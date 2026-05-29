@@ -149,8 +149,8 @@ function blocksOf(entry) {
   return out
 }
 
-// Which entry-type badge to show. If the entry only contains tool_use, label
-// it as such; same for tool_result. Otherwise use the raw `type`.
+// Badge label: collapse tool_use-only / tool_result-only entries to that
+// kind; otherwise the raw `type`.
 function entryBadge(entry, blocks) {
   if (entry.type === 'user' && blocks.every((b) => b.kind === 'tool_result')) return 'tool_result'
   if (entry.type === 'assistant' && blocks.every((b) => b.kind === 'tool_use' || b.kind === 'thinking')) {

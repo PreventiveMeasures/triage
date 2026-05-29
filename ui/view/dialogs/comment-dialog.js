@@ -1,8 +1,7 @@
-// `<comment-dialog>` — multi-line comment editor for a finding.
-// Replaces window.prompt() for the .mark-comment button so the
-// user can write more than one line, see the finding context they
-// are annotating, and use a real textarea (paste with newlines,
-// arrow keys, undo, etc.).
+// `<comment-dialog>` — multi-line comment editor for a finding,
+// fronting the .mark-comment button. Lets the user write more than
+// one line, see the finding context they're annotating, and use a
+// real textarea (paste with newlines, arrow keys, undo, etc.).
 //
 // Same shape as the other deepview dialogs (triage-export-dialog,
 // triage-conflict-dialog): extends `AppDialog` for the shared
@@ -55,8 +54,7 @@ class CommentDialog extends AppDialog {
   _onSave = () => {
     const trimmed = (this._value ?? '').trim()
     const before = (this.initial ?? '').trim()
-    // No-op when nothing changed — same semantic the old prompt
-    // path used (early-return on trimmed === current).
+    // Unchanged value resolves null (no-op), like a non-edit.
     if (trimmed === before) { this._finish(null); return }
     this._finish(trimmed)
   }
@@ -111,14 +109,12 @@ class CommentDialog extends AppDialog {
 
 customElements.define('comment-dialog', CommentDialog)
 
-// Public entry point. `finding` is the active tab object the
-// caller already resolved (severity / file / line / description
-// used for the context header — all optional). `initial` is the
-// current comment text (defaults to ''). Resolves with:
+// Public entry point. `finding` supplies the context header
+// (severity / file / line / description, all optional); `initial`
+// is the current comment text (defaults to ''). Resolves with:
 //   * a trimmed string when the user saved a different value
 //     (empty string = explicit Clear)
-//   * null when the user cancelled, dismissed the dialog with
-//     Esc / backdrop, or saved an unchanged value
+//   * null on cancel / Esc / backdrop / unchanged save
 // Callers treat null as a no-op (skip persistence + re-render).
 export function openCommentDialog({ initial = '', finding = null } = {}) {
   return openAppDialog('comment-dialog', { initial, finding })

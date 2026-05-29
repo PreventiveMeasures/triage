@@ -1,12 +1,9 @@
 /* Light-DOM tooltip chrome — a single shared element appended to
    <body> by `view/tooltip.js`. Consumers (sidebar, bundle view, …)
-   call `showTooltip(el)` / `hideTooltip()` on hover and the
-   `[data-tooltip]` attribute drives the text. Lives outside any
-   view's shadow root so it escapes `overflow: hidden`. Replaces
-   the native `title=` browser tooltip — that one reads as a
-   webpage (delayed, OS chrome) and we want an instant in-app
-   affordance instead.
-   Pre-rename historical name: `#sidebar-tooltip`. */
+   call `showTooltip(el)`/`hideTooltip()` on hover; `[data-tooltip]`
+   drives the text. Lives outside any view's shadow root so it escapes
+   `overflow: hidden`. Replaces native `title=` (delayed, OS chrome)
+   with an instant in-app affordance. */
 #styled-tooltip {
   position: fixed;
   background: rgb(28 28 28 / .95);
@@ -31,12 +28,11 @@ body.theme-light #styled-tooltip {
   background: rgb(246 248 250 / .96);
 }
 
-/* Pink theme — mirrors the light override but pulls the fill from
-   the pink surface palette so the tooltip reads as part of the
-   themed chrome rather than the default dark slab. Alpha bumped
-   to .96 (vs --surface's .72) for the same reason as the light
-   override: tooltips need to stay legible over arbitrary backdrops
-   without leaning entirely on the backdrop-filter blur. */
+/* Pink theme — mirrors the light override but fills from the pink
+   surface palette so the tooltip reads as themed chrome, not the
+   default dark slab. Alpha bumped to .96 (vs --surface's .72), like
+   the light override: tooltips must stay legible over arbitrary
+   backdrops without relying entirely on the backdrop-filter blur. */
 body.theme-pink #styled-tooltip {
   background: rgb(255 224 240 / .96);
 }

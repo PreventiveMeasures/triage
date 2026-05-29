@@ -1,9 +1,8 @@
 /* `<bundle-terminal>` shadow-DOM styles. Imported as text by
-   ui/terminal.js and wrapped with unsafeCSS() so the bytes ship
-   inside the component's shadow root. Theme custom properties
-   (--bg, --text, --muted, --accent, --critical, --border) cascade
-   into the shadow boundary, so the terminal picks up dark/light
-   mode automatically from the page. */
+   ui/terminal.js and wrapped with unsafeCSS() so the bytes ship in
+   the component's shadow root. Theme custom properties (--bg, --text,
+   --muted, --accent, --critical, --border) cascade across the shadow
+   boundary, so the terminal follows page dark/light mode. */
 
 :host {
   display: flex;
@@ -32,9 +31,9 @@
   margin-bottom: 8px;
 }
 
-/* Clickable command suggestions inside the banner — plain text
-   in accent colour, no button chrome. Inherits monospace/size
-   from the host so the line reads as continuous prose. */
+/* Clickable command suggestions in the banner — plain accent text,
+   no button chrome; inherits monospace/size from the host so the line
+   reads as continuous prose. */
 .banner .cmd {
   color: var(--accent, #58a6ff);
 }
@@ -68,20 +67,19 @@
   border-top: 1px solid var(--border, #2c2c2c);
 }
 
-/* Visible focus indicator. The input strips its default outline
-   for the bare-prompt aesthetic, so the form's top border
-   brightens to the accent color while focus is anywhere inside
-   the row — that satisfies WCAG 2.4.7 without putting a box
-   around the input itself. */
+/* Visible focus indicator. The input strips its outline for the
+   bare-prompt look, so the form's top border brightens to accent
+   while focus is anywhere in the row — satisfies WCAG 2.4.7 without
+   boxing the input itself. */
 .form:focus-within {
   border-top-color: var(--accent, #58a6ff);
 }
 
-/* Prompt-row cwd shrinks with ellipsis: a deep `cd` shouldn't
-   push the input off the right edge. min-width: 0 overrides the
-   flex-item default of `min-width: auto`, which would otherwise
-   keep the span at content width. Output-line `.cwd` stays
-   unstyled (the line's pre-wrap container handles wrapping). */
+/* Prompt-row cwd shrinks with ellipsis so a deep `cd` doesn't push
+   the input off the right edge. min-width: 0 overrides the flex-item
+   default `min-width: auto`, which would keep the span at content
+   width. Output-line `.cwd` stays unstyled (its pre-wrap container
+   handles wrapping). */
 .form .cwd {
   flex: 0 1 auto;
   min-width: 0;
@@ -92,13 +90,13 @@
 }
 .form .sigil { flex: 0 0 auto; user-select: none; }
 
-/* Wraps the real <input> and the ghost-suggestion overlay so the
-   overlay can absolute-position against the input's box without
-   competing for layout space in the form row. */
+/* Wraps the real <input> + ghost-suggestion overlay so the overlay
+   can absolute-position against the input's box without competing for
+   layout space in the form row. */
 .input-wrap {
   flex: 1 1 auto;
-  /* Same min-width override — without it, a long cwd plus the
-     input's content width could exceed the row width. */
+  /* Same min-width override — without it a long cwd plus the input's
+     content width could exceed the row width. */
   min-width: 0;
   position: relative;
   display: flex;
@@ -117,11 +115,11 @@
   position: relative;
 }
 
-/* Ghost suggestion: a transparent copy of `_input` pushes the
-   visible tail past where the caret sits, so it reads as a
-   continuation. `white-space: pre` keeps the padding span's width
-   in step with the input's monospace text. `pointer-events: none`
-   + `user-select: none` keep clicks / selection on the real input. */
+/* Ghost suggestion: a transparent copy of `_input` pushes the visible
+   tail past the caret so it reads as a continuation. `white-space:
+   pre` keeps the padding span's width in step with the input's
+   monospace text. `pointer-events`/`user-select: none` keep
+   clicks/selection on the real input. */
 .ghost {
   position: absolute;
   inset: 0;

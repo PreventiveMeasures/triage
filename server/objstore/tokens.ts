@@ -112,16 +112,14 @@ function isValidPayload(v: unknown): v is TokenPayload {
   const o = v as Record<string, unknown>
   if (typeof o['tag'] !== 'string' || typeof o['res'] !== 'string') return false
   // `Number.isSafeInteger` over `Number.isInteger`: `exp` is compared
-  // to `Date.now()` (which is itself a safe int), `len` is compared
-  // against the Content-Length the REST layer parsed (which already
-  // gates on `isSafeInteger`), and `ver` is compared against SQLite's
-  // INTEGER (capacity 2^63). An unsafe-but-integer value in the token
-  // round-trips through IEEE-754 and could spoof equality with a
-  // different actual value, or — for `exp` — let an adversarial
-  // token claim a `Number.MAX_SAFE_INTEGER + 1` expiry that compares
-  // ambiguously near the IEEE-754 boundary. Matches the rest of the
-  // codebase's safe-int gates (server/objstore/sign.ts,
-  // server/objstore/rest.ts, server/objstore/handlers.ts).
+  // to `Date.now()` (a safe int), `len` against the Content-Length the
+  // REST layer parsed (itself `isSafeInteger`-gated), and `ver` against
+  // SQLite's INTEGER (capacity 2^63). An unsafe-but-integer value in the
+  // token round-trips through IEEE-754 and could spoof equality with a
+  // different actual value, or — for `exp` — claim a
+  // `Number.MAX_SAFE_INTEGER + 1` expiry that compares ambiguously near
+  // the IEEE-754 boundary. Matches the codebase's other safe-int gates
+  // (server/objstore/sign.ts, rest.ts, handlers.ts).
   if (!Number.isSafeInteger(o['exp']) || (o['exp'] as number) < 0) return false
   if (o['op'] === 'put') {
     return typeof o['sid'] === 'string'
@@ -138,8 +136,7 @@ function isValidPayload(v: unknown): v is TokenPayload {
   return false
 }
 
-// Convenience constructors so the WS handler doesn't have to assemble
-// the payload shape inline.
+// Constructors so the WS handler doesn't assemble the payload inline.
 export function mintPutToken(
   secret: TokenSecret,
   tag: string, res: string, sid: string, len: number,

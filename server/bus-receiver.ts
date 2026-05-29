@@ -69,13 +69,13 @@ export function createBusReceiver(deps: BusReceiverDeps): (msg: BusMessage) => P
         if (debug) console.warn(`pubsub: objput ${msg.res.slice(0, 8)}… missing for ${msg.tag.slice(0, 12)}…`)
         return
       }
-      // Note: `getLive` returns the CURRENT live row, which may be a
-      // strictly NEWER version than the NOTIFY referred to (two
-      // closely-spaced puts on one resourceTag arrive at the receiver
-      // with the DB already showing v2 for both). Broadcasting v2 twice
-      // is sound — client `putHandlers` already absorb same-instance
-      // PUT echoes (rest.ts uses `except: null`), so handlers must be
-      // idempotent on (resourceTag, version) anyway.
+      // `getLive` returns the CURRENT live row, which may be a strictly
+      // NEWER version than the NOTIFY referred to (two closely-spaced
+      // puts on one resourceTag arrive with the DB already showing v2
+      // for both). Broadcasting v2 twice is sound — client `putHandlers`
+      // already absorb same-instance PUT echoes (rest.ts uses
+      // `except: null`), so handlers must be idempotent on
+      // (resourceTag, version) anyway.
       broadcastLocalRaw(msg.tag, JSON.stringify({
         type: 'objstore-put',
         workspaceTag: msg.tag,

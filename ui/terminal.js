@@ -113,15 +113,15 @@ class BundleTerminal extends LitElement {
   }
 
   // Bind to the current sources map: a Map reference change means
-  // a different bundle, so we rebuild the shell and reset history.
-  // Idempotent within a bundle — re-renders that pass the same
-  // Map reference leave the running session alone.
+  // a different bundle, so rebuild the shell and reset history.
+  // Idempotent within a bundle — re-renders passing the same Map
+  // reference leave the running session alone.
   //
-  // The second branch (an `_input` change) is what drives ghost-text
-  // refresh: clear the prior suggestion and rearm the debounce.
-  // Doing it here rather than in `#onInput` covers every path that
-  // mutates the field — typing, history nav, Tab fill, submit-reset,
-  // and the bundle-swap reset above — through a single seam.
+  // The `_input` branch drives ghost-text refresh: clear the prior
+  // suggestion and rearm the debounce. Doing it here rather than in
+  // `#onInput` covers every path that mutates the field through a
+  // single seam — typing, history nav, Tab fill, submit-reset, and
+  // the bundle-swap reset above.
   willUpdate(changed) {
     if (changed.has('sources') && this.sources !== this.#lastSources) {
       this.#term = this.sources ? createTerminal(this.sources) : null
@@ -144,14 +144,13 @@ class BundleTerminal extends LitElement {
   }
 
   // Reconnecting after detach (tab flip Terminal → Code → Terminal,
-  // and similar paths through terminal-attach.js's element cache)
-  // resets the inner .output scrollTop — the browser clears it on
-  // element removal, and no Lit update fires on reattach because
-  // no reactive property changed. `updated()` therefore can't
-  // restore it. Scroll to the latest output explicitly here;
+  // via terminal-attach.js's element cache) loses the inner .output
+  // scrollTop: the browser clears it on element removal, and no Lit
+  // update fires on reattach (no reactive property changed), so
+  // `updated()` can't restore it. Scroll explicitly here.
   // updateComplete waits for the pending first render so
-  // scrollHeight is meaningful, and on subsequent reconnects (no
-  // pending update) it resolves immediately.
+  // scrollHeight is meaningful; on later reconnects (no pending
+  // update) it resolves immediately.
   connectedCallback() {
     super.connectedCallback()
     this.updateComplete.then(() => this.#scrollToBottom())
@@ -228,12 +227,11 @@ class BundleTerminal extends LitElement {
     if (e.key === 'ArrowUp') { e.preventDefault(); this.#historyBack() }
     else if (e.key === 'ArrowDown') { e.preventDefault(); this.#historyForward() }
     // Rearm the ghost debounce on every non-Tab key. willUpdate
-    // catches keys that mutate `_input` (typing, history nav), but
-    // cursor-only keys (ArrowLeft/Right, Home, End) and bare-cycle-
-    // resets don't trip it — and after we clear `#completions` here
-    // the ghost may newly become relevant. Double-arming on a
-    // char key is harmless: the willUpdate path that follows just
-    // resets the same timer.
+    // catches keys that mutate `_input`, but cursor-only keys
+    // (ArrowLeft/Right, Home, End) and bare-cycle-resets don't trip
+    // it — and clearing `#completions` above may newly make the
+    // ghost relevant. Double-arming on a char key is harmless: the
+    // willUpdate path that follows just resets the same timer.
     this.#cancelGhost()
     this.#scheduleGhost()
   }
@@ -299,9 +297,8 @@ class BundleTerminal extends LitElement {
     // tail beyond what's already typed. Defensive check on the
     // prefix in case the shell ever returns a non-prefix variant.
     if (!first.startsWith(input) || first === input) return
-    // Mid-token: suppress the ghost if the typed text is itself one
-    // of the completion variants — the user already has something
-    // valid, so a "you could extend this" hint is just noise.
+    // Mid-token, typed text is itself a valid variant: suppress
+    // (the `ls` vs `lsb` rule above).
     if (inToken && items.includes(input)) return
     this._ghost = first.slice(input.length)
   }

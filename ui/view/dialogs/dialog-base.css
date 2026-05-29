@@ -1,16 +1,14 @@
 /* Shared modal-dialog chrome for the `AppDialog` base class
-   (app-dialog.js, same dir). Inlined into each dialog component's
-   shadow root via inherited `static styles`, so it targets the bare
-   `dialog` element (there's exactly one per dialog shadow) for the
-   frame, plus the `.nwd-*` inner classes the dialog bodies use. */
+   (app-dialog.js), inherited into each dialog's shadow via `static
+   styles`. Targets the bare `dialog` element (exactly one per shadow)
+   for the frame, plus the `.nwd-*` body classes. */
 
 /* Shadow trees don't inherit theme.css's global reset. */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 dialog {
-  /* Drop the showModal() vertical centering down ~5rem (margin-top
-     + auto bottom margin) so the chrome doesn't punch through the
-     viewport centerline on tall screens. */
+  /* Offset showModal()'s centering down ~5rem (auto bottom margin) so
+     tall dialogs don't punch through the viewport. */
   margin-top: 5rem;
   margin-inline: auto;
   border: 1px solid var(--border); border-radius: 10px;
@@ -22,9 +20,8 @@ dialog {
   &::backdrop { background: rgb(from var(--theme-bar) r g b / .55); backdrop-filter: blur(2px); }
 }
 
-/* Every dialog has exactly one `<header><h3>`; address it by type
-   so the bodies don't each carry a `*-head` class. Per-dialog layers
-   override just the margin where they differ. */
+/* One `<header><h3>` per dialog; addressed by type so bodies need no
+   `*-head` class. Per-dialog layers override just the margin. */
 header h3 {
   margin: 0 0 .6rem; font-size: 1rem; font-weight: 600;
 }
@@ -47,9 +44,8 @@ header h3 {
   margin: .55rem 0 0;
   color: var(--muted); font-size: .74rem; line-height: 1.45;
 }
-/* `.nwd-intro` is the above-the-input sibling to `.nwd-note`:
-   body-text size for first-read legibility, plus margin-bottom to
-   break the visual stickiness against the input. */
+/* Above-input sibling to `.nwd-note`: larger body-text size for
+   legibility, margin-bottom to separate it from the input. */
 .nwd-intro {
   margin: 0 0 .8rem;
   color: var(--muted); font-size: .82rem; line-height: 1.5;
@@ -72,8 +68,7 @@ header h3 {
     background: var(--accent); color: var(--surface); border-color: var(--accent);
     &:hover:not(:disabled) { color: var(--surface); filter: brightness(1.08); }
   }
-  /* Destructive action (Clear in the annotation dialogs, Leave /
-     Delete in the list dialogs). */
+  /* Destructive action (Clear, Leave, Delete). */
   &.danger {
     color: var(--critical, #f87171); border-color: var(--border);
     &:hover:not(:disabled) { border-color: var(--critical, #f87171); color: var(--critical, #f87171); }
@@ -81,14 +76,12 @@ header h3 {
   &:disabled { opacity: .5; }
 }
 
-/* WCO PWA mode — theme.css makes the whole <body> a window drag
-   region and opts interactive elements (incl. `dialog`) back out
-   with `app-region: no-drag`. Those light-DOM rules can't reach
-   into the dialog's shadow root, so without this mirror the
-   shadow `<dialog>` stays a drag region and its buttons / input
-   drag the window instead of taking the click. `no-drag` on the
-   `dialog` covers its whole subtree (children inherit the
-   region). */
+/* WCO PWA mode — theme.css makes <body> a drag region and opts
+   interactive elements back out via `app-region: no-drag`, but those
+   light-DOM rules can't reach the shadow. Without this mirror the
+   shadow `<dialog>` stays a drag region and its buttons/input drag the
+   window instead of taking the click. no-drag is inherited, so it
+   covers the whole subtree. */
 /* stylelint-disable media-feature-name-value-no-unknown */
 @media (display-mode: window-controls-overlay) {
   dialog {

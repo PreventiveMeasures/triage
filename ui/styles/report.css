@@ -37,12 +37,10 @@
        `#findings-body-slot` (overflow: auto) has no bounded
        parent, that pane grows to its content size instead of its
        allotted space, and the wheel scrolls the whole page rather
-       than just the inner pane. Revert to the default flex-shrink
-       when those views are mounted; the findings-list overflow
-       concern that originally motivated `flex-shrink: 0` is now
-       handled by the findings body slot's own overflow (see the
-       `@media not print` block further down), so unqualified
-       `.findings-content` joins the list. `.bundles-view` /
+       than just the inner pane. Revert to default flex-shrink for
+       those views; unqualified `.findings-content` is safe to join
+       because the findings body slot owns its own overflow (see the
+       `@media not print` block below). `.bundles-view` /
        `.packages-view` covers both the regular list view and the
        slide variant (which carries both classes). */
     &:has(
@@ -51,12 +49,11 @@
     ) { flex-shrink: 1; }
   }
 
-  /* Was `& > header.page-head` (direct child of #report) before
-     render.js's Lit refactor. The header is now Lit-rendered into a
-     `<div id="header-slot">` placeholder, so the direct-child path
-     no longer matches; descendant selector still uniquely picks the
-     page header (the only `header.page-head` inside #report; the
-     details-panel header uses `.findings-table-details-bar`). */
+  /* Descendant selector, not direct child: the header is Lit-
+     rendered into a `<div id="header-slot">` placeholder so a
+     `& >` path wouldn't match. Still unique — the only
+     `header.page-head` inside #report (the details-panel header
+     uses `.findings-table-details-bar`). */
   & header.page-head {
     display: flex; align-items: flex-start; justify-content: space-between;
     gap: 1rem;
@@ -164,13 +161,12 @@
        inherit through the shadow boundary so theme switching works
        without copying rules here. */
 
-    /* Files toggle — replaces the old Files (N) tab. Same on/off
-       shape as the toolbar's `.trash-btn`, scoped to the page
-       header where it sits next to the repo chip. Pill chrome
-       (`.125rem .5rem` padding, 999px radius, .72rem font) mirrors
-       the sibling `.file-chip` and the repo-chip so all three
-       elements in the title row share one height + corner shape.
-       Active state uses `--accent` rather than `--critical`
+    /* Files toggle — same on/off shape as the toolbar's
+       `.trash-btn`, scoped to the page header next to the repo
+       chip. Pill chrome (`.125rem .5rem` padding, 999px radius,
+       .72rem font) mirrors the sibling `.file-chip` and the
+       repo-chip so all three title-row elements share one height +
+       corner shape. Active uses `--accent` not `--critical`
        because Files isn't a destructive view. */
     & .files-toggle-btn {
       display: inline-flex; align-items: center;
@@ -193,21 +189,17 @@
     }
 
     /* Per-report sync-status badge — rendered inside the title `h1`
-       (a flex row alongside file-chip / repo-chip / files-toggle-btn)
-       so it sits on the same baseline as those, not visually a half-
-       row above. `margin-left: auto` consumes the remaining space
-       inside the h1, pushing the badge to the header's right edge
-       (which is itself capped at max-width: 1200px above, so the
-       badge naturally aligns above the right end of the toolbar
-       below). Two states driven by `data-status`:
-         local — hard-drive icon, neutral chrome (report not in
-                 remote inventory yet); clickable to open the
-                 upload-confirmation dialog
-         cloud — cloud icon, accent border + accent text (every
-                 loaded report's tag is present in objstore.list())
-       Pill chrome mirrors the sibling .files-toggle-btn / .file-chip
-       so all chips in the title row share one height + corner
-       shape. */
+       (flex row alongside file-chip / repo-chip / files-toggle-btn)
+       so it shares their baseline. `margin-left: auto` eats the
+       remaining h1 space, pushing the badge to the header's right
+       edge (capped at 1200px above, so it lands above the toolbar's
+       right end). Two `data-status` states:
+         local — hard-drive icon, neutral chrome (not yet in remote
+                 inventory); clickable to open the upload dialog
+         cloud — cloud icon, accent border + text (tag present in
+                 objstore.list())
+       Pill chrome mirrors .files-toggle-btn / .file-chip so all
+       title-row chips share one height + corner shape. */
     & .report-sync-badge {
       display: inline-flex; align-items: center; gap: .375rem;
       min-height: 24px; box-sizing: border-box;
@@ -251,55 +243,45 @@
 }
 
 /* Narrow-viewport guard — below ~1530px the page-head's right edge
-   (after the 1200px cap above) gets close enough to the fixed
-   `<theme-toggle>` / `<print-button>` stack (right: .5rem of viewport,
-   30px wide) that they overlap. Reserve a 56px gutter on the right
-   so the badge inside the h1 always has clear space for the
-   toggle. The header itself shrinks; the title content reflows
-   inside `.page-title` via `flex-wrap`. */
+   (after the 1200px cap) gets close enough to the fixed
+   `<theme-toggle>` / `<print-button>` stack (right: .5rem, 30px
+   wide) to overlap. Reserve a 56px right gutter so the badge in the
+   h1 keeps clear space for the toggle. The header shrinks; title
+   content reflows inside `.page-title` via `flex-wrap`. */
 @media (width <= 1530px) {
   #report header.page-head { padding-right: 56px; box-sizing: border-box; }
 }
 
-/* WCO mode lays the three floating buttons out as a horizontal row
-   (theme.css), so the clearance the page-head's right edge needs
-   grows from one 30px button to a 3-button strip (~109px). Reserve
-   up to 128px when the OS-paint area (titlebar-area-x + width =
-   right edge of the platform's safe zone) butts close to the
-   header's 1510px content budget; ramp linearly down to 0 once
-   there's room, so wide viewports get no extra padding override.
+/* WCO mode lays the three floating buttons in a horizontal row
+   (theme.css), so the page-head's right-edge clearance grows from
+   one 30px button to a ~109px 3-button strip. Ramp the right
+   padding up as the OS safe-zone right edge (titlebar-area-x +
+   width) approaches the header budget, down to 0 when there's room.
 
-   Expressed in the property value rather than a media query
-   threshold because env() inside `@media (… <= calc(env(…)))` has
-   patchy browser support, but env() inside a regular calc() in a
-   property value is well-supported across all the engines that
-   ship WCO.
+   Expressed in the property value, not a media-query threshold,
+   because env() inside `@media (… <= calc(env(…)))` has patchy
+   browser support whereas env() inside a property-value calc() is
+   well-supported across all engines that ship WCO.
 
    Two pieces:
-     • ramp     = max(0, 1508 - safe_zone_right). 0 when the safe
-       zone is at or past 1508px, scales up linearly as the safe
-       zone shrinks. Trigger sized so the cap kicks in exactly
-       where the header starts shrinking — sidebar (260) +
-       scrollbar gutter (~0 on Chromium with stable gutter and
-       no overflow) + #report padding (24+24) + header max-width
-       (1200) = 1508 (clearance = 0).
-     • cluster_cap = cluster_width (= the OS-controls cluster
-       width, no clearance constant on top). This plateau is
-       what the badge sits at once the viewport gets narrow
-       enough that the header drops below its 1200px max-width:
-       from that point on the header shrinks 1:1 with the
-       viewport, and an uncapped ramp would push the right edge
-       inward on top of that shrinkage. Tying the cap to
-       cluster_width keeps the badge responsive to OS-controls
-       changes; the floating button row (~109px from the right)
-       sits beneath the OS toolbar vertically so it doesn't need
-       its own horizontal clearance from the badge.
+     • ramp = max(0, 1508 - safe_zone_right): 0 at/past 1508px,
+       scales up as the safe zone shrinks. 1508 = where the header
+       starts shrinking: sidebar (260) + scrollbar gutter (~0 on
+       Chromium with stable gutter, no overflow) + #report padding
+       (24+24) + header max-width (1200).
+     • cluster_cap = the OS-controls cluster width (no clearance
+       constant). Plateau the badge sits at once the viewport is
+       narrow enough that the header drops below 1200px and shrinks
+       1:1 with the viewport — an uncapped ramp would push the right
+       edge inward on top of that. Tying the cap to cluster_width
+       keeps the badge tracking OS-controls changes; the ~109px
+       button row sits beneath the OS toolbar vertically so it needs
+       no horizontal clearance from the badge.
 
-   Final: padding = min(cluster_cap, ramp). Tuned so ramp == cap
-   exactly at the header's shrink-start point — no stationary
-   gap, no 2x sweep, badge moves at 1:1 with the viewport in
-   both regimes, and lands 24px from the OS toolbar's left edge
-   (#report's own right padding) when on the cap plateau. */
+   Final: padding = min(cluster_cap, ramp), tuned so ramp == cap
+   exactly at the shrink-start point — no stationary gap, no 2x
+   sweep, badge moves 1:1 in both regimes and lands 24px from the OS
+   toolbar's left edge (#report's right padding) on the plateau. */
 /* stylelint-disable-next-line media-feature-name-value-no-unknown */
 @media (display-mode: window-controls-overlay) {
   #report header.page-head {
@@ -320,26 +302,22 @@
    `.with-details` is added by render.js when the table view's
    details panel is open: the wrapper grows to fit the 3 fr +
    2 fr split (1200 list + 800 panel = 2000 max). */
-/* The slot wrapper render() emits around the bundles view —
-   `display: contents` flattens it so the flex chain from #report
-   reaches .bundles-view directly, the same pattern the graph view
-   uses for #findings-graph-slot. */
+/* `display: contents` flattens the slot wrapper render() emits so
+   the flex chain from #report reaches .bundles-view directly — same
+   pattern the graph view uses for #findings-graph-slot. */
 #bundles-slot { display: contents; }
 #packages-slot { display: contents; }
 #repositories-slot { display: contents; }
 
-/* Bundle slide — the full-width view for Graph / Issues. Replaces
-   the bundles list + details panel with a header bar (back button
-   + bundle name + sub-tab switcher) on top and the active sub-
-   tab's content edge to edge below. Same flex chain as the
-   regular .bundles-view so the body fills the viewport. */
-/* Two-class compound so this beats `.bundles-view`'s
-   `max-width: 1200px` (defined later in the stylesheet — without the
-   extra specificity the cap leaks back into the slide and the graph
-   sits cramped at 1200px regardless of viewport width). The
-   .packages-view variant carries the same chrome — the package
-   Issues drill-in renders edge-to-edge through the same .bundles-
-   slide-* classes. */
+/* Bundle slide — full-width view for Graph / Issues: header bar
+   (back button + bundle name + sub-tab switcher) on top, active
+   sub-tab's content edge-to-edge below. Same flex chain as the
+   regular .bundles-view so the body fills the viewport.
+   Two-class compound for specificity to beat `.bundles-view`'s
+   `max-width: 1200px` — without it the cap leaks back and cramps
+   the graph at 1200px regardless of viewport. The .packages-view
+   variant shares the chrome (package Issues drill-in renders
+   edge-to-edge through the same .bundles-slide-* classes). */
 .bundles-view.bundles-slide-view,
 .packages-view.packages-slide-view {
   max-width: none;
@@ -362,11 +340,10 @@
   flex-shrink: 0;
 }
 
-/* In WCO the OS controls + our floating button row sit anchored
-   to the top-right; without this, the bundles slide bar runs the
-   full main-content width and tucks under both. The shared
-   --wco-right-toolbar var (theme.css) keeps the inset in sync
-   with the seam-cover blob — same calc, single source of truth. */
+/* In WCO the OS controls + floating button row anchor top-right;
+   without this the slide bar runs full width and tucks under both.
+   Shared --wco-right-toolbar var (theme.css) keeps the inset in
+   sync with the seam-cover blob — single source of truth. */
 /* stylelint-disable-next-line media-feature-name-value-no-unknown */
 @media (display-mode: window-controls-overlay) {
   .bundles-slide-bar { margin-right: var(--wco-right-toolbar); }
@@ -422,13 +399,12 @@
   overflow: hidden;
 }
 
-/* Overview tab — metadata block on top, three side-by-side
-   independently-scrollable columns (Packages / Files / Reports)
-   below. The body itself is a non-scrolling flex column; the
-   columns row owns the remaining height and each column's body
-   scrolls internally. The other slide tabs (Graph, Terminal,
-   Issues, Code, Treemap) keep the edge-to-edge body — each owns
-   its own internal layout. */
+/* Overview tab — metadata block on top, three independently-
+   scrollable columns (Packages / Files / Reports) below. The body
+   is a non-scrolling flex column; the columns row owns the
+   remaining height and each column's body scrolls internally. Other
+   slide tabs (Graph, Terminal, Issues, Code, Treemap) keep the
+   edge-to-edge body, each owning its own internal layout. */
 .bundles-slide-body-overview {
   display: flex;
   flex-direction: column;
@@ -606,18 +582,15 @@
   -webkit-app-region: no-drag; app-region: no-drag;
   padding: .35rem .25rem .5rem;
 }
-/* Search bar — a single bordered chrome strip with a lens icon
-   on the left, the query input flexing to fill, and the
-   Files / Code / Issues mode toggles as icon buttons pinned to
-   the right edge. Mode picks what gets filtered; query is
-   shared across modes so the user can pivot between them against
-   the same string. Mirrors the sidebar's "Search reports" chrome
-   (`<div class="sidebar-search">`) so the two strips read as the
-   same affordance in different contexts. */
-/* `<bundle-code-search>` host element IS the flex shell — element
-   selector rather than `.bundle-code-search` on a wrapper div so
-   one DOM node carries the layout. The input + clear button + mode
-   tabs all live inside the host. */
+/* Search bar — bordered strip: lens icon left, query input
+   flexing to fill, Files / Code / Issues mode toggles pinned right.
+   Mode picks what's filtered; query is shared across modes so the
+   user can pivot against the same string. Mirrors the sidebar's
+   "Search reports" chrome (`<div class="sidebar-search">`) so the
+   two strips read as the same affordance.
+   The `<bundle-code-search>` host IS the flex shell (element
+   selector, not a `.bundle-code-search` wrapper div) so one DOM
+   node carries the layout; input + clear + mode tabs live inside. */
 bundle-code-search {
   margin: .35rem .5rem;
   padding: 0 .2rem 0 .45rem;
@@ -667,11 +640,10 @@ bundle-code-search {
 }
 .bundle-code-search-clear:hover { color: var(--text); background: rgb(from var(--text) r g b / .08); }
 
-/* Mode-toggle icon buttons — Files / Code / Issues. Pinned to
-   the search row's right edge in a tablist span; the inner span
-   exists so `role="tablist"` doesn't sit on the outer container
-   alongside the lens icon + input (those aren't tabs and
-   screen-reader announcements would get confused). */
+/* Mode-toggle icon buttons — Files / Code / Issues, pinned to the
+   search row's right edge in a tablist span. The inner span keeps
+   `role="tablist"` off the outer container, which also holds the
+   lens icon + input (not tabs — would confuse screen readers). */
 .bundle-code-search-modes {
   flex-shrink: 0;
   display: inline-flex; align-items: center;
@@ -873,11 +845,9 @@ bundle-code-search {
   background: var(--bg);
   color: var(--text);
 }
-/* Selection — solid accent-tinted background. Avoids the
-   inset box-shadow strip the prior version used; that strip
-   picked up the button's border-radius and rendered as a
-   curved sliver at the top/bottom. A flat tint reads as a
-   single highlighted row without the visual artefact. */
+/* Selection — solid accent-tinted background, not an inset
+   box-shadow strip: the strip picks up the button's border-radius
+   and renders as a curved sliver at top/bottom. */
 .bundle-code-tree-link.current {
   background: color-mix(in oklch, var(--accent, #2563eb) 18%, var(--bg));
   color: var(--text);
@@ -951,14 +921,11 @@ bundle-code-search {
 }
 
 /* Bundles view — flat list of OPFS-stored sourcemap / stasis blobs.
-   Default layout caps at 1200px (single column); when a bundle is
-   open, `.with-details` widens the wrapper to fit the list + the
-   right-side panel side by side, mirroring the findings-table
-   details pattern. Flex column with flex: 1 so the layout fills
-   the viewport's remaining height below the page-head; the inner
-   list and details columns each scroll independently rather than
-   pushing #report past 100vh. Mirrors how the graph view fits to
-   screen. */
+   Caps at 1200px (single column); `.with-details` widens it to fit
+   list + right-side panel side by side (mirrors the findings-table
+   details pattern). Flex column with flex: 1 so it fills the height
+   below the page-head and the inner list / details columns scroll
+   independently instead of pushing #report past 100vh. */
 /* Per-file grouped issue list — shared by the bundle Issues tab
    and the package Issues slide. Severity badge + file path +
    description per row, sorted by severity desc. The summary line
@@ -1372,29 +1339,24 @@ bundle-code-search {
    the standalone Graph tab. Drop the readability cap so the
    1fr stage + 300px sidebar grid can use the full viewport,
    matching how the Graph tab renders. */
-/* Findings-tab graph plumbing. All four rules used to share scope
-   with `.graph2-layout` inside `styles/graph2.css`, but the layout
-   moved into the `<graph-layout>` shadow DOM — selectors can't
-   cross the boundary, so the ancestor / host-targeting parts live
-   here in the light-DOM cascade. The remaining shadow-internal
-   rules (chrome, grid template) stay in `graph/graph2.css`.
+/* Findings-tab graph plumbing. These are the ancestor / host-
+   targeting rules; selectors can't cross into the `<graph-layout>`
+   shadow DOM, so they live here in the light-DOM cascade while the
+   shadow-internal rules (chrome, grid template) stay in
+   `graph/graph2.css`.
 
-   `.findings-content.with-graph` itself: flex column so its
-   `graph-layout` child can flex-grow to fill the remaining
-   viewport height below the page header.
+   `.findings-content.with-graph`: flex column so its `graph-layout`
+   child can flex-grow into the remaining height below the header.
 
-   `#findings-graph-slot`: `display: contents` removes the slot's
-   own box from layout so `<graph-layout>` becomes a direct flex
-   child of `.findings-content`, picking up `flex: 1` cleanly
-   without a parent box that would break the flex chain.
+   `#findings-graph-slot`: `display: contents` drops the slot's own
+   box so `<graph-layout>` becomes a direct flex child and picks up
+   `flex: 1` without an intervening box breaking the chain.
 
-   `graph-layout` (the host): `flex: 1; min-height: 0` lets it
-   absorb the remaining height. `border-radius: 6px` +
-   `box-shadow: var(--shadow-glass)` + `background: transparent`
-   override the host defaults (8px, no shadow, opaque canvas bg)
-   so the findings-tab graph reads as a glass-panel slot matching
-   the toolbar's chrome instead of the standalone graph's heavier
-   card look. */
+   `graph-layout` (host): `flex: 1; min-height: 0` absorbs the
+   remaining height; `border-radius: 6px` + `box-shadow` +
+   transparent bg override the host defaults (8px, no shadow, opaque
+   canvas) so it reads as a glass-panel slot matching the toolbar
+   rather than the standalone graph's heavier card. */
 .findings-content.with-graph {
   max-width: none;
   display: flex;
@@ -1414,38 +1376,31 @@ bundle-code-search {
   margin-bottom: 0;
 }
 /* Kanban view-mode lays five status columns side-by-side; drop
-   the readability cap so they have room to breathe horizontally
-   on wide screens. The flex chain (#report → .findings-content
-   .with-kanban → .kanban-board) lets the board fill the remaining
-   viewport height under the toolbar so only the column bodies
-   scroll. `#findings-body-slot` collapses out of layout with
-   `display: contents` so the kanban-board is a direct flex-child
-   of the wrapper — same trick the graph view uses for its slot
-   (see graph2.css). */
+   the readability cap so they have horizontal room on wide screens.
+   The flex chain (#report → .findings-content.with-kanban →
+   .kanban-board) lets the board fill the remaining viewport height
+   under the toolbar so only the column bodies scroll. (The body
+   slot's flex setup is in the next block.) */
 .findings-content.with-kanban {
   max-width: none;
   display: flex; flex-direction: column;
   flex: 1; min-height: 0;
 }
-/* Body slot becomes its own flex container that the kanban board
-   fills. Earlier attempts used `display: contents` (the graph
-   view's trick), but the slot is the target of a Lit `litRender`
-   call — Lit emits comment-marker nodes inside it for its parts,
-   and `display: contents` made them visible flex-children of
-   `.findings-content`, which in some browsers shifted the flex
-   distribution enough that the kanban-board's `flex: 1` lost its
-   height bound. Explicit flex on the slot is more reliable. */
+/* Body slot is its own flex container the kanban board fills.
+   Explicit flex, NOT the graph view's `display: contents` trick:
+   this slot is a Lit `litRender` target, and under `display:
+   contents` Lit's comment-marker nodes become visible flex-children
+   of `.findings-content`, shifting flex distribution enough in some
+   browsers that the board's `flex: 1` loses its height bound. */
 .findings-content.with-kanban #findings-body-slot {
   flex: 1; min-height: 0;
   display: flex; flex-direction: column;
 }
-/* The toolbar's default `margin-bottom: 1rem` was pushing the
-   kanban-board exactly one rem past the viewport (the symptom
-   the user reported as "1rem too large"). Graph view doesn't hit
-   this because it doesn't render the findings toolbar at all.
-   The toolbar's own border + glass shadow already visually
-   separates it from the board below, so dropping the margin
-   here costs nothing visually. */
+/* Trim the toolbar's default `margin-bottom: 1rem`, which pushes
+   the kanban-board exactly 1rem past the viewport. (Graph view
+   doesn't render the toolbar, so it never hits this.) The toolbar's
+   own border + glass shadow already separates it from the board, so
+   the smaller margin costs nothing visually. */
 .findings-content.with-kanban .toolbar { margin-bottom: .5rem; }
 
 /* Table / list / grouped view-modes: scroll the finding list
@@ -1492,14 +1447,12 @@ bundle-code-search {
   }
 }
 
-/* Focus view-mode — the general `.findings-content:not(.with-
-   graph, .with-kanban)` block above already gives us the flex
-   chain. We just override the inherited 1200px max-width so
-   the focus layout (card + optional code pane + sidebar)
-   spreads across the full viewport, turn the body slot into a
-   flex column so `.focus-view`'s own `flex: 1` resolves
-   against bounded height, and drop the toolbar's bottom margin
-   for the same "1rem too large" reason kanban did. */
+/* Focus view-mode — the `.findings-content:not(.with-graph,
+   .with-kanban)` block above already supplies the flex chain. Here:
+   override the 1200px cap so the focus layout (card + optional code
+   pane + sidebar) spreads full-viewport; make the body slot a flex
+   column so `.focus-view`'s own `flex: 1` resolves against bounded
+   height; trim the toolbar margin (same reason as kanban). */
 .findings-content.with-focus { max-width: none; }
 .findings-content.with-focus #findings-body-slot {
   display: flex; flex-direction: column;
@@ -1751,16 +1704,13 @@ body.report-fullscreen {
   display: flex; flex-direction: column;
 }
 /* Per-line gutter row — height comes from the natural text-flow
-   line-box (`.bundle-source-lineno-num` is a span inheriting the
-   parent's `line-height: 1.45`), same path the source `<pre>`
-   uses for its own lines. Earlier we set `height: 1.45em`
-   explicitly to "match" the line-height, but explicit-height
-   layout and natural-text-flow layout round subpixels along
-   different paths — over hundreds of lines the gutter drifted
-   ~1% against the code column. Letting the line-num span size
-   its row keeps both columns on identical line-box arithmetic.
-   Dot + line-number live side by side, both right-aligned
-   relative to the column edge. */
+   line-box (`.bundle-source-lineno-num` span inherits
+   `line-height: 1.45`), the same path the source `<pre>` uses, so
+   both columns share identical line-box arithmetic. Do NOT set an
+   explicit `height: 1.45em`: explicit-height vs natural-text-flow
+   layout round subpixels differently and the gutter drifts ~1%
+   against the code column over hundreds of lines. Dot + line-number
+   sit side by side, both right-aligned to the column edge. */
 .bundle-source-lineno-row {
   display: flex; align-items: center; justify-content: flex-end;
   gap: .35rem;
@@ -1806,14 +1756,13 @@ body.report-fullscreen {
   & code { font: inherit; background: transparent; padding: 0; }
 }
 
-/* Prism token theme — minimal palette tuned to the project's
-   dark surface. Prism stamps tokens as `<span class="token X Y">`
-   where X is the primary kind (keyword / string / etc) and Y is
-   an optional sub-modifier (we don't differentiate, the kind
-   alone gives enough signal). Mirrors the highlight-tier feel of
-   common dark themes (one-dark, dracula). Shared between the
-   bundle source viewer modal (`.bundle-source-code`) and the
-   focus view's inline Code panel (`.focus-code-source`). */
+/* Prism token theme — minimal palette tuned to the dark surface,
+   in the one-dark / dracula vein. Prism stamps `<span class="token
+   X Y">` where X is the primary kind (keyword / string / …) and Y
+   an optional sub-modifier; we target X only (the kind alone gives
+   enough signal). Shared between the bundle source viewer modal
+   (`.bundle-source-code`) and the focus view's inline Code panel
+   (`.focus-code-source`). */
 .bundle-source-code .token.comment,
 .bundle-source-code .token.prolog,
 .bundle-source-code .token.cdata,
@@ -1898,12 +1847,11 @@ body.report-fullscreen {
    aggregate views. */
 /* Tab strip in details panels — bundles details (Packages / Files
    / Reports / Graph → / Issues → / Code →) and packages details
-   (Overview / Issues) both render this. Hoisted out of the
-   .bundles-view scope so any details panel that drops a
-   `.bundles-tabs` strip in picks the same chrome up. The spacer
-   between the data tabs and the actions pushes the actions to
-   the right edge so the visual reads as "panel content tabs on
-   the left, drill-in actions on the right". */
+   (Overview / Issues) both render this. Kept out of the
+   `.bundles-view` scope so any details panel dropping in a
+   `.bundles-tabs` strip picks up the same chrome. The spacer pushes
+   the actions to the right edge: data tabs left, drill-in actions
+   right. */
 .bundles-tabs {
   display: flex; gap: .25rem;
   padding: 0 .25rem;

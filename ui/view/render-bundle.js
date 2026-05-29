@@ -1,30 +1,15 @@
 // Bundle-view rendering surface. Lifted out of `render.js` so the
 // findings-tab path doesn't have to scroll past ~1500 lines of
-// bundle chrome to find itself. Covers:
+// bundle chrome. Covers bundle data prep, the bundle graph, the
+// bundles list + details panel + tabs + source-viewer modal, and
+// `renderIssuesGroupedByFile` (the per-file grouped finding list
+// shared with the package Issues slide via render-packages.js).
 //
-//   * Bundle data prep — `buildBundleTree`, `bundleSourcesAsMap`,
-//     `bundleImportsAsMap`, `computeBundleFileHashes`,
-//     `bundleFindingsByFile`, `bundleReachableFromIssueFiles`,
-//     `countBundleTriageBuckets`.
-//   * The bundle graph — `buildBundleGraphData`, the
-//     `_currentBundleGraph` cache it feeds into, and the
-//     `refreshBundleGraphSidebar` / `refreshBundleGraphTopPkgs`
-//     refresh helpers events.js calls from graph2 click handlers.
-//   * The bundles list + details panel + tabs (Packages /
-//     Files / Graph / Issues / Code) + the full-width Code slide
-//     and the source-viewer modal — `renderBundlesList`,
-//     `renderBundleDetails`, `renderBundleSlide`,
-//     `renderBundleSourceModal`, `renderBundleCodeView`, etc.
-//   * `renderIssuesGroupedByFile` — the per-file grouped finding
-//     list shared between the bundle Issues tab and the package
-//     Issues slide (imported by render-packages.js for the latter).
-//
-// The orchestrator `render()` in `render.js` keeps the
-// `state.currentView === 'bundles'` dispatch (slot reuse + canvas
-// attach), importing `renderBundlesList`, `buildBundleGraphData`,
-// `setCurrentBundleGraph`, `countBundleTriageBuckets`,
-// `refreshBundleGraphSidebar`, and `refreshBundleGraphTopPkgs`
-// from this module.
+// `render()` in `render.js` keeps the `currentView === 'bundles'`
+// dispatch (slot reuse + canvas attach), importing `renderBundlesList`,
+// `buildBundleGraphData`, `setCurrentBundleGraph`,
+// `countBundleTriageBuckets`, `refreshBundleGraphSidebar`, and
+// `refreshBundleGraphTopPkgs` from this module.
 import { html, nothing } from 'lit'
 import { choose } from 'lit/directives/choose.js'
 import { classMap } from 'lit/directives/class-map.js'
@@ -44,36 +29,28 @@ import { pkgColor } from './graph/utils.js'
 import { graph2 } from './graph/state.js'
 import { loadedGraphMod } from './graph-attach.js'
 import { ensureBundleAdvisories, renderBundleAdvisoriesTab, showAdvisoriesTab } from './render-bundle-advisories.js'
-// `render` is the orchestrator over in `render.js`; bundle code
-// calls it back after async source-highlight completes so the
-// next render() pass picks up the cached HTML. Module-level
-// circular import — ESM resolves it for hoisted function
-// declarations, and the call sites are async (always after init).
+// `render` is the orchestrator in `render.js`; bundle code calls it
+// back after async source-highlight completes so the next pass picks
+// up the cached HTML. Module-level circular import — ESM resolves it
+// for hoisted function declarations, and the call sites are async
+// (always after init).
 import { render } from './render.js'
 
-// Bundles graph — parallel to buildGraph2Data above, but the data
-// source is a parsed bundle (sourcemap / stasis) instead of a
-// loaded report. Findings are not attached yet (a follow-up wires
-// them by file-hash matching against state.reports). The reused
-// pieces below (refreshBundleGraphSidebar / refreshBundleGraphTopPkgs)
-// mirror their findings-tab counterparts so the same renderGraph2Layout
-// can render against either data source: each call uses the cached
-// `_currentBundlePrep` reference to feed the right-panel templates.
-// Stores the raw-inputs shape (NOT the built graph) since the
-// `buildGraph` call lives in the lazy `ui/graph.js` module — the
-// refresh helpers below dispatch this prep to the lazy module on
-// each chip click, and the lazy module rebuilds the graph there.
+// Bundles graph — like the findings-tab graph but sourced from a
+// parsed bundle (sourcemap / stasis). The refresh helpers below
+// (refreshBundleGraphSidebar / refreshBundleGraphTopPkgs) mirror
+// their findings-tab counterparts so the same layout renders against
+// either source, each call feeding this cached prep to the right-
+// panel templates. Holds the raw-inputs shape, NOT the built graph:
+// the `buildGraph` call lives in lazy `ui/graph.js`, which the
+// refresh helpers re-dispatch this prep to on each chip click.
 let _currentBundlePrep = null
-
-// SEARCH_MODE_ICONS moved into `<bundle-code-search>` (see
-// view/bundle-code-search.js) along with the toggle template.
 
 // File → set of resolved import paths. The stasis Bundle exposes
 // imports as Map<conditionsKey, Map<parent, Map<specifier, resolved>>>
-// (see `@exodus/stasis/bundle`); we union resolved targets across
-// all condition keys (node, import, module-sync, ...) and dedupe
-// per parent file. Sourcemaps have no import info, so the map is
-// empty.
+// (see `@exodus/stasis/bundle`); union resolved targets across all
+// condition keys (node, import, module-sync, ...) and dedupe per
+// parent. Sourcemaps have no import info, so the map is empty.
 function bundleImportsAsMap(details) {
   const result = new Map()
   if (!details || details.kind !== 'stasis' || !details.bundle) return result
@@ -88,19 +65,18 @@ function bundleImportsAsMap(details) {
   return result
 }
 
-// Synthesise a treeData blob shaped like the analyzer's tree dump,
-// so buildGraph (in graph/data.js) can chew on it without
-// modification. The shared directory prefix (a common build-output
-// root) is stripped from every file path BEFORE the tree is built
-// so the graph's nodes — and the package buckets the canvas
-// derives from them — use compact, prefix-free keys. Imports get
-// remapped through the same stripping table so adjacency stays
-// intact, and out-of-bundle resolutions are dropped.
+// Synthesise a treeData blob shaped like the analyzer's tree dump so
+// buildGraph (graph/data.js) consumes it unmodified. The shared
+// directory prefix (a common build-output root) is stripped from
+// every path BEFORE the tree is built so graph nodes — and the
+// package buckets the canvas derives from them — use compact,
+// prefix-free keys. Imports remap through the same stripping table
+// so adjacency stays intact; out-of-bundle resolutions are dropped.
 //
-// Sizes come from the source content (UTF-8 byte length). Returns
-// `{ tree, origToStripped }`; callers that also need to translate
-// other per-file metadata (e.g. SHA-512 hashes for finding match)
-// onto the stripped keys reuse the mapping.
+// Sizes are the source content's UTF-8 byte length. Returns
+// `{ tree, origToStripped }`; callers translating other per-file
+// metadata (e.g. SHA-512 hashes for finding match) onto stripped
+// keys reuse the mapping.
 function buildBundleTree(details) {
   const sources = bundleSourcesAsMap(details)
   const imports = bundleImportsAsMap(details)
@@ -121,11 +97,11 @@ function buildBundleTree(details) {
   return { tree, origToStripped }
 }
 
-// SHA-512 of each bundle source's content, in the canonical
-// `sha512-${base64}` SRI-style form that `computeFileHash`
-// (common/finding-id.js) produces — same hashing the analyzer
-// stamps on findings, so the two strings compare equal. Async
-// because crypto.subtle.digest is. Returns Map<file, integrity>.
+// SHA-512 of each bundle source, in the canonical `sha512-${base64}`
+// SRI form that `computeFileHash` (common/finding-id.js) produces —
+// the same hashing the analyzer stamps on findings, so the strings
+// compare equal. Async because crypto.subtle.digest is. Returns
+// Map<file, integrity>.
 export async function computeBundleFileHashes(details) {
   const sources = bundleSourcesAsMap(details)
   const result = new Map()
@@ -135,22 +111,21 @@ export async function computeBundleFileHashes(details) {
   return result
 }
 
-// Match every indexed finding against the bundle's per-file
-// hashes. Returns Map<file, Finding[]>. Pulls from the OPFS-wide
-// `bundle-finding-index` (client/bundle-finding-index.js) rather
-// than `state.reports` so a bundle is matched against EVERY report
-// the user has ever dropped — not only the one they happen to have
-// open right now. The index is populated in the background by
-// `ensureBundleFindingsIndexed`; this lookup is purely synchronous,
-// reading whatever is currently cached.
+// Match every indexed finding against the bundle's per-file hashes.
+// Returns Map<file, Finding[]>. Pulls from the OPFS-wide
+// `bundle-finding-index` (client/bundle-finding-index.js) rather than
+// `state.reports` so a bundle is matched against EVERY report the
+// user has ever dropped, not just the one open now. The index is
+// populated in the background by `ensureBundleFindingsIndexed`; this
+// lookup is synchronous, reading whatever is currently cached.
 //
-// Multiple findings can share a fileHash (a single source dropped
-// in one scan may emit several), and a single hash may map to
-// multiple bundle files (rare — duplicate sources).
+// Multiple findings can share a fileHash (one source may emit
+// several), and one hash may map to multiple bundle files (rare —
+// duplicate sources).
 // Per-bucket counts of bundle-matched findings — drives the graph
 // topbar's triage selector visibility / counts. Walks the same
-// hash → finding index that bundleFindingsByFile uses, bucketing
-// each finding by its triage state (or 'live' when none).
+// hash → finding index bundleFindingsByFile uses, bucketing each
+// finding by triage state (or 'live' when none).
 export function countBundleTriageBuckets(details) {
   const counts = { fixed: 0, invalid: 0, deleted: 0 }
   if (!details?.fileHashes) return counts
@@ -168,23 +143,21 @@ export function countBundleTriageBuckets(details) {
 
 // Bundle-side per-finding filter. Two modes:
 //
-//   'graph'  — bundle graph view. Filter follows state.shownTriage
-//              (null = live + ignored, 'fixed'/'invalid'/'deleted'
-//              = exact bucket). Ignore is intentionally NOT
-//              considered here: it's a per-report flag and a
-//              bundle aggregates findings across reports, so an
-//              ignored finding still counts as live in the bundle's
-//              non-triaged view. The selector exposes only the
-//              three triage buckets accordingly.
+//   'graph'  — bundle graph view. Follows state.shownTriage (null =
+//              live + ignored, 'fixed'/'invalid'/'deleted' = exact
+//              bucket). Ignore is intentionally NOT considered: it's
+//              a per-report flag and a bundle aggregates across
+//              reports, so an ignored finding still counts as live
+//              in the non-triaged view. The selector exposes only
+//              the three triage buckets accordingly.
 //
 //   'issues' — bundle Issues list (and the source viewer's per-line
 //              dots / panel). Always shows live + fixed + ignored;
-//              invalid + deleted are hidden. Rationale: a bundle
-//              built before a fix shipped is still affected; a
-//              per-report ignore signals "anticipated future
-//              removal" but the bundle is still affected today.
-//              Invalid / deleted dismiss the issue entirely so we
-//              drop them from the bundle list.
+//              hides invalid + deleted. A bundle built before a fix
+//              shipped is still affected; a per-report ignore signals
+//              "anticipated future removal" but the bundle is still
+//              affected today. Invalid / deleted dismiss the issue
+//              entirely, so drop them.
 function bundleFindingsByFile(fileHashes, mode = 'graph') {
   if (!fileHashes || fileHashes.size === 0) return new Map()
   const result = new Map()
@@ -204,13 +177,12 @@ function bundleFindingsByFile(fileHashes, mode = 'graph') {
   return result
 }
 
-// BFS-walk the import graph starting from every issue-bearing
-// file and return the closure (issue files + every file they
-// depend on, directly or transitively). Used by
-// `buildBundleGraphData` when `graph2.showAll` is OFF: the file
-// set narrows to this closure so clean files that aren't a dep of
-// any issue-bearing file get hidden, but every file the issue
-// chain depends on stays visible.
+// BFS-walk the import graph from every issue-bearing file and
+// return the closure (issue files + every file they depend on,
+// directly or transitively). Used by `buildBundleGraphData` when
+// `graph2.showAll` is OFF: clean files that aren't a dep of any
+// issue-bearing file get hidden, but every file the issue chain
+// depends on stays visible.
 function bundleReachableFromIssueFiles(tree, ownCounts) {
   const visible = new Set()
   for (const [file, counts] of ownCounts) {
@@ -233,26 +205,22 @@ function bundleReachableFromIssueFiles(tree, ownCounts) {
   return visible
 }
 
-// Build a graph2-shaped graph from the open bundle. When the
-// bundle's per-file hashes have been computed (events.js kicks
-// the async digest after parse), findings from the loaded reports
-// are matched onto bundle files via fileHash equality and rolled
-// up into the same `ownCounts` / `severitySet` / `colorSet` /
-// `findings` shape buildGraph expects. Without hashes, every node
-// is "clean" — the topbar chip counts collapse to zero, but the
-// canvas still renders the bundle's import graph.
+// Build a graph2-shaped graph from the open bundle. Once per-file
+// hashes are computed (events.js kicks the async digest after
+// parse), findings from the loaded reports match onto bundle files
+// via fileHash equality, rolled up into the `ownCounts` /
+// `severitySet` / `colorSet` / `findings` shape buildGraph expects.
+// Without hashes every node is "clean" — topbar chip counts collapse
+// to zero, but the canvas still renders the import graph.
 //
-// The tree is keyed by stripped paths (see buildBundleTree); the
-// `origToStripped` translation table also re-keys `details.
-// fileHashes` so finding match keys line up with the graph's
-// node ids (otherwise the graph would never light up findings —
-// findings would be looked up under original paths but nodes live
-// under stripped ones).
+// The tree is keyed by stripped paths (see buildBundleTree), so
+// `origToStripped` must also re-key `details.fileHashes` or the
+// graph would never light up findings — they'd be looked up under
+// original paths while nodes live under stripped ones.
 //
-// `graph2.showAll === true` (the bundle default): every bundle
-// file is a node. `false`: filter to issue-bearing files plus
-// every file in their dep tree (so reachable deps stay visible
-// while clean unrelated files drop out).
+// `graph2.showAll === true` (bundle default): every file is a node.
+// `false`: filter to issue-bearing files plus their dep tree (so
+// reachable deps stay visible while clean unrelated files drop out).
 export function buildBundleGraphData(details) {
   const { tree, origToStripped } = buildBundleTree(details)
   const allFiles = Object.keys(tree)
@@ -291,32 +259,28 @@ export function buildBundleGraphData(details) {
   const files = graph2.showAll
     ? allFiles
     : [...bundleReachableFromIssueFiles(tree, ownCounts)]
-  // Stripped→original mapping the lazy `buildGraphFromPrep`
-  // applies to each node's `origFile` field — the selection
-  // card's "View source →" button hands the unstripped path
-  // to the source viewer (which reads from `bundleSourcesAsMap`,
-  // keyed by the original path). Findings-tab graph nodes don't
-  // get `origFile` populated, so the button stays bundle-only.
+  // Stripped→original mapping the lazy `buildGraphFromPrep` applies
+  // to each node's `origFile` field — the selection card's "View
+  // source →" button hands the unstripped path to the source viewer
+  // (keyed by original path in `bundleSourcesAsMap`). Findings-tab
+  // nodes don't get `origFile`, so the button stays bundle-only.
   const strippedToOrig = new Map()
   for (const [orig, stripped] of origToStripped) strippedToOrig.set(stripped, orig)
-  // `hasEdges` lets the main bundle render path decide whether
-  // to hide the "All files" toggle without having to build the
-  // graph first (the lazy `buildGraph` is the only thing that
-  // knows the final edge count — but tree-level imports already
-  // tell us if the bundle has any). Sourcemap bundles have no
-  // import info, so the toggle would have nothing to filter
-  // against.
+  // `hasEdges` lets the render path hide the "All files" toggle
+  // without building the graph first: only the lazy `buildGraph`
+  // knows the final edge count, but tree-level imports already tell
+  // us whether the bundle has any. Sourcemap bundles have no import
+  // info, so the toggle would have nothing to filter against.
   let hasEdges = false
   for (const meta of Object.values(tree)) {
     if (meta?.imports && meta.imports.length > 0) { hasEdges = true; break }
   }
-  // Raw-inputs shape — lazy `ui/graph.js` does the actual
-  // `buildGraph(...)` call inside `buildGraphFromPrep`. `pkgOf`
-  // rides along in `options` so node packaging recognizes both
-  // `node_modules/` and `dependencies/` regardless of what the
-  // global depsDir picked from state.reports — the report-driven
-  // depsDir would otherwise miss bundle paths under whichever
-  // dir the loaded reports don't use.
+  // Raw-inputs shape — lazy `ui/graph.js` runs the actual
+  // `buildGraph(...)` in `buildGraphFromPrep`. `pkgOf` rides in
+  // `options` so packaging recognizes both `node_modules/` and
+  // `dependencies/` regardless of the global depsDir picked from
+  // state.reports, which would otherwise miss bundle paths under
+  // whichever dir the loaded reports don't use.
   return {
     treeData: tree, files, ownCounts, transitiveCounts,
     severitySets, colorSets, fileFindings,
@@ -326,10 +290,9 @@ export function buildBundleGraphData(details) {
   }
 }
 
-// Always bundle context here — these helpers are only used for
-// the bundle Graph tab. The selection card branches between
-// Files → and View source → buttons; bundle ↦ View source.
-// Dispatch into the lazy `ui/graph.js` module so its
+// Always bundle context — these helpers serve only the bundle Graph
+// tab, so the selection card's Files → / View source → branch picks
+// View source. Dispatch into lazy `ui/graph.js` so its
 // `<graph-layout>` shadow-DOM render code stays out of view.js.
 export function refreshBundleGraphSidebar() {
   if (!_currentBundlePrep) return
@@ -628,10 +591,8 @@ function renderBundleSourceLines(content, path, integrity, lineFindings) {
       const highlightedHtml = await prismHighlight(content, lang)
       _bundleHighlightCache.set(cacheKey, highlightedHtml ?? null)
       _bundleHighlightPending.delete(cacheKey)
-      // Cheap re-render — the rest of the bundles view rebuilds
-      // from the same render() call but Lit only patches what
-      // changed, so the cost is the highlighted string getting
-      // injected via unsafeHTML on the next pass.
+      // Cheap re-render — Lit only patches what changed, so the cost
+      // is just the highlighted string injected via unsafeHTML.
       if (state.bundleSourceFile === path) render()
     })()
   }
@@ -1215,13 +1176,10 @@ function renderBundleCodeView(details) {
 }
 
 // Top-level bundle view. The header carries the bundle's filename
-// (the canonical user-facing label — the integrity moved into the
-// Overview tab's metadata block) and the tab strip; the body
-// dispatches on the active tab. Overview = the
-// `renderBundleDetails` panel (metadata, integrity, packages,
-// files, reports — formerly the right-hand details aside in the
-// list+aside layout). The other five tabs match the prior slide
-// views.
+// (the canonical user-facing label; integrity lives in the Overview
+// tab's metadata block) and the tab strip; the body dispatches on
+// the active tab. Overview = the `renderBundleDetails` panel
+// (metadata, integrity, packages, files, reports).
 //
 // `state.bundleDetailsTab` carries the active tab. 'overview' is
 // the canonical Overview value; older persisted suffixes that named

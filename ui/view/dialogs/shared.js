@@ -1,7 +1,6 @@
-// Small shared helpers for the dialog components — pulled out of the
-// individual `*-dialog.js` files so the duplicated bits live in one
-// place. Kept dependency-light (lit + plain functions) so it stays
-// cheap to import from every dialog.
+// Small shared helpers for the dialog components. Kept
+// dependency-light (lit + plain functions) so it stays cheap to
+// import from every dialog.
 import { html, nothing } from 'lit'
 
 // Severity chip shown in the finding-context header of the comment,

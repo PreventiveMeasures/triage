@@ -46,10 +46,10 @@ const DDL_LOCK_KEY_OBJSTORE_SUB = 0x6f62_6a73 // 'objs'
 // defend the commitPut conflict arithmetic — a manual `UPDATE
 // workspace_object SET version = -1` would otherwise round-trip
 // through `num()` (which only rejects non-safe-integers) and corrupt
-// the version monotonicity invariant. The SQLite schema carries the
-// identical CHECKs (see `store.ts`) — STRICT there enforces the column
-// TYPE but NOT this value domain (`version = -1` is a valid integer
-// STRICT accepts), so both backends need the explicit CHECKs.
+// version monotonicity. SQLite carries the identical CHECKs (see
+// `store.ts`): STRICT there enforces column TYPE but NOT this value
+// domain (`version = -1` is a valid integer STRICT accepts), so both
+// backends need the explicit CHECKs.
 const SCHEMA_PG = [
   `CREATE TABLE IF NOT EXISTS workspace_object (
      workspace_tag  TEXT    NOT NULL,

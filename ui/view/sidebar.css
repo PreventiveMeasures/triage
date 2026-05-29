@@ -1,22 +1,19 @@
 /* Sidebar — collapsible report picker rooted in OPFS, persists across
    reloads. Pinned to the viewport (height: 100%; body is 100vh +
-   overflow:hidden, main scrolls instead). When OPFS has no entries
-   AND nothing is currently loaded, the whole sidebar is hidden so
-   the empty-state drop zone reads as a clean welcome screen. The
-   collapsed state shrinks to a thin strip with just the toggle
-   button so the user can always re-open it. Hidden in print. */
-/* Box / margin / padding reset — mirrors `styles/theme.css:1`,
-   which the document already gets but the shadow tree doesn't
-   inherit. Without it the in-shadow buttons / inputs / list fall
-   back to user-agent defaults and mis-size. */
+   overflow:hidden, main scrolls instead). Hidden entirely when OPFS has
+   no entries AND nothing is loaded, so the empty-state drop zone reads
+   as a clean welcome screen. Collapsed = thin strip with just the
+   toggle button so the user can always re-open it. Hidden in print. */
+/* Box / margin / padding reset — mirrors `styles/theme.css:1`, which
+   the document gets but the shadow tree doesn't inherit. Without it the
+   in-shadow buttons / inputs / list fall back to UA defaults and
+   mis-size. */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-/* `<app-sidebar>` host — was `#sidebar` before the shadow-DOM
-   extraction. `:host` styles the custom element itself; the
-   collapse / empty modifiers are toggled as classes on the host,
-   so they read as `:host(.collapsed)` / `:host(.empty)` (a nested
-   `&.collapsed` would compile to `:host.collapsed`, which does NOT
-   match a class on the host). */
+/* `<app-sidebar>` host. The collapse / empty modifiers are classes on
+   the host, so they must read as `:host(.collapsed)` / `:host(.empty)`
+   — a nested `&.collapsed` compiles to `:host.collapsed`, which does
+   NOT match a class on the host. */
 :host {
   width: 260px; flex-shrink: 0; height: 100%;
   background: var(--surface); backdrop-filter: var(--glass-blur);
@@ -58,13 +55,12 @@
     white-space: nowrap; overflow: hidden;
     user-select: none;
   }
-  /* Only the wordmark itself is the click target — the `dev` tag
-     sits outside as a sibling so the row's whitespace stays
-     non-interactive. `data-action="go-home"` is wired in
-     sidebar.js's click delegate. Transparent + no border so the
-     button reads as plain text with no hover paint at all. The
-     `app-region: no-drag` opt-out for WCO mode lives in the
-     @media block below, mirroring `#encryption-toggle`. */
+  /* Only the wordmark is the click target — the `dev` tag is a sibling
+     so the row's whitespace stays non-interactive.
+     `data-action="go-home"` is wired in sidebar.js's click delegate.
+     Transparent + no border so it reads as plain text, no hover paint.
+     The WCO `app-region: no-drag` opt-out lives in the @media block
+     below, mirroring `#encryption-toggle`. */
   & .brand-button {
     background: transparent; border: 0;
     padding: 0; margin: 0;
@@ -84,30 +80,25 @@
   }
 }
 
-/* WCO PWA mode — make the sidebar header the visual home for the
-   OS window controls. `min-height` raises it to the OS titlebar
-   strip so close/min/max paint inside it instead of clipping over
-   the brand row; the `padding-left: max(…, env(titlebar-area-x))`
-   pushes the DeepView wordmark right of the macOS traffic lights
-   (env-x is 0 on Windows / Linux, so the original .75rem padding
-   wins there). The whole strip becomes a drag handle so users can
-   move the window from the brand row. The hamburger collapse
-   button is hidden — collapsing the sidebar in WCO would also
-   hide the OS-controls landing surface, which would visually
-   strand the close button.
+/* WCO PWA mode — make the sidebar header the visual home for the OS
+   window controls. `min-height` raises it to the OS titlebar strip so
+   close/min/max paint inside it, not clipping over the brand row;
+   `padding-left: max(.75rem, env(titlebar-area-x))` pushes the wordmark
+   right of the macOS traffic lights (env-x is 0 on Windows / Linux, so
+   .75rem wins there). The whole strip becomes a drag handle. The
+   hamburger is hidden — collapsing in WCO would also hide the
+   OS-controls landing surface, stranding the close button.
 
-   Both the brand wordmark AND the lock icon opt out of the drag
-   region (same `app-region: no-drag` pattern), so a click on
-   either fires normally while the surrounding strip drags the
-   window. */
+   The brand wordmark AND lock icon opt out of the drag region (same
+   `app-region: no-drag` pattern), so a click on either fires normally
+   while the surrounding strip drags the window. */
 /* stylelint-disable media-feature-name-value-no-unknown, length-zero-no-unit */
 @media (display-mode: window-controls-overlay) {
   /* The whole sidebar inherits drag from body's WCO baseline in
-     theme.css — its bg + the gaps between rows act as a window
-     drag handle. Interactive elements inside (buttons, inputs,
-     etc.) opt back out via the central no-drag list, so the
-     surrounding container chrome drags but the controls
-     themselves stay clickable. */
+     theme.css — its bg + the row gaps act as a window drag handle.
+     Interactive elements (buttons, inputs, etc.) opt back out via the
+     central no-drag list, so the container chrome drags but the
+     controls stay clickable. */
   .sidebar-header {
     min-height: env(titlebar-area-height, 0px);
     padding-left: max(.75rem, env(titlebar-area-x, 0px));
@@ -136,18 +127,17 @@
   &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
 }
 
-/* Encryption toggle — small lock icon sitting to the LEFT of the
-   hamburger. Three visual states:
+/* Encryption toggle — lock icon to the LEFT of the hamburger. States:
      - default          : open lock, muted (encryption off)
      - `.encrypted`     : closed lock, accent (on + unlocked)
-     - `.locked-pending`: closed lock, warning tint (on + this tab
-                          hasn't unlocked — data is currently
-                          inaccessible). The dashed outline + warning
-                          hue separate this state from the working
-                          one so a user who dismissed the boot dialog
-                          notices their reports aren't merely absent.
-   Hidden via the inline `hidden` attribute when WebAuthn isn't
-   available in the browser. */
+     - `.locked-pending`: closed lock, warning tint (on, but this tab
+                          hasn't unlocked — data inaccessible). The
+                          dashed outline + warning hue distinguish it
+                          from the working state so a user who dismissed
+                          the boot dialog notices reports aren't merely
+                          absent.
+   Hidden via the inline `hidden` attribute when WebAuthn is
+   unavailable. */
 #encryption-toggle {
   flex-shrink: 0;
   width: 22px; height: 22px;
@@ -165,12 +155,12 @@
   }
 }
 
-/* The search row is itself the bordered surface — the leading search
-   glyph, the transparent input, and any trailing view buttons all sit
-   inside the same chrome so the buttons read as affixed to the input
-   rather than as standalone neighbors. Focus ring travels with the
-   container (via `:focus-within`) so tabbing into the input lights up
-   the whole strip the same way the bare input used to. */
+/* The search row is itself the bordered surface — the leading glyph,
+   the transparent input, and any trailing view buttons share the same
+   chrome so the buttons read as affixed to the input, not standalone
+   neighbors. The focus ring travels with the container (via
+   `:focus-within`) so tabbing into the input lights up the whole
+   strip. */
 .sidebar-search {
   display: flex; align-items: center;
   margin: 0 .55rem .25rem;
@@ -178,18 +168,16 @@
   background: rgb(from var(--text) r g b / .04);
   border: 1px solid var(--border); border-radius: 5px;
   transition: background .12s, border-color .12s;
-  /* The whole search row catches click-to-focus on the input
-     (anywhere in the strip — icon, padding) via the input's
-     `flex: 1` width plus the row's `:focus-within` ring. In
-     WCO mode the sidebar is drag by default, so without this
-     no-drag the icon swallows mousedown as window-drag and
-     the input never receives focus. */
+  /* The whole row catches click-to-focus on the input (anywhere —
+     icon, padding) via the input's `flex: 1` width plus the row's
+     `:focus-within` ring. In WCO the sidebar is drag by default, so
+     without this no-drag the icon swallows mousedown as window-drag and
+     the input never gets focus. */
   -webkit-app-region: no-drag; app-region: no-drag;
 
-  /* `:has(input:focus)` instead of `:focus-within` — the latter would
-     also fire when tabbing onto a trailing view button, dragging the
-     accent ring onto the chrome for a button focus that has nothing to
-     do with the input. */
+  /* `:has(input:focus)` not `:focus-within` — the latter would also
+     fire when tabbing onto a trailing view button, dragging the accent
+     ring onto the chrome for a focus unrelated to the input. */
   &:has(input:focus) {
     border-color: var(--accent);
     background: rgb(from var(--text) r g b / .06);
@@ -218,18 +206,16 @@
   }
 }
 
-/* Packages / Repositories navigation buttons — sit flush inside the
-   search row's right edge, sized so the input height drives the row.
-   Borderless icon chrome (the search-row border already frames them);
-   only the background tint + color move on hover / active. The count
-   badge in the top-right corner mirrors the `.triage-filter .count`
-   pattern. Each button is rendered by a `<sidebar-view-button>`
-   StateElement that returns `nothing` (so the inner button + host
-   contribute zero layout) when its `count` property is 0. */
-/* `<sidebar-view-button>` hosts flatten into `.sidebar-search`'s
-   flex layout via `display: contents` so the inner button (or
-   nothing, when count === 0) participates directly alongside the
-   search input. */
+/* Packages / Repositories navigation buttons — flush inside the search
+   row's right edge, input height drives the row. Borderless (the
+   search-row border already frames them); only the background tint +
+   color move on hover / active. The corner count badge mirrors the
+   `.triage-filter .count` pattern. Each button's `<sidebar-view-button>`
+   StateElement returns `nothing` when `count` is 0, so button + host
+   contribute zero layout. */
+/* `<sidebar-view-button>` hosts flatten into `.sidebar-search`'s flex
+   layout via `display: contents` so the inner button (or nothing, when
+   count === 0) participates directly alongside the search input. */
 sidebar-view-button { display: contents; }
 
 .sidebar-view-btn {
@@ -243,11 +229,10 @@ sidebar-view-button { display: contents; }
   transition: background .12s, color .12s;
 
   /* Breathing room between adjacent view buttons + a small nudge off
-     the search row's right edge for the trailing one. The matcher
-     keys off the host element since the inner button is the only
-     child of its `<sidebar-view-button>` host (so the prior
-     `& + &` adjacent-sibling / `&:last-child` rules wouldn't fire
-     across hosts). */
+     the search row's right edge for the trailing one. The matcher keys
+     off the host because the inner button is the only child of its
+     `<sidebar-view-button>` host, so `& + &` / `&:last-child` wouldn't
+     fire across hosts. */
   sidebar-view-button + sidebar-view-button > & { margin-left: .4rem; }
   sidebar-view-button:last-of-type > & { margin-right: .1rem; }
 
@@ -277,9 +262,8 @@ sidebar-view-button { display: contents; }
   overscroll-behavior: none; scrollbar-gutter: stable;
   /* No-drag despite the sidebar being a drag surface — wheel and
      scrollbar-thumb events on a WCO drag region don't reach the
-     scroller. (The free space below the last item shares the
-     same container so it doesn't drag either; trade-off for
-     reliable scroll.) */
+     scroller. (The free space below the last item then doesn't drag
+     either; trade-off for reliable scroll.) */
   -webkit-app-region: no-drag; app-region: no-drag;
   padding: 0 .35rem .25rem 0; margin: 0;
   /* Thin scrollbar that doesn't fight the glass surface. */
@@ -289,18 +273,17 @@ sidebar-view-button { display: contents; }
   &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 }
 
-/* Section header (REPORTS, CLAUDE SECURITY, …). The `.group-count`
-   on the right mirrors the per-file count chip but with a transparent
-   background — same shape, less visual weight. user-select: none so
-   the label doesn't catch drag-selection. The first header sits flush
-   against the search box; subsequent headers get a touch more top
-   padding via the adjacent-sibling rule below to space groups apart
-   without inflating every header.
+/* Section header (REPORTS, CLAUDE SECURITY, …). The `.group-count` on
+   the right mirrors the per-file count chip but transparent — same
+   shape, less weight. user-select: none so the label doesn't catch
+   drag-selection. The first header sits flush against the search box;
+   later ones get more top padding via the adjacent-sibling rule below,
+   spacing groups apart without inflating every header.
 
-   `:first-child` and the adjacent-sibling rule are scoped to
+   `:first-child` + the adjacent-sibling rule are scoped to
    `.file-group-header` directly (not via `:has(...)`) so they survive
-   the search filter — empty groups skip rendering entirely, so the
-   first surviving header is whichever bucket happens to be top. */
+   the search filter — empty groups skip rendering, so the first
+   surviving header is whichever bucket happens to be top. */
 .file-group-header {
   display: flex; align-items: center; justify-content: space-between;
   padding: .45rem .35rem .2rem .55rem;
@@ -318,9 +301,8 @@ sidebar-view-button { display: contents; }
 }
 
 /* Workspaces header — same chrome as a regular bucket header, but the
-   right slot bundles the count chip together with a "+" button. The
-   button uses the same hover treatment as #sidebar-toggle so the
-   chrome stays consistent. */
+   right slot bundles the count chip with a "+" button. The button
+   reuses #sidebar-toggle's hover treatment for consistency. */
 .file-group-header.workspace-header .workspace-header-actions {
   display: flex; align-items: center; gap: .35rem;
 }
@@ -336,10 +318,9 @@ sidebar-view-button { display: contents; }
 }
 
 /* Workspace row layout: name (flex-fill) | hover-revealed export
-   button | count chip. The count chip is the rightmost element to
-   mirror the section-header layout and the per-file rows; the export
-   button sits to its left, hidden until the row is hovered or
-   keyboard-focused. */
+   button | count chip. Count chip is rightmost to mirror the
+   section-header and per-file rows; the export button sits to its left,
+   hidden until the row is hovered or keyboard-focused. */
 .file-item.workspace-item {
   display: flex; align-items: stretch; gap: .15rem;
 }
@@ -373,8 +354,8 @@ sidebar-view-button { display: contents; }
 }
 
 /* Inline rename input — swapped in over the label span on dblclick.
-   Inherits the label's monospace font so the row height doesn't
-   shift; the accent border is the visible "you're editing" cue. */
+   Inherits the label's monospace font so the row height doesn't shift;
+   the accent border is the "you're editing" cue. */
 .workspace-rename-input {
   width: 100%; box-sizing: border-box;
   background: var(--surface); color: var(--text);
@@ -385,10 +366,10 @@ sidebar-view-button { display: contents; }
   outline: none;
 }
 
-/* File row. The clickable surface is the inner `<button>` so the
-   focus ring + hover background hug the visible chip instead of
-   spilling to the row edge. Rounded corners + subtle background on
-   hover / current to read as a card-like pill. */
+/* File row. The clickable surface is the inner `<button>` so the focus
+   ring + hover background hug the visible chip instead of spilling to
+   the row edge. Rounded corners + subtle hover / current background to
+   read as a card-like pill. */
 .file-item {
   list-style: none;
   position: relative;
@@ -396,10 +377,10 @@ sidebar-view-button { display: contents; }
   &.hidden { display: none; }
 }
 
-/* Active-row indicator — small accent chip flush against the sidebar's
-   left edge, rounded on the right side so it reads as "tucked under"
-   the row. Hover state intentionally leaves it off; the chip is the
-   selection cue, not a hover affordance. */
+/* Active-row indicator — accent chip flush against the sidebar's left
+   edge, rounded on the right so it reads as "tucked under" the row.
+   Intentionally not shown on hover; the chip is the selection cue, not
+   a hover affordance. */
 .file-item.current::after {
   content: '';
   position: absolute;
@@ -462,10 +443,9 @@ sidebar-view-button { display: contents; }
   & .file-icon, & .file-count { color: var(--text); }
 }
 
-/* Indented reports — those that live inside a workspace. The extra
-   left padding visually nests them under their workspace row; the
-   subtle left border is a tree-line hint that survives across both
-   themes. */
+/* Indented reports — those inside a workspace. The extra left padding
+   nests them under their workspace row; the subtle left border is a
+   tree-line hint that survives both themes. */
 .file-item.indented button.file-name {
   padding-left: 1.3rem;
 }
@@ -476,13 +456,13 @@ sidebar-view-button { display: contents; }
 }
 
 /* Workspace-claimed bundles/reports whose bytes aren't on this device —
-   typically imported from another device, or evicted with no cloud copy.
-   Rendered muted + italic so the user sees what's referenced without
-   being misled into clicking (no button wrapper, non-draggable). The
-   tree-line decoration from `.file-item.indented` still applies, so the
-   row reads as "part of the workspace". `report-missing` shares the
-   styling — a missing report shows its filename in the same muted slot a
-   missing bundle uses for its integrity prefix. */
+   imported from another device, or evicted with no cloud copy. Muted +
+   italic so the user sees the reference without being misled into
+   clicking (no button wrapper, non-draggable). The tree-line from
+   `.file-item.indented` still applies, so the row reads as "part of the
+   workspace". `report-missing` shares the styling — a missing report
+   shows its filename in the same muted slot a missing bundle uses for
+   its integrity prefix. */
 .file-item.bundle-missing > .file-name,
 .file-item.report-missing > .file-name {
   display: flex; align-items: center; gap: .5rem;
@@ -505,15 +485,14 @@ sidebar-view-button { display: contents; }
   }
 }
 
-/* Pink theme — drop the per-row mono overrides so the sidebar
-   inherits the body font (Comic Sans, set on `body.theme-pink` in
-   styles/theme.css). `:host-context` walks across the shadow
-   boundary so a `body.theme-pink` ancestor in light DOM still gates
-   these rules from inside the sidebar's shadow stylesheet. The
-   selectors mirror the mono declarations above (rename input, file
-   label, bundle-missing label, report-missing label) so specificity
-   wins over the originals; everything else in the sidebar already used
-   `font: inherit` and just picks up the body font automatically. */
+/* Pink theme — drop the per-row mono overrides so the sidebar inherits
+   the body font (Comic Sans, set on `body.theme-pink` in theme.css).
+   `:host-context` walks across the shadow boundary so a light-DOM
+   `body.theme-pink` ancestor still gates these rules from inside the
+   shadow stylesheet. The selectors mirror the mono declarations above
+   (rename input, file label, bundle-missing / report-missing labels) so
+   specificity wins over them; everything else already uses
+   `font: inherit` and picks up the body font automatically. */
 :host-context(body.theme-pink) .workspace-rename-input,
 :host-context(body.theme-pink) .file-item button.file-name .file-label,
 :host-context(body.theme-pink) .file-item.bundle-missing .file-label,
@@ -521,11 +500,10 @@ sidebar-view-button { display: contents; }
   font-family: inherit;
 }
 
-/* Drag-and-drop visuals — assigning a report to a workspace by
-   dragging it onto the workspace row (or one of its children).
-   `.dragging` dims the source so the user knows what's in flight;
-   `.drag-over` paints the target with the accent color so the drop
-   zone reads as receptive. */
+/* Drag-and-drop visuals — assign a report to a workspace by dragging
+   it onto the workspace row (or a child). `.dragging` dims the source
+   so the user knows what's in flight; `.drag-over` paints the target
+   accent so the drop zone reads as receptive. */
 .file-item.dragging button.file-name { opacity: .4; }
 
 .file-item.workspace-item.drag-over button.file-name,
@@ -542,18 +520,17 @@ sidebar-view-button { display: contents; }
   padding: .35rem .55rem .45rem;
   border-top: 1px solid var(--border);
   display: flex; gap: .35rem; align-items: center;
-  /* Delete-current sits left, Sync status sits right — opposite
-     ends of the action row. */
+  /* Delete-current left, Sync status right. */
   justify-content: space-between;
 
   & button {
     background: transparent; border: 1px solid var(--border); color: var(--muted);
     border-radius: 4px; padding: .2rem .5rem;
     font-size: .72rem; font-family: inherit;
-    /* WCO: the sidebar is a drag surface (theme.css's body baseline,
-       which can't reach into this shadow root), so opt the action
-       buttons back out — otherwise clicks start a window drag instead
-       of activating the button. */
+    /* WCO: the sidebar is a drag surface (theme.css's body baseline
+       can't reach this shadow root), so opt the action buttons back
+       out — otherwise clicks start a window drag instead of activating
+       the button. */
     -webkit-app-region: no-drag; app-region: no-drag;
 
     &:hover { color: var(--text); border-color: var(--accent); }
@@ -562,16 +539,13 @@ sidebar-view-button { display: contents; }
   }
 }
 
-/* "Delete current" lives in the actions row above; the trash
-   glyph sits to the left of the text so the destructive nature
-   reads at a glance before the user parses the label. The
-   button's :hover rule above (.sidebar-actions button.danger)
-   already swaps the colour to var(--critical); the icon
-   inherits via `currentColor`. */
-/* The host carries no layout of its own — the inner button is the
-   actual flex item of `.sidebar-actions` (alongside the
-   `#sync-status` button), so flatten the host out via
-   `display: contents`. */
+/* "Delete current" — trash glyph left of the text so the destructive
+   nature reads before the label. The :hover rule above
+   (.sidebar-actions button.danger) swaps the colour to var(--critical);
+   the icon inherits via `currentColor`. */
+/* The host carries no layout — the inner button is the actual flex item
+   of `.sidebar-actions` (alongside `#sync-status`), so flatten the host
+   via `display: contents`. */
 sidebar-delete-current { display: contents; }
 sidebar-delete-current button {
   display: inline-flex; align-items: center; gap: .35rem;
@@ -579,22 +553,21 @@ sidebar-delete-current button {
   & .trash-icon { flex-shrink: 0; }
 }
 
-/* Sync-status indicator. Three states drive the dot color via
-   `data-status` on the button:
+/* Sync-status indicator. `data-status` on the button drives the dot
+   color:
      off      grey  — no server URL configured
      offline  red   — URL set, socket isn't open (reconnecting / down)
      online   green — WebSocket is open
-   The label hides in collapsed sidebar mode (see the override
-   below) so only the dot shows; the row stays visible there too,
-   which is why .sidebar-actions's collapsed `display: none` rule
-   gets relaxed for this button. */
+   The label hides in collapsed mode (see the override below) so only
+   the dot shows; the row stays visible, which is why .sidebar-actions's
+   collapsed `display: none` is relaxed for this button. */
 #sync-status {
   display: inline-flex; align-items: center; gap: .35rem;
   /* Borderless until hovered — the dot + label already read as a
      status; the frame is only a click affordance, so it appears on
      hover. Overrides the shared `.sidebar-actions button` border; the
-     id-specific `:hover` re-asserts the accent frame over the bare
-     `border-color: transparent` above. */
+     id-specific `:hover` re-asserts the accent frame over this
+     transparent border. */
   border-color: transparent;
   &:hover { border-color: var(--accent); }
 
@@ -610,16 +583,15 @@ sidebar-delete-current button {
 }
 /* `persistenceDegraded` is orthogonal to the connection dot color — the
    socket can be online (green dot) while local writes are paused. Ring
-   the dot amber so it reads as a warning in BOTH expanded and collapsed
+   the dot amber so the warning reads in BOTH expanded and collapsed
    mode (the label suffix + tooltip only show expanded). The status
    color stays on the dot fill; this only adds the ring. */
 #sync-status[data-degraded] .sync-dot {
   box-shadow: 0 0 0 2px var(--medium);
 }
-/* The bare `#sync-status` rule above carries (1,0,0) specificity
-   which beats the user-agent's `[hidden] { display: none }`
-   (0,1,0). Match the id + attribute (1,1,0) here so `btn.hidden =
-   true` actually hides the button — without this the renderer's
-   visibility gate is a no-op and "Sync off" stays painted on
-   workspaces / origins where the button shouldn't be reachable. */
+/* The bare `#sync-status` rule above is (1,0,0), which beats the UA's
+   `[hidden] { display: none }` (0,1,0). Match id + attribute (1,1,0)
+   here so `btn.hidden = true` actually hides the button — without this
+   the renderer's visibility gate is a no-op and "Sync off" stays
+   painted where the button shouldn't be reachable. */
 #sync-status[hidden] { display: none; }

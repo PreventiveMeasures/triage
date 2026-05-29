@@ -1,13 +1,11 @@
-// Shared async open-bundle pipeline. The sidebar bundle row
-// click (`.file-item[data-bundle-integrity]` in sidebar.js), the
+// Shared async open-bundle pipeline, consolidated so error handling
+// etc. live in one place. Three callers need the same readBundle →
+// branch by extension → JSON.parse / brotliDecompress → set
+// bundleDetails + render → kick the SHA-512 file-hash index → kick
+// the findings index flow: the sidebar bundle row click
+// (`.file-item[data-bundle-integrity]` in sidebar.js), the
 // finding-card "Code →" shortcut (`data-finding-code-bundle` in
-// events.js), and the bundle-only drop branch in `ingest.js` all
-// need the same readBundle → branch by extension → JSON.parse /
-// brotliDecompress → set bundleDetails + render → kick the
-// SHA-512 file-hash index → kick the findings index flow.
-// Three near-identical copies used to live across the bundles
-// list + sidebar + ingest paths; consolidating here means the
-// next fix to e.g. error handling lands in one place.
+// events.js), and the bundle-only drop branch in `ingest.js`.
 import { Bundle } from '@exodus/stasis/bundle'
 import { ensureBundleFindingsIndexed, hasBundleFileHashes, readBundle, recordBundleFileHashes, state } from '#client/index.js'
 import { decodeUtf8 } from '../../common/utf8.js'
@@ -15,23 +13,20 @@ import { brotliDecompress } from './brotli-decompress.js'
 import { render } from './render.js'
 import { computeBundleFileHashes } from './render-bundle.js'
 
-// Read OPFS bytes for the given bundle, classify by the entry's
-// name (`.map` → sourcemap, anything else → stasis), and parse
-// into the `details` object the bundle render path consumes.
-// Errors (read fail, JSON parse fail, brotli fail) are reflected
-// as a fallback shape rather than thrown — the caller assigns
+// Read OPFS bytes, classify by entry name (`.map` → sourcemap, else
+// → stasis), and parse into the `details` object the render path
+// consumes. Errors (read fail, JSON parse fail, brotli fail) come
+// back as a fallback shape rather than thrown — the caller assigns
 // `state.bundleDetails` unconditionally; the render path shows a
 // "failed to parse" placeholder when `details.error` is set.
 //
-// Sourcemap → `details.json` carries the raw `.map` JSON. Stasis
-// → `details.bundle` carries an `@exodus/stasis` `Bundle` instance
-// (handles v0 + v1 layouts uniformly; .sources / .imports / .modules
-// are Map-shaped APIs the render path consumes).
+// Sourcemap → `details.json` is the raw `.map` JSON. Stasis →
+// `details.bundle` is an `@exodus/stasis` `Bundle` (handles v0 + v1
+// uniformly; .sources / .imports / .modules are Map-shaped).
 //
 // Exported so non-state-mutating callers (focus view's inline code
-// panel, prefetchBundleHashes below) can parse a bundle without
-// touching `state.bundleDetails`. The two openBundle / prefetch
-// pipelines in this file both go through this helper.
+// panel, prefetchBundleHashes below) can parse without touching
+// `state.bundleDetails`.
 export async function buildBundleDetails(integrity, entry) {
   try {
     const bytes = await readBundle(integrity)
@@ -43,11 +38,10 @@ export async function buildBundleDetails(integrity, entry) {
         return { integrity, kind, size: bytes.byteLength, json }
       }
       // Stasis bundles are brotli-compressed JSON snapshots;
-      // brotliDecompress dispatches to native DecompressionStream
-      // when available and falls through to the SW echo trick when
-      // it's not (see view/brotli-decompress.js). Bundle.parseCode
-      // validates the wrapper (version, scope, asserts on tampered
-      // shapes) and normalizes both v0 and v1 layouts.
+      // brotliDecompress dispatches native-or-fallback (see
+      // view/brotli-decompress.js). Bundle.parseCode validates the
+      // wrapper (version, scope, asserts on tampered shapes) and
+      // normalizes both v0 and v1 layouts.
       const decoded = decodeUtf8(await brotliDecompress(bytes))
       const bundle = Bundle.parseCode(decoded)
       return { integrity, kind, size: bytes.byteLength, bundle }
@@ -59,22 +53,20 @@ export async function buildBundleDetails(integrity, entry) {
   }
 }
 
-// Background SHA-512 hashing of every source file in the parsed
-// bundle so the bundle graph + Issues tab can join findings by
-// fileHash. No-op when neither parse slot landed (load failed).
-// Caller has already set `state.bundleDetails = details` and
-// rendered; this attaches `fileHashes` once it lands and triggers
-// a re-render. Stale resolves (user clicked another row mid-hash)
-// drop silently.
+// Background SHA-512 hashing of every source file so the bundle
+// graph + Issues tab can join findings by fileHash. No-op when
+// neither parse slot landed (load failed). Caller has already set
+// `state.bundleDetails` and rendered; this attaches `fileHashes`
+// once it lands and re-renders. Stale resolves (user clicked another
+// row mid-hash) drop silently.
 function kickFileHashes(details) {
   if (!details?.json && !details?.bundle) return
   ;(async () => {
     try {
       const fileHashes = await computeBundleFileHashes(details)
-      // Cross-bundle hash index always gets the result, even
-      // when the user has navigated away — the data is useful
-      // to the report-card's "Code →" lookup regardless of
-      // the bundle panel's visibility.
+      // Cross-bundle hash index always gets the result, even after
+      // navigating away — the report-card's "Code →" lookup needs it
+      // regardless of the bundle panel's visibility.
       recordBundleFileHashes(details.integrity, fileHashes)
       if (state.selectedBundle !== details.integrity) return
       details.fileHashes = fileHashes
@@ -83,15 +75,11 @@ function kickFileHashes(details) {
   })()
 }
 
-// State-free variant of the open path — parses the bundle and
-// computes its per-file hashes, recording them in the hash
-// index, without touching `state.bundleDetails` /
-// `state.selectedBundle`. Used to seed the index for findings
-// in a freshly-loaded report so the "Code →" shortcut surfaces
-// without the user having to manually open every bundle.
-// Idempotent + cheap: skipped if we already have hashes for
-// this integrity; otherwise the same buildBundleDetails +
-// computeBundleFileHashes pipeline.
+// State-free variant of the open path — parses and records per-file
+// hashes without touching `state.bundleDetails` / `selectedBundle`.
+// Seeds the index for a freshly-loaded report's findings so "Code →"
+// surfaces without the user opening every bundle. Idempotent + cheap:
+// skipped if hashes for this integrity already exist.
 export async function prefetchBundleHashes(integrity) {
   if (hasBundleFileHashes(integrity)) return
   const entry = (state.bundles ?? []).find((b) => b.integrity === integrity)
@@ -104,20 +92,17 @@ export async function prefetchBundleHashes(integrity) {
   } catch {}
 }
 
-// Full open-bundle pipeline. Caller is responsible for the
-// pre-load state setup (selectedBundle, bundleDetails=null, the
-// view's other slots like bundleDetailsTab / shownTriage /
-// graph2.showAll) and for the loading-state render(); this
-// function owns the parse + post-parse fan-out (set details +
-// render, kick file hashes, kick the cross-report findings
-// indexer). Looks up the entry from `state.bundles`; bails
-// silently when it's gone (user deleted the bundle in another
-// tab between the click and now).
+// Full open-bundle pipeline. Caller owns the pre-load state setup
+// (selectedBundle, bundleDetails=null, view slots like
+// bundleDetailsTab / shownTriage / graph2.showAll) and the
+// loading-state render(); this owns the parse + post-parse fan-out
+// (set details + render, kick file hashes, kick the cross-report
+// findings indexer). Bails silently when the entry is gone (bundle
+// deleted in another tab between click and now).
 //
-// Stale resolves are dropped via `state.selectedBundle !==
-// integrity` after each await — that's how a fast click into
-// another bundle keeps the previous load from clobbering the
-// new one's panel.
+// Stale resolves are dropped via `state.selectedBundle !== integrity`
+// after each await, so a fast click into another bundle doesn't let
+// the previous load clobber the new one's panel.
 export async function openBundle(integrity) {
   const entry = (state.bundles ?? []).find((b) => b.integrity === integrity)
   if (!entry) return

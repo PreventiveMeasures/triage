@@ -154,17 +154,14 @@ export class SseTransport extends EventTarget implements WebSocketLike {
   // shutdown so a hung POST (headers never arriving) tears down with
   // the rest of the transport instead of leaving a stranded socket.
   private readonly fetchAbort = new AbortController()
-  // EventTarget surface for the outer transport's
-  // `addEventListener('open' / 'message' / 'close' / 'error', …)`.
-  // The first `session` event flips us from CONNECTING → OPEN.
 
   constructor(wsUrl: string) {
     super()
     this.baseUrl = wsUrlToSseUrl(wsUrl)
-    // Kick off the first POST immediately so the session opens before
-    // any consumer frames arrive. An empty-body POST is a valid "open
-    // me" probe — the server mints a session, writes the `session`
-    // event + `challenge` frame, and keeps the response stream open.
+    // First POST immediately so the session opens before any consumer
+    // frames arrive. An empty-body POST is a valid "open me" probe — the
+    // server mints a session, writes the `session` event + `challenge`
+    // frame, and keeps the response stream open.
     this.scheduleFlush(/* now= */ true)
   }
 
@@ -222,11 +219,10 @@ export class SseTransport extends EventTarget implements WebSocketLike {
   // stream on takeover, while the new flush opens its own POST.
   private async flush(): Promise<void> {
     if (this.readyState === SseTransport.CLOSED) return
-    // Wait for the previous POST to send its headers + body, but cap
-    // the wait so a stalled server doesn't pin us forever. The server
-    // closes the previous response when the next POST arrives, so a
-    // long-tail response read is OK to leave behind — the post-send
-    // path keeps reading it for any in-flight frames.
+    // Wait for the previous POST's headers + body, capped so a stalled
+    // server doesn't pin us forever. The server closes the previous
+    // response when the next POST arrives, so leaving a long-tail read
+    // behind is fine — its reader keeps draining its frames.
     if (this.inFlightPost) {
       const timer = new Promise<void>((resolve) => { setTimeout(resolve, FLUSH_MAX_WAIT_MS) })
       await Promise.race([this.inFlightPost.catch(() => {}), timer])
@@ -310,12 +306,12 @@ export class SseTransport extends EventTarget implements WebSocketLike {
         const events = parser.parse(decoder.decode(value, { stream: true }))
         for (const ev of events) this.dispatchEvent_(ev)
       }
-      // Flush any partial UTF-8 sequence still buffered in the
-      // TextDecoder. `decoder.decode()` with no args switches off
-      // stream mode and emits U+FFFD for incomplete tail bytes (instead
-      // of silently dropping them), which then runs through the parser
-      // in case the tail completes a `data:` line for an event whose
-      // `\n\n` terminator was the last bytes of the stream.
+      // Flush any partial UTF-8 sequence buffered in the TextDecoder.
+      // `decoder.decode()` with no args ends stream mode and emits
+      // U+FFFD for incomplete tail bytes (rather than dropping them);
+      // run it through the parser in case the tail completes a `data:`
+      // line for an event whose `\n\n` terminator was the stream's last
+      // bytes.
       if (this.readyState !== SseTransport.CLOSED) {
         const tail = decoder.decode()
         if (tail.length > 0) {
@@ -340,10 +336,9 @@ export class SseTransport extends EventTarget implements WebSocketLike {
   // the outer transport.
   private dispatchEvent_(ev: { event: string; data: string }): void {
     if (ev.event === 'session') {
-      // Only update if still in a state that can use the token. A
-      // post-shutdown 'session' from a stale reader has no caller for
-      // the new id and could leak it through a future reuse of the
-      // SseTransport instance.
+      // Skip if no longer in a state that can use the token: a
+      // post-shutdown 'session' from a stale reader has no caller for the
+      // new id and could leak it through a future reuse of the instance.
       if (this.readyState === SseTransport.CLOSED) return
       this.sessionId = ev.data
       if (this.readyState === SseTransport.CONNECTING) {
@@ -353,10 +348,10 @@ export class SseTransport extends EventTarget implements WebSocketLike {
       return
     }
     if (ev.event === 'close') {
-      // Server-initiated close (graceful shutdown) — payload carries
-      // `{code, reason}`. Forward both via the close Event so the
-      // outer socket-transport can short-circuit reconnect backoff on
-      // 1001 (parity with the WS 1001 path).
+      // Server-initiated graceful close — payload carries `{code,
+      // reason}`. Forward both via the close Event so the outer
+      // socket-transport can short-circuit reconnect backoff on 1001
+      // (parity with the WS 1001 path).
       let code: number | undefined
       let reason: string | undefined
       try {
@@ -373,11 +368,10 @@ export class SseTransport extends EventTarget implements WebSocketLike {
     }
   }
 
-  // `code` / `reason` propagate to the dispatched close event so the
-  // outer transport can read them (parity with WebSocket CloseEvent).
-  // Plain-Event fallback when `CloseEvent` isn't available (Node test
-  // environments without it) — we attach the fields directly so the
-  // outer's `ev.code` read works either way.
+  // `code` / `reason` propagate onto the dispatched close event (parity
+  // with WebSocket CloseEvent). Plain `Event` with fields attached
+  // directly, not `CloseEvent` — the latter isn't available in some Node
+  // test envs, and the outer's `ev.code` read works either way.
   private shutdown(code?: number, reason?: string): void {
     if (this.readyState === SseTransport.CLOSED) return
     this.readyState = SseTransport.CLOSING

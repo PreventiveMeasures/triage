@@ -15,12 +15,11 @@
 // info. Used only by the flat list mode.
 //
 // Reactivity: extends StateElement, which wraps render() in an
-// observer-util reaction. Reads of state inside the helpers
-// (state.triage, state.activeTabByGroup,
-// state.showDeleted) get auto-tracked, so a mutation that
-// invalidates the card triggers a targeted re-render. The
-// classList stamping happens inside render() so its
-// `state.showDeleted` read joins the same tracked set.
+// observer-util reaction. State reads inside the helpers
+// (state.triage, state.activeTabByGroup, state.showDeleted) get
+// auto-tracked, so a mutation that invalidates the card triggers a
+// targeted re-render. The classList stamping happens inside render()
+// so its `state.showDeleted` read joins the same tracked set.
 //
 // Click semantics: action buttons (`.tab`, `.mark-dot`, `.mark-x`,
 // `.mark-restore`) bubble out composed:true and reach events.js's
@@ -62,27 +61,26 @@ class FindingCard extends StateElement {
 
   render() {
     if (!this.group) return html``
-    // Stamp host attributes/classes inside render() so the state
-    // reads (state.showDeleted via findingCardClasses, state.triage
-    // / state.deletedIds via findingCardInnerHTML) join StateElement's
-    // tracked set and trigger a re-render on mutation.
+    // Stamp host attributes/classes inside render() so the state reads
+    // (state.showDeleted via findingCardClasses, state.triage /
+    // state.deletedIds via findingCardInnerHTML) join StateElement's
+    // tracked set and re-render on mutation.
     this.dataset.gid = findingCardGid(this.group)
     const next = new Set(findingCardClasses(this.group))
     for (const c of MANAGED_HOST_CLASSES) this.classList.toggle(c, next.has(c))
-    // Visual chrome is on the inner `.card` wrapper rather than the
-    // host so the global `* { padding: 0 }` reset in theme.css can't
-    // override our padding/border via the shadow boundary's
-    // outer-wins-over-inner cascade rule. See finding-card.css.
+    // Visual chrome lives on the inner `.card`, not the host, so
+    // theme.css's global `* { padding: 0 }` reset can't override our
+    // padding/border via the shadow boundary's outer-wins cascade
+    // rule. See finding-card.css.
     return html`<div class="card">${findingCardInnerTemplate(this.group, { context: this.context })}</div>`
   }
 
   connectedCallback() {
     super.connectedCallback()
-    // Force a render after every (re)connect so StateElement's
-    // wrapped render() runs and a fresh autorun gets registered.
-    // render.js recreates these elements on every render() call;
-    // this also covers the case of a card being moved between
-    // parents (e.g. table-details aside vs. file-group body).
+    // Force a render after every (re)connect so StateElement's wrapped
+    // render() runs and re-registers a fresh autorun. render.js
+    // recreates these on every render() call; also covers a card moved
+    // between parents (e.g. table-details aside vs. file-group body).
     if (this.hasUpdated) this.requestUpdate()
   }
 }

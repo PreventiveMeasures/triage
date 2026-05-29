@@ -116,9 +116,7 @@
      these unless a descendant rule overrides them. The thumb pulls
      from `--border`, which each theme retunes, so the page-level
      scrollbar picks up the green wash in `theme-green`, the pink
-     wash in `theme-pink`, etc. The per-component overrides in
-     styles/findings.css are now redundant (they re-state the same
-     `var(--border) transparent` value) but harmless. */
+     wash in `theme-pink`, etc. */
   scrollbar-color: var(--border) transparent;
   scrollbar-width: thin;
 }
@@ -448,8 +446,7 @@ a { color: var(--accent); text-decoration: none; }
    absolute-positioned layout and the per-button `&:hover` chrome
    directly; `:has(button)` keeps the layout off the host when the
    button isn't there so it doesn't claim a 30×30 hit target while
-   invisible. The button itself is `display: flex` (was previously
-   driven by the now-retired body.show-print-btn class). */
+   invisible. The button itself is `display: flex`. */
 print-button:has(button),
 download-button:has(button) {
   position: absolute; right: .5rem;
@@ -530,9 +527,8 @@ download-button { top: calc(.5rem + 30px + .35rem + 30px + .35rem); }
 
   /* Body-wide drag baseline — anything that isn't explicitly
      listed in the no-drag rules below acts as a window drag
-     handle. This is the original model from the first WCO pass;
-     the briefly-tried inverse (allow-list of drag chrome) kept
-     leaving floating top-right buttons in an inheritance limbo
+     handle. The inverse (allow-list of drag chrome) was rejected:
+     it left floating top-right buttons in an inheritance limbo
      where Chromium's hit-test treated their app-region as
      ambiguous. The exclusion list covers everything that
      shouldn't drag (every content container + every interactive

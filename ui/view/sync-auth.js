@@ -18,13 +18,12 @@ export function installSyncAuthResolver() {
     try {
       return await openSyncAuthDialog({ retry })
     } catch (err) {
-      // Stacked-modal failure (another modal is open). We don't have
-      // a useful recovery here — the auth flow will bail on the null
-      // return; the user can re-trigger by editing again once the
-      // blocking modal is dismissed. Log so a debug session can
-      // correlate. Mirrors hydration-conflict.js's catch behaviour:
-      // never let the resolver throw and abort triage-sync's
-      // `runAuthFlow`.
+      // Stacked-modal failure (another modal is open). No useful
+      // recovery — the auth flow bails on the null return; the user
+      // re-triggers by editing again once the blocking modal closes.
+      // Log so a debug session can correlate. Mirrors
+      // hydration-conflict.js: never let the resolver throw and abort
+      // triage-sync's `runAuthFlow`.
       console.warn('Sync auth dialog failed to open:', err)
       return null
     }

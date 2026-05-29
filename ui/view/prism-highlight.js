@@ -1,12 +1,12 @@
 // Lazy loader for prismjs syntax highlighting. Mirrors the brotli
-// pattern: a runtime-string dynamic import keeps `prism.js`
-// (and the prismjs grammar packs) out of the main view.js bundle.
-// First call kicks the import; subsequent calls share the same
-// promise so prism only downloads + parses once per session.
+// pattern: a runtime-string dynamic import keeps `prism.js` (and the
+// grammar packs) out of the main view.js bundle. First call kicks
+// the import; subsequent calls share the promise so prism downloads
+// + parses once per session.
 //
-// Languages are detected from file path extension. Unknown
-// extensions resolve to null so the source viewer falls back to
-// plain text without paying the import cost.
+// Languages are detected from file extension. Unknown extensions
+// resolve to null so the source viewer falls back to plain text
+// without paying the import cost.
 
 let loadPromise = null
 

@@ -3,19 +3,19 @@ import { decodeUtf8, encodeUtf8 } from '../../common/utf8.js'
 import { gunzipBytes, gzipBytes } from '../../common/gzip.js'
 
 // AEAD layer for triage-sync. Wraps ChaCha20-Poly1305 (RFC 8439) so
-// changesets travel encrypted through the relay server. The server
-// only ever sees `{ base, nonce, ciphertext }` — the actual triage
-// values are sealed under the workspace's private key.
+// changesets travel encrypted through the relay server. The server only
+// ever sees `{ base, nonce, ciphertext }` — the triage values are
+// sealed under the workspace's private key.
 //
-// Implementation prefers WebCrypto's native ChaCha20-Poly1305 (Chrome
-// 137+, Firefox 144+) and falls back to `@noble/ciphers` everywhere
-// else. Detection is one-shot at module load and cached.
+// Prefers WebCrypto's native ChaCha20-Poly1305 (Chrome 137+, Firefox
+// 144+), falls back to `@noble/ciphers` elsewhere. Detection is
+// one-shot at module load and cached.
 //
-// Each per-workspace content key is derived from the workspace's
-// 32-byte private key via HKDF-SHA-256 with the domain-separating
-// info string below — the private key itself never reaches the
-// cipher, so future protocols can derive other keys (signing,
-// MAC, future versions) from the same secret without collision.
+// Each per-workspace content key derives from the workspace's 32-byte
+// private key via HKDF-SHA-256 with the domain-separating info string
+// below — the private key itself never reaches the cipher, so future
+// protocols can derive other keys (signing, MAC, versions) from the
+// same secret without collision.
 
 const KEY_INFO = 'deepview-triage-sync.v1.content-key'
 const SIGN_INFO = 'deepview-triage-sync.v1.sign-key'
@@ -154,18 +154,16 @@ export async function deriveSigningKeypair(privateKeyBase64: string, workspaceId
   const pkcs8 = new Uint8Array(ED25519_PKCS8_HEADER.length + 32)
   pkcs8.set(ED25519_PKCS8_HEADER, 0)
   pkcs8.set(seed, ED25519_PKCS8_HEADER.length)
-  // Recover the 32-byte public key through WebCrypto rather than
-  // @noble/curves. WebCrypto exposes no seed→public-key derivation,
-  // so import the seed as an EXTRACTABLE key and read the JWK `x`
-  // member — already base64url, unpadded: exactly the wire form.
-  // The JWK also exposes `d` (the seed) as an immutable string we
-  // can't zero, so drop the reference the moment `x` is read, before
-  // the next await, so it's collectable. The key we RETURN is the
-  // separate non-extractable import below, so no extractable handle
-  // to the seed survives this call. This is the JWK round-trip the
-  // old @noble/curves path was added to avoid (audit L1); moving to
-  // WebCrypto trades that transient in-memory copy for dropping the
-  // elliptic-curve dependency.
+  // Recover the public key through WebCrypto, not @noble/curves.
+  // WebCrypto exposes no seed→public-key derivation, so import the seed
+  // as an EXTRACTABLE key and read the JWK `x` member — already
+  // base64url unpadded, the exact wire form. The JWK also exposes `d`
+  // (the seed) as an immutable string we can't zero; drop the reference
+  // the moment `x` is read (before the next await) so it's collectable.
+  // The RETURNED key is the separate non-extractable import below, so no
+  // extractable handle to the seed survives this call. This transient
+  // in-memory JWK copy is the round-trip the old @noble/curves path
+  // avoided (audit L1) — the trade for dropping the EC dependency.
   const probe = await crypto.subtle.importKey(
     'pkcs8',
     pkcs8,
@@ -189,39 +187,35 @@ export async function deriveSigningKeypair(privateKeyBase64: string, workspaceId
     false,
     ['sign'],
   )
-  // Zero the seed bytes (and the pkcs8 envelope that copied them)
-  // so a heap-snapshot dump of this realm doesn't expose the
-  // workspace's signing material. The WebCrypto `privateKey` is
-  // already non-extractable; this closes the in-process disclosure
-  // window for the brief lifetime of the local Uint8Arrays.
-  // Defense-in-depth — JS doesn't expose a deterministic erase
-  // primitive (the GC may have already moved the bytes), but the
-  // explicit `fill(0)` guarantees the wrappers we hold no longer
-  // contain the seed. Audit round-8 L1.
+  // Zero the seed bytes (and the pkcs8 envelope that copied them) so a
+  // heap-snapshot dump doesn't expose the workspace's signing material.
+  // The WebCrypto `privateKey` is already non-extractable; this closes
+  // the in-process disclosure window for the brief lifetime of the local
+  // Uint8Arrays. Defense-in-depth — JS has no deterministic erase (the
+  // GC may already have copied the bytes), but the explicit `fill(0)`
+  // guarantees the wrappers we hold no longer contain the seed. Audit
+  // round-8 L1.
   seed.fill(0)
   pkcs8.fill(0)
   return { privateKey, publicKey, publicKeyB64 }
 }
 
-// Bytes the signature covers — kept identical between sender and
-// every receiver. Domain prefix + newline-joined fields. Newlines
-// can't appear in base64url or in the bare integer/empty
-// `base` field, so this is unambiguous without explicit
-// length-prefix framing.
+// Bytes the signature covers — identical between sender and every
+// receiver. Domain prefix + newline-joined fields. Newlines can't
+// appear in base64url or in the bare integer/empty `base` field, so
+// this is unambiguous without explicit length-prefix framing.
 //
-// The `keyframe` field is `'1'` only when the value is `=== true`,
-// `''` otherwise — STRICT, not truthy. The server's
-// `canonicalSave` matches; the storage path (`msg.keyframe ===
-// true`) matches; if any of the three drifted to a looser rule
-// (e.g. `keyframe ? '1' : ''`), a non-boolean truthy wire flag
-// like `keyframe: 1` would hash differently between the sender
-// and one of the receivers, sail past sig-verify on the wrong
-// side, and end up as a chain row that no one can apply.
+// `keyframe` is `'1'` only when `=== true`, `''` otherwise — STRICT,
+// not truthy. The server's `canonicalSave` and the storage path
+// (`msg.keyframe === true`) match; if any of the three drifted looser
+// (e.g. `keyframe ? '1' : ''`), a non-boolean truthy wire flag like
+// `keyframe: 1` would hash differently between sender and one receiver,
+// sail past sig-verify on the wrong side, and become a chain row no one
+// can apply.
 //
-// Including `keyframe` in the SIGNED bytes also stops a malicious
-// server from relabeling a normal save as a keyframe (or vice
-// versa) — the wire flag the server uses for routing/storage
-// MUST match the signed flag, or the signature fails.
+// Signing `keyframe` also stops a malicious server relabeling a normal
+// save as a keyframe (or vice versa) — the wire flag the server uses
+// for routing/storage MUST match the signed flag, or the sig fails.
 function canonicalSavePayload(
   { publicKeyB64, base, keyframe, nonceB64, ciphertextB64 }: SavePayload,
 ): Uint8Array<ArrayBuffer> {
@@ -260,18 +254,15 @@ export async function computeRevisionId(payload: SavePayload): Promise<string> {
   return new Uint8Array(digest).toBase64({ alphabet: 'base64url', omitPadding: true })
 }
 
-// Same idea as the save signature, but the canonical bytes are
-// `<subscribe-domain>\n<pubkey>\n<from>\n<connectionNonce>` —
-// `from` is the last revision the client knows it has applied (so
-// the server can skip straight to revisions newer than that), and
-// `connectionNonce` is the per-socket challenge the server emitted
-// in a `challenge` frame the moment this socket opened (round-9 H2).
-// The nonce binds this signature to the connection; a captured
-// subscribe frame can't be replayed from a different connection
-// because that connection's nonce is different and the signature
-// won't verify against the new canonical bytes. Different domain
-// prefix from save so a save signature can't be replayed as a
-// subscribe and vice versa.
+// Like the save signature, but canonical bytes are
+// `<subscribe-domain>\n<pubkey>\n<from>\n<connectionNonce>`. `from` is
+// the last revision the client knows it applied (so the server skips
+// straight to newer revisions); `connectionNonce` is the per-socket
+// challenge the server emitted when this socket opened (round-9 H2).
+// The nonce binds the signature to the connection — a captured
+// subscribe frame can't be replayed from a different connection because
+// that connection's nonce differs and the sig won't verify. Different
+// domain prefix from save so neither signature replays as the other.
 function canonicalSubscribePayload(
   publicKeyB64: string,
   fromBase: string | number | null | undefined,
@@ -295,17 +286,16 @@ export async function verifySavePayload(
   payload: SavePayload,
   signatureB64: string,
 ): Promise<boolean> {
-  // Wrap the entire verify in one try / catch — `Uint8Array.fromBase64`
-  // throws SyntaxError on a malformed `signatureB64` (e.g. a peer or
-  // relay-supplied non-base64 string), and `canonicalSavePayload`
-  // throws via `encodeUtf8` on a lone surrogate or non-string field.
-  // The previous shape only caught `importKey` and `verify` errors,
-  // letting fromBase64 throw unhandled out of `applyChainToBase` —
-  // a bad sig from a peer would unwind the chain mid-loop, leaving
-  // session.baseState / baseRevision partially advanced and the
-  // captured user overlay lost. Treating any throw as `ok=false`
-  // routes through the existing structured `applyChainToBase`
-  // recovery (skip + bump savesSinceKeyframe). Audit round-12 H9.
+  // One try/catch around the whole verify: `Uint8Array.fromBase64`
+  // throws SyntaxError on a malformed `signatureB64` (peer/relay-supplied
+  // non-base64), and `canonicalSavePayload` throws via `encodeUtf8` on a
+  // lone surrogate or non-string field. Catching only `importKey` /
+  // `verify` errors (the prior shape) let fromBase64 throw unhandled out
+  // of `applyChainToBase` — a bad peer sig would unwind the chain
+  // mid-loop, leaving session.baseState / baseRevision partially
+  // advanced and the captured user overlay lost. Treating any throw as
+  // `ok=false` routes through `applyChainToBase`'s structured recovery
+  // (skip + bump savesSinceKeyframe). Audit round-12 H9.
   try {
     const key = await crypto.subtle.importKey(
       'raw',
@@ -329,13 +319,12 @@ function randomNonce(): Uint8Array<ArrayBuffer> {
 }
 
 // Bind ciphertext to its workspace + base-revision context so a
-// malicious server can't replay a changeset under a different
-// workspace or graft it onto a different revision history. The
-// workspace half is the derived tag (not the UUID) — that's what
-// travels on the wire, and the receiver reconstructs the AAD
-// straight from the message header without needing to look the
-// local workspace up. Format: ASCII bytes of `<tag>|<base>` (base
-// = '' when the session has no base yet, e.g. the very first save).
+// malicious server can't replay a changeset under a different workspace
+// or graft it onto a different revision history. The workspace half is
+// the derived tag (not the UUID) — that's what travels on the wire, so
+// the receiver reconstructs the AAD straight from the message header
+// without a local-workspace lookup. Format: ASCII `<tag>|<base>` (base
+// = '' when the session has no base yet, e.g. the first save).
 export function buildAad(
   workspaceTag: string,
   base: string | number | null | undefined,
@@ -393,18 +382,16 @@ async function decryptBytes(
   return cipher.decrypt(ciphertext) as Uint8Array<ArrayBuffer>
 }
 
-// Compress + pad before encrypting so the wire ciphertext size
-// reveals only the bucket the changeset falls into, not its real
-// length. Plaintext layout is:
-//   <4-byte BE compressed-length><gzip bytes><zero pad>
+// Compress + pad before encrypting so the wire ciphertext size reveals
+// only the bucket the changeset falls into, not its real length.
+// Plaintext layout: <4-byte BE compressed-length><gzip bytes><zero pad>
 // — the length prefix lets the decoder strip the trailing zero-pad
-// before gunzip (gzip's footer is fine, but a deflate stream
-// followed by trailing zeros isn't portably tolerated by every
-// decompressor). Ciphertext length = padded plaintext length + 16
-// (Poly1305 tag), so a single-color toggle and a 600-byte comment
-// edit collapse to the same wire size as long as both fit the same
-// power-of-two bucket. Floor at 64 bytes so the smallest bucket
-// doesn't itself reveal "this is an empty / tiny update".
+// before gunzip (gzip's footer tolerates it, but a deflate stream
+// followed by trailing zeros isn't portably decompressed). Ciphertext
+// length = padded plaintext + 16 (Poly1305 tag), so a single-color
+// toggle and a 600-byte comment edit collapse to the same wire size
+// when both fit the same power-of-two bucket. Floor at 64 bytes so the
+// smallest bucket doesn't itself reveal "empty/tiny update".
 const PAD_FLOOR = 64
 
 // Smallest power of two ≥ max(n, floor). Capped at 2^30 (~1 GiB)
@@ -440,10 +427,9 @@ async function unframeAndUngzip(plaintext: Uint8Array<ArrayBuffer>): Promise<unk
   return JSON.parse(decodeUtf8(json))
 }
 
-// JSON-friendly conveniences — gzip + pad + encrypt a JSON-able
-// value to `{ nonce, ciphertext }` (both base64) and reverse on the
-// way back. Tag is appended to the ciphertext by the AEAD; we ship
-// it as one blob.
+// JSON-friendly conveniences — gzip + pad + encrypt a JSON-able value
+// to `{ nonce, ciphertext }` (both base64) and reverse. The AEAD
+// appends the tag to the ciphertext; we ship it as one blob.
 export async function encryptJson(
   keyBytes: Uint8Array<ArrayBuffer>,
   value: unknown,

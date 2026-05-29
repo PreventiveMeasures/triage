@@ -8,13 +8,12 @@
 // description) once and lists the per-property choices (color,
 // comment, fix, triage) inside it. The host calls
 // `resolveTriageConflicts(conflicts, lookup, labels)` and gets a
-// Promise that resolves with a map keyed by `${id}:${property}`
+// Promise resolving to a map keyed by `${id}:${property}`
 // → `'local'` / `'imported'`, or `null` if cancelled (= keep
 // local everywhere).
 //
 // Extends `AppDialog` for the shared shadow-DOM <dialog> chrome
-// (focus-trap + Esc-to-cancel), with the severity-badge + conflict
-// layers added on top.
+// (focus-trap + Esc-to-cancel), plus severity-badge + conflict layers.
 import { html, nothing, unsafeCSS } from 'lit'
 import { isHttpUrl } from '../format.js'
 import { makeStackedModalError } from '../dom.js'
@@ -23,19 +22,17 @@ import severityCSS from './dialog-severity.css'
 import conflictCSS from './dialog-conflict.css'
 import { severityBadge } from './shared.js'
 
-// Swatch reads its hue from the global `--marker-*` custom
-// properties (see theme.css); the matching `.color-dot`
-// rules in dialog-conflict.css map a `marker-{red,blue,green,gray}`
-// modifier class to the right `var(--marker-…)` background.
-// One source for the four marker colors — change theme.css and
-// both the in-app picker and these swatches follow.
+// Swatch hue comes from the global `--marker-*` custom properties
+// (theme.css); `.color-dot` rules in dialog-conflict.css map a
+// `marker-{red,blue,green,gray}` class to the right `var(--marker-…)`.
+// Single source for the four marker colors — change theme.css and both
+// the in-app picker and these swatches follow.
 function colorSwatchTemplate(color) {
-  // Empty string = "unset". The conflict-detection three-way
-  // compare in triage-sync.ts uses '' for the absent side of an
-  // unset-vs-set disagreement (we cleared color locally, peer set
-  // one — or vice versa); render that as a `<em>none</em>` chip
-  // so the dialog can show both sides side-by-side without an
-  // empty / undefined-named swatch.
+  // Empty string = "unset": the three-way compare in triage-sync.ts
+  // uses '' for the absent side of an unset-vs-set disagreement (we
+  // cleared color locally, peer set one, or vice versa). Render it as a
+  // `<em>none</em>` chip so both sides show side-by-side without an
+  // empty/undefined-named swatch.
   if (!color) return html`<em>none</em>`
   return html`<span class="color">
     <span class=${`color-dot marker-${color}`}></span>
@@ -49,9 +46,9 @@ function commentBlockTemplate(text) {
 
 function fixBlockTemplate(text) {
   if (!text) return html`<span class="comment-text"><em>empty</em></span>`
-  // Only http(s) values get a clickable link — plain-text fix
-  // references ("internal ticket #42") render as text inside the
-  // same `.fix-text` span so the layout stays put.
+  // Only http(s) values get a clickable link; plain-text fix
+  // references ("internal ticket #42") render as text in the same
+  // `.fix-text` span so the layout stays put.
   if (!isHttpUrl(text)) return html`<span class="fix-text">${text}</span>`
   return html`<span class="fix-text"><a href=${text} target="_blank" rel="noopener noreferrer">${text}</a></span>`
 }
@@ -115,14 +112,11 @@ class TriageConflictDialog extends AppDialog {
   }
 
   // No explicit initial focus — showModal()'s native autofocus lands
-  // on the first bulk button, which is what we want (the base default
-  // `focusInitial` would instead grab the first radio). Modal-conflict
-  // (another dialog already open) is handled by the base
-  // `firstUpdated`, which dispatches `modal-conflict`; the wrapper
-  // rejects so the caller can alert that the imported peer's triage
-  // decisions were skipped. Base `_finish` (close + resolve) and
-  // `_onClose` (Esc / backdrop → resolve null = keep all current) are
-  // inherited unchanged.
+  // on the first bulk button (the base default would grab the first
+  // radio). Modal-conflict is handled by base `firstUpdated`; the
+  // wrapper rejects so the caller can alert that the peer's triage
+  // decisions were skipped. Base `_finish` and `_onClose` (Esc /
+  // backdrop → resolve null = keep all current) are inherited.
   focusInitial() {}
 
   _onClick = (e) => {
@@ -147,17 +141,15 @@ class TriageConflictDialog extends AppDialog {
 
   render() {
     const lbl = this.labels
-    // Group by finding id so a finding with both a color AND a
-    // comment conflict shows up as a single card with two
-    // decisions, instead of two unrelated rows.
+    // Group by finding id so a finding with both a color AND a comment
+    // conflict shows as one card with two decisions, not two rows.
     const byId = new Map()
     for (const c of this.conflicts) {
       if (!byId.has(c.id)) byId.set(c.id, [])
       byId.get(c.id).push(c)
     }
-    // Sort properties within a card so order is stable: color
-    // first, then comment, then fix, then triage — matches the
-    // action-row ordering in the finding card.
+    // Stable property order within a card (color, comment, fix,
+    // triage) — matches the action-row ordering in the finding card.
     for (const list of byId.values()) {
       list.sort((a, b) => (PROP_ORDER[a.property] ?? 99) - (PROP_ORDER[b.property] ?? 99))
     }
@@ -222,18 +214,16 @@ class TriageConflictDialog extends AppDialog {
 
 customElements.define('triage-conflict-dialog', TriageConflictDialog)
 
-// Public API — same signature the imperative version exposed:
-// caller awaits the Promise; resolves with a `${id}:${property}`
-// → 'local' / 'imported' map, or null on cancel. Rejects when
-// another modal is already open so the caller can surface that the
-// conflict resolution was skipped (the merge layer otherwise
+// Public API. Caller awaits the Promise; resolves with a
+// `${id}:${property}` → 'local' / 'imported' map, or null on cancel.
+// Rejects when another modal is already open so the caller can surface
+// that conflict resolution was skipped (otherwise the merge layer
 // silently keeps local for all disagreements).
 //
 // `findingLookup` is `Map<id, { severity, file, line, description }>`.
-// `labels` overrides the default copy: { title, intro, trailingNote,
-// applyButton, importedSideLabel }. The defaults read like the
-// generic "triage conflicts" wording; pass labels to specialise for
-// "import bundle" vs "report attach".
+// `labels` overrides the default copy { title, intro, trailingNote,
+// applyButton, importedSideLabel } to specialise the generic wording
+// for "import bundle" vs "report attach".
 export function resolveTriageConflicts(conflicts, findingLookup, labels = {}) {
   return new Promise((resolve, reject) => {
     const el = document.createElement('triage-conflict-dialog')

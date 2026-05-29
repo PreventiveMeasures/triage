@@ -1,19 +1,18 @@
 :host {
   display: inline-block;
   vertical-align: middle;
-  /* Stacking context so the absolute-positioned edit input
-     sits on top of the ghost chip without affecting flow. */
+  /* Stacking context so the absolute edit input sits over the ghost
+     chip without affecting flow. */
   position: relative;
 }
 
 .chip {
   display: inline-flex; align-items: center; gap: .375rem;
   cursor: default; user-select: none;
-  /* Pin to 24px so readonly mode (no pencil button) stays the same
-     height as editable mode (which hits 24px naturally from its 18px
-     button + .125rem padding + 1px border × 2). The page-header's
-     sibling .file-chip and .files-toggle-btn use the same 24px so
-     the three pills in the title row read as one row. */
+  /* Pin to 24px so readonly mode (no pencil) matches editable mode
+     (which hits 24px naturally: 18px button + .125rem padding + 1px
+     border × 2). Sibling .file-chip / .files-toggle-btn use the same
+     24px so the title-row pills line up. */
   min-height: 24px; box-sizing: border-box;
   padding: .125rem .375rem .125rem .5rem;
   background: var(--surface);
@@ -25,10 +24,10 @@
   font-weight: 500;
 }
 .chip svg { color: var(--muted); flex-shrink: 0; }
-/* Empty chip is one big click target — see repo-chip.js. Hover lift
-   gives the affordance without dropping a text-style pointer cursor
-   on top of what's still a chip (matches the rest of the page-head
-   chrome, which doesn't change cursor on click targets either). */
+/* Empty chip is one big click target (see repo-chip.js). Hover lift
+   signals the affordance without a pointer cursor on what's still a
+   chip — matches the rest of the page-head chrome, which also doesn't
+   change cursor on click targets. */
 .chip.empty:hover { border-color: var(--accent); }
 .chip.empty .label { color: var(--muted); font-style: italic; }
 .chip.readonly { padding-right: .5rem; }
@@ -43,19 +42,18 @@
 }
 .edit-btn:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
 
-/* Ghost chip — held in the DOM during edit mode so the host's
-   layout footprint matches display mode (h1 flex row stays put).
-   `visibility: hidden` keeps the box but suppresses paint so the
-   old chip text doesn't bleed through the input's semi-transparent
-   --surface background. `inert` blocks interaction; aria-hidden in
-   the template hides it from AT. */
+/* Ghost chip — kept in the DOM during edit mode so the host's layout
+   footprint matches display mode (h1 flex row stays put).
+   `visibility: hidden` keeps the box but suppresses paint, so the old
+   chip text doesn't bleed through the input's semi-transparent
+   --surface. `inert` blocks interaction; aria-hidden (in the
+   template) hides it from AT. */
 .chip[inert] { visibility: hidden; min-width: 19rem; }
 
-/* Edit input — absolutely positioned over the ghost chip so it
-   doesn't participate in flow. Sized exactly to the ghost's
-   footprint via `inset: 0`, so it never spills past the chip's
-   anchor into adjacent h1 items. Long URLs scroll horizontally
-   inside the input — same UX as any other constrained text field. */
+/* Edit input — absolute over the ghost chip (out of flow), sized to
+   the ghost's footprint via `inset: 0` so it never spills past the
+   chip anchor into adjacent h1 items. Long URLs scroll horizontally
+   inside it, like any constrained text field. */
 input {
   position: absolute;
   inset: 0;
@@ -71,13 +69,12 @@ input {
   outline: none;
 }
 
-/* Print: force the chip text + icon to black regardless of theme,
-   and drop the pencil edit affordance. The page-head's print rules
-   in `ui/styles/print.css` handle the host element (background /
-   border / padding strip) but stop at the shadow boundary —
-   `var(--text)` inherits across that boundary, so a dark-theme
-   user printing a report would otherwise get the chip in light-on-
-   white. The svg uses `var(--muted)` for the same reason. */
+/* Print: force chip text + icon black regardless of theme, drop the
+   pencil. The page-head print rules in `ui/styles/print.css` strip
+   the host (background/border/padding) but stop at the shadow
+   boundary — `var(--text)` inherits across it, so a dark-theme user
+   would otherwise print the chip light-on-white. The svg uses
+   `var(--muted)` for the same reason. */
 @media print {
   .chip {
     color: #000 !important;

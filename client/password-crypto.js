@@ -23,8 +23,8 @@ const SALT_LEN = 16
 const NONCE_LEN = 12
 // version + salt + nonce + 16-byte GCM tag.
 export const MIN_WIRE_LEN = 1 + SALT_LEN + NONCE_LEN + 16
-// AAD covers the prefix that lives outside the ciphertext: version
-// byte + salt + nonce. Tampering with any of those flips the GCM tag.
+// Length of the AAD prefix (version byte + salt + nonce) that rides
+// outside the ciphertext; see header for the tamper-detection rationale.
 const AAD_LEN = 1 + SALT_LEN + NONCE_LEN
 
 async function deriveAesKey(password, salt) {

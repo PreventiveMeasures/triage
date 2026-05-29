@@ -4,19 +4,16 @@
    selectors like `.flat-group .finding` still match the host.
 
    Visible card chrome (padding, border, background, outline) lives
-   on a shadow-DOM `.card` wrapper rather than on `:host` directly.
-   Why: per the CSS Scoping cascade, light-DOM rules targeting the
-   host beat shadow-DOM `:host` declarations — and the global
-   `*, *::before, *::after { padding: 0; margin: 0 }` reset in
-   theme.css would otherwise wipe out the card's padding. Light-DOM
-   rules cannot reach elements inside the shadow tree, so styling
-   `.card` instead is bulletproof against future global resets too.
+   on a shadow-DOM `.card` wrapper, not `:host`: per CSS Scoping,
+   light-DOM rules targeting the host beat shadow `:host` declarations,
+   so theme.css's global `*, *::before, *::after { padding: 0; margin: 0 }`
+   reset would wipe the card's padding. Light DOM can't reach shadow
+   children, so styling `.card` is bulletproof against future resets too.
 
-   The host stays a plain `display: block` container (with
-   `:host(.hidden) { display: none }` honoured); host-state
+   The host stays a plain `display: block` container; host-state
    selectors (`:host(.is-critical)`, `:host(:last-child)`,
-   `:host([in-group])`, etc.) project onto `.card` via combinator
-   selectors so the styled element is always the inner wrapper. */
+   `:host([in-group])`, etc.) project onto `.card` via combinators so
+   the styled element is always the inner wrapper. */
 
 :host { display: block; }
 :host(.hidden) { display: none; }
@@ -32,9 +29,8 @@
 }
 :host(:last-child) .card { border-bottom: none; }
 /* No `.is-critical` card tint — the severity badge already carries the
-   color, and a card-wide red background collides visually with
-   `.mark-red`'s identical-hue tint. Mirrors the same removal in
-   finding-row.css. */
+   color, and a card-wide red collides with `.mark-red`'s identical-hue
+   tint. Mirrors the removal in finding-row.css. */
 :host(.mark-red) .card   { background: var(--mark-red-bg); }
 :host(.mark-blue) .card  { background: var(--mark-blue-bg); }
 :host(.mark-green) .card { background: var(--mark-green-bg); }
@@ -65,9 +61,8 @@
 }
 
 /* Workspace-mode lift: when the action row carries the wide report
-   chip, the "introduced in" span is moved out of `.marks-left` into
-   its own row above. Indent matches `.marks` so it aligns with the
-   description column under the badge. */
+   chip, the "introduced in" span gets its own row here. Indent matches
+   `.marks` so it aligns with the description column under the badge. */
 .marks-commit-row {
   margin-top: .4rem;
   padding-left: 4.75rem;
@@ -80,15 +75,13 @@
   &.active { display: grid; }
 }
 
-/* Typography matches the prototype's `.summary` block
-   (design/prototypes/DeepView.0.html). The description's first line
-   becomes a bold title; the rest renders as a slightly muted body
-   block. Inline `"quoted"` / `` `code` `` segments get tag-style
-   highlights via render-finding.js's renderHighlighted(). The
-   rationale (`.conf-reason`) sits below a dashed divider in italic
-   muted type so it reads as an explanatory note, not body prose.
-   Single-line descriptions still render as plain `.desc` so JSON
-   findings with one-paragraph summaries don't get jarringly bolded. */
+/* Description's first line becomes a bold title; the rest is a muted
+   body block. Inline `"quoted"` / `` `code` `` segments get tag-style
+   highlights via render-finding.js's renderHighlighted(). The rationale
+   (`.conf-reason`) sits below a dashed divider in italic muted type so
+   it reads as an explanatory note, not body prose. Single-line
+   descriptions stay plain `.desc` so one-paragraph JSON findings aren't
+   jarringly bolded. */
 .desc-title {
   grid-column: 2;
   font-size: 1.08em; font-weight: 600;
@@ -114,11 +107,9 @@
   border-top: 1px dashed var(--border);
 }
 
-/* Inline highlights — `"quoted"` regions get a soft accent-tinted
-   chip; `` `code` `` spans get a monospace chip with the same
-   chrome. Both keep the original delimiters inside the chip so the
-   reader still sees them. Mirrors the prototype's `.summary q` and
-   `.title em` rules with our theme tokens. */
+/* Inline highlights — `"quoted"` gets a soft accent-tinted chip,
+   `` `code` `` a monospace chip. Both keep the original delimiters
+   inside the chip so the reader still sees them. */
 .inline-quote {
   background: rgb(from var(--accent) r g b / .1);
   padding: 1px; border-radius: 3px;
@@ -139,12 +130,10 @@
 }
 .run-meta { color: var(--muted); font-size: .65rem; }
 
-/* "Code →" shortcut — surfaces in the `.finding-left` rail
-   when the finding's `fileHash` matches a source in one of
-   the bundles the analyzer was run against. Click jumps to
-   that bundle's Code view at the matching file. Sits below
-   the Confidence stack; same pill chrome the marker chips
-   elsewhere use, sized to fit the 4rem left column. */
+/* "Code →" shortcut in the `.finding-left` rail — surfaces when the
+   finding's `fileHash` matches a source in an analyzed bundle; click
+   jumps to that bundle's Code view at the file. Below the Confidence
+   stack; pill chrome sized to the 4rem column. */
 .finding-code-btn {
   display: inline-block;
   margin-top: .35rem;
@@ -160,11 +149,10 @@
 .marks {
   display: flex; gap: .35rem; justify-content: flex-end;
   margin-top: .4rem; align-items: center;
-  /* Indent the row by the badge column's width so .marks-left's
-     leading items (commit ref, multi-tab strip) align under the
-     description / recommendation text in column 2 of the .tab-body
-     grid. min-width of .finding-left is 4rem; gap is .75rem;
-     4.75rem matches that for typical badges. */
+  /* Indent by the badge column's width so .marks-left's leading items
+     (commit ref, multi-tab strip) align under the description /
+     recommendation in column 2 of the .tab-body grid.
+     4.75rem = .finding-left's 4rem min-width + the .75rem gap. */
   padding-left: 4.75rem;
   user-select: none;
 }
@@ -181,12 +169,11 @@
 }
 
 /* Confidence arc — used only by the table view's side-details panel
-   (see confTemplate in render-finding.js). The arc length is set
-   inline on the inner <circle> via stroke-dasharray; the SVG ring
-   shows ONLY the colored arc, with no track behind the unfilled
-   portion. `--col` flips on the severity class so the arc matches
-   the badge hue. The SVG is rotated -90deg so 0% starts at 12
-   o'clock and the arc grows clockwise. */
+   (see confTemplate in render-finding.js). Arc length set inline on
+   the inner <circle> via stroke-dasharray; only the colored arc shows,
+   no track behind the unfilled portion. `--col` flips on the severity
+   class to match the badge hue. SVG rotated -90deg so 0% starts at
+   12 o'clock and grows clockwise. */
 .conf-ring {
   --col: var(--muted);
   position: relative;
@@ -241,10 +228,8 @@
    strip already conveys "this group has N tabs". */
 .print-case-label { display: none; }
 
-/* Duplicates of the row-internal building blocks. Source:
-   ui/styles/findings.css. The originals stay there because the
-   row-internal Lit components also need them; copying them into
-   each shadow root keeps the cards self-contained. */
+/* Row-internal building blocks duplicated into each shadow root to keep
+   cards self-contained. Source: ui/styles/findings.css. */
 
 /* Shadow DOM doesn't inherit the global theme.css chrome rule, so
    reassert non-selectable cursor on display-only chrome here. */
@@ -341,12 +326,11 @@
 }
 .mark-comment.has-comment,
 .mark-fix.has-fix { color: var(--accent); }
-/* Pulse the copy / claude button briefly after a successful click
-   so it's visually acknowledged — the class is set + cleared by
-   the events.js handler around the action (clipboard write for
-   copy, claude:// navigation for claude). Buttons share the
-   group's border now, so the pulse paints the cell background +
-   icon color instead of border-color. */
+/* Pulse the copy / claude button briefly after a successful click —
+   class set + cleared by events.js around the action (clipboard write
+   for copy, claude:// nav for claude). Buttons share the group's
+   border, so the pulse paints cell background + icon color, not
+   border-color. */
 .mark-copy.copied,
 .mark-claude.copied {
   color: var(--green, #4ade80);
@@ -402,11 +386,10 @@
   box-shadow: 0 4px 12px rgb(0 0 0 / .25);
   display: flex; flex-direction: column;
   gap: 1px;
-  /* WCO: the popover lives in the top layer above body's drag
-     baseline; the menu-item buttons inside are no-drag via the
-     central `button` selector, but the popover's own padding /
-     gap pixels would otherwise inherit drag and eat the click
-     when the user lands on the chrome between items. */
+  /* WCO: the popover sits in the top layer above body's drag baseline.
+     Menu-item buttons are no-drag via the central `button` selector,
+     but the popover's own padding / gap pixels would inherit drag and
+     eat clicks landing on the chrome between items. */
   -webkit-app-region: no-drag; app-region: no-drag;
 }
 .triage-menu[popover]:not(:popover-open) { display: none; }
@@ -427,34 +410,27 @@
 .triage-menu-invalid:hover { color: var(--muted); }
 .triage-menu-deleted:hover { color: var(--critical); }
 
-/* Focus-view context — set via the `context="focus"` attribute on
-   the host (see findingCardPlaceholder in render.js). Two visual
-   tweaks make the focus view's centered card feel like a
-   workbench rather than a list row:
-     1. The triage menu's chevron button is hidden and the popover
-        content is inlined into the action strip, so Fixed /
-        Invalid / Delete / Ignore each become a one-click button
-        instead of a dropdown. The popover element is forced out
-        of its `display: none` resting state via `display: flex`,
-        positioned statically (`position: revert`) so it lays out
-        as a normal sibling of the marks-left block instead of
-        floating in the top layer.
-     2. Slightly larger action button hit targets — the focus
-        view has more vertical room and the bottom action row is
-        the primary triage affordance, so beefing up its tap
-        size reads as intentional rather than cramped. */
+/* Focus-view context — set via `context="focus"` on the host (see
+   findingCardPlaceholder in render.js). Two tweaks make the centered
+   card read as a workbench, not a list row:
+     1. Hide the triage chevron and inline the popover into the action
+        strip so Fixed / Invalid / Delete / Ignore become one-click
+        buttons. The popover is forced out of `display: none` via
+        `display: flex` and positioned statically so it lays out as a
+        normal sibling instead of floating in the top layer.
+     2. Larger action-button hit targets — the focus view has vertical
+        room and the bottom action row is the primary triage
+        affordance, so bigger reads as intentional, not cramped. */
 :host([context='focus']) .triage-menu-wrap > .mark-triage-menu { display: none; }
 :host([context='focus']) .triage-menu-wrap {
-  /* Wrap is a flex carrier so the inlined popover (its only
-     remaining child once the chevron button is hidden) stretches
-     naturally next to the rest of the action row. */
+  /* Flex carrier so the inlined popover (its only remaining child
+     once the chevron is hidden) stretches next to the action row. */
   display: inline-flex;
 }
 :host([context='focus']) .triage-menu[popover] {
-  /* User-agent CSS sets [popover] to position: fixed; inset: 0;
-     and (when closed) display: none. Force overrides to take it
-     out of the top layer's flow and into the action row. The
-     !important is necessary on `display` because the implicit
+  /* UA CSS sets [popover] to position: fixed; inset: 0; and (closed)
+     display: none. Override to pull it out of the top layer into the
+     action row. !important on `display` is needed because the UA's
      "display: none when popover not open" rule wins otherwise. */
   position: static; inset: auto;
   display: inline-flex !important;
@@ -495,16 +471,13 @@
 }
 :host([context='focus']) .triage-menu-item.active::before { content: ''; margin: 0; }
 
-/* Larger action chrome in focus context — the row carries more
-   air around the buttons (extra gap, slightly taller buttons)
-   so the centered triage UI doesn't read as a footnote. The
-   list-view default indents the marks row by the badge column's
-   width (`padding-left: 4.75rem`) so .marks-left aligns under
-   the description; in focus mode we drop that indent so the
-   action row spans the full card width below the left rail too.
-   Bumps the top margin a touch + adds a hairline divider so the
-   widened row reads as its own band, not as text trailing off
-   the description. */
+/* Larger action chrome in focus context — more air around the buttons
+   so the centered triage UI doesn't read as a footnote. Drop the
+   list-view marks indent (`padding-left: 4.75rem`, which aligns
+   .marks-left under the description) so the action row spans the full
+   card width below the left rail. The top margin + hairline divider
+   make the widened row read as its own band, not text trailing off the
+   description. */
 :host([context='focus']) .marks {
   gap: .5rem;
   margin-top: .65rem;
@@ -513,9 +486,8 @@
   border-top: 1px solid var(--border);
   flex-wrap: wrap;
 }
-/* Workspace-mode commit lift moves up out of `.marks-left` into
-   its own row. Same un-indent rule so the lifted line spans the
-   full card width too. */
+/* Same un-indent for the lifted commit row so it spans the full card
+   width too. */
 :host([context='focus']) .marks-commit-row { padding-left: 0; }
 :host([context='focus']) .mark-comment,
 :host([context='focus']) .mark-fix,
@@ -528,32 +500,29 @@
   font-size: .72rem;
 }
 :host([context='focus']) .mark-btn-label {
-  /* Label text after the icon — slightly muted so the icon stays
-     the primary visual cue and the label reads as supporting
-     context rather than competing for attention. */
+  /* Label text after the icon — muted so the icon stays the primary
+     cue and the label reads as supporting context, not competing. */
   color: inherit;
   font-weight: 500;
   letter-spacing: .02em;
 }
 
 /* Subtle mark-color tints for the focus context. The list / table
-   views paint the card's full surface in the saturated mark
-   color so it stands out from row neighbours. In the focus view
-   the card is the only finding on screen and is already framed
-   in its own glass panel, so a full-saturation tint feels heavy.
-   `color-mix` against the solid page `--bg` (NOT --surface, which
-   is itself translucent — alpha-stacking that against an alpha
-   surface produced a muddy mid-toned wash, the bug the user
-   pointed out) gives a clean opaque tint that reads as the
-   intended mark hue but at a fraction of its weight. */
+   views paint the full surface in the saturated mark color to stand
+   out from row neighbours; in focus the card is the only finding and
+   is already framed in its own glass panel, so full saturation feels
+   heavy. `color-mix` against the solid page `--bg` (NOT --surface,
+   which is itself translucent — alpha-stacking against an alpha
+   surface produced a muddy mid-toned wash) gives a clean opaque tint
+   at a fraction of the mark hue's weight. */
 :host([context='focus'].mark-red) .card   { background: color-mix(in srgb, var(--mark-red-bg) 15%, var(--bg)); }
 :host([context='focus'].mark-blue) .card  { background: color-mix(in srgb, var(--mark-blue-bg) 15%, var(--bg)); }
 :host([context='focus'].mark-green) .card { background: color-mix(in srgb, var(--mark-green-bg) 15%, var(--bg)); }
 :host([context='focus'].mark-gray) .card  { background: color-mix(in srgb, var(--mark-gray-bg) 15%, var(--bg)); }
 
-/* Comment + fix-link blocks in the tab body. Quote-style notes
-   below the description / recommendation / confidence reason when
-   the active tab carries a free-text annotation or a fix URL. */
+/* Comment + fix-link blocks in the tab body — quote-style notes below
+   the description / recommendation / confidence reason, shown when the
+   active tab carries a free-text annotation or a fix URL. */
 .comment-block,
 .fix-block {
   margin-top: .5rem;
@@ -598,12 +567,11 @@
 }
 .npm-link:hover { border-color: var(--accent); color: var(--accent); }
 
-/* Print rules — moved out of styles/print.css's `.finding {…}` block
-   because that selector would no longer reach across the shadow
-   boundary. The host-level `:host` rules let us preserve the
-   per-card print behaviours (break-inside, multi-case banner) while
-   the in-body rules (`.tab-body`, `.tabs`, etc.) only apply inside
-   the shadow root anyway. */
+/* Print rules live here, not in styles/print.css's `.finding {…}`
+   block, because a light-DOM selector can't reach across the shadow
+   boundary. `:host` rules carry the per-card print behaviours
+   (break-inside, multi-case banner); the in-body rules
+   (`.tab-body`, `.tabs`, etc.) only apply inside the shadow root. */
 @media print {
   .card {
     break-inside: avoid;
@@ -641,21 +609,19 @@
     margin-top: .5rem; padding-top: .5rem;
     border-top: 1px dashed #999;
   }
-  /* On screen, the .flat-group-loc header above the card stands in
-     for the in-body .line-row (file/line/meta) so :host([in-group])
-     suppresses the duplicate. In print, when there are duplicates
-     (.multi-case), every tab body stacks visibly — and the header's
-     run-meta is hidden by styles/print.css — so each tab body needs
-     to carry its own per-run metadata. Re-show every tab body's
+  /* On screen the .flat-group-loc header stands in for the in-body
+     .line-row (file/line/meta), so :host([in-group]) suppresses the
+     duplicate. In print with duplicates (.multi-case) every tab body
+     stacks visibly and the header's run-meta is hidden by print.css,
+     so each tab body needs its own per-run metadata — re-show every
      in-body row (active included). Single-tab in-group findings keep
      the screen rule and stay hidden so file:line isn't doubled. */
   :host([in-group].multi-case) .tab-body .line-row { display: flex; }
-  /* In print at 9pt the line-row gets crowded enough that
-     `(found analyzing X)` between file:line and run-meta forces meta
-     onto a wrapped second line. Push the discovered-in span onto its
-     own row instead so the meta stays on the top line next to
-     file:line. `order: 99` keeps the wrap from rearranging meta
-     ahead of it. */
+  /* In print at 9pt the line-row crowds: `(found analyzing X)` between
+     file:line and run-meta forces meta onto a wrapped second line.
+     Push the discovered-in span onto its own row so meta stays on the
+     top line next to file:line; `order: 99` keeps it from rearranging
+     ahead of meta. */
   .line-row .discovered-in { flex-basis: 100%; order: 99; }
   .print-case-label {
     display: block;
@@ -685,9 +651,8 @@
      identically to the bare-text fallback. */
   a, .line-num, .line-num a { color: inherit; }
 
-  /* Inline `` `code` `` spans carry a 1px border + tinted background
-     on screen to read as a chip; on paper the border crowds dense
-     prose and the chip chrome reads as visual noise. Keep the
-     monospace font so code still distinguishes from prose. */
+  /* Inline `` `code` `` spans read as a chip on screen (1px border +
+     tinted bg); on paper that chrome crowds dense prose and reads as
+     noise. Keep the monospace font so code still stands out. */
   .inline-code { border: 0; background: transparent; padding: 0; }
 }

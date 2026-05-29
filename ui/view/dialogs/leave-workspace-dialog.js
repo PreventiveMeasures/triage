@@ -85,12 +85,9 @@ class LeaveWorkspaceDialog extends AppDialog {
   _onModeChange = (e) => { this._mode = e.target.value }
   _onTriageChange = (e) => { this._triage = e.target.value }
 
-  // The triage section: only rendered when the user has selected
-  // 'delete' mode. Three shapes based on the precomputed impact:
-  //   - no triage attached at all → terse note
-  //   - all attached triage is also on a kept report → reassuring
-  //     note that nothing will be orphaned
-  //   - some attached triage would be orphaned → keep/wipe radio
+  // Only rendered in 'delete' mode. Three shapes by precomputed impact:
+  // none attached → note; all also on a kept report → reassuring note;
+  // some orphaned → keep/wipe radio.
   _triageSection() {
     if (this._mode !== 'delete' || this.reportCount === 0) return ''
     const orphan = this.orphanedTriage
@@ -139,10 +136,9 @@ class LeaveWorkspaceDialog extends AppDialog {
     const b = this.bundleCount
     const hasReports = n > 0
     const reportNoun = n === 1 ? 'report' : 'reports'
-    // Pluralization for the radio labels + hints. `n === 1`
-    // takes singular pronoun / verb forms so the dialog reads
-    // correctly when a workspace has exactly one report — the
-    // mode-choice text now agrees in number with `reportNoun`.
+    // Pluralization for the radio labels + hints. `n === 1` takes
+    // singular pronoun / verb forms so the mode-choice text agrees
+    // in number with `reportNoun`.
     const them = n === 1 ? 'it' : 'them'
     const stay = n === 1 ? 'stays' : 'stay'
     const areRemoved = n === 1 ? 'is removed' : 'are removed'

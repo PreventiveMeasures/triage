@@ -45,16 +45,14 @@ import { errStack } from '../util.ts'
 
 // Server-side fault codes that should surface as 500 `io-error`
 // rather than 400 `aborted`. `pipeline(req, ws)` rejects with the
-// first stream error; the client-side codes (socket close, the
-// manual `overrun`) are everything else. ENOENT is included because
-// `createWriteStream` will reject with it if the `${tag}/.staging`
-// dir was removed out from under us (operator action / external
-// fs activity) — that's a server-side state, not a client-fixable
-// abort. PR #4 review. The Vercel-blob backend surfaces failures
-// through other paths (rejected put promise → caught by the
-// pipeline catch as a plain Error without a `code`); those land in
-// the default `aborted` branch and the operator-facing log line
-// carries the SDK's error message.
+// first stream error; client-side codes (socket close, the manual
+// `overrun`) are everything else. ENOENT is included because
+// `createWriteStream` rejects with it if the `${tag}/.staging` dir
+// was removed out from under us (operator / external fs activity) —
+// a server-side state, not a client-fixable abort. Vercel-blob
+// failures arrive without a `code` (rejected put promise → plain
+// Error); those land in the default `aborted` branch, with the SDK
+// error in the operator log line.
 const IO_FAULT_CODES = new Set(['ENOSPC', 'EACCES', 'EROFS', 'EIO', 'EMFILE', 'ENFILE', 'EDQUOT', 'EPERM', 'ENOENT'])
 
 export type ObjstoreRestDeps = {
@@ -71,35 +69,34 @@ export type ObjstoreRestDeps = {
   debug: boolean
 }
 
-// Concurrent commits need no lock at all: the live blob is content-
-// addressed (`${tag}/${contentHash}.bin`) so two racing commits write
-// to DIFFERENT immutable addresses, and the commit itself is an atomic
-// version compare-and-set on the live row (see commitPut in store.ts).
-// Exactly one racer wins the CAS; the loser gets a 409 `conflict` and
-// rebases. This holds within a single process and across replicas —
-// there is no in-process mutex serialising commits. (The PUT *body*
-// does take a per-process single-writer reservation — `inFlightSids`
-// below — but that only rejects a duplicate upload of one staging
-// slot; it never makes distinct commits wait.)
+// Concurrent commits need no lock: the live blob is content-addressed
+// (`${tag}/${contentHash}.bin`) so two racing commits write to
+// DIFFERENT immutable addresses, and the commit is an atomic version
+// compare-and-set on the live row (see commitPut in store.ts). Exactly
+// one racer wins the CAS; the loser gets a 409 `conflict` and rebases.
+// Holds within a process and across replicas — no in-process mutex
+// serialises commits. (The PUT *body* takes a per-process single-
+// writer reservation — `inFlightSids` below — but that only rejects a
+// duplicate upload of one staging slot; distinct commits never wait.)
 
 // Per-process single-writer guard for the REST PUT body. A put-token is
 // a REUSABLE bearer capability (tokens.ts) valid for its whole TTL, so a
-// client replaying it on overlapping PUTs — a retry that doesn't cancel
-// the in-flight request, a proxy re-issuing the PUT, a double-submit —
+// client replaying it on overlapping PUTs (a retry that doesn't cancel
+// the in-flight request, a proxy re-issuing the PUT, a double-submit)
 // would otherwise have two requests stream into the SAME staging file
-// (same sid). On the FS backend `createWriteStream(…, { flags: 'w' })`
-// truncates, so the two writers clobber each other's bytes/size and BOTH
-// can fail (size-mismatch 400 + promote-race 500) with neither
-// committing. `inFlightSids` admits exactly ONE in-flight upload per
-// staging id; a concurrent same-token PUT is rejected (409) before it
-// can open a second writer. The slot is held only across the body +
-// commit and released in a `finally` (and bounded by the REST idle-body
-// timeout in server/http.ts so a slow-loris can't pin it). It is NOT a
-// commit lock — commits stay lock-free on the version-CAS above. It's
-// per-process: the Vercel multi-replica path leans on `allowOverwrite:
-// true` + the commit CAS + content-addressing for cross-replica
-// correctness (a duplicate that lands on another replica can't clobber a
-// shared local file and still loses the CAS), not on this set.
+// (same sid). On FS, `createWriteStream(…, { flags: 'w' })` truncates,
+// so the two writers clobber each other's bytes/size and BOTH can fail
+// (size-mismatch 400 + promote-race 500) with neither committing.
+// `inFlightSids` admits exactly ONE in-flight upload per staging id; a
+// concurrent same-token PUT is rejected (409) before it can open a
+// second writer. The slot is held only across body + commit, released
+// in a `finally`, and bounded by the REST idle-body timeout in
+// server/http.ts so a slow-loris can't pin it. NOT a commit lock —
+// commits stay lock-free on the version-CAS above. Per-process: the
+// Vercel multi-replica path leans on `allowOverwrite: true` + the
+// commit CAS + content-addressing for cross-replica correctness (a
+// duplicate landing on another replica can't clobber a shared local
+// file and still loses the CAS), not on this set.
 const inFlightSids = new Set<string>()
 
 // `/api/objstore/${workspaceTag}/${resourceTag}` — base64url
@@ -121,14 +118,13 @@ export function matchRoute(url: string | undefined): RouteMatch | null {
 
 function deny(res: ServerResponse, status: number, body: string): void {
   // Uniform `{ error: <reason> }` JSON envelope for every failure so
-  // clients have one shape to parse. Status + reason are NOT
-  // intentionally indistinguishable across causes — 401, 404, 405,
-  // 410, 411, 500 each map to a documented reason in server/README.md
-  // and the client decides recovery from the code. Defense against
-  // probe-driven distinguishing isn't a property the relay aims for;
-  // every error reason is reachable only after the route + bearer-
-  // token check passes (or as 401/404 from the public surface), so
-  // there's no signal here a probe couldn't otherwise enumerate.
+  // clients parse one shape. Status + reason are NOT intentionally
+  // indistinguishable across causes — 401/404/405/410/411/500 each map
+  // to a documented reason in server/README.md and the client decides
+  // recovery from the code. Probe-distinguishing defense isn't a goal:
+  // every reason is reachable only after the route + bearer-token check
+  // passes (or as 401/404 from the public surface), so a probe gains no
+  // signal it couldn't otherwise enumerate.
   res.writeHead(status, { 'content-type': 'application/json' })
   res.end(JSON.stringify({ error: body }))
 }
@@ -209,21 +205,20 @@ async function handleRestPut(
   // No lock: the commit's version-CAS arbitrates concurrent commits
   // (the live blob is content-addressed, so racers can't desync
   // metadata vs bytes — the loser surfaces a 409 `conflict`). The
-  // staging row is protected from the reaper not by a lock but by its
-  // `begun_at`: an upload under the staging TTL stays fresh through the
-  // body, and the after-body `refreshStagingBegunAt` re-extends the
-  // TTL across the commit. (An upload exceeding the TTL during the
-  // body can be reaped mid-flight → commit 410s; documented accepted
-  // tradeoff — see commitPut in store.ts.)
+  // staging row is protected from the reaper by its `begun_at`, not a
+  // lock: an upload under the staging TTL stays fresh through the body,
+  // and the after-body `refreshStagingBegunAt` re-extends the TTL across
+  // the commit. (An upload exceeding the TTL during the body can be
+  // reaped mid-flight → commit 410s; documented accepted tradeoff —
+  // see commitPut in store.ts.)
   await handleRestPutBody(deps, req, res, route, payload, declared)
 }
 
 // Map a `commitPut` failure to its wire response. Extracted from
-// `handleRestPutBody` to keep it under the per-function line cap
-// and to make the wire-mapping ladder its own audit surface — the
-// exhaustiveness `never` guard at the bottom catches a forward-
-// compat hazard where a new `CommitPutResult` reason lands without
-// updating this dispatch.
+// `handleRestPutBody` to keep it under the per-function line cap and
+// to make the wire-mapping ladder its own audit surface — the
+// exhaustiveness `never` guard at the bottom catches a new
+// `CommitPutResult` reason landing without updating this dispatch.
 function denyCommitFailure(res: ServerResponse, result: Exclude<CommitPutResult, { ok: true }>): void {
   if (result.reason === 'conflict') {
     denyConflict(res, result.conflict?.version ?? null, result.conflict?.incarnation ?? null)
@@ -273,10 +268,9 @@ async function handleRestPutBody(
   }
   inFlightSids.add(payload.sid)
   try {
-    // Stream the upload + commit, no lock. The commit's version-CAS
-    // arbitrates concurrent commits; the staging row is kept fresh for
-    // the reaper by its `begun_at` (+ the after-body refresh), not by a
-    // mutex. See the rationale in handleRestPut above.
+    // Stream the upload + commit, no lock — version-CAS arbitrates
+    // commits, the staging row stays fresh for the reaper via its
+    // `begun_at` (+ after-body refresh). See handleRestPut above.
     const result = await runUploadAndCommit(deps, route, payload, declared, req, res)
     if (result.handled) return
     if (!result.commit.ok) { denyCommitFailure(res, result.commit); return }
@@ -294,15 +288,13 @@ async function handleRestPutBody(
       ...objectMetaWire(row),
     }, null)
     // Cross-instance fan-out (Neon mode). The bus payload carries only
-    // (tag, resourceTag); peers on other instances re-fetch the live
-    // row from workspace_object to compose their local broadcast. The
-    // committed row is durable by here (commitPut's version-CAS already
-    // landed), so the receiver typically sees either THIS version or a
-    // STRICTLY newer one (also a valid broadcast — clients are
-    // idempotent on (resourceTag, version)). The receiver is allowed
-    // to find no live row at all if a subsequent delete races the
-    // notification; bus-receiver.ts drops that case silently. SQLite
-    // mode publishes to a no-op.
+    // (tag, resourceTag); peers on other instances re-fetch the live row
+    // from workspace_object to compose their broadcast. The committed
+    // row is durable by here (commitPut's version-CAS landed), so the
+    // receiver sees THIS version or a STRICTLY newer one (also valid —
+    // clients are idempotent on (resourceTag, version)), or no live row
+    // at all if a subsequent delete races the notification (bus-
+    // receiver.ts drops that silently). SQLite mode publishes to a no-op.
     deps.publishObjPut(route.tag, route.resourceTag)
     if (deps.debug) console.log(`objstore put → ${route.tag.slice(0, 12)}…/${route.resourceTag.slice(0, 8)}… v${row.version}`)
   } finally {

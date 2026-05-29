@@ -126,11 +126,10 @@ function notify() {
 }
 
 // Synchronous lookup for the open bundle's hash → findings join.
-// Returns the same Finding objects we cached during indexing — id /
-// severity / description / file / line / repo all preserved so the
-// Issues tab and graph dim logic can read them as-is. The bucket's
-// internal Set is hidden from callers; just the deduped list is
-// exposed.
+// Returns the same Finding objects cached during indexing (all
+// fields preserved) so the Issues tab and graph dim logic read them
+// as-is. Exposes only the deduped list; the bucket's internal Set
+// stays hidden.
 export function findingsForFileHash(hash) {
   return byHash.get(hash)?.list ?? []
 }
@@ -150,10 +149,7 @@ export function getPackagesIndex() {
 // Repositories view. Same shape as the Packages index (Map<repoKey,
 // { findings, files, reports, … }>), but only own-source findings
 // (those NOT in node_modules / dependencies) get indexed — deps
-// stay Packages-only. Note that a finding can appear in BOTH
-// indexes when its file is own-source AND the analyzer stamped
-// a `package.npm.name` (the user's own project as a "package").
-// Repo key comes from `repoOf(f)` above.
+// stay Packages-only. Repo key comes from `repoOf(f)` above.
 export function getRepositoriesIndex() {
   return byRepo
 }

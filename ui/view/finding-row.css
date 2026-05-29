@@ -1,38 +1,34 @@
 /* `<finding-row>` shadow-DOM styles. The host element IS the row —
    classes like `is-critical` / `mark-red` / `selected` (set on the
-   host by finding-row.js) drive the row-level backgrounds and
-   outline. The grid layout and the score / body / tabs sub-cells
-   live here; the row-internal building blocks (`.badge`, `.tab`,
-   `.mark-x`, `.mark-restore`, `.line-num`) are inlined here so the
-   shadow root is self-contained. The mark-dot color picker lives in
-   its own component (see view/color-marker.js); this file no longer
-   needs the `.mark-dot` rules. CSS variables (--surface, --border,
-   --text, etc.) inherit through the shadow boundary so theme
-   switching keeps working. */
+   host by finding-row.js) drive the row-level backgrounds and outline.
+   The grid layout and the score / body / tabs sub-cells live here; the
+   row-internal building blocks (`.badge`, `.tab`, `.mark-x`,
+   `.mark-restore`, `.line-num`) are inlined so the shadow root is
+   self-contained. The mark-dot color picker is its own component (see
+   view/color-marker.js). CSS variables (--surface, --border, --text,
+   etc.) inherit through the shadow boundary so theme switching works. */
 
 /* Visible chrome (grid layout, padding, border, backgrounds, hover /
-   selected outlines) lives on a shadow-DOM `.row` wrapper rather than
-   on `:host` directly. Per the CSS Scoping cascade, light-DOM rules
-   targeting the host beat shadow `:host` declarations regardless of
-   specificity, so the global `* { padding: 0; margin: 0 }` reset in
-   theme.css would otherwise wipe out the row's padding. Shadow-DOM
-   children aren't reachable from light DOM, so styling `.row`
-   instead is bulletproof.
+   selected outlines) lives on a shadow-DOM `.row` wrapper, not `:host`:
+   per CSS Scoping, light-DOM rules targeting the host beat shadow
+   `:host` declarations regardless of specificity, so theme.css's global
+   `* { padding: 0; margin: 0 }` reset would wipe the row's padding.
+   Shadow children aren't reachable from light DOM, so styling `.row` is
+   bulletproof.
 
    The host stays a plain `display: block` container; host-state
    selectors (`:host(.is-critical)`, `:host(:last-child)`,
-   `:host(.selected)`, etc.) project onto `.row` via combinator
-   selectors so the styled element is always the inner wrapper.
+   `:host(.selected)`, etc.) project onto `.row` via combinators so the
+   styled element is always the inner wrapper.
 
-   Two-column grid: fixed-width score column on the left, body column
-   on the right. The body's three sub-rows (title / meta / tabs)
-   participate in this same grid via `display: contents` on .row-body
-   so the score column can `grid-row: 1 / 3` — i.e. center against
-   the title + meta rows specifically, ignoring the optional third
-   tabs row. The implicit grid creates row 3 only when there's
-   actually a `.tabs-row` child, so single-tab findings stay at two
-   rows tall with no trailing gap. The minmax(0, …) on the second
-   column lets `.title` / `.row-loc` shrink for text-overflow ellipsis. */
+   Two-column grid: fixed-width score column left, body column right.
+   The body's three sub-rows (title / meta / tabs) join this same grid
+   via `display: contents` on .row-body so the score column can
+   `grid-row: 1 / 3` — centering against title + meta only, ignoring the
+   optional tabs row. The implicit grid creates row 3 only when a
+   `.tabs-row` child exists, so single-tab findings stay two rows tall
+   with no trailing gap. minmax(0, …) on column 2 lets `.title` /
+   `.row-loc` shrink for text-overflow ellipsis. */
 :host { display: block; }
 
 .row {
@@ -47,9 +43,8 @@
 :host(:last-child) .row { border-bottom: none; }
 :host(:hover) .row { background: rgb(from var(--text) r g b / .04); }
 /* No `.is-critical` row tint — the severity badge already carries the
-   color, and a row-wide red background collides visually with
-   `.mark-red`'s identical-hue tint. The colored stripe / score
-   pill / mark-red row tint stay distinct for triage by color. */
+   color, and a row-wide red collides with `.mark-red`'s identical-hue
+   tint, which needs to stay distinct for triage-by-color. */
 :host(.mark-red) .row   { background: var(--mark-red-bg); }
 :host(.mark-blue) .row  { background: var(--mark-blue-bg); }
 :host(.mark-green) .row { background: var(--mark-green-bg); }
@@ -61,19 +56,18 @@
 :host(.triage-ignored) { opacity: .75; }
 :host(.selected) .row { outline: 2px solid var(--accent); outline-offset: -2px; }
 
-/* First/last row in the parent `<finding-table>` shadow inherits
-   the table's 6px corner radius so a selected edge row's outline
-   traces the rounded clip, not a square inside it. The host
-   pseudo with structural selectors lets the row's stylesheet
-   own this without the parent having to stamp classes per row. */
+/* First/last row matches the parent `<finding-table>`'s 6px corner
+   radius so a selected edge row's outline traces the rounded clip, not
+   a square inside it. Structural host pseudos let the row own this
+   without the parent stamping classes per row. */
 :host(:first-of-type) .row { border-top-left-radius: 6px; border-top-right-radius: 6px; }
 :host(:last-of-type) .row { border-bottom-left-radius: 6px; border-bottom-right-radius: 6px; }
 
 .row-score {
   grid-column: 1;
   /* Span the title + meta rows only; the optional tabs row sits in
-     row 3 below the badge, so the badge stays vertically aligned
-     with the upper, "primary" half of the row. */
+     row 3 below, keeping the badge aligned with the upper, "primary"
+     half of the row. */
   grid-row: 1 / 3;
   align-self: center;
   display: flex; flex-direction: column;
@@ -84,11 +78,10 @@
   & .badge { min-width: 4.4rem; text-align: center; }
   & .row-conf {
     color: var(--muted); font-size: .72rem;
-    /* Clicking the row resets any text selection inside it (the table
-       picks up the click and toggles the details panel), so let the
-       row read as a button rather than selectable text. Scoped to the
-       table row's shadow DOM, so the same fields stay selectable in
-       the kanban / list / grouped / detail views. */
+    /* Row-click toggles the details panel and clears any selection
+       here, so read the row as a button, not selectable text. Scoped
+       to the table row's shadow DOM, so these fields stay selectable
+       in the kanban / list / grouped / detail views. */
     user-select: none;
     & strong { color: var(--text); font-size: .8rem; }
   }
@@ -108,9 +101,8 @@
     flex: 1; min-width: 0;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     font-weight: 500;
-    /* Match `.row-conf`: row-click clears any selection here anyway,
-       so don't tease the user with selectable text. The same title /
-       description prose stays selectable in the non-table views. */
+    /* Same as `.row-conf`: row-click clears any selection here anyway.
+       This prose stays selectable in the non-table views. */
     user-select: none;
   }
   & .row-type { color: var(--muted); font-size: .68rem; flex-shrink: 0; }
@@ -233,10 +225,10 @@
 }
 .mark-comment.has-comment,
 .mark-fix.has-fix { color: var(--accent); }
-/* Pulse the copy / claude button briefly after a successful click
-   — the class is set + cleared by the events.js handler. Buttons
-   share the action-group's border now, so the pulse paints the
-   cell background + icon color instead of border-color. */
+/* Pulse the copy / claude button briefly after a successful click —
+   class set + cleared by the events.js handler. Buttons share the
+   action-group's border, so the pulse paints cell background + icon
+   color, not border-color. */
 .mark-copy.copied,
 .mark-claude.copied {
   color: var(--green, #4ade80);
@@ -252,11 +244,10 @@
   &:hover { color: var(--critical); border-color: var(--critical); }
 }
 
-/* Triage menu — chevron button with a popover anchor. The
-   wrap is `position: relative` so the popover floats below the
-   chevron without affecting the row's height. The popover stops
-   pointer events on its surface so a click inside doesn't trip
-   the row-select fallback. */
+/* Triage menu — chevron button with a popover anchor. The wrap is
+   `position: relative` so the popover floats below the chevron without
+   affecting row height. The popover stops pointer events on its surface
+   so a click inside doesn't trip the row-select fallback. */
 .triage-menu-wrap {
   position: relative;
   display: inline-flex;
@@ -271,12 +262,11 @@
 }
 .mark-triage-menu:hover { color: var(--text); border-color: var(--accent); }
 .mark-triage-menu.open { border-color: var(--accent); color: var(--text); }
-/* Labelled variant — shown in any non-live triage view. The label
-   reads as the current bucket; the chevron stays at the right
-   edge so the affordance still reads as a dropdown. Bucket-tinted
-   border / text matches the toolbar's segmented selector so the
-   visual link between the row state and the active filter is
-   clear. */
+/* Labelled variant — shown in any non-live triage view. Label reads
+   as the current bucket; the chevron stays at the right edge so it
+   still reads as a dropdown. Bucket-tinted border / text matches the
+   toolbar's segmented selector, linking the row state to the active
+   filter. */
 .mark-triage-menu.with-label {
   padding: 0 .35rem 0 .5rem;
   font-size: .72rem;
@@ -291,10 +281,9 @@
 .mark-triage-menu.triage-state-fixed   { border-color: var(--green, #4ade80); color: var(--green, #4ade80); }
 .mark-triage-menu.triage-state-invalid { border-color: var(--muted); color: var(--text); }
 .mark-triage-menu.triage-state-ignored { border-color: var(--accent, #2563eb); color: var(--accent, #2563eb); }
-/* Native popover — fixed position is set inline by events.js's
-   beforetoggle listener. Override the UA's default centering (the
-   browser auto-positions popover="auto" elements) so our coords
-   take effect: inset:auto + margin:0 zero out the UA layout. */
+/* Native popover — fixed position set inline by events.js's
+   beforetoggle listener. inset:auto + margin:0 zero out the UA's
+   auto-centering of popover="auto" so our coords take effect. */
 .triage-menu[popover] {
   position: fixed;
   inset: auto;
@@ -307,15 +296,14 @@
   box-shadow: 0 4px 12px rgb(0 0 0 / .25);
   display: flex; flex-direction: column;
   gap: 1px;
-  /* WCO: the popover lives in the top layer above body's drag
-     baseline; the menu-item buttons inside are no-drag via the
-     central `button` selector, but the popover's own padding /
-     gap pixels would otherwise inherit drag and eat the click
-     when the user lands on the chrome between items. */
+  /* WCO: the popover sits in the top layer above body's drag baseline.
+     Menu-item buttons are no-drag via the central `button` selector,
+     but the popover's own padding / gap pixels would inherit drag and
+     eat clicks landing on the chrome between items. */
   -webkit-app-region: no-drag; app-region: no-drag;
 }
-/* Hidden state — the popover API toggles `:popover-open` rather
-   than the legacy display flip. Keep the stack tight when closed. */
+/* Hidden state — the popover API toggles `:popover-open`; keep the
+   stack tight (display: none) when closed. */
 .triage-menu[popover]:not(:popover-open) { display: none; }
 .triage-menu[popover]:popover-open { display: flex; }
 .triage-menu-item {
@@ -345,18 +333,15 @@
 .line-num a { color: inherit; }
 .line-num a:hover { color: var(--accent); }
 
-/* Print rules. Light-DOM `@media print` in styles/print.css can't
-   reach inside this shadow root, so the badge / mark-host /
-   interactive-control overrides have to live here. Mirrors the
-   shape of the `<finding-card>` shadow's print block — the badge
-   palette is theme-independent (paper-friendly fixed swatches
-   with `print-color-adjust: exact` so backgrounds aren't stripped
-   by the browser's economy default). The mark-* row tints are
-   dropped entirely (colored row backgrounds add visual noise on
-   paper without any of the screen mode's triage value), the
-   mark-x / mark-restore action buttons hide, and the host
-   selection / deletion outlines get neutralized so a paper dump
-   reads as a uniform list. */
+/* Print rules — light-DOM `@media print` in styles/print.css can't
+   reach this shadow root, so the badge / mark-host / interactive
+   overrides live here (mirrors the `<finding-card>` shadow's print
+   block). The badge palette is theme-independent: paper-friendly fixed
+   swatches with `print-color-adjust: exact` so backgrounds aren't
+   stripped by the browser's economy default. mark-* row tints are
+   dropped (colored backgrounds add noise on paper with no triage
+   value), mark-x / mark-restore hide, and selection / deletion outlines
+   are neutralized so a paper dump reads as a uniform list. */
 @media print {
   :host(:hover) .row,
   :host(.mark-red) .row,

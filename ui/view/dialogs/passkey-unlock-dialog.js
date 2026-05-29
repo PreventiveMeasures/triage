@@ -6,9 +6,9 @@
 // session key, and triage / OPFS reads start succeeding.
 //
 // Layout mirrors the setup + share-link dialogs (extends `AppDialog`
-// for the shared shadow-DOM <dialog> chrome). The user can dismiss; the app is
-// still usable but encrypted-at-rest data won't load (banner stays
-// up via the vault-state listener wired in view.js).
+// for the shared shadow-DOM <dialog> chrome). The user can dismiss;
+// the app stays usable but encrypted-at-rest data won't load (banner
+// stays up via the vault-state listener wired in view.js).
 
 import { html, nothing, unsafeCSS } from 'lit'
 import { unlockEncryption } from '#client/index.js'
@@ -35,9 +35,8 @@ class PasskeyUnlockDialog extends AppDialog {
 
   _finish(success) {
     if (this._settled) return
-    // Abort any in-flight WebAuthn ceremony so the system prompt
-    // disappears when the user cancels via our dialog (Browser /
-    // OS prompts otherwise stay up and confuse the user).
+    // Abort any in-flight WebAuthn ceremony so the OS prompt
+    // disappears on cancel (it otherwise stays up and confuses them).
     if (this._abortController) {
       try { this._abortController.abort() } catch {}
     }

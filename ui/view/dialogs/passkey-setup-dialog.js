@@ -11,11 +11,10 @@
 // Esc-to-cancel). State machine mirrors the share-link dialog
 // (form → busy → result).
 //
-// Migration is invoked from passkey-vault.enableEncryption — this
-// dialog only collects the optional user-visible name (defaults to
-// the origin's hostname) and surfaces progress/errors. The migration
-// itself is wrapped in the vault's Web Lock so a sibling tab can't
-// race a competing enable.
+// Migration runs in passkey-vault.enableEncryption — this dialog only
+// collects the optional user-visible name (defaults to the origin's
+// hostname) and surfaces progress/errors. The migration is wrapped in
+// the vault's Web Lock so a sibling tab can't race a competing enable.
 
 import { html, nothing, unsafeCSS } from 'lit'
 import { enableEncryption, hasOrphanedUserId, isEncryptionEnabled, isPasskeyEnvironmentSupported, migrateOpfsBundlesEncrypt, migrateOpfsFilesEncrypt, migrateSecureStorageToEncrypted, migrateTriageToEncrypted, onVaultStateChange, wipeAllVaultData } from '#client/index.js'
@@ -46,58 +45,52 @@ class PasskeySetupDialog extends AppDialog {
     // Orphan state: a USER_ID_KEY survives in localStorage from a
     // previous vault whose metadata is gone (devtools wipe, profile
     // reset, partial setup). The old credential is unrecoverable, so
-    // any data still on disk that was encrypted under it is
-    // permanently unreadable. We surface this BEFORE the normal
-    // enable flow so the user can't be surprised by silent data loss.
+    // any data on disk encrypted under it is permanently unreadable.
+    // Surfaced BEFORE the normal enable flow so the user isn't
+    // surprised by silent data loss.
     this._orphan = false
     // Explicit acknowledgement that ALL local data (encrypted and
-    // plaintext) will be deleted by the wipe. The "Wipe and continue"
-    // button stays disabled until checked so a misclick can't trigger
-    // a destructive irreversible action.
+    // plaintext) will be deleted by the wipe. "Wipe and continue"
+    // stays disabled until checked so a misclick can't trigger the
+    // destructive irreversible action.
     this._orphanAck = false
-    // Allow Cancel during the WebAuthn registration phase (the
-    // AbortController plumbed into `registerPasskey` cleanly
-    // unwinds it). Flipped false when we cross into migrate / wipe
-    // phases where abort isn't propagated and a dialog close would
-    // strand the operation mid-flight.
+    // Allow Cancel during WebAuthn registration (the AbortController
+    // plumbed into `registerPasskey` unwinds it). Flipped false at the
+    // migrate / wipe phases where abort isn't propagated and a close
+    // would strand the operation mid-flight.
     this._canCancel = true
     this._abortController = null
   }
 
   updated(changed) {
-    // When transitioning into the success state, move focus to the
-    // primary Close button. Without this, focus stays on whatever
-    // the user just clicked (often the now-removed "Enable" button)
-    // and keyboard users have to Tab to find the close affordance.
+    // On success, move focus to the primary Close button — otherwise
+    // it stays on the now-removed "Enable" button and keyboard users
+    // must Tab to find the close affordance.
     if (changed.has('_success') && this._success) {
       const btn = this.renderRoot.querySelector('footer button.primary')
       if (btn) btn.focus()
     }
   }
 
-  // Seed the default name + orphan state + cross-tab listener before
-  // the base `firstUpdated` calls `showModal()`, so the first modal
+  // Seed default name + orphan state + cross-tab listener before the
+  // base `firstUpdated` calls `showModal()`, so the first modal
   // interaction already reflects them.
   beforeOpen() {
-    // Default name = origin hostname so the user has a reasonable
-    // label without typing. They can still edit it; the value rides
-    // through to the authenticator as the "user.name" field, which
-    // shows up in the OS-level passkey manager.
+    // Default name = origin hostname so the user has a label without
+    // typing. Editable; rides through to the authenticator as
+    // "user.name", visible in the OS-level passkey manager.
     if (typeof location !== 'undefined') this._userName = location.hostname || 'DeepView'
     // Detect orphan AFTER the default-name fill so the orphan body
     // renders with the right state.
     this._orphan = hasOrphanedUserId()
-    // Watch for cross-tab vault state changes while the dialog is
-    // open. A sibling tab enabling encryption (or wiping) while the
-    // user is reading the orphan warning invalidates the dialog's
-    // assumptions: the orphan body would still offer to wipe a
-    // state that no longer exists, or our `_onEnable` would race a
-    // freshly-enabled vault. Auto-close with `_finish(false)` so
-    // view.js's cross-tab reload alert can take over.
+    // A sibling tab enabling (or wiping) while the user reads the
+    // orphan warning invalidates our assumptions: the orphan body
+    // would offer to wipe a state that no longer exists, or `_onEnable`
+    // would race a freshly-enabled vault. Auto-close so view.js's
+    // cross-tab reload alert can take over.
     this._vaultStateUnsub = onVaultStateChange(() => {
       if (this._settled) return
-      // Re-evaluate orphan; if it's still consistent with our
-      // current body, no action needed.
+      // No action needed if orphan state is still consistent.
       const stillOrphan = hasOrphanedUserId()
       if (this._orphan && !stillOrphan && isEncryptionEnabled()) {
         // A sibling tab finished an enable that consumed the orphan
@@ -112,12 +105,10 @@ class PasskeySetupDialog extends AppDialog {
     })
   }
 
-  // Wait for Lit to re-render with the orphan/normal body before
-  // querying for the input — `beforeOpen` set `_orphan` synchronously
-  // but the reactive re-render hasn't landed yet. Without the await,
-  // the `input[data-role="orphan-ack"]` query returns null and focus
-  // is silently skipped, leaving keyboard users with no visible
-  // focus indicator.
+  // Await the orphan/normal re-render before querying the input:
+  // `beforeOpen` set `_orphan` synchronously but the render hasn't
+  // landed yet. Without the await the query returns null and focus is
+  // silently skipped, leaving keyboard users no visible focus.
   async focusInitial() {
     await this.updateComplete
     const selector = this._orphan ? 'input[data-role="orphan-ack"]' : 'input[data-role="name"]'
@@ -135,9 +126,8 @@ class PasskeySetupDialog extends AppDialog {
   _finish(success) {
     if (this._settled) return
     // Abort any in-flight WebAuthn ceremony so the system prompt
-    // disappears when the user cancels via our dialog. The vault's
-    // enableEncryption is responsible for cleaning up the credential
-    // it just created via signalUnknownCredential.
+    // disappears on cancel. The vault's enableEncryption cleans up the
+    // credential it just created via signalUnknownCredential.
     if (this._abortController) {
       try { this._abortController.abort() } catch {}
     }
@@ -146,21 +136,16 @@ class PasskeySetupDialog extends AppDialog {
 
   _onClose = () => this._finish(this._success)
   _onCancel = () => {
-    // Cancel is ONLY safe when:
-    //   - Not busy at all (form / orphan-ack / success), OR
-    //   - We're in a phase that has a wired AbortController and
-    //     aborting actually unwinds the in-flight work cleanly.
-    //     `_abortController` is set during `registerPasskey`
-    //     (the WebAuthn ceremony — abort closes the OS prompt and
-    //     cleans up the credential) AND remains set during the
-    //     subsequent migrate. The `_canCancel` flag flips false
-    //     when we cross into the migrate phase, since the abort
-    //     signal isn't plumbed through migrate and the close
-    //     would silently abandon a partial encryption sweep.
-    //
-    // Without this distinction, a user stuck on an OS prompt
-    // they can't fulfil (no platform authenticator, hardware key
-    // not connected) had no way out except killing the tab.
+    // Cancel is ONLY safe when not busy (form / orphan-ack / success)
+    // or in a phase whose wired AbortController unwinds cleanly.
+    // `_abortController` is set during `registerPasskey` (abort closes
+    // the OS prompt + cleans up the credential) and stays set through
+    // migrate, but `_canCancel` flips false at the migrate phase since
+    // the abort signal isn't plumbed through it — a close there would
+    // silently abandon a partial encryption sweep. Without the guard, a
+    // user stuck on an OS prompt they can't fulfil (no platform
+    // authenticator, key not connected) had no way out but killing the
+    // tab.
     if (this._busy && !this._canCancel) return
     this._finish(false)
   }
@@ -177,19 +162,17 @@ class PasskeySetupDialog extends AppDialog {
   _onNameInput = (e) => { this._userName = e.target.value }
   _onOrphanAckInput = (e) => { this._orphanAck = e.target.checked }
 
-  // Wipe the orphan state, then continue with the normal enable
-  // flow. wipeAllVaultData clears USER_ID_KEY, every secure-storage
-  // key, and the OPFS report/bundle directories — anything still on
-  // disk encrypted under the lost passkey was unreadable anyway.
+  // Wipe orphan state, then continue with the normal enable flow.
+  // wipeAllVaultData clears USER_ID_KEY, every secure-storage key, and
+  // the OPFS report/bundle dirs — anything on disk encrypted under the
+  // lost passkey was unreadable anyway.
   _onWipeOrphan = async () => {
     if (this._busy) return
     if (!this._orphanAck) return
-    // Cheap pre-flight guard against a sibling tab having enabled
-    // the vault while this dialog was open. The wipe itself
-    // re-checks inside `VAULT_LOCK` with `refuseIfEnabled: true`,
-    // which is the load-bearing guarantee — this synchronous check
-    // is just a fast-path so the user doesn't wait for the lock
-    // before seeing the error.
+    // Fast-path guard against a sibling tab having enabled the vault.
+    // The load-bearing guarantee is the wipe's own re-check inside
+    // `VAULT_LOCK` with `refuseIfEnabled: true`; this just spares the
+    // user the lock wait before seeing the error.
     if (isEncryptionEnabled()) {
       this._error = 'Encryption was just enabled in another tab. Reload this page to unlock.'
       return
@@ -201,16 +184,12 @@ class PasskeySetupDialog extends AppDialog {
     try {
       await wipeAllVaultData({ refuseIfEnabled: true })
       // Reload to drop in-memory state that survives `wipeAllVaultData`:
-      // the bundle-finding / bundle-hash indices, state.bundles /
-      // state.reports / state.findings, the storage.js read cache,
-      // any rendered UI referencing the now-deleted files. Without
-      // the reload, the user could click a finding's "Code →"
-      // affordance and hit "File not found" because the in-memory
-      // index still points at OPFS keys that were wiped. Matches the
-      // lock-overlay wipe path (also reloads). User has to re-trigger
-      // the setup dialog after — acceptable, since wipe is a
-      // destructive one-shot and a fresh start is the intended
-      // outcome.
+      // bundle-finding/bundle-hash indices, state.bundles/reports/
+      // findings, the storage.js read cache, rendered UI referencing
+      // now-deleted files. Without it, a finding's "Code →" hits "File
+      // not found" because the index still points at wiped OPFS keys.
+      // Matches the lock-overlay wipe path (also reloads). User
+      // re-triggers setup after — fine for a destructive one-shot.
       location.reload()
     } catch (err) {
       this._error = `Could not clear previous vault state: ${err?.message ?? err}`
@@ -233,19 +212,17 @@ class PasskeySetupDialog extends AppDialog {
     this._phase = 'Registering passkey…'
     this._abortController = new AbortController()
     try {
-      // The migration callback walks both data layers in sequence
-      // — triage first (small, fast), then OPFS reports (potentially
-      // many files). Each layer's helper is no-op-safe when there's
-      // nothing to convert, so an empty-vault user just gets a no-op
-      // sealed-empty state.
+      // The migration callback walks both layers in sequence — triage
+      // first (small, fast), then OPFS reports (potentially many
+      // files). Each helper is no-op-safe when there's nothing to
+      // convert, so an empty-vault user gets a sealed-empty state.
       const ok = await enableEncryption({
         userName: this._userName.trim() || 'DeepView user',
         rpName: 'DeepView',
         signal: this._abortController.signal,
         migrate: async ({ seal }) => {
-          // Crossing into migrate — abort signal isn't propagated
-          // through the migration sweep, so a Cancel here would
-          // strand the partial encryption. Block Cancel.
+          // Abort signal isn't propagated through the migration sweep,
+          // so a Cancel here would strand a partial encryption. Block it.
           this._canCancel = false
           this._phase = 'Encrypting workspaces and metadata…'
           await migrateSecureStorageToEncrypted({ seal })
@@ -262,12 +239,9 @@ class PasskeySetupDialog extends AppDialog {
         this._phase = ''
       }
     } catch (err) {
-      // WebAuthn errors surface with `.name` that's useful (e.g.
-      // `NotAllowedError` when the user cancels the prompt). The
-      // vault wraps "PRF unsupported" into a friendly message; pass
-      // the rest through as-is so the user sees what the browser said.
-      // AbortError surfaces here when the user clicks Cancel during
-      // the ceremony — surface a friendlier wording.
+      // The vault wraps "PRF unsupported" into a friendly message; pass
+      // the rest through as-is. AbortError surfaces here on Cancel
+      // during the ceremony — suppress it, it's not a failure.
       if (err?.name === 'AbortError') {
         this._error = ''
       } else {
@@ -283,9 +257,8 @@ class PasskeySetupDialog extends AppDialog {
 
   _body() {
     if (this._orphan) {
-      // Orphan-resolve phase. We don't render the name input or the
-      // Enable button here — the user has to consciously acknowledge
-      // the data loss before they get to the normal flow.
+      // Orphan-resolve phase: no name input or Enable button — the
+      // user must consciously acknowledge the data loss first.
       return html`
         <p class="wsl-error">
           DeepView found an abandoned passkey setup on this device. The

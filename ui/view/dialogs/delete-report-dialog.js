@@ -6,12 +6,11 @@
 //   - triage impact (none / shared / orphan-radio)
 //   - whether the report is also stored in the workspace's remote
 //     objstore inventory — if so, a notice explains that the
-//     delete fans out to remote too (no per-scope choice; the
-//     pre-fix "delete locally only" path had no honest semantics
-//     — a peer Replace would re-download the bytes detached, and
-//     the cached tag→name pinned auto-download off for fresh
-//     opens, so users got a quietly-deleted-but-still-listed
-//     remote row either way).
+//     delete fans out to remote too. No per-scope choice: a
+//     "delete locally only" path had no honest semantics — a peer
+//     Replace would re-download the detached bytes, and the cached
+//     tag→name pinned auto-download off for fresh opens, so users
+//     got a quietly-deleted-but-still-listed remote row either way.
 //
 // Sibling of `<leave-workspace-dialog>`: extends `AppDialog` for the
 // shared shadow-DOM <dialog> chrome (focus-trap + Esc-to-cancel),
@@ -141,9 +140,8 @@ customElements.define('delete-report-dialog', DeleteReportDialog)
 // Public entry point. Resolves with `{ confirmed, triage }`. Cancel
 // / Esc / native close all resolve to `{ confirmed: false, triage:
 // 'keep' }`. Pass `inRemote: true` when the workspace's objstore
-// session holds a copy of the report — the dialog surfaces the
-// remote-side notice; the caller already knows the remote scope
-// so the dialog doesn't re-emit it.
+// session holds a copy of the report, to surface the remote-side
+// notice.
 export function openDeleteReportDialog({ name, triageImpact, inRemote } = {}) {
   return openAppDialog('delete-report-dialog', {
     reportName: name ?? '',

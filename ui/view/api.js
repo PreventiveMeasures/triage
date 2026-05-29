@@ -7,22 +7,21 @@ import { getTheme, setTheme, themes } from './theme.js'
 
 // `window.DeepView` — a small read-mostly façade over the in-memory
 // state for browser-console / external-script use. Findings + groups
-// are exposed as live getters that snapshot the current state on
-// each access; triage entries (markers / deleted / comments) come
-// out as fresh `Map` / `Set` copies so a caller can iterate without
-// risk of mutating the live store. `triage.set(id, …)` is the one
-// write-through path: it updates the observed `state.*` containers,
-// persists via `saveTriage()`, and re-renders so a console-driven
-// triage edit lights up the UI immediately.
+// are live getters snapshotting current state per access; triage
+// entries come out as fresh `Map` / `Set` copies so a caller can
+// iterate without mutating the live store. `triage.set(id, …)` is
+// the one write-through path: updates the observed `state.*`
+// containers, persists via `saveTriage()`, and re-renders so a
+// console-driven edit lights up the UI immediately.
 //
-// IDs follow the same convention the renderer uses (`tabKey(f)` =
+// IDs follow the renderer's convention (`tabKey(f)` =
 // `f.id ?? String(f._id)`): non-numeric values are uuid-shaped
-// (analyzer-export id, codex finding-url id, deterministic
-// markdown id) and persist; numeric strings are session-only and
-// don't round-trip.
+// (analyzer-export, codex finding-url, deterministic markdown id)
+// and persist; numeric strings are session-only and don't
+// round-trip.
 
 // Project the single triage map back into the per-field Maps the
-// façade has always exposed, so external callers see no change.
+// façade exposes.
 function projectField(field) {
   const m = new Map()
   for (const [id, e] of state.triage) {
@@ -75,9 +74,9 @@ const triage = {
       } else {
         // Reject unknown triage values loudly. 'ignored' is a
         // common mistake — the per-report ignore set is keyed by
-        // (reportName, id), not by id alone, so it can't be
-        // expressed through this id-only API. Use the per-finding
-        // ignore button or the workspace import path instead.
+        // (reportName, id), not id alone, so it can't be expressed
+        // through this id-only API. Use the per-finding ignore
+        // button or the workspace import path instead.
         throw new TypeError(
           `DeepView.triage.set: unknown triage value ${JSON.stringify(triageVal)} ` +
           "(expected 'fixed' | 'invalid' | 'deleted' | null)",
@@ -115,10 +114,10 @@ const triage = {
 }
 
 window.DeepView = {
-  // Live snapshots of the active load. Each access re-flatten so a
+  // Live snapshots of the active load — each access re-flattens so a
   // caller iterating after a triage edit / file switch sees the
-  // current shape. Returns shallow copies — mutating the returned
-  // arrays doesn't touch `state`.
+  // current shape. Shallow copies: mutating the returned arrays
+  // doesn't touch `state`.
   get reports() { return state.reports.slice() },
   get groups() { return getMergedGroups() },
   get findings() { return getMergedGroups().flat() },
@@ -152,11 +151,10 @@ window.DeepView = {
   refresh() { render() },
 
   // Opens the full-triage backup dialog (export + import in one
-  // place). Bundles every persisted-id triage entry plus all
-  // saved repo URLs into a single gzipped JSON; same dialog
-  // imports a previously-exported backup with a choice of merge
-  // modes. Returns a Promise that resolves when the dialog
-  // closes — caller usually doesn't await it (it's a console
-  // command), but doing so is harmless.
+  // place). Bundles every persisted-id triage entry + all saved
+  // repo URLs into a single gzipped JSON; the same dialog imports a
+  // previously-exported backup with a choice of merge modes.
+  // Returns a Promise resolving on dialog close — caller usually
+  // doesn't await it (console command), but doing so is harmless.
   export() { return openTriageExportDialog() },
 }

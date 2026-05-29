@@ -602,7 +602,7 @@ export async function disableEncryption({ migrate }) {
       // `…|<empty>|<key>` that never matches the
       // `…|<userIdB64>|<key>` AAD the existing envelopes were
       // sealed with — every `open` throws and the entire disable
-      // flow data-losses. (Found in audit re-run round-N P0.)
+      // flow data-losses.
       //
       // `fireVaultStateChange()` stays at the end so UI listeners see
       // the disabled state once everything is plaintext on disk, not

@@ -4,13 +4,10 @@
    its file cells reach the document-level [data-bundle-view-source]
    click delegate. */
 
-/* Treemap slide — a squarified treemap of the bundle's source files
-   over their PATH hierarchy (layout computed in view/bundle-treemap.js,
-   which measures the plot and positions every node absolutely). These
-   rules are mostly paint: directories are faint bordered containers
-   with a name strip; leaves (files) and depth-capped aggregates are
-   filled with the package hue, their text color set inline for
-   contrast. */
+/* Treemap slide. Layout (node positions) is computed in
+   view/bundle-treemap.js, which measures the plot and positions every
+   node absolutely; these rules are paint only. Leaf/aggregate fill is
+   the package hue with text color set inline for contrast. */
 .bundles-slide-body > bundle-treemap {
   display: flex;
   flex-direction: column;

@@ -169,11 +169,9 @@ function buildEntry(staticDir: string, name: string): StaticEntry {
   const ext = extname(name)
   const raw = readFileSync(join(staticDir, name))
   const type = CONTENT_TYPE[ext] ?? 'application/octet-stream'
-  // HTML: lift `<link rel="(module)preload" …>` into a Link header
-  // and drop the tags from the served body so the bytes ship without
-  // the now-redundant in-body hint. ETag + compression run against
-  // the stripped body — the on-disk file and the served body diverge
-  // by exactly the lifted tags.
+  // HTML: lift `<link rel="(module)preload" …>` into a Link header and
+  // drop the tags from the served body. ETag + compression run against
+  // the stripped body (see the header note on the divergence).
   let identity = raw
   let link: string | null = null
   if (ext === '.html') {
@@ -273,13 +271,11 @@ function isUnsafeAttr(s: string): boolean {
   return /[\r\n",;<>]/u.test(s)
 }
 
-// Find character ranges in `html` whose contents are NOT real HTML
-// content: comment bodies and script / noscript raw-text bodies. A
-// `<link>` whose match offset falls inside any range is preserved
-// verbatim (no header lift). Heuristic: a real HTML parser is
-// overkill here — the build emits clean, well-formed markup; this is
-// defence against the build (or a hand edit) accidentally mentioning
-// `<link rel="preload">` somewhere it isn't meant to fire.
+// Char ranges in `html` whose contents are NOT real HTML content:
+// comment bodies and script / noscript raw-text bodies. A `<link>`
+// whose match offset falls in any range is preserved verbatim (no
+// header lift — see the call site for why). Heuristic, not a real
+// parser: the build emits clean, well-formed markup.
 function findSkipRanges(html: string): Array<[number, number]> {
   const ranges: Array<[number, number]> = []
   const patterns = [

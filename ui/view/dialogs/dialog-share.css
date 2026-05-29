@@ -2,13 +2,10 @@
    `static styles` of the dialogs that put `workspace-share-dialog` /
    `workspace-unlock-dialog` / `workspace-export-dialog` on their
    frame (passkey-setup, passkey-unlock, workspace-share-link,
-   workspace-export, workspace-unlock-bundle, workspace-unlock-link).
-   Sits on top of dialog-base.css (the `dialog` frame + `.nwd-*`).
-   Flattened from the nested `.workspace-*-dialog { … }` block in
-   styles/dialogs.css — each lives in its own shadow root with one
-   `<dialog>`, so the wrapping class isn't needed for scoping. */
+   workspace-export, workspace-unlock-bundle, workspace-unlock-link),
+   on top of dialog-base.css. */
 
-/* Wider frame than the base 480px. */
+/* Wider than the base 480px. */
 dialog { max-width: 520px; width: min(94vw, 520px); }
 
 .wsl-field {
@@ -22,9 +19,9 @@ dialog { max-width: 520px; width: min(94vw, 520px); }
   }
 }
 
-/* Acknowledgement checkbox row used by the orphan-setup-resolve
-   flow. The label spans a single row so the checkbox sits inline
-   with its text instead of stacking. */
+/* Acknowledgement checkbox row (orphan-setup-resolve flow): label
+   spans one row so the checkbox sits inline with its text rather than
+   stacking. */
 .wsl-ack {
   display: flex; align-items: flex-start; gap: .5rem;
   margin-top: .6rem;

@@ -1,9 +1,8 @@
-// Per-connection server state. One `Peer` per accepted WebSocket,
-// replacing the former parallel per-socket WeakMaps (challenge /
-// authorized / alive / inflight / tags). The connection handler
-// constructs one on accept and holds it in a closure, so the hot
-// paths (message dispatch, pong, close) touch fields directly; the
-// few cross-function call sites look it up via `peers.get(socket)`.
+// Per-connection server state. One `Peer` per accepted WebSocket. The
+// connection handler constructs one on accept and holds it in a
+// closure, so the hot paths (message dispatch, pong, close) touch
+// fields directly; the few cross-function call sites look it up via
+// `peers.get(socket)`.
 //
 // Held in a `WeakMap<WebSocket, Peer>` so a closed socket's state GCs
 // with the socket; the close handler also `delete`s it explicitly
@@ -17,9 +16,8 @@ export class Peer {
   // `workspace-subscribe` signature — blocks cross-connection replay
   // of a captured subscribe frame.
   readonly challenge: string
-  // Password-gate authorization flag. Once the `authenticate`
-  // handshake succeeds, every subsequent first-action on this socket
-  // bypasses the new-workspace gate. `false` until then.
+  // Password-gate flag. Once the `authenticate` handshake succeeds,
+  // first-actions on this socket bypass the new-workspace gate.
   authorized = false
   // Heartbeat liveness. The sweep flips it `false` after each `ping()`;
   // the `pong` listener flips it back. A socket still `false` on the

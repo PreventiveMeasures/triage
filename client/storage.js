@@ -110,11 +110,9 @@ function getOpfsDir() {
 // magic bytes (1f 8b) so the flag doesn't need to live in metadata.
 export { gunzipBytes }
 
-// Storage layer: try OPFS first (real files, large quota), fall back to
-// gzipped localStorage when OPFS is unavailable. Each function probes
-// OPFS once per call — caching is unnecessary because getDirectoryHandle
-// is cheap. localStorage paths read/write a key prefixed with
-// LS_REPORT_PREFIX; the file list is enumerated by scanning that prefix.
+// Each function re-probes OPFS once per call — caching the dir
+// handle is unnecessary because getDirectoryHandle is cheap.
+//
 // In-memory cache for report contents. Populated lazily on
 // `readFile`, kept in sync by `saveFile` (overwrite) and `deleteFile`
 // (evict). `inFlight` deduplicates concurrent reads of the same name
@@ -130,45 +128,33 @@ export { gunzipBytes }
 const cache = new Map()
 const inFlight = new Map()
 // Per-name write-generation token. Bumped synchronously by every
-// `saveFile` and `deleteFile` call BOTH before AND after its async
-// I/O. `readFile` captures the token at the start of its read; if
-// the token changed by the time the read resolves (a saveFile /
-// deleteFile landed in the meantime), the read result is stale
-// relative to the current view and we skip the
-// `cache.set(name, content)` step. Without this guard, an in-flight
-// read that started before a saveFile could resolve AFTER
-// saveFile's `cache.set(name, NEW)` ran and overwrite the cache
-// with the OLD bytes — subsequent reads serve stale content with
-// no invalidation path until the next saveFile.
+// `saveFile` and `deleteFile` BOTH before AND after its async I/O.
+// `readFile` captures the token at the start of its read and skips
+// `cache.set(name, content)` if it changed by resolution time (a
+// save/delete landed meanwhile, so the read is stale). Without it,
+// an in-flight read that started before a saveFile could resolve
+// AFTER saveFile's `cache.set(NEW)` and overwrite it with OLD bytes
+// — stale content with no invalidation until the next saveFile.
 //
-// The two-bump design closes BOTH directions of the race:
-//   1. read started BEFORE the write — captured the pre-bump gen,
-//      sees gen advanced after the await, skips cache.set. (Pre-
-//      bump audit round-9 H1.)
+// Two bumps close BOTH race directions:
+//   1. read started BEFORE the write — captured pre-bump gen, sees
+//      it advanced after the await, skips cache.set. (round-9 H1.)
 //   2. read started AFTER the start-bump but read the pre-commit
 //      File snapshot (OPFS createWritable doesn't commit until
-//      close) — captured the start-bumped gen, sees gen advanced
-//      again after writable.close + cache.set, skips cache.set.
-//      (Audit round-12 H8.)
+//      close) — sees the gen advance again at close + cache.set,
+//      skips. (round-12 H8.)
 //
-// The Map grows monotonically with every distinct filename touched
-// over the page's lifetime; we deliberately do NOT prune entries
-// on `deleteFile` because the race-protection invariant — "if
-// writeGen advanced since you started reading, skip the cache
-// update" — would weaken under prune-then-reinsert. Concretely: an
-// in-flight `readFile` that captured `gen = 5` then saw the entry
-// pruned (gen would default to 0 on a re-`saveFile`) could resume
-// with the gen check `0 !== 5` → skip cache.set; safe. But a NEW
-// read post-prune captures `gen = 0`, sees the next saveFile bump
-// to `1`, and SKIPS POPULATING ITS OWN FRESH BYTES INTO THE CACHE
-// — the bytes are still returned to the caller (the gen-check
-// only gates `cache.set`, not `return content`), but the next
-// readFile pays the OPFS round-trip again. Net effect is a
-// redundant re-read, not a correctness break — but redundant
-// re-reads in a fast-path that's read on every render are easy
-// to leak ~8 bytes per ever-touched name to avoid. Audit-flagged
-// as "benign in practice"; documented here so the trade-off
-// isn't re-litigated.
+// Map grows monotonically with every distinct filename touched; we
+// deliberately do NOT prune on `deleteFile`, because prune-then-
+// reinsert weakens the invariant. A NEW read post-prune captures
+// gen 0, sees the next saveFile bump to 1, and skips caching its
+// OWN fresh bytes (gen-check gates `cache.set`, not `return
+// content` — bytes still reach the caller, but the next readFile
+// re-pays the OPFS round-trip). (An in-flight read that captured
+// gen 5 pre-prune is still safe: 0 !== 5 also skips.) Net effect:
+// a redundant re-read on a per-render fast path, not a correctness
+// break — cheaper to leak ~8 bytes/name than re-read. Audit-flagged
+// "benign in practice"; documented so it isn't re-litigated.
 const writeGen = new Map()
 function bumpWriteGen(name) {
   writeGen.set(name, (writeGen.get(name) ?? 0) + 1)
@@ -257,35 +243,29 @@ export async function saveFile(name, content) {
     let bytes = await gzipBytes(encodeUtf8(content))
     // Envelope when the passkey vault is unlocked. AAD binds the
     // ciphertext to the filename so a report swap on disk fails
-    // AEAD verification on the next read. Storage at rest layout:
+    // AEAD verification on the next read. At-rest layout:
     //   [4-byte DVE1 magic][12-byte nonce][AES-GCM ciphertext+tag]
-    // …of the GZIPPED report bytes — readFile peels the envelope
-    // FIRST, then falls into the existing gzip magic-sniff to
-    // decompress.
+    // …of the GZIPPED bytes — readFile peels the envelope FIRST,
+    // then gzip-magic-sniffs to decompress.
     //
-    // Vault-state consistency: capture the session key BEFORE the
-    // async seal, then double-check it didn't flip during the seal.
-    // A sibling-tab disable that fires during seal would otherwise
-    // produce envelope bytes on disk under a key the next page load
-    // doesn't have. Mirrors the same check in saveTriage. On
-    // mismatch, abort cleanly — the saveFile caller already saw a
-    // resolved promise from the bump, and the next save will land
-    // under the new state.
+    // Vault-state consistency (done inside sealForStorage): capture
+    // the session key before the seal, recheck it didn't flip during
+    // it. Mirrors saveTriage. A sibling-tab disable mid-seal would
+    // otherwise leave envelope bytes under a key the next page load
+    // lacks; on mismatch we abort cleanly (the caller already saw a
+    // resolved promise from the bump; the next save lands under the
+    // new state). This recheck is LOAD-BEARING under the shared
+    // VAULT_LOCK: the lock serialises us against enable/disable, but
+    // passkey-vault's storage-event handler nulls `sessionKey` on a
+    // sibling-tab disable WITHOUT the lock (storage events fire on the
+    // task queue, not the lock scheduler) — this catches that path.
     //
-    // LOAD-BEARING under shared VAULT_LOCK: the shared lock serialises
-    // this saveFile against enable/disable, BUT the storage-event
-    // handler in passkey-vault.js synchronously nulls `sessionKey`
-    // on a sibling-tab disable WITHOUT acquiring VAULT_LOCK (storage
-    // events fire on the task queue, not through the lock
-    // scheduler). The check catches exactly that path.
-    //
-    // Refuse writes when the vault is enabled-but-locked. A user
-    // who dismissed the boot unlock dialog still ends up here on
-    // drag-drop / paste; without this guard, the file lands as
-    // plaintext on disk under an enabled vault — breaking the
-    // "everything written while encryption is on is encrypted"
-    // invariant. Caller surfaces via the same "vault locked"
-    // path that switchToFile already handles (unlock + retry).
+    // Refuse writes when the vault is enabled-but-locked (a user who
+    // dismissed the boot unlock dialog still reaches here on drag-drop
+    // / paste): else the file lands plaintext under an enabled vault,
+    // breaking "everything written while encryption is on is
+    // encrypted". Caller surfaces via the same "vault locked" path
+    // switchToFile handles (unlock + retry).
     bytes = await sealForStorage(bytes, sealForOpfs, name, `"${name}"`, () => bumpWriteGen(name))
     const fh = await dir.getFileHandle(name, { create: true })
     const writable = await fh.createWritable()
@@ -305,11 +285,9 @@ export async function saveFile(name, content) {
       // Bump again so a concurrent in-flight readFile that observed
       // the pre-bump gen treats its result as stale. Audit round-12 H8.
       bumpWriteGen(name)
-      // Explicit abort so the underlying writable releases its file
-      // handle immediately rather than waiting for GC. OPFS spec
-      // auto-cleans on collection, but eager release closes the
-      // window where a concurrent createWritable for the same name
-      // could race the GC. Memory-lifecycle audit
+      // Eager-release the writable rather than wait for GC, closing
+      // the window where a concurrent createWritable for the same
+      // name races the collection. Memory-lifecycle audit
       // `client/storage.js:175`.
       try { await writable.abort(err) } catch {}
       throw err

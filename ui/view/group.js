@@ -113,9 +113,8 @@ export function groupState(group) {
   const commonTriage = !hasConflict && bucketVals.length > 0 ? bucketVals[0] : null
   return {
     hasConflict, commonColor, anyTriage, allTriaged, commonTriage,
-    // Convenience flags mirroring the original API; downstream code
-    // that asked "is this group in the trash bucket" continues to
-    // work without branching on commonTriage.
+    // Convenience flags so downstream code that asks "is this group in
+    // the trash bucket" needn't branch on commonTriage.
     isFixed:    commonTriage === 'fixed',
     isInvalid:  commonTriage === 'invalid',
     isDeleted:  commonTriage === 'deleted',
@@ -126,18 +125,17 @@ export function groupState(group) {
 export function isGroupDeleted(group) { return groupState(group).isDeleted }
 export function groupTriage(group) { return groupState(group).commonTriage }
 
-// Flatten every loaded report's groups into the workspace overall
-// list, applying `state.workspaceMerges` so groups bound together by
-// a cross-report dedup hint render as a single super-group. Each
-// merge instruction is a Set of finding ids in the order the source
-// combined entry listed them — that order is the canonical one (the
-// upstream dedup pass deliberately picked a primary), so the
-// assembled super-group sorts its members by merge-instruction
-// order, falling back to load order for anything no instruction
-// mentioned (e.g. a member of a multi-finding source group the
-// merge only named once). Per-report `state.reports[*].groups` is
-// untouched — single-report views and per-report iteration keep
-// their original shape; only the merged display uses this view.
+// Flatten every loaded report's groups into the workspace list,
+// applying `state.workspaceMerges` so groups bound by a cross-report
+// dedup hint render as a single super-group. Each merge instruction is
+// a Set of finding ids in the order the source combined entry listed
+// them — that order is canonical (the upstream dedup pass deliberately
+// picked a primary), so the super-group sorts members by
+// merge-instruction order, falling back to load order for anything no
+// instruction mentioned (e.g. a member of a multi-finding source group
+// the merge only named once). Per-report `state.reports[*].groups` is
+// untouched — single-report views and per-report iteration keep their
+// shape; only the merged display uses this view.
 export function getMergedGroups() {
   const allGroups = state.reports.flatMap((r) => r.groups)
   const merges = state.workspaceMerges
@@ -163,11 +161,10 @@ export function getMergedGroups() {
       else union(first, idx)
     }
   }
-  // Walk allGroups in order; first hit on each root opens its slot in
-  // the output (so the merged super-group lands at the position of
-  // its earliest member). Members are then ordered by merge-instruction
-  // order — first-recorded instruction wins; ids no instruction names
-  // get appended in load order.
+  // Walk allGroups in order; first hit on each root opens its output
+  // slot (so the super-group lands at its earliest member's position).
+  // Members are then ordered by merge-instruction order — first-recorded
+  // instruction wins; ids no instruction names get appended in load order.
   const seenRoots = new Set()
   const merged = []
   for (let i = 0; i < allGroups.length; i++) {

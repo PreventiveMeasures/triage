@@ -93,8 +93,7 @@ export type LiveReader = {
 // desync the reaper (or store propagation) reconciles — exactly the
 // `unavailable`/503 contract, which the client retries. Both backends MUST
 // map a missing blob to `unavailable` (FS: ENOENT; Vercel: BlobNotFoundError
-// / null get()). Returning a 404-mapping reason here is the bug fixed in the
-// Vercel backend — the variant is intentionally absent so it can't recur.
+// / null get()). No 404-mapping variant exists here so that bug can't recur.
 export type OpenLiveResult =
   | { ok: true; reader: LiveReader }
   | { ok: false; reason: 'unavailable' }

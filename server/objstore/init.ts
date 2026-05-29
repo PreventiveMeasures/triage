@@ -103,15 +103,14 @@ export function initObjstore(deps: ObjstoreInitDeps): ObjstoreInit {
   // on-disk state still has stranded files from a prior crash.
   const startupReap = enqueueSweep()
   // Jittered start of the periodic timer. Multi-replica deploys
-  // (Neon + Vercel Blob) commonly boot N replicas in tight lock-
-  // step (deploy rollout, cluster restart) and would otherwise
-  // sync every replica's reaper at the same wall-clock tick,
-  // hammering the DB + blob store with N×readdir+lock-acquire
-  // bursts. A random first-interval delay deconcurrencies the
-  // cluster without changing the long-term sweep cadence.
-  // Jitter range is 0…1× reapIntervalMs (i.e., the next sweep
-  // happens at [interval, 2×interval] after boot); subsequent
-  // sweeps stay at exactly `reapIntervalMs` apart.
+  // (Neon + Vercel Blob) commonly boot N replicas in tight lock-step
+  // (deploy rollout, cluster restart), which would otherwise sync every
+  // replica's reaper to the same wall-clock tick and hammer the DB +
+  // blob store with N×readdir+lock-acquire bursts. A random
+  // first-interval delay spreads the cluster out without changing the
+  // long-term cadence. Jitter is 0…1× reapIntervalMs (first sweep at
+  // [interval, 2×interval] after boot); subsequent sweeps stay exactly
+  // `reapIntervalMs` apart.
   let reapTimer: ReturnType<typeof setInterval> | null = null
   const jitterMs = Math.floor(Math.random() * deps.reapIntervalMs)
   const firstTimer = setTimeout(() => {

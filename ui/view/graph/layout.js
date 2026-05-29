@@ -8,28 +8,22 @@
 // dimensions, so the layout matches the viewport instead of
 // an arbitrary unit square.
 //
-// Earlier versions also shipped Fruchterman-Reingold "force",
-// a "classic" variant pinned to graph v1's canvas, "radial"
-// (single ring), and "grid" (package cells). All four got
-// removed — Force/Classic were an order of magnitude slower
-// on big trees and produced a more cluttered result; Radial
-// looked clean only at small N and crowded badly at large;
-// Grid mis-read because user nodes themselves often align
-// to a grid (file-system layout) so the cells reinforced
-// the wrong axis.
+// Spiral is the only layout: Force/Classic (Fruchterman-
+// Reingold) were ~10× slower on big trees and more cluttered;
+// Radial (single ring) crowded badly at large N; Grid mis-read
+// because user nodes often already align to a grid (file-system
+// layout), so the cells reinforced the wrong axis.
 
-// Outgoing + incoming cross-package edges per package. Walks
-// the directed imports relation: for each "f imports imp"
-// where the two files live in different packages, +1 to f's
-// package (outgoing) and +1 to imp's package (incoming). Bidi
-// pairs (A↔B across packages) contribute +2 to each side.
+// Outgoing + incoming cross-package edges per package. Per
+// directed "f imports imp" across packages: +1 to f's pkg
+// (outgoing) and +1 to imp's pkg (incoming); a bidi pair thus
+// contributes +2 to each side.
 //
-// This is what drives Spiral's "well-connected toward the
-// center" sort: a package with lots of code pointing at it
-// AND lots of code pointing out from it both read as "core".
-// Walking edges instead would only count each cross-pair
-// once — losing the asymmetric case where a hub library has
-// many incoming but few outgoing imports.
+// Drives Spiral's "well-connected toward the center" sort: a
+// package with lots of code pointing at it AND out of it reads
+// as "core". Counting undirected edges would tally each cross-
+// pair once, losing the asymmetric hub-library case (many
+// incoming, few outgoing).
 function crossDegByPkg(graph) {
   const map = new Map()
   for (const [f, imps] of graph.importsOf) {
@@ -47,21 +41,19 @@ function crossDegByPkg(graph) {
 }
 
 // Pick the entry-point package — the one nothing else points
-// at. A package qualifies when none of its files has an
-// importer in a DIFFERENT package; same-package importers are
-// fine (intra-package coupling is expected). Among qualifying
-// packages, pick the largest by file count.
+// at. Qualifies when no file has an importer in a DIFFERENT
+// package (same-package importers are fine, intra-package
+// coupling is expected); among qualifiers, pick the largest by
+// file count.
 //
-// For a typical DeepView project this lands on the user's
-// own source: nothing in node_modules imports app code, but
-// the reverse is constant. Multiple candidates can exist
-// (e.g. `src/` and `lib/` as sibling top-level dirs both with
-// no inbound from npm), and the largest one usually carries
-// the project's main intent.
+// Typically lands on the user's own source: nothing in
+// node_modules imports app code, the reverse is constant. With
+// multiple candidates (e.g. sibling `src/` and `lib/`, neither
+// with npm inbound) the largest usually carries the main intent.
 //
 // Returns null when every package has cross-package inbound
-// (full cycle / no clear root). Callers fall back to a
-// no-pinned-center layout in that case.
+// (full cycle / no clear root); callers then fall back to a
+// no-pinned-center layout.
 function findEntryPkg(graph) {
   if (graph.packages.length === 0) return null
   const hasInbound = new Set()
@@ -84,42 +76,38 @@ function findEntryPkg(graph) {
   return null
 }
 
-// Distribute files inside their per-package disks. Same two-phase
-// approach as the package-level Spiral above, applied at file scope:
+// Distribute files inside their per-package disks. Two-phase,
+// same approach as the package-level Spiral above at file scope:
 //
-//   1. Vogel slot positions inside each disk. Each file's index
-//      within the package's sorted file list maps to a fixed (angle,
-//      radius) via the same i × 137.508° / sqrt(i/(N-1)) seed
-//      pattern. Hubs occupy the inner band [0, 0.3·groupR]; members
-//      the outer band [0.4·groupR, 1.0·groupR]. The Vogel sort puts
-//      hubs at low indices (small radii) and members at higher
-//      indices (rim) automatically.
+//   1. Vogel slot positions. File index within the package's
+//      sorted list maps to a fixed (angle, radius) via the same
+//      i × 137.508° / sqrt(i/(N-1)) seed. Hubs occupy the inner
+//      band [0, 0.3·groupR], members the outer [0.4·groupR,
+//      1.0·groupR]; the Vogel sort already puts hubs at low
+//      indices (small radii) and members at the rim.
 //
-//   2. Greedy assignment. Walk packages in pkgInfo iteration order
-//      (priority order from the Spiral pass: entry first, then
-//      cross-degree desc), and within each package walk files in
-//      priority order (hubs first, then by degree desc). Each file
-//      picks the unused Vogel slot in its band closest to the
-//      barycenter of its already-placed neighbours (intra- AND
-//      cross-package). Files with no placed neighbours take the
-//      lowest unused index in their band, inheriting the Vogel
-//      golden-angle spread.
+//   2. Greedy assignment. Walk packages in pkgInfo order (Spiral's
+//      priority: entry first, then cross-degree desc), files in
+//      priority order (hubs first, then degree desc). Each file
+//      picks the unused slot in its band closest to the barycenter
+//      of its already-placed neighbours (intra- AND cross-package);
+//      files with no placed neighbours take the lowest unused index
+//      in their band, inheriting the golden-angle spread.
 //
-// Net effect: files with cross-package edges drift toward the rim
-// of their disk facing the connected packages, so cross-package
-// edges run as short radial chords instead of long diagonals.
+// Net effect: files with cross-package edges drift to the disk rim
+// facing the connected packages, so those edges run as short radial
+// chords instead of long diagonals.
 //
-// Hub-pull-to-center is gated on hub count: when a package has
-// more than 5 hubs (common on a large public-API package), pulling
-// them all to the inner 30% piles them into a tight blob and the
-// cluster loses readability. In that case, hubs use the same outer
-// band as members and just rely on their bigger radius + halo +
-// ring for the visual "this is a hub" cue.
+// Hub-pull-to-center is gated on hub count: past 5 hubs (common on a
+// large public-API package), pulling them all into the inner 30%
+// piles them into an unreadable blob. Above the limit, hubs share
+// the outer band with members and rely on their bigger radius +
+// halo + ring as the "this is a hub" cue.
 const HUB_PULL_LIMIT = 5
 function placeFilesInDisk(graph, pkgInfo) {
   // Files-per-package buckets, in priority order (hubs first by
   // degree, then members by degree). Computed once so the placement
-  // loop below can iterate them without re-filtering graph.nodes.
+  // loop needn't re-filter graph.nodes per package.
   const filesByPkg = new Map()
   for (const n of graph.nodes) {
     if (!pkgInfo.has(n.pkg)) continue
@@ -133,26 +121,23 @@ function placeFilesInDisk(graph, pkgInfo) {
     })
   }
 
-  // Tracks which files have positions written so the barycenter
+  // Which files have positions written, so the barycenter
   // accumulator below can ignore not-yet-placed neighbours.
   const placedX = new Map()
   const placedY = new Map()
 
-  // Walk packages in pkgInfo iteration order — that's the order the
-  // Spiral pass inserted them: entry first (when present), then
-  // others in priority order. Inner packages thus place first; their
-  // outer-package neighbours (placed later) get to optimize toward
-  // the inner files' positions. The reverse direction would have
-  // outer-package files placed first and inner files optimizing
-  // outward, but inner positions are closer to the canvas centroid
-  // so they have less room to move and benefit less from the pass.
+  // Walk packages in pkgInfo insertion order (entry first when
+  // present, then priority order). Inner packages place first; their
+  // outer neighbours, placed later, optimize toward the inner files'
+  // positions. Reversing would place outer files first and let inner
+  // files optimize outward — but inner positions sit near the canvas
+  // centroid, so they have less room to move and benefit less.
   for (const [pkg, info] of pkgInfo) {
     const files = filesByPkg.get(pkg)
     if (!files || files.length === 0) continue
     const N = files.length
-    // Re-derive the hub count from the sorted list (sort put hubs
-    // first, so they occupy the leading prefix). pullToCenter
-    // matches the gate at the top of this function.
+    // Hub count = leading prefix of the sorted list (hubs sorted
+    // first). pullToCenter matches the gate at the top of the file.
     let totalHubs = 0
     for (const n of files) { if (n.isHub) totalHubs++; else break }
     const pullToCenter = totalHubs > 0 && totalHubs <= HUB_PULL_LIMIT
@@ -160,10 +145,9 @@ function placeFilesInDisk(graph, pkgInfo) {
     const outerN = N - innerN
     const groupR = info.groupR
 
-    // Vogel slot positions for this disk. Indices [0, innerN) live
-    // in the inner band [0, 0.3·groupR]; [innerN, N) live in the
-    // outer band [0.4·groupR, groupR]. Angle is the same i ×
-    // 137.508° golden-step across both bands.
+    // Vogel slot positions. Indices [0, innerN) → inner band
+    // [0, 0.3·groupR]; [innerN, N) → outer band [0.4·groupR,
+    // groupR]. Angle is the same i × 137.508° step across both.
     const slotX = Array.from({ length: N })
     const slotY = Array.from({ length: N })
     for (let i = 0; i < N; i++) {
@@ -185,11 +169,11 @@ function placeFilesInDisk(graph, pkgInfo) {
 
     for (let fi = 0; fi < N; fi++) {
       const f = files[fi]
-      // Slot range available to this file:
+      // Slot range for this file:
       //   pullToCenter && hub → inner band [0, innerN)
       //   pullToCenter && member → outer band [innerN, N)
       //   !pullToCenter → entire disk [0, N) (hubs sort earlier so
-      //   still get the inner indices in the outer band)
+      //   still take the inner indices)
       let bandEnd
       let bandStart
       if (pullToCenter && f.isHub) { bandStart = 0; bandEnd = innerN }
@@ -197,10 +181,9 @@ function placeFilesInDisk(graph, pkgInfo) {
       else { bandStart = 0; bandEnd = N }
 
       // Weighted barycenter of placed neighbours (intra- and cross-
-      // package). Each import / imported-by counts once; a bidi pair
-      // ends up contributing twice (once via importsOf, once via
-      // importedBy), which is the desired "stronger pull" for
-      // bidirectional coupling.
+      // package). Each import / imported-by counts once, so a bidi
+      // pair contributes twice (importsOf + importedBy) — the
+      // intended stronger pull for bidirectional coupling.
       let bx = 0, by = 0, count = 0
       const imps = graph.importsOf.get(f.file)
       if (imps) {
@@ -222,10 +205,9 @@ function placeFilesInDisk(graph, pkgInfo) {
       if (count > 0) {
         bx /= count; by /= count
         const dx = bx - info.x, dy = by - info.y
-        // Skip the barycenter path when it sits essentially at the
-        // disk center: all slots in the band would be roughly
-        // equidistant and slot bandStart would always win, collapsing
-        // these files onto the same arc.
+        // Skip the barycenter path when it sits ~at the disk center:
+        // all band slots would be roughly equidistant and slot
+        // bandStart would always win, collapsing files onto one arc.
         if (dx * dx + dy * dy > 1) useBary = true
       }
 
@@ -252,43 +234,38 @@ function placeFilesInDisk(graph, pkgInfo) {
   }
 }
 
-// "Spiral" — Vogel sunflower positions (the same (i × 137.5°,
-// sqrt(i/(N-1))) seed pattern as before) with greedy assignment
-// of packages to those positions. The slot geometry is fixed; the
-// degree of freedom is which priority-ranked package occupies which
-// slot.
+// "Spiral" — Vogel sunflower positions ((i × 137.5°,
+// sqrt(i/(N-1))) seed) with greedy assignment of packages to
+// them. Slot geometry is fixed; the only freedom is which
+// priority-ranked package occupies which slot.
 //
 // Two phases:
 //
 //   1. Priority bucketing. Packages sort by cross-package degree
-//      desc (ties: file count desc) and quantize the resulting
-//      rank order into discrete rings. Ring k spans rank range
-//      [(k/M)² · N, ((k+1)/M)² · N) — sqrt-density bucketing, so
-//      outer rings carry proportionally more packages just like
-//      the Vogel index ordering did. Most-coupled packages land
+//      desc (ties: file count desc); the rank order quantizes into
+//      rings. Ring k spans rank [(k/M)² · N, ((k+1)/M)² · N) —
+//      sqrt-density, so outer rings carry proportionally more
+//      packages (as the Vogel index ordering does). Most-coupled
 //      on the innermost ring, leaves on the rim.
 //
 //   2. Within-ring assignment. For each ring inner→outer, walk
-//      packages in priority order; each picks the unused Vogel
-//      slot in this ring closest to the weighted barycenter of
-//      its already-placed neighbours (weight = cross-package edge
-//      count). Packages without placed neighbours take the next-
-//      available slot in Vogel index order, which preserves the
-//      original spiral's golden-angle spread for unconstrained
-//      placements.
+//      packages in priority order; each picks the unused Vogel slot
+//      in this ring closest to the weighted barycenter of its
+//      already-placed neighbours (weight = cross-package edge
+//      count). Packages with no placed neighbours take the next
+//      available slot in Vogel index order (golden-angle spread).
 //
 // The entry-point package (largest with no incoming cross-package
 // edges — typically the project's own source root) is pinned at
-// center. Files inside each package fan out in their disk via the
-// shared placeFilesInDisk helper.
+// center. Files inside each package fan out via placeFilesInDisk.
 //
 // Greedy, single-pass: O(N × (avgNeighbours + ringSlots))
 // ≈ O(N²/numRings). Sub-millisecond on 500+ packages.
 export function layoutSpiral(graph, w, h) {
   const cx = w / 2, cy = h / 2
-  // Work in the design's unit space (where 1.0 = half-canvas)
-  // so the magic numbers below port over directly. Scaling to
-  // pixels happens once per coordinate at write time.
+  // Work in unit space (1.0 = half-canvas) so the magic numbers
+  // below port over directly; scale to pixels per coordinate at
+  // write time.
   const unitToPx = Math.min(w, h) / 2
   const N = graph.packages.length
   if (N === 0) return
@@ -303,8 +280,8 @@ export function layoutSpiral(graph, w, h) {
       return (graph.pkgCount.get(b) ?? 0) - (graph.pkgCount.get(a) ?? 0)
     })
   const Nothers = others.length
-  // Adapt the OUTER radius to N. Tight ring at low N, widening
-  // through medium N, full spiral at high N.
+  // Outer radius adapts to N: tight ring at low N, full spiral
+  // at high N.
   let maxRUnit
   if (Nothers <= 0) maxRUnit = 0
   else if (Nothers <= 6) maxRUnit = 0.65
@@ -429,10 +406,9 @@ export function layoutSpiral(graph, w, h) {
   for (let k = 0; k < numRings; k++) ringDelta[k] = ringR1[k] - ringR0[k]
 
   // Pre-compute the Vogel sunflower positions for every index
-  // 0..Nothers-1. Same (i × 137.508°, sqrt(i/(N-1))) seed pattern
-  // as before, with each package's band shifted by the per-ring
-  // delta computed above (preserves within-ring spread, just
-  // translates the ring centre).
+  // 0..Nothers-1. Same (i × 137.508°, sqrt(i/(N-1))) seed, with each
+  // package's band shifted by the per-ring delta above (preserves
+  // within-ring spread, just translates the ring centre).
   const vogelX = Array.from({ length: Nothers })
   const vogelY = Array.from({ length: Nothers })
   let curRing = 0

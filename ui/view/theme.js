@@ -19,16 +19,14 @@ const THEME_KEY = 'deepview.theme'
 const THEMES = Object.freeze(['dark', 'light', 'green', 'pink'])
 
 // Per-theme `<meta name="theme-color">` values. `base` paints the
-// WCO title-bar / Android browser chrome in normal mode. `dim` is a
-// pre-darkened variant we swap to while the print-preview scrim is
-// open — Chrome paints the scrim over the web-contents rect but not
-// over the WCO strip (whose colour is driven by `theme-color`), so
-// without the swap the title bar stays at full brightness and the
-// seam between it and the dimmed page reads as a bug. The composite-
-// vs-alpha approach is intentional: a single alpha doesn't map the
-// same way across light and dark base colours, and the scrim itself
-// isn't exposed to CSS or the page. If the browser ever exposes it
-// we can drop this.
+// WCO title-bar / Android browser chrome normally. `dim` swaps in
+// while the print-preview scrim is open: Chrome paints the scrim
+// over the web-contents rect but not the WCO strip (driven by
+// `theme-color`), so without the swap the title bar stays bright and
+// the seam reads as a bug. Pre-darkened rather than one alpha
+// because alpha doesn't map the same across light and dark bases,
+// and the scrim isn't exposed to CSS. Droppable if the browser ever
+// exposes the scrim.
 const THEME_COLOR = {
   dark:  { base: '#1a1a1b', dim: '#0a0a0a' },
   light: { base: '#f6f6fa', dim: '#646464' },
@@ -63,7 +61,7 @@ function applyTheme(name) {
   // Wipe every named theme class so back-to-back swaps don't leave
   // stale classes layered (e.g. switching green → light must clear
   // `theme-green` first). `dark` is the implicit default — no class
-  // at all on body, same as the legacy behaviour.
+  // at all on body.
   for (const t of THEMES) if (t !== 'dark') document.body.classList.remove(`theme-${t}`)
   if (name !== 'dark') document.body.classList.add(`theme-${name}`)
   try {
@@ -79,9 +77,9 @@ function applyTheme(name) {
 }
 
 // Apply the persisted theme at module evaluation time so the body
-// class is set before any custom element upgrades. Same flash trade-
-// off as the previous boolean implementation: a stored non-dark
-// theme briefly paints over default-dark before this runs.
+// class is set before any custom element upgrades. Flash trade-off:
+// a stored non-dark theme briefly paints over default-dark before
+// this runs.
 applyTheme(readStored())
 
 window.addEventListener('beforeprint', () => {
@@ -115,11 +113,10 @@ class ThemeToggle extends LitElement {
 
   constructor() {
     super()
-    // Reads document state rather than the persisted theme so a
-    // green / pink workspace lands on `false` and the button shows
-    // ☀ ("click to go light"). Click handler does the same read so
-    // the click always behaves correctly regardless of how we got
-    // into the current theme.
+    // Read document state, not the persisted theme, so a green / pink
+    // workspace lands on `false` and shows ☀ ("click to go light").
+    // The click handler reads the same way, so a click behaves right
+    // regardless of how we reached the current theme.
     this._light = document.body.classList.contains('theme-light')
   }
 
@@ -149,10 +146,9 @@ class ThemeToggle extends LitElement {
     this._light = document.body.classList.contains('theme-light')
   }
 
-  // Only ever lands on dark or light — picking green / pink is
-  // intentionally locked behind the DeepView API. Reading the
-  // document state (not `this._light`) makes a click from a non-
-  // light easter-egg theme do the right thing: switch to light.
+  // Only ever lands on dark or light — green / pink are locked behind
+  // the DeepView API. Reads document state (not `this._light`) so a
+  // click from a non-light easter-egg theme switches to light.
   _toggle = () => {
     const nowLight = document.body.classList.contains('theme-light')
     applyTheme(nowLight ? 'dark' : 'light')
@@ -166,8 +162,6 @@ class ThemeToggle extends LitElement {
   }
 
   render() {
-    // When in light mode, show moon (click → switch to dark).
-    // Otherwise, show sun (click → switch to light).
     return html`${this._light ? ICON_DARK : ICON_LIGHT}`
   }
 }

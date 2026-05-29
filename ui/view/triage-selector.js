@@ -1,14 +1,12 @@
 // `<triage-selector>` — Fixed / Invalid / Deleted (+ Ignored for the
-// findings tab) bucket-switcher buttons. Consolidates four near-
-// duplicate inline templates (the findings toolbar in render.js, the
-// graph topbar in graph/render.js, and the Packages / Repositories
-// page toolbars in render-packages.js / render-repositories.js).
-// All four read `state.shownTriage` and emit the same button shape;
-// the variants differed only in an extra marker class
+// findings tab) bucket-switcher buttons, shared by the findings
+// toolbar, the graph topbar, and the Packages / Repositories page
+// toolbars. All read `state.shownTriage` and emit the same button
+// shape; variants differ only in an extra marker class
 // (`graph2-triage-selector` or `packages-triage-selector`) that
-// events.js uses to route the click to a teardown-aware path
-// (graph variant tears down the canvas before re-rendering) rather
-// than the plain render() flow.
+// events.js uses to route the click to a teardown-aware path (graph
+// variant tears down the canvas before re-rendering) rather than the
+// plain render() flow.
 //
 // Reactivity: extends StateElement, so reads of `state.shownTriage`
 // inside render() are tracked by observer-util — the active

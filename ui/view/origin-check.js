@@ -1,38 +1,32 @@
 // One-shot origin check for the legacy view hosts. The production
-// view now lives on triage.space; users who land on either
+// view now lives on triage.space; users landing on
 // deepaudit.dev/view.html or chalker.github.io/deepview/view.html
-// with no local data are bounced over silently, and users who do
-// have local data get a styled modal so they can either follow
-// the migration or keep editing in place while they export their
-// local state.
+// with no local data are bounced over silently, those with local
+// data get a styled modal to either migrate or keep editing in
+// place while they export.
 //
-// What each transfer mechanism actually carries (so the prompt
-// doesn't lie about the migration paths):
+// What each transfer mechanism carries (so the prompt doesn't lie
+// about the migration paths):
 //
 //   triage-sync (deepaudit.dev only)
 //     Per-workspace TRIAGE STATE — markers, triage buckets,
-//     comments, fixes, per-report ignores. Does NOT carry the
-//     workspace record itself (private key + report list) or
-//     report content; both still need a manual re-import on the
-//     new origin before the synced triage can reattach.
+//     comments, fixes, per-report ignores. NOT the workspace record
+//     (private key + report list) or report content; both need a
+//     manual re-import on the new origin before the synced triage
+//     can reattach.
 //
 //   <workspace-export> (sidebar button on each workspace)
-//     A single workspace and its reports + the triage for those
-//     reports, in one .gz drop. This is the right move for a
-//     non-synced workspace migration: drop the .gz on triage.space
-//     and everything appears at once.
+//     One workspace + its reports + their triage in one .gz drop —
+//     the right move for a non-synced workspace migration.
 //
 //   DeepView.export() / <triage-export-dialog>
-//     The flat, persisted-id triage table plus saved repo URLs.
-//     No reports, no workspaces — strictly the triage payload
-//     keyed by finding id. Useful for moving triage attached to
-//     loose (unattached) reports, or as a top-up after a
-//     workspace re-import.
+//     Flat persisted-id triage table + saved repo URLs, keyed by
+//     finding id. No reports/workspaces. For triage on loose
+//     (unattached) reports, or as a top-up after a workspace
+//     re-import.
 //
-// Modal lives in the same family as `<triage-export-dialog>` /
-// `<comment-dialog>`: native <dialog> for focus-trap + Esc-to-
-// cancel, light-DOM render so `.origin-migration-dialog` rules in
-// sidebar.css apply.
+// Modal: native <dialog> for focus-trap + Esc-to-cancel, light-DOM
+// render so `.origin-migration-dialog` rules in sidebar.css apply.
 
 import { LitElement, html } from 'lit'
 import { hasAnyBundles, listFiles, listWorkspaces } from '#client/index.js'
@@ -59,20 +53,19 @@ function matchedHost() {
   return null
 }
 
-// localStorage keys that hold user data outside the report/workspace
-// stores. Hard-coded here rather than imported because `client/triage.js`
-// keeps its key names private; the canonical defs live there
+// localStorage keys holding user data outside the report/workspace
+// stores. Hard-coded rather than imported because `client/triage.js`
+// keeps its key names private; canonical defs live there
 // (`TRIAGE_KEY`, `TRIAGE_PENDING_KEY`) and in `client/state.ts`
-// (`REPO_URLS_KEY`). Touch this list whenever those move.
+// (`REPO_URLS_KEY`). Keep this list in sync whenever those move.
 //
-//   deepview.triage          compressed triage blob — only present
-//                            when at least one entry exists (saveTriage
-//                            removes the key on an empty payload).
+//   deepview.triage          compressed triage blob — present only
+//                            when ≥1 entry exists (saveTriage removes
+//                            the key on an empty payload).
 //   deepview.triage.pending  uncompressed pre-compress snapshot — same
 //                            "present ⇒ non-empty" invariant.
-//   deepview.repoUrls        per-report repo URL map; written even when
-//                            the map empties out, so parse to confirm
-//                            it actually contains entries.
+//   deepview.repoUrls        per-report repo URL map; written even
+//                            when empty, so parse to confirm entries.
 const TRIAGE_KEYS = ['deepview.triage', 'deepview.triage.pending']
 const REPO_URLS_KEY = 'deepview.repoUrls'
 

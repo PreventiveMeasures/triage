@@ -1,9 +1,8 @@
 // `<fix-link-dialog>` — single-line URL editor for a finding's
-// fix reference (typically a PR URL). Replaces window.prompt()
-// for the .mark-fix button so the user gets a real text field
-// with the finding context they are annotating, an "open"
-// affordance for an existing URL, and the same look as the
-// other deepview dialogs.
+// fix reference (typically a PR URL), fronting the .mark-fix
+// button. Gives a real text field with the finding context being
+// annotated, an "open" affordance for an existing URL, and the
+// same look as the other deepview dialogs.
 //
 // Sibling of `<comment-dialog>`: extends `AppDialog` for the shared
 // shadow-DOM <dialog> chrome (focus-trap + Esc-to-cancel), with the
@@ -37,9 +36,8 @@ class FixLinkDialog extends AppDialog {
   // `firstUpdated` shows the modal.
   beforeOpen() { this._value = this.initial ?? '' }
 
-  // Focus + select-all the input. Select-all (vs caret-at-end)
-  // matches single-line URL editors — the common edit is "paste
-  // a new URL", which overwrites the current one.
+  // Focus + select-all (vs caret-at-end): the common edit on a
+  // single-line URL is "paste a new URL", overwriting the current.
   focusInitial() {
     const input = this.renderRoot.querySelector('input[type="url"]')
     if (!input) return
@@ -63,9 +61,8 @@ class FixLinkDialog extends AppDialog {
 
   _onCancel = () => this._finish(null)
 
-  // Enter saves; the input is single-line so a bare Enter would
-  // submit a wrapping <form> anyway — handling it here avoids
-  // depending on a form parent. Esc is handled by the native
+  // Enter saves. Handling it here avoids depending on a wrapping
+  // <form> for single-line submit. Esc is handled by the native
   // <dialog> close event.
   _onKeydown = (e) => {
     if (e.key === 'Enter') {

@@ -1,37 +1,21 @@
 // `<slide-triage-tabs>` — Invalid / Deleted bucket tabs shown in the
-// header of the Packages / Repositories detail slides. Replaces two
-// near-duplicate inline templates (`packageSlideTriageTabsTemplate`
-// in render-packages.js, `repositorySlideTriageTabsTemplate` in
-// render-repositories.js) that read different state slices
-// (`state.packageSlideTriage` vs. `state.repositorySlideTriage`)
-// and emit different data attributes
-// (`data-package-slide-triage` vs. `data-repository-slide-triage`)
-// but otherwise share their shape, classes, and toggle behaviour.
+// header of the Packages / Repositories detail slides. Both kinds
+// share shape/classes/toggle behaviour but read different state slices
+// (`state.packageSlideTriage` vs. `state.repositorySlideTriage`),
+// discriminated by the `kind` property rather than per-page data
+// attributes: a click dispatches `slide-triage-toggle` with the bound
+// `kind` + picked bucket, and events.js's single listener writes the
+// matching slice and re-renders. (Same custom-event pattern as
+// `<severity-chips>`, `<triage-filter>`, `<color-marker>`.)
 //
-// The component drops the per-page data-attribute scheme — clicks
-// dispatch a `slide-triage-toggle` CustomEvent with the bound `kind`
-// and the picked bucket value. events.js's single listener then
-// writes the matching state slice and calls render(). Matches the
-// existing custom-event pattern used by `<severity-chips>`,
-// `<triage-filter>`, `<color-marker>`.
-//
-// Reactivity: extends StateElement. The render() autorun reads
-// `state.packageSlideTriage` or `state.repositorySlideTriage`
-// depending on `kind` — selecting an active bucket re-highlights
-// the right tab without needing a parent prop hand-off.
+// Reactivity: extends StateElement. The render() autorun reads the
+// `kind`-selected slice, so selecting an active bucket re-highlights
+// the right tab without a parent prop hand-off.
 //
 // Returns `nothing` when no bucket is visible (no findings AND no
 // active selection), so the host can drop it in unconditionally.
 //
-// Properties:
-//   * `counts` (`attribute: false`) — `{ invalid, deleted }` from
-//                the parent's filter pipeline.
-//   * `kind`   — `"package"` or `"repository"`. Default `"package"`.
-//
-// Events (bubble + composed:true):
-//   * `slide-triage-toggle(detail: { kind, value })` — fired on
-//     button click. events.js routes the toggle to the matching
-//     `state.${kind}SlideTriage` slot.
+// `counts` is `{ invalid, deleted }` from the parent's filter pipeline.
 import { nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { StateElement, html } from '@rray/frontend/state-element'

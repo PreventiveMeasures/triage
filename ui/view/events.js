@@ -10,29 +10,24 @@ import { openCommentDialog } from './dialogs/comment-dialog.js'
 import { openFixLinkDialog } from './dialogs/fix-link-dialog.js'
 import { downloadReportsAsMarkdown } from './markdown-export.js'
 
-// Subscribe once to the bundle-finding index. Any time another
-// OPFS report finishes parsing, re-render IF the user is currently
-// looking at a bundle — the Issues tab and Graph view both pull
-// from the index, so newly-indexed findings need to land in the
-// view without waiting for a tab flip / re-open.
+// When another OPFS report finishes parsing, re-render if the user is
+// viewing a bundle — Issues tab and Graph view both pull from the
+// index, so newly-indexed findings must land without a tab flip / re-open.
 subscribeToBundleFindingIndex(() => {
   if (state.currentView === 'bundles' && state.selectedBundle) render()
   else if (state.currentView === 'packages') render()
   else if (state.currentView === 'repositories') render()
   else if (state.currentView === 'findings' || state.currentView === 'files') {
-    // Sidebar's PACKAGES / REPOSITORIES entry captions depend on
-    // the index too — refresh it when the count would change. The
-    // main view stays put.
+    // Sidebar's PACKAGES / REPOSITORIES captions depend on the index
+    // too; refresh it (main view stays put).
     renderSidebar().catch(() => {})
   }
 })
 
-// The findings-tab graph view and the bundles-tab graph view share
-// the same renderGraph2Layout chrome but draw from different graph
-// data. Click delegates below pick the right refresh helper based
-// on which view is currently active so a node selection inside a
-// bundle graph repaints the bundle's sidebar (and its top-pkgs
-// block), not the findings tab's.
+// Findings-tab and bundles-tab graph views share renderGraph2Layout
+// chrome but draw from different graph data. Pick the refresh helper
+// by active view so a node selection inside a bundle graph repaints
+// the bundle's sidebar / top-pkgs block, not the findings tab's.
 function refreshActiveGraphSidebar() {
   if (state.currentView === 'bundles' && state.bundleDetailsTab === 'graph') {
     refreshBundleGraphSidebar()
@@ -49,12 +44,10 @@ function refreshActiveGraphTopPkgs() {
 }
 
 // Re-render preserving the bundle source viewer's scroll position.
-// Toggling the side panel (and any other state change while the
-// viewer is open) goes through render() — Lit may detach + reattach
-// .bundle-source-code-wrap when sibling structure changes, dropping
-// scrollTop. Capture before, restore after on the freshly-rendered
-// element. Tied specifically to the source viewer because nothing
-// else in this view has user-driven scroll worth preserving.
+// Lit may detach + reattach .bundle-source-code-wrap when sibling
+// structure changes (e.g. side-panel toggle), dropping scrollTop;
+// capture before, restore after. Source-viewer-specific because
+// nothing else here has user-driven scroll worth preserving.
 function renderPreservingSourceScroll() {
   const before = document.querySelector('.bundle-source-code-wrap')
   const top = before?.scrollTop ?? 0
@@ -67,12 +60,11 @@ function renderPreservingSourceScroll() {
   }
 }
 
-// Re-render preserving scrollTop on a named container. Picking a
-// row in any list-driven view (Code rail tree, Issues slide list,
-// Code search results) triggers render() — Lit may rebuild the
-// container's child nodes for the `.current` highlight or for a
-// data shape change, and a rebuilt subtree resets scrollTop on
-// the scrolling ancestor.
+// Re-render preserving scrollTop on a named container. Picking a row
+// in a list-driven view (Code rail tree, Issues slide, Code search)
+// makes Lit rebuild the container's children for the `.current`
+// highlight / data-shape change, and a rebuilt subtree resets
+// scrollTop on the scrolling ancestor.
 function renderPreservingScrollOf(selector) {
   const before = document.querySelector(selector)
   const top = before?.scrollTop ?? 0
@@ -81,9 +73,9 @@ function renderPreservingScrollOf(selector) {
   if (after) after.scrollTop = top
 }
 
-// Row-internal interactions (tab switch, triage popover action, mark-color,
-// comment / fix dialog save, details-panel close) all re-render the page
-// after mutating per-tab state. In table mode that subtree lives inside
+// Row-internal interactions (tab switch, triage popover, mark-color,
+// comment / fix save, details-panel close) re-render after mutating
+// per-tab state. In table mode that subtree lives inside
 // `<finding-table>`, so a bare render() resets scrollTop on
 // `.findings-table-list`. Call this instead.
 function renderPreservingTableScroll() {
@@ -96,15 +88,12 @@ import { BUNDLE_TABS, persistLastBundle, switchToFile } from './ingest.js'
 import { treeAnchor } from './file-counts.js'
 import { graph2, cleanupGraph2 } from './graph/state.js'
 
-// composedPath-aware variant of Element.closest — needed for clicks
-// that originate inside a shadow DOM (e.g. `<finding-table>`'s
-// `.tab` / `.mark-dot` / `.mark-x` / `.mark-restore` buttons). Native
-// click events bubble out composed:true, but `e.target` retargets to
-// the shadow host on the way up, so a plain `e.target.closest('.tab')`
-// from this delegate would miss the inner element. Walking
-// composedPath sees the original target. Returns the deepest matching
-// element, or null. Works equally for light-DOM clicks since the path
-// starts at the same node.
+// composedPath-aware Element.closest — needed for clicks originating
+// inside a shadow DOM (e.g. `<finding-table>`'s `.tab` / `.mark-*`
+// buttons): clicks bubble out composed:true but `e.target` retargets
+// to the shadow host, so a plain `e.target.closest()` would miss the
+// inner element; composedPath sees the original target. Works for
+// light-DOM clicks too since the path starts at the same node.
 function pathClosest(e, selector) {
   for (const el of e.composedPath()) {
     if (el?.matches?.(selector)) return el
@@ -113,12 +102,10 @@ function pathClosest(e, selector) {
 }
 
 // Labeled `Repo / File / Line / Description / Confidence` block for
-// the active tab under the clicked button. Shared by the copy
-// button (writes to clipboard) and the Claude button (hands off to
-// claude:// as a `Confirm and fix:` prompt). The repo lookup walks
-// the package index first (matching the per-package repo header
-// shown in the file picker) and falls back to the per-finding /
-// per-report / global repo URL for OWN-source findings.
+// the active tab under the clicked button. Shared by the copy and
+// Claude buttons. Repo lookup walks the package index first (matching
+// the per-package repo header in the file picker), falling back to
+// the per-finding / per-report / global repo URL for OWN-source findings.
 function findingHandoffText(e) {
   const findingEl = pathClosest(e, '[data-gid]')
   const gid = findingEl?.dataset?.gid
@@ -148,26 +135,15 @@ function findingHandoffText(e) {
 }
 
 // All interactive elements inside #report are handled via event
-// delegation here, no inline handlers. Order matters: closer-fitting
-// selectors come first so a more specific match short-circuits before a
-// generic one (e.g. tree-graph buttons before generic tab clicks).
+// delegation here, no inline handlers. Order matters: more specific
+// selectors come first so they short-circuit before a generic match
+// (e.g. tree-graph buttons before generic tab clicks).
 report.addEventListener('click', (e) => {
-  // Bundles list — per-row "Code →" shortcut. Selects the bundle
-  // (kicking the same async parse the data-select-bundle path
-  // does) and opens straight into the Code slide. Listed BEFORE
-  // the row-select handler since both buttons live inside the
-  // selectable row container; without the early return, the
-  // generic row-select would fire too and we'd race the slide
-  // setup against bundleDetails landing.
-  // Finding card's `[Code]` shortcut — pops the bundle source
-  // viewer modal as an overlay on top of the current view
-  // (findings, packages, etc.) without navigating away. Same
-  // pattern the graph-tab "View source" link uses inside the
-  // bundles view, lifted to the global overlay slot
-  // (`#bundle-source-overlay-slot` — render.js mounts the
-  // modal there on every render). The button lives inside
-  // `<finding-card>`'s shadow root, so we walk composedPath
-  // rather than `e.target.closest`.
+  // Finding card's `[Code]` shortcut — pops the bundle source viewer
+  // modal as an overlay on the current view (findings, packages, etc.)
+  // without navigating away, via the global overlay slot
+  // (`#bundle-source-overlay-slot`, mounted by render.js each render).
+  // Button lives in `<finding-card>`'s shadow root, hence composedPath.
   const findingCode = pathClosest(e, '[data-finding-code-bundle]')
   if (findingCode) {
     const integrity = findingCode.dataset.findingCodeBundle
@@ -176,24 +152,20 @@ report.addEventListener('click', (e) => {
     const line = lineAttr ? parseInt(lineAttr, 10) : null
     state.bundleSourceFile = file || null
     state.bundleSourceFindingIdx = null
-    // The modal suppresses itself when we're in the Code tab of
-    // the bundles view (the slide renders the source inline);
-    // flip the tab back to the default so the modal surfaces
-    // even if the user happens to be parked on Code right now.
+    // The modal suppresses itself in the Code tab (slide renders the
+    // source inline); flip back to default so it surfaces even if the
+    // user is parked on Code.
     if (state.bundleDetailsTab === 'code') state.bundleDetailsTab = 'overview'
-    // After the modal lands in the DOM, scroll its line-row for
-    // this finding into view at the top of the viewport. Same
-    // shape the Code-search hits use.
+    // After the modal mounts, scroll its line-row to the top of the
+    // viewport (same shape Code-search hits use).
     const scrollToFindingLine = () => {
       if (!Number.isFinite(line)) return
       queueMicrotask(() => {
         const row = document.querySelector(`.bundle-source-lineno-row[data-line="${line}"]`)
-        // `instant` (not `smooth`) — the modal pops over the
-        // current view, so a smooth scroll from the modal's
-        // initial natural position would visibly drift the line
-        // into place. Instant scroll lands the matching line at
-        // the top of the viewport in the same frame the modal
-        // appears.
+        // `instant`, not `smooth`: the modal pops over the current
+        // view, so a smooth scroll from its initial natural position
+        // would visibly drift the line into place. Instant lands the
+        // line at the top in the same frame the modal appears.
         if (row) row.scrollIntoView({ block: 'start', behavior: 'instant' })
       })
     }
@@ -214,23 +186,11 @@ report.addEventListener('click', (e) => {
     })()
     return
   }
-  // Packages list — row select. Mirrors the bundles select pattern;
-  // selection is purely UI (no async load — the index is already in
-  // memory), so a plain re-render paints the right-side panel.
-  // [Issues →] button on a package / repository row — open the
-  // full-width Issues slide directly, without forcing the user
-  // to drill into the right-side details panel first. Same
-  // shortcut shape bundles' [Code →] row button uses. Listed
-  // BEFORE the row-select handlers below because the button
-  // sits inside the `<li>`; closest() would otherwise bubble
-  // the click up to the row's data-select-* attribute.
   // Packages list — expand chevron on multi-version row headlines.
-  // Flips `state.expandedPackages` membership for this package so
-  // the older-version sub-rows surface (or hide) on the next
-  // render. Listed before the row-issues / row-select handlers
-  // because the chevron lives inside the `<li>` click target;
-  // bubbling up to the row would otherwise select the latest
-  // version row alongside the expand.
+  // Flips `state.expandedPackages` so older-version sub-rows surface /
+  // hide next render. Listed before the row-issues / row-select
+  // handlers: the chevron lives inside the `<li>`, so bubbling up
+  // would otherwise select the latest-version row alongside the expand.
   const pkgExpand = e.target.closest('[data-package-expand]')
   if (pkgExpand) {
     const pkg = pkgExpand.dataset.packageExpand
@@ -239,6 +199,9 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
+  // Before the row-select handler below: the [Issues →] button sits
+  // inside the selectable `<li>`, so closest() would otherwise select
+  // the row too.
   const pkgRowIssues = e.target.closest('[data-package-row-issues]')
   if (pkgRowIssues) {
     const pkg = pkgRowIssues.dataset.packageRowIssues
@@ -299,8 +262,8 @@ report.addEventListener('click', (e) => {
   // Packages details — tab switch. Overview keeps the regular
   // list + details layout; Issues opens the full-width slide
   // (state.packageDetailsTab='issues' triggers the slide branch
-  // in renderPackagesView). Pure UI flip; the bucket is already
-  // in memory so the re-render is paint-only.
+  // in renderPackagesView). Bucket's already in memory, so the
+  // re-render is paint-only.
   const pkgTab = e.target.closest('[data-package-tab]')
   if (pkgTab) {
     const tab = pkgTab.dataset.packageTab
@@ -329,11 +292,10 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
-  // Package / repository slide Invalid / Deleted tabs are now
-  // dispatched as `slide-triage-toggle` CustomEvents by
-  // `<slide-triage-tabs>` — handled by the listener registered below
-  // (search "slide-triage-toggle"). No data-attribute branch needed
-  // here anymore.
+  // Package / repository slide Invalid / Deleted tabs dispatch
+  // `slide-triage-toggle` CustomEvents from `<slide-triage-tabs>` —
+  // handled by the listener below (search "slide-triage-toggle"), no
+  // data-attribute branch here.
   // Packages details — click a report row to navigate to it.
   // Mirrors the bundle Issues report-chip handler (switchToFile
   // loads it into findings + flips currentView away from packages).
@@ -431,17 +393,13 @@ report.addEventListener('click', (e) => {
     if (name) switchToFile(name)
     return
   }
-  // Bundle code-rail search-mode tabs (Files / Code / Issues) are
-  // dispatched as `bundle-search-mode-change` CustomEvents by
-  // `<bundle-code-search>` — handled by the listener registered
-  // below (search "bundle-search-mode-change"). Clicking a tab
-  // doesn't clear the query so the user can pivot between modes
-  // against the same string.
-  // [×] clear button next to the bundle code search input now lives
-  // inside `<bundle-code-search>`; it dispatches the same
-  // `search-input` CustomEvent the typed-input path uses with
-  // `value: ""`, so the listener registered with the other search-
-  // input branches handles both flows uniformly.
+  // Bundle code-rail search-mode tabs (Files / Code / Issues)
+  // dispatch `bundle-search-mode-change` from `<bundle-code-search>`
+  // — handled by the listener below. Clicking a tab doesn't clear the
+  // query so the user can pivot between modes against the same string.
+  // The [×] clear button inside `<bundle-code-search>` dispatches the
+  // same `search-input` CustomEvent as typed input with `value: ""`,
+  // so the search-input listener below handles both flows uniformly.
   // Bundle source viewer — open / close. Close fires when the click
   // lands directly on the backdrop (NOT a descendant — clicks inside
   // the modal body shouldn't dismiss) or on any element carrying
@@ -528,14 +486,13 @@ report.addEventListener('click', (e) => {
     }
     return
   }
-  // Files toggle (page header, right of the repo chip). On/off
-  // shape — clicking flips state.currentView between 'files' and
-  // 'findings', mirroring the Trash button's state.showDeleted.
-  // The graph view-mode (when active) lives inside Findings now;
-  // its rAF/observers tear down naturally when the body's innerHTML
-  // resets at the top of render(), but cleanupGraph2 is called
-  // explicitly so the canvas state can drop its viewport cache /
-  // hover state cleanly across the view switch.
+  // Files toggle (page header, right of the repo chip). Flips
+  // state.currentView between 'files' and 'findings', mirroring the
+  // Trash button's state.showDeleted. The graph view-mode lives
+  // inside Findings; its rAF/observers tear down when render() resets
+  // the body innerHTML, but cleanupGraph2 is called explicitly so the
+  // canvas drops its viewport cache / hover state cleanly across the
+  // switch.
   const filesToggle = e.target.closest('[data-action="toggle-files"]')
   if (filesToggle) {
     if (state.currentView === 'files') {
@@ -558,10 +515,7 @@ report.addEventListener('click', (e) => {
   if (g2Pkg) {
     const pkg = g2Pkg.dataset.g2Pkg
     // Clicking a package row (Top packages list) toggles solo on
-    // that package. Clicking the currently-soloed entry clears
-    // solo. Used to also drive a swatch palette in the right
-    // panel; that grid is gone now, so the only DOM surface to
-    // update is the right-panel sections via refresh helpers.
+    // that package; re-clicking the soloed entry clears solo.
     graph2.solo = graph2.solo === pkg ? null : pkg
     // Clear the file selection when the user solos a package —
     // selection card switches to package mode in that case (see
@@ -574,11 +528,9 @@ report.addEventListener('click', (e) => {
     graph2.graphState?.requestDraw?.()
     return
   }
-  // (graph2 severity filter is now a `<severity-chips kind="graph">`
-  // — the click dispatches a `severity-toggle` CustomEvent that the
-  // dedicated listener at the bottom of this file handles, doing
-  // the same canvas redraw + Top-packages refresh as the old
-  // `[data-g2-sev]` click delegate did.)
+  // (graph2 severity filter is a `<severity-chips kind="graph">`; its
+  // click dispatches `severity-toggle`, handled by the listener at the
+  // bottom of this file — canvas redraw + Top-packages refresh.)
 
   const g2Select = pathClosest(e, '[data-g2-select]')
   if (g2Select) {
@@ -596,15 +548,12 @@ report.addEventListener('click', (e) => {
   }
   const g2JumpFindings = pathClosest(e, '[data-g2-jump-findings]')
   if (g2JumpFindings) {
-    // Bundle context — the file selected in the canvas lives inside
-    // a bundle, not in `state.reports`, so flipping
+    // Bundle context — the canvas-selected file lives inside a
+    // bundle, not in `state.reports`, so flipping
     // `state.currentView = 'findings'` would navigate out of the
-    // bundle entirely (and pre-shadow-DOM the click silently no-op'd
-    // because `e.target.closest` couldn't reach across the boundary,
-    // hiding the same destructive jump). Switch to the bundle's
-    // Issues tab instead so the click stays bundle-local — that's
-    // the closest analog to "show me this file's findings" inside a
-    // bundle.
+    // bundle entirely. Switch to the bundle's Issues tab instead so
+    // the click stays bundle-local — the closest analog to "show me
+    // this file's findings" inside a bundle.
     if (state.currentView === 'bundles') {
       if (state.bundleDetailsTab === 'graph') cleanupGraph2()
       state.bundleDetailsTab = 'issues'
@@ -678,9 +627,8 @@ report.addEventListener('click', (e) => {
   }
   // Triage view selector in graph v2's topbar — flips
   // state.shownTriage to the picked bucket (or back to live when
-  // re-clicking the active button). Same canvas teardown +
-  // cache invalidation the prior trash toggle did so the graph
-  // rebuilds against the new file set.
+  // re-clicking the active button). Canvas teardown + cache
+  // invalidation so the graph rebuilds against the new file set.
   const g2TriageBtn = pathClosest(e, '.graph2-triage-selector [data-triage-show]')
   if (g2TriageBtn) {
     const next = g2TriageBtn.dataset.triageShow
@@ -717,11 +665,10 @@ report.addEventListener('click', (e) => {
   }
   // Tab click — switch the active tab within a group. Re-render because
   // tab highlight + tab body visibility + marks row color all update.
-  // pathClosest (rather than e.target.closest) so the lookup works for
-  // tabs rendered inside `<finding-table>`'s shadow DOM. Same applies
-  // to the mark-dot / mark-x / mark-restore handlers below; the `[data-gid]`
-  // ancestor is also resolved off the path because it's the
-  // `.finding-row` inside the same shadow tree.
+  // pathClosest (not e.target.closest) so the lookup works for tabs
+  // rendered inside `<finding-table>`'s shadow DOM — same for the
+  // mark-* handlers below, and the `[data-gid]` ancestor is resolved
+  // off the path too (it's the `.finding-row` in the same shadow tree).
   const tabEl = pathClosest(e, '.tab')
   if (tabEl && pathClosest(e, '.tabs')) {
     const findingEl = pathClosest(e, '[data-gid]')
@@ -782,14 +729,12 @@ report.addEventListener('click', (e) => {
     renderPreservingTableScroll()
     return
   }
-  // Comment button — open the multi-line <comment-dialog> with
-  // the active tab's existing comment (empty when none).
-  // Whitespace-trimmed input; empty strings clear the entry from
-  // state.comments so saveTriage doesn't persist a "" placeholder.
-  // The comment is per-active-tab (matching mark-color semantics —
-  // a multi-tab group can hold distinct comments per member tab).
-  // The dialog resolves to null when the user cancelled or saved
-  // an unchanged value, so the early-return covers both.
+  // Comment button — open the multi-line <comment-dialog> with the
+  // active tab's existing comment. Empty input clears the entry so
+  // saveTriage doesn't persist a "" placeholder. Per-active-tab
+  // (matching mark-color semantics — a multi-tab group holds distinct
+  // comments per member). Dialog resolves to null on cancel or an
+  // unchanged save, so the early-return covers both.
   const commentBtn = pathClosest(e, '.mark-comment')
   if (commentBtn) {
     const findingEl = pathClosest(e, '[data-gid]')
@@ -808,15 +753,12 @@ report.addEventListener('click', (e) => {
     }).catch(() => {})
     return
   }
-  // Copy button — write the active tab's file / line /
-  // description / confidence to the clipboard as a labeled
-  // block. Per-active-tab so a multi-tab group copies the
-  // member the user is currently looking at. Briefly toggles a
-  // `.copied` class so the button's icon pulses to acknowledge
-  // the click; the class is dropped after 1s so the next click
-  // pulses again. Failure (no clipboard permission, no secure
-  // context) silently no-ops — the button is a convenience, not
-  // load-bearing.
+  // Copy button — write the active tab's file / line / description /
+  // confidence to the clipboard as a labeled block (per-active-tab,
+  // so a multi-tab group copies the member in view). Toggles `.copied`
+  // for 1s so the icon pulses per click. Failure (no clipboard
+  // permission, no secure context) silently no-ops — a convenience,
+  // not load-bearing.
   const copyBtn = pathClosest(e, '.mark-copy')
   if (copyBtn) {
     const text = findingHandoffText(e)
@@ -847,10 +789,10 @@ report.addEventListener('click', (e) => {
     return
   }
   // Fix-link button — mirrors the comment flow but stores into
-  // state.fixes. Typically a PR URL (also accepts plain text).
-  // Empty input clears the entry. Per-active-tab so a multi-tab
-  // group can hold distinct fix references per member. The
-  // dialog resolves to null on cancel / Esc / unchanged save.
+  // state.fixes. Typically a PR URL (also accepts plain text). Empty
+  // input clears the entry. Per-active-tab so a multi-tab group holds
+  // distinct fix references per member. Dialog resolves to null on
+  // cancel / Esc / unchanged save.
   const fixBtn = pathClosest(e, '.mark-fix')
   if (fixBtn) {
     const findingEl = pathClosest(e, '[data-gid]')
@@ -880,16 +822,10 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
-  // Source filter chips now dispatch a `source-toggle` CustomEvent
-  // from `<source-filter>` — handled by the listener registered below.
-  // (severity-chips / triage-filter / view-mode-buttons clicks are
-  // dispatched as `severity-toggle` / `color-toggle` /
-  // `view-mode-change` custom events from their respective Lit
-  // components — handled outside this click delegate by dedicated
-  // listeners below.)
-  // `severity-toggle` / `color-toggle` custom events from their
-  // respective Lit components — handled outside this click delegate
-  // by dedicated listeners below.)
+  // severity-chips / triage-filter / source-filter / view-mode-buttons
+  // clicks dispatch `severity-toggle` / `color-toggle` / `source-toggle`
+  // / `view-mode-change` custom events — handled outside this click
+  // delegate by dedicated listeners below.
 
   // Table-view details panel close button — clears selection and
   // re-renders so the list expands back to full width.
@@ -1079,25 +1015,23 @@ report.addEventListener('drop', (e) => {
 })
 
 // Kanban detail popover — open / close via document.startViewTransition
-// so the modal animates in / out via the CSS keyframes attached to
+// so the modal animates via the CSS keyframes on
 // `::view-transition-{new,old}(kanban-detail-modal)` in findings.css.
-// We intentionally do NOT use a shared-element pairing (the card
-// doesn't get the same view-transition-name): the morph between a
-// 200×60 card and a 560×~400 modal causes visible drop-shadow
-// flicker and, more importantly, leaves the view-transition state
-// in a sometimes-stuck shape (next click takes no effect, the one
-// after that does — the "every third click" report). Letting the
-// modal animate in place against the unchanged kanban board is
-// stable and still feels snappy.
-// True between `startViewTransition` and the resolution of its
-// `.finished` promise. Used to swallow rapid follow-up open / close
-// clicks that would otherwise call `startViewTransition` against
-// the still-active prior transition — the browser would
-// `skipTransition()` the prior one, forcing its update callback to
-// run synchronously against the just-updated state, which left
-// the page in an inconsistent shape (the "rapid-double-click then
-// nothing ever opens again" report). Card-to-card switches still
-// go through (they don't start a transition).
+// Intentionally NOT a shared-element pairing (card doesn't get the
+// same view-transition-name): morphing a 200×60 card into a 560×~400
+// modal flickers the drop-shadow and leaves the transition in a
+// sometimes-stuck shape (next click no-ops, the one after works — the
+// "every third click" report). Animating the modal in place against
+// the unchanged board is stable and still snappy.
+//
+// kanbanTransitioning is true between `startViewTransition` and its
+// `.finished` settling. It swallows rapid follow-up open / close
+// clicks that would otherwise call `startViewTransition` against the
+// still-active prior one — the browser would `skipTransition()` it,
+// running its callback synchronously against just-updated state and
+// leaving the page inconsistent (the "rapid-double-click then nothing
+// ever opens again" report). Card-to-card switches still go through
+// (they don't start a transition).
 let kanbanTransitioning = false
 
 function kanbanCardEl(gid) {
@@ -1106,19 +1040,17 @@ function kanbanCardEl(gid) {
 }
 
 // Measure a representative kanban card and stamp its dimensions as
-// CSS custom properties on the document root. The clip-path
-// keyframes (kanban-clip-hide / kanban-clip-reveal in findings.css)
-// use these to set the floor of the modal pseudo's clip animation
-// — the modal never shrinks past card-sized, so its "small" frame
-// exactly overlaps the source card instead of going to a zero-area
-// inner rect that would expose the OLD modal snapshot's leftover
-// edges (the "two rectangles overlapping" report). Falls back to the
-// :root defaults if no card is mounted; uses the actual stamped
-// source card when provided, else the first card in the board.
+// CSS custom properties on the document root. The clip-path keyframes
+// (kanban-clip-hide / kanban-clip-reveal in findings.css) use these
+// as the floor of the modal pseudo's clip animation — the modal never
+// shrinks past card-sized, so its "small" frame overlaps the source
+// card instead of collapsing to a zero-area rect that would expose
+// the OLD modal snapshot's leftover edges (the "two rectangles
+// overlapping" report). Uses the stamped source card when provided,
+// else the first board card; falls back to :root defaults if none.
 //
-// The user note: "underestimating size is ok, overestimating might
-// make the animation bad" — Math.floor of the measured rect plays
-// it safe.
+// Per the user note ("underestimating size is ok, overestimating
+// might make the animation bad"), Math.floor plays it safe.
 function updateKanbanClipVars(stampedCard) {
   const card = stampedCard ?? report.querySelector('.kanban-card')
   if (!card) return
@@ -1158,33 +1090,29 @@ function setKanbanPopoverGid(next) {
   kanbanTransitioning = true
 
   // Direction class on <html> so the CSS can hide the card-side
-  // pseudo for the duration of the transition. The card snapshot
-  // sits at a different proportion than the modal snapshot (its
-  // natural ~200×60 vs the modal's ~560×400), and during the
-  // morph it's visible underneath the scaling modal as a
-  // mis-proportioned stub. Hiding it leaves only the modal
-  // pseudo's clip-path animation visible. CSS uses the direction
-  // to pick the right pseudo: ::view-transition-old for opening
-  // (OLD = card), ::view-transition-new for closing (NEW = card).
+  // pseudo for the transition's duration. The card snapshot is a
+  // different proportion than the modal (~200×60 vs ~560×400), so
+  // during the morph it shows under the scaling modal as a
+  // mis-proportioned stub; hiding it leaves only the modal pseudo's
+  // clip-path animation visible. CSS picks the pseudo by direction:
+  // ::view-transition-old for opening (OLD = card),
+  // ::view-transition-new for closing (NEW = card).
   const directionClass = opening ? 'kanban-opening' : 'kanban-closing'
   document.documentElement.classList.add(directionClass)
 
   // Shared-element pairing: the modal has `view-transition-name:
-  // kanban-detail-modal` in CSS; we stamp the source card with
-  // the same name via inline style. The browser pairs the
-  // snapshots by name and the GROUP pseudo morphs position +
-  // size between them, so the modal flies out of the card on
-  // open and back into it on close. The inline-style bookkeeping
-  // is safe because the lock above guarantees only one transition
-  // is ever in flight at a time.
+  // kanban-detail-modal` in CSS; we stamp the source card with the
+  // same name via inline style. The browser pairs snapshots by name
+  // and the GROUP pseudo morphs position + size, so the modal flies
+  // out of the card on open and back on close. The inline-style
+  // bookkeeping is safe because the lock above guarantees one
+  // transition in flight at a time.
   //
-  // Safety-net timeout: ViewTransition.finished is supposed to
-  // settle (resolve or reject) when the transition ends, but
-  // some browser builds get stuck and never settle if the
-  // transition is interrupted oddly — that would leave the lock
-  // held forever and "no clicks open the modal until reload".
-  // 600ms is generous (animation runs in ~200ms); the setTimeout
-  // is cleared on a clean settle.
+  // Safety-net timeout: ViewTransition.finished should settle when
+  // the transition ends, but some browser builds get stuck and never
+  // settle on an odd interruption — leaving the lock held forever
+  // ("no clicks open the modal until reload"). 600ms is generous
+  // (animation ~200ms); cleared on a clean settle.
   const unlock = (card) => {
     if (card) card.style.viewTransitionName = ''
     document.documentElement.classList.remove(directionClass)
@@ -1362,10 +1290,9 @@ report.addEventListener('click', (e) => {
 })
 
 // Keyboard navigation through the focus-view queue. Bound to
-// document so the key fires from anywhere in the page, guarded so
-// it only acts when the focus view is the one mounted AND the
-// user isn't typing in a text field (Search, Repo, etc.) and no
-// modal dialog is open.
+// document so the key fires from anywhere, guarded to act only when
+// the focus view is mounted, the user isn't typing in a text field
+// (Search, Repo, etc.), and no modal dialog is open.
 //
 // Bound keys (all clamp at the ends, no wrap):
 //   ← / ArrowLeft   → previous finding
@@ -1373,15 +1300,14 @@ report.addEventListener('click', (e) => {
 //
 // ArrowUp / ArrowDown intentionally don't navigate — the focused
 // finding-card's description can be tall enough to scroll, and
-// hijacking up/down would steal the user's natural way of reading
-// past the fold.
+// hijacking up/down would steal the user's way of reading past the
+// fold.
 //
-// The "is the user typing" check walks `composedPath()` rather
-// than reading `e.target.tagName`. Inputs inside a custom
-// element's shadow root (search bars, repo chip, etc.) retarget
-// `e.target` to the shadow host, so the old `tagName` check
-// would hijack arrow-key caret movement inside them. The path
-// walk sees the actual focused node.
+// The "is the user typing" check walks `composedPath()` rather than
+// `e.target.tagName`: inputs inside a custom element's shadow root
+// (search bars, repo chip) retarget `e.target` to the shadow host, so
+// a tagName check would hijack arrow-key caret movement inside them.
+// The path walk sees the actual focused node.
 function focusNavBlocked(e) {
   if (document.querySelector('dialog[open]')) return true
   for (const el of e.composedPath()) {
@@ -1428,45 +1354,39 @@ report.addEventListener('mark-color', (e) => {
 
 // Print button — fixed top-right icon, lives OUTSIDE #report (see
 // index.html / styles/theme.css), so the report-level click delegate
-// can't see it. Attach directly. Two pieces of state get swapped
-// for the duration of the print and restored after the dialog
-// dismisses:
+// can't see it; attach directly. Two pieces of state swap for the
+// print and restore after the dialog dismisses:
 //
 //   - document.title → filename (or longest common prefix across
-//     loaded reports) so the OS print dialog and any saved PDF
-//     default to a meaningful name. Set AFTER the viewMode swap
-//     because `render()` ends by writing the document title.
+//     loaded reports) so the OS print dialog / saved PDF default to a
+//     meaningful name. Set AFTER the viewMode swap because `render()`
+//     ends by writing the document title.
 //
 //   - state.viewMode `table` → `list`. The table layout is
-//     interaction-driven (compact rows, side details panel, hover
-//     state) and prints as a stub of the row chrome with none of
-//     the finding body the reader needs on paper. List mode paints
-//     the full card per entry, which is what paper actually wants.
-//     `tableSelectedGid` isn't bound to viewMode so the row
-//     selection survives the round trip.
+//     interaction-driven (compact rows, side panel, hover) and prints
+//     as row-chrome stubs with none of the finding body; list mode
+//     paints the full card per entry, which is what paper wants.
+//     `tableSelectedGid` isn't bound to viewMode, so the row selection
+//     survives the round trip.
 //
 // The swap/restore lifecycle is owned by a beforeprint/afterprint
 // pair so non-button entry points (Ctrl+P, browser menu, print
-// extensions) get the same printable layout. The pair alone isn't
-// enough, though: `<finding-card>` is a Lit element whose render is
-// scheduled in a microtask, so going from beforeprint straight to
-// the browser snapshot prints empty card shells — only the
-// file/location headers, which land synchronously through
-// innerHTML, show up. The button handler covers that by running
-// the swap eagerly and awaiting every card's `updateComplete`
-// BEFORE calling `window.print()`; beforeprint then no-ops because
-// `prepareForPrint` is idempotent on the saved-state sentinel. The
-// Ctrl+P / menu path can't insert that await between the event and
-// the snapshot and is best-effort — the mode swap and title
-// rewrite land, but finding bodies may print blank on the first
-// shot (a second print after Lit has caught up renders fully).
-// Microtasks drain through the await chain in user-gesture
-// context, so `window.print()` still pops a dialog without the
-// browser suppressing it as automation.
+// extensions) get the same layout. The pair alone isn't enough:
+// `<finding-card>` is Lit, rendering in a microtask, so going
+// straight from beforeprint to the browser snapshot prints empty
+// shells — only the file/location headers (synchronous via innerHTML)
+// show. The button handler fixes that by swapping eagerly and
+// awaiting every card's `updateComplete` BEFORE `window.print()`;
+// beforeprint then no-ops since `prepareForPrint` is idempotent on
+// the saved-state sentinel. The Ctrl+P / menu path can't insert that
+// await and is best-effort — mode swap + title land, but finding
+// bodies may print blank on the first shot (a second print after Lit
+// catches up renders fully). Microtasks drain through the await chain
+// in user-gesture context, so `window.print()` still pops a dialog
+// without the browser flagging it as automation.
 //
-// Saved-state vars hold the values to restore on afterprint; a
-// non-null `printSavedMode` doubles as the re-entrancy guard so
-// the click handler doesn't race itself across the await and
+// A non-null `printSavedMode` also doubles as the re-entrancy guard,
+// so the click handler doesn't race itself across the await and
 // beforeprint doesn't clobber state the click handler captured.
 let printSavedMode = null
 let printSavedTitle = null
@@ -1539,8 +1459,8 @@ document.addEventListener('download-requested', () => {
 })
 
 // `<analyzer-select>` dispatches this on native change; it owns its
-// `<select>` element so events.js no longer needs an id-keyed branch
-// in the generic toolbar `change` listener for it.
+// `<select>`, so there's no id-keyed branch in a generic change
+// listener.
 report.addEventListener('analyzer-change', (e) => {
   state.filterAnalyzer = e.detail.value
   render()
@@ -1556,7 +1476,6 @@ report.addEventListener('repo-change', (e) => {
 })
 // `<bundle-code-search>` dispatches this when a Files / Code /
 // Issues mode tab is clicked in the bundle code rail's search row.
-// Replaces the prior `[data-bundle-search-mode]` click delegate.
 report.addEventListener('bundle-search-mode-change', (e) => {
   const mode = e.detail?.mode
   if (mode !== 'files' && mode !== 'code' && mode !== 'issues') return

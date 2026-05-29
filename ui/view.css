@@ -1,5 +1,4 @@
-/* Entry point — @imports are resolved at load time.
-   `print.css` is last so its `!important` palette overrides anything
+/* `print.css` is last so its `!important` palette overrides anything
    above on paper. */
 @import './styles/theme.css';
 @import './styles/file-icon.css';

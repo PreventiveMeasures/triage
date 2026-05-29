@@ -5,11 +5,10 @@ import { html, render as litRender } from 'lit'
 
 export const dropZone = document.querySelector('#drop-zone')
 export const report = document.querySelector('#report')
-// The sidebar is now the `<app-sidebar>` shadow-DOM component
-// (view/sidebar.js). The host element stays in light DOM, so the
-// collapse-state toggle (`view.js` boot + the in-component toggle
-// button) still works on `.classList`. `#file-list` moved into the
-// component's shadow root, so it's no longer exported here — only
+// The `<app-sidebar>` shadow-DOM component (view/sidebar.js). The
+// host stays in light DOM so the collapse-state toggle (`view.js`
+// boot + the in-component toggle button) works on `.classList`.
+// `#file-list` lives in the shadow root, not exported here — only
 // sidebar.js touches it, through its own shadow-root reference.
 export const sidebar = document.querySelector('app-sidebar')
 

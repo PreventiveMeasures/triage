@@ -1,8 +1,8 @@
 // `<import-conflict-dialog>` — surfaces when a dropped report name
-// matches an existing local report whose content differs. Replaces
-// the previous silent overwrite (which left workspace-attached
-// reports out of sync with the cloud because saveFile bumps local
-// bytes but doesn't touch remote).
+// matches an existing local report whose content differs. Avoids a
+// silent overwrite, which would leave workspace-attached reports out
+// of sync with the cloud (saveFile bumps local bytes but doesn't
+// touch remote).
 //
 // The dialog offers three outcomes:
 //   - Replace: overwrite the local file. Callers re-upload the new
@@ -42,27 +42,21 @@ class ImportConflictDialog extends AppDialog {
     this.reportName = ''
     this.workspaceNames = []
     this.existingNames = new Set()
-    // Default radio to Replace — that's the most common intent for
-    // a re-drop of the same filename (the user is updating the
-    // report). This is just the radio's pre-selected option, NOT
-    // the action a stray Enter triggers: `focusInitial()` puts
-    // initial focus on the Cancel button (matches
-    // delete-report-dialog) so an accidental Enter dismisses the
-    // dialog without writing anything. The user has to either
-    // shift focus to the Confirm button or click it to actually
-    // Replace.
+    // Default radio to Replace — most common intent for a re-drop of
+    // the same filename. Pre-selection only, NOT what a stray Enter
+    // triggers: `focusInitial()` focuses Cancel (matches
+    // delete-report-dialog), so Enter dismisses without writing; the
+    // user must focus/click Confirm to actually Replace.
     this._choice = 'replace'
-    // Caller-seeded via the `openImportConflictDialog` wrapper so
-    // the input shows the non-colliding suggestion on the FIRST
-    // paint (computing it in `beforeOpen` would leave the input
-    // empty for the frame between the initial render and the
-    // post-firstUpdated re-render).
+    // Caller-seeded via the `openImportConflictDialog` wrapper so the
+    // input shows the non-colliding suggestion on the FIRST paint
+    // (computing it in `beforeOpen` would leave it empty for one frame
+    // between initial render and the post-firstUpdated re-render).
     this._newName = ''
   }
 
-  // Focus the Cancel button so an accidental Enter from a stray
-  // keystroke doesn't immediately commit the overwrite. Matches the
-  // delete-report-dialog convention for destructive defaults.
+  // Focus Cancel so a stray Enter doesn't commit the overwrite.
+  // Matches the delete-report-dialog destructive-default convention.
   focusInitial() {
     this.renderRoot.querySelector('button[data-role="cancel"]')?.focus()
   }
@@ -72,9 +66,8 @@ class ImportConflictDialog extends AppDialog {
   _onChoiceChange = (e) => { this._choice = e.target.value }
   _onNewNameInput = (e) => { this._newName = e.target.value }
 
-  // Enter on a focused field commits the current choice when valid.
-  // Mirrors the new-workspace dialog's Enter handler — single-line
-  // input, no Ctrl/Cmd gate.
+  // Enter commits the current choice when valid. Mirrors the
+  // new-workspace dialog's handler — single-line input, no Ctrl/Cmd gate.
   _onNewNameKeydown = (e) => {
     if (e.key === 'Enter') {
       e.preventDefault()
@@ -100,12 +93,12 @@ class ImportConflictDialog extends AppDialog {
     const label = n === 1
       ? html`workspace <strong>"${this.workspaceNames[0]}"</strong>`
       : html`<strong>${n}</strong> workspaces (${this.workspaceNames.join(', ')})`
-    // "When sync is online" rather than a flat "will be re-uploaded"
-    // — `uploadReportToWorkspaces` rides the lazy sync wrapper, which
-    // no-ops when the user has sync disabled or hasn't loaded the
-    // sync chunk yet. The local overwrite happens unconditionally;
-    // the upload doesn't. Phrasing this conditionally avoids
-    // promising a cloud update we can't always deliver.
+    // "When sync is online" rather than a flat "will be re-uploaded":
+    // `uploadReportToWorkspaces` rides the lazy sync wrapper, which
+    // no-ops when sync is disabled or the sync chunk isn't loaded yet.
+    // The local overwrite is unconditional; the upload isn't, so the
+    // conditional phrasing avoids promising a cloud update we can't
+    // always deliver.
     return html`<span class="lwd-option-hint">
       The local file will be overwritten. When sync is online, the new bytes are also uploaded to ${label} so the cloud copy matches.
     </span>`
@@ -118,11 +111,11 @@ class ImportConflictDialog extends AppDialog {
     if (trimmed === this.reportName) {
       return html`<p class="lwd-rename-error">Pick a name different from the original.</p>`
     }
-    // `saveFile` rejects NUL outright (the `\0` byte is the separator
-    // inside `state.ignoredIds` keys and would split entries at the
-    // wrong byte); slashes break OPFS keys. Surface these inline so the
-    // user doesn't pick an invalid name, hit Confirm, and get the
-    // generic `Failed to load: ...` alert from the addFiles fallback.
+    // `saveFile` rejects NUL outright (the `\0` byte separates
+    // `state.ignoredIds` keys and would split entries at the wrong
+    // byte); slashes break OPFS keys. Surface these inline so the user
+    // doesn't pick an invalid name, hit Confirm, and get the generic
+    // `Failed to load: ...` alert from the addFiles fallback.
     if (trimmed.includes('\0')) {
       return html`<p class="lwd-rename-error">The new name cannot contain a NUL byte.</p>`
     }
@@ -153,11 +146,10 @@ class ImportConflictDialog extends AppDialog {
     const confirmDisabled = renameSelected && !this._isRenameValid(trimmed)
     const confirmLabel = renameSelected ? 'Rename' : 'Replace'
     const confirmClass = renameSelected ? 'primary' : 'danger'
-    // Renaming saves under a fresh filename — that name has no
-    // workspace attachment, even if the colliding original was
-    // listed in one. Spell that out next to the input so the user
-    // isn't surprised when the renamed copy doesn't show up under
-    // the workspace's reports.
+    // Renaming saves under a fresh filename, which has no workspace
+    // attachment even if the colliding original was listed in one.
+    // Spell that out so the user isn't surprised when the renamed copy
+    // doesn't show up under the workspace's reports.
     const renameHint = this.workspaceNames.length > 0
       ? html`<span class="lwd-option-hint">Saved as an unfiled report — the renamed copy isn't added to any workspace.</span>`
       : nothing
@@ -230,22 +222,20 @@ customElements.define('import-conflict-dialog', ImportConflictDialog)
 //   { action: 'cancel' }
 // Cancel / Esc / native close all resolve to `{ action: 'cancel' }`.
 //
-// The rename suggestion is computed up front so it lands as the
-// initial value of `_newName` BEFORE the dialog's first render —
-// seeding it inside the element (e.g. via `beforeOpen`) would leave
-// the input empty for one frame between the initial paint and the
-// post-firstUpdated re-render.
+// The rename suggestion is computed up front so it seeds `_newName`
+// BEFORE the first render (see constructor: avoids a one-frame empty
+// input).
 //
 // Custom open helper rather than the shared `openAppDialog`: this
-// dialog can be invoked from `addFiles` while another modal is
-// already showing (e.g. the first-import passkey prompt, or a
-// workspace-import unlock dialog left up by an earlier drag). The
-// shared helper only listens for `resolve`, so a `modal-conflict`
-// from `AppDialog.firstUpdated` would leave the element parked on
-// `<body>` and the promise unresolved — the import flow would hang
-// forever. Listening for `modal-conflict` and collapsing to a
-// cancel result keeps the flow non-blocking; the user can re-drop
-// the file once the blocking modal is gone.
+// dialog can be invoked from `addFiles` while another modal is already
+// showing (e.g. the first-import passkey prompt, or a workspace-import
+// unlock dialog left up by an earlier drag). The shared helper only
+// listens for `resolve`, so a `modal-conflict` from
+// `AppDialog.firstUpdated` would leave the element parked on `<body>`
+// with the promise unresolved — the import flow would hang forever.
+// Listening for `modal-conflict` and collapsing to a cancel result
+// keeps the flow non-blocking; the user can re-drop once the blocking
+// modal is gone.
 export function openImportConflictDialog({ name, workspaceNames, existingNames } = {}) {
   const existing = existingNames instanceof Set ? existingNames : new Set(existingNames ?? [])
   return new Promise((resolve) => {
@@ -269,11 +259,10 @@ export function openImportConflictDialog({ name, workspaceNames, existingNames }
 }
 
 // Derive a non-colliding name from `original` by inserting `-N`
-// before the final extension and bumping N until the result isn't
-// in `taken`. " (N)" would clash with browser download-duplicate
-// markers (see `stripDownloadDup` in ingest.js); using `-N` keeps
-// the two conventions distinct so a renamed import doesn't look
-// like a redownload to the drop router.
+// before the final extension and bumping N until it's not in `taken`.
+// `-N` not " (N)": the latter clashes with browser download-duplicate
+// markers (see `stripDownloadDup` in ingest.js), so a renamed import
+// would look like a redownload to the drop router.
 function suggestUniqueName(original, taken) {
   if (typeof original !== 'string' || original.length === 0) return ''
   const dot = original.lastIndexOf('.')

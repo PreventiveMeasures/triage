@@ -90,12 +90,10 @@ export function openFsBlobBackend(dir: string): BlobBackend {
         // closed by Node's stream machinery on 'finish'.
         finalize: async () => {},
         // `destroy(err)` synchronously starts tearing the stream
-        // down; the WriteStream emits 'close' on the next tick.
-        // For the FS backend there's no remote upload to wait for,
-        // so we resolve immediately — the REST layer awaits but
-        // doesn't block on anything real here. eslint-disable for
-        // the no-await-in-async — the function signature is
-        // dictated by the BlobBackend contract.
+        // down; the WriteStream emits 'close' on the next tick. No
+        // remote upload to wait for on FS, so we resolve immediately
+        // — the REST layer awaits but doesn't block on anything real.
+        // Async signature is dictated by the BlobBackend contract.
         // eslint-disable-next-line require-await
         abort: async (err) => { writable.destroy(err as Error) },
       }

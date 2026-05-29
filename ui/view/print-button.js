@@ -1,21 +1,14 @@
 // `<print-button>` — fixed top-right print icon. Shown only on the
 // findings view with a loaded report AND a printable view-mode
-// (table / list / grouped / focus). Graph and kanban don't read on
-// paper, and the Files / Packages / Repositories tabs aren't
-// findings.
+// (table / list / grouped / focus): graph and kanban don't read on
+// paper, and the Files / Packages / Repositories tabs aren't findings.
+// render() returns `nothing` when the predicate is false.
 //
-// Replaces a static `<button id="print-btn">` in index.html plus an
-// autorun in view/print-btn-visibility.js that toggled
-// `body.show-print-btn` based on the same predicate. The component
-// IS the button now — its render() returns `nothing` when the
-// visibility predicate is false, so there's no body-class toggle
-// and no separate visibility module.
-//
-// The click flow stays in view/events.js (it has shared
+// The click flow stays in view/events.js (it owns the shared
 // prepareForPrint / restoreAfterPrint state and beforeprint /
-// afterprint listeners). The component dispatches a
-// `print-requested` CustomEvent (bubbles + composed) when clicked;
-// events.js listens on document and runs the print pipeline.
+// afterprint listeners): the click dispatches a `print-requested`
+// CustomEvent (bubbles + composed), events.js listens on document and
+// runs the print pipeline.
 import { nothing } from 'lit'
 import { StateElement, html } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'

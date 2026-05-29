@@ -1,86 +1,72 @@
-/* Print: strip interactive widgets and keep each finding on one page.
-   The toolbar + stats + reset button are hidden because they're
-   noise on paper; mark-dots and x-button likewise. Individual
-   findings get `break-inside: avoid` so a finding won't be split
-   across a page boundary (file-groups can span pages — a single
-   file with many findings is more common than a finding long
-   enough to need its own page). */
+/* Print: strip interactive widgets (toolbar, stats, reset, mark-dots,
+   x-button — noise on paper) and give findings `break-inside: avoid`
+   so one isn't split across a page. File-groups may still span pages:
+   a file with many findings is commoner than a finding long enough to
+   need its own page. */
 @media print {
-  /* ~9pt root maps the rem-based screen sizes onto a tighter A4/Letter
-     density than 11pt (body lands around 8pt, headings ~11.7pt, badges
-     ~6.3pt). Trades a bit of readability for noticeably more findings
-     per page on dense reports. */
+  /* ~9pt root scales the rem-based screen sizes to a tighter
+     A4/Letter density than 11pt (body ~8pt, headings ~11.7pt, badges
+     ~6.3pt) — trades a little readability for more findings/page. */
   html { font-size: 9pt; }
   body { background: #fff; color: #000; line-height: 1.35; display: block; }
 
   .toolbar, .stats { display: none !important; }
-  /* Graph view is interactive-only; hide the whole host so the
-     print path doesn't dump a giant black box. Mirror lives in
-     graph/graph2.css as `@media print { :host { display: none } }`
-     but having the rule on the light-DOM host too is a no-cost
-     belt-and-suspenders against shadow-CSS @media-print edge cases. */
+  /* Graph view is interactive-only; hide the host so print doesn't
+     dump a giant black box. Mirrored in graph/graph2.css's
+     `@media print { :host { display: none } }`; this light-DOM rule
+     is a no-cost belt-and-suspenders against shadow-CSS @media-print
+     edge cases. */
   graph-layout { display: none !important; }
   #drop-zone, app-sidebar { display: none !important; }
   #report { max-width: none; padding: 0; }
   header h1 { font-size: 1.2rem; }
 
-  /* Standalone-mode PWA paints a 1px border across the top of
-     #main-content to mirror the sidebar→main divider (theme.css under
-     `(display-mode: standalone)`). On paper there's no sidebar to
-     mirror; the line just sits across the top of the first page. */
+  /* Standalone-mode PWA paints a 1px top border on #main-content to
+     mirror the sidebar→main divider (theme.css under
+     `(display-mode: standalone)`). No sidebar on paper, so the line
+     would just sit across the top of the first page. */
   #main-content { border-top: 0 !important; }
 
-  /* Per-report sync status badge ("N cloud / M local") — pure
-     interactive workspace-state UI. Has no meaning on paper and the
-     local/cloud chunks render as small buttons that pull the eye away
-     from the title. */
+  /* Per-report sync status badge ("N cloud / M local") — interactive
+     workspace-state UI, meaningless on paper, and its local/cloud
+     chunks render as small buttons that pull the eye off the title. */
   .page-head .report-sync-badge { display: none !important; }
 
-  /* The empty-state repo chip is a "Set repo" CTA — pure on-screen
-     affordance, useless on paper. `<repo-chip>` reflects `empty` as a
-     boolean attribute on the host when its `url` is falsy (set by
-     render.js's repoChipTemplate); shadow-DOM rules in
-     `view/repo-chip.css` handle the printed chrome of populated
-     chips. */
+  /* Empty-state repo chip is a "Set repo" CTA — on-screen only,
+     useless on paper. `<repo-chip>` reflects `empty` as a boolean
+     host attribute when `url` is falsy (render.js's repoChipTemplate);
+     populated-chip print chrome lives in `view/repo-chip.css`. */
   .page-head repo-chip[empty] { display: none !important; }
 
   /* Strip on-screen link colors so a linked filename reads identically
-     to the bare-text fallback. Naming all the explicit selectors here
-     because:
-       • `a { color: var(--accent) }` (theme.css, specificity 0,0,1) —
-         covered by the generic `a` listing below.
-       • `.file-header a { color: var(--text) }` (findings.css,
-         specificity 0,1,1) — needs the matching `.file-header a` here
-         to win on source order.
+     to bare text. `inherit` resolves to body #000. All selectors named
+     explicitly because:
+       • `a { color: var(--accent) }` (theme.css, 0,0,1) — covered by
+         the generic `a` below.
+       • `.file-header a { color: var(--text) }` (findings.css, 0,1,1)
+         — needs matching `.file-header a` here to win on source order.
        • `.flat-group-loc .file { color: var(--text) }` (findings.css)
-         puts the color on the span around the link, so the link
-         inherits a non-body color even with `color: inherit` on the
-         <a>. Overriding the span itself fixes that.
-     `inherit` resolves to the body color (#000), so links in print
-     match the bare-text version when no repo URL is set. */
+         colors the span around the link, so the <a> inherits a
+         non-body color even with `color: inherit`; override the span
+         too. */
   a, .file-header a, .flat-group-loc .file, .flat-group-loc .file a { color: inherit; }
 
-  /* Theme variables — pinned to a single set of print-friendly values
-     so dark/light mode doesn't affect the printed output. The dark
-     defaults are tuned for a dark UI (light --text, saturated --accent
-     etc.) and would print near-invisible or garishly bright on white
-     paper; the light overrides print a touch better but still drift
-     from the dark output. Pinning every theme-light-flipped variable
-     in one place keeps the cascade simple and gives the print sheet a
-     single canonical palette. Both selectors listed so the rule wins
-     under either theme — `body.theme-light` outweighs `body` alone.
-     Severity colors (--critical, --high, etc.) and inline mark
-     palettes live in shadow DOM and are pinned inside the
-     `<finding-card>` print block rather than here.
+  /* Theme variables — pinned to one print-friendly set so dark/light
+     mode doesn't affect output. Dark defaults (light --text, saturated
+     --accent) print near-invisible or garish on white; the light
+     overrides drift too. Pinning every theme-flipped var in one place
+     keeps the cascade simple with one canonical palette. Both
+     selectors listed so the rule wins under either theme —
+     `body.theme-light` outweighs `body` alone. Severity colors
+     (--critical etc.) and inline mark palettes live in shadow DOM,
+     pinned in the `<finding-card>` print block.
 
-     `--text: #000` and `--muted: #555` carry through the shadow
-     boundary into finding-card body copy and muted subtrees (chip
-     backgrounds, sep dots, repo glyphs). `--border: #888` is a
-     mid-gray that reads on paper without dominating (the dark-mode
-     #30363d would print near-black, light-mode #d1d9e0 nearly
-     vanishes). `--accent` and `--green` are pinned to their
-     light-theme values, which are tuned for black-on-white legibility;
-     surfaces collapse to plain white so subtle theme-tinted
+     --text #000 / --muted #555 carry through the shadow boundary into
+     finding-card body copy and muted subtrees (chip backgrounds, sep
+     dots, repo glyphs). --border #888 reads on paper without
+     dominating (dark #30363d prints near-black, light #d1d9e0 nearly
+     vanishes). --accent / --green pinned to their light-theme values,
+     tuned for black-on-white; surfaces collapse to white so tinted
      backgrounds (card body, triage menus) don't print as gray boxes. */
   body, body.theme-light {
     --bg: #fff;
@@ -94,18 +80,14 @@
   }
 
   /* Page-head: strip the screen pill chrome (chip backgrounds /
-     borders / interactive controls) so the title row reads as
-     plain printed type, theme-independent. The screen rules in
-     report.css are nested under `#report header.page-head` —
-     specificity 1,1,1 and up — so plain `.page-head .file-chip`
-     would lose the cascade and the chips would still pull
-     `var(--text)` / `var(--muted)` from whichever theme the user
-     was looking at. `!important` is the right hammer here: the
-     print sheet's job is to be the authoritative override.
-     Dark-theme users would otherwise get dark surface tints on
-     white paper with light-on-white text inside the chips. The
-     pencil button, the editable URL input, and the empty-repo
-     CTA chip are pure on-screen affordances and get dropped. */
+     borders / controls) so the title row reads as plain printed type,
+     theme-independent. report.css's screen rules nest under
+     `#report header.page-head` (specificity 1,1,1+), so plain
+     `.page-head .file-chip` loses the cascade and chips keep pulling
+     `var(--text)`/`var(--muted)` from the active theme — a dark-theme
+     user would get dark surface tints with light-on-white chip text.
+     `!important` makes the print sheet authoritative. Pencil button,
+     URL input, and empty-repo CTA chip are on-screen-only, dropped. */
   .page-head .file-chip,
   .page-head .meta-row .tag,
   .page-head .meta-row .repo-chip,
@@ -118,42 +100,39 @@
   .page-head .file-chip svg,
   .page-head .meta-row .repo-chip svg { color: #000 !important; }
   .page-head .meta-row { color: #000 !important; }
-  /* The repo-chip's pencil + input live inside its shadow root —
-     `repo-chip.css` carries the print rule that hides them. Here
-     we only drop the empty-state CTA chip (a pure on-screen
-     affordance) and the workspace severity bar (proportional
-     palette of severity colors that prints as muddy noise on
-     paper; `display: none` rather than `visibility: hidden` so
-     the row reflows without a phantom 200×8 gap). */
+  /* repo-chip's pencil + input live in its shadow root —
+     `repo-chip.css` hides them. Here we drop the empty-state CTA chip
+     (on-screen only) and the workspace severity bar (proportional
+     severity-color palette that prints as muddy noise). `display:
+     none`, not `visibility: hidden`, so the row reflows without a
+     phantom 200×8 gap. */
   .page-head .meta-row .repo-chip.empty,
   .page-head .meta-row .status-bar { display: none !important; }
   .page-head { break-after: avoid; }
 
   /* Per-finding card print rules (break-inside: avoid, multi-case
      banner, stacked tab bodies, .marks suppression, .badge palette
-     overrides) live inside `<finding-card>`'s shadow DOM. See the
+     overrides) live in `<finding-card>`'s shadow DOM — see the
      `@media print` block in view/finding-card.css. */
 
   .file-header { break-after: avoid; font-size: .85rem; }
 
   /* List view (flat, ungrouped) wraps each finding in a `.flat-group`
-     whose first child is `.flat-group-loc` — the filename + line +
-     meta row that names the source for the card below. Pin that row
-     to the card it belongs to so a page break never lands between
-     the filename and the finding body. The card itself can still
-     break across pages (long descriptions stay readable) — we only
-     guard the header-to-body seam. */
+     whose first child `.flat-group-loc` is the filename/line/meta row
+     naming the source for the card below. Pin that row to its card so
+     a page break never lands between filename and finding body. The
+     card itself can still break across pages — we only guard the
+     header-to-body seam. */
   .flat-group-loc { break-after: avoid; }
 
   /* The header echoes file/line/meta for the ACTIVE tab. On screen
-     that's the only tab visible, so the echo just helpfully promotes
-     the meta into the header band. In print, when the group has
-     duplicates, every tab body stacks visibly with its own .line-row
-     (re-enabled in finding-card.css's print block) — keeping the
-     header's run-meta there would attach the active tab's metadata
-     to the group banner instead of to its own tab body. The
-     `.multi-case` gate keeps single-tab findings unchanged: their
-     header still shows meta and the in-body line-row stays hidden,
-     so meta isn't doubled and isn't dropped. */
+     that's the only visible tab, so the echo just promotes meta into
+     the header band. In print, a duplicate group stacks every tab
+     body with its own .line-row (re-enabled in finding-card.css's
+     print block) — keeping the header's run-meta would pin the active
+     tab's metadata to the group banner, not its own body. The
+     `.multi-case` gate leaves single-tab findings unchanged (header
+     shows meta, in-body line-row stays hidden), so meta is neither
+     doubled nor dropped. */
   .flat-group.multi-case .flat-group-loc .run-meta { display: none; }
 }

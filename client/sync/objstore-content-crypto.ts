@@ -214,9 +214,8 @@ export function objstorePayloadWireLength(fileName: string, contentByteLength: n
 // `wrapBundleContent` produces that shape; `unwrapBundleContent`
 // reverses it. The maximum name length is the same 65535-byte cap
 // that gates the name slot (the prefix word is u16BE either way).
-// Bundles uploaded before this wrapper layer existed would fail to
-// unwrap; cloud sync is still in pre-release so we don't ship a
-// backward-compat shim.
+// No backward-compat shim for unwrapped bundles: cloud sync is still
+// pre-release.
 export function wrapBundleContent(name: string, content: Uint8Array): Uint8Array {
   const nameBytes = encodeUtf8(name)
   if (nameBytes.length > 0xffff) {
