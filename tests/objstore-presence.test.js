@@ -22,6 +22,7 @@ import { readdirSync, rmSync } from 'node:fs'
 import path from 'node:path'
 
 const {
+  __test__,
   closeWorkspace, deleteBundleFromRemote, deleteFromRemote,
   discoverRemoteBundleIntegrities, discoverRemoteFileNames,
   fetchFile, isBundleInRemote, isInRemote,
@@ -1601,6 +1602,136 @@ describe('client/sync/objstore-presence', () => {
       // Bytes stay gone — we did not overwrite the row with mismatched content.
       assert.equal(await fetchFile(ws.id, name), null)
     } finally {
+      await deleteFile(name).catch(() => {})
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+    }
+  })
+
+  it('recheckRemoteStorage recovers a report even when the in-memory remoteTags lags the fresh listing', async () => {
+    // Regression: recovery rows come from the authoritative fresh DB
+    // listing, but a stale guard used to gate on entry.remoteTags — so a
+    // recoverable object missing from the lagging in-memory set was wrongly
+    // reported 'missing'. Clearing remoteTags reproduces that divergence;
+    // recovery must still re-upload (it observes only mid-recheck deletes).
+    const ws = await createWorkspace('objstore-recovery-lag')
+    const tag = (await deriveObjstoreKeys(ws.privateKey, ws.id)).workspaceTag
+    const blobDir = path.join(server.serverDir, 'objstore', tag)
+    const name = `lag-${crypto.randomUUID()}.json`
+    const bytes = encodeUtf8(`lagging report ${name}`)
+    try {
+      await saveFileBytes(name, bytes)
+      await setReportWorkspace(name, ws.id)
+      openWorkspace(ws.id)
+      await awaitSyncOnline()
+      assert.equal((await putFile(ws.id, name, bytes)).ok, true)
+      await awaitPresence(() => isInRemote(ws.id, name), 'report in remote')
+
+      // Lose the relay bytes AND simulate the in-memory view lagging the
+      // authoritative listing by clearing remoteTags.
+      for (const n of readdirSync(blobDir).filter((x) => x.endsWith('.bin'))) rmSync(path.join(blobDir, n))
+      __test__.getEntry(ws.id).remoteTags.clear()
+
+      const r = await recheckRemoteStorage(ws.id)
+      assert.equal(r.counts.reuploaded, 1, `expected 1 reuploaded despite remoteTags lag, got ${JSON.stringify(r.counts)}`)
+      assert.equal(r.items.find((i) => i.identifier === name)?.status, 'reuploaded')
+      assert.ok(await fetchFile(ws.id, name), 'bytes restored after recovery')
+    } finally {
+      await deleteFile(name).catch(() => {})
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+    }
+  })
+
+  it('recheckRemoteStorage reports a re-upload that fails as "failed" (not swallowed into "missing")', async () => {
+    // The re-upload attempt can throw (a transient relay/blob commit error
+    // — 500/400 — or a re-fired conflict). recoverReport used to swallow
+    // ANY such failure into 'missing', discarding the cause; it must now
+    // surface 'failed' with the reason (retryable), distinct from a
+    // genuinely-absent local copy.
+    const ws = await createWorkspace('objstore-recovery-failed')
+    const tag = (await deriveObjstoreKeys(ws.privateKey, ws.id)).workspaceTag
+    const blobDir = path.join(server.serverDir, 'objstore', tag)
+    const name = `failed-${crypto.randomUUID()}.json`
+    const bytes = encodeUtf8(`failing report ${name}`)
+    try {
+      await saveFileBytes(name, bytes)
+      await setReportWorkspace(name, ws.id)
+      openWorkspace(ws.id)
+      await awaitSyncOnline()
+      assert.equal((await putFile(ws.id, name, bytes)).ok, true)
+      await awaitPresence(() => isInRemote(ws.id, name), 'report in remote')
+
+      for (const n of readdirSync(blobDir).filter((x) => x.endsWith('.bin'))) rmSync(path.join(blobDir, n))
+
+      // Make the re-upload throw at the session layer (simulating a failed
+      // commit), and assert it surfaces as 'failed' with the reason.
+      const e = __test__.getEntry(ws.id)
+      const realPut = e.session.put.bind(e.session)
+      e.session.put = () => Promise.reject(new Error('simulated commit failure'))
+      try {
+        const r = await recheckRemoteStorage(ws.id)
+        assert.equal(r.counts.failed, 1, `expected 1 failed, got ${JSON.stringify(r.counts)}`)
+        assert.equal(r.counts.missing, 0, 'an attempted-but-failed re-upload must not count as missing')
+        const row = r.items.find((i) => i.identifier === name)
+        assert.equal(row?.status, 'failed')
+        assert.match(row?.detail ?? '', /simulated commit failure/u)
+      } finally {
+        e.session.put = realPut
+      }
+    } finally {
+      await deleteFile(name).catch(() => {})
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+    }
+  })
+
+  it('recheckRemoteStorage does not resurrect an object deleted mid-recheck', async () => {
+    // A delete observed DURING the recheck (here: while awaiting the
+    // per-object fetch) must not be re-uploaded over its tombstone — even
+    // though we hold a matching local copy. It stays 'missing'.
+    const ws = await createWorkspace('objstore-recovery-midrun-delete')
+    const tag = (await deriveObjstoreKeys(ws.privateKey, ws.id)).workspaceTag
+    const blobDir = path.join(server.serverDir, 'objstore', tag)
+    const name = `midrun-${crypto.randomUUID()}.json`
+    const bytes = encodeUtf8(`midrun report ${name}`)
+    const peer = await openPeerSession(ws)
+    try {
+      await saveFileBytes(name, bytes)
+      await setReportWorkspace(name, ws.id)
+      openWorkspace(ws.id)
+      await awaitSyncOnline()
+      const put = await putFile(ws.id, name, bytes)
+      assert.equal(put.ok, true)
+      await awaitPresence(() => isInRemote(ws.id, name), 'report in remote')
+      for (const n of readdirSync(blobDir).filter((x) => x.endsWith('.bin'))) rmSync(path.join(blobDir, n))
+
+      // Intercept the per-object fetch to make a peer delete land mid-recheck:
+      // wait until THIS session observes the objstore-deleted broadcast (so
+      // recovery's deletedDuringRecheck records it), then report bytes-gone.
+      const e = __test__.getEntry(ws.id)
+      let resolveObserved
+      const observed = new Promise((res) => { resolveObserved = res })
+      const offObserver = e.session.onDeleted(() => resolveObserved())
+      const realFetchByTag = e.session.fetchByTag.bind(e.session)
+      e.session.fetchByTag = async () => {
+        e.session.fetchByTag = realFetchByTag  // intercept once
+        await peer.delete(name, { version: put.meta.version, incarnation: put.meta.incarnation })
+        await observed
+        return null
+      }
+      try {
+        const r = await recheckRemoteStorage(ws.id)
+        assert.equal(r.counts.reuploaded, 0, 'a mid-recheck-deleted object must not be re-uploaded')
+        assert.equal(r.items[0]?.status, 'missing')
+        // And it stays deleted server-side (not resurrected).
+        assert.equal(await fetchFile(ws.id, name), null)
+      } finally {
+        offObserver()
+        e.session.fetchByTag = realFetchByTag
+      }
+    } finally {
+      peer.close()
       await deleteFile(name).catch(() => {})
       closeWorkspace(ws.id)
       await deleteWorkspace(ws.id)
