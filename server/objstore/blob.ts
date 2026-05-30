@@ -94,9 +94,16 @@ export type LiveReader = {
 // `unavailable`/503 contract, which the client retries. Both backends MUST
 // map a missing blob to `unavailable` (FS: ENOENT; Vercel: BlobNotFoundError
 // / null get()). No 404-mapping variant exists here so that bug can't recur.
+//
+// `detail` is a short, NON-SENSITIVE machine tag for the specific cause
+// (e.g. 'vercel-get-not-found', 'fs-enoent', 'vercel-no-size'). Every
+// byte-side failure collapses to the same 503 on the wire, so a permanent
+// loss (reaper GC'd the bytes) and a transient read fault are otherwise
+// indistinguishable — the REST layer logs `detail` so an operator can tell
+// them apart. Purely diagnostic; the REST status is unchanged.
 export type OpenLiveResult =
   | { ok: true; reader: LiveReader }
-  | { ok: false; reason: 'unavailable' }
+  | { ok: false; reason: 'unavailable'; detail?: string }
 
 export type BlobBackend = {
   // Per-workspace setup. FS creates the on-disk staging directory;
