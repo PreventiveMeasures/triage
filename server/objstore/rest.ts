@@ -457,7 +457,13 @@ async function openLiveSnapshot(
   const hashTag = `hash=${debugId(live.content_hash)}`
   let opened
   try { opened = await deps.handle.blob.openLiveReader(route.tag, live.content_hash) }
-  catch (err) { return { reason: 'unavailable', detail: `open-threw ${hashTag} ${errMsg(err)}` } }
+  // Length-cap the thrown error text: today a non-BlobNotFound SDK throw
+  // (BlobServiceNotAvailable / store-not-found) carries no credential
+  // (the RW token rides the Authorization header, never `.message`), but
+  // a future SDK could embed a signed URL / token fragment — bound the
+  // log line so it can't dump one verbatim. Mirrors the `.slice(0, 200)`
+  // cap used on SDK error text in blob-vercel.ts.
+  catch (err) { return { reason: 'unavailable', detail: `open-threw ${hashTag} ${String(errMsg(err)).slice(0, 200)}` } }
   if (!opened.ok) return { reason: 'unavailable', detail: `${opened.detail ?? 'backend'} ${hashTag}` }
   // Size mismatch between the live row and the on-storage bytes
   // is a transient inconsistency — reaper will reconcile. Close
