@@ -1685,4 +1685,56 @@ describe('client/sync/objstore-presence', () => {
       await deleteWorkspace(ws.id)
     }
   })
+
+  it('recheckRemoteStorage does not resurrect an object deleted mid-recheck', async () => {
+    // A delete observed DURING the recheck (here: while awaiting the
+    // per-object fetch) must not be re-uploaded over its tombstone — even
+    // though we hold a matching local copy. It stays 'missing'.
+    const ws = await createWorkspace('objstore-recovery-midrun-delete')
+    const tag = (await deriveObjstoreKeys(ws.privateKey, ws.id)).workspaceTag
+    const blobDir = path.join(server.serverDir, 'objstore', tag)
+    const name = `midrun-${crypto.randomUUID()}.json`
+    const bytes = encodeUtf8(`midrun report ${name}`)
+    const peer = await openPeerSession(ws)
+    try {
+      await saveFileBytes(name, bytes)
+      await setReportWorkspace(name, ws.id)
+      openWorkspace(ws.id)
+      await awaitSyncOnline()
+      const put = await putFile(ws.id, name, bytes)
+      assert.equal(put.ok, true)
+      await awaitPresence(() => isInRemote(ws.id, name), 'report in remote')
+      for (const n of readdirSync(blobDir).filter((x) => x.endsWith('.bin'))) rmSync(path.join(blobDir, n))
+
+      // Intercept the per-object fetch to make a peer delete land mid-recheck:
+      // wait until THIS session observes the objstore-deleted broadcast (so
+      // recovery's deletedDuringRecheck records it), then report bytes-gone.
+      const e = __test__.getEntry(ws.id)
+      let resolveObserved
+      const observed = new Promise((res) => { resolveObserved = res })
+      const offObserver = e.session.onDeleted(() => resolveObserved())
+      const realFetchByTag = e.session.fetchByTag.bind(e.session)
+      e.session.fetchByTag = async () => {
+        e.session.fetchByTag = realFetchByTag  // intercept once
+        await peer.delete(name, { version: put.meta.version, incarnation: put.meta.incarnation })
+        await observed
+        return null
+      }
+      try {
+        const r = await recheckRemoteStorage(ws.id)
+        assert.equal(r.counts.reuploaded, 0, 'a mid-recheck-deleted object must not be re-uploaded')
+        assert.equal(r.items[0]?.status, 'missing')
+        // And it stays deleted server-side (not resurrected).
+        assert.equal(await fetchFile(ws.id, name), null)
+      } finally {
+        offObserver()
+        e.session.fetchByTag = realFetchByTag
+      }
+    } finally {
+      peer.close()
+      await deleteFile(name).catch(() => {})
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+    }
+  })
 })

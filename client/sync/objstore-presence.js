@@ -1760,8 +1760,8 @@ async function classifyAndRecover(entry, workspaceId, row, deletedDuringRecheck)
   // long-lived set can lag the authoritative fresh listing the rows came
   // from, which would false-'missing' a recoverable object.
   if (deletedDuringRecheck.has(row.resourceTag)) return 'missing'
-  if (row.reportName !== undefined) return await recoverReport(workspaceId, row)
-  if (row.bundleIntegrity !== undefined) return await recoverBundle(workspaceId, row)
+  if (row.reportName !== undefined) return await recoverReport(workspaceId, row, deletedDuringRecheck)
+  if (row.bundleIntegrity !== undefined) return await recoverBundle(workspaceId, row, deletedDuringRecheck)
   // Listed remotely, bytes gone, and we hold no local copy — this
   // client can't recover it.
   return 'missing'
@@ -1774,7 +1774,7 @@ async function classifyAndRecover(entry, workspaceId, row, deletedDuringRecheck)
 // random nonce means the contentHash can't be reproduced). A mismatch
 // means our local copy is a DIFFERENT version than the row expects —
 // leave it 'missing' rather than silently overwrite.
-async function recoverReport(workspaceId, row) {
+async function recoverReport(workspaceId, row, deletedDuringRecheck) {
   let bytes
   try { bytes = await readFileBytes(row.reportName) }
   catch { return 'missing' }  // local bytes gone too
@@ -1796,6 +1796,11 @@ async function recoverReport(workspaceId, row) {
   // Surface it as 'failed' with the reason and never swallow it silently:
   // bare `catch { return 'missing' }` here was conflating a failed attempt
   // with "no local copy" and discarding the cause.
+  //
+  // Re-check the delete observer one last time: a delete broadcast could
+  // have landed while we awaited the fetch / readFileBytes above, and we
+  // must not re-upload over a just-deleted object's tombstone.
+  if (deletedDuringRecheck.has(row.resourceTag)) return 'missing'
   try {
     const r = await putFile(workspaceId, row.reportName, bytes)
     if (r && r.ok) return 'reuploaded'
@@ -1812,12 +1817,15 @@ async function recoverReport(workspaceId, row) {
 // Bundles are content-addressed: a local bundle with this integrity is
 // byte-identical to what the row expects, so identity IS the match (no
 // length gate). `putBundleToRemote` reads the bytes from OPFS.
-async function recoverBundle(workspaceId, row) {
+async function recoverBundle(workspaceId, row, deletedDuringRecheck) {
   // Probe local bytes first so "no local copy" stays 'missing'; a failure
   // of the actual upload is a retryable 'failed' (reason surfaced), not a
   // bare swallowed 'missing'.
   try { await readBundle(row.bundleIntegrity) }
   catch { return 'missing' }  // bytes gone from OPFS too — unrecoverable here
+  // Re-check the delete observer after the probe await: don't resurrect an
+  // object deleted mid-recheck.
+  if (deletedDuringRecheck.has(row.resourceTag)) return 'missing'
   try {
     const r = await putBundleToRemote(workspaceId, row.bundleIntegrity)
     if (r && r.ok) return 'reuploaded'
