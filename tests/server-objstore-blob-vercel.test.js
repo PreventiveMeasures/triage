@@ -320,6 +320,9 @@ describe('vercel blob backend — error & race surfaces', () => {
       assert.equal(opened.ok, false)
       assert.equal(opened.reason, 'unavailable')
       assert.notEqual(opened.reason, 'not-found')
+      // The diagnostic sub-reason is carried so the REST 503 is loggable:
+      // a missing blob surfaces as the BlobNotFoundError get() path.
+      assert.equal(opened.detail, 'vercel-get-not-found')
     } finally { cleanup() }
   })
 

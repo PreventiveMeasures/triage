@@ -364,19 +364,19 @@ function buildOpenLiveReader(sdk: VercelBlobSdk, token: string): BlobBackend['op
       // same condition (blob-fs.ts maps ENOENT → `unavailable`), telling
       // the client the resource is gone for good when it should refetch.
       // See server/README.md's GET status table.
-      if (isNotFound(err)) return { ok: false, reason: 'unavailable' }
+      if (isNotFound(err)) return { ok: false, reason: 'unavailable', detail: 'vercel-get-not-found' }
       throw err
     }
     // SDK returned null (no blob) — same "bytes missing for a live row"
     // transient as the BlobNotFoundError branch above → `unavailable`, not
     // `not-found`.
-    if (res == null) return { ok: false, reason: 'unavailable' }
+    if (res == null) return { ok: false, reason: 'unavailable', detail: 'vercel-get-null' }
     // statusCode 304 doesn't reach here in practice — the REST
     // GET layer doesn't pass If-None-Match — but a future call
     // site could. Treat as unavailable rather than streaming a
     // null body.
     if (res.statusCode !== 200 || res.stream == null) {
-      return { ok: false, reason: 'unavailable' }
+      return { ok: false, reason: 'unavailable', detail: `vercel-get-status-${res.statusCode}` }
     }
     // `@vercel/blob@2.x`'s streaming `get()` for private blobs returns
     // the body but does NOT populate `blob.size` nor pass a
@@ -395,11 +395,11 @@ function buildOpenLiveReader(sdk: VercelBlobSdk, token: string): BlobBackend['op
         // Blob vanished between get() and the head() size fallback (a
         // racing reaper GC) — still the "live row present, bytes gone"
         // transient, so `unavailable` (503), matching the get() path above.
-        if (isNotFound(headErr)) return { ok: false, reason: 'unavailable' }
+        if (isNotFound(headErr)) return { ok: false, reason: 'unavailable', detail: 'vercel-head-not-found' }
         throw headErr
       }
     }
-    if (size == null) return { ok: false, reason: 'unavailable' }
+    if (size == null) return { ok: false, reason: 'unavailable', detail: 'vercel-no-size' }
     // SDK returns a web ReadableStream<Uint8Array>; the REST layer
     // expects a Node Readable for pipeline(). Convert via
     // Readable.fromWeb — built-in and zero-copy where possible.

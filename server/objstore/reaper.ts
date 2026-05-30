@@ -27,6 +27,7 @@
 // predicate can't match a row a concurrent upload just refreshed.
 
 import { type Handle, STAGING_TTL_MS_DEFAULT, isValidContentHash, isValidStagingId, isValidTag } from './store.ts'
+import { debugId, debugTag } from '../util.ts'
 
 type StagingRow = {
   workspace_tag: string
@@ -67,12 +68,19 @@ type StagingRow = {
 // live-set re-read, not via mutual exclusion.
 async function gcBlobIfUnreferenced(
   handle: Handle, tag: string, hash: string, modifiedMs: number, now: number, grace: number,
-): Promise<void> {
-  if (!isValidContentHash(hash)) return
-  if (now - modifiedMs < grace) return
+): Promise<boolean> {
+  if (!isValidContentHash(hash)) return false
+  if (now - modifiedMs < grace) return false
   const refs = await liveHashSet(handle, tag)
-  if (refs.has(hash)) return
+  if (refs.has(hash)) return false
   await handle.blob.unlinkLive(tag, hash)
+  // Log EVERY live-blob deletion unconditionally (not behind `debug`):
+  // this is the only record that the GC removed bytes. A handful per
+  // sweep is normal (superseded versions aging out); a burst across many
+  // workspaces is the smoking gun for the "all uploaded data went
+  // missing" failure — pair it with the sweep summary in `reapOrphans`.
+  console.warn(`objstore-reaper: GC live blob ${debugTag(tag)}/${debugId(hash)} (unreferenced, age ${Math.round((now - modifiedMs) / 1000)}s ≥ grace ${Math.round(grace / 1000)}s)`)
+  return true
 }
 
 // The set of content hashes referenced by the workspace's live rows.
@@ -86,18 +94,22 @@ async function liveHashSet(handle: Handle, tag: string): Promise<Set<string>> {
 // snapshot we read up front can race a concurrent commit; the
 // reference re-read inside `gcBlobIfUnreferenced` (plus the grace
 // window) ensures we never unlink a blob a live row names.
-async function reapUnreferencedForTag(handle: Handle, tag: string, now: number, grace: number): Promise<void> {
-  if (!isValidTag(tag)) return
+// Returns the number of live blobs GC'd for this tag, so `reapOrphans`
+// can surface a sweep-wide total (the headline signal for mass loss).
+async function reapUnreferencedForTag(handle: Handle, tag: string, now: number, grace: number): Promise<number> {
+  if (!isValidTag(tag)) return 0
   const blobs = await handle.blob.listLiveBlobs(tag)
-  if (blobs.length === 0) return
+  if (blobs.length === 0) return 0
   const referenced = await liveHashSet(handle, tag)
+  let gc = 0
   for (const { hash, modifiedMs } of blobs) {
     if (!isValidContentHash(hash)) continue
     // Referenced in our snapshot → skip the grace + re-read path
     // entirely; only unreferenced blobs need it.
     if (referenced.has(hash)) continue
-    await gcBlobIfUnreferenced(handle, tag, hash, modifiedMs, now, grace)
+    if (await gcBlobIfUnreferenced(handle, tag, hash, modifiedMs, now, grace)) gc++
   }
+  return gc
 }
 
 // Drop staging rows older than the TTL and unlink their on-storage
@@ -172,9 +184,10 @@ export async function reapOrphans(handle: Handle, stagingTtlMs: number = STAGING
   const grace = stagingTtlMs
   // Pass 1: tags the live table knows about — GC unreferenced live
   // blobs (past the grace window) against the referenced-hash set.
+  let liveGc = 0
   const liveTagsRows = await handle.listLiveTags.all()
   const liveTags = liveTagsRows.map((r) => r.workspace_tag)
-  for (const tag of liveTags) await reapUnreferencedForTag(handle, tag, now, grace)
+  for (const tag of liveTags) liveGc += await reapUnreferencedForTag(handle, tag, now, grace)
   // Whole-workspace deletes leave residue (dirs / blob-prefixes) the
   // live table no longer lists. Walk the backend's top-level workspace
   // listing to find them; for each straggler tag, GC its unreferenced
@@ -186,7 +199,14 @@ export async function reapOrphans(handle: Handle, stagingTtlMs: number = STAGING
   const liveSet = new Set(liveTags)
   for (const tag of topLevel) {
     if (liveSet.has(tag) || !isValidTag(tag)) continue
-    await reapUnreferencedForTag(handle, tag, now, grace)
+    liveGc += await reapUnreferencedForTag(handle, tag, now, grace)
+  }
+  // Sweep-wide total. A nonzero count means the GC deleted live bytes
+  // this pass — logged unconditionally so "all data went missing"
+  // leaves an obvious server-side trail (a large count over a short
+  // window is the signature). Per-blob lines above carry which/why.
+  if (liveGc > 0) {
+    console.warn(`objstore-reaper: swept ${liveTags.length} live + ${topLevel.length} store tag(s); GC'd ${liveGc} live blob(s)`)
   }
   // Pass 2: stale staging rows + orphan staging blobs. The orphan
   // sweep does per-blob row lookups (no caller-side snapshot), so a

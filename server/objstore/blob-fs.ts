@@ -48,13 +48,13 @@ async function fsOpenLiveReader(dir: string, tag: string, contentHash: string): 
   const path = liveFilePath(dir, tag, contentHash)
   let fh
   try { fh = await open(path, 'r') } catch (err: unknown) {
-    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return { ok: false, reason: 'unavailable' }
+    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return { ok: false, reason: 'unavailable', detail: 'fs-enoent' }
     throw err
   }
   let size: number
   try { size = (await fh.stat()).size } catch {
     await fh.close().catch(() => {})
-    return { ok: false, reason: 'unavailable' }
+    return { ok: false, reason: 'unavailable', detail: 'fs-stat-failed' }
   }
   const stream = fh.createReadStream()
   let closed = false

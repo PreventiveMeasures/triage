@@ -41,7 +41,7 @@ import {
 } from './store.ts'
 import type { LiveReader } from './blob.ts'
 import { type TokenSecret, extractBearer, verifyToken } from './tokens.ts'
-import { errStack } from '../util.ts'
+import { debugId, debugTag, errMsg, errStack } from '../util.ts'
 
 // Server-side fault codes that should surface as 500 `io-error`
 // rather than 400 `aborted`. `pipeline(req, ws)` rejects with the
@@ -431,7 +431,10 @@ async function runUploadAndCommit(
 type GetOpened =
   | { reason: 'ok'; reader: LiveReader }
   | { reason: 'not-found' }
-  | { reason: 'unavailable' }
+  // `detail` is a short non-sensitive cause tag (backend sub-reason +
+  // content-hash prefix) the GET handler logs so a 503 is diagnosable —
+  // every byte-side failure collapses to the same wire 503 otherwise.
+  | { reason: 'unavailable'; detail: string }
 
 async function openLiveSnapshot(
   deps: ObjstoreRestDeps, route: RouteMatch, payload: { ver: number; inc: string },
@@ -448,17 +451,21 @@ async function openLiveSnapshot(
   // returns a pinned fd; for the Vercel backend a fetch-backed stream.)
   const live = await deps.handle.selectLiveOne.get(route.tag, route.resourceTag)
   if (!live || live.version !== payload.ver || live.incarnation !== payload.inc) return { reason: 'not-found' }
+  // Tag the content hash into every `unavailable` detail so an operator
+  // can go check the byte store directly for THIS blob (gone → reaper /
+  // deletion; present → transient read fault).
+  const hashTag = `hash=${debugId(live.content_hash)}`
   let opened
   try { opened = await deps.handle.blob.openLiveReader(route.tag, live.content_hash) }
-  catch { return { reason: 'unavailable' } }
-  if (!opened.ok) return { reason: opened.reason }
+  catch (err) { return { reason: 'unavailable', detail: `open-threw ${hashTag} ${errMsg(err)}` } }
+  if (!opened.ok) return { reason: 'unavailable', detail: `${opened.detail ?? 'backend'} ${hashTag}` }
   // Size mismatch between the live row and the on-storage bytes
   // is a transient inconsistency — reaper will reconcile. Close
   // the reader before returning so we don't leak the fd / fetch
   // reader. PR #4 review H8.
   if (opened.reader.size !== live.content_length) {
     await opened.reader.close().catch(() => {})
-    return { reason: 'unavailable' }
+    return { reason: 'unavailable', detail: `size-mismatch row=${live.content_length} blob=${opened.reader.size} ${hashTag}` }
   }
   return { reason: 'ok', reader: opened.reader }
 }
@@ -478,8 +485,19 @@ async function handleRestGet(
   // If the live row is there but the bytes are missing / wrong size,
   // it's a transient inconsistency the reaper will sort out — 503
   // (vs 404) tells the client this is a server-side state, not a
-  // "the resource truly isn't there" answer.
-  if (opened.reason === 'unavailable') { deny(res, 503, 'unavailable'); return }
+  // "the resource truly isn't there" answer. Log the cause
+  // UNCONDITIONALLY (not behind `debug`): a 503 means a live row whose
+  // bytes can't be served, and the wire response can't distinguish a
+  // permanent loss (reaper GC'd referenced bytes) from a transient read
+  // fault. `detail` carries the backend sub-reason + content-hash prefix
+  // so an operator can tell which — the only server-side breadcrumb for
+  // the "all data turned into 503" failure. (Volume is bounded: a 503 is
+  // an error path; a workspace-wide outage is exactly when these are
+  // wanted.)
+  if (opened.reason === 'unavailable') {
+    console.warn(`objstore-get: 503 unavailable ${debugTag(route.tag)}/${route.resourceTag.slice(0, 8)}… v${payload.ver} ${opened.detail}`)
+    deny(res, 503, 'unavailable'); return
+  }
   res.writeHead(200, {
     'content-type': 'application/octet-stream',
     'content-length': String(opened.reader.size),
