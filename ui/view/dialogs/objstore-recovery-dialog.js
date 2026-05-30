@@ -8,7 +8,9 @@
 //   3. re-uploads any whose bytes are gone (a persistent 503 — the row
 //      is present but its content-addressed blob is missing) when a
 //      matching local copy is held, and
-//   4. reports a per-object status: good / re-uploaded / missing.
+//   4. reports a per-object status: good / re-uploaded / failed / missing
+//      ('failed' = a held copy whose re-upload errored — retryable, reason
+//      shown on hover; distinct from 'missing' = no usable local copy).
 // Rows update live via the onList/onItem callbacks. Healthy objects we
 // don't hold locally can be pulled down through the existing download
 // dialog (the action the badge used to open directly).
