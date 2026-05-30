@@ -8,6 +8,15 @@ import { randomBytes } from 'node:crypto'
 // is an Ed25519 public key; operator logs shouldn't carry it verbatim.
 export function debugTag(s: string): string { return `${s.slice(0, 12)}…` }
 
+// Truncated view of a content hash / staging id for logs (objstore GC +
+// 503 diagnostics). Same 12-char prefix convention as `debugTag`; named
+// separately so call sites read as "this is a blob id, not a workspace
+// tag". Tolerates a non-string (logs a placeholder) so a diagnostic
+// path can't itself throw on bad input.
+export function debugId(s: unknown): string {
+  return typeof s === 'string' ? `${s.slice(0, 12)}…` : '<no-id>'
+}
+
 // 16 random bytes → 22 base64url chars (no padding). The shared shape
 // for per-socket challenge nonces and staging ids — collision is
 // 1/2^128. `isValidStagingId` in objstore/store.ts validates exactly
