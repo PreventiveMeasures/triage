@@ -2,8 +2,8 @@ import { html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { bundlesForFileHash, state } from '#client/index.js'
-import { commitUrl, fileUrl, findingDisplayName, formatRunMeta, isHttpUrl, stripExportMarker } from './format.js'
-import { activeTabFor, groupKey, groupState, isIgnored, sortTabs, tabKey } from './group.js'
+import { commitUrl, fileUrl, findingDisplayName, formatRunMeta, githubIssueUrl, isHttpUrl, stripExportMarker } from './format.js'
+import { activeTabFor, findingRepo, groupKey, groupState, isIgnored, sortTabs, tabKey } from './group.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 
 // All `<finding-row>` / `<finding-card>` shadow-DOM markup is built
@@ -134,6 +134,44 @@ const CLAUDE_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hi
   </g>
 </svg>`
 
+// GitHub "issue opened" glyph (circle + center dot) for the `[github
+// issue]` shortcut link. Same size + stroke weight as the other action
+// icons so the strip stays uniform.
+const ISSUE_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
+  <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.2"/>
+  <circle cx="8" cy="8" r="1.7" fill="currentColor"/>
+</svg>`
+
+// Issue title — the finding's first description line (the table-view
+// title), capped so the pre-filled `?title=` stays a sane length;
+// falls back to the file path, then a generic label.
+function issueTitle(f) {
+  const base = firstLine(f.description) || f.file || 'Security finding'
+  return base.length > 120 ? `${base.slice(0, 119)}…` : base
+}
+
+// Issue body — the finding detail for the pre-filled `?body=`. Tailored
+// for a GitHub issue rather than reusing the copy / Claude handoff
+// block: no `Repo:` line (the issue already lives on that repo), the
+// description sits on its own as a bare paragraph (no label), and
+// file:line is a Markdown link to the source on GitHub — the same
+// target the card / row file links use, falling back to plain
+// `file:line` text when the path can't be linked (e.g. a node_modules
+// file with no resolvable upstream repo). Blocks join with a blank line
+// so the file link and confidence bracket the description paragraph.
+function issueBody(f) {
+  const url = fileUrl(f.file, f.repo?.github, f._repoFallback ?? state.repoUrl)
+  const lineNum = parseInt(f.line, 10)
+  const hasLine = Number.isFinite(lineNum)
+  const loc = hasLine ? `${f.file}:${lineNum}` : f.file
+  const href = url && hasLine ? `${url}#L${lineNum}` : url
+  const blocks = []
+  if (f.file) blocks.push(`File: ${href ? `[${loc}](${href})` : loc}`)
+  if (f.description) blocks.push(f.description)
+  if (f.confidence !== undefined && f.confidence !== null) blocks.push(`Confidence: ${f.confidence}/10`)
+  return blocks.join('\n\n')
+}
+
 // Workspace-merged views show which report a finding came from.
 // The chip mirrors the sidebar's file row (brand sticker + display
 // name) and lives at the start of the action row. Single-file
@@ -175,6 +213,20 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeKey, context = 
   // Confidence` block for the active tab to the clipboard (handler
   // in events.js, active tab resolved via the same gid lookup).
   const copyBtn = html`<button type="button" class="mark-copy" title="Copy file, line, description, confidence to clipboard" aria-label="Copy finding details to clipboard">${COPY_ICON}${isFocus ? html`<span class="mark-btn-label">Copy</span>` : nothing}</button>`
+  // GitHub-issue link — a plain anchor (no JS handoff) to GitHub's
+  // pre-filled new-issue form for the finding's repo, with the finding
+  // detail (file:line linked to source, description, confidence) as the
+  // body. Only rendered when the finding resolves to a github.com repo
+  // (issues live on github.com; githubIssueUrl returns null for a
+  // gitlab / self-hosted / unknown base), so non-GitHub findings keep
+  // the plain copy + Claude pair. Sits between copy and Claude:
+  // copy | issue | claude.
+  const activeFinding = activeTabFor(group)
+  const findingRepoId = findingRepo(activeFinding)
+  const issueHref = githubIssueUrl(findingRepoId, { title: issueTitle(activeFinding), body: issueBody(activeFinding) })
+  const issueBtn = issueHref
+    ? html`<a class="mark-issue" href=${issueHref} target="_blank" rel="noopener" title="Create a pre-filled GitHub issue for this finding" aria-label="Create a GitHub issue for this finding">${ISSUE_ICON}${isFocus ? html`<span class="mark-btn-label">Issue</span>` : nothing}</a>`
+    : nothing
   // Claude button — hands off the same finding block the copy
   // button writes (prefixed with "Confirm and fix:") to Claude Code
   // via the `claude://code/new?q=…` URL scheme.
@@ -191,7 +243,7 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeKey, context = 
   const menuTitle = groupSt.hasConflict
     ? 'change triage state (colors mismatch — acts per-tab)'
     : (sortedTabs.length > 1 ? 'change triage state for the whole group' : 'change triage state')
-  return html`${reportChip}<span class="mark-action-group">${commentBtn}${fixBtn}</span><span class="mark-action-group">${copyBtn}${claudeBtn}</span>${picker}${triageMenuTemplate(group, menuTitle, context)}`
+  return html`${reportChip}<span class="mark-action-group">${commentBtn}${fixBtn}</span><span class="mark-action-group">${copyBtn}${issueBtn}${claudeBtn}</span>${picker}${triageMenuTemplate(group, menuTitle, context)}`
 }
 
 // Triage menu — chevron button toggling a popover with the Fixed /

@@ -305,3 +305,38 @@ export function commitUrl(githubRepo, hash) {
     : `https://github.com/${githubRepo}`
   return `${base}/commit/${hash}`
 }
+
+// Labeled `Repo / File / Line / Description / Confidence` block for a
+// finding `f`. Shared by the copy button, the Claude handoff, and the
+// GitHub-issue body so the three actions carry identical text. `repo`
+// is resolved by the caller (group.findingRepo) so this stays a pure
+// formatter with no `#client/...` dependency (see fileUrl's note on
+// keeping this module out of the client aggregator's import chain).
+export function handoffBlock(f, repo) {
+  const lines = []
+  if (repo) lines.push(`Repo: ${repo}`)
+  if (f.file) lines.push(`File: ${f.file}`)
+  if (f.line !== undefined && f.line !== null && f.line !== '') lines.push(`Line: ${f.line}`)
+  if (f.description) lines.push(`Description: ${f.description}`)
+  if (f.confidence !== undefined && f.confidence !== null) lines.push(`Confidence: ${f.confidence}/10`)
+  return lines.join('\n')
+}
+
+// GitHub "new issue" URL with a pre-filled title + body, or null when
+// `repo` doesn't resolve to a github.com base. Issues only exist on
+// github.com, so a gitlab / bitbucket / self-hosted base (a full URL
+// the user typed) can't take this link — returning null there lets the
+// caller hide the button rather than render a dead link. `repo` is the
+// same slug-or-URL the handoff block's `Repo:` line carries.
+export function githubIssueUrl(repo, { title, body } = {}) {
+  const base = repoBaseUrl(repo)
+  if (!base) return null
+  let host
+  try { host = new URL(base).host.toLowerCase() } catch { return null }
+  if (host !== 'github.com') return null
+  const params = new URLSearchParams()
+  if (title) params.set('title', title)
+  if (body) params.set('body', body)
+  const qs = params.toString()
+  return qs ? `${base}/issues/new?${qs}` : `${base}/issues/new`
+}

@@ -1,4 +1,4 @@
-import { isReportIgnored, state } from '#client/index.js'
+import { getPackagesIndex, isReportIgnored, state } from '#client/index.js'
 import { SEVERITY_ORDER } from './format.js'
 
 // ID helpers. Internally every `state.reports[].groups[i]` is a
@@ -52,6 +52,21 @@ export function activeTabFor(group) {
     if (match) return match
   }
   return primaryTab(group)
+}
+
+// Repo identifier (slug or URL) for a finding, matching the `Repo:`
+// line of the copy / Claude / GitHub-issue handoff block: a
+// node_modules file resolves to its package bucket's repo when that
+// bucket maps to exactly one upstream, otherwise the per-finding
+// `repo.github` / resolved `_repoFallback` / user-typed
+// `state.repoUrl`. Returns null when none of those is known.
+export function findingRepo(f) {
+  for (const bucket of getPackagesIndex().values()) {
+    if (bucket.files.has(f.file)) {
+      return (bucket.repos && bucket.repos.size === 1) ? [...bucket.repos][0] : null
+    }
+  }
+  return f.repo?.github ?? f._repoFallback ?? state.repoUrl ?? null
 }
 
 // Group-level triage rollup. User spec:
