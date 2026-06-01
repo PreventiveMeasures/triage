@@ -150,24 +150,26 @@ function issueTitle(f) {
   return base.length > 120 ? `${base.slice(0, 119)}…` : base
 }
 
-// Issue body — the finding detail for the pre-filled `?body=`. Like the
-// copy / Claude handoff block but tailored for a GitHub issue: no
-// `Repo:` line (the issue already lives on that repo) and file:line
-// rendered as a Markdown link to the source on GitHub — the same target
-// the card / row file links use. Falls back to plain `file:line` text
-// when the path can't be linked (e.g. a node_modules file with no
-// resolvable upstream repo).
+// Issue body — the finding detail for the pre-filled `?body=`. Tailored
+// for a GitHub issue rather than reusing the copy / Claude handoff
+// block: no `Repo:` line (the issue already lives on that repo), the
+// description sits on its own as a bare paragraph (no label), and
+// file:line is a Markdown link to the source on GitHub — the same
+// target the card / row file links use, falling back to plain
+// `file:line` text when the path can't be linked (e.g. a node_modules
+// file with no resolvable upstream repo). Blocks join with a blank line
+// so the file link and confidence bracket the description paragraph.
 function issueBody(f) {
   const url = fileUrl(f.file, f.repo?.github, f._repoFallback ?? state.repoUrl)
   const lineNum = parseInt(f.line, 10)
   const hasLine = Number.isFinite(lineNum)
   const loc = hasLine ? `${f.file}:${lineNum}` : f.file
   const href = url && hasLine ? `${url}#L${lineNum}` : url
-  const lines = []
-  if (f.file) lines.push(`File: ${href ? `[${loc}](${href})` : loc}`)
-  if (f.description) lines.push(`Description: ${f.description}`)
-  if (f.confidence !== undefined && f.confidence !== null) lines.push(`Confidence: ${f.confidence}/10`)
-  return lines.join('\n')
+  const blocks = []
+  if (f.file) blocks.push(`File: ${href ? `[${loc}](${href})` : loc}`)
+  if (f.description) blocks.push(f.description)
+  if (f.confidence !== undefined && f.confidence !== null) blocks.push(`Confidence: ${f.confidence}/10`)
+  return blocks.join('\n\n')
 }
 
 // Workspace-merged views show which report a finding came from.
