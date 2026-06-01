@@ -216,6 +216,7 @@
 .mark-comment,
 .mark-fix,
 .mark-copy,
+.mark-issue,
 .mark-claude {
   background: transparent; border: 0; color: var(--muted);
   padding: 0 .25rem; height: 1.4rem;
@@ -223,6 +224,10 @@
   &:not(:last-child) { border-right: 1px solid var(--border); }
   &:hover { color: var(--accent); background: var(--surface-active); }
 }
+/* The issue button is an <a> (a real link to GitHub's new-issue form),
+   so drop the default underline + link color — it inherits the muted
+   button color above. */
+.mark-issue { text-decoration: none; }
 .mark-comment.has-comment,
 .mark-fix.has-fix { color: var(--accent); }
 /* Pulse the copy / claude button briefly after a successful click —

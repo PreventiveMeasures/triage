@@ -1,7 +1,7 @@
-import { VIEW_MODE_KEY, getPackagesIndex, isReportIgnored, patchEntry, saveRepoUrlFor, saveTriage, setReportIgnored, state, subscribeToBundleFindingIndex } from '#client/index.js'
+import { VIEW_MODE_KEY, isReportIgnored, patchEntry, saveRepoUrlFor, saveTriage, setReportIgnored, state, subscribeToBundleFindingIndex } from '#client/index.js'
 import { report } from './dom.js'
-import { commonPrefix } from './format.js'
-import { activeTabFor, findGroupById, findingReport, groupState, tabKey } from './group.js'
+import { commonPrefix, handoffBlock } from './format.js'
+import { activeTabFor, findGroupById, findingRepo, findingReport, groupState, tabKey } from './group.js'
 import { resetFilters } from './filters.js'
 import { refreshGraph2Sidebar, refreshGraph2TopPkgs, render } from './render.js'
 import { refreshBundleGraphSidebar, refreshBundleGraphTopPkgs } from './render-bundle.js'
@@ -103,35 +103,18 @@ function pathClosest(e, selector) {
 
 // Labeled `Repo / File / Line / Description / Confidence` block for
 // the active tab under the clicked button. Shared by the copy and
-// Claude buttons. Repo lookup walks the package index first (matching
-// the per-package repo header in the file picker), falling back to
-// the per-finding / per-report / global repo URL for OWN-source findings.
+// Claude buttons (and, built the same way from `findingRepo` +
+// `handoffBlock`, the GitHub-issue link in render-finding.js). Repo
+// lookup walks the package index first (matching the per-package repo
+// header in the file picker), falling back to the per-finding /
+// per-report / global repo URL for OWN-source findings.
 function findingHandoffText(e) {
   const findingEl = pathClosest(e, '[data-gid]')
   const gid = findingEl?.dataset?.gid
   const group = gid ? findGroupById(gid) : null
   if (!group) return null
   const f = activeTabFor(group)
-  let inPackage = false
-  let repo = null
-  for (const bucket of getPackagesIndex().values()) {
-    if (bucket.files.has(f.file)) {
-      inPackage = true
-      if (bucket.repos && bucket.repos.size === 1) repo = [...bucket.repos][0]
-      break
-    }
-  }
-  if (!inPackage) {
-    repo = f.repo?.github ?? f._repoFallback ?? state.repoUrl ?? null
-    if (!repo) repo = null
-  }
-  const lines = []
-  if (repo) lines.push(`Repo: ${repo}`)
-  if (f.file) lines.push(`File: ${f.file}`)
-  if (f.line !== undefined && f.line !== null && f.line !== '') lines.push(`Line: ${f.line}`)
-  if (f.description) lines.push(`Description: ${f.description}`)
-  if (f.confidence !== undefined && f.confidence !== null) lines.push(`Confidence: ${f.confidence}/10`)
-  return lines.join('\n')
+  return handoffBlock(f, findingRepo(f))
 }
 
 // All interactive elements inside #report are handled via event

@@ -317,6 +317,7 @@
 .mark-comment,
 .mark-fix,
 .mark-copy,
+.mark-issue,
 .mark-claude {
   background: transparent; border: 0; color: var(--muted);
   padding: 0 .25rem; height: 1.4rem;
@@ -324,6 +325,10 @@
   &:not(:last-child) { border-right: 1px solid var(--border); }
   &:hover { color: var(--accent); background: var(--surface-active); }
 }
+/* The issue button is an <a> (a real link to GitHub's new-issue form),
+   so drop the default underline + link color the icon/label would
+   otherwise pick up — it inherits the muted button color above. */
+.mark-issue { text-decoration: none; }
 .mark-comment.has-comment,
 .mark-fix.has-fix { color: var(--accent); }
 /* Pulse the copy / claude button briefly after a successful click —
@@ -492,6 +497,7 @@
 :host([context='focus']) .mark-comment,
 :host([context='focus']) .mark-fix,
 :host([context='focus']) .mark-copy,
+:host([context='focus']) .mark-issue,
 :host([context='focus']) .mark-claude {
   height: 1.75rem;
   padding: 0 .55rem;
@@ -580,9 +586,10 @@
   /* Pure on-screen affordance — the bundle source viewer is an
      interactive surface that doesn't have a paper analogue. */
   .finding-code-btn { display: none !important; }
-  /* Same — clipboard copy + claude handoff buttons have no
-     paper meaning. */
+  /* Same — clipboard copy, GitHub-issue, and claude handoff buttons
+     have no paper meaning. */
   .mark-copy,
+  .mark-issue,
   .mark-claude { display: none !important; }
   /* Drop the on-screen pill chrome from the npm chip — on paper
      the boxed outline next to the file:line reads inconsistently
