@@ -178,13 +178,12 @@ export function findingDisplayName(f) {
 // upstream repo (`lodash/lodash`), useful when a merged report mixes
 // findings from many node_modules dependencies.
 //
-// The user-typed fix reference (`state.fixes`) is NOT in this base
-// set — fix entries are typically full PR URLs and would dilute
-// regular keyword searches against the description / file fields
-// with noise (e.g. typing "lib" matching every fix URL containing
-// the substring). filters.js opts in for fix-field matching only
-// when the query itself looks like a URL (`https://…`); see
-// matchesFilters there.
+// The per-finding triage annotations (`comment` and `fix`) are NOT in
+// this base set — they live in `state.triage`, keyed off the finding,
+// and folding them in would force `findingText` to import `state`. But
+// this module stays free of any `#client/...` import so it can ride
+// the lazy graph bundle (see the `fileUrl` note below), so filters.js
+// matches the comment and fix fields itself; see matchesFilters there.
 export function findingText(f) {
   return [f.file, f.description, f.recommendation, f.confidenceReason, f.discoveredIn, f.repo?.github].filter(Boolean).join('\n').toLowerCase()
 }

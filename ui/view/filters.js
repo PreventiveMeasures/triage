@@ -118,14 +118,18 @@ export function matchesFilters(f) {
   }
   if (inc) {
     if (findingText(f).includes(inc)) return true
-    // URL-shaped queries (start with `https://` AND have a char past
-    // the prefix) opt into matching the user-typed fix reference (PR
-    // URL / free-text note). Plain keyword searches stay out of the
-    // fix field so a substring like "pull" doesn't pull in every
-    // finding with a github PR fix link.
-    if (inc.startsWith('https://') && inc.length > 'https://'.length) {
-      const fix = (state.triage.get(tabKey(f))?.fix ?? '').toLowerCase()
-      if (fix.includes(inc)) return true
+    // Triage annotations (the free-form `comment` and the `fix`
+    // reference — PR URL, issue link, or free-text note) live off the
+    // finding in `state.triage`, so they're matched here rather than
+    // folded into `findingText` (which stays free of any `#client`
+    // import — see format.js). Both are searched on every query so a
+    // keyword like "false positive" surfaces findings the user
+    // annotated, and pasting a fix URL surfaces the finding it's filed
+    // against.
+    const entry = state.triage.get(tabKey(f))
+    if (entry) {
+      if ((entry.comment ?? '').toLowerCase().includes(inc)) return true
+      if ((entry.fix ?? '').toLowerCase().includes(inc)) return true
     }
     return false
   }
