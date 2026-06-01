@@ -152,7 +152,7 @@ class WorkspaceUnlockLinkDialog extends AppDialog {
   // id does NOT match the share-link's derived id (same-id is handled
   // as the "already attached" branch). Compared on the sanitised form
   // (not raw trim) so a
-  // control-char variant like `"Foo"` can't slip past the gate
+  // control-char variant like `"Foo\u0001"` can't slip past the gate
   // and persist as a second `"Foo"` row. Audit follow-up.
   _nameCollision(sanitised) {
     if (!sanitised || !this._decoded) return null

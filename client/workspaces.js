@@ -208,7 +208,7 @@ const MAX_WORKSPACE_NAME_LEN = 200
 // Exported so the share-link unlock dialog runs its live name-
 // collision check against the SAME normalised form the persisted blob
 // uses. Comparing raw `.trim()` values would let a control-char
-// variant (e.g. `Foo`) typed by the recipient slip past the
+// variant (e.g. `Foo\u0001`) typed by the recipient slip past the
 // dialog's check and persist as the same displayed `Foo` next to an
 // existing entry — two workspaces sharing one display name on the
 // same device. Audit follow-up (round-2 share-link review).

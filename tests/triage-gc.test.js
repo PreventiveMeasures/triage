@@ -693,7 +693,7 @@ describe('round-2 review #5: report names cannot contain NUL', () => {
     // pin (reportName, id) pairs that never resolve. Guard at
     // the storage boundary so the bug can't enter the cache.
     await assert.rejects(
-      storage.saveFile('a evil.json', '{"findings":[]}'),
+      storage.saveFile('a\u0000evil.json', '{"findings":[]}'),
       /Invalid report name: contains NUL byte/u,
     )
   })
