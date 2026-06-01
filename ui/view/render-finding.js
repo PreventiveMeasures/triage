@@ -2,7 +2,7 @@ import { html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { bundlesForFileHash, state } from '#client/index.js'
-import { commitUrl, fileUrl, findingDisplayName, formatRunMeta, githubIssueUrl, handoffBlock, isHttpUrl, stripExportMarker } from './format.js'
+import { commitUrl, fileUrl, findingDisplayName, formatRunMeta, githubIssueUrl, isHttpUrl, stripExportMarker } from './format.js'
 import { activeTabFor, findingRepo, groupKey, groupState, isIgnored, sortTabs, tabKey } from './group.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 
@@ -150,6 +150,26 @@ function issueTitle(f) {
   return base.length > 120 ? `${base.slice(0, 119)}…` : base
 }
 
+// Issue body — the finding detail for the pre-filled `?body=`. Like the
+// copy / Claude handoff block but tailored for a GitHub issue: no
+// `Repo:` line (the issue already lives on that repo) and file:line
+// rendered as a Markdown link to the source on GitHub — the same target
+// the card / row file links use. Falls back to plain `file:line` text
+// when the path can't be linked (e.g. a node_modules file with no
+// resolvable upstream repo).
+function issueBody(f) {
+  const url = fileUrl(f.file, f.repo?.github, f._repoFallback ?? state.repoUrl)
+  const lineNum = parseInt(f.line, 10)
+  const hasLine = Number.isFinite(lineNum)
+  const loc = hasLine ? `${f.file}:${lineNum}` : f.file
+  const href = url && hasLine ? `${url}#L${lineNum}` : url
+  const lines = []
+  if (f.file) lines.push(`File: ${href ? `[${loc}](${href})` : loc}`)
+  if (f.description) lines.push(`Description: ${f.description}`)
+  if (f.confidence !== undefined && f.confidence !== null) lines.push(`Confidence: ${f.confidence}/10`)
+  return lines.join('\n')
+}
+
 // Workspace-merged views show which report a finding came from.
 // The chip mirrors the sidebar's file row (brand sticker + display
 // name) and lives at the start of the action row. Single-file
@@ -192,15 +212,16 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeKey, context = 
   // in events.js, active tab resolved via the same gid lookup).
   const copyBtn = html`<button type="button" class="mark-copy" title="Copy file, line, description, confidence to clipboard" aria-label="Copy finding details to clipboard">${COPY_ICON}${isFocus ? html`<span class="mark-btn-label">Copy</span>` : nothing}</button>`
   // GitHub-issue link — a plain anchor (no JS handoff) to GitHub's
-  // pre-filled new-issue form for the finding's repo, carrying the same
-  // labeled block the copy button writes as the issue body. Only
-  // rendered when the finding resolves to a github.com repo (issues
-  // live on github.com; githubIssueUrl returns null for a gitlab /
-  // self-hosted / unknown base), so non-GitHub findings keep the plain
-  // copy + Claude pair. Sits between copy and Claude: copy | issue | claude.
+  // pre-filled new-issue form for the finding's repo, with the finding
+  // detail (file:line linked to source, description, confidence) as the
+  // body. Only rendered when the finding resolves to a github.com repo
+  // (issues live on github.com; githubIssueUrl returns null for a
+  // gitlab / self-hosted / unknown base), so non-GitHub findings keep
+  // the plain copy + Claude pair. Sits between copy and Claude:
+  // copy | issue | claude.
   const activeFinding = activeTabFor(group)
   const findingRepoId = findingRepo(activeFinding)
-  const issueHref = githubIssueUrl(findingRepoId, { title: issueTitle(activeFinding), body: handoffBlock(activeFinding, findingRepoId) })
+  const issueHref = githubIssueUrl(findingRepoId, { title: issueTitle(activeFinding), body: issueBody(activeFinding) })
   const issueBtn = issueHref
     ? html`<a class="mark-issue" href=${issueHref} target="_blank" rel="noopener" title="Create a pre-filled GitHub issue for this finding" aria-label="Create a GitHub issue for this finding">${ISSUE_ICON}${isFocus ? html`<span class="mark-btn-label">Issue</span>` : nothing}</a>`
     : nothing
