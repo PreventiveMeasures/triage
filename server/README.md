@@ -43,6 +43,8 @@ See the "Cross-instance broadcasts" detail in the Neon section.
 | `DATABASE_URL`         | —                     | set → Neon mode (Postgres connection string)   |
 | `BLOB_READ_WRITE_TOKEN`| —                     | Neon mode, **required** — Vercel Blob R/W token |
 | `OBJSTORE_TOKEN_SECRET`| —                     | Neon mode, **required** — shared HMAC secret    |
+| `OBJSTORE_REAP_INTERVAL_MS` | `600000` (10 min) | orphan-reaper period                       |
+| `OBJSTORE_REAP_DISABLED` | —                   | `1` / `true` disables the reaper entirely (no GC; orphans grow unbounded — see below) |
 | `TRUST_PROXY`          | on for loopback `HOST` | any non-loopback bind behind a proxy — set `1` (see below) |
 
 ## SQLite mode (default)
@@ -599,6 +601,16 @@ The reaper runs once at startup (before accepting traffic) then every
 `OBJSTORE_REAP_INTERVAL_MS`. Stale staging rows and unreferenced live
 blobs expire after `STAGING_TTL_MS_DEFAULT` (1h) — the grace window that
 keeps a just-promoted blob from being collected mid-commit.
+
+Setting `OBJSTORE_REAP_DISABLED=1` (or `=true`) turns the reaper **off
+entirely** — no startup sweep and no periodic GC. Since live-blob
+reclamation lives solely in the reaper (DELETE and superseded commits only
+drop/orphan the row; see above), nothing then collects orphaned bytes or
+stale staging rows and they grow unbounded. Only use it when an external
+job owns GC — e.g. a scheduled task calling `reapOrphans(handle)` directly,
+which is stateless, lock-free, and safe to run concurrently with live
+traffic and across replicas. The server logs a loud warning at boot when
+the reaper is disabled.
 
 </details>
 

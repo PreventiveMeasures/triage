@@ -18,6 +18,12 @@ export type ObjstoreInitDeps = {
   // the workspace_revision handle in server/db.ts.
   handle: Handle
   reapIntervalMs: number
+  // Hard off-switch (OBJSTORE_REAP_DISABLED). When true, NEITHER the boot
+  // sweep nor the periodic timer runs: `startupReap` resolves immediately
+  // and `stopReaper` is a no-op. Orphaned/superseded blobs and stale
+  // staging rows then accumulate unbounded — only safe if an external job
+  // handles GC. Omitted/false → reaper runs (the default). See config.ts.
+  reapDisabled?: boolean
   send: (socket: WebSocket, msg: object) => void
   broadcast: (tag: string, msg: object, except: WebSocket | null) => void
   // Cross-instance pub/sub publishers. SQLite mode passes no-ops; Neon
@@ -106,6 +112,16 @@ export function initObjstore(deps: ObjstoreInitDeps): ObjstoreInit {
     }).finally(() => { if (inFlight === p) inFlight = null })
     inFlight = p
     return p
+  }
+  // Hard off-switch (OBJSTORE_REAP_DISABLED). Skip the boot sweep AND the
+  // periodic timer entirely: `startupReap` resolves immediately so the
+  // index.ts `await startupReap` gate is a no-op, and `stopReaper` has
+  // nothing to clear or drain. Loud, unconditional warning — with GC off,
+  // orphaned/superseded blobs and stale staging rows are never reclaimed
+  // (they accumulate until an external job, if any, collects them).
+  if (deps.reapDisabled) {
+    console.warn('objstore: reaper DISABLED (OBJSTORE_REAP_DISABLED) — orphaned/superseded blobs and stale staging will NOT be reclaimed')
+    return { handlers, restDeps, startupReap: Promise.resolve(), stopReaper: async () => {} }
   }
   // Caller awaits this before accepting traffic so a fresh boot
   // can't hand out list / fetch / put-begin against a tag whose
