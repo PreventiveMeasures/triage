@@ -366,10 +366,6 @@ const sseServer = installSseServer({
   // Mirror the WS `maxPayload` so the SSE plane can't accept frames
   // the WS plane would reject.
   maxBodyBytes: 4 * 1024 * 1024,
-  // 90s idle ceiling. The client's JSON ping/pong is 15s; this is ~6
-  // missed pings before we close — well past any transient network
-  // hiccup, much shorter than the kernel's hours-long TCP keepalive.
-  sessionIdleMs: 90_000,
   debug: DEBUG,
 })
 
@@ -449,6 +445,7 @@ const closeDb = async (): Promise<void> => {
 installLifecycle({
   httpServer, wss, heartbeatTimer, stopReaper,
   sseSessions: sseServer.sessions,
+  sseKeepaliveTimer: sseServer.keepaliveTimer,
   closeDb,
 })
 

@@ -28,6 +28,15 @@ import { EventEmitter } from 'node:events'
 import type { Buffer } from 'node:buffer'
 import type { ServerResponse } from 'node:http'
 
+// TCP keepalive initial-probe delay for the downstream socket. With the
+// client no longer POSTing a periodic ping (see client/sync/socket-
+// transport.ts), a QUIET session whose client vanished without a FIN
+// (crash, NAT/idle drop) has no application-level liveness signal — so we
+// lean on the kernel: keepalive probes surface a dead half-open socket as
+// a `close`/`error` here in bounded time instead of the kernel's
+// hours-long default. ~30s matches the server keepalive-comment sweep.
+const SOCKET_KEEPALIVE_MS = 30_000
+
 export class SseSession extends EventEmitter {
   static readonly CONNECTING = 0
   static readonly OPEN = 1
@@ -62,6 +71,10 @@ export class SseSession extends EventEmitter {
   // spurious session 'error' that operators read as a real transport
   // failure on a healthy session.
   private wireResponse(res: ServerResponse): void {
+    // Probe half-open downstreams at the kernel level (see SOCKET_KEEPALIVE_MS).
+    // A failed probe trips the `close`/`error` handlers below, which is how a
+    // dead-but-quiet SSE client is reaped now that there's no client ping.
+    try { res.socket?.setKeepAlive(true, SOCKET_KEEPALIVE_MS) } catch {}
     res.on('close', () => {
       if (res !== this.currentRes) return  // current-response guard (see above)
       if (this.readyState === SseSession.CLOSED) return
@@ -173,11 +186,14 @@ export class SseSession extends EventEmitter {
     this.emit('close')
   }
 
-  // The heartbeat sweep ping()s every WS client to detect dead sockets
-  // via the unanswered-pong path. SSE has no `pong` equivalent, so we
-  // write a comment line that keeps the channel alive across proxies
-  // without expecting a reply. The per-session idle timeout in
-  // sse-server.ts owns the dead-client detection.
+  // Server-driven keepalive, called on the SSE keepalive sweep in
+  // sse-server.ts. SSE has no `pong` equivalent, so we write a `:` comment
+  // line — ignored by the client parser — that keeps the downstream from
+  // being idle-closed by intermediary proxies (nginx et al. default to a
+  // ~60s read timeout). Dead-client detection is the response `close` event
+  // (clean disconnect, or a half-open socket the TCP keepalive in
+  // `wireResponse` forces closed), NOT this write: a `:`-comment write to a
+  // half-open socket just buffers, it doesn't synchronously throw.
   ping(): void {
     if (this.readyState !== SseSession.OPEN) return
     const res = this.currentRes
