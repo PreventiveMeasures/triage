@@ -8,9 +8,12 @@
 //   3. re-uploads any whose bytes are gone (a persistent 503 — the row
 //      is present but its content-addressed blob is missing) when a
 //      matching local copy is held, and
-//   4. reports a per-object status: good / re-uploaded / failed / missing
-//      ('failed' = a held copy whose re-upload errored — retryable, reason
-//      shown on hover; distinct from 'missing' = no usable local copy).
+//   4. reports a per-object status:
+//      good / re-uploaded / failed / check failed / missing
+//      ('failed' = a held copy whose re-UPLOAD errored; 'check failed' =
+//      the verification DOWNLOAD errored on a transport/session hiccup or
+//      decrypt failure, so health is unknown — distinct from a confirmed
+//      'missing'; both retryable, reason shown on hover).
 // Rows update live via the onList/onItem callbacks. Healthy objects we
 // don't hold locally can be pulled down through the existing download
 // dialog (the action the badge used to open directly).
@@ -26,7 +29,7 @@ import { openSyncDownloadDialog } from './sync-download-dialog.js'
 import listCSS from './dialog-list.css'
 import recoveryCSS from './dialog-recovery.css'
 
-const STATUS_LABEL = { checking: 'checking…', good: 'available', reuploaded: 're-uploaded', failed: 're-upload failed', missing: 'missing' }
+const STATUS_LABEL = { checking: 'checking…', good: 'available', reuploaded: 're-uploaded', failed: 're-upload failed', 'check-failed': 'check failed', missing: 'missing' }
 
 class ObjstoreRecoveryDialog extends AppDialog {
   static styles = [...AppDialog.styles, unsafeCSS(listCSS), unsafeCSS(recoveryCSS)]
@@ -68,7 +71,7 @@ class ObjstoreRecoveryDialog extends AppDialog {
   _onCancel = () => this._finish(this._ran ? this._result() : null)
 
   _counts() {
-    const counts = { good: 0, reuploaded: 0, failed: 0, missing: 0 }
+    const counts = { good: 0, reuploaded: 0, failed: 0, 'check-failed': 0, missing: 0 }
     for (const r of this._rows) if (r.status in counts) counts[r.status] += 1
     return counts
   }
@@ -138,6 +141,7 @@ class ObjstoreRecoveryDialog extends AppDialog {
     if (c.good) parts.push(`${c.good} available`)
     if (c.reuploaded) parts.push(`${c.reuploaded} re-uploaded`)
     if (c.failed) parts.push(`${c.failed} failed`)
+    if (c['check-failed']) parts.push(`${c['check-failed']} check failed`)
     if (c.missing) parts.push(`${c.missing} missing`)
     // role="status"/aria-live so a screen reader announces the outcome
     // when the re-check finishes (the per-row updates above aren't a live
