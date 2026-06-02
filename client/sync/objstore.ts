@@ -725,6 +725,12 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
   //     the REST PUT, which is NOT a socket waiter and so is never the
   //     source of this rejection. A replayed begin at most mints a fresh
   //     staging row the reaper collects; it can't double-commit.
+  //   - `_rawDeleteOnce` is idempotent: a WS-mode delete commits on the
+  //     socket frame the restart CAN interrupt (unlike put), so a drop that
+  //     committed before its ack was lost to the hop replays against an
+  //     already-gone row -> not-found (non-null prev) / deletedVersion 0
+  //     (null prev). That's the desired gone-state, already reachable via a
+  //     manual retry, so the replay can't corrupt anything.
   //
   // No-hang invariant: the `op`'s re-await of `state.connectedPromise`
   // relies on the restart being IMMEDIATELY followed by a synchronous
@@ -1053,13 +1059,21 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
     return { kind: 'ok', deletedVersion: (ack as { deletedVersion: number }).deletedVersion }
   }
 
-  async function _rawDelete(state: SessionState, resourceTag: string, prev: ObjstorePrev): Promise<RawDeleteResult> {
+  // Wire-level DELETE. Wraps the single attempt with the session-restart
+  // replay (see `withSessionRestartRetry`), matching `_rawPut` / `_rawFetch`
+  // so an SSE replica hop mid-handshake doesn't surface a spurious
+  // "session restarted" error. Safe because delete is idempotent (see the
+  // `_rawDeleteOnce` obligation in `withSessionRestartRetry`).
+  function _rawDelete(state: SessionState, resourceTag: string, prev: ObjstorePrev): Promise<RawDeleteResult> {
+    return withSessionRestartRetry(state, () => _rawDeleteOnce(state, resourceTag, prev))
+  }
+
+  // One delete attempt: SSE → REST mint (session-independent), else the
+  // in-band WS handshake; on a REST 401 fall back to the WS path.
+  async function _rawDeleteOnce(state: SessionState, resourceTag: string, prev: ObjstorePrev): Promise<RawDeleteResult> {
     await state.connectedPromise
     if (state.closed) throw new Error('objstore: session closed')
     const fields: ObjstoreDeleteFields = { workspaceTag: state.workspaceTag, resourceTag, prevVersion: prev?.version ?? null, prevIncarnation: prev?.incarnation ?? null }
-    // In SSE mode mint over REST (session-independent); else the in-band WS
-    // handshake. On a REST 401 (stale ts / replay / clock skew) fall back to
-    // the nonce-bound WS path.
     let outcome: DeleteOutcome
     if (transport.isSse()) {
       outcome = await restDelete(state, resourceTag, fields)

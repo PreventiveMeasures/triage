@@ -445,4 +445,33 @@ describe('objstore REST mint (POST /api/objstore/{tag}/{res}; op=fetch|put|delet
     const signature = await signObjstoreDeleteRest(keys.signingKey, fields, ts)
     assert.equal((await mintPost(tag, res, { op: 'delete', ts, signature, prevVersion: 1, prevIncarnation: null })).status, 400)
   })
+
+  it('delete mint: a real drop broadcasts objstore-deleted to subscribers; a no-op does not', async () => {
+    // seedObject's session is WS-subscribed to the workspace, so a server-side
+    // broadcast(tag, …, except:null) — which includes the originator's
+    // subscription — lands on its socket and fires onDeleted.
+    const { keys, res, put, session } = await seedObject('rest-delete-broadcast.json', Buffer.from('drop-and-fan-out-0001'))
+    try {
+      const tag = keys.workspaceTag
+      const events = []
+      let resolveDrop
+      const dropEvent = new Promise((r) => { resolveDrop = r })
+      session.onDeleted((ev) => { events.push(ev); if (ev.resourceTag === res) resolveDrop(ev) })
+
+      // A null-precondition delete on a never-seen resource → deletedVersion 0
+      // (nothing dropped), so the server must NOT broadcast. It runs first, so
+      // any (erroneous) broadcast would arrive before the real drop's below.
+      const absent = await computeResourceTag(keys.tagKey, 'rest-delete-broadcast-absent.json')
+      assert.equal((await (await deleteMint(keys, tag, absent, { prevVersion: null, prevIncarnation: null })).json()).deletedVersion, 0)
+
+      // A real drop of the seeded object → exactly one broadcast.
+      assert.equal((await deleteMint(keys, tag, res, { prevVersion: put.meta.version, prevIncarnation: put.meta.incarnation })).status, 200)
+      const ev = await dropEvent
+      assert.equal(ev.version, put.meta.version, 'broadcast carries the dropped version')
+      // FIFO over the one socket: if the no-op had broadcast, it would already
+      // be in `events` by the time the real-drop event resolved dropEvent.
+      assert.ok(!events.some((e) => e.resourceTag === absent), 'the deletedVersion-0 no-op broadcasts nothing')
+      assert.equal(events.length, 1, 'only the real drop fanned out')
+    } finally { session.close() }
+  })
 })
