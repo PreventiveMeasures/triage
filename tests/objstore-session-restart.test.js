@@ -33,7 +33,7 @@ const HTTP_ORIGIN = 'https://relay.test'
 // connect / disconnect / message delivery and to simulate a session
 // restart (synchronous disconnect+reconnect with a new nonce — the same
 // ordering `socket-transport.ts` produces on a re-challenge).
-function makeFakeTransport(initialNonce = 'nonce-1') {
+function makeFakeTransport(initialNonce = 'nonce-1', { sse = false } = {}) {
   let consumer = null
   let nonce = initialNonce
   const sent = []
@@ -63,6 +63,7 @@ function makeFakeTransport(initialNonce = 'nonce-1') {
     acquire() { return { release() {} } },
     getNonce() { return nonce },
     getSocket() { return {} },
+    isSse() { return sse },
     send(msg) {
       sent.push(msg)
       try { onSend?.(msg) } catch {}
@@ -235,5 +236,124 @@ describe('objstore _rawPut session-restart retry', () => {
       assert.equal(await fetchP, null)
       assert.equal(transport.count('objstore-fetch'), 1, 'no restart → no replay')
     } finally { client.close() }
+  })
+})
+
+// SSE-mode routing: in SSE mode the client mints fetch/put tokens over the
+// REST endpoint (session-independent) instead of the in-band WS frame, then
+// drives the unchanged GET/PUT. Driven over the fake transport (isSse:true)
+// with a mocked `globalThis.fetch` for the mint POST + the byte transfer.
+describe('objstore SSE-mode REST mint routing', () => {
+  // Minimal fetch Response stand-in.
+  function jsonResponse(status, obj) {
+    return {
+      ok: status >= 200 && status < 300,
+      status,
+      json() { return Promise.resolve(obj) },
+      text() { return Promise.resolve(JSON.stringify(obj)) },
+    }
+  }
+
+  it('fetchByTag mints over REST (POST op=fetch), not a WS frame', async () => {
+    const transport = makeFakeTransport('nonce-1', { sse: true })
+    const real = globalThis.fetch
+    const posts = []
+    globalThis.fetch = (url, opts) => {
+      if (opts.method === 'POST') { posts.push({ url: String(url), body: JSON.parse(opts.body) }); return Promise.resolve(jsonResponse(404, { error: 'not-found' })) }
+      throw new Error(`unexpected ${opts.method}`)
+    }
+    const { client, session } = await openSession(transport)
+    try {
+      const got = await session.fetchByTag('resource-tag-abc')
+      assert.equal(got, null, 'a 404 fetch-mint resolves to null')
+      assert.equal(posts.length, 1, 'exactly one mint POST')
+      assert.equal(posts[0].body.op, 'fetch')
+      assert.ok(posts[0].url.includes('/api/objstore/') && posts[0].url.endsWith('/resource-tag-abc'), posts[0].url)
+      assert.equal(transport.count('objstore-fetch'), 0, 'no in-band WS fetch frame in SSE mode')
+    } finally { globalThis.fetch = real; client.close() }
+  })
+
+  it('put mints over REST (POST op=put) and commits via the PUT, no WS frame', async () => {
+    const transport = makeFakeTransport('nonce-1', { sse: true })
+    const real = globalThis.fetch
+    const posts = []
+    globalThis.fetch = async (url, opts) => {
+      if (opts.method === 'POST') {
+        posts.push(JSON.parse(opts.body))
+        return jsonResponse(200, { stagingId: 's1', urlPath: '/api/objstore/x/y', token: 'tok', expiresAt: Date.now() + 60_000 })
+      }
+      if (opts.method === 'PUT') {
+        const contentHash = await computeContentHash(opts.body)
+        return jsonResponse(200, { version: 1, incarnation: 'inc-1', contentHash, contentLength: opts.body.byteLength })
+      }
+      throw new Error(`unexpected ${opts.method}`)
+    }
+    const { client, session } = await openSession(transport)
+    try {
+      const r = await session.put({ fileName: 'f.json', content: Buffer.from('hello-sse'), prev: null })
+      assert.equal(r.ok, true, `put should succeed: ${JSON.stringify(r)}`)
+      assert.equal(posts.length, 1, 'exactly one mint POST')
+      assert.equal(posts[0].op, 'put')
+      assert.equal(transport.count('objstore-put-begin'), 0, 'no in-band WS put-begin in SSE mode')
+    } finally { globalThis.fetch = real; client.close() }
+  })
+
+  it('put falls back to the WS put-begin when the REST mint returns 401 (new-workspace gate)', async () => {
+    const transport = makeFakeTransport('nonce-1', { sse: true })
+    const real = globalThis.fetch
+    globalThis.fetch = async (url, opts) => {
+      if (opts.method === 'POST') return jsonResponse(401, { error: 'unauthorized' })
+      if (opts.method === 'PUT') {
+        const contentHash = await computeContentHash(opts.body)
+        return jsonResponse(200, { version: 1, incarnation: 'inc-1', contentHash, contentLength: opts.body.byteLength })
+      }
+      throw new Error(`unexpected ${opts.method}`)
+    }
+    const { client, session } = await openSession(transport)
+    try {
+      const putP = session.put({ fileName: 'f.json', content: Buffer.from('hello-fallback'), prev: null })
+      // The 401 mint routes to the in-band WS put-begin; deliver its token so
+      // the put completes through the (mocked) REST PUT.
+      await waitFor(() => transport.count('objstore-put-begin') === 1, 'WS put-begin fallback after mint 401')
+      const begin = transport.last('objstore-put-begin')
+      transport.deliver({ type: 'objstore-put-token', workspaceTag: begin.workspaceTag, resourceTag: begin.resourceTag, urlPath: '/api/objstore/x/y', token: 'tok', expiresAt: Date.now() + 60_000, stagingId: 's1' })
+      const r = await putP
+      assert.equal(r.ok, true, 'put completes via the WS fallback')
+    } finally { globalThis.fetch = real; client.close() }
+  })
+
+  it('put surfaces a REST 409 as a conflict result (rebase path), no WS frame', async () => {
+    const transport = makeFakeTransport('nonce-1', { sse: true })
+    const real = globalThis.fetch
+    globalThis.fetch = (url, opts) => {
+      if (opts.method === 'POST') return Promise.resolve(jsonResponse(409, { error: 'conflict', currentVersion: 7, currentIncarnation: 'inc-x' }))
+      throw new Error(`unexpected ${opts.method}`)
+    }
+    const { client, session } = await openSession(transport)
+    try {
+      const r = await session.put({ fileName: 'f.json', content: Buffer.from('x'), prev: null })
+      assert.equal(r.ok, false)
+      assert.equal(r.reason, 'conflict')
+      assert.equal(r.current?.version, 7, 'currentVersion parsed from the REST 409 envelope')
+      assert.equal(r.current?.incarnation, 'inc-x')
+      assert.equal(transport.count('objstore-put-begin'), 0, 'conflict came from the REST mint, no WS frame')
+    } finally { globalThis.fetch = real; client.close() }
+  })
+
+  it('fetch falls back to the WS fetch-token when the REST mint returns 401', async () => {
+    const transport = makeFakeTransport('nonce-1', { sse: true })
+    const real = globalThis.fetch
+    globalThis.fetch = (url, opts) => {
+      if (opts.method === 'POST') return Promise.resolve(jsonResponse(401, { error: 'unauthorized' }))
+      throw new Error(`unexpected ${opts.method}`)
+    }
+    const { client, session } = await openSession(transport)
+    try {
+      const fetchP = session.fetchByTag('resource-tag-xyz')
+      await waitFor(() => transport.count('objstore-fetch') === 1, 'WS fetch-token fallback after mint 401')
+      const f = transport.last('objstore-fetch')
+      transport.deliver({ type: 'objstore-fetch-not-found', workspaceTag: f.workspaceTag, resourceTag: f.resourceTag })
+      assert.equal(await fetchP, null, 'fetch resolves via the WS fallback')
+    } finally { globalThis.fetch = real; client.close() }
   })
 })

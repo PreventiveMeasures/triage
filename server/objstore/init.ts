@@ -42,6 +42,12 @@ export type ObjstoreInitDeps = {
   // is not load-balancer-pinned). See server/index.ts boot logic
   // for the env var (`OBJSTORE_TOKEN_SECRET`).
   tokenSecret?: TokenSecret
+  // New-workspace operator gate for the REST put-begin mint — returns
+  // `true` to DENY (password configured AND workspace new). The
+  // connection-independent analog of `authGate`; the client falls back to
+  // the in-band WS put-begin on a deny. Omitted → open (never deny),
+  // matching `authGate`'s no-config default.
+  restPutGate?: (workspaceTag: string) => Promise<boolean>
 }
 
 export type ObjstoreInit = {
@@ -77,7 +83,9 @@ export function initObjstore(deps: ObjstoreInitDeps): ObjstoreInit {
     ...(deps.sendUnauthorized ? { sendUnauthorized: deps.sendUnauthorized } : {}),
   })
   const restDeps: ObjstoreRestDeps = {
-    handle, secret, broadcast: deps.broadcast, publishObjPut: deps.publishObjPut, debug: deps.debug,
+    handle, secret, broadcast: deps.broadcast, publishObjPut: deps.publishObjPut,
+    restPutGate: deps.restPutGate ?? (() => Promise.resolve(false)),
+    debug: deps.debug,
   }
   // Re-entrancy guard for periodic + startup sweeps. Kicking the
   // startup sweep through the same `enqueueSweep` path means the

@@ -41,6 +41,8 @@ import {
 } from './store.ts'
 import type { LiveReader } from './blob.ts'
 import { type TokenSecret, extractBearer, verifyToken } from './tokens.ts'
+import { deny, denyConflict } from './rest-deny.ts'
+import { handleRestMint } from './rest-mint.ts'
 import { debugId, debugTag, errMsg, errStack } from '../util.ts'
 
 // Server-side fault codes that should surface as 500 `io-error`
@@ -66,6 +68,13 @@ export type ObjstoreRestDeps = {
   // workspace_object for the full metadata (version, hash, length,
   // signature). SQLite mode passes a no-op.
   publishObjPut: (tag: string, resourceTag: string) => void
+  // New-workspace operator gate for the REST put-begin mint — the
+  // connection-independent analog of the WS path's `authGate`. Returns
+  // `true` to DENY (a password is configured AND the workspace is
+  // never-before-seen), which routes the client to its in-band WS
+  // put-begin fallback (REST has no socket auth state to consult).
+  // No-config default is open (never deny), matching the WS authGate.
+  restPutGate: (workspaceTag: string) => Promise<boolean>
   debug: boolean
 }
 
@@ -116,34 +125,21 @@ export function matchRoute(url: string | undefined): RouteMatch | null {
   return { tag: tag!, resourceTag: resourceTag! }
 }
 
-function deny(res: ServerResponse, status: number, body: string): void {
-  // Uniform `{ error: <reason> }` JSON envelope for every failure so
-  // clients parse one shape. Status + reason are NOT intentionally
-  // indistinguishable across causes — 401/404/405/410/411/500 each map
-  // to a documented reason in server/README.md and the client decides
-  // recovery from the code. Probe-distinguishing defense isn't a goal:
-  // every reason is reachable only after the route + bearer-token check
-  // passes (or as 401/404 from the public surface), so a probe gains no
-  // signal it couldn't otherwise enumerate.
-  res.writeHead(status, { 'content-type': 'application/json' })
-  res.end(JSON.stringify({ error: body }))
-}
-
-// Variant of `deny` that augments the JSON envelope with the live
-// row's `currentVersion` + `currentIncarnation` so a REST PUT 409 lets
-// the caller rebase onto the right precondition token. Without this the
-// client only learns the slot is occupied — not at what (version,
-// incarnation) — and retries blindly against a non-empty slot, looping
-// indefinitely against a live row. Symmetric with the WS plane's
-// `objstore-conflict` envelope.
-function denyConflict(res: ServerResponse, currentVersion: number | null, currentIncarnation: string | null): void {
-  res.writeHead(409, { 'content-type': 'application/json' })
-  res.end(JSON.stringify({ error: 'conflict', currentVersion, currentIncarnation }))
-}
-
 export async function handleRest(deps: ObjstoreRestDeps, req: IncomingMessage, res: ServerResponse): Promise<void> {
   const route = matchRoute(req.url)
   if (!route) { deny(res, 404, 'not-found'); return }
+  // POST = REST mint (fetch or put-begin, by body `op`; signature-authed
+  // via the JSON body, no bearer token). Dispatched before the bearer-token
+  // gate below, which guards the token-authed GET/PUT byte transfers.
+  if (req.method === 'POST') {
+    try { await handleRestMint(deps, req, res, route) }
+    catch (err: unknown) {
+      if (deps.debug) console.warn('objstore POST error:', errStack(err))
+      if (res.headersSent) res.destroy()
+      else deny(res, 500, 'internal')
+    }
+    return
+  }
   const token = extractBearer(req.headers['authorization'])
   if (!token) { deny(res, 401, 'unauthorized'); return }
   const payload = verifyToken(deps.secret, token)

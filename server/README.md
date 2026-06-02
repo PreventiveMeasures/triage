@@ -383,9 +383,9 @@ objstore-deleted      { workspaceTag, resourceTag, version }
 ```
 
 Canonical signing payloads are the source of truth in
-`server/objstore/sign.ts` (`canonicalObjstorePut` / `…Delete` / `…Fetch`);
-JSON key order on the wire is irrelevant but the signed byte order is
-fixed by those builders. `*-error` / `*-conflict` frames are sent after
+`server/objstore/sign.ts` (`canonicalObjstorePut` / `…Delete` / `…Fetch` /
+`…FetchRest`); JSON key order on the wire is irrelevant but the signed
+byte order is fixed by those builders. `*-error` / `*-conflict` frames are sent after
 sig verify, so only legit signers see them.
 
 </details>
@@ -393,9 +393,23 @@ sig verify, so only legit signers see them.
 <details>
 <summary>REST endpoints &amp; tokens</summary>
 
-Both routes match `/api/objstore/{workspaceTag}/{resourceTag}`; the token
-rides `Authorization: Bearer <token>`, never the URL (querystring tokens
-leak via access logs / referer).
+All routes match `/api/objstore/{workspaceTag}/{resourceTag}`. The `PUT`/
+`GET` byte transfers carry a token in `Authorization: Bearer <token>`,
+never the URL (querystring tokens leak via access logs / referer). The
+`POST` mint is a REST alternative to the WS `objstore-fetch` /
+`objstore-put-begin` handshakes (`server/objstore/rest-mint.ts`): authed by
+an Ed25519 signature in the JSON body (no live socket, no bearer token), it
+returns the SAME token shape the WS path sends for the same `GET` / `PUT`
+route — useful when minting independent of the SSE session (e.g. so an SSE
+replica hop can't interrupt it; the client uses it in SSE mode). The body's
+`op` selects `fetch` (→ get-token) or `put` (→ put-token + stagingId). In
+place of the WS connection nonce it binds a client timestamp; the server
+enforces a ±60s freshness window + a single-use replay dedup
+(`server/objstore/fetch-mint-guard.ts`), so a retry must re-sign with a
+fresh `ts` rather than resend the same body. The `put` op also runs the
+new-workspace operator gate — since REST has no socket auth state, a
+never-seen workspace under a configured password gets 401 and the client
+falls back to the in-band WS put-begin.
 
 Every non-2xx response is a uniform JSON envelope `{ "error": <reason> }`
 (the reason word is shown below); the 409 envelope additionally carries
@@ -426,6 +440,31 @@ GET  /api/objstore/{workspaceTag}/{resourceTag}
   405 { error: "method-not-allowed" }
   500 { error: "internal" }
   503 { error: "unavailable" }        live row present, file missing / size diverged
+
+POST /api/objstore/{workspaceTag}/{resourceTag}      (mint; op=fetch|put)
+  Common body (application/json): { op, ts, signature }
+    ts        client epoch-ms; rejected outside a ±60s window
+    signature Ed25519 over the op's canonical (workspaceTag IS the pubkey;
+              canonicals in sign.ts), binding `ts` in the nonce slot
+  401 { error: "unauthorized" }       bad signature, stale ts, OR replayed
+                                      signature (re-sign with a fresh ts)
+  400 { error: "bad-request" }        missing/malformed fields, or unknown op
+
+  op=fetch  signature over [fetch-rest domain, tag, res, ts]
+    200 { resourceTag, version, incarnation, contentHash, contentLength,
+          signature, urlPath, token, expiresAt }   get-token for the GET above
+    404 { error: "not-found" }        no live row for (tag, res)
+
+  op=put    + body { prevVersion, prevIncarnation, expectedLength, contentHash }
+            signature over [put-rest domain, tag, res, prevVersion,
+              prevIncarnation, contentHash, expectedLength, ts]
+    200 { stagingId, urlPath, token, expiresAt }   put-token for the PUT above
+    401 also = new-workspace operator gate (password set + workspace new);
+              client falls back to the in-band WS put-begin
+    403 { error: "workspace-full" }   per-workspace resource cap
+    409 { error: "conflict", currentVersion, currentIncarnation }
+                                      prevVersion/incarnation precondition stale
+  500 { error: "internal" }
 ```
 
 Tokens are HMAC-SHA-256 over a JSON payload, base64url, dot-joined to the
@@ -433,7 +472,7 @@ payload bytes:
 
 ```
 PUT payload: { op: "put", tag, res, sid, len, exp }
-GET payload: { op: "get", tag, res, ver, exp }
+GET payload: { op: "get", tag, res, ver, inc, exp }
 token       = base64url(payload-json) + "." + base64url(hmac)
 ```
 
@@ -441,7 +480,15 @@ The HMAC secret is a 32-byte random value minted at start; restart
 invalidates outstanding tokens (TTL is short — 5 min default — and clients
 re-handshake over WS). PUT tokens are single-use (`commitPut` deletes the
 staging row keyed by `sid`, so a replay hits `410 Gone`); GET tokens are
-multi-use within TTL but only ever yield AEAD ciphertext.
+multi-use within TTL but only ever yield AEAD ciphertext. (`inc` =
+incarnation; the GET re-checks it so a token can't serve a recreated
+incarnation that reuses the version number.)
+
+In a multi-replica deployment the secret MUST be the shared
+`OBJSTORE_TOKEN_SECRET` (required + fail-fast in Neon mode, see above) so a
+token minted on one replica — including via the `POST` fetch-mint — verifies
+on any other. The per-process random secret is the single-process (SQLite)
+default, where mint and serve are always the same process.
 
 </details>
 

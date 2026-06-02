@@ -12,6 +12,17 @@ import { encodeUtf8 } from '../../common/utf8.js'
 const PUT_DOMAIN = 'deepview-objstore.v1.put'
 const DELETE_DOMAIN = 'deepview-objstore.v1.delete'
 const FETCH_DOMAIN = 'deepview-objstore.v1.fetch'
+// REST fetch-mint (POST /api/objstore/{tag}/{res}) — a DISTINCT domain
+// from the WS FETCH so a captured WS-fetch signature can't be replayed
+// as a REST mint, and vice versa. Binds a client timestamp instead of
+// the connection nonce; the server enforces a freshness window + a
+// replay cache in its place. See server/objstore/rest.ts.
+const FETCH_REST_DOMAIN = 'deepview-objstore.v1.fetch-rest'
+// REST put-begin mint (POST /api/objstore/{tag}/{res}, op:'put') — a
+// DISTINCT domain from the WS PUT so a captured WS put-begin signature
+// can't be replayed as a REST mint, and vice versa. Binds a client
+// timestamp (same anti-replay model as FETCH_REST_DOMAIN).
+const PUT_REST_DOMAIN = 'deepview-objstore.v1.put-rest'
 
 // Fields the client passes to the canonical builders. `prevVersion`
 // is `number | null` — null is the "must-not-exist" precondition.
@@ -103,6 +114,40 @@ export function signObjstoreDelete(privateKey: CryptoKey, fields: ObjstoreDelete
 
 export function signObjstoreFetch(privateKey: CryptoKey, workspaceTag: string, resourceTag: string, connectionNonce: string): Promise<string> {
   return signCanonical(privateKey, canonicalObjstoreFetch(workspaceTag, resourceTag, connectionNonce))
+}
+
+// Canonical bytes for the REST fetch-mint signature. `ts` is the
+// client's epoch-ms timestamp; the server rejects it outside a skew
+// window and dedups the signature, so it plays the anti-replay role the
+// connection nonce plays on the WS path. Stringified so the canonical
+// form is byte-stable across the wire (matches the server's `String(ts)`).
+export function canonicalObjstoreFetchRest(workspaceTag: string, resourceTag: string, ts: number): Uint8Array<ArrayBuffer> {
+  return encodeUtf8([FETCH_REST_DOMAIN, workspaceTag, resourceTag, String(ts)].join('\n'))
+}
+
+export function signObjstoreFetchRest(privateKey: CryptoKey, workspaceTag: string, resourceTag: string, ts: number): Promise<string> {
+  return signCanonical(privateKey, canonicalObjstoreFetchRest(workspaceTag, resourceTag, ts))
+}
+
+// REST put-begin canonical — the WS `canonicalObjstorePut` fields in the
+// same order/coercion, but under the put-rest domain and binding a client
+// `ts` instead of the connection nonce. Byte-stable against the server's
+// `canonicalObjstorePutRest`.
+export function canonicalObjstorePutRest(fields: ObjstorePutBeginFields, ts: number): Uint8Array<ArrayBuffer> {
+  return encodeUtf8([
+    PUT_REST_DOMAIN,
+    fields.workspaceTag,
+    fields.resourceTag,
+    intOrEmpty(fields.prevVersion),
+    incOrEmpty(fields.prevIncarnation),
+    fields.contentHash,
+    String(fields.expectedLength),
+    String(ts),
+  ].join('\n'))
+}
+
+export function signObjstorePutBeginRest(privateKey: CryptoKey, fields: ObjstorePutBeginFields, ts: number): Promise<string> {
+  return signCanonical(privateKey, canonicalObjstorePutRest(fields, ts))
 }
 
 // SHA-256 of the bytes, base64url-no-padding. Used to populate
