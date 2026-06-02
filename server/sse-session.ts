@@ -28,6 +28,20 @@ import { EventEmitter } from 'node:events'
 import type { Buffer } from 'node:buffer'
 import type { ServerResponse } from 'node:http'
 
+// TCP keepalive idle delay for the downstream socket. With the client no
+// longer POSTing a periodic ping (see client/sync/socket-transport.ts), a
+// QUIET session whose client vanished without a FIN (crash, NAT/idle drop)
+// has no application-level liveness signal — so we lean on the kernel:
+// after this much idle the kernel starts probing, and a dead half-open
+// socket surfaces as a `close`/`error` here. Node's `setKeepAlive` sets
+// only TCP_KEEPIDLE (the delay to the FIRST probe), not the probe
+// interval/count — so full teardown is this delay PLUS the OS's
+// TCP_KEEPINTVL × TCP_KEEPCNT (~minutes on Linux defaults), still bounded
+// and far below the kernel's hours-long default-off behaviour. `maxSessions`
+// is the hard backstop. Behind a TLS-terminating / buffering proxy this
+// probes the proxy hop, not the client — see the reaping note in sse-server.ts.
+const SOCKET_KEEPALIVE_MS = 30_000
+
 export class SseSession extends EventEmitter {
   static readonly CONNECTING = 0
   static readonly OPEN = 1
@@ -62,6 +76,10 @@ export class SseSession extends EventEmitter {
   // spurious session 'error' that operators read as a real transport
   // failure on a healthy session.
   private wireResponse(res: ServerResponse): void {
+    // Probe half-open downstreams at the kernel level (see SOCKET_KEEPALIVE_MS).
+    // A failed probe trips the `close`/`error` handlers below, which is how a
+    // dead-but-quiet SSE client is reaped now that there's no client ping.
+    try { res.socket?.setKeepAlive(true, SOCKET_KEEPALIVE_MS) } catch {}
     res.on('close', () => {
       if (res !== this.currentRes) return  // current-response guard (see above)
       if (this.readyState === SseSession.CLOSED) return
@@ -142,9 +160,8 @@ export class SseSession extends EventEmitter {
   // double-emit), which means without the explicit emit here neither
   // sse-server's dropSession cleanup nor setupPeerConnection's
   // unsubscribeAll/peers.delete would run on any server-initiated
-  // teardown — sessions / hub.subscribers / idleTimers would leak per
-  // close. The wireResponse guard then ensures the later async fire
-  // is a no-op.
+  // teardown — the sessions map / hub.subscribers would leak per close.
+  // The wireResponse guard then ensures the later async fire is a no-op.
   close(code?: number, reason?: string): void {
     if (this.readyState === SseSession.CLOSED) return
     const res = this.currentRes
@@ -173,11 +190,14 @@ export class SseSession extends EventEmitter {
     this.emit('close')
   }
 
-  // The heartbeat sweep ping()s every WS client to detect dead sockets
-  // via the unanswered-pong path. SSE has no `pong` equivalent, so we
-  // write a comment line that keeps the channel alive across proxies
-  // without expecting a reply. The per-session idle timeout in
-  // sse-server.ts owns the dead-client detection.
+  // Server-driven keepalive, called on the SSE keepalive sweep in
+  // sse-server.ts. SSE has no `pong` equivalent, so we write a `:` comment
+  // line — ignored by the client parser — that keeps the downstream from
+  // being idle-closed by intermediary proxies (nginx et al. default to a
+  // ~60s read timeout). Dead-client detection is the response `close` event
+  // (clean disconnect, or a half-open socket the TCP keepalive in
+  // `wireResponse` forces closed), NOT this write: a `:`-comment write to a
+  // half-open socket just buffers, it doesn't synchronously throw.
   ping(): void {
     if (this.readyState !== SseSession.OPEN) return
     const res = this.currentRes

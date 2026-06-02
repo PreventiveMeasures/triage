@@ -172,6 +172,18 @@ export function createSocketTransport(deps: SocketTransportDeps): SocketTranspor
   function startHeartbeat(): void {
     stopHeartbeat()
     if (pingIntervalMs <= 0) return
+    // SSE fallback: NO client ping. The SSE plane is POST-driven and every
+    // POST forces a server-side stream takeover (the current event-stream
+    // response is closed and reopened on the POST's response — see
+    // sse-transport.ts), so a periodic ping would needlessly restart the
+    // downstream every tick; on a non-sticky multi-replica deploy it could
+    // also bounce the session to a replica that doesn't know its id → fresh
+    // challenge → re-subscribe. The server keeps SSE sessions alive on its
+    // own (periodic keepalive comment + TCP keepalive + response-close
+    // reaping; see server/sse-server.ts), so the client needn't prove
+    // liveness by POSTing. WS still pings — the unanswered pong is its only
+    // dead-socket signal, and a WS ping is a cheap control frame (no churn).
+    if (currentIsSse) return
     pingIntervalId = setInterval(() => {
       // `socket.OPEN` (instance constant) not the global `WebSocket.OPEN`:
       // when the SSE fallback engaged because there is NO global

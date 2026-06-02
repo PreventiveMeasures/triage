@@ -52,6 +52,24 @@ import { errMsg, randomId } from './util.ts'
 // path so the same `location` block routes both.
 export const SSE_OPEN_PATH = '/api/sync/sse'
 
+// Cadence of the server-driven keepalive sweep: every tick we write a `:`
+// comment to each open session's downstream so intermediary proxies don't
+// idle-close it (nginx et al. default to a ~60s read timeout). This is the
+// server's own liveness upkeep — the client no longer POSTs a periodic ping
+// (which forced a stream takeover every tick).
+//
+// Reaping model (replaces the old POST-driven idle timer): a session is
+// dropped on its downstream response `close` — clean disconnect, or a
+// half-open socket the per-session TCP keepalive forces closed (see
+// SseSession.SOCKET_KEEPALIVE_MS) — NOT by this sweep. We intentionally
+// trust connection-level liveness. The one topology this can't see is a
+// buffering / TLS-terminating proxy that holds the upstream open after the
+// real client vanished (keepalive then probes the proxy hop, not the
+// client); such a session lingers until `maxSessions`, the hard backstop.
+// This is the same exposure the WS heartbeat already has (its ping only
+// proves the proxy↔server hop too), not a new class of leak.
+const KEEPALIVE_SWEEP_MS = 30_000
+
 export type SseServerDeps = {
   // The WS dispatch is the cohesive unit; SSE just provides another
   // transport into it. Closure over the same handler / hub / objstore
@@ -70,12 +88,6 @@ export type SseServerDeps = {
   // the per-frame budget is the same as the WS plane after the
   // dispatcher splits them.
   maxBodyBytes: number
-  // Idle timeout for a session with no inbound POSTs. Detects the
-  // wandered-off browser tab the WS heartbeat sweep handles via
-  // ping/pong on real sockets. The client's JSON ping/pong heartbeat
-  // (every 15s) is the steady-state liveness signal; this is the
-  // hard ceiling.
-  sessionIdleMs: number
   debug: boolean
 }
 
@@ -86,6 +98,9 @@ export type SseServer = {
   // Iterates active sessions. Lifecycle's graceful-shutdown loop
   // reads this to close SSE sessions alongside WS clients.
   sessions: () => Iterable<SseSession>
+  // The keepalive-sweep timer. Lifecycle clears it on shutdown (parity
+  // with the WS heartbeat timer) so a tick can't fire mid-teardown.
+  keepaliveTimer: ReturnType<typeof setInterval>
 }
 
 // Inbound POST body. Every field optional — an empty-body POST is a
@@ -98,7 +113,7 @@ type SseBody = {
 }
 
 export function installSseServer(deps: SseServerDeps): SseServer {
-  const { peerDeps, isShuttingDown, maxSessions, maxBodyBytes, sessionIdleMs, debug } = deps
+  const { peerDeps, isShuttingDown, maxSessions, maxBodyBytes, debug } = deps
 
   // Active SSE sessions, keyed by the random session id `createSession`
   // mints on the first POST that lacks a `?id=` (or whose id this
@@ -108,26 +123,9 @@ export function installSseServer(deps: SseServerDeps): SseServer {
   // mint a fresh session instead, so a multi-replica deployment doesn't
   // require sticky LB routing to recover.
   const sessions = new Map<string, SseSession>()
-  // Per-session idle timer handle. Reset on every inbound POST; fires
-  // after `sessionIdleMs` of silence to close a stranded session.
-  const idleTimers = new Map<string, ReturnType<typeof setTimeout>>()
-
-  function armIdleTimer(sid: string, session: SseSession): void {
-    clearTimeout(idleTimers.get(sid))
-    if (sessionIdleMs <= 0) return
-    const t = setTimeout(() => {
-      if (debug) console.warn(`sse: session ${sid.slice(0, 8)}… idle ${sessionIdleMs}ms → close`)
-      try { session.terminate() } catch {}
-    }, sessionIdleMs)
-    t.unref?.()
-    idleTimers.set(sid, t)
-  }
 
   function dropSession(sid: string): void {
     sessions.delete(sid)
-    const t = idleTimers.get(sid)
-    if (t) clearTimeout(t)
-    idleTimers.delete(sid)
   }
 
   function writeSseHeaders(res: ServerResponse): void {
@@ -149,7 +147,7 @@ export function installSseServer(deps: SseServerDeps): SseServer {
     res.write('retry: 1000\n\n')
   }
 
-  function createSession(res: ServerResponse, req: HttpRequest): { sid: string; session: SseSession } | null {
+  function createSession(res: ServerResponse, req: HttpRequest): SseSession | null {
     if (sessions.size >= maxSessions) {
       if (debug) console.warn(`sse: refused open — sessions ${sessions.size} >= ${maxSessions}`)
       return null
@@ -158,7 +156,6 @@ export function installSseServer(deps: SseServerDeps): SseServer {
     const sid = randomId()
     const session = new SseSession(res)
     sessions.set(sid, session)
-    armIdleTimer(sid, session)
     session.on('close', () => { dropSession(sid) })
     // Announce the continuation token BEFORE the dispatcher emits its
     // `challenge` frame so the client latches the id first and the
@@ -171,7 +168,7 @@ export function installSseServer(deps: SseServerDeps): SseServer {
     // `setupPeerConnection`'s first action is the protocol `challenge`
     // frame, on the default-named SSE channel.
     setupPeerConnection(session as unknown as WebSocket, req, peerDeps)
-    return { sid, session }
+    return session
   }
 
   // Drives a POST body's `password` and `frames` through the shared
@@ -268,19 +265,16 @@ export function installSseServer(deps: SseServerDeps): SseServer {
       // through to createSession with `res` still header-virgin, so
       // the new session can writeSseHeaders without ERR_HTTP_HEADERS_SENT.
       let session: SseSession | null = null
-      let sid: string | null = null
       if (sidFromUrl) {
         const existing = sessions.get(sidFromUrl)
         if (existing && existing.readyState === existing.OPEN && existing.attachResponse(res)) {
           writeSseHeaders(res)
           session = existing
-          sid = sidFromUrl
-          armIdleTimer(sid, session)
         }
       }
       if (!session) {
-        const created = createSession(res, req)
-        if (!created) {
+        session = createSession(res, req)
+        if (!session) {
           // Cap exceeded; createSession already logged. Response
           // headers not yet written by writeSseHeaders, so send a
           // 503 JSON instead.
@@ -288,8 +282,6 @@ export function installSseServer(deps: SseServerDeps): SseServer {
           res.end(JSON.stringify({ error: 'too-many-sessions' }))
           return
         }
-        session = created.session
-        sid = created.sid
       }
       dispatchBody(session, body)
       // Do NOT res.end() — the response stays open as the session's
@@ -323,7 +315,22 @@ export function installSseServer(deps: SseServerDeps): SseServer {
     return true
   }
 
-  return { handle, sessions: () => sessions.values() }
+  // Server-driven keepalive sweep. Writes a `:` comment to every open
+  // session's downstream so proxies don't idle-close it. `unref` so it can't
+  // by itself hold the event loop open (parity with the WS heartbeat timer);
+  // skipped during shutdown so a tick can't write to a session the close
+  // loop is tearing down. Dead-session reaping is the response `close` event
+  // (see SseSession.wireResponse + the per-session TCP keepalive), NOT this
+  // sweep — so a half-open client is dropped without ever POSTing.
+  const keepaliveTimer = setInterval(() => {
+    if (isShuttingDown()) return
+    for (const session of sessions.values()) {
+      try { session.ping() } catch {}
+    }
+  }, KEEPALIVE_SWEEP_MS)
+  keepaliveTimer.unref?.()
+
+  return { handle, sessions: () => sessions.values(), keepaliveTimer }
 }
 
 // Bare-bones query parse for `id=<base64url>`. Avoids URLSearchParams

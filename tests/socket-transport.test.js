@@ -496,6 +496,51 @@ describe('socket-transport: heartbeat', () => {
   })
 })
 
+// ─────────── SSE heartbeat (no client ping) ───────────
+
+describe('socket-transport: SSE heartbeat', () => {
+  // In SSE mode the client must NOT ping: every POST forces a server-side
+  // stream takeover, so a ping would needlessly restart the downstream each
+  // tick (the server self-keepalives instead). Drive the SSE fallback by
+  // making the WebSocket constructor throw, then serve the SSE downstream
+  // from a mocked fetch, and assert no `{type:'ping'}` is ever POSTed.
+  it('sends NO ping in SSE mode (server self-keepalives)', async () => {
+    const realFetch = globalThis.fetch
+    const realWS = globalThis.WebSocket
+    const posts = []
+    let streamController = null
+    // Throwing constructor → socket-transport falls back to SSE.
+    globalThis.WebSocket = class { constructor() { throw new Error('ws unavailable (forcing SSE fallback)') } }
+    globalThis.fetch = (_url, opts) => {
+      posts.push(opts?.body == null ? {} : JSON.parse(opts.body))
+      const body = new ReadableStream({
+        start(c) {
+          streamController = c
+          // The `session` event flips the SSE adapter OPEN + fires 'open',
+          // which is what triggers the (now SSE-skipped) heartbeat start.
+          c.enqueue(new TextEncoder().encode('event: session\ndata: sse-test-sid\n\n'))
+        },
+      })
+      return Promise.resolve({ ok: true, status: 200, statusText: 'OK', body })
+    }
+    // Short ping interval: WS mode would fire ~6 pings across the wait below.
+    const t = makeTransport({ pingIntervalMs: 20, pongTimeoutMs: 100 })
+    const h = t.acquire()
+    try {
+      await delay(140)
+      assert.equal(t.isSse(), true, 'transport fell back to SSE')
+      const pingPosts = posts.filter((b) => Array.isArray(b.frames) && b.frames.some((f) => f && f.type === 'ping'))
+      assert.equal(pingPosts.length, 0, `expected zero ping POSTs in SSE mode, saw ${pingPosts.length} of ${posts.length} POST(s)`)
+    } finally {
+      h.release()
+      try { streamController?.close() } catch {}
+      t.close()
+      globalThis.fetch = realFetch
+      globalThis.WebSocket = realWS
+    }
+  })
+})
+
 // ─────────── coverage gaps from the re-audit ───────────
 
 describe('socket-transport: misc invariants', () => {

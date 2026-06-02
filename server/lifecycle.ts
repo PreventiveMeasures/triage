@@ -14,6 +14,10 @@ export type ShutdownDeps = {
   httpServer: Server
   wss: WebSocketServer
   heartbeatTimer: ReturnType<typeof setInterval>
+  // The SSE keepalive-sweep timer (server/sse-server.ts). Cleared on
+  // shutdown alongside `heartbeatTimer` so a tick can't write a keepalive
+  // comment to a session the close loop below is already tearing down.
+  sseKeepaliveTimer: ReturnType<typeof setInterval>
   // Stops the periodic reaper AND awaits any in-flight sweep.
   stopReaper: () => Promise<void>
   // Live SSE+POST session iterator (mirrors `wss.clients` for the SSE
@@ -62,7 +66,7 @@ export function createLifecycle(): Lifecycle {
   let pendingExitCode = 0
 
   function install(deps: ShutdownDeps): void {
-    const { httpServer, wss, heartbeatTimer, stopReaper, sseSessions, closeDb } = deps
+    const { httpServer, wss, heartbeatTimer, sseKeepaliveTimer, stopReaper, sseSessions, closeDb } = deps
 
     async function shutdown(exitCode: number = 0): Promise<void> {
       // Re-entry: don't restart the teardown, but escalate the pending
@@ -77,9 +81,9 @@ export function createLifecycle(): Lifecycle {
       shuttingDown = true
       pendingExitCode = exitCode
       console.log('Shutting down…')
-      // Stop the heartbeat so a tick can't fire mid-shutdown and ping a
-      // socket the close-loop below already started tearing down.
-      clearInterval(heartbeatTimer)
+      // Stop both periodic timers (WS heartbeat + SSE keepalive) so neither
+      // fires mid-shutdown against a peer the close-loop is tearing down.
+      for (const timer of [heartbeatTimer, sseKeepaliveTimer]) clearInterval(timer)
       // Send a 1001 (going away) close frame to every open socket BEFORE
       // shutting the listener. Lets clients distinguish a server-initiated
       // graceful shutdown from a network drop, so they can skip their
