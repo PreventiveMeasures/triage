@@ -21,12 +21,12 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 
 import { deriveObjstoreKeys } from '../client/sync/objstore.ts'
-import { computeContentHash, signObjstoreFetch, signObjstoreFetchRest, signObjstorePut, signObjstorePutBeginRest } from '../client/sync/objstore-crypto.ts'
+import { computeContentHash, signObjstoreDelete, signObjstoreDeleteRest, signObjstoreFetch, signObjstoreFetchRest, signObjstorePut, signObjstorePutBeginRest } from '../client/sync/objstore-crypto.ts'
 import { computeResourceTag } from '../client/sync/objstore-content-crypto.ts'
 import { createObjstoreSession } from './_objstore-session.js'
 import { bootServer } from './_helpers.js'
 
-describe('objstore REST mint (POST /api/objstore/{tag}/{res}; op=fetch|put)', () => {
+describe('objstore REST mint (POST /api/objstore/{tag}/{res}; op=fetch|put|delete)', () => {
   let httpOrigin, server, serverUrl
   before(async () => { server = await bootServer(); serverUrl = server.serverUrl; httpOrigin = server.httpOrigin })
   after(async () => { if (server) await server.teardown() })
@@ -330,5 +330,148 @@ describe('objstore REST mint (POST /api/objstore/{tag}/{res}; op=fetch|put)', ()
       await gated.teardown()
       rmSync(gatedDir, { recursive: true, force: true })
     }
+  })
+
+  // ---- op:'delete' (delete mint) ----
+
+  // Sign + POST a delete mint (with optional prev precondition). Returns the
+  // fetch Response. Unlike put/fetch, delete mints nothing — it mutates in
+  // place and the 200 body is just `{ deletedVersion }`.
+  async function deleteMint(keys, tag, res, { prevVersion = null, prevIncarnation = null } = {}) {
+    const ts = Date.now()
+    const fields = { workspaceTag: tag, resourceTag: res, prevVersion, prevIncarnation }
+    const signature = await signObjstoreDeleteRest(keys.signingKey, fields, ts)
+    return mintPost(tag, res, { op: 'delete', ts, signature, prevVersion, prevIncarnation })
+  }
+
+  it('delete mint: drops a live object; a follow-up fetch-mint then 404s (gone)', async () => {
+    const content = Buffer.from('delete-me-opaque-ciphertext-stand-in-0001')
+    const { keys, res, put, session } = await seedObject('rest-delete.json', content)
+    try {
+      const tag = keys.workspaceTag
+      const del = await deleteMint(keys, tag, res, { prevVersion: put.meta.version, prevIncarnation: put.meta.incarnation })
+      assert.equal(del.status, 200, 'delete should succeed for a matching precondition')
+      assert.equal((await del.json()).deletedVersion, put.meta.version)
+      // The live row is gone — a fetch-mint for the same resource now 404s.
+      const fmTs = Date.now()
+      const fm = await mintPost(tag, res, { op: 'fetch', ts: fmTs, signature: await signObjstoreFetchRest(keys.signingKey, tag, res, fmTs) })
+      assert.equal(fm.status, 404, 'object is gone after delete')
+    } finally { session.close() }
+  })
+
+  it('delete mint: a null precondition against a missing row is an idempotent no-op (deletedVersion 0)', async () => {
+    const keys = await makeKeys()
+    const tag = keys.workspaceTag
+    const res = await computeResourceTag(keys.tagKey, 'rest-delete-noop.json')
+    // No live row + must-not-exist precondition → success with deletedVersion 0
+    // (nothing was dropped, nothing to broadcast).
+    const del = await deleteMint(keys, tag, res, { prevVersion: null, prevIncarnation: null })
+    assert.equal(del.status, 200)
+    assert.equal((await del.json()).deletedVersion, 0)
+  })
+
+  it('delete mint: a non-null precondition against a missing row 404s', async () => {
+    const keys = await makeKeys()
+    const tag = keys.workspaceTag
+    const res = await computeResourceTag(keys.tagKey, 'rest-delete-missing.json')
+    // A concrete (version, incarnation) precondition but no row to match it →
+    // not-found (distinct from the null-precondition no-op above).
+    const del = await deleteMint(keys, tag, res, { prevVersion: 1, prevIncarnation: 'a'.repeat(22) })
+    assert.equal(del.status, 404)
+  })
+
+  it('delete mint: a stale precondition against a live row 409s with the current version', async () => {
+    const { keys, res, put, session } = await seedObject('rest-delete-conflict.json', Buffer.from('v1-bytes'))
+    try {
+      const tag = keys.workspaceTag
+      // A wrong-version precondition against the live row → conflict, echoing
+      // the current (version, incarnation) for the client to rebase on.
+      const del = await deleteMint(keys, tag, res, { prevVersion: put.meta.version + 999, prevIncarnation: put.meta.incarnation })
+      assert.equal(del.status, 409)
+      const j = await del.json()
+      assert.equal(j.error, 'conflict')
+      assert.equal(j.currentVersion, put.meta.version)
+      assert.equal(j.currentIncarnation, put.meta.incarnation)
+    } finally { session.close() }
+  })
+
+  it('delete mint: rejects a replayed signature with 401', async () => {
+    const keys = await makeKeys()
+    const tag = keys.workspaceTag
+    const res = await computeResourceTag(keys.tagKey, 'rest-delete-replay.json')
+    const ts = Date.now()
+    const fields = { workspaceTag: tag, resourceTag: res, prevVersion: null, prevIncarnation: null }
+    const signature = await signObjstoreDeleteRest(keys.signingKey, fields, ts)
+    const body = { op: 'delete', ts, signature, prevVersion: null, prevIncarnation: null }
+    // First admit succeeds (a null-precondition no-op); the replay is caught by
+    // the freshness/replay guard BEFORE the delete runs.
+    assert.equal((await mintPost(tag, res, body)).status, 200)
+    assert.equal((await mintPost(tag, res, body)).status, 401, 'replayed delete signature rejected')
+  })
+
+  it('delete mint: rejects a signature from a different workspace key with 401', async () => {
+    const keys = await makeKeys()
+    const other = await makeKeys()
+    const tag = keys.workspaceTag
+    const res = await computeResourceTag(keys.tagKey, 'rest-delete-wrongkey.json')
+    const ts = Date.now()
+    const fields = { workspaceTag: tag, resourceTag: res, prevVersion: null, prevIncarnation: null }
+    // Structurally valid Ed25519 sig but by the WRONG signer — won't verify
+    // against `tag` (the victim's pubkey).
+    const signature = await signObjstoreDeleteRest(other.signingKey, fields, ts)
+    assert.equal((await mintPost(tag, res, { op: 'delete', ts, signature, prevVersion: null, prevIncarnation: null })).status, 401)
+  })
+
+  it('delete mint: rejects a WS delete signature presented to the mint (domain separation) with 401', async () => {
+    const keys = await makeKeys()
+    const tag = keys.workspaceTag
+    const res = await computeResourceTag(keys.tagKey, 'rest-delete-domainsep.json')
+    const ts = Date.now()
+    const fields = { workspaceTag: tag, resourceTag: res, prevVersion: null, prevIncarnation: null }
+    // Sign under the WS delete domain (nonce slot = the ts string); the REST
+    // mint canonicalizes under a DISTINCT domain → won't verify.
+    const wsSig = await signObjstoreDelete(keys.signingKey, fields, String(ts))
+    assert.equal((await mintPost(tag, res, { op: 'delete', ts, signature: wsSig, prevVersion: null, prevIncarnation: null })).status, 401)
+  })
+
+  it('delete mint: rejects a half-pair precondition (version without incarnation) with 400', async () => {
+    const keys = await makeKeys()
+    const tag = keys.workspaceTag
+    const res = await computeResourceTag(keys.tagKey, 'rest-delete-halfpair.json')
+    const ts = Date.now()
+    // prevVersion set but prevIncarnation null → malformed precondition,
+    // rejected before sig verify (matches the WS validPrevPair gate).
+    const fields = { workspaceTag: tag, resourceTag: res, prevVersion: 1, prevIncarnation: null }
+    const signature = await signObjstoreDeleteRest(keys.signingKey, fields, ts)
+    assert.equal((await mintPost(tag, res, { op: 'delete', ts, signature, prevVersion: 1, prevIncarnation: null })).status, 400)
+  })
+
+  it('delete mint: a real drop broadcasts objstore-deleted to subscribers; a no-op does not', async () => {
+    // seedObject's session is WS-subscribed to the workspace, so a server-side
+    // broadcast(tag, …, except:null) — which includes the originator's
+    // subscription — lands on its socket and fires onDeleted.
+    const { keys, res, put, session } = await seedObject('rest-delete-broadcast.json', Buffer.from('drop-and-fan-out-0001'))
+    try {
+      const tag = keys.workspaceTag
+      const events = []
+      let resolveDrop
+      const dropEvent = new Promise((r) => { resolveDrop = r })
+      session.onDeleted((ev) => { events.push(ev); if (ev.resourceTag === res) resolveDrop(ev) })
+
+      // A null-precondition delete on a never-seen resource → deletedVersion 0
+      // (nothing dropped), so the server must NOT broadcast. It runs first, so
+      // any (erroneous) broadcast would arrive before the real drop's below.
+      const absent = await computeResourceTag(keys.tagKey, 'rest-delete-broadcast-absent.json')
+      assert.equal((await (await deleteMint(keys, tag, absent, { prevVersion: null, prevIncarnation: null })).json()).deletedVersion, 0)
+
+      // A real drop of the seeded object → exactly one broadcast.
+      assert.equal((await deleteMint(keys, tag, res, { prevVersion: put.meta.version, prevIncarnation: put.meta.incarnation })).status, 200)
+      const ev = await dropEvent
+      assert.equal(ev.version, put.meta.version, 'broadcast carries the dropped version')
+      // FIFO over the one socket: if the no-op had broadcast, it would already
+      // be in `events` by the time the real-drop event resolved dropEvent.
+      assert.ok(!events.some((e) => e.resourceTag === absent), 'the deletedVersion-0 no-op broadcasts nothing')
+      assert.equal(events.length, 1, 'only the real drop fanned out')
+    } finally { session.close() }
   })
 })

@@ -58,6 +58,7 @@ import {
   type ObjstorePutBeginFields,
   computeContentHash,
   signObjstoreDelete,
+  signObjstoreDeleteRest,
   signObjstoreFetch,
   signObjstoreFetchRest,
   signObjstorePut,
@@ -724,6 +725,12 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
   //     the REST PUT, which is NOT a socket waiter and so is never the
   //     source of this rejection. A replayed begin at most mints a fresh
   //     staging row the reaper collects; it can't double-commit.
+  //   - `_rawDeleteOnce` is idempotent: a WS-mode delete commits on the
+  //     socket frame the restart CAN interrupt (unlike put), so a drop that
+  //     committed before its ack was lost to the hop replays against an
+  //     already-gone row -> not-found (non-null prev) / deletedVersion 0
+  //     (null prev). That's the desired gone-state, already reachable via a
+  //     manual retry, so the replay can't corrupt anything.
   //
   // No-hang invariant: the `op`'s re-await of `state.connectedPromise`
   // relies on the restart being IMMEDIATELY followed by a synchronous
@@ -989,16 +996,25 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
 
   // Wire-level DELETE. `delete` (public) is the encrypting wrapper —
   // it derives the tag from the plaintext fileName and calls here.
-  async function _rawDelete(state: SessionState, resourceTag: string, prev: ObjstorePrev): Promise<RawDeleteResult> {
-    await state.connectedPromise
-    if (state.closed) throw new Error('objstore: session closed')
+  // Outcome of a delete handshake (WS in-band OR REST mint). `unauthorized`
+  // arises only on the REST path (stale ts / replay / clock skew) — delete
+  // has no operator gate (it's signature-gated + idempotent + creates
+  // nothing), so the caller falls back to the nonce-bound WS path, which
+  // can't produce it.
+  type DeleteOutcome =
+    | { kind: 'ok'; deletedVersion: number }
+    | { kind: 'conflict'; current: { version: number; incarnation: string } | null }
+    | { kind: 'not-found' }
+    | { kind: 'unauthorized' }
+
+  // In-band WS delete handshake.
+  async function wsDelete(state: SessionState, fields: ObjstoreDeleteFields): Promise<DeleteOutcome> {
     const nonce = transport.getNonce()
     if (!nonce) throw new Error('objstore: socket not open')
-    const fields: ObjstoreDeleteFields = { workspaceTag: state.workspaceTag, resourceTag, prevVersion: prev?.version ?? null, prevIncarnation: prev?.incarnation ?? null }
     const signature = await signObjstoreDelete(state.signingKey, fields, nonce)
     send({ type: 'objstore-delete', ...fields, signature })
     const reply = await recv((m) =>
-      m.workspaceTag === state.workspaceTag && m.resourceTag === resourceTag && (
+      m.workspaceTag === state.workspaceTag && m.resourceTag === fields.resourceTag && (
         m.type === 'objstore-deleted-ack' ||
         m.type === 'objstore-delete-error' ||
         m.type === 'objstore-conflict'
@@ -1006,14 +1022,71 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
     )
     if (reply.type === 'objstore-deleted-ack') {
       if (typeof reply['deletedVersion'] !== 'number') throw new TypeError('objstore: malformed deleted-ack (deletedVersion not a number)')
-      return { ok: true, deletedVersion: reply['deletedVersion'] }
+      return { kind: 'ok', deletedVersion: reply['deletedVersion'] }
     }
     if (reply.type === 'objstore-conflict') {
       const current = isObjectMeta(reply['current'] as WireMessage | undefined) ? toObjectMeta(reply['current'] as WireMessage) : null
-      return { ok: false, reason: 'conflict', current }
+      return { kind: 'conflict', current }
     }
-    if (reply['reason'] === 'not-found') return { ok: false, reason: 'not-found' }
+    if (reply['reason'] === 'not-found') return { kind: 'not-found' }
     throw new Error(`objstore: delete-error reason='${String(reply['reason'])}'`)
+  }
+
+  // REST delete mint (SSE mode): POST the signed delete to the mint endpoint.
+  // 200 → `{ deletedVersion }`; 404 → not-found; 409 → conflict; 401 →
+  // stale/replay (caller falls back to WS).
+  async function restDelete(state: SessionState, resourceTag: string, fields: ObjstoreDeleteFields): Promise<DeleteOutcome> {
+    const ts = Date.now()
+    const signature = await signObjstoreDeleteRest(state.signingKey, fields, ts)
+    const res = await globalThis.fetch(restMintUrl(state.workspaceTag, resourceTag), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ op: 'delete', ts, signature, prevVersion: fields.prevVersion, prevIncarnation: fields.prevIncarnation }),
+    })
+    if (res.status === 401) return { kind: 'unauthorized' }
+    if (res.status === 404) return { kind: 'not-found' }
+    if (res.status === 409) return { kind: 'conflict', current: await parseRestConflict(res) }
+    if (!res.ok) {
+      let body = ''
+      try { body = await res.text() } catch {}
+      throw new Error(`objstore: REST delete failed ${res.status} ${body.slice(0, 200)}`)
+    }
+    let ack: unknown
+    try { ack = await res.json() } catch { throw new TypeError('objstore: delete-ack JSON parse failed') }
+    if (!ack || typeof ack !== 'object' || typeof (ack as { deletedVersion?: unknown }).deletedVersion !== 'number') {
+      throw new TypeError('objstore: malformed delete-ack (deletedVersion not a number)')
+    }
+    return { kind: 'ok', deletedVersion: (ack as { deletedVersion: number }).deletedVersion }
+  }
+
+  // Wire-level DELETE. Wraps the single attempt with the session-restart
+  // replay (see `withSessionRestartRetry`), matching `_rawPut` / `_rawFetch`
+  // so an SSE replica hop mid-handshake doesn't surface a spurious
+  // "session restarted" error. Safe because delete is idempotent (see the
+  // `_rawDeleteOnce` obligation in `withSessionRestartRetry`).
+  function _rawDelete(state: SessionState, resourceTag: string, prev: ObjstorePrev): Promise<RawDeleteResult> {
+    return withSessionRestartRetry(state, () => _rawDeleteOnce(state, resourceTag, prev))
+  }
+
+  // One delete attempt: SSE → REST mint (session-independent), else the
+  // in-band WS handshake; on a REST 401 fall back to the WS path.
+  async function _rawDeleteOnce(state: SessionState, resourceTag: string, prev: ObjstorePrev): Promise<RawDeleteResult> {
+    await state.connectedPromise
+    if (state.closed) throw new Error('objstore: session closed')
+    const fields: ObjstoreDeleteFields = { workspaceTag: state.workspaceTag, resourceTag, prevVersion: prev?.version ?? null, prevIncarnation: prev?.incarnation ?? null }
+    let outcome: DeleteOutcome
+    if (transport.isSse()) {
+      outcome = await restDelete(state, resourceTag, fields)
+      if (outcome.kind === 'unauthorized') outcome = await wsDelete(state, fields)
+    } else {
+      outcome = await wsDelete(state, fields)
+    }
+    if (outcome.kind === 'ok') return { ok: true, deletedVersion: outcome.deletedVersion }
+    if (outcome.kind === 'conflict') return { ok: false, reason: 'conflict', current: outcome.current }
+    if (outcome.kind === 'not-found') return { ok: false, reason: 'not-found' }
+    // wsDelete never returns 'unauthorized' (delete has no operator gate), so
+    // the fallback above resolves it; this is unreachable defensive cover.
+    throw new Error('objstore: delete unauthorized')
   }
 
   // Reject a fetched object whose version is strictly lower than the

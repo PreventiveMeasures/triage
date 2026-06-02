@@ -68,6 +68,11 @@ export type ObjstoreRestDeps = {
   // workspace_object for the full metadata (version, hash, length,
   // signature). SQLite mode passes a no-op.
   publishObjPut: (tag: string, resourceTag: string) => void
+  // Cross-instance pub/sub for objstore-deleted — fired alongside the local
+  // `broadcast` after a successful REST delete mint, so peers on OTHER
+  // instances drop the resource in real time. Carries (tag, resourceTag,
+  // version) inline (the row is gone post-delete). SQLite mode passes a no-op.
+  publishObjDeleted: (tag: string, resourceTag: string, version: number) => void
   // New-workspace operator gate for the REST put-begin mint — the
   // connection-independent analog of the WS path's `authGate`. Returns
   // `true` to DENY (a password is configured AND the workspace is
