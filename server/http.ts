@@ -109,14 +109,16 @@ export function createHttpServer(deps: HttpServerDeps): Server {
         res.end(JSON.stringify({ error: 'origin-denied' }))
         return
       }
-      // PUT idle-body timeout — a slow-loris client trickling bytes
-      // within the declared Content-Length holds the staging fd + an
-      // inFlightSids slot indefinitely. `req.setTimeout` fires on
-      // inactivity; we destroy the request, aborting the body pipeline.
+      // Idle-body timeout for the body-bearing REST methods — a slow-loris
+      // client trickling bytes holds the connection (and, for PUT, the
+      // staging fd + inFlightSids slot) indefinitely. PUT carries the raw
+      // blob within its declared Content-Length; POST carries the small
+      // fetch-mint JSON body. `req.setTimeout` fires on inactivity; we
+      // destroy the request, aborting the body pipeline.
       // Transport audit `server/objstore/rest.ts:218`.
-      if (req.method === 'PUT') {
+      if (req.method === 'PUT' || req.method === 'POST') {
         req.setTimeout(restPutIdleTimeoutMs, () => {
-          if (debug) console.warn(`REST PUT idle ${restPutIdleTimeoutMs}ms → abort`)
+          if (debug) console.warn(`REST ${req.method} idle ${restPutIdleTimeoutMs}ms → abort`)
           try { req.destroy(new Error('idle-timeout')) } catch {}
         })
       }

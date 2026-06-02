@@ -383,9 +383,9 @@ objstore-deleted      { workspaceTag, resourceTag, version }
 ```
 
 Canonical signing payloads are the source of truth in
-`server/objstore/sign.ts` (`canonicalObjstorePut` / `…Delete` / `…Fetch`);
-JSON key order on the wire is irrelevant but the signed byte order is
-fixed by those builders. `*-error` / `*-conflict` frames are sent after
+`server/objstore/sign.ts` (`canonicalObjstorePut` / `…Delete` / `…Fetch` /
+`…FetchRest`); JSON key order on the wire is irrelevant but the signed
+byte order is fixed by those builders. `*-error` / `*-conflict` frames are sent after
 sig verify, so only legit signers see them.
 
 </details>
@@ -393,9 +393,17 @@ sig verify, so only legit signers see them.
 <details>
 <summary>REST endpoints &amp; tokens</summary>
 
-Both routes match `/api/objstore/{workspaceTag}/{resourceTag}`; the token
-rides `Authorization: Bearer <token>`, never the URL (querystring tokens
-leak via access logs / referer).
+All routes match `/api/objstore/{workspaceTag}/{resourceTag}`. The `PUT`/
+`GET` byte transfers carry a token in `Authorization: Bearer <token>`,
+never the URL (querystring tokens leak via access logs / referer). The
+`POST` fetch-mint is a REST alternative to the WS `objstore-fetch`
+handshake: authed by an Ed25519 signature in the JSON body (no live socket,
+no bearer token), it returns a get-token for the same `GET` route — useful
+when minting independent of the SSE session (e.g. so an SSE replica hop
+can't interrupt it). In place of the WS connection nonce it binds a client
+timestamp; the server enforces a ±60s freshness window + a single-use
+replay dedup (`server/objstore/fetch-mint-guard.ts`), so a retry must
+re-sign with a fresh `ts` rather than resend the same body.
 
 Every non-2xx response is a uniform JSON envelope `{ "error": <reason> }`
 (the reason word is shown below); the 409 envelope additionally carries
@@ -426,6 +434,19 @@ GET  /api/objstore/{workspaceTag}/{resourceTag}
   405 { error: "method-not-allowed" }
   500 { error: "internal" }
   503 { error: "unavailable" }        live row present, file missing / size diverged
+
+POST /api/objstore/{workspaceTag}/{resourceTag}      (fetch-mint)
+  Body (application/json): { ts, signature }
+    ts        client epoch-ms; rejected outside a ±60s window
+    signature Ed25519 over [fetch-rest domain, tag, res, ts]
+              (the workspaceTag IS the pubkey; canonical in sign.ts)
+  200 { resourceTag, version, incarnation, contentHash, contentLength,
+        signature, urlPath, token, expiresAt }   get-token for the GET above
+  400 { error: "bad-request" }        missing / malformed ts | signature
+  401 { error: "unauthorized" }       bad signature, stale ts, OR replayed
+                                      signature (re-sign with a fresh ts)
+  404 { error: "not-found" }          no live row for (tag, res)
+  500 { error: "internal" }
 ```
 
 Tokens are HMAC-SHA-256 over a JSON payload, base64url, dot-joined to the
@@ -433,7 +454,7 @@ payload bytes:
 
 ```
 PUT payload: { op: "put", tag, res, sid, len, exp }
-GET payload: { op: "get", tag, res, ver, exp }
+GET payload: { op: "get", tag, res, ver, inc, exp }
 token       = base64url(payload-json) + "." + base64url(hmac)
 ```
 
@@ -441,7 +462,15 @@ The HMAC secret is a 32-byte random value minted at start; restart
 invalidates outstanding tokens (TTL is short — 5 min default — and clients
 re-handshake over WS). PUT tokens are single-use (`commitPut` deletes the
 staging row keyed by `sid`, so a replay hits `410 Gone`); GET tokens are
-multi-use within TTL but only ever yield AEAD ciphertext.
+multi-use within TTL but only ever yield AEAD ciphertext. (`inc` =
+incarnation; the GET re-checks it so a token can't serve a recreated
+incarnation that reuses the version number.)
+
+In a multi-replica deployment the secret MUST be the shared
+`OBJSTORE_TOKEN_SECRET` (required + fail-fast in Neon mode, see above) so a
+token minted on one replica — including via the `POST` fetch-mint — verifies
+on any other. The per-process random secret is the single-process (SQLite)
+default, where mint and serve are always the same process.
 
 </details>
 
