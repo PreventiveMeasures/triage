@@ -28,13 +28,18 @@ import { EventEmitter } from 'node:events'
 import type { Buffer } from 'node:buffer'
 import type { ServerResponse } from 'node:http'
 
-// TCP keepalive initial-probe delay for the downstream socket. With the
-// client no longer POSTing a periodic ping (see client/sync/socket-
-// transport.ts), a QUIET session whose client vanished without a FIN
-// (crash, NAT/idle drop) has no application-level liveness signal — so we
-// lean on the kernel: keepalive probes surface a dead half-open socket as
-// a `close`/`error` here in bounded time instead of the kernel's
-// hours-long default. ~30s matches the server keepalive-comment sweep.
+// TCP keepalive idle delay for the downstream socket. With the client no
+// longer POSTing a periodic ping (see client/sync/socket-transport.ts), a
+// QUIET session whose client vanished without a FIN (crash, NAT/idle drop)
+// has no application-level liveness signal — so we lean on the kernel:
+// after this much idle the kernel starts probing, and a dead half-open
+// socket surfaces as a `close`/`error` here. Node's `setKeepAlive` sets
+// only TCP_KEEPIDLE (the delay to the FIRST probe), not the probe
+// interval/count — so full teardown is this delay PLUS the OS's
+// TCP_KEEPINTVL × TCP_KEEPCNT (~minutes on Linux defaults), still bounded
+// and far below the kernel's hours-long default-off behaviour. `maxSessions`
+// is the hard backstop. Behind a TLS-terminating / buffering proxy this
+// probes the proxy hop, not the client — see the reaping note in sse-server.ts.
 const SOCKET_KEEPALIVE_MS = 30_000
 
 export class SseSession extends EventEmitter {
@@ -155,9 +160,8 @@ export class SseSession extends EventEmitter {
   // double-emit), which means without the explicit emit here neither
   // sse-server's dropSession cleanup nor setupPeerConnection's
   // unsubscribeAll/peers.delete would run on any server-initiated
-  // teardown — sessions / hub.subscribers / idleTimers would leak per
-  // close. The wireResponse guard then ensures the later async fire
-  // is a no-op.
+  // teardown — the sessions map / hub.subscribers would leak per close.
+  // The wireResponse guard then ensures the later async fire is a no-op.
   close(code?: number, reason?: string): void {
     if (this.readyState === SseSession.CLOSED) return
     const res = this.currentRes

@@ -56,9 +56,18 @@ export const SSE_OPEN_PATH = '/api/sync/sse'
 // comment to each open session's downstream so intermediary proxies don't
 // idle-close it (nginx et al. default to a ~60s read timeout). This is the
 // server's own liveness upkeep — the client no longer POSTs a periodic ping
-// (which forced a stream takeover every tick). Dead sessions are reaped by
-// the response `close` event (clean disconnect, or a half-open socket the
-// per-session TCP keepalive forces closed), not by this sweep.
+// (which forced a stream takeover every tick).
+//
+// Reaping model (replaces the old POST-driven idle timer): a session is
+// dropped on its downstream response `close` — clean disconnect, or a
+// half-open socket the per-session TCP keepalive forces closed (see
+// SseSession.SOCKET_KEEPALIVE_MS) — NOT by this sweep. We intentionally
+// trust connection-level liveness. The one topology this can't see is a
+// buffering / TLS-terminating proxy that holds the upstream open after the
+// real client vanished (keepalive then probes the proxy hop, not the
+// client); such a session lingers until `maxSessions`, the hard backstop.
+// This is the same exposure the WS heartbeat already has (its ping only
+// proves the proxy↔server hop too), not a new class of leak.
 const KEEPALIVE_SWEEP_MS = 30_000
 
 export type SseServerDeps = {
@@ -138,7 +147,7 @@ export function installSseServer(deps: SseServerDeps): SseServer {
     res.write('retry: 1000\n\n')
   }
 
-  function createSession(res: ServerResponse, req: HttpRequest): { sid: string; session: SseSession } | null {
+  function createSession(res: ServerResponse, req: HttpRequest): SseSession | null {
     if (sessions.size >= maxSessions) {
       if (debug) console.warn(`sse: refused open — sessions ${sessions.size} >= ${maxSessions}`)
       return null
@@ -159,7 +168,7 @@ export function installSseServer(deps: SseServerDeps): SseServer {
     // `setupPeerConnection`'s first action is the protocol `challenge`
     // frame, on the default-named SSE channel.
     setupPeerConnection(session as unknown as WebSocket, req, peerDeps)
-    return { sid, session }
+    return session
   }
 
   // Drives a POST body's `password` and `frames` through the shared
@@ -264,8 +273,8 @@ export function installSseServer(deps: SseServerDeps): SseServer {
         }
       }
       if (!session) {
-        const created = createSession(res, req)
-        if (!created) {
+        session = createSession(res, req)
+        if (!session) {
           // Cap exceeded; createSession already logged. Response
           // headers not yet written by writeSseHeaders, so send a
           // 503 JSON instead.
@@ -273,7 +282,6 @@ export function installSseServer(deps: SseServerDeps): SseServer {
           res.end(JSON.stringify({ error: 'too-many-sessions' }))
           return
         }
-        session = created.session
       }
       dispatchBody(session, body)
       // Do NOT res.end() — the response stays open as the session's
