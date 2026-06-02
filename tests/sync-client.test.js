@@ -142,6 +142,41 @@ describe('triage-sync client', () => {
     await deleteWorkspace(wsId)
   })
 
+  it('SSE mode: saves go to the REST save plane (POST /api/sync/save), not the session stream', async () => {
+    // Force the SSE fallback (WS constructor throws) and spy on fetch while
+    // delegating to the real relay. In SSE mode a save must POST to
+    // /api/sync/save (session-independent) instead of riding a session POST
+    // that would take over the event-stream. Proof: a /api/sync/save fetch
+    // happens AND the save commits (settles after the REST ack).
+    const realWS = globalThis.WebSocket
+    const realFetch = globalThis.fetch
+    const fetchedUrls = []
+    globalThis.WebSocket = class {
+      static CONNECTING = 0; static OPEN = 1; static CLOSING = 2; static CLOSED = 3
+      constructor() { throw new Error('forced SSE fallback') }
+    }
+    globalThis.fetch = (input, init) => { fetchedUrls.push(String(input)); return realFetch(input, init) }
+    try {
+      // Drop any existing WS socket so the next open uses the SSE mock.
+      triageSync.setServerUrl('')
+      const wsId = await startSession(['finding-A'])
+      patchEntry(state.triage, 'finding-A', { color: 'red' })
+      await saveTriage()
+      await waitFor(() => settledAfterAck(wsId), 'SSE REST save acked')
+      assert.ok(
+        fetchedUrls.some((u) => u.split('?', 1)[0].endsWith('/api/sync/save')),
+        `expected a POST to /api/sync/save in SSE mode, saw ${JSON.stringify(fetchedUrls.slice(-6))}`,
+      )
+      assert.equal(state.triage.get('finding-A')?.color, 'red', 'REST-routed save committed + applied')
+      triageSync.closeSession()
+      await deleteWorkspace(wsId)
+    } finally {
+      globalThis.WebSocket = realWS
+      globalThis.fetch = realFetch
+      triageSync.setServerUrl('')
+    }
+  })
+
   it('merges a remote change with an in-progress local edit', async () => {
     const wsId = await startSession(['finding-A', 'finding-B'])
     // Local: finding-A = red, sync up.

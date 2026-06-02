@@ -50,7 +50,10 @@ export type WebSocketLike = {
 // same path as the WS upgrade — see server/http.ts `WS_UPGRADE_PATH`
 // and `server/sse-server.ts SSE_OPEN_PATH` which is
 // `${WS_UPGRADE_PATH}/sse`.
-export function wsUrlToSseUrl(wsUrl: string): string {
+// Scheme-convert (ws→http / wss→https) and strip any `?…` build/debug tags,
+// yielding the http(s) base at the WS upgrade path. The SSE (`/sse`) and
+// REST-save (`/save`) planes are siblings of that path on the server.
+function wsUrlToHttpBase(wsUrl: string): string {
   let httpScheme: string
   let rest: string
   if (wsUrl.startsWith('wss://')) { httpScheme = 'https://'; rest = wsUrl.slice(6) }
@@ -58,11 +61,20 @@ export function wsUrlToSseUrl(wsUrl: string): string {
   else if (wsUrl.startsWith('https://')) { httpScheme = 'https://'; rest = wsUrl.slice(8) }
   else if (wsUrl.startsWith('http://')) { httpScheme = 'http://'; rest = wsUrl.slice(7) }
   else throw new Error(`sse-transport: unsupported URL scheme: ${wsUrl}`)
-  // Strip any `?…` the caller may have appended (build / debug tags
-  // on the WS upgrade URL); the SSE endpoint doesn't need them.
   const queryIx = rest.indexOf('?')
   if (queryIx >= 0) rest = rest.slice(0, queryIx)
-  return `${httpScheme}${rest}/sse`
+  return `${httpScheme}${rest}`
+}
+
+export function wsUrlToSseUrl(wsUrl: string): string {
+  return `${wsUrlToHttpBase(wsUrl)}/sse`
+}
+
+// The session-independent REST save plane (server/http.ts SAVE_REST_PATH =
+// `${WS_UPGRADE_PATH}/save`). triage-sync POSTs saves here in SSE mode so a
+// save doesn't take over the event-stream.
+export function wsUrlToSaveUrl(wsUrl: string): string {
+  return `${wsUrlToHttpBase(wsUrl)}/save`
 }
 
 // 100ms outbound coalesce window. Saves + subscribes + pings produced

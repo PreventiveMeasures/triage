@@ -292,9 +292,9 @@ const publishObjDeleted = (tag: string, resourceTag: string, version: number): v
   pubsub.publish({ kind: 'objdel', tag, res: resourceTag, ver: version })
 }
 
-const { handleSave, handleSubscribe, sendSaveError } = createSyncHandlers({
+const { handleSave, handleSaveRest, handleSubscribe, sendSaveError } = createSyncHandlers({
   handle, send, broadcast, publishRevision, subscribe, getNonce,
-  requiresAuth, sendUnauthorized, workspaceExists,
+  requiresAuth, passwordConfigured, sendUnauthorized, workspaceExists,
   // Folds the objstore inventory into the `workspace-subscribed` ack.
   // The objstore store keeps its own richer `Handle`, so we wire the
   // query here where both handles exist rather than coupling
@@ -377,7 +377,7 @@ const sseServer = installSseServer({
 // below.
 const httpServer = createHttpServer({
   wss, restDeps: objstoreRestDeps, sseServer, isOriginAllowed,
-  isShuttingDown, track,
+  isShuttingDown, track, handleSaveRest,
   restPutIdleTimeoutMs: REST_PUT_IDLE_TIMEOUT_MS, debug: DEBUG,
 })
 

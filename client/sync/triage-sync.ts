@@ -25,6 +25,7 @@ let setSecureItem!: (key: string, value: string) => Promise<void>
 import { loadCachedSyncPasswordFromStorage, setCachedSyncPassword } from './sync-auth-cache.ts'
 import { type AcquireHandle } from './socket-transport.ts'
 import { getSharedTransport, setSharedAuthResolver } from './sync-transport.ts'
+import { wsUrlToSaveUrl } from './sse-transport.ts'
 import {
   type SavePayload,
   buildAad,
@@ -604,6 +605,64 @@ function send(msg: unknown): boolean {
   return transport.send(msg as object)
 }
 
+// Dispatch a `workspace-save` frame. In SSE mode, POST it to the session-
+// independent REST save plane (server SAVE_REST_PATH) so the save doesn't
+// force an event-stream takeover (every in-band SSE POST reopens the stream).
+// The JSON result is fed back through the normal message path so the existing
+// ack / stale-base / too-large handlers run unchanged. Falls back to the
+// in-band frame on the new-workspace gate (401) or any transport error —
+// idempotent, since a committed save replays to a duplicate-id ack and a
+// stale one to a rebase. WS mode sends in-band, unchanged.
+function dispatchSave(wireMsg: { [k: string]: unknown }): void {
+  if (!transport.isSse()) { send(wireMsg); return }
+  postSaveRest(wireMsg).then((fallBack) => {
+    if (fallBack) send(wireMsg)
+    return null
+  }).catch(() => { send(wireMsg) })
+}
+
+// POST the save frame to the REST save plane and map the response into the
+// message path. Returns true when the caller should fall back to the in-band
+// frame (401 new-workspace gate, transport error, or an unexpected status).
+async function postSaveRest(wireMsg: { [k: string]: unknown }): Promise<boolean> {
+  if (!serverUrl) return true
+  let url: string
+  try { url = wsUrlToSaveUrl(serverUrl) } catch { return true }
+  let res: Response
+  try {
+    res = await globalThis.fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(wireMsg),
+    })
+  } catch { return true }  // offline / network error → in-band (idempotent)
+  const tag = wireMsg['workspaceTag']
+  const base = (wireMsg['base'] ?? null) as string | null
+  if (res.status === 401) return true  // new-workspace gate → in-band (runs the auth flow)
+  if (res.ok) {
+    let body: { id?: unknown } | null = null
+    try { body = await res.json() as { id?: unknown } } catch { return true }
+    if (!body || typeof body.id !== 'string') return true
+    onTransportMessage({ type: 'workspace-save-ack', workspaceTag: tag, base, id: body.id })
+    return false
+  }
+  if (res.status === 409) {
+    let body: { revisions?: unknown } | null = null
+    try { body = await res.json() as { revisions?: unknown } } catch { return true }
+    const revisions = body && Array.isArray(body.revisions) ? body.revisions : []
+    // State FIRST (its handler clears pending), then the typed error (a no-op
+    // on the now-missing pending) — same wire order as the WS stale-base path.
+    onTransportMessage({ type: 'workspace-state', workspaceTag: tag, revisions })
+    onTransportMessage({ type: 'workspace-save-error', workspaceTag: tag, base, reason: 'stale-base' })
+    return false
+  }
+  if (res.status === 413) {
+    onTransportMessage({ type: 'workspace-save-error', workspaceTag: tag, base, reason: 'too-large' })
+    return false
+  }
+  return true  // 400 / 5xx / unexpected → in-band fallback
+}
+
 // Send a `workspace-subscribe` once per session-on-this-socket,
 // registering the connection as a broadcast subscriber even with no
 // local change to push (e.g. a fresh client whose triage already
@@ -774,7 +833,7 @@ function trySendSave(session: Session): void {
       // missing/false alike, and a minimal message keeps the wire
       // trace cleaner in the common case.
       if (isKeyframe) wireMsg['keyframe'] = true
-      send(wireMsg)
+      dispatchSave(wireMsg)
       // Crypto round-trip succeeded — clear any prior error /
       // failure-counter so the UI moves out of `error`.
       session.consecutiveFailures = 0

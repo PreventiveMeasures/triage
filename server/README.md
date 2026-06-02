@@ -249,6 +249,21 @@ UI bundle).
 
 - `ws://${host}/api/sync` — WebSocket upgrade; the triage-sync wire
   protocol flows over it.
+- `POST /api/sync/sse` — SSE+POST fallback transport (corporate proxies
+  that strip the `Upgrade` header); same wire protocol, upstream batched
+  into POSTs, downstream a long-lived `text/event-stream`.
+- `POST /api/sync/save` — session-independent save plane. The SSE-mode
+  alternative to the in-band `workspace-save` frame: the same signed save
+  frame in the JSON body, run through the SAME pipeline (the save canonical
+  binds no connection nonce, so it self-verifies), committed + broadcast
+  WITHOUT taking over the client's SSE event-stream (every in-band SSE POST
+  reopens the stream). The outcome is a JSON HTTP status: `200 { ok, id }`
+  (committed / replay), `409 { reason:'stale-base', revisions }` (catch-up
+  to rebase on), `413 { reason:'too-large' }`, or `401` (new-workspace
+  gate). The client POSTs here in SSE mode, falling back to the in-band
+  frame on `401`. Broadcasts use `except: null` (no socket to exclude); the
+  originator's own content-addressed echo on its stream is an idempotent
+  no-op.
 - `/api/objstore/{workspaceTag}/{resourceTag}` — REST `PUT`/`GET` byte
   transfer for the object store.
 - Any other URL — `404 not-found` (JSON body).
