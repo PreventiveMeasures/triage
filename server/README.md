@@ -396,20 +396,23 @@ sig verify, so only legit signers see them.
 All routes match `/api/objstore/{workspaceTag}/{resourceTag}`. The `PUT`/
 `GET` byte transfers carry a token in `Authorization: Bearer <token>`,
 never the URL (querystring tokens leak via access logs / referer). The
-`POST` mint is a REST alternative to the WS `objstore-fetch` /
-`objstore-put-begin` handshakes (`server/objstore/rest-mint.ts`): authed by
-an Ed25519 signature in the JSON body (no live socket, no bearer token), it
-returns the SAME token shape the WS path sends for the same `GET` / `PUT`
-route — useful when minting independent of the SSE session (e.g. so an SSE
-replica hop can't interrupt it; the client uses it in SSE mode). The body's
-`op` selects `fetch` (→ get-token) or `put` (→ put-token + stagingId). In
-place of the WS connection nonce it binds a client timestamp; the server
-enforces a ±60s freshness window + a single-use replay dedup
-(`server/objstore/fetch-mint-guard.ts`), so a retry must re-sign with a
+`POST` route is a REST alternative to the WS `objstore-fetch` /
+`objstore-put-begin` / `objstore-delete` handshakes
+(`server/objstore/rest-mint.ts`): authed by an Ed25519 signature in the JSON
+body (no live socket, no bearer token) — useful when running these ops
+independent of the SSE session (e.g. so an SSE replica hop can't interrupt
+them; the client uses it in SSE mode). The body's `op` selects `fetch` (→
+get-token) or `put` (→ put-token + stagingId) — both return the SAME token
+shape the WS path sends for the same `GET` / `PUT` route — or `delete`, which
+mutates in place and returns `{ deletedVersion }` (no token; there are no
+bytes to move). In place of the WS connection nonce it binds a client
+timestamp; the server enforces a ±60s freshness window + a single-use replay
+dedup (`server/objstore/fetch-mint-guard.ts`), so a retry must re-sign with a
 fresh `ts` rather than resend the same body. The `put` op also runs the
 new-workspace operator gate — since REST has no socket auth state, a
 never-seen workspace under a configured password gets 401 and the client
-falls back to the in-band WS put-begin.
+falls back to the in-band WS put-begin. `delete` has no such gate (it's
+signature-gated, idempotent, and creates nothing), matching the WS path.
 
 Every non-2xx response is a uniform JSON envelope `{ "error": <reason> }`
 (the reason word is shown below); the 409 envelope additionally carries
@@ -441,7 +444,7 @@ GET  /api/objstore/{workspaceTag}/{resourceTag}
   500 { error: "internal" }
   503 { error: "unavailable" }        live row present, file missing / size diverged
 
-POST /api/objstore/{workspaceTag}/{resourceTag}      (mint; op=fetch|put)
+POST /api/objstore/{workspaceTag}/{resourceTag}      (op=fetch|put|delete)
   Common body (application/json): { op, ts, signature }
     ts        client epoch-ms; rejected outside a ±60s window
     signature Ed25519 over the op's canonical (workspaceTag IS the pubkey;
@@ -462,6 +465,16 @@ POST /api/objstore/{workspaceTag}/{resourceTag}      (mint; op=fetch|put)
     401 also = new-workspace operator gate (password set + workspace new);
               client falls back to the in-band WS put-begin
     403 { error: "workspace-full" }   per-workspace resource cap
+    409 { error: "conflict", currentVersion, currentIncarnation }
+                                      prevVersion/incarnation precondition stale
+
+  op=delete + body { prevVersion, prevIncarnation }   (null pair = must-exist-free)
+            signature over [delete-rest domain, tag, res, prevVersion,
+              prevIncarnation, ts]
+    200 { deletedVersion }            0 = idempotent no-op (no live row + null
+              precondition); >0 = dropped that version (broadcasts to peers).
+              No operator gate (idempotent, creates nothing)
+    404 { error: "not-found" }        non-null precondition against a missing row
     409 { error: "conflict", currentVersion, currentIncarnation }
                                       prevVersion/incarnation precondition stale
   500 { error: "internal" }

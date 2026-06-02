@@ -18,6 +18,10 @@ const OBJSTORE_FETCH_REST_DOMAIN = 'deepview-objstore.v1.fetch-rest'
 // from OBJSTORE_PUT_DOMAIN so a WS put-begin signature can't be replayed
 // against the REST mint endpoint.
 const OBJSTORE_PUT_REST_DOMAIN = 'deepview-objstore.v1.put-rest'
+// REST delete domain — MUST match the client's DELETE_REST_DOMAIN. Distinct
+// from OBJSTORE_DELETE_DOMAIN so a WS delete signature can't be replayed
+// against the REST mint endpoint.
+const OBJSTORE_DELETE_REST_DOMAIN = 'deepview-objstore.v1.delete-rest'
 
 // Wire shapes the verifiers accept. Fields land here post-
 // `JSON.parse`, so every value starts life as `unknown` — strict
@@ -233,5 +237,33 @@ export function verifyObjstorePutBeginRestSig(
       fields.contentHash, fields.expectedLength, ts,
     )
   } catch { return Promise.resolve(false) }
+  return verifyEd25519(fields.workspaceTag, payload, signature)
+}
+
+// REST delete-mint canonical. WS `canonicalObjstoreDelete` fields, under the
+// delete-rest domain, binding the client `ts` in place of the nonce.
+function canonicalObjstoreDeleteRest(
+  workspaceTag: string, resourceTag: string,
+  prevVersion: number | null, prevIncarnation: string | null, ts: number,
+): Uint8Array<ArrayBuffer> {
+  return encodeUtf8([
+    OBJSTORE_DELETE_REST_DOMAIN,
+    workspaceTag,
+    resourceTag,
+    intOrEmpty(prevVersion),
+    strOrEmpty(prevIncarnation),
+    String(ts),
+  ].join('\n'))
+}
+
+// Verify a REST delete-mint signature. Self-contained (workspaceTag IS the
+// pubkey); the caller (rest.ts) has range-checked `ts` + the prev pair.
+export function verifyObjstoreDeleteRestSig(
+  fields: { workspaceTag: string; resourceTag: string; prevVersion: number | null; prevIncarnation: string | null },
+  ts: number, signature: string,
+): Promise<boolean> {
+  let payload: Uint8Array<ArrayBuffer>
+  try { payload = canonicalObjstoreDeleteRest(fields.workspaceTag, fields.resourceTag, fields.prevVersion, fields.prevIncarnation, ts) }
+  catch { return Promise.resolve(false) }
   return verifyEd25519(fields.workspaceTag, payload, signature)
 }

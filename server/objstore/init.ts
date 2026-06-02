@@ -83,7 +83,8 @@ export function initObjstore(deps: ObjstoreInitDeps): ObjstoreInit {
     ...(deps.sendUnauthorized ? { sendUnauthorized: deps.sendUnauthorized } : {}),
   })
   const restDeps: ObjstoreRestDeps = {
-    handle, secret, broadcast: deps.broadcast, publishObjPut: deps.publishObjPut,
+    handle, secret, broadcast: deps.broadcast,
+    publishObjPut: deps.publishObjPut, publishObjDeleted: deps.publishObjDeleted,
     restPutGate: deps.restPutGate ?? (() => Promise.resolve(false)),
     debug: deps.debug,
   }

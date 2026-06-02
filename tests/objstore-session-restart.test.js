@@ -356,4 +356,63 @@ describe('objstore SSE-mode REST mint routing', () => {
       assert.equal(await fetchP, null, 'fetch resolves via the WS fallback')
     } finally { globalThis.fetch = real; client.close() }
   })
+
+  it('delete mints over REST (POST op=delete), not a WS frame', async () => {
+    const transport = makeFakeTransport('nonce-1', { sse: true })
+    const real = globalThis.fetch
+    const posts = []
+    globalThis.fetch = (url, opts) => {
+      if (opts.method === 'POST') { posts.push({ url: String(url), body: JSON.parse(opts.body) }); return Promise.resolve(jsonResponse(200, { deletedVersion: 0 })) }
+      throw new Error(`unexpected ${opts.method}`)
+    }
+    const { client, session } = await openSession(transport)
+    try {
+      const r = await session.delete('f.json', null)
+      assert.equal(r.ok, true, `delete should succeed: ${JSON.stringify(r)}`)
+      assert.equal(r.deletedVersion, 0)
+      assert.equal(posts.length, 1, 'exactly one mint POST')
+      assert.equal(posts[0].body.op, 'delete')
+      assert.ok(posts[0].url.includes('/api/objstore/'), posts[0].url)
+      assert.equal(transport.count('objstore-delete'), 0, 'no in-band WS delete frame in SSE mode')
+    } finally { globalThis.fetch = real; client.close() }
+  })
+
+  it('delete falls back to the WS delete when the REST mint returns 401', async () => {
+    const transport = makeFakeTransport('nonce-1', { sse: true })
+    const real = globalThis.fetch
+    globalThis.fetch = (url, opts) => {
+      if (opts.method === 'POST') return Promise.resolve(jsonResponse(401, { error: 'unauthorized' }))
+      throw new Error(`unexpected ${opts.method}`)
+    }
+    const { client, session } = await openSession(transport)
+    try {
+      const delP = session.delete('f.json', null)
+      // The 401 mint routes to the in-band WS delete; ack it so the delete
+      // completes (delete has no operator gate, so this fallback always works).
+      await waitFor(() => transport.count('objstore-delete') === 1, 'WS delete fallback after mint 401')
+      const del = transport.last('objstore-delete')
+      transport.deliver({ type: 'objstore-deleted-ack', workspaceTag: del.workspaceTag, resourceTag: del.resourceTag, deletedVersion: 3 })
+      const r = await delP
+      assert.equal(r.ok, true, 'delete completes via the WS fallback')
+      assert.equal(r.deletedVersion, 3)
+    } finally { globalThis.fetch = real; client.close() }
+  })
+
+  it('delete surfaces a REST 409 as a conflict result (rebase path), no WS frame', async () => {
+    const transport = makeFakeTransport('nonce-1', { sse: true })
+    const real = globalThis.fetch
+    globalThis.fetch = (url, opts) => {
+      if (opts.method === 'POST') return Promise.resolve(jsonResponse(409, { error: 'conflict', currentVersion: 5, currentIncarnation: 'inc-y' }))
+      throw new Error(`unexpected ${opts.method}`)
+    }
+    const { client, session } = await openSession(transport)
+    try {
+      const r = await session.delete('f.json', { version: 2, incarnation: 'inc-old' })
+      assert.equal(r.ok, false)
+      assert.equal(r.reason, 'conflict')
+      assert.equal(r.current?.version, 5, 'currentVersion parsed from the REST 409 envelope')
+      assert.equal(r.current?.incarnation, 'inc-y')
+      assert.equal(transport.count('objstore-delete'), 0, 'conflict came from the REST mint, no WS frame')
+    } finally { globalThis.fetch = real; client.close() }
+  })
 })

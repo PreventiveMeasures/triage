@@ -1,28 +1,30 @@
-// REST mint endpoints for the objstore plane — the single-round-trip,
+// REST endpoints for the objstore plane — the single-round-trip,
 // SSE-session-independent alternative to the WS `objstore-fetch` /
-// `objstore-put-begin` handshakes (so token minting can't be interrupted
-// by an SSE replica hop). One route, `POST /api/objstore/{tag}/{res}`,
-// with a JSON body `{ op, ts, signature, ... }`: the workspace signs the
-// request (the workspaceTag IS the Ed25519 pubkey, so verification is
-// self-contained — no socket, no stored key), the server verifies it +
-// freshness/replay-guards (the connection-nonce stand-in), and returns the
-// SAME token shape the WS path sends, for the UNCHANGED bearer-token GET /
-// PUT byte transfers. See server/README.md "REST endpoints & tokens".
+// `objstore-put-begin` / `objstore-delete` handshakes (so these ops can't
+// be interrupted by an SSE replica hop). One route, `POST
+// /api/objstore/{tag}/{res}`, with a JSON body `{ op, ts, signature, ... }`:
+// the workspace signs the request (the workspaceTag IS the Ed25519 pubkey,
+// so verification is self-contained — no socket, no stored key), the server
+// verifies it + freshness/replay-guards (the connection-nonce stand-in).
+// fetch/put return the SAME token shape the WS path sends, for the UNCHANGED
+// bearer-token GET / PUT byte transfers; delete mutates in place and returns
+// `{ deletedVersion }` (no token — there are no bytes to move). See
+// server/README.md "REST endpoints & tokens".
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Buffer } from 'node:buffer'
 
 import type { ObjstoreRestDeps, RouteMatch } from './rest.ts'
 import { deny, denyConflict } from './rest-deny.ts'
-import { MAX_CONTENT_LENGTH, beginPut, getLive, isValidContentHash, isValidIncarnation, isValidSignature, objectMetaWire } from './store.ts'
+import { MAX_CONTENT_LENGTH, beginPut, deleteObject, getLive, isValidContentHash, isValidIncarnation, isValidSignature, objectMetaWire } from './store.ts'
 import { mintGetToken, mintPutToken } from './tokens.ts'
-import { verifyObjstoreFetchRestSig, verifyObjstorePutBeginRestSig } from './sign.ts'
+import { verifyObjstoreDeleteRestSig, verifyObjstoreFetchRestSig, verifyObjstorePutBeginRestSig } from './sign.ts'
 import { createFetchMintGuard } from './fetch-mint-guard.ts'
 
-// Per-process freshness + replay guard for the REST mint POSTs (fetch +
-// put-begin). They have no connection nonce to bind, so they bind a client
-// timestamp — see ./fetch-mint-guard.ts. Fetch and put-begin signatures are
-// globally unique (distinct canonical domains), so one guard dedups both.
+// Per-process freshness + replay guard for the REST POSTs (fetch, put-begin,
+// delete). They have no connection nonce to bind, so they bind a client
+// timestamp — see ./fetch-mint-guard.ts. The three ops' signatures are
+// globally unique (distinct canonical domains), so one guard dedups all three.
 const mintGuard = createFetchMintGuard()
 
 // Hard cap on a mint JSON body. The put-begin body (op, ts, signature,
@@ -77,6 +79,7 @@ export async function handleRestMint(
   const op = (body as { op?: unknown }).op
   if (op === 'fetch') { await handleRestFetchMint(deps, res, route, body); return }
   if (op === 'put') { await handleRestPutBegin(deps, res, route, body); return }
+  if (op === 'delete') { await handleRestDelete(deps, res, route, body); return }
   deny(res, 400, 'bad-request')
 }
 
@@ -174,4 +177,48 @@ async function handleRestPutBegin(
     token,
     expiresAt: exp,
   }))
+}
+
+// op:'delete' — mirrors the WS `handleDelete`: verify the signed delete
+// fields, freshness/replay-guard, then `deleteObject` (a precondition-checked
+// version-CAS drop). Unlike put, there is NO operator gate — delete is
+// signature-gated, idempotent, and creates nothing (the WS handleDelete has
+// no authGate either). Returns 200 `{ deletedVersion }` (0 = idempotent
+// no-op on a missing row with a null precondition); 409 conflict (stale
+// prevVersion/incarnation); 404 not-found (a non-null precondition against a
+// missing row). On a real drop it broadcasts `objstore-deleted` to
+// subscribers (+ cross-instance), exactly like the WS path.
+async function handleRestDelete(
+  deps: ObjstoreRestDeps, res: ServerResponse, route: RouteMatch, body: object,
+): Promise<void> {
+  const auth = parseMintAuth(body)
+  if (!auth) { deny(res, 400, 'bad-request'); return }
+  const prevVersionRaw = (body as { prevVersion?: unknown }).prevVersion
+  if (prevVersionRaw != null && (typeof prevVersionRaw !== 'number' || !Number.isSafeInteger(prevVersionRaw))) {
+    deny(res, 400, 'bad-request'); return
+  }
+  const prevVersion = typeof prevVersionRaw === 'number' ? prevVersionRaw : null
+  const prevIncarnationRaw = (body as { prevIncarnation?: unknown }).prevIncarnation
+  const prevIncarnation = typeof prevIncarnationRaw === 'string' ? prevIncarnationRaw : null
+  // null-iff-null pair (matches the WS `validPrevPair`); a non-null
+  // incarnation must be the wire shape.
+  if ((prevVersion === null) !== (prevIncarnation === null)) { deny(res, 400, 'bad-request'); return }
+  if (prevIncarnation !== null && !isValidIncarnation(prevIncarnation)) { deny(res, 400, 'bad-request'); return }
+
+  const fields = { workspaceTag: route.tag, resourceTag: route.resourceTag, prevVersion, prevIncarnation }
+  if (!await verifyObjstoreDeleteRestSig(fields, auth.ts, auth.signature)) { deny(res, 401, 'unauthorized'); return }
+  if (mintGuard.admit(auth.signature, auth.ts) !== 'ok') { deny(res, 401, 'unauthorized'); return }
+  const result = await deleteObject(deps.handle, route.tag, route.resourceTag, prevVersion, prevIncarnation)
+  if (!result.ok) {
+    if (result.reason === 'conflict') { denyConflict(res, result.conflict?.version ?? null, result.conflict?.incarnation ?? null); return }
+    deny(res, 404, 'not-found'); return
+  }
+  res.writeHead(200, { 'content-type': 'application/json' })
+  res.end(JSON.stringify({ deletedVersion: result.deletedVersion }))
+  // deletedVersion 0 = nothing was live → nothing to broadcast. A real drop
+  // fans out to subscribers (including the originator, matching the WS path's
+  // `except: null`) so peers' `onDeleted` fire.
+  if (result.deletedVersion === 0) return
+  deps.broadcast(route.tag, { type: 'objstore-deleted', workspaceTag: route.tag, resourceTag: route.resourceTag, version: result.deletedVersion }, null)
+  deps.publishObjDeleted(route.tag, route.resourceTag, result.deletedVersion)
 }
