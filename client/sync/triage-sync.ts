@@ -650,8 +650,11 @@ async function postSaveRest(wireMsg: { [k: string]: unknown }): Promise<boolean>
     let body: { revisions?: unknown } | null = null
     try { body = await res.json() as { revisions?: unknown } } catch { return true }
     const revisions = body && Array.isArray(body.revisions) ? body.revisions : []
-    // State FIRST (its handler clears pending), then the typed error (a no-op
-    // on the now-missing pending) — same wire order as the WS stale-base path.
+    // State FIRST then the typed error — same wire order as the WS stale-base
+    // path. A well-formed catch-up clears pending, so the error frame no-ops;
+    // a malformed/empty `revisions` leaves pending set and the error marks
+    // session.error — the intended safe-fail (don't silently swallow a
+    // divergence), reachable identically via a hostile WS frame today.
     onTransportMessage({ type: 'workspace-state', workspaceTag: tag, revisions })
     onTransportMessage({ type: 'workspace-save-error', workspaceTag: tag, base, reason: 'stale-base' })
     return false
