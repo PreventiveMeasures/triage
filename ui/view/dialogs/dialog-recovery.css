@@ -28,9 +28,14 @@
 .rec-status-checking { color: var(--muted); }
 .rec-status-good { color: var(--ok, #16a34a); }
 .rec-status-reuploaded { color: var(--accent, #2563eb); }
-/* `failed` = re-upload attempted but errored (retryable) — amber, distinct
-   from `missing` (no local copy / mismatch) which is the terminal red. */
-.rec-status-failed { color: var(--warning, #d97706); }
+/* `failed` (re-UPLOAD errored) and `check-failed` (verification DOWNLOAD
+   errored — transport/session hiccup or decrypt failure, health unknown)
+   are both retryable, so both read amber — distinct from `missing` (no
+   local copy / mismatch), the terminal red. The two amber states are told
+   apart by their label ("re-upload failed" vs "check failed") + the reason
+   on hover, since they call for the same user action (re-check / retry). */
+.rec-status-failed,
+.rec-status-check-failed { color: var(--warning, #d97706); }
 .rec-status-missing { color: var(--critical, #dc2626); }
 .rec-summary {
   margin: .1rem 0 .2rem;

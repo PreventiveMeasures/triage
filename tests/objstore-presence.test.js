@@ -11,6 +11,7 @@ import { Buffer } from 'node:buffer'
 import { after, before, describe, it } from 'node:test'
 
 import { deriveObjstoreKeys } from '../client/sync/objstore.ts'
+import { SESSION_RESTART_REASON } from '../client/sync/socket-transport.ts'
 import { createObjstoreSession } from './_objstore-session.js'
 import { gunzipBytes, gzipBytes } from '../common/gzip.js'
 import { decodeUtf8, encodeUtf8 } from '../common/utf8.js'
@@ -1677,6 +1678,61 @@ describe('client/sync/objstore-presence', () => {
         assert.equal(row?.status, 'failed')
         assert.match(row?.detail ?? '', /simulated commit failure/u)
       } finally {
+        e.session.put = realPut
+      }
+    } finally {
+      await deleteFile(name).catch(() => {})
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+    }
+  })
+
+  it('recheckRemoteStorage reports a verification fetch that throws as "check-failed", not a re-upload', async () => {
+    // The download used to verify each object can throw on a transport /
+    // session hiccup (e.g. an SSE session restart that outlived the
+    // client's retry) — distinct from returning null, which is the
+    // authoritative "bytes gone" signal. classifyAndRecover used to
+    // `catch { got = null }`, conflating the two: a thrown verification
+    // fetch was mis-read as bytes-missing and triggered a re-upload, whose
+    // own failure then surfaced as 're-upload failed' — hiding that the
+    // DOWNLOAD was the problem. A throw must now be 'check-failed' (health
+    // unknown, retryable), never a re-upload or a 'missing'.
+    const ws = await createWorkspace('objstore-recovery-checkfail')
+    const name = `checkfail-${crypto.randomUUID()}.json`
+    const bytes = encodeUtf8(`check-fail report ${name}`)
+    try {
+      // Keep a matching local copy attached + uploaded. With the old
+      // swallow-to-null behaviour this would have re-uploaded (→ 'reuploaded'),
+      // so asserting 'check-failed' proves the throw is no longer mistaken
+      // for bytes-missing.
+      await saveFileBytes(name, bytes)
+      await setReportWorkspace(name, ws.id)
+      openWorkspace(ws.id)
+      await awaitSyncOnline()
+      assert.equal((await putFile(ws.id, name, bytes)).ok, true)
+      await awaitPresence(() => isInRemote(ws.id, name), 'report in remote')
+
+      // Make the verification fetch throw the transient session-restart
+      // error (the exact reason the client surfaces on an SSE replica hop
+      // once its own retry is exhausted).
+      const e = __test__.getEntry(ws.id)
+      const realFetch = e.session.fetchByTag.bind(e.session)
+      const realPut = e.session.put.bind(e.session)
+      let putCalls = 0
+      e.session.put = (...args) => { putCalls += 1; return realPut(...args) }
+      e.session.fetchByTag = () => Promise.reject(new Error(`objstore: ${SESSION_RESTART_REASON}`))
+      try {
+        const r = await recheckRemoteStorage(ws.id)
+        assert.equal(r.counts['check-failed'], 1, `expected 1 check-failed, got ${JSON.stringify(r.counts)}`)
+        assert.equal(r.counts.reuploaded, 0, 'a verification throw must not trigger a re-upload')
+        assert.equal(r.counts.failed, 0, 'a download error must not be reported as an upload failure')
+        assert.equal(r.counts.missing, 0, 'a verification throw must not be reported as missing')
+        assert.equal(putCalls, 0, 'recovery must not attempt a re-upload when the verification fetch threw')
+        const row = r.items.find((i) => i.identifier === name)
+        assert.equal(row?.status, 'check-failed')
+        assert.match(row?.detail ?? '', /session restarted/u)
+      } finally {
+        e.session.fetchByTag = realFetch
         e.session.put = realPut
       }
     } finally {

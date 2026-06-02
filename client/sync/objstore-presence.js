@@ -1617,16 +1617,24 @@ export async function deleteBundleFromRemote(workspaceId, integrity) {
 //          local bundle with that integrity is byte-identical).
 //      Re-upload goes through putFile / putBundleToRemote → a fresh
 //      ciphertext at version+1 (the live row's version-CAS accepts it).
-//   4. Report a status per object: 'good' | 'reuploaded' | 'failed' | 'missing'
-//      ('failed' = a held copy whose re-upload attempt errored — retryable,
-//      with the reason on `detail`; distinct from 'missing' = no usable copy).
+//   4. Report a status per object:
+//      'good' | 'reuploaded' | 'failed' | 'check-failed' | 'missing'
+//        - 'failed'       = a held copy whose re-UPLOAD attempt errored
+//                           (retryable; reason on `detail`).
+//        - 'check-failed' = the verification DOWNLOAD threw (a transport /
+//                           session error that outlived the client retry,
+//                           or a decrypt failure) — health UNKNOWN, NOT a
+//                           confirmed-missing and NOT an upload error
+//                           (retryable; reason on `detail`).
+//        - 'missing'      = bytes authoritatively gone and no usable local
+//                           copy to recover from.
 //
 // `onList(rows)` (optional) fires once with the full pending set right
 // after the fresh listing lands; `onItem(row)` (optional) fires as each
 // object resolves, so the dialog can render live progress. Returns
 // `{ items, counts }` so a non-UI caller (tests) gets the full result.
 // Rows are `{ resourceTag, kind: 'report'|'bundle'|'unknown', label, status,
-// identifier?, detail? }` (`detail` set only on 'failed').
+// identifier?, detail? }` (`detail` set on 'failed' and 'check-failed').
 export async function recheckRemoteStorage(workspaceId, { onList, onItem } = {}) {
   const entry = sessions.get(workspaceId)
   if (!entry) throw new Error(`Workspace ${workspaceId} is not open`)
@@ -1681,7 +1689,7 @@ export async function recheckRemoteStorage(workspaceId, { onList, onItem } = {})
     })
     if (typeof onList === 'function') { try { onList(rows.map(publicRecoveryRow)) } catch {} }
 
-    const counts = { good: 0, reuploaded: 0, failed: 0, missing: 0 }
+    const counts = { good: 0, reuploaded: 0, failed: 0, 'check-failed': 0, missing: 0 }
     for (const row of rows) {
       row.status = await classifyAndRecover(entry, workspaceId, row, deletedDuringRecheck)
       counts[row.status] += 1
@@ -1736,16 +1744,31 @@ function parseRemoteResources(raw) {
 }
 
 // Re-fetch one remote object and, if its bytes are missing, repair it
-// from a matching local copy. Returns 'good' | 'reuploaded' | 'failed' |
-// 'missing' (sets `row.detail` with the reason on 'failed').
+// from a matching local copy. Returns
+// 'good' | 'reuploaded' | 'failed' | 'check-failed' | 'missing'
+// (sets `row.detail` with the reason on 'failed' and 'check-failed').
 async function classifyAndRecover(entry, workspaceId, row, deletedDuringRecheck) {
   // (2) Attempt the re-fetch. `fetchByTag` rides the client's internal
-  // 404/503 retry loop; a non-null result means the bytes are present
-  // AND intact (it verifies the contentHash) → healthy. Refresh the
-  // human label + kind from the decrypted payload while we have it.
+  // 404/503 + session-restart retry loops; it returns a value when the
+  // bytes are present AND intact (contentHash verified) → healthy, and
+  // returns `null` ONLY when the bytes are authoritatively gone (the
+  // 503/bytes-missing case this recovery exists to repair). It THROWS for
+  // anything else: a transport/session error that outlived the client's
+  // restart retry, or a decrypt / tag-round-trip failure.
+  //
+  // Distinguish those two failure modes — they were previously conflated
+  // by `catch { got = null }`, which mislabeled a verification DOWNLOAD
+  // error as "bytes missing" → a spurious re-upload that then surfaced as
+  // 're-upload failed', hiding the real (download) cause. A throw means we
+  // couldn't VERIFY the object, not that it's gone, so report 'check-failed'
+  // (reason on hover) instead of re-uploading over an object whose health
+  // we don't actually know.
   let got
   try { got = await entry.session.fetchByTag(row.resourceTag) }
-  catch { got = null }
+  catch (err) {
+    row.detail = `verification fetch failed: ${err?.message ?? String(err)}`
+    return 'check-failed'
+  }
   if (got) {
     if (got.kind === 'report') { row.kind = 'report'; row.label = got.fileName; row.identifier = got.fileName }
     else { row.kind = 'bundle'; row.label = got.name ?? row.label; row.bundleIntegrity = got.integrity; row.identifier = got.integrity }

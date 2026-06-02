@@ -101,6 +101,17 @@ export type SocketTransport = {
 const INITIAL_RECONNECT_DELAY = 1_000
 const MAX_RECONNECT_DELAY = 30_000
 
+// Disconnect reason fired when a mid-life re-challenge with a new nonce
+// mints a fresh server session (the SSE replica-hop case in
+// `handleMessage`). Distinct from a genuine socket drop in that it is
+// ALWAYS immediately followed by a synchronous `notifyConnected` against
+// the new nonce. Exported as the single source of truth because
+// `client/sync/objstore.ts` keys its put-retry on exactly this reason
+// (matched as `objstore: ${SESSION_RESTART_REASON}` once `failPendingWaiters`
+// adds its prefix) — a private copy on either side would let the strings
+// drift apart and silently disable the retry.
+export const SESSION_RESTART_REASON = 'session restarted'
+
 export function createSocketTransport(deps: SocketTransportDeps): SocketTransport {
   let serverUrl = deps.serverUrl
   let pingIntervalMs = deps.pingIntervalMs ?? 15_000
@@ -227,7 +238,7 @@ export function createSocketTransport(deps: SocketTransportDeps): SocketTranspor
       // subscribers, and broadcasts never reach this client until the
       // next full reconnect.
       if (connectionNonce != null && connectionNonce !== msg['nonce']) {
-        notifyDisconnected('session restarted')
+        notifyDisconnected(SESSION_RESTART_REASON)
       }
       connectionNonce = msg['nonce']
       notifyConnected(connectionNonce)

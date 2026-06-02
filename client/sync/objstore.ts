@@ -73,6 +73,7 @@ import {
 import {
   type AcquireHandle,
   type ConsumerHandle,
+  SESSION_RESTART_REASON,
   type SocketTransport,
   createSocketTransport,
 } from './socket-transport.ts'
@@ -299,6 +300,14 @@ type WireMessage = { type?: unknown; workspaceTag?: unknown; resourceTag?: unkno
 // all. Empirically the queue depth is bounded by inflight ops.
 const MAX_QUEUE_SIZE = 64
 
+// Bound on how many times `withSessionRestartRetry` replays an op (a
+// put's begin→token handshake, or a fetch) across a transient session
+// restart (an SSE replica hop re-challenges with a fresh nonce; see
+// `withSessionRestartRetry`). High enough that a bulk recovery riding
+// through a few hops still completes per-object, low enough that a
+// genuinely flapping socket surfaces the error instead of spinning.
+const MAX_SESSION_RESTART_RETRIES = 5
+
 // REST GET vs concurrent commit / backend propagation: a token minted at
 // v1 can race a commitPut that lands v2 before the GET reaches the server
 // (→ 404 token-ver mismatch), or the live row can be present while its
@@ -377,7 +386,7 @@ function validateObjstoreUrlPath(urlPath: string, httpOrigin: string): string {
   }
   return url.href
 }
-export const __test__ = { validateObjstoreUrlPath, isObjectMeta, isSafeNonNegativeInt }
+export const __test__ = { validateObjstoreUrlPath, isObjectMeta, isSafeNonNegativeInt, MAX_SESSION_RESTART_RETRIES }
 
 export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
   const timeoutMs = deps.requestTimeoutMs ?? 10_000
@@ -601,9 +610,65 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
 
   const buildObjstoreUrl = (urlPath: string) => validateObjstoreUrlPath(urlPath, httpOriginParsed)
 
-  // Wire-level PUT — takes a pre-computed resourceTag + ciphertext.
-  // `put` (public) is the encrypting wrapper.
-  async function _rawPut(state: SessionState, opts: { resourceTag: string; bytes: Uint8Array; prev: ObjstorePrev }): Promise<RawPutResult> {
+  // Replay `op` across a transient session restart. An SSE replica hop
+  // re-challenges with a fresh nonce; `socket-transport.ts` fires a
+  // synthetic disconnect (`SESSION_RESTART_REASON`) that
+  // `failPendingWaiters` turns into an `objstore: session restarted`
+  // rejection of WHATEVER socket `recv` is in flight — the put-token wait
+  // (`_rawPutOnce`) OR the fetch-token wait (`_rawFetchOnce`). The session
+  // reconnects synchronously against the new nonce, so `op` (which
+  // re-awaits the connected gate and re-signs) is safe to replay. Without
+  // this, the mass re-upload flow surfaced a 'failed'/'check-failed' row
+  // per hop ("… failed: objstore: session restarted").
+  //
+  // Replay-safety obligations on `op`:
+  //   - `_rawFetchOnce` is an idempotent read — always safe.
+  //   - `_rawPutOnce`'s replay is pre-commit: the server commits only on
+  //     the REST PUT, which is NOT a socket waiter and so is never the
+  //     source of this rejection. A replayed begin at most mints a fresh
+  //     staging row the reaper collects; it can't double-commit.
+  //
+  // No-hang invariant: the `op`'s re-await of `state.connectedPromise`
+  // relies on the restart being IMMEDIATELY followed by a synchronous
+  // reconnect — `socket-transport.ts` always fires `notifyConnected(new
+  // nonce)` in the same turn as the `SESSION_RESTART_REASON` disconnect,
+  // so the re-armed gate is already resolved when the retry re-enters. If
+  // that ordering ever changes, the retry would wait on the next
+  // reconnect (no worse than the pre-change first-await, but worth
+  // flagging). Bounded by `MAX_SESSION_RESTART_RETRIES`.
+  async function withSessionRestartRetry<T>(state: SessionState, op: () => Promise<T>): Promise<T> {
+    // Reconstruct the wrapped message `failPendingWaiters` produces for a
+    // restart. The reason half is imported from socket-transport (its emit
+    // site) so a reword there can't silently desync this guard; the
+    // `objstore: ` prefix half is owned here (failPendingWaiters).
+    const restartMessage = `objstore: ${SESSION_RESTART_REASON}`
+    for (let retries = 0; ; retries++) {
+      try {
+        return await op()
+      } catch (err) {
+        if (
+          retries < MAX_SESSION_RESTART_RETRIES
+          && !state.closed
+          && err instanceof Error
+          && err.message === restartMessage
+        ) {
+          continue
+        }
+        throw err
+      }
+    }
+  }
+
+  // Wire-level PUT. Wraps the single attempt with the session-restart
+  // replay (see `withSessionRestartRetry`). Covers both `put` and
+  // `putBundle` via `rawPutAndMap`.
+  function _rawPut(state: SessionState, opts: { resourceTag: string; bytes: Uint8Array; prev: ObjstorePrev }): Promise<RawPutResult> {
+    return withSessionRestartRetry(state, () => _rawPutOnce(state, opts))
+  }
+
+  // One begin→put-token→REST-PUT attempt. `put` (public) is the
+  // encrypting wrapper; `_rawPut` above wraps THIS with the restart retry.
+  async function _rawPutOnce(state: SessionState, opts: { resourceTag: string; bytes: Uint8Array; prev: ObjstorePrev }): Promise<RawPutResult> {
     await state.connectedPromise
     if (state.closed) throw new Error('objstore: session closed')
     const nonce = transport.getNonce()
@@ -728,7 +793,12 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
   // eventually surfaces null rather than spinning.
   async function _rawFetch(state: SessionState, resourceTag: string): Promise<{ bytes: Uint8Array; meta: ObjectMeta } | null> {
     for (let attempt = 0; attempt < REST_RACE_MAX_ATTEMPTS; attempt++) {
-      const r = await _rawFetchOnce(state, resourceTag)
+      // Wrap each attempt with the session-restart replay so an SSE
+      // replica hop mid-fetch (which rejects the fetch-token `recv` with
+      // 'session restarted') re-issues against the fresh nonce instead of
+      // throwing — distinct from the kind-based 404/503 race retry below.
+      // A read is idempotent, so the replay is unconditionally safe.
+      const r = await withSessionRestartRetry(state, () => _rawFetchOnce(state, resourceTag))
       if (r.kind === 'ok') return r.value
       if (r.kind === 'not-found') return null
       // r.kind === 'retry' — REST 404 or 503 against a token the
