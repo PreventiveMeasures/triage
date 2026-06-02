@@ -102,7 +102,7 @@ import { createBusReceiver } from './bus-receiver.ts'
 const config = loadConfig()
 const {
   port: PORT, host: HOST, dbPath: DB_PATH, objstoreDir: OBJSTORE_DIR,
-  reapIntervalMs: OBJSTORE_REAP_INTERVAL_MS,
+  reapIntervalMs: OBJSTORE_REAP_INTERVAL_MS, reapDisabled: OBJSTORE_REAP_DISABLED,
   maxInflightPerSocket: MAX_INFLIGHT_PER_SOCKET, debug: DEBUG,
   neonUrl: NEON_URL, blobToken: BLOB_TOKEN, tokenSecret: TOKEN_SECRET,
   password: CONFIG_PASSWORD, trustProxyEnv: TRUST_PROXY_ENV,
@@ -305,6 +305,7 @@ const { handleSave, handleSubscribe, sendSaveError } = createSyncHandlers({
 
 const { handlers: objstore, restDeps: objstoreRestDeps, startupReap, stopReaper } = initObjstore({
   handle: objstoreHandle, reapIntervalMs: OBJSTORE_REAP_INTERVAL_MS,
+  reapDisabled: OBJSTORE_REAP_DISABLED,
   send, broadcast, publishObjPut, publishObjDeleted,
   getNonce, debug: DEBUG,
   // Auth gate for the FIRST objstore-put-begin against a workspace
