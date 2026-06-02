@@ -82,7 +82,14 @@ class TriageSelector extends StateElement {
         `expected one of ${Object.keys(VARIANT_CLASS).map((k) => JSON.stringify(k)).join(', ')} or "".`)
     }
     for (const cls of Object.values(VARIANT_CLASS)) this.classList.toggle(cls, cls === extra)
-    if (total === 0 && !state.shownTriage) return nothing
+    // Self-hide the host (it carries the bordered-pill chrome in toolbar.css)
+    // when there are no buckets to render — otherwise an empty bordered box
+    // lingers in the toolbar. Light-DOM host (createRenderRoot returns this),
+    // so a class toggle is more reliable than `:empty` (Lit leaves part-marker
+    // comment nodes behind when the template is `nothing`).
+    const isEmpty = total === 0 && !state.shownTriage
+    this.classList.toggle('is-empty', isEmpty)
+    if (isEmpty) return nothing
     return html`${states.map((s) => {
       const n = this.counts[s] ?? 0
       const active = state.shownTriage === s

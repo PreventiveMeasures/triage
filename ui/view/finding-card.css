@@ -296,6 +296,10 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   margin-right: .65rem;
   max-width: 16rem;
+  /* Shrink target when the marks row is tight: the action cluster to the
+     right is flex-shrink:0, so this chip absorbs the squeeze and ellipsises
+     the filename (label below) rather than the buttons clipping. */
+  min-width: 0;
 
   & .report-chip-label {
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -312,7 +316,10 @@
 
 .mark-action-group {
   display: inline-flex; border: 1px solid var(--border); border-radius: 3px;
-  overflow: hidden; margin-right: .25rem;
+  /* Never shrink — the group's overflow:hidden would otherwise clip its
+     buttons when a long report-chip filename squeezes the marks row. The
+     report-chip is the designated shrink target instead. */
+  overflow: hidden; margin-right: .25rem; flex-shrink: 0;
 }
 .mark-comment,
 .mark-fix,
@@ -355,6 +362,7 @@
   position: relative;
   display: inline-flex;
   margin-left: .25rem;
+  flex-shrink: 0;
 }
 .mark-triage-menu {
   background: transparent; border: 1px solid var(--border); color: var(--muted);
