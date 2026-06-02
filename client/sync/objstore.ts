@@ -59,7 +59,9 @@ import {
   computeContentHash,
   signObjstoreDelete,
   signObjstoreFetch,
+  signObjstoreFetchRest,
   signObjstorePut,
+  signObjstorePutBeginRest,
 } from './objstore-crypto.ts'
 import {
   type ObjstoreKeys,
@@ -610,6 +612,101 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
 
   const buildObjstoreUrl = (urlPath: string) => validateObjstoreUrlPath(urlPath, httpOriginParsed)
 
+  // The REST mint endpoint for (tag, res) — same `/api/objstore/...` route
+  // as GET/PUT, validated against the captured origin. POST here mints a
+  // fetch/put token without the SSE round-trip (see the REST handlers in
+  // server/objstore/rest.ts).
+  const restMintUrl = (workspaceTag: string, resourceTag: string) =>
+    buildObjstoreUrl(`/api/objstore/${workspaceTag}/${resourceTag}`)
+
+  // Outcome of a put-begin handshake (WS in-band OR REST mint), before the
+  // byte PUT. The byte PUT itself is identical for both.
+  type PutBeginOutcome =
+    | { kind: 'token'; urlPath: string; token: string }
+    | { kind: 'conflict'; current: { version: number; incarnation: string } | null }
+    | { kind: 'workspace-full' }
+    | { kind: 'unauthorized' }
+
+  // In-band WS put-begin handshake. Also the SSE-mode fallback for the
+  // new-workspace operator gate (it runs `runAuthFlow` on a `gated` reply
+  // and retries). Returns the token (or a conflict / workspace-full /
+  // unauthorized outcome) — the caller does the byte PUT.
+  async function wsPutBegin(state: SessionState, resourceTag: string, fields: ObjstorePutBeginFields): Promise<PutBeginOutcome> {
+    const nonce = transport.getNonce()
+    if (!nonce) throw new Error('objstore: socket not open')
+    const signature = await signObjstorePut(state.signingKey, fields, nonce)
+    // At most ONE retry after a successful auth flow — see the prior
+    // _rawPutOnce note; the signature reuse across the retry is safe
+    // because connectionNonce doesn't change on the same socket.
+    let reply: WireMessage
+    let attemptedAuth = false
+    while (true) {
+      send({ type: 'objstore-put-begin', ...fields, signature })
+      // Pin on `kind: 'gated'` so the `auth-failed` reply from our own
+      // in-flight `authenticate` can't satisfy this predicate.
+      reply = await recv((m) =>
+        m.workspaceTag === state.workspaceTag && m.resourceTag === resourceTag && (
+          m.type === 'objstore-put-token' ||
+          m.type === 'objstore-put-error' ||
+          m.type === 'objstore-conflict' ||
+          (m.type === 'unauthorized' && m['kind'] === 'gated')
+        ),
+      )
+      if (reply.type !== 'unauthorized') break
+      if (attemptedAuth) break
+      attemptedAuth = true
+      const authed = await transport.runAuthFlow()
+      if (!authed) break
+    }
+    if (reply.type === 'unauthorized') return { kind: 'unauthorized' }
+    if (reply.type === 'objstore-put-error') {
+      if (reply['reason'] === 'workspace-full') return { kind: 'workspace-full' }
+      throw new Error(`objstore: put-error reason='${String(reply['reason'])}'`)
+    }
+    if (reply.type === 'objstore-conflict') {
+      const current = isObjectMeta(reply['current'] as WireMessage | undefined) ? toObjectMeta(reply['current'] as WireMessage) : null
+      return { kind: 'conflict', current }
+    }
+    if (typeof reply['urlPath'] !== 'string' || typeof reply['token'] !== 'string') {
+      throw new TypeError('objstore: malformed put-token (missing urlPath/token)')
+    }
+    return { kind: 'token', urlPath: reply['urlPath'], token: reply['token'] }
+  }
+
+  // REST put-begin mint (SSE mode): POST the signed begin to the mint
+  // endpoint; the reply is the same token shape over JSON. 401 → the
+  // new-workspace operator gate (caller falls back to `wsPutBegin`); 409 →
+  // conflict (rebase); 403 → workspace-full.
+  async function restPutBegin(state: SessionState, resourceTag: string, fields: ObjstorePutBeginFields, contentHash: string): Promise<PutBeginOutcome> {
+    const ts = Date.now()
+    const signature = await signObjstorePutBeginRest(state.signingKey, fields, ts)
+    const res = await globalThis.fetch(restMintUrl(state.workspaceTag, resourceTag), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        op: 'put', ts, signature,
+        prevVersion: fields.prevVersion, prevIncarnation: fields.prevIncarnation,
+        expectedLength: fields.expectedLength, contentHash,
+      }),
+    })
+    if (res.status === 401) return { kind: 'unauthorized' }
+    if (res.status === 403) return { kind: 'workspace-full' }
+    if (res.status === 409) return { kind: 'conflict', current: await parseRestConflict(res) }
+    if (!res.ok) {
+      let body = ''
+      try { body = await res.text() } catch {}
+      throw new Error(`objstore: REST put-begin failed ${res.status} ${body.slice(0, 200)}`)
+    }
+    let mint: unknown
+    try { mint = await res.json() } catch { throw new TypeError('objstore: put-mint JSON parse failed') }
+    if (!mint || typeof mint !== 'object'
+      || typeof (mint as { urlPath?: unknown }).urlPath !== 'string'
+      || typeof (mint as { token?: unknown }).token !== 'string') {
+      throw new TypeError('objstore: malformed put-mint (missing urlPath/token)')
+    }
+    return { kind: 'token', urlPath: (mint as { urlPath: string }).urlPath, token: (mint as { token: string }).token }
+  }
+
   // Replay `op` across a transient session restart. An SSE replica hop
   // re-challenges with a fresh nonce; `socket-transport.ts` fires a
   // synthetic disconnect (`SESSION_RESTART_REASON`) that
@@ -671,8 +768,6 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
   async function _rawPutOnce(state: SessionState, opts: { resourceTag: string; bytes: Uint8Array; prev: ObjstorePrev }): Promise<RawPutResult> {
     await state.connectedPromise
     if (state.closed) throw new Error('objstore: session closed')
-    const nonce = transport.getNonce()
-    if (!nonce) throw new Error('objstore: socket not open')
     const contentHash = await computeContentHash(opts.bytes)
     const fields: ObjstorePutBeginFields = {
       workspaceTag: state.workspaceTag,
@@ -682,53 +777,28 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
       expectedLength: opts.bytes.byteLength,
       contentHash,
     }
-    const signature = await signObjstorePut(state.signingKey, fields, nonce)
-    // At most ONE retry after a successful auth flow. The signature
-    // binds all the per-frame fields including connectionNonce —
-    // none change between retries on the same socket — so reuse is
-    // safe. `attemptedAuth` caps the loop in the pathological case
-    // where auth succeeds but a second `unauthorized` still arrives.
-    let reply: WireMessage
-    let attemptedAuth = false
-    while (true) {
-      send({ type: 'objstore-put-begin', ...fields, signature })
-      // Pin on `kind: 'gated'` so the `auth-failed` reply from our
-      // own in-flight `authenticate` (already consumed by the
-      // transport) can't satisfy this predicate.
-      reply = await recv((m) =>
-        m.workspaceTag === state.workspaceTag && m.resourceTag === opts.resourceTag && (
-          m.type === 'objstore-put-token' ||
-          m.type === 'objstore-put-error' ||
-          m.type === 'objstore-conflict' ||
-          (m.type === 'unauthorized' && m['kind'] === 'gated')
-        ),
-      )
-      if (reply.type !== 'unauthorized') break
-      if (attemptedAuth) break
-      attemptedAuth = true
-      const authed = await transport.runAuthFlow()
-      if (!authed) break
+    // Acquire a put-token. In SSE mode mint over REST — independent of the
+    // session, so a replica hop can't interrupt it; else use the in-band WS
+    // handshake. On a REST new-workspace gate (401 → 'unauthorized') fall
+    // back to the WS path, which runs the operator auth flow.
+    let outcome: PutBeginOutcome
+    if (transport.isSse()) {
+      outcome = await restPutBegin(state, opts.resourceTag, fields, contentHash)
+      if (outcome.kind === 'unauthorized') outcome = await wsPutBegin(state, opts.resourceTag, fields)
+    } else {
+      outcome = await wsPutBegin(state, opts.resourceTag, fields)
     }
-    if (reply.type === 'unauthorized') return { ok: false, reason: 'unauthorized' }
-    if (reply.type === 'objstore-put-error') {
-      if (reply['reason'] === 'workspace-full') return { ok: false, reason: 'workspace-full' }
-      throw new Error(`objstore: put-error reason='${String(reply['reason'])}'`)
-    }
-    if (reply.type === 'objstore-conflict') {
-      const current = isObjectMeta(reply['current'] as WireMessage | undefined) ? toObjectMeta(reply['current'] as WireMessage) : null
-      return { ok: false, reason: 'conflict', current }
-    }
-    // objstore-put-token { urlPath, token, expiresAt, stagingId, ... }
-    if (typeof reply['urlPath'] !== 'string' || typeof reply['token'] !== 'string') {
-      throw new TypeError('objstore: malformed put-token (missing urlPath/token)')
-    }
-    const res = await globalThis.fetch(buildObjstoreUrl(reply['urlPath']), {
+    if (outcome.kind === 'unauthorized') return { ok: false, reason: 'unauthorized' }
+    if (outcome.kind === 'workspace-full') return { ok: false, reason: 'workspace-full' }
+    if (outcome.kind === 'conflict') return { ok: false, reason: 'conflict', current: outcome.current }
+    // outcome.kind === 'token' → PUT the bytes (identical for both paths).
+    const res = await globalThis.fetch(buildObjstoreUrl(outcome.urlPath), {
       method: 'PUT',
       headers: {
         // No explicit `content-length` — browser `fetch()` forbids
         // setting it; both undici and the browser compute it from
         // the body bytes (matches the server's parse).
-        'authorization': `Bearer ${reply['token']}`,
+        'authorization': `Bearer ${outcome.token}`,
         'content-type': 'application/octet-stream',
       },
       body: opts.bytes as Uint8Array<ArrayBuffer>,
@@ -791,6 +861,64 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
   // `tests/objstore-client-races.test.js` ('GET races concurrent
   // PUT v2'). Bounded so a constantly-thrashed resource still
   // eventually surfaces null rather than spinning.
+  // Outcome of a fetch-token handshake (WS in-band OR REST mint), before
+  // the byte GET. `unauthorized` only arises on the REST path (stale ts /
+  // replay / clock skew); the caller falls back to the WS path, which is
+  // nonce-bound and has no such failure mode. (Fetch has no operator gate —
+  // it's read-only.)
+  type FetchTokenOutcome =
+    | { kind: 'token'; urlPath: string; token: string; meta: ObjectMeta }
+    | { kind: 'not-found' }
+    | { kind: 'unauthorized' }
+
+  // In-band WS fetch-token handshake.
+  async function wsFetchToken(state: SessionState, resourceTag: string): Promise<FetchTokenOutcome> {
+    const nonce = transport.getNonce()
+    if (!nonce) throw new Error('objstore: socket not open')
+    const signature = await signObjstoreFetch(state.signingKey, state.workspaceTag, resourceTag, nonce)
+    send({ type: 'objstore-fetch', workspaceTag: state.workspaceTag, resourceTag, signature })
+    const reply = await recv((m) =>
+      m.workspaceTag === state.workspaceTag && m.resourceTag === resourceTag && (
+        m.type === 'objstore-fetch-token' ||
+        m.type === 'objstore-fetch-not-found'
+      ),
+    )
+    if (reply.type === 'objstore-fetch-not-found') return { kind: 'not-found' }
+    if (typeof reply['urlPath'] !== 'string' || typeof reply['token'] !== 'string' || !isObjectMeta(reply)) {
+      throw new TypeError('objstore: malformed fetch-token (missing urlPath / token / metadata)')
+    }
+    return { kind: 'token', urlPath: reply['urlPath'], token: reply['token'], meta: toObjectMeta(reply) }
+  }
+
+  // REST fetch-token mint (SSE mode): POST the signed fetch to the mint
+  // endpoint; the reply is the same `{ ...meta, urlPath, token }` shape over
+  // JSON. 404 → not-found; 401 → stale/replay (caller falls back to WS).
+  async function restFetchToken(state: SessionState, resourceTag: string): Promise<FetchTokenOutcome> {
+    const ts = Date.now()
+    const signature = await signObjstoreFetchRest(state.signingKey, state.workspaceTag, resourceTag, ts)
+    const res = await globalThis.fetch(restMintUrl(state.workspaceTag, resourceTag), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ op: 'fetch', ts, signature }),
+    })
+    if (res.status === 404) return { kind: 'not-found' }
+    if (res.status === 401) return { kind: 'unauthorized' }
+    if (!res.ok) {
+      let body = ''
+      try { body = await res.text() } catch {}
+      throw new Error(`objstore: REST fetch-mint failed ${res.status} ${body.slice(0, 200)}`)
+    }
+    let mint: unknown
+    try { mint = await res.json() } catch { throw new TypeError('objstore: fetch-mint JSON parse failed') }
+    if (!mint || typeof mint !== 'object'
+      || typeof (mint as { urlPath?: unknown }).urlPath !== 'string'
+      || typeof (mint as { token?: unknown }).token !== 'string'
+      || !isObjectMeta(mint as WireMessage)) {
+      throw new TypeError('objstore: malformed fetch-mint (missing urlPath / token / metadata)')
+    }
+    return { kind: 'token', urlPath: (mint as { urlPath: string }).urlPath, token: (mint as { token: string }).token, meta: toObjectMeta(mint as WireMessage) }
+  }
+
   async function _rawFetch(state: SessionState, resourceTag: string): Promise<{ bytes: Uint8Array; meta: ObjectMeta } | null> {
     for (let attempt = 0; attempt < REST_RACE_MAX_ATTEMPTS; attempt++) {
       // Wrap each attempt with the session-restart replay so an SSE
@@ -822,24 +950,22 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
   > {
     await state.connectedPromise
     if (state.closed) throw new Error('objstore: session closed')
-    const nonce = transport.getNonce()
-    if (!nonce) throw new Error('objstore: socket not open')
-    const signature = await signObjstoreFetch(state.signingKey, state.workspaceTag, resourceTag, nonce)
-    send({ type: 'objstore-fetch', workspaceTag: state.workspaceTag, resourceTag, signature })
-    const reply = await recv((m) =>
-      m.workspaceTag === state.workspaceTag && m.resourceTag === resourceTag && (
-        m.type === 'objstore-fetch-token' ||
-        m.type === 'objstore-fetch-not-found'
-      ),
-    )
-    if (reply.type === 'objstore-fetch-not-found') return { kind: 'not-found' }
-    if (typeof reply['urlPath'] !== 'string' || typeof reply['token'] !== 'string' || !isObjectMeta(reply)) {
-      throw new TypeError('objstore: malformed fetch-token (missing urlPath / token / metadata)')
+    // Acquire a fetch-token. In SSE mode mint over REST (session-
+    // independent); else the in-band WS handshake. On a REST 401 (stale ts
+    // / replay / clock skew) fall back to the nonce-bound WS path.
+    let tok: FetchTokenOutcome
+    if (transport.isSse()) {
+      tok = await restFetchToken(state, resourceTag)
+      if (tok.kind === 'unauthorized') tok = await wsFetchToken(state, resourceTag)
+    } else {
+      tok = await wsFetchToken(state, resourceTag)
     }
-    const meta = toObjectMeta(reply)
-    const res = await globalThis.fetch(buildObjstoreUrl(reply['urlPath']), {
+    if (tok.kind === 'not-found') return { kind: 'not-found' }
+    if (tok.kind === 'unauthorized') throw new Error('objstore: fetch-mint unauthorized')
+    const meta = tok.meta
+    const res = await globalThis.fetch(buildObjstoreUrl(tok.urlPath), {
       method: 'GET',
-      headers: { 'authorization': `Bearer ${reply['token']}` },
+      headers: { 'authorization': `Bearer ${tok.token}` },
     })
     if (!res.ok) {
       // 404: live row deleted or advanced past the token's version.

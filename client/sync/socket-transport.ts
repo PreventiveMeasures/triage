@@ -82,6 +82,11 @@ export type SocketTransport = {
   // the real `WebSocket` or the `SseTransport` adapter; consumers
   // only compare identity, so the union surface is enough.
   getSocket(): WebSocketLike | null
+  // True while the live socket is the SSE fallback (vs a WebSocket).
+  // Consumers route around the SSE plane's replica-hop fragility with it
+  // (objstore mints fetch/put tokens over REST in SSE mode). False when no
+  // socket is live.
+  isSse(): boolean
   // Singleton per-socket; concurrent callers coalesce. Returns
   // false on cancel / no resolver / socket-swap-mid-flow.
   runAuthFlow(): Promise<boolean>
@@ -125,6 +130,12 @@ export function createSocketTransport(deps: SocketTransportDeps): SocketTranspor
   // `runAuthFlow`, `setHeartbeatTimings`, etc. just call the subset
   // both expose.
   let socket: WebSocketLike | null = null
+  // Whether the live socket is the SSE fallback (vs a WebSocket). Tracks
+  // the `sse` arm chosen in `tryOpen`; read by `isSse()` so consumers can
+  // route around the SSE plane's replica-hop fragility (e.g. objstore mints
+  // its fetch/put tokens over REST in SSE mode). Meaningful only while a
+  // socket is live.
+  let currentIsSse = false
   let connectionNonce: string | null = null
   let acquireCount = 0
   let transportClosed = false
@@ -404,6 +415,7 @@ export function createSocketTransport(deps: SocketTransportDeps): SocketTranspor
       return
     }
     socket = next
+    currentIsSse = sse
     connectionNonce = null
     cachedPasswordTriedOnThisSocket = false
     // Whether THIS attempt ever reached `open`. The WS plane fires
@@ -545,6 +557,7 @@ export function createSocketTransport(deps: SocketTransportDeps): SocketTranspor
     send,
     getNonce: () => connectionNonce,
     getSocket: () => socket,
+    isSse: () => socket != null && currentIsSse,
     runAuthFlow,
     close,
     setHeartbeatTimings,

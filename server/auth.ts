@@ -31,6 +31,10 @@ export type AuthenticateMsg = { password?: unknown }
 export type Auth = {
   // True iff the gate is configured AND this socket hasn't authenticated.
   requiresAuth(socket: WebSocket): boolean
+  // Static "is a server password configured" flag — the socket-less
+  // predicate the REST put-begin gate needs (a REST request can never be
+  // operator-authorized, so `requiresAuth` collapses to this there).
+  passwordConfigured: boolean
   handleAuthenticate(socket: WebSocket, msg: AuthenticateMsg): void
   sendUnauthorized(socket: WebSocket, ctx: UnauthorizedContext): void
 }
@@ -106,5 +110,5 @@ export function createAuth(deps: {
     send(socket, { type: 'authenticated' })
   }
 
-  return { requiresAuth, handleAuthenticate, sendUnauthorized }
+  return { requiresAuth, passwordConfigured: CONFIGURED_PASSWORD_HMAC != null, handleAuthenticate, sendUnauthorized }
 }

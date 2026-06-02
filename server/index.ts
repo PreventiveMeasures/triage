@@ -275,7 +275,7 @@ if (NEON_URL) {
 // Password gate (see ./auth.ts) — HMAC derivation + the `authenticate`
 // handshake.
 const auth = createAuth({ peers, password: CONFIG_PASSWORD, send, debug: DEBUG })
-const { requiresAuth, handleAuthenticate, sendUnauthorized } = auth
+const { requiresAuth, passwordConfigured, handleAuthenticate, sendUnauthorized } = auth
 
 // Triage-sync protocol handlers (see ./sync-handlers.ts). `getNonce`
 // resolves a socket's challenge nonce and is shared with the objstore
@@ -315,6 +315,11 @@ const { handlers: objstore, restDeps: objstoreRestDeps, startupReap, stopReaper 
   // `unauthorized` frame and bails on `true`.
   authGate: async (socket, tag) => requiresAuth(socket) && !await workspaceExists(tag),
   sendUnauthorized,
+  // Socket-less analog of `authGate` for the REST put-begin mint: a REST
+  // request can never be operator-authorized, so the gate collapses to
+  // "password configured AND workspace new". A deny routes the client to
+  // its in-band WS put-begin fallback.
+  restPutGate: async (tag) => passwordConfigured && !await workspaceExists(tag),
   // `tokenSecret` is set only when OBJSTORE_TOKEN_SECRET was
   // provided in env (see TOKEN_SECRET resolution above). Omitted
   // → initObjstore mints a fresh per-process secret (fine for

@@ -16,25 +16,31 @@ import assert from 'node:assert/strict'
 import { Buffer } from 'node:buffer'
 import { after, before, describe, it } from 'node:test'
 
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+
 import { deriveObjstoreKeys } from '../client/sync/objstore.ts'
-import { computeContentHash, signObjstoreFetch, signObjstoreFetchRest } from '../client/sync/objstore-crypto.ts'
+import { computeContentHash, signObjstoreFetch, signObjstoreFetchRest, signObjstorePut, signObjstorePutBeginRest } from '../client/sync/objstore-crypto.ts'
 import { computeResourceTag } from '../client/sync/objstore-content-crypto.ts'
 import { createObjstoreSession } from './_objstore-session.js'
 import { bootServer } from './_helpers.js'
 
-describe('objstore REST fetch-mint (POST /api/objstore/{tag}/{res})', () => {
-  let server, serverUrl, httpOrigin
+describe('objstore REST mint (POST /api/objstore/{tag}/{res}; op=fetch|put)', () => {
+  let httpOrigin, server, serverUrl
   before(async () => { server = await bootServer(); serverUrl = server.serverUrl; httpOrigin = server.httpOrigin })
   after(async () => { if (server) await server.teardown() })
 
   function makeKeys() {
     return deriveObjstoreKeys(crypto.getRandomValues(new Uint8Array(32)).toBase64(), crypto.randomUUID())
   }
+  // Defaults the body's `op` to 'fetch' (this suite's op); a caller can
+  // override via the body. The server requires `op` to route the mint.
   function mintPost(tag, res, body) {
     return fetch(`${httpOrigin}/api/objstore/${tag}/${res}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ op: 'fetch', ...body }),
     })
   }
   // Upload one object via the production session so a live row exists.
@@ -165,5 +171,164 @@ describe('objstore REST fetch-mint (POST /api/objstore/{tag}/{res})', () => {
     const res = await computeResourceTag(keys.tagKey, 'huge.json')
     // JSON body well past the 4096-byte cap → readJsonBody returns null → 400.
     assert.equal((await mintPost(tag, res, { ts: Date.now(), signature: 'A'.repeat(5000) })).status, 400)
+  })
+
+  it('rejects an unknown op with 400', async () => {
+    const keys = await makeKeys()
+    const tag = keys.workspaceTag
+    const res = await computeResourceTag(keys.tagKey, 'unknownop.json')
+    assert.equal((await mintPost(tag, res, { op: 'bogus', ts: Date.now(), signature: 'x' })).status, 400)
+  })
+
+  // ---- op:'put' (put-begin mint) ----
+
+  // Sign + POST a put-begin mint for `bytes` (with optional prev). Returns
+  // the fetch Response. `contentHash`/`expectedLength` derive from `bytes`.
+  async function putBeginMint(keys, tag, res, bytes, { prevVersion = null, prevIncarnation = null } = {}) {
+    const contentHash = await computeContentHash(bytes)
+    const ts = Date.now()
+    const fields = { workspaceTag: tag, resourceTag: res, prevVersion, prevIncarnation, expectedLength: bytes.length, contentHash }
+    const signature = await signObjstorePutBeginRest(keys.signingKey, fields, ts)
+    return mintPost(tag, res, { op: 'put', ts, signature, prevVersion, prevIncarnation, expectedLength: bytes.length, contentHash })
+  }
+
+  it('put-begin mint: POST op=put → token → REST PUT commits, then round-trips', async () => {
+    const keys = await makeKeys()
+    const tag = keys.workspaceTag
+    const res = await computeResourceTag(keys.tagKey, 'rest-put.json')
+    const bytes = Buffer.from('opaque-ciphertext-stand-in-for-rest-put-0001')
+    const begin = await putBeginMint(keys, tag, res, bytes)
+    assert.equal(begin.status, 200, 'put-begin mint should succeed for a new object')
+    const j = await begin.json()
+    assert.equal(j.urlPath, `/api/objstore/${tag}/${res}`)
+    assert.equal(typeof j.token, 'string')
+    assert.equal(typeof j.stagingId, 'string')
+    // Commit the bytes with the minted put-token (the UNCHANGED PUT path).
+    const put = await fetch(`${httpOrigin}${j.urlPath}`, {
+      method: 'PUT',
+      headers: { authorization: `Bearer ${j.token}`, 'content-type': 'application/octet-stream', 'content-length': String(bytes.length) },
+      body: bytes,
+    })
+    if (put.status !== 200) assert.fail(`commit should succeed, got ${put.status}: ${await put.text().catch(() => '')}`)
+    const ack = await put.json()
+    assert.equal(ack.version, 1)
+    assert.equal(ack.contentHash, await computeContentHash(bytes))
+    // Read it back via a fetch-mint get-token.
+    const fmTs = Date.now()
+    const fm = await mintPost(tag, res, { op: 'fetch', ts: fmTs, signature: await signObjstoreFetchRest(keys.signingKey, tag, res, fmTs) })
+    assert.equal(fm.status, 200)
+    const fmJ = await fm.json()
+    const get = await fetch(`${httpOrigin}${fmJ.urlPath}`, { headers: { authorization: `Bearer ${fmJ.token}` } })
+    assert.equal(get.status, 200)
+    assert.equal(Buffer.from(await get.arrayBuffer()).toString('utf8'), bytes.toString('utf8'))
+  })
+
+  it('put-begin rejects a replayed signature with 401', async () => {
+    const keys = await makeKeys()
+    const tag = keys.workspaceTag
+    const res = await computeResourceTag(keys.tagKey, 'rest-put-replay.json')
+    const bytes = Buffer.from('replay-bytes')
+    const contentHash = await computeContentHash(bytes)
+    const ts = Date.now()
+    const fields = { workspaceTag: tag, resourceTag: res, prevVersion: null, prevIncarnation: null, expectedLength: bytes.length, contentHash }
+    const signature = await signObjstorePutBeginRest(keys.signingKey, fields, ts)
+    const body = { op: 'put', ts, signature, prevVersion: null, prevIncarnation: null, expectedLength: bytes.length, contentHash }
+    assert.equal((await mintPost(tag, res, body)).status, 200)
+    assert.equal((await mintPost(tag, res, body)).status, 401, 'replayed put-begin signature rejected')
+  })
+
+  it('put-begin rejects a signature from a different workspace key with 401', async () => {
+    const keys = await makeKeys()
+    const other = await makeKeys()
+    const tag = keys.workspaceTag
+    const res = await computeResourceTag(keys.tagKey, 'rest-put-wrongkey.json')
+    const bytes = Buffer.from('x')
+    const contentHash = await computeContentHash(bytes)
+    const ts = Date.now()
+    const fields = { workspaceTag: tag, resourceTag: res, prevVersion: null, prevIncarnation: null, expectedLength: bytes.length, contentHash }
+    const signature = await signObjstorePutBeginRest(other.signingKey, fields, ts)
+    assert.equal((await mintPost(tag, res, { op: 'put', ts, signature, prevVersion: null, prevIncarnation: null, expectedLength: bytes.length, contentHash })).status, 401)
+  })
+
+  it('put-begin rejects a WS put signature presented to the mint (domain separation) with 401', async () => {
+    const keys = await makeKeys()
+    const tag = keys.workspaceTag
+    const res = await computeResourceTag(keys.tagKey, 'rest-put-domainsep.json')
+    const bytes = Buffer.from('x')
+    const contentHash = await computeContentHash(bytes)
+    const ts = Date.now()
+    const fields = { workspaceTag: tag, resourceTag: res, prevVersion: null, prevIncarnation: null, expectedLength: bytes.length, contentHash }
+    // Sign under the WS put domain (nonce slot = the ts string); the REST
+    // mint canonicalizes under a DISTINCT domain → won't verify.
+    const wsSig = await signObjstorePut(keys.signingKey, fields, String(ts))
+    assert.equal((await mintPost(tag, res, { op: 'put', ts, signature: wsSig, prevVersion: null, prevIncarnation: null, expectedLength: bytes.length, contentHash })).status, 401)
+  })
+
+  it('put-begin returns 409 conflict when the precondition is stale', async () => {
+    const keys = await makeKeys()
+    const tag = keys.workspaceTag
+    const res = await computeResourceTag(keys.tagKey, 'rest-put-conflict.json')
+    const bytes = Buffer.from('v1-bytes')
+    const begin1 = await putBeginMint(keys, tag, res, bytes)
+    assert.equal(begin1.status, 200)
+    const j1 = await begin1.json()
+    const commit = await fetch(`${httpOrigin}${j1.urlPath}`, {
+      method: 'PUT',
+      headers: { authorization: `Bearer ${j1.token}`, 'content-type': 'application/octet-stream', 'content-length': String(bytes.length) },
+      body: bytes,
+    })
+    assert.equal(commit.status, 200)
+    // A second put-begin with prev=null (must-not-exist) now conflicts.
+    const begin2 = await putBeginMint(keys, tag, res, Buffer.from('v2-attempt'))
+    assert.equal(begin2.status, 409, 'must-not-exist precondition against a live row → conflict')
+    const j2 = await begin2.json()
+    assert.equal(j2.error, 'conflict')
+    assert.equal(typeof j2.currentVersion, 'number')
+    assert.equal(typeof j2.currentIncarnation, 'string')
+  })
+
+  it('put-begin rejects a missing expectedLength/contentHash with 400', async () => {
+    const keys = await makeKeys()
+    const tag = keys.workspaceTag
+    const res = await computeResourceTag(keys.tagKey, 'rest-put-malformed.json')
+    // A syntactically-valid auth pair but no put fields → 400 before sig verify.
+    assert.equal((await mintPost(tag, res, { op: 'put', ts: Date.now(), signature: 'A'.repeat(86) })).status, 400)
+  })
+
+  it('put-begin on a password-gated server refuses a new workspace with 401 (client falls back to WS)', async () => {
+    // A password-configured server gates the first write to a never-seen
+    // workspace. The REST mint can't operator-authenticate, so it 401s; the
+    // client (not exercised here) falls back to the in-band WS put-begin.
+    const gatedDir = mkdtempSync(path.join(tmpdir(), 'deepview-gated-'))
+    writeFileSync(path.join(gatedDir, 'config.json'), JSON.stringify({ password: 'sekret' }))
+    const gated = await bootServer({ dir: gatedDir })
+    try {
+      const keys = await makeKeys()
+      const tag = keys.workspaceTag
+      const res = await computeResourceTag(keys.tagKey, 'gated-new.json')
+      const bytes = Buffer.from('x')
+      const contentHash = await computeContentHash(bytes)
+      const ts = Date.now()
+      const fields = { workspaceTag: tag, resourceTag: res, prevVersion: null, prevIncarnation: null, expectedLength: bytes.length, contentHash }
+      const signature = await signObjstorePutBeginRest(keys.signingKey, fields, ts)
+      const r = await fetch(`${gated.httpOrigin}/api/objstore/${tag}/${res}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ op: 'put', ts, signature, prevVersion: null, prevIncarnation: null, expectedLength: bytes.length, contentHash }),
+      })
+      assert.equal(r.status, 401, 'gated new-workspace put-begin refused over REST')
+      // Fetch-mint for a new workspace on the SAME gated server is NOT gated
+      // (read-only) — it's a plain 404 (no live row), proving the gate is
+      // put-specific.
+      const fm = await fetch(`${gated.httpOrigin}/api/objstore/${tag}/${res}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ op: 'fetch', ts, signature: await signObjstoreFetchRest(keys.signingKey, tag, res, ts) }),
+      })
+      assert.equal(fm.status, 404, 'fetch-mint is not gated (read-only) — new resource is just not-found')
+    } finally {
+      await gated.teardown()
+      rmSync(gatedDir, { recursive: true, force: true })
+    }
   })
 })

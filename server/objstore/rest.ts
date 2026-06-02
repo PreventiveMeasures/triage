@@ -40,9 +40,9 @@ import {
   objectMetaWire,
 } from './store.ts'
 import type { LiveReader } from './blob.ts'
-import { type TokenSecret, extractBearer, mintGetToken, verifyToken } from './tokens.ts'
-import { verifyObjstoreFetchRestSig } from './sign.ts'
-import { createFetchMintGuard } from './fetch-mint-guard.ts'
+import { type TokenSecret, extractBearer, verifyToken } from './tokens.ts'
+import { deny, denyConflict } from './rest-deny.ts'
+import { handleRestMint } from './rest-mint.ts'
 import { debugId, debugTag, errMsg, errStack } from '../util.ts'
 
 // Server-side fault codes that should surface as 500 `io-error`
@@ -68,6 +68,13 @@ export type ObjstoreRestDeps = {
   // workspace_object for the full metadata (version, hash, length,
   // signature). SQLite mode passes a no-op.
   publishObjPut: (tag: string, resourceTag: string) => void
+  // New-workspace operator gate for the REST put-begin mint — the
+  // connection-independent analog of the WS path's `authGate`. Returns
+  // `true` to DENY (a password is configured AND the workspace is
+  // never-before-seen), which routes the client to its in-band WS
+  // put-begin fallback (REST has no socket auth state to consult).
+  // No-config default is open (never deny), matching the WS authGate.
+  restPutGate: (workspaceTag: string) => Promise<boolean>
   debug: boolean
 }
 
@@ -101,86 +108,6 @@ export type ObjstoreRestDeps = {
 // file and still loses the CAS), not on this set.
 const inFlightSids = new Set<string>()
 
-// Per-process freshness + replay guard for the REST fetch-mint POST (it
-// has no connection nonce to bind, so it binds a client timestamp — see
-// ./fetch-mint-guard.ts). Module-level singleton, same lifetime as
-// `inFlightSids`.
-const fetchMintGuard = createFetchMintGuard()
-
-// Hard cap on the fetch-mint JSON body (`{ ts, signature }` is a few
-// hundred bytes). Bounds the read so a hostile client can't stream an
-// unbounded body into memory before the parse.
-const FETCH_MINT_BODY_MAX = 4096
-
-// Read a small JSON request body up to `maxBytes`, returning the parsed
-// value or null on overflow / parse failure / read error. Used only by
-// the fetch-mint POST; the PUT body is the raw blob and streams to disk
-// via a different path.
-async function readJsonBody(req: IncomingMessage, maxBytes: number): Promise<unknown> {
-  const chunks: Buffer[] = []
-  let total = 0
-  try {
-    for await (const chunk of req) {
-      const buf = chunk as Buffer
-      total += buf.length
-      if (total > maxBytes) return null
-      chunks.push(buf)
-    }
-  } catch { return null }
-  try { return JSON.parse(Buffer.concat(chunks).toString('utf8')) }
-  catch { return null }
-}
-
-// POST /api/objstore/{tag}/{res} — REST fetch-mint. Mirrors the WS
-// `objstore-fetch` → `objstore-fetch-token` handshake but over a single
-// REST round-trip independent of the SSE session: the workspace signs
-// `[fetch-rest domain, tag, res, ts]`, the server verifies it (the
-// workspaceTag IS the Ed25519 pubkey), enforces a freshness window +
-// replay dedup in place of the connection nonce, then returns the SAME
-// `{ ...meta, urlPath, token, expiresAt }` shape the WS path sends — the
-// caller does the GET with `Authorization: Bearer <token>` exactly as
-// today (the GET handler is unchanged). Auth-proxy friendly: the
-// signature rides the JSON body (not a header or cookie, so it never
-// collides with a cookie-based proxy), and the response is JSON — no
-// redirect and no token in any URL (so nothing leaks to access logs).
-//
-// Client note: because a replayed signature is rejected, a retry MUST
-// re-sign with a fresh `ts` (cheap) rather than resend the same body.
-async function handleRestFetchMint(
-  deps: ObjstoreRestDeps, req: IncomingMessage, res: ServerResponse, route: RouteMatch,
-): Promise<void> {
-  const body = await readJsonBody(req, FETCH_MINT_BODY_MAX)
-  if (!body || typeof body !== 'object') { deny(res, 400, 'bad-request'); return }
-  const ts = (body as { ts?: unknown }).ts
-  const signature = (body as { signature?: unknown }).signature
-  if (!Number.isSafeInteger(ts) || (ts as number) < 0 || typeof signature !== 'string') {
-    deny(res, 400, 'bad-request'); return
-  }
-  // Verify the workspace signature BEFORE touching the replay guard so a
-  // bad-sig request can't consume cache space. The signature commits to
-  // THIS `ts`, so a forged/altered timestamp fails here.
-  if (!await verifyObjstoreFetchRestSig(route.tag, route.resourceTag, ts as number, signature)) {
-    deny(res, 401, 'unauthorized'); return
-  }
-  // Freshness window + single-use dedup (the connection-nonce stand-in).
-  // 'stale' (outside the skew window) and 'replay' (signature already
-  // minted) are both opaque 401s — the client re-signs with a fresh `ts`
-  // and retries.
-  if (fetchMintGuard.admit(signature, ts as number) !== 'ok') {
-    deny(res, 401, 'unauthorized'); return
-  }
-  const row = await getLive(deps.handle, route.tag, route.resourceTag)
-  if (!row) { deny(res, 404, 'not-found'); return }
-  const { token, exp } = mintGetToken(deps.secret, route.tag, route.resourceTag, row.version, row.incarnation)
-  res.writeHead(200, { 'content-type': 'application/json' })
-  res.end(JSON.stringify({
-    ...objectMetaWire(row),
-    urlPath: `/api/objstore/${route.tag}/${route.resourceTag}`,
-    token,
-    expiresAt: exp,
-  }))
-}
-
 // `/api/objstore/${workspaceTag}/${resourceTag}` — base64url
 // alphabet, case-sensitive. The `?…` query is permitted but ignored
 // (token rides the Authorization header, not the URL — querystring
@@ -198,39 +125,14 @@ export function matchRoute(url: string | undefined): RouteMatch | null {
   return { tag: tag!, resourceTag: resourceTag! }
 }
 
-function deny(res: ServerResponse, status: number, body: string): void {
-  // Uniform `{ error: <reason> }` JSON envelope for every failure so
-  // clients parse one shape. Status + reason are NOT intentionally
-  // indistinguishable across causes — 401/404/405/410/411/500 each map
-  // to a documented reason in server/README.md and the client decides
-  // recovery from the code. Probe-distinguishing defense isn't a goal:
-  // every reason is reachable only after the route + bearer-token check
-  // passes (or as 401/404 from the public surface), so a probe gains no
-  // signal it couldn't otherwise enumerate.
-  res.writeHead(status, { 'content-type': 'application/json' })
-  res.end(JSON.stringify({ error: body }))
-}
-
-// Variant of `deny` that augments the JSON envelope with the live
-// row's `currentVersion` + `currentIncarnation` so a REST PUT 409 lets
-// the caller rebase onto the right precondition token. Without this the
-// client only learns the slot is occupied — not at what (version,
-// incarnation) — and retries blindly against a non-empty slot, looping
-// indefinitely against a live row. Symmetric with the WS plane's
-// `objstore-conflict` envelope.
-function denyConflict(res: ServerResponse, currentVersion: number | null, currentIncarnation: string | null): void {
-  res.writeHead(409, { 'content-type': 'application/json' })
-  res.end(JSON.stringify({ error: 'conflict', currentVersion, currentIncarnation }))
-}
-
 export async function handleRest(deps: ObjstoreRestDeps, req: IncomingMessage, res: ServerResponse): Promise<void> {
   const route = matchRoute(req.url)
   if (!route) { deny(res, 404, 'not-found'); return }
-  // POST = REST fetch-mint (signature-authed via the JSON body; no bearer
-  // token). Dispatched before the bearer-token gate below, which guards
-  // the token-authed GET/PUT byte transfers.
+  // POST = REST mint (fetch or put-begin, by body `op`; signature-authed
+  // via the JSON body, no bearer token). Dispatched before the bearer-token
+  // gate below, which guards the token-authed GET/PUT byte transfers.
   if (req.method === 'POST') {
-    try { await handleRestFetchMint(deps, req, res, route) }
+    try { await handleRestMint(deps, req, res, route) }
     catch (err: unknown) {
       if (deps.debug) console.warn('objstore POST error:', errStack(err))
       if (res.headersSent) res.destroy()

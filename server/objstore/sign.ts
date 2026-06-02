@@ -14,6 +14,10 @@ const OBJSTORE_FETCH_DOMAIN = 'deepview-objstore.v1.fetch'
 // (client/sync/objstore-crypto.ts). Distinct from OBJSTORE_FETCH_DOMAIN so
 // a WS-fetch signature can't be replayed against the REST mint endpoint.
 const OBJSTORE_FETCH_REST_DOMAIN = 'deepview-objstore.v1.fetch-rest'
+// REST put-begin domain — MUST match the client's PUT_REST_DOMAIN. Distinct
+// from OBJSTORE_PUT_DOMAIN so a WS put-begin signature can't be replayed
+// against the REST mint endpoint.
+const OBJSTORE_PUT_REST_DOMAIN = 'deepview-objstore.v1.put-rest'
 
 // Wire shapes the verifiers accept. Fields land here post-
 // `JSON.parse`, so every value starts life as `unknown` — strict
@@ -111,6 +115,26 @@ function canonicalObjstoreFetchRest(workspaceTag: string, resourceTag: string, t
   ].join('\n'))
 }
 
+// REST put-begin canonical — the WS `canonicalObjstorePut` fields in the
+// same order/coercion (intOrEmpty / strOrEmpty), under the put-rest domain
+// and binding the client `ts` in place of the connection nonce.
+function canonicalObjstorePutRest(
+  workspaceTag: string, resourceTag: string,
+  prevVersion: number | null, prevIncarnation: string | null,
+  contentHash: string, expectedLength: number, ts: number,
+): Uint8Array<ArrayBuffer> {
+  return encodeUtf8([
+    OBJSTORE_PUT_REST_DOMAIN,
+    workspaceTag,
+    resourceTag,
+    intOrEmpty(prevVersion),
+    strOrEmpty(prevIncarnation),
+    contentHash,
+    String(expectedLength),
+    String(ts),
+  ].join('\n'))
+}
+
 // `Number.isSafeInteger` rather than `Number.isInteger`: JSON numbers
 // are IEEE-754 and integers above 2^53-1 aren't precisely
 // representable. Accepting non-safe integers would let a signed
@@ -193,4 +217,21 @@ export function verifyObjstoreFetchRestSig(
   try { payload = canonicalObjstoreFetchRest(workspaceTag, resourceTag, ts) }
   catch { return Promise.resolve(false) }
   return verifyEd25519(workspaceTag, payload, signature)
+}
+
+// Verify a REST put-begin signature. Same self-contained shape as
+// `verifyObjstoreFetchRestSig` — the caller (rest.ts) has already
+// range-checked the put fields + `ts`. The workspaceTag IS the pubkey.
+export function verifyObjstorePutBeginRestSig(
+  fields: { workspaceTag: string; resourceTag: string; prevVersion: number | null; prevIncarnation: string | null; contentHash: string; expectedLength: number },
+  ts: number, signature: string,
+): Promise<boolean> {
+  let payload: Uint8Array<ArrayBuffer>
+  try {
+    payload = canonicalObjstorePutRest(
+      fields.workspaceTag, fields.resourceTag, fields.prevVersion, fields.prevIncarnation,
+      fields.contentHash, fields.expectedLength, ts,
+    )
+  } catch { return Promise.resolve(false) }
+  return verifyEd25519(fields.workspaceTag, payload, signature)
 }

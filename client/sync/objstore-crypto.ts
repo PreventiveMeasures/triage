@@ -18,6 +18,11 @@ const FETCH_DOMAIN = 'deepview-objstore.v1.fetch'
 // the connection nonce; the server enforces a freshness window + a
 // replay cache in its place. See server/objstore/rest.ts.
 const FETCH_REST_DOMAIN = 'deepview-objstore.v1.fetch-rest'
+// REST put-begin mint (POST /api/objstore/{tag}/{res}, op:'put') — a
+// DISTINCT domain from the WS PUT so a captured WS put-begin signature
+// can't be replayed as a REST mint, and vice versa. Binds a client
+// timestamp (same anti-replay model as FETCH_REST_DOMAIN).
+const PUT_REST_DOMAIN = 'deepview-objstore.v1.put-rest'
 
 // Fields the client passes to the canonical builders. `prevVersion`
 // is `number | null` — null is the "must-not-exist" precondition.
@@ -122,6 +127,27 @@ export function canonicalObjstoreFetchRest(workspaceTag: string, resourceTag: st
 
 export function signObjstoreFetchRest(privateKey: CryptoKey, workspaceTag: string, resourceTag: string, ts: number): Promise<string> {
   return signCanonical(privateKey, canonicalObjstoreFetchRest(workspaceTag, resourceTag, ts))
+}
+
+// REST put-begin canonical — the WS `canonicalObjstorePut` fields in the
+// same order/coercion, but under the put-rest domain and binding a client
+// `ts` instead of the connection nonce. Byte-stable against the server's
+// `canonicalObjstorePutRest`.
+export function canonicalObjstorePutRest(fields: ObjstorePutBeginFields, ts: number): Uint8Array<ArrayBuffer> {
+  return encodeUtf8([
+    PUT_REST_DOMAIN,
+    fields.workspaceTag,
+    fields.resourceTag,
+    intOrEmpty(fields.prevVersion),
+    incOrEmpty(fields.prevIncarnation),
+    fields.contentHash,
+    String(fields.expectedLength),
+    String(ts),
+  ].join('\n'))
+}
+
+export function signObjstorePutBeginRest(privateKey: CryptoKey, fields: ObjstorePutBeginFields, ts: number): Promise<string> {
+  return signCanonical(privateKey, canonicalObjstorePutRest(fields, ts))
 }
 
 // SHA-256 of the bytes, base64url-no-padding. Used to populate
