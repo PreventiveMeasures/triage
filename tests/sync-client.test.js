@@ -142,6 +142,105 @@ describe('triage-sync client', () => {
     await deleteWorkspace(wsId)
   })
 
+  it('SSE mode: saves go to the REST save plane (POST /api/sync/save), not the session stream', async () => {
+    // Force the SSE fallback (WS constructor throws) and spy on fetch while
+    // delegating to the real relay. In SSE mode a save must POST to
+    // /api/sync/save (session-independent) instead of riding a session POST
+    // that would take over the event-stream. Proof: a /api/sync/save fetch
+    // happens AND the save commits (settles after the REST ack).
+    const realWS = globalThis.WebSocket
+    const realFetch = globalThis.fetch
+    const fetchedUrls = []
+    globalThis.WebSocket = class {
+      static CONNECTING = 0; static OPEN = 1; static CLOSING = 2; static CLOSED = 3
+      constructor() { throw new Error('forced SSE fallback') }
+    }
+    globalThis.fetch = (input, init) => { fetchedUrls.push(String(input)); return realFetch(input, init) }
+    try {
+      // Drop any existing WS socket so the next open uses the SSE mock.
+      triageSync.setServerUrl('')
+      const wsId = await startSession(['finding-A'])
+      patchEntry(state.triage, 'finding-A', { color: 'red' })
+      await saveTriage()
+      await waitFor(() => settledAfterAck(wsId), 'SSE REST save acked')
+      assert.ok(
+        fetchedUrls.some((u) => u.split('?', 1)[0].endsWith('/api/sync/save')),
+        `expected a POST to /api/sync/save in SSE mode, saw ${JSON.stringify(fetchedUrls.slice(-6))}`,
+      )
+      assert.equal(state.triage.get('finding-A')?.color, 'red', 'REST-routed save committed + applied')
+      triageSync.closeSession()
+      await deleteWorkspace(wsId)
+    } finally {
+      globalThis.WebSocket = realWS
+      globalThis.fetch = realFetch
+      triageSync.setServerUrl('')
+    }
+  })
+
+  it('SSE mode: a server 413 (too-large) surfaces as a save error, not a stuck pending', async () => {
+    const realWS = globalThis.WebSocket
+    const realFetch = globalThis.fetch
+    globalThis.WebSocket = class {
+      static CONNECTING = 0; static OPEN = 1; static CLOSING = 2; static CLOSED = 3
+      constructor() { throw new Error('forced SSE fallback') }
+    }
+    // Intercept ONLY the REST save POST → 413; SSE stream fetches pass through.
+    globalThis.fetch = (input, init) => {
+      if (String(input).split('?', 1)[0].endsWith('/api/sync/save')) {
+        return Promise.resolve(new Response(JSON.stringify({ reason: 'too-large' }), { status: 413, headers: { 'content-type': 'application/json' } }))
+      }
+      return realFetch(input, init)
+    }
+    try {
+      triageSync.setServerUrl('')
+      const wsId = await startSession(['finding-A'])
+      patchEntry(state.triage, 'finding-A', { color: 'red' })
+      await saveTriage()
+      // 413 → workspace-save-error{too-large} (non-recoverable) → session.error.
+      await waitFor(() => triageSync.sessionInfo(wsId)?.error != null, 'too-large surfaced as session error')
+      triageSync.closeSession()
+      await deleteWorkspace(wsId)
+    } finally {
+      globalThis.WebSocket = realWS
+      globalThis.fetch = realFetch
+      triageSync.setServerUrl('')
+    }
+  })
+
+  it('SSE mode: a malformed REST save response falls back to the in-band frame (still commits)', async () => {
+    const realWS = globalThis.WebSocket
+    const realFetch = globalThis.fetch
+    let savePosts = 0
+    globalThis.WebSocket = class {
+      static CONNECTING = 0; static OPEN = 1; static CLOSING = 2; static CLOSED = 3
+      constructor() { throw new Error('forced SSE fallback') }
+    }
+    // First REST save POST → malformed 200 (no `id`) → the client must fall
+    // back to the in-band frame (over the SSE session POST), which commits.
+    globalThis.fetch = (input, init) => {
+      if (String(input).split('?', 1)[0].endsWith('/api/sync/save')) {
+        savePosts++
+        if (savePosts === 1) return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      }
+      return realFetch(input, init)
+    }
+    try {
+      triageSync.setServerUrl('')
+      const wsId = await startSession(['finding-A'])
+      patchEntry(state.triage, 'finding-A', { color: 'red' })
+      await saveTriage()
+      await waitFor(() => settledAfterAck(wsId), 'in-band fallback save committed')
+      assert.equal(state.triage.get('finding-A')?.color, 'red')
+      assert.ok(savePosts >= 1, 'the REST save plane was attempted before falling back')
+      triageSync.closeSession()
+      await deleteWorkspace(wsId)
+    } finally {
+      globalThis.WebSocket = realWS
+      globalThis.fetch = realFetch
+      triageSync.setServerUrl('')
+    }
+  })
+
   it('merges a remote change with an in-progress local edit', async () => {
     const wsId = await startSession(['finding-A', 'finding-B'])
     // Local: finding-A = red, sync up.

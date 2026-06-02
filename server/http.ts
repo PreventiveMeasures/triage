@@ -20,6 +20,12 @@ import { errStack } from './util.ts'
 // similar) can route `/api/*` → this process and `/*` → the static UI
 // bundle with a single location block.
 export const WS_UPGRADE_PATH = '/api/sync'
+// Session-independent triage-sync save plane: `POST /api/sync/save`. The
+// SSE-mode alternative to the in-band `workspace-save` frame — a save POSTed
+// here commits + broadcasts WITHOUT taking over the client's SSE event-stream
+// (each in-band POST forces a stream takeover; see sse-server.ts). Sibling of
+// the WS upgrade path so one nginx `/api/*` block routes both.
+export const SAVE_REST_PATH = '/api/sync/save'
 function isUpgradePath(url: string | undefined): boolean {
   if (typeof url !== 'string') return false
   // Strip `?…` so clients can carry build / debug tags. Exact match
@@ -42,12 +48,68 @@ export type HttpServerDeps = {
   isOriginAllowed: (req: HasHeaders) => boolean
   isShuttingDown: () => boolean
   track: (promise: Promise<unknown>) => void
+  // Handler for `POST /api/sync/save` (see SAVE_REST_PATH). Owns body parse +
+  // the save pipeline + JSON response; this module owns the gates (method,
+  // same-origin, shutdown, idle-timeout) and the graceful-drain tracking.
+  handleSaveRest: (req: HttpRequest, res: ServerResponse) => Promise<void>
   restPutIdleTimeoutMs: number
   debug: boolean
 }
 
+// `POST /api/sync/save` dispatch. Returns the in-flight handler promise when
+// the request matched the route (the caller `track`s it for graceful drain),
+// or null when it's for a different route. The gate ladder — method →
+// shutdown → same-origin → idle-timeout — mirrors the objstore REST branch; a
+// gate rejection writes its own response and returns an already-settled
+// promise. Kept out of `createHttpServer` so that dispatcher stays compact.
+function dispatchSaveRest(
+  req: HttpRequest, res: ServerResponse,
+  deps: {
+    handleSaveRest: (req: HttpRequest, res: ServerResponse) => Promise<void>
+    isOriginAllowed: (req: HasHeaders) => boolean
+    isShuttingDown: () => boolean
+    restPutIdleTimeoutMs: number
+    debug: boolean
+  },
+): Promise<void> | null {
+  if (typeof req.url !== 'string' || req.url.split('?', 1)[0] !== SAVE_REST_PATH) return null
+  if (req.method !== 'POST') {
+    res.writeHead(405, { 'content-type': 'application/json', 'allow': 'POST', 'connection': 'close' })
+    res.end(JSON.stringify({ error: 'method-not-allowed' }))
+    return Promise.resolve()
+  }
+  // Shutdown gate — parity with the objstore REST branch (a POST on an
+  // existing keep-alive socket after SIGTERM but before close() drains).
+  if (deps.isShuttingDown()) {
+    res.writeHead(503, { 'content-type': 'application/json', 'connection': 'close' })
+    res.end(JSON.stringify({ error: 'shutting-down' }))
+    return Promise.resolve()
+  }
+  // Same-origin gate — a hostile cross-origin page would carry an Origin
+  // header (browser-set on fetch); same-origin XHR may omit it (allowed).
+  if (!deps.isOriginAllowed(req)) {
+    res.writeHead(403, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ error: 'origin-denied' }))
+    return Promise.resolve()
+  }
+  // Idle-body timeout — a slow-loris trickling the JSON body would otherwise
+  // hold the connection indefinitely.
+  req.setTimeout(deps.restPutIdleTimeoutMs, () => {
+    if (deps.debug) console.warn(`sync-save REST idle ${deps.restPutIdleTimeoutMs}ms → abort`)
+    try { req.destroy(new Error('idle-timeout')) } catch {}
+  })
+  // Outer catch is the unhandled-rejection guard for a throw OUTSIDE the
+  // handler's own try/catch — logs and terminates the response so the TCP
+  // socket doesn't dangle (same policy as the objstore handleRest wrapper).
+  return deps.handleSaveRest(req, res).catch((err) => {
+    console.warn('sync-save REST handler error:', errStack(err))
+    if (res.headersSent) { try { res.destroy() } catch {} }
+    else { try { res.writeHead(500, { 'content-type': 'application/json' }); res.end(JSON.stringify({ error: 'internal' })) } catch {} }
+  })
+}
+
 export function createHttpServer(deps: HttpServerDeps): Server {
-  const { wss, restDeps, sseServer, isOriginAllowed, isShuttingDown, track, restPutIdleTimeoutMs, debug } = deps
+  const { wss, restDeps, sseServer, isOriginAllowed, isShuttingDown, track, handleSaveRest, restPutIdleTimeoutMs, debug } = deps
   // Static-file plane (see ./static.ts). The directory is the
   // `build.js build` output sibling to this file; the loader handles
   // enumeration, pre-compression, and ETag derivation. Plugged in after
@@ -76,6 +138,12 @@ export function createHttpServer(deps: HttpServerDeps): Server {
       // the lifecycle's sseSessions() close loop.
       if (sseServer.handle(req, res)) return
     }
+    // Triage-sync save REST plane (see SAVE_REST_PATH) — session-independent
+    // `POST /api/sync/save` so an SSE-mode save doesn't take over the
+    // event-stream. The dispatch helper owns the gate ladder; we `track` the
+    // returned in-flight promise so SIGTERM drains it (mirrors npm-advisories).
+    const saveP = dispatchSaveRest(req, res, { handleSaveRest, isOriginAllowed, isShuttingDown, restPutIdleTimeoutMs, debug })
+    if (saveP) { track(saveP); return }
     // npm advisories proxy — same-origin + shutdown gates live in the
     // helper so this dispatcher stays compact. `dispatchNpmAdvisories`
     // returns the in-flight promise (or null when the route didn't

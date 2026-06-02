@@ -163,6 +163,16 @@ async function bootServer(configBody) {
   }
 }
 
+// POST a save frame to the session-independent REST save plane.
+async function postSave(httpOrigin, msg) {
+  const res = await fetch(`${httpOrigin}/api/sync/save`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(msg),
+  })
+  let body = null
+  try { body = await res.json() } catch {}
+  return { status: res.status, body }
+}
+
 describe('triage-sync server: first-action password gate (no config)', () => {
   let server
   before(async () => { server = await bootServer(undefined) })
@@ -212,6 +222,41 @@ describe('triage-sync server: first-action password gate (password configured)',
     const chain = await c.recv((m) => m.type === 'workspace-state' && m.workspaceTag === tag)
     assert.deepEqual(chain.revisions, [], 'gated save did not commit')
     c.ws.close()
+  })
+
+  it('REST save against a fresh tag is blocked with 401 (new-workspace gate), nothing committed', async () => {
+    // The REST plane has no socket to read operator-auth state from, so the
+    // gate collapses to "password set AND workspace new" → 401. The SSE
+    // client falls back to the in-band frame (which runs the auth flow).
+    const { sk, tag } = await makeKp()
+    const save = await buildSave(sk, tag, null, 'rest-gated-first')
+    const { status, body } = await postSave(server.httpOrigin, save)
+    assert.equal(status, 401)
+    assert.equal(body.reason, 'unauthorized')
+    // Not committed — a fresh subscriber sees an empty chain.
+    const c = await connect(server.url)
+    const sig = await signSubscribe(sk, tag, null, c.connectionNonce)
+    c.ws.send(JSON.stringify({ type: 'workspace-subscribe', workspaceTag: tag, from: null, signature: sig }))
+    await c.recv((m) => m.type === 'workspace-subscribed' && m.workspaceTag === tag)
+    const chain = await c.recv((m) => m.type === 'workspace-state' && m.workspaceTag === tag)
+    assert.deepEqual(chain.revisions, [], 'gated REST save did not commit')
+    c.ws.close()
+  })
+
+  it('REST save to an ALREADY-established workspace is allowed (gate is new-workspace-only)', async () => {
+    const { sk, tag } = await makeKp()
+    // Establish the workspace via an authenticated WS save.
+    const c = await connect(server.url)
+    c.ws.send(JSON.stringify({ type: 'authenticate', password }))
+    await c.recv((m) => m.type === 'authenticated')
+    c.ws.send(JSON.stringify(await buildSave(sk, tag, null, 'rest-gate-establish')))
+    const ack1 = await c.recv((m) => m.type === 'workspace-save-ack' && m.workspaceTag === tag)
+    c.ws.close()
+    // A REST save against the now-existing workspace passes the gate (200).
+    const save2 = await buildSave(sk, tag, ack1.id, 'rest-gate-followup')
+    const { status, body } = await postSave(server.httpOrigin, save2)
+    assert.equal(status, 200)
+    assert.equal(body.ok, true)
   })
 
   it('authenticate with the right password unlocks subsequent saves on the same socket', async () => {

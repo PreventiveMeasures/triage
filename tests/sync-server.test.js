@@ -60,6 +60,20 @@ async function buildSave(sk, tag, base, plaintext, { keyframe = false } = {}) {
   return { msg, id }
 }
 
+// POST a save frame to the session-independent REST save plane and return
+// the HTTP status + parsed JSON body. The `type` field is harmless (the
+// server reads the frame fields); kept so the body matches the WS frame.
+async function postSave(httpOrigin, msg) {
+  const res = await fetch(`${httpOrigin}/api/sync/save`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(msg),
+  })
+  let body = null
+  try { body = await res.json() } catch {}
+  return { status: res.status, body }
+}
+
 // One persistent WS message listener per connection + a queue.
 // Tests pull matches via `recv(predicate)`; messages that arrive
 // before the matching call lands in the queue rather than being
@@ -144,11 +158,12 @@ async function subscribe(c, sk, tag, from = null) {
 // `it`s don't collide on data. Concurrency lets the slowest test
 // dominate wall-time instead of the sum.
 describe('triage-sync server', { concurrency: true }, () => {
-  let server, serverUrl
+  let httpOrigin, server, serverUrl
 
   before(async () => {
     server = await bootServer()
     serverUrl = server.serverUrl
+    httpOrigin = server.httpOrigin
   })
 
   after(async () => {
@@ -196,6 +211,93 @@ describe('triage-sync server', { concurrency: true }, () => {
     // Sender doesn't see its own save echoed back.
     await c1.expectSilent(150)
     c1.ws.close(); c2.ws.close()
+  })
+
+  // ── REST save plane (POST /api/sync/save) ──────────────────────────
+  // Session-independent alternative to the in-band workspace-save frame
+  // (used in SSE mode so a save doesn't take over the event-stream). Same
+  // pipeline as the WS path; the outcome renders as a JSON HTTP status.
+
+  it('REST save commits and returns the content-addressed id (200)', async () => {
+    const { sk, tag } = await makeKp()
+    const { msg, id } = await buildSave(sk, tag, null, 'rest-hello')
+    const { status, body } = await postSave(httpOrigin, msg)
+    assert.equal(status, 200)
+    assert.equal(body.ok, true)
+    assert.equal(body.id, id, 'REST ack carries the same content-addressed id the client derived')
+    // Committed to the chain: a fresh subscriber sees it in its catch-up.
+    const c = await connect(serverUrl)
+    const { chain } = await subscribe(c, sk, tag)
+    assert.equal(chain.revisions.length, 1)
+    assert.equal(chain.revisions[0].id, id)
+    c.ws.close()
+  })
+
+  it('REST save replay is idempotent → 200 ack-only', async () => {
+    const { sk, tag } = await makeKp()
+    const { msg, id } = await buildSave(sk, tag, null, 'rest-dup')
+    assert.equal((await postSave(httpOrigin, msg)).status, 200)
+    const second = await postSave(httpOrigin, msg)  // byte-identical frame
+    assert.equal(second.status, 200)
+    assert.equal(second.body.id, id)
+  })
+
+  it('REST save with a stale base → 409 + catch-up revisions to rebase on', async () => {
+    const { sk, tag } = await makeKp()
+    const { msg: m1, id: id1 } = await buildSave(sk, tag, null, 'rest-base-1')
+    assert.equal((await postSave(httpOrigin, m1)).status, 200)
+    // Second save ALSO claims base=null — stale, head is now id1.
+    const { msg: m2 } = await buildSave(sk, tag, null, 'rest-base-2')
+    const { status, body } = await postSave(httpOrigin, m2)
+    assert.equal(status, 409)
+    assert.equal(body.reason, 'stale-base')
+    assert.ok(Array.isArray(body.revisions) && body.revisions.length > 0)
+    assert.equal(body.revisions[0].id, id1, 'catch-up carries the current head')
+  })
+
+  it('REST save fans out live to a WS subscriber (except: null)', async () => {
+    const { sk, tag } = await makeKp()
+    const c = await connect(serverUrl)
+    await subscribe(c, sk, tag)
+    const { msg, id } = await buildSave(sk, tag, null, 'rest-broadcast')
+    const [resp, state] = await Promise.all([
+      postSave(httpOrigin, msg),
+      c.recv((m) => m.type === 'workspace-state' && m.revisions.length > 0),
+    ])
+    assert.equal(resp.status, 200)
+    assert.equal(state.revisions[0].id, id)
+    c.ws.close()
+  })
+
+  it('REST save with a bad signature → 400, nothing committed', async () => {
+    const { sk, tag } = await makeKp()
+    const { msg } = await buildSave(sk, tag, null, 'rest-badsig')
+    msg.signature = b64url(crypto.getRandomValues(new Uint8Array(64)))  // garbage
+    assert.equal((await postSave(httpOrigin, msg)).status, 400)
+    // Not committed: a fresh subscriber sees an empty chain.
+    const c = await connect(serverUrl)
+    const { chain } = await subscribe(c, sk, tag)
+    assert.equal(chain.revisions.length, 0)
+    c.ws.close()
+  })
+
+  it('REST save over the ciphertext cap → 413', async () => {
+    const { sk, tag } = await makeKp()
+    // ciphertext string just past MAX_CIPHERTEXT_LEN (2 MiB); the signature
+    // covers the oversized field (the size policy is post-sig-verify).
+    const ciphertext = 'A'.repeat(2 * 1024 * 1024 + 1)
+    const nonce = b64url(crypto.getRandomValues(new Uint8Array(12)))
+    const { signature } = await signSave(sk, { tag, base: null, keyframe: false, nonce, ciphertext })
+    const { status, body } = await postSave(httpOrigin, { type: 'workspace-save', workspaceTag: tag, base: null, nonce, ciphertext, signature })
+    assert.equal(status, 413)
+    assert.equal(body.reason, 'too-large')
+  })
+
+  it('REST save: malformed body → 400; non-POST → 405', async () => {
+    const bad = await fetch(`${httpOrigin}/api/sync/save`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: 'not-json{[}' })
+    assert.equal(bad.status, 400)
+    const wrong = await fetch(`${httpOrigin}/api/sync/save`, { method: 'GET' })
+    assert.equal(wrong.status, 405)
   })
 
   it('broadcast stringify-once: every subscriber receives byte-equal frame', async () => {
