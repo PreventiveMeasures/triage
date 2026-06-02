@@ -173,6 +173,9 @@ slide-triage-tabs {
   overflow: hidden;
 }
 .toolbar triage-selector { margin-left: auto; }
+/* No buckets to show → the component renders nothing and tags itself
+   `is-empty`; drop the pill chrome so an empty bordered box doesn't linger. */
+triage-selector.is-empty { display: none; }
 .triage-state-btn {
   background: transparent; border: none; color: var(--muted);
   padding: 0 .55rem;
@@ -263,11 +266,12 @@ source-filter {
    toolbar's `var(--surface)`) so the field reads as a sunken pill;
    the input inside is borderless + transparent so it sits on the
    wrapper's bg without stacking a second background.
-   `input[type="text"]` is needed because the generic
-   `.toolbar input[type="text"]` rule above paints `var(--bg)` +
-   border on every text input and beats the lower-specificity
-   `toolbar-search input` selector — matching its specificity here
-   plus coming later in the file lets these rules win.
+   The generic `.toolbar input[type="text"]` rule above (specificity
+   0,2,1) would otherwise paint `var(--bg)` + a border + padding on this
+   input, stacking a second border inside the host pill (with extra padding
+   between input and pill). The reset below qualifies the host with its
+   always-present `[kind]` attribute (0,2,2) so it outweighs that generic
+   rule wherever `<toolbar-search>` is used.
    `flex: 1 1 14rem` mirrors the prototype's `flex: 1 1 220px` so
    the field expands when there's room and stays at a comfortable
    minimum when the row gets cramped. */
@@ -295,7 +299,10 @@ toolbar-search {
 
   & svg { color: var(--muted); flex-shrink: 0; }
 
-  & input[type='text'] {
+  /* `&[kind]` (always present — kind="findings"/"files") lifts this to
+     specificity 0,2,2 so it beats the generic `.toolbar input[type='text']`
+     (0,2,1); without it the input keeps a second border + padding. */
+  &[kind] input[type='text'] {
     flex: 1; min-width: 0;
     background: transparent; border: 0; outline: none;
     color: var(--text); font: inherit; font-size: .8rem;

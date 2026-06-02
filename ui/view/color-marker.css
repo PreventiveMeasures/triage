@@ -2,6 +2,9 @@
   display: inline-flex;
   gap: 4px;
   align-items: center;
+  /* Part of the marks-row action cluster — never shrink (the dots would
+     otherwise overflow/clip when a long report-chip squeezes the row). */
+  flex-shrink: 0;
 }
 
 button {
