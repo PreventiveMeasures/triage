@@ -28,7 +28,7 @@ const DIALOG_STRINGS = {
   chain: {
     title: 'Triage conflict from peer update',
     intro: 'were changed by a peer (or by another tab) in a way that disagrees with your local triage on',
-    trailingNote: 'Other findings whose remote value didn\'t conflict were applied automatically; this list only covers disagreements. Pick which side to keep — cancelling keeps your local value (which will then propagate back to the chain on your next save).',
+    trailingNote: 'Other findings whose remote value didn\'t conflict were applied automatically; this list only covers disagreements. Pick which side to keep for each — a "keep current" pick re-publishes your local value to the chain on your next save.',
     importedSideLabel: 'Apply from chain',
     applyButton: 'Apply',
   },

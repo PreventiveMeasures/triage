@@ -9,19 +9,21 @@
 // comment, fix, triage) inside it. The host calls
 // `resolveTriageConflicts(conflicts, lookup, labels)` and gets a
 // Promise resolving to a map keyed by `${id}:${property}`
-// → `'local'` / `'imported'`, or `null` if cancelled (= keep
-// local everywhere).
+// → `'local'` / `'imported'`.
 //
-// No side is pre-selected. Each property's two radios are `required`
-// members of one group, and Apply is the form's submit button, so
-// native constraint validation blocks Apply until the user has picked
-// a side for every conflict (the bulk buttons set them all at once).
-// Cancelling is still "keep all local", but that's a deliberate
-// action, not a silent default that could flip a peer's value on a
-// stray Apply.
+// The dialog is UNAVOIDABLE and has NO default. Each property's two
+// radios are `required` members of one group and Apply is the form's
+// submit button, so native constraint validation blocks Apply until
+// the user has picked a side for every conflict (the bulk buttons set
+// them all at once). There's no Cancel button and Esc is blocked — so
+// there is no silent blanket "keep all local" exit that could flip a
+// peer's value. The only way the host sees `null` is the degraded
+// "couldn't even open" path (another modal already up), surfaced as a
+// rejection the callers turn into keep-local.
 //
 // Extends `AppDialog` for the shared shadow-DOM <dialog> chrome
-// (focus-trap + Esc-to-cancel), plus severity-badge + conflict layers.
+// (focus-trap; the base's Esc-to-cancel is overridden here — see
+// `_blockEscClose`), plus severity-badge + conflict layers.
 import { html, nothing, unsafeCSS } from 'lit'
 import { isHttpUrl } from '../format.js'
 import { makeStackedModalError } from '../dom.js'
@@ -123,18 +125,22 @@ class TriageConflictDialog extends AppDialog {
   // on the first bulk button (the base default would grab the first
   // radio). Modal-conflict is handled by base `firstUpdated`; the
   // wrapper rejects so the caller can alert that the peer's triage
-  // decisions were skipped. Base `_finish` and `_onClose` (Esc /
-  // backdrop → resolve null = keep all current) are inherited.
+  // decisions were skipped.
   focusInitial() {}
+
+  // Esc must NOT dismiss this dialog. A modal <dialog> fires a
+  // cancelable `cancel` event on Esc; preventing it keeps the dialog
+  // open, so the only way out is to resolve every conflict and Apply.
+  // Without this, Esc would close the dialog and the inherited
+  // `_onClose` would resolve `null` — the blanket "keep all local"
+  // escape we're removing.
+  _blockEscClose = (e) => e.preventDefault()
 
   _onClick = (e) => {
     const bulk = e.target.closest('[data-bulk]')
-    if (bulk) {
-      const value = bulk.dataset.bulk
-      for (const r of this.renderRoot.querySelectorAll(`input[type="radio"][value="${value}"]`)) r.checked = true
-      return
-    }
-    if (e.target.closest('[data-action="cancel"]')) this._finish(null)
+    if (!bulk) return
+    const value = bulk.dataset.bulk
+    for (const r of this.renderRoot.querySelectorAll(`input[type="radio"][value="${value}"]`)) r.checked = true
   }
 
   // Apply is the form's submit button, so the browser runs constraint
@@ -181,6 +187,7 @@ class TriageConflictDialog extends AppDialog {
 
     return html`<dialog
       @click=${this._onClick}
+      @cancel=${this._blockEscClose}
       @close=${this._onClose}
     >
       <header>
@@ -224,7 +231,6 @@ class TriageConflictDialog extends AppDialog {
           `)}
         </ul>
         <footer class="actions">
-          <button type="button" data-action="cancel">Cancel</button>
           <button type="submit" class="primary">${lbl.applyButton}</button>
         </footer>
       </form>
@@ -235,10 +241,12 @@ class TriageConflictDialog extends AppDialog {
 customElements.define('triage-conflict-dialog', TriageConflictDialog)
 
 // Public API. Caller awaits the Promise; resolves with a
-// `${id}:${property}` → 'local' / 'imported' map, or null on cancel.
-// Rejects when another modal is already open so the caller can surface
-// that conflict resolution was skipped (otherwise the merge layer
-// silently keeps local for all disagreements).
+// `${id}:${property}` → 'local' / 'imported' map once the user has
+// resolved every conflict. The dialog is unavoidable — there's no
+// Cancel and Esc is blocked — so there's no user-facing "keep all
+// local" null. Rejects when another modal is already open so the
+// caller can surface that conflict resolution was skipped (the merge
+// layer then keeps local for all disagreements).
 //
 // `findingLookup` is `Map<id, { severity, file, line, description }>`.
 // `labels` overrides the default copy { title, intro, trailingNote,
