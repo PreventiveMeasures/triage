@@ -64,15 +64,24 @@ const COMPRESSIBLE = new Set(['.html', '.css', '.js', '.svg', '.webmanifest'])
 // navigated `image/svg+xml` icon into something script-executable.
 // `no-referrer` keeps URLs of this (potentially sensitive) viewer out
 // of outbound Referer headers, and `same-origin` CORP stops other
-// origins embedding these bytes. CSP is deliberately NOT here: the
-// HTML documents carry their own per-page `<meta http-equiv>` policy
-// (and the three pages differ), so a blanket header CSP would just AND
-// against the meta one and risk breaking a page — non-document assets
-// get their own flat CSP via `StaticEntry.csp` instead.
+// origins embedding these bytes. COOP `same-origin` severs the
+// window.opener link to any cross-origin opener/popup (so an external
+// `target=_blank` GitHub/Claude link can't reach back into this context),
+// and COEP `require-corp` bars the document from loading any cross-origin
+// subresource that doesn't opt in via CORP/CORS. Together they also make
+// the page cross-origin-isolated. Safe here because the bundle is fully
+// same-origin (no external scripts/images/fonts/iframes) — switch COEP to
+// `credentialless` if a cross-origin resource is ever added. CSP is
+// deliberately NOT here: the HTML documents carry their own per-page
+// `<meta http-equiv>` policy (and the three pages differ), so a blanket
+// header CSP would just AND against the meta one and risk breaking a page
+// — non-document assets get their own flat CSP via `StaticEntry.csp`.
 const SECURITY_HEADERS = {
   'x-content-type-options': 'nosniff',
   'referrer-policy': 'no-referrer',
   'cross-origin-resource-policy': 'same-origin',
+  'cross-origin-opener-policy': 'same-origin',
+  'cross-origin-embedder-policy': 'require-corp',
 } as const
 
 type StaticEntry = {
