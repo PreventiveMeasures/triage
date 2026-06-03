@@ -147,3 +147,17 @@ header p {
   padding-top: .7rem;
   border-top: 1px solid var(--border);
 }
+
+/* No side is pre-picked, so Apply stays disabled until every conflict
+   has an explicit choice. Dim it and cancel the hover affordances. */
+.actions button:disabled { opacity: .5; cursor: not-allowed; }
+.actions button:disabled:hover {
+  border-color: var(--border); color: var(--text); filter: none;
+}
+.actions button.primary:disabled:hover { color: var(--surface); }
+
+/* Left-aligned "N of M still need a choice" nudge in the action row. */
+.resolve-hint {
+  margin-right: auto; align-self: center;
+  color: var(--muted); font-size: .76rem;
+}

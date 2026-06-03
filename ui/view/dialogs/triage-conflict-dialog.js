@@ -12,6 +12,13 @@
 // → `'local'` / `'imported'`, or `null` if cancelled (= keep
 // local everywhere).
 //
+// No side is pre-selected: the user must consciously pick `local`
+// or `imported` for every conflicting property (the bulk buttons
+// set them all at once), and Apply stays disabled until they do.
+// Cancelling is still "keep all local", but that's a deliberate
+// action, not a silent default that could flip a peer's value on a
+// stray Apply.
+//
 // Extends `AppDialog` for the shared shadow-DOM <dialog> chrome
 // (focus-trap + Esc-to-cancel), plus severity-badge + conflict layers.
 import { html, nothing, unsafeCSS } from 'lit'
@@ -101,6 +108,11 @@ class TriageConflictDialog extends AppDialog {
     findingLookup: { attribute: false },
     labels: { attribute: false },
     _settled: { state: true },
+    // How many conflict rows currently carry an explicit pick. Drives
+    // the Apply-enabled gate and the "N still need a choice" hint —
+    // 0 on open (no side pre-selected), reaches `conflicts.length`
+    // once every row is resolved.
+    _resolvedCount: { state: true },
   }
 
   constructor() {
@@ -109,6 +121,7 @@ class TriageConflictDialog extends AppDialog {
     this.findingLookup = new Map()
     this.labels = { ...DEFAULT_LABELS }
     this._settled = false
+    this._resolvedCount = 0
   }
 
   // No explicit initial focus — showModal()'s native autofocus lands
@@ -124,19 +137,47 @@ class TriageConflictDialog extends AppDialog {
     if (bulk) {
       const value = bulk.dataset.bulk
       for (const r of this.renderRoot.querySelectorAll(`input[type="radio"][value="${value}"]`)) r.checked = true
+      // Programmatic `.checked` writes don't fire `change`, so refresh
+      // the resolved-count (→ Apply enablement) ourselves.
+      this._recomputeResolved()
       return
     }
     if (e.target.closest('[data-action="apply"]')) {
+      // No-default contract: every conflict must carry an explicit pick
+      // before we resolve. Apply is disabled until then, but re-check
+      // here so a stray/programmatic click can't slip an unresolved set
+      // through and fall back to a silent default.
+      this._recomputeResolved()
+      if (this._resolvedCount < this.conflicts.length) return
       const decisions = {}
       for (const c of this.conflicts) {
         const key = `${c.id}:${c.property}`
         const checked = this.renderRoot.querySelector(`input[name="conflict-${CSS.escape(key)}"]:checked`)
-        decisions[key] = checked?.value ?? 'local'
+        // No `?? 'local'` fallback — the guard above guarantees a
+        // checked radio per conflict, so we never invent a default.
+        if (checked) decisions[key] = checked.value
       }
       this._finish(decisions)
       return
     }
     if (e.target.closest('[data-action="cancel"]')) this._finish(null)
+  }
+
+  // Radio `change` events bubble up to the dialog; recompute how many
+  // conflicts now carry a pick so Apply can enable once all do.
+  _onChange = () => this._recomputeResolved()
+
+  // Count conflict rows that have a checked radio. The radios aren't
+  // lit-bound (the user's picks live in the DOM, and re-renders must
+  // preserve them), so read them live rather than mirroring each
+  // toggle into reactive state.
+  _recomputeResolved() {
+    let resolved = 0
+    for (const c of this.conflicts) {
+      const key = `${c.id}:${c.property}`
+      if (this.renderRoot.querySelector(`input[name="conflict-${CSS.escape(key)}"]:checked`)) resolved++
+    }
+    this._resolvedCount = resolved
   }
 
   render() {
@@ -166,8 +207,15 @@ class TriageConflictDialog extends AppDialog {
     ].filter(Boolean).join(', ')
     const findingsLabel = `${byId.size} finding${byId.size === 1 ? '' : 's'}`
 
+    // Apply gate: nothing is pre-selected, so it stays disabled until
+    // every conflict row carries a pick. `remaining` feeds the hint.
+    const total = this.conflicts.length
+    const remaining = total - this._resolvedCount
+    const allResolved = total > 0 && remaining === 0
+
     return html`<dialog
       @click=${this._onClick}
+      @change=${this._onChange}
       @close=${this._onClose}
     >
       <header>
@@ -189,7 +237,7 @@ class TriageConflictDialog extends AppDialog {
                 return html`<div class="row" data-key=${key}>
                   <span class="row-label">${PROP_LABEL[c.property] ?? c.property}</span>
                   <label class="choice">
-                    <input type="radio" name=${radioName} value="local" checked>
+                    <input type="radio" name=${radioName} value="local">
                     <span class="choice-label">Keep current</span>
                     <span class="choice-value">${valueTemplate(c.property, c.local)}</span>
                   </label>
@@ -205,8 +253,11 @@ class TriageConflictDialog extends AppDialog {
         `)}
       </ul>
       <footer class="actions">
+        ${remaining > 0
+          ? html`<span class="resolve-hint">${remaining} of ${total} still need a choice</span>`
+          : nothing}
         <button type="button" data-action="cancel">Cancel</button>
-        <button type="button" data-action="apply" class="primary">${lbl.applyButton}</button>
+        <button type="button" data-action="apply" class="primary" ?disabled=${!allResolved}>${lbl.applyButton}</button>
       </footer>
     </dialog>`
   }
