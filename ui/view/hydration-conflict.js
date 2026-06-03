@@ -17,10 +17,7 @@ const DIALOG_STRINGS = {
     title: 'Synced triage on report attach',
     intro: 'have triage from your workspace that disagrees with your local view on',
     // Disclose that non-conflicting chain values were already
-    // gap-filled into state.* before this dialog opened —
-    // cancelling only keeps your local values for the conflicting
-    // findings shown here, not for everything in the chain.
-    // Audit L1 round-5.
+    // gap-filled into state.* before this dialog opened.
     trailingNote: 'Other findings in this report whose chain value didn\'t conflict were applied automatically; this list only covers disagreements. Pick which side to keep.',
     importedSideLabel: 'Apply from chain',
     applyButton: 'Apply',
@@ -28,7 +25,7 @@ const DIALOG_STRINGS = {
   chain: {
     title: 'Triage conflict from peer update',
     intro: 'were changed by a peer (or by another tab) in a way that disagrees with your local triage on',
-    trailingNote: 'Other findings whose remote value didn\'t conflict were applied automatically; this list only covers disagreements. Pick which side to keep — cancelling keeps your local value (which will then propagate back to the chain on your next save).',
+    trailingNote: 'Other findings whose remote value didn\'t conflict were applied automatically; this list only covers disagreements. Pick which side to keep for each — a "keep current" pick re-publishes your local value to the chain on your next save.',
     importedSideLabel: 'Apply from chain',
     applyButton: 'Apply',
   },

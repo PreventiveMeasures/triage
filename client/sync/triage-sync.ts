@@ -1233,11 +1233,12 @@ async function handleChain(session: Session, revisions: unknown): Promise<void> 
     return
   }
   // Chain-conflict detection: if the pre-rebase overlay disagrees
-  // per-property with the new baseState, surface it so the user
-  // picks "keep my local" (default — overlay-wins) or "apply from
-  // chain". Without this a peer's view silently flips when another
-  // tab joins with a conflicting unsynced edit, and the joiner's
-  // local-wins overlay silently propagates back through the chain.
+  // per-property with the new baseState, surface it so the user picks
+  // "keep my local" or "apply from chain" per conflict (no default;
+  // dialog unavoidable, so null only when it can't be shown → keep
+  // local). Without this a peer's view silently flips when another tab
+  // joins with a conflicting unsynced edit, and the joiner's local-wins
+  // overlay silently propagates back through the chain.
   const conflicts = collectChainConflicts(overlay, oldBaseState, session.baseState)
   let decisions: { [key: string]: 'local' | 'imported' } | null = null
   if (conflicts.length > 0 && hydrationConflictResolver) {

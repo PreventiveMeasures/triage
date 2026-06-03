@@ -81,6 +81,9 @@ header p {
   align-self: center;
 }
 .choice {
+  /* Anchor the hidden radio below so the native validation bubble
+     points at this cell, not the dialog origin. */
+  position: relative;
   display: flex; flex-direction: column; gap: .15rem;
   padding: .35rem .5rem;
   border: 1px solid var(--border); border-radius: 5px;
@@ -89,6 +92,11 @@ header p {
   &:has(input:checked) {
     border-color: var(--accent);
     background: rgb(from var(--accent) r g b / .07);
+  }
+
+  /* Keyboard focus ring — the radio itself is opacity:0, so surface it. */
+  &:has(input:focus-visible) {
+    outline: 2px solid var(--accent); outline-offset: 1px;
   }
 }
 .choice input[type='radio'] {

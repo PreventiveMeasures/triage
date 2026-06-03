@@ -9,11 +9,18 @@
 // comment, fix, triage) inside it. The host calls
 // `resolveTriageConflicts(conflicts, lookup, labels)` and gets a
 // Promise resolving to a map keyed by `${id}:${property}`
-// → `'local'` / `'imported'`, or `null` if cancelled (= keep
-// local everywhere).
+// → `'local'` / `'imported'`.
+//
+// The dialog is unavoidable and has no default: each property's two
+// radios are `required` and Apply is the form's submit, so the user
+// must pick a side for every conflict (bulk buttons set them all). No
+// Cancel, Esc blocked — no silent "keep all local" exit. The host sees
+// `null` only on the degraded "couldn't open" path (another modal up),
+// which the callers turn into keep-local.
 //
 // Extends `AppDialog` for the shared shadow-DOM <dialog> chrome
-// (focus-trap + Esc-to-cancel), plus severity-badge + conflict layers.
+// (focus-trap; base Esc-to-cancel overridden — see `_blockEscClose`),
+// plus severity-badge + conflict layers.
 import { html, nothing, unsafeCSS } from 'lit'
 import { isHttpUrl } from '../format.js'
 import { makeStackedModalError } from '../dom.js'
@@ -115,28 +122,31 @@ class TriageConflictDialog extends AppDialog {
   // on the first bulk button (the base default would grab the first
   // radio). Modal-conflict is handled by base `firstUpdated`; the
   // wrapper rejects so the caller can alert that the peer's triage
-  // decisions were skipped. Base `_finish` and `_onClose` (Esc /
-  // backdrop → resolve null = keep all current) are inherited.
+  // decisions were skipped.
   focusInitial() {}
+
+  // Esc must not dismiss: prevent the modal's cancelable `cancel` event
+  // so Apply stays the only exit (the base `_onClose` would resolve null).
+  _blockEscClose = (e) => e.preventDefault()
 
   _onClick = (e) => {
     const bulk = e.target.closest('[data-bulk]')
-    if (bulk) {
-      const value = bulk.dataset.bulk
-      for (const r of this.renderRoot.querySelectorAll(`input[type="radio"][value="${value}"]`)) r.checked = true
-      return
+    if (!bulk) return
+    const value = bulk.dataset.bulk
+    for (const r of this.renderRoot.querySelectorAll(`input[type="radio"][value="${value}"]`)) r.checked = true
+  }
+
+  // Apply = form submit, so `required` validation runs first: reached
+  // only once every conflict has a pick (no manual gate, no default).
+  _onSubmit = (e) => {
+    e.preventDefault()  // resolve via _finish, don't navigate
+    const decisions = {}
+    for (const c of this.conflicts) {
+      const key = `${c.id}:${c.property}`
+      const checked = this.renderRoot.querySelector(`input[name="conflict-${CSS.escape(key)}"]:checked`)
+      if (checked) decisions[key] = checked.value
     }
-    if (e.target.closest('[data-action="apply"]')) {
-      const decisions = {}
-      for (const c of this.conflicts) {
-        const key = `${c.id}:${c.property}`
-        const checked = this.renderRoot.querySelector(`input[name="conflict-${CSS.escape(key)}"]:checked`)
-        decisions[key] = checked?.value ?? 'local'
-      }
-      this._finish(decisions)
-      return
-    }
-    if (e.target.closest('[data-action="cancel"]')) this._finish(null)
+    this._finish(decisions)
   }
 
   render() {
@@ -168,6 +178,7 @@ class TriageConflictDialog extends AppDialog {
 
     return html`<dialog
       @click=${this._onClick}
+      @cancel=${this._blockEscClose}
       @close=${this._onClose}
     >
       <header>
@@ -178,36 +189,37 @@ class TriageConflictDialog extends AppDialog {
           <button type="button" data-bulk="imported">${lbl.importedSideLabel} (all)</button>
         </div>
       </header>
-      <ul class="list">
-        ${[...byId.entries()].map(([id, items]) => html`
-          <li class="card" data-id=${id}>
-            ${findingHeaderTemplate(this.findingLookup.get(id), id)}
-            <div class="rows">
-              ${items.map((c) => {
-                const key = `${c.id}:${c.property}`
-                const radioName = `conflict-${key}`
-                return html`<div class="row" data-key=${key}>
-                  <span class="row-label">${PROP_LABEL[c.property] ?? c.property}</span>
-                  <label class="choice">
-                    <input type="radio" name=${radioName} value="local" checked>
-                    <span class="choice-label">Keep current</span>
-                    <span class="choice-value">${valueTemplate(c.property, c.local)}</span>
-                  </label>
-                  <label class="choice">
-                    <input type="radio" name=${radioName} value="imported">
-                    <span class="choice-label">${lbl.importedSideLabel}</span>
-                    <span class="choice-value">${valueTemplate(c.property, c.imported)}</span>
-                  </label>
-                </div>`
-              })}
-            </div>
-          </li>
-        `)}
-      </ul>
-      <footer class="actions">
-        <button type="button" data-action="cancel">Cancel</button>
-        <button type="button" data-action="apply" class="primary">${lbl.applyButton}</button>
-      </footer>
+      <form @submit=${this._onSubmit}>
+        <ul class="list">
+          ${[...byId.entries()].map(([id, items]) => html`
+            <li class="card" data-id=${id}>
+              ${findingHeaderTemplate(this.findingLookup.get(id), id)}
+              <div class="rows">
+                ${items.map((c) => {
+                  const key = `${c.id}:${c.property}`
+                  const radioName = `conflict-${key}`
+                  return html`<div class="row" data-key=${key}>
+                    <span class="row-label">${PROP_LABEL[c.property] ?? c.property}</span>
+                    <label class="choice">
+                      <input type="radio" name=${radioName} value="local" required>
+                      <span class="choice-label">Keep current</span>
+                      <span class="choice-value">${valueTemplate(c.property, c.local)}</span>
+                    </label>
+                    <label class="choice">
+                      <input type="radio" name=${radioName} value="imported" required>
+                      <span class="choice-label">${lbl.importedSideLabel}</span>
+                      <span class="choice-value">${valueTemplate(c.property, c.imported)}</span>
+                    </label>
+                  </div>`
+                })}
+              </div>
+            </li>
+          `)}
+        </ul>
+        <footer class="actions">
+          <button type="submit" class="primary">${lbl.applyButton}</button>
+        </footer>
+      </form>
     </dialog>`
   }
 }
@@ -215,10 +227,10 @@ class TriageConflictDialog extends AppDialog {
 customElements.define('triage-conflict-dialog', TriageConflictDialog)
 
 // Public API. Caller awaits the Promise; resolves with a
-// `${id}:${property}` → 'local' / 'imported' map, or null on cancel.
-// Rejects when another modal is already open so the caller can surface
-// that conflict resolution was skipped (otherwise the merge layer
-// silently keeps local for all disagreements).
+// `${id}:${property}` → 'local' / 'imported' map once every conflict
+// is resolved (the dialog is unavoidable — see header). Rejects when
+// another modal is already open so the caller can surface that conflict
+// resolution was skipped (the merge layer then keeps local).
 //
 // `findingLookup` is `Map<id, { severity, file, line, description }>`.
 // `labels` overrides the default copy { title, intro, trailingNote,
