@@ -198,8 +198,6 @@ class TriageConflictDialog extends AppDialog {
                 ${items.map((c) => {
                   const key = `${c.id}:${c.property}`
                   const radioName = `conflict-${key}`
-                  // `required`, nothing pre-checked: group invalid
-                  // until picked, so submit (Apply) stays blocked.
                   return html`<div class="row" data-key=${key}>
                     <span class="row-label">${PROP_LABEL[c.property] ?? c.property}</span>
                     <label class="choice">

@@ -93,6 +93,11 @@ header p {
     border-color: var(--accent);
     background: rgb(from var(--accent) r g b / .07);
   }
+
+  /* Keyboard focus ring — the radio itself is opacity:0, so surface it. */
+  &:has(input:focus-visible) {
+    outline: 2px solid var(--accent); outline-offset: 1px;
+  }
 }
 .choice input[type='radio'] {
   position: absolute;

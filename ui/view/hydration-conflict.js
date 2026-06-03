@@ -17,10 +17,7 @@ const DIALOG_STRINGS = {
     title: 'Synced triage on report attach',
     intro: 'have triage from your workspace that disagrees with your local view on',
     // Disclose that non-conflicting chain values were already
-    // gap-filled into state.* before this dialog opened —
-    // cancelling only keeps your local values for the conflicting
-    // findings shown here, not for everything in the chain.
-    // Audit L1 round-5.
+    // gap-filled into state.* before this dialog opened.
     trailingNote: 'Other findings in this report whose chain value didn\'t conflict were applied automatically; this list only covers disagreements. Pick which side to keep.',
     importedSideLabel: 'Apply from chain',
     applyButton: 'Apply',
