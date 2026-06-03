@@ -81,9 +81,8 @@ header p {
   align-self: center;
 }
 .choice {
-  /* Anchor for the visually-hidden radio below — keeps the browser's
-     native "select one of these options" validation bubble pointing at
-     this choice cell instead of the dialog origin. */
+  /* Anchor the hidden radio below so the native validation bubble
+     points at this cell, not the dialog origin. */
   position: relative;
   display: flex; flex-direction: column; gap: .15rem;
   padding: .35rem .5rem;

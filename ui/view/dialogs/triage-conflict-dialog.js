@@ -11,19 +11,16 @@
 // Promise resolving to a map keyed by `${id}:${property}`
 // → `'local'` / `'imported'`.
 //
-// The dialog is UNAVOIDABLE and has NO default. Each property's two
-// radios are `required` members of one group and Apply is the form's
-// submit button, so native constraint validation blocks Apply until
-// the user has picked a side for every conflict (the bulk buttons set
-// them all at once). There's no Cancel button and Esc is blocked — so
-// there is no silent blanket "keep all local" exit that could flip a
-// peer's value. The only way the host sees `null` is the degraded
-// "couldn't even open" path (another modal already up), surfaced as a
-// rejection the callers turn into keep-local.
+// The dialog is unavoidable and has no default: each property's two
+// radios are `required` and Apply is the form's submit, so the user
+// must pick a side for every conflict (bulk buttons set them all). No
+// Cancel, Esc blocked — no silent "keep all local" exit. The host sees
+// `null` only on the degraded "couldn't open" path (another modal up),
+// which the callers turn into keep-local.
 //
 // Extends `AppDialog` for the shared shadow-DOM <dialog> chrome
-// (focus-trap; the base's Esc-to-cancel is overridden here — see
-// `_blockEscClose`), plus severity-badge + conflict layers.
+// (focus-trap; base Esc-to-cancel overridden — see `_blockEscClose`),
+// plus severity-badge + conflict layers.
 import { html, nothing, unsafeCSS } from 'lit'
 import { isHttpUrl } from '../format.js'
 import { makeStackedModalError } from '../dom.js'
@@ -128,12 +125,8 @@ class TriageConflictDialog extends AppDialog {
   // decisions were skipped.
   focusInitial() {}
 
-  // Esc must NOT dismiss this dialog. A modal <dialog> fires a
-  // cancelable `cancel` event on Esc; preventing it keeps the dialog
-  // open, so the only way out is to resolve every conflict and Apply.
-  // Without this, Esc would close the dialog and the inherited
-  // `_onClose` would resolve `null` — the blanket "keep all local"
-  // escape we're removing.
+  // Esc must not dismiss: prevent the modal's cancelable `cancel` event
+  // so Apply stays the only exit (the base `_onClose` would resolve null).
   _blockEscClose = (e) => e.preventDefault()
 
   _onClick = (e) => {
@@ -143,12 +136,10 @@ class TriageConflictDialog extends AppDialog {
     for (const r of this.renderRoot.querySelectorAll(`input[type="radio"][value="${value}"]`)) r.checked = true
   }
 
-  // Apply is the form's submit button, so the browser runs constraint
-  // validation first: this fires only once every conflict's `required`
-  // radio group has a pick. An unresolved row blocks submit and the UA
-  // points the user at it — no manual gate, no invented default.
+  // Apply = form submit, so `required` validation runs first: reached
+  // only once every conflict has a pick (no manual gate, no default).
   _onSubmit = (e) => {
-    e.preventDefault()  // resolve via _finish; don't navigate the page
+    e.preventDefault()  // resolve via _finish, don't navigate
     const decisions = {}
     for (const c of this.conflicts) {
       const key = `${c.id}:${c.property}`
@@ -207,11 +198,8 @@ class TriageConflictDialog extends AppDialog {
                 ${items.map((c) => {
                   const key = `${c.id}:${c.property}`
                   const radioName = `conflict-${key}`
-                  // Both radios carry `required`: with neither
-                  // pre-checked, the group stays invalid until the user
-                  // picks a side, so the form's submit (Apply) is
-                  // blocked and the UA scrolls to + flags the first
-                  // unresolved row. No default is ever invented.
+                  // `required`, nothing pre-checked: group invalid
+                  // until picked, so submit (Apply) stays blocked.
                   return html`<div class="row" data-key=${key}>
                     <span class="row-label">${PROP_LABEL[c.property] ?? c.property}</span>
                     <label class="choice">
@@ -241,12 +229,10 @@ class TriageConflictDialog extends AppDialog {
 customElements.define('triage-conflict-dialog', TriageConflictDialog)
 
 // Public API. Caller awaits the Promise; resolves with a
-// `${id}:${property}` → 'local' / 'imported' map once the user has
-// resolved every conflict. The dialog is unavoidable — there's no
-// Cancel and Esc is blocked — so there's no user-facing "keep all
-// local" null. Rejects when another modal is already open so the
-// caller can surface that conflict resolution was skipped (the merge
-// layer then keeps local for all disagreements).
+// `${id}:${property}` → 'local' / 'imported' map once every conflict
+// is resolved (the dialog is unavoidable — see header). Rejects when
+// another modal is already open so the caller can surface that conflict
+// resolution was skipped (the merge layer then keeps local).
 //
 // `findingLookup` is `Map<id, { severity, file, line, description }>`.
 // `labels` overrides the default copy { title, intro, trailingNote,
