@@ -627,6 +627,30 @@ which is stateless, lock-free, and safe to run concurrently with live
 traffic and across replicas. The server logs a loud warning at boot when
 the reaper is disabled.
 
+#### Vercel Cron reaper
+
+`api/reap.ts` + `vercel.json` ship that external GC job for Neon + Vercel
+Blob deployments — for running serverless (no long-lived process to host the
+periodic sweep) or for a long-lived relay with `OBJSTORE_REAP_DISABLED=1`.
+The function opens its own objstore handle (the Neon HTTP callable is
+stateless — no relay boot) and runs one `reapOrphans` sweep per invocation;
+Vercel Cron triggers it on `vercel.json`'s `schedule` (default every 10
+min, matching `OBJSTORE_REAP_INTERVAL_MS` — note the Vercel **Hobby** plan
+caps cron at once/day, **Pro** allows any cadence).
+
+Required env on the deployment:
+
+- **`CRON_SECRET`** — Vercel sends it as `Authorization: Bearer <secret>` on
+  cron invocations; the endpoint **fails closed** (401) without a match, so
+  the GC endpoint can't be triggered by arbitrary callers. A 401 in the cron
+  logs means it wasn't set.
+- **`DATABASE_URL`** + **`BLOB_READ_WRITE_TOKEN`** — same Neon + Vercel Blob
+  config as the relay (the endpoint 500s `not-configured` without them).
+
+`reapOrphans` being lock-free + idempotent means the cron can run alongside
+a still-enabled in-process reaper or other replicas without coordination —
+worst case is redundant, harmless work.
+
 </details>
 
 <details>

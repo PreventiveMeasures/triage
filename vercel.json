@@ -1,0 +1,9 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/reap.ts": { "maxDuration": 60 }
+  },
+  "crons": [
+    { "path": "/api/reap", "schedule": "*/10 * * * *" }
+  ]
+}

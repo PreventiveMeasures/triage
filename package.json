@@ -97,7 +97,7 @@
   ],
   "scripts": {
     "lint": "node --run lint:js && node --run lint:css && node --run lint:ts",
-    "lint:js": "oxlint -c .oxlintrc.json --ignore-pattern=ui/logs.js ./tests/ ./common/ ./server/ ./client/ ./ui/",
+    "lint:js": "oxlint -c .oxlintrc.json --ignore-pattern=ui/logs.js ./tests/ ./common/ ./server/ ./client/ ./ui/ ./api/",
     "lint:css": "stylelint 'ui/**/*.css'",
     "lint:ts": "tsc --noEmit",
     "prepack": "node --run build",
