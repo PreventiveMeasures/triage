@@ -81,6 +81,10 @@ header p {
   align-self: center;
 }
 .choice {
+  /* Anchor for the visually-hidden radio below — keeps the browser's
+     native "select one of these options" validation bubble pointing at
+     this choice cell instead of the dialog origin. */
+  position: relative;
   display: flex; flex-direction: column; gap: .15rem;
   padding: .35rem .5rem;
   border: 1px solid var(--border); border-radius: 5px;
@@ -146,18 +150,4 @@ header p {
   margin-top: .8rem;
   padding-top: .7rem;
   border-top: 1px solid var(--border);
-}
-
-/* No side is pre-picked, so Apply stays disabled until every conflict
-   has an explicit choice. Dim it and cancel the hover affordances. */
-.actions button:disabled { opacity: .5; cursor: not-allowed; }
-.actions button:disabled:hover {
-  border-color: var(--border); color: var(--text); filter: none;
-}
-.actions button.primary:disabled:hover { color: var(--surface); }
-
-/* Left-aligned "N of M still need a choice" nudge in the action row. */
-.resolve-hint {
-  margin-right: auto; align-self: center;
-  color: var(--muted); font-size: .76rem;
 }
