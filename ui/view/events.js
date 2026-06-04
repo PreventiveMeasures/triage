@@ -757,7 +757,7 @@ report.addEventListener('click', (e) => {
   }
   // Page-header file chip — click copies the report name(s) to the
   // clipboard (a convenience, like the finding copy button above:
-  // silent no-op without clipboard access, brief green pulse on
+  // silent no-op without clipboard access, brief "Copied" overlay on
   // success). No pointer cursor — the title + hover border lift signal
   // it, matching the page-head chrome.
   const copyReport = pathClosest(e, '[data-copy-report]')

@@ -9,6 +9,8 @@
 .chip {
   display: inline-flex; align-items: center; gap: .375rem;
   cursor: default; user-select: none;
+  /* Anchor for the copied overlay. */
+  position: relative;
   /* Pin to 24px so readonly mode (no pencil) matches editable mode
      (which hits 24px naturally: 18px button + .125rem padding + 1px
      border × 2). Sibling .file-chip / .files-toggle-btn use the same
@@ -34,10 +36,26 @@
 
 /* Copyable slug (read-only + editable-with-URL): hovering the label
    lifts the chip border to signal the affordance — no pointer cursor,
-   matching `.chip.empty` and the rest of the page-head chrome. A brief
-   green flash confirms the copy. */
+   matching `.chip.empty` and the rest of the page-head chrome. On copy,
+   an opaque "Copied" overlay covers the chip for ~1s — absolutely
+   positioned (out of flow + pointer-events: none) so the chip never
+   changes size and the click still lands. */
 .chip:has(.label.copyable:hover) { border-color: var(--accent); }
-.label.copied { color: var(--green, #4ade80); }
+.chip.copied::after {
+  content: 'Copied';
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  /* Opaque tint (not translucent `--surface`) so the slug underneath
+     doesn't ghost through behind "Copied". */
+  background: var(--surface-active);
+  border-radius: 999px;
+  color: var(--text);
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+}
 
 .edit-btn {
   width: 18px; height: 18px;

@@ -18,7 +18,7 @@
 //
 // In the read-only and editable-with-URL modes the `user/repo` slug is
 // click-to-copy: clicking the label writes the slug to the clipboard
-// (brief green flash, no pointer cursor — matching the page-head
+// (brief "Copied" overlay, no pointer cursor — matching the page-head
 // chrome). The pencil still owns edit duty, so copy never fights it.
 //
 // The component owns focus management because `.focus()` after
@@ -58,7 +58,7 @@ class RepoChip extends LitElement {
     url:      { type: String },
     editable: { type: Boolean, reflect: true },
     editing:  { type: Boolean, reflect: true },
-    // Internal: drives the brief "copied" flash on the slug label.
+    // Internal: drives the brief "Copied" overlay on the chip.
     _copied:  { state: true },
   }
 
@@ -102,7 +102,9 @@ class RepoChip extends LitElement {
     if (this.editable) {
       const hasUrl = !!this.url
       const label = hasUrl ? prettyRepoLabel(this.url) : 'Set repo'
-      const cls = hasUrl ? 'chip' : 'chip empty'
+      const cls = hasUrl
+        ? (this._copied ? 'chip copied' : 'chip')
+        : 'chip empty'
       // Empty chip: the whole pill is the click target — the `Set
       // repo` label IS the affordance, so requiring a tiny-pencil aim
       // would be needless precision. Once a URL is set, the pencil
@@ -122,7 +124,8 @@ class RepoChip extends LitElement {
       </span>`
     }
     if (this.url) {
-      return html`<span class="chip readonly" title="Repo from findings (read-only)">
+      const cls = this._copied ? 'chip readonly copied' : 'chip readonly'
+      return html`<span class=${cls} title="Repo from findings (read-only)">
         ${GITHUB_ICON}
         ${this._slugLabel(prettyRepoLabel(this.url))}
       </span>`
@@ -132,10 +135,10 @@ class RepoChip extends LitElement {
 
   // Click-to-copy slug label, shared by the read-only and
   // editable-with-URL modes. `copyable` carries the hover affordance;
-  // `copied` drives the post-copy flash.
+  // the post-copy "Copied" overlay rides on the parent `.chip.copied`.
   _slugLabel(text) {
     return html`<span
-      class=${this._copied ? 'label copyable copied' : 'label copyable'}
+      class="label copyable"
       title="Copy repo name"
       @click=${this._onCopyLabel}
     >${text}</span>`
@@ -161,8 +164,8 @@ class RepoChip extends LitElement {
 
   // Copy the displayed `user/repo` slug to the clipboard. stopPropagation
   // so the slug click doesn't bubble to the chip / host; `_copied` drives
-  // a brief green flash. Silent no-op without clipboard access (insecure
-  // context) — a convenience, not load-bearing.
+  // a brief "Copied" overlay. Silent no-op without clipboard access
+  // (insecure context) — a convenience, not load-bearing.
   _onCopyLabel = (e) => {
     if (e) e.stopPropagation()
     const text = prettyRepoLabel(this.url)

@@ -93,8 +93,9 @@
     & .file-chip {
       display: inline-flex; align-items: center; gap: .375rem;
       /* Click-to-copy target — keep the default arrow (never a pointer)
-         and suppress selection, matching the sibling repo-chip. */
-      cursor: default; user-select: none;
+         and suppress selection, matching the sibling repo-chip.
+         `position: relative` anchors the copied overlay. */
+      cursor: default; user-select: none; position: relative;
       min-height: 24px; box-sizing: border-box;
       padding: .125rem .5rem .125rem .4rem;
       background: var(--surface);
@@ -108,10 +109,26 @@
     & .file-chip svg { flex-shrink: 0; }
     /* Click-to-copy the report name (data-copy-report, events.js): a
        hover border lift signals the affordance without a pointer cursor
-       (matching the repo-chip / page-head chrome), and a brief green
-       flash confirms the copy. */
+       (matching the repo-chip / page-head chrome). On copy, an opaque
+       "Copied" overlay covers the chip for ~1s — absolutely positioned
+       (out of flow + pointer-events: none) so the chip never changes
+       size and the click still lands. */
     & .file-chip:hover { border-color: var(--accent); }
-    & .file-chip.copied { border-color: var(--green, #4ade80); color: var(--green, #4ade80); }
+    & .file-chip.copied::after {
+      content: 'Copied';
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      /* Opaque tint (not translucent `--surface`) so the report name
+         underneath doesn't ghost through behind "Copied". */
+      background: var(--surface-active);
+      border-radius: 999px;
+      color: var(--text);
+      font-weight: 600;
+      white-space: nowrap;
+      pointer-events: none;
+    }
 
     /* Meta-row: count + model/effort/exports tags + analyzer cell.
        Wraps on narrow viewports; separator dots flow with the wrap so
