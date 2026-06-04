@@ -23,7 +23,7 @@
 // open view (Bundles' Issues tab, Packages page) can repaint
 // progressively as findings come in.
 
-import { addFindingToBucket, dropKeyFromBucket, indexFindingByVersion, newBucket, packageVersionOf, pruneVersionSlot, recomputeBucketReports } from './bundle-finding-versions.js'
+import { addFindingToBucket, dropKeyFromBucket, indexFindingByVersion, isPlaceholderNpmPackage, newBucket, packageVersionOf, pruneVersionSlot, recomputeBucketReports } from './bundle-finding-versions.js'
 import { listFiles, onFileMutated, readFile } from './storage.js'
 import { loadRepoUrlFor, onRepoUrlChanged } from './state.ts'
 import { flattenFindings, parseReport } from '../common/report-findings.js'
@@ -51,8 +51,13 @@ const contributionsByName = new Map()
 
 // Package extractor — prefers the analyzer-stamped `f.package.npm.name`
 // (the report finding shape carries `package: { npm: { name, version? } }`
-// when the analyzer was able to identify the upstream package directly);
-// otherwise matches `node_modules/<pkg>/...` and `dependencies/<pkg>/...`
+// when the analyzer was able to identify the upstream package directly),
+// EXCEPT the `solidity-bundle@0.0.0` placeholder it stamps when it
+// couldn't determine the package (see `isPlaceholderNpmPackage`) — that
+// one is ignored so the finding falls through to path extraction (and
+// drops out of the view entirely when its path is own source) rather
+// than opening a bogus `solidity-bundle` row.
+// Otherwise matches `node_modules/<pkg>/...` and `dependencies/<pkg>/...`
 // against the file path (both conventions are common). Walks past pnpm's
 // synthetic `.pnpm/<name>@<ver>/node_modules/<name>` shim so
 // `@noble/hashes` / `ws` / etc. surface as themselves rather than
@@ -62,7 +67,8 @@ const contributionsByName = new Map()
 // source clutters the page with "src" / "tests" / "playground"
 // pseudo-packages that aren't what the user thinks of as a package.
 function packageOf(f) {
-  if (typeof f?.package?.npm?.name === 'string' && f.package.npm.name) return f.package.npm.name
+  const npm = f?.package?.npm
+  if (typeof npm?.name === 'string' && npm.name && !isPlaceholderNpmPackage(npm)) return npm.name
   if (!f?.file) return null
   const re = /(?:^|\/)(?:node_modules|dependencies)\/(@[^/]+\/[^/]+|[^/]+)/gu
   let m

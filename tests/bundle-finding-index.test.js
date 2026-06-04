@@ -44,7 +44,7 @@ const {
   reportsForFindingByRepo,
   subscribeToBundleFindingIndex,
 } = await import('../client/bundle-finding-index.js')
-const { compareVersionsDesc } = await import('../client/bundle-finding-versions.js')
+const { compareVersionsDesc, isPlaceholderNpmPackage, packageVersionOf } = await import('../client/bundle-finding-versions.js')
 
 // Each test gets a unique report-name suffix so the in-memory storage
 // cache (which doesn't get cleared between tests) doesn't bleed
@@ -498,6 +498,93 @@ describe('bundle-finding-index — analyzer-stamped package.npm overrides path e
     })
     await ensureBundleFindingsIndexed()
     assert.ok(getRepositoriesIndex().get(repo), 'look-alike folder name does not get classified as deps')
+  })
+})
+
+// The analyzer stamps `package.npm = { name: 'solidity-bundle', version:
+// '0.0.0' }` as a placeholder when it can't determine the real upstream
+// package. That synthetic pair must not surface as a real npm package in
+// either the Packages view (this index) or the finding card's npm chip
+// (`isPlaceholderNpmPackage`, shared with `ui/view/render-finding.js`).
+describe('bundle-finding-index — solidity-bundle@0.0.0 placeholder is not a real package', () => {
+  it('drops an own-source finding carrying only the placeholder stamp', async () => {
+    // Placeholder stamp + own-source path → packageOf has no real
+    // signal to fall back on, so the finding never enters the Packages
+    // view. Asserted by id across every bucket so the check is immune
+    // to a `solidity-bundle` bucket another test may have seeded.
+    const tag = `placeholder-own-${Date.now()}`
+    await seedReport({
+      findings: [
+        { id: `${tag}-f1`, severity: 'high', file: `contracts/${tag}.sol`, description: 'd', package: { npm: { name: 'solidity-bundle', version: '0.0.0' } } },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+    for (const [, bucket] of getPackagesIndex()) {
+      assert.ok(!bucket.findings.some((f) => f.id === `${tag}-f1`), 'placeholder own-source finding is not bucketed under any package')
+    }
+  })
+
+  it('falls back to the file-path package (not solidity-bundle) when the placeholder stamp rides a node_modules path', async () => {
+    // Placeholder stamp is ignored, so both the name AND the version
+    // come from the path: the real package, version `null` (plain
+    // node_modules path, no pnpm shim) — never `0.0.0`.
+    const tag = `placeholder-path-${Date.now()}`
+    await seedReport({
+      findings: [
+        { id: `${tag}-f1`, severity: 'high', file: `node_modules/${tag}/x.js`, description: 'd', package: { npm: { name: 'solidity-bundle', version: '0.0.0' } } },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+    const real = getPackagesIndex().get(tag)
+    assert.ok(real, 'finding buckets under the path-derived package, not the placeholder')
+    assert.ok(real.findings.some((f) => f.id === `${tag}-f1`))
+    assert.equal(real.byVersion.get('0.0.0'), undefined, 'placeholder version is not used as a version slot')
+    assert.ok(real.byVersion.get(null), 'version falls back to the path-derived (null) slot')
+  })
+
+  it('still surfaces a genuine package named solidity-bundle at a real version', async () => {
+    // Guard against over-matching: only the exact `@0.0.0` pair is the
+    // placeholder. A real `solidity-bundle` release keeps its row.
+    await seedReport({
+      findings: [
+        { id: `real-solidity-bundle-${Date.now()}`, severity: 'high', file: 'src/own.js', description: 'd', package: { npm: { name: 'solidity-bundle', version: '1.2.3' } } },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+    const bucket = getPackagesIndex().get('solidity-bundle')
+    assert.ok(bucket, 'a real solidity-bundle@1.2.3 still surfaces as a package')
+    assert.ok(bucket.byVersion.get('1.2.3'), 'real version slot present')
+  })
+
+  it('still surfaces a real package that happens to be pinned at 0.0.0 under a different name', async () => {
+    // Guard against over-matching on version alone — `0.0.0` is a
+    // legitimate (unpublished / local) version for a real package name.
+    const tag = `local-pkg-${Date.now()}`
+    await seedReport({
+      findings: [
+        { id: `${tag}-f1`, severity: 'high', file: `node_modules/${tag}/x.js`, description: 'd', package: { npm: { name: tag, version: '0.0.0' } } },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+    const bucket = getPackagesIndex().get(tag)
+    assert.ok(bucket, 'a real package pinned at 0.0.0 still surfaces')
+    assert.ok(bucket.byVersion.get('0.0.0'), 'its 0.0.0 slot is kept')
+  })
+
+  it('isPlaceholderNpmPackage matches only the exact (name, version) pair', () => {
+    assert.equal(isPlaceholderNpmPackage({ name: 'solidity-bundle', version: '0.0.0' }), true)
+    assert.equal(isPlaceholderNpmPackage({ name: 'solidity-bundle', version: '1.0.0' }), false, 'real version is not the placeholder')
+    assert.equal(isPlaceholderNpmPackage({ name: 'solidity-bundle' }), false, 'missing version is not the placeholder')
+    assert.equal(isPlaceholderNpmPackage({ name: 'other-pkg', version: '0.0.0' }), false, 'real name is not the placeholder')
+    assert.equal(isPlaceholderNpmPackage(undefined), false)
+    assert.equal(isPlaceholderNpmPackage(null), false)
+  })
+
+  it('packageVersionOf ignores the placeholder stamp', () => {
+    // Placeholder stamp + own-source path → no version signal at all.
+    assert.equal(packageVersionOf({ package: { npm: { name: 'solidity-bundle', version: '0.0.0' } }, file: 'contracts/Foo.sol' }), null)
+    // A real stamp still comes through.
+    assert.equal(packageVersionOf({ package: { npm: { name: 'foo', version: '0.0.0' } }, file: 'src/x.js' }), '0.0.0')
   })
 })
 

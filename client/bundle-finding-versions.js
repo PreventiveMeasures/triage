@@ -12,10 +12,28 @@
 // repo book-keeping; `findingDedupeKey` is threaded in from the
 // index module to avoid a circular import.
 
+// The analyzer stamps `package.npm = { name: 'solidity-bundle',
+// version: '0.0.0' }` as a synthetic placeholder on findings whose
+// upstream npm package it COULDN'T determine (bundled source with no
+// resolvable `node_modules/` origin). It's not a real registry entry, so
+// callers treat a placeholder stamp as if it were absent: the Packages
+// view falls back to file-path extraction (and drops the finding when
+// the path is own-source) instead of opening a `solidity-bundle` row,
+// and the finding card's npm chip renders nothing instead of linking to
+// a 404 npm page. Matched on the exact (name, version) pair so a genuine
+// `solidity-bundle` release — or any real package pinned at `0.0.0` —
+// still surfaces normally.
+const PLACEHOLDER_NPM_NAME = 'solidity-bundle'
+const PLACEHOLDER_NPM_VERSION = '0.0.0'
+export function isPlaceholderNpmPackage(npm) {
+  return npm?.name === PLACEHOLDER_NPM_NAME && npm?.version === PLACEHOLDER_NPM_VERSION
+}
+
 // Version extractor — prefers the analyzer-stamped
 // `f.package.npm.version` (the report finding shape carries
 // `package: { npm: { name, version? } }` when the analyzer can
-// identify the upstream package). Falls back to pnpm's
+// identify the upstream package), unless that stamp is the
+// "couldn't determine" placeholder above. Falls back to pnpm's
 // `.pnpm/<encoded-name>@<version>/node_modules/<name>/...` shape on
 // `f.file`. Scoped names are encoded with `+` (e.g. `@scope/name` →
 // `@scope+name`), and a `_<peer-deps>` suffix may follow the version
@@ -27,8 +45,9 @@
 // `node_modules/<pkg>/` paths with no stamped version); the Packages
 // view treats null as a single unversioned bucket.
 export function packageVersionOf(f) {
-  const stamped = f?.package?.npm?.version
-  if (typeof stamped === 'string' && stamped) return stamped
+  const npm = f?.package?.npm
+  const stamped = npm?.version
+  if (typeof stamped === 'string' && stamped && !isPlaceholderNpmPackage(npm)) return stamped
   const file = f?.file
   if (!file) return null
   const m = /(?:^|\/)node_modules\/\.pnpm\/([^/]+)\/node_modules\//u.exec(file)

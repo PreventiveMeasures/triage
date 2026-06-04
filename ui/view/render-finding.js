@@ -1,7 +1,7 @@
 import { html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { bundlesForFileHash, state } from '#client/index.js'
+import { bundlesForFileHash, isPlaceholderNpmPackage, state } from '#client/index.js'
 import { commitUrl, fileUrl, findingDisplayName, formatRunMeta, githubIssueUrl, isHttpUrl, stripExportMarker } from './format.js'
 import { activeTabFor, findingRepo, groupKey, groupState, isIgnored, sortTabs, tabKey } from './group.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
@@ -416,6 +416,10 @@ const NPM_NAME_RE = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/iu
 // `encodeURIComponent`'d (semver tags are URL-safe but pre-release
 // builds can carry `+` which would otherwise read as a space).
 function npmChipTemplate(npm) {
+  // The analyzer's "couldn't determine the package" placeholder
+  // (`solidity-bundle@0.0.0`) is not a real registry entry — suppress
+  // the chip rather than linking to a 404 npm page.
+  if (isPlaceholderNpmPackage(npm)) return nothing
   const name = npm?.name
   if (typeof name !== 'string' || !NPM_NAME_RE.test(name)) return nothing
   const version = npm?.version

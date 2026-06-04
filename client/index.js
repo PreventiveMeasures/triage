@@ -15,7 +15,7 @@ export {
   subscribeToBundleFindingIndex,
 } from './bundle-finding-index.js'
 
-export { compareVersionsDesc } from './bundle-finding-versions.js'
+export { compareVersionsDesc, isPlaceholderNpmPackage } from './bundle-finding-versions.js'
 
 export {
   bundlesForFileHash,
