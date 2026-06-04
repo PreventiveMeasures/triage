@@ -91,9 +91,37 @@ const pendingValues = new Map()
 // reads stale data because secure-storage's hydrate is async while
 // the storage event handlers run synchronously.
 const afterHydrateListeners = new Set()
+// Subscribe to the post-hydrate fire. A subscriber registered BEFORE
+// the first hydrate is fanned out by `fireAfterHydrate()` inside
+// `hydrate()` as usual. A LATE subscriber — one that registers after a
+// hydrate has already completed — gets a one-shot catch-up fire here,
+// because `hydrate()` fires each listener exactly once per hydrate and
+// does NOT re-run just because a new listener showed up. This matters
+// for the lazily-loaded sync surface: its
+// `host.onSecureStorageHydrated(...)` hook (which copies the persisted
+// sync password into the in-memory auth cache via
+// `loadCachedSyncPasswordFromStorage`) is registered only once the sync
+// chunk loads — AFTER `continueBoot`'s one boot `hydrate()`. Without the
+// catch-up that hook never ran at boot, so `getCachedSyncPassword()`
+// stayed null and the operator was re-prompted every session despite a
+// saved password. The catch-up runs on a microtask so subscribe returns
+// synchronously and a subscribe-then-immediately-unsubscribe is safe
+// (the `has` check skips an already-removed listener) — mirroring
+// `triage-session-store`'s `onPersistenceDegraded`.
 export function onAfterHydrate(cb) {
-  afterHydrateListeners.add(cb)
-  return () => afterHydrateListeners.delete(cb)
+  // Wrap so the same `cb` reference can subscribe more than once
+  // (distinct Set entries) and the returned unsubscribe removes only
+  // THIS subscription — without the wrap two subscriptions of one `cb`
+  // collapse to a single Set entry and either unsubscribe kills both.
+  const wrapped = () => cb()
+  afterHydrateListeners.add(wrapped)
+  if (hydratedOnce) {
+    queueMicrotask(() => {
+      if (!afterHydrateListeners.has(wrapped)) return
+      try { wrapped() } catch (err) { console.warn('secure-storage after-hydrate listener:', err) }
+    })
+  }
+  return () => afterHydrateListeners.delete(wrapped)
 }
 function fireAfterHydrate() {
   for (const cb of afterHydrateListeners) {
