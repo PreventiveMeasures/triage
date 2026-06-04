@@ -686,7 +686,7 @@ function triageFilterTemplate(colorCounts) {
 // so the host drops it in unconditionally.
 
 function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCounts, flags, analyzerOptions, repoOptions) {
-  const { showSource, showConfidence, showPriority, showGraphMode, showFileSort, kanbanMode, showRepo, hasFlagged } = flags
+  const { showSource, showConfidence, showPriority, showGraphMode, showFileSort, kanbanMode, showRepo, hasComment, hasFix, hasFlagged } = flags
   // The findings tab gains a "graph" view-mode option when a
   // tree-bearing report is loaded (showGraphMode). The focus and
   // kanban modes sit between grouped and graph. Switching to graph
@@ -711,7 +711,9 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
         ?show-priority=${showPriority}
       ></findings-sort>
       ${showSource ? html`<div class="sep"></div><source-filter></source-filter>` : nothing}
-      ${hasFlagged || state.filterFlagged ? html`<div class="sep"></div><flag-filter></flag-filter>` : nothing}
+      ${hasComment || hasFix || hasFlagged || state.filterComment || state.filterFix || state.filterFlagged
+        ? html`<div class="sep"></div><annotation-filter .hasComment=${hasComment} .hasFix=${hasFix} .hasFlagged=${hasFlagged}></annotation-filter>`
+        : nothing}
       ${showConfidence ? html`<div class="sep"></div><conf-filter></conf-filter>` : nothing}
       ${kanbanMode ? nothing : html`<triage-selector .counts=${triageCounts}></triage-selector>`}
     </div>
@@ -1436,11 +1438,21 @@ function renderImpl() {
     const t = groupState(g).commonTriage
     if (t) triageCounts[t]++
   }
-  // The flag filter self-gates like the triage selector: it appears only
-  // once at least one finding is flagged (scanned over the full loaded
-  // set, independent of the active filters), or while the filter itself
-  // is on — so a filter that's left active can always be switched off.
-  const hasFlagged = mergedGroups.some((g) => g.some((f) => state.triage.get(tabKey(f))?.flagged === true))
+  // The annotation filter group (comment | fix | flag) self-gates per
+  // chip like the triage selector: a chip shows only once at least one
+  // finding carries that annotation (scanned over the full loaded set,
+  // independent of the active filters) — or while its filter is on, so a
+  // left-active filter can always be switched off. One pass for all three.
+  let hasComment = false, hasFix = false, hasFlagged = false
+  for (const g of mergedGroups) {
+    for (const f of g) {
+      const e = state.triage.get(tabKey(f))
+      if (!e) continue
+      if (e.comment) hasComment = true
+      if (e.fix) hasFix = true
+      if (e.flagged === true) hasFlagged = true
+    }
+  }
   // Kanban view shows every triage bucket as a column, so it
   // ignores the shownTriage single-bucket filter entirely; every
   // other view-mode (table / list / grouped / graph) honours it.
@@ -1712,6 +1724,8 @@ function renderImpl() {
       // reports stacked into one view) are where the user benefits
       // from narrowing to a single repo.
       showRepo: !!state.currentWorkspace,
+      hasComment,
+      hasFix,
       hasFlagged,
     }, analyzerOptions, repoOptions)
 

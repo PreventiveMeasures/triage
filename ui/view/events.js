@@ -1683,9 +1683,14 @@ report.addEventListener('source-toggle', (e) => {
   if (!wasActive) state.filterSources.add(v)
   render()
 })
-// Flag filter chip — flips the boolean and re-renders the row set.
-report.addEventListener('flag-filter-toggle', () => {
-  state.filterFlagged = !state.filterFlagged
+// Annotation filter chips (comment | fix | flag) — flip the matching
+// boolean and re-render. Each is an independent AND filter (matchesFilters).
+report.addEventListener('annotation-filter-toggle', (e) => {
+  const key = e.detail?.key
+  if (key === 'comment') state.filterComment = !state.filterComment
+  else if (key === 'fix') state.filterFix = !state.filterFix
+  else if (key === 'flag') state.filterFlagged = !state.filterFlagged
+  else return
   render()
 })
 // Package / repository detail slide — `<slide-triage-tabs>` dispatches
