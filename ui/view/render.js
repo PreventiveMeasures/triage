@@ -199,12 +199,14 @@ const COMBO_FIELDS = ['type', 'model', 'effort', 'exportsMode']
 // Format a single combo-field value as a tag-display string. The
 // type field carries the `analyzer: ` label and always renders (even
 // when null) so the slot is never silently dropped — `analyzer: null`
-// reads as "this run had no analyzer subtype". Non-type fields return
-// null when the value is missing so the caller can drop them; a bare
-// `null` for a missing model / effort / exports just clutters the
-// header.
-function formatComboField(field, value) {
-  if (field === 'type') return `analyzer: ${value ?? 'null'}`
+// reads as "this run had no analyzer subtype". Pass `typePrefix: false`
+// to render the bare type value without the label, for tuples where the
+// prefix no longer marks a separable factor (see `buildAnalyzerTags`).
+// Non-type fields return null when the value is missing so the caller
+// can drop them; a bare `null` for a missing model / effort / exports
+// just clutters the header.
+function formatComboField(field, value, { typePrefix = true } = {}) {
+  if (field === 'type') return typePrefix ? `analyzer: ${value ?? 'null'}` : `${value ?? 'null'}`
   if (value == null) return null
   return value
 }
@@ -248,6 +250,16 @@ function formatComboField(field, value) {
 //   `null · opus 4.7 · xhigh · isolate` + `null · opus 4.7 · max · list`
 //     → `opus 4.7` `analyzer: null` `xhigh · isolate` `max · list`
 //   `correctness · null · null · null`  →  `analyzer: correctness`
+//
+// When `type` itself varies inside a multi-field tuple (so it no longer
+// renders as its own standalone chip) AND there are more than two
+// combos, the `analyzer:` prefix no longer labels a separable factor and
+// just repeats down the strip, so it's dropped — each tuple reads as a
+// bare value list:
+//   `null · gpt 5.5 · xhigh · list` + `security · opus 5.8 · max · isolate`
+//   + `correctness · opus 4.7 · max · list`
+//     → `null · gpt 5.5 · xhigh · list` `security · opus 5.8 · max · isolate`
+//       `correctness · opus 4.7 · max · list`
 function buildAnalyzerTags(findings, fields = COMBO_FIELDS) {
   const comboMap = new Map()
   for (const f of findings) {
@@ -267,6 +279,17 @@ function buildAnalyzerTags(findings, fields = COMBO_FIELDS) {
   }
   const varyingSlots = fields.filter((k) => !isCommon[k])
 
+  // The `analyzer:` prefix only reads as a label when `type` renders as
+  // its own standalone chip — when it's common across every combo, or the
+  // sole varying slot. This routine collapses ALL varying fields into one
+  // `·` tuple (it never factors a product back out), so the moment `type`
+  // shares a varying tuple with another field it's no longer standalone
+  // and the repeated prefix just clutters each tuple. Past two such
+  // combos, drop it and let the type value sit bare at the tuple head.
+  const dropAnalyzerPrefix = combos.length > 2
+    && varyingSlots.includes('type')
+    && varyingSlots.length > 1
+
   // Promote common model / effort ahead of the analyzer-type chip; the
   // remaining fields keep their canonical order so varying tuples still
   // emit at the first-varying slot.
@@ -282,7 +305,7 @@ function buildAnalyzerTags(findings, fields = COMBO_FIELDS) {
     } else if (!combosEmitted) {
       for (const combo of combos) {
         const parts = varyingSlots
-          .map((s) => formatComboField(s, combo[s]))
+          .map((s) => formatComboField(s, combo[s], { typePrefix: !dropAnalyzerPrefix }))
           .filter((p) => p != null)
         if (parts.length > 0) tags.push(parts.join(' · '))
       }
