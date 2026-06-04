@@ -1163,6 +1163,13 @@ bundle-code-search {
     grid-template-columns: repeat(auto-fit, minmax(min(700px, 100%), 1fr));
     gap: .75rem 2rem;
     margin: 0 0 .75rem;
+    /* Top-align the two columns instead of stretching the shorter one
+       to the taller's height: a stretched inner grid spreads its auto
+       rows, which drifts the `align-self: center` dt labels off their
+       top-aligned dd values (visible when the columns hold a different
+       number of rows, e.g. 3 vs 4). Natural height keeps each row's
+       label and value on the same line. */
+    align-items: start;
 
     & .bundles-detail-meta { margin: 0; }
   }
