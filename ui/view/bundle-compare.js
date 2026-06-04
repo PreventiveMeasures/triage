@@ -339,7 +339,6 @@ class BundleCompare extends LitElement {
         type="button"
         class="bundle-compare-swap"
         @click=${() => this._swap()}
-        title=${`Swap — open ${this._nameFor(this._targetIntegrity)} and compare it against ${baseName}`}
         aria-label="Swap the two bundles"
       ><span class="bundle-compare-swap-icon" aria-hidden="true">↔</span>Swap</button>` : nothing}
     </div>`
