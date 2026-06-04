@@ -78,23 +78,10 @@ export function matchesFilters(f) {
     if (allowOwn && isModule(f.file)) return false
     if (!allowOwn && !isModule(f.file)) return false
   }
-  // Annotation filters (comment | fix | flag) — each is a tri-state:
-  // 'with' requires the annotation, 'without' requires its absence, ''
-  // is off. Each independently AND-narrows the set (a tab must satisfy
-  // EVERY active one). Per-tab like the predicates above, so applyFilters'
-  // `g.some` keeps a group visible when ANY tab matches all of them.
-  if (state.filterComment || state.filterFix || state.filterFlagged) {
-    const e = state.triage.get(tabKey(f))
-    const hasComment = !!e?.comment
-    const hasFix = !!e?.fix
-    const isFlagged = e?.flagged === true
-    if (state.filterComment === 'with' && !hasComment) return false
-    if (state.filterComment === 'without' && hasComment) return false
-    if (state.filterFix === 'with' && !hasFix) return false
-    if (state.filterFix === 'without' && hasFix) return false
-    if (state.filterFlagged === 'with' && !isFlagged) return false
-    if (state.filterFlagged === 'without' && isFlagged) return false
-  }
+  // NOTE: the annotation filters (comment | fix | flag) are intentionally
+  // NOT evaluated here — they're GROUP-level (see matchesAnnotationFilters
+  // / applyFilters) so 'with' / 'without' stay complementary across a
+  // dedup group.
   // Analyzer filter — single-select dropdown. Empty = no filter.
   // Findings with no analyzer (`_analyzer === null`) match
   // NULL_ANALYZER_SENTINEL; other values are straight string
@@ -158,8 +145,35 @@ export function matchesFilters(f) {
   return true
 }
 
+// Group-level annotation filters (comment | fix | flag), each a tri-state
+// '' / 'with' / 'without'. These are deliberately NOT per-tab: 'without'
+// must mean "NO tab in the dedup group carries it" (¬∃) — the exact
+// complement of 'with' = "≥1 tab carries it" (∃). A per-tab `g.some`
+// negation would instead keep a group that has the annotation on one tab
+// just because ANOTHER tab lacks it, which is not complementary. Existence
+// is computed once over the whole group, then 'with'/'without' applied.
+function matchesAnnotationFilters(group) {
+  if (!state.filterComment && !state.filterFix && !state.filterFlagged) return true
+  const groupHas = (pred) => group.some((f) => pred(state.triage.get(tabKey(f))))
+  if (state.filterComment) {
+    const has = groupHas((e) => Boolean(e?.comment))
+    if (state.filterComment === 'with' ? !has : has) return false
+  }
+  if (state.filterFix) {
+    const has = groupHas((e) => Boolean(e?.fix))
+    if (state.filterFix === 'with' ? !has : has) return false
+  }
+  if (state.filterFlagged) {
+    const has = groupHas((e) => e?.flagged === true)
+    if (state.filterFlagged === 'with' ? !has : has) return false
+  }
+  return true
+}
+
 export function applyFilters(groups) {
-  return groups.filter((g) => g.some(matchesFilters))
+  // Per-tab existential filters (severity / color / source / analyzer /
+  // repo / search) via `g.some`, AND the group-level annotation filters.
+  return groups.filter((g) => g.some(matchesFilters) && matchesAnnotationFilters(g))
 }
 
 // Numeric-field comparator factory — the `confidence-*` /
