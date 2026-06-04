@@ -36,3 +36,17 @@ test('package.json "files" lists every server source file (publish allowlist)', 
     `from the published triage-server package and crash on import:\n  ${missing.join('\n  ')}`,
   )
 })
+
+// Every `exports` target must be in `files` too — an entry point that isn't
+// published resolves to a missing file for consumers (e.g. the `./reap`
+// Vercel-cron handler lives under `api/`, outside the `server/` scan above).
+test('package.json "files" includes every exports target', () => {
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+  const allow = new Set(pkg.files)
+  const missing = Object.entries(pkg.exports)
+    .map(([sub, target]) => [sub, target.replace(/^\.\//u, '')])
+    // `package.json` is always included by npm; everything else must be listed.
+    .filter(([, rel]) => rel !== 'package.json' && !allow.has(rel))
+    .map(([sub, rel]) => `exports["${sub}"] → ${rel}`)
+  assert.deepEqual(missing, [], `exports targets missing from "files":\n  ${missing.join('\n  ')}`)
+})

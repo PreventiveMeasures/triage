@@ -29,6 +29,7 @@
     "#client/sync-host.js": "./client/sync-host.js"
   },
   "exports": {
+    "./reap": "./api/reap.ts",
     "./server": "./server/index.ts",
     "./strip-types-loader": "./strip-types-loader.js",
     "./package.json": "./package.json"
@@ -37,6 +38,7 @@
     "triage-server": "server/cli.js"
   },
   "files": [
+    "api/reap.ts",
     "server/auth.ts",
     "server/bus-receiver.ts",
     "server/cli.js",
