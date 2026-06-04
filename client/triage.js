@@ -346,7 +346,7 @@ function applyTriageEntries(entries, { replace = false } = {}) {
   }
   if (!entries) return
   for (const [id, v] of Object.entries(entries)) {
-    // Triage bucket — preferred form `triage: 'fixed'|'invalid'|'deleted'`;
+    // Triage bucket — preferred form `triage: 'inprogress'|'fixed'|'invalid'|'deleted'`;
     // legacy `deleted: true` migrates to 'deleted' via bucketOf.
     const bucket = bucketOf(v)
     const patch = {}

@@ -25,7 +25,7 @@ import { decryptBundle, isEncryptedBundle } from './workspace-bundle-crypto.js'
 // Triage merge rules:
 //   - new colors / comments / fixes adopt the imported value;
 //   - identical values are no-ops;
-//   - imported `triage: 'fixed'|'invalid'|'deleted'` adopts when the
+//   - imported `triage: 'inprogress'|'fixed'|'invalid'|'deleted'` adopts when the
 //     local side has nothing — disagreements queue a conflict;
 //   - LEGACY: an export carrying only `deleted: true` (pre-bucket
 //     format) migrates to `triage: 'deleted'` on read, so old bundles

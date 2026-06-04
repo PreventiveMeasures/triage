@@ -113,7 +113,7 @@ function ignoredReportsEqual(a: unknown, b: unknown): boolean {
 }
 
 function entriesEqual(a: TriageEntry, b: TriageEntry): boolean {
-  // `triage` is the current shape (`'fixed' | 'invalid' | 'deleted'` or
+  // `triage` is the current shape (`'inprogress' | 'fixed' | 'invalid' | 'deleted'` or
   // absent). Legacy `deleted: true` from older peers / stored chains
   // compares as 'deleted' — the receive-side migrates on apply, but a
   // local state still carrying the legacy boolean shouldn't false-equal

@@ -16,7 +16,7 @@ import { encryptBundle } from './workspace-bundle-crypto.js'
 // Triage filters by report-membership: only entries whose id appears
 // in one of the workspace's reports ride along, so the export stays a
 // clean self-contained slice. Always emits the new
-// `triage: 'fixed'|'invalid'|'deleted'` shape; legacy `deleted: true`
+// `triage: 'inprogress'|'fixed'|'invalid'|'deleted'` shape; legacy `deleted: true`
 // is never written here.
 
 const EXPORT_VERSION = 1
