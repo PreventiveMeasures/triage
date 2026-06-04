@@ -371,11 +371,11 @@ export class SseTransport extends EventTarget implements WebSocketLike {
     this.activeReaders.add(reader)
     const parser = new SseParser()
     const decoder = new TextDecoder()
-    let endedGracefully = false
+    let reachedEof = false
     try {
       for (;;) {
         const { value, done } = await reader.read()
-        if (done) { endedGracefully = true; break }
+        if (done) { reachedEof = true; break }
         // Skip dispatch if the transport tore down while we awaited —
         // protects consumers from a post-shutdown phantom-connected
         // frame surfacing through their `onMessage` handler.
@@ -413,12 +413,20 @@ export class SseTransport extends EventTarget implements WebSocketLike {
       // (seq < postSeq) is the normal takeover signal — the server
       // end()s the prior response when the next POST attaches — so it
       // stays silent.
-      if (endedGracefully && this.readyState !== SseTransport.CLOSED && seq === this.postSeq) {
+      if (reachedEof && this.readyState !== SseTransport.CLOSED && seq === this.postSeq) {
         console.warn('sse-transport: live downstream closed without a close frame; reconnecting')
         this.shutdown()
       }
     } catch (err) {
-      if (this.readyState !== SseTransport.CLOSED) {
+      // Same live-vs-superseded split as the bare-EOF path above: a read
+      // error on the LIVE downstream (seq === postSeq) is a death →
+      // reconnect. A SUPERSEDED reader (seq < postSeq) erroring is the
+      // takeover tearing the old connection down — normally a clean
+      // end() (the EOF path), but an RST surfaced by the OS / an
+      // intermediary lands here instead. Its successor already owns
+      // liveness, so drop it silently rather than shutting the healthy
+      // stream down.
+      if (this.readyState !== SseTransport.CLOSED && seq === this.postSeq) {
         console.warn('sse-transport: stream read failed:', err)
         this.shutdown()
       }

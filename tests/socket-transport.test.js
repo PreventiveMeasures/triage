@@ -1003,6 +1003,53 @@ describe('socket-transport: SSE fallback', () => {
     t.close()
   })
 
+  it('a read error on the live downstream disconnects', async () => {
+    // Takeover normally end()s the prior response (a clean EOF), but a
+    // dropped connection surfaces as a read REJECTION instead. On the
+    // LIVE downstream that's a death → reconnect (the catch path).
+    const t = makeTransport()
+    const c = recordingConsumer()
+    t.addConsumer(c)
+    t.acquire()
+    FakeWebSocket.last.simulateClose()
+    assert.ok(await awaitFetch(1))
+    lastStream().pushEvent('session', 'sid-x')
+    lastStream().pushMessage({ type: 'challenge', nonce: 'n' })
+    await delay(10)
+    assert.equal(c.disconnected.length, 0, 'healthy while the stream is live')
+    // The LIVE stream errors (no takeover preceded it) → death.
+    lastStream().error(new Error('ECONNRESET'))
+    await delay(30)
+    assert.equal(c.disconnected.length, 1, 'live downstream read error disconnects')
+    t.close()
+  })
+
+  it('a superseded SSE response that ERRORS (RST, not a clean EOF) does NOT disconnect', async () => {
+    // Like the superseded-EOF case, but the takeover tore the old
+    // connection down with an RST (OS/proxy-surfaced) so the superseded
+    // reader's read() REJECTS instead of cleanly ending. The catch path
+    // applies the same live-vs-superseded `seq` guard as the EOF path,
+    // so this stays silent — the successor owns the live downstream.
+    const t = makeTransport()
+    const c = recordingConsumer()
+    t.addConsumer(c)
+    t.acquire()
+    FakeWebSocket.last.simulateClose()
+    assert.ok(await awaitFetch(1))
+    const firstStream = lastStream()
+    firstStream.pushEvent('session', 'sid-x')
+    firstStream.pushMessage({ type: 'challenge', nonce: 'n' })
+    await delay(10)
+    // Second POST takes over → the first response is now superseded.
+    t.send({ type: 'ping' })
+    assert.ok(await awaitFetch(2, 500))
+    // The superseded reader's stream errors instead of cleanly ending.
+    firstStream.error(new Error('ECONNRESET'))
+    await delay(30)
+    assert.equal(c.disconnected.length, 0, 'superseded reader error stays silent')
+    t.close()
+  })
+
   it('downstream inactivity (no keepalive, no data, no EOF) trips the watchdog → disconnect', async () => {
     // A wedged TLS-terminating proxy holds the stream open but stops
     // forwarding: no data, no server `:` keepalive, no EOF. The bare-EOF
