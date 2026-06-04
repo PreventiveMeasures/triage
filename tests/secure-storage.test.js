@@ -170,4 +170,43 @@ describe('secure-storage: onAfterHydrate late-subscriber catch-up', () => {
     assert.equal(fired, 3, 'unsubA removed only its own subscription; B still fires')
     unsubB()
   })
+
+  it('the one-shot catch-up does NOT unwire the listener from later real hydrates', async () => {
+    // The real consumer (triage-sync's handleSecureStorageHydrated) is
+    // designed to run again on every later hydrate — vault-state change,
+    // sibling-tab storage event. After the one-shot catch-up the listener
+    // must STILL be in the Set so the next hydrate fans it out; a future
+    // refactor that removed `wrapped` once the catch-up fired would
+    // silently break that re-fire. This is the most realistic boot
+    // sequence (late subscribe → catch-up → a subsequent rehydrate).
+    await ss.hydrate()
+    let fired = 0
+    const unsub = ss.onAfterHydrate(() => { fired++ })
+    await Promise.resolve()           // catch-up
+    assert.equal(fired, 1, 'one catch-up fire')
+    await ss.hydrate()                // a real later hydrate
+    assert.equal(fired, 2, 'still fires through fireAfterHydrate after the catch-up')
+    unsub()
+  })
+
+  it('a throwing late subscriber is swallowed and does not starve a sibling catch-up', async () => {
+    // The catch-up runs detached on a microtask, so a synchronous throw
+    // in the callback must be swallowed (warn-and-continue, parity with
+    // fireAfterHydrate) — otherwise it surfaces as an unhandledRejection
+    // and could break a sibling subscriber's catch-up.
+    await ss.hydrate()
+    let good = 0
+    const realWarn = console.warn
+    console.warn = () => {} // silence the expected warn-and-continue
+    try {
+      const unsubBad = ss.onAfterHydrate(() => { throw new Error('boom') })
+      const unsubGood = ss.onAfterHydrate(() => { good++ })
+      await Promise.resolve()         // drain both catch-up microtasks
+      assert.equal(good, 1, 'the throw is isolated; the sibling still catches up')
+      unsubBad()
+      unsubGood()
+    } finally {
+      console.warn = realWarn
+    }
+  })
 })
