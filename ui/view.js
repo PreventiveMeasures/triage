@@ -269,6 +269,8 @@ async function continueBoot() {
         state.bundleCodeSearchMode = 'files'
         state.bundleSearchQuery = ''
         state.bundleSearchRegex = false
+        state.bundleSearchCase = false
+        state.bundleSearchContext = true
         state.bundleDetailsTab = tab
         state.shownTriage = null
         graph2.showAll = true

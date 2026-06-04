@@ -693,29 +693,16 @@ function renderBundleSourceFindingPanel(findings) {
   </aside>`
 }
 
-// Public so render.js can mount it into the global overlay slot
-// (`#bundle-source-overlay-slot` in index.html). The modal needs
-// to overlay any view — the finding-card's [Code] shortcut
-// pops it from the findings view without switching the user to
-// the bundles view first.
-export function renderBundleSourceModal() {
-  const path = state.bundleSourceFile
-  if (!path) return nothing
-  // In the Code slide the source already renders inline in the
-  // slide body; suppress the modal so it doesn't stack over the
-  // slide. The slide owns bundleSourceFile while it's active and
-  // resets it on slide exit (events.js's slide-back handler).
-  if (state.bundleDetailsTab === 'code') return nothing
-  const sources = bundleSourcesAsMap(state.bundleDetails)
-  const content = sources.get(path)
-  // Find this file's matched findings (live or trash, depending on
-  // showDeleted) and bucket by line so the gutter can stamp dots.
-  // The map is also passed to the side panel: clicking a dot picks
-  // the first finding on that line by default.
+// Per-file findings for the source viewer: the flat list (indexed
+// for the side panel) + a line→entries map for the gutter dots.
+// Shared by the source-viewer modal, the Code slide's right pane,
+// and the Search slide's right sidebar. Empty until the async hash
+// pass populates `details.fileHashes`.
+function bundleViewerFindings(details, path, content) {
   const fileFindings = []
   const lineFindings = new Map()
-  if (typeof content === 'string' && state.bundleDetails?.fileHashes) {
-    const matches = bundleFindingsByFile(state.bundleDetails.fileHashes, 'issues')
+  if (typeof content === 'string' && details?.fileHashes) {
+    const matches = bundleFindingsByFile(details.fileHashes, 'issues')
     const onThisFile = matches.get(path) ?? []
     for (let i = 0; i < onThisFile.length; i++) {
       const f = onThisFile[i]
@@ -727,6 +714,30 @@ export function renderBundleSourceModal() {
       }
     }
   }
+  return { fileFindings, lineFindings }
+}
+
+// Public so render.js can mount it into the global overlay slot
+// (`#bundle-source-overlay-slot` in index.html). The modal needs
+// to overlay any view — the finding-card's [Code] shortcut
+// pops it from the findings view without switching the user to
+// the bundles view first.
+export function renderBundleSourceModal() {
+  const path = state.bundleSourceFile
+  if (!path) return nothing
+  // In the Code and Search slides the source already renders inline
+  // (Code's right pane / Search's right sidebar); suppress the modal
+  // so it doesn't stack over the slide. The slide owns
+  // bundleSourceFile while it's active and resets it on slide exit
+  // (events.js's tab-switch handler).
+  if (state.bundleDetailsTab === 'code' || state.bundleDetailsTab === 'search') return nothing
+  const sources = bundleSourcesAsMap(state.bundleDetails)
+  const content = sources.get(path)
+  // Find this file's matched findings (live or trash, depending on
+  // showDeleted) and bucket by line so the gutter can stamp dots.
+  // The map is also passed to the side panel: clicking a dot picks
+  // the first finding on that line by default.
+  const { fileFindings, lineFindings } = bundleViewerFindings(state.bundleDetails, path, content)
   return html`<div class="bundle-source-overlay">
     <div class=${classMap({ 'bundle-source-modal': true, 'with-panel': state.bundleSourceFindingIdx != null })}>
       <header class="bundle-source-bar">
@@ -1114,21 +1125,7 @@ function renderBundleCodeView(details) {
   // the modal uses; the panel renders inside the slide rather
   // than as an overlay so the user can read source + finding
   // details side by side.
-  const fileFindings = []
-  const lineFindings = new Map()
-  if (typeof content === 'string' && details.fileHashes) {
-    const matches = bundleFindingsByFile(details.fileHashes, 'issues')
-    const onThisFile = matches.get(path) ?? []
-    for (let i = 0; i < onThisFile.length; i++) {
-      const f = onThisFile[i]
-      fileFindings.push(f)
-      const ln = parseInt(f.line, 10)
-      if (Number.isFinite(ln) && ln > 0) {
-        if (!lineFindings.has(ln)) lineFindings.set(ln, [])
-        lineFindings.get(ln).push({ f, idx: i })
-      }
-    }
-  }
+  const { fileFindings, lineFindings } = bundleViewerFindings(details, path, content)
   // Per-file finding index for the tree's right-side count chips
   // and the Issues-mode hidden-when-empty gate. Computed once and
   // reused — the tree walk reads it as Map<originalPath, Finding[]>.
@@ -1194,8 +1191,8 @@ function renderBundleCodeView(details) {
 // SEARCH_MAX_TOTAL_HITS matches or SEARCH_MAX_FILES files and flag
 // the result set as truncated. Lines clip to SEARCH_MAX_LINE chars
 // (minified bundles ship single 100k-char lines).
-const SEARCH_MAX_TOTAL_HITS = 600
-const SEARCH_MAX_FILES = 60
+const SEARCH_MAX_TOTAL_HITS = 2000
+const SEARCH_MAX_FILES = 200
 const SEARCH_MAX_LINE = 400
 const SEARCH_MAX_MARKS_PER_LINE = 50
 
@@ -1215,18 +1212,20 @@ function searchContextRadius(totalHits) {
 // (stricter, consistent with the rest of the codebase); fall back to
 // legacy mode for the patterns `u` rejects but a user reasonably
 // types as a plain regex — a bare `{` / `}`, a redundant escape — so
-// searching for those literals still works. Returns `{ re }` or
-// `{ error }`.
-function compileSearchRegex(pattern) {
+// searching for those literals still works. `i` rides in unless the
+// case-sensitivity toggle is on. Returns `{ re }` or `{ error }`.
+function compileSearchRegex(pattern, caseSensitive) {
+  const unicodeFlags = caseSensitive ? 'gu' : 'giu'
+  const legacyFlags = caseSensitive ? 'g' : 'gi'
   try {
-    return { re: new RegExp(pattern, 'giu') }
+    return { re: new RegExp(pattern, unicodeFlags) }
   } catch {
     try {
       // Intentionally legacy (no `u`): `u` mode rejects patterns a
       // user reasonably types to search code — a bare `{` / `}`, a
       // redundant escape — and we want those to match as literals.
       // eslint-disable-next-line require-unicode-regexp
-      return { re: new RegExp(pattern, 'gi') }
+      return { re: new RegExp(pattern, legacyFlags) }
     } catch (err) {
       return { error: err.message }
     }
@@ -1234,13 +1233,14 @@ function compileSearchRegex(pattern) {
 }
 
 // Build a per-line matcher: `.ranges(line)` returns the [start,end]
-// character spans that match, capped per line. Substring mode is a
-// case-insensitive `indexOf` walk; regex mode execs the compiled
-// pattern globally, skipping zero-width matches so `^` / `$` / `a*`
-// can't spin. Returns `{ error }` when the regex doesn't compile.
-function buildSearchMatcher(query, useRegex) {
+// character spans that match, capped per line. Substring mode is an
+// `indexOf` walk (case-folded unless `caseSensitive`); regex mode
+// execs the compiled pattern globally, skipping zero-width matches so
+// `^` / `$` / `a*` can't spin. Returns `{ error }` when the regex
+// doesn't compile.
+function buildSearchMatcher(query, useRegex, caseSensitive) {
   if (useRegex) {
-    const compiled = compileSearchRegex(query)
+    const compiled = compileSearchRegex(query, caseSensitive)
     if (compiled.error) return { error: compiled.error }
     const { re } = compiled
     return {
@@ -1257,11 +1257,11 @@ function buildSearchMatcher(query, useRegex) {
       },
     }
   }
-  const needle = query.toLowerCase()
+  const needle = caseSensitive ? query : query.toLowerCase()
   const len = needle.length
   return {
     ranges(line) {
-      const hay = line.toLowerCase()
+      const hay = caseSensitive ? line : line.toLowerCase()
       const out = []
       let from = 0
       let idx
@@ -1379,7 +1379,9 @@ function renderSearchFile(fileResult, prefix, radius) {
   const windows = buildSearchWindows(hits, lines.length, radius)
   const hitRanges = new Map(hits.map((h) => [h.ln, h.ranges]))
   const firstHit = hits[0].ln
-  return html`<section class="bundle-search-file">
+  // Highlight the card whose source is open in the right sidebar.
+  const isCurrent = path === state.bundleSourceFile
+  return html`<section class=${classMap({ 'bundle-search-file': true, current: isCurrent })}>
     <header class="bundle-search-file-head">
       <button
         type="button"
@@ -1399,17 +1401,18 @@ function renderSearchFile(fileResult, prefix, radius) {
 
 // Scan every source for the active query, collecting per-file hit
 // lines (capped), then render file groups with context snippets.
-function renderBundleSearchResults(sources, query, useRegex) {
+function renderBundleSearchResults(sources, query, useRegex, caseSensitive, showContext) {
   if (!query) {
     return html`<div class="bundle-search-results">
       <div class="bundle-search-hint">
         Search across every source in this bundle. Each match shows the surrounding
         lines for context — fewer matches get more context. Toggle
-        <span class="bundle-search-hint-kbd">.*</span> to match by regular expression.
+        <span class="bundle-search-hint-kbd">Aa</span> for case-sensitive and
+        <span class="bundle-search-hint-kbd">.*</span> for regular-expression matching.
       </div>
     </div>`
   }
-  const matcher = buildSearchMatcher(query, useRegex)
+  const matcher = buildSearchMatcher(query, useRegex, caseSensitive)
   if (matcher.error) {
     return html`<div class="bundle-search-results">
       <div class="bundle-search-error">
@@ -1446,7 +1449,10 @@ function renderBundleSearchResults(sources, query, useRegex) {
       <div class="bundle-search-empty">No matches.</div>
     </div>`
   }
-  const radius = searchContextRadius(totalHits)
+  // Context off → radius 0: windows collapse to the matched lines
+  // themselves (adjacent matches still merge into one block; the gap
+  // rule keeps non-adjacent ones apart).
+  const radius = showContext ? searchContextRadius(totalHits) : 0
   const fileCount = fileResults.length
   return html`<div class="bundle-search-results">
     <div class="bundle-search-summary">
@@ -1459,9 +1465,46 @@ function renderBundleSearchResults(sources, query, useRegex) {
   </div>`
 }
 
-// Search tab body — the github-style search bar over a scrolling
-// results column. Reads its own query state (state.bundleSearchQuery
-// / bundleSearchRegex) so it never fights the Code tab's rail filter.
+// Right sidebar for the Search tab — the clicked result's source,
+// docked beside the results instead of in a popup. Reuses the
+// modal's chrome (bar / body / code-wrap + finding panel) and the
+// same renderBundleSourceLines + renderBundleSourceFindingPanel
+// pipeline, so line gutter, prism highlight, per-line finding dots
+// and the finding panel behave identically. Renders only once a
+// result is clicked (state.bundleSourceFile set); the × button
+// clears it via the shared bundle-source-close action.
+function renderBundleSearchSide(details, sources) {
+  const path = state.bundleSourceFile
+  if (!path) return nothing
+  const content = sources.get(path)
+  const { fileFindings, lineFindings } = bundleViewerFindings(details, path, content)
+  return html`<aside class=${classMap({ 'bundle-search-side': true, 'with-panel': state.bundleSourceFindingIdx != null })}>
+    <header class="bundle-source-bar">
+      <div class="bundle-source-title" title=${path}>${path}</div>
+      <button
+        type="button"
+        class="bundle-source-close"
+        data-action="bundle-source-close"
+        title="Close source viewer (Esc)"
+        aria-label="Close source viewer"
+      >×</button>
+    </header>
+    <div class="bundle-source-body">
+      <div class="bundle-source-code-wrap">
+        ${typeof content === 'string'
+          ? renderBundleSourceLines(content, path, details.integrity, lineFindings)
+          : html`<div class="bundle-source-empty">Source content not bundled.</div>`}
+      </div>
+      ${renderBundleSourceFindingPanel(fileFindings)}
+    </div>
+  </aside>`
+}
+
+// Search tab body — the github-style search bar over a results
+// column, with the clicked result's source docked in a right
+// sidebar. Reads its own query state (state.bundleSearchQuery /
+// bundleSearchRegex / bundleSearchCase) so it never fights the Code
+// tab's rail filter.
 function renderBundleSearchView(details) {
   if (!details || (!details.json && !details.bundle)) return nothing
   const sources = bundleSourcesAsMap(details)
@@ -1470,11 +1513,26 @@ function renderBundleSearchView(details) {
       <div class="bundle-code-empty">This bundle doesn't carry any source content.</div>
     </div>`
   }
+  // Context toggle lives in the header, to the right of the search
+  // field (not inside it) — a show/hide pill modelled on the Graph
+  // tab's "All files" switch. On (default) shows the lines around
+  // each match; off collapses to just the matched lines.
+  const showContext = state.bundleSearchContext
   return html`<div class="bundle-search-view">
     <div class="bundle-search-bar-row">
       <bundle-search></bundle-search>
+      <button
+        type="button"
+        class=${classMap({ 'bundle-search-context-toggle': true, on: showContext })}
+        data-bundle-search-context
+        aria-pressed=${String(showContext)}
+        title=${showContext ? 'Showing context lines — click to show only matches' : 'Showing only match lines — click to add context'}
+      ><span>Context</span><span class="bundle-search-switch" aria-hidden="true"></span></button>
     </div>
-    ${renderBundleSearchResults(sources, state.bundleSearchQuery, state.bundleSearchRegex)}
+    <div class="bundle-search-main">
+      ${renderBundleSearchResults(sources, state.bundleSearchQuery, state.bundleSearchRegex, state.bundleSearchCase, showContext)}
+      ${renderBundleSearchSide(details, sources)}
+    </div>
   </div>`
 }
 

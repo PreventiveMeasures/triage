@@ -348,6 +348,8 @@ export async function addFiles(files) {
     state.bundleCodeSearchMode = 'files'
     state.bundleSearchQuery = ''
     state.bundleSearchRegex = false
+    state.bundleSearchCase = false
+    state.bundleSearchContext = true
     state.shownTriage = null
     graph2.showAll = true
     persistLastBundle(lastBundleIntegrity)

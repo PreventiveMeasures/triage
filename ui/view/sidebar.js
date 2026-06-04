@@ -615,6 +615,8 @@ async function onSidebarClick(e) {
     state.bundleCodeSearchMode = 'files'
     state.bundleSearchQuery = ''
     state.bundleSearchRegex = false
+    state.bundleSearchCase = false
+    state.bundleSearchContext = true
     state.bundleDetailsTab = 'overview'
     graph2.showAll = true
     state.shownTriage = null

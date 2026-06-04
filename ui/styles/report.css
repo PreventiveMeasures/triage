@@ -955,17 +955,65 @@ bundle-code-search {
 }
 .bundle-search-bar-row {
   flex-shrink: 0;
+  display: flex; align-items: center; gap: .75rem;
+  justify-content: space-between;
   padding: .6rem .75rem;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
 }
+/* Context show/hide pill — modelled on the Graph tab's "All files"
+   toggle (.g2-topbar-toggle + .g2-switch), replicated here because
+   that chrome lives in the graph component's shadow DOM. Pinned to
+   the header's right edge by the bar row's space-between. */
+.bundle-search-context-toggle {
+  flex-shrink: 0;
+  display: inline-flex; align-items: center; gap: 8px;
+  height: 30px; box-sizing: border-box;
+  padding: 5px 10px;
+  background: rgb(from var(--text) r g b / .04);
+  border: 1px solid var(--border); border-radius: 6px;
+  color: var(--muted);
+  font-size: .72rem; font-weight: 500; line-height: 1;
+  white-space: nowrap;
+
+  &:hover { color: var(--text); border-color: var(--accent); }
+  &.on { color: var(--text); }
+  &.on .bundle-search-switch { background: color-mix(in oklch, var(--accent) 22%, transparent); }
+  &.on .bundle-search-switch::after { transform: translateX(12px); background: var(--accent); }
+}
+.bundle-search-switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 26px; height: 14px;
+  background: var(--border);
+  border-radius: 8px;
+  transition: background .15s;
+
+  &::after {
+    content: '';
+    position: absolute;
+    top: 2px; left: 2px;
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: var(--muted);
+    transition: transform .15s, background .15s;
+  }
+}
+/* Below the bar: results column on the left, the clicked result's
+   source docked in a right sidebar. The sidebar only renders once a
+   result is opened, so the results take the full width until then. */
+.bundle-search-main {
+  flex: 1; min-height: 0;
+  display: flex;
+}
 /* The `<bundle-search>` host IS the flex shell (element selector,
    mirrors `bundle-code-search`): lens icon, query input, clear, and
-   the `.*` regex toggle. Capped width so the field doesn't stretch
-   across a wide viewport. */
+   the `Aa` case + `.*` regex toggles. Grows to fill the header up to
+   a cap so the field doesn't stretch across a wide viewport, while
+   the Context pill keeps its place at the right edge. */
 bundle-search {
+  flex: 0 1 720px; min-width: 0;
   display: flex; align-items: center;
-  max-width: 720px;
   padding: 0 .25rem 0 .55rem;
   background: rgb(from var(--text) r g b / .04);
   border: 1px solid var(--border); border-radius: 6px;
@@ -1009,7 +1057,8 @@ bundle-search {
 }
 /* `.*` regex modifier — same borderless icon-button chrome as
    `.bundle-code-search-mode` / `.search-negate-btn`; accent tint when
-   active. Monospace glyph so it reads as a regex affordance. */
+   active. Monospace glyph so each reads as its affordance (`Aa`
+   case, `.*` regex). */
 .bundle-search-mod {
   flex-shrink: 0;
   height: 22px; min-width: 26px;
@@ -1021,6 +1070,8 @@ bundle-search {
   font-size: .82rem; font-weight: 700; line-height: 1;
   transition: background .12s, color .12s;
 
+  & + & { margin-left: 2px; }
+
   &:hover { color: var(--text); background: rgb(from var(--text) r g b / .08); }
   &.active {
     color: var(--accent);
@@ -1029,10 +1080,21 @@ bundle-search {
 }
 
 .bundle-search-results {
-  flex: 1; min-height: 0;
+  flex: 1; min-width: 0; min-height: 0;
   overflow: auto;
   -webkit-app-region: no-drag; app-region: no-drag;
   padding: .6rem .75rem 1.5rem;
+}
+/* Right sidebar — the open result's source, reusing the modal's
+   `.bundle-source-*` chrome inside. Fixed-ish basis so the results
+   keep a stable column; shrinks on narrow viewports but never below
+   a readable width. */
+.bundle-search-side {
+  flex: 0 0 clamp(400px, 48%, 820px);
+  min-width: 0;
+  display: flex; flex-direction: column;
+  border-left: 1px solid var(--border);
+  background: var(--bg);
 }
 .bundle-search-hint,
 .bundle-search-empty {
@@ -1089,11 +1151,16 @@ bundle-search {
   background: var(--surface);
   overflow: hidden;
 }
+/* The file whose source is open in the right sidebar. */
+.bundle-search-file.current { border-color: var(--accent); }
 .bundle-search-file-head {
   display: flex; align-items: center; gap: .5rem;
   padding: .25rem .4rem .25rem .5rem;
   border-bottom: 1px solid var(--border);
   background: rgb(from var(--text) r g b / .03);
+}
+.bundle-search-file.current .bundle-search-file-head {
+  background: color-mix(in oklch, var(--accent) 12%, transparent);
 }
 .bundle-search-file-name {
   flex: 1; min-width: 0;

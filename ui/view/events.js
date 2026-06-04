@@ -135,10 +135,12 @@ report.addEventListener('click', (e) => {
     const line = lineAttr ? parseInt(lineAttr, 10) : null
     state.bundleSourceFile = file || null
     state.bundleSourceFindingIdx = null
-    // The modal suppresses itself in the Code tab (slide renders the
-    // source inline); flip back to default so it surfaces even if the
-    // user is parked on Code.
-    if (state.bundleDetailsTab === 'code') state.bundleDetailsTab = 'overview'
+    // The modal suppresses itself in the Code + Search tabs (those
+    // slides render the source inline); flip back to default so it
+    // surfaces even if the user is parked on one of them.
+    if (state.bundleDetailsTab === 'code' || state.bundleDetailsTab === 'search') {
+      state.bundleDetailsTab = 'overview'
+    }
     // After the modal mounts, scroll its line-row to the top of the
     // viewport (same shape Code-search hits use).
     const scrollToFindingLine = () => {
@@ -354,6 +356,15 @@ report.addEventListener('click', (e) => {
       if (state.selectedBundle) persistLastBundle(state.selectedBundle, tab)
       render()
     }
+    return
+  }
+  // Search tab — Context show/hide pill in the header. Flips whether
+  // matches render with surrounding lines or just the match lines;
+  // preserve the results scroll so the toggle doesn't jump the view.
+  const searchContext = pathClosest(e, '[data-bundle-search-context]')
+  if (searchContext) {
+    state.bundleSearchContext = !state.bundleSearchContext
+    renderPreservingScrollOf('.bundle-search-results')
     return
   }
   // Advisories tab — first-visit consent confirm. Writes the
@@ -1559,6 +1570,12 @@ report.addEventListener('bundle-search-mode-change', (e) => {
 // plain-substring and regular-expression matching.
 report.addEventListener('bundle-search-regex-toggle', () => {
   state.bundleSearchRegex = !state.bundleSearchRegex
+  render()
+})
+// …and this when the `Aa` modifier is clicked — flip matching
+// between case-insensitive (default) and case-sensitive.
+report.addEventListener('bundle-search-case-toggle', () => {
+  state.bundleSearchCase = !state.bundleSearchCase
   render()
 })
 // `<findings-sort>` (kind="findings") and `<entity-sort>` (kind=
