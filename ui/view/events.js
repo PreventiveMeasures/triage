@@ -1161,6 +1161,34 @@ function setKanbanPopoverGid(next) {
   })()
 }
 
+// Move the open kanban popover by `direction` (+1 = next, -1 =
+// previous) through the cards of the SAME column as the currently-
+// shown finding, so the arrow keys step between findings sharing a
+// triage state without crossing into another column. Clamps at the
+// column ends (no wrap). Mirrors navigateFocus but scopes the walk
+// to one `.kanban-column` rather than the flat focus queue. The
+// card-to-card hop swaps the modal contents in place (no view
+// transition — see setKanbanPopoverGid's plain-render branch).
+function navigateKanban(direction) {
+  const current = kanbanCardEl(state.kanbanPopoverGid)
+  const column = current?.closest('.kanban-column')
+  if (!column) return
+  const cards = [...column.querySelectorAll('.kanban-card[data-kanban-source]')]
+  const idx = cards.indexOf(current)
+  if (idx < 0) return
+  const nextIdx = Math.min(Math.max(idx + direction, 0), cards.length - 1)
+  if (nextIdx === idx) return
+  const nextGid = cards[nextIdx].dataset.gid
+  if (!nextGid) return
+  setKanbanPopoverGid(nextGid)
+  // Keep the now-open card in view inside its (independently
+  // scrolling) column body so the modal's close transition morphs
+  // back into an on-screen card. `nearest` minimises movement; the
+  // modal covers the board, so the scroll is invisible until close.
+  const card = kanbanCardEl(nextGid)
+  if (card) card.scrollIntoView({ block: 'nearest', behavior: 'instant' })
+}
+
 report.addEventListener('click', (e) => {
   // × button inside the modal — close. Listed first so the card
   // toggle below doesn't intercept clicks landing here when the
@@ -1272,10 +1300,16 @@ report.addEventListener('click', (e) => {
   if (gid) setFocusGid(gid)
 })
 
-// Keyboard navigation through the focus-view queue. Bound to
-// document so the key fires from anywhere, guarded to act only when
-// the focus view is mounted, the user isn't typing in a text field
-// (Search, Repo, etc.), and no modal dialog is open.
+// Arrow-key navigation between findings. Bound to document so the key
+// fires from anywhere, guarded to act only on an arrow-navigable
+// surface, when the user isn't typing in a text field (Search, Repo,
+// etc.), and no modal dialog is open. Two surfaces share the handler:
+//
+//   - Focus view — walks the right-hand "up next" queue.
+//   - Kanban view with the detail popover open — walks the cards in
+//     the open card's own column, stepping the popover through the
+//     findings that share its triage state. With no popover up there's
+//     nothing anchored to step from, so the arrows stay inert.
 //
 // Bound keys (all clamp at the ends, no wrap):
 //   ← / ArrowLeft   → previous finding
@@ -1297,13 +1331,23 @@ function focusNavBlocked(e) {
     if (!el || el.nodeType !== 1) continue
     const tag = el.tagName
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true
+    // App dialogs (comment / fix-link / …) render their <dialog> inside
+    // a Lit shadow root, so the light-DOM querySelector above can't see
+    // them. showModal() traps focus inside, so the open <dialog> is
+    // always on a keydown's composed path while it's up — catch it here
+    // regardless of which control holds focus (the INPUT/TEXTAREA check
+    // alone misses a focused button, e.g. fix-link's Save/Cancel).
+    if (tag === 'DIALOG' && el.open) return true
     if (el.isContentEditable) return true
   }
   return false
 }
 
 document.addEventListener('keydown', (e) => {
-  if (state.viewMode !== 'focus' || state.currentView !== 'findings') return
+  if (state.currentView !== 'findings') return
+  const inFocus = state.viewMode === 'focus'
+  const inKanban = state.viewMode === 'kanban' && state.kanbanPopoverGid !== null
+  if (!inFocus && !inKanban) return
   if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return
   if (focusNavBlocked(e)) return
   let direction = 0
@@ -1311,7 +1355,8 @@ document.addEventListener('keydown', (e) => {
   else if (e.key === 'ArrowLeft') direction = -1
   else return
   e.preventDefault()
-  navigateFocus(direction)
+  if (inFocus) navigateFocus(direction)
+  else navigateKanban(direction)
 })
 
 // mark-color fires from `<color-marker>` (composed:true) when one of
