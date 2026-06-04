@@ -245,11 +245,12 @@
 /* Per-column accent — the header label adopts the same bucket color
    as .triage-state-btn.active.triage-state-* so columns read at a
    glance even without their labels. */
-.kanban-column-untriaged .kanban-column-header .label { color: var(--text); }
-.kanban-column-fixed     .kanban-column-header .label { color: var(--green, #4ade80); }
-.kanban-column-invalid   .kanban-column-header .label { color: var(--muted); }
-.kanban-column-deleted   .kanban-column-header .label { color: var(--critical); }
-.kanban-column-ignored   .kanban-column-header .label { color: var(--accent, #2563eb); }
+.kanban-column-untriaged  .kanban-column-header .label { color: var(--text); }
+.kanban-column-inprogress .kanban-column-header .label { color: var(--warning, #d97706); }
+.kanban-column-fixed      .kanban-column-header .label { color: var(--green, #4ade80); }
+.kanban-column-invalid    .kanban-column-header .label { color: var(--muted); }
+.kanban-column-deleted    .kanban-column-header .label { color: var(--critical); }
+.kanban-column-ignored    .kanban-column-header .label { color: var(--accent, #2563eb); }
 
 .kanban-column-body {
   flex: 1 1 auto;

@@ -17,6 +17,9 @@
 
 :host { display: block; }
 :host(.hidden) { display: none; }
+/* Resolved/dismissed buckets dim when their bucket view is shown.
+   In-progress is intentionally NOT dimmed — it's active work, not a
+   settled state, so it reads at full strength like the live view. */
 :host(.triage-fixed),
 :host(.triage-invalid),
 :host(.triage-deleted),
@@ -274,6 +277,7 @@
   &.tab-mark-gray.active { border-color: var(--text); }
 
   &.tab-deleted .tab-label { text-decoration: line-through; opacity: .6; }
+  &.tab-inprogress .tab-label::after { content: ' ◐'; opacity: .6; }
   &.tab-fixed .tab-label { opacity: .65; }
   &.tab-fixed .tab-label::after { content: ' ✓'; opacity: .6; }
   &.tab-invalid .tab-label { opacity: .65; }
@@ -383,10 +387,11 @@
   letter-spacing: .05em;
   font-weight: 600;
 }
-.mark-triage-menu.triage-state-deleted { border-color: var(--critical); color: var(--critical); }
-.mark-triage-menu.triage-state-fixed   { border-color: var(--green, #4ade80); color: var(--green, #4ade80); }
-.mark-triage-menu.triage-state-invalid { border-color: var(--muted); color: var(--text); }
-.mark-triage-menu.triage-state-ignored { border-color: var(--accent, #2563eb); color: var(--accent, #2563eb); }
+.mark-triage-menu.triage-state-deleted    { border-color: var(--critical); color: var(--critical); }
+.mark-triage-menu.triage-state-fixed      { border-color: var(--green, #4ade80); color: var(--green, #4ade80); }
+.mark-triage-menu.triage-state-inprogress { border-color: var(--warning, #d97706); color: var(--warning, #d97706); }
+.mark-triage-menu.triage-state-invalid    { border-color: var(--muted); color: var(--text); }
+.mark-triage-menu.triage-state-ignored    { border-color: var(--accent, #2563eb); color: var(--accent, #2563eb); }
 .triage-menu[popover] {
   position: fixed;
   inset: auto;
@@ -419,6 +424,7 @@
 }
 .triage-menu-item:hover { background: var(--surface); }
 .triage-menu-item.active::before { content: '✓ '; color: var(--accent); }
+.triage-menu-inprogress:hover { color: var(--warning, #d97706); }
 .triage-menu-fixed:hover   { color: var(--green, #4ade80); }
 .triage-menu-invalid:hover { color: var(--muted); }
 .triage-menu-deleted:hover { color: var(--critical); }
@@ -472,6 +478,11 @@
   color: var(--accent);
 }
 :host([context='focus']) .triage-menu-item:hover { background: var(--surface-active); }
+:host([context='focus']) .triage-menu-inprogress.active {
+  background: rgb(from var(--warning, #d97706) r g b / .12);
+  border-color: var(--warning, #d97706);
+  color: var(--warning, #d97706);
+}
 :host([context='focus']) .triage-menu-fixed.active {
   background: rgb(from var(--green, #4ade80) r g b / .12);
   border-color: var(--green, #4ade80);

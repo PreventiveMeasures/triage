@@ -7,7 +7,7 @@ const VALID_VIEW_MODES = new Set(['grouped', 'list', 'table', 'kanban', 'focus']
 
 export type ViewMode = 'table' | 'list' | 'grouped' | 'kanban' | 'focus'
 export type CurrentView = 'findings' | 'files' | 'bundles'
-export type TriageBucket = 'fixed' | 'invalid' | 'deleted'
+export type TriageBucket = 'inprogress' | 'fixed' | 'invalid' | 'deleted'
 
 // One finding's triage annotations, keyed by `tabKey(f)` in
 // `state.triage`. Unset fields are absent (not empty): the helpers in
@@ -304,7 +304,7 @@ export const state: State = store<State>({
   // on the primary tab.
   packageDetailsTab: 'overview',
   // Sub-view inside the package Issues slide — null = live
-  // (untriaged + fixed, the default + the same set the rest of
+  // (untriaged + in-progress + fixed, the default + the same set the rest of
   // the package surface counts as "issues"), 'invalid' / 'deleted'
   // = the corresponding triage bucket. Surfaced as `[Invalid |
   // Deleted]` tabs in the slide's header, only when the bucket
@@ -439,9 +439,9 @@ export const state: State = store<State>({
   // `deleted: true` shape are migrated to `triage: 'deleted'` on load.
   triage: new Map<string, TriageEntry>(),
   // Currently displayed triage bucket — null = live view (no triage
-  // state); 'fixed' / 'invalid' / 'deleted' = filter to that bucket
-  // only. The toolbar's 4-segment selector flips between the four
-  // states.
+  // state); 'inprogress' / 'fixed' / 'invalid' / 'deleted' = filter to
+  // that bucket only. The toolbar's segmented selector flips between
+  // these states (+ 'ignored' on the findings tab).
   shownTriage: null,
   nextFindingId: 0,
   // Ephemeral per-render state — which tab is active within each dedup

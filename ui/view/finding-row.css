@@ -50,6 +50,9 @@
 :host(.mark-green) .row { background: var(--mark-green-bg); }
 :host(.mark-gray) .row  { background: var(--mark-gray-bg); }
 :host(.has-conflict) .row { outline: 2px dashed var(--accent); outline-offset: -2px; }
+/* Resolved/dismissed buckets dim when their bucket view is shown.
+   In-progress is intentionally NOT dimmed — it's active work, not a
+   settled state, so it reads at full strength like the live view. */
 :host(.triage-fixed),
 :host(.triage-invalid),
 :host(.triage-deleted),
@@ -174,6 +177,7 @@
   &.tab-mark-gray.active { border-color: var(--text); }
 
   &.tab-deleted .tab-label { text-decoration: line-through; opacity: .6; }
+  &.tab-inprogress .tab-label::after { content: ' ◐'; opacity: .6; }
   &.tab-fixed .tab-label { opacity: .65; }
   &.tab-fixed .tab-label::after { content: ' ✓'; opacity: .6; }
   &.tab-invalid .tab-label { opacity: .65; }
@@ -290,10 +294,11 @@
   letter-spacing: .05em;
   font-weight: 600;
 }
-.mark-triage-menu.triage-state-deleted { border-color: var(--critical); color: var(--critical); }
-.mark-triage-menu.triage-state-fixed   { border-color: var(--green, #4ade80); color: var(--green, #4ade80); }
-.mark-triage-menu.triage-state-invalid { border-color: var(--muted); color: var(--text); }
-.mark-triage-menu.triage-state-ignored { border-color: var(--accent, #2563eb); color: var(--accent, #2563eb); }
+.mark-triage-menu.triage-state-deleted    { border-color: var(--critical); color: var(--critical); }
+.mark-triage-menu.triage-state-fixed      { border-color: var(--green, #4ade80); color: var(--green, #4ade80); }
+.mark-triage-menu.triage-state-inprogress { border-color: var(--warning, #d97706); color: var(--warning, #d97706); }
+.mark-triage-menu.triage-state-invalid    { border-color: var(--muted); color: var(--text); }
+.mark-triage-menu.triage-state-ignored    { border-color: var(--accent, #2563eb); color: var(--accent, #2563eb); }
 /* Native popover — fixed position set inline by events.js's
    beforetoggle listener. inset:auto + margin:0 zero out the UA's
    auto-centering of popover="auto" so our coords take effect. */
@@ -331,6 +336,7 @@
 }
 .triage-menu-item:hover { background: var(--surface); }
 .triage-menu-item.active::before { content: '✓ '; color: var(--accent); }
+.triage-menu-inprogress:hover { color: var(--warning, #d97706); }
 .triage-menu-fixed:hover   { color: var(--green, #4ade80); }
 .triage-menu-invalid:hover { color: var(--muted); }
 .triage-menu-deleted:hover { color: var(--critical); }

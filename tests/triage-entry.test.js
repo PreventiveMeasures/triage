@@ -21,6 +21,7 @@ const {
 
 describe('bucketOf', () => {
   it('reads the triage bucket', () => {
+    assert.equal(bucketOf({ triage: 'inprogress' }), 'inprogress')
     assert.equal(bucketOf({ triage: 'fixed' }), 'fixed')
     assert.equal(bucketOf({ triage: 'invalid' }), 'invalid')
     assert.equal(bucketOf({ triage: 'deleted' }), 'deleted')
@@ -68,6 +69,10 @@ describe('normalizeEntry', () => {
     assert.deepEqual(
       normalizeEntry({ color: 'red', comment: 'c', fix: 'pr', triage: 'fixed' }),
       { color: 'red', triage: 'fixed', comment: 'c', fix: 'pr' },
+    )
+    assert.deepEqual(
+      normalizeEntry({ triage: 'inprogress' }),
+      { triage: 'inprogress' },
     )
   })
   it('migrates legacy deleted and never re-emits the boolean', () => {

@@ -1,5 +1,5 @@
-// `<triage-selector>` — Fixed / Invalid / Deleted (+ Ignored for the
-// findings tab) bucket-switcher buttons, shared by the findings
+// `<triage-selector>` — In progress / Fixed / Invalid / Deleted
+// (+ Ignored for the findings tab) bucket-switcher buttons, shared by the findings
 // toolbar, the graph topbar, and the Packages / Repositories page
 // toolbars. All read `state.shownTriage` and emit the same button
 // shape; variants differ only in an extra marker class
@@ -22,12 +22,13 @@
 //
 // Properties (`attribute: false` — passed by reference via Lit's
 // `.prop=${...}` property binding; no attribute reflection):
-//   * `counts` — `{ fixed?, invalid?, deleted?, ignored? }`. Missing
-//                or zero buckets render no button.
+//   * `counts` — `{ inprogress?, fixed?, invalid?, deleted?, ignored? }`.
+//                Missing or zero buckets render no button.
 //   * `states` — array picking which buckets the selector renders.
-//                Defaults to all four; Packages / Repositories pass
-//                `['fixed', 'invalid', 'deleted']` because ignore is
-//                per-report and treated as untriaged in those views.
+//                Defaults to all five; Packages / Repositories pass
+//                `['inprogress', 'fixed', 'invalid', 'deleted']` because
+//                ignore is per-report and treated as untriaged in those
+//                views.
 //
 // Attributes:
 //   * `variant` — adds an extra class onto the host element so
@@ -41,11 +42,17 @@ import { StateElement, html } from '@rray/frontend/state-element'
 import { ensureHostAria } from './host-aria.js'
 import { state } from '#client/index.js'
 
-const DEFAULT_STATES = ['fixed', 'invalid', 'deleted', 'ignored']
+const DEFAULT_STATES = ['inprogress', 'fixed', 'invalid', 'deleted', 'ignored']
 const VARIANT_CLASS = {
   graph:    'graph2-triage-selector',
   packages: 'packages-triage-selector',
 }
+
+// Display labels for bucket keys that don't title-case cleanly from
+// the key alone (multi-word). Everything else falls back to
+// capitalize-first-letter so single-word keys need no entry here.
+const STATE_LABELS = { inprogress: 'In progress' }
+const labelFor = (s) => STATE_LABELS[s] ?? (s.charAt(0).toUpperCase() + s.slice(1))
 
 class TriageSelector extends StateElement {
   static properties = {
@@ -97,13 +104,14 @@ class TriageSelector extends StateElement {
       // so the user can always click the active button to exit
       // its bucket even when the count drops mid-session.
       if (n === 0 && !active) return nothing
+      const label = labelFor(s)
       return html`<button
         type="button"
         class=${classMap({ 'triage-state-btn': true, [`triage-state-${s}`]: true, active })}
         data-triage-show=${s}
-        title=${active ? `Exit ${s} view` : `Show ${s} (${n})`}
+        title=${active ? `Exit ${label.toLowerCase()} view` : `Show ${label.toLowerCase()} (${n})`}
         aria-pressed=${String(active)}
-      >${s.charAt(0).toUpperCase() + s.slice(1)} (${n})</button>`
+      >${label} (${n})</button>`
     })}`
   }
 }

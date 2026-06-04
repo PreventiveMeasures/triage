@@ -32,6 +32,12 @@
   --border: #2c2c2c; --text: #e6edf3;
   --muted: #8b949e; --accent: #58a6ff; --critical: #d8413a;
   --high: #d57422; --medium: #d29922; --low: #8b949e; --green: #3fb950;
+  /* Amber accent for the "In progress" triage state — distinct from the
+     green (fixed) / red (deleted) / blue (ignored) / muted (invalid)
+     bucket hues. Retuned per theme like --high / --medium: the dark +
+     green themes use this amber; light + pink darken it to #9a6700 so
+     the badge/label text stays legible on their pale surfaces. */
+  --warning: #d97706;
   /* Triage marker palette — single source for the four colors
      surfaced by the per-finding marker UI. Cross the shadow
      boundary so both the `<color-marker>` shadow stylesheet and
@@ -142,6 +148,9 @@ body.theme-light {
   --medium: #f0c040;
   --low: #6e7781;
   --green: #1a7f37;
+  /* Darkened amber (vs :root #d97706) so the In-progress badge/label
+     text clears contrast on the light surface. */
+  --warning: #9a6700;
   --high-bug: #a85a14;
   --bug: #6b5e52;
   --info: #218bff;
@@ -246,6 +255,9 @@ body.theme-pink {
   --medium: #f0c040;
   --low: #a13a72;
   --green: #1d8c3c;
+  /* Darkened amber (vs :root #d97706) so the In-progress badge/label
+     text clears contrast on the pale pink surface. */
+  --warning: #9a6700;
   --high-bug: #a85a14;
   --bug: #8c5e6c;
   --info: #218bff;

@@ -1030,6 +1030,7 @@ bundle-code-search {
   border: 1px solid currentcolor;
   background: transparent;
   white-space: nowrap;
+  &.triage-inprogress { color: var(--warning, #d97706); }
   &.triage-fixed   { color: var(--green, #4ade80); }
   &.triage-invalid { color: var(--muted); }
   &.triage-deleted { color: var(--critical); }
@@ -1603,6 +1604,7 @@ body.report-fullscreen {
   background: transparent;
   white-space: nowrap;
   flex-shrink: 0;
+  &.triage-inprogress { color: var(--warning, #d97706); }
   &.triage-fixed   { color: var(--green, #4ade80); }
   &.triage-invalid { color: var(--muted); }
   &.triage-deleted { color: var(--critical); }

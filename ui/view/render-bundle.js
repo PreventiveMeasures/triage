@@ -127,7 +127,7 @@ export async function computeBundleFileHashes(details) {
 // hash → finding index bundleFindingsByFile uses, bucketing each
 // finding by triage state (or 'live' when none).
 export function countBundleTriageBuckets(details) {
-  const counts = { fixed: 0, invalid: 0, deleted: 0 }
+  const counts = { inprogress: 0, fixed: 0, invalid: 0, deleted: 0 }
   if (!details?.fileHashes) return counts
   const seen = new Set()
   for (const hash of details.fileHashes.values()) {
@@ -152,7 +152,7 @@ export function countBundleTriageBuckets(details) {
 //              the three triage buckets accordingly.
 //
 //   'issues' — bundle Issues list (and the source viewer's per-line
-//              dots / panel). Always shows live + fixed + ignored;
+//              dots / panel). Always shows live + in-progress + fixed + ignored;
 //              hides invalid + deleted. A bundle built before a fix
 //              shipped is still affected; a per-report ignore signals
 //              "anticipated future removal" but the bundle is still
@@ -639,13 +639,13 @@ function renderBundleSourceFindingPanel(findings) {
   // Display-only triage badge in the header. The bundle Issues
   // filter excludes invalid/deleted, and ignored is per-report
   // (the bundle treats ignored findings as live), so the only
-  // status that surfaces here is 'fixed' — every other case
-  // (live or ignored) renders without a badge. An "Untriaged"
-  // label would conflate live + ignored, which is misleading
-  // because the user might have ignored the finding in a report
-  // even though the bundle still treats it as active.
+  // statuses that surface here are 'fixed' and 'inprogress' —
+  // every other case (live or ignored) renders without a badge. An
+  // "Untriaged" label would conflate live + ignored, which is
+  // misleading because the user might have ignored the finding in a
+  // report even though the bundle still treats it as active.
   const triage = state.triage.get(tabKey(f))?.triage
-  const triageLabel = triage === 'fixed' ? 'Fixed' : null
+  const triageLabel = triage === 'fixed' ? 'Fixed' : triage === 'inprogress' ? 'In progress' : null
   // Run meta — analyzer / model / effort / exportsMode chained
   // with `·`, same shape the report's tab-body uses (see
   // render-finding.js's `meta`). Sits to the right of the Line
@@ -1464,7 +1464,7 @@ export function renderIssuesGroupedByFile(findingsByFile, { kind, bucketKey } = 
               // tab they clicked.
               const triageLabel = (triage === 'fixed' || triage === 'invalid' || triage === 'deleted')
                 ? triage.toUpperCase()
-                : null
+                : triage === 'inprogress' ? 'In progress' : null
               const inner = html`<div class="bundle-issues-finding-head">
                 <span class=${`bundle-issue-sev sev-${sev}`}>${sev.replaceAll('_', ' ')}</span>
                 ${(() => { const lbl = formatFindingLine(finding.line); return lbl ? html`<span class="bundle-issues-finding-line">${lbl}</span>` : nothing })()}

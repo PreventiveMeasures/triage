@@ -25,7 +25,7 @@ import { decryptBundle, isEncryptedBundle } from './workspace-bundle-crypto.js'
 // Triage merge rules:
 //   - new colors / comments / fixes adopt the imported value;
 //   - identical values are no-ops;
-//   - imported `triage: 'fixed'|'invalid'|'deleted'` adopts when the
+//   - imported `triage: 'inprogress'|'fixed'|'invalid'|'deleted'` adopts when the
 //     local side has nothing — disagreements queue a conflict;
 //   - LEGACY: an export carrying only `deleted: true` (pre-bucket
 //     format) migrates to `triage: 'deleted'` on read, so old bundles
@@ -210,7 +210,7 @@ export function parseWorkspaceJson(text) {
 }
 
 // Read an imported triage entry's bucket. Preferred form is the new
-// `triage: 'fixed'|'invalid'|'deleted'` field; legacy bundles carry
+// `triage: 'inprogress'|'fixed'|'invalid'|'deleted'` field; legacy bundles carry
 // only `deleted: true`, treated as 'deleted'. Null when the entry has
 // no bucket annotation.
 export function readImportedTriageBucket(entry) {

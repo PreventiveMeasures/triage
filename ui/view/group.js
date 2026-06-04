@@ -71,7 +71,7 @@ export function findingRepo(f) {
 
 // Group-level triage rollup. User spec:
 //   1. A tab is "annotated" if it has a color AND/OR a triage state
-//      (fixed / invalid / deleted). Unannotated tabs are neutral —
+//      (inprogress / fixed / invalid / deleted). Unannotated tabs are neutral —
 //      they don't contribute to the rollup and can never cause a
 //      conflict on their own.
 //   2. Among annotated tabs, a conflict exists iff they disagree on
@@ -87,7 +87,7 @@ export function findingRepo(f) {
 //   3. Otherwise (consistent annotated tabs), the card takes the
 //      common color (if any annotated tab is colored); any annotated
 //      tab carrying a triage state puts the whole group in that
-//      bucket (fixed / invalid / deleted).
+//      bucket (inprogress / fixed / invalid / deleted).
 //   4. Click handlers enforce the inverse — see events.js.
 // Examples (where A/B/C are tabs in one dedup group):
 //   A(green, deleted), B(), C()            → no conflict, deleted, A is green
@@ -124,12 +124,13 @@ export function groupState(group) {
   const anyTriage = bucketVals.some((b) => b !== 'ignored')
   const allTriaged = annotated.length > 0 && annotated.every((t) => Boolean(t.bucket) && t.bucket !== 'ignored')
   // Common bucket — null when no consensus or live; one of
-  // 'fixed' / 'invalid' / 'deleted' / 'ignored' otherwise.
+  // 'inprogress' / 'fixed' / 'invalid' / 'deleted' / 'ignored' otherwise.
   const commonTriage = !hasConflict && bucketVals.length > 0 ? bucketVals[0] : null
   return {
     hasConflict, commonColor, anyTriage, allTriaged, commonTriage,
     // Convenience flags so downstream code that asks "is this group in
     // the trash bucket" needn't branch on commonTriage.
+    isInProgress: commonTriage === 'inprogress',
     isFixed:    commonTriage === 'fixed',
     isInvalid:  commonTriage === 'invalid',
     isDeleted:  commonTriage === 'deleted',

@@ -79,6 +79,7 @@ function makeWorkspace({ id = 'ws-1', name = 'WS', reports = [], bundles = [] } 
 
 describe('readImportedTriageBucket', () => {
   it('reads the new triage field verbatim', () => {
+    assert.equal(readImportedTriageBucket({ triage: 'inprogress' }), 'inprogress')
     assert.equal(readImportedTriageBucket({ triage: 'fixed' }), 'fixed')
     assert.equal(readImportedTriageBucket({ triage: 'invalid' }), 'invalid')
     assert.equal(readImportedTriageBucket({ triage: 'deleted' }), 'deleted')
