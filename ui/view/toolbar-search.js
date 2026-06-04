@@ -38,9 +38,11 @@ const SEARCH_ICON = html`<svg viewBox="0 0 24 24" width="13" height="13" fill="n
 
 // Trailing negate toggle (findings only): inverts the query so the
 // list keeps findings that DON'T match. Hidden while the field empty.
-const NEGATE_ICON = html`<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-  <circle cx="8" cy="8" r="5.5"/>
-  <path d="M4.1 4.1l7.8 7.8" stroke-linecap="round"/>
+// The glyph is the logic-NOT sign (¬) — a horizontal bar with a
+// right-hand descender — chosen over a circle-slash so it reads as
+// "negate the query", not "clear the field".
+const NEGATE_ICON = html`<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <path d="M3 6h10v4"/>
 </svg>`
 
 const KIND = {
