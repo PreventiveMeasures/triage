@@ -287,7 +287,15 @@ source-filter {
   flex: 1 1 14rem; min-width: 12rem;
 }
 
-toolbar-search {
+/* The `<toolbar-search>` element host (findings + Files tabs) and the
+   `.toolbar-search` shell class share this rule. The class form is used by
+   the graph topbar's path/package filter (view/graph/render.js), which can't
+   be the `<toolbar-search>` component — it's wired to the canvas dim
+   predicate with its own `graph2.pathFilter` state + clear button — but still
+   wants the same field look. The graph inlines this file into its shadow DOM
+   (graph-layout.js), so the class picks up the shell there. */
+toolbar-search,
+.toolbar-search {
   display: inline-flex; align-items: center; gap: .5rem;
   flex: 1; min-width: 0;
   height: 30px; box-sizing: border-box;
@@ -299,10 +307,16 @@ toolbar-search {
 
   & svg { color: var(--muted); flex-shrink: 0; }
 
-  /* `&[kind]` (always present — kind="findings"/"files") lifts this to
-     specificity 0,2,2 so it beats the generic `.toolbar input[type='text']`
-     (0,2,1); without it the input keeps a second border + padding. */
-  &[kind] input[type='text'] {
+  /* `&[kind]` (always present on the `<toolbar-search>` element host —
+     kind="findings"/"files") lifts this to specificity 0,3,1 — the `&` is the
+     `toolbar-search, .toolbar-search` list above, so `:is(…)` contributes the
+     class column — which beats the generic `.toolbar input[type='text']`
+     (0,2,1); without it the input keeps a second border + padding. The
+     `.toolbar-search` graph path-filter lives in the graph shadow DOM (not
+     inside a `.toolbar`), so there's no generic rule to outweigh — its input
+     rides the class form below. */
+  &[kind] input[type='text'],
+  &.toolbar-search input[type='text'] {
     flex: 1; min-width: 0;
     background: transparent; border: 0; outline: none;
     color: var(--text); font: inherit; font-size: .8rem;
