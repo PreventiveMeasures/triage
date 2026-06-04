@@ -21,8 +21,18 @@
 //     aggregate block instead of unreadable confetti;
 //   * sub-pixel rects are dropped, and a box too small to host a
 //     header + children renders as a single block.
+//
+// Navigation: clicking a directory cell (a `dir` container's header
+// strip or a depth-capped `agg` block) drills into that subtree —
+// it becomes the new layout root filling the whole plot, so the
+// depth cap that aggregated it now spends a fresh budget revealing
+// its contents. A breadcrumb trail in the header walks back up
+// (each ancestor is a button; the home crumb returns to the whole
+// bundle). File cells keep their existing behavior — a click opens
+// the source viewer via the `[data-bundle-view-source]` delegate.
 import { LitElement, html, render as litRender } from 'lit'
 import { styleMap } from 'lit/directives/style-map.js'
+import { classMap } from 'lit/directives/class-map.js'
 import { bundleSourcesAsMap } from './bundle-sources.js'
 import { formatBytes, stripCommonPathPrefix } from './format.js'
 import { pkgColor } from './graph/utils.js'
@@ -127,13 +137,21 @@ function collapseNode(node) {
 }
 
 // Bottom-up: sum byte sizes + leaf counts onto every directory, and
-// stamp each node's full (prefix-stripped) path for coloring + titles.
-function finalize(node, parentPath) {
+// stamp each node's full (prefix-stripped) path for coloring +
+// titles. Also threads a `parent` pointer through every node and
+// registers each directory in `byPath` (path → node) — the drill-in
+// navigation resolves a clicked cell's path to its node, then walks
+// `parent` up to the root to rebuild the breadcrumb chain. Paths are
+// unique (the tree is keyed by path segments and file/dir collisions
+// are rejected at build time), so the map can't alias two nodes.
+function finalize(node, parentPath, parent, byPath) {
   node.path = node.name ? (parentPath ? `${parentPath}/${node.name}` : node.name) : parentPath
+  node.parent = parent
   if (node.isFile) { node.count = 1; return node.value }
+  byPath.set(node.path, node)
   let value = 0
   let count = 0
-  for (const c of node.children.values()) { value += finalize(c, node.path); count += c.count }
+  for (const c of node.children.values()) { value += finalize(c, node.path, node, byPath); count += c.count }
   node.value = value
   node.count = count
   return value
@@ -167,6 +185,10 @@ class BundleTreemap extends LitElement {
     details: { attribute: false },
     _w: { state: true },
     _h: { state: true },
+    // Drill-in path: nodes from the root down to the focused subtree
+    // (empty = whole bundle). Reassigned as a fresh array on every
+    // navigation so Lit's identity check re-lays-out.
+    _focus: { state: true },
   }
 
   // Light DOM so report.css rules apply and file-cell clicks bubble to
@@ -179,6 +201,8 @@ class BundleTreemap extends LitElement {
     this._w = 0
     this._h = 0
     this._root = null
+    this._focus = []
+    this._dirByPath = new Map()
     this._status = 'loading'
     this._meta = { files: 0, total: 0, prefix: '' }
     this._ro = null
@@ -187,6 +211,7 @@ class BundleTreemap extends LitElement {
     this._ttCell = null
     this._onPointerMove = this._onPointerMove.bind(this)
     this._onPointerLeave = this._onPointerLeave.bind(this)
+    this._onPlotClick = this._onPlotClick.bind(this)
   }
 
   willUpdate(changed) {
@@ -269,6 +294,10 @@ class BundleTreemap extends LitElement {
   // render (it depends on the measured size).
   _rebuild() {
     this._root = null
+    // A new bundle invalidates the old node refs — drop any drill-in
+    // so we don't render a focus path into a tree that no longer exists.
+    this._focus = []
+    this._dirByPath = new Map()
     this._meta = { files: 0, total: 0, prefix: '' }
     if (!this.details) { this._status = 'loading'; return }
     const sources = bundleSourcesAsMap(this.details)
@@ -314,10 +343,75 @@ class BundleTreemap extends LitElement {
     }
     if (total === 0) { this._status = 'empty'; return }
     for (const c of root.children.values()) collapseNode(c)
-    finalize(root, '')
+    const dirByPath = new Map()
+    finalize(root, '', null, dirByPath)
     this._root = root
+    this._dirByPath = dirByPath
     this._meta = { files, total, prefix }
     this._status = 'ok'
+  }
+
+  // The subtree currently filling the plot — the deepest focused node,
+  // or the whole-bundle root when nothing is drilled into.
+  get _focusNode() {
+    return this._focus.length > 0 ? this._focus.at(-1) : this._root
+  }
+
+  // Drill into a directory: rebuild the focus chain root→node by
+  // walking parent pointers (excluding the virtual root) so the
+  // breadcrumb is correct even when the click lands several levels
+  // below the current focus. Files and empty nodes aren't navigable.
+  _drillInto(node) {
+    if (!node || node.isFile || !node.children || node.children.size === 0) return
+    const chain = []
+    for (let n = node; n && n !== this._root; n = n.parent) chain.push(n)
+    chain.reverse()
+    this._focus = chain
+    this._hideTooltip()
+  }
+
+  // Jump to a breadcrumb: index -1 is the home crumb (whole bundle);
+  // otherwise keep the first index+1 nodes of the chain. No-op when
+  // it wouldn't change the focus, so re-clicking the active crumb
+  // doesn't churn a render.
+  _focusTo(index) {
+    const next = index < 0 ? [] : this._focus.slice(0, index + 1)
+    if (next.length === this._focus.length) return
+    this._focus = next
+    this._hideTooltip()
+  }
+
+  // Plot-level click delegate. Only directory cells carry
+  // `data-treemap-into`; a file button has no such attribute, so its
+  // click falls through this handler and reaches the document-level
+  // `[data-bundle-view-source]` delegate that opens the source viewer.
+  _onPlotClick(e) {
+    const nav = e.target.closest('[data-treemap-into]')
+    if (!nav) return
+    const node = this._dirByPath.get(nav.dataset.treemapInto)
+    if (node) this._drillInto(node)
+  }
+
+  // Breadcrumb trail. The home crumb keeps the old "Source treemap"
+  // title styling (and reads as the title when nothing's drilled in);
+  // each focused segment follows, the last rendered as plain text
+  // (it's the current location, not a jump target).
+  _renderCrumbs() {
+    const focus = this._focus
+    const atRoot = focus.length === 0
+    return html`<nav class="bundle-treemap-crumbs" aria-label="Treemap location">
+      <button
+        type="button"
+        class=${classMap({ 'bundle-treemap-crumb-home': true, 'at-root': atRoot })}
+        @click=${() => this._focusTo(-1)}
+      >Source treemap</button>
+      ${focus.map((node, i) => {
+        const last = i === focus.length - 1
+        return html`<span class="bundle-treemap-crumb-sep" aria-hidden="true">›</span>${last
+          ? html`<span class="bundle-treemap-crumb-current" aria-current="location" title=${node.path}>${node.name}</span>`
+          : html`<button type="button" class="bundle-treemap-crumb" @click=${() => this._focusTo(i)} title=${node.path}>${node.name}</button>`}`
+      })}
+    </nav>`
   }
 
   _cell(c) {
@@ -330,26 +424,32 @@ class BundleTreemap extends LitElement {
     // file-count; the dir container omits the package head line (a
     // directory spans packages), leaves carry it.
     if (c.kind === 'dir') {
-      return html`<div
+      return html`<button
+        type="button"
         class="bundle-treemap-node bundle-treemap-dir"
         style=${styleMap(pos)}
+        data-treemap-into=${c.node.path}
         data-tt-path=${`${c.node.path}/`}
         data-tt-meta=${`${formatBytes(c.node.value)} · ${fileCount} · ${pctStr}%`}
-      ><span class="bundle-treemap-dirname">${c.node.name}</span></div>`
+        aria-label=${`Zoom into ${c.node.path}`}
+      ><span class="bundle-treemap-dirname">${c.node.name}</span></button>`
     }
     const pkg = bundlePkgOf(c.node.path)
     const color = pkgColor(pkg)
     const style = styleMap({ ...pos, background: color, color: readableTextOn(color) })
     const ttPkg = pkg === '__own__' ? 'own source' : pkg
     if (c.kind === 'agg') {
-      return html`<div
+      return html`<button
+        type="button"
         class="bundle-treemap-node bundle-treemap-leaf bundle-treemap-agg"
         style=${style}
+        data-treemap-into=${c.node.path}
         data-tt-path=${`${c.node.path}/`}
         data-tt-pkg=${ttPkg}
         data-tt-color=${color}
         data-tt-meta=${`${formatBytes(c.node.value)} · ${fileCount} · ${pctStr}%`}
-      ><span class="bundle-treemap-label">${c.node.name}/</span></div>`
+        aria-label=${`Zoom into ${c.node.path}`}
+      ><span class="bundle-treemap-label">${c.node.name}/</span></button>`
     }
     return html`<button
       type="button"
@@ -364,19 +464,25 @@ class BundleTreemap extends LitElement {
   }
 
   render() {
+    const focus = this._focusNode
     const cells = []
-    if (this._status === 'ok' && this._root && this._w > 0 && this._h > 0) {
-      const kids = [...this._root.children.values()].toSorted((a, b) => b.value - a.value)
+    if (this._status === 'ok' && focus && focus.children && this._w > 0 && this._h > 0) {
+      const kids = [...focus.children.values()].toSorted((a, b) => b.value - a.value)
       for (const p of squarify(kids, { x: 0, y: 0, w: this._w, h: this._h })) {
         layout(p.node, p.x, p.y, p.w, p.h, 1, cells)
       }
     }
     const { files, total, prefix } = this._meta
+    // Sub-line tracks the focused subtree so the count + size reflect
+    // what's actually on screen after a drill-in (the whole bundle at
+    // the root, where focus === _root and these match `_meta`).
+    const curFiles = this._status === 'ok' && focus ? focus.count : files
+    const curBytes = this._status === 'ok' && focus ? focus.value : total
     return html`<header class="bundle-treemap-head">
-        <span class="bundle-treemap-title">Source treemap</span>
-        <span class="bundle-treemap-sub">${files} ${files === 1 ? 'file' : 'files'} · ${formatBytes(total)}${prefix ? html` · <span class="mono">${prefix}</span>` : ''}</span>
+        ${this._renderCrumbs()}
+        <span class="bundle-treemap-sub">${curFiles} ${curFiles === 1 ? 'file' : 'files'} · ${formatBytes(curBytes)}${prefix ? html` · <span class="mono">${prefix}</span>` : ''}</span>
       </header>
-      <div class="bundle-treemap-plot" @pointermove=${this._onPointerMove} @pointerleave=${this._onPointerLeave}>
+      <div class="bundle-treemap-plot" @click=${this._onPlotClick} @pointermove=${this._onPointerMove} @pointerleave=${this._onPointerLeave}>
         ${this._status === 'loading'
           ? html`<div class="bundle-treemap-empty">Loading…</div>`
           : this._status === 'empty'
