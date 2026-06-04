@@ -135,8 +135,9 @@
   -webkit-appearance: none;
   background: rgb(from var(--text) r g b / .04);
   border: 1px solid rgb(from var(--text) r g b / .14);
-  transition: background .1s ease, border-color .1s ease;
 }
+/* Instant — no transition. Animating the fill/border of many nested
+   group boxes janks on large trees, so the drill-in highlight snaps in. */
 .bundle-treemap-dir:hover {
   background: rgb(from var(--text) r g b / .09);
   border-color: rgb(from var(--text) r g b / .28);
