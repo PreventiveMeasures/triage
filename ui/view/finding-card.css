@@ -102,6 +102,13 @@
   /* Keep a set flag as an indicator on paper; drop the empty toggles. */
   .mark-flag:not(.flagged) { display: none; }
 }
+/* Kanban detail popover: the modal's × close button (its own light-DOM
+   layer) sits at the top-right corner, exactly where the flag toggle
+   lives — and the popover is the canonical place to toggle a kanban
+   finding's flag. Widen the gutter and inset the flag so it clears the
+   close button instead of hiding under it. */
+:host([context='kanban-detail']) .tab-body { padding-right: 2.5rem; }
+:host([context='kanban-detail']) .mark-flag { right: 1.5rem; }
 
 /* Description's first line becomes a bold title; the rest is a muted
    body block. Inline `"quoted"` / `` `code` `` segments get tag-style

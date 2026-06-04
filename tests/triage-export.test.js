@@ -188,6 +188,20 @@ describe('applyTriageImport: shape validation (audit round-14 TE-1)', () => {
     assert.equal(state.triage.get(FINDING_B)?.color, 'green')
     assert.equal(loadRepoUrlFor('r.json'), 'https://example.test')
   })
+
+  it('imports the flagged tri-state, including the false tombstone (replace mode)', async () => {
+    // Backup import must carry `flagged` like every other field — and
+    // `replace` mode installs the backup verbatim, including the explicit
+    // `false` tombstone, not just `true`.
+    patchEntry(state.triage, FINDING_A, { flagged: true })  // wiped + re-set by replace
+    await applyTriageImport({
+      version: 1,
+      triage: { [FINDING_A]: { flagged: false }, [FINDING_B]: { flagged: true } },
+      repoUrls: {},
+    }, 'replace')
+    assert.equal(state.triage.get(FINDING_A)?.flagged, false, 'imported false tombstone applied')
+    assert.equal(state.triage.get(FINDING_B)?.flagged, true, 'imported flag applied')
+  })
 })
 
 describe('applyTriageImport: repo-URL merge through secure-storage', () => {

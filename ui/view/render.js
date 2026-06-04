@@ -935,7 +935,7 @@ function kanbanDetailTemplate(focusGroup) {
         aria-label="Close details"
       >×</button>
       <div class="kanban-detail-body">
-        ${findingCardPlaceholder(focusGroup)}
+        ${findingCardPlaceholder(focusGroup, false, 'kanban-detail')}
       </div>
     </div>
   </div>`
