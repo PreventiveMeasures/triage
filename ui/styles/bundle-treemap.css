@@ -81,7 +81,7 @@
   text-overflow: ellipsis;
 }
 .bundle-treemap-crumb { color: var(--muted); }
-.bundle-treemap-crumb:hover { color: var(--text); text-decoration: underline; }
+.bundle-treemap-crumb:hover { color: var(--text); }
 /* Pinned: never shrinks, so the current location stays fully visible
    while the lead group clips. */
 .bundle-treemap-crumb-current { color: var(--text); flex: 0 0 auto; }
