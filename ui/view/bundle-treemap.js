@@ -30,6 +30,14 @@
 // (each ancestor is a button; the home crumb returns to the whole
 // bundle). File cells keep their existing behavior — a click opens
 // the source viewer via the `[data-bundle-view-source]` delegate.
+//
+// Cells are plain `<div>`s, not buttons, and carry no `:hover` style.
+// A treemap can hold thousands of them; making each a focusable button
+// bloated the accessibility tree, and per-cell hover repaints (the fill
+// of a large directory box especially) janked mouse-over on big trees.
+// Every click still reaches its delegate through a `data-*` attribute,
+// so the viz stays mouse-driven (keyboard users get the Files / Code
+// tabs); only the few header breadcrumbs remain buttons.
 import { LitElement, html, render as litRender } from 'lit'
 import { styleMap } from 'lit/directives/style-map.js'
 import { classMap } from 'lit/directives/class-map.js'
@@ -382,7 +390,7 @@ class BundleTreemap extends LitElement {
   }
 
   // Plot-level click delegate. Only directory cells carry
-  // `data-treemap-into`; a file button has no such attribute, so its
+  // `data-treemap-into`; a file cell has no such attribute, so its
   // click falls through this handler and reaches the document-level
   // `[data-bundle-view-source]` delegate that opens the source viewer.
   _onPlotClick(e) {
@@ -438,23 +446,20 @@ class BundleTreemap extends LitElement {
     // file-count; the dir container omits the package head line (a
     // directory spans packages), leaves carry it.
     if (c.kind === 'dir') {
-      return html`<button
-        type="button"
+      return html`<div
         class="bundle-treemap-node bundle-treemap-dir"
         style=${styleMap(pos)}
         data-treemap-into=${c.node.path}
         data-tt-path=${`${c.node.path}/`}
         data-tt-meta=${`${formatBytes(c.node.value)} · ${fileCount} · ${pctStr}%`}
-        aria-label=${`Zoom into ${c.node.path}`}
-      ><span class="bundle-treemap-dirname">${c.node.name}</span></button>`
+      ><span class="bundle-treemap-dirname">${c.node.name}</span></div>`
     }
     const pkg = bundlePkgOf(c.node.path)
     const color = pkgColor(pkg)
     const style = styleMap({ ...pos, background: color, color: readableTextOn(color) })
     const ttPkg = pkg === '__own__' ? 'own source' : pkg
     if (c.kind === 'agg') {
-      return html`<button
-        type="button"
+      return html`<div
         class="bundle-treemap-node bundle-treemap-leaf bundle-treemap-agg"
         style=${style}
         data-treemap-into=${c.node.path}
@@ -462,11 +467,9 @@ class BundleTreemap extends LitElement {
         data-tt-pkg=${ttPkg}
         data-tt-color=${color}
         data-tt-meta=${`${formatBytes(c.node.value)} · ${fileCount} · ${pctStr}%`}
-        aria-label=${`Zoom into ${c.node.path}`}
-      ><span class="bundle-treemap-label">${c.node.name}/</span></button>`
+      ><span class="bundle-treemap-label">${c.node.name}/</span></div>`
     }
-    return html`<button
-      type="button"
+    return html`<div
       class="bundle-treemap-node bundle-treemap-leaf bundle-treemap-file"
       style=${style}
       data-bundle-view-source=${c.node.origPath}
@@ -474,7 +477,7 @@ class BundleTreemap extends LitElement {
       data-tt-pkg=${ttPkg}
       data-tt-color=${color}
       data-tt-meta=${`${formatBytes(c.node.value)} · ${pctStr}% of bundle`}
-    ><span class="bundle-treemap-label">${c.node.name}</span></button>`
+    ><span class="bundle-treemap-label">${c.node.name}</span></div>`
   }
 
   render() {

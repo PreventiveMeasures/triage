@@ -112,39 +112,21 @@
   box-sizing: border-box;
   overflow: hidden;
   border-radius: 2px;
+  cursor: default;
 }
 /* Directory container — faint fill + border so its children read as
-   nested inside it; the name sits in the reserved top strip. A
-   `<button>` (drill-in target), so the native chrome is zeroed out —
-   the fill is semi-transparent, so an un-suppressed UA button
-   background would bleed through it. `display:flex` + flex-start
-   pins the name to the top strip (a bare `<button>` centers its
-   content, which would drop the name into the middle of the box,
-   under the child cells). Only the header strip + the 2px inset
-   border are actually clickable; the children paint on top as
-   later-in-DOM siblings and field their own clicks. */
+   nested inside it; the name sits in the reserved top strip. A plain
+   <div> (a click drills in via the plot's [data-treemap-into]
+   delegate): only the header strip + the 2px inset border show, since
+   the children paint over the rest as later-in-DOM siblings. No :hover
+   — repainting these (often large) translucent boxes as the cursor
+   crossed them was the treemap's hover-lag on big trees. */
 .bundle-treemap-dir {
-  margin: 0;
-  padding: 0;
-  display: flex;
-  align-items: flex-start;
-  text-align: left;
-  font: inherit;
-  color: inherit;
-  appearance: none;
-  -webkit-appearance: none;
   background: rgb(from var(--text) r g b / .04);
   border: 1px solid rgb(from var(--text) r g b / .14);
 }
-/* Instant — no transition. Animating the fill/border of many nested
-   group boxes janks on large trees, so the drill-in highlight snaps in. */
-.bundle-treemap-dir:hover {
-  background: rgb(from var(--text) r g b / .09);
-  border-color: rgb(from var(--text) r g b / .28);
-}
 .bundle-treemap-dirname {
   display: block;
-  min-width: 0;
   padding: 0 4px;
   line-height: 14px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -156,8 +138,8 @@
   text-overflow: ellipsis;
   pointer-events: none;
 }
-/* Leaf = a file (button) or a depth-capped directory aggregate (div),
-   both filled with the package hue and bordered for separation. */
+/* Leaf = a file or a depth-capped directory aggregate, both plain
+   <div>s filled with the package hue and bordered for separation. */
 .bundle-treemap-leaf {
   margin: 0;
   padding: 1px 3px;
@@ -166,19 +148,11 @@
   align-items: flex-start;
   text-align: left;
 }
-/* Cursor stays the app-default arrow (the global `button` rule in
-   theme.css) on every cell + crumb — hover affordances signal
-   interactivity, matching app convention, not a `pointer` cursor. */
-.bundle-treemap-file { transition: filter .1s ease; }
-.bundle-treemap-file:hover { filter: brightness(1.14); }
-/* Aggregate = a depth-capped / too-small directory drawn as one block.
-   Also a drill-in target (clicking it spends a fresh depth budget on
-   its contents), so it gets the file's hover affordance. */
-.bundle-treemap-agg { font-style: italic; transition: filter .1s ease; }
-.bundle-treemap-agg:hover { filter: brightness(1.14); }
-.bundle-treemap-file:focus-visible,
-.bundle-treemap-agg:focus-visible,
-.bundle-treemap-dir:focus-visible { outline: 2px solid var(--text); outline-offset: -2px; z-index: 2; }
+/* Aggregate = a depth-capped / too-small directory drawn as one block;
+   a click drills into it. No cell carries a :hover effect — the paint /
+   filter churn as the cursor crossed cells was the hover-lag on large
+   trees, and the tooltip already surfaces each cell's detail. */
+.bundle-treemap-agg { font-style: italic; }
 .bundle-treemap-label {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .64rem;
