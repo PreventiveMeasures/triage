@@ -112,6 +112,10 @@ header p {
 }
 .choice-value { font-size: .82rem; min-width: 0; }
 
+/* Flag conflict token — 'flagged' (accent) vs 'not flagged' (muted). */
+.flag-badge { font-size: .82rem; color: var(--muted); }
+.flag-badge.on { color: var(--accent); font-weight: 600; }
+
 .color {
   display: inline-flex; align-items: center; gap: .35rem;
 }

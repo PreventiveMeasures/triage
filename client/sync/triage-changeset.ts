@@ -6,7 +6,7 @@
 
 import type { TriageEntry } from './host.ts'
 
-export type ConflictProperty = 'color' | 'triage' | 'comment' | 'fix'
+export type ConflictProperty = 'color' | 'triage' | 'comment' | 'fix' | 'flagged'
 
 export type Conflict = {
   id: string
@@ -39,6 +39,13 @@ function normComment(entry: TriageEntry | null | undefined): string {
 }
 function normFix(entry: TriageEntry | null | undefined): string {
   return typeof entry?.fix === 'string' ? entry.fix : ''
+}
+// Tri-state flag → a stable conflict string. `false` ("explicitly
+// unflagged") maps to a NON-empty token so it reads as a real value
+// the three-way compare can disagree with a stale `true` over —
+// `''` is reserved for the absent/"unset" side only.
+function normFlagged(entry: TriageEntry | null | undefined): string {
+  return entry?.flagged === true ? 'flagged' : entry?.flagged === false ? 'not flagged' : ''
 }
 
 // Per-property comparison between the user's pre-rebase overlay
@@ -82,6 +89,7 @@ export function collectChainConflicts(
       { name: 'triage' as const, norm: normTriage },
       { name: 'comment' as const, norm: normComment },
       { name: 'fix' as const, norm: normFix },
+      { name: 'flagged' as const, norm: normFlagged },
     ]
     for (const { name, norm } of props) {
       const oldVal = norm(oldEntry)
@@ -124,6 +132,7 @@ function entriesEqual(a: TriageEntry, b: TriageEntry): boolean {
     && triageA === triageB
     && (a.comment ?? '') === (b.comment ?? '')
     && (a.fix ?? '') === (b.fix ?? '')
+    && a.flagged === b.flagged
     && ignoredReportsEqual(a.ignoredReports, b.ignoredReports)
 }
 

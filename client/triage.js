@@ -319,6 +319,13 @@ function applyTriageEntries(entries, { replace = false } = {}) {
       if (!(pendingHas(id) && pendingEntries[id]?.fix) && (noBlob || typeof v?.fix !== 'string' || !v.fix)) {
         patchEntry(map, id, { fix: undefined })
       }
+      // Tri-state flag: clear local only when neither the blob nor this
+      // tab's pending snapshot carries a flagged value (true OR false).
+      // A blob `false` is adopted by the apply loop above; a blob with no
+      // flagged key means the sibling never set one, so mirror that.
+      if (!(pendingHas(id) && pendingEntries[id]?.flagged !== undefined) && (noBlob || v?.flagged === undefined)) {
+        patchEntry(map, id, { flagged: undefined })
+      }
     }
     // Per-report ignore. Drop a report from an id's `ignoredReports`
     // when the new blob no longer lists it. Session-only ids are left
@@ -354,6 +361,9 @@ function applyTriageEntries(entries, { replace = false } = {}) {
     if (bucket) patch.triage = bucket
     if (v && typeof v.comment === 'string' && v.comment) patch.comment = v.comment
     if (v && typeof v.fix === 'string' && v.fix) patch.fix = v.fix
+    // Tri-state flag — adopt both `true` and `false` (false is the
+    // explicit "unflagged" tombstone, not "unset").
+    if (v && typeof v.flagged === 'boolean') patch.flagged = v.flagged
     if (Object.keys(patch).length > 0) patchEntry(map, id, patch)
     // Mutual exclusion with triage: triage and per-report ignore
     // can't coexist on a tab. Skip importing `ignoredReports` when

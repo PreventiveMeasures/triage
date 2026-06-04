@@ -73,9 +73,34 @@
 
 .tab-body {
   display: none;
+  position: relative;
   grid-template-columns: auto 1fr;
   gap: .25rem .75rem;
+  /* Reserve a right gutter so the absolutely-positioned attention flag
+     (pinned to the top-right corner) never overlaps the line-row /
+     description text. */
+  padding-right: 1.35rem;
   &.active { display: grid; }
+}
+
+/* Attention-flag toggle — top-right corner of the active tab body.
+   Ghost (muted, half-opacity) until hovered or set; accent with a
+   filled cloth when flagged. */
+.mark-flag {
+  position: absolute; top: .15rem; right: .1rem;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 2px; border: 0; border-radius: 4px;
+  background: transparent; color: var(--muted); opacity: .5;
+  cursor: pointer; transition: opacity .12s, color .12s, background .12s;
+
+  &:hover { opacity: 1; color: var(--text); background: var(--surface-active); }
+  &.flagged { opacity: 1; color: var(--accent); }
+  &.flagged .flag-cloth { fill: var(--accent); }
+  & svg { display: block; }
+}
+@media print {
+  /* Keep a set flag as an indicator on paper; drop the empty toggles. */
+  .mark-flag:not(.flagged) { display: none; }
 }
 
 /* Description's first line becomes a bold title; the rest is a muted

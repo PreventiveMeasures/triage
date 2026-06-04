@@ -11,7 +11,7 @@ import { SEVERITIES, configureDepsDir, fileLink, findingDisplayName, formatRunMe
 import { activeTabFor, getMergedGroups, groupKey, groupState, primaryTab, tabKey } from './group.js'
 import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, applyFilters, applySorting, repoOfFinding } from './filters.js'
 import { ANALYZER_LABELS } from './analyzer-select.js'
-import { badgeLabel, findingCardGid, firstLine } from './render-finding.js'
+import { FLAG_ICON, badgeLabel, findingCardGid, firstLine } from './render-finding.js'
 import { computeFindingCountsByFile, computeTransitiveCounts, fileHasFindings, mergeReportsTree } from './file-counts.js'
 import { renderTreeView } from './render-files.js'
 import { graph2 } from './graph/state.js'
@@ -688,6 +688,7 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
         ?show-priority=${showPriority}
       ></findings-sort>
       ${showSource ? html`<div class="sep"></div><source-filter></source-filter>` : nothing}
+      <div class="sep"></div><flag-filter></flag-filter>
       ${showConfidence ? html`<div class="sep"></div><conf-filter></conf-filter>` : nothing}
       ${kanbanMode ? nothing : html`<triage-selector .counts=${triageCounts}></triage-selector>`}
     </div>
@@ -833,11 +834,19 @@ function kanbanCardTemplate(g, opts = {}) {
   const lineNum = parseInt(activeTab.line, 10)
   const lineSuffix = Number.isFinite(lineNum) ? `:${lineNum}` : ''
   const letter = SEVERITY_LETTERS[activeTab.severity] ?? '?'
-  const inner = html`<span
-      class=${`kanban-badge sev-${activeTab.severity}`}
-      title=${badgeLabel(activeTab.severity)}
-      aria-label=${badgeLabel(activeTab.severity)}
-    >${letter}</span>
+  // Attention flag sits directly under the severity badge (top-right
+  // of the card). Display-only here — the card is a drag/click target,
+  // so toggling lives in the detail popover's finding-card; we only
+  // surface the indicator when the active tab is flagged.
+  const flagged = state.triage.get(tabKey(activeTab))?.flagged === true
+  const inner = html`<div class="kanban-badge-col">
+      <span
+        class=${`kanban-badge sev-${activeTab.severity}`}
+        title=${badgeLabel(activeTab.severity)}
+        aria-label=${badgeLabel(activeTab.severity)}
+      >${letter}</span>
+      ${flagged ? html`<span class="kanban-flag" title="Flagged" aria-label="Flagged">${FLAG_ICON}</span>` : nothing}
+    </div>
     <span class="kanban-title">${title}</span>
     <div class="kanban-meta">
       <span class="kanban-loc">${activeTab.file}${lineSuffix}</span>
