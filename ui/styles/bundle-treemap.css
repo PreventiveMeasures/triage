@@ -27,8 +27,8 @@
 /* Breadcrumb trail (view/bundle-treemap.js `_renderCrumbs`). The
    home crumb keeps the old `.bundle-treemap-title` look so the header
    is unchanged at the root; focused segments follow it, mono to read
-   as path parts. `theme.css` sets buttons to `cursor: default` +
-   non-selectable, so each crumb re-asserts `cursor: pointer`. */
+   as path parts. Cursor stays the app-default arrow (the `button`
+   rule in theme.css); hover color/underline signals clickability. */
 .bundle-treemap-crumbs {
   display: flex;
   align-items: baseline;
@@ -62,9 +62,7 @@
   font-weight: 600;
   color: var(--muted);
   white-space: nowrap;
-  cursor: pointer;
 }
-.bundle-treemap-crumb-home.at-root { cursor: default; }
 .bundle-treemap-crumb-home:not(.at-root):hover { color: var(--text); }
 .bundle-treemap-crumb,
 .bundle-treemap-crumb-current {
@@ -82,7 +80,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.bundle-treemap-crumb { color: var(--muted); cursor: pointer; }
+.bundle-treemap-crumb { color: var(--muted); }
 .bundle-treemap-crumb:hover { color: var(--text); text-decoration: underline; }
 /* Pinned: never shrinks, so the current location stays fully visible
    while the lead group clips. */
@@ -119,18 +117,22 @@
    nested inside it; the name sits in the reserved top strip. A
    `<button>` (drill-in target), so the native chrome is zeroed out —
    the fill is semi-transparent, so an un-suppressed UA button
-   background would bleed through it. Only the header strip + the 2px
-   inset border are actually clickable; the children paint on top as
+   background would bleed through it. `display:flex` + flex-start
+   pins the name to the top strip (a bare `<button>` centers its
+   content, which would drop the name into the middle of the box,
+   under the child cells). Only the header strip + the 2px inset
+   border are actually clickable; the children paint on top as
    later-in-DOM siblings and field their own clicks. */
 .bundle-treemap-dir {
   margin: 0;
   padding: 0;
+  display: flex;
+  align-items: flex-start;
   text-align: left;
   font: inherit;
   color: inherit;
   appearance: none;
   -webkit-appearance: none;
-  cursor: pointer;
   background: rgb(from var(--text) r g b / .04);
   border: 1px solid rgb(from var(--text) r g b / .14);
   transition: background .1s ease, border-color .1s ease;
@@ -141,6 +143,7 @@
 }
 .bundle-treemap-dirname {
   display: block;
+  min-width: 0;
   padding: 0 4px;
   line-height: 14px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -162,12 +165,15 @@
   align-items: flex-start;
   text-align: left;
 }
-.bundle-treemap-file { cursor: pointer; transition: filter .1s ease; }
+/* Cursor stays the app-default arrow (the global `button` rule in
+   theme.css) on every cell + crumb — hover affordances signal
+   interactivity, matching app convention, not a `pointer` cursor. */
+.bundle-treemap-file { transition: filter .1s ease; }
 .bundle-treemap-file:hover { filter: brightness(1.14); }
 /* Aggregate = a depth-capped / too-small directory drawn as one block.
    Also a drill-in target (clicking it spends a fresh depth budget on
-   its contents), so it gets the file's pointer + hover affordance. */
-.bundle-treemap-agg { cursor: pointer; font-style: italic; transition: filter .1s ease; }
+   its contents), so it gets the file's hover affordance. */
+.bundle-treemap-agg { font-style: italic; transition: filter .1s ease; }
 .bundle-treemap-agg:hover { filter: brightness(1.14); }
 .bundle-treemap-file:focus-visible,
 .bundle-treemap-agg:focus-visible,
