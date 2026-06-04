@@ -233,9 +233,9 @@ class WorkspaceShareLinkDialog extends AppDialog {
       <p class="nwd-note">
         The link carries the workspace's identity (id, name, and
         private key) so the recipient joins the same sync chain.
-        Triage, reports, and comments are not included. The link
-        decrypts with the password above; without it the link is
-        useless.
+        Triage, reports, and comments aren't in the link itself —
+        they sync over once the recipient joins. The link decrypts
+        with the password above; without it the link is useless.
       </p>
       ${this._error ? html`<p class="wsl-error" role="alert">${this._error}</p>` : nothing}
       ${this._password && this._confirm && this._password !== this._confirm
