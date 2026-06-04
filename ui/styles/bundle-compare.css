@@ -1,0 +1,254 @@
+/* Styles for the <bundle-compare> light-DOM component (the Compare
+   slide in the bundles view — see view/bundle-compare.js). Global (not
+   shadow-scoped) because the component renders into light DOM so its
+   file rows reach the document-level [data-bundle-view-source] click
+   delegate, exactly like the treemap. Coloring is git-style: a leading
+   `+` (added / grew) is green, a leading `−` (removed / shrank) is red,
+   and changed is amber — applied uniformly to chips, group accents, and
+   the per-row size deltas. */
+
+.bundles-slide-body > bundle-compare {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  background: var(--bg);
+}
+.bundle-compare {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.bundle-compare-head {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: .55rem;
+  padding: .6rem .75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Picker row — open bundle name → comparison <select>. */
+.bundle-compare-picker {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.bundle-compare-base {
+  max-width: 28ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  font-size: .8rem;
+  color: var(--text);
+}
+.bundle-compare-arrow { flex-shrink: 0; color: var(--muted); }
+.bundle-compare-select-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+}
+.bundle-compare-select-hint {
+  font-size: .64rem;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--muted);
+}
+.bundle-compare-select {
+  max-width: 32ch;
+  padding: .2rem .4rem;
+  font: inherit;
+  font-size: .78rem;
+  color: var(--text);
+  background: var(--surface-active);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+
+/* Summary band — file + size metrics, then the four bucket chips. */
+.bundle-compare-summary {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  font-variant-numeric: tabular-nums;
+}
+.bundle-compare-metric {
+  display: inline-flex;
+  align-items: baseline;
+  gap: .35rem;
+  font-size: .74rem;
+}
+.bundle-compare-metric-label {
+  font-size: .62rem;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--muted);
+}
+.bundle-compare-metric-value { color: var(--text); }
+.bundle-compare-metric-delta { font-weight: 600; color: var(--muted); }
+.bundle-compare-metric-delta.up { color: var(--green); }
+.bundle-compare-metric-delta.down { color: var(--critical); }
+.bundle-compare-pct { font-weight: 500; color: var(--muted); }
+.bundle-compare-chips {
+  display: inline-flex;
+  gap: .3rem;
+  flex-wrap: wrap;
+}
+.bundle-compare-chip {
+  display: inline-block;
+  padding: .1rem .4rem;
+  font-size: .66rem;
+  font-weight: 600;
+  line-height: 1.3;
+  border-radius: 3px;
+  font-variant-numeric: tabular-nums;
+}
+.bundle-compare-chip.added { color: var(--green); background: rgb(from var(--green) r g b / .16); }
+.bundle-compare-chip.removed { color: var(--critical); background: rgb(from var(--critical) r g b / .16); }
+.bundle-compare-chip.changed { color: var(--medium); background: rgb(from var(--medium) r g b / .18); }
+.bundle-compare-chip.unchanged { color: var(--muted); background: rgb(from var(--muted) r g b / .14); }
+
+/* Scrolling body — caption + package/file diff sections. */
+.bundle-compare-body {
+  flex: 1;
+  min-height: 0;
+  padding: .75rem;
+  overflow-y: auto;
+  overscroll-behavior: none;
+  scrollbar-gutter: stable;
+}
+.bundle-compare-caption {
+  margin-bottom: .6rem;
+  font-size: .74rem;
+  color: var(--muted);
+
+  & strong { font-weight: 600; color: var(--text); }
+  & .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+}
+
+.bundle-compare-section { margin-bottom: 1rem; }
+.bundle-compare-section-head {
+  margin: 0 0 .4rem;
+  font-size: .7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--muted);
+}
+/* Added | Removed sit side by side once each column can hold at least
+   700px (≈1424px of body width with the gap), and collapse to a single
+   stacked column below that. `auto-fit` + `minmax(min(700px, 100%), 1fr)`
+   makes the breakpoint self-measuring off the grid's own width (the
+   slide body, sidebar-independent) and never overflows a narrow pane.
+   Changed renders full-width below this grid. */
+.bundle-compare-cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(700px, 100%), 1fr));
+  gap: 0 1.5rem;
+  align-items: start;
+}
+
+.bundle-compare-group { margin-bottom: .6rem; }
+.bundle-compare-group-head {
+  display: flex;
+  align-items: center;
+  gap: .4rem;
+  margin-bottom: .25rem;
+  font-size: .72rem;
+  font-weight: 600;
+}
+.bundle-compare-dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 2px;
+}
+.bundle-compare-group-count {
+  font-weight: 500;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.bundle-compare-added .bundle-compare-dot { background: var(--green); }
+.bundle-compare-removed .bundle-compare-dot { background: var(--critical); }
+.bundle-compare-changed .bundle-compare-dot { background: var(--medium); }
+.bundle-compare-added .bundle-compare-group-title { color: var(--green); }
+.bundle-compare-removed .bundle-compare-group-title { color: var(--critical); }
+.bundle-compare-changed .bundle-compare-group-title { color: var(--medium); }
+
+.bundle-compare-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.bundle-compare-row {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  width: 100%;
+  padding: .2rem .35rem;
+  font-size: .72rem;
+  text-align: left;
+  color: var(--text);
+  background: none;
+  border: 0;
+  border-radius: 4px;
+}
+button.bundle-compare-row-link { cursor: pointer; }
+button.bundle-compare-row-link:hover { background: var(--surface-active); }
+.bundle-compare-row-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bundle-compare-row-path.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.bundle-compare-pkg-dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+}
+.bundle-compare-row-size {
+  flex-shrink: 0;
+  font-size: .68rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.bundle-compare-row-delta {
+  flex-shrink: 0;
+  min-width: 9ch;
+  font-size: .68rem;
+  font-weight: 600;
+  text-align: right;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.bundle-compare-row-delta.up { color: var(--green); }
+.bundle-compare-row-delta.down { color: var(--critical); }
+.bundle-compare-more {
+  padding: .2rem .35rem;
+  font-size: .68rem;
+  color: var(--muted);
+}
+
+/* Empty / placeholder / identical states share the centered look. */
+.bundle-compare-empty,
+.bundle-compare-identical {
+  padding: 1.5rem;
+  font-size: .82rem;
+  text-align: center;
+  color: var(--muted);
+}
+.bundle-compare-empty.is-error { color: var(--critical); }
+.bundle-compare-empty strong { color: var(--text); }
+.bundle-compare-empty code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .9em;
+}
+.bundle-compare-identical { color: var(--green); }
