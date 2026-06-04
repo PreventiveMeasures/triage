@@ -82,6 +82,21 @@ function renderPreservingTableScroll() {
   if (state.viewMode === 'table') renderPreservingScrollOf('.findings-table-list')
   else render()
 }
+// Coalesce Search-tab re-renders to one per animation frame. The
+// full-bundle scan (renderBundleSearchResults) runs inside render(),
+// so rendering synchronously on every keystroke would tie typing
+// latency to the scan cost; deferring to the next frame keeps the
+// input responsive and collapses bursts (held key / paste / IME) into
+// a single scan. The query state is written synchronously, so a frame
+// already pending just picks up the newest value when it fires.
+let _bundleSearchRaf = 0
+function renderBundleSearchDebounced() {
+  if (_bundleSearchRaf) return
+  _bundleSearchRaf = requestAnimationFrame(() => {
+    _bundleSearchRaf = 0
+    render()
+  })
+}
 import { openBundle } from './bundle-load.js'
 import { renderSidebar } from './sidebar.js'
 import { BUNDLE_TABS, persistLastBundle, switchToFile } from './ingest.js'
@@ -135,10 +150,12 @@ report.addEventListener('click', (e) => {
     const line = lineAttr ? parseInt(lineAttr, 10) : null
     state.bundleSourceFile = file || null
     state.bundleSourceFindingIdx = null
-    // The modal suppresses itself in the Code tab (slide renders the
-    // source inline); flip back to default so it surfaces even if the
-    // user is parked on Code.
-    if (state.bundleDetailsTab === 'code') state.bundleDetailsTab = 'overview'
+    // The modal suppresses itself in the Code + Search tabs (those
+    // slides render the source inline); flip back to default so it
+    // surfaces even if the user is parked on one of them.
+    if (state.bundleDetailsTab === 'code' || state.bundleDetailsTab === 'search') {
+      state.bundleDetailsTab = 'overview'
+    }
     // After the modal mounts, scroll its line-row to the top of the
     // viewport (same shape Code-search hits use).
     const scrollToFindingLine = () => {
@@ -356,6 +373,15 @@ report.addEventListener('click', (e) => {
     }
     return
   }
+  // Search tab — Context show/hide pill in the header. Flips whether
+  // matches render with surrounding lines or just the match lines;
+  // preserve the results scroll so the toggle doesn't jump the view.
+  const searchContext = pathClosest(e, '[data-bundle-search-context]')
+  if (searchContext) {
+    state.bundleSearchContext = !state.bundleSearchContext
+    renderPreservingScrollOf('.bundle-search-results')
+    return
+  }
   // Advisories tab — first-visit consent confirm. Writes the
   // localStorage flag + re-renders; the Advisories body's
   // ensureBundleAdvisories call then sees hasConsent() = true on
@@ -446,6 +472,8 @@ report.addEventListener('click', (e) => {
     // `.current` highlight.
     if (sourceOpen.closest('.bundle-code-rail')) {
       renderPreservingScrollOf('.bundle-code-rail-body')
+    } else if (sourceOpen.closest('.bundle-search-results')) {
+      renderPreservingScrollOf('.bundle-search-results')
     } else if (sourceOpen.closest('.bundles-slide-body')) {
       renderPreservingScrollOf('.bundles-slide-body')
     } else {
@@ -1552,6 +1580,19 @@ report.addEventListener('bundle-search-mode-change', (e) => {
   state.bundleCodeSearchMode = mode
   render()
 })
+// `<bundle-search>` (the Search tab's github-style bar) dispatches
+// this when the trailing `.*` modifier is clicked — flip between
+// plain-substring and regular-expression matching.
+report.addEventListener('bundle-search-regex-toggle', () => {
+  state.bundleSearchRegex = !state.bundleSearchRegex
+  render()
+})
+// …and this when the `Aa` modifier is clicked — flip matching
+// between case-insensitive (default) and case-sensitive.
+report.addEventListener('bundle-search-case-toggle', () => {
+  state.bundleSearchCase = !state.bundleSearchCase
+  render()
+})
 // `<findings-sort>` (kind="findings") and `<entity-sort>` (kind=
 // "packages"|"repositories") both dispatch this on native change.
 // Routes to the matching state slot.
@@ -1622,6 +1663,14 @@ report.addEventListener('search-input', (e) => {
     state.repositoriesSearchQuery = value
   } else if (kind === 'bundle-code') {
     state.bundleCodeSearchQuery = value
+  } else if (kind === 'bundle-search') {
+    // Heaviest of the search fields (scans every source) — debounce
+    // its render to one per frame instead of the synchronous render
+    // below. The `<bundle-search>` component still updates its own
+    // input via its autorun, so the field stays responsive.
+    state.bundleSearchQuery = value
+    renderBundleSearchDebounced()
+    return
   } else {
     return
   }

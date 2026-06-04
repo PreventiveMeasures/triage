@@ -72,6 +72,10 @@ export interface State {
   bundleSourceFindingIdx: number | null
   bundleCodeSearchMode: string
   bundleCodeSearchQuery: string
+  bundleSearchQuery: string
+  bundleSearchRegex: boolean
+  bundleSearchCase: boolean
+  bundleSearchContext: boolean
   filterSeverities: Set<string>
   filterColors: Set<string>
   filterSources: Set<string>
@@ -375,6 +379,17 @@ export const state: State = store<State>({
   // query doesn't carry over to the next bundle.
   bundleCodeSearchMode: 'files',
   bundleCodeSearchQuery: '',
+  // Search-tab state — the github-style full-bundle search (the
+  // 'search' tab), kept separate from the Code tab's compact rail
+  // filter above so the two surfaces don't share one string. `regex`
+  // matches the query as a RegExp; `case` makes matching
+  // case-sensitive (both off by default). `context` shows the lines
+  // around each match (on by default; off = only the exact match
+  // lines). Reset on bundle change alongside the Code-search slice.
+  bundleSearchQuery: '',
+  bundleSearchRegex: false,
+  bundleSearchCase: false,
+  bundleSearchContext: true,
   // Severity + color filters are multi-select: empty Set = "no filter,
   // show everything" (selecting every option individually is equivalent
   // — the predicate passes when every finding's value is in the Set).

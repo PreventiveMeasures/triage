@@ -943,6 +943,299 @@ bundle-code-search {
   padding: 2rem;
 }
 
+/* Search tab — full-width github-style code search across the whole
+   bundle. A search bar pinned at the top, a scrolling results column
+   below: per-file cards, each holding one or more context snippets.
+   Distinct from the Code tab's compact rail filter — here every hit
+   renders with the lines around it (radius scales with hit count). */
+.bundles-slide-body > .bundle-search-view {
+  display: flex; flex-direction: column;
+  flex: 1; min-height: 0;
+  background: var(--bg);
+}
+.bundle-search-bar-row {
+  flex-shrink: 0;
+  display: flex; align-items: center; gap: .75rem;
+  justify-content: space-between;
+  padding: .6rem .75rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+/* Context show/hide pill — modelled on the Graph tab's "All files"
+   toggle (.g2-topbar-toggle + .g2-switch), replicated here because
+   that chrome lives in the graph component's shadow DOM. Pinned to
+   the header's right edge by the bar row's space-between. */
+.bundle-search-context-toggle {
+  flex-shrink: 0;
+  display: inline-flex; align-items: center; gap: 8px;
+  height: 30px; box-sizing: border-box;
+  padding: 5px 10px;
+  background: rgb(from var(--text) r g b / .04);
+  border: 1px solid var(--border); border-radius: 6px;
+  color: var(--muted);
+  font-size: .72rem; font-weight: 500; line-height: 1;
+  white-space: nowrap;
+
+  &:hover { color: var(--text); }
+  &.on .bundle-search-switch { background: color-mix(in oklch, var(--accent) 22%, transparent); }
+  &.on .bundle-search-switch::after { transform: translateX(12px); background: var(--accent); }
+}
+.bundle-search-switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 26px; height: 14px;
+  background: var(--border);
+  border-radius: 8px;
+  transition: background .15s;
+
+  &::after {
+    content: '';
+    position: absolute;
+    top: 2px; left: 2px;
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: var(--muted);
+    transition: transform .15s, background .15s;
+  }
+}
+/* Below the bar: results column on the left, the clicked result's
+   source docked in a right sidebar. The sidebar only renders once a
+   result is opened, so the results take the full width until then. */
+.bundle-search-main {
+  flex: 1; min-height: 0;
+  display: flex;
+}
+/* The `<bundle-search>` host IS the flex shell (element selector,
+   mirrors `bundle-code-search`): lens icon, query input, clear, and
+   the `Aa` case + `.*` regex toggles. Grows to fill the header up to
+   a cap so the field doesn't stretch across a wide viewport, while
+   the Context pill keeps its place at the right edge. */
+bundle-search {
+  flex: 0 1 720px; min-width: 0;
+  display: flex; align-items: center;
+  padding: 0 .25rem 0 .55rem;
+  background: rgb(from var(--text) r g b / .04);
+  border: 1px solid var(--border); border-radius: 6px;
+  transition: background .12s, border-color .12s;
+
+  &:has(.bundle-search-input:focus) {
+    border-color: var(--accent);
+    background: rgb(from var(--text) r g b / .06);
+  }
+}
+.bundle-search-icon {
+  flex-shrink: 0;
+  margin-right: .45rem;
+  color: var(--muted); pointer-events: none;
+}
+.bundle-search-input {
+  flex: 1; min-width: 0;
+  padding: .4rem 0;
+  background: transparent; color: var(--text);
+  border: 0; outline: none;
+  font: inherit; font-size: .85rem;
+
+  &::placeholder { color: var(--muted); }
+  &::-webkit-search-cancel-button { display: none; }
+}
+.bundle-search-clear {
+  flex-shrink: 0;
+  width: 1.15rem; height: 1.15rem;
+  display: grid; place-items: center;
+  padding: 0; margin-right: .15rem;
+  background: transparent; color: var(--muted);
+  border: 0; border-radius: 3px;
+  font: inherit; font-size: 1rem; line-height: 1;
+
+  &:hover { color: var(--text); background: rgb(from var(--text) r g b / .08); }
+}
+.bundle-search-mods {
+  flex-shrink: 0;
+  display: inline-flex; align-items: center;
+  margin-left: .25rem;
+}
+/* `.*` regex modifier — same borderless icon-button chrome as
+   `.bundle-code-search-mode` / `.search-negate-btn`; accent tint when
+   active. Monospace glyph so each reads as its affordance (`Aa`
+   case, `.*` regex). */
+.bundle-search-mod {
+  flex-shrink: 0;
+  height: 22px; min-width: 26px;
+  display: grid; place-items: center;
+  padding: 0 .3rem;
+  background: transparent; color: var(--muted);
+  border: 0; border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .82rem; font-weight: 700; line-height: 1;
+  transition: background .12s, color .12s;
+
+  & + & { margin-left: 2px; }
+
+  &:hover { color: var(--text); background: rgb(from var(--text) r g b / .08); }
+  &.active {
+    color: var(--accent);
+    background: rgb(from var(--text) r g b / .12);
+  }
+}
+
+.bundle-search-results {
+  flex: 1; min-width: 0; min-height: 0;
+  overflow: auto; overscroll-behavior: none;
+  -webkit-app-region: no-drag; app-region: no-drag;
+  padding: .6rem .75rem 1.5rem;
+}
+/* Right sidebar — the open result's source, reusing the modal's
+   `.bundle-source-*` chrome inside. Fixed-ish basis so the results
+   keep a stable column; shrinks on narrow viewports but never below
+   a readable width. */
+.bundle-search-side {
+  flex: 0 0 clamp(400px, 48%, 820px);
+  min-width: 0;
+  display: flex; flex-direction: column;
+  border-left: 1px solid var(--border);
+  background: var(--bg);
+}
+.bundle-search-hint,
+.bundle-search-empty {
+  max-width: 64ch;
+  padding: 1rem .25rem;
+  color: var(--muted);
+  font-size: .82rem;
+  line-height: 1.55;
+}
+.bundle-search-hint-kbd {
+  padding: 0 .3rem;
+  border: 1px solid var(--border); border-radius: 3px;
+  background: rgb(from var(--text) r g b / .05);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .78rem;
+}
+.bundle-search-error {
+  display: flex; flex-direction: column; gap: .3rem;
+  max-width: 64ch;
+  margin: .35rem 0;
+  padding: .65rem .75rem;
+  border: 1px solid color-mix(in oklch, var(--critical) 45%, var(--border));
+  border-radius: 6px;
+  background: color-mix(in oklch, var(--critical) 8%, transparent);
+}
+.bundle-search-error-label { color: var(--text); font-size: .8rem; font-weight: 600; }
+.bundle-search-error-msg { color: var(--muted); font-size: .74rem; overflow-wrap: anywhere; }
+
+.bundle-search-summary {
+  display: flex; align-items: center; gap: .6rem; flex-wrap: wrap;
+  padding: .1rem .15rem .65rem;
+  color: var(--muted);
+  font-size: .7rem;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.bundle-search-summary-prefix {
+  max-width: 52ch;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  text-transform: none; letter-spacing: 0;
+}
+.bundle-search-summary-more {
+  color: var(--medium);
+  text-transform: none; letter-spacing: 0;
+}
+
+/* File card — clickable header (stripped path + match count) over
+   its snippets, framed so results from different files stay
+   visually distinct. */
+.bundle-search-file {
+  margin-bottom: .85rem;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: var(--surface);
+  overflow: hidden;
+}
+/* The file whose source is open in the right sidebar. */
+.bundle-search-file.current { border-color: var(--accent); }
+.bundle-search-file-head {
+  display: flex; align-items: center; gap: .5rem;
+  padding: .25rem .4rem .25rem .5rem;
+  border-bottom: 1px solid var(--border);
+  background: rgb(from var(--text) r g b / .03);
+}
+.bundle-search-file.current .bundle-search-file-head {
+  background: color-mix(in oklch, var(--accent) 12%, transparent);
+}
+.bundle-search-file-name {
+  flex: 1; min-width: 0;
+  padding: .15rem .25rem;
+  text-align: left;
+  background: transparent; color: var(--text);
+  border: 0; border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .76rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+
+  &:hover { color: var(--accent); }
+}
+.bundle-search-file-count {
+  flex-shrink: 0;
+  padding-right: .35rem;
+  color: var(--muted);
+  font-size: .68rem;
+  font-variant-numeric: tabular-nums;
+}
+.bundle-search-snippets { display: flex; flex-direction: column; }
+/* Each snippet is a button: clicking opens the source viewer at the
+   anchor line. The hover tint signals the whole block is actionable. */
+.bundle-search-snippet {
+  display: block; width: 100%;
+  padding: .3rem 0;
+  text-align: left;
+  background: transparent; border: 0;
+  font: inherit;
+
+  &:hover { background: rgb(from var(--text) r g b / .03); }
+  &:hover .bundle-search-lineno { color: var(--text); }
+}
+/* Dashed rule between non-contiguous snippets in the same file —
+   signals omitted lines without spelling out the gap size. */
+.bundle-search-gap {
+  height: 0;
+  margin: .1rem .6rem;
+  border-top: 1px dashed var(--border);
+}
+.bundle-search-line {
+  display: flex; align-items: baseline; gap: .65rem;
+  padding: 0 .65rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .74rem;
+  line-height: 1.55;
+}
+/* Matched line — faint accent wash so it stands out from the muted
+   context lines around it. */
+.bundle-search-line.is-match {
+  background: color-mix(in oklch, var(--accent) 10%, transparent);
+}
+.bundle-search-lineno {
+  flex-shrink: 0;
+  min-width: var(--bundle-search-lineno-w, 2ch);
+  text-align: right;
+  color: var(--muted);
+  font-size: .68rem;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+.bundle-search-code {
+  flex: 1; min-width: 0;
+  color: var(--muted);
+  white-space: pre;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.bundle-search-line.is-match .bundle-search-code { color: var(--text); }
+.bundle-search-clip { margin-right: .15rem; color: var(--muted); }
+/* Matched substring — yellow highlighter on black text, the
+   documented pairing for `--medium` (theme.css). */
+.bundle-search-mark {
+  border-radius: 2px;
+  background: var(--medium); color: #000;
+}
+
 /* Bundles view — flat list of OPFS-stored sourcemap / stasis blobs.
    Caps at 1200px (single column); `.with-details` widens it to fit
    list + right-side panel side by side (mirrors the findings-table
@@ -1766,6 +2059,16 @@ body.report-fullscreen {
   width: var(--lineno-width);
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+/* Search-matched line — tint the gutter row + accent the number so
+   hits stand out while scrolling the full file in the Search
+   sidebar, the way finding lines carry a gutter dot. */
+.bundle-source-lineno-row.is-match {
+  background: color-mix(in oklch, var(--accent) 16%, transparent);
+}
+.bundle-source-lineno-row.is-match .bundle-source-lineno-num {
+  color: var(--accent);
+  font-weight: 600;
 }
 /* Issue dot — colored by severity tier. Button so it's
    keyboard-focusable and click-handled by events.js. The

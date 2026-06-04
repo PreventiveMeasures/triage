@@ -32,6 +32,7 @@ import './view/color-marker.js'
 import './view/analyzer-select.js'
 import './view/conf-filter.js'
 import './view/bundle-code-search.js'
+import './view/bundle-search.js'
 import './view/entity-search.js'
 import './view/entity-sort.js'
 import './view/findings-sort.js'
@@ -251,7 +252,8 @@ async function continueBoot() {
       // membership is checked synchronously; missing entries (deleted
       // in another tab between sessions) fall through to the empty
       // drop-zone. A space-delimited suffix encodes the active tab
-      // (terminal / treemap / graph / compare / advisories / issues / code); an
+      // (terminal / treemap / graph / compare / advisories / issues / code /
+      // search); an
       // unknown / missing suffix defaults to Overview (also catching
       // old persisted suffixes for removed values).
       const rest = last.slice(2)
@@ -267,6 +269,10 @@ async function continueBoot() {
         state.bundleSourceFindingIdx = null
         state.bundleCodeSearchQuery = ''
         state.bundleCodeSearchMode = 'files'
+        state.bundleSearchQuery = ''
+        state.bundleSearchRegex = false
+        state.bundleSearchCase = false
+        state.bundleSearchContext = true
         state.bundleDetailsTab = tab
         state.shownTriage = null
         graph2.showAll = true

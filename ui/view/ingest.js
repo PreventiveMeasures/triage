@@ -39,7 +39,7 @@ export const LAST_FILE_KEY = 'deepview.lastFile'
 // That fallback also covers old persisted suffixes naming removed
 // values ('packages' / 'files' / 'reports') — no migration needed,
 // they just miss the set.
-export const BUNDLE_TABS = new Set(['overview', 'graph', 'treemap', 'compare', 'advisories', 'issues', 'code', 'terminal'])
+export const BUNDLE_TABS = new Set(['overview', 'graph', 'treemap', 'compare', 'advisories', 'issues', 'code', 'search', 'terminal'])
 
 // Persist a bundle selection to LAST_FILE_KEY as `b:<integrity> <tab>`.
 // The default 'overview' tab is dropped from the suffix so the
@@ -346,6 +346,10 @@ export async function addFiles(files) {
     state.bundleSourceFindingIdx = null
     state.bundleCodeSearchQuery = ''
     state.bundleCodeSearchMode = 'files'
+    state.bundleSearchQuery = ''
+    state.bundleSearchRegex = false
+    state.bundleSearchCase = false
+    state.bundleSearchContext = true
     state.shownTriage = null
     graph2.showAll = true
     persistLastBundle(lastBundleIntegrity)
