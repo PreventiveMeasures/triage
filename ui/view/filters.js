@@ -131,7 +131,8 @@ export function matchesFilters(f) {
       || (entry?.comment ?? '').toLowerCase().includes(inc)
       || (entry?.fix ?? '').toLowerCase().includes(inc)
     // Negation toggle: when on, the query excludes — keep the findings
-    // that DON'T match.
+    // that DON'T match. Per-finding (a group stays visible if any tab
+    // is a non-match, same group rule as every other filter below).
     return state.filterIncludeNegate ? !hit : hit
   }
   return true

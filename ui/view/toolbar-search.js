@@ -36,9 +36,8 @@ const SEARCH_ICON = html`<svg viewBox="0 0 24 24" width="13" height="13" fill="n
   <path d="m20 20-3.5-3.5"/>
 </svg>`
 
-// Trailing negate toggle (findings only). The ⊘ circle-slash reads as
-// "exclude": flipping it inverts the query so the list keeps findings
-// that DON'T match. Hidden while the field is empty.
+// Trailing negate toggle (findings only): inverts the query so the
+// list keeps findings that DON'T match. Hidden while the field empty.
 const NEGATE_ICON = html`<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
   <circle cx="8" cy="8" r="5.5"/>
   <path d="M4.1 4.1l7.8 7.8" stroke-linecap="round"/>
@@ -91,7 +90,7 @@ class ToolbarSearch extends StateElement {
     return html`<button
       type="button"
       class=${classMap({ 'search-negate-btn': true, active: negate })}
-      title=${negate ? 'Negation on — show matching findings' : 'Negate: show non-matching findings'}
+      title=${negate ? 'Negation on — click to undo' : 'Negate: show non-matching findings'}
       aria-label="Negate search"
       aria-pressed=${String(negate)}
       @click=${this._onToggleNegate}

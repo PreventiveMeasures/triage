@@ -1523,6 +1523,10 @@ report.addEventListener('search-input', (e) => {
   const { kind, value } = e.detail
   if (kind === 'findings') {
     state.filterInclude = value
+    // Clearing the field ends the search; drop negation so a fresh
+    // query starts matching (the toggle is hidden while empty, so a
+    // persisted mode would resurface unseen).
+    if (!value) state.filterIncludeNegate = false
   } else if (kind === 'files') {
     state.filesSearch = value
   } else if (kind === 'packages') {

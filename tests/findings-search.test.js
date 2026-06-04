@@ -26,7 +26,7 @@ if (!globalThis[slotKey]) {
 }
 
 const { state } = await import('../client/state.ts')
-const { matchesFilters } = await import('../ui/view/filters.js')
+const { matchesFilters, applyFilters } = await import('../ui/view/filters.js')
 
 // Neutralise every non-search filter so each assertion isolates the
 // `filterInclude` search path. Findings carry no confidence, so the
@@ -129,5 +129,25 @@ describe('matchesFilters — findings search', () => {
     state.filterIncludeNegate = true
     state.filterInclude = ''
     assert.equal(matchesFilters(makeFinding('K')), true)
+  })
+
+  it('negation inverts only the text match — other filters still reject', () => {
+    const f = makeFinding('L', { severity: 'low', description: 'no term here' })
+    state.filterIncludeNegate = true
+    state.filterInclude = 'absent-term'         // f doesn't match → text side passes
+    state.filterSeverities = new Set(['high'])  // but f is 'low' → severity rejects
+    assert.equal(matchesFilters(f), false)
+  })
+
+  it('negation is per-finding — a group stays visible if any tab is a non-match', () => {
+    const a = makeFinding('M', { description: 'contains foobar token' })
+    const b = makeFinding('N', { description: 'unrelated' })
+    state.filterIncludeNegate = true
+    state.filterInclude = 'foobar'
+    // [a, b]: a matches (dropped), b doesn't (kept) → g.some keeps the
+    // group, same group-visibility rule as the positive filter.
+    assert.deepEqual(applyFilters([[a, b]]), [[a, b]])
+    // Every tab matches the excluded term → the group drops out.
+    assert.deepEqual(applyFilters([[a]]), [])
   })
 })
