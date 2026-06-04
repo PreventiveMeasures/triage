@@ -17,7 +17,9 @@
 
 :host { display: block; }
 :host(.hidden) { display: none; }
-:host(.triage-inprogress),
+/* Resolved/dismissed buckets dim when their bucket view is shown.
+   In-progress is intentionally NOT dimmed — it's active work, not a
+   settled state, so it reads at full strength like the live view. */
 :host(.triage-fixed),
 :host(.triage-invalid),
 :host(.triage-deleted),
@@ -275,7 +277,6 @@
   &.tab-mark-gray.active { border-color: var(--text); }
 
   &.tab-deleted .tab-label { text-decoration: line-through; opacity: .6; }
-  &.tab-inprogress .tab-label { opacity: .8; }
   &.tab-inprogress .tab-label::after { content: ' ◐'; opacity: .6; }
   &.tab-fixed .tab-label { opacity: .65; }
   &.tab-fixed .tab-label::after { content: ' ✓'; opacity: .6; }
@@ -613,7 +614,6 @@
      the boxed outline next to the file:line reads inconsistently
      with the surrounding flat text. */
   .npm-link { border: 0; padding: 0; }
-  :host(.triage-inprogress),
   :host(.triage-fixed),
   :host(.triage-invalid),
   :host(.triage-deleted),

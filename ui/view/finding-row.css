@@ -50,7 +50,9 @@
 :host(.mark-green) .row { background: var(--mark-green-bg); }
 :host(.mark-gray) .row  { background: var(--mark-gray-bg); }
 :host(.has-conflict) .row { outline: 2px dashed var(--accent); outline-offset: -2px; }
-:host(.triage-inprogress),
+/* Resolved/dismissed buckets dim when their bucket view is shown.
+   In-progress is intentionally NOT dimmed — it's active work, not a
+   settled state, so it reads at full strength like the live view. */
 :host(.triage-fixed),
 :host(.triage-invalid),
 :host(.triage-deleted),
@@ -175,7 +177,6 @@
   &.tab-mark-gray.active { border-color: var(--text); }
 
   &.tab-deleted .tab-label { text-decoration: line-through; opacity: .6; }
-  &.tab-inprogress .tab-label { opacity: .8; }
   &.tab-inprogress .tab-label::after { content: ' ◐'; opacity: .6; }
   &.tab-fixed .tab-label { opacity: .65; }
   &.tab-fixed .tab-label::after { content: ' ✓'; opacity: .6; }
@@ -368,7 +369,6 @@
   :host(.mark-gray) .row {
     background: transparent !important;
   }
-  :host(.triage-inprogress),
   :host(.triage-fixed),
   :host(.triage-invalid),
   :host(.triage-deleted),
