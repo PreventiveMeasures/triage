@@ -10,23 +10,32 @@
 // live in their own module so the main index file (already at the
 // lint line ceiling) can focus on the top-level hash / package /
 // repo book-keeping; `findingDedupeKey` is threaded in from the
-// index module to avoid a circular import.
+// index module to avoid a circular import. This module also hosts
+// `isPlaceholderNpmPackage` — the shared npm-stamp sentinel check used
+// by `packageVersionOf` here and `packageOf` in the index, and
+// re-exported to the finding card via `#client/index.js`.
 
-// The analyzer stamps `package.npm = { name: 'solidity-bundle',
-// version: '0.0.0' }` as a synthetic placeholder on findings whose
-// upstream npm package it COULDN'T determine (bundled source with no
-// resolvable `node_modules/` origin). It's not a real registry entry, so
+// The analyzer stamps `package.npm = { name: 'solidity-bundle', version:
+// '0.0.0' }` as a synthetic placeholder on findings whose upstream npm
+// package it couldn't determine. It's not a real registry entry, so
 // callers treat a placeholder stamp as if it were absent: the Packages
 // view falls back to file-path extraction (and drops the finding when
 // the path is own-source) instead of opening a `solidity-bundle` row,
 // and the finding card's npm chip renders nothing instead of linking to
-// a 404 npm page. Matched on the exact (name, version) pair so a genuine
-// `solidity-bundle` release — or any real package pinned at `0.0.0` —
-// still surfaces normally.
+// a 404 npm page.
+//
+// `solidity-bundle` is the sentinel NAME; the version is the analyzer's
+// `0.0.0` default, but `package.npm.version` is documented optional (see
+// the finding shape note in the index), so an absent / empty version
+// under that name is treated as the placeholder too. A genuine
+// `solidity-bundle` release at a real, concrete version is NOT
+// suppressed — only the can't-determine sentinel is.
 const PLACEHOLDER_NPM_NAME = 'solidity-bundle'
 const PLACEHOLDER_NPM_VERSION = '0.0.0'
 export function isPlaceholderNpmPackage(npm) {
-  return npm?.name === PLACEHOLDER_NPM_NAME && npm?.version === PLACEHOLDER_NPM_VERSION
+  if (npm?.name !== PLACEHOLDER_NPM_NAME) return false
+  const version = npm.version
+  return !version || version === PLACEHOLDER_NPM_VERSION
 }
 
 // Version extractor — prefers the analyzer-stamped

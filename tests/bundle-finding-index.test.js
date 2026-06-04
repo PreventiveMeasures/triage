@@ -503,9 +503,11 @@ describe('bundle-finding-index — analyzer-stamped package.npm overrides path e
 
 // The analyzer stamps `package.npm = { name: 'solidity-bundle', version:
 // '0.0.0' }` as a placeholder when it can't determine the real upstream
-// package. That synthetic pair must not surface as a real npm package in
-// either the Packages view (this index) or the finding card's npm chip
-// (`isPlaceholderNpmPackage`, shared with `ui/view/render-finding.js`).
+// package. `solidity-bundle` is the sentinel name (the `0.0.0` version is
+// its default, but an absent / empty version under that name counts too).
+// It must not surface as a real npm package in either the Packages view
+// (this index) or the finding card's npm chip (`isPlaceholderNpmPackage`,
+// shared with `ui/view/render-finding.js`).
 describe('bundle-finding-index — solidity-bundle@0.0.0 placeholder is not a real package', () => {
   it('drops an own-source finding carrying only the placeholder stamp', async () => {
     // Placeholder stamp + own-source path → packageOf has no real
@@ -543,39 +545,64 @@ describe('bundle-finding-index — solidity-bundle@0.0.0 placeholder is not a re
   })
 
   it('still surfaces a genuine package named solidity-bundle at a real version', async () => {
-    // Guard against over-matching: only the exact `@0.0.0` pair is the
-    // placeholder. A real `solidity-bundle` release keeps its row.
+    // Guard against over-matching: the sentinel is `solidity-bundle` at
+    // its `0.0.0`/absent default — a real `solidity-bundle` release at a
+    // concrete version keeps its row. Asserted by the specific finding id
+    // (not just bucket existence) so the check is meaningful regardless of
+    // what else seeded the shared `solidity-bundle` bucket.
+    const id = `real-solidity-bundle-${Date.now()}`
     await seedReport({
       findings: [
-        { id: `real-solidity-bundle-${Date.now()}`, severity: 'high', file: 'src/own.js', description: 'd', package: { npm: { name: 'solidity-bundle', version: '1.2.3' } } },
+        { id, severity: 'high', file: 'src/own.js', description: 'd', package: { npm: { name: 'solidity-bundle', version: '1.2.3' } } },
       ],
     })
     await ensureBundleFindingsIndexed()
-    const bucket = getPackagesIndex().get('solidity-bundle')
-    assert.ok(bucket, 'a real solidity-bundle@1.2.3 still surfaces as a package')
-    assert.ok(bucket.byVersion.get('1.2.3'), 'real version slot present')
+    const slot = getPackagesIndex().get('solidity-bundle')?.byVersion.get('1.2.3')
+    assert.ok(slot, 'a real solidity-bundle@1.2.3 surfaces under its real version slot')
+    assert.ok(slot.findings.some((f) => f.id === id), 'this finding is the one in the slot')
+  })
+
+  it('drops an own-source finding stamped with the placeholder name but no version', async () => {
+    // `package.npm.version` is optional, so the can't-determine sentinel
+    // can arrive as a bare `{ name: 'solidity-bundle' }`. That must be
+    // suppressed too — otherwise a versionless placeholder leaks back as
+    // a `solidity-bundle` row. Asserted by id across every bucket.
+    const tag = `placeholder-nover-${Date.now()}`
+    await seedReport({
+      findings: [
+        { id: `${tag}-f1`, severity: 'high', file: `contracts/${tag}.sol`, description: 'd', package: { npm: { name: 'solidity-bundle' } } },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+    for (const [, bucket] of getPackagesIndex()) {
+      assert.ok(!bucket.findings.some((f) => f.id === `${tag}-f1`), 'versionless placeholder finding is not bucketed under any package')
+    }
   })
 
   it('still surfaces a real package that happens to be pinned at 0.0.0 under a different name', async () => {
     // Guard against over-matching on version alone — `0.0.0` is a
     // legitimate (unpublished / local) version for a real package name.
+    // Own-source path so the bucket name can ONLY come from the honored
+    // stamp (not from path extraction).
     const tag = `local-pkg-${Date.now()}`
     await seedReport({
       findings: [
-        { id: `${tag}-f1`, severity: 'high', file: `node_modules/${tag}/x.js`, description: 'd', package: { npm: { name: tag, version: '0.0.0' } } },
+        { id: `${tag}-f1`, severity: 'high', file: `src/${tag}.js`, description: 'd', package: { npm: { name: tag, version: '0.0.0' } } },
       ],
     })
     await ensureBundleFindingsIndexed()
     const bucket = getPackagesIndex().get(tag)
-    assert.ok(bucket, 'a real package pinned at 0.0.0 still surfaces')
+    assert.ok(bucket, 'a real package pinned at 0.0.0 still surfaces via its stamp')
     assert.ok(bucket.byVersion.get('0.0.0'), 'its 0.0.0 slot is kept')
   })
 
-  it('isPlaceholderNpmPackage matches only the exact (name, version) pair', () => {
+  it('isPlaceholderNpmPackage matches the sentinel name at its 0.0.0 / absent / empty version', () => {
     assert.equal(isPlaceholderNpmPackage({ name: 'solidity-bundle', version: '0.0.0' }), true)
-    assert.equal(isPlaceholderNpmPackage({ name: 'solidity-bundle', version: '1.0.0' }), false, 'real version is not the placeholder')
-    assert.equal(isPlaceholderNpmPackage({ name: 'solidity-bundle' }), false, 'missing version is not the placeholder')
-    assert.equal(isPlaceholderNpmPackage({ name: 'other-pkg', version: '0.0.0' }), false, 'real name is not the placeholder')
+    assert.equal(isPlaceholderNpmPackage({ name: 'solidity-bundle' }), true, 'absent version under the sentinel name is the placeholder')
+    assert.equal(isPlaceholderNpmPackage({ name: 'solidity-bundle', version: '' }), true, 'empty version under the sentinel name is the placeholder')
+    assert.equal(isPlaceholderNpmPackage({ name: 'solidity-bundle', version: '1.0.0' }), false, 'a real version keeps a genuine solidity-bundle release')
+    assert.equal(isPlaceholderNpmPackage({ name: 'other-pkg', version: '0.0.0' }), false, 'a different name is not the placeholder')
+    assert.equal(isPlaceholderNpmPackage({ name: 'other-pkg' }), false, 'a different name without a version is not the placeholder')
     assert.equal(isPlaceholderNpmPackage(undefined), false)
     assert.equal(isPlaceholderNpmPackage(null), false)
   })
