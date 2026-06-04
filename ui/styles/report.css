@@ -977,7 +977,6 @@ bundle-code-search {
   white-space: nowrap;
 
   &:hover { color: var(--text); }
-  &.on { color: var(--text); }
   &.on .bundle-search-switch { background: color-mix(in oklch, var(--accent) 22%, transparent); }
   &.on .bundle-search-switch::after { transform: translateX(12px); background: var(--accent); }
 }
@@ -1190,7 +1189,6 @@ bundle-search {
   text-align: left;
   background: transparent; border: 0;
   font: inherit;
-  cursor: pointer;
 
   &:hover { background: rgb(from var(--text) r g b / .03); }
   &:hover .bundle-search-lineno { color: var(--text); }
