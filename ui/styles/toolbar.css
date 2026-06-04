@@ -308,11 +308,13 @@ toolbar-search,
   & svg { color: var(--muted); flex-shrink: 0; }
 
   /* `&[kind]` (always present on the `<toolbar-search>` element host —
-     kind="findings"/"files") lifts this to specificity 0,2,2 so it beats the
-     generic `.toolbar input[type='text']` (0,2,1); without it the input keeps
-     a second border + padding. The `.toolbar-search` graph path-filter lives
-     in the graph shadow DOM (not inside a `.toolbar`), so there's no generic
-     rule to outweigh — its input rides the class form below. */
+     kind="findings"/"files") lifts this to specificity 0,3,1 — the `&` is the
+     `toolbar-search, .toolbar-search` list above, so `:is(…)` contributes the
+     class column — which beats the generic `.toolbar input[type='text']`
+     (0,2,1); without it the input keeps a second border + padding. The
+     `.toolbar-search` graph path-filter lives in the graph shadow DOM (not
+     inside a `.toolbar`), so there's no generic rule to outweigh — its input
+     rides the class form below. */
   &[kind] input[type='text'],
   &.toolbar-search input[type='text'] {
     flex: 1; min-width: 0;
