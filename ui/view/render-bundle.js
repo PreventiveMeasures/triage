@@ -1457,7 +1457,7 @@ function renderBundleSearchResults(sources, query, useRegex, caseSensitive, show
   return html`<div class="bundle-search-results">
     <div class="bundle-search-summary">
       <span>${totalHits}${truncated ? '+' : ''} ${totalHits === 1 ? 'match' : 'matches'}
-        in ${fileCount} ${fileCount === 1 ? 'file' : 'files'}</span>
+        in ${fileCount}${truncated ? '+' : ''} ${fileCount === 1 ? 'file' : 'files'}</span>
       ${prefix ? html`<span class="bundle-search-summary-prefix mono" title=${prefix}>${prefix}</span>` : nothing}
       ${truncated ? html`<span class="bundle-search-summary-more">results capped — refine to narrow</span>` : nothing}
     </div>
