@@ -82,6 +82,21 @@ function renderPreservingTableScroll() {
   if (state.viewMode === 'table') renderPreservingScrollOf('.findings-table-list')
   else render()
 }
+// Coalesce Search-tab re-renders to one per animation frame. The
+// full-bundle scan (renderBundleSearchResults) runs inside render(),
+// so rendering synchronously on every keystroke would tie typing
+// latency to the scan cost; deferring to the next frame keeps the
+// input responsive and collapses bursts (held key / paste / IME) into
+// a single scan. The query state is written synchronously, so a frame
+// already pending just picks up the newest value when it fires.
+let _bundleSearchRaf = 0
+function renderBundleSearchDebounced() {
+  if (_bundleSearchRaf) return
+  _bundleSearchRaf = requestAnimationFrame(() => {
+    _bundleSearchRaf = 0
+    render()
+  })
+}
 import { openBundle } from './bundle-load.js'
 import { renderSidebar } from './sidebar.js'
 import { BUNDLE_TABS, persistLastBundle, switchToFile } from './ingest.js'
@@ -1649,7 +1664,13 @@ report.addEventListener('search-input', (e) => {
   } else if (kind === 'bundle-code') {
     state.bundleCodeSearchQuery = value
   } else if (kind === 'bundle-search') {
+    // Heaviest of the search fields (scans every source) — debounce
+    // its render to one per frame instead of the synchronous render
+    // below. The `<bundle-search>` component still updates its own
+    // input via its autorun, so the field stays responsive.
     state.bundleSearchQuery = value
+    renderBundleSearchDebounced()
+    return
   } else {
     return
   }
