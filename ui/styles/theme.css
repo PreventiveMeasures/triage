@@ -32,6 +32,11 @@
   --border: #2c2c2c; --text: #e6edf3;
   --muted: #8b949e; --accent: #58a6ff; --critical: #d8413a;
   --high: #d57422; --medium: #d29922; --low: #8b949e; --green: #3fb950;
+  /* Amber accent for the "In progress" triage state — distinct from the
+     green (fixed) / red (deleted) / blue (ignored) / muted (invalid)
+     bucket hues. Inherited by every theme (the light/easter-egg blocks
+     don't override it; the amber reads on all four backgrounds). */
+  --warning: #d97706;
   /* Triage marker palette — single source for the four colors
      surfaced by the per-finding marker UI. Cross the shadow
      boundary so both the `<color-marker>` shadow stylesheet and

@@ -144,7 +144,7 @@ export function applyHydrationDecisions(
     } else if (c.property === 'fix') {
       patchEntry(state.triage, c.id, { fix: c.imported })
     } else if (c.property === 'triage') {
-      if (c.imported === 'fixed' || c.imported === 'invalid' || c.imported === 'deleted') {
+      if (c.imported === 'inprogress' || c.imported === 'fixed' || c.imported === 'invalid' || c.imported === 'deleted') {
         // Mutex — clear the id's per-report ignore alongside the bucket.
         patchEntry(state.triage, c.id, { triage: c.imported, ignoredReports: undefined })
       } else {

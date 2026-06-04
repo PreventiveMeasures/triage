@@ -51,7 +51,7 @@ export function renderPackagesView() {
   // latest version's row inline + an expand chevron that reveals
   // the older versions underneath; single-slot packages collapse
   // back to the original one-row shape (no chevron).
-  const triageCounts = { fixed: 0, invalid: 0, deleted: 0 }
+  const triageCounts = { inprogress: 0, fixed: 0, invalid: 0, deleted: 0 }
   const filtered = []
   for (const [pkg, bucket] of buckets) {
     const versions = []
@@ -63,7 +63,8 @@ export function renderPackagesView() {
       const files = new Map()
       for (const f of sub.findings) {
         const t = state.triage.get(tabKey(f))?.triage ?? null
-        if (t === 'fixed') triageCounts.fixed++
+        if (t === 'inprogress') triageCounts.inprogress++
+        else if (t === 'fixed') triageCounts.fixed++
         else if (t === 'invalid') triageCounts.invalid++
         else if (t === 'deleted') triageCounts.deleted++
         if (t !== state.shownTriage) continue
@@ -245,7 +246,7 @@ function packagesToolbarTemplate(triageCounts) {
 // State list for `<triage-selector variant="packages">` (see
 // view/triage-selector.js) — the only thing the call site passes.
 // No `ignored`: it's per-report and treated as untriaged in this view.
-const PACKAGES_TRIAGE_STATES = ['fixed', 'invalid', 'deleted']
+const PACKAGES_TRIAGE_STATES = ['inprogress', 'fixed', 'invalid', 'deleted']
 
 // In-place sort by the user-selected key. Every option falls back
 // to alphabetical name ordering on ties so the list stays stable

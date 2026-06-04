@@ -304,12 +304,12 @@ function triageMenuTemplate(group, title, context = null) {
     ? (state.triage.get(activeKey)?.triage
        ?? (isIgnored(activeTab) ? 'ignored' : null))
     : groupSt.commonTriage
-  const STATE_LABELS = { fixed: 'Fixed', invalid: 'Invalid', deleted: 'Deleted', ignored: 'Ignored' }
-  const ACTION_LABELS = { fixed: 'Fixed', invalid: 'Invalid', deleted: 'Delete', ignored: 'Ignore' }
+  const STATE_LABELS = { inprogress: 'In progress', fixed: 'Fixed', invalid: 'Invalid', deleted: 'Deleted', ignored: 'Ignored' }
+  const ACTION_LABELS = { inprogress: 'In progress', fixed: 'Fixed', invalid: 'Invalid', deleted: 'Delete', ignored: 'Ignore' }
   const inTriageView = Boolean(state.shownTriage)
   const buttonLabel = inTriageView ? STATE_LABELS[state.shownTriage] : null
-  // Action order: triage states first (Fixed / Invalid / Delete),
-  // then Ignore.
+  // Action order: triage states first (In progress / Fixed / Invalid
+  // / Delete), then Ignore.
   //
   // Focus-view variant shows all four states as toggleable chips
   // with the active one marked `.active` (pressed); clicking it
@@ -319,7 +319,7 @@ function triageMenuTemplate(group, title, context = null) {
   // List-view variant (the dropdown) prepends Restore in a triage
   // view and excludes the current state — as a popover menu, showing
   // the active bucket without a "press" affordance would confuse.
-  const ALL_ACTIONS = ['fixed', 'invalid', 'deleted', 'ignored']
+  const ALL_ACTIONS = ['inprogress', 'fixed', 'invalid', 'deleted', 'ignored']
   const isFocus = context === 'focus'
   let actions
   if (isFocus) {

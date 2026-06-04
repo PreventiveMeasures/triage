@@ -124,12 +124,13 @@ export function groupState(group) {
   const anyTriage = bucketVals.some((b) => b !== 'ignored')
   const allTriaged = annotated.length > 0 && annotated.every((t) => Boolean(t.bucket) && t.bucket !== 'ignored')
   // Common bucket — null when no consensus or live; one of
-  // 'fixed' / 'invalid' / 'deleted' / 'ignored' otherwise.
+  // 'inprogress' / 'fixed' / 'invalid' / 'deleted' / 'ignored' otherwise.
   const commonTriage = !hasConflict && bucketVals.length > 0 ? bucketVals[0] : null
   return {
     hasConflict, commonColor, anyTriage, allTriaged, commonTriage,
     // Convenience flags so downstream code that asks "is this group in
     // the trash bucket" needn't branch on commonTriage.
+    isInProgress: commonTriage === 'inprogress',
     isFixed:    commonTriage === 'fixed',
     isInvalid:  commonTriage === 'invalid',
     isDeleted:  commonTriage === 'deleted',

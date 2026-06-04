@@ -1094,11 +1094,12 @@ function findingsBodyTemplate(filtered) {
     // moves the card between status columns; the handler lives in
     // events.js.
     const columns = [
-      { key: 'untriaged', label: 'Untriaged', target: 'untriaged' },
-      { key: 'fixed',     label: 'Fixed',     target: 'fixed' },
-      { key: 'invalid',   label: 'Invalid',   target: 'invalid' },
-      { key: 'deleted',   label: 'Deleted',   target: 'deleted' },
-      { key: 'ignored',   label: 'Ignored',   target: 'ignored' },
+      { key: 'untriaged',  label: 'Untriaged',   target: 'untriaged' },
+      { key: 'inprogress', label: 'In progress', target: 'inprogress' },
+      { key: 'fixed',      label: 'Fixed',       target: 'fixed' },
+      { key: 'invalid',    label: 'Invalid',     target: 'invalid' },
+      { key: 'deleted',    label: 'Deleted',     target: 'deleted' },
+      { key: 'ignored',    label: 'Ignored',     target: 'ignored' },
     ]
     const buckets = new Map(columns.map((c) => [c.key, []]))
     for (const g of filtered) {
@@ -1315,7 +1316,7 @@ function renderImpl() {
             const options = {
               hideAllFiles,
               triageCounts,
-              triageStates: ['fixed', 'invalid', 'deleted'],
+              triageStates: ['inprogress', 'fixed', 'invalid', 'deleted'],
             }
             // First open of the graph tab triggers the dynamic
             // import of `ui/graph.js` (LitElement + ~37 KB shadow
@@ -1392,7 +1393,7 @@ function renderImpl() {
   // selector. Conflict groups stay in the "live" bucket (their
   // commonTriage is null) regardless of which states their member
   // tabs carry — matching the original behaviour.
-  const triageCounts = { fixed: 0, invalid: 0, deleted: 0, ignored: 0 }
+  const triageCounts = { inprogress: 0, fixed: 0, invalid: 0, deleted: 0, ignored: 0 }
   for (const g of mergedGroups) {
     const t = groupState(g).commonTriage
     if (t) triageCounts[t]++
@@ -1789,11 +1790,11 @@ function renderImpl() {
       ></view-mode-buttons>`
       // Triage bucket counts across every loaded report's groups —
       // the findings-tab graph's topbar uses this for its triage
-      // selector (Fixed / Invalid / Deleted / Ignored). Computed
-      // here (in the main bundle) rather than inside
+      // selector (In progress / Fixed / Invalid / Deleted / Ignored).
+      // Computed here (in the main bundle) rather than inside
       // `renderTopBar` so the lazy `ui/graph.js` bundle stays free
       // of `groupState` / `state` imports.
-      const findingsTriageCounts = { fixed: 0, invalid: 0, deleted: 0, ignored: 0 }
+      const findingsTriageCounts = { inprogress: 0, fixed: 0, invalid: 0, deleted: 0, ignored: 0 }
       for (const g of getMergedGroups()) {
         const t = groupState(g).commonTriage
         if (t) findingsTriageCounts[t]++
@@ -1801,7 +1802,7 @@ function renderImpl() {
       const options = {
         extraTopRow: viewModeRow,
         triageCounts: findingsTriageCounts,
-        triageStates: ['fixed', 'invalid', 'deleted', 'ignored'],
+        triageStates: ['inprogress', 'fixed', 'invalid', 'deleted', 'ignored'],
       }
       // First open of the graph view-mode kicks the dynamic
       // import of `ui/graph.js`; subsequent opens reuse the

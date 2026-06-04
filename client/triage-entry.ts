@@ -28,7 +28,7 @@ export type TriageMap = Map<string, TriageEntry>
 export type TriagePatch = { [K in keyof TriageEntry]?: TriageEntry[K] | undefined }
 
 function asBucket(v: unknown): TriageBucket | undefined {
-  return v === 'fixed' || v === 'invalid' || v === 'deleted' ? v : undefined
+  return v === 'inprogress' || v === 'fixed' || v === 'invalid' || v === 'deleted' ? v : undefined
 }
 
 // The effective triage bucket, honoring the legacy `deleted: true`

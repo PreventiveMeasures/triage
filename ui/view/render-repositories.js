@@ -54,14 +54,15 @@ export function renderRepositoriesView() {
   // re-renders progressively as more reports finish indexing.
   ensureBundleFindingsIndexed().catch(() => {})
   const buckets = getRepositoriesIndex()
-  const triageCounts = { fixed: 0, invalid: 0, deleted: 0 }
+  const triageCounts = { inprogress: 0, fixed: 0, invalid: 0, deleted: 0 }
   const filtered = []
   for (const [repo, bucket] of buckets) {
     const findings = []
     const files = new Map()
     for (const f of bucket.findings) {
       const t = state.triage.get(tabKey(f))?.triage ?? null
-      if (t === 'fixed') triageCounts.fixed++
+      if (t === 'inprogress') triageCounts.inprogress++
+      else if (t === 'fixed') triageCounts.fixed++
       else if (t === 'invalid') triageCounts.invalid++
       else if (t === 'deleted') triageCounts.deleted++
       if (t !== state.shownTriage) continue
@@ -135,7 +136,7 @@ function repositoriesToolbarTemplate(triageCounts) {
 // view/triage-selector.js) — same 3-bucket state list, same marker
 // class (`.packages-triage-selector`) so events.js's click routing
 // applies.
-const REPOSITORIES_TRIAGE_STATES = ['fixed', 'invalid', 'deleted']
+const REPOSITORIES_TRIAGE_STATES = ['inprogress', 'fixed', 'invalid', 'deleted']
 
 function sortRepositories(arr, sortBy) {
   const cmp = sortBy === 'name-asc'

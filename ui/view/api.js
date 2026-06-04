@@ -66,7 +66,7 @@ const triage = {
     if (triageVal !== undefined) {
       if (triageVal === null || triageVal === '' || triageVal === false) {
         if (patchEntry(state.triage, id, { triage: undefined })) changed = true
-      } else if (triageVal === 'fixed' || triageVal === 'invalid' || triageVal === 'deleted') {
+      } else if (triageVal === 'inprogress' || triageVal === 'fixed' || triageVal === 'invalid' || triageVal === 'deleted') {
         if (state.triage.get(id)?.triage !== triageVal) {
           patchEntry(state.triage, id, { triage: triageVal })
           changed = true
@@ -79,7 +79,7 @@ const triage = {
         // button or the workspace import path instead.
         throw new TypeError(
           `DeepView.triage.set: unknown triage value ${JSON.stringify(triageVal)} ` +
-          "(expected 'fixed' | 'invalid' | 'deleted' | null)",
+          "(expected 'inprogress' | 'fixed' | 'invalid' | 'deleted' | null)",
         )
       }
     }

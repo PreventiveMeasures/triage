@@ -187,10 +187,11 @@ triage-selector.is-empty { display: none; }
   &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
   &.active { background: var(--surface-active); }
 }
-.triage-state-btn.active.triage-state-deleted { color: var(--critical); }
-.triage-state-btn.active.triage-state-fixed   { color: var(--green, #4ade80); }
-.triage-state-btn.active.triage-state-invalid { color: var(--muted); }
-.triage-state-btn.active.triage-state-ignored { color: var(--accent, #2563eb); }
+.triage-state-btn.active.triage-state-deleted    { color: var(--critical); }
+.triage-state-btn.active.triage-state-fixed      { color: var(--green, #4ade80); }
+.triage-state-btn.active.triage-state-inprogress { color: var(--warning, #d97706); }
+.triage-state-btn.active.triage-state-invalid    { color: var(--muted); }
+.triage-state-btn.active.triage-state-ignored    { color: var(--accent, #2563eb); }
 
 /* `<entity-search>` is the lone holdout that still needs
    `display: contents` — its template is just a bare `<input>`, so

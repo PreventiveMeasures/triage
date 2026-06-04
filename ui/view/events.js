@@ -678,7 +678,7 @@ report.addEventListener('click', (e) => {
     const group = findGroupById(gid)
     if (!group) return
     const action = triageActionBtn.dataset.triageAction
-    if (!['fixed', 'invalid', 'deleted', 'ignored', 'restore'].includes(action)) return
+    if (!['inprogress', 'fixed', 'invalid', 'deleted', 'ignored', 'restore'].includes(action)) return
     const groupSt = groupState(group)
     const targets = groupSt.hasConflict ? [activeTabFor(group)] : group
     for (const f of targets) {
@@ -890,8 +890,8 @@ report.addEventListener('row-select', (e) => {
 
 // Kanban drag-and-drop. A `<finding-row class="kanban-card">` is
 // draggable; the `.kanban-column` elements advertise themselves as
-// drop zones via `data-kanban-target=<active|fixed|invalid|deleted
-// |ignored>`. On drop we mirror the existing `[data-triage-action]`
+// drop zones via `data-kanban-target=<active|inprogress|fixed|invalid
+// |deleted|ignored>`. On drop we mirror the existing `[data-triage-action]`
 // menu's mutation rules (conflict groups apply to the active tab
 // only, consistent groups apply to every tab), then `saveTriage()`
 // + render() to repaint the board.

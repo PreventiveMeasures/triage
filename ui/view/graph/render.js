@@ -31,8 +31,8 @@ import { pkgRelative } from './data.js'
 export function renderTopBar(graph, options) {
   const extraTopRow = options.extraTopRow
   const hideAllFiles = options.hideAllFiles ?? false
-  const triageCounts = options.triageCounts ?? { fixed: 0, invalid: 0, deleted: 0 }
-  const triageStates = options.triageStates ?? ['fixed', 'invalid', 'deleted']
+  const triageCounts = options.triageCounts ?? { inprogress: 0, fixed: 0, invalid: 0, deleted: 0 }
+  const triageStates = options.triageStates ?? ['inprogress', 'fixed', 'invalid', 'deleted']
   // Severity highlight pills — same tier set as the findings tab
   // (format.js's SEVERITIES). Skip zero-count tiers UNLESS currently
   // selected, so an active pill stays clickable to deselect even
@@ -65,9 +65,9 @@ export function renderTopBar(graph, options) {
   const hasAnyColor = COLORS.some((c) => colorCounts[c] > 0 || graph2.selectedColors.has(c))
 
   // Triage state selector — `<triage-selector variant="graph">`. The
-  // bundle path passes `triageStates = ['fixed', 'invalid', 'deleted']`
+  // bundle path passes `triageStates = ['inprogress', 'fixed', 'invalid', 'deleted']`
   // (no Ignored; ignore is per-report and the bundle aggregates across
-  // reports); the findings-tab path passes all four. The component
+  // reports); the findings-tab path passes all five. The component
   // reads `state.shownTriage` itself and handles its own visibility.
   // `variant="graph"` adds `.graph2-triage-selector` to the inner
   // wrapper so events.js's click delegate routes through the canvas-

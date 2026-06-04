@@ -30,7 +30,7 @@ function normColor(entry: TriageEntry | null | undefined): string {
   return typeof entry?.color === 'string' ? entry.color : ''
 }
 function normTriage(entry: TriageEntry | null | undefined): string {
-  if (entry?.triage === 'fixed' || entry?.triage === 'invalid' || entry?.triage === 'deleted') return entry.triage
+  if (entry?.triage === 'inprogress' || entry?.triage === 'fixed' || entry?.triage === 'invalid' || entry?.triage === 'deleted') return entry.triage
   if (entry?.deleted) return 'deleted'
   return ''
 }
