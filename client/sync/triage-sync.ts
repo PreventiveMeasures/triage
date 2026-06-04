@@ -351,11 +351,21 @@ function currentStatus(): SyncStatus {
   }
   const sock = transport.getSocket()
   if (!sock || sock.readyState !== WebSocket.OPEN) return 'offline'
-  // Subscribe sent but not yet acked → `connecting`. Sessions still
-  // deriving keys (`subscribed === false`) don't gate; they reach
-  // `connecting` only once they actually attempt to subscribe.
+  // `online` requires EVERY active session to hold its
+  // `workspace-subscribed` ack — that ack is the ONLY proof the server
+  // registered this connection as a broadcast peer, so upstream changes
+  // will actually reach us. A session that hasn't acked yet does NOT
+  // count as online, whether it's still deriving keys, has a subscribe
+  // sign in flight, hasn't seen the challenge nonce, or — the SSE case
+  // — had its ack lost when a silently-dead downstream went
+  // unreconnected. Reporting `online` off a bare open socket was the
+  // bug: in SSE mode a save rides the side-channel REST `/save` plane
+  // and keeps succeeding, so the badge read `online` while nothing was
+  // subscribed to receive peers' changes. With no sessions at all (the
+  // empty state) there's nothing to subscribe to, so an open socket is
+  // `online`.
   for (const session of sessions.values()) {
-    if (session.subscribed && !session.subscribeAcked) return 'connecting'
+    if (!session.subscribeAcked) return 'connecting'
   }
   return 'online'
 }

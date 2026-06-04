@@ -21,6 +21,7 @@ await import('./_polyfills.js')
 
 const { createSocketTransport } = await import('../client/sync/socket-transport.ts')
 const { setCachedSyncPassword } = await import('../client/sync/sync-auth-cache.ts')
+const { setSseDownstreamTimeoutMs } = await import('../client/sync/sse-transport.ts')
 
 // ─────────── fake WebSocket ───────────
 //
@@ -725,6 +726,9 @@ describe('socket-transport: SSE fallback', () => {
   afterEach(() => {
     globalThis.fetch = originalFetch
     delete globalThis.__sseStreams
+    // Undo any per-test lowering of the downstream-inactivity window so
+    // the production default doesn't leak into the next test.
+    setSseDownstreamTimeoutMs(75_000)
   })
 
   function lastStream() {
@@ -936,6 +940,91 @@ describe('socket-transport: SSE fallback', () => {
     // ctor fires another instance.
     assert.ok(FakeWebSocket.instances.length >= 2, 'reconnect attempted')
     assert.ok(fetchCalls.length >= beforeReconnect, 'reconnect fired')
+    t.close()
+  })
+
+  it('a bare EOF on the live downstream (no close frame) disconnects + reconnects', async () => {
+    // The server (or an idle proxy / LB / a reaped session) drops the
+    // live event-stream WITHOUT the graceful `close` event and without a
+    // newer POST taking over. Pre-fix `consumeStream` returned silently
+    // on this EOF, leaving readyState OPEN forever — and since the SSE
+    // plane runs NO client ping, the dead downstream was never noticed,
+    // so the outer transport never reconnected and the UI hung
+    // ("Connecting"). Now the live reader treats a bare EOF as a death.
+    const t = makeTransport()
+    const c = recordingConsumer()
+    t.addConsumer(c)
+    t.acquire()
+    assert.equal(FakeWebSocket.instances.length, 1, 'WS attempted first')
+    FakeWebSocket.last.simulateClose()  // force the SSE fallback
+    assert.ok(await awaitFetch(1))
+    lastStream().pushEvent('session', 'sid-x')
+    lastStream().pushMessage({ type: 'challenge', nonce: 'n' })
+    await delay(10)
+    assert.deepEqual(c.connected, ['n'])
+    assert.equal(c.disconnected.length, 0, 'healthy while the stream is live')
+    // Live downstream EOFs with no `close` frame and no successor POST.
+    lastStream().close()
+    await delay(30)
+    assert.equal(c.disconnected.length, 1, 'bare EOF on the live downstream disconnects')
+    // ...and the outer transport reconnects (WS-first) rather than
+    // hanging — the SSE `open` reset the backoff to INITIAL (~1s).
+    const wsBefore = FakeWebSocket.instances.length
+    await delay(1100)
+    assert.ok(FakeWebSocket.instances.length > wsBefore, 'reconnect attempted after the silent EOF')
+    t.close()
+  })
+
+  it('a superseded SSE response EOF (the normal takeover) does NOT disconnect', async () => {
+    // Each POST opens a fresh downstream and the server end()s the
+    // previous response — so the PRIOR reader EOFs as part of every
+    // takeover. That EOF must stay silent (the successor owns the live
+    // downstream now); only the LATEST stream's EOF signals a death.
+    const t = makeTransport()
+    const c = recordingConsumer()
+    t.addConsumer(c)
+    t.acquire()
+    FakeWebSocket.last.simulateClose()
+    assert.ok(await awaitFetch(1))
+    const firstStream = lastStream()
+    firstStream.pushEvent('session', 'sid-x')
+    firstStream.pushMessage({ type: 'challenge', nonce: 'n' })
+    await delay(10)
+    assert.deepEqual(c.connected, ['n'])
+    // A send opens a SECOND POST (the takeover) — postSeq advances, so
+    // the first response is now superseded.
+    t.send({ type: 'ping' })
+    assert.ok(await awaitFetch(2, 500))
+    // The server end()s the FIRST response → its reader EOFs. Normal
+    // takeover signal, not a death.
+    firstStream.close()
+    await delay(30)
+    assert.equal(c.disconnected.length, 0, 'superseded reader EOF stays silent')
+    t.close()
+  })
+
+  it('downstream inactivity (no keepalive, no data, no EOF) trips the watchdog → disconnect', async () => {
+    // A wedged TLS-terminating proxy holds the stream open but stops
+    // forwarding: no data, no server `:` keepalive, no EOF. The bare-EOF
+    // check can't see this, so the inactivity watchdog (the SSE peer of
+    // the WS pong-timeout) must fire and tear the channel down. Lower the
+    // window so the test needn't wait the production 75s.
+    setSseDownstreamTimeoutMs(80)
+    const t = makeTransport()
+    const c = recordingConsumer()
+    t.addConsumer(c)
+    t.acquire()
+    FakeWebSocket.last.simulateClose()
+    assert.ok(await awaitFetch(1))
+    lastStream().pushEvent('session', 'sid-x')
+    lastStream().pushMessage({ type: 'challenge', nonce: 'n' })
+    await delay(10)
+    assert.deepEqual(c.connected, ['n'])
+    assert.equal(c.disconnected.length, 0, 'healthy while bytes flow')
+    // Go quiet past the (lowered) inactivity window — no bytes arrive,
+    // and the SSE plane sends no client ping to keep itself alive.
+    await delay(160)
+    assert.equal(c.disconnected.length, 1, 'inactivity watchdog closed the silent downstream')
     t.close()
   })
 })

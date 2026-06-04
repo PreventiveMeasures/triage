@@ -285,14 +285,20 @@ describe('triage-sync client races', () => {
       // saveTriage settles (the underlying op's promise resolves
       // even if the session closed mid-flight).
       await savePromise.catch(() => null)
-      // Re-opening the session loads the persisted base; it should
-      // be the settledBase (the post-close save was lost when the
-      // session was torn down — by design).
+      // Re-opening the session loads the persisted base synchronously
+      // (loadPersistedSession). It MUST be settledBase: the post-close
+      // save's encrypt result was dropped by the identity recheck and
+      // never persisted. Read it right AT openSession — before the
+      // reopened session subscribes and legitimately re-pushes the green
+      // edit that's still live in module-level state.* (that re-sync
+      // would advance the base and is NOT what this test pins). Reading
+      // at the load point also makes the assertion independent of how
+      // long `online` takes to settle — the previous post-`online` read
+      // only passed because the old status logic reported `online`
+      // before the subscribe-ack (and thus before the re-push acked).
       triageSync.openSession(wsId)
-      triageSync.setServerUrl(serverUrl)
-      await waitFor(statusOnline, 'reopened online')
       const reopenedBase = triageSync.sessionInfo(wsId).baseRevision
-      assert.equal(reopenedBase, settledBase, 'reopened base is the last fully-acked base, not the closed-mid-flight save')
+      assert.equal(reopenedBase, settledBase, 'persisted base after close is the last fully-acked base, not a half-saved one')
     } finally {
       triageSync.closeSession(wsId)
       await deleteWorkspace(wsId)

@@ -913,6 +913,56 @@ describe('triage-sync client', () => {
     await relay.close()
   })
 
+  it('an open socket with no subscribe-ack reads `connecting`, never `online`', async () => {
+    // Complaint: the badge read `online` whenever the socket was OPEN,
+    // even with nothing subscribed to receive peers' changes — so an
+    // action riding a side channel (the SSE REST `/save` plane) could
+    // "look online" while nothing was listening upstream. A relay that
+    // accepts the WebSocket but sends NO `challenge` holds the session
+    // at subscribed === false / subscribeAcked === false with the socket
+    // OPEN — the canonical "connected but not listening" shape (and the
+    // steady state a silently-dead SSE downstream leaves behind). Status
+    // MUST settle at `connecting`, never fall through to `online`.
+    //
+    // Pre-fix `currentStatus` only gated `connecting` on
+    // `subscribed && !subscribeAcked`, so an unsubscribed session
+    // (subscribed === false) didn't gate and the status latched `online`
+    // off the bare open socket.
+    const { WebSocketServer } = await import('ws')
+    const wss = new WebSocketServer({ port: 0, host: '127.0.0.1' })
+    await new Promise((resolve) => { wss.once('listening', resolve) })
+    const url = `ws://127.0.0.1:${wss.address().port}`
+    // Accept the socket and stay silent — no challenge means the client
+    // never gets a nonce, so it can't (and doesn't) subscribe.
+    wss.on('connection', () => {})
+
+    const wsId = `ws-${Math.random().toString(36).slice(2, 10)}`
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: randomBase64(), reports: ['t.md'] })
+    setReports([{ id: 'finding-A', _id: 'finding-A' }], 't.md')
+    clearTriageState()
+
+    // No client ping, so a missing pong can't close the socket out from
+    // under the assertion — we want the steady-state status of an
+    // open-but-unsubscribed socket.
+    setHeartbeatTimings({ pingMs: 0, pongMs: 5_000 })
+    triageSync.openSession(wsId)
+    triageSync.setServerUrl(url)
+    // Socket reaches OPEN (status leaves `offline`); with no
+    // subscribe-ack it must sit at `connecting`.
+    await waitFor(() => triageSync.status === 'connecting', 'reached connecting on a bare open socket')
+    // Give the status ample room to (wrongly) latch `online` if the gate
+    // regressed to the old `subscribed && !subscribeAcked` test.
+    await new Promise((resolve) => { setTimeout(resolve, 200) })
+    assert.equal(triageSync.status, 'connecting', 'open-but-unsubscribed socket is `connecting`')
+    assert.notEqual(triageSync.status, 'online', 'never `online` without a subscribe-ack')
+
+    setHeartbeatTimings({ pingMs: 15_000, pongMs: 5_000 })
+    triageSync.closeSession()
+    triageSync.setServerUrl('')
+    await deleteWorkspace(wsId)
+    await new Promise((resolve) => { wss.close(resolve) })
+  })
+
   it('emits a keyframe after `keyframeInterval` non-keyframe revisions', async () => {
     // Drop the threshold so we don't have to stage 100 saves.
     // Production stays at 100 — verified by reading sessionInfo

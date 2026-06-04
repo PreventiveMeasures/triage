@@ -88,6 +88,29 @@ const FLUSH_DELAY_MS = 100
 // response server-side is the takeover signal we want here.
 const FLUSH_MAX_WAIT_MS = 5_000
 
+// Client-side liveness ceiling for the live SSE downstream. The server
+// writes a `:` keepalive comment to every open session's response every
+// server/sse-server.ts KEEPALIVE_SWEEP_MS (30s), so a healthy live
+// stream delivers SOME bytes at least that often even when idle. If
+// NOTHING arrives within this window — no keepalive, no data, and no
+// EOF (a wedged TLS-terminating proxy that holds the socket open but
+// stops forwarding, a silently-dropped NAT mapping) — the downstream is
+// dead in a way the bare-EOF path below can't observe, so we tear down
+// and let the outer socket-transport reconnect. This is the SSE plane's
+// analogue of the WS pong-timeout (socket-transport `startHeartbeat`):
+// the SSE plane sends no client ping, so the server's keepalive is the
+// only liveness beat we get. Generous (2.5× the sweep) to absorb a
+// dropped keepalive + scheduling jitter without a false reconnect.
+let downstreamTimeoutMs = 75_000
+
+// Test-only knob: lower the downstream-inactivity window so a unit test
+// can drive the watchdog without waiting the full production timeout
+// (the peer of socket-transport's `setHeartbeatTimings`). Production
+// constructs `SseTransport` with the default 75s.
+export function setSseDownstreamTimeoutMs(ms: number): void {
+  downstreamTimeoutMs = typeof ms === 'number' && ms > 0 ? ms : 75_000
+}
+
 // SSE frame parser. Splits a streaming chunk buffer on `\n\n` event
 // terminators and yields each event with its name + concatenated data
 // lines. Holds incomplete trailing bytes in `buf` for the next call.
@@ -166,6 +189,20 @@ export class SseTransport extends EventTarget implements WebSocketLike {
   // shutdown so a hung POST (headers never arriving) tears down with
   // the rest of the transport instead of leaving a stranded socket.
   private readonly fetchAbort = new AbortController()
+  // Monotonic id stamped on each POST as it's issued. `consumeStream`
+  // captures its POST's value; on a bare response EOF it compares back
+  // to `postSeq` to tell the LIVE downstream (still the latest → the
+  // connection died, reconnect) from a SUPERSEDED reader (a newer POST
+  // already took over → the normal takeover, stay quiet). Bumped at
+  // issue time in `flush`, BEFORE the fetch, so a prior stream that EOFs
+  // the instant its successor is issued already observes the higher
+  // value and so stays silent.
+  private postSeq = 0
+  // Inactivity watchdog for the live downstream (see downstreamTimeoutMs).
+  // (Re)armed when a POST is issued and on every byte the live stream
+  // delivers; fires → shutdown. Null when disarmed (never armed / shut
+  // down).
+  private downstreamWatchdog: ReturnType<typeof setTimeout> | null = null
 
   constructor(wsUrl: string) {
     super()
@@ -223,6 +260,26 @@ export class SseTransport extends EventTarget implements WebSocketLike {
     }, delay)
   }
 
+  // (Re)arm the downstream-inactivity watchdog. Called when a POST is
+  // issued and on every byte the live stream delivers, so the timer only
+  // fires after a full `downstreamTimeoutMs` with no sign of life on the
+  // downstream — at which point the channel is presumed dead and we shut
+  // down so the outer transport reconnects.
+  private armDownstreamWatchdog(): void {
+    if (this.readyState === SseTransport.CLOSED) return
+    if (this.downstreamWatchdog != null) clearTimeout(this.downstreamWatchdog)
+    this.downstreamWatchdog = setTimeout(() => {
+      this.downstreamWatchdog = null
+      if (this.readyState === SseTransport.CLOSED) return
+      console.warn('sse-transport: no downstream activity within the liveness window; reconnecting')
+      this.shutdown()
+    }, downstreamTimeoutMs)
+    // Don't let the watchdog by itself keep a Node event loop alive
+    // (parity with the server keepalive timer); a browser timer id is a
+    // number and ignores this.
+    this.downstreamWatchdog.unref?.()
+  }
+
   // One POST cycle: serialise the outbound buffer, await any in-flight
   // POST (so we don't open two concurrent streams), then issue the
   // POST and drive its response body through the SSE parser. If a new
@@ -251,6 +308,13 @@ export class SseTransport extends EventTarget implements WebSocketLike {
     const url = this.sessionId == null
       ? this.baseUrl
       : `${this.baseUrl}?id=${encodeURIComponent(this.sessionId)}`
+    // Stamp this POST and (re)arm the liveness watchdog up front:
+    // issuing a POST is itself a sign of life and opens a fresh
+    // downstream, so it refreshes the window even before the response's
+    // first byte lands — covering the brief takeover gap while the new
+    // fetch is in flight and the prior stream has stopped being live.
+    const seq = ++this.postSeq
+    this.armDownstreamWatchdog()
     const post = (async (): Promise<void> => {
       let res: Response
       try {
@@ -291,7 +355,7 @@ export class SseTransport extends EventTarget implements WebSocketLike {
       // Promise<void> resolves on headers (releasing the next flush to
       // proceed). Broadcasts and acks land on this reader until the
       // server closes the response on the next POST's takeover.
-      void this.consumeStream(stream)
+      void this.consumeStream(stream, seq)
     })()
     this.inFlightPost = post
     post.finally(() => { if (this.inFlightPost === post) this.inFlightPost = null })
@@ -302,19 +366,27 @@ export class SseTransport extends EventTarget implements WebSocketLike {
   // previous POST's reader still draining while the new one starts) —
   // each owns its own parser + reader, registered in `activeReaders`
   // so shutdown can cancel them all.
-  private async consumeStream(stream: ReadableStream<Uint8Array>): Promise<void> {
+  private async consumeStream(stream: ReadableStream<Uint8Array>, seq: number): Promise<void> {
     const reader = stream.getReader()
     this.activeReaders.add(reader)
     const parser = new SseParser()
     const decoder = new TextDecoder()
+    let endedGracefully = false
     try {
       for (;;) {
         const { value, done } = await reader.read()
-        if (done) break
+        if (done) { endedGracefully = true; break }
         // Skip dispatch if the transport tore down while we awaited —
         // protects consumers from a post-shutdown phantom-connected
         // frame surfacing through their `onMessage` handler.
         if (this.readyState === SseTransport.CLOSED) return
+        // Any byte on the LIVE downstream (data OR the server's `:`
+        // keepalive comment, which the parser skips below but which
+        // still proves the channel is alive) refreshes the watchdog. A
+        // superseded reader (seq < postSeq) must NOT — its successor owns
+        // liveness now, and letting a slow-draining old stream reset the
+        // timer would mask a dead live downstream.
+        if (seq === this.postSeq) this.armDownstreamWatchdog()
         const events = parser.parse(decoder.decode(value, { stream: true }))
         for (const ev of events) this.dispatchEvent_(ev)
       }
@@ -329,6 +401,21 @@ export class SseTransport extends EventTarget implements WebSocketLike {
         if (tail.length > 0) {
           for (const ev of parser.parse(tail)) this.dispatchEvent_(ev)
         }
+      }
+      // Bare EOF: the server closed this response with neither a `close`
+      // event (dispatchEvent_ already shut us down on that path) nor a
+      // newer POST superseding it. On the LIVE downstream (still the
+      // latest issued, seq === postSeq) that's a silent death — a server
+      // restart, an LB/idle-proxy drop, a reaped session — and because
+      // the SSE plane runs no client heartbeat, nothing else would
+      // notice; tear down so the outer socket-transport reconnects
+      // (WS-first, SSE again on failure). A SUPERSEDED reader EOFing
+      // (seq < postSeq) is the normal takeover signal — the server
+      // end()s the prior response when the next POST attaches — so it
+      // stays silent.
+      if (endedGracefully && this.readyState !== SseTransport.CLOSED && seq === this.postSeq) {
+        console.warn('sse-transport: live downstream closed without a close frame; reconnecting')
+        this.shutdown()
       }
     } catch (err) {
       if (this.readyState !== SseTransport.CLOSED) {
@@ -388,6 +475,7 @@ export class SseTransport extends EventTarget implements WebSocketLike {
     if (this.readyState === SseTransport.CLOSED) return
     this.readyState = SseTransport.CLOSING
     if (this.flushTimer != null) { clearTimeout(this.flushTimer); this.flushTimer = null }
+    if (this.downstreamWatchdog != null) { clearTimeout(this.downstreamWatchdog); this.downstreamWatchdog = null }
     // Abort the in-flight fetch (if any), then cancel every active
     // reader so a stuck stream can't keep firing past CLOSED.
     try { this.fetchAbort.abort() } catch {}
