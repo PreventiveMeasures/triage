@@ -68,6 +68,7 @@ export interface State {
   filterConfMin: number
   filterConfMax: number
   filterInclude: string
+  filterIncludeNegate: boolean
   repoUrl: string
   repoEditing: boolean
   sortBy: string
@@ -402,6 +403,9 @@ export const state: State = store<State>({
   filterConfMin: 0,
   filterConfMax: 10,
   filterInclude: '',
+  // Negation toggle for the findings search: when true the query
+  // EXCLUDES — show findings that DON'T match. See matchesFilters.
+  filterIncludeNegate: false,
   repoUrl: '',
   // Transient flag — true while the header's repo chip has expanded
   // into its `<input>` form (user clicked the pencil). Cleared on

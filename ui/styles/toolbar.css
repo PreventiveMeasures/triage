@@ -295,9 +295,13 @@ toolbar-search {
   background: var(--bg);
   border: 1px solid var(--border); border-radius: 6px;
 
-  &:focus-within { border-color: var(--accent); }
+  /* `:has(input:focus)` not `:focus-within` — the latter would drag the
+     accent border on when the trailing negate toggle takes focus. */
+  &:has(input:focus) { border-color: var(--accent); }
 
-  & svg { color: var(--muted); flex-shrink: 0; }
+  /* Direct child only — the prefix lens. The negate button's icon
+     (a deeper svg) inherits its own color so the active state recolors. */
+  & > svg { color: var(--muted); flex-shrink: 0; }
 
   /* `&[kind]` (always present — kind="findings"/"files") lifts this to
      specificity 0,2,2 so it beats the generic `.toolbar input[type='text']`
@@ -312,6 +316,28 @@ toolbar-search {
     &::placeholder { color: var(--muted); }
     &:focus::placeholder { color: transparent; }
     &::-webkit-search-cancel-button { display: none; }
+  }
+}
+
+/* Findings-search negate toggle — borderless icon button at the field's
+   right edge, shown only while the query is non-empty. Same shape +
+   recolor as `.sidebar-view-btn` (reports search) and
+   `.bundle-code-search-mode` (bundle code tree search). */
+.search-negate-btn {
+  flex-shrink: 0;
+  width: 20px; height: 20px;
+  display: grid; place-items: center;
+  background: transparent; color: var(--muted);
+  border: 0; border-radius: 3px;
+  padding: 0;
+  transition: background .12s, color .12s;
+
+  & svg { width: 13px; height: 13px; }
+
+  &:hover { color: var(--text); background: rgb(from var(--text) r g b / .08); }
+  &.active {
+    color: var(--accent);
+    background: rgb(from var(--text) r g b / .10);
   }
 }
 

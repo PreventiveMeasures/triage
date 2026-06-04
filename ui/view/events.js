@@ -1537,6 +1537,14 @@ report.addEventListener('search-input', (e) => {
   render()
 })
 
+// The findings search's negate toggle (`<toolbar-search kind="findings">`)
+// flips the include/exclude mode; re-filter so the list follows.
+// matchesFilters reads `state.filterIncludeNegate`.
+report.addEventListener('search-negate-toggle', () => {
+  state.filterIncludeNegate = !state.filterIncludeNegate
+  render()
+})
+
 // `<severity-chips>` / `<triage-filter>` events. Each component
 // dispatches a `*-toggle` event with the value to flip; the host
 // adds / removes it from the matching state Set and re-renders so

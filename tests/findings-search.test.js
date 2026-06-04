@@ -40,6 +40,7 @@ function reset() {
   state.filterConfMin = 0
   state.filterConfMax = 10
   state.filterInclude = ''
+  state.filterIncludeNegate = false
   state.triage = new Map()
 }
 
@@ -105,5 +106,28 @@ describe('matchesFilters — findings search', () => {
   it('an empty query keeps every finding', () => {
     state.filterInclude = ''
     assert.equal(matchesFilters(makeFinding('H')), true)
+  })
+
+  it('negation inverts the match — keeps findings that DON\'T contain the term', () => {
+    const f = makeFinding('I', { description: 'prototype pollution in merge' })
+    state.filterIncludeNegate = true
+    state.filterInclude = 'pollution'
+    assert.equal(matchesFilters(f), false)   // matches term → excluded
+    state.filterInclude = 'absent-term'
+    assert.equal(matchesFilters(f), true)    // no match → kept
+  })
+
+  it('negation also inverts triage-annotation matches', () => {
+    const f = makeFinding('J')
+    state.triage.set('J', { comment: 'false positive' })
+    state.filterIncludeNegate = true
+    state.filterInclude = 'false positive'
+    assert.equal(matchesFilters(f), false)
+  })
+
+  it('negation has no effect on an empty query — every finding kept', () => {
+    state.filterIncludeNegate = true
+    state.filterInclude = ''
+    assert.equal(matchesFilters(makeFinding('K')), true)
   })
 })

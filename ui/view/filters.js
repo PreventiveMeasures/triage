@@ -42,6 +42,7 @@ export function resetFilters() {
   state.filterConfMin = 0
   state.filterConfMax = 10
   state.filterInclude = ''
+  state.filterIncludeNegate = false
   // Default sort tracks the dataset: if any finding carries a
   // `priority`, sort priority-descending (most important first),
   // else severity. Called on first-ingest only (subsequent loads
@@ -117,7 +118,6 @@ export function matchesFilters(f) {
     if (state.filterConfMax < 10 && f.confidence > state.filterConfMax) return false
   }
   if (inc) {
-    if (findingText(f).includes(inc)) return true
     // Triage annotations (the free-form `comment` and the `fix`
     // reference — PR URL, issue link, or free-text note) live off the
     // finding in `state.triage`, so they're matched here rather than
@@ -127,11 +127,12 @@ export function matchesFilters(f) {
     // annotated, and pasting a fix URL surfaces the finding it's filed
     // against.
     const entry = state.triage.get(tabKey(f))
-    if (entry) {
-      if ((entry.comment ?? '').toLowerCase().includes(inc)) return true
-      if ((entry.fix ?? '').toLowerCase().includes(inc)) return true
-    }
-    return false
+    const hit = findingText(f).includes(inc)
+      || (entry?.comment ?? '').toLowerCase().includes(inc)
+      || (entry?.fix ?? '').toLowerCase().includes(inc)
+    // Negation toggle: when on, the query excludes — keep the findings
+    // that DON'T match.
+    return state.filterIncludeNegate ? !hit : hit
   }
   return true
 }
