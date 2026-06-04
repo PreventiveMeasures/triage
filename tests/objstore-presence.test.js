@@ -1760,6 +1760,22 @@ describe('client/sync/objstore-presence', () => {
       const put = await putFile(ws.id, name, bytes)
       assert.equal(put.ok, true)
       await awaitPresence(() => isInRemote(ws.id, name), 'report in remote')
+      // Drain the background name-discovery worker BEFORE arming the
+      // one-shot fetch interception below. `putFile` seeds fileTags /
+      // remoteVersions but NOT remoteNameByTag, so the put's own
+      // objstore-put echo kicks `ensureRemoteNames` → a background
+      // `fetchByTag` for this tag. That fetch is still in flight when we
+      // reach here (`isInRemote` only needs the tag in `remoteTags`, which
+      // the broadcast sets before the fetch resolves), so without this
+      // drain it — not the recheck's verification fetch — would consume the
+      // intercept-once below and fire the peer delete at an uncontrolled
+      // time, racing `freshRemoteListing`'s fresh DB snapshot. When the
+      // delete won that race the snapshot came back empty and the recheck
+      // returned zero rows (`r.items[0]` undefined → flake). Awaiting
+      // discovery resolves the in-flight fetch (and caches the name, so no
+      // later pass re-fetches), leaving the recheck's own per-object fetch
+      // as the sole consumer of the interception.
+      await discoverRemoteFileNames(ws.id)
       for (const n of readdirSync(blobDir).filter((x) => x.endsWith('.bin'))) rmSync(path.join(blobDir, n))
 
       // Intercept the per-object fetch to make a peer delete land mid-recheck:
