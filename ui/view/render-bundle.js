@@ -485,8 +485,11 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
     })}
   </ul>` : html`<p class="bundles-overview-col-empty">No matching reports indexed yet.</p>`
 
-  // Overview body — metadata block on top, three side-by-side
-  // columns (Packages / Files / Reports) below. Each column has its
+  // Overview body — metadata blocks on top, three side-by-side
+  // columns (Packages / Files / Reports) below. The two meta groups
+  // share a `.bundles-detail-meta-row` that pairs them into
+  // side-by-side columns once the summary is wide enough for both
+  // (700px each) and stacks them otherwise. Each column has its
   // own header + scroll container so a 2000-file bundle doesn't
   // stretch the meta block off-screen. The Reports column only
   // renders when at least one OPFS report carries findings that
@@ -497,12 +500,14 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
   // chips, and CSS handles the per-column scroll.
   return html`<div class="bundles-overview">
     <div class="bundles-overview-summary">
-      ${meta}
-      <dl class="bundles-detail-meta">
-        ${extras}
-        <dt>Sources</dt><dd>${sources.length}</dd>
-        ${prefix ? html`<dt>Prefix</dt><dd class="mono">${prefix}</dd>` : nothing}
-      </dl>
+      <div class="bundles-detail-meta-row">
+        ${meta}
+        <dl class="bundles-detail-meta">
+          ${extras}
+          <dt>Sources</dt><dd>${sources.length}</dd>
+          ${prefix ? html`<dt>Prefix</dt><dd class="mono">${prefix}</dd>` : nothing}
+        </dl>
+      </div>
       ${issueTotal > 0 ? html`<div class="bundles-issue-summary tree-count-chips">${issueChips}</div>` : nothing}
     </div>
     <div class="bundles-overview-columns">
