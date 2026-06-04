@@ -101,6 +101,23 @@ export function hydrateStateFromBaseState(baseState: TriageStateMap, ids: Iterab
       else if (local !== entry.fix) conflicts.push({ id, property: 'fix', local, imported: entry.fix })
     }
 
+    // Tri-state flag — both `true` and `false` are real values, so
+    // gap-fill when local is unset, else surface a conflict (rendered
+    // to the dialog as a 'flagged' / 'not flagged' token). This is what
+    // stops a peer's stale `true` from silently re-flagging an entry the
+    // user locally un-flagged (and vice versa).
+    if (typeof entry.flagged === 'boolean') {
+      const local = cur?.flagged
+      if (local === undefined) patchEntry(state.triage, id, { flagged: entry.flagged })
+      else if (local !== entry.flagged) {
+        conflicts.push({
+          id, property: 'flagged',
+          local: local ? 'flagged' : 'not flagged',
+          imported: entry.flagged ? 'flagged' : 'not flagged',
+        })
+      }
+    }
+
     // Per-report ignore: skipped when triage is set (mutex), and when
     // the id already carries any ignoredReports (local-wins, like the
     // checks above). No conflict path for ignoredReports — the mutex
@@ -150,6 +167,13 @@ export function applyHydrationDecisions(
       } else {
         patchEntry(state.triage, c.id, { triage: undefined })
       }
+    } else if (c.property === 'flagged') {
+      // Map the conflict token back to the tri-state. 'not flagged'
+      // resolves to the explicit `false` tombstone, never to undefined,
+      // so adopting the peer's un-flag still propagates onward.
+      patchEntry(state.triage, c.id, {
+        flagged: c.imported === 'flagged' ? true : c.imported === 'not flagged' ? false : undefined,
+      })
     }
   }
 }
@@ -160,6 +184,7 @@ function currentLocalValue(id: string, property: ConflictProperty): string {
   if (property === 'triage') return bucketOf(entry) ?? ''
   if (property === 'comment') return entry?.comment ?? ''
   if (property === 'fix') return entry?.fix ?? ''
+  if (property === 'flagged') return entry?.flagged === true ? 'flagged' : entry?.flagged === false ? 'not flagged' : ''
   return ''
 }
 

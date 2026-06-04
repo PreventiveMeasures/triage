@@ -142,6 +142,12 @@ export async function applyTriageImport(payload, mode) {
     if (typeof v.fix === 'string' && v.fix && (!keepCurrent || !map.get(id)?.fix)) {
       patchEntry(map, id, { fix: v.fix })
     }
+    // Tri-state attention flag — adopt both `true` and the explicit
+    // `false` tombstone. prefer-current fills only when local has NO flag
+    // at all (undefined), not merely when it's `false`.
+    if (typeof v.flagged === 'boolean' && (!keepCurrent || map.get(id)?.flagged === undefined)) {
+      patchEntry(map, id, { flagged: v.flagged })
+    }
     // Per-report ignore: mutex with triage state. Skip the
     // ignoredReports merge when this id ended up with a triage
     // state (same rule the cross-tab apply path enforces).

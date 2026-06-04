@@ -794,6 +794,22 @@ report.addEventListener('click', (e) => {
     }).catch(() => {})
     return
   }
+  // Attention-flag toggle (top-right of the card / row). Tri-state:
+  // unset/false → true, true → false. We write the explicit `false`
+  // on un-flag (never undefined) so the removal is a real, syncable
+  // change that overrides a peer's stale `true` (see TriageEntry.flagged).
+  // `data-flag-toggle` carries the exact tab key, so a multi-tab group
+  // flags per member rather than the active tab only.
+  const flagBtn = pathClosest(e, '[data-flag-toggle]')
+  if (flagBtn) {
+    const key = flagBtn.dataset.flagToggle
+    // Toggle: true → false (explicit tombstone), false/unset → true.
+    const cur = state.triage.get(key)?.flagged
+    patchEntry(state.triage, key, { flagged: cur !== true })
+    saveTriage()
+    renderPreservingTableScroll()
+    return
+  }
   // Toolbar triage view selector — flips state.shownTriage to the
   // picked bucket (or back to live when re-clicking the active
   // button). Filters (severity, confidence, text match) still apply,
@@ -1665,6 +1681,11 @@ report.addEventListener('source-toggle', (e) => {
   const wasActive = state.filterSources.has(v)
   state.filterSources.clear()
   if (!wasActive) state.filterSources.add(v)
+  render()
+})
+// Flag filter chip — flips the boolean and re-renders the row set.
+report.addEventListener('flag-filter-toggle', () => {
+  state.filterFlagged = !state.filterFlagged
   render()
 })
 // Package / repository detail slide — `<slide-triage-tabs>` dispatches

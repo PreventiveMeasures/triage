@@ -60,6 +60,7 @@ function findingToMarkdown(f) {
   if (triage) meta.push(`**Triage:** ${triage}`)
   else if (ignored) meta.push(`**Ignored**`)
   if (color) meta.push(`**Mark:** ${color}`)
+  if (entry?.flagged === true) meta.push(`**Flagged**`)
   if (meta.length > 0) {
     lines.push(meta.join(', '))
     lines.push('')

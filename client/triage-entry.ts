@@ -42,6 +42,7 @@ export function entryIsEmpty(entry: TriageEntry | undefined): boolean {
   if (!entry) return true
   return !entry.color && !bucketOf(entry) && !entry.comment && !entry.fix
     && !(entry.ignoredReports && entry.ignoredReports.length > 0)
+    && entry.flagged === undefined
 }
 
 export function isReportIgnored(map: TriageMap, id: string, report: string): boolean {
@@ -66,7 +67,7 @@ export function normalizeEntry(src: unknown): TriageEntry | undefined {
   if (!src || typeof src !== 'object') return undefined
   const e = src as {
     color?: unknown, triage?: unknown, comment?: unknown,
-    fix?: unknown, ignoredReports?: unknown, deleted?: unknown,
+    fix?: unknown, flagged?: unknown, ignoredReports?: unknown, deleted?: unknown,
   }
   const out: TriageEntry = {}
   if (typeof e.color === 'string' && e.color) out.color = e.color
@@ -74,6 +75,9 @@ export function normalizeEntry(src: unknown): TriageEntry | undefined {
   if (bucket) out.triage = bucket
   if (typeof e.comment === 'string' && e.comment) out.comment = e.comment
   if (typeof e.fix === 'string' && e.fix) out.fix = e.fix
+  // Tri-state: keep BOTH `true` and `false` (false is a meaningful
+  // "explicitly unflagged" tombstone); anything else is "unset".
+  if (typeof e.flagged === 'boolean') out.flagged = e.flagged
   if (Array.isArray(e.ignoredReports)) {
     const reports = e.ignoredReports.filter((r): r is string => typeof r === 'string' && r.length > 0)
     if (reports.length > 0) out.ignoredReports = reports
@@ -99,6 +103,7 @@ function entriesEqual(a: TriageEntry | undefined, b: TriageEntry | undefined): b
     && (bucketOf(ea) ?? '') === (bucketOf(eb) ?? '')
     && (ea.comment ?? '') === (eb.comment ?? '')
     && (ea.fix ?? '') === (eb.fix ?? '')
+    && ea.flagged === eb.flagged
     && ignoredEqual(ea.ignoredReports, eb.ignoredReports)
 }
 

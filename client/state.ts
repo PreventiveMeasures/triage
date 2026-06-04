@@ -22,6 +22,13 @@ export type TriageEntry = {
   triage?: TriageBucket
   comment?: string
   fix?: string
+  // Tri-state attention flag. `undefined` = never set; `true` =
+  // flagged; `false` = explicitly UN-flagged — a tombstone that is
+  // deliberately NOT pruned. Keeping `false` distinct from absent is
+  // load-bearing for sync/conflict resolution: unflagging is a real
+  // change that must overwrite a peer's stale `true`, not read as "no
+  // opinion" and get silently undone.
+  flagged?: boolean
   ignoredReports?: string[]
   deleted?: boolean
 }
@@ -69,6 +76,9 @@ export interface State {
   filterConfMax: number
   filterInclude: string
   filterIncludeNegate: boolean
+  // Attention-flag filter — when true, restrict the row set to findings
+  // whose triage carries `flagged: true`. See matchesFilters.
+  filterFlagged: boolean
   repoUrl: string
   repoEditing: boolean
   sortBy: string
@@ -406,6 +416,10 @@ export const state: State = store<State>({
   // Negation toggle for the findings search: when true the query
   // EXCLUDES — show findings that DON'T match. See matchesFilters.
   filterIncludeNegate: false,
+  // Attention-flag filter toggle (the toolbar's flag chip after the
+  // Sources / Dependencies switch). false = no filter; true = show only
+  // findings the user flagged.
+  filterFlagged: false,
   repoUrl: '',
   // Transient flag — true while the header's repo chip has expanded
   // into its `<input>` form (user clicked the pencil). Cleared on

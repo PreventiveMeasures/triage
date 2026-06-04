@@ -188,6 +188,35 @@ describe('applyTriageImport: shape validation (audit round-14 TE-1)', () => {
     assert.equal(state.triage.get(FINDING_B)?.color, 'green')
     assert.equal(loadRepoUrlFor('r.json'), 'https://example.test')
   })
+
+  it('imports the flagged tri-state, including the false tombstone (replace mode)', async () => {
+    // Backup import must carry `flagged` like every other field — and
+    // `replace` mode installs the backup verbatim, including the explicit
+    // `false` tombstone, not just `true`.
+    patchEntry(state.triage, FINDING_A, { flagged: true })  // wiped + re-set by replace
+    await applyTriageImport({
+      version: 1,
+      triage: { [FINDING_A]: { flagged: false }, [FINDING_B]: { flagged: true } },
+      repoUrls: {},
+    }, 'replace')
+    assert.equal(state.triage.get(FINDING_A)?.flagged, false, 'imported false tombstone applied')
+    assert.equal(state.triage.get(FINDING_B)?.flagged, true, 'imported flag applied')
+  })
+
+  it('prefer-current keeps a local false flag against an imported true', async () => {
+    // The gap-fill is gated on `=== undefined`, not falsiness: a local
+    // `false` tombstone is a real value and must NOT be overwritten by
+    // an imported `true` in prefer-current; the imported flag only fills
+    // an id that has no local flag at all.
+    patchEntry(state.triage, FINDING_A, { flagged: false })  // local tombstone
+    await applyTriageImport({
+      version: 1,
+      triage: { [FINDING_A]: { flagged: true }, [FINDING_B]: { flagged: true } },
+      repoUrls: {},
+    }, 'prefer-current')
+    assert.equal(state.triage.get(FINDING_A)?.flagged, false, 'local false preserved over imported true')
+    assert.equal(state.triage.get(FINDING_B)?.flagged, true, 'imported flag fills the unset id')
+  })
 })
 
 describe('applyTriageImport: repo-URL merge through secure-storage', () => {

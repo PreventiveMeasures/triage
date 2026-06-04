@@ -320,9 +320,24 @@
   &.mark-gray  { background: var(--mark-gray-bg); }
 }
 
-.kanban-card .kanban-badge {
+.kanban-card .kanban-badge-col {
   grid-area: badge;
   align-self: start;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: .15rem;
+}
+/* Flag indicator stacked under the severity badge — display-only on the
+   compact card (toggling lives in the detail popover's finding-card). */
+.kanban-card .kanban-flag {
+  display: inline-flex;
+  line-height: 0;
+  color: var(--accent);
+
+  & .flag-cloth { fill: var(--accent); }
+}
+.kanban-card .kanban-badge {
   margin-top: .05rem;
   padding: .05rem .25rem;
   min-width: 1.1rem;

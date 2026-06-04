@@ -206,6 +206,34 @@ describe('pruneOrphanTriage', () => {
     assert.equal(state.triage.get(FINDING_B)?.fix, 'https://kept', 'kept fix survives')
   })
 
+  it('drops a flag-only orphan (true or the false tombstone), keeps a reachable flag', async () => {
+    // A flag-only entry whose finding-id is gone from every report is an
+    // orphan like any other field — the `false` tombstone is meaningful
+    // only while the finding is reachable. Both an orphaned `true` and an
+    // orphaned `false` must be collected.
+    patchEntry(state.triage, FINDING_A, { flagged: true })   // orphan (true)
+    patchEntry(state.triage, FINDING_C, { flagged: false })  // orphan (false tombstone)
+    patchEntry(state.triage, FINDING_B, { flagged: true })   // kept (reachable)
+    await saveReport('b.json', [{ id: FINDING_B }])
+    await pruneOrphanTriage()
+    assert.equal(state.triage.has(FINDING_A), false, 'orphaned flag:true entry dropped')
+    assert.equal(state.triage.has(FINDING_C), false, 'orphaned flag:false tombstone dropped')
+    assert.equal(state.triage.get(FINDING_B)?.flagged, true, 'reachable flag survives')
+  })
+
+  it('fully clears a multi-field orphan carrying a flag (no residual tombstone)', async () => {
+    // A multi-field orphan (color + a false tombstone) must be FULLY
+    // removed — the clearing patch includes `flagged`, so it doesn't
+    // leave a residual {flagged:false} zombie behind.
+    patchEntry(state.triage, FINDING_A, { color: 'red', flagged: false })   // orphan
+    patchEntry(state.triage, FINDING_B, { color: 'green', flagged: true })  // kept
+    await saveReport('b.json', [{ id: FINDING_B }])
+    await pruneOrphanTriage()
+    assert.equal(state.triage.has(FINDING_A), false, 'multi-field orphan fully removed (no flagged residue)')
+    assert.equal(state.triage.get(FINDING_B)?.color, 'green', 'kept entry survives')
+    assert.equal(state.triage.get(FINDING_B)?.flagged, true, 'kept flag survives')
+  })
+
   it('drops ignoredIds whose report is no longer on disk even when the id is reachable', async () => {
     // The id IS reachable (via kept.json) but the per-report
     // ignore was scoped to a report that no longer exists. The

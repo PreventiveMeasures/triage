@@ -65,11 +65,19 @@ function triageBadgeTemplate(value) {
   return html`<span class=${`triage triage-${value}`}>${value}</span>`
 }
 
+// Flag conflict values arrive as the 'flagged' / 'not flagged' tokens
+// (see triage-changeset normFlagged); `''` is the unset side.
+function flaggedBadgeTemplate(value) {
+  if (!value) return html`<em>none</em>`
+  return html`<span class=${`flag-badge${value === 'flagged' ? ' on' : ''}`}>${value}</span>`
+}
+
 function valueTemplate(property, value) {
   if (property === 'color') return colorSwatchTemplate(value)
   if (property === 'comment') return commentBlockTemplate(value)
   if (property === 'fix') return fixBlockTemplate(value)
   if (property === 'triage') return triageBadgeTemplate(value)
+  if (property === 'flagged') return flaggedBadgeTemplate(value)
   return html`${String(value)}`
 }
 
@@ -97,8 +105,8 @@ const DEFAULT_LABELS = {
   importedSideLabel: 'Apply imported',
 }
 
-const PROP_ORDER = { color: 0, comment: 1, fix: 2, triage: 3 }
-const PROP_LABEL = { color: 'Color', comment: 'Comment', fix: 'Fix', triage: 'Triage state' }
+const PROP_ORDER = { color: 0, comment: 1, fix: 2, triage: 3, flagged: 4 }
+const PROP_LABEL = { color: 'Color', comment: 'Comment', fix: 'Fix', triage: 'Triage state', flagged: 'Flag' }
 
 class TriageConflictDialog extends AppDialog {
   static styles = [...AppDialog.styles, unsafeCSS(severityCSS), unsafeCSS(conflictCSS)]
@@ -168,11 +176,13 @@ class TriageConflictDialog extends AppDialog {
     const commentN = this.conflicts.filter((c) => c.property === 'comment').length
     const fixN = this.conflicts.filter((c) => c.property === 'fix').length
     const triageN = this.conflicts.filter((c) => c.property === 'triage').length
+    const flaggedN = this.conflicts.filter((c) => c.property === 'flagged').length
     const summary = [
       colorN ? `${colorN} color${colorN === 1 ? '' : 's'}` : '',
       commentN ? `${commentN} comment${commentN === 1 ? '' : 's'}` : '',
       fixN ? `${fixN} fix${fixN === 1 ? '' : 'es'}` : '',
       triageN ? `${triageN} triage state${triageN === 1 ? '' : 's'}` : '',
+      flaggedN ? `${flaggedN} flag${flaggedN === 1 ? '' : 's'}` : '',
     ].filter(Boolean).join(', ')
     const findingsLabel = `${byId.size} finding${byId.size === 1 ? '' : 's'}`
 

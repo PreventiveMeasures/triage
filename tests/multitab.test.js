@@ -140,6 +140,22 @@ describe('reloadTriageFromStorage (cross-tab triage)', () => {
     assert.equal(state.triage.get(FINDING_A)?.fix, 'https://example.test/pr/42')
   })
 
+  it('round-trips the flagged tri-state, including the false tombstone', async () => {
+    // `flagged: true` and the explicit `flagged: false` must BOTH
+    // survive persist → load. `false` is the syncable "removed the
+    // flag" tombstone — distinct from never-flagged (undefined) — so it
+    // must not be pruned, even when it's the entry's only field.
+    patchEntry(state.triage, FINDING_A, { flagged: true })
+    patchEntry(state.triage, FINDING_B, { flagged: false })
+    await saveTriage()
+    state.triage.clear()
+
+    await reloadTriageFromStorage()
+
+    assert.equal(state.triage.get(FINDING_A)?.flagged, true, 'flagged:true round-trips')
+    assert.equal(state.triage.get(FINDING_B)?.flagged, false, 'flagged:false tombstone round-trips (not pruned)')
+  })
+
   it('round-trips the in-progress bucket like the other triage states', async () => {
     // `inprogress` is a normal TriageBucket (not the per-report
     // `ignored` special case), so it must survive the persist → load

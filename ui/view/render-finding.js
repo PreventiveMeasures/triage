@@ -142,6 +142,36 @@ const ISSUE_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hid
   <circle cx="8" cy="8" r="1.7" fill="currentColor"/>
 </svg>`
 
+// Pennant flag for the per-finding attention flag (top-right of the
+// card/row, the kanban card, and the toolbar filter). Outline by
+// default; the `.flagged` button fills the cloth + turns accent via
+// CSS. Exported so the kanban card (render.js) and the toolbar
+// `<flag-filter>` reuse the identical glyph.
+export const FLAG_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
+  <path class="flag-pole" d="M4 1.8v12.4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+  <path class="flag-cloth" d="M4 2.5h7.4l-1.8 2.4 1.8 2.4H4z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+</svg>`
+
+// Attention-flag toggle shown top-right of the finding card/row.
+// Tri-state under the hood (see TriageEntry.flagged): the events.js
+// click handler walks unset/false → true → false, writing the explicit
+// `false` tombstone on un-flag (never undefined) so the removal syncs.
+// Keyed to the specific tab `f` so multi-tab groups flag each member
+// independently, mirroring the per-tab color / comment marks.
+function flagButtonTemplate(f) {
+  const key = tabKey(f)
+  const flagged = state.triage.get(key)?.flagged === true
+  const title = flagged ? 'Remove flag' : 'Flag this finding'
+  return html`<button
+    type="button"
+    class=${classMap({ 'mark-flag': true, flagged })}
+    data-flag-toggle=${key}
+    title=${title}
+    aria-label=${title}
+    aria-pressed=${String(flagged)}
+  >${FLAG_ICON}</button>`
+}
+
 // Issue title — the finding's first description line (the table-view
 // title), capped so the pre-filled `?title=` stays a sane length;
 // falls back to the file path, then a generic label.
@@ -498,6 +528,7 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
   }
   const { title: descTitle, body: descBody } = splitDescription(stripExportMarker(f.description, f))
   return html`<div class=${classMap({ 'tab-body': true, active: isActive })} data-tid=${key}>
+    ${flagButtonTemplate(f)}
     ${total > 1 ? html`<div class="print-case-label">${idx + 1} of ${total}</div>` : nothing}
     <div class="finding-left">
       <span class=${`badge ${f.severity}`}>${badgeLabel(f.severity)}</span>
@@ -633,6 +664,7 @@ export function tableRowInnerTemplate(g) {
       <div class="title-row">
         <span class="title">${title}</span>
         ${typeLabel ? html`<span class="row-type">${typeLabel}</span>` : nothing}
+        ${flagButtonTemplate(f)}
       </div>
       <div class="meta-row">
         <span class="row-loc">${rowLocationTemplate(f)}${exportPart}</span>

@@ -109,6 +109,27 @@
     user-select: none;
   }
   & .row-type { color: var(--muted); font-size: .68rem; flex-shrink: 0; }
+  & .mark-flag { align-self: center; }
+}
+
+/* Attention-flag toggle — inline at the right end of the title row
+   (the title flexes to push it + the run-type label right). Ghost
+   (muted, half-opacity) until hovered or set; accent + filled cloth
+   when flagged. */
+.mark-flag {
+  flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 1px; border: 0; border-radius: 4px;
+  background: transparent; color: var(--muted); opacity: .5;
+  cursor: pointer; transition: opacity .12s, color .12s, background .12s;
+
+  &:hover { opacity: 1; color: var(--text); background: var(--surface-active); }
+  &.flagged { opacity: 1; color: var(--accent); }
+  &.flagged .flag-cloth { fill: var(--accent); }
+  & svg { display: block; }
+}
+@media print {
+  .mark-flag:not(.flagged) { display: none; }
 }
 
 .meta-row {

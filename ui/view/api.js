@@ -35,6 +35,9 @@ const triage = {
   get triageState() { return projectField('triage') },
   get comments() { return projectField('comment') },
   get fixes() { return projectField('fix') },
+  // Set of flagged finding ids (id → true). `projectField` skips the
+  // falsy `false` tombstones, so this is the "currently flagged" view.
+  get flags() { return projectField('flagged') },
 
   // Bundle every triage field for one finding into a single object,
   // omitting absent properties — matches the persisted shape so a
@@ -46,6 +49,9 @@ const triage = {
     if (e?.triage) out.triage = e.triage
     if (e?.comment) out.comment = e.comment
     if (e?.fix) out.fix = e.fix
+    // Tri-state: surface both `true` and the explicit `false`; only an
+    // unset (undefined) flag is omitted.
+    if (e?.flagged !== undefined) out.flagged = e.flagged
     return out
   },
 
@@ -53,7 +59,7 @@ const triage = {
   // an `undefined` field is left alone. Returns the boolean "did
   // anything change" so callers can short-circuit. Async because the
   // saveTriage write is async; the UI render fires after persistence.
-  async set(id, { color, triage: triageVal, comment, fix } = {}) {
+  async set(id, { color, triage: triageVal, comment, fix, flagged } = {}) {
     let changed = false
     if (color !== undefined) {
       if (color === null || color === '') {
@@ -102,6 +108,17 @@ const triage = {
           changed = true
         }
       } else if (patchEntry(state.triage, id, { fix: undefined })) {
+        changed = true
+      }
+    }
+    if (flagged !== undefined) {
+      // Tri-state: `true` → flagged, `false` → explicit "unflagged"
+      // tombstone (kept so the removal still syncs); `null` or `''` →
+      // clear to unset (undefined), matching the "pass null/'' to clear"
+      // contract the string/bucket fields follow. Other values coerce.
+      const next = (flagged === null || flagged === '') ? undefined : Boolean(flagged)
+      if (state.triage.get(id)?.flagged !== next) {
+        patchEntry(state.triage, id, { flagged: next })
         changed = true
       }
     }

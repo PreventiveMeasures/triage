@@ -303,6 +303,24 @@ async function mergeTriage(triage, conflictResolver, findingLookup) {
       // ignoredReports set.
       patchEntry(map, id, { triage: importedTriage, ignoredReports: undefined })
     }
+
+    // Tri-state attention flag — gap-fill when local is unset, surface a
+    // conflict (as 'flagged' / 'not flagged' tokens, matching the sync
+    // hydration path) when both sides set it and disagree. Adopting the
+    // imported value covers the explicit `false` tombstone too, so an
+    // imported un-flag isn't silently dropped.
+    const localFlag = map.get(id)?.flagged
+    const importedFlag = typeof entry.flagged === 'boolean' ? entry.flagged : undefined
+    if (importedFlag !== undefined && localFlag !== undefined && localFlag !== importedFlag) {
+      conflicts.push({
+        id, property: 'flagged',
+        local: localFlag ? 'flagged' : 'not flagged',
+        imported: importedFlag ? 'flagged' : 'not flagged',
+      })
+    } else if (importedFlag !== undefined && importedFlag !== localFlag) {
+      patchEntry(map, id, { flagged: importedFlag })
+    }
+
     // Per-report ignore — additive merge. Each (reportName, id) is an
     // independent slot; union the imported list into local. No
     // conflict path since keys don't collide between sides (both
@@ -348,6 +366,11 @@ function applyConflictDecisions(conflicts, decisions) {
       // Clear the per-report ignore on the same id — mutex with triage.
       patchEntry(state.triage, c.id, { triage: c.imported, ignoredReports: undefined })
     }
+    else if (c.property === 'flagged') {
+      // 'not flagged' resolves to the explicit `false` tombstone, never
+      // undefined, so adopting the imported un-flag still propagates.
+      patchEntry(state.triage, c.id, { flagged: c.imported === 'flagged' ? true : c.imported === 'not flagged' ? false : undefined })
+    }
   }
 }
 
@@ -359,6 +382,10 @@ function currentLocalValue(id, property) {
   if (property === 'triage') return bucketOf(state.triage.get(id)) ?? null
   if (property === 'comment') return state.triage.get(id)?.comment ?? ''
   if (property === 'fix') return state.triage.get(id)?.fix ?? ''
+  if (property === 'flagged') {
+    const f = state.triage.get(id)?.flagged
+    return f === true ? 'flagged' : f === false ? 'not flagged' : ''
+  }
   return undefined
 }
 

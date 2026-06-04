@@ -258,6 +258,29 @@ source-filter {
   }
 }
 
+/* Flag filter — a single flag-icon chip right after the Sources /
+   Dependencies switch. Same pill chrome as source-filter; accent +
+   filled cloth when the flagged-only filter is on. */
+flag-filter {
+  display: inline-flex;
+  height: 30px; box-sizing: border-box;
+  border: 1px solid var(--border); border-radius: 4px;
+  overflow: hidden;
+
+  & .flag-chip {
+    background: transparent; border: none; color: var(--muted);
+    padding: 0 .5rem;
+    display: inline-flex; align-items: center;
+    transition: background .12s, color .12s;
+    cursor: pointer;
+
+    &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
+    &.active { color: var(--accent); background: var(--surface-active); }
+    &.active .flag-cloth { fill: var(--accent); }
+    & svg { display: block; }
+  }
+}
+
 .toolbar-row {
   display: flex; gap: .75rem; flex-wrap: wrap; align-items: center;
 }

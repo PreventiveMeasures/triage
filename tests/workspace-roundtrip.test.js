@@ -395,6 +395,50 @@ describe('applyWorkspaceImport: triage migration', () => {
     assert.equal(state.triage.get(FINDING_A)?.triage, 'invalid', 'imported decision should win')
   })
 
+  it('adopts an imported flag and the false tombstone (gap-fill, no conflict)', async () => {
+    let called = false
+    const conflictResolver = () => { called = true; return null }
+    const data = parseWorkspaceJson(JSON.stringify({
+      version: 1,
+      workspace: { id: 'ws-flag', name: 'F', privateKey: 'k' },
+      reports: [{ name: 'r.json', content: reportContent([FINDING_A, FINDING_B]) }],
+      triage: {
+        [FINDING_A]: { flagged: true },
+        [FINDING_B]: { flagged: false },
+      },
+    }))
+    await applyWorkspaceImport(data, { conflictResolver })
+    assert.equal(called, false, 'no conflict when local is unset')
+    assert.equal(state.triage.get(FINDING_A)?.flagged, true, 'imported flag adopted')
+    assert.equal(state.triage.get(FINDING_B)?.flagged, false, 'imported false tombstone adopted, not dropped')
+  })
+
+  it('queues a flag conflict when local + imported disagree and honors "imported"', async () => {
+    // Local un-flagged (false); the bundle still flags it (true). The
+    // disagreement must surface as a conflict (not silently resolve), and
+    // adopting "imported" applies the true.
+    patchEntry(state.triage, FINDING_A, { flagged: false })
+    const seen = []
+    const conflictResolver = (conflicts) => {
+      for (const c of conflicts) seen.push(c)
+      const decisions = {}
+      for (const c of conflicts) decisions[`${c.id}:${c.property}`] = 'imported'
+      return decisions
+    }
+    const data = parseWorkspaceJson(JSON.stringify({
+      version: 1,
+      workspace: { id: 'ws-flag-conflict', name: 'FC', privateKey: 'k' },
+      reports: [{ name: 'r.json', content: reportContent([FINDING_A]) }],
+      triage: { [FINDING_A]: { flagged: true } },
+    }))
+    await applyWorkspaceImport(data, { conflictResolver })
+    assert.equal(seen.length, 1)
+    assert.equal(seen[0].property, 'flagged')
+    assert.equal(seen[0].local, 'not flagged')
+    assert.equal(seen[0].imported, 'flagged')
+    assert.equal(state.triage.get(FINDING_A)?.flagged, true, 'imported flag wins')
+  })
+
   // Per-property positive coverage: a refactor that broke
   // `applyConflictDecisions` for color/comment/fix while leaving
   // triage intact would pass the existing "imported wins" test

@@ -199,8 +199,12 @@ export async function pruneOrphanTriage() {
     // fields go; any ignoredReports for an unreachable id are cleared
     // by the per-report pass below (reachable.has(id) is false there).
     const cur = state.triage.get(id)
-    if (!cur || !(cur.color || bucketOf(cur) || cur.comment || cur.fix)) continue
-    if (patchEntry(state.triage, id, { color: undefined, triage: undefined, comment: undefined, fix: undefined, deleted: undefined })) {
+    // `flagged !== undefined` so a flag-only orphan (true OR the false
+    // tombstone) is detected as prunable. The tombstone is kept while
+    // the finding is reachable, but an orphaned id is gone for good, so
+    // collecting it matches how color/comment/fix orphans are pruned.
+    if (!cur || !(cur.color || bucketOf(cur) || cur.comment || cur.fix || cur.flagged !== undefined)) continue
+    if (patchEntry(state.triage, id, { color: undefined, triage: undefined, comment: undefined, fix: undefined, flagged: undefined, deleted: undefined })) {
       changed = true
     }
   }
