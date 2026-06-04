@@ -23,8 +23,7 @@ import { ensureHostAria } from './host-aria.js'
 // in the finding-render module. Same path data as render-finding's
 // FLAG_ICON so the two glyphs match.
 const FLAG_GLYPH = html`<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
-  <path class="flag-pole" d="M4 1.8v12.4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
-  <path class="flag-cloth" d="M4 2.5h7.4l-1.8 2.4 1.8 2.4H4z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+  <path class="flag-cloth" d="M5 1.5h6v13l-3-2.7-3 2.7z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
 </svg>`
 
 class FlagFilter extends StateElement {
