@@ -232,7 +232,7 @@ class BundleCompare extends LitElement {
 
   // Compute (or reuse the memo of) the diff for the current pairing.
   _diffFor() {
-    const key = `${this.integrity} ${this._targetIntegrity}`
+    const key = `${this.integrity}|${this._targetIntegrity}`
     if (this._diffKey !== key || !this._diff) {
       const baseSources = bundleSourcesAsMap(this.details)
       const otherSources = bundleSourcesAsMap(this._otherDetails)

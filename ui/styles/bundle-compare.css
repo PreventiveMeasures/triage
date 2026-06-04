@@ -73,7 +73,7 @@
 .bundle-compare-summary {
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: .6rem 2rem;
   flex-wrap: wrap;
   font-variant-numeric: tabular-nums;
 }
@@ -153,7 +153,17 @@
   align-items: start;
 }
 
-.bundle-compare-group { margin-bottom: .6rem; }
+/* Each group sits on a very faint, kind-tinted card so Added | Removed
+   (and Changed) read as distinct regions — without it the side-by-side
+   columns and the stacked groups blur together. */
+.bundle-compare-group {
+  margin-bottom: .6rem;
+  padding: .45rem .6rem;
+  border-radius: 6px;
+}
+.bundle-compare-group.bundle-compare-added { background: rgb(from var(--green) r g b / .06); }
+.bundle-compare-group.bundle-compare-removed { background: rgb(from var(--critical) r g b / .06); }
+.bundle-compare-group.bundle-compare-changed { background: rgb(from var(--medium) r g b / .07); }
 .bundle-compare-group-head {
   display: flex;
   align-items: center;
