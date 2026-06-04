@@ -9,6 +9,11 @@ export type ViewMode = 'table' | 'list' | 'grouped' | 'kanban' | 'focus'
 export type CurrentView = 'findings' | 'files' | 'bundles'
 export type TriageBucket = 'inprogress' | 'fixed' | 'invalid' | 'deleted'
 
+// Tri-state for the toolbar annotation filters (comment / fix / flag):
+// '' = off, 'with' = only findings carrying it, 'without' = only findings
+// lacking it. See matchesFilters + <annotation-filter>.
+export type AnnotationFilterState = '' | 'with' | 'without'
+
 // One finding's triage annotations, keyed by `tabKey(f)` in
 // `state.triage`. Unset fields are absent (not empty): the helpers in
 // `triage-entry.ts` prune emptied fields and drop the id entirely when
@@ -76,12 +81,13 @@ export interface State {
   filterConfMax: number
   filterInclude: string
   filterIncludeNegate: boolean
-  // Annotation filters — each independently (AND-combined) restricts the
-  // row set to findings whose triage carries a comment / a fix /
-  // `flagged: true` respectively. See matchesFilters.
-  filterComment: boolean
-  filterFix: boolean
-  filterFlagged: boolean
+  // Annotation filters — each is a tri-state ('' / 'with' / 'without')
+  // that independently (AND-combined) restricts the row set by whether a
+  // finding's triage carries a comment / a fix / `flagged: true`. See
+  // matchesFilters.
+  filterComment: AnnotationFilterState
+  filterFix: AnnotationFilterState
+  filterFlagged: AnnotationFilterState
   repoUrl: string
   repoEditing: boolean
   sortBy: string
@@ -419,12 +425,13 @@ export const state: State = store<State>({
   // Negation toggle for the findings search: when true the query
   // EXCLUDES — show findings that DON'T match. See matchesFilters.
   filterIncludeNegate: false,
-  // Annotation-filter toggles (the toolbar's comment | fix | flag chip
-  // group after the Sources / Dependencies switch). false = no filter;
-  // true = show only findings carrying that annotation. AND-combined.
-  filterComment: false,
-  filterFix: false,
-  filterFlagged: false,
+  // Annotation-filter tri-states (the toolbar's comment | fix | flag chip
+  // group after the Sources / Dependencies switch). '' = no filter,
+  // 'with' = only those carrying it, 'without' = only those lacking it.
+  // AND-combined.
+  filterComment: '',
+  filterFix: '',
+  filterFlagged: '',
   repoUrl: '',
   // Transient flag — true while the header's repo chip has expanded
   // into its `<input>` form (user clicked the pencil). Cleared on

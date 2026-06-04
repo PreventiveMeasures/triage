@@ -41,9 +41,9 @@ function reset() {
   state.filterConfMax = 10
   state.filterInclude = ''
   state.filterIncludeNegate = false
-  state.filterComment = false
-  state.filterFix = false
-  state.filterFlagged = false
+  state.filterComment = ''
+  state.filterFix = ''
+  state.filterFlagged = ''
   state.triage = new Map()
 }
 
@@ -155,58 +155,64 @@ describe('matchesFilters — findings search', () => {
   })
 })
 
-describe('matchesFilters — annotation filters (comment | fix | flag, AND-combined)', () => {
+describe('matchesFilters — annotation filters (comment | fix | flag, tri-state, AND-combined)', () => {
   beforeEach(reset)
 
-  it('filterComment keeps only findings with a comment', () => {
+  it("comment 'with' keeps only commented; 'without' inverts; '' is off", () => {
     const withC = makeFinding('A'); state.triage.set('A', { comment: 'note' })
-    const without = makeFinding('B')
-    state.filterComment = true
+    const noC = makeFinding('B')
+    state.filterComment = 'with'
     assert.equal(matchesFilters(withC), true)
-    assert.equal(matchesFilters(without), false)
+    assert.equal(matchesFilters(noC), false)
+    state.filterComment = 'without'
+    assert.equal(matchesFilters(withC), false)
+    assert.equal(matchesFilters(noC), true)
+    state.filterComment = ''
+    assert.equal(matchesFilters(withC), true)
+    assert.equal(matchesFilters(noC), true)
   })
 
-  it('filterFix keeps only findings with a fix', () => {
+  it("fix 'with' / 'without'", () => {
     const withF = makeFinding('A'); state.triage.set('A', { fix: 'https://x/pr/1' })
-    const without = makeFinding('B')
-    state.filterFix = true
+    const noF = makeFinding('B')
+    state.filterFix = 'with'
     assert.equal(matchesFilters(withF), true)
-    assert.equal(matchesFilters(without), false)
+    assert.equal(matchesFilters(noF), false)
+    state.filterFix = 'without'
+    assert.equal(matchesFilters(withF), false)
+    assert.equal(matchesFilters(noF), true)
   })
 
-  it('filterFlagged keeps only flagged findings (false tombstone excluded)', () => {
+  it("flag 'with' = flagged===true; 'without' = the false tombstone OR unset", () => {
     const flagged = makeFinding('A'); state.triage.set('A', { flagged: true })
     const tomb = makeFinding('B'); state.triage.set('B', { flagged: false })
     const none = makeFinding('C')
-    state.filterFlagged = true
+    state.filterFlagged = 'with'
     assert.equal(matchesFilters(flagged), true)
     assert.equal(matchesFilters(tomb), false)
     assert.equal(matchesFilters(none), false)
+    state.filterFlagged = 'without'
+    assert.equal(matchesFilters(flagged), false)
+    assert.equal(matchesFilters(tomb), true)   // explicit false counts as "without"
+    assert.equal(matchesFilters(none), true)   // unset counts as "without"
   })
 
-  it('combines as AND — each active chip narrows the set further', () => {
-    state.triage.set('A', { comment: 'c', fix: 'f', flagged: true })  // all three
-    state.triage.set('B', { comment: 'c', flagged: true })            // no fix
-    state.triage.set('C', { comment: 'c', fix: 'f' })                 // not flagged
+  it('combines as AND — mixing with / without narrows further', () => {
+    state.triage.set('A', { comment: 'c', flagged: true })  // commented + flagged
+    state.triage.set('B', { comment: 'c' })                 // commented, not flagged
+    state.triage.set('C', { flagged: true })                // flagged, no comment
     const a = makeFinding('A'), b = makeFinding('B'), c = makeFinding('C')
-    state.filterComment = true
-    assert.equal(matchesFilters(a), true)
+    state.filterComment = 'with'      // must have a comment …
+    state.filterFlagged = 'without'   // … AND must not be flagged → only B
+    assert.equal(matchesFilters(a), false)
     assert.equal(matchesFilters(b), true)
-    assert.equal(matchesFilters(c), true)
-    state.filterFix = true        // + fix → drops B (no fix)
-    assert.equal(matchesFilters(a), true)
-    assert.equal(matchesFilters(b), false)
-    assert.equal(matchesFilters(c), true)
-    state.filterFlagged = true    // + flag → drops C; only A satisfies all three
-    assert.equal(matchesFilters(a), true)
-    assert.equal(matchesFilters(b), false)
     assert.equal(matchesFilters(c), false)
   })
 
   it('group stays visible if ANY tab matches all active annotation filters', () => {
     state.triage.set('A1', { comment: 'c' })
     const group = [makeFinding('A1'), makeFinding('A2')]
-    state.filterComment = true
+    state.filterComment = 'with'
     assert.deepEqual(applyFilters([group]), [group])  // A1 carries the comment
     state.triage = new Map()                           // none commented now
     assert.deepEqual(applyFilters([group]), [])
