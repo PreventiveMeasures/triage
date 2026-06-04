@@ -45,6 +45,16 @@ import { computeBundleDiff } from './bundle-compare-diff.js'
 // an "and N more" footer.
 const MAX_ROWS = 400
 
+// Swap handoff. The swap button switches the active bundle to the
+// current comparison target (so A and B trade places, and the app
+// navigates to the other bundle). That base change would normally clear
+// the comparison in willUpdate; this module-level slot carries the
+// intended new target (the old base) across the prop teardown — a
+// component-internal field wouldn't survive the navigation. Shape:
+// `{ base, target }`, consumed once by willUpdate when integrity flips
+// to `base`.
+let _pendingSwap = null
+
 // Signed byte count for a delta cell: `+1,234 B` / `−1,234 B` / `±0 B`.
 // Uses a real minus (−) to match the typographic style elsewhere in
 // the chrome and so it never reads as a hyphen in a path.
@@ -99,17 +109,49 @@ class BundleCompare extends LitElement {
   }
 
   willUpdate(changed) {
-    // A new base bundle (the user opened a different row, or the parse
-    // landed) invalidates the whole comparison — the picked target and
-    // its parsed bytes belonged to the previous base. Drop them so we
-    // don't diff against a stale pairing.
-    if (changed.has('details') || changed.has('integrity')) {
-      this._targetIntegrity = null
+    // Reset only when the BASE bundle itself changes (integrity). A
+    // details object swapped in for the SAME integrity — the parse
+    // landing after a navigation, or fileHashes attaching in place — is
+    // the same content, so the comparison stays valid; resetting there
+    // would wipe the target the instant the base finished loading.
+    if (!changed.has('integrity')) return
+    // A swap navigates to the old comparison target as the new base; in
+    // that single case restore the old base as the new target instead
+    // of clearing it (the module-level handoff survives the prop
+    // teardown the navigation triggers).
+    if (_pendingSwap && this.integrity === _pendingSwap.base) {
+      const target = _pendingSwap.target
+      _pendingSwap = null
+      this._targetIntegrity = target
       this._otherDetails = null
-      this._status = 'idle'
+      this._status = 'loading'
       this._diff = null
       this._diffKey = null
+      this._loadOther(target)
+      return
     }
+    this._targetIntegrity = null
+    this._otherDetails = null
+    this._status = 'idle'
+    this._diff = null
+    this._diffKey = null
+  }
+
+  // Swap A and B: open the current comparison target as the active
+  // bundle (so the app navigates to it) and flip the comparison to the
+  // old base. The pending-swap slot carries the new target across the
+  // base change; events.js handles the actual bundle switch off the
+  // dispatched event (same path the sidebar row click takes).
+  _swap() {
+    const newBase = this._targetIntegrity
+    if (!newBase || newBase === this.integrity) return
+    if (!(state.bundles ?? []).some((b) => b.integrity === newBase)) return
+    _pendingSwap = { base: newBase, target: this.integrity }
+    this.dispatchEvent(new CustomEvent('bundle-swap', {
+      bubbles: true,
+      composed: true,
+      detail: { integrity: newBase },
+    }))
   }
 
   // Friendly name for an integrity, resolved from the sidebar's cached
@@ -268,15 +310,15 @@ class BundleCompare extends LitElement {
         <span class=${`bundle-compare-metric-delta ${totals.byteDelta > 0 ? 'up' : totals.byteDelta < 0 ? 'down' : ''}`}>${formatDelta(totals.byteDelta)}${(() => { const p = formatPct(totals.byteDelta, totals.baseBytes); return p ? html`${' '}<span class="bundle-compare-pct">(${p})</span>` : nothing })()}</span>
       </div>
       <div class="bundle-compare-chips">
-        <span class="bundle-compare-chip added">+${totals.onlyOtherFiles.toLocaleString()} added</span>
         <span class="bundle-compare-chip removed">−${totals.onlyBaseFiles.toLocaleString()} removed</span>
+        <span class="bundle-compare-chip added">+${totals.onlyOtherFiles.toLocaleString()} added</span>
         <span class="bundle-compare-chip changed">${totals.changedFiles.toLocaleString()} changed</span>
         <span class="bundle-compare-chip unchanged">${totals.unchangedFiles.toLocaleString()} unchanged</span>
       </div>
     </div>`
   }
 
-  _renderPicker(others) {
+  _renderPicker(others, hasTarget) {
     const baseName = this._nameFor(this.integrity)
     return html`<div class="bundle-compare-picker">
       <span class="bundle-compare-base" title=${baseName}>${baseName}</span>
@@ -293,6 +335,13 @@ class BundleCompare extends LitElement {
           ${others.map((o) => html`<option value=${o.integrity}>${o.label}</option>`)}
         </select>
       </label>
+      ${hasTarget ? html`<button
+        type="button"
+        class="bundle-compare-swap"
+        @click=${() => this._swap()}
+        title=${`Swap — open ${this._nameFor(this._targetIntegrity)} and compare it against ${baseName}`}
+        aria-label="Swap the two bundles"
+      ><span class="bundle-compare-swap-icon" aria-hidden="true">↔</span>Swap</button>` : nothing}
     </div>`
   }
 
@@ -312,15 +361,16 @@ class BundleCompare extends LitElement {
 
   render() {
     const others = this._otherOptions()
-    // Picker is always present (when there's anything to pick) so the
-    // user can switch the compared bundle without leaving the tab.
-    const picker = others.length > 0 ? this._renderPicker(others) : nothing
     // The picked bundle may have been deleted out from under us (in
     // this tab or another) while its diff was showing — treat a target
     // that's no longer on disk as no selection so we don't keep
     // rendering a diff against a bundle the user can't see in the list.
     const hasTarget = Boolean(this._targetIntegrity)
       && others.some((o) => o.integrity === this._targetIntegrity)
+    // Picker is always present (when there's anything to pick) so the
+    // user can switch the compared bundle without leaving the tab; the
+    // swap button rides in it, shown only once a target is live.
+    const picker = others.length > 0 ? this._renderPicker(others, hasTarget) : nothing
     const ready = hasTarget
       && this._status === 'ready'
       && this._otherDetails
@@ -385,16 +435,16 @@ class BundleCompare extends LitElement {
           ${hasPkgChanges ? html`<section class="bundle-compare-section">
             <h3 class="bundle-compare-section-head">Packages</h3>
             <div class="bundle-compare-cols">
-              ${this._pkgGroup(`Added · only in ${otherName}`, diff.packages.onlyOther, 'added')}
               ${this._pkgGroup(`Removed · only in ${baseName}`, diff.packages.onlyBase, 'removed')}
+              ${this._pkgGroup(`Added · only in ${otherName}`, diff.packages.onlyOther, 'added')}
               ${this._pkgGroup('Changed size', diff.packages.changed, 'changed')}
             </div>
           </section>` : nothing}
           <section class="bundle-compare-section">
             <h3 class="bundle-compare-section-head">Files</h3>
             <div class="bundle-compare-cols bundle-compare-cols--files">
-              ${this._fileGroup(`Added · only in ${otherName}`, diff.files.onlyOther, 'added', false, displayOf)}
               ${this._fileGroup(`Removed · only in ${baseName}`, diff.files.onlyBase, 'removed', true, displayOf)}
+              ${this._fileGroup(`Added · only in ${otherName}`, diff.files.onlyOther, 'added', false, displayOf)}
               ${this._fileGroup('Changed', diff.files.changed, 'changed', true, displayOf)}
             </div>
           </section>

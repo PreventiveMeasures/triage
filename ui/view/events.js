@@ -1593,6 +1593,29 @@ report.addEventListener('bundle-search-case-toggle', () => {
   state.bundleSearchCase = !state.bundleSearchCase
   render()
 })
+// `<bundle-compare>` swap button — switch the active bundle to the
+// comparison target while staying on the Compare tab (so A and B trade
+// places). The component has already stashed the post-swap target (the
+// old base); this performs the same full bundle switch the sidebar row
+// click does, just landing on 'compare' instead of 'overview'.
+report.addEventListener('bundle-swap', (e) => {
+  const integrity = e.detail?.integrity
+  if (!integrity || !(state.bundles ?? []).some((b) => b.integrity === integrity)) return
+  state.currentView = 'bundles'
+  state.selectedBundle = integrity
+  state.bundleDetails = null
+  state.bundleSourceFile = null
+  state.bundleSourceFindingIdx = null
+  state.bundleCodeSearchQuery = ''
+  state.bundleCodeSearchMode = 'files'
+  state.bundleDetailsTab = 'compare'
+  graph2.showAll = true
+  state.shownTriage = null
+  persistLastBundle(integrity, 'compare')
+  render()
+  renderSidebar()
+  openBundle(integrity)
+})
 // `<findings-sort>` (kind="findings") and `<entity-sort>` (kind=
 // "packages"|"repositories") both dispatch this on native change.
 // Routes to the matching state slot.
