@@ -326,15 +326,18 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: .15rem;
+  gap: .3rem;
 }
 /* Flag indicator stacked under the severity badge — display-only on the
-   compact card (toggling lives in the detail popover's finding-card). */
+   compact card (toggling lives in the detail popover's finding-card).
+   Rendered a touch larger than the 11px base glyph so it reads clearly
+   at the small kanban scale. */
 .kanban-card .kanban-flag {
   display: inline-flex;
   line-height: 0;
   color: var(--accent);
 
+  & svg { width: 13px; height: 13px; }
   & .flag-cloth { fill: var(--accent); }
 }
 .kanban-card .kanban-badge {

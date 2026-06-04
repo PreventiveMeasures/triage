@@ -76,8 +76,11 @@ export interface State {
   filterConfMax: number
   filterInclude: string
   filterIncludeNegate: boolean
-  // Attention-flag filter — when true, restrict the row set to findings
-  // whose triage carries `flagged: true`. See matchesFilters.
+  // Annotation filters — each independently (AND-combined) restricts the
+  // row set to findings whose triage carries a comment / a fix /
+  // `flagged: true` respectively. See matchesFilters.
+  filterComment: boolean
+  filterFix: boolean
   filterFlagged: boolean
   repoUrl: string
   repoEditing: boolean
@@ -416,9 +419,11 @@ export const state: State = store<State>({
   // Negation toggle for the findings search: when true the query
   // EXCLUDES — show findings that DON'T match. See matchesFilters.
   filterIncludeNegate: false,
-  // Attention-flag filter toggle (the toolbar's flag chip after the
-  // Sources / Dependencies switch). false = no filter; true = show only
-  // findings the user flagged.
+  // Annotation-filter toggles (the toolbar's comment | fix | flag chip
+  // group after the Sources / Dependencies switch). false = no filter;
+  // true = show only findings carrying that annotation. AND-combined.
+  filterComment: false,
+  filterFix: false,
   filterFlagged: false,
   repoUrl: '',
   // Transient flag — true while the header's repo chip has expanded

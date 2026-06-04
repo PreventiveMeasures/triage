@@ -147,7 +147,7 @@ const ISSUE_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hid
 // pole-less vertical pennant (swallowtail at the bottom) that fills the
 // icon height; outline by default, the `.flagged` button fills the cloth
 // + turns accent via CSS. Exported so the kanban card (render.js) and
-// the toolbar `<flag-filter>` reuse the identical glyph.
+// the toolbar `<annotation-filter>` reuse the identical glyph.
 export const FLAG_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
   <path class="flag-cloth" d="M5 1.5h6v13l-3-2.7-3 2.7z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
 </svg>`
