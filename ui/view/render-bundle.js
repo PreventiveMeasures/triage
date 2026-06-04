@@ -1603,6 +1603,16 @@ function renderBundleSlide(entry) {
   if (state.bundleDetailsTab === 'advisories' && !showAdvisories) {
     state.bundleDetailsTab = 'overview'
   }
+  // Compare needs a second bundle on disk to diff against. With only
+  // the open bundle present the picker would have nothing to offer, so
+  // the tab is hidden and a persisted 'compare' selection (carried
+  // over from when a second bundle existed, or from another bundle's
+  // state) coerces back to Overview — same pattern as the advisories
+  // coercion above.
+  const canCompare = (state.bundles?.length ?? 0) >= 2
+  if (state.bundleDetailsTab === 'compare' && !canCompare) {
+    state.bundleDetailsTab = 'overview'
+  }
   const tab = state.bundleDetailsTab
   const overviewActive = tab === 'overview'
   // Kick the fetch lazily — only once the user has actually clicked
@@ -1677,6 +1687,13 @@ function renderBundleSlide(entry) {
           aria-selected=${String(tab === 'search')}
           role="tab"
         >Search</button>
+        ${canCompare ? html`<button
+          type="button"
+          class=${classMap({ 'bundles-tab': true, active: tab === 'compare' })}
+          data-bundle-tab="compare"
+          aria-selected=${String(tab === 'compare')}
+          role="tab"
+        >Compare</button>` : nothing}
         <button
           type="button"
           class=${classMap({ 'bundles-tab': true, active: overviewActive })}
@@ -1695,6 +1712,7 @@ function renderBundleSlide(entry) {
             ['treemap', () => html`<bundle-treemap .details=${state.bundleDetails}></bundle-treemap>`],
             ['code', () => renderBundleCodeView(state.bundleDetails)],
             ['search', () => renderBundleSearchView(state.bundleDetails)],
+            ['compare', () => html`<bundle-compare .details=${state.bundleDetails} .integrity=${entry.integrity}></bundle-compare>`],
             ['issues', () => renderBundleIssuesList(state.bundleDetails)],
             ['advisories', () => renderBundleAdvisoriesTab(state.bundleDetails)],
           ])}

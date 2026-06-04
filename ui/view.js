@@ -53,6 +53,7 @@ import './view/triage-filter.js'
 import './view/triage-selector.js'
 import './view/view-mode-buttons.js'
 import './view/bundle-treemap.js'
+import './view/bundle-compare.js'
 import './view/print-button.js'
 import './view/download-button.js'
 import './view/api.js'
@@ -251,7 +252,8 @@ async function continueBoot() {
       // membership is checked synchronously; missing entries (deleted
       // in another tab between sessions) fall through to the empty
       // drop-zone. A space-delimited suffix encodes the active tab
-      // (terminal / treemap / graph / advisories / issues / code); an
+      // (terminal / treemap / graph / compare / advisories / issues / code /
+      // search); an
       // unknown / missing suffix defaults to Overview (also catching
       // old persisted suffixes for removed values).
       const rest = last.slice(2)
