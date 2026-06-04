@@ -16,6 +16,11 @@
 //     No pencil. Used when every non-module finding shares the
 //     same `repo.github` and no user input is needed.
 //
+// In the read-only and editable-with-URL modes the `user/repo` slug is
+// click-to-copy: clicking the label writes the slug to the clipboard
+// (brief green flash, no pointer cursor — matching the page-head
+// chrome). The pencil still owns edit duty, so copy never fights it.
+//
 // The component owns focus management because `.focus()` after
 // switching to editing mode is unreliable on innerHTML-injected
 // nodes — autofocus only fires on the page's first load.
@@ -53,6 +58,8 @@ class RepoChip extends LitElement {
     url:      { type: String },
     editable: { type: Boolean, reflect: true },
     editing:  { type: Boolean, reflect: true },
+    // Internal: drives the brief "copied" flash on the slug label.
+    _copied:  { state: true },
   }
 
   static styles = unsafeCSS(chipCSS)
@@ -62,6 +69,7 @@ class RepoChip extends LitElement {
     this.url = ''
     this.editable = false
     this.editing = false
+    this._copied = false
     // URL snapshot at the moment the input opened — Escape rolls back
     // to this. Captured by `_onFocus` so a programmatic re-open after
     // a previous commit starts from the most recently-saved value.
@@ -103,7 +111,7 @@ class RepoChip extends LitElement {
       // pencil click doesn't also fire the chip-level handler.
       return html`<span class=${cls} @click=${hasUrl ? null : this._onEdit}>
         ${GITHUB_ICON}
-        <span class="label">${label}</span>
+        ${hasUrl ? this._slugLabel(label) : html`<span class="label">${label}</span>`}
         <button
           type="button"
           class="edit-btn"
@@ -116,10 +124,21 @@ class RepoChip extends LitElement {
     if (this.url) {
       return html`<span class="chip readonly" title="Repo from findings (read-only)">
         ${GITHUB_ICON}
-        <span class="label">${prettyRepoLabel(this.url)}</span>
+        ${this._slugLabel(prettyRepoLabel(this.url))}
       </span>`
     }
     return nothing
+  }
+
+  // Click-to-copy slug label, shared by the read-only and
+  // editable-with-URL modes. `copyable` carries the hover affordance;
+  // `copied` drives the post-copy flash.
+  _slugLabel(text) {
+    return html`<span
+      class=${this._copied ? 'label copyable copied' : 'label copyable'}
+      title="Copy repo name"
+      @click=${this._onCopyLabel}
+    >${text}</span>`
   }
 
   // Drive focus imperatively when editing flips on (see header:
@@ -138,6 +157,23 @@ class RepoChip extends LitElement {
   _onEdit = (e) => {
     if (e) e.stopPropagation()
     this._emit('repo-edit-start')
+  }
+
+  // Copy the displayed `user/repo` slug to the clipboard. stopPropagation
+  // so the slug click doesn't bubble to the chip / host; `_copied` drives
+  // a brief green flash. Silent no-op without clipboard access (insecure
+  // context) — a convenience, not load-bearing.
+  _onCopyLabel = (e) => {
+    if (e) e.stopPropagation()
+    const text = prettyRepoLabel(this.url)
+    if (!text) return
+    try {
+      navigator.clipboard.writeText(text).then(() => {
+        this._copied = true
+        setTimeout(() => { this._copied = false }, 1000)
+        return null
+      }).catch(() => {})
+    } catch {}
   }
 
   _onFocus = (e) => { this._opener = e.target.value }

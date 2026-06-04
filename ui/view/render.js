@@ -342,14 +342,17 @@ function headerTemplate(totalCount, fileNames, repoInputUseful, knownRepo, treeF
   // merge) collapse to "N reports" with a GENERIC outline file glyph
   // — even under one shared source, a brand sticker would mis-imply
   // the chip names a single item rather than the collection it is.
+  // Clicking the chip copies the report name(s) to the clipboard
+  // (`data-copy-report`, handled in events.js); no pointer cursor, in
+  // keeping with the rest of the page-head chrome.
   const singleStickerKey = singleSource && FILE_ICONS[singleSource] ? singleSource : 'default'
   const singleSticker = unsafeHTML(FILE_ICONS[singleStickerKey])
   const multiSticker = html`<svg class="file-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>`
   let fileChip = nothing
   if (fileNames.length === 1) {
-    fileChip = html`<span class="file-chip">${singleSticker}<span>${fileNames[0]}</span></span>`
+    fileChip = html`<span class="file-chip" data-copy-report=${fileNames[0]} title="Copy report name">${singleSticker}<span>${fileNames[0]}</span></span>`
   } else if (fileNames.length > 1) {
-    fileChip = html`<span class="file-chip">${multiSticker}<span>${fileNames.length} reports</span></span>`
+    fileChip = html`<span class="file-chip" data-copy-report=${fileNames.join('\n')} title="Copy report names">${multiSticker}<span>${fileNames.length} reports</span></span>`
   }
 
   const findings = state.reports.flatMap((r) => r.groups.flat())

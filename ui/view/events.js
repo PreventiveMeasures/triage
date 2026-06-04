@@ -755,6 +755,23 @@ report.addEventListener('click', (e) => {
     } catch {}
     return
   }
+  // Page-header file chip — click copies the report name(s) to the
+  // clipboard (a convenience, like the finding copy button above:
+  // silent no-op without clipboard access, brief green pulse on
+  // success). No pointer cursor — the title + hover border lift signal
+  // it, matching the page-head chrome.
+  const copyReport = pathClosest(e, '[data-copy-report]')
+  if (copyReport) {
+    const text = copyReport.dataset.copyReport
+    try {
+      navigator.clipboard.writeText(text).then(() => {
+        copyReport.classList.add('copied')
+        setTimeout(() => copyReport.classList.remove('copied'), 1000)
+        return null
+      }).catch(() => {})
+    } catch {}
+    return
+  }
   // Claude button — hand the same finding block to Claude Code via
   // the `claude://code/new?q=…` URL scheme, prefixed with a
   // `Confirm and fix:` instruction so the receiving session knows

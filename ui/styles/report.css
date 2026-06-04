@@ -92,6 +92,9 @@
        row share the same height. */
     & .file-chip {
       display: inline-flex; align-items: center; gap: .375rem;
+      /* Click-to-copy target — keep the default arrow (never a pointer)
+         and suppress selection, matching the sibling repo-chip. */
+      cursor: default; user-select: none;
       min-height: 24px; box-sizing: border-box;
       padding: .125rem .5rem .125rem .4rem;
       background: var(--surface);
@@ -103,6 +106,12 @@
       font-weight: 500;
     }
     & .file-chip svg { flex-shrink: 0; }
+    /* Click-to-copy the report name (data-copy-report, events.js): a
+       hover border lift signals the affordance without a pointer cursor
+       (matching the repo-chip / page-head chrome), and a brief green
+       flash confirms the copy. */
+    & .file-chip:hover { border-color: var(--accent); }
+    & .file-chip.copied { border-color: var(--green, #4ade80); color: var(--green, #4ade80); }
 
     /* Meta-row: count + model/effort/exports tags + analyzer cell.
        Wraps on narrow viewports; separator dots flow with the wrap so

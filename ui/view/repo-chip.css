@@ -32,6 +32,13 @@
 .chip.empty .label { color: var(--muted); font-style: italic; }
 .chip.readonly { padding-right: .5rem; }
 
+/* Copyable slug (read-only + editable-with-URL): hovering the label
+   lifts the chip border to signal the affordance — no pointer cursor,
+   matching `.chip.empty` and the rest of the page-head chrome. A brief
+   green flash confirms the copy. */
+.chip:has(.label.copyable:hover) { border-color: var(--accent); }
+.label.copied { color: var(--green, #4ade80); }
+
 .edit-btn {
   width: 18px; height: 18px;
   display: grid; place-items: center;
