@@ -663,7 +663,7 @@ function triageFilterTemplate(colorCounts) {
 // so the host drops it in unconditionally.
 
 function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCounts, flags, analyzerOptions, repoOptions) {
-  const { showSource, showConfidence, showPriority, showGraphMode, showFileSort, kanbanMode, showRepo } = flags
+  const { showSource, showConfidence, showPriority, showGraphMode, showFileSort, kanbanMode, showRepo, hasFlagged } = flags
   // The findings tab gains a "graph" view-mode option when a
   // tree-bearing report is loaded (showGraphMode). The focus and
   // kanban modes sit between grouped and graph. Switching to graph
@@ -688,7 +688,7 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
         ?show-priority=${showPriority}
       ></findings-sort>
       ${showSource ? html`<div class="sep"></div><source-filter></source-filter>` : nothing}
-      <div class="sep"></div><flag-filter></flag-filter>
+      ${hasFlagged || state.filterFlagged ? html`<div class="sep"></div><flag-filter></flag-filter>` : nothing}
       ${showConfidence ? html`<div class="sep"></div><conf-filter></conf-filter>` : nothing}
       ${kanbanMode ? nothing : html`<triage-selector .counts=${triageCounts}></triage-selector>`}
     </div>
@@ -1413,6 +1413,11 @@ function renderImpl() {
     const t = groupState(g).commonTriage
     if (t) triageCounts[t]++
   }
+  // The flag filter self-gates like the triage selector: it appears only
+  // once at least one finding is flagged (scanned over the full loaded
+  // set, independent of the active filters), or while the filter itself
+  // is on — so a filter that's left active can always be switched off.
+  const hasFlagged = mergedGroups.some((g) => g.some((f) => state.triage.get(tabKey(f))?.flagged === true))
   // Kanban view shows every triage bucket as a column, so it
   // ignores the shownTriage single-bucket filter entirely; every
   // other view-mode (table / list / grouped / graph) honours it.
@@ -1684,6 +1689,7 @@ function renderImpl() {
       // reports stacked into one view) are where the user benefits
       // from narrowing to a single repo.
       showRepo: !!state.currentWorkspace,
+      hasFlagged,
     }, analyzerOptions, repoOptions)
 
     // Empty-state line — slot-based so the typeLabel (which can carry

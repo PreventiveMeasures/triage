@@ -1,7 +1,11 @@
 // `<flag-filter>` — a single flag-icon toggle in the findings toolbar,
-// placed right after the Sources / Dependencies switch. When active it
-// restricts the row set to flagged findings (`state.filterFlagged`); the
-// same pennant glyph as the per-finding flag keeps it compact.
+// placed right after the Sources / Dependencies switch. The toolbar only
+// mounts it once at least one finding is flagged (or while the filter is
+// already active, so it can still be switched off) — see the `hasFlagged`
+// gate in render.js's toolbarTemplate — so it stays out of the way until
+// it's useful. When active it restricts the row set to flagged findings
+// (`state.filterFlagged`); the same pennant glyph as the per-finding flag
+// keeps it compact.
 //
 // Reactivity: extends StateElement, so the active highlight follows
 // `state.filterFlagged` on its own. Click dispatches a
