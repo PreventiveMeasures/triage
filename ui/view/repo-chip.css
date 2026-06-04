@@ -34,25 +34,23 @@
 .chip.empty .label { color: var(--muted); font-style: italic; }
 .chip.readonly { padding-right: .5rem; }
 
-/* Copyable slug (read-only + editable-with-URL): hovering the label
-   lifts the chip border to signal the affordance — no pointer cursor,
+/* Copyable slug (read-only + editable-with-URL): no pointer cursor,
    matching `.chip.empty` and the rest of the page-head chrome. On copy,
-   an opaque "Copied" overlay covers the chip for ~1s — absolutely
+   a frosted "Copied" overlay covers the chip for ~1s — absolutely
    positioned (out of flow + pointer-events: none) so the chip never
-   changes size and the click still lands. */
-.chip:has(.label.copyable:hover) { border-color: var(--accent); }
+   changes size and the click still lands. The glass blur frosts the
+   slug behind it so it doesn't read through. */
 .chip.copied::after {
   content: 'Copied';
   position: absolute;
   inset: 0;
   display: grid;
   place-items: center;
-  /* Opaque tint (not translucent `--surface`) so the slug underneath
-     doesn't ghost through behind "Copied". */
-  background: var(--surface-active);
+  background: var(--surface);
+  backdrop-filter: var(--glass-blur);
   border-radius: 999px;
   color: var(--text);
-  font-weight: 600;
+  font-weight: 400;
   white-space: nowrap;
   pointer-events: none;
 }

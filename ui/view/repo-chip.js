@@ -134,11 +134,11 @@ class RepoChip extends LitElement {
   }
 
   // Click-to-copy slug label, shared by the read-only and
-  // editable-with-URL modes. `copyable` carries the hover affordance;
-  // the post-copy "Copied" overlay rides on the parent `.chip.copied`.
+  // editable-with-URL modes. The post-copy "Copied" overlay rides on
+  // the parent `.chip.copied`.
   _slugLabel(text) {
     return html`<span
-      class="label copyable"
+      class="label"
       title="Copy repo name"
       @click=${this._onCopyLabel}
     >${text}</span>`
