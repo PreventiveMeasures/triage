@@ -265,7 +265,7 @@ class BundleCompare extends LitElement {
       <div class="bundle-compare-metric">
         <span class="bundle-compare-metric-label">Size</span>
         <span class="bundle-compare-metric-value">${formatBytes(totals.baseBytes)} → ${formatBytes(totals.otherBytes)}</span>
-        <span class=${`bundle-compare-metric-delta ${totals.byteDelta > 0 ? 'up' : totals.byteDelta < 0 ? 'down' : ''}`}>${formatDelta(totals.byteDelta)}${(() => { const p = formatPct(totals.byteDelta, totals.baseBytes); return p ? html` <span class="bundle-compare-pct">(${p})</span>` : nothing })()}</span>
+        <span class=${`bundle-compare-metric-delta ${totals.byteDelta > 0 ? 'up' : totals.byteDelta < 0 ? 'down' : ''}`}>${formatDelta(totals.byteDelta)}${(() => { const p = formatPct(totals.byteDelta, totals.baseBytes); return p ? html`${' '}<span class="bundle-compare-pct">(${p})</span>` : nothing })()}</span>
       </div>
       <div class="bundle-compare-chips">
         <span class="bundle-compare-chip added">+${totals.onlyOtherFiles.toLocaleString()} added</span>
@@ -387,16 +387,16 @@ class BundleCompare extends LitElement {
             <div class="bundle-compare-cols">
               ${this._pkgGroup(`Added · only in ${otherName}`, diff.packages.onlyOther, 'added')}
               ${this._pkgGroup(`Removed · only in ${baseName}`, diff.packages.onlyBase, 'removed')}
+              ${this._pkgGroup('Changed size', diff.packages.changed, 'changed')}
             </div>
-            ${this._pkgGroup('Changed size', diff.packages.changed, 'changed')}
           </section>` : nothing}
           <section class="bundle-compare-section">
             <h3 class="bundle-compare-section-head">Files</h3>
-            <div class="bundle-compare-cols">
+            <div class="bundle-compare-cols bundle-compare-cols--files">
               ${this._fileGroup(`Added · only in ${otherName}`, diff.files.onlyOther, 'added', false, displayOf)}
               ${this._fileGroup(`Removed · only in ${baseName}`, diff.files.onlyBase, 'removed', true, displayOf)}
+              ${this._fileGroup('Changed', diff.files.changed, 'changed', true, displayOf)}
             </div>
-            ${this._fileGroup('Changed', diff.files.changed, 'changed', true, displayOf)}
           </section>
         `}
     `

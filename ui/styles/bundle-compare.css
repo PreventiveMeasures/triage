@@ -140,24 +140,45 @@
   letter-spacing: .05em;
   color: var(--muted);
 }
-/* Added | Removed sit side by side once each column can hold at least
-   700px (≈1424px of body width with the gap), and collapse to a single
-   stacked column below that. `auto-fit` + `minmax(min(700px, 100%), 1fr)`
-   makes the breakpoint self-measuring off the grid's own width (the
-   slide body, sidebar-independent) and never overflows a narrow pane.
-   Changed renders full-width below this grid. */
+/* Added | Removed | Changed are flex columns that wrap by their own
+   minimums, so the row only adds a column when there's genuine room for
+   it. Packages (short names): Added/Removed want >=400px, Changed wants
+   >=500px — all three share a row once 400+400+500 (+ gaps) fits; below
+   that Changed wraps full-width under a 400+400 Added|Removed row; below
+   that everything stacks. Files (long paths) use wider minimums (see
+   the --files override). flex-grow fills the row, min-width sets the
+   wrap point and never overflows a narrow pane; empty groups drop out
+   with no leftover gap. Self-measuring off the container's own width,
+   so it tracks the slide pane regardless of the sidebar. */
 .bundle-compare-cols {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(700px, 100%), 1fr));
-  gap: 0 1.5rem;
-  align-items: start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: .6rem 1.5rem;
+  align-items: flex-start;
+}
+.bundle-compare-cols > .bundle-compare-group {
+  flex: 1 1 400px;
+  min-width: min(400px, 100%);
+}
+.bundle-compare-cols > .bundle-compare-changed {
+  flex: 1 1 500px;
+  min-width: min(500px, 100%);
+}
+/* Files list full paths, so their columns need more room: Added/Removed
+   >=700px, Changed >=800px (keeping Changed the widest, as in Packages). */
+.bundle-compare-cols--files > .bundle-compare-group {
+  flex: 1 1 700px;
+  min-width: min(700px, 100%);
+}
+.bundle-compare-cols--files > .bundle-compare-changed {
+  flex: 1 1 800px;
+  min-width: min(800px, 100%);
 }
 
 /* Each group sits on a very faint, kind-tinted card so Added | Removed
    (and Changed) read as distinct regions — without it the side-by-side
    columns and the stacked groups blur together. */
 .bundle-compare-group {
-  margin-bottom: .6rem;
   padding: .45rem .6rem;
   border-radius: 6px;
 }
