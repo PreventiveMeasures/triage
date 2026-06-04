@@ -256,7 +256,7 @@
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  overscroll-behavior: contain;
+  overscroll-behavior: none;
   padding: .3rem;
   display: flex; flex-direction: column; gap: .25rem;
   scrollbar-width: thin;
