@@ -46,7 +46,7 @@ if (globalThis.localStorage === undefined) {
 await import('./_polyfills.js')
 
 const { state } = await import('../client/state.ts')
-const { saveTriage, reloadTriageFromStorage } = await import('../client/triage.js')
+const { saveTriage, reloadTriageFromStorage, setTriageReloadNotifier } = await import('../client/triage.js')
 const { triageSync } = await import('../client/sync/triage-sync.ts')
 const { patchEntry, setReportIgnored, isReportIgnored } = await import('../client/triage-entry.ts')
 
@@ -74,6 +74,30 @@ describe('reloadTriageFromStorage (cross-tab triage)', () => {
     await reloadTriageFromStorage()
 
     assert.equal(state.triage.get(FINDING_A)?.color, 'red', 'sibling-added marker landed')
+  })
+
+  it('fires the UI redraw notifier so non-reactive surfaces repaint', async () => {
+    // The kanban board, toolbar counts, and bucket filtering are
+    // painted by the imperative render() in ui/view/render.js — they
+    // don't observe `state.triage` the way the StateElement cards do.
+    // A cross-tab reload mutates the map straight through, so without
+    // an explicit redraw those surfaces freeze on the sibling's edit
+    // until the next click. The notifier hook (wired to render() in
+    // ui/view.js) is what unsticks them.
+    patchEntry(state.triage, FINDING_A, { color: 'red' })
+    await saveTriage()
+    state.triage.clear()
+
+    let redraws = 0
+    setTriageReloadNotifier(() => { redraws += 1 })
+    try {
+      await reloadTriageFromStorage()
+    } finally {
+      setTriageReloadNotifier(null)
+    }
+
+    assert.equal(redraws, 1, 'reload triggered exactly one redraw')
+    assert.equal(state.triage.get(FINDING_A)?.color, 'red', 'sibling edit still landed')
   })
 
   it('removes entries the sibling tab cleared', async () => {

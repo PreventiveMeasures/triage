@@ -25,6 +25,23 @@ export function setTriageChangeNotifier(fn) {
   triageChangeNotifier = typeof fn === 'function' ? fn : () => {}
 }
 
+// UI redraw hook for cross-tab reloads. A sibling tab's saveTriage
+// fires a `storage` event here; `reloadTriageFromStorage` then writes
+// the sibling's blob straight into the reactive `state.triage`. The
+// reactive StateElements (finding-card / finding-row) re-render on
+// their own, but the parts painted by the imperative render() in
+// `ui/view/render.js` — the kanban board, the toolbar counts, the
+// triage-bucket filtering / grouping — never observe the mutation, so
+// they'd show stale until the next user click forces a render. The UI
+// wires render() here (see ui/view.js) so a reload repaints them too.
+// Separate slot from `triageChangeNotifier`: that one fans local edits
+// OUT to peers, which a cross-tab reload must NOT do (the sibling is
+// already on the same wire — see the storage handler below).
+let triageReloadNotifier = () => {}
+export function setTriageReloadNotifier(fn) {
+  triageReloadNotifier = typeof fn === 'function' ? fn : () => {}
+}
+
 // Markers + deletions + comments + fix-links survive page reload
 // via `localStorage['deepview.triage']`. Payload shape:
 // `{ <id>: { color?, deleted?, comment?, fix? } }` — one entry per
@@ -376,6 +393,11 @@ export async function reloadTriageFromStorage() {
   try {
     const entries = await readTriageBlob()
     applyTriageEntries(entries, { replace: true })
+    // Repaint the imperatively-rendered surfaces (kanban board, toolbar
+    // counts, bucket filtering) that don't observe `state.triage` on
+    // their own — without this they stay frozen on a sibling tab's edit
+    // until the next click. No-op until the UI wires render() in.
+    triageReloadNotifier()
   } catch (err) {
     console.warn('Failed to reload triage:', err)
   }

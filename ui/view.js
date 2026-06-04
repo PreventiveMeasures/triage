@@ -11,7 +11,7 @@
 // `Symbol.for('@rray/frontend')`.
 import './view/frontend-install.js'
 import { sidebar } from './view/dom.js'
-import { attachSharedWorkspace, extractShareEncoded, getSecureItem, hydrateSecureStorage, isDisablingInThisTab, isEncryptionEnabled, isUnlocked, listFiles, listWorkspaces, onVaultStateChange, state, syncObservedAfterHydrate } from '#client/index.js'
+import { attachSharedWorkspace, extractShareEncoded, getSecureItem, hydrateSecureStorage, isDisablingInThisTab, isEncryptionEnabled, isUnlocked, listFiles, listWorkspaces, onVaultStateChange, setTriageReloadNotifier, state, syncObservedAfterHydrate } from '#client/index.js'
 import { onAutoDownloaded, onBundleAutoDownloaded, onChange as onPresenceChange, setRedraw, triageSync } from './view/client-sync.js'
 import { renderSidebar } from './view/sidebar.js'
 import { BUNDLE_TABS, LAST_FILE_KEY, switchToFile, switchToWorkspace } from './view/ingest.js'
@@ -65,6 +65,13 @@ import './view/drop-supported-icons.js'
 // Wire render() into triage-sync so a remote update repaints the view.
 // The client/ layer doesn't import ui/, so this hook bridges the two.
 setRedraw(render)
+// Same bridge for cross-tab learning: a sibling tab's saveTriage fires
+// a `storage` event that reloads the blob straight into the reactive
+// `state.triage` (see client/triage.js). The StateElement cards pick
+// that up on their own, but the imperatively-rendered surfaces (kanban
+// board, toolbar counts, bucket filtering) need an explicit render() —
+// without it they stay stale on a sibling edit until the next click.
+setTriageReloadNotifier(render)
 // objstore-presence cache changes (initial list() snapshot + live
 // objstore-put / objstore-deleted broadcasts) repaint the header
 // sync-status badge. Full render() rather than a targeted patch — Lit
