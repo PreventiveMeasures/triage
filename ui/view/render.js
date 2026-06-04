@@ -824,7 +824,10 @@ function kanbanCardTemplate(g, opts = {}) {
     'kanban-card': true,
     'has-conflict': groupSt.hasConflict,
     'focus-side-card': !isKanban,
-    'active': !isKanban && active,
+    // Active = the focus-view queue's current card, or (kanban) the
+    // card whose detail popover is open. Drives the accent ring so it
+    // tracks arrow-key navigation independently of DOM focus.
+    'active': active,
   }
   if (!groupSt.hasConflict && groupSt.commonColor) classes[`mark-${groupSt.commonColor}`] = true
   const lineNum = parseInt(activeTab.line, 10)
@@ -850,6 +853,7 @@ function kanbanCardTemplate(g, opts = {}) {
       draggable="true"
       role="button"
       tabindex="0"
+      aria-current=${active ? 'true' : 'false'}
       aria-label=${`Open details for ${title}`}
     >${inner}</div>`
   }
@@ -1129,7 +1133,9 @@ function findingsBodyTemplate(filtered) {
           <div class="kanban-column-body">
             ${items.length === 0
               ? html`<div class="kanban-empty">No ${c.label.toLowerCase()} findings.</div>`
-              : repeat(items, (g) => groupKey(g), (g) => kanbanCardTemplate(g))}
+              : repeat(items, (g) => groupKey(g), (g) => kanbanCardTemplate(g, {
+                  active: groupKey(g) === state.kanbanPopoverGid,
+                }))}
           </div>
         </div>`
       })}

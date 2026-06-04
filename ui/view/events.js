@@ -1181,12 +1181,21 @@ function navigateKanban(direction) {
   const nextGid = cards[nextIdx].dataset.gid
   if (!nextGid) return
   setKanbanPopoverGid(nextGid)
-  // Keep the now-open card in view inside its (independently
-  // scrolling) column body so the modal's close transition morphs
-  // back into an on-screen card. `nearest` minimises movement; the
-  // modal covers the board, so the scroll is invisible until close.
+  // The accent ring that marks the open card is the state-driven
+  // `.active` class (render.js / findings.css), so the indicator itself
+  // tracks the popover regardless of DOM focus. Still move focus to the
+  // now-open card: it keeps keyboard focus coherent with what's shown,
+  // and parks the card's own `:focus-visible` ring on the SAME card as
+  // `.active` instead of leaving it stuck on the originally-clicked card
+  // once the keyboard is in use (which showed a second, wrong outline).
+  // `preventScroll` defers positioning to the scrollIntoView below;
+  // `nearest` minimises movement, and the modal covers the board so the
+  // scroll is invisible until the close transition morphs back.
   const card = kanbanCardEl(nextGid)
-  if (card) card.scrollIntoView({ block: 'nearest', behavior: 'instant' })
+  if (card) {
+    card.focus({ preventScroll: true })
+    card.scrollIntoView({ block: 'nearest', behavior: 'instant' })
+  }
 }
 
 report.addEventListener('click', (e) => {

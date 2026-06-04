@@ -303,6 +303,13 @@
      meaning. */
   &:hover { background: rgb(from var(--text) r g b / .05); }
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  /* Open in the detail popover — the accent ring tracks the active card
+     as arrow keys walk the column. State-driven (not :focus-visible) so
+     it's engine-independent and doesn't hinge on which node holds DOM
+     focus; matches the :focus-visible ring above so a card that's both
+     focused and active shows a single outline. The focus-side variant
+     has its own .active treatment below. */
+  &.active:not(.focus-side-card) { outline: 2px solid var(--accent); outline-offset: 1px; }
   &:active { cursor: grabbing; }
   &.dragging { opacity: .45; cursor: grabbing; }
   &.has-conflict { outline: 1px dashed var(--accent); outline-offset: -1px; }
