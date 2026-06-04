@@ -210,7 +210,7 @@ export function parseWorkspaceJson(text) {
 }
 
 // Read an imported triage entry's bucket. Preferred form is the new
-// `triage: 'fixed'|'invalid'|'deleted'` field; legacy bundles carry
+// `triage: 'inprogress'|'fixed'|'invalid'|'deleted'` field; legacy bundles carry
 // only `deleted: true`, treated as 'deleted'. Null when the entry has
 // no bucket annotation.
 export function readImportedTriageBucket(entry) {

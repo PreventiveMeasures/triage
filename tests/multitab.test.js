@@ -140,6 +140,40 @@ describe('reloadTriageFromStorage (cross-tab triage)', () => {
     assert.equal(state.triage.get(FINDING_A)?.fix, 'https://example.test/pr/42')
   })
 
+  it('round-trips the in-progress bucket like the other triage states', async () => {
+    // `inprogress` is a normal TriageBucket (not the per-report
+    // `ignored` special case), so it must survive the persist → load
+    // round-trip and not be pruned as empty — same as fixed/invalid/
+    // deleted. Pins the new value against a future change that
+    // special-cases the known buckets by name on this path.
+    patchEntry(state.triage, FINDING_A, { triage: 'inprogress' })
+    await saveTriage()
+    state.triage.clear()
+
+    await reloadTriageFromStorage()
+
+    assert.equal(state.triage.get(FINDING_A)?.triage, 'inprogress',
+      'in-progress bucket survived the cross-tab round-trip')
+  })
+
+  it('honors the triage/ignored mutex for in-progress too', async () => {
+    // Mutex parity: an `inprogress` bucket wins over a stale
+    // ignoredReports entry on reload, exactly like `fixed` does in
+    // the test below — the apply path keys off bucketOf(), so the new
+    // value must take the same branch.
+    patchEntry(state.triage, FINDING_A, { triage: 'inprogress' })
+    setReportIgnored(state.triage, FINDING_A, 'r.json', true)
+    await saveTriage()
+    // This tab cleared the ignore locally before the storage event.
+    setReportIgnored(state.triage, FINDING_A, 'r.json', false)
+
+    await reloadTriageFromStorage()
+
+    assert.equal(state.triage.get(FINDING_A)?.triage, 'inprogress', 'in-progress triage preserved')
+    assert.equal(isReportIgnored(state.triage, FINDING_A, 'r.json'), false,
+      'ignored skipped because in-progress triage wins')
+  })
+
   it('honors triage/ignored mutual-exclusion when the blob carries both', async () => {
     // The action handlers + sync layer enforce "triage and per-
     // report ignore can't coexist on a tab" — but a sibling tab on

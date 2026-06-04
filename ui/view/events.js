@@ -227,7 +227,7 @@ report.addEventListener('click', (e) => {
     state.selectedPackageVersion = ver
     state.packageDetailsTab = 'overview'
     // Drop the slide's triage sub-view so a new pick lands in the
-    // default `live` (untriaged + fixed) bucket — carrying a
+    // default `live` (untriaged + in-progress + fixed) bucket — carrying a
     // prior package's `'invalid'` / `'deleted'` mode would
     // surprise the user.
     state.packageSlideTriage = null

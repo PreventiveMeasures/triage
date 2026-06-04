@@ -152,7 +152,7 @@ export function countBundleTriageBuckets(details) {
 //              the three triage buckets accordingly.
 //
 //   'issues' — bundle Issues list (and the source viewer's per-line
-//              dots / panel). Always shows live + fixed + ignored;
+//              dots / panel). Always shows live + in-progress + fixed + ignored;
 //              hides invalid + deleted. A bundle built before a fix
 //              shipped is still affected; a per-report ignore signals
 //              "anticipated future removal" but the bundle is still

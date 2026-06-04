@@ -133,7 +133,7 @@ function repositoriesToolbarTemplate(triageCounts) {
 }
 
 // Reuses `<triage-selector variant="packages">` (see
-// view/triage-selector.js) — same 3-bucket state list, same marker
+// view/triage-selector.js) — same 4-bucket state list, same marker
 // class (`.packages-triage-selector`) so events.js's click routing
 // applies.
 const REPOSITORIES_TRIAGE_STATES = ['inprogress', 'fixed', 'invalid', 'deleted']

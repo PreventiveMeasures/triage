@@ -1311,7 +1311,7 @@ function renderImpl() {
             // The triage selector inside the bundle graph topbar
             // reads `state.shownTriage` directly (via
             // `<triage-selector>`); the bundle path always uses the
-            // 3-bucket form (no `ignored` — that's a per-report
+            // 4-bucket form (no `ignored` — that's a per-report
             // concern).
             const options = {
               hideAllFiles,

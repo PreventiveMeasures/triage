@@ -263,7 +263,7 @@ function sortPackages(arr, sortBy) {
 }
 
 // Per-bucket counts for the slide's Invalid / Deleted tabs.
-// Keys: 'live' (untriaged + fixed — the default body), 'invalid',
+// Keys: 'live' (untriaged + in-progress + fixed — the default body), 'invalid',
 // 'deleted'. Walks the raw OPFS bucket once; the slide uses the
 // counts to decide which tabs to render (non-zero only) and
 // passes the active mode to packageFindingsByFile for the body.
@@ -497,7 +497,7 @@ function renderPackageDetails(pkg, bucket, version) {
 
 // Per-file groupings for a package's Issues tab. Three modes:
 //
-//   * `'live'` (default) — untriaged + fixed. Same set the bundle
+//   * `'live'` (default) — untriaged + in-progress + fixed. Same set the bundle
 //     Issues tab shows; matches the package-row issue count.
 //   * `'invalid'` — only findings triaged as invalid.
 //   * `'deleted'` — only findings triaged as deleted.

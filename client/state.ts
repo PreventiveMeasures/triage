@@ -304,7 +304,7 @@ export const state: State = store<State>({
   // on the primary tab.
   packageDetailsTab: 'overview',
   // Sub-view inside the package Issues slide — null = live
-  // (untriaged + fixed, the default + the same set the rest of
+  // (untriaged + in-progress + fixed, the default + the same set the rest of
   // the package surface counts as "issues"), 'invalid' / 'deleted'
   // = the corresponding triage bucket. Surfaced as `[Invalid |
   // Deleted]` tabs in the slide's header, only when the bucket

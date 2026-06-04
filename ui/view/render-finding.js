@@ -311,7 +311,7 @@ function triageMenuTemplate(group, title, context = null) {
   // Action order: triage states first (In progress / Fixed / Invalid
   // / Delete), then Ignore.
   //
-  // Focus-view variant shows all four states as toggleable chips
+  // Focus-view variant shows all five states as toggleable chips
   // with the active one marked `.active` (pressed); clicking it
   // toggles off (the duplicate-click semantic events.js already
   // implements), so no separate "Restore" entry is needed.
