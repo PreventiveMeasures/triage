@@ -1180,6 +1180,304 @@ function renderBundleCodeView(details) {
   </div>`
 }
 
+// ── Search tab — github-style full-bundle code search ────────────
+// A full-width search over every source in the bundle. Where the
+// Code tab's rail filter (renderBundleCodeContentResults) shows one
+// truncated line per hit, this surfaces every match inside a snippet
+// with the lines around it, so the user reads each hit in context.
+// Plain queries match as a case-insensitive substring; the `.*`
+// modifier (state.bundleSearchRegex) switches to a case-insensitive
+// regular expression, matched per line.
+
+// Per-keystroke caps. A bare `.` regex (or a one-char substring)
+// matches almost everything, so bound the work + DOM: stop after
+// SEARCH_MAX_TOTAL_HITS matches or SEARCH_MAX_FILES files and flag
+// the result set as truncated. Lines clip to SEARCH_MAX_LINE chars
+// (minified bundles ship single 100k-char lines).
+const SEARCH_MAX_TOTAL_HITS = 600
+const SEARCH_MAX_FILES = 60
+const SEARCH_MAX_LINE = 400
+const SEARCH_MAX_MARKS_PER_LINE = 50
+
+// Context radius (lines above + below each match) scales INVERSELY
+// with the total hit count: a handful of matches can afford a
+// generous window; a flood tightens toward the github ±2 default so
+// the page stays scannable.
+function searchContextRadius(totalHits) {
+  if (totalHits <= 5) return 8
+  if (totalHits <= 15) return 6
+  if (totalHits <= 40) return 4
+  if (totalHits <= 120) return 3
+  return 2
+}
+
+// Compile a user pattern for the regex modifier. Unicode mode first
+// (stricter, consistent with the rest of the codebase); fall back to
+// legacy mode for the patterns `u` rejects but a user reasonably
+// types as a plain regex — a bare `{` / `}`, a redundant escape — so
+// searching for those literals still works. Returns `{ re }` or
+// `{ error }`.
+function compileSearchRegex(pattern) {
+  try {
+    return { re: new RegExp(pattern, 'giu') }
+  } catch {
+    try {
+      // Intentionally legacy (no `u`): `u` mode rejects patterns a
+      // user reasonably types to search code — a bare `{` / `}`, a
+      // redundant escape — and we want those to match as literals.
+      // eslint-disable-next-line require-unicode-regexp
+      return { re: new RegExp(pattern, 'gi') }
+    } catch (err) {
+      return { error: err.message }
+    }
+  }
+}
+
+// Build a per-line matcher: `.ranges(line)` returns the [start,end]
+// character spans that match, capped per line. Substring mode is a
+// case-insensitive `indexOf` walk; regex mode execs the compiled
+// pattern globally, skipping zero-width matches so `^` / `$` / `a*`
+// can't spin. Returns `{ error }` when the regex doesn't compile.
+function buildSearchMatcher(query, useRegex) {
+  if (useRegex) {
+    const compiled = compileSearchRegex(query)
+    if (compiled.error) return { error: compiled.error }
+    const { re } = compiled
+    return {
+      ranges(line) {
+        re.lastIndex = 0
+        const out = []
+        let m
+        while ((m = re.exec(line)) !== null) {
+          if (m[0].length === 0) { re.lastIndex++; continue }
+          out.push([m.index, m.index + m[0].length])
+          if (out.length >= SEARCH_MAX_MARKS_PER_LINE) break
+        }
+        return out
+      },
+    }
+  }
+  const needle = query.toLowerCase()
+  const len = needle.length
+  return {
+    ranges(line) {
+      const hay = line.toLowerCase()
+      const out = []
+      let from = 0
+      let idx
+      while ((idx = hay.indexOf(needle, from)) !== -1) {
+        out.push([idx, idx + len])
+        from = idx + len
+        if (out.length >= SEARCH_MAX_MARKS_PER_LINE) break
+      }
+      return out
+    },
+  }
+}
+
+// Expand each hit line into a ±radius window, merging windows that
+// touch or overlap (gap ≤ 1 merges, so a lone 1-line gap never
+// shows). `hits` is line-sorted ascending. Returns inclusive 1-based
+// { start, end } ranges.
+function buildSearchWindows(hits, lineCount, radius) {
+  const windows = []
+  for (const h of hits) {
+    const start = Math.max(1, h.ln - radius)
+    const end = Math.min(lineCount, h.ln + radius)
+    const last = windows.at(-1)
+    if (last && start <= last.end + 1) last.end = Math.max(last.end, end)
+    else windows.push({ start, end })
+  }
+  return windows
+}
+
+// Clip a long line to SEARCH_MAX_LINE chars, sliding the window to
+// keep the first match in view (minified sources put the only match
+// thousands of chars in). Returns the display text, the match ranges
+// shifted into it, and whether the head was cut (so the row can show
+// a leading ellipsis).
+function clipSearchLine(text, ranges, max) {
+  if (text.length <= max) return { text, ranges, clipped: false }
+  const firstStart = ranges.length > 0 ? ranges[0][0] : 0
+  const from = firstStart > max - 60 ? Math.max(0, firstStart - 60) : 0
+  const slice = text.slice(from, from + max)
+  if (from === 0) return { text: slice, ranges, clipped: false }
+  const shifted = []
+  for (const [s, e] of ranges) {
+    const ns = s - from
+    const ne = e - from
+    if (ne <= 0 || ns >= slice.length) continue
+    shifted.push([Math.max(0, ns), Math.min(slice.length, ne)])
+  }
+  return { text: slice, ranges: shifted, clipped: true }
+}
+
+// Wrap each matched span in a <mark>, leaving the rest as plain text
+// nodes (Lit auto-escapes both). `ranges` are already clipped into
+// `text`; spans are clamped + de-overlapped defensively.
+function renderSearchMarks(text, ranges) {
+  if (ranges.length === 0) return text
+  const out = []
+  let pos = 0
+  for (const [s, e] of ranges) {
+    const cs = Math.max(pos, Math.min(s, text.length))
+    const ce = Math.max(cs, Math.min(e, text.length))
+    if (ce <= cs) continue
+    if (cs > pos) out.push(text.slice(pos, cs))
+    out.push(html`<mark class="bundle-search-mark">${text.slice(cs, ce)}</mark>`)
+    pos = ce
+  }
+  if (pos < text.length) out.push(text.slice(pos))
+  return out
+}
+
+// One source line inside a snippet: line-number gutter + code.
+// Matched lines (ranges non-null) pick up `.is-match` and get their
+// hits marked; context lines render plain.
+function renderSearchRow(text, ln, ranges) {
+  const clip = clipSearchLine(text, ranges ?? [], SEARCH_MAX_LINE)
+  return html`<div class=${classMap({ 'bundle-search-line': true, 'is-match': ranges != null })}>
+    <span class="bundle-search-lineno">${ln}</span>
+    <span class="bundle-search-code">${clip.clipped
+      ? html`<span class="bundle-search-clip">…</span>`
+      : nothing}${renderSearchMarks(clip.text, clip.ranges)}</span>
+  </div>`
+}
+
+// A single context snippet — rendered as a button so a click jumps
+// the source viewer to the snippet's first matched line. `hitRanges`
+// maps 1-based line → match spans for the matched lines in range.
+function renderSearchSnippet(path, lines, win, hitRanges, showGap) {
+  const { start, end } = win
+  let anchor = start
+  for (let ln = start; ln <= end; ln++) {
+    if (hitRanges.has(ln)) { anchor = ln; break }
+  }
+  const digits = String(end).length
+  const rows = []
+  for (let ln = start; ln <= end; ln++) {
+    rows.push(renderSearchRow(lines[ln - 1] ?? '', ln, hitRanges.get(ln) ?? null))
+  }
+  return html`${showGap ? html`<div class="bundle-search-gap" aria-hidden="true"></div>` : nothing}
+    <button
+      type="button"
+      class="bundle-search-snippet"
+      style=${styleMap({ '--bundle-search-lineno-w': `${digits}ch` })}
+      data-bundle-view-source=${path}
+      data-bundle-view-line=${anchor}
+      data-bundle-view-scroll-block="center"
+      title=${`${path}:${anchor}`}
+    >${rows}</button>`
+}
+
+// One file group — a clickable header (stripped path + match count)
+// over its context snippets. The header opens the file at its first
+// match; each snippet opens at its own anchor line.
+function renderSearchFile(fileResult, prefix, radius) {
+  const { path, lines, hits } = fileResult
+  const bare = prefix && path.startsWith(prefix) ? path.slice(prefix.length) : path
+  const windows = buildSearchWindows(hits, lines.length, radius)
+  const hitRanges = new Map(hits.map((h) => [h.ln, h.ranges]))
+  const firstHit = hits[0].ln
+  return html`<section class="bundle-search-file">
+    <header class="bundle-search-file-head">
+      <button
+        type="button"
+        class="bundle-search-file-name mono"
+        data-bundle-view-source=${path}
+        data-bundle-view-line=${firstHit}
+        data-bundle-view-scroll-block="center"
+        title=${path}
+      >${bare}</button>
+      <span class="bundle-search-file-count">${hits.length} ${hits.length === 1 ? 'match' : 'matches'}</span>
+    </header>
+    <div class="bundle-search-snippets">
+      ${windows.map((w, i) => renderSearchSnippet(path, lines, w, hitRanges, i > 0))}
+    </div>
+  </section>`
+}
+
+// Scan every source for the active query, collecting per-file hit
+// lines (capped), then render file groups with context snippets.
+function renderBundleSearchResults(sources, query, useRegex) {
+  if (!query) {
+    return html`<div class="bundle-search-results">
+      <div class="bundle-search-hint">
+        Search across every source in this bundle. Each match shows the surrounding
+        lines for context — fewer matches get more context. Toggle
+        <span class="bundle-search-hint-kbd">.*</span> to match by regular expression.
+      </div>
+    </div>`
+  }
+  const matcher = buildSearchMatcher(query, useRegex)
+  if (matcher.error) {
+    return html`<div class="bundle-search-results">
+      <div class="bundle-search-error">
+        <span class="bundle-search-error-label">Invalid regular expression</span>
+        <span class="bundle-search-error-msg mono">${matcher.error}</span>
+      </div>
+    </div>`
+  }
+  // Stable display prefix from ALL sources, so it doesn't jump as the
+  // matched-file set shifts between keystrokes.
+  const allPaths = [...sources.keys()].toSorted()
+  const { prefix } = stripCommonPathPrefix(allPaths)
+  const fileResults = []
+  let totalHits = 0
+  let truncated = false
+  for (const path of allPaths) {
+    const content = sources.get(path)
+    if (typeof content !== 'string') continue
+    const lines = content.split('\n')
+    const hits = []
+    for (let i = 0; i < lines.length; i++) {
+      const ranges = matcher.ranges(lines[i])
+      if (ranges.length === 0) continue
+      hits.push({ ln: i + 1, ranges })
+      totalHits++
+      if (totalHits >= SEARCH_MAX_TOTAL_HITS) { truncated = true; break }
+    }
+    if (hits.length > 0) fileResults.push({ path, lines, hits })
+    if (truncated) break
+    if (fileResults.length >= SEARCH_MAX_FILES) { truncated = true; break }
+  }
+  if (fileResults.length === 0) {
+    return html`<div class="bundle-search-results">
+      <div class="bundle-search-empty">No matches.</div>
+    </div>`
+  }
+  const radius = searchContextRadius(totalHits)
+  const fileCount = fileResults.length
+  return html`<div class="bundle-search-results">
+    <div class="bundle-search-summary">
+      <span>${totalHits}${truncated ? '+' : ''} ${totalHits === 1 ? 'match' : 'matches'}
+        in ${fileCount} ${fileCount === 1 ? 'file' : 'files'}</span>
+      ${prefix ? html`<span class="bundle-search-summary-prefix mono" title=${prefix}>${prefix}</span>` : nothing}
+      ${truncated ? html`<span class="bundle-search-summary-more">results capped — refine to narrow</span>` : nothing}
+    </div>
+    ${repeat(fileResults, (f) => f.path, (f) => renderSearchFile(f, prefix, radius))}
+  </div>`
+}
+
+// Search tab body — the github-style search bar over a scrolling
+// results column. Reads its own query state (state.bundleSearchQuery
+// / bundleSearchRegex) so it never fights the Code tab's rail filter.
+function renderBundleSearchView(details) {
+  if (!details || (!details.json && !details.bundle)) return nothing
+  const sources = bundleSourcesAsMap(details)
+  if (sources.size === 0) {
+    return html`<div class="bundle-search-view">
+      <div class="bundle-code-empty">This bundle doesn't carry any source content.</div>
+    </div>`
+  }
+  return html`<div class="bundle-search-view">
+    <div class="bundle-search-bar-row">
+      <bundle-search></bundle-search>
+    </div>
+    ${renderBundleSearchResults(sources, state.bundleSearchQuery, state.bundleSearchRegex)}
+  </div>`
+}
+
 // Top-level bundle view. The header carries the bundle's filename
 // (the canonical user-facing label; integrity lives in the Overview
 // tab's metadata block) and the tab strip; the body dispatches on
@@ -1280,6 +1578,13 @@ function renderBundleSlide(entry) {
         >Code</button>
         <button
           type="button"
+          class=${classMap({ 'bundles-tab': true, active: tab === 'search' })}
+          data-bundle-tab="search"
+          aria-selected=${String(tab === 'search')}
+          role="tab"
+        >Search</button>
+        <button
+          type="button"
           class=${classMap({ 'bundles-tab': true, active: overviewActive })}
           data-bundle-tab="overview"
           aria-selected=${String(overviewActive)}
@@ -1295,6 +1600,7 @@ function renderBundleSlide(entry) {
             ['graph', () => html`<div id="bundle-graph-slot" class="bundle-graph-slot"></div>`],
             ['treemap', () => html`<bundle-treemap .details=${state.bundleDetails}></bundle-treemap>`],
             ['code', () => renderBundleCodeView(state.bundleDetails)],
+            ['search', () => renderBundleSearchView(state.bundleDetails)],
             ['issues', () => renderBundleIssuesList(state.bundleDetails)],
             ['advisories', () => renderBundleAdvisoriesTab(state.bundleDetails)],
           ])}

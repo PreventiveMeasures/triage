@@ -32,6 +32,7 @@ import './view/color-marker.js'
 import './view/analyzer-select.js'
 import './view/conf-filter.js'
 import './view/bundle-code-search.js'
+import './view/bundle-search.js'
 import './view/entity-search.js'
 import './view/entity-sort.js'
 import './view/findings-sort.js'
@@ -266,6 +267,8 @@ async function continueBoot() {
         state.bundleSourceFindingIdx = null
         state.bundleCodeSearchQuery = ''
         state.bundleCodeSearchMode = 'files'
+        state.bundleSearchQuery = ''
+        state.bundleSearchRegex = false
         state.bundleDetailsTab = tab
         state.shownTriage = null
         graph2.showAll = true

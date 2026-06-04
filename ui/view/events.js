@@ -446,6 +446,8 @@ report.addEventListener('click', (e) => {
     // `.current` highlight.
     if (sourceOpen.closest('.bundle-code-rail')) {
       renderPreservingScrollOf('.bundle-code-rail-body')
+    } else if (sourceOpen.closest('.bundle-search-results')) {
+      renderPreservingScrollOf('.bundle-search-results')
     } else if (sourceOpen.closest('.bundles-slide-body')) {
       renderPreservingScrollOf('.bundles-slide-body')
     } else {
@@ -1552,6 +1554,13 @@ report.addEventListener('bundle-search-mode-change', (e) => {
   state.bundleCodeSearchMode = mode
   render()
 })
+// `<bundle-search>` (the Search tab's github-style bar) dispatches
+// this when the trailing `.*` modifier is clicked — flip between
+// plain-substring and regular-expression matching.
+report.addEventListener('bundle-search-regex-toggle', () => {
+  state.bundleSearchRegex = !state.bundleSearchRegex
+  render()
+})
 // `<findings-sort>` (kind="findings") and `<entity-sort>` (kind=
 // "packages"|"repositories") both dispatch this on native change.
 // Routes to the matching state slot.
@@ -1622,6 +1631,8 @@ report.addEventListener('search-input', (e) => {
     state.repositoriesSearchQuery = value
   } else if (kind === 'bundle-code') {
     state.bundleCodeSearchQuery = value
+  } else if (kind === 'bundle-search') {
+    state.bundleSearchQuery = value
   } else {
     return
   }
