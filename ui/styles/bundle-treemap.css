@@ -24,13 +24,73 @@
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
-.bundle-treemap-title {
+/* Breadcrumb trail (view/bundle-treemap.js `_renderCrumbs`). The
+   home crumb keeps the old `.bundle-treemap-title` look so the header
+   is unchanged at the root; focused segments follow it, mono to read
+   as path parts. `theme.css` sets buttons to `cursor: default` +
+   non-selectable, so each crumb re-asserts `cursor: pointer`. */
+.bundle-treemap-crumbs {
+  display: flex;
+  align-items: baseline;
+  gap: .3rem;
+  min-width: 0;
+  overflow: hidden;
+}
+/* Home + ancestors. Shrinks and clips (from its trailing edge, so the
+   home crumb survives) before the pinned current crumb gives up any
+   space — a deep drill-in elides the middle while the current location
+   stays visible. */
+.bundle-treemap-crumbs-lead {
+  display: flex;
+  align-items: baseline;
+  gap: .3rem;
+  min-width: 0;
+  overflow: hidden;
+  flex: 0 1 auto;
+}
+.bundle-treemap-crumb-home {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  appearance: none;
+  -webkit-appearance: none;
   text-transform: uppercase;
   letter-spacing: .05em;
   font-size: .7rem;
   font-weight: 600;
   color: var(--muted);
   white-space: nowrap;
+  cursor: pointer;
+}
+.bundle-treemap-crumb-home.at-root { cursor: default; }
+.bundle-treemap-crumb-home:not(.at-root):hover { color: var(--text); }
+.bundle-treemap-crumb,
+.bundle-treemap-crumb-current {
+  min-width: 0;
+  max-width: 22ch;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  appearance: none;
+  -webkit-appearance: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .68rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bundle-treemap-crumb { color: var(--muted); cursor: pointer; }
+.bundle-treemap-crumb:hover { color: var(--text); text-decoration: underline; }
+/* Pinned: never shrinks, so the current location stays fully visible
+   while the lead group clips. */
+.bundle-treemap-crumb-current { color: var(--text); flex: 0 0 auto; }
+.bundle-treemap-crumb-sep {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: .7rem;
 }
 .bundle-treemap-sub {
   min-width: 0;
@@ -56,10 +116,28 @@
   border-radius: 2px;
 }
 /* Directory container — faint fill + border so its children read as
-   nested inside it; the name sits in the reserved top strip. */
+   nested inside it; the name sits in the reserved top strip. A
+   `<button>` (drill-in target), so the native chrome is zeroed out —
+   the fill is semi-transparent, so an un-suppressed UA button
+   background would bleed through it. Only the header strip + the 2px
+   inset border are actually clickable; the children paint on top as
+   later-in-DOM siblings and field their own clicks. */
 .bundle-treemap-dir {
+  margin: 0;
+  padding: 0;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
   background: rgb(from var(--text) r g b / .04);
   border: 1px solid rgb(from var(--text) r g b / .14);
+  transition: background .1s ease, border-color .1s ease;
+}
+.bundle-treemap-dir:hover {
+  background: rgb(from var(--text) r g b / .09);
+  border-color: rgb(from var(--text) r g b / .28);
 }
 .bundle-treemap-dirname {
   display: block;
@@ -86,8 +164,14 @@
 }
 .bundle-treemap-file { cursor: pointer; transition: filter .1s ease; }
 .bundle-treemap-file:hover { filter: brightness(1.14); }
-.bundle-treemap-file:focus-visible { outline: 2px solid var(--text); outline-offset: -2px; z-index: 2; }
-.bundle-treemap-agg { cursor: default; font-style: italic; }
+/* Aggregate = a depth-capped / too-small directory drawn as one block.
+   Also a drill-in target (clicking it spends a fresh depth budget on
+   its contents), so it gets the file's pointer + hover affordance. */
+.bundle-treemap-agg { cursor: pointer; font-style: italic; transition: filter .1s ease; }
+.bundle-treemap-agg:hover { filter: brightness(1.14); }
+.bundle-treemap-file:focus-visible,
+.bundle-treemap-agg:focus-visible,
+.bundle-treemap-dir:focus-visible { outline: 2px solid var(--text); outline-offset: -2px; z-index: 2; }
 .bundle-treemap-label {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .64rem;
