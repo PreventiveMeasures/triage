@@ -109,27 +109,6 @@
     user-select: none;
   }
   & .row-type { color: var(--muted); font-size: .68rem; flex-shrink: 0; }
-  & .mark-flag { align-self: center; }
-}
-
-/* Attention-flag toggle — inline at the right end of the title row
-   (the title flexes to push it + the run-type label right). Ghost
-   (muted, half-opacity) until hovered or set; accent + filled cloth
-   when flagged. */
-.mark-flag {
-  flex-shrink: 0;
-  display: inline-flex; align-items: center; justify-content: center;
-  padding: 1px; border: 0; border-radius: 4px;
-  background: transparent; color: var(--muted); opacity: .5;
-  cursor: pointer; transition: opacity .12s, color .12s, background .12s;
-
-  &:hover { opacity: 1; color: var(--text); background: var(--surface-active); }
-  &.flagged { opacity: 1; color: var(--accent); }
-  &.flagged .flag-cloth { fill: var(--accent); }
-  & svg { display: block; }
-}
-@media print {
-  .mark-flag:not(.flagged) { display: none; }
 }
 
 .meta-row {
@@ -247,11 +226,13 @@
 }
 .mark-comment,
 .mark-fix,
+.mark-flag,
 .mark-copy,
 .mark-issue,
 .mark-claude {
   background: transparent; border: 0; color: var(--muted);
   padding: 0 .25rem; height: 1.4rem;
+  cursor: pointer;
   display: inline-flex; align-items: center; justify-content: center;
   &:not(:last-child) { border-right: 1px solid var(--border); }
   &:hover { color: var(--accent); background: var(--surface-active); }
@@ -261,7 +242,9 @@
    button color above. */
 .mark-issue { text-decoration: none; }
 .mark-comment.has-comment,
-.mark-fix.has-fix { color: var(--accent); }
+.mark-fix.has-fix,
+.mark-flag.flagged { color: var(--accent); }
+.mark-flag svg { display: block; }
 /* Pulse the copy / claude button briefly after a successful click —
    class set + cleared by the events.js handler. Buttons share the
    action-group's border, so the pulse paints cell background + icon
@@ -273,6 +256,7 @@
 }
 .mark-comment.has-comment .bubble { fill: var(--accent); fill-opacity: .15; }
 .mark-fix.has-fix .wrench { fill: var(--accent); fill-opacity: .15; }
+.mark-flag.flagged .flag-cloth { fill: var(--accent); fill-opacity: .15; }
 
 .mark-x {
   background: transparent; border: 1px solid var(--border); color: var(--muted);

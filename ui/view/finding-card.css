@@ -73,42 +73,10 @@
 
 .tab-body {
   display: none;
-  position: relative;
   grid-template-columns: auto 1fr;
   gap: .25rem .75rem;
-  /* Reserve a right gutter so the absolutely-positioned attention flag
-     (pinned to the top-right corner) never overlaps the line-row /
-     description text. */
-  padding-right: 1.35rem;
   &.active { display: grid; }
 }
-
-/* Attention-flag toggle — top-right corner of the active tab body.
-   Ghost (muted, half-opacity) until hovered or set; accent with a
-   filled cloth when flagged. */
-.mark-flag {
-  position: absolute; top: .15rem; right: .1rem;
-  display: inline-flex; align-items: center; justify-content: center;
-  padding: 2px; border: 0; border-radius: 4px;
-  background: transparent; color: var(--muted); opacity: .5;
-  cursor: pointer; transition: opacity .12s, color .12s, background .12s;
-
-  &:hover { opacity: 1; color: var(--text); background: var(--surface-active); }
-  &.flagged { opacity: 1; color: var(--accent); }
-  &.flagged .flag-cloth { fill: var(--accent); }
-  & svg { display: block; }
-}
-@media print {
-  /* Keep a set flag as an indicator on paper; drop the empty toggles. */
-  .mark-flag:not(.flagged) { display: none; }
-}
-/* Kanban detail popover: the modal's × close button (its own light-DOM
-   layer) sits at the top-right corner, exactly where the flag toggle
-   lives — and the popover is the canonical place to toggle a kanban
-   finding's flag. Widen the gutter and inset the flag so it clears the
-   close button instead of hiding under it. */
-:host([context='kanban-detail']) .tab-body { padding-right: 2.75rem; }
-:host([context='kanban-detail']) .mark-flag { right: 1.5rem; }
 
 /* Description's first line becomes a bold title; the rest is a muted
    body block. Inline `"quoted"` / `` `code` `` segments get tag-style
@@ -359,11 +327,13 @@
 }
 .mark-comment,
 .mark-fix,
+.mark-flag,
 .mark-copy,
 .mark-issue,
 .mark-claude {
   background: transparent; border: 0; color: var(--muted);
   padding: 0 .25rem; height: 1.4rem;
+  cursor: pointer;
   display: inline-flex; align-items: center; justify-content: center;
   &:not(:last-child) { border-right: 1px solid var(--border); }
   &:hover { color: var(--accent); background: var(--surface-active); }
@@ -373,7 +343,9 @@
    otherwise pick up — it inherits the muted button color above. */
 .mark-issue { text-decoration: none; }
 .mark-comment.has-comment,
-.mark-fix.has-fix { color: var(--accent); }
+.mark-fix.has-fix,
+.mark-flag.flagged { color: var(--accent); }
+.mark-flag svg { display: block; }
 /* Pulse the copy / claude button briefly after a successful click —
    class set + cleared by events.js around the action (clipboard write
    for copy, claude:// nav for claude). Buttons share the group's
@@ -386,6 +358,7 @@
 }
 .mark-comment.has-comment .bubble { fill: var(--accent); fill-opacity: .15; }
 .mark-fix.has-fix .wrench { fill: var(--accent); fill-opacity: .15; }
+.mark-flag.flagged .flag-cloth { fill: var(--accent); fill-opacity: .15; }
 
 .mark-x {
   background: transparent; border: 1px solid var(--border); color: var(--muted);
@@ -547,6 +520,7 @@
 :host([context='focus']) .marks-commit-row { padding-left: 0; }
 :host([context='focus']) .mark-comment,
 :host([context='focus']) .mark-fix,
+:host([context='focus']) .mark-flag,
 :host([context='focus']) .mark-copy,
 :host([context='focus']) .mark-issue,
 :host([context='focus']) .mark-claude {

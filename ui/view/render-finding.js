@@ -142,24 +142,24 @@ const ISSUE_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hid
   <circle cx="8" cy="8" r="1.7" fill="currentColor"/>
 </svg>`
 
-// Pennant flag for the per-finding attention flag (top-right of the
-// card/row, the kanban card, and the toolbar filter). Outline by
-// default; the `.flagged` button fills the cloth + turns accent via
-// CSS. Exported so the kanban card (render.js) and the toolbar
-// `<flag-filter>` reuse the identical glyph.
+// Pennant flag for the per-finding attention flag (the comment/fix
+// action group, the kanban card indicator, and the toolbar filter). A
+// pole-less vertical pennant (swallowtail at the bottom) that fills the
+// icon height; outline by default, the `.flagged` button fills the cloth
+// + turns accent via CSS. Exported so the kanban card (render.js) and
+// the toolbar `<flag-filter>` reuse the identical glyph.
 export const FLAG_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
-  <path class="flag-pole" d="M4 1.8v12.4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
-  <path class="flag-cloth" d="M4 2.5h7.4l-1.8 2.4 1.8 2.4H4z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+  <path class="flag-cloth" d="M5 1.5h6v13l-3-2.7-3 2.7z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
 </svg>`
 
-// Attention-flag toggle shown top-right of the finding card/row.
-// Tri-state under the hood (see TriageEntry.flagged): the events.js
-// click handler walks unset/false → true → false, writing the explicit
-// `false` tombstone on un-flag (never undefined) so the removal syncs.
-// Keyed to the specific tab `f` so multi-tab groups flag each member
-// independently, mirroring the per-tab color / comment marks.
-function flagButtonTemplate(f) {
-  const key = tabKey(f)
+// Attention-flag toggle — sits in the comment/fix action group of the
+// finding card/row (and gains a text label in the focus view, like its
+// siblings). Tri-state under the hood (see TriageEntry.flagged): the
+// events.js click handler walks unset/false → true → false, writing the
+// explicit `false` tombstone on un-flag (never undefined) so the removal
+// syncs. Keyed to the active tab's `key`, mirroring the per-tab color /
+// comment / fix marks beside it.
+function flagButtonTemplate(key, isFocus = false) {
   const flagged = state.triage.get(key)?.flagged === true
   const title = flagged ? 'Remove flag' : 'Flag this finding'
   return html`<button
@@ -169,7 +169,7 @@ function flagButtonTemplate(f) {
     title=${title}
     aria-label=${title}
     aria-pressed=${String(flagged)}
-  >${FLAG_ICON}</button>`
+  >${FLAG_ICON}${isFocus ? html`<span class="mark-btn-label">${flagged ? 'Flagged' : 'Flag'}</span>` : nothing}</button>`
 }
 
 // Issue title — the finding's first description line (the table-view
@@ -239,6 +239,8 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeKey, context = 
   const fixLabel = activeFix ? 'Edit fix link' : 'Fix link'
   const commentBtn = html`<button type="button" class=${classMap({ 'mark-comment': true, 'has-comment': activeComment })} title=${commentTitle} aria-label=${commentTitle}>${COMMENT_ICON}${isFocus ? html`<span class="mark-btn-label">${commentLabel}</span>` : nothing}</button>`
   const fixBtn = html`<button type="button" class=${classMap({ 'mark-fix': true, 'has-fix': activeFix })} title=${fixTitle} aria-label=${fixTitle}>${FIX_ICON}${isFocus ? html`<span class="mark-btn-label">${fixLabel}</span>` : nothing}</button>`
+  // Attention flag — third chip in the comment/fix group.
+  const flagBtn = flagButtonTemplate(activeKey, isFocus)
   // Copy button — writes a labeled `File / Line / Description /
   // Confidence` block for the active tab to the clipboard (handler
   // in events.js, active tab resolved via the same gid lookup).
@@ -273,7 +275,7 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeKey, context = 
   const menuTitle = groupSt.hasConflict
     ? 'change triage state (colors mismatch — acts per-tab)'
     : (sortedTabs.length > 1 ? 'change triage state for the whole group' : 'change triage state')
-  return html`${reportChip}<span class="mark-action-group">${commentBtn}${fixBtn}</span><span class="mark-action-group">${copyBtn}${issueBtn}${claudeBtn}</span>${picker}${triageMenuTemplate(group, menuTitle, context)}`
+  return html`${reportChip}<span class="mark-action-group">${commentBtn}${fixBtn}${flagBtn}</span><span class="mark-action-group">${copyBtn}${issueBtn}${claudeBtn}</span>${picker}${triageMenuTemplate(group, menuTitle, context)}`
 }
 
 // Triage menu — chevron button toggling a popover with the Fixed /
@@ -528,7 +530,6 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
   }
   const { title: descTitle, body: descBody } = splitDescription(stripExportMarker(f.description, f))
   return html`<div class=${classMap({ 'tab-body': true, active: isActive })} data-tid=${key}>
-    ${flagButtonTemplate(f)}
     ${total > 1 ? html`<div class="print-case-label">${idx + 1} of ${total}</div>` : nothing}
     <div class="finding-left">
       <span class=${`badge ${f.severity}`}>${badgeLabel(f.severity)}</span>
@@ -664,7 +665,6 @@ export function tableRowInnerTemplate(g) {
       <div class="title-row">
         <span class="title">${title}</span>
         ${typeLabel ? html`<span class="row-type">${typeLabel}</span>` : nothing}
-        ${flagButtonTemplate(f)}
       </div>
       <div class="meta-row">
         <span class="row-loc">${rowLocationTemplate(f)}${exportPart}</span>
