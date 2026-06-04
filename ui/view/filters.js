@@ -43,9 +43,9 @@ export function resetFilters() {
   state.filterConfMax = 10
   state.filterInclude = ''
   state.filterIncludeNegate = false
-  state.filterComment = false
-  state.filterFix = false
-  state.filterFlagged = false
+  state.filterComment = ''
+  state.filterFix = ''
+  state.filterFlagged = ''
   // Default sort tracks the dataset: if any finding carries a
   // `priority`, sort priority-descending (most important first),
   // else severity. Called on first-ingest only (subsequent loads
@@ -78,15 +78,22 @@ export function matchesFilters(f) {
     if (allowOwn && isModule(f.file)) return false
     if (!allowOwn && !isModule(f.file)) return false
   }
-  // Annotation filters (comment | fix | flag) — each independently
-  // AND-narrows the set: a tab must satisfy EVERY active one. Per-tab
-  // like the predicates above, so applyFilters' `g.some` keeps a group
-  // visible when ANY tab matches all the active annotation filters.
+  // Annotation filters (comment | fix | flag) — each is a tri-state:
+  // 'with' requires the annotation, 'without' requires its absence, ''
+  // is off. Each independently AND-narrows the set (a tab must satisfy
+  // EVERY active one). Per-tab like the predicates above, so applyFilters'
+  // `g.some` keeps a group visible when ANY tab matches all of them.
   if (state.filterComment || state.filterFix || state.filterFlagged) {
     const e = state.triage.get(tabKey(f))
-    if (state.filterComment && !e?.comment) return false
-    if (state.filterFix && !e?.fix) return false
-    if (state.filterFlagged && e?.flagged !== true) return false
+    const hasComment = !!e?.comment
+    const hasFix = !!e?.fix
+    const isFlagged = e?.flagged === true
+    if (state.filterComment === 'with' && !hasComment) return false
+    if (state.filterComment === 'without' && hasComment) return false
+    if (state.filterFix === 'with' && !hasFix) return false
+    if (state.filterFix === 'without' && hasFix) return false
+    if (state.filterFlagged === 'with' && !isFlagged) return false
+    if (state.filterFlagged === 'without' && isFlagged) return false
   }
   // Analyzer filter — single-select dropdown. Empty = no filter.
   // Findings with no analyzer (`_analyzer === null`) match

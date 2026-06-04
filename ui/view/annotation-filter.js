@@ -64,20 +64,23 @@ class AnnotationFilter extends StateElement {
 
   render() {
     // A chip shows when its annotation exists in the loaded set OR its
-    // filter is currently on (so it can be turned back off).
+    // filter is active (so it can be cycled back off).
     const visible = CHIPS.filter((c) => this[c.hasKey] || state[c.stateKey])
     if (visible.length === 0) return nothing
     return html`${visible.map((c) => {
-      const active = state[c.stateKey]
-      const title = active
-        ? `Showing only ${c.label} findings — click to clear`
-        : `Show only ${c.label} findings`
+      // Tri-state: '' → 'with' (only) → 'without' (exclude) → ''.
+      const sel = state[c.stateKey]
+      const title = sel === 'with'
+        ? `Showing only ${c.label} findings — click to exclude them`
+        : sel === 'without'
+          ? `Excluding ${c.label} findings — click to clear`
+          : `Show only ${c.label} findings`
       return html`<button
         type="button"
-        class=${classMap({ 'annotation-chip': true, active })}
+        class=${classMap({ 'annotation-chip': true, 'sel-with': sel === 'with', 'sel-without': sel === 'without' })}
         title=${title}
         aria-label=${title}
-        aria-pressed=${String(active)}
+        aria-pressed=${String(sel !== '')}
         @click=${() => this._toggle(c.key)}
       >${c.glyph}</button>`
     })}`
