@@ -976,7 +976,7 @@ bundle-code-search {
   font-size: .72rem; font-weight: 500; line-height: 1;
   white-space: nowrap;
 
-  &:hover { color: var(--text); border-color: var(--accent); }
+  &:hover { color: var(--text); }
   &.on { color: var(--text); }
   &.on .bundle-search-switch { background: color-mix(in oklch, var(--accent) 22%, transparent); }
   &.on .bundle-search-switch::after { transform: translateX(12px); background: var(--accent); }
@@ -2061,6 +2061,16 @@ body.report-fullscreen {
   width: var(--lineno-width);
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+/* Search-matched line — tint the gutter row + accent the number so
+   hits stand out while scrolling the full file in the Search
+   sidebar, the way finding lines carry a gutter dot. */
+.bundle-source-lineno-row.is-match {
+  background: color-mix(in oklch, var(--accent) 16%, transparent);
+}
+.bundle-source-lineno-row.is-match .bundle-source-lineno-num {
+  color: var(--accent);
+  font-weight: 600;
 }
 /* Issue dot — colored by severity tier. Button so it's
    keyboard-focusable and click-handled by events.js. The

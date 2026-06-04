@@ -577,7 +577,7 @@ function _topSeverityOf(findings) {
 //
 // `lineFindings` (Map<line, Finding[]>) drives the per-line dot in
 // the gutter. Lines without findings render a plain number.
-function renderBundleSourceLines(content, path, integrity, lineFindings) {
+function renderBundleSourceLines(content, path, integrity, lineFindings, matchLines = null) {
   const lineCount = content.split('\n').length
   const digits = String(lineCount).length
   const lang = langForPath(path)
@@ -610,7 +610,7 @@ function renderBundleSourceLines(content, path, integrity, lineFindings) {
         const sev = entries ? _topSeverityOf(entries.map((e) => e.f)) : null
         const isActive = entries && state.bundleSourceFindingIdx != null
           && entries.some((e) => e.idx === state.bundleSourceFindingIdx)
-        return html`<div class="bundle-source-lineno-row" data-line=${ln}>
+        return html`<div class=${classMap({ 'bundle-source-lineno-row': true, 'is-match': matchLines?.has(ln) ?? false })} data-line=${ln}>
           ${entries
             ? html`<button
                 type="button"
@@ -1465,19 +1465,37 @@ function renderBundleSearchResults(sources, query, useRegex, caseSensitive, show
   </div>`
 }
 
+// Line numbers (1-based) in `content` matched by the active search —
+// drives the matched-line highlight in the sidebar's gutter (the same
+// lines the results column marks). Empty when there's no query or the
+// regex doesn't compile.
+function searchMatchLines(content, query, useRegex, caseSensitive) {
+  const out = new Set()
+  if (!query || typeof content !== 'string') return out
+  const matcher = buildSearchMatcher(query, useRegex, caseSensitive)
+  if (matcher.error) return out
+  const lines = content.split('\n')
+  for (let i = 0; i < lines.length; i++) {
+    if (matcher.ranges(lines[i]).length > 0) out.add(i + 1)
+  }
+  return out
+}
+
 // Right sidebar for the Search tab — the clicked result's source,
 // docked beside the results instead of in a popup. Reuses the
 // modal's chrome (bar / body / code-wrap + finding panel) and the
 // same renderBundleSourceLines + renderBundleSourceFindingPanel
 // pipeline, so line gutter, prism highlight, per-line finding dots
-// and the finding panel behave identically. Renders only once a
-// result is clicked (state.bundleSourceFile set); the × button
-// clears it via the shared bundle-source-close action.
+// and the finding panel behave identically. Matched lines pick up the
+// gutter highlight. Renders only once a result is clicked
+// (state.bundleSourceFile set); the × button clears it via the shared
+// bundle-source-close action.
 function renderBundleSearchSide(details, sources) {
   const path = state.bundleSourceFile
   if (!path) return nothing
   const content = sources.get(path)
   const { fileFindings, lineFindings } = bundleViewerFindings(details, path, content)
+  const matchLines = searchMatchLines(content, state.bundleSearchQuery, state.bundleSearchRegex, state.bundleSearchCase)
   return html`<aside class=${classMap({ 'bundle-search-side': true, 'with-panel': state.bundleSourceFindingIdx != null })}>
     <header class="bundle-source-bar">
       <div class="bundle-source-title" title=${path}>${path}</div>
@@ -1492,7 +1510,7 @@ function renderBundleSearchSide(details, sources) {
     <div class="bundle-source-body">
       <div class="bundle-source-code-wrap">
         ${typeof content === 'string'
-          ? renderBundleSourceLines(content, path, details.integrity, lineFindings)
+          ? renderBundleSourceLines(content, path, details.integrity, lineFindings, matchLines)
           : html`<div class="bundle-source-empty">Source content not bundled.</div>`}
       </div>
       ${renderBundleSourceFindingPanel(fileFindings)}
@@ -1526,7 +1544,7 @@ function renderBundleSearchView(details) {
         class=${classMap({ 'bundle-search-context-toggle': true, on: showContext })}
         data-bundle-search-context
         aria-pressed=${String(showContext)}
-        title=${showContext ? 'Showing context lines — click to show only matches' : 'Showing only match lines — click to add context'}
+        aria-label="Toggle context lines"
       ><span>Context</span><span class="bundle-search-switch" aria-hidden="true"></span></button>
     </div>
     <div class="bundle-search-main">

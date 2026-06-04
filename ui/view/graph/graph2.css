@@ -189,7 +189,7 @@
   font-family: inherit;
   white-space: nowrap;
 
-  &:hover { color: var(--text); border-color: var(--accent); }
+  &:hover { color: var(--text); }
   &.on { color: var(--text); }
   &.on .g2-switch { background: color-mix(in srgb, var(--accent) 22%, transparent); }
   &.on .g2-switch::after { transform: translateX(12px); background: var(--accent); }
