@@ -1523,6 +1523,10 @@ report.addEventListener('search-input', (e) => {
   const { kind, value } = e.detail
   if (kind === 'findings') {
     state.filterInclude = value
+    // Clearing the field ends the search; drop negation so a fresh
+    // query starts matching (the toggle is hidden while empty, so a
+    // persisted mode would resurface unseen).
+    if (!value) state.filterIncludeNegate = false
   } else if (kind === 'files') {
     state.filesSearch = value
   } else if (kind === 'packages') {
@@ -1534,6 +1538,14 @@ report.addEventListener('search-input', (e) => {
   } else {
     return
   }
+  render()
+})
+
+// The findings search's negate toggle (`<toolbar-search kind="findings">`)
+// flips the include/exclude mode; re-filter so the list follows.
+// matchesFilters reads `state.filterIncludeNegate`.
+report.addEventListener('search-negate-toggle', () => {
+  state.filterIncludeNegate = !state.filterIncludeNegate
   render()
 })
 
