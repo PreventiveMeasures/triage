@@ -339,6 +339,35 @@ onVaultStateChange(() => {
   }
 })
 
+// A share link opened in a FRESH tab rides the boot pipeline above
+// (`continueBoot` → `handleShareHashIfPresent`, off the initial
+// `location.hash`). But pasting one into the address bar of an
+// ALREADY-OPEN tab only mutates the fragment — no navigation, so boot
+// never re-runs and the link used to silently do nothing. Re-run the
+// same handler on `hashchange` so it attaches in place.
+//
+// Gated on `bootContinuationRan`: while the vault is enabled-but-locked
+// the continuation hasn't run (workspaces un-hydrated, lock overlay
+// up), so leave the hash in the URL for the post-unlock `continueBoot`
+// to pick up rather than stacking the unlock dialog over the overlay
+// against an empty workspaces list. No re-entrancy flag is needed —
+// `handleShareHashIfPresent` strips the fragment synchronously before
+// its first await, so a same-hash re-entry reads an empty hash and
+// no-ops, and a second DISTINCT link arriving mid-dialog trips the
+// dialog's own modal-conflict guard. The same strip also covers a
+// hashchange landing mid-boot: `bootContinuationRan` flips true at
+// `continueBoot`'s top, BEFORE boot's own one-shot call, so the two can
+// race — but only one sees the (then-stripped) payload, leaving at
+// worst a redundant last-file restore, never a double-attach. The
+// handler swallows its expected failures (dialog-open, collisions)
+// internally; the catch here is a
+// backstop so an unexpected rejection in an event listener doesn't
+// surface as an unhandledrejection.
+window.addEventListener('hashchange', () => {
+  if (!bootContinuationRan) return
+  handleShareHashIfPresent().catch((err) => console.warn('share-link hashchange:', err))
+})
+
 ;(async () => {
   // Legacy-origin redirect: deepaudit.dev users with no local data
   // bounce silently to triage.space; users with data get a confirm
