@@ -332,6 +332,13 @@ function matchesSearch(name) {
   return displayName(name).toLowerCase().includes(searchQuery)
 }
 
+// Alphabetical comparator for report names, keyed on the visible label
+// (displayName) rather than the raw OPFS name — the codex bucket's
+// on-disk name differs from the row text, and matchesSearch already
+// keys off displayName, so ordering matches what the user reads. Plain
+// localeCompare mirrors the sort helpers elsewhere in the view.
+const byReportName = (a, b) => displayName(a).localeCompare(displayName(b))
+
 // Render the OPFS file list into the sidebar. Highlights the active
 // file. Disables Delete when nothing's open. Hides the whole sidebar
 // when there are no files AND nothing's currently loaded — keeps the
@@ -477,6 +484,10 @@ export async function renderSidebar() {
         if (nameSet.has(r)) presentReports.push(r)
         else missingReports.push(r)
       }
+      // Order each report group alphabetically; bundles stay below,
+      // rendered from their own (unsorted) arrays further down.
+      presentReports.sort(byReportName)
+      missingReports.sort(byReportName)
       // Resolve bundle integrities to their metadata + filter by search.
       // Bundles split into two render paths:
       //   - present:  the integrity matches an OPFS bundle → normal row
@@ -505,7 +516,9 @@ export async function renderSidebar() {
       `
     })}
     ${GROUP_ORDER.map((g) => {
-      const list = buckets.get(g) ?? []
+      // Within each type bucket, list reports alphabetically; the
+      // GROUP_ORDER loop preserves the by-type grouping itself.
+      const list = (buckets.get(g) ?? []).toSorted(byReportName)
       const isDefault = g === 'default'
       if (list.length === 0 && !(isDefault && isDraggingReport)) return null
       return html`
