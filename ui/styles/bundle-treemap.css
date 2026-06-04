@@ -36,6 +36,18 @@
   min-width: 0;
   overflow: hidden;
 }
+/* Home + ancestors. Shrinks and clips (from its trailing edge, so the
+   home crumb survives) before the pinned current crumb gives up any
+   space — a deep drill-in elides the middle while the current location
+   stays visible. */
+.bundle-treemap-crumbs-lead {
+  display: flex;
+  align-items: baseline;
+  gap: .3rem;
+  min-width: 0;
+  overflow: hidden;
+  flex: 0 1 auto;
+}
 .bundle-treemap-crumb-home {
   flex-shrink: 0;
   margin: 0;
@@ -72,7 +84,9 @@
 }
 .bundle-treemap-crumb { color: var(--muted); cursor: pointer; }
 .bundle-treemap-crumb:hover { color: var(--text); text-decoration: underline; }
-.bundle-treemap-crumb-current { color: var(--text); }
+/* Pinned: never shrinks, so the current location stays fully visible
+   while the lead group clips. */
+.bundle-treemap-crumb-current { color: var(--text); flex: 0 0 auto; }
 .bundle-treemap-crumb-sep {
   flex-shrink: 0;
   color: var(--muted);

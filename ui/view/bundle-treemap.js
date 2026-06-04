@@ -399,18 +399,32 @@ class BundleTreemap extends LitElement {
   _renderCrumbs() {
     const focus = this._focus
     const atRoot = focus.length === 0
+    // Home + ancestors sit in a shrinkable, overflow-clipped lead
+    // group; the current crumb is pinned as a sibling. On a deep
+    // drill-in the lead elides from its trailing edge (home stays,
+    // middle ancestors clip) while the current location — the most
+    // useful crumb — never gives up space.
+    const lead = focus.slice(0, -1)
+    const current = atRoot ? null : focus.at(-1)
     return html`<nav class="bundle-treemap-crumbs" aria-label="Treemap location">
-      <button
-        type="button"
-        class=${classMap({ 'bundle-treemap-crumb-home': true, 'at-root': atRoot })}
-        @click=${() => this._focusTo(-1)}
-      >Source treemap</button>
-      ${focus.map((node, i) => {
-        const last = i === focus.length - 1
-        return html`<span class="bundle-treemap-crumb-sep" aria-hidden="true">›</span>${last
-          ? html`<span class="bundle-treemap-crumb-current" aria-current="location" title=${node.path}>${node.name}</span>`
-          : html`<button type="button" class="bundle-treemap-crumb" @click=${() => this._focusTo(i)} title=${node.path}>${node.name}</button>`}`
-      })}
+      <span class="bundle-treemap-crumbs-lead">
+        <button
+          type="button"
+          class=${classMap({ 'bundle-treemap-crumb-home': true, 'at-root': atRoot })}
+          @click=${() => this._focusTo(-1)}
+        >Source treemap</button>
+        ${lead.map((node, i) => html`<span class="bundle-treemap-crumb-sep" aria-hidden="true">›</span><button
+          type="button"
+          class="bundle-treemap-crumb"
+          @click=${() => this._focusTo(i)}
+          title=${node.path}
+        >${node.name}</button>`)}
+      </span>
+      ${current ? html`<span class="bundle-treemap-crumb-sep" aria-hidden="true">›</span><span
+        class="bundle-treemap-crumb-current"
+        aria-current="location"
+        title=${current.path}
+      >${current.name}</span>` : ''}
     </nav>`
   }
 
