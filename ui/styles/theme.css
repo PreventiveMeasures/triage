@@ -603,8 +603,17 @@ download-button { top: calc(.5rem + 30px + .35rem + 30px + .35rem); }
     top: calc(env(titlebar-area-height, 33px) + .35rem);
   }
   theme-toggle  { right: .5rem; }
-  print-button  { right: calc(.5rem + 30px + .35rem); }
-  download-button { right: calc(.5rem + 2 * (30px + .35rem)); }
+  /* `print-button` / `download-button` are qualified with `:has(button)`
+     so they tie — and, being later in source order, outrank — the base
+     `print-button:has(button), download-button:has(button)` rule above
+     that pins `right: .5rem`. Bare type selectors here (0,0,1) lose to
+     that rule (0,0,2), which would collapse all three buttons onto
+     `right: .5rem` and stack them on top of each other. theme-toggle
+     needs no such qualifier: its base position lives in the component's
+     shadow `:host`, which an outer-tree rule overrides regardless of
+     specificity (and it renders no inner <button> for `:has` to match). */
+  print-button:has(button)  { right: calc(.5rem + 30px + .35rem); }
+  download-button:has(button) { right: calc(.5rem + 2 * (30px + .35rem)); }
 
   /* In WCO mode there's no OS-painted title-bar strip above the
      viewport — the buttons land on top of the page itself — so the
