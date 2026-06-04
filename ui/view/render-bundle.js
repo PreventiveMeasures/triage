@@ -1276,9 +1276,11 @@ function buildSearchMatcher(query, useRegex, caseSensitive) {
 }
 
 // Expand each hit line into a ±radius window, merging windows that
-// touch or overlap (gap ≤ 1 merges, so a lone 1-line gap never
-// shows). `hits` is line-sorted ascending. Returns inclusive 1-based
-// { start, end } ranges.
+// touch or overlap. With context on (radius ≥ 1) a lone 1-line gap
+// between nearby hits is absorbed; with context off (radius 0) only
+// directly-adjacent hit lines merge, so non-adjacent matches stay in
+// separate snippets. `hits` is line-sorted ascending. Returns
+// inclusive 1-based { start, end } ranges.
 function buildSearchWindows(hits, lineCount, radius) {
   const windows = []
   for (const h of hits) {
@@ -1495,7 +1497,7 @@ function renderBundleSearchSide(details, sources, matchLines) {
   if (!path) return nothing
   const content = sources.get(path)
   const { fileFindings, lineFindings } = bundleViewerFindings(details, path, content)
-  return html`<aside class=${classMap({ 'bundle-search-side': true, 'with-panel': state.bundleSourceFindingIdx != null })}>
+  return html`<aside class="bundle-search-side">
     <header class="bundle-source-bar">
       <div class="bundle-source-title" title=${path}>${path}</div>
       <button
