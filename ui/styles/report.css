@@ -1152,6 +1152,20 @@ bundle-code-search {
     & dd { margin: 0; font-size: .78rem; word-break: break-all; }
     & dd.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .68rem; }
   }
+  /* The overview pairs its two meta blocks (name/integrity/size +
+     parse details) in this row. `auto-fit` packs as many 700px
+     columns as fit: two side-by-side once the summary spans ~1400px,
+     a single full-width column below that. `min(700px, 100%)` keeps
+     the 700px floor from overflowing a narrow panel; the row gap
+     carries the stacked-spacing the child metas drop below. */
+  & .bundles-detail-meta-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(700px, 100%), 1fr));
+    gap: .75rem 2rem;
+    margin: 0 0 .75rem;
+
+    & .bundles-detail-meta { margin: 0; }
+  }
   & .bundles-overview-placeholder {
     padding: .75rem;
     color: var(--muted);
