@@ -1191,8 +1191,8 @@ function renderBundleCodeView(details) {
 // SEARCH_MAX_TOTAL_HITS matches or SEARCH_MAX_FILES files and flag
 // the result set as truncated. Lines clip to SEARCH_MAX_LINE chars
 // (minified bundles ship single 100k-char lines).
-const SEARCH_MAX_TOTAL_HITS = 2000
-const SEARCH_MAX_FILES = 200
+const SEARCH_MAX_TOTAL_HITS = 5000
+const SEARCH_MAX_FILES = 500
 const SEARCH_MAX_LINE = 400
 const SEARCH_MAX_MARKS_PER_LINE = 50
 
@@ -1490,12 +1490,11 @@ function searchMatchLines(content, query, useRegex, caseSensitive) {
 // gutter highlight. Renders only once a result is clicked
 // (state.bundleSourceFile set); the × button clears it via the shared
 // bundle-source-close action.
-function renderBundleSearchSide(details, sources) {
+function renderBundleSearchSide(details, sources, matchLines) {
   const path = state.bundleSourceFile
   if (!path) return nothing
   const content = sources.get(path)
   const { fileFindings, lineFindings } = bundleViewerFindings(details, path, content)
-  const matchLines = searchMatchLines(content, state.bundleSearchQuery, state.bundleSearchRegex, state.bundleSearchCase)
   return html`<aside class=${classMap({ 'bundle-search-side': true, 'with-panel': state.bundleSourceFindingIdx != null })}>
     <header class="bundle-source-bar">
       <div class="bundle-source-title" title=${path}>${path}</div>
@@ -1531,6 +1530,23 @@ function renderBundleSearchView(details) {
       <div class="bundle-code-empty">This bundle doesn't carry any source content.</div>
     </div>`
   }
+  const query = state.bundleSearchQuery
+  const useRegex = state.bundleSearchRegex
+  const caseSensitive = state.bundleSearchCase
+  // Auto-close the sidebar when the open file no longer matches the
+  // current query — it has dropped out of the results list. The
+  // matched lines are computed once here and handed down to the
+  // sidebar's gutter highlight so the file isn't scanned twice.
+  let openMatchLines = null
+  if (state.bundleSourceFile) {
+    const lines = searchMatchLines(sources.get(state.bundleSourceFile), query, useRegex, caseSensitive)
+    if (lines.size === 0) {
+      state.bundleSourceFile = null
+      state.bundleSourceFindingIdx = null
+    } else {
+      openMatchLines = lines
+    }
+  }
   // Context toggle lives in the header, to the right of the search
   // field (not inside it) — a show/hide pill modelled on the Graph
   // tab's "All files" switch. On (default) shows the lines around
@@ -1548,8 +1564,8 @@ function renderBundleSearchView(details) {
       ><span>Context</span><span class="bundle-search-switch" aria-hidden="true"></span></button>
     </div>
     <div class="bundle-search-main">
-      ${renderBundleSearchResults(sources, state.bundleSearchQuery, state.bundleSearchRegex, state.bundleSearchCase, showContext)}
-      ${renderBundleSearchSide(details, sources)}
+      ${renderBundleSearchResults(sources, query, useRegex, caseSensitive, showContext)}
+      ${renderBundleSearchSide(details, sources, openMatchLines)}
     </div>
   </div>`
 }
