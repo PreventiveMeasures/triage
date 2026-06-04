@@ -113,9 +113,10 @@ const triage = {
     }
     if (flagged !== undefined) {
       // Tri-state: `true` → flagged, `false` → explicit "unflagged"
-      // tombstone (kept so the removal still syncs), `null` → clear to
-      // unset (undefined). Anything else coerces to a boolean.
-      const next = flagged === null ? undefined : Boolean(flagged)
+      // tombstone (kept so the removal still syncs); `null` or `''` →
+      // clear to unset (undefined), matching the "pass null/'' to clear"
+      // contract the string/bucket fields follow. Other values coerce.
+      const next = (flagged === null || flagged === '') ? undefined : Boolean(flagged)
       if (state.triage.get(id)?.flagged !== next) {
         patchEntry(state.triage, id, { flagged: next })
         changed = true

@@ -107,7 +107,7 @@
    lives — and the popover is the canonical place to toggle a kanban
    finding's flag. Widen the gutter and inset the flag so it clears the
    close button instead of hiding under it. */
-:host([context='kanban-detail']) .tab-body { padding-right: 2.5rem; }
+:host([context='kanban-detail']) .tab-body { padding-right: 2.75rem; }
 :host([context='kanban-detail']) .mark-flag { right: 1.5rem; }
 
 /* Description's first line becomes a bold title; the rest is a muted

@@ -779,7 +779,7 @@ const pendingFindingCards = new Map()
 function findingCardPlaceholder(g, inGroup = false, context = null) {
   const gid = findingCardGid(g)
   pendingFindingCards.set(gid, { group: g, inGroup })
-  // `context` (currently only `'focus'`) reflects as a `context=`
+  // `context` (`'focus'` or `'kanban-detail'`) reflects as a `context=`
   // attribute on the host so `<finding-card>`'s shadow CSS can
   // target the focus-view variant — inlined triage menu, expanded
   // action chrome — via `:host([context="focus"])`. The default

@@ -221,6 +221,19 @@ describe('pruneOrphanTriage', () => {
     assert.equal(state.triage.get(FINDING_B)?.flagged, true, 'reachable flag survives')
   })
 
+  it('fully clears a multi-field orphan carrying a flag (no residual tombstone)', async () => {
+    // A multi-field orphan (color + a false tombstone) must be FULLY
+    // removed — the clearing patch includes `flagged`, so it doesn't
+    // leave a residual {flagged:false} zombie behind.
+    patchEntry(state.triage, FINDING_A, { color: 'red', flagged: false })   // orphan
+    patchEntry(state.triage, FINDING_B, { color: 'green', flagged: true })  // kept
+    await saveReport('b.json', [{ id: FINDING_B }])
+    await pruneOrphanTriage()
+    assert.equal(state.triage.has(FINDING_A), false, 'multi-field orphan fully removed (no flagged residue)')
+    assert.equal(state.triage.get(FINDING_B)?.color, 'green', 'kept entry survives')
+    assert.equal(state.triage.get(FINDING_B)?.flagged, true, 'kept flag survives')
+  })
+
   it('drops ignoredIds whose report is no longer on disk even when the id is reachable', async () => {
     // The id IS reachable (via kept.json) but the per-report
     // ignore was scoped to a report that no longer exists. The
