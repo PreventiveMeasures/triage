@@ -26,6 +26,7 @@ import { loadCachedSyncPasswordFromStorage, setCachedSyncPassword } from './sync
 import { type AcquireHandle } from './socket-transport.ts'
 import { getSharedTransport, setSharedAuthResolver } from './sync-transport.ts'
 import { wsUrlToSaveUrl } from './sse-transport.ts'
+import { onProxyAuthRequired, probeProxyAuth, proxyAuthRequired, setProxyAuthRequired } from './proxy-auth-detect.ts'
 import {
   type SavePayload,
   buildAad,
@@ -374,9 +375,104 @@ function emitStatusIfChanged(): void {
   const status = currentStatus()
   if (status === lastEmittedStatus) return
   lastEmittedStatus = status
+  // Drive the auth-proxy watch off the same transitions: arm the probe
+  // on entering a connection-trouble state, clear it on recovery. Runs
+  // before the listeners so a probe-cleared latch is consistent with the
+  // status the UI is about to render.
+  reconcileProxyAuthWatch(status)
   for (const fn of statusListeners) {
     try { fn(status) } catch (err) { console.warn('Triage sync status listener:', err) }
   }
+}
+
+// ─────────── auth-proxy (e.g. Cloudflare Access) detection ───────────
+//
+// Symptom we catch: `status` sits in a connection-trouble state
+// (`offline` / `connecting`) because every reconnect is being
+// redirected to a login proxy — the WS upgrade fails and the SSE POST's
+// cross-origin redirect surfaces as a bare network error, so the
+// reconnect loop spins silently. After the connection has been in
+// trouble for `proxyAuthInitialDelayMs` (long enough not to nag on an
+// ordinary reconnect blip), GET-probe the relay origin
+// (`probeProxyAuth` in ./proxy-auth-detect.ts). A hit latches
+// `proxyAuthRequired`, which the sidebar turns into a one-shot "reload
+// to sign in" popup; the latch clears the moment the connection
+// recovers. Timings are mutable for tests (`setProxyAuthProbeTimings`).
+let proxyAuthInitialDelayMs = 6_000
+let proxyAuthReprobeMs = 30_000
+let proxyAuthProbeTimer: ReturnType<typeof setTimeout> | null = null
+let proxyAuthProbeInFlight = false
+
+function inConnectionTrouble(status: SyncStatus): boolean {
+  return status === 'offline' || status === 'connecting'
+}
+
+function cancelProxyAuthProbe(): void {
+  if (proxyAuthProbeTimer != null) { clearTimeout(proxyAuthProbeTimer); proxyAuthProbeTimer = null }
+}
+
+function armProxyAuthProbe(delayMs: number): void {
+  cancelProxyAuthProbe()
+  proxyAuthProbeTimer = setTimeout(() => {
+    proxyAuthProbeTimer = null
+    void runProxyAuthProbe()
+  }, delayMs)
+  // Don't let the probe timer by itself keep a Node event loop alive
+  // (parity with the SSE downstream watchdog); a browser timer id is a
+  // number and ignores this.
+  proxyAuthProbeTimer.unref?.()
+}
+
+async function runProxyAuthProbe(): Promise<void> {
+  if (proxyAuthProbeInFlight) return
+  if (!isActive() || !inConnectionTrouble(currentStatus())) return
+  proxyAuthProbeInFlight = true
+  let detected = false
+  try { detected = await probeProxyAuth(serverUrl) }
+  catch { detected = false }
+  finally { proxyAuthProbeInFlight = false }
+  // The connection may have recovered (or sync gone inactive) while the
+  // probe was in flight — never latch a stale positive onto a
+  // now-healthy socket.
+  if (!isActive() || !inConnectionTrouble(currentStatus())) {
+    setProxyAuthRequired(false)
+    return
+  }
+  if (detected) {
+    // Latched; the status-recovery path (`reconcileProxyAuthWatch`)
+    // clears it. Don't re-arm — re-probing a known-blocked proxy would
+    // just re-raise the popup the user already saw or dismissed.
+    setProxyAuthRequired(true)
+    return
+  }
+  // Still stuck but not (yet) an auth proxy — server down, no network,
+  // etc. Re-probe on the slower cadence so a proxy session that expires
+  // partway through an unrelated outage is still eventually caught.
+  armProxyAuthProbe(proxyAuthReprobeMs)
+}
+
+// React to a status transition: start watching when the connection
+// enters trouble, stop + clear the latch when it recovers, goes off, or
+// a session error takes precedence (none of which is a proxy redirect).
+function reconcileProxyAuthWatch(status: SyncStatus): void {
+  if (inConnectionTrouble(status)) {
+    // Arm once per trouble episode: don't reset a running timer when the
+    // status flaps offline↔connecting, don't double-arm over an
+    // in-flight probe, and don't keep re-probing once already latched.
+    if (proxyAuthProbeTimer == null && !proxyAuthProbeInFlight && !proxyAuthRequired()) {
+      armProxyAuthProbe(proxyAuthInitialDelayMs)
+    }
+  } else {
+    cancelProxyAuthProbe()
+    setProxyAuthRequired(false)
+  }
+}
+
+// Test-only knob: shorten the probe delays so a unit test needn't wait
+// the production 6s/30s. Mirrors `setHeartbeatTimings`.
+export function setProxyAuthProbeTimings(opts: { initialMs?: number, reprobeMs?: number } = {}): void {
+  if (typeof opts.initialMs === 'number' && opts.initialMs >= 0) proxyAuthInitialDelayMs = opts.initialMs
+  if (typeof opts.reprobeMs === 'number' && opts.reprobeMs >= 0) proxyAuthReprobeMs = opts.reprobeMs
 }
 // Re-entrancy guard. Bumped while we're applying remote state so
 // the saveTriage at the tail doesn't trigger a notify and bounce
@@ -1560,6 +1656,12 @@ export const triageSync = {
     if (next === serverUrl) return
     const prev = serverUrl
     serverUrl = next
+    // A different relay (or sync going off) is a fresh diagnosis — drop
+    // any auth-proxy latch + pending probe keyed on the old endpoint.
+    // The status reconcile at the tail re-arms the watch against the new
+    // URL if it lands in connection trouble.
+    cancelProxyAuthProbe()
+    setProxyAuthRequired(false)
     // Drop persisted entries whose `serverUrl` doesn't match the new
     // relay — they could never apply (loadPersistedSession rejects on
     // URL mismatch) and would sit in localStorage forever. Empty
@@ -1911,6 +2013,19 @@ export const triageSync = {
   // change AND once on subscribe with the current value). The latch +
   // listeners live in triage-session-store.ts; delegate to it.
   onPersistenceDegraded(cb: (degraded: boolean) => void): () => void { return onPersistenceDegraded(cb) },
+
+  // True while reconnects are being redirected to an authentication
+  // proxy (e.g. Cloudflare Access) — the relay is unreachable until the
+  // user re-runs the proxy login, which a page reload does. Orthogonal
+  // to `status` (which reads `offline` throughout): the sidebar turns
+  // this into a one-shot "reload to sign in" popup. Detected by a
+  // GET-probe after the connection sits in trouble too long; the latch +
+  // probe live in proxy-auth-detect.ts, driven by reconcileProxyAuthWatch.
+  get proxyAuthRequired(): boolean { return proxyAuthRequired() },
+  // Subscribe to proxy-auth transitions (fires on every off↔on change
+  // AND once on subscribe with the current value). Delegates to
+  // proxy-auth-detect.ts.
+  onProxyAuthRequired(cb: (required: boolean) => void): () => void { return onProxyAuthRequired(cb) },
 }
 
 // Boot wiring — the listeners and persisted-flag restore reach into

@@ -29,6 +29,7 @@ import { openDeleteBundleDialog } from './dialogs/delete-bundle-dialog.js'
 import { openDetachBundleDialog } from './dialogs/detach-bundle-dialog.js'
 import { openDetachReportDialog } from './dialogs/detach-report-dialog.js'
 import { openPersistenceDegradedDialog } from './dialogs/persistence-degraded-dialog.js'
+import { openProxyAuthDialog } from './dialogs/proxy-auth-dialog.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 import { BUNDLE_ICON_SVG, WORKSPACE_ICON_SVG } from './icons.js'
 import { openBundle } from './bundle-load.js'
@@ -1013,12 +1014,20 @@ function renderSyncStatus(status) {
   // onPersistenceDegraded subscription below.
   const degraded = triageSync.persistenceDegraded
   btn.toggleAttribute('data-degraded', degraded)
+  // Auth-proxy redirect: reflected so the badge tooltip still explains
+  // the stuck-offline cause after the one-shot dialog is dismissed.
+  // Degraded takes tooltip precedence (it implies possible data loss);
+  // proxy-auth is the next most actionable hint.
+  const proxyAuth = triageSync.proxyAuthRequired
+  btn.toggleAttribute('data-proxy-auth', proxyAuth)
   // Keep the label to the status word — the action row is tight (it
   // wraps). The amber ring + this tooltip carry the degraded signal in
   // the badge; the one-shot dialog explains it in full.
   btn.title = degraded
     ? 'Not saving to this browser right now (storage may be full, or another tab is on a newer version). Changes that haven’t synced could be lost on reload.'
-    : ''
+    : proxyAuth
+      ? 'Can’t reach the sync server — the connection is being redirected to a sign-in proxy (e.g. Cloudflare Access). Reload the page to sign in again.'
+      : ''
   const label = btn.querySelector('.sync-label')
   if (label) label.textContent = SYNC_LABELS[s] ?? ''
 }
@@ -1053,6 +1062,36 @@ triageSync.onPersistenceDegraded((degraded) => {
   renderSyncStatus()
   if (degraded) showDegradedDialogOnce()
   else degradedShownThisEpisode = false
+})
+
+// Auth-proxy (e.g. Cloudflare Access) detection: when triage-sync finds
+// that reconnects are being redirected to a login proxy, raise a
+// one-shot cancellable popup offering a page reload — the reload re-runs
+// the proxy login and restores the session, after which sync resumes.
+// One dialog per episode; the latch (and so the episode) clears when the
+// connection recovers, per triage-sync's reconcileProxyAuthWatch. Same
+// modal-conflict retry dance as the degraded dialog above.
+let proxyAuthDialogInFlight = false
+let proxyAuthShownThisEpisode = false
+async function showProxyAuthDialogOnce() {
+  if (!triageSync.proxyAuthRequired || proxyAuthShownThisEpisode || proxyAuthDialogInFlight) return
+  proxyAuthDialogInFlight = true
+  const { shown, reload } = await openProxyAuthDialog()
+  proxyAuthDialogInFlight = false
+  if (!shown) {
+    // Couldn't show (another modal was open). Retry while still blocked.
+    if (triageSync.proxyAuthRequired) setTimeout(showProxyAuthDialogOnce, 1500)
+    return
+  }
+  proxyAuthShownThisEpisode = true
+  // The reload re-runs the proxy's login flow; triage is persisted
+  // locally so nothing is lost. "Not now" just dismisses.
+  if (reload) location.reload()
+}
+triageSync.onProxyAuthRequired((required) => {
+  renderSyncStatus()
+  if (required) showProxyAuthDialogOnce()
+  else proxyAuthShownThisEpisode = false
 })
 
 // Double-click a workspace row → inline rename. Replaces the label

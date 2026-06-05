@@ -247,6 +247,7 @@ export const triageSync = {
   get status() { return realModule ? realModule.triageSync.status : 'off' },
   get openSessions() { return realModule ? realModule.triageSync.openSessions : [] },
   get persistenceDegraded() { return realModule ? realModule.triageSync.persistenceDegraded : false },
+  get proxyAuthRequired() { return realModule ? realModule.triageSync.proxyAuthRequired : false },
 
   // `setEnabled(true)` is the canonical "switch to online" trigger.
   // Always loads sync — even if the user is enabling for the first
@@ -336,5 +337,8 @@ export const triageSync = {
   },
   onPersistenceDegraded(cb) {
     return deferSubscription(cb, (m, fn) => m.triageSync.onPersistenceDegraded(fn))
+  },
+  onProxyAuthRequired(cb) {
+    return deferSubscription(cb, (m, fn) => m.triageSync.onProxyAuthRequired(fn))
   },
 }
