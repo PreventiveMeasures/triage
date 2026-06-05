@@ -86,10 +86,20 @@ describe('parseCommentRefs — valid issue / PR / commit URLs', () => {
     assert.equal(q.url, 'https://github.com/o/r/commit/abc1234')
   })
 
-  it('accepts an uppercase scheme / host and canonicalises them', () => {
-    const link = onlyLink('HTTPS://GitHub.COM/owner/repo/issues/7')
-    assert.equal(link.label, 'owner/repo#7')
-    assert.equal(link.url, 'https://github.com/owner/repo/issues/7')
+  it('drops a fragment that is not a plausible GitHub anchor', () => {
+    // Encoded payload — `%` is not an anchor character, so the fragment
+    // is stripped from the href rather than carried through.
+    const enc = onlyLink('https://github.com/o/r/pull/9#%3Cscript%3E')
+    assert.equal(enc.url, 'https://github.com/o/r/pull/9')
+    assert.equal(enc.label, 'o/r#9')
+    // A slash in the fragment is likewise rejected.
+    assert.equal(onlyLink('https://github.com/o/r/issues/3#a/b').url, 'https://github.com/o/r/issues/3')
+  })
+
+  it('accepts mixed-case owner / repo (path case is preserved, host is not touched)', () => {
+    const link = onlyLink('https://github.com/MyOrg/My.Repo/issues/7')
+    assert.equal(link.label, 'MyOrg/My.Repo#7')
+    assert.equal(link.url, 'https://github.com/MyOrg/My.Repo/issues/7')
   })
 })
 
@@ -107,6 +117,15 @@ describe('parseCommentRefs — embedding in prose', () => {
     assert.equal(segs[1].label, 'o/r#42')
     assert.equal(segs[1].url, 'https://github.com/o/r/pull/42')
     assert.equal(segs.at(-1), ').')
+  })
+
+  it('captures a ref cleanly out of bracket / quote / backtick wrappers', () => {
+    // The stricter scanner stops at the wrapper chars, so the wrapped URL
+    // validates instead of dragging the wrapper into the path. A trailing
+    // backtick used to be percent-encoded into the path and broke this.
+    assert.equal(onlyLink('`https://github.com/o/r/pull/9`').label, 'o/r#9')
+    assert.equal(onlyLink('<https://github.com/o/r/issues/5>').label, 'o/r#5')
+    assert.equal(onlyLink('"https://github.com/o/r/commit/abc1234"').label, 'o/r@abc1234')
   })
 
   it('linkifies multiple URLs in one comment', () => {
@@ -195,5 +214,48 @@ describe('parseCommentRefs — strict rejections', () => {
 
   it('rejects path traversal that normalises away the segments', () => {
     assert.ok(hasNoLink('https://github.com/../../etc/issues/1'))
+  })
+
+  // Round-trip safeguard: anything `new URL` would rewrite is rejected,
+  // because the scanned candidate then differs from its parsed form and
+  // could otherwise "round up" into a passing ref the reader never typed.
+  it('rejects URLs that new URL mutates (must match parsed form)', () => {
+    // `..` / `.` that resolve to an otherwise-valid ref.
+    assert.ok(hasNoLink('https://github.com/o/r/x/../issues/1'))
+    assert.ok(hasNoLink('https://github.com/o/r/./issues/1'))
+    // Default port :443 is stripped by new URL (u.port is '' for it), so
+    // only the round-trip check catches this one.
+    assert.ok(hasNoLink('https://github.com:443/o/r/issues/1'))
+    // Scheme / host case is normalised to lower-case by new URL.
+    assert.ok(hasNoLink('HTTPS://GitHub.COM/o/r/issues/1'))
+    assert.ok(hasNoLink('https://GitHub.com/o/r/issues/1'))
+    // Backslashes are rewritten to forward slashes by new URL (and the
+    // scanner also excludes them) — doubly rejected.
+    assert.ok(hasNoLink('https://github.com/o/r/issues\\1'))
+  })
+
+  it('rejects non-ASCII homoglyphs in owner / repo', () => {
+    // U+017F (ſ → s) and U+212A (K → k) case-fold into [a-z] under /iu;
+    // the validators are ASCII-explicit so they never produce a label
+    // that impersonates `microsoft` / `Kernel`. (new URL also percent-
+    // encodes these, so they are rejected on two independent grounds.)
+    assert.ok(hasNoLink('https://github.com/microſoft/vscode/issues/1'))
+    assert.ok(hasNoLink('https://github.com/torvalds/Kernel/pull/2'))
+  })
+})
+
+describe('parseCommentRefs — performance (ReDoS guard)', () => {
+  it('stays linear on a long trailing-punctuation run', () => {
+    // A scanned URL run can end in a long run of `.,!?;:*` (all
+    // URL-scan-legal). The trailing-punct trim must not backtrack
+    // quadratically over it. Fixed: ~1ms; the old `/[…]+$/` regex took
+    // ~9s at 100k and ~36s here. A 2s ceiling cleanly separates them.
+    const payload = `https://x${'.'.repeat(200000)}a`
+    const t = performance.now()
+    const segs = parseCommentRefs(payload)
+    const ms = performance.now() - t
+    assert.ok(ms < 2000, `trim took ${ms.toFixed(0)}ms — possible ReDoS regression`)
+    // Host is `x…a`, not github.com, so it stays plain text.
+    assert.deepEqual(segs, [payload])
   })
 })

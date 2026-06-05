@@ -359,18 +359,29 @@ export function githubIssueUrl(repo, { title, body } = {}) {
 // recognised — bare `#123` / `owner/repo#123` shorthand needs a repo
 // context the comment doesn't carry, so it's intentionally left alone.
 
+// These validators spell out both ASCII cases (`a-zA-Z`) instead of using
+// the `i` flag on purpose: under `/iu`, Unicode case-folding pulls a few
+// non-ASCII homoglyphs into `[a-z]` (U+017F ſ → s, U+212A K → k), which
+// could render a label that impersonates a different owner/repo. Staying
+// ASCII-explicit keeps the validators robust on their own, not merely
+// because the round-trip guard happens to reject those bytes upstream.
+
 // GitHub login (user / org): alphanumeric or single hyphens, no leading
 // or trailing hyphen, no consecutive hyphens. Length (≤39) is checked
 // separately so the pattern stays readable.
-const GH_OWNER_RE = /^[a-z\d](?:-?[a-z\d])*$/iu
+const GH_OWNER_RE = /^[a-zA-Z\d](?:-?[a-zA-Z\d])*$/u
 // Repo name: chars from [A-Za-z0-9._-]; `.` / `..` are reserved. Length
 // (≤100) and the reserved names are checked alongside the pattern.
-const GH_REPO_RE = /^[a-z\d._-]+$/iu
+const GH_REPO_RE = /^[a-zA-Z\d._-]+$/u
 // Issue / PR number: positive, no leading zero, capped at 10 digits so a
 // long digit run in prose can't masquerade as an issue reference.
 const GH_NUM_RE = /^[1-9]\d{0,9}$/u
 // Commit SHA: abbreviated (7) through full (40) hex, either case.
-const GH_SHA_RE = /^[\da-f]{7,40}$/iu
+const GH_SHA_RE = /^[a-fA-F\d]{7,40}$/u
+// On-page fragment anchor (the URL "hash"), including its leading `#`:
+// word characters + hyphens, matching GitHub's own anchor ids
+// (`#issuecomment-123`, `#discussion_r…`, `#diff-<hex>R10`, `#L42`).
+const GH_ANCHOR_RE = /^#[\w-]+$/u
 
 function isValidOwner(s) { return s.length <= 39 && GH_OWNER_RE.test(s) }
 function isValidRepo(s) { return s.length <= 100 && s !== '.' && s !== '..' && GH_REPO_RE.test(s) }
@@ -383,15 +394,25 @@ function isValidRepo(s) { return s.length <= 100 && s !== '.' && s !== '..' && G
 function githubRefToken(candidate) {
   let u
   try { u = new URL(candidate) } catch { return null }
+  // Anti-mutation safeguard: only accept a candidate that is ALREADY in
+  // its canonical parsed form. `new URL` silently rewrites its input —
+  // resolving `..`/`.` path segments, lower-casing scheme + host,
+  // dropping a default `:443`, punycoding IDN homographs (`gіthub.com`),
+  // turning `\` into `/`, stripping tabs/newlines — any of which can let
+  // a non-canonical or look-alike string "round up" into a passing ref.
+  // If the re-serialised URL differs from what we scanned, it wasn't
+  // canonical, so reject it rather than linkify a target the reader
+  // never actually typed. Every legitimate ref round-trips unchanged.
+  if (u.href !== candidate) return null
   // https only, exact host, no embedded credentials or explicit port —
   // anything else is either insecure or a look-alike (`github.com@evil`,
   // `github.com:8080`) that shouldn't be presented as a github link.
   if (u.protocol !== 'https:') return null
   if (u.hostname.toLowerCase() !== 'github.com') return null
   if (u.port || u.username || u.password) return null
-  // Path must be exactly /<owner>/<repo>/<kind>/<id>, read after `new URL`
-  // has normalised it (so `..` segments are already resolved and can't
-  // smuggle in extra depth). A single trailing slash is tolerated; any
+  // Path must be exactly /<owner>/<repo>/<kind>/<id>. `..`/`.` traversal
+  // can't reach here — the round-trip guard above rejects any path the
+  // parser had to normalise. A single trailing slash is tolerated; any
   // deeper path (`/pull/42/files`) is rejected so we only linkify the
   // precise thing we can name.
   const parts = u.pathname.split('/')
@@ -409,25 +430,45 @@ function githubRefToken(candidate) {
   } else {
     return null
   }
-  // Canonical href: rebuilt from the validated components (drops any
-  // query string) but keeps a fragment, which carries useful anchors
-  // (`#issuecomment-…`, `#diff-…`) and can't redirect off github.com.
-  const href = `https://github.com/${owner}/${repo}/${kind}/${id}${u.hash}`
+  // Canonical href: rebuilt from the validated components (query string
+  // always dropped). A fragment is preserved only when it's a plausible
+  // GitHub on-page anchor — `#issuecomment-123`, `#discussion_r…`,
+  // `#diff-<hex>`, `#L42`, etc.: word characters and hyphens. Anything
+  // else (encoded payloads, slashes, dots) is dropped rather than carried
+  // through, so the fragment can't smuggle junk into the href.
+  const hash = GH_ANCHOR_RE.test(u.hash) ? u.hash : ''
+  const href = `https://github.com/${owner}/${repo}/${kind}/${id}${hash}`
   return { url: href, label }
 }
 
-// Candidate-URL scanner: any `http(s)://<non-space>` run. The scan is
-// deliberately broad so githubRefToken is the SINGLE authoritative gate —
-// wrong scheme, a look-alike host, embedded credentials, or an explicit
-// port are all rejected there (rather than incidentally by a narrow scan
-// pattern), and non-github URLs simply fail validation and stay text.
-const URL_SCAN_RE = /https?:\/\/\S+/giu
+// Candidate-URL scanner: an `http(s)://` run of URL-legal characters.
+// Stricter than a blanket `\S+` — it stops at whitespace AND at the
+// wrapper / "unwise" characters (`<> " ' \` ( ) { } [ ] | \ ^`) that bound
+// a URL inside prose or markdown, so a ref wrapped in `<…>`, `"…"`,
+// \`…\`, `(…)` or `{…}` is captured cleanly without dragging the wrapper
+// in. (A trailing backtick in particular used to be percent-encoded into
+// the path by `new URL` and break validation.) `:` and `@` stay inside
+// the class so credential / port look-alikes still reach githubRefToken,
+// which remains the authoritative gate for scheme / host / port / creds.
+const URL_SCAN_RE = /https?:\/\/[^\s<>"'`(){}[\]|\\^]+/giu
 // Trailing prose punctuation trimmed off a candidate before validation,
 // so a URL closing a sentence (`…/pull/42).`) or wrapped in markdown
 // emphasis (`*…/pull/42*`) still resolves. None of these characters can
 // appear in a valid owner / repo / number / sha, so trimming never
 // corrupts an otherwise-valid reference.
-const GH_TRAILING_PUNCT_RE = /[).,!?;:'"*\]}>]+$/u
+//
+// Implemented as a Set + end-scan rather than a `/[…]+$/` regex on
+// purpose: several of these characters are also URL-scan-legal, so a
+// candidate can end in a long run of them, and the anchored greedy
+// regex backtracks quadratically over such a run (a ReDoS vector on
+// attacker-controlled comment text). The end-scan is linear.
+const TRAILING_PUNCT = new Set([')', '.', ',', '!', '?', ';', ':', "'", '"', '*', ']', '}', '>'])
+
+function trimTrailingPunct(s) {
+  let end = s.length
+  while (end > 0 && TRAILING_PUNCT.has(s[end - 1])) end--
+  return end === s.length ? s : s.slice(0, end)
+}
 
 // Split `text` into the segment list described above: alternating plain
 // `string` runs and validated `{ url, label }` link tokens. A comment
@@ -440,7 +481,7 @@ export function parseCommentRefs(text) {
   URL_SCAN_RE.lastIndex = 0
   let m
   while ((m = URL_SCAN_RE.exec(text)) !== null) {
-    const trimmed = m[0].replace(GH_TRAILING_PUNCT_RE, '')
+    const trimmed = trimTrailingPunct(m[0])
     const token = trimmed ? githubRefToken(trimmed) : null
     if (token) {
       if (m.index > lastIndex) segments.push(text.slice(lastIndex, m.index))
