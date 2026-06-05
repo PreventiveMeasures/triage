@@ -85,6 +85,12 @@ describe('parseCommentRefs — valid issue / PR / commit URLs', () => {
     const q = onlyLink('https://github.com/o/r/commit/abc1234?diff=split')
     assert.equal(q.url, 'https://github.com/o/r/commit/abc1234')
   })
+
+  it('accepts an uppercase scheme / host and canonicalises them', () => {
+    const link = onlyLink('HTTPS://GitHub.COM/owner/repo/issues/7')
+    assert.equal(link.label, 'owner/repo#7')
+    assert.equal(link.url, 'https://github.com/owner/repo/issues/7')
+  })
 })
 
 describe('parseCommentRefs — embedding in prose', () => {
@@ -119,6 +125,11 @@ describe('parseCommentRefs — embedding in prose', () => {
   })
 })
 
+// The scanner matches any http(s):// run, so these all reach the
+// githubRefToken validator and exercise its host / scheme / port /
+// credential / path guards directly (rather than being filtered out by a
+// narrow scan pattern). A rejected candidate is preserved verbatim as
+// plain text — see the lossless-passthrough case at the end.
 describe('parseCommentRefs — strict rejections', () => {
   it('rejects non-github and look-alike hosts', () => {
     assert.ok(hasNoLink('https://gitlab.com/o/r/issues/1'))
@@ -127,12 +138,26 @@ describe('parseCommentRefs — strict rejections', () => {
     assert.ok(hasNoLink('https://www.github.com/o/r/issues/1'))
   })
 
+  it('rejects credential-smuggling / userinfo authorities', () => {
+    // Real host is evil.example — the `github.com` is just userinfo.
+    assert.ok(hasNoLink('https://github.com@evil.example/o/r/issues/1'))
+    // Host is github.com but a username is present — reject regardless.
+    assert.ok(hasNoLink('https://user:pass@github.com/o/r/issues/1'))
+  })
+
   it('rejects non-https schemes', () => {
     assert.ok(hasNoLink('http://github.com/o/r/issues/1'))
   })
 
   it('rejects an explicit port', () => {
     assert.ok(hasNoLink('https://github.com:8080/o/r/issues/1'))
+  })
+
+  it('leaves a non-github URL untouched, losslessly, as plain text', () => {
+    assert.deepEqual(
+      parseCommentRefs('see https://example.com/o/r/issues/1 here'),
+      ['see https://example.com/o/r/issues/1 here'],
+    )
   })
 
   it('rejects extra or missing path segments', () => {

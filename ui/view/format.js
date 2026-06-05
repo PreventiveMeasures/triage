@@ -389,9 +389,11 @@ function githubRefToken(candidate) {
   if (u.protocol !== 'https:') return null
   if (u.hostname.toLowerCase() !== 'github.com') return null
   if (u.port || u.username || u.password) return null
-  // Path must be exactly /<owner>/<repo>/<kind>/<id>. A single trailing
-  // slash is tolerated; any deeper path (`/pull/42/files`) is rejected
-  // so we only linkify the precise thing we can name.
+  // Path must be exactly /<owner>/<repo>/<kind>/<id>, read after `new URL`
+  // has normalised it (so `..` segments are already resolved and can't
+  // smuggle in extra depth). A single trailing slash is tolerated; any
+  // deeper path (`/pull/42/files`) is rejected so we only linkify the
+  // precise thing we can name.
   const parts = u.pathname.split('/')
   if (parts.at(-1) === '') parts.pop()
   if (parts.length !== 5) return null
@@ -414,14 +416,18 @@ function githubRefToken(candidate) {
   return { url: href, label }
 }
 
-// Candidate-URL scanner: runs of `https://github.com/<non-space>`. Each
-// run is validated by githubRefToken; non-matches stay plain text.
-const GH_URL_SCAN_RE = /https:\/\/github\.com\/\S+/giu
+// Candidate-URL scanner: any `http(s)://<non-space>` run. The scan is
+// deliberately broad so githubRefToken is the SINGLE authoritative gate —
+// wrong scheme, a look-alike host, embedded credentials, or an explicit
+// port are all rejected there (rather than incidentally by a narrow scan
+// pattern), and non-github URLs simply fail validation and stay text.
+const URL_SCAN_RE = /https?:\/\/\S+/giu
 // Trailing prose punctuation trimmed off a candidate before validation,
-// so a URL closing a sentence (`…/pull/42).`) still resolves. None of
-// these characters can appear in a valid owner / repo / number / sha, so
-// trimming never corrupts an otherwise-valid reference.
-const GH_TRAILING_PUNCT_RE = /[).,!?;:'"\]}>]+$/u
+// so a URL closing a sentence (`…/pull/42).`) or wrapped in markdown
+// emphasis (`*…/pull/42*`) still resolves. None of these characters can
+// appear in a valid owner / repo / number / sha, so trimming never
+// corrupts an otherwise-valid reference.
+const GH_TRAILING_PUNCT_RE = /[).,!?;:'"*\]}>]+$/u
 
 // Split `text` into the segment list described above: alternating plain
 // `string` runs and validated `{ url, label }` link tokens. A comment
@@ -431,19 +437,19 @@ export function parseCommentRefs(text) {
   if (typeof text !== 'string' || text.length === 0) return []
   const segments = []
   let lastIndex = 0
-  GH_URL_SCAN_RE.lastIndex = 0
+  URL_SCAN_RE.lastIndex = 0
   let m
-  while ((m = GH_URL_SCAN_RE.exec(text)) !== null) {
+  while ((m = URL_SCAN_RE.exec(text)) !== null) {
     const trimmed = m[0].replace(GH_TRAILING_PUNCT_RE, '')
     const token = trimmed ? githubRefToken(trimmed) : null
     if (token) {
       if (m.index > lastIndex) segments.push(text.slice(lastIndex, m.index))
       segments.push(token)
       lastIndex = m.index + trimmed.length
-      GH_URL_SCAN_RE.lastIndex = lastIndex
+      URL_SCAN_RE.lastIndex = lastIndex
     }
     // A non-match leaves the run as text; the loop resumes after it
-    // (GH_URL_SCAN_RE.lastIndex already points past the full run).
+    // (URL_SCAN_RE.lastIndex already points past the full run).
   }
   if (lastIndex < text.length) segments.push(text.slice(lastIndex))
   return segments
