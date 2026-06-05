@@ -387,15 +387,25 @@ function isValidRepo(s) { return s.length <= 100 && s !== '.' && s !== '..' && G
 function githubRefToken(candidate) {
   let u
   try { u = new URL(candidate) } catch { return null }
+  // Anti-mutation safeguard: only accept a candidate that is ALREADY in
+  // its canonical parsed form. `new URL` silently rewrites its input —
+  // resolving `..`/`.` path segments, lower-casing scheme + host,
+  // dropping a default `:443`, punycoding IDN homographs (`gіthub.com`),
+  // turning `\` into `/`, stripping tabs/newlines — any of which can let
+  // a non-canonical or look-alike string "round up" into a passing ref.
+  // If the re-serialised URL differs from what we scanned, it wasn't
+  // canonical, so reject it rather than linkify a target the reader
+  // never actually typed. Every legitimate ref round-trips unchanged.
+  if (u.href !== candidate) return null
   // https only, exact host, no embedded credentials or explicit port —
   // anything else is either insecure or a look-alike (`github.com@evil`,
   // `github.com:8080`) that shouldn't be presented as a github link.
   if (u.protocol !== 'https:') return null
   if (u.hostname.toLowerCase() !== 'github.com') return null
   if (u.port || u.username || u.password) return null
-  // Path must be exactly /<owner>/<repo>/<kind>/<id>, read after `new URL`
-  // has normalised it (so `..` segments are already resolved and can't
-  // smuggle in extra depth). A single trailing slash is tolerated; any
+  // Path must be exactly /<owner>/<repo>/<kind>/<id>. `..`/`.` traversal
+  // can't reach here — the round-trip guard above rejects any path the
+  // parser had to normalise. A single trailing slash is tolerated; any
   // deeper path (`/pull/42/files`) is rejected so we only linkify the
   // precise thing we can name.
   const parts = u.pathname.split('/')

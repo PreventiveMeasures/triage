@@ -96,10 +96,10 @@ describe('parseCommentRefs — valid issue / PR / commit URLs', () => {
     assert.equal(onlyLink('https://github.com/o/r/issues/3#a/b').url, 'https://github.com/o/r/issues/3')
   })
 
-  it('accepts an uppercase scheme / host and canonicalises them', () => {
-    const link = onlyLink('HTTPS://GitHub.COM/owner/repo/issues/7')
-    assert.equal(link.label, 'owner/repo#7')
-    assert.equal(link.url, 'https://github.com/owner/repo/issues/7')
+  it('accepts mixed-case owner / repo (path case is preserved, host is not touched)', () => {
+    const link = onlyLink('https://github.com/MyOrg/My.Repo/issues/7')
+    assert.equal(link.label, 'MyOrg/My.Repo#7')
+    assert.equal(link.url, 'https://github.com/MyOrg/My.Repo/issues/7')
   })
 })
 
@@ -214,5 +214,23 @@ describe('parseCommentRefs — strict rejections', () => {
 
   it('rejects path traversal that normalises away the segments', () => {
     assert.ok(hasNoLink('https://github.com/../../etc/issues/1'))
+  })
+
+  // Round-trip safeguard: anything `new URL` would rewrite is rejected,
+  // because the scanned candidate then differs from its parsed form and
+  // could otherwise "round up" into a passing ref the reader never typed.
+  it('rejects URLs that new URL mutates (must match parsed form)', () => {
+    // `..` / `.` that resolve to an otherwise-valid ref.
+    assert.ok(hasNoLink('https://github.com/o/r/x/../issues/1'))
+    assert.ok(hasNoLink('https://github.com/o/r/./issues/1'))
+    // Default port :443 is stripped by new URL (u.port is '' for it), so
+    // only the round-trip check catches this one.
+    assert.ok(hasNoLink('https://github.com:443/o/r/issues/1'))
+    // Scheme / host case is normalised to lower-case by new URL.
+    assert.ok(hasNoLink('HTTPS://GitHub.COM/o/r/issues/1'))
+    assert.ok(hasNoLink('https://GitHub.com/o/r/issues/1'))
+    // Backslashes are rewritten to forward slashes by new URL (and the
+    // scanner also excludes them) — doubly rejected.
+    assert.ok(hasNoLink('https://github.com/o/r/issues\\1'))
   })
 })
