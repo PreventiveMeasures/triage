@@ -190,6 +190,20 @@
   &.tab-mark-blue .tab-conf,
   &.tab-mark-green .tab-conf,
   &.tab-mark-gray .tab-conf { color: var(--text); }
+
+  /* Annotation marks (comment / fix / flag) at the tail of a tab (after
+     the severity badge + confidence) whose finding carries one — inert
+     accent glyphs mirroring the action-row icons, so triage annotations
+     read off the collapsed tab strip. Distinct from the .tab-mark-{color}
+     background classes above (those tint the whole button). */
+  & .tab-marks {
+    display: inline-flex; align-items: center; gap: .15rem;
+    margin-left: .25rem; vertical-align: middle; color: var(--accent);
+  }
+  & .tab-marks svg { display: block; }
+  & .tab-marks .has-comment .bubble { fill: var(--accent); fill-opacity: .15; }
+  & .tab-marks .has-fix .wrench { fill: var(--accent); fill-opacity: .15; }
+  & .tab-marks .flagged .flag-cloth { fill: var(--accent); fill-opacity: .15; }
 }
 
 .report-chip {

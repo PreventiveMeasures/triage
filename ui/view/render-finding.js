@@ -403,9 +403,32 @@ function triageMenuTemplate(group, title, context = null) {
   </div>`
 }
 
-// One tab button. Carries severity badge + (optional) confidence,
-// plus per-tab color/deleted classes so multi-tab triage state is
-// visible from the group header.
+// Read-only annotation marks for a group tab — the speech-bubble /
+// wrench / pennant glyphs (shared with the action row) shown at the
+// trailing edge of the tab (after the severity badge + confidence) when
+// that tab's finding carries a comment, fix link, and/or attention flag.
+// Lets triage annotations read off the collapsed tab strip without
+// activating each sibling. Inert <span>s (the tab is the button); always
+// in the filled/accent state since they only render when the annotation
+// is present. `nothing` when the tab is unannotated.
+function tabMarksTemplate(entry) {
+  const hasComment = Boolean(entry?.comment)
+  const hasFix = Boolean(entry?.fix)
+  const flagged = entry?.flagged === true
+  if (!hasComment && !hasFix && !flagged) return nothing
+  return html`<span class="tab-marks">${
+    hasComment ? html`<span class="has-comment" title="Has a comment">${COMMENT_ICON}</span>` : nothing
+  }${
+    hasFix ? html`<span class="has-fix" title="Has a fix link">${FIX_ICON}</span>` : nothing
+  }${
+    flagged ? html`<span class="flagged" title="Flagged">${FLAG_ICON}</span>` : nothing
+  }</span>`
+}
+
+// One tab button. Carries severity badge + (optional) confidence +
+// annotation marks (comment / fix / flag, when present), plus per-tab
+// color/deleted classes so multi-tab triage state is visible from the
+// group header.
 function tabTemplate(f, isActive) {
   const key = tabKey(f)
   const entry = state.triage.get(key)
@@ -421,7 +444,7 @@ function tabTemplate(f, isActive) {
   // handler. Falls through to a muted opacity hint via finding-row
   // / finding-card CSS.
   else if (ignored) classes.push('tab-ignored')
-  return html`<button type="button" class=${classes.join(' ')} data-tid=${key}><span class="tab-label"><span class=${`badge ${f.severity}`}>${badgeLabel(f.severity)}</span> ${f.confidence === undefined ? nothing : html`<span class="tab-conf">${f.confidence}/10</span>`}</span></button>`
+  return html`<button type="button" class=${classes.join(' ')} data-tid=${key}><span class="tab-label"><span class=${`badge ${f.severity}`}>${badgeLabel(f.severity)}</span> ${f.confidence === undefined ? nothing : html`<span class="tab-conf">${f.confidence}/10</span>`}${tabMarksTemplate(entry)}</span></button>`
 }
 
 // Confidence display for the finding-left badge column. The table
