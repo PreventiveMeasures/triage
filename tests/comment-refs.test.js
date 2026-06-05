@@ -86,6 +86,16 @@ describe('parseCommentRefs — valid issue / PR / commit URLs', () => {
     assert.equal(q.url, 'https://github.com/o/r/commit/abc1234')
   })
 
+  it('drops a fragment that is not a plausible GitHub anchor', () => {
+    // Encoded payload — `%` is not an anchor character, so the fragment
+    // is stripped from the href rather than carried through.
+    const enc = onlyLink('https://github.com/o/r/pull/9#%3Cscript%3E')
+    assert.equal(enc.url, 'https://github.com/o/r/pull/9')
+    assert.equal(enc.label, 'o/r#9')
+    // A slash in the fragment is likewise rejected.
+    assert.equal(onlyLink('https://github.com/o/r/issues/3#a/b').url, 'https://github.com/o/r/issues/3')
+  })
+
   it('accepts an uppercase scheme / host and canonicalises them', () => {
     const link = onlyLink('HTTPS://GitHub.COM/owner/repo/issues/7')
     assert.equal(link.label, 'owner/repo#7')
@@ -107,6 +117,15 @@ describe('parseCommentRefs — embedding in prose', () => {
     assert.equal(segs[1].label, 'o/r#42')
     assert.equal(segs[1].url, 'https://github.com/o/r/pull/42')
     assert.equal(segs.at(-1), ').')
+  })
+
+  it('captures a ref cleanly out of bracket / quote / backtick wrappers', () => {
+    // The stricter scanner stops at the wrapper chars, so the wrapped URL
+    // validates instead of dragging the wrapper into the path. A trailing
+    // backtick used to be percent-encoded into the path and broke this.
+    assert.equal(onlyLink('`https://github.com/o/r/pull/9`').label, 'o/r#9')
+    assert.equal(onlyLink('<https://github.com/o/r/issues/5>').label, 'o/r#5')
+    assert.equal(onlyLink('"https://github.com/o/r/commit/abc1234"').label, 'o/r@abc1234')
   })
 
   it('linkifies multiple URLs in one comment', () => {

@@ -371,6 +371,10 @@ const GH_REPO_RE = /^[a-z\d._-]+$/iu
 const GH_NUM_RE = /^[1-9]\d{0,9}$/u
 // Commit SHA: abbreviated (7) through full (40) hex, either case.
 const GH_SHA_RE = /^[\da-f]{7,40}$/iu
+// On-page fragment anchor (the URL "hash"), including its leading `#`:
+// word characters + hyphens, matching GitHub's own anchor ids
+// (`#issuecomment-123`, `#discussion_r…`, `#diff-<hex>R10`, `#L42`).
+const GH_ANCHOR_RE = /^#[\w-]+$/u
 
 function isValidOwner(s) { return s.length <= 39 && GH_OWNER_RE.test(s) }
 function isValidRepo(s) { return s.length <= 100 && s !== '.' && s !== '..' && GH_REPO_RE.test(s) }
@@ -409,19 +413,27 @@ function githubRefToken(candidate) {
   } else {
     return null
   }
-  // Canonical href: rebuilt from the validated components (drops any
-  // query string) but keeps a fragment, which carries useful anchors
-  // (`#issuecomment-…`, `#diff-…`) and can't redirect off github.com.
-  const href = `https://github.com/${owner}/${repo}/${kind}/${id}${u.hash}`
+  // Canonical href: rebuilt from the validated components (query string
+  // always dropped). A fragment is preserved only when it's a plausible
+  // GitHub on-page anchor — `#issuecomment-123`, `#discussion_r…`,
+  // `#diff-<hex>`, `#L42`, etc.: word characters and hyphens. Anything
+  // else (encoded payloads, slashes, dots) is dropped rather than carried
+  // through, so the fragment can't smuggle junk into the href.
+  const hash = GH_ANCHOR_RE.test(u.hash) ? u.hash : ''
+  const href = `https://github.com/${owner}/${repo}/${kind}/${id}${hash}`
   return { url: href, label }
 }
 
-// Candidate-URL scanner: any `http(s)://<non-space>` run. The scan is
-// deliberately broad so githubRefToken is the SINGLE authoritative gate —
-// wrong scheme, a look-alike host, embedded credentials, or an explicit
-// port are all rejected there (rather than incidentally by a narrow scan
-// pattern), and non-github URLs simply fail validation and stay text.
-const URL_SCAN_RE = /https?:\/\/\S+/giu
+// Candidate-URL scanner: an `http(s)://` run of URL-legal characters.
+// Stricter than a blanket `\S+` — it stops at whitespace AND at the
+// wrapper / "unwise" characters (`<> " ' \` ( ) { } [ ] | \ ^`) that bound
+// a URL inside prose or markdown, so a ref wrapped in `<…>`, `"…"`,
+// \`…\`, `(…)` or `{…}` is captured cleanly without dragging the wrapper
+// in. (A trailing backtick in particular used to be percent-encoded into
+// the path by `new URL` and break validation.) `:` and `@` stay inside
+// the class so credential / port look-alikes still reach githubRefToken,
+// which remains the authoritative gate for scheme / host / port / creds.
+const URL_SCAN_RE = /https?:\/\/[^\s<>"'`(){}[\]|\\^]+/giu
 // Trailing prose punctuation trimmed off a candidate before validation,
 // so a URL closing a sentence (`…/pull/42).`) or wrapped in markdown
 // emphasis (`*…/pull/42*`) still resolves. None of these characters can
