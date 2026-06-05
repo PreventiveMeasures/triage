@@ -44,7 +44,7 @@ import { classMap } from 'lit/directives/class-map.js'
 import { bundleSourcesAsMap } from './bundle-sources.js'
 import { formatBytes, stripCommonPathPrefix } from './format.js'
 import { pkgColor } from './graph/utils.js'
-import { bundlePkgOf } from './render-bundle.js'
+import { bundlePkgOf } from './bundle-pkg-of.js'
 
 // After single-child collapse, six nested levels is plenty to drill;
 // beyond it (or once a box is too small) a node aggregates so large

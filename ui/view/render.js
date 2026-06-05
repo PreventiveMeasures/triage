@@ -1360,6 +1360,10 @@ function renderImpl() {
               hideAllFiles,
               triageCounts,
               triageStates: ['inprogress', 'fixed', 'invalid', 'deleted'],
+              // Bundle-only "Split dirs" toggle — own source as one
+              // group (default) vs. a group per top-level directory.
+              // Hidden when own source can't be split (≤1 own bucket).
+              showSplitOwnDirs: prep.canSplitOwnDirs,
             }
             // First open of the graph tab triggers the dynamic
             // import of `ui/graph.js` (LitElement + ~37 KB shadow

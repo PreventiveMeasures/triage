@@ -21,6 +21,7 @@ import { BUNDLE_ICON_SVG } from './icons.js'
 import { findingsForFileHash, reportsForFinding, reportsForFindingByPackage, reportsForFindingByRepo, state } from '#client/index.js'
 import { SEVERITIES, SEVERITY_ORDER, formatBytes, formatRunMeta, stripCommonPathPrefix } from './format.js'
 import { bundleSourcesAsMap } from './bundle-sources.js'
+import { bundlePkgOf, ownSourceSplittable } from './bundle-pkg-of.js'
 import { tabKey } from './group.js'
 import { computeFileHash } from '../../common/finding-id.js'
 import { langForPath, highlight as prismHighlight } from './prism-highlight.js'
@@ -275,18 +276,33 @@ export function buildBundleGraphData(details) {
   for (const meta of Object.values(tree)) {
     if (meta?.imports && meta.imports.length > 0) { hasEdges = true; break }
   }
+  // `canSplitOwnDirs` lets the render path hide the "Split dirs" toggle
+  // when own source can't actually be divided (all in one top-level
+  // dir, or none at all) — flipping it would be a no-op. Computed over
+  // the full tree, not the (showAll-dependent) `files`, so the toggle's
+  // presence stays stable as other filters narrow the view.
+  const canSplitOwnDirs = ownSourceSplittable(allFiles)
   // Raw-inputs shape — lazy `ui/graph.js` runs the actual
   // `buildGraph(...)` in `buildGraphFromPrep`. `pkgOf` rides in
   // `options` so packaging recognizes both `node_modules/` and
   // `dependencies/` regardless of the global depsDir picked from
   // state.reports, which would otherwise miss bundle paths under
-  // whichever dir the loaded reports don't use.
+  // whichever dir the loaded reports don't use. `graph2.splitOwnDirs`
+  // (topbar "Split dirs" toggle) decides whether own source fans out
+  // into per-directory groups or collapses into one `__own__` bucket;
+  // it's read here so flipping it + re-rendering rebuilds the graph
+  // with the new package set. AND-ed with `canSplitOwnDirs` so a
+  // bundle that can't be split stays merged regardless of a toggle
+  // value persisted from a previous, splittable bundle — its hidden
+  // toggle can't be the reason the grouping looks different.
+  const splitOwnDirs = graph2.splitOwnDirs && canSplitOwnDirs
   return {
     treeData: tree, files, ownCounts, transitiveCounts,
     severitySets, colorSets, fileFindings,
-    options: { pkgOf: bundlePkgOf },
+    options: { pkgOf: (p) => bundlePkgOf(p, { splitOwnDirs }) },
     strippedToOrig,
     hasEdges,
+    canSplitOwnDirs,
   }
 }
 
@@ -311,26 +327,6 @@ export function refreshBundleGraphTopPkgs() {
 export function setCurrentBundleGraphPrep(prep) {
   _currentBundlePrep = prep
 }
-export function bundlePkgOf(path) {
-  // Bundle paths land under either `node_modules/<pkg>/...` or
-  // `dependencies/<pkg>/...`. pnpm wraps each install in
-  // `node_modules/.pnpm/<name>@<version>/node_modules/<name>/...` —
-  // matching the first occurrence would bucket every dep under
-  // `.pnpm`, so when we hit that synthetic dir we walk past it to
-  // the inner `node_modules/<pkg>` segment that names the actual
-  // package. Fallback (no `node_modules` / `dependencies` anywhere)
-  // takes the first path segment so own-source paths like
-  // `src/foo/a.js` still bucket under `src`.
-  const re = /(?:^|\/)(?:node_modules|dependencies)\/(@[^/]+\/[^/]+|[^/]+)/gu
-  let m
-  while ((m = re.exec(path)) !== null) {
-    if (m[1] !== '.pnpm') return m[1]
-  }
-  const slash = path.indexOf('/')
-  if (slash > 0) return path.slice(0, slash)
-  return '__own__'
-}
-
 // Per-package size visualization for the bundles details panel.
 // Builds a horizontal stacked bar (segments proportional to each
 // package's total source-byte size) plus a sorted breakdown row

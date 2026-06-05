@@ -88,6 +88,21 @@ export function renderTopBar(graph, options) {
     aria-pressed=${String(graph2.showAll)}
   ><span>All files</span><span class="g2-switch"></span></button>`
 
+  // "Split dirs" — bundle Graph tab only (gated by the caller's
+  // `showSplitOwnDirs`). Off: all own (non-dependency) source shares
+  // one "own source" group. On: own source fans out into a group per
+  // top-level directory. Like All files this reshapes the package set
+  // (colors + clustering + the Packages distribution), so flipping it
+  // rebuilds the graph rather than just re-styling it.
+  const showSplitOwnDirs = options.showSplitOwnDirs ?? false
+  const splitOwnBtn = showSplitOwnDirs ? html`<button
+    type="button"
+    class=${classMap({ 'g2-topbar-toggle': true, on: graph2.splitOwnDirs })}
+    data-g2-split-own
+    aria-pressed=${String(graph2.splitOwnDirs)}
+    title="Split your own source into a group per top-level directory (off: one 'own source' group)"
+  ><span>Split dirs</span><span class="g2-switch"></span></button>` : null
+
   // When the topbar carries an extra row (Findings-tab embed), the
   // view-mode chooser + All files + Trash sit on the new top row,
   // and the main row keeps the data-shaping filters (severity /
@@ -97,6 +112,7 @@ export function renderTopBar(graph, options) {
     ${extraTopRow ? html`<div class="graph2-topbar-row graph2-topbar-row-extra toolbar-row">
       ${extraTopRow}
       ${allFilesBtn}
+      ${splitOwnBtn}
       <div class="g2-spacer"></div>
       ${triageBtn}
     </div>` : null}
@@ -132,6 +148,7 @@ export function renderTopBar(graph, options) {
       <button type="button" class="g2-path-filter-clear" id="g2-path-filter-clear" title="Clear filter" aria-label="Clear filter">✕</button>
     </div>
     ${extraTopRow ? null : allFilesBtn}
+    ${extraTopRow ? null : splitOwnBtn}
     <div class="g2-spacer"></div>
     ${extraTopRow ? null : triageBtn}
     <!-- Fullscreen — toggles body.report-fullscreen. The sidebar

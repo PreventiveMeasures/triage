@@ -636,6 +636,22 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
+  // Split-dirs toggle (bundle Graph tab) — reclassifies own source
+  // (one `__own__` group ⇄ a group per top-level dir), which changes
+  // the package set, the colors, and the spiral clustering, so the
+  // graph rebuilds. A solo'd / focused package name may no longer
+  // exist after the flip (e.g. `src` → `__own__`), so clear both;
+  // the file set is unchanged, so `selected` stays valid.
+  const g2SplitOwn = pathClosest(e, '[data-g2-split-own]')
+  if (g2SplitOwn) {
+    graph2.splitOwnDirs = !graph2.splitOwnDirs
+    graph2.layoutCache = null
+    graph2.solo = null
+    graph2.focusedPkg = null
+    cleanupGraph2()
+    render()
+    return
+  }
   // Triage view selector in graph v2's topbar — flips
   // state.shownTriage to the picked bucket (or back to live when
   // re-clicking the active button). Canvas teardown + cache
