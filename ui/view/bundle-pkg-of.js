@@ -35,3 +35,23 @@ export function bundlePkgOf(path, { splitOwnDirs = true } = {}) {
   }
   return '__own__'
 }
+
+// Whether splitting own source by top-level dir would actually divide
+// it — i.e. the own (non-dependency) files fall into more than one
+// bucket once split (multiple top-level dirs, or a top-level dir
+// alongside repo-root files). False when every own file shares a
+// single bucket, or there's no own source at all. The bundle Graph
+// tab uses this to hide its "Split dirs" toggle when flipping it would
+// be a no-op. Stops at the second distinct bucket — no need to walk
+// the whole bundle once the answer is settled.
+export function ownSourceSplittable(paths) {
+  const buckets = new Set()
+  for (const p of paths) {
+    // Dependency files (resolve to a package name either way) never
+    // move when own-source splitting toggles — skip them.
+    if (bundlePkgOf(p, { splitOwnDirs: false }) !== '__own__') continue
+    buckets.add(bundlePkgOf(p, { splitOwnDirs: true }))
+    if (buckets.size > 1) return true
+  }
+  return false
+}

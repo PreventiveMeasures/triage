@@ -13,7 +13,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-const { bundlePkgOf } = await import('../ui/view/bundle-pkg-of.js')
+const { bundlePkgOf, ownSourceSplittable } = await import('../ui/view/bundle-pkg-of.js')
 
 describe('bundlePkgOf', () => {
   it('buckets node_modules files by package name', () => {
@@ -66,5 +66,35 @@ describe('bundlePkgOf', () => {
       assert.equal(bundlePkgOf('node_modules/foo/x.js', { splitOwnDirs: false }), 'foo')
       assert.equal(bundlePkgOf('src/node_modules/foo/x.js', { splitOwnDirs: false }), 'foo')
     })
+  })
+})
+
+describe('ownSourceSplittable', () => {
+  it('is false for an empty file set', () => {
+    assert.equal(ownSourceSplittable([]), false)
+  })
+
+  it('is false when every file is a dependency', () => {
+    assert.equal(ownSourceSplittable(['node_modules/foo/a.js', 'dependencies/bar/b.js']), false)
+  })
+
+  it('is false when all own source sits in one top-level dir', () => {
+    assert.equal(ownSourceSplittable(['src/a.js', 'src/b/c.js']), false)
+    // Dependencies alongside a single own dir don't make it splittable.
+    assert.equal(ownSourceSplittable(['src/a.js', 'node_modules/foo/i.js']), false)
+  })
+
+  it('is false when all own source is repo-root files (one __own__ bucket)', () => {
+    assert.equal(ownSourceSplittable(['index.js', 'main.js']), false)
+  })
+
+  it('is true when own source spans multiple top-level dirs', () => {
+    assert.equal(ownSourceSplittable(['src/a.js', 'lib/b.js']), true)
+    assert.equal(ownSourceSplittable(['node_modules/foo/i.js', 'src/a.js', 'app/b.js']), true)
+  })
+
+  it('is true when a top-level dir coexists with repo-root files', () => {
+    // split → { src, __own__ }: the root file separates from src.
+    assert.equal(ownSourceSplittable(['src/a.js', 'index.js']), true)
   })
 })

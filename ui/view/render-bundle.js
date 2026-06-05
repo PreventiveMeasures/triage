@@ -21,7 +21,7 @@ import { BUNDLE_ICON_SVG } from './icons.js'
 import { findingsForFileHash, reportsForFinding, reportsForFindingByPackage, reportsForFindingByRepo, state } from '#client/index.js'
 import { SEVERITIES, SEVERITY_ORDER, formatBytes, formatRunMeta, stripCommonPathPrefix } from './format.js'
 import { bundleSourcesAsMap } from './bundle-sources.js'
-import { bundlePkgOf } from './bundle-pkg-of.js'
+import { bundlePkgOf, ownSourceSplittable } from './bundle-pkg-of.js'
 import { tabKey } from './group.js'
 import { computeFileHash } from '../../common/finding-id.js'
 import { langForPath, highlight as prismHighlight } from './prism-highlight.js'
@@ -276,6 +276,12 @@ export function buildBundleGraphData(details) {
   for (const meta of Object.values(tree)) {
     if (meta?.imports && meta.imports.length > 0) { hasEdges = true; break }
   }
+  // `canSplitOwnDirs` lets the render path hide the "Split dirs" toggle
+  // when own source can't actually be divided (all in one top-level
+  // dir, or none at all) — flipping it would be a no-op. Computed over
+  // the full tree, not the (showAll-dependent) `files`, so the toggle's
+  // presence stays stable as other filters narrow the view.
+  const canSplitOwnDirs = ownSourceSplittable(allFiles)
   // Raw-inputs shape — lazy `ui/graph.js` runs the actual
   // `buildGraph(...)` in `buildGraphFromPrep`. `pkgOf` rides in
   // `options` so packaging recognizes both `node_modules/` and
@@ -285,13 +291,18 @@ export function buildBundleGraphData(details) {
   // (topbar "Split dirs" toggle) decides whether own source fans out
   // into per-directory groups or collapses into one `__own__` bucket;
   // it's read here so flipping it + re-rendering rebuilds the graph
-  // with the new package set.
+  // with the new package set. AND-ed with `canSplitOwnDirs` so a
+  // bundle that can't be split stays merged regardless of a toggle
+  // value persisted from a previous, splittable bundle — its hidden
+  // toggle can't be the reason the grouping looks different.
+  const splitOwnDirs = graph2.splitOwnDirs && canSplitOwnDirs
   return {
     treeData: tree, files, ownCounts, transitiveCounts,
     severitySets, colorSets, fileFindings,
-    options: { pkgOf: (p) => bundlePkgOf(p, { splitOwnDirs: graph2.splitOwnDirs }) },
+    options: { pkgOf: (p) => bundlePkgOf(p, { splitOwnDirs }) },
     strippedToOrig,
     hasEdges,
+    canSplitOwnDirs,
   }
 }
 
