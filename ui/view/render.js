@@ -1346,10 +1346,6 @@ function renderImpl() {
           const prep = buildBundleGraphData(state.bundleDetails)
           if (prep) {
             setCurrentBundleGraphPrep(prep)
-            // Hide the "All files" toggle when the bundle has no
-            // edges to walk (sourcemaps don't carry import info,
-            // so the toggle would have nothing to filter against).
-            const hideAllFiles = !prep.hasEdges
             const triageCounts = countBundleTriageBuckets(state.bundleDetails)
             // The triage selector inside the bundle graph topbar
             // reads `state.shownTriage` directly (via
@@ -1357,7 +1353,9 @@ function renderImpl() {
             // 4-bucket form (no `ignored` — that's a per-report
             // concern).
             const options = {
-              hideAllFiles,
+              // The bundle graph always shows every file, so it carries
+              // no "All files" toggle (that's a findings-tab control).
+              hideAllFiles: true,
               triageCounts,
               triageStates: ['inprogress', 'fixed', 'invalid', 'deleted'],
               // Bundle-only "Split dirs" toggle — own source as one

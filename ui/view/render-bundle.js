@@ -178,34 +178,6 @@ function bundleFindingsByFile(fileHashes, mode = 'graph') {
   return result
 }
 
-// BFS-walk the import graph from every issue-bearing file and
-// return the closure (issue files + every file they depend on,
-// directly or transitively). Used by `buildBundleGraphData` when
-// `graph2.showAll` is OFF: clean files that aren't a dep of any
-// issue-bearing file get hidden, but every file the issue chain
-// depends on stays visible.
-function bundleReachableFromIssueFiles(tree, ownCounts) {
-  const visible = new Set()
-  for (const [file, counts] of ownCounts) {
-    if (!counts) continue
-    for (const v of Object.values(counts)) {
-      if (v > 0) { visible.add(file); break }
-    }
-  }
-  const queue = [...visible]
-  while (queue.length > 0) {
-    const file = queue.shift()
-    const imps = tree[file]?.imports ?? []
-    for (const imp of imps) {
-      if (!visible.has(imp) && tree[imp]) {
-        visible.add(imp)
-        queue.push(imp)
-      }
-    }
-  }
-  return visible
-}
-
 // Build a graph2-shaped graph from the open bundle. Once per-file
 // hashes are computed (events.js kicks the async digest after
 // parse), findings from the loaded reports match onto bundle files
@@ -219,9 +191,8 @@ function bundleReachableFromIssueFiles(tree, ownCounts) {
 // graph would never light up findings — they'd be looked up under
 // original paths while nodes live under stripped ones.
 //
-// `graph2.showAll === true` (bundle default): every file is a node.
-// `false`: filter to issue-bearing files plus their dep tree (so
-// reachable deps stay visible while clean unrelated files drop out).
+// Every file in the bundle is a node — unlike the findings-tab graph,
+// the bundle graph has no "All files" toggle (see `files` below).
 export function buildBundleGraphData(details) {
   const { tree, origToStripped } = buildBundleTree(details)
   const allFiles = Object.keys(tree)
@@ -257,9 +228,10 @@ export function buildBundleGraphData(details) {
     fileFindings.set(file, ff)
   }
   const transitiveCounts = computeTransitiveCounts(tree, ownCounts)
-  const files = graph2.showAll
-    ? allFiles
-    : [...bundleReachableFromIssueFiles(tree, ownCounts)]
+  // Bundles always graph their full inventory — there's no "All files"
+  // toggle here (a bundle's findings are matched in from other reports
+  // and are often zero, so a filtered-to-issues view could be empty).
+  const files = allFiles
   // Stripped→original mapping the lazy `buildGraphFromPrep` applies
   // to each node's `origFile` field — the selection card's "View
   // source →" button hands the unstripped path to the source viewer
@@ -267,20 +239,9 @@ export function buildBundleGraphData(details) {
   // nodes don't get `origFile`, so the button stays bundle-only.
   const strippedToOrig = new Map()
   for (const [orig, stripped] of origToStripped) strippedToOrig.set(stripped, orig)
-  // `hasEdges` lets the render path hide the "All files" toggle
-  // without building the graph first: only the lazy `buildGraph`
-  // knows the final edge count, but tree-level imports already tell
-  // us whether the bundle has any. Sourcemap bundles have no import
-  // info, so the toggle would have nothing to filter against.
-  let hasEdges = false
-  for (const meta of Object.values(tree)) {
-    if (meta?.imports && meta.imports.length > 0) { hasEdges = true; break }
-  }
   // `canSplitOwnDirs` lets the render path hide the "Split dirs" toggle
   // when own source can't actually be divided (all in one top-level
-  // dir, or none at all) — flipping it would be a no-op. Computed over
-  // the full tree, not the (showAll-dependent) `files`, so the toggle's
-  // presence stays stable as other filters narrow the view.
+  // dir, or none at all) — flipping it would be a no-op.
   const canSplitOwnDirs = ownSourceSplittable(allFiles)
   // Raw-inputs shape — lazy `ui/graph.js` runs the actual
   // `buildGraph(...)` in `buildGraphFromPrep`. `pkgOf` rides in
@@ -301,7 +262,6 @@ export function buildBundleGraphData(details) {
     severitySets, colorSets, fileFindings,
     options: { pkgOf: (p) => bundlePkgOf(p, { splitOwnDirs }) },
     strippedToOrig,
-    hasEdges,
     canSplitOwnDirs,
   }
 }
