@@ -339,3 +339,118 @@ export function githubIssueUrl(repo, { title, body } = {}) {
   const qs = params.toString()
   return qs ? `${base}/issues/new?${qs}` : `${base}/issues/new`
 }
+
+// ── GitHub reference linkification for comments ──────────────────────
+//
+// Free-text triage comments routinely paste a GitHub issue / PR / commit
+// URL ("fixed in https://github.com/owner/repo/pull/42"). `parseCommentRefs`
+// splits a comment into a flat list of segments — plain `string` runs
+// interleaved with `{ url, label }` link tokens — so the renderer can
+// wrap only the validated refs in an `<a>` and leave the rest as text.
+// Returning data (not markup) keeps the strict-validation logic pure and
+// unit-testable, and sits this beside the other github URL builders.
+//
+// "Strict" = every URL component is checked against GitHub's own naming
+// rules before a link is emitted. A bad owner, an over-long repo, a
+// non-hex commit, a look-alike host, or an extra path segment all fall
+// through to plain text, so we never render a link that 404s or points
+// somewhere off github.com. Only canonical
+// `https://github.com/<owner>/<repo>/(issues|pull|commit)/<id>` URLs are
+// recognised — bare `#123` / `owner/repo#123` shorthand needs a repo
+// context the comment doesn't carry, so it's intentionally left alone.
+
+// GitHub login (user / org): alphanumeric or single hyphens, no leading
+// or trailing hyphen, no consecutive hyphens. Length (≤39) is checked
+// separately so the pattern stays readable.
+const GH_OWNER_RE = /^[a-z\d](?:-?[a-z\d])*$/iu
+// Repo name: chars from [A-Za-z0-9._-]; `.` / `..` are reserved. Length
+// (≤100) and the reserved names are checked alongside the pattern.
+const GH_REPO_RE = /^[a-z\d._-]+$/iu
+// Issue / PR number: positive, no leading zero, capped at 10 digits so a
+// long digit run in prose can't masquerade as an issue reference.
+const GH_NUM_RE = /^[1-9]\d{0,9}$/u
+// Commit SHA: abbreviated (7) through full (40) hex, either case.
+const GH_SHA_RE = /^[\da-f]{7,40}$/iu
+
+function isValidOwner(s) { return s.length <= 39 && GH_OWNER_RE.test(s) }
+function isValidRepo(s) { return s.length <= 100 && s !== '.' && s !== '..' && GH_REPO_RE.test(s) }
+
+// Validate one candidate URL string and, on success, return its
+// `{ url, label }` link token — a canonical href plus a GitHub-style
+// short label (`owner/repo#123` for issues / PRs, `owner/repo@sha` for
+// commits). Returns null for anything that isn't a strict issue / PR /
+// commit URL on github.com.
+function githubRefToken(candidate) {
+  let u
+  try { u = new URL(candidate) } catch { return null }
+  // https only, exact host, no embedded credentials or explicit port —
+  // anything else is either insecure or a look-alike (`github.com@evil`,
+  // `github.com:8080`) that shouldn't be presented as a github link.
+  if (u.protocol !== 'https:') return null
+  if (u.hostname.toLowerCase() !== 'github.com') return null
+  if (u.port || u.username || u.password) return null
+  // Path must be exactly /<owner>/<repo>/<kind>/<id>, read after `new URL`
+  // has normalised it (so `..` segments are already resolved and can't
+  // smuggle in extra depth). A single trailing slash is tolerated; any
+  // deeper path (`/pull/42/files`) is rejected so we only linkify the
+  // precise thing we can name.
+  const parts = u.pathname.split('/')
+  if (parts.at(-1) === '') parts.pop()
+  if (parts.length !== 5) return null
+  const [, owner, repo, kind, id] = parts
+  if (!isValidOwner(owner) || !isValidRepo(repo)) return null
+  let label
+  if (kind === 'issues' || kind === 'pull') {
+    if (!GH_NUM_RE.test(id)) return null
+    label = `${owner}/${repo}#${id}`
+  } else if (kind === 'commit') {
+    if (!GH_SHA_RE.test(id)) return null
+    label = `${owner}/${repo}@${id.slice(0, 7)}`
+  } else {
+    return null
+  }
+  // Canonical href: rebuilt from the validated components (drops any
+  // query string) but keeps a fragment, which carries useful anchors
+  // (`#issuecomment-…`, `#diff-…`) and can't redirect off github.com.
+  const href = `https://github.com/${owner}/${repo}/${kind}/${id}${u.hash}`
+  return { url: href, label }
+}
+
+// Candidate-URL scanner: any `http(s)://<non-space>` run. The scan is
+// deliberately broad so githubRefToken is the SINGLE authoritative gate —
+// wrong scheme, a look-alike host, embedded credentials, or an explicit
+// port are all rejected there (rather than incidentally by a narrow scan
+// pattern), and non-github URLs simply fail validation and stay text.
+const URL_SCAN_RE = /https?:\/\/\S+/giu
+// Trailing prose punctuation trimmed off a candidate before validation,
+// so a URL closing a sentence (`…/pull/42).`) or wrapped in markdown
+// emphasis (`*…/pull/42*`) still resolves. None of these characters can
+// appear in a valid owner / repo / number / sha, so trimming never
+// corrupts an otherwise-valid reference.
+const GH_TRAILING_PUNCT_RE = /[).,!?;:'"*\]}>]+$/u
+
+// Split `text` into the segment list described above: alternating plain
+// `string` runs and validated `{ url, label }` link tokens. A comment
+// with no recognised github URL (the common case) comes back as a single
+// `[text]` entry; empty / non-string input yields `[]`.
+export function parseCommentRefs(text) {
+  if (typeof text !== 'string' || text.length === 0) return []
+  const segments = []
+  let lastIndex = 0
+  URL_SCAN_RE.lastIndex = 0
+  let m
+  while ((m = URL_SCAN_RE.exec(text)) !== null) {
+    const trimmed = m[0].replace(GH_TRAILING_PUNCT_RE, '')
+    const token = trimmed ? githubRefToken(trimmed) : null
+    if (token) {
+      if (m.index > lastIndex) segments.push(text.slice(lastIndex, m.index))
+      segments.push(token)
+      lastIndex = m.index + trimmed.length
+      URL_SCAN_RE.lastIndex = lastIndex
+    }
+    // A non-match leaves the run as text; the loop resumes after it
+    // (URL_SCAN_RE.lastIndex already points past the full run).
+  }
+  if (lastIndex < text.length) segments.push(text.slice(lastIndex))
+  return segments
+}

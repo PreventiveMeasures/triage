@@ -2,7 +2,7 @@ import { html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { bundlesForFileHash, isPlaceholderNpmPackage, state } from '#client/index.js'
-import { commitUrl, fileUrl, findingDisplayName, formatRunMeta, githubIssueUrl, isHttpUrl, stripExportMarker } from './format.js'
+import { commitUrl, fileUrl, findingDisplayName, formatRunMeta, githubIssueUrl, isHttpUrl, parseCommentRefs, stripExportMarker } from './format.js'
 import { activeTabFor, findingRepo, groupKey, groupState, isIgnored, sortTabs, tabKey } from './group.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 
@@ -74,6 +74,19 @@ function renderHighlighted(text) {
   if (lastIdx === 0) return text
   if (lastIdx < text.length) parts.push(text.slice(lastIdx))
   return parts
+}
+
+// Render a triage comment, linkifying any GitHub issue / PR / commit URL
+// the user pasted. parseCommentRefs (format.js) does the strict
+// validation + tokenisation; here we only map its segments to templates
+// — plain `string` runs pass through untouched (an all-prose comment
+// comes back as a single string), and each validated `{ url, label }`
+// becomes a compact `<a>` (`owner/repo#123`, `owner/repo@sha`) with the
+// full URL in `title`.
+function renderCommentText(text) {
+  return parseCommentRefs(text).map((seg) => (typeof seg === 'string'
+    ? seg
+    : html`<a href=${seg.url} target="_blank" rel="noopener noreferrer" title=${seg.url}>${seg.label}</a>`))
 }
 
 // Combined `file:line` link for the table-view row's location cell —
@@ -552,7 +565,7 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
       ${descBody ? html`<div class="desc">${renderHighlighted(descBody)}</div>` : nothing}
       ${f.recommendation ? html`<div class="recommendation">Recommendation: ${renderHighlighted(stripExportMarker(f.recommendation, f))}</div>` : nothing}
       ${f.confidenceReason ? html`<div class="conf-reason">${renderHighlighted(stripExportMarker(f.confidenceReason, f))}</div>` : nothing}
-      ${comment ? html`<div class="comment-block"><span class="comment-label">Comment:</span> ${comment}</div>` : nothing}
+      ${comment ? html`<div class="comment-block"><span class="comment-label">Comment:</span> ${renderCommentText(comment)}</div>` : nothing}
       ${fix
         ? html`<div class="fix-block"><span class="fix-label">Fix:</span> ${isHttpUrl(fix)
           ? html`<a href=${fix} target="_blank" rel="noopener noreferrer">${fix}</a>`
