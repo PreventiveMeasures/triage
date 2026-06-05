@@ -45,13 +45,28 @@ export function sortTabs(group) {
 
 export function primaryTab(group) { return sortTabs(group)[0] }
 
+// Whether a tab (finding) carries an annotation marker — a comment, a
+// fix link, or a raised attention flag, i.e. the glyphs the tab strip
+// renders after the severity badge (see tabMarksTemplate). Empty-string
+// / `false`-tombstone forms count as absent, matching that render and
+// the toolbar annotation filters.
+export function tabHasMarks(f) {
+  const entry = state.triage.get(tabKey(f))
+  return Boolean(entry?.comment) || Boolean(entry?.fix) || entry?.flagged === true
+}
+
 export function activeTabFor(group) {
   const stored = state.activeTabByGroup.get(groupKey(group))
   if (stored) {
     const match = group.find((f) => tabKey(f) === stored)
     if (match) return match
   }
-  return primaryTab(group)
+  // No explicit selection yet: default to the first tab (in display
+  // order) carrying an annotation marker so an annotated sibling opens
+  // first; fall back to the primary (first sorted) tab when none is
+  // marked. `sorted[0]` is exactly primaryTab(group).
+  const sorted = sortTabs(group)
+  return sorted.find(tabHasMarks) ?? sorted[0]
 }
 
 // Repo identifier (slug or URL) for a finding, matching the `Repo:`
