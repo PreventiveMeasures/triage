@@ -33,6 +33,15 @@ function createImpl() {
     // issue-bearing code. Toggled via the topbar's "All files"
     // button.
     showAll: false,
+    // Split own (non-dependency) source into per-directory groups.
+    // Off by default: every first-party file shares the single
+    // `__own__` group (labeled "own source") so the canvas's color +
+    // clustering axis is "which package", not "which top-level dir".
+    // On: own source buckets by its top-level directory (`src/...`,
+    // `lib/...` each become their own group/color). Bundle Graph tab
+    // only — toggled via the topbar's "Split dirs" pill; flipping it
+    // rebuilds the graph (different packages → different layout).
+    splitOwnDirs: false,
     selected: null,        // file path or null
     // Package focus mode — when set, the canvas drops the spiral
     // and renders ONLY this package's intra-imports in graph v1

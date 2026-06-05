@@ -20,8 +20,9 @@ const { computeBundleDiff } = await import('../ui/view/bundle-compare-diff.js')
 // `.length` — keeps the expected-bytes assertions readable.
 const m = (obj) => new Map(Object.entries(obj))
 // First path segment as the package bucket — exercises the grouping /
-// classification logic without dragging in the real `bundlePkgOf`
-// (which lives in the Lit-bound render-bundle.js).
+// classification logic with a trivial stand-in; the real `bundlePkgOf`
+// (and its node_modules / pnpm handling) has its own coverage in
+// `bundle-pkg-of.test.js`.
 const firstSeg = (p) => p.split('/')[0]
 
 describe('computeBundleDiff', () => {
