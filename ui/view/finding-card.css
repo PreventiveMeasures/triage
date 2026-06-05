@@ -563,7 +563,13 @@
   border-radius: 0 4px 4px 0;
   font-size: .82rem; color: var(--text);
 }
-.comment-block { white-space: pre-wrap; }
+.comment-block {
+  white-space: pre-wrap;
+  /* Linkified GitHub issue / PR / commit refs (parseCommentRefs) — same
+     accent-underline treatment as the fix-link anchor below. */
+  & a { color: var(--accent); text-decoration: none; }
+  & a:hover { text-decoration: underline; }
+}
 .fix-block {
   word-break: break-all;
   & a { color: var(--accent); text-decoration: none; }
