@@ -329,7 +329,8 @@ sidebar-view-button { display: contents; }
 
 .workspace-share,
 .workspace-export,
-.workspace-leave {
+.workspace-leave,
+.workspace-manage {
   flex-shrink: 0;
   width: 22px; align-self: center;
   height: 22px;
@@ -351,6 +352,26 @@ sidebar-view-button { display: contents; }
   .file-item.workspace-item:hover .workspace-share,
   .file-item.workspace-item:hover .workspace-export,
   .file-item.workspace-item:hover .workspace-leave { display: grid; }
+}
+
+/* Report / bundle rows that carry the "Manage workspaces" affordance.
+   Mirrors the workspace-item layout: the name button flexes to fill,
+   the action button takes a fixed slot at the right. `display: none`
+   on the button (shared rule above) means a non-hovered row collapses
+   to just the full-width name — identical to a row without the
+   affordance — so resting layout is unchanged. */
+.file-item.with-actions {
+  display: flex; align-items: stretch; gap: .15rem;
+}
+.file-item.with-actions button.file-name { flex: 1; min-width: 0; }
+@media (hover: hover) {
+  .file-item.with-actions:hover .workspace-manage { display: grid; }
+}
+/* Touch / no-hover devices can't reveal-on-hover, so keep the button
+   persistently visible there — the membership dialog is the primary
+   multi-workspace affordance for pointer-less input. */
+@media (hover: none) {
+  .file-item.with-actions .workspace-manage { display: grid; }
 }
 
 /* Inline rename input — swapped in over the label span on dblclick.

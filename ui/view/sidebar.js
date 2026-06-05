@@ -28,6 +28,7 @@ import { openDeleteReportDialog } from './dialogs/delete-report-dialog.js'
 import { openDeleteBundleDialog } from './dialogs/delete-bundle-dialog.js'
 import { openDetachBundleDialog } from './dialogs/detach-bundle-dialog.js'
 import { openDetachReportDialog } from './dialogs/detach-report-dialog.js'
+import { openWorkspaceMembershipDialog } from './dialogs/workspace-membership-dialog.js'
 import { openPersistenceDegradedDialog } from './dialogs/persistence-degraded-dialog.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 import { BUNDLE_ICON_SVG, WORKSPACE_ICON_SVG } from './icons.js'
@@ -135,6 +136,28 @@ const GROUP_ORDER = ['default', 'claude-security', 'codex-security', 'deepsec']
 // losing their search.
 let searchQuery = ''
 
+// Workspace-tray-with-a-plus glyph for the per-row "Manage
+// workspaces" affordance on report + bundle rows. Reads as "add this
+// to a workspace"; distinct from the workspace row's share / export /
+// leave icons. Sized to match those hover-revealed action buttons.
+const MANAGE_WORKSPACES_ICON = html`<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1.6" y="4.4" width="8" height="7" rx="1.1"/><path d="M3.8 4.4v-.7h3.2v.7"/><path d="M12 8.4v4.2M14.1 10.5h-4.2"/></svg>`
+
+// Hover/touch-revealed "Manage workspaces" button shared by the
+// report + bundle row templates. `action` is the click-delegate hook
+// (`manage-report-workspaces` / `manage-bundle-workspaces`); `kind`
+// fills the accessible label. Only rendered when at least one
+// workspace exists (membership has somewhere to go) — gated by the
+// caller via `opts.showManage`.
+function manageWorkspacesButton(action, kind) {
+  return html`<button
+    type="button"
+    class="workspace-manage"
+    data-action=${action}
+    title="Add to workspaces…"
+    aria-label=${`Manage workspaces for this ${kind}`}
+  >${MANAGE_WORKSPACES_ICON}</button>`
+}
+
 function fileItemTemplate(n, opts = {}) {
   // Suppress the `current` highlight when the user is browsing the
   // bundles view — there's no active report in that mode, so
@@ -143,7 +166,7 @@ function fileItemTemplate(n, opts = {}) {
   // workspace-row template below.
   const isCurrent = n === state.currentFile
     && (state.currentView === 'findings' || state.currentView === 'files')
-  const cls = `file-item${isCurrent ? ' current' : ''}${opts.indented ? ' indented' : ''}`
+  const cls = `file-item${isCurrent ? ' current' : ''}${opts.indented ? ' indented' : ''}${opts.showManage ? ' with-actions' : ''}`
   const label = displayName(n)
   const count = getCount(n)
   const iconHtml = FILE_ICONS[groupOf(n)] ?? FILE_ICONS.default
@@ -161,7 +184,7 @@ function fileItemTemplate(n, opts = {}) {
     data-file=${n}
     data-workspace-id=${opts.workspaceId ?? nothing}
     draggable="true"
-  ><button type="button" class="file-name" data-tooltip=${label}>${unsafeHTML(iconHtml)}<span class="file-label">${label}</span>${count === undefined ? nothing : html`<span class="file-count">${count}</span>`}</button></li>`
+  ><button type="button" class="file-name" data-tooltip=${label}>${unsafeHTML(iconHtml)}<span class="file-label">${label}</span>${count === undefined ? nothing : html`<span class="file-count">${count}</span>`}</button>${opts.showManage ? manageWorkspacesButton('manage-report-workspaces', 'report') : nothing}</li>`
 }
 
 function groupHeaderTemplate(label, opts = {}) {
@@ -222,7 +245,7 @@ function bundleItemTemplate(bundle, opts = {}) {
   // Bundles category render flush with the other category rows
   // (Reports, DeepSec, …).
   const indented = opts.workspaceId != null
-  const cls = `file-item bundle-item${indented ? ' indented' : ''}${isCurrent ? ' current' : ''}`
+  const cls = `file-item bundle-item${indented ? ' indented' : ''}${isCurrent ? ' current' : ''}${opts.showManage ? ' with-actions' : ''}`
   // `data-workspace-id` mirrors `fileItemTemplate` — when the row sits
   // INSIDE a workspace, a drop onto it resolves to "this workspace"
   // (so dragging a sibling bundle into the same workspace is a no-op
@@ -234,7 +257,7 @@ function bundleItemTemplate(bundle, opts = {}) {
     data-bundle-integrity=${integrity}
     data-workspace-id=${opts.workspaceId ?? nothing}
     draggable="true"
-  ><button type="button" class="file-name" data-tooltip=${`${name}\n${integrity}`}>${BUNDLE_ICON}<span class="file-label">${name}</span></button></li>`
+  ><button type="button" class="file-name" data-tooltip=${`${name}\n${integrity}`}>${BUNDLE_ICON}<span class="file-label">${name}</span></button>${opts.showManage ? manageWorkspacesButton('manage-bundle-workspaces', 'bundle') : nothing}</li>`
 }
 
 // Row for a workspace-claimed bundle whose bytes aren't on this device
@@ -361,6 +384,11 @@ export async function renderSidebar() {
   ensureBundleFindingsIndexed().catch(() => {})
   const names = await listFiles()
   const workspaces = listWorkspaces()
+  // Membership can only go somewhere when a workspace exists, so the
+  // per-row "Manage workspaces" affordance is gated on this — an
+  // unfiled report with no workspaces around gets no button (the user
+  // creates a workspace from the section header first).
+  const hasWorkspaces = workspaces.length > 0
   const bundleNames = await listBundles()
   // Stash the bundles list on state so the main view's bundles
   // branch (in render.js) can paint synchronously without redoing
@@ -509,9 +537,9 @@ export async function renderSidebar() {
       }
       return html`
         ${workspaceItemTemplate(w)}
-        ${presentReports.map((r) => fileItemTemplate(r, { indented: true, workspaceId: w.id }))}
+        ${presentReports.map((r) => fileItemTemplate(r, { indented: true, workspaceId: w.id, showManage: hasWorkspaces }))}
         ${missingReports.map((r) => missingReportItemTemplate(r, w.id))}
-        ${presentBundles.map((b) => bundleItemTemplate(b, { workspaceId: w.id }))}
+        ${presentBundles.map((b) => bundleItemTemplate(b, { workspaceId: w.id, showManage: hasWorkspaces }))}
         ${missingBundles.map((integ) => missingBundleItemTemplate(integ, w.id))}
       `
     })}
@@ -523,11 +551,11 @@ export async function renderSidebar() {
       if (list.length === 0 && !(isDefault && isDraggingReport)) return null
       return html`
         ${groupHeaderTemplate(GROUP_LABELS[g] ?? g, { dropTarget: isDefault })}
-        ${list.map((n) => fileItemTemplate(n))}
+        ${list.map((n) => fileItemTemplate(n, { showManage: hasWorkspaces }))}
       `
     })}
     ${unfiledBundles.length > 0 || isDraggingBundle ? bundlesHeaderTemplate() : null}
-    ${repeat(unfiledBundles, (b) => b.integrity, (b) => bundleItemTemplate(b))}
+    ${repeat(unfiledBundles, (b) => b.integrity, (b) => bundleItemTemplate(b, { showManage: hasWorkspaces }))}
   `, fileList)
 
   // Packages + Repositories navigation buttons live to the right of
@@ -571,6 +599,83 @@ export async function renderSidebar() {
 // the sidebar's own template too.
 onVaultStateChange(() => { renderSidebar() })
 
+// Open the workspace-membership checklist for a report and apply the
+// resulting set. ADDS go through the additive `addReportToWorkspace`
+// (a report can be a member of many workspaces, so the others are
+// left untouched). REMOVES mirror the sidebar drag-out path: when the
+// workspace holds a remote copy we surface the same
+// `<detach-report-dialog>` confirmation and drop that workspace's
+// remote tag on confirm — otherwise the next `openWorkspace` would
+// auto-download the report straight back. Cancelling a per-workspace
+// detach leaves that one membership intact (the rest still apply).
+// `memberOf` is the pre-dialog snapshot, so the diff is computed
+// against what the user was shown rather than re-reading mid-flow.
+async function openReportWorkspacesManager(filename) {
+  const workspaces = listWorkspaces()
+  if (workspaces.length === 0) return
+  const memberOf = new Set(
+    workspaces.filter((w) => (w.reports ?? []).includes(filename)).map((w) => w.id),
+  )
+  const { confirmed, selectedIds } = await openWorkspaceMembershipDialog({
+    itemLabel: displayName(filename),
+    itemKind: 'report',
+    workspaces: workspaces.map((w) => ({ id: w.id, name: w.name, checked: memberOf.has(w.id) })),
+  })
+  if (!confirmed) return
+  const selected = new Set(selectedIds)
+  for (const id of selected) {
+    if (!memberOf.has(id)) await addReportToWorkspace(filename, id)
+  }
+  for (const id of memberOf) {
+    if (selected.has(id)) continue
+    if (isInRemoteOrCached(id, filename)) {
+      const ws = workspaces.find((w) => w.id === id)
+      const { confirmed: detach } = await openDetachReportDialog({ name: filename, workspaceName: ws?.name ?? '' })
+      if (!detach) continue
+      try { await deleteRemote(id, filename) }
+      catch (err) { console.warn(`Failed to remove '${filename}' from workspace ${id} remote:`, err) }
+    }
+    await removeReportFromWorkspace(filename, id)
+  }
+  renderSidebar()
+}
+
+// Bundle twin of `openReportWorkspacesManager` — same additive-add +
+// scoped-remove-with-detach-confirm shape on the `bundles` list. The
+// friendly name (from `state.bundles`) labels both the membership
+// dialog and the `<detach-bundle-dialog>` confirmation, matching the
+// bundle drag-out path.
+async function openBundleWorkspacesManager(integrity) {
+  const workspaces = listWorkspaces()
+  if (workspaces.length === 0) return
+  const friendly = (state.bundles ?? []).find((b) => b.integrity === integrity)?.name ?? integrity
+  const memberOf = new Set(
+    workspaces.filter((w) => (w.bundles ?? []).includes(integrity)).map((w) => w.id),
+  )
+  const { confirmed, selectedIds } = await openWorkspaceMembershipDialog({
+    itemLabel: friendly,
+    itemKind: 'bundle',
+    workspaces: workspaces.map((w) => ({ id: w.id, name: w.name, checked: memberOf.has(w.id) })),
+  })
+  if (!confirmed) return
+  const selected = new Set(selectedIds)
+  for (const id of selected) {
+    if (!memberOf.has(id)) await addBundleToWorkspace(integrity, id)
+  }
+  for (const id of memberOf) {
+    if (selected.has(id)) continue
+    if (isBundleInRemoteOrCached(id, integrity)) {
+      const ws = workspaces.find((w) => w.id === id)
+      const { confirmed: detach } = await openDetachBundleDialog({ name: friendly, workspaceName: ws?.name ?? '' })
+      if (!detach) continue
+      try { await deleteBundleFromRemote(id, integrity) }
+      catch (err) { console.warn(`Failed to remove '${friendly}' from workspace ${id} remote:`, err) }
+    }
+    await removeBundleFromWorkspace(integrity, id)
+  }
+  renderSidebar()
+}
+
 // Sidebar event delegation: file-list click switches; Delete removes
 // the current file; toggle collapses / expands; search filters on
 // input. The workspace "+" button intercepts BEFORE the file-row
@@ -585,6 +690,24 @@ async function onSidebarClick(e) {
   // and triage stay intact.
   if (e.target.closest('[data-action="go-home"]')) {
     await goHome()
+    return
+  }
+  // Per-row "Manage workspaces" affordance — opens the membership
+  // checklist for the report / bundle the button sits in. Matched
+  // BEFORE the bundle / report selection handlers below: the button
+  // lives inside a `.file-item[data-…]` row, so a stray fall-through
+  // would also switch the main pane to that item. The membership
+  // dialog + diff-apply live in the managers below.
+  const manageReportEl = e.target.closest('[data-action="manage-report-workspaces"]')
+  if (manageReportEl) {
+    const row = manageReportEl.closest('.file-item[data-file]')
+    if (row?.dataset.file) await openReportWorkspacesManager(row.dataset.file)
+    return
+  }
+  const manageBundleEl = e.target.closest('[data-action="manage-bundle-workspaces"]')
+  if (manageBundleEl) {
+    const row = manageBundleEl.closest('.file-item[data-bundle-integrity]')
+    if (row?.dataset.bundleIntegrity) await openBundleWorkspacesManager(row.dataset.bundleIntegrity)
     return
   }
   // Per-bundle row in the expanded Bundles section — selects that
