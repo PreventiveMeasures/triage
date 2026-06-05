@@ -359,18 +359,25 @@ export function githubIssueUrl(repo, { title, body } = {}) {
 // recognised — bare `#123` / `owner/repo#123` shorthand needs a repo
 // context the comment doesn't carry, so it's intentionally left alone.
 
+// These validators spell out both ASCII cases (`a-zA-Z`) instead of using
+// the `i` flag on purpose: under `/iu`, Unicode case-folding pulls a few
+// non-ASCII homoglyphs into `[a-z]` (U+017F ſ → s, U+212A K → k), which
+// could render a label that impersonates a different owner/repo. Staying
+// ASCII-explicit keeps the validators robust on their own, not merely
+// because the round-trip guard happens to reject those bytes upstream.
+
 // GitHub login (user / org): alphanumeric or single hyphens, no leading
 // or trailing hyphen, no consecutive hyphens. Length (≤39) is checked
 // separately so the pattern stays readable.
-const GH_OWNER_RE = /^[a-z\d](?:-?[a-z\d])*$/iu
+const GH_OWNER_RE = /^[a-zA-Z\d](?:-?[a-zA-Z\d])*$/u
 // Repo name: chars from [A-Za-z0-9._-]; `.` / `..` are reserved. Length
 // (≤100) and the reserved names are checked alongside the pattern.
-const GH_REPO_RE = /^[a-z\d._-]+$/iu
+const GH_REPO_RE = /^[a-zA-Z\d._-]+$/u
 // Issue / PR number: positive, no leading zero, capped at 10 digits so a
 // long digit run in prose can't masquerade as an issue reference.
 const GH_NUM_RE = /^[1-9]\d{0,9}$/u
 // Commit SHA: abbreviated (7) through full (40) hex, either case.
-const GH_SHA_RE = /^[\da-f]{7,40}$/iu
+const GH_SHA_RE = /^[a-fA-F\d]{7,40}$/u
 // On-page fragment anchor (the URL "hash"), including its leading `#`:
 // word characters + hyphens, matching GitHub's own anchor ids
 // (`#issuecomment-123`, `#discussion_r…`, `#diff-<hex>R10`, `#L42`).
@@ -449,7 +456,19 @@ const URL_SCAN_RE = /https?:\/\/[^\s<>"'`(){}[\]|\\^]+/giu
 // emphasis (`*…/pull/42*`) still resolves. None of these characters can
 // appear in a valid owner / repo / number / sha, so trimming never
 // corrupts an otherwise-valid reference.
-const GH_TRAILING_PUNCT_RE = /[).,!?;:'"*\]}>]+$/u
+//
+// Implemented as a Set + end-scan rather than a `/[…]+$/` regex on
+// purpose: several of these characters are also URL-scan-legal, so a
+// candidate can end in a long run of them, and the anchored greedy
+// regex backtracks quadratically over such a run (a ReDoS vector on
+// attacker-controlled comment text). The end-scan is linear.
+const TRAILING_PUNCT = new Set([')', '.', ',', '!', '?', ';', ':', "'", '"', '*', ']', '}', '>'])
+
+function trimTrailingPunct(s) {
+  let end = s.length
+  while (end > 0 && TRAILING_PUNCT.has(s[end - 1])) end--
+  return end === s.length ? s : s.slice(0, end)
+}
 
 // Split `text` into the segment list described above: alternating plain
 // `string` runs and validated `{ url, label }` link tokens. A comment
@@ -462,7 +481,7 @@ export function parseCommentRefs(text) {
   URL_SCAN_RE.lastIndex = 0
   let m
   while ((m = URL_SCAN_RE.exec(text)) !== null) {
-    const trimmed = m[0].replace(GH_TRAILING_PUNCT_RE, '')
+    const trimmed = trimTrailingPunct(m[0])
     const token = trimmed ? githubRefToken(trimmed) : null
     if (token) {
       if (m.index > lastIndex) segments.push(text.slice(lastIndex, m.index))

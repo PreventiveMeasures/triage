@@ -233,4 +233,29 @@ describe('parseCommentRefs — strict rejections', () => {
     // scanner also excludes them) — doubly rejected.
     assert.ok(hasNoLink('https://github.com/o/r/issues\\1'))
   })
+
+  it('rejects non-ASCII homoglyphs in owner / repo', () => {
+    // U+017F (ſ → s) and U+212A (K → k) case-fold into [a-z] under /iu;
+    // the validators are ASCII-explicit so they never produce a label
+    // that impersonates `microsoft` / `Kernel`. (new URL also percent-
+    // encodes these, so they are rejected on two independent grounds.)
+    assert.ok(hasNoLink('https://github.com/microſoft/vscode/issues/1'))
+    assert.ok(hasNoLink('https://github.com/torvalds/Kernel/pull/2'))
+  })
+})
+
+describe('parseCommentRefs — performance (ReDoS guard)', () => {
+  it('stays linear on a long trailing-punctuation run', () => {
+    // A scanned URL run can end in a long run of `.,!?;:*` (all
+    // URL-scan-legal). The trailing-punct trim must not backtrack
+    // quadratically over it. Fixed: ~1ms; the old `/[…]+$/` regex took
+    // ~9s at 100k and ~36s here. A 2s ceiling cleanly separates them.
+    const payload = `https://x${'.'.repeat(200000)}a`
+    const t = performance.now()
+    const segs = parseCommentRefs(payload)
+    const ms = performance.now() - t
+    assert.ok(ms < 2000, `trim took ${ms.toFixed(0)}ms — possible ReDoS regression`)
+    // Host is `x…a`, not github.com, so it stays plain text.
+    assert.deepEqual(segs, [payload])
+  })
 })
