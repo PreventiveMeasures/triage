@@ -63,15 +63,20 @@ const RIGHT_GAP_PX = 8
 // edge when clamping.
 const VIEWPORT_MARGIN_PX = 8
 
-export function showTooltip(el, { placement = 'cursor' } = {}) {
+export function showTooltip(el, { placement = 'cursor', anchorEl } = {}) {
   const node = ensureEl()
   if (currentTarget === el) return
   const text = el.dataset.tooltip ?? ''
   if (!text) return
   node.textContent = text
   if (placement === 'right') {
-    // Anchor to the element's right edge, vertically centered.
-    const rect = el.getBoundingClientRect()
+    // Anchor to the element's right edge, vertically centered. The
+    // geometry source can differ from the text element: a sidebar row
+    // hangs `data-tooltip` on its label button but passes the whole
+    // `.file-item` as `anchorEl`, so the popup clears any right-edge
+    // row actions (e.g. the hover-revealed "Manage workspaces"
+    // button) instead of landing on top of them.
+    const rect = (anchorEl ?? el).getBoundingClientRect()
     node.style.top = `${Math.round(rect.top + rect.height / 2)}px`
     node.style.left = `${Math.round(rect.right + RIGHT_GAP_PX)}px`
     node.style.transform = 'translateY(-50%)'
@@ -103,10 +108,10 @@ export function hideTooltip() {
 // Pluggable show predicate. Called pre-display; return false to
 // suppress (e.g., sidebar's truncation gate). Default: always show.
 // `placement` is forwarded to `showTooltip` when the timer fires.
-export function scheduleTooltip(el, { gate, placement } = {}) {
+export function scheduleTooltip(el, { gate, placement, anchorEl } = {}) {
   if (gate && !gate(el)) return
   clearTimeout(showTimer)
-  showTimer = setTimeout(() => { showTooltip(el, { placement }) }, SHOW_DELAY_MS)
+  showTimer = setTimeout(() => { showTooltip(el, { placement, anchorEl }) }, SHOW_DELAY_MS)
 }
 
 // Document-level handler — wires once at boot, covers every

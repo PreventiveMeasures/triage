@@ -243,6 +243,14 @@
         border-color: var(--accent);
         color: var(--accent);
       }
+      /* mixed — report is synced in some of its workspaces and
+         local-only in others (per-workspace objstore tags). Warning
+         hue + dashed-cloud icon; clicking opens the per-workspace
+         breakdown dialog. */
+      &[data-status='mixed'] {
+        border-color: var(--warning);
+        color: var(--warning);
+      }
       /* Workspace-aggregate variant: two side-by-side chips
          ("N cloud / M local") with a divider between. Either chip
          can be clickable (local opens multi-upload). */
@@ -257,8 +265,16 @@
         width: 1px; height: 14px; margin: 0 .125rem;
         background: var(--border);
       }
+      &.report-sync-badge-clickable { cursor: pointer; }
       &.report-sync-badge-clickable:hover[data-status='local'] {
         border-color: var(--accent);
+        color: var(--text);
+      }
+      /* cloud / mixed chips are clickable in the multi-workspace case
+         (open the per-workspace breakdown) — darken the text on hover
+         so they read as interactive while keeping their status hue. */
+      &.report-sync-badge-clickable:hover[data-status='cloud'],
+      &.report-sync-badge-clickable:hover[data-status='mixed'] {
         color: var(--text);
       }
     }

@@ -1021,6 +1021,13 @@ function onFileListMouseover(e) {
     // The default cursor-anchored placement is for in-column lists
     // in the main pane.
     placement: 'right',
+    // Anchor on the whole row, not the label button — a `with-actions`
+    // row's label is `flex: 1` and shrinks on hover to make room for
+    // the "Manage workspaces" button, so anchoring to the button's
+    // right edge would drop the popup on top of that control. The row
+    // li's right edge sits past it. Falls back to the element itself
+    // for non-row consumers.
+    anchorEl: el.closest('.file-item') ?? undefined,
     gate: (node) => {
       const label = node.querySelector('.file-label')
       if (!label) return true

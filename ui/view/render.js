@@ -3,7 +3,7 @@ import { classMap } from 'lit/directives/class-map.js'
 import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { FILE_ICONS } from './file-display.js'
+import { FILE_ICONS, displayName as reportDisplayName } from './file-display.js'
 import { listBundles, listWorkspaces, state } from '#client/index.js'
 import { isBundleInRemote, isInRemote, remoteCount, triageSync } from './client-sync.js'
 import { dropZone, report } from './dom.js'
@@ -32,6 +32,7 @@ import {
 import { getFocusCode } from './focus-code.js'
 import { openSyncUploadDialog } from './dialogs/sync-upload-dialog.js'
 import { openObjstoreRecoveryDialog } from './dialogs/objstore-recovery-dialog.js'
+import { openReportPresenceDialog } from './dialogs/report-presence-dialog.js'
 
 // View-mode icons + titles + click handling all live in
 // `<view-mode-buttons>` (see view/view-mode-buttons.js); the host
@@ -463,23 +464,55 @@ function syncBadgeTemplate() {
   if (state.currentView !== 'findings' && state.currentView !== 'files') return nothing
   const wsContext = resolveWorkspaceContext()
   if (!wsContext) return nothing
-  const { workspaceId, fileNames, mode } = wsContext
+  const { workspaceId, owners, fileNames, mode } = wsContext
   if (mode === 'single') {
-    // Single-file view: chip reflects just the active report's
-    // status. Bundles aren't represented here — they live in the
-    // workspace context, which the user can navigate to via the
-    // sidebar to see the combined badge.
+    // Single-file view: chip reflects the active report's status.
+    // Bundles aren't represented here — they live in the workspace
+    // context, which the user can navigate to via the sidebar to see
+    // the combined badge.
+    //
+    // A report can belong to several workspaces, each with its own
+    // objstore tag, so "synced" is per-workspace — it can be in the
+    // cloud for one and local-only for another. Compute the status
+    // per owner; collapse to ONE chip whose status is the consensus
+    // ('cloud' all synced / 'local' none synced / 'mixed' differs)
+    // rather than silently reporting just the first owner's state.
     const name = fileNames[0]
-    const status = isInRemote(workspaceId, name) ? 'cloud' : 'local'
+    const entries = owners.map((o) => ({
+      workspaceId: o.id,
+      workspaceName: o.name,
+      status: isInRemote(o.id, name) ? 'cloud' : 'local',
+    }))
+    if (entries.length === 1) {
+      const status = entries[0].status
+      return badgeChipButton({
+        status,
+        label: status,
+        title: status === 'cloud'
+          ? 'Synced to remote'
+          : 'Local only — click to upload',
+        onClick: status === 'local'
+          ? () => openUploadFromBadge({ workspaceId, items: [{ kind: 'report', identifier: name }] })
+          : null,
+      })
+    }
+    // Multi-workspace: one chip, status = consensus, click opens the
+    // per-workspace breakdown dialog (which offers upload on the
+    // local-only rows).
+    const cloudCount = entries.filter((e) => e.status === 'cloud').length
+    const status = cloudCount === entries.length
+      ? 'cloud'
+      : (cloudCount === 0 ? 'local' : 'mixed')
+    const title = status === 'cloud'
+      ? `Synced in all ${entries.length} workspaces — click for per-workspace status`
+      : (status === 'local'
+        ? `Local only in all ${entries.length} workspaces — click for per-workspace status`
+        : `Synced in ${cloudCount} of ${entries.length} workspaces — click for per-workspace status`)
     return badgeChipButton({
       status,
       label: status,
-      title: status === 'cloud'
-        ? 'Synced to remote'
-        : 'Local only — click to upload',
-      onClick: status === 'local'
-        ? () => openUploadFromBadge({ workspaceId, items: [{ kind: 'report', identifier: name }] })
-        : null,
+      title,
+      onClick: () => openReportPresenceFromBadge({ fileName: name, entries }),
     })
   }
   // Workspace view — two chunks, "N cloud" and "M local", with
@@ -569,7 +602,9 @@ function syncBadgeTemplate() {
 }
 
 function badgeChipButton({ status, label, title, onClick }) {
-  const icon = status === 'cloud' ? cloudIconTpl() : localIconTpl()
+  const icon = status === 'cloud'
+    ? cloudIconTpl()
+    : (status === 'mixed' ? mixedIconTpl() : localIconTpl())
   const labelTpl = html`<span class="sync-badge-label">${label}</span>`
   if (typeof onClick !== 'function') {
     // Informational chip — render as a `<span>` so it doesn't pick
@@ -608,6 +643,16 @@ function cloudIconTpl() {
   </svg>`
 }
 
+// 'mixed' — a dashed cloud, signalling "partially synced": the report
+// is in the cloud for some of its workspaces and local-only in
+// others. Paired with the `--warning` hue (report.css) + the "mixed"
+// label so the partial state reads at a glance.
+function mixedIconTpl() {
+  return html`<svg class="sync-badge-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="3 2.5" aria-hidden="true">
+    <path d="M17.5 19a4.5 4.5 0 1 0-1-8.9A6 6 0 0 0 5.07 13.5 4 4 0 0 0 6 21h11.5z"/>
+  </svg>`
+}
+
 async function openUploadFromBadge({ workspaceId, items }) {
   // Resolve user-friendly labels for the bundle items so the dialog
   // shows the actual sidebar name (e.g. "my-app.js") instead of the
@@ -625,6 +670,22 @@ async function openUploadFromBadge({ workspaceId, items }) {
   await openSyncUploadDialog({ workspaceId, items })
 }
 
+// Open the per-workspace sync-status breakdown for a report that's in
+// more than one workspace. The dialog is display-first; if the user
+// clicks Upload on a local-only row it resolves `{ action: 'upload',
+// workspaceId }` and we hand off to the upload dialog AFTER this one
+// closes — a nested `showModal` would throw (modal-conflict). The
+// report's display name labels the dialog.
+async function openReportPresenceFromBadge({ fileName, entries }) {
+  const { action, workspaceId } = await openReportPresenceDialog({
+    reportName: reportDisplayName(fileName),
+    entries,
+  })
+  if (action === 'upload' && workspaceId) {
+    await openUploadFromBadge({ workspaceId, items: [{ kind: 'report', identifier: fileName }] })
+  }
+}
+
 // Resolve which workspace + which loaded report file-names the
 // sync-status badge applies to. `mode` differentiates a single-file
 // view (one report from a workspace) from a workspace-merged view
@@ -640,9 +701,22 @@ function resolveWorkspaceContext() {
     }
   }
   if (state.currentFile) {
-    const ws = listWorkspaces().find((w) => Array.isArray(w.reports) && w.reports.includes(state.currentFile))
-    if (!ws) return null
-    return { mode: 'single', workspaceId: ws.id, fileNames: [state.currentFile] }
+    // A report can be a member of several workspaces (see
+    // client/workspaces.js). Collect EVERY owner so the single-file
+    // badge can reflect per-workspace cloud/local status — picking
+    // only the first would mislabel a report that's synced in one
+    // workspace but local-only in another. `workspaceId` stays the
+    // first owner as the representative id for single-owner callers.
+    const owners = listWorkspaces().filter(
+      (w) => Array.isArray(w.reports) && w.reports.includes(state.currentFile),
+    )
+    if (owners.length === 0) return null
+    return {
+      mode: 'single',
+      workspaceId: owners[0].id,
+      owners: owners.map((w) => ({ id: w.id, name: w.name })),
+      fileNames: [state.currentFile],
+    }
   }
   return null
 }
