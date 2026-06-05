@@ -581,6 +581,15 @@ sidebar-delete-current button {
   &[data-status='connecting'] .sync-dot { background: var(--medium); }
   &[data-status='offline']    .sync-dot { background: var(--critical); }
 }
+/* Auth-proxy redirect (e.g. Cloudflare Access): the offline dot fill
+   stays red; ring it in the accent so the actionable "reload to sign in"
+   state reads in BOTH expanded and collapsed mode (the tooltip only
+   shows expanded). Ordered before the degraded ring below so degraded
+   (possible data loss) wins the box-shadow when both apply, matching the
+   tooltip precedence in renderSyncStatus. */
+#sync-status[data-proxy-auth] .sync-dot {
+  box-shadow: 0 0 0 2px var(--accent);
+}
 /* `persistenceDegraded` is orthogonal to the connection dot color — the
    socket can be online (green dot) while local writes are paused. Ring
    the dot amber so the warning reads in BOTH expanded and collapsed

@@ -402,12 +402,19 @@ let proxyAuthInitialDelayMs = 6_000
 let proxyAuthReprobeMs = 30_000
 let proxyAuthProbeTimer: ReturnType<typeof setTimeout> | null = null
 let proxyAuthProbeInFlight = false
+// Bumped whenever a pending/in-flight probe is superseded — recovery,
+// sync off, and server switch all route through `cancelProxyAuthProbe`.
+// An in-flight probe captures this before its await and bails if it
+// changed, so a positive can't latch against a connection or endpoint
+// that moved on under it (the peer of socket-transport's startSocket pin).
+let proxyAuthProbeGen = 0
 
 function inConnectionTrouble(status: SyncStatus): boolean {
   return status === 'offline' || status === 'connecting'
 }
 
 function cancelProxyAuthProbe(): void {
+  proxyAuthProbeGen += 1
   if (proxyAuthProbeTimer != null) { clearTimeout(proxyAuthProbeTimer); proxyAuthProbeTimer = null }
 }
 
@@ -426,14 +433,19 @@ function armProxyAuthProbe(delayMs: number): void {
 async function runProxyAuthProbe(): Promise<void> {
   if (proxyAuthProbeInFlight) return
   if (!isActive() || !inConnectionTrouble(currentStatus())) return
+  const gen = proxyAuthProbeGen
   proxyAuthProbeInFlight = true
   let detected = false
   try { detected = await probeProxyAuth(serverUrl) }
   catch { detected = false }
   finally { proxyAuthProbeInFlight = false }
-  // The connection may have recovered (or sync gone inactive) while the
-  // probe was in flight — never latch a stale positive onto a
-  // now-healthy socket.
+  // Superseded while in flight? Recovery, sync-off, and server-switch all
+  // bump the generation via `cancelProxyAuthProbe`, so a mismatch means
+  // the result is stale (possibly for a now-replaced endpoint) and
+  // whoever superseded us already owns the latch — drop it untouched.
+  if (proxyAuthProbeGen !== gen) return
+  // Belt-and-braces: never latch onto a connection that recovered or went
+  // inactive (the recovery path above already bumps the generation).
   if (!isActive() || !inConnectionTrouble(currentStatus())) {
     setProxyAuthRequired(false)
     return

@@ -1,10 +1,17 @@
 // Detects a captive "auth proxy" sitting in front of the sync relay.
-// The canonical case is Cloudflare Access (`*.cloudflareaccess.com`),
-// but any identity-aware proxy (Google IAP, Azure AD App Proxy, an
-// nginx `auth_request` gateway, …) behaves the same way: an
-// unauthenticated request to the relay's own origin is answered with a
-// 3xx redirect to the proxy's login page instead of reaching the
-// server.
+// The target case is Cloudflare Access (`*.cloudflareaccess.com`), whose
+// default for an unauthenticated XHR/fetch is a 3xx redirect to its
+// login page instead of reaching the server — the same shape other
+// identity-aware proxies (Google IAP, Azure AD App Proxy, an nginx
+// `auth_request` gateway) take when configured to redirect.
+//
+// Scope is exactly that 3xx-redirect class. A proxy that instead answers
+// fetches programmatically — a 401/403 with a JSON/HTML body, or a 200
+// inline-login page with no redirect — emits no 3xx and is NOT detected
+// here. That's a deliberate, conservative cut: the only false-negative
+// cost is staying at the same stuck-"Offline" state we'd show anyway
+// (no regression, no false alarm), whereas content-sniffing those other
+// shapes risks mislabelling an ordinary 5xx error page as proxy auth.
 //
 // Why the transport can't surface this on its own: a WebSocket upgrade
 // against such an origin simply fails to upgrade (the proxy answers the

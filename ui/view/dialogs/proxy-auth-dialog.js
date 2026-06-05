@@ -24,10 +24,9 @@ class ProxyAuthDialog extends AppDialog {
     this.renderRoot.querySelector('button.primary')?.focus()
   }
 
+  // The only bespoke action. "Not now", Esc, and backdrop all fall
+  // through to AppDialog's inherited `_onClose` (resolves null = cancel).
   _onReload = () => this._finish('reload')
-  _onDismiss = () => this._finish(null)
-  // Esc / backdrop dismissal is a cancel, same as "Not now".
-  _onClose = () => this._finish(null)
 
   render() {
     return html`<dialog @close=${this._onClose}>
@@ -45,7 +44,7 @@ class ProxyAuthDialog extends AppDialog {
       </p>
       <footer class="nwd-actions">
         <span class="nwd-spacer"></span>
-        <button type="button" @click=${this._onDismiss}>Not now</button>
+        <button type="button" @click=${this._onClose}>Not now</button>
         <button type="button" class="primary" @click=${this._onReload}>Reload page</button>
       </footer>
     </dialog>`
