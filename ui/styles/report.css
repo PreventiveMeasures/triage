@@ -265,7 +265,6 @@
         width: 1px; height: 14px; margin: 0 .125rem;
         background: var(--border);
       }
-      &.report-sync-badge-clickable { cursor: pointer; }
       &.report-sync-badge-clickable:hover[data-status='local'] {
         border-color: var(--accent);
         color: var(--text);

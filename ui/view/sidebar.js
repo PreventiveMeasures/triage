@@ -136,28 +136,6 @@ const GROUP_ORDER = ['default', 'claude-security', 'codex-security', 'deepsec']
 // losing their search.
 let searchQuery = ''
 
-// Workspace-tray-with-a-plus glyph for the per-row "Manage
-// workspaces" affordance on report + bundle rows. Reads as "add this
-// to a workspace"; distinct from the workspace row's share / export /
-// leave icons. Sized to match those hover-revealed action buttons.
-const MANAGE_WORKSPACES_ICON = html`<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1.6" y="4.4" width="8" height="7" rx="1.1"/><path d="M3.8 4.4v-.7h3.2v.7"/><path d="M12 8.4v4.2M14.1 10.5h-4.2"/></svg>`
-
-// Hover/touch-revealed "Manage workspaces" button shared by the
-// report + bundle row templates. `action` is the click-delegate hook
-// (`manage-report-workspaces` / `manage-bundle-workspaces`); `kind`
-// fills the accessible label. Only rendered when at least one
-// workspace exists (membership has somewhere to go) — gated by the
-// caller via `opts.showManage`.
-function manageWorkspacesButton(action, kind) {
-  return html`<button
-    type="button"
-    class="workspace-manage"
-    data-action=${action}
-    title="Add to workspaces…"
-    aria-label=${`Manage workspaces for this ${kind}`}
-  >${MANAGE_WORKSPACES_ICON}</button>`
-}
-
 function fileItemTemplate(n, opts = {}) {
   // Suppress the `current` highlight when the user is browsing the
   // bundles view — there's no active report in that mode, so
@@ -166,7 +144,7 @@ function fileItemTemplate(n, opts = {}) {
   // workspace-row template below.
   const isCurrent = n === state.currentFile
     && (state.currentView === 'findings' || state.currentView === 'files')
-  const cls = `file-item${isCurrent ? ' current' : ''}${opts.indented ? ' indented' : ''}${opts.showManage ? ' with-actions' : ''}`
+  const cls = `file-item${isCurrent ? ' current' : ''}${opts.indented ? ' indented' : ''}`
   const label = displayName(n)
   const count = getCount(n)
   const iconHtml = FILE_ICONS[groupOf(n)] ?? FILE_ICONS.default
@@ -184,7 +162,7 @@ function fileItemTemplate(n, opts = {}) {
     data-file=${n}
     data-workspace-id=${opts.workspaceId ?? nothing}
     draggable="true"
-  ><button type="button" class="file-name" data-tooltip=${label}>${unsafeHTML(iconHtml)}<span class="file-label">${label}</span>${count === undefined ? nothing : html`<span class="file-count">${count}</span>`}</button>${opts.showManage ? manageWorkspacesButton('manage-report-workspaces', 'report') : nothing}</li>`
+  ><button type="button" class="file-name" data-tooltip=${label}>${unsafeHTML(iconHtml)}<span class="file-label">${label}</span>${count === undefined ? nothing : html`<span class="file-count">${count}</span>`}</button></li>`
 }
 
 function groupHeaderTemplate(label, opts = {}) {
@@ -245,7 +223,7 @@ function bundleItemTemplate(bundle, opts = {}) {
   // Bundles category render flush with the other category rows
   // (Reports, DeepSec, …).
   const indented = opts.workspaceId != null
-  const cls = `file-item bundle-item${indented ? ' indented' : ''}${isCurrent ? ' current' : ''}${opts.showManage ? ' with-actions' : ''}`
+  const cls = `file-item bundle-item${indented ? ' indented' : ''}${isCurrent ? ' current' : ''}`
   // `data-workspace-id` mirrors `fileItemTemplate` — when the row sits
   // INSIDE a workspace, a drop onto it resolves to "this workspace"
   // (so dragging a sibling bundle into the same workspace is a no-op
@@ -257,7 +235,7 @@ function bundleItemTemplate(bundle, opts = {}) {
     data-bundle-integrity=${integrity}
     data-workspace-id=${opts.workspaceId ?? nothing}
     draggable="true"
-  ><button type="button" class="file-name" data-tooltip=${`${name}\n${integrity}`}>${BUNDLE_ICON}<span class="file-label">${name}</span></button>${opts.showManage ? manageWorkspacesButton('manage-bundle-workspaces', 'bundle') : nothing}</li>`
+  ><button type="button" class="file-name" data-tooltip=${`${name}\n${integrity}`}>${BUNDLE_ICON}<span class="file-label">${name}</span></button></li>`
 }
 
 // Row for a workspace-claimed bundle whose bytes aren't on this device
@@ -384,11 +362,6 @@ export async function renderSidebar() {
   ensureBundleFindingsIndexed().catch(() => {})
   const names = await listFiles()
   const workspaces = listWorkspaces()
-  // Membership can only go somewhere when a workspace exists, so the
-  // per-row "Manage workspaces" affordance is gated on this — an
-  // unfiled report with no workspaces around gets no button (the user
-  // creates a workspace from the section header first).
-  const hasWorkspaces = workspaces.length > 0
   const bundleNames = await listBundles()
   // Stash the bundles list on state so the main view's bundles
   // branch (in render.js) can paint synchronously without redoing
@@ -537,9 +510,9 @@ export async function renderSidebar() {
       }
       return html`
         ${workspaceItemTemplate(w)}
-        ${presentReports.map((r) => fileItemTemplate(r, { indented: true, workspaceId: w.id, showManage: hasWorkspaces }))}
+        ${presentReports.map((r) => fileItemTemplate(r, { indented: true, workspaceId: w.id }))}
         ${missingReports.map((r) => missingReportItemTemplate(r, w.id))}
-        ${presentBundles.map((b) => bundleItemTemplate(b, { workspaceId: w.id, showManage: hasWorkspaces }))}
+        ${presentBundles.map((b) => bundleItemTemplate(b, { workspaceId: w.id }))}
         ${missingBundles.map((integ) => missingBundleItemTemplate(integ, w.id))}
       `
     })}
@@ -551,11 +524,11 @@ export async function renderSidebar() {
       if (list.length === 0 && !(isDefault && isDraggingReport)) return null
       return html`
         ${groupHeaderTemplate(GROUP_LABELS[g] ?? g, { dropTarget: isDefault })}
-        ${list.map((n) => fileItemTemplate(n, { showManage: hasWorkspaces }))}
+        ${list.map((n) => fileItemTemplate(n))}
       `
     })}
     ${unfiledBundles.length > 0 || isDraggingBundle ? bundlesHeaderTemplate() : null}
-    ${repeat(unfiledBundles, (b) => b.integrity, (b) => bundleItemTemplate(b, { showManage: hasWorkspaces }))}
+    ${repeat(unfiledBundles, (b) => b.integrity, (b) => bundleItemTemplate(b))}
   `, fileList)
 
   // Packages + Repositories navigation buttons live to the right of
@@ -676,6 +649,29 @@ async function openBundleWorkspacesManager(integrity) {
   renderSidebar()
 }
 
+// Right-click a report / bundle row to open its workspace-membership
+// checklist — the multi-workspace add/remove affordance. Right-click
+// (rather than an in-row button) keeps the rows visually clean: no
+// hover control to reflow the count chip or collide with the row
+// tooltip. Only fires when at least one workspace exists; otherwise
+// the browser's default menu is left alone. Missing rows (no local
+// bytes) carry no `data-file` / are flagged `bundle-missing`, so they
+// fall through untouched.
+function onSidebarContextmenu(e) {
+  if (listWorkspaces().length === 0) return
+  const fileEl = e.target.closest('.file-item[data-file]')
+  if (fileEl) {
+    e.preventDefault()
+    openReportWorkspacesManager(fileEl.dataset.file)
+    return
+  }
+  const bundleEl = e.target.closest('.file-item[data-bundle-integrity]')
+  if (bundleEl && !bundleEl.classList.contains('bundle-missing')) {
+    e.preventDefault()
+    openBundleWorkspacesManager(bundleEl.dataset.bundleIntegrity)
+  }
+}
+
 // Sidebar event delegation: file-list click switches; Delete removes
 // the current file; toggle collapses / expands; search filters on
 // input. The workspace "+" button intercepts BEFORE the file-row
@@ -690,24 +686,6 @@ async function onSidebarClick(e) {
   // and triage stay intact.
   if (e.target.closest('[data-action="go-home"]')) {
     await goHome()
-    return
-  }
-  // Per-row "Manage workspaces" affordance — opens the membership
-  // checklist for the report / bundle the button sits in. Matched
-  // BEFORE the bundle / report selection handlers below: the button
-  // lives inside a `.file-item[data-…]` row, so a stray fall-through
-  // would also switch the main pane to that item. The membership
-  // dialog + diff-apply live in the managers below.
-  const manageReportEl = e.target.closest('[data-action="manage-report-workspaces"]')
-  if (manageReportEl) {
-    const row = manageReportEl.closest('.file-item[data-file]')
-    if (row?.dataset.file) await openReportWorkspacesManager(row.dataset.file)
-    return
-  }
-  const manageBundleEl = e.target.closest('[data-action="manage-bundle-workspaces"]')
-  if (manageBundleEl) {
-    const row = manageBundleEl.closest('.file-item[data-bundle-integrity]')
-    if (row?.dataset.bundleIntegrity) await openBundleWorkspacesManager(row.dataset.bundleIntegrity)
     return
   }
   // Per-bundle row in the expanded Bundles section — selects that
@@ -1021,13 +999,6 @@ function onFileListMouseover(e) {
     // The default cursor-anchored placement is for in-column lists
     // in the main pane.
     placement: 'right',
-    // Anchor on the whole row, not the label button — a `with-actions`
-    // row's label is `flex: 1` and shrinks on hover to make room for
-    // the "Manage workspaces" button, so anchoring to the button's
-    // right edge would drop the popup on top of that control. The row
-    // li's right edge sits past it. Falls back to the element itself
-    // for non-row consumers.
-    anchorEl: el.closest('.file-item') ?? undefined,
     gate: (node) => {
       const label = node.querySelector('.file-label')
       if (!label) return true
@@ -1461,6 +1432,7 @@ function mount(host) {
   fileList = root.querySelector('#file-list')
   initEncryptionToggle(root.querySelector('#encryption-toggle'))
   root.addEventListener('click', onSidebarClick)
+  root.addEventListener('contextmenu', onSidebarContextmenu)
   root.addEventListener('dblclick', onSidebarDblclick)
   root.addEventListener('dragstart', onSidebarDragstart)
   root.addEventListener('dragend', onSidebarDragend)

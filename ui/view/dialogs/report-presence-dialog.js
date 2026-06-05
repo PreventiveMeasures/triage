@@ -20,6 +20,16 @@ import { css, html, nothing, unsafeCSS } from 'lit'
 import { AppDialog, openAppDialog } from './app-dialog.js'
 import listCSS from './dialog-list.css'
 
+// Cloud glyph for cloud-synced rows (same outline as the page-header
+// badge's). Local-only rows render no icon — the absence is the
+// signal, so the column reads "synced rows are marked, the rest
+// aren't".
+function cloudStatusIcon() {
+  return html`<svg class="rpd-status-icon" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M17.5 19a4.5 4.5 0 1 0-1-8.9A6 6 0 0 0 5.07 13.5 4 4 0 0 0 6 21h11.5z"/>
+  </svg>`
+}
+
 class ReportPresenceDialog extends AppDialog {
   static styles = [...AppDialog.styles, unsafeCSS(listCSS), css`
     .rpd-list {
@@ -40,16 +50,26 @@ class ReportPresenceDialog extends AppDialog {
     }
     .rpd-status {
       flex-shrink: 0;
+      display: inline-flex; align-items: center; gap: .3rem;
       font-size: .68rem; font-weight: 600;
       text-transform: uppercase; letter-spacing: .05em;
+
+      & .rpd-status-icon { flex-shrink: 0; }
     }
     .rpd-status.cloud { color: var(--accent); }
     .rpd-status.local { color: var(--muted); }
-    .rpd-upload {
+    /* Reserved right-hand column so the Upload button sits flush at
+       the row's right edge and the status labels line up across rows
+       whether or not a row carries an Upload action. */
+    .rpd-action {
       flex-shrink: 0;
+      min-width: 4.5rem;
+      display: flex; justify-content: flex-end;
+    }
+    .rpd-upload {
       background: transparent; border: 1px solid var(--border);
       color: var(--text); border-radius: 5px;
-      padding: .2rem .6rem; font: inherit; font-size: .74rem; cursor: pointer;
+      padding: .2rem .6rem; font: inherit; font-size: .74rem;
 
       &:hover { border-color: var(--accent); color: var(--accent); }
     }
@@ -93,10 +113,14 @@ class ReportPresenceDialog extends AppDialog {
       <div class="rpd-list">
         ${this.entries.map((e) => html`<div class="rpd-row">
           <span class="rpd-name">${e.workspaceName}</span>
-          <span class=${`rpd-status ${e.status}`}>${e.status === 'cloud' ? 'Cloud' : 'Local only'}</span>
-          ${e.status === 'local'
-            ? html`<button type="button" class="rpd-upload" @click=${() => this._onUpload(e.workspaceId)}>Upload</button>`
-            : nothing}
+          <span class=${`rpd-status ${e.status}`}>
+            ${e.status === 'cloud' ? cloudStatusIcon() : nothing}${e.status === 'cloud' ? 'Cloud' : 'Local only'}
+          </span>
+          <span class="rpd-action">
+            ${e.status === 'local'
+              ? html`<button type="button" class="rpd-upload" @click=${() => this._onUpload(e.workspaceId)}>Upload</button>`
+              : nothing}
+          </span>
         </div>`)}
       </div>
       <footer class="nwd-actions">
