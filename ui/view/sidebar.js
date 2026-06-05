@@ -592,7 +592,12 @@ async function openReportWorkspacesManager(filename) {
   const { confirmed, selectedIds } = await openWorkspaceMembershipDialog({
     itemLabel: displayName(filename),
     itemKind: 'report',
-    workspaces: workspaces.map((w) => ({ id: w.id, name: w.name, checked: memberOf.has(w.id) })),
+    workspaces: workspaces.map((w) => ({
+      id: w.id,
+      name: w.name,
+      checked: memberOf.has(w.id),
+      synced: isInRemoteOrCached(w.id, filename),
+    })),
   })
   if (!confirmed) return
   const selected = new Set(selectedIds)
@@ -628,7 +633,12 @@ async function openBundleWorkspacesManager(integrity) {
   const { confirmed, selectedIds } = await openWorkspaceMembershipDialog({
     itemLabel: friendly,
     itemKind: 'bundle',
-    workspaces: workspaces.map((w) => ({ id: w.id, name: w.name, checked: memberOf.has(w.id) })),
+    workspaces: workspaces.map((w) => ({
+      id: w.id,
+      name: w.name,
+      checked: memberOf.has(w.id),
+      synced: isBundleInRemoteOrCached(w.id, integrity),
+    })),
   })
   if (!confirmed) return
   const selected = new Set(selectedIds)

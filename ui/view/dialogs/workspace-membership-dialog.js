@@ -21,11 +21,24 @@
 // `openWorkspaceMembershipDialog({ itemLabel, itemKind, workspaces })`
 // returns a Promise resolving to `{ confirmed, selectedIds }`
 // (`selectedIds` is `[]` on cancel / Esc).
-import { css, html, unsafeCSS } from 'lit'
+import { css, html, nothing, unsafeCSS } from 'lit'
 import { AppDialog, openAppDialog } from './app-dialog.js'
 import listCSS from './dialog-list.css'
 
+// Cloud glyph marking workspaces where the item is already synced to
+// that workspace's remote. Absence = local-only in that workspace.
+function cloudMemberIcon() {
+  return html`<svg class="wmd-cloud" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M17.5 19a4.5 4.5 0 1 0-1-8.9A6 6 0 0 0 5.07 13.5 4 4 0 0 0 6 21h11.5z"/>
+  </svg>`
+}
+
 class WorkspaceMembershipDialog extends AppDialog {
+  // NOTE: keep these rules FLAT — no `&` nesting. Inline `css` tagged
+  // templates are minified by `minify-html-literals` (build.js), whose
+  // CSS pass doesn't understand CSS nesting and silently drops nested
+  // blocks AND the rule that follows them. (`.css` files go through
+  // esbuild and DO support nesting; inline templates do not.)
   static styles = [...AppDialog.styles, unsafeCSS(listCSS), css`
     .wmd-list {
       margin: .2rem 0 .65rem;
@@ -35,16 +48,16 @@ class WorkspaceMembershipDialog extends AppDialog {
     }
     .wmd-option {
       display: flex; align-items: center; gap: .55rem;
-      padding: .42rem .6rem; cursor: pointer;
-
-      & + .wmd-option { border-top: 1px solid rgb(from var(--text) r g b / .05); }
-      & input[type='checkbox'] { flex-shrink: 0; margin: 0; accent-color: var(--accent); }
-      & .wmd-name {
-        flex: 1; min-width: 0;
-        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-        color: var(--text); font-size: .82rem;
-      }
+      padding: .42rem .6rem;
     }
+    .wmd-option + .wmd-option { border-top: 1px solid rgb(from var(--text) r g b / .05); }
+    .wmd-option input[type='checkbox'] { flex-shrink: 0; margin: 0; accent-color: var(--accent); }
+    .wmd-name {
+      flex: 1; min-width: 0;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      color: var(--text); font-size: .82rem;
+    }
+    .wmd-cloud { flex-shrink: 0; color: var(--accent); }
   `]
 
   static properties = {
@@ -80,6 +93,10 @@ class WorkspaceMembershipDialog extends AppDialog {
         id: w.id,
         name: w.name,
         checked: Boolean(w.checked),
+        // `synced` (the item is in this workspace's remote) is a
+        // read-only status hint — it rides alongside the mutable
+        // `checked` but the cloud icon below only reflects it.
+        synced: Boolean(w.synced),
       }))
     }
   }
@@ -124,6 +141,7 @@ class WorkspaceMembershipDialog extends AppDialog {
                 @change=${() => this._onToggle(c.id)}
               >
               <span class="wmd-name">${c.name}</span>
+              ${c.synced ? cloudMemberIcon() : nothing}
             </label>`)}
           </div>`}
       <footer class="nwd-actions">
@@ -137,8 +155,10 @@ class WorkspaceMembershipDialog extends AppDialog {
 
 customElements.define('workspace-membership-dialog', WorkspaceMembershipDialog)
 
-// Public entry point. `workspaces` is `[{ id, name, checked }]` — the
-// full workspace list with `checked` pre-set to current membership.
+// Public entry point. `workspaces` is `[{ id, name, checked, synced }]`
+// — the full workspace list with `checked` pre-set to current
+// membership and `synced` (optional) flagging workspaces whose remote
+// already holds the item (rendered as a cloud icon, display-only).
 // Resolves `{ confirmed, selectedIds }`; Cancel / Esc / native close
 // all resolve to `{ confirmed: false, selectedIds: [] }`, so callers
 // branch on `confirmed` first.

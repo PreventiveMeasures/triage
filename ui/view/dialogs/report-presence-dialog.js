@@ -31,6 +31,11 @@ function cloudStatusIcon() {
 }
 
 class ReportPresenceDialog extends AppDialog {
+  // NOTE: keep these rules FLAT — no `&` nesting. Inline `css` tagged
+  // templates are minified by `minify-html-literals` (build.js), whose
+  // CSS pass doesn't understand CSS nesting and silently drops nested
+  // blocks AND the rule that follows them. (`.css` files go through
+  // esbuild and DO support nesting; inline templates do not.)
   static styles = [...AppDialog.styles, unsafeCSS(listCSS), css`
     .rpd-list {
       margin: .2rem 0 .65rem;
@@ -40,9 +45,8 @@ class ReportPresenceDialog extends AppDialog {
     .rpd-row {
       display: flex; align-items: center; gap: .6rem;
       padding: .45rem .6rem;
-
-      & + .rpd-row { border-top: 1px solid rgb(from var(--text) r g b / .05); }
     }
+    .rpd-row + .rpd-row { border-top: 1px solid rgb(from var(--text) r g b / .05); }
     .rpd-name {
       flex: 1; min-width: 0;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -53,9 +57,8 @@ class ReportPresenceDialog extends AppDialog {
       display: inline-flex; align-items: center; gap: .3rem;
       font-size: .68rem; font-weight: 600;
       text-transform: uppercase; letter-spacing: .05em;
-
-      & .rpd-status-icon { flex-shrink: 0; }
     }
+    .rpd-status-icon { flex-shrink: 0; }
     .rpd-status.cloud { color: var(--accent); }
     .rpd-status.local { color: var(--muted); }
     /* Reserved right-hand column so the Upload button sits flush at
@@ -70,9 +73,8 @@ class ReportPresenceDialog extends AppDialog {
       background: transparent; border: 1px solid var(--border);
       color: var(--text); border-radius: 5px;
       padding: .2rem .6rem; font: inherit; font-size: .74rem;
-
-      &:hover { border-color: var(--accent); color: var(--accent); }
     }
+    .rpd-upload:hover { border-color: var(--accent); color: var(--accent); }
   `]
 
   static properties = {

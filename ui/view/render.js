@@ -594,9 +594,17 @@ function syncBadgeTemplate() {
   const divider = (cloudCount > 0 && localOnly.length > 0)
     ? html`<span class="sync-badge-divider" aria-hidden="true"></span>`
     : nothing
+  // Only flag the wrapper `mixed` (orange ring) when it genuinely
+  // holds BOTH a cloud and a local chunk. A cloud-only ("N cloud") or
+  // local-only ("M local") aggregate is not mixed, so it stays on the
+  // neutral border — otherwise the shared `[data-status='mixed']`
+  // styling painted every workspace badge orange, including fully-
+  // synced ones. (The attribute predates this; it was just never
+  // styled until the single-report mixed badge added the rule.)
+  const aggregateStatus = (cloudCount > 0 && localOnly.length > 0) ? 'mixed' : nothing
   return html`<div
     class=${`report-sync-badge${cloudClickable || localClickable ? ' report-sync-badge-clickable' : ''}`}
-    data-status="mixed"
+    data-status=${aggregateStatus}
     title=${wrapperTitle}
   >${cloudChunk}${divider}${localChunk}</div>`
 }
