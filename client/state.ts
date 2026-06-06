@@ -3,10 +3,18 @@ import { getItem as getSecureItem, mutate as mutateSecureItem, onAfterHydrate, s
 import { type ManagedServerInfo, type ServerMode, readCachedServerInfo } from './sync/server-mode.ts'
 
 export const VIEW_MODE_KEY = 'deepview.viewMode'
+export const SEVERITY_MODE_KEY = 'deepview.severityMode'
 export const REPO_URLS_KEY = 'deepview.repoUrls'
 const VALID_VIEW_MODES = new Set(['grouped', 'list', 'table', 'kanban', 'focus'])
+const VALID_SEVERITY_MODES = new Set(['corrected', 'original'])
 
 export type ViewMode = 'table' | 'list' | 'grouped' | 'kanban' | 'focus'
+// Global display lens for finding severities. 'corrected' (default) shows
+// each finding's application-specific `correctedSeverity` when present;
+// 'original' shows the analyzer's intrinsic `severity`. A pure display /
+// count / sort preference — never alters report data. See ui/view/format.js
+// (displayedSeverity) and <severity-mode-switch>.
+export type SeverityMode = 'corrected' | 'original'
 export type CurrentView = 'findings' | 'files' | 'bundles' | 'admin-users' | 'manage-repos' | 'manage-reports' | 'manage-bundles' | 'manage-teams'
 export type TriageBucket = 'inprogress' | 'fixed' | 'invalid' | 'deleted'
 
@@ -98,6 +106,7 @@ export interface State {
   repoEditing: boolean
   sortBy: string
   viewMode: ViewMode
+  severityMode: SeverityMode
   triage: Map<string, TriageEntry>
   shownTriage: TriageBucket | null
   nextFindingId: number
@@ -140,6 +149,16 @@ function readSavedViewMode(): ViewMode | null {
   try {
     const v = localStorage.getItem(VIEW_MODE_KEY)
     return v !== null && VALID_VIEW_MODES.has(v) ? (v as ViewMode) : null
+  } catch { return null }
+}
+
+// Same validate-on-read pattern as the view mode. A non-sensitive UI
+// preference (which severity lens to show), so it lives in raw
+// localStorage like viewMode / theme — not secure-storage.
+function readSavedSeverityMode(): SeverityMode | null {
+  try {
+    const v = localStorage.getItem(SEVERITY_MODE_KEY)
+    return v !== null && VALID_SEVERITY_MODES.has(v) ? (v as SeverityMode) : null
   } catch { return null }
 }
 
@@ -504,6 +523,11 @@ export const state: State = store<State>({
   // to localStorage so the choice survives reloads (events.js
   // writes on click).
   viewMode: readSavedViewMode() ?? 'table',
+  // Severity display lens — 'corrected' (default) or 'original'. Global,
+  // persisted to raw localStorage (events.js writes on toggle), so the
+  // choice survives reloads like viewMode. The corrected DATA is per-
+  // report and read-only; this is only which value the UI surfaces.
+  severityMode: readSavedSeverityMode() ?? 'corrected',
   // Per-finding triage annotations — color, triage bucket, comment,
   // fix reference, and per-report ignore — bundled into one TriageEntry
   // per finding. Keyed by `tabKey(f)` = `f.id ?? String(f._id)`: the

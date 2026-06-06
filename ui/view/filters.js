@@ -1,5 +1,5 @@
 import { state } from '#client/index.js'
-import { SEVERITY_ORDER, findingText, isModule, prettyModel } from './format.js'
+import { SEVERITY_ORDER, displayedSeverity, findingText, isModule, prettyModel } from './format.js'
 import { primaryTab, tabKey } from './group.js'
 
 // Stand-in for the "no analyzer" bucket in the analyzer dropdown.
@@ -121,7 +121,7 @@ export function matchesFilters(f) {
   // filter, non-empty = membership required. Unmarked tabs bucket
   // under the literal `'none'` so ticking only that chip isolates
   // unreviewed findings.
-  if (state.filterSeverities.size > 0 && !state.filterSeverities.has(f.severity)) return false
+  if (state.filterSeverities.size > 0 && !state.filterSeverities.has(displayedSeverity(f, state.severityMode))) return false
   if (state.filterColors.size > 0) {
     const col = state.triage.get(tabKey(f))?.color ?? 'none'
     if (!state.filterColors.has(col)) return false
@@ -273,7 +273,7 @@ function confidenceSorter(dir) {
 const confDescCmp = confidenceSorter('desc')
 const SORTERS = {
   severity: (pa, pb) =>
-    (SEVERITY_ORDER[pb.severity] || 0) - (SEVERITY_ORDER[pa.severity] || 0)
+    (SEVERITY_ORDER[displayedSeverity(pb, state.severityMode)] || 0) - (SEVERITY_ORDER[displayedSeverity(pa, state.severityMode)] || 0)
     || confDescCmp(pa, pb)
     || parseInt(pa.line, 10) - parseInt(pb.line, 10),
   'confidence-desc': confDescCmp,

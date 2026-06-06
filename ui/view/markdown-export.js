@@ -1,7 +1,7 @@
 import { state } from '#client/index.js'
 import { downloadBlob } from './dom.js'
 import { applyFilters } from './filters.js'
-import { commonPrefix, findingDisplayName, stripExportMarker } from './format.js'
+import { commonPrefix, correctedVariants, effectiveSeverity, findingDisplayName, hasSeverityCorrection, stripExportMarker } from './format.js'
 import { groupState, isIgnored, tabKey } from './group.js'
 
 // Markdown serializer for the "download report" toolbar button —
@@ -64,6 +64,12 @@ function findingToMarkdown(f) {
   const lines = [heading, '']
 
   const meta = []
+  // Severity correction provenance — the doc has no toggle, so always
+  // record both the corrected (effective) tier and the original.
+  if (hasSeverityCorrection(f)) {
+    const varies = correctedVariants(f) ? ', varies across reports' : ''
+    meta.push(`**Severity:** ${severityLabel(effectiveSeverity(f))} (corrected from ${severityLabel(f.severity)}${varies})`)
+  }
   if (f.confidence !== undefined) meta.push(`**Confidence:** ${f.confidence}/10`)
   if (triage) meta.push(`**Triage:** ${triage}`)
   else if (ignored) meta.push(`**Ignored**`)
@@ -84,6 +90,10 @@ function findingToMarkdown(f) {
   }
   if (f.confidenceReason) {
     lines.push(`**Confidence reason:** ${stripExportMarker(f.confidenceReason, f).trim()}`)
+    lines.push('')
+  }
+  if (hasSeverityCorrection(f) && f.correctedSeverityReason) {
+    lines.push(`**Severity correction:** ${f.correctedSeverityReason.trim()}`)
     lines.push('')
   }
   if (f.fix) {
@@ -132,7 +142,7 @@ function reportToMarkdown(report, groups) {
 
   const buckets = new Map()
   for (const f of findings) {
-    const sev = f.severity ?? 'informational'
+    const sev = effectiveSeverity(f) ?? 'informational'
     if (!buckets.has(sev)) buckets.set(sev, [])
     buckets.get(sev).push(f)
   }

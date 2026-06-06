@@ -2,7 +2,7 @@ import { html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { bundlesForFileHash, isPlaceholderNpmPackage, state } from '#client/index.js'
-import { commitUrl, fileUrl, findingDisplayName, formatRunMeta, githubIssueUrl, isHttpUrl, parseCommentRefs, stripExportMarker } from './format.js'
+import { SEVERITY_ORDER, commitUrl, correctedVariants, displayedSeverity, effectiveSeverity, fileUrl, findingDisplayName, formatRunMeta, githubIssueUrl, hasSeverityCorrection, isHttpUrl, parseCommentRefs, stripExportMarker } from './format.js'
 import { activeTabFor, findingRepo, groupKey, groupState, isIgnored, sortTabs, tabKey } from './group.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 
@@ -22,6 +22,73 @@ import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 export function badgeLabel(severity) {
   if (severity === 'informational') return 'info'
   return severity.replaceAll('_', ' ')
+}
+
+// ── Severity badge (corrected + original) ────────────────────────────
+// Single source for the finding severity chip across the tab strip, the
+// finding-left column, and the table-row score column. Reads the global
+// `state.severityMode` lens through format.js's `displayedSeverity`, so
+// the toolbar switch flips every site at once.
+//
+// When the finding carries a severity correction (and we're showing
+// corrected — the default), the primary chip is the corrected tier and a
+// muted, struck `was <original>` companion + a ▲/▼ direction glyph render
+// alongside it; in 'original' mode the primary is the original tier and an
+// outlined companion shows the corrected target. `correctedVariants` adds
+// a "varies" chip when a deduped finding's correction differs across the
+// reports it appeared in (workspace view). The ▲/▼ glyph + strikethrough
+// are shape cues so the corrected/original distinction is never conveyed
+// by color alone; the full detail rides the `title` + `aria-label`.
+//   variant 'full'    — finding-left / focus (companion stacks below)
+//   variant 'compact' — table row (companion stacks below; tighter)
+//   variant 'tab'     — tab strip (primary + a small ▲/▼ marker only)
+export function severityBadge(f, { variant = 'full' } = {}) {
+  const mode = state.severityMode
+  const shown = displayedSeverity(f, mode)
+  const primary = html`<span class=${`badge ${shown}`}>${badgeLabel(shown)}</span>`
+  const hasCorr = hasSeverityCorrection(f)
+  // Cross-report divergence is a per-survivor (group-level) concept — not
+  // meaningful on the tiny per-tab badge, so skip it there.
+  const variants = variant === 'tab' ? null : correctedVariants(f)
+  if (!hasCorr && !variants) return primary
+
+  const variesTip = variants
+    ? `Corrected severity varies across reports — ${Object.entries(variants).map(([r, v]) => `${r || '(this report)'}: ${badgeLabel(v.severity)}`).join('; ')}`
+    : null
+  const variesChip = variants
+    ? html`<span class="badge-varies" title=${variesTip} aria-label=${variesTip}>varies</span>`
+    : nothing
+
+  if (!hasCorr) {
+    // Divergence only — this report's survivor carries no own-correction
+    // but a deduped sibling did. Show the plain primary + the varies hint.
+    return html`<span class=${`badge-pair badge-pair-${variant}`}>${primary}${variesChip}</span>`
+  }
+
+  const original = f.severity
+  const corrected = effectiveSeverity(f)
+  const reason = f.correctedSeverityReason
+  const raised = (SEVERITY_ORDER[corrected] ?? 0) > (SEVERITY_ORDER[original] ?? 0)
+  const dirWord = raised ? 'up' : 'down'
+  const arrow = raised ? '▲' : '▼'
+  const showingCorrected = mode !== 'original'
+  const tip = (showingCorrected
+    ? `Corrected ${dirWord} from ${badgeLabel(original)}`
+    : `Original severity — corrected ${dirWord} to ${badgeLabel(corrected)}`)
+    + (reason ? ` — ${reason}` : '')
+  const aria = `Severity ${badgeLabel(shown)}; ${showingCorrected
+    ? `corrected ${dirWord} from ${badgeLabel(original)}`
+    : `original, corrected to ${badgeLabel(corrected)}`}${reason ? `; reason: ${reason}` : ''}`
+
+  if (variant === 'tab') {
+    return html`<span class="badge-pair badge-pair-tab" title=${tip} aria-label=${aria}>${primary}<span class=${`badge-corr-mark ${dirWord}`} aria-hidden="true">${arrow}</span></span>`
+  }
+
+  // The companion: the value NOT currently primary. In corrected mode
+  // that's the (struck) original; in original mode it's the corrected
+  // target (outlined, not struck — it isn't superseded in this view).
+  const other = showingCorrected ? original : corrected
+  return html`<span class=${`badge-pair badge-pair-${variant}`} title=${tip} aria-label=${aria}>${primary}<span class="badge-orig-wrap"><span class=${`badge-arrow ${dirWord}`} aria-hidden="true">${arrow}</span>${showingCorrected ? html`<span class="badge-pre" aria-hidden="true">was</span>` : nothing}<span class=${`badge-orig ${other}${showingCorrected ? ' struck' : ''}`}>${badgeLabel(other)}</span></span>${variesChip}</span>`
 }
 
 // First non-empty line of a description, for the table-view title.
@@ -450,7 +517,7 @@ function tabTemplate(f, isActive) {
   // handler. Falls through to a muted opacity hint via finding-row
   // / finding-card CSS.
   else if (ignored) classes.push('tab-ignored')
-  return html`<button type="button" class=${classes.join(' ')} data-tid=${key}><span class="tab-label"><span class=${`badge ${f.severity}`}>${badgeLabel(f.severity)}</span> ${f.confidence === undefined ? nothing : html`<span class="tab-conf">${f.confidence}/10</span>`}${tabMarksTemplate(entry)}</span></button>`
+  return html`<button type="button" class=${classes.join(' ')} data-tid=${key}><span class="tab-label">${severityBadge(f, { variant: 'tab' })} ${f.confidence === undefined ? nothing : html`<span class="tab-conf">${f.confidence}/10</span>`}${tabMarksTemplate(entry)}</span></button>`
 }
 
 // Confidence display for the finding-left badge column. The table
@@ -464,7 +531,7 @@ function confTemplate(f) {
     // (circumference ≈ 100), so stroke-dasharray = "<conf*10> 100"
     // draws an N% arc with the remainder invisible (no track ring).
     const arc = f.confidence * 10
-    return html`<div class=${`conf-ring ${f.severity}`}>
+    return html`<div class=${`conf-ring ${displayedSeverity(f, state.severityMode)}`}>
       <svg viewBox="0 0 36 36" aria-hidden="true">
         <circle class="conf-ring-track" cx="18" cy="18" r="15.9155"/>
         <circle class="conf-ring-arc" cx="18" cy="18" r="15.9155" style=${`stroke-dasharray: ${arc} 100`}/>
@@ -578,7 +645,7 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
   return html`<div class=${classMap({ 'tab-body': true, active: isActive })} data-tid=${key}>
     ${total > 1 ? html`<div class="print-case-label">${idx + 1} of ${total}</div>` : nothing}
     <div class="finding-left">
-      <span class=${`badge ${f.severity}`}>${badgeLabel(f.severity)}</span>
+      ${severityBadge(f, { variant: 'full' })}
       <div class="value-label">Severity</div>
       ${f.confidence === undefined ? nothing : confTemplate(f)}
       ${codeButton}
@@ -594,6 +661,7 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
       ${descBody ? html`<div class="desc">${renderHighlighted(descBody)}</div>` : nothing}
       ${f.recommendation ? html`<div class="recommendation">Recommendation: ${renderHighlighted(stripExportMarker(f.recommendation, f))}</div>` : nothing}
       ${f.confidenceReason ? html`<div class="conf-reason">${renderHighlighted(stripExportMarker(f.confidenceReason, f))}</div>` : nothing}
+      ${hasSeverityCorrection(f) && f.correctedSeverityReason ? html`<div class="severity-reason"><span class="severity-reason-label">Severity correction:</span> ${renderHighlighted(f.correctedSeverityReason)}</div>` : nothing}
       ${comment ? html`<div class="comment-block"><span class="comment-label">Comment:</span> ${renderCommentText(comment)}</div>` : nothing}
       ${fix
         ? html`<div class="fix-block"><span class="fix-label">Fix:</span> ${isHttpUrl(fix)
@@ -619,7 +687,7 @@ export function findingCardGid(g) {
 export function findingCardClasses(g) {
   const groupSt = groupState(g)
   const sortedTabs = sortTabs(g)
-  const isCritical = g.some((f) => f.critical || f.severity === 'critical')
+  const isCritical = g.some((f) => f.critical || displayedSeverity(f, state.severityMode) === 'critical')
   const classes = ['finding']
   if (isCritical) classes.push('is-critical')
   if (groupSt.hasConflict) classes.push('has-conflict')
@@ -678,7 +746,7 @@ export function tableRowGid(g) {
 // since the parent <finding-table> tracks selection there.
 export function tableRowClasses(g) {
   const groupSt = groupState(g)
-  const isCritical = g.some((f) => f.critical || f.severity === 'critical')
+  const isCritical = g.some((f) => f.critical || displayedSeverity(f, state.severityMode) === 'critical')
   const classes = []
   if (isCritical) classes.push('is-critical')
   if (groupSt.hasConflict) classes.push('has-conflict')
@@ -704,7 +772,7 @@ export function tableRowInnerTemplate(g) {
 
   return html`
     <div class="row-score">
-      <span class=${`badge ${f.severity}`}>${badgeLabel(f.severity)}</span>
+      ${severityBadge(f, { variant: 'compact' })}
       ${f.confidence === undefined ? nothing : html`<span class="row-conf"><strong>${f.confidence}</strong>/10</span>`}
     </div>
     <div class="row-body">

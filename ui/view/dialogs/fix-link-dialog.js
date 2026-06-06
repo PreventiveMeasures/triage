@@ -10,7 +10,8 @@
 // `openFixLinkDialog(...)` returns a Promise that resolves to the
 // trimmed new value, or null on cancel (= no change).
 import { html, nothing, unsafeCSS } from 'lit'
-import { isHttpUrl } from '../format.js'
+import { state } from '#client/index.js'
+import { displayedSeverity, isHttpUrl } from '../format.js'
 import { AppDialog, openAppDialog } from './app-dialog.js'
 import severityCSS from './dialog-severity.css'
 import fixLinkCSS from './dialog-fix-link.css'
@@ -81,7 +82,7 @@ class FixLinkDialog extends AppDialog {
       <header>
         <h3>${hasInitial ? 'Edit fix link' : 'Add fix link'}</h3>
         <div class="finding">
-          ${severityBadge(f.severity)}
+          ${severityBadge(displayedSeverity(f, state.severityMode))}
           ${loc ? html`<span class="loc" title=${loc}>${loc}</span>` : nothing}
         </div>
         ${f.description

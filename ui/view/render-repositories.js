@@ -28,7 +28,7 @@ import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { ensureBundleFindingsIndexed, getRepositoriesIndex, state } from '#client/index.js'
 import { tabKey } from './group.js'
-import { SEVERITIES } from './format.js'
+import { SEVERITIES, displayedSeverity } from './format.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 import { pkgColor } from './graph/utils.js'
 import { renderIssuesGroupedByFile } from './render-bundle.js'
@@ -206,7 +206,8 @@ function renderRepositorySlide(repo, bucket) {
 function renderRepositoryRow(repo, bucket, isSel) {
   const sevCounts = { critical: 0, high: 0, medium: 0, low: 0, high_bug: 0, bug: 0, informational: 0 }
   for (const f of bucket.findings) {
-    if (sevCounts[f.severity] !== undefined) sevCounts[f.severity]++
+    const sev = displayedSeverity(f, state.severityMode)
+    if (sevCounts[sev] !== undefined) sevCounts[sev]++
   }
   const chips = SEVERITIES.filter((s) => sevCounts[s] > 0)
   // Reuse the package palette so each repo lands on a stable
@@ -274,7 +275,8 @@ function repositoryFindingsByFile(rawBucket, mode = 'live') {
 function renderRepositoryOverview(repo, bucket) {
   const sevCounts = { critical: 0, high: 0, medium: 0, low: 0, high_bug: 0, bug: 0, informational: 0 }
   for (const f of bucket.findings) {
-    if (sevCounts[f.severity] !== undefined) sevCounts[f.severity]++
+    const sev = displayedSeverity(f, state.severityMode)
+    if (sevCounts[sev] !== undefined) sevCounts[sev]++
   }
   const chips = SEVERITIES.filter((s) => sevCounts[s] > 0)
   const sortedFiles = [...bucket.files.entries()].toSorted(([fa, a], [fb, b]) => {
