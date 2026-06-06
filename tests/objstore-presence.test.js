@@ -28,7 +28,8 @@ const {
   discoverRemoteBundleIntegrities, discoverRemoteFileNames,
   fetchFile, isBundleInRemote, isInRemote,
   onAutoDownloaded, onChange, openWorkspace, putFile, recheckRemoteStorage,
-  remoteBundleCount, remoteBundleIntegrities, remoteCount, remoteFileNames,
+  remoteBundleCount, remoteBundleIntegrities, remoteBundleModifiedAt, remoteCount, remoteFileNames,
+  remoteModifiedAt,
 } = await import('../client/sync/objstore-presence.js')
 
 async function createWorkspaceWithReports(name, reports) {
@@ -204,6 +205,33 @@ describe('client/sync/objstore-presence', () => {
       closeWorkspace(ws.id)
       await deleteWorkspace(ws.id)
     }
+  })
+
+  it('remoteModifiedAt surfaces the relay commit time after a putFile', async () => {
+    const ws = await createWorkspaceWithReports('presence-modat', ['mod-me.json'])
+    try {
+      openWorkspace(ws.id)
+      await awaitPresence(() => isInRemote(ws.id, 'mod-me.json') === false, 'initial false')
+      // Unknown before any commit.
+      assert.equal(remoteModifiedAt(ws.id, 'mod-me.json'), 0)
+      const beforePut = Date.now()
+      const result = await putFile(ws.id, 'mod-me.json', Buffer.from('{"hi":1}'))
+      assert.equal(result.ok, true, `put failed: ${JSON.stringify(result)}`)
+      // The put result carries the relay's commit timestamp...
+      assert.equal(typeof result.meta.putAt, 'number')
+      assert.ok(result.meta.putAt >= beforePut, 'putAt is the just-committed epoch ms')
+      // ...and the presence layer exposes it as the report's "last modified".
+      await awaitPresence(() => isInRemote(ws.id, 'mod-me.json'), 'cloud after putFile')
+      assert.equal(remoteModifiedAt(ws.id, 'mod-me.json'), result.meta.putAt)
+    } finally {
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+    }
+  })
+
+  it('remoteModifiedAt / remoteBundleModifiedAt are 0 for an unopened workspace', () => {
+    assert.equal(remoteModifiedAt('nonexistent-ws-id', 'x.json'), 0)
+    assert.equal(remoteBundleModifiedAt('nonexistent-ws-id', 'sha512-x'), 0)
   })
 
   it('putFile re-upload passes the live version through prevVersion', async () => {

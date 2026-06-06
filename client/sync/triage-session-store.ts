@@ -21,6 +21,7 @@ const SESSIONS_VERSION = 1
 type PersistedSession = {
   serverUrl?: unknown
   baseRevision?: unknown
+  triageModifiedAt?: unknown
   baseState?: unknown
   savesSinceKeyframe?: unknown
 }
@@ -151,6 +152,7 @@ async function writeAllSessionsRaw(map: PersistedSessionsMap): Promise<boolean> 
 
 export type RestoredSession = {
   baseRevision: string | null
+  triageModifiedAt: number | null
   baseState: TriageStateMap
   savesSinceKeyframe: number
 }
@@ -166,6 +168,9 @@ export function loadPersistedSession(workspaceId: string, currentServerUrl: stri
   if (!entry || entry.serverUrl !== currentServerUrl) return null
   return {
     baseRevision: typeof entry.baseRevision === 'string' ? entry.baseRevision : null,
+    // Advisory display value; tolerate a missing field (older blob) by
+    // defaulting to null — the next applied revision / save repopulates it.
+    triageModifiedAt: typeof entry.triageModifiedAt === 'number' ? entry.triageModifiedAt : null,
     // Round-12 H6 defense-in-depth: normalise baseState into a
     // null-prototype object so a `__proto__` own key (from a prior
     // version's polluted save) doesn't trigger the Object.prototype

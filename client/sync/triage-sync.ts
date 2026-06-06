@@ -136,6 +136,12 @@ type Session = {
   verifyingKey: Uint8Array<ArrayBuffer> | null
   ids: Set<string>
   baseRevision: string | null
+  // Epoch ms of the chain head's commit — the workspace's "triage last
+  // modified". Advanced from each applied revision's `createdAt` and on a
+  // local save-ack; persisted alongside `baseRevision` so it survives a
+  // reload (an at-head re-subscribe returns an empty catch-up chain).
+  // null until the first revision is applied / restored.
+  triageModifiedAt: number | null
   baseState: TriageStateMap
   savesSinceKeyframe: number
   localState: TriageStateMap
@@ -203,6 +209,10 @@ type WireRevision = {
   nonce?: unknown
   ciphertext?: unknown
   signature?: unknown
+  // Epoch ms the server stamped at commit. Advisory (server-asserted,
+  // outside the signed canonical) — surfaced as the workspace's "triage
+  // last modified". Untyped like the rest; consumers number-guard it.
+  createdAt?: unknown
 }
 type WireMessage = {
   type?: unknown
@@ -232,6 +242,10 @@ export type SessionInfo = {
   workspaceId: string
   workspaceTag: string | null
   baseRevision: string | null
+  // Epoch ms of the workspace's last triage change (the chain head's
+  // commit), or null if not yet known. The UI surfaces this as the synced
+  // report's "triage last modified".
+  triageModifiedAt: number | null
   pending: { base: string | null, keyframe: boolean } | null
   pendingSave: boolean
   keyReady: boolean
@@ -641,6 +655,7 @@ function persistSession(target: Session): void {
     all[target.workspaceId] = {
       serverUrl: url,
       baseRevision: target.baseRevision,
+      triageModifiedAt: target.triageModifiedAt,
       savesSinceKeyframe: target.savesSinceKeyframe ?? 0,
       baseState: target.baseState,
     }
@@ -1104,6 +1119,12 @@ async function applyChainToBase(session: Session, revisions: WireRevision[]): Pr
     const applyTo: TriageStateMap = isKeyframe ? Object.create(null) : session.baseState
     session.baseState = applyChangeset(applyTo, changeset ?? {})
     session.baseRevision = rev.id
+    // Advance the "triage last modified" to this revision's commit time.
+    // Revisions arrive in chain order, so the last one applied is the
+    // head; `createdAt` is advisory (server-asserted) so just number-guard.
+    if (typeof rev.createdAt === 'number' && Number.isFinite(rev.createdAt)) {
+      session.triageModifiedAt = rev.createdAt
+    }
     if (isKeyframe) session.savesSinceKeyframe = 0
     // Cap at keyframeInterval: once over the threshold the next save
     // is a keyframe regardless of how many more peer revs land first,
@@ -1219,6 +1240,13 @@ async function handleAck(session: Session, msg: WireMessage): Promise<void> {
     const applyTo: TriageStateMap = session.pending.keyframe ? Object.create(null) : session.baseState
     session.baseState = applyChangeset(applyTo, session.pending.changeset)
     session.baseRevision = msg.id
+    // Our own save just committed — stamp the "triage last modified" with
+    // local now. The save-ack doesn't carry the server's `created_at`, and
+    // the saver doesn't receive its own `workspace-state` broadcast, so
+    // this is the saver-side equivalent of the chain-apply update above.
+    // Peers get the authoritative server time via their broadcast; the
+    // sub-second skew between the two is immaterial for a "last modified".
+    session.triageModifiedAt = Date.now()
     // Same cap as the chain-apply path — see audit L3 round-6.
     session.savesSinceKeyframe = session.pending.keyframe
       ? 0
@@ -1705,6 +1733,7 @@ export const triageSync = {
       deactivateSession(session)
       const restored = next ? loadPersistedSession(session.workspaceId, next) : null
       session.baseRevision = restored?.baseRevision ?? null
+      session.triageModifiedAt = restored?.triageModifiedAt ?? null
       session.baseState = restored?.baseState ?? Object.create(null)
       session.savesSinceKeyframe = restored?.savesSinceKeyframe ?? 0
       session.localState = effectiveLocalState(session.baseState, session.ids)
@@ -1868,6 +1897,9 @@ export const triageSync = {
       // per-server persistence when present; otherwise null / empty
       // / 0 and the first save sends the full local snapshot.
       baseRevision: restored?.baseRevision ?? null,
+      // Restored alongside baseRevision so the "triage last modified"
+      // survives a reload (the at-head re-subscribe returns no revisions).
+      triageModifiedAt: restored?.triageModifiedAt ?? null,
       baseState: restoredBaseState,
       savesSinceKeyframe: restored?.savesSinceKeyframe ?? 0,
       localState: effectiveLocalState(restoredBaseState, ids),
@@ -1967,6 +1999,7 @@ export const triageSync = {
       workspaceId: session.workspaceId,
       workspaceTag: session.workspaceTag,
       baseRevision: session.baseRevision,
+      triageModifiedAt: session.triageModifiedAt,
       pending: session.pending && { base: session.pending.base, keyframe: session.pending.keyframe },
       pendingSave: session.pendingSave,
       keyReady: session.key !== null,

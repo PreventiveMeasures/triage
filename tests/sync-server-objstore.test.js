@@ -320,14 +320,14 @@ describe('v1.objstore server (REST-primary)', { concurrency: true }, () => {
     const conflict = await c.recv((m) => m.type === 'objstore-conflict')
     assert.equal(conflict.action, 'put')
     assert.equal(conflict.current.version, 1)
-    // `current` must be the `objectMetaWire` projection, never the raw
-    // `ObjectRow`: the server-only `putAt` debug column must not leak
-    // onto the wire. Pin the exact key set so a future regression that
-    // re-adds `putAt` (or any other column) is caught.
-    assert.equal('putAt' in conflict.current, false, 'PUT conflict.current must not leak server-only putAt')
+    // `current` is the `objectMetaWire` projection: it now carries the
+    // advisory `putAt` (last-commit epoch ms — the synced "last modified")
+    // alongside the load-bearing fields. Pin the exact key set so the
+    // conflict frame stays in lockstep with the fetch / list / PUT frames.
+    assert.equal(typeof conflict.current.putAt, 'number')
     assert.deepEqual(
       Object.keys(conflict.current).toSorted(),
-      ['contentHash', 'contentLength', 'incarnation', 'resourceTag', 'signature', 'version'],
+      ['contentHash', 'contentLength', 'incarnation', 'putAt', 'resourceTag', 'signature', 'version'],
     )
     c.ws.close()
   })
@@ -650,6 +650,12 @@ describe('v1.objstore server (REST-primary)', { concurrency: true }, () => {
     assert.equal(list.resources.length, 3)
     const tags = list.resources.map((r) => r.resourceTag).toSorted()
     assert.deepEqual(tags, ['r-a', 'r-b', 'r-c'])
+    // Each subscribe-ack resource carries the advisory `putAt` (last-commit
+    // epoch ms) — the synced "last modified" the presence layer surfaces.
+    for (const r of list.resources) {
+      assert.equal(typeof r.putAt, 'number')
+      assert.ok(r.putAt > 0, 'putAt is a real epoch-ms timestamp')
+    }
     // Per-resource fetch returns its own bytes, not a sibling's.
     const fetchedB = await fetchBlob(c, sk, tag, 'r-b', httpOrigin)
     assert.deepEqual(fetchedB.body, p2)
@@ -1236,12 +1242,12 @@ describe('v1.objstore server (REST-primary)', { concurrency: true }, () => {
     assert.equal(conflict.action, 'delete')
     assert.equal(conflict.current.version, 1)
     // Same wire contract as the PUT-conflict path: the DELETE conflict
-    // frame echoes the live row through `objectMetaWire`, so the
-    // server-only `putAt` column must be absent here too.
-    assert.equal('putAt' in conflict.current, false, 'DELETE conflict.current must not leak server-only putAt')
+    // frame echoes the live row through `objectMetaWire`, so it carries
+    // the advisory `putAt` (last-commit epoch ms) alongside the rest.
+    assert.equal(typeof conflict.current.putAt, 'number')
     assert.deepEqual(
       Object.keys(conflict.current).toSorted(),
-      ['contentHash', 'contentLength', 'incarnation', 'resourceTag', 'signature', 'version'],
+      ['contentHash', 'contentLength', 'incarnation', 'putAt', 'resourceTag', 'signature', 'version'],
     )
     // Row still there — the failed DELETE didn't drop it.
     const list = await listViaSubscribe(c, sk, tag)

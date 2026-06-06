@@ -171,9 +171,10 @@ describe('bus-receiver — objstore-put branch (`objput`)', () => {
       assert.equal(wire.contentHash, row.contentHash)
       assert.equal(wire.contentLength, row.contentLength)
       assert.equal(wire.signature, row.signature)
-      // putAt is a server-only debug column — `objectMetaWire` strips
-      // it. A regression that forwarded `row.putAt` would surface here.
-      assert.equal(Object.prototype.hasOwnProperty.call(wire, 'putAt'), false, 'putAt must not leak to the wire')
+      // putAt (the resource's last-commit epoch ms) now rides the wire via
+      // `objectMetaWire` as the synced "last modified" hint, so the
+      // cross-instance re-broadcast must carry it through too.
+      assert.equal(wire.putAt, row.putAt)
     } finally { await cleanup() }
   })
 

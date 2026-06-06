@@ -593,6 +593,34 @@ describe('triage-sync client', () => {
     await deleteWorkspace(wsId)
   })
 
+  it('exposes triageModifiedAt — stamped on save, restored across reopen', async () => {
+    const wsId = await startSession(['finding-A'])
+    // Unknown until the first triage change lands.
+    assert.equal(triageSync.sessionInfo(wsId).triageModifiedAt, null)
+    const beforeSave = Date.now()
+    patchEntry(state.triage, 'finding-A', { color: 'red' })
+    await saveTriage()
+    await waitFor(() => settledAfterAck(wsId), 'baseline ack')
+    const modAt = triageSync.sessionInfo(wsId).triageModifiedAt
+    assert.equal(typeof modAt, 'number')
+    assert.ok(modAt >= beforeSave, 'triageModifiedAt stamped at save time')
+
+    // Reopen: the at-head re-subscribe returns an empty chain, so the
+    // value must come back from the persisted session blob rather than
+    // reset to null — otherwise "triage last modified" would vanish on
+    // every reload.
+    triageSync.closeSession()
+    triageSync.openSession(wsId)
+    await waitFor(statusOnline, 'sync online (re-open)')
+    await waitFor(
+      () => triageSync.sessionInfo(wsId)?.baseRevision != null,
+      'baseRevision restored from localStorage',
+    )
+    assert.equal(triageSync.sessionInfo(wsId).triageModifiedAt, modAt, 'triageModifiedAt restored across reopen')
+    triageSync.closeSession()
+    await deleteWorkspace(wsId)
+  })
+
   it('skips a revision whose id does not match its content hash', async () => {
     // Fake relay so we can fabricate a chain entry the real server
     // would never produce. The signature is valid; only the `id`

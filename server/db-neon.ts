@@ -319,14 +319,14 @@ function tryCommitNeon(sql: NeonSql): (input: RevisionInsert) => Promise<CommitR
       // type mismatch) rethrow.
       if (!isUniqueViolation(err)) throw err
       const dupRows = await sql.query(REVISION_EXISTS_SQL, [tag, id]) as Array<unknown>
-      if (dupRows.length > 0) return { kind: 'inserted' }
+      if (dupRows.length > 0) return { kind: 'inserted', createdAt }
       const headRows = await sql.query(HEAD_FOR_SQL, [tag]) as Array<{ id: string }>
       return { kind: 'stale-base', head: headRows[0]?.id ?? null }
     }
     const insertRows = results[0] as Array<unknown>
     const dupRows = results[1] as Array<unknown>
     const headRows = results[2] as Array<{ id: string }>
-    if (insertRows.length > 0) return { kind: 'inserted' }
+    if (insertRows.length > 0) return { kind: 'inserted', createdAt }
     if (dupRows.length > 0) return { kind: 'duplicate' }
     return { kind: 'stale-base', head: headRows[0]?.id ?? null }
   }

@@ -23,8 +23,10 @@ export {
   putBundleToRemote,
   putFile,
   recheckRemoteStorage,
+  remoteBundleModifiedAt,
   remoteBundleName,
   remoteCount,
+  remoteModifiedAt,
 } from './sync/objstore-presence.js'
 
 export {

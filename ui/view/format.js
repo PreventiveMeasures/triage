@@ -64,6 +64,38 @@ export function formatBytes(n) {
   return `${n.toLocaleString()} B`
 }
 
+// Human "last modified" label from an epoch-ms timestamp — the synced
+// report / bundle / triage modified date. Returns null for a missing,
+// zero, or non-finite value (the relay reports 0 = "unknown", and callers
+// suppress the row rather than render a placeholder). Recent times read as
+// a coarse relative age ("just now", "5 min ago", "3 hr ago", "2 days
+// ago"); anything older than a week falls back to a locale date. Relative
+// output can go mildly stale between renders — the sidebar / overview
+// re-render on every sync change, frequent enough for a "modified" hint.
+export function formatModifiedAt(ms) {
+  if (typeof ms !== 'number' || !Number.isFinite(ms) || ms <= 0) return null
+  const diff = Date.now() - ms
+  // Future timestamps (clock skew between this client and the relay or
+  // the uploading peer) read as "just now" rather than a negative age.
+  if (diff < 60_000) return 'just now'
+  const mins = Math.floor(diff / 60_000)
+  if (mins < 60) return `${mins} min ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs} hr ago`
+  const days = Math.floor(hrs / 24)
+  if (days < 7) return `${days} day${days === 1 ? '' : 's'} ago`
+  // Older than a week — a bare locale date reads better than "37 days ago".
+  try { return new Date(ms).toLocaleDateString() } catch { return null }
+}
+
+// Absolute locale date-time companion to `formatModifiedAt`, for the
+// `title` tooltip that shows the precise timestamp on hover. Null when the
+// value is missing / unknown so callers can drop the attribute.
+export function formatTimestamp(ms) {
+  if (typeof ms !== 'number' || !Number.isFinite(ms) || ms <= 0) return null
+  try { return new Date(ms).toLocaleString() } catch { return null }
+}
+
 // Strip the longest common DIRECTORY prefix shared by every path
 // in `paths`. Mirrors `stripCommonPrefix` in src/paths.js so the
 // UI matches what the analyzer-side normalisation produces:

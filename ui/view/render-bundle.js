@@ -18,8 +18,9 @@ import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 import { BUNDLE_ICON_SVG } from './icons.js'
-import { findingsForFileHash, reportsForFinding, reportsForFindingByPackage, reportsForFindingByRepo, state } from '#client/index.js'
-import { SEVERITIES, SEVERITY_ORDER, formatBytes, formatRunMeta, stripCommonPathPrefix } from './format.js'
+import { findingsForFileHash, listWorkspaces, reportsForFinding, reportsForFindingByPackage, reportsForFindingByRepo, state } from '#client/index.js'
+import { remoteBundleModifiedAt } from './client-sync.js'
+import { SEVERITIES, SEVERITY_ORDER, formatBytes, formatModifiedAt, formatRunMeta, formatTimestamp, stripCommonPathPrefix } from './format.js'
 import { bundleSourcesAsMap } from './bundle-sources.js'
 import { bundlePkgOf, ownSourceSplittable } from './bundle-pkg-of.js'
 import { tabKey } from './group.js'
@@ -1897,6 +1898,22 @@ export function renderBundlesList(bundles) {
   return renderBundleSlide(selectedEntry)
 }
 
+// "Last modified" (epoch ms) for a bundle across every workspace that
+// holds it in remote. Bundles are content-addressed, so the same
+// integrity can be synced under multiple workspaces — take the most
+// recent commit. Returns 0 when no owning workspace has it in remote
+// (local-only, sync off, or an older relay that didn't report a date).
+function bundleModifiedAt(integrity) {
+  let latest = 0
+  for (const w of listWorkspaces()) {
+    if (Array.isArray(w.bundles) && w.bundles.includes(integrity)) {
+      const m = remoteBundleModifiedAt(w.id, integrity)
+      if (m > latest) latest = m
+    }
+  }
+  return latest
+}
+
 // Right-panel content for the open bundle. Until events.js finishes
 // the readBundle + parse, `state.bundleDetails` is null (or stale
 // for a previous selection); show a Loading… placeholder. For .map
@@ -1904,9 +1921,17 @@ export function renderBundlesList(bundles) {
 // list with per-source content sizes). Anything else (stasis
 // bundle, unparseable .map) gets the metadata-only fallback.
 function renderBundleDetails(entry, details) {
+  // "Last modified" of the synced bundle (epoch ms), resolved across the
+  // workspaces that hold it in remote (see `bundleModifiedAt`). Suppressed
+  // entirely when unknown (sync off, local-only bundle, older relay).
+  const modifiedAt = bundleModifiedAt(entry.integrity)
+  const modifiedLabel = formatModifiedAt(modifiedAt)
   const meta = html`<dl class="bundles-detail-meta">
     <dt>Name</dt><dd>${entry.name}</dd>
     <dt>Integrity</dt><dd class="mono">${entry.integrity}</dd>
+    ${modifiedLabel
+      ? html`<dt>Modified</dt><dd title=${formatTimestamp(modifiedAt) ?? nothing}>${modifiedLabel}</dd>`
+      : nothing}
     ${details && details.integrity === entry.integrity
       ? html`<dt>Size</dt><dd>${formatBytes(details.size)}</dd>`
       : nothing}

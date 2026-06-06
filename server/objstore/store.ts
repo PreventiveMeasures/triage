@@ -79,8 +79,11 @@ const SCHEMA = `
 
 // One LIVE row, exactly the shape the `workspace-subscribed` ack's
 // `resources` array carries on the wire, minus `keyframe`-style
-// server-only flags. `put_at` is a debug aid the wire format never
-// includes — inspectable via the DB but the server never volunteers it.
+// server-only flags. `put_at` (epoch ms of the last commit) rides the
+// wire via `objectMetaWire` as a display-only "last modified" hint —
+// it's server-asserted, NOT covered by the row signature, so clients
+// treat it as advisory (a relay can't forge content under it, only
+// misreport when its own copy last changed).
 export type ObjectRow = {
   resourceTag: string
   version: number
@@ -323,17 +326,19 @@ function rowFromDb(r: DbRow): ObjectRow {
 }
 
 // The live-row fields every objstore wire frame carries (list result,
-// fetch token, PUT broadcast). `putAt` is a server-only debug column
-// the wire never includes. One projection so the emit sites
-// (sync-handlers.ts subscribe-ack `resources`, handlers.ts handleFetch,
-// rest.ts PUT broadcast) can't drift on the shape.
+// fetch token, PUT broadcast). `putAt` (epoch ms of the last commit)
+// rides along as a display-only "last modified" hint — server-asserted,
+// NOT covered by the row signature, so clients treat it as advisory. One
+// projection so the emit sites (sync-handlers.ts subscribe-ack
+// `resources`, handlers.ts handleFetch, rest.ts PUT broadcast) can't
+// drift on the shape.
 export type ObjectMetaWire = {
-  resourceTag: string; version: number; incarnation: string; contentHash: string; contentLength: number; signature: string
+  resourceTag: string; version: number; incarnation: string; contentHash: string; contentLength: number; signature: string; putAt: number
 }
 export function objectMetaWire(row: ObjectRow): ObjectMetaWire {
   return {
     resourceTag: row.resourceTag, version: row.version, incarnation: row.incarnation, contentHash: row.contentHash,
-    contentLength: row.contentLength, signature: row.signature,
+    contentLength: row.contentLength, signature: row.signature, putAt: row.putAt,
   }
 }
 

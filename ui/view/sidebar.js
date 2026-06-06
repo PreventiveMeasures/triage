@@ -2,7 +2,8 @@ import { LitElement, html, render as litRender, nothing, unsafeCSS } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, getCount, getPackagesIndex, getRepositoriesIndex, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, state } from '#client/index.js'
-import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, triageSync } from './client-sync.js'
+import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, remoteBundleModifiedAt, remoteModifiedAt, triageSync } from './client-sync.js'
+import { formatModifiedAt } from './format.js'
 import sidebarCSS from './sidebar.css'
 import fileIconCSS from '../styles/file-icon.css'
 import { initEncryptionToggle } from './encryption-toggle.js'
@@ -147,6 +148,13 @@ function fileItemTemplate(n, opts = {}) {
   const cls = `file-item${isCurrent ? ' current' : ''}${opts.indented ? ' indented' : ''}`
   const label = displayName(n)
   const count = getCount(n)
+  // "Synced · modified X ago" rides the row tooltip when this report is
+  // shown inside a workspace and the relay has reported a commit time —
+  // reports have no detail panel of their own, so the tooltip is their
+  // home for the synced "last modified". Top-level (unfiled) rows have no
+  // workspace context, so no date.
+  const modifiedLabel = opts.workspaceId ? formatModifiedAt(remoteModifiedAt(opts.workspaceId, n)) : null
+  const tooltip = modifiedLabel ? `${label}\nSynced · modified ${modifiedLabel}` : label
   const iconHtml = FILE_ICONS[groupOf(n)] ?? FILE_ICONS.default
   // Indented rows live inside a workspace; carry the workspace id so
   // a drop onto one of these is treated as "assign to this workspace"
@@ -162,7 +170,7 @@ function fileItemTemplate(n, opts = {}) {
     data-file=${n}
     data-workspace-id=${opts.workspaceId ?? nothing}
     draggable="true"
-  ><button type="button" class="file-name" data-tooltip=${label}>${unsafeHTML(iconHtml)}<span class="file-label">${label}</span>${count === undefined ? nothing : html`<span class="file-count">${count}</span>`}</button></li>`
+  ><button type="button" class="file-name" data-tooltip=${tooltip}>${unsafeHTML(iconHtml)}<span class="file-label">${label}</span>${count === undefined ? nothing : html`<span class="file-count">${count}</span>`}</button></li>`
 }
 
 function groupHeaderTemplate(label, opts = {}) {
@@ -224,6 +232,12 @@ function bundleItemTemplate(bundle, opts = {}) {
   // (Reports, DeepSec, …).
   const indented = opts.workspaceId != null
   const cls = `file-item bundle-item${indented ? ' indented' : ''}${isCurrent ? ' current' : ''}`
+  // Append the synced "last modified" to the existing name\nintegrity
+  // tooltip when this bundle sits inside a workspace and the relay has a
+  // commit time for it (the prominent copy is the bundle Overview's
+  // Modified row; this is the at-a-glance sidebar echo).
+  const modifiedLabel = opts.workspaceId ? formatModifiedAt(remoteBundleModifiedAt(opts.workspaceId, integrity)) : null
+  const tooltip = modifiedLabel ? `${name}\n${integrity}\nSynced · modified ${modifiedLabel}` : `${name}\n${integrity}`
   // `data-workspace-id` mirrors `fileItemTemplate` — when the row sits
   // INSIDE a workspace, a drop onto it resolves to "this workspace"
   // (so dragging a sibling bundle into the same workspace is a no-op
@@ -235,7 +249,7 @@ function bundleItemTemplate(bundle, opts = {}) {
     data-bundle-integrity=${integrity}
     data-workspace-id=${opts.workspaceId ?? nothing}
     draggable="true"
-  ><button type="button" class="file-name" data-tooltip=${`${name}\n${integrity}`}>${BUNDLE_ICON}<span class="file-label">${name}</span></button></li>`
+  ><button type="button" class="file-name" data-tooltip=${tooltip}>${BUNDLE_ICON}<span class="file-label">${name}</span></button></li>`
 }
 
 // Row for a workspace-claimed bundle whose bytes aren't on this device
@@ -303,6 +317,17 @@ const WORKSPACE_LEAVE_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11
 // (export) and the door-arrow (leave). Sized to match the other
 // hover-revealed action buttons in the workspace row.
 const WORKSPACE_SHARE_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 9.5L9 7.5"/><path d="M9.5 5.5L10.5 4.5a2.1 2.1 0 1 1 3 3l-1 1"/><path d="M6.5 11.5L5.5 12.5a2.1 2.1 0 1 1-3-3l1-1"/></svg>`
+// "Triage updated X ago" for a workspace row's title tooltip — the
+// workspace's triage last-modified, read from its sync session. Triage
+// syncs as a per-workspace revision chain (not per report), so this is a
+// workspace-level value. `nothing` when sync isn't loaded or the time is
+// unknown, so the title attribute is dropped rather than rendered empty.
+function workspaceTriageTitle(workspaceId) {
+  const session = triageSync.openSessions.find((s) => s.workspaceId === workspaceId)
+  const label = session ? formatModifiedAt(session.triageModifiedAt) : null
+  return label ? `Triage updated ${label}` : nothing
+}
+
 function workspaceItemTemplate(w) {
   const isCurrent = state.currentWorkspace === w.id
     && (state.currentView === 'findings' || state.currentView === 'files')
@@ -325,7 +350,7 @@ function workspaceItemTemplate(w) {
   // their copy). No placeholder trash icon for the eventual
   // server-side "delete the chain too" (TBD): it would misread as
   // "Delete is the same action as Leave, just greyed out".
-  return html`<li class=${cls} data-workspace-id=${w.id}><button type="button" class="file-name">${WORKSPACE_ICON}<span class="file-label" .textContent=${w.name}></span></button><button type="button" class="workspace-share" data-action="share-workspace" title="Share by link" aria-label="Share workspace by link">${WORKSPACE_SHARE_ICON}</button><button type="button" class="workspace-export" data-action="export-workspace" title="Export workspace" aria-label="Export workspace">${WORKSPACE_EXPORT_ICON}</button><button type="button" class="workspace-leave" data-action="leave-workspace" title="Leave workspace" aria-label="Leave workspace">${WORKSPACE_LEAVE_ICON}</button></li>`
+  return html`<li class=${cls} data-workspace-id=${w.id}><button type="button" class="file-name" title=${workspaceTriageTitle(w.id)}>${WORKSPACE_ICON}<span class="file-label" .textContent=${w.name}></span></button><button type="button" class="workspace-share" data-action="share-workspace" title="Share by link" aria-label="Share workspace by link">${WORKSPACE_SHARE_ICON}</button><button type="button" class="workspace-export" data-action="export-workspace" title="Export workspace" aria-label="Export workspace">${WORKSPACE_EXPORT_ICON}</button><button type="button" class="workspace-leave" data-action="leave-workspace" title="Leave workspace" aria-label="Leave workspace">${WORKSPACE_LEAVE_ICON}</button></li>`
 }
 
 function matchesSearch(name) {

@@ -93,6 +93,10 @@ export type RevisionRow = {
   nonce: string
   ciphertext: string
   signature: string
+  // Epoch ms stamped at commit. Surfaced on the wire (via `chainForWire`
+  // / the bus-receiver spread) so clients can show when triage was last
+  // modified; server-asserted, not part of the signed canonical.
+  createdAt: number
 }
 
 // Input to `commitRevision`. `keyframe` is a strict boolean here —
@@ -114,7 +118,7 @@ export type RevisionInsert = {
 // caller's claimed base — the caller renders this as a
 // `workspace-state` catch-up. `inserted` is the success path.
 export type CommitResult =
-  | { kind: 'inserted' }
+  | { kind: 'inserted'; createdAt: number }
   | { kind: 'duplicate' }
   | { kind: 'stale-base'; head: string | null }
 
@@ -509,14 +513,19 @@ export async function commitRevisionSqlite(
   // invocation from a non-typed context. Input-validation audit.
   const keyframeCol = keyframe === true ? 1 : 0
   const baseNorm = base ?? null
+  // One commit timestamp for the whole attempt — used for the INSERT and
+  // echoed in the `inserted` result (incl. the unique-violation recovery
+  // path below, which can't cheaply read back the stored value). Display-
+  // only, so a few ms of skew on the rare recovery branch is immaterial.
+  const createdAt = Date.now()
   try {
     // Gated INSERT: inserts (and RETURNs the assigned seq) only when
     // there is no dup id AND the current head equals the proposed
     // base. A returned row ⇔ inserted. `node:sqlite` runs this whole
     // statement synchronously, so the head-check and MAX(seq) it
     // contains read one snapshot — no concurrent commit interleaves.
-    const inserted = await gatedInsert.get(tag, id, baseNorm, keyframeCol, nonce, ciphertext, signature, Date.now())
-    if (inserted) return { kind: 'inserted' }
+    const inserted = await gatedInsert.get(tag, id, baseNorm, keyframeCol, nonce, ciphertext, signature, createdAt)
+    if (inserted) return { kind: 'inserted', createdAt }
     // No insert → a gate failed. Re-assert the dup gate first (a
     // retransmit landed) before falling back to the base gate
     // (head advanced past our base) — same dup-then-base precedence.
@@ -548,7 +557,7 @@ export async function commitRevisionSqlite(
     //     computed seq via a sibling commit with a different id.
     //     `stale-base` so the caller renders a `workspace-state`
     //     catch-up.
-    if (await handle.revisionExists.get(tag, id)) return { kind: 'inserted' }
+    if (await handle.revisionExists.get(tag, id)) return { kind: 'inserted', createdAt }
     const newHeadRow = await handle.headFor.get(tag)
     return { kind: 'stale-base', head: newHeadRow?.id ?? null }
   }

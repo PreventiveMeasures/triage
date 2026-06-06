@@ -230,6 +230,11 @@ describe('triage-sync server', { concurrency: true }, () => {
     const { chain } = await subscribe(c, sk, tag)
     assert.equal(chain.revisions.length, 1)
     assert.equal(chain.revisions[0].id, id)
+    // The catch-up chain carries each revision's `created_at` (epoch ms)
+    // as `createdAt` — the client takes the head's value as the
+    // workspace's "triage last modified".
+    assert.equal(typeof chain.revisions[0].createdAt, 'number')
+    assert.ok(chain.revisions[0].createdAt > 0)
     c.ws.close()
   })
 
@@ -734,6 +739,11 @@ describe('triage-sync server', { concurrency: true }, () => {
     // normalises on send so peers don't depend on `Boolean()`
     // coercion at receive time.
     assert.strictEqual(state.revisions[0].keyframe, true, 'broadcast keyframe is strict true')
+    // The live broadcast carries the commit's `createdAt` (epoch ms) too,
+    // so a peer's "triage last modified" advances in real time, not only
+    // on the catch-up chain.
+    assert.equal(typeof state.revisions[0].createdAt, 'number')
+    assert.ok(state.revisions[0].createdAt > 0)
     c1.ws.close(); c2.ws.close()
   })
 

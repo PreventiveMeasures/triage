@@ -70,6 +70,10 @@ export function mapRevisionRow(r: Record<string, unknown>): RevisionRow {
     nonce: String(r['nonce']),
     ciphertext: String(r['ciphertext']),
     signature: String(r['signature']),
+    // Epoch ms the server stamped at commit (`created_at`). Carried to
+    // the wire as the triage "last modified" hint; `num` is strict so a
+    // driver-shape change surfaces rather than silently zeroing the date.
+    createdAt: num(r['created_at']),
   }
 }
 
@@ -95,13 +99,13 @@ export const SEQ_OF_ID_SQL =
 export const LAST_KEYFRAME_SEQ_SQL =
   `SELECT MAX(seq) AS s FROM workspace_revision WHERE workspace_tag = $1 AND keyframe = 1`
 export const CHAIN_ALL_SQL =
-  `SELECT base, id, keyframe, nonce, ciphertext, signature
+  `SELECT base, id, keyframe, nonce, ciphertext, signature, created_at
   FROM workspace_revision WHERE workspace_tag = $1 ORDER BY seq ASC`
 export const CHAIN_AFTER_SQL =
-  `SELECT base, id, keyframe, nonce, ciphertext, signature
+  `SELECT base, id, keyframe, nonce, ciphertext, signature, created_at
   FROM workspace_revision WHERE workspace_tag = $1 AND seq > $2 ORDER BY seq ASC`
 export const CHAIN_FROM_SQL =
-  `SELECT base, id, keyframe, nonce, ciphertext, signature
+  `SELECT base, id, keyframe, nonce, ciphertext, signature, created_at
   FROM workspace_revision WHERE workspace_tag = $1 AND seq >= $2 ORDER BY seq ASC`
 export const REVISION_EXISTS_SQL =
   `SELECT 1 AS one FROM workspace_revision WHERE workspace_tag = $1 AND id = $2`
@@ -112,7 +116,7 @@ export const REVISION_EXISTS_SQL =
 // The receiver re-fetches the row from this shared table to construct the
 // wire broadcast for its local peers.
 export const REVISION_BY_ID_SQL =
-  `SELECT base, id, keyframe, nonce, ciphertext, signature
+  `SELECT base, id, keyframe, nonce, ciphertext, signature, created_at
   FROM workspace_revision WHERE workspace_tag = $1 AND id = $2`
 
 // The gated commit INSERT, in `$N` form. One statement folds the

@@ -104,6 +104,9 @@ type ObjectMeta = {
   contentHash: string
   contentLength: number
   signature: string
+  // Epoch ms the relay stamped at the last commit — a display-only
+  // "last modified" hint (server-asserted, not under the row signature).
+  putAt: number
 }
 
 // Public listing — server-emitted metadata for one resource. The
@@ -119,6 +122,9 @@ export type Listing = {
   version: number
   incarnation: string
   contentLength: number
+  // Epoch ms of the resource's last commit on the relay — a display-only
+  // "last modified" hint (server-asserted, advisory; see ObjectMeta).
+  putAt: number
 }
 
 // Optimistic-concurrency precondition. `null` = "must not exist" (first
@@ -131,7 +137,7 @@ export type Listing = {
 export type ObjstorePrev = { version: number; incarnation: string } | null
 
 export type PutResult =
-  | { ok: true; meta: { version: number; incarnation: string; contentLength: number } }
+  | { ok: true; meta: { version: number; incarnation: string; contentLength: number; putAt: number } }
   | { ok: false; reason: 'conflict'; current: { version: number; incarnation: string } | null }
   | { ok: false; reason: 'workspace-full' }
   // Operator-side first-action gate fired: this is the FIRST signed
@@ -152,12 +158,12 @@ export type DeleteResult =
 // is omitted from the result because the caller already knows it
 // (they passed it in). `fetchByTag` reverses the AAD-bound name and
 // returns both fields.
-export type FetchResult = { content: Uint8Array; version: number; incarnation: string }
+export type FetchResult = { content: Uint8Array; version: number; incarnation: string; putAt: number }
 // Bundle fetch carries the user-friendly name alongside the bytes —
 // peers downloading a bundle they didn't upload themselves need this
 // to render a meaningful sidebar label. The integrity is what the
 // caller passed in.
-export type FetchBundleResult = { name: string; content: Uint8Array; version: number; incarnation: string }
+export type FetchBundleResult = { name: string; content: Uint8Array; version: number; incarnation: string; putAt: number }
 // `fetchByTag` returns a discriminated union: the embedded "name" in
 // the encrypted payload is either a report fileName (kind='report')
 // or a bundle's sha512 integrity (kind='bundle'). The session decides
@@ -167,8 +173,8 @@ export type FetchBundleResult = { name: string; content: Uint8Array; version: nu
 // discard bundles. The bundle branch additionally unwraps the
 // structured content prefix to surface the user-friendly bundle name.
 export type FetchByTagResult =
-  | { kind: 'report'; fileName: string; content: Uint8Array; version: number; incarnation: string }
-  | { kind: 'bundle'; integrity: string; name: string; content: Uint8Array; version: number; incarnation: string }
+  | { kind: 'report'; fileName: string; content: Uint8Array; version: number; incarnation: string; putAt: number }
+  | { kind: 'bundle'; integrity: string; name: string; content: Uint8Array; version: number; incarnation: string; putAt: number }
 
 // Per-client deps. The client opens one WebSocket and multiplexes
 // every workspace's session over it. `authResolver` is shared too —
@@ -237,7 +243,7 @@ export type ObjstoreSession = {
   // mirrors. Both deliver the wire `resourceTag` (opaque), since
   // the relay doesn't decrypt — callers who need fileNames must
   // `fetchByTag` to surface the inner names.
-  onPut(handler: (event: { resourceTag: string; version: number; contentLength: number }) => void): () => void
+  onPut(handler: (event: { resourceTag: string; version: number; contentLength: number; putAt: number }) => void): () => void
   onDeleted(handler: (event: { resourceTag: string; version: number }) => void): () => void
   // Bundle-side put / fetch / delete. Same semantics as the report
   // counterparts but the tag derives from a sha512 integrity and the
@@ -336,7 +342,7 @@ type SessionState = {
   signingKey: CryptoKey
   contentKey: Uint8Array
   tagKey: Uint8Array
-  putHandlers: Set<(event: { resourceTag: string; version: number; contentLength: number }) => void>
+  putHandlers: Set<(event: { resourceTag: string; version: number; contentLength: number; putAt: number }) => void>
   deletedHandlers: Set<(event: { resourceTag: string; version: number }) => void>
   // Per-tag rollback watermark, keyed by incarnation — see
   // `noteVersion` / `assertFreshOrLater`. Tracks the highest version
@@ -363,7 +369,7 @@ type SessionState = {
   // ack's `resources` snapshot, then kept current by this session's own
   // put/delete results and by `objstore-put` / `-deleted` broadcasts.
   // `list()` is a read of this map, not a wire request.
-  inventory: Map<string, { version: number; incarnation: string; contentLength: number }>
+  inventory: Map<string, { version: number; incarnation: string; contentLength: number; putAt: number }>
   // Resolves once the inventory has been seeded at least once (the first
   // `workspace-subscribed` for this tag). `list()` awaits it so an early
   // read doesn't return an empty snapshot before the subscribe ack lands.
@@ -453,7 +459,7 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
   function seedInventory(state: SessionState, resources: ObjectMeta[]): void {
     state.inventory.clear()
     for (const m of resources) {
-      state.inventory.set(m.resourceTag, { version: m.version, incarnation: m.incarnation, contentLength: m.contentLength })
+      state.inventory.set(m.resourceTag, { version: m.version, incarnation: m.incarnation, contentLength: m.contentLength, putAt: m.putAt })
       noteVersion(state, m.resourceTag, m.incarnation, m.version)
     }
     state.resolveListed()
@@ -535,8 +541,8 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
       // v5 in a broadcast then serves v3 on FETCH hits assertFreshOrLater.
       noteVersion(state, meta.resourceTag, meta.incarnation, meta.version)
       // Keep the live inventory current so `list()` reflects peer puts.
-      state.inventory.set(meta.resourceTag, { version: meta.version, incarnation: meta.incarnation, contentLength: meta.contentLength })
-      const putEvent = { resourceTag: meta.resourceTag, version: meta.version, contentLength: meta.contentLength }
+      state.inventory.set(meta.resourceTag, { version: meta.version, incarnation: meta.incarnation, contentLength: meta.contentLength, putAt: meta.putAt })
+      const putEvent = { resourceTag: meta.resourceTag, version: meta.version, contentLength: meta.contentLength, putAt: meta.putAt }
       for (const h of state.putHandlers) { try { h(putEvent) } catch {} }
       return
     }
@@ -841,11 +847,17 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
       || !isSafeNonNegativeInt((ack as { contentLength?: unknown }).contentLength)) {
       throw new TypeError('objstore: PUT ack malformed (missing/invalid version/incarnation/contentHash/contentLength)')
     }
-    const meta = ack as { version: number; incarnation: string; contentHash: string; contentLength: number }
+    const meta = ack as { version: number; incarnation: string; contentHash: string; contentLength: number; putAt?: unknown }
     if (meta.contentHash !== contentHash || meta.contentLength !== opts.bytes.byteLength) {
       throw new Error(`objstore: PUT ack mismatch — server returned contentHash=${meta.contentHash.slice(0, 16)}… length=${meta.contentLength}, client signed ${contentHash.slice(0, 16)}… length=${opts.bytes.byteLength}`)
     }
-    return { ok: true, meta }
+    // `putAt` is advisory (display-only), so it's NOT a hard-validate
+    // field like the others — a relay that omits it (or a proxy that
+    // strips it) degrades to 0 ("unknown") rather than failing the put.
+    return { ok: true, meta: {
+      version: meta.version, incarnation: meta.incarnation, contentHash: meta.contentHash,
+      contentLength: meta.contentLength, putAt: isSafeNonNegativeInt(meta.putAt) ? meta.putAt : 0,
+    } }
   }
 
   // Wire-level FETCH — returns raw ciphertext + meta. `fetch` /
@@ -1217,8 +1229,8 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
         // Reflect our own put in the live inventory immediately, so a
         // `list()` right after a put sees it without waiting for the
         // server's broadcast echo to round-trip.
-        full.inventory.set(resourceTag, { version: raw.meta.version, incarnation: raw.meta.incarnation, contentLength: raw.meta.contentLength })
-        return { ok: true, meta: { version: raw.meta.version, incarnation: raw.meta.incarnation, contentLength: raw.meta.contentLength } }
+        full.inventory.set(resourceTag, { version: raw.meta.version, incarnation: raw.meta.incarnation, contentLength: raw.meta.contentLength, putAt: raw.meta.putAt })
+        return { ok: true, meta: { version: raw.meta.version, incarnation: raw.meta.incarnation, contentLength: raw.meta.contentLength, putAt: raw.meta.putAt } }
       }
       if (raw.reason === 'workspace-full') return { ok: false, reason: 'workspace-full' }
       if (raw.reason === 'unauthorized') return { ok: false, reason: 'unauthorized' }
@@ -1242,7 +1254,7 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
         throw new Error(`objstore: fileName-binding mismatch — requested '${fileName}', payload encoded '${decoded}'`)
       }
       noteVersion(full, resourceTag, raw.meta.incarnation, raw.meta.version)
-      return { content, version: raw.meta.version, incarnation: raw.meta.incarnation }
+      return { content, version: raw.meta.version, incarnation: raw.meta.incarnation, putAt: raw.meta.putAt }
     }
 
     async function fetchByTag(resourceTag: string): Promise<FetchByTagResult | null> {
@@ -1260,13 +1272,13 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
       const expectedReport = await computeResourceTag(full.tagKey, embeddedName)
       if (expectedReport === resourceTag) {
         noteVersion(full, resourceTag, raw.meta.incarnation, raw.meta.version)
-        return { kind: 'report', fileName: embeddedName, content, version: raw.meta.version, incarnation: raw.meta.incarnation }
+        return { kind: 'report', fileName: embeddedName, content, version: raw.meta.version, incarnation: raw.meta.incarnation, putAt: raw.meta.putAt }
       }
       const expectedBundle = await computeBundleResourceTag(full.tagKey, embeddedName)
       if (expectedBundle === resourceTag) {
         const { name, content: bundleContent } = unwrapBundleContent(content)
         noteVersion(full, resourceTag, raw.meta.incarnation, raw.meta.version)
-        return { kind: 'bundle', integrity: embeddedName, name, content: bundleContent, version: raw.meta.version, incarnation: raw.meta.incarnation }
+        return { kind: 'bundle', integrity: embeddedName, name, content: bundleContent, version: raw.meta.version, incarnation: raw.meta.incarnation, putAt: raw.meta.putAt }
       }
       throw new Error('objstore: fetchByTag — decrypted name does not derive back to the requested resourceTag under either the report or bundle tag scheme (relay or workspace member produced a non-round-trippable tag-name pair)')
     }
@@ -1302,7 +1314,7 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
       await awaitListed(full)
       if (full.closed) throw new Error('objstore: session closed')
       return [...full.inventory.entries()].map(([resourceTag, m]) => ({
-        resourceTag, version: m.version, incarnation: m.incarnation, contentLength: m.contentLength,
+        resourceTag, version: m.version, incarnation: m.incarnation, contentLength: m.contentLength, putAt: m.putAt,
       }))
     }
 
@@ -1324,7 +1336,7 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
       }
       const { name, content } = unwrapBundleContent(wrapped)
       noteVersion(full, resourceTag, raw.meta.incarnation, raw.meta.version)
-      return { name, content, version: raw.meta.version, incarnation: raw.meta.incarnation }
+      return { name, content, version: raw.meta.version, incarnation: raw.meta.incarnation, putAt: raw.meta.putAt }
     }
 
     async function deleteBundle(integrity: string, prev: ObjstorePrev): Promise<DeleteResult> {
@@ -1410,7 +1422,7 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
 // blob — the conflict envelope's resourceTag is the OPAQUE wire tag,
 // which the caller can't meaningfully consume without the tagKey.
 type RawPutResult =
-  | { ok: true; meta: { version: number; incarnation: string; contentHash: string; contentLength: number } }
+  | { ok: true; meta: { version: number; incarnation: string; contentHash: string; contentLength: number; putAt: number } }
   | { ok: false; reason: 'conflict'; current: { version: number; incarnation: string } | null }
   | { ok: false; reason: 'workspace-full' }
   | { ok: false; reason: 'unauthorized' }
@@ -1471,6 +1483,10 @@ function isSafeNonNegativeInt(v: unknown): v is number {
 // finite version past `typeof` and poison the rollback watermark.
 function isObjectMeta(m: WireMessage | undefined): m is WireMessage {
   if (!m || typeof m !== 'object') return false
+  // `putAt` is deliberately NOT gated here — it's an advisory display
+  // field, so an older relay (or a proxy that drops it) must still yield
+  // a valid meta (the load-bearing fields are what we vet). `toObjectMeta`
+  // defaults a missing/invalid `putAt` to 0.
   return typeof m['resourceTag'] === 'string'
     && isSafeNonNegativeInt(m['version'])
     && typeof m['incarnation'] === 'string'
@@ -1490,5 +1506,6 @@ function toObjectMeta(m: WireMessage): ObjectMeta {
     contentHash: m['contentHash'] as string,
     contentLength: m['contentLength'] as number,
     signature: m['signature'] as string,
+    putAt: isSafeNonNegativeInt(m['putAt']) ? (m['putAt'] as number) : 0,
   }
 }

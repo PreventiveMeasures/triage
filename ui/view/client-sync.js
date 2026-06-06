@@ -167,6 +167,15 @@ export function remoteCount(workspaceId) {
 export function remoteBundleName(workspaceId, integrity) {
   return realModule ? realModule.remoteBundleName(workspaceId, integrity) : null
 }
+// "Last modified" (epoch ms) for a synced report / bundle, or 0 when
+// the sync chunk hasn't loaded or the relay didn't report one. Sync, so
+// the render path can read it inline; a post-load redraw flips the value.
+export function remoteModifiedAt(workspaceId, fileName) {
+  return realModule ? realModule.remoteModifiedAt(workspaceId, fileName) : 0
+}
+export function remoteBundleModifiedAt(workspaceId, integrity) {
+  return realModule ? realModule.remoteBundleModifiedAt(workspaceId, integrity) : 0
+}
 
 // Subscription wrappers — pure queue, no load trigger. The sync
 // module fires these once it lands; in the meantime the UI sees

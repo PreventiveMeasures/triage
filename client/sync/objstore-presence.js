@@ -262,6 +262,14 @@ export function openWorkspace(workspaceId) {
     // peers to re-download the bytes rather than stay pinned on the
     // old content while new joiners fetch the fresh blob.
     remoteVersions: new Map(),
+    // `resourceTag → putAt` (epoch ms the relay stamped at the resource's
+    // last commit) for every remote resource we know about. Tracked
+    // alongside `remoteVersions` from the same sources (boot `list()`,
+    // `onPut`, local put echoes) and dropped on `onDeleted`. Advisory /
+    // display-only — surfaced via `remoteModifiedAt` / `remoteBundleModifiedAt`
+    // as the report's / bundle's "last modified" in the UI. 0 means the
+    // relay didn't report one (older server).
+    remoteModifiedAt: new Map(),
     // `resourceTag → version` of the bytes WE last committed to
     // local OPFS. Set whenever we successfully write a report's
     // bytes through `saveFileBytes` (via maybeAutoDownload's
@@ -360,6 +368,10 @@ export function openWorkspace(workspaceId) {
         const previous = entry.remoteVersions.get(item.resourceTag)
         if (previous === undefined || item.version > previous) {
           entry.remoteVersions.set(item.resourceTag, item.version)
+          // Track the modified-at alongside the version it belongs to, so
+          // a fresher `onPut` value that raced in mid-boot isn't clobbered
+          // by the slightly-older list snapshot (mirrors the version guard).
+          entry.remoteModifiedAt.set(item.resourceTag, item.putAt)
         }
       }
       // Populate reverse maps from the two cheap sources before
@@ -476,7 +488,7 @@ export function openWorkspace(workspaceId) {
   // through the replace-refetch path.
   function registerBroadcastHandlers() {
     const session = entry.session
-    session.onPut(({ resourceTag, version }) => {
+    session.onPut(({ resourceTag, version, putAt }) => {
       const previousVersion = entry.remoteVersions.get(resourceTag)
       const isReplace = entry.remoteTags.has(resourceTag)
         && typeof previousVersion === 'number'
@@ -487,6 +499,8 @@ export function openWorkspace(workspaceId) {
       // V+1 if the loop runs after — see the boot-loop comment.
       if (previousVersion === undefined || version > previousVersion) {
         entry.remoteVersions.set(resourceTag, version)
+        // Modified-at tracks the version it arrived with (same guard).
+        entry.remoteModifiedAt.set(resourceTag, putAt)
       }
       notify()
       if (isReplace) {
@@ -512,6 +526,8 @@ export function openWorkspace(workspaceId) {
       // stale version pinned would let the next onPut's
       // version-bump comparison mis-fire as a Replace.
       entry.remoteVersions.delete(resourceTag)
+      // Drop the modified-at with the version it belonged to.
+      entry.remoteModifiedAt.delete(resourceTag)
       // Same reasoning for the local baseline: a deletion + recreate
       // at the same tag is a brand-new resource, so the prior
       // local-version pin should not survive the delete.
@@ -686,6 +702,19 @@ export function isInRemote(workspaceId, fileName) {
   return entry.remoteTags.has(tag)
 }
 
+// Epoch ms the relay last committed this report (the "last modified"
+// the UI shows for a synced report), or 0 when unknown — the workspace
+// isn't open, the tag hasn't been computed, the resource isn't in remote
+// yet, or an older relay didn't report a timestamp. Synchronous for the
+// render path, mirroring `isInRemote`.
+export function remoteModifiedAt(workspaceId, fileName) {
+  const entry = sessions.get(workspaceId)
+  if (!entry) return 0
+  const tag = entry.fileTags.get(fileName)
+  if (!tag) return 0
+  return entry.remoteModifiedAt.get(tag) ?? 0
+}
+
 // Pre-warm the tag cache for a fileName not in workspace.reports
 // (e.g., the user just dropped a file onto a workspace; the
 // workspace blob hasn't been re-read yet). Best-effort — silently
@@ -709,6 +738,17 @@ export function isBundleInRemote(workspaceId, integrity) {
   const tag = entry.bundleTags.get(integrity)
   if (!tag) return false
   return entry.remoteTags.has(tag)
+}
+
+// Bundle counterpart of `remoteModifiedAt` — epoch ms of the bundle's
+// last commit on the relay (the bundle Overview's "Modified"), or 0 when
+// unknown. Synchronous, mirroring `isBundleInRemote`.
+export function remoteBundleModifiedAt(workspaceId, integrity) {
+  const entry = sessions.get(workspaceId)
+  if (!entry) return 0
+  const tag = entry.bundleTags.get(integrity)
+  if (!tag) return 0
+  return entry.remoteModifiedAt.get(tag) ?? 0
 }
 
 // Pre-warm the bundle tag cache. Mirrors `trackFile` for bundles —
@@ -1382,6 +1422,10 @@ export async function putFile(workspaceId, fileName, content) {
         ?? await computeResourceTag(entry.keys.tagKey, fileName)
       entry.fileTags.set(fileName, tag)
       entry.remoteVersions.set(tag, result.meta.version)
+      // Reflect our own put's modified-at immediately (mirrors the
+      // remoteVersions self-echo) so the sidebar shows a fresh "modified"
+      // without waiting for the server's broadcast to round-trip back.
+      entry.remoteModifiedAt.set(tag, result.meta.putAt)
       // Local OPFS now holds the bytes for this version (the caller
       // wrote them via saveFile before calling putFile), so the
       // baseline tracks the put. This is what makes a future

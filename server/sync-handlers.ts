@@ -24,6 +24,9 @@ type WireRevision = {
   nonce: string
   ciphertext: string
   signature: string
+  // Epoch ms the server stamped at commit — the per-revision "modified
+  // at". Clients take the head revision's value as "triage last modified".
+  createdAt: number
 }
 
 // Structured result of the shared save pipeline (`commitSave`), rendered
@@ -255,6 +258,7 @@ export function createSyncHandlers(deps: SyncHandlersDeps): SyncHandlers {
         nonce: msg.nonce,
         ciphertext: msg.ciphertext,
         signature: msg.signature,
+        createdAt: commit.createdAt,
       }],
     }, except)
     // Cross-instance fan-out. The bus payload carries only the revision id —

@@ -282,6 +282,7 @@ async function handleRestPutBody(
       incarnation: row.incarnation,
       contentHash: row.contentHash,
       contentLength: row.contentLength,
+      putAt: row.putAt,
     }))
     deps.broadcast(route.tag, {
       type: 'objstore-put',
