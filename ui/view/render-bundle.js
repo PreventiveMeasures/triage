@@ -20,7 +20,7 @@ import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 import { BUNDLE_ICON_SVG } from './icons.js'
 import { findingsForFileHash, reportsForFinding, reportsForFindingByPackage, reportsForFindingByRepo, state } from '#client/index.js'
 import { SEVERITIES, SEVERITY_ORDER, formatBytes, formatRunMeta, stripCommonPathPrefix } from './format.js'
-import { bundleSourcesAsMap } from './bundle-sources.js'
+import { bundlePackageDirs, bundleSourcesAsMap } from './bundle-sources.js'
 import { bundlePkgOf, ownSourceSplittable } from './bundle-pkg-of.js'
 import { tabKey } from './group.js'
 import { computeFileHash } from '../../common/finding-id.js'
@@ -239,16 +239,33 @@ export function buildBundleGraphData(details) {
   // nodes don't get `origFile`, so the button stays bundle-only.
   const strippedToOrig = new Map()
   for (const [orig, stripped] of origToStripped) strippedToOrig.set(stripped, orig)
+  // Re-key the stasis package map onto the stripped paths the graph
+  // nodes use (the tree is built from stripped paths), so the classifier
+  // can look a node's authoritative package dir up by node id. The dir
+  // VALUE stays the original package path — that's the package identity
+  // (label + color), independent of any stripped display prefix. Null
+  // for sourcemap bundles, where the classifier falls back to the path
+  // heuristic alone.
+  const origPackageDirs = bundlePackageDirs(details)
+  const strippedPackageDirs = origPackageDirs
+    ? new Map([...origToStripped].map(([orig, stripped]) => [stripped, origPackageDirs.get(orig)]))
+    : null
+  const packageDirOf = strippedPackageDirs ? (p) => strippedPackageDirs.get(p) : null
   // `canSplitOwnDirs` lets the render path hide the "Split dirs" toggle
   // when own source can't actually be divided (all in one top-level
-  // dir, or none at all) — flipping it would be a no-op.
-  const canSplitOwnDirs = ownSourceSplittable(allFiles)
+  // dir, or none at all) — flipping it would be a no-op. Workspace
+  // packages are excluded via the package map so they don't masquerade
+  // as splittable own source.
+  const canSplitOwnDirs = ownSourceSplittable(allFiles, packageDirOf)
   // Raw-inputs shape — lazy `ui/graph.js` runs the actual
   // `buildGraph(...)` in `buildGraphFromPrep`. `pkgOf` rides in
   // `options` so packaging recognizes both `node_modules/` and
   // `dependencies/` regardless of the global depsDir picked from
   // state.reports, which would otherwise miss bundle paths under
-  // whichever dir the loaded reports don't use. `graph2.splitOwnDirs`
+  // whichever dir the loaded reports don't use, plus the stasis
+  // `packageDir` for each node so workspace packages (the PHP
+  // `vendor/<vendor>/<pkg>` case, monorepo `packages/<name>`) split out
+  // instead of collapsing under a shared parent dir. `graph2.splitOwnDirs`
   // (topbar "Split dirs" toggle) decides whether own source fans out
   // into per-directory groups or collapses into one `__own__` bucket;
   // it's read here so flipping it + re-rendering rebuilds the graph
@@ -260,7 +277,7 @@ export function buildBundleGraphData(details) {
   return {
     treeData: tree, files, ownCounts, transitiveCounts,
     severitySets, colorSets, fileFindings,
-    options: { pkgOf: (p) => bundlePkgOf(p, { splitOwnDirs }) },
+    options: { pkgOf: (p) => bundlePkgOf(p, { splitOwnDirs, packageDir: packageDirOf?.(p) }) },
     strippedToOrig,
     canSplitOwnDirs,
   }
@@ -295,13 +312,15 @@ export function setCurrentBundleGraphPrep(prep) {
 // across both views (a `@noble/hashes` package shows the same hue
 // in the bundle-size chart and the canvas).
 function renderBundleSizeDistribution(items) {
-  // items: Array<{path, size}>; size may be 0 / null when the
+  // items: Array<{path, size, pkgDir}>; size may be 0 / null when the
   // bundle didn't carry per-source content (rare for sourcemaps).
+  // `pkgDir` is the path's stasis package dir (undefined for sourcemap
+  // bundles), so workspace packages bucket apart from their parent dir.
   const totalByPkg = new Map()
   let total = 0
-  for (const { path, size } of items) {
+  for (const { path, size, pkgDir } of items) {
     if (typeof size !== 'number' || size <= 0) continue
-    const pkg = bundlePkgOf(path)
+    const pkg = bundlePkgOf(path, { packageDir: pkgDir })
     totalByPkg.set(pkg, (totalByPkg.get(pkg) ?? 0) + size)
     total += size
   }
@@ -345,20 +364,27 @@ function renderBundleSizeDistribution(items) {
 // `sources` and `sizes` are parallel arrays — same indices, same
 // length. Sizes may be null when content wasn't shipped in the
 // bundle (uncommon for sourcemaps).
-function renderBundleSourcesPanel(meta, extras, sources, sizes) {
+function renderBundleSourcesPanel(meta, extras, sources, sizes, packageDirs) {
   const { prefix, stripped } = stripCommonPathPrefix(sources)
   // Compute packages from the STRIPPED paths so the visualization
   // reflects what differs between files (a shared `dist/src/...`
   // prefix would otherwise bucket everything under `dist`). Paths
-  // without a remaining directory map to `__own__`.
+  // without a remaining directory map to `__own__`. `packageDirs`
+  // (keyed by the ORIGINAL `sources` paths) carries the stasis package
+  // boundary per file so sibling workspace packages (`vendor/aws/*`,
+  // monorepo `packages/*`) stay separate instead of collapsing under a
+  // shared parent dir; null for sourcemap bundles, which have none.
+  const pkgDirOf = (i) => packageDirs?.get(sources[i])
   const packages = new Set()
-  for (const p of stripped) packages.add(bundlePkgOf(p))
+  for (let i = 0; i < stripped.length; i++) {
+    packages.add(bundlePkgOf(stripped[i], { packageDir: pkgDirOf(i) }))
+  }
   // Stable alphabetical order — size signal is in the dist viz.
   const order = stripped
     .map((_, i) => i)
     .toSorted((a, b) => stripped[a].localeCompare(stripped[b]))
 
-  const distItems = stripped.map((p, i) => ({ path: p, size: sizes[i] }))
+  const distItems = stripped.map((p, i) => ({ path: p, size: sizes[i], pkgDir: pkgDirOf(i) }))
   // `renderBundleSizeDistribution` returns `nothing` when no source
   // carries a positive byte size (common for stasis bundles without
   // inline `sourcesContent`). Mirror the Files / Reports column
@@ -1943,7 +1969,9 @@ function renderBundleDetails(entry, details) {
       ${json.sourceRoot ? html`<dt>Source root</dt><dd class="mono">${json.sourceRoot}</dd>` : nothing}
       ${json.names ? html`<dt>Names</dt><dd>${json.names.length}</dd>` : nothing}
     `
-    return renderBundleSourcesPanel(meta, extras, sources, sizes)
+    // Sourcemaps carry no package metadata — pass null so the panel
+    // falls back to the path heuristic for bucketing.
+    return renderBundleSourcesPanel(meta, extras, sources, sizes, null)
   }
   if (details.kind === 'stasis' && details.bundle) {
     const bundle = details.bundle
@@ -1976,7 +2004,9 @@ function renderBundleDetails(entry, details) {
         ? html`<dt>Resolution kinds</dt><dd>${sortedKinds.join(', ')}</dd>`
         : nothing}
     `
-    return renderBundleSourcesPanel(meta, extras, sourceNames, sizes)
+    // Stasis records authoritative package boundaries — feed them in so
+    // workspace packages bucket apart from their shared parent dir.
+    return renderBundleSourcesPanel(meta, extras, sourceNames, sizes, bundlePackageDirs(details))
   }
   // Stasis without a parsed bundle — likely a brotli decompression
   // that failed silently (no error path filled in). Fall back to

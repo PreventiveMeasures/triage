@@ -23,11 +23,25 @@
 // first-party file collapses into the single `__own__` group the graph
 // labels "own source". The bundle Graph tab passes this through from
 // its "Split dirs" topbar toggle.
-export function bundlePkgOf(path, { splitOwnDirs = true } = {}) {
+//
+// `packageDir` is this path's authoritative stasis package directory
+// (from `bundlePackageDirs` in bundle-sources.js), when one is known.
+// It only matters for workspace packages the heuristic can't see —
+// non-`node_modules` dirs like PHP's `vendor/<vendor>/<pkg>` or a
+// monorepo's `packages/<name>` — which would otherwise collapse into a
+// single shared-parent bucket; supplying the dir returns it verbatim so
+// siblings stay separate. `node_modules` deps still resolve to the bare
+// package name above (their dir is redundant), and the `.` root falls
+// through to own-source bucketing below so the "Split dirs" behavior is
+// unchanged for first-party code.
+export function bundlePkgOf(path, { splitOwnDirs = true, packageDir = null } = {}) {
   const re = /(?:^|\/)(?:node_modules|dependencies)\/(@[^/]+\/[^/]+|[^/]+)/gu
   let m
   while ((m = re.exec(path)) !== null) {
     if (m[1] !== '.pnpm') return m[1]
+  }
+  if (packageDir && packageDir !== '.' && !packageDir.includes('node_modules')) {
+    return packageDir
   }
   if (splitOwnDirs) {
     const slash = path.indexOf('/')
@@ -44,13 +58,20 @@ export function bundlePkgOf(path, { splitOwnDirs = true } = {}) {
 // tab uses this to hide its "Split dirs" toggle when flipping it would
 // be a no-op. Stops at the second distinct bucket — no need to walk
 // the whole bundle once the answer is settled.
-export function ownSourceSplittable(paths) {
+//
+// `packageDirOf(path)` (optional) supplies each path's stasis package
+// dir so workspace packages (PHP `vendor/<vendor>/<pkg>`, monorepo
+// `packages/<name>`) are recognized as their own packages and excluded
+// from the own-source tally — flipping "Split dirs" doesn't move them,
+// so they must not be what makes own source look splittable.
+export function ownSourceSplittable(paths, packageDirOf = null) {
   const buckets = new Set()
   for (const p of paths) {
-    // Dependency files (resolve to a package name either way) never
-    // move when own-source splitting toggles — skip them.
-    if (bundlePkgOf(p, { splitOwnDirs: false }) !== '__own__') continue
-    buckets.add(bundlePkgOf(p, { splitOwnDirs: true }))
+    const packageDir = packageDirOf?.(p) ?? null
+    // Dependency + workspace-package files (resolve to a package either
+    // way) never move when own-source splitting toggles — skip them.
+    if (bundlePkgOf(p, { splitOwnDirs: false, packageDir }) !== '__own__') continue
+    buckets.add(bundlePkgOf(p, { splitOwnDirs: true, packageDir }))
     if (buckets.size > 1) return true
   }
   return false
