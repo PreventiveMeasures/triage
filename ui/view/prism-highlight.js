@@ -35,6 +35,7 @@ const EXT_TO_LANG = {
   sh: 'bash', bash: 'bash',
   md: 'markdown', markdown: 'markdown',
   sol: 'solidity',
+  php: 'php', phtml: 'php',
 }
 
 export function langForPath(path) {

@@ -12,6 +12,8 @@
 // run. ES module evaluation order matches the import order here,
 // so base-grammar chains stay correct: clike must precede the
 // javascript/typescript that extend it (→ jsx/tsx), markup before html.
+// php needs markup-templating (which needs markup, above), and
+// php-extras augments php via insertBefore so it must follow php.
 import Prism from 'prismjs/prism.js'
 import 'prismjs/components/prism-markup.js'
 import 'prismjs/components/prism-clike.js'
@@ -25,6 +27,9 @@ import 'prismjs/components/prism-yaml.js'
 import 'prismjs/components/prism-bash.js'
 import 'prismjs/components/prism-markdown.js'
 import 'prismjs/components/prism-solidity.js'
+import 'prismjs/components/prism-markup-templating.js'
+import 'prismjs/components/prism-php.js'
+import 'prismjs/components/prism-php-extras.js'
 
 // Suppress auto-highlightAll. Prism checks `manual` from a
 // DOMContentLoaded callback, which fires after this module body
