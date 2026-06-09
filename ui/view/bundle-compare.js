@@ -34,7 +34,7 @@ import { state } from '#client/index.js'
 import { formatBytes, stripCommonPathPrefix } from './format.js'
 import { pkgColor } from './graph/utils.js'
 import { bundlePkgOf } from './bundle-pkg-of.js'
-import { bundleSourcesAsMap } from './bundle-sources.js'
+import { bundlePackageDirs, bundleSourcesAsMap } from './bundle-sources.js'
 import { buildBundleDetails } from './bundle-load.js'
 import { computeBundleDiff } from './bundle-compare-diff.js'
 
@@ -279,16 +279,31 @@ class BundleCompare extends LitElement {
       const baseSources = bundleSourcesAsMap(this.details)
       const otherSources = bundleSourcesAsMap(this._otherDetails)
       // Bucket packages on prefix-stripped paths so own-source files
-      // land under the same name the Overview / Treemap tabs show —
-      // those strip the shared build-output root before bundlePkgOf, so
-      // a raw path would bucket `dist/src/x` under `dist` here vs `src`
-      // there. The prefix spans BOTH bundles so the two sides align;
-      // node_modules / dependencies buckets are unaffected (their
-      // marker is matched anywhere in the path).
+      // land under the same name the Overview / Treemap / Graph tabs
+      // show — those strip the shared build-output root before
+      // bundlePkgOf, so a raw path would bucket `dist/src/x` under `dist`
+      // here vs `src` there. The prefix spans BOTH bundles so the two
+      // sides align; node_modules / dependencies buckets are unaffected
+      // (their marker is matched anywhere in the path).
+      //
+      // Stasis bundles carry authoritative package boundaries, so feed
+      // each path's package dir through too — matching those tabs,
+      // workspace packages like `vendor/aws/aws-crt-php` stay separate
+      // instead of collapsing under their shared `vendor` parent. The
+      // dir is looked up by the ORIGINAL path (the maps are keyed
+      // pre-strip) while the stripped path drives own-source bucketing;
+      // both sides' maps are merged so a path resolves whichever bundle
+      // carries it. Null for sourcemap pairs → heuristic-only, as before.
       const { prefix } = stripCommonPathPrefix([...baseSources.keys(), ...otherSources.keys()])
-      const pkgOf = prefix
-        ? (p) => bundlePkgOf(p.startsWith(prefix) ? p.slice(prefix.length) : p)
-        : bundlePkgOf
+      const baseDirs = bundlePackageDirs(this.details)
+      const otherDirs = bundlePackageDirs(this._otherDetails)
+      const packageDirs = baseDirs || otherDirs
+        ? new Map([...(baseDirs ?? []), ...(otherDirs ?? [])])
+        : null
+      const pkgOf = (p) => bundlePkgOf(
+        prefix && p.startsWith(prefix) ? p.slice(prefix.length) : p,
+        { packageDir: packageDirs?.get(p) },
+      )
       this._diff = computeBundleDiff(baseSources, otherSources, pkgOf)
       this._diffKey = key
     }
