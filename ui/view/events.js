@@ -547,6 +547,10 @@ report.addEventListener('click', (e) => {
   if (g2Select) {
     graph2.selected = g2Select.dataset.g2Select
     refreshActiveGraphSidebar()
+    // The canvas paints the selection ring from graph2.selected, so
+    // redraw now — otherwise the highlight lags until the next hover
+    // happens to dirty the frame.
+    graph2.graphState?.requestDraw?.()
     return
   }
   // Top-packages mini-tabs (Issues / Files). Pure right-panel
