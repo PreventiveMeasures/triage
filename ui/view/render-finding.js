@@ -76,13 +76,13 @@ function renderHighlighted(text) {
   return parts
 }
 
-// Render a triage comment, linkifying any GitHub issue / PR / commit URL
-// the user pasted. parseCommentRefs (format.js) does the strict
-// validation + tokenisation; here we only map its segments to templates
-// — plain `string` runs pass through untouched (an all-prose comment
-// comes back as a single string), and each validated `{ url, label }`
-// becomes a compact `<a>` (`owner/repo#123`, `owner/repo@sha`) with the
-// full URL in `title`.
+// Render a triage comment, linkifying any GitHub issue / PR / commit /
+// security-advisory URL the user pasted. parseCommentRefs (format.js) does
+// the strict validation + tokenisation; here we only map its segments to
+// templates — plain `string` runs pass through untouched (an all-prose
+// comment comes back as a single string), and each validated
+// `{ url, label }` becomes a compact `<a>` (`owner/repo#123`,
+// `owner/repo@sha`, `GHSA-xxxx-xxxx-xxxx`) with the full URL in `title`.
 function renderCommentText(text) {
   return parseCommentRefs(text).map((seg) => (typeof seg === 'string'
     ? seg

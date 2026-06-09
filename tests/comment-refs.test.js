@@ -1,9 +1,10 @@
 // `ui/view/format.js` — `parseCommentRefs` turns a free-text triage
 // comment into a segment list (plain `string` runs interleaved with
 // `{ url, label }` link tokens) so the comment renderer can linkify any
-// pasted GitHub issue / PR / commit URL. This pins the STRICT validation:
-// only canonical github.com issue / pull / commit URLs become links, and
-// every component (owner / repo / number / sha / host / path) is checked.
+// pasted GitHub issue / PR / commit / security-advisory URL. This pins the
+// STRICT validation: only canonical github.com issue / pull / commit /
+// advisory URLs become links, and every component (owner / repo / number /
+// sha / GHSA id / host / path) is checked.
 
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
@@ -100,6 +101,79 @@ describe('parseCommentRefs — valid issue / PR / commit URLs', () => {
     const link = onlyLink('https://github.com/MyOrg/My.Repo/issues/7')
     assert.equal(link.label, 'MyOrg/My.Repo#7')
     assert.equal(link.url, 'https://github.com/MyOrg/My.Repo/issues/7')
+  })
+})
+
+describe('parseCommentRefs — GitHub Security Advisory (GHSA) URLs', () => {
+  it('linkifies a global advisory URL with the bare GHSA id as label', () => {
+    const link = onlyLink('https://github.com/advisories/GHSA-jfh8-c2jp-5v3q')
+    assert.equal(link.label, 'GHSA-jfh8-c2jp-5v3q')
+    assert.equal(link.url, 'https://github.com/advisories/GHSA-jfh8-c2jp-5v3q')
+  })
+
+  it('linkifies an in-repo advisory URL (repo kept in href, id is the label)', () => {
+    const link = onlyLink('https://github.com/owner/repo/security/advisories/GHSA-jfh8-c2jp-5v3q')
+    assert.equal(link.label, 'GHSA-jfh8-c2jp-5v3q')
+    assert.equal(link.url, 'https://github.com/owner/repo/security/advisories/GHSA-jfh8-c2jp-5v3q')
+  })
+
+  it('embeds an advisory ref in prose and trims trailing punctuation', () => {
+    const segs = parseCommentRefs('flagged by https://github.com/advisories/GHSA-jfh8-c2jp-5v3q.')
+    assert.equal(segs[0], 'flagged by ')
+    assert.equal(segs[1].label, 'GHSA-jfh8-c2jp-5v3q')
+    assert.equal(segs[1].url, 'https://github.com/advisories/GHSA-jfh8-c2jp-5v3q')
+    assert.equal(segs.at(-1), '.')
+  })
+
+  it('drops a query string and fragment from the advisory href', () => {
+    assert.equal(
+      onlyLink('https://github.com/advisories/GHSA-jfh8-c2jp-5v3q?utm=x').url,
+      'https://github.com/advisories/GHSA-jfh8-c2jp-5v3q',
+    )
+    assert.equal(
+      onlyLink('https://github.com/owner/repo/security/advisories/GHSA-jfh8-c2jp-5v3q#summary').url,
+      'https://github.com/owner/repo/security/advisories/GHSA-jfh8-c2jp-5v3q',
+    )
+  })
+
+  it('rejects a malformed GHSA id (group count / length / upper-case)', () => {
+    assert.ok(hasNoLink('https://github.com/advisories/GHSA-jfh8-c2jp'))
+    assert.ok(hasNoLink('https://github.com/advisories/GHSA-jfh8-c2jp-5v3q-9xyz'))
+    assert.ok(hasNoLink('https://github.com/advisories/GHSA-jfh-c2jp-5v3q'))
+    assert.ok(hasNoLink('https://github.com/advisories/GHSA-JFH8-C2JP-5V3Q'))
+    assert.ok(hasNoLink('https://github.com/advisories/not-a-ghsa-id'))
+  })
+
+  it('rejects advisory paths with the wrong depth or shape', () => {
+    assert.ok(hasNoLink('https://github.com/advisories'))
+    assert.ok(hasNoLink('https://github.com/advisories/GHSA-jfh8-c2jp-5v3q/dependabot'))
+    // Missing the `security/` segment — a bare `/owner/repo/advisories/…`
+    // is not a real GitHub route and must stay text.
+    assert.ok(hasNoLink('https://github.com/owner/repo/advisories/GHSA-jfh8-c2jp-5v3q'))
+    assert.ok(hasNoLink('https://github.com/owner/repo/security/advisories'))
+  })
+
+  it('rejects an in-repo advisory with a malformed owner', () => {
+    assert.ok(hasNoLink('https://github.com/-bad/repo/security/advisories/GHSA-jfh8-c2jp-5v3q'))
+  })
+
+  // The advisory branches sit behind the same host / scheme / credential /
+  // round-trip guards as the issue / PR / commit path, and validate the id
+  // (and owner/repo) as raw, still-percent-encoded path bytes. These pin
+  // that an advisory URL can't smuggle an off-github host or use encoding
+  // to break the id out into a deeper path.
+  it('rejects advisory URLs that smuggle a host, credentials, port, or encoded breakout', () => {
+    // userinfo authority — the real host is evil.com, not github.com
+    assert.ok(hasNoLink('https://github.com@evil.com/advisories/GHSA-jfh8-c2jp-5v3q'))
+    // host is github.com but credentials are present — rejected regardless
+    assert.ok(hasNoLink('https://user:pass@github.com/owner/repo/security/advisories/GHSA-jfh8-c2jp-5v3q'))
+    // explicit port on the advisory host
+    assert.ok(hasNoLink('https://github.com:8080/advisories/GHSA-jfh8-c2jp-5v3q'))
+    // percent-encoded `/` can't extend the id into a deeper path (the id is
+    // matched as raw bytes, so `%2F` fails the GHSA pattern)
+    assert.ok(hasNoLink('https://github.com/advisories/GHSA-jfh8-c2jp-5v3q%2Fevil'))
+    // percent-encoded `-` inside the id is likewise seen raw and rejected
+    assert.ok(hasNoLink('https://github.com/advisories/GHSA%2Djfh8-c2jp-5v3q'))
   })
 })
 

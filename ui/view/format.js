@@ -354,10 +354,13 @@ export function githubIssueUrl(repo, { title, body } = {}) {
 // rules before a link is emitted. A bad owner, an over-long repo, a
 // non-hex commit, a look-alike host, or an extra path segment all fall
 // through to plain text, so we never render a link that 404s or points
-// somewhere off github.com. Only canonical
-// `https://github.com/<owner>/<repo>/(issues|pull|commit)/<id>` URLs are
-// recognised — bare `#123` / `owner/repo#123` shorthand needs a repo
-// context the comment doesn't carry, so it's intentionally left alone.
+// somewhere off github.com. Recognised canonical shapes are
+// `https://github.com/<owner>/<repo>/(issues|pull|commit)/<id>` plus the
+// two GitHub Security Advisory forms — the global
+// `https://github.com/advisories/GHSA-xxxx-xxxx-xxxx` and the in-repo
+// `https://github.com/<owner>/<repo>/security/advisories/GHSA-…`. Bare
+// `#123` / `owner/repo#123` shorthand needs a repo context the comment
+// doesn't carry, so it's intentionally left alone.
 
 // These validators spell out both ASCII cases (`a-zA-Z`) instead of using
 // the `i` flag on purpose: under `/iu`, Unicode case-folding pulls a few
@@ -382,6 +385,12 @@ const GH_SHA_RE = /^[a-fA-F\d]{7,40}$/u
 // word characters + hyphens, matching GitHub's own anchor ids
 // (`#issuecomment-123`, `#discussion_r…`, `#diff-<hex>R10`, `#L42`).
 const GH_ANCHOR_RE = /^#[\w-]+$/u
+// GHSA (GitHub Security Advisory) id — the literal `GHSA-` prefix plus
+// three hyphen-separated groups of four base32 characters
+// (`GHSA-xxxx-xxxx-xxxx`). GitHub always renders the suffix lower-case, so
+// pinning that canonical casing keeps the round-trip guard satisfied and
+// the emitted label faithful to what GitHub itself shows.
+const GH_GHSA_RE = /^GHSA(?:-[0-9a-z]{4}){3}$/u
 
 function isValidOwner(s) { return s.length <= 39 && GH_OWNER_RE.test(s) }
 function isValidRepo(s) { return s.length <= 100 && s !== '.' && s !== '..' && GH_REPO_RE.test(s) }
@@ -410,13 +419,35 @@ function githubRefToken(candidate) {
   if (u.protocol !== 'https:') return null
   if (u.hostname.toLowerCase() !== 'github.com') return null
   if (u.port || u.username || u.password) return null
-  // Path must be exactly /<owner>/<repo>/<kind>/<id>. `..`/`.` traversal
-  // can't reach here — the round-trip guard above rejects any path the
-  // parser had to normalise. A single trailing slash is tolerated; any
-  // deeper path (`/pull/42/files`) is rejected so we only linkify the
-  // precise thing we can name.
+  // Break the path into its non-empty segments (a single trailing slash is
+  // tolerated). `..`/`.` traversal can't reach here — the round-trip guard
+  // above rejects any path the parser had to normalise.
   const parts = u.pathname.split('/')
   if (parts.at(-1) === '') parts.pop()
+
+  // GitHub Security Advisories take two shapes that don't fit the
+  // /<owner>/<repo>/<kind>/<id> mould handled further down:
+  //   * global  — /advisories/GHSA-xxxx-xxxx-xxxx (no repo context)
+  //   * in-repo — /<owner>/<repo>/security/advisories/GHSA-xxxx-xxxx-xxxx
+  // A GHSA id is a globally-unique identifier, so both forms label as the
+  // bare id; the owning repo (when present) stays in the href. The in-repo
+  // owner/repo are still validated so a slug that could never be a real
+  // GitHub path falls through to plain text rather than linkifying.
+  if (parts.length === 3 && parts[1] === 'advisories') {
+    const id = parts[2]
+    if (!GH_GHSA_RE.test(id)) return null
+    return { url: `https://github.com/advisories/${id}`, label: id }
+  }
+  if (parts.length === 6 && parts[3] === 'security' && parts[4] === 'advisories') {
+    const [, owner, repo, , , id] = parts
+    if (!isValidOwner(owner) || !isValidRepo(repo)) return null
+    if (!GH_GHSA_RE.test(id)) return null
+    return { url: `https://github.com/${owner}/${repo}/security/advisories/${id}`, label: id }
+  }
+
+  // Otherwise the path must be exactly /<owner>/<repo>/<kind>/<id>. Any
+  // deeper path (`/pull/42/files`) is rejected so we only linkify the
+  // precise thing we can name.
   if (parts.length !== 5) return null
   const [, owner, repo, kind, id] = parts
   if (!isValidOwner(owner) || !isValidRepo(repo)) return null
