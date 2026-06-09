@@ -4,11 +4,13 @@
 // imports it straight.
 //
 // The behavior under test: dependency paths bucket by package name
-// (scopes + pnpm's nested `node_modules` handled), and own (first-
-// party) source buckets either by top-level directory or into the
-// single `__own__` group depending on `splitOwnDirs`. The Graph tab's
-// "Split dirs" toggle is the only caller that flips it off; everyone
-// else keeps the default split.
+// (scopes + pnpm's nested `node_modules` handled), own (first-party)
+// source buckets either by top-level directory or into the single
+// `__own__` group depending on `splitOwnDirs`, and a supplied stasis
+// `packageDir` keeps workspace packages (PHP `vendor/<vendor>/<pkg>`,
+// monorepo `packages/<name>`) separate from their shared parent dir.
+// The Graph tab's "Split dirs" toggle is the only caller that flips
+// `splitOwnDirs` off; everyone else keeps the default split.
 
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
@@ -67,6 +69,48 @@ describe('bundlePkgOf', () => {
       assert.equal(bundlePkgOf('src/node_modules/foo/x.js', { splitOwnDirs: false }), 'foo')
     })
   })
+
+  describe('stasis packageDir (workspace packages)', () => {
+    it('buckets a workspace-package file by its package dir', () => {
+      // PHP `vendor/<vendor>/<pkg>` — the heuristic alone would
+      // collapse both under the shared `vendor` top-level dir.
+      assert.equal(
+        bundlePkgOf('vendor/aws/aws-sdk-php/src/S3/S3Client.php', { packageDir: 'vendor/aws/aws-sdk-php' }),
+        'vendor/aws/aws-sdk-php',
+      )
+      assert.equal(
+        bundlePkgOf('vendor/aws/aws-crt-php/src/AWS.php', { packageDir: 'vendor/aws/aws-crt-php' }),
+        'vendor/aws/aws-crt-php',
+      )
+    })
+
+    it('keeps sibling workspace packages under a shared parent separate', () => {
+      const a = bundlePkgOf('packages/a/index.js', { packageDir: 'packages/a' })
+      const b = bundlePkgOf('packages/b/index.js', { packageDir: 'packages/b' })
+      assert.equal(a, 'packages/a')
+      assert.equal(b, 'packages/b')
+      assert.notEqual(a, b)
+    })
+
+    it('lets the node_modules heuristic win over a redundant dep packageDir', () => {
+      // A dep's stasis dir IS node_modules/<pkg>; the bare package
+      // name (existing behavior + color) must still win.
+      assert.equal(
+        bundlePkgOf('node_modules/foo/index.js', { packageDir: 'node_modules/foo' }),
+        'foo',
+      )
+      assert.equal(
+        bundlePkgOf('a/node_modules/@s/p/i.js', { packageDir: 'a/node_modules/@s/p' }),
+        '@s/p',
+      )
+    })
+
+    it('treats the `.` root dir as own source (split by top-level dir)', () => {
+      assert.equal(bundlePkgOf('src/foo/a.js', { packageDir: '.' }), 'src')
+      assert.equal(bundlePkgOf('index.js', { packageDir: '.' }), '__own__')
+      assert.equal(bundlePkgOf('src/foo/a.js', { packageDir: '.', splitOwnDirs: false }), '__own__')
+    })
+  })
 })
 
 describe('ownSourceSplittable', () => {
@@ -96,5 +140,32 @@ describe('ownSourceSplittable', () => {
   it('is true when a top-level dir coexists with repo-root files', () => {
     // split → { src, __own__ }: the root file separates from src.
     assert.equal(ownSourceSplittable(['src/a.js', 'index.js']), true)
+  })
+
+  describe('with a stasis packageDirOf', () => {
+    // Workspace packages resolve to a package either way, so they're
+    // not own source and must not make own source look splittable.
+    const dirs = new Map([
+      ['vendor/aws/aws-crt-php/a.php', 'vendor/aws/aws-crt-php'],
+      ['vendor/aws/aws-sdk-php/b.php', 'vendor/aws/aws-sdk-php'],
+      ['index.php', '.'],
+    ])
+    const dirOf = (p) => dirs.get(p)
+
+    it('excludes sibling workspace packages from the own-source tally', () => {
+      // Without the map these two would both bucket under `vendor`
+      // (still one bucket → false), but the root file alone is one
+      // `__own__` bucket, so own source is not splittable.
+      assert.equal(
+        ownSourceSplittable(['vendor/aws/aws-crt-php/a.php', 'vendor/aws/aws-sdk-php/b.php', 'index.php'], dirOf),
+        false,
+      )
+    })
+
+    it('still reports splittable own source alongside workspace packages', () => {
+      const paths = ['vendor/aws/aws-sdk-php/b.php', 'src/a.php', 'lib/c.php']
+      const withDirs = new Map([...dirs, ['src/a.php', '.'], ['lib/c.php', '.']])
+      assert.equal(ownSourceSplittable(paths, (p) => withDirs.get(p)), true)
+    })
   })
 })

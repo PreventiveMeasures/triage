@@ -41,7 +41,7 @@
 import { LitElement, html, render as litRender } from 'lit'
 import { styleMap } from 'lit/directives/style-map.js'
 import { classMap } from 'lit/directives/class-map.js'
-import { bundleSourcesAsMap } from './bundle-sources.js'
+import { bundlePackageDirs, bundleSourcesAsMap } from './bundle-sources.js'
 import { formatBytes, stripCommonPathPrefix } from './format.js'
 import { pkgColor } from './graph/utils.js'
 import { bundlePkgOf } from './bundle-pkg-of.js'
@@ -159,9 +159,23 @@ function finalize(node, parentPath, parent, byPath) {
   byPath.set(node.path, node)
   let value = 0
   let count = 0
-  for (const c of node.children.values()) { value += finalize(c, node.path, node, byPath); count += c.count }
+  // Roll the package up from children: a directory whose every
+  // descendant shares one package inherits it (so a depth-capped
+  // `agg` block paints that package's hue), while a directory spanning
+  // packages — `vendor/` over several `vendor/<vendor>/<pkg>` workspace
+  // packages — resolves to null ("mixed") and the cell falls back to
+  // its top-level-dir color. `undefined` until the first child is
+  // seen; a single differing child latches it to null.
+  let pkg
+  for (const c of node.children.values()) {
+    value += finalize(c, node.path, node, byPath)
+    count += c.count
+    if (pkg === undefined) pkg = c.pkg
+    else if (pkg !== c.pkg) pkg = null
+  }
   node.value = value
   node.count = count
+  node.pkg = pkg ?? null
   return value
 }
 
@@ -311,6 +325,12 @@ class BundleTreemap extends LitElement {
     const sources = bundleSourcesAsMap(this.details)
     if (!sources || sources.size === 0) { this._status = 'empty'; return }
     const origPaths = [...sources.keys()]
+    // Stasis package boundaries (keyed by original path) so each leaf
+    // is colored by its authoritative package — sibling workspace
+    // packages stay distinct instead of merging under a shared parent
+    // dir. Null for sourcemap bundles; leaves then bucket via the path
+    // heuristic alone.
+    const packageDirs = bundlePackageDirs(this.details)
     const { prefix, stripped } = stripCommonPathPrefix(origPaths)
     const enc = new TextEncoder()
     const root = { name: '', children: new Map(), value: 0, isFile: false }
@@ -342,7 +362,11 @@ class BundleTreemap extends LitElement {
       let leaf = node.children.get(base)
       if (leaf && !leaf.isFile) continue
       if (!leaf) {
-        leaf = { name: base, isFile: true, value: 0, origPath: origPaths[i] }
+        // Classify on the stripped path (own-source split matches the
+        // file labels) but resolve the stasis package dir from the
+        // original path (the map is keyed pre-strip).
+        const pkg = bundlePkgOf(stripped[i], { packageDir: packageDirs?.get(origPaths[i]) })
+        leaf = { name: base, isFile: true, value: 0, origPath: origPaths[i], pkg }
         node.children.set(base, leaf)
       }
       leaf.value += size
@@ -454,7 +478,11 @@ class BundleTreemap extends LitElement {
         data-tt-meta=${`${formatBytes(c.node.value)} · ${fileCount} · ${pctStr}%`}
       ><span class="bundle-treemap-dirname">${c.node.name}</span></div>`
     }
-    const pkg = bundlePkgOf(c.node.path)
+    // Leaves carry their package from `_rebuild` (stasis-aware); a
+    // directory rendered as one block inherits it via `finalize` when
+    // its whole subtree shares a package, else `pkg` is null (mixed)
+    // and we fall back to the path heuristic for a stable hue.
+    const pkg = c.node.pkg ?? bundlePkgOf(c.node.path)
     const color = pkgColor(pkg)
     const style = styleMap({ ...pos, background: color, color: readableTextOn(color) })
     const ttPkg = pkg === '__own__' ? 'own source' : pkg

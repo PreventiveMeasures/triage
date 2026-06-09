@@ -29,3 +29,34 @@ export function bundleSourcesAsMap(details) {
   }
   return result
 }
+
+// Map each stasis bundle source path to the package directory that
+// owns it. A stasis `Bundle` already records authoritative package
+// boundaries in `.modules` (a `Map<dir, { name, version, files }>`
+// covering both `node_modules` deps and workspace packages — the
+// PHP `vendor/<vendor>/<pkg>` case, monorepo workspaces, etc.); this
+// mirrors the `Bundle.sources` getter's path construction (`dir/rel`,
+// or just `rel` for the `.` root) so the returned keys line up exactly
+// with `bundleSourcesAsMap`'s.
+//
+// The package views (overview, treemap, graph) otherwise classify
+// paths with `bundlePkgOf`'s string heuristic, which only knows
+// `node_modules/`/`dependencies/` and buckets everything else by
+// top-level dir — collapsing sibling workspace packages under their
+// shared parent (`vendor/aws/aws-crt-php` + `vendor/aws/aws-sdk-php`
+// both fall under `vendor`). Feeding each path's dir into
+// `bundlePkgOf` (`packageDir` option) keeps those packages separate.
+//
+// Returns null for sourcemap bundles (and anything without parsed
+// modules) — they carry no package metadata, so callers fall back to
+// the path heuristic alone.
+export function bundlePackageDirs(details) {
+  if (details?.kind !== 'stasis' || !details.bundle?.modules) return null
+  const map = new Map()
+  for (const [dir, info] of details.bundle.modules) {
+    for (const rel of Object.keys(info.files)) {
+      map.set(dir === '.' ? rel : `${dir}/${rel}`, dir)
+    }
+  }
+  return map
+}
