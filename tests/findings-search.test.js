@@ -64,6 +64,24 @@ describe('matchesFilters — findings search', () => {
     assert.equal(matchesFilters(f), false)
   })
 
+  it('matches exportName / methodName, including the joined display label', () => {
+    const f = makeFinding('X', { exportName: 'TokenStore', methodName: 'rotateKeys' })
+    state.filterInclude = 'tokenstore'
+    assert.equal(matchesFilters(f), true)
+    state.filterInclude = 'rotatekeys'
+    assert.equal(matchesFilters(f), true)
+    // The pair renders as `exportName.methodName` in the line rows —
+    // pasting that on-screen label matches too (the search surface
+    // uses findingDisplayName, not the raw fields; see findingText).
+    state.filterInclude = 'tokenstore.rotatekeys'
+    assert.equal(matchesFilters(f), true)
+    // Either field alone is also searchable.
+    state.filterInclude = 'parseheader'
+    assert.equal(matchesFilters(makeFinding('Y', { exportName: 'parseHeader' })), true)
+    state.filterInclude = 'handleupgrade'
+    assert.equal(matchesFilters(makeFinding('Z', { methodName: 'handleUpgrade' })), true)
+  })
+
   it('matches the triage comment, case-insensitively', () => {
     const f = makeFinding('B')
     state.triage.set('B', { comment: 'Looks like a FALSE positive' })

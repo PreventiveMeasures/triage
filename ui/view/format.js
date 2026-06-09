@@ -172,11 +172,17 @@ export function findingDisplayName(f) {
 }
 
 // Searchable text for `state.filterInclude`. Joins the user-visible
-// fields (file path, description, recommendation, confidence
-// reasoning, discovery context) plus the per-finding `repo.github`
-// slug — the latter so the search field can match findings by their
-// upstream repo (`lodash/lodash`), useful when a merged report mixes
-// findings from many node_modules dependencies.
+// fields (file path, export/method name, description, recommendation,
+// confidence reasoning, discovery context) plus the per-finding
+// `repo.github` slug — the latter so the search field can match
+// findings by their upstream repo (`lodash/lodash`), useful when a
+// merged report mixes findings from many node_modules dependencies.
+//
+// The export/method location goes in as `findingDisplayName(f)` rather
+// than the raw `exportName` / `methodName` fields: the joined
+// `exportName.methodName` form is what the line rows render, so
+// pasting that on-screen label matches — and it contains both raw
+// names as substrings, so searching either alone matches too.
 //
 // The per-finding triage annotations (`comment` and `fix`) are NOT in
 // this base set — they live in `state.triage`, keyed off the finding,
@@ -185,7 +191,7 @@ export function findingDisplayName(f) {
 // the lazy graph bundle (see the `fileUrl` note below), so filters.js
 // matches the comment and fix fields itself; see matchesFilters there.
 export function findingText(f) {
-  return [f.file, f.description, f.recommendation, f.confidenceReason, f.discoveredIn, f.repo?.github].filter(Boolean).join('\n').toLowerCase()
+  return [f.file, findingDisplayName(f), f.description, f.recommendation, f.confidenceReason, f.discoveredIn, f.repo?.github].filter(Boolean).join('\n').toLowerCase()
 }
 
 export function prettyModel(model) {
