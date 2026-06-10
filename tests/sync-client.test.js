@@ -896,6 +896,245 @@ describe('triage-sync client', () => {
     }
   })
 
+  it('recovers from a wiped server (stale-base + empty catch-up) with a full state push', async () => {
+    // Review finding #1. A relay that lost this tag's chain (DB wiped /
+    // moved / SQLite→Neon migration) answers a save built on the old
+    // base with an EMPTY workspace-state followed by the stale-base
+    // error. The empty catch-up can't clear `pending`, so the error
+    // handler used to take the terminal branch — wedging the session in
+    // an error ↔ dismissError loop forever (the persisted base never
+    // reset). Now it must run ONE full-state-push reset: drop the base
+    // anchor and re-send the full local state at base=null, which the
+    // wiped relay accepts as the new chain root.
+    const wsId = `ws-${Math.random().toString(36).slice(2, 10)}`
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: randomBase64(), reports: ['t.md'] })
+    setReports([{ id: 'finding-A', _id: 'finding-A' }], 't.md')
+    clearTriageState()
+
+    // Relay script: save 1 acks normally (builds the client's base);
+    // save 2 gets the wiped-server response; save 3+ ack normally
+    // (the post-wipe relay accepting a fresh root).
+    const saves = []
+    const relay = await startFakeRelay((sock) => {
+      sock.on('message', (data) => {
+        const msg = JSON.parse(data.toString())
+        if (msg.type === 'workspace-subscribe') {
+          sock.send(JSON.stringify({ type: 'workspace-subscribed', workspaceTag: msg.workspaceTag }))
+          return
+        }
+        if (msg.type !== 'workspace-save') return
+        saves.push(msg.base ?? null)
+        if (saves.length === 2) {
+          // The exact wire pair a wiped real server emits (pinned by
+          // the sync-server test "save against a missing chain"):
+          // empty catch-up FIRST, typed error second.
+          sock.send(JSON.stringify({ type: 'workspace-state', workspaceTag: msg.workspaceTag, revisions: [] }))
+          sock.send(JSON.stringify({
+            type: 'workspace-save-error', workspaceTag: msg.workspaceTag,
+            base: msg.base ?? null, reason: 'stale-base',
+          }))
+          return
+        }
+        void (async () => {
+          const id = await cryptoMod.computeRevisionId({
+            publicKeyB64: msg.workspaceTag, base: msg.base ?? null,
+            keyframe: msg.keyframe === true,
+            nonceB64: msg.nonce, ciphertextB64: msg.ciphertext,
+          })
+          sock.send(JSON.stringify({
+            type: 'workspace-save-ack', workspaceTag: msg.workspaceTag,
+            base: msg.base ?? null, id,
+          }))
+        })()
+      })
+    })
+
+    try {
+      triageSync.openSession(wsId)
+      triageSync.setServerUrl(relay.url)
+      await waitFor(statusOnline, 'sync online')
+      // Save 1: establish a non-null base ("the chain before the wipe").
+      patchEntry(state.triage, 'finding-A', { color: 'red' })
+      await saveTriage()
+      await waitFor(() => settledAfterAck(wsId), 'save 1 acked')
+      const preWipeBase = triageSync.sessionInfo(wsId).baseRevision
+      assert.notEqual(preWipeBase, null)
+      // Save 2: edit again — the relay now answers as a wiped server.
+      patchEntry(state.triage, 'finding-A', { comment: 'survives the wipe' })
+      await saveTriage()
+      // Recovery save (3) must re-anchor at base=null without any
+      // further user action.
+      await waitFor(() => saves.length >= 3, 'full state push after the empty catch-up')
+      assert.equal(saves[1], preWipeBase, 'save 2 was built on the pre-wipe base')
+      assert.equal(saves[2], null, 'recovery save re-anchors at base=null')
+      await waitFor(() => settledAfterAck(wsId), 'recovery save acked')
+      const info = triageSync.sessionInfo(wsId)
+      assert.equal(info.error, null, 'no terminal error during recovery')
+      assert.notEqual(info.baseRevision, preWipeBase, 'rebased onto the new root')
+      assert.notEqual(info.baseRevision, null)
+      // Local state survived the reset (state.* is never touched by it).
+      assert.equal(state.triage.get('finding-A')?.color, 'red')
+      assert.equal(state.triage.get('finding-A')?.comment, 'survives the wipe')
+    } finally {
+      triageSync.closeSession()
+      triageSync.setServerUrl('')
+      await deleteWorkspace(wsId)
+      await relay.close()
+    }
+  })
+
+  it('repeated empty-catch-up stale-base is terminal after one reset (no retry loop)', async () => {
+    // The one-shot `staleResetAttempted` latch: a relay that answers
+    // EVERY save with the empty-catch-up + stale-base pair (hostile, or
+    // wedged storage) gets exactly one full-state-push retry; the second
+    // rejection marks the session errored instead of looping full-state
+    // saves forever.
+    const wsId = `ws-${Math.random().toString(36).slice(2, 10)}`
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: randomBase64(), reports: ['t.md'] })
+    setReports([{ id: 'finding-A', _id: 'finding-A' }], 't.md')
+    clearTriageState()
+
+    let saveCount = 0
+    const relay = await startFakeRelay((sock) => {
+      sock.on('message', (data) => {
+        const msg = JSON.parse(data.toString())
+        if (msg.type === 'workspace-subscribe') {
+          sock.send(JSON.stringify({ type: 'workspace-subscribed', workspaceTag: msg.workspaceTag }))
+          return
+        }
+        if (msg.type !== 'workspace-save') return
+        saveCount += 1
+        sock.send(JSON.stringify({ type: 'workspace-state', workspaceTag: msg.workspaceTag, revisions: [] }))
+        sock.send(JSON.stringify({
+          type: 'workspace-save-error', workspaceTag: msg.workspaceTag,
+          base: msg.base ?? null, reason: 'stale-base',
+        }))
+      })
+    })
+
+    try {
+      triageSync.openSession(wsId)
+      triageSync.setServerUrl(relay.url)
+      await waitFor(statusOnline, 'sync online')
+      patchEntry(state.triage, 'finding-A', { color: 'red' })
+      await saveTriage()
+      await waitFor(() => triageSync.status === 'error', 'second rejection is terminal')
+      assert.equal(triageSync.sessionInfo(wsId).error, 'server rejected save: stale-base')
+      assert.equal(saveCount, 2, 'exactly one reset retry before giving up')
+      // No runaway loop: nothing further goes out after the error latch.
+      await new Promise((resolve) => { setTimeout(resolve, 200) })
+      assert.equal(saveCount, 2, 'no further saves after the terminal error')
+    } finally {
+      triageSync.closeSession()
+      triageSync.setServerUrl('')
+      await deleteWorkspace(wsId)
+      await relay.close()
+    }
+  })
+
+  it('a misdetected wipe (glitched empty catch-up) cannot reset a server that still holds the chain', async () => {
+    // Counterpart to the wiped-server recovery test: here the empty
+    // catch-up is a GLITCH — the relay still holds the chain. The
+    // client's one-shot full-state push goes out at base=null, and the
+    // server-side null-safe head CAS must REJECT it (head ≠ null),
+    // answering with the real chain. The client then rebases onto that
+    // chain (clearing the one-shot latch), re-sends a normal delta, and
+    // ends exactly where an un-glitched client would: linear chain, no
+    // reset root, no lost edits, no terminal error.
+    const wsId = `ws-${Math.random().toString(36).slice(2, 10)}`
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: randomBase64(), reports: ['t.md'] })
+    setReports([{ id: 'finding-A', _id: 'finding-A' }], 't.md')
+    clearTriageState()
+
+    // Real-server-like relay: keeps the chain, accepts a save iff its
+    // base matches the head, rejects otherwise with the full chain as
+    // catch-up (the revisions are the client's own signed frames, so
+    // sig-verify + decrypt succeed on re-delivery). One scripted
+    // deviation: save 2 gets the glitched empty-catch-up pair.
+    const chain = []
+    const saves = []
+    const relay = await startFakeRelay((sock) => {
+      sock.on('message', (data) => {
+        const msg = JSON.parse(data.toString())
+        if (msg.type === 'workspace-subscribe') {
+          sock.send(JSON.stringify({ type: 'workspace-subscribed', workspaceTag: msg.workspaceTag }))
+          return
+        }
+        if (msg.type !== 'workspace-save') return
+        saves.push(msg.base ?? null)
+        if (saves.length === 2) {
+          // The glitch: empty catch-up + stale-base while the chain is intact.
+          sock.send(JSON.stringify({ type: 'workspace-state', workspaceTag: msg.workspaceTag, revisions: [] }))
+          sock.send(JSON.stringify({
+            type: 'workspace-save-error', workspaceTag: msg.workspaceTag,
+            base: msg.base ?? null, reason: 'stale-base',
+          }))
+          return
+        }
+        const head = chain.at(-1)?.id ?? null
+        if ((msg.base ?? null) !== head) {
+          // Honest rejection: the head CAS fails, catch-up is the REAL chain.
+          sock.send(JSON.stringify({ type: 'workspace-state', workspaceTag: msg.workspaceTag, revisions: [...chain] }))
+          sock.send(JSON.stringify({
+            type: 'workspace-save-error', workspaceTag: msg.workspaceTag,
+            base: msg.base ?? null, reason: 'stale-base',
+          }))
+          return
+        }
+        void (async () => {
+          const id = await cryptoMod.computeRevisionId({
+            publicKeyB64: msg.workspaceTag, base: msg.base ?? null,
+            keyframe: msg.keyframe === true,
+            nonceB64: msg.nonce, ciphertextB64: msg.ciphertext,
+          })
+          chain.push({
+            base: msg.base ?? null, id, keyframe: msg.keyframe === true,
+            nonce: msg.nonce, ciphertext: msg.ciphertext, signature: msg.signature,
+          })
+          sock.send(JSON.stringify({
+            type: 'workspace-save-ack', workspaceTag: msg.workspaceTag,
+            base: msg.base ?? null, id,
+          }))
+        })()
+      })
+    })
+
+    try {
+      triageSync.openSession(wsId)
+      triageSync.setServerUrl(relay.url)
+      await waitFor(statusOnline, 'sync online')
+      // Save 1 builds the chain the glitch will later pretend is gone.
+      patchEntry(state.triage, 'finding-A', { color: 'red' })
+      await saveTriage()
+      await waitFor(() => settledAfterAck(wsId), 'save 1 acked')
+      const r1 = triageSync.sessionInfo(wsId).baseRevision
+      // Save 2 hits the glitch → client misdetects a wipe → full-state
+      // push at base=null (save 3) → relay rejects with the real chain →
+      // client rebases and lands the edit as a delta on the real head
+      // (save 4).
+      patchEntry(state.triage, 'finding-A', { comment: 'survives the glitch' })
+      await saveTriage()
+      await waitFor(() => settledAfterAck(wsId) && chain.length === 2, 'edit landed as a delta on the REAL chain')
+      assert.deepEqual(saves, [null, r1, null, r1], 'push at base=null was rejected, then rebased onto the real head')
+      assert.equal(chain[0].id, r1, 'original root survived the misdetection')
+      assert.equal(chain[1].base, r1, 'chain stayed linear — no reset root, no fork')
+      const info = triageSync.sessionInfo(wsId)
+      assert.equal(info.error, null, 'glitch round-trip ends with no terminal error')
+      assert.equal(info.baseRevision, chain[1].id)
+      assert.equal(state.triage.get('finding-A')?.color, 'red')
+      assert.equal(state.triage.get('finding-A')?.comment, 'survives the glitch')
+      // Settled: no further traffic (the latch was cleared by the applied
+      // chain, not left mid-ladder).
+      await new Promise((resolve) => { setTimeout(resolve, 200) })
+      assert.equal(saves.length, 4, 'no residual retry traffic')
+    } finally {
+      triageSync.closeSession()
+      triageSync.setServerUrl('')
+      await deleteWorkspace(wsId)
+      await relay.close()
+    }
+  })
+
   it('heartbeat closes the socket when the server stops responding to pings', async () => {
     // Fake relay accepts the connection but never replies to a
     // `ping`. With heartbeat enabled, the client should hit its

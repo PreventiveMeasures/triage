@@ -255,6 +255,94 @@ describe('triage-sync server', { concurrency: true }, () => {
     assert.equal(body.revisions[0].id, id1, 'catch-up carries the current head')
   })
 
+  it('save against a missing chain (non-null base, empty tag) → EMPTY catch-up then stale-base', async () => {
+    // The wiped-relay shape (review finding #1): a client holding a
+    // persisted base from a chain this deployment no longer has (DB
+    // wiped / moved / SQLite→Neon migration) saves base=R_old against
+    // head=null. The gated INSERT rejects (null-safe head check) and
+    // `chainFrom` has NOTHING to return — no seq for R_old, no
+    // keyframe, empty chain — so the catch-up is `revisions: []`,
+    // followed by the typed stale-base error. The client keys its
+    // full-state-push recovery off exactly this sequence (`pending`
+    // survives the empty catch-up), so the wire ORDER is contractual:
+    // state first, error second.
+    const { sk, tag } = await makeKp()
+    const c = await connect(serverUrl)
+    const ghostBase = b64url(crypto.getRandomValues(new Uint8Array(32)))
+    const { msg } = await buildSave(sk, tag, ghostBase, 'wiped-1')
+    c.ws.send(JSON.stringify(msg))
+    const first = await c.recv((m) => m.type === 'workspace-state' || m.type === 'workspace-save-error')
+    const second = await c.recv((m) => m.type === 'workspace-state' || m.type === 'workspace-save-error')
+    assert.equal(first.type, 'workspace-state', 'catch-up precedes the typed error')
+    assert.deepEqual(first.revisions, [], 'no chain to return — catch-up is empty')
+    assert.equal(second.type, 'workspace-save-error')
+    assert.equal(second.reason, 'stale-base')
+    assert.equal(second.base, ghostBase, 'error attributes the rejected base')
+    // Recovery contract: the same signer re-anchoring at base=null
+    // commits as the new chain root.
+    const { msg: m2, id: id2 } = await buildSave(sk, tag, null, 'wiped-recovery')
+    c.ws.send(JSON.stringify(m2))
+    const ack = await c.recv((m) => m.type === 'workspace-save-ack')
+    assert.equal(ack.id, id2)
+    c.ws.close()
+  })
+
+  it('full-state push (base=null) against a NON-empty chain is rejected — server data wins', async () => {
+    // The other half of the wiped-relay recovery contract: if a client
+    // MISDETECTS a wipe (a glitch delivered an empty catch-up while the
+    // server in fact still holds the chain), its recovery push arrives
+    // as base=null against a non-null head. The gated INSERT's
+    // null-safe head CAS (`head IS [NOT DISTINCT FROM] base`) only
+    // matches base=null when the chain is genuinely empty, so the push
+    // MUST be rejected as stale-base — and the catch-up is the REAL
+    // chain (non-empty), which rebases the client instead of letting
+    // the push land as a forked/reset root.
+    const { sk, tag } = await makeKp()
+    const c = await connect(serverUrl)
+    await subscribe(c, sk, tag)
+    const { msg: m1, id: id1 } = await buildSave(sk, tag, null, 'glitch-base-1')
+    c.ws.send(JSON.stringify(m1))
+    await c.recv((m) => m.type === 'workspace-save-ack' && m.id === id1)
+    // The misdetected-wipe recovery push: base=null while head is id1.
+    const { msg: m2, id: id2 } = await buildSave(sk, tag, null, 'glitch-full-push')
+    c.ws.send(JSON.stringify(m2))
+    const first = await c.recv((m) => m.type === 'workspace-state' || m.type === 'workspace-save-error')
+    const second = await c.recv((m) => m.type === 'workspace-state' || m.type === 'workspace-save-error')
+    assert.equal(first.type, 'workspace-state')
+    assert.equal(first.revisions.length, 1, 'catch-up is the REAL chain, not empty')
+    assert.equal(first.revisions[0].id, id1)
+    assert.equal(second.type, 'workspace-save-error')
+    assert.equal(second.reason, 'stale-base')
+    // The chain continues from id1 — a proper delta commits…
+    const { msg: m3, id: id3 } = await buildSave(sk, tag, id1, 'glitch-delta')
+    c.ws.send(JSON.stringify(m3))
+    await c.recv((m) => m.type === 'workspace-save-ack' && m.id === id3)
+    // …and the rejected push never landed anywhere in it.
+    const c2 = await connect(serverUrl)
+    const { chain } = await subscribe(c2, sk, tag)
+    assert.deepEqual(chain.revisions.map((r) => r.id), [id1, id3], 'no fork, no reset root')
+    assert.ok(!chain.revisions.some((r) => r.id === id2), 'the base=null push is nowhere in the chain')
+    c.ws.close(); c2.ws.close()
+  })
+
+  it('REST save against a missing chain → 409 stale-base with EMPTY revisions', async () => {
+    // REST rendering of the wiped-relay shape above: 409 with an empty
+    // catch-up array. The client synthesises the same state+error pair
+    // from this body, so the recovery path is shared with the WS plane.
+    const { sk, tag } = await makeKp()
+    const ghostBase = b64url(crypto.getRandomValues(new Uint8Array(32)))
+    const { msg } = await buildSave(sk, tag, ghostBase, 'rest-wiped')
+    const { status, body } = await postSave(httpOrigin, msg)
+    assert.equal(status, 409)
+    assert.equal(body.reason, 'stale-base')
+    assert.deepEqual(body.revisions, [], 'no chain to rebase on — client full-state-pushes at base=null')
+    // Recovery: base=null commits as the new root.
+    const { msg: m2, id: id2 } = await buildSave(sk, tag, null, 'rest-wiped-recovery')
+    const r2 = await postSave(httpOrigin, m2)
+    assert.equal(r2.status, 200)
+    assert.equal(r2.body.id, id2)
+  })
+
   it('REST save fans out live to a WS subscriber (except: null)', async () => {
     const { sk, tag } = await makeKp()
     const c = await connect(serverUrl)

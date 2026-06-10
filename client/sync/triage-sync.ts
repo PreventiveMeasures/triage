@@ -146,6 +146,20 @@ type Session = {
   subscribed: boolean
   subscribeAcked: boolean
   resyncAttempted: boolean
+  // True after a `stale-base` save-error arrived with `pending` STILL
+  // armed — the preceding catch-up failed to clear it: it was EMPTY
+  // (chain gone: wiped / moved DB file, SQLite→Neon migration) or it
+  // didn't APPLY (chain rebuilt past our base; see handleSaveError's
+  // stale-base branch) — and we've already answered with one
+  // full-state-push reset. A second such error before the latch
+  // re-arms falls through to the terminal `session.error`. Re-armed
+  // on ack, on any applied chain, and by the lifecycle resets (incl.
+  // every reconnect), so the bound is one reset per RECOVERY CYCLE —
+  // rate-limited by edit cadence + reconnect backoff, not once-ever.
+  // Deliberately NOT re-armed by `dismissError`: each user retry
+  // after the terminal error gets one push at the already-null base,
+  // not a fresh reset cycle (hostile-relay amplification bound).
+  staleResetAttempted: boolean
   consecutiveFailures: number
   error: string | null
   keyDerivationGen?: number
@@ -815,9 +829,14 @@ async function postSaveRest(wireMsg: { [k: string]: unknown }): Promise<boolean>
     const revisions = body && Array.isArray(body.revisions) ? body.revisions : []
     // State FIRST then the typed error — same wire order as the WS stale-base
     // path. A well-formed catch-up clears pending, so the error frame no-ops;
-    // a malformed/empty `revisions` leaves pending set and the error marks
-    // session.error — the intended safe-fail (don't silently swallow a
-    // divergence), reachable identically via a hostile WS frame today.
+    // an EMPTY `revisions` (the relay's chain for this tag is gone — wiped /
+    // migrated DB) leaves pending set, and the error's stale-base branch then
+    // runs the one-shot full-state-push reset instead of wedging the session
+    // in `error` (see handleSaveError; review finding #1). NB any 409 with a
+    // parseable JSON body coerces here — a non-relay 409 (middlebox/gateway)
+    // carries no `revisions` and synthesizes the same empty pair, triggering
+    // the same reset. Convergent either way: the recovery push only roots an
+    // actually-empty chain (server-side null-safe head CAS).
     onTransportMessage({ type: 'workspace-state', workspaceTag: tag, revisions })
     onTransportMessage({ type: 'workspace-save-error', workspaceTag: tag, base, reason: 'stale-base' })
     return false
@@ -1277,6 +1296,9 @@ async function handleAck(session: Session, msg: WireMessage): Promise<void> {
       ? 0
       : Math.min((session.savesSinceKeyframe ?? 0) + 1, keyframeInterval)
     session.pending = null
+    // A committed save is the recovery-complete signal for the
+    // stale-base full-reset ladder — re-arm it for any future wipe.
+    session.staleResetAttempted = false
     await applyOverlayAndPersist(session, overlay)
     // applyOverlayAndPersist self-bails if the session was closed
     // during its awaits, but a follow-up trySendSave on the orphan
@@ -1311,24 +1333,27 @@ async function handleAck(session: Session, msg: WireMessage): Promise<void> {
 }
 
 async function handleChain(session: Session, revisions: unknown): Promise<void> {
-  // INVARIANT (load-bearing for the stale-base typed-error path):
-  // empty `revisions` early-returns WITHOUT clearing `pending`. The
-  // stale-base branch in `server/index.ts handleSave` emits
-  // `workspace-state` (here) THEN `workspace-save-error{stale-base}`,
-  // relying on this handler to clear `pending` before the save-error
-  // reaches `handleSaveError`. Safe today because `chainFrom` on a
-  // head-mismatched base ALWAYS returns ≥1 row (a base mismatch means
-  // ≥1 rev the client hasn't seen), so length===0 is unreachable on
-  // the stale-base path.
-  //
-  // If a future server emits an empty `workspace-state` ahead of a
-  // stale-base error, `pending` survives, `handleSaveError` finds it
-  // set, takes the non-recoverable branch, and marks `error` on a
-  // benign race. Preferred fix: reaffirm the non-empty-chain server
-  // invariant. Hoisting `pending = null` above this guard is wider —
-  // a no-op today, but would re-arm pendingSave on every empty chain
-  // (changes behavior for malformed frames from a buggy/hostile
-  // server). Audit follow-up to PR #79.
+  // Wire-order contract with the stale-base typed-error path: the
+  // server emits `workspace-state` (handled here) THEN
+  // `workspace-save-error{stale-base}`, and a NON-empty catch-up
+  // clears `pending` below before that error reaches
+  // `handleSaveError`. Empty `revisions` early-returns WITHOUT
+  // clearing `pending` — deliberately: hoisting `pending = null`
+  // above this guard would re-arm pendingSave on every empty or
+  // malformed frame from a buggy/hostile server. There IS one honest
+  // protocol path where the stale-base catch-up is empty — the
+  // server's chain for this tag is GONE (wiped / moved DB,
+  // SQLite→Neon migration) while we hold a persisted base, so
+  // `chainFrom` has nothing to return (head=null, no keyframe, no
+  // rows). That case therefore reaches `handleSaveError` with
+  // `pending` still set, and its stale-base branch owns the recovery:
+  // one full-state-push reset, latched by `staleResetAttempted`. (A
+  // NON-empty catch-up that fails to APPLY — continuity break, chain
+  // rebuilt past our base — likewise retains `pending` via the `!ok`
+  // first-break branch below and lands in the same recovery; see the
+  // route list in handleSaveError.) Before that branch existed this
+  // wedged the session in a terminal error ↔ dismissError loop —
+  // review finding #1. Audit follow-up to PR #79.
   if (!Array.isArray(revisions) || revisions.length === 0) return
   // Key not derived yet — bail; a future open retries once
   // deriveSessionKey lands and trySendSave re-runs. Also bypasses the
@@ -1381,6 +1406,9 @@ async function handleChain(session: Session, revisions: unknown): Promise<void> 
     return
   }
   session.resyncAttempted = false
+  // A successfully-applied chain proves the server serves usable
+  // catch-ups again — re-arm the stale-base full-reset ladder too.
+  session.staleResetAttempted = false
   // If a save was in flight when the chain arrived, the server is
   // implicitly rejecting it (it brought us forward without acking).
   // Clear pending so the next save recomputes the changeset against
@@ -1538,6 +1566,54 @@ function handleSaveError(session: Session, wire: WireMessage): void {
     armBusyRetry(session)
     return
   }
+  // `stale-base` reaching a still-armed `pending` means the catch-up
+  // the server emits BEFORE this frame failed to clear it. Two honest
+  // routes here, both flavours of "our base is gone from the server's
+  // chain":
+  //   a. the catch-up was EMPTY — the chain for this tag is GONE (DB
+  //      wiped, file moved, SQLite→Neon migration) while we hold a
+  //      persisted baseRevision, so `chainFrom` had nothing to return
+  //      (head=null can't match our non-null base; no keyframe, no
+  //      rows);
+  //   b. the catch-up was NON-empty but didn't APPLY — the chain was
+  //      rebuilt past our base (a peer already re-rooted after a wipe;
+  //      a partial restore kept a keyframe but not our revision), so
+  //      applyChainToBase broke continuity and handleChain's
+  //      first-break branch returned with `pending` intact.
+  // The old terminal-error behaviour wedged route (a) permanently:
+  // error → dismissError → identical save → identical error, with the
+  // persisted base never reset (review finding #1). Recover instead
+  // with the same full-state-push reset as handleChain's second-break
+  // branch: drop the base anchor so the next save ships full local
+  // state against base=null.
+  //
+  // SAFETY rests on the server's null-safe head CAS, not on the
+  // trigger diagnosis: a base=null push only roots a genuinely EMPTY
+  // chain; against any surviving or re-rooted chain it is rejected
+  // with a REAL catch-up that rebases us on the normal path (clearing
+  // the latch via the applied chain). A MISDETECTED wipe — a glitched
+  // frame pair from a relay that still holds the chain — therefore
+  // cannot reset server data. Trade-offs, both shared with the
+  // sibling reset in handleChain: state.* is untouched, but triage
+  // living ONLY in baseState (ids of reports not loaded locally)
+  // drops out of the recovery push, and on a misdetect an unsynced
+  // DELETION (id→null vs the old base) is unrepresentable against the
+  // emptied base, so the rebase resurrects the entry. One reset per
+  // recovery cycle (`staleResetAttempted`): a relay replaying the
+  // rejection forever gets the terminal error on the second round
+  // instead of an infinite full-state loop.
+  if (reason === 'stale-base' && !session.staleResetAttempted) {
+    session.staleResetAttempted = true
+    console.warn('Triage sync: stale-base catch-up did not apply (server chain gone or rebuilt past our base); full state push')
+    session.baseRevision = null
+    session.baseState = Object.create(null)
+    session.pendingSave = false
+    session.resyncAttempted = false
+    persistSession(session)
+    redraw()
+    trySendSave(session)
+    return
+  }
   session.consecutiveFailures = (session.consecutiveFailures ?? 0) + 1
   session.error = `server rejected save: ${reason}`
   emitStatusIfChanged()
@@ -1602,6 +1678,7 @@ function onTransportDisconnected(_reason: string): void {
     session.subscribed = false
     session.subscribeAcked = false
     session.resyncAttempted = false
+    session.staleResetAttempted = false
     session.pendingSave = true
     // The reconnect path owns the resend now (onConnected flushes
     // pendingSave); a busy retry firing against a closed socket would
@@ -1722,6 +1799,7 @@ function deactivateSession(session: Session): void {
   session.subscribed = false
   session.subscribeAcked = false
   session.resyncAttempted = false
+  session.staleResetAttempted = false
   clearBusyRetry(session)
 }
 
@@ -1958,6 +2036,10 @@ export const triageSync = {
       // falls through to the full state-push reset; else a server
       // sending broken chains would loop us forever.
       resyncAttempted: false,
+      // One-shot latch for the stale-base-with-empty-catch-up reset
+      // (see the Session type doc + handleSaveError's stale-base
+      // branch).
+      staleResetAttempted: false,
       // Consecutive crypto failures (encrypt/sign). Reset on a
       // successful round-trip; promoted to `error` past
       // `maxConsecutiveFailures`. Per-session — cause is typically the

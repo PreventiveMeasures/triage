@@ -28,11 +28,21 @@
 //                   and this frame's handler then early-returns
 //                   on the missing pending. So `stale-base` is
 //                   NOT in the recoverable set: in the happy path
-//                   the recoverable branch is unreachable; in the
-//                   pathological case where wire order flipped,
-//                   we'd rather mark the session errored (visible
-//                   via UI + recoverable via `dismissError()`)
-//                   than silently swallow a state divergence.
+//                   the recoverable branch is unreachable. When
+//                   `pending` DOES survive to this frame — the
+//                   catch-up was empty (chain gone: wiped /
+//                   migrated DB) or didn't apply (chain rebuilt
+//                   past the client's base) — the client answers
+//                   with ONE full-state-push reset per recovery
+//                   cycle (re-anchor at base=null; safe because
+//                   the server's null-safe head CAS rejects a
+//                   base=null root against any non-empty chain;
+//                   see `staleResetAttempted` in triage-sync.ts).
+//                   A repeat within the cycle marks the session
+//                   errored (visible via UI + recoverable via
+//                   `dismissError()`) rather than looping
+//                   full-state saves against a relay that keeps
+//                   rejecting them.
 
 export type SaveErrorReason = 'too-large' | 'busy' | 'stale-base'
 

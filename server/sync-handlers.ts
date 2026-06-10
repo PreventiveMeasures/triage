@@ -238,6 +238,14 @@ export function createSyncHandlers(deps: SyncHandlersDeps): SyncHandlers {
       // chain in the 409 body. Either way the catch-up clears the client's
       // pending and the error is a no-op on the now-missing pending (a
       // recoverable race — client rebases + re-saves).
+      //
+      // The catch-up CAN be empty: a client holding a base from a chain
+      // this deployment no longer has (wiped / moved DB, SQLite→Neon
+      // migration — head=null, no keyframe, no rows) gets `revisions: []`.
+      // The client detects that shape (pending survives the catch-up) and
+      // answers with a full-state push re-anchored at base=null, which
+      // commits as the new chain root — see the client's
+      // `handleSaveError` stale-base branch.
       const revisions = chainForWire(await chainFrom(handle, tag, baseNorm))
       if (debug) console.log(`save (stale base ${baseNorm} vs head ${commit.head}) → chain ${revisions.length}`)
       return { kind: 'stale-base', base: baseNorm, revisions }
