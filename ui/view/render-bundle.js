@@ -297,6 +297,12 @@ export function buildBundleGraphData(details) {
     if (focusFiles.length > 0) files = focusFiles
     else graph2.focusedPkg = null
   }
+  // Same staleness rule for the file selection: a `selected` carried
+  // over from another bundle (or a report) names a file this tree
+  // doesn't have. At file altitude that only costs an unhelpful
+  // "File not in current view" card; at package altitude it would
+  // put that card over a package canvas. Clear it like the focus.
+  if (graph2.selected && !Object.hasOwn(tree, graph2.selected)) graph2.selected = null
   // Raw-inputs shape — lazy `ui/graph.js` runs the actual
   // `buildGraph(...)` in `buildGraphFromPrep`.
   return {

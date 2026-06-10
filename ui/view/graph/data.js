@@ -256,7 +256,6 @@ export function buildPackageGraph(graph) {
       paths.push(n.file)
     }
     return {
-      id: pkg,
       file: pkg,
       pkg,
       label: pkg === '__own__' ? 'own source' : pkg,

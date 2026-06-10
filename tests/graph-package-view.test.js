@@ -2,8 +2,9 @@
 // package-level graph behind the bundle Graph tab's "Packages"
 // toggle: one node per package with aggregated finding / size /
 // file counts, and one edge per connected package pair with
-// directional flags + the number of file-level imports collapsed
-// into it. The mapping under test that's easiest to get wrong:
+// directional flags + the number of file-level import PAIRS
+// collapsed into it (a bidirectional a↔b file pair counts once).
+// The mapping under test that's easiest to get wrong:
 // file edges store direction in lo/hi FILE-path order, while
 // package edges store it in lo/hi PACKAGE-name order, and the two
 // orders can disagree (an own-source dir sorting after a

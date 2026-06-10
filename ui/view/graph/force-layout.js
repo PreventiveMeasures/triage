@@ -10,7 +10,15 @@
 
 import { packageOf } from './utils.js'
 
-export function forceLayout(files, importsOf, layoutW, layoutH) {
+// `opts.groupOf(id)`: classifier behind the centroid-pull clusters
+// below. Defaults to packageOf — right when ids are file paths (the
+// package-focus mode). The packages view passes identity: its ids
+// are package NAMES, which packageOf would mis-bucket (every
+// unscoped name → '/', scoped names by scope), pulling unrelated
+// packages toward a common centroid. Identity makes every group a
+// singleton, which the pull loop skips — spring + repulsion forces
+// alone shape that layout.
+export function forceLayout(files, importsOf, layoutW, layoutH, { groupOf = packageOf } = {}) {
   const N = files.length
   const height = layoutH || 760
   const width = layoutW || 1100
@@ -44,10 +52,10 @@ export function forceLayout(files, importsOf, layoutW, layoutH) {
     }
   }
 
-  // Group by package for centroid pull.
+  // Group for centroid pull (per-package when ids are file paths).
   const byPkg = new Map()
   for (let i = 0; i < N; i++) {
-    const p = packageOf(nodes[i].file) ?? '__own__'
+    const p = groupOf(nodes[i].file) ?? '__own__'
     if (!byPkg.has(p)) byPkg.set(p, [])
     byPkg.get(p).push(i)
   }

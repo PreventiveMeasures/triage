@@ -177,7 +177,11 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
       layoutFilesVogel(pg, w, h)
       return
     }
-    const sol = forceLayout(pg.nodes.map((n) => n.pkg), pg.importsOf, w, h)
+    // groupOf identity: the ids are package NAMES, which the
+    // solver's default packageOf clustering would mis-bucket (see
+    // force-layout.js) — singleton groups disable the centroid
+    // pull, leaving spring + repulsion to shape the layout.
+    const sol = forceLayout(pg.nodes.map((n) => n.pkg), pg.importsOf, w, h, { groupOf: (id) => id })
     const idx = new Map(sol.map((s) => [s.file, s]))
     for (const n of pg.nodes) {
       const p = idx.get(n.pkg)
@@ -949,10 +953,11 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
   // always-on collision-avoidant labels) but keeps per-package
   // hues: each edge runs a gradient importer → importee so
   // direction reads from color before the arrowhead resolves, and
-  // stroke width scales with how many file-level imports collapsed
-  // into it. graph2.solo doubles as the package selection here
-  // (canvas clicks and the right panel's Packages rows both set
-  // it), so the package card and the ring highlight always agree.
+  // stroke width scales with how many file-level import pairs
+  // collapsed into it. graph2.solo doubles as the package selection
+  // here (canvas clicks and the right panel's Packages rows both
+  // set it), so the package card and the ring highlight always
+  // agree.
   function drawPackagesGraph(T) {
     const pg = getPkgGraph()
     const soloPkg = graph2.solo && pg.byPkg.has(graph2.solo) ? graph2.solo : null
@@ -984,6 +989,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
       const na = pg.byPkg.get(e.a)
       const nb = pg.byPkg.get(e.b)
       if (!na || !nb) continue
+      if (!nodeVisible(na) || !nodeVisible(nb)) continue
       // Direction handling mirrors drawPackageView: bidi pairs get
       // arrows on both ends, unidirectional ones an arrow at the
       // import target.
@@ -992,7 +998,11 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
       const a = reversed ? nb : na
       const b = reversed ? na : nb
       const touches = focusPkg !== null && (e.a === focusPkg || e.b === focusPkg)
-      const isDim = focusPkg !== null && !touches
+      // Fully filter-dimmed (both endpoints) edges drop with their
+      // nodes AND skip arrowheads below — an arrow at +0.15 alpha
+      // over a 0.05 body would keep "dimmed" links visibly arrowed.
+      const bothDimmed = nodeIsDimmed(na) && nodeIsDimmed(nb)
+      const isDim = (focusPkg !== null && !touches) || bothDimmed
 
       const ra = pkgNodeRadius(a), rb = pkgNodeRadius(b)
       const [ax, ay] = worldToScreen(a.x, a.y)
@@ -1007,10 +1017,10 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
       const qcy = (sy + ey) / 2 + ux * off
 
       let edgeAlpha
-      if (touches) edgeAlpha = 0.9
+      if (bothDimmed) edgeAlpha = 0.05
+      else if (touches) edgeAlpha = 0.9
       else if (isDim) edgeAlpha = 0.06
       else edgeAlpha = 0.5
-      if (nodeIsDimmed(na) && nodeIsDimmed(nb)) edgeAlpha = Math.min(edgeAlpha, 0.05)
 
       const grad = ctx.createLinearGradient(sx, sy, ex, ey)
       grad.addColorStop(0, pkgColor(a.pkg) + alphaHex(edgeAlpha))
@@ -1060,6 +1070,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
 
     // ── Nodes ───────────────────────────────────────────────────
     for (const p of pg.nodes) {
+      if (!nodeVisible(p)) continue
       const [sx, sy] = worldToScreen(p.x, p.y)
       const r = pkgNodeRadius(p)
       const isHov = p.pkg === hovered
@@ -1107,6 +1118,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     const labelPad = 2
     const labelCandidates = []
     for (const p of pg.nodes) {
+      if (!nodeVisible(p)) continue
       const [sx, sy] = worldToScreen(p.x, p.y)
       const r = pkgNodeRadius(p)
       const ty = sy + r + 4
