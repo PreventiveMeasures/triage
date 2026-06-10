@@ -502,9 +502,11 @@ export const state: State = store<State>({
   nextFindingId: 0,
   // Ephemeral per-render state — which tab is active within each dedup
   // group. Keyed by `groupKey(g)` (the first member's tabKey), value is
-  // a tabKey within the group. Falls back to the sorted-primary tab
-  // when absent or when the stored tab no longer exists. Session-only;
-  // NOT persisted (it's a pure UI focus state, not triage).
+  // a tabKey within the group. When absent (or the stored tab no longer
+  // exists), the default-tab resolution in view/group.js's activeTabFor
+  // applies — analyzer/model-filter match, then annotation marker, then
+  // the sorted-primary tab. Session-only; NOT persisted (it's a pure UI
+  // focus state, not triage).
   activeTabByGroup: new Map<string, string>(),
   // Table view: gid of the currently-selected row. Null when no row
   // is selected (the details panel is hidden and the list takes the

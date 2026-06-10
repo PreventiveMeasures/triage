@@ -45,6 +45,39 @@ export function modelOfFinding(f) {
   return prettyModel(f.model) || null
 }
 
+// Analyzer + model dimension predicate — the two run-meta checks of
+// the toolbar's `<analyzer-select>` dropdown, factored out of
+// matchesFilters because group.js's activeTabFor ALSO consults it:
+// when the dropdown narrows the view, the tab a dedup group opens on
+// by default should be one the filter actually matched, not whichever
+// sorted first. A separate export (rather than reusing matchesFilters)
+// keeps the default-tab preference from dragging the search box /
+// severity / confidence state into tab resolution.
+//
+// Analyzer: empty = no filter. Findings with no analyzer
+// (`_analyzer === null`) match NULL_ANALYZER_SENTINEL; other values
+// are straight string equality.
+//
+// Model: matched on `modelOfFinding` (the pretty name; see that
+// helper for why). Findings with no model match NULL_MODEL_SENTINEL.
+//
+// Both dimensions are evaluated per-finding, so selecting both means
+// "SOME finding carries this exact analyzer+model combination" — not
+// one finding with the analyzer and a different one with the model.
+export function matchesRunFilters(f) {
+  if (state.filterAnalyzer) {
+    const a = f._analyzer ?? null
+    const want = state.filterAnalyzer === NULL_ANALYZER_SENTINEL ? null : state.filterAnalyzer
+    if (a !== want) return false
+  }
+  if (state.filterModel) {
+    const m = modelOfFinding(f)
+    const want = state.filterModel === NULL_MODEL_SENTINEL ? null : state.filterModel
+    if (m !== want) return false
+  }
+  return true
+}
+
 // Resolve a finding's repo to a single string key, or null when no
 // repo signal is available. Mirrors `repoOf` in
 // client/bundle-finding-index.js — kept local because that helper
@@ -106,29 +139,13 @@ export function matchesFilters(f) {
   // NOT evaluated here — they're GROUP-level (see matchesAnnotationFilters
   // / applyFilters) so 'with' / 'without' stay complementary across a
   // dedup group.
-  // Analyzer filter — one dimension of the `<analyzer-select>`
-  // dropdown. Empty = no filter. Findings with no analyzer
-  // (`_analyzer === null`) match NULL_ANALYZER_SENTINEL; other values
-  // are straight string equality. applyFilters runs this at the GROUP
-  // level via `g.some(...)`, so a dedup group shows in full when any
-  // entry matches — same group-visibility as severity / color.
-  if (state.filterAnalyzer) {
-    const a = f._analyzer ?? null
-    const want = state.filterAnalyzer === NULL_ANALYZER_SENTINEL ? null : state.filterAnalyzer
-    if (a !== want) return false
-  }
-  // Model filter — the other `<analyzer-select>` dimension, matched on
-  // `modelOfFinding` (the pretty name; see that helper for why).
-  // Findings with no model match NULL_MODEL_SENTINEL. Evaluated in the
-  // same per-finding pass as the analyzer check above, so selecting
-  // both dimensions means "SOME finding carries this exact
-  // analyzer+model combination" — not one finding with the analyzer
-  // and a different one with the model.
-  if (state.filterModel) {
-    const m = modelOfFinding(f)
-    const want = state.filterModel === NULL_MODEL_SENTINEL ? null : state.filterModel
-    if (m !== want) return false
-  }
+  // Analyzer + model filters — the `<analyzer-select>` dropdown's two
+  // dimensions, shared with group.js's default-tab resolution via
+  // matchesRunFilters (see its comment above for the matching rules).
+  // applyFilters runs this at the GROUP level via `g.some(...)`, so a
+  // dedup group shows in full when any entry matches — same
+  // group-visibility as severity / color.
+  if (!matchesRunFilters(f)) return false
   // Repo filter — single-select dropdown shown only in workspace
   // view (parent gates the chip on `state.currentWorkspace` + a
   // multi-repo option list). Empty = no filter; `NO_REPO_SENTINEL`

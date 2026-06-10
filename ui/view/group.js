@@ -1,5 +1,11 @@
 import { getPackagesIndex, isReportIgnored, state } from '#client/index.js'
 import { SEVERITY_ORDER } from './format.js'
+// NOTE: filters.js imports from this module too (primaryTab / tabKey).
+// The cycle is deliberate and benign: both sides only call across
+// inside function bodies, never during module evaluation, so whichever
+// module evaluates first resolves the other's hoisted function
+// declarations by the time anything runs.
+import { matchesRunFilters } from './filters.js'
 
 // ID helpers. Internally every `state.reports[].groups[i]` is a
 // Finding[] (single-finding entries are wrapped at ingest, so code
@@ -26,9 +32,11 @@ export function isIgnored(f) {
 
 // Tab sort order within a group: colored tabs first (drawing attention
 // to already-triaged cases), then higher severity, then higher
-// confidence. The first tab after sort is the group's "primary" — used
-// as the default active tab AND as the representative for group-level
-// sorting (file/severity/confidence dropdowns).
+// confidence. The first tab after sort is the group's "primary" — the
+// representative for group-level sorting (file/severity/confidence
+// dropdowns) and the last-resort default active tab (the full
+// default-tab resolution — explicit pick, analyzer/model-filter match,
+// annotation marker — lives in activeTabFor below).
 export function sortTabs(group) {
   return [...group].toSorted((a, b) => {
     const aColored = state.triage.get(tabKey(a))?.color ? 1 : 0
@@ -61,12 +69,29 @@ export function activeTabFor(group) {
     const match = group.find((f) => tabKey(f) === stored)
     if (match) return match
   }
-  // No explicit selection yet: default to the first tab (in display
-  // order) carrying an annotation marker so an annotated sibling opens
-  // first; fall back to the primary (first sorted) tab when none is
-  // marked. `sorted[0]` is exactly primaryTab(group).
+  // No explicit selection yet. Candidate pool: all tabs in display
+  // order, narrowed to the tabs matching the analyzer/model dropdown
+  // while that filter is active — a group stays visible when ANY tab
+  // matches (group-level some() in applyFilters), so without the
+  // narrowing a group could open on the very duplicate the user just
+  // filtered away from (filter to analyzer B, group still presents
+  // its analyzer-A tab). The full-strip fallback when no tab matches
+  // is purely defensive under the current wiring — every rendered
+  // group passed applyFilters, which embeds this same predicate — but
+  // callers that resolve groups outside the filtered render path
+  // (gid-based event handlers, future surfaces) must never strand a
+  // group without an active tab.
+  //
+  // Within the pool: prefer the first tab carrying an annotation
+  // marker so an annotated sibling opens first; else the pool's first
+  // (= primaryTab(group) when unfiltered).
   const sorted = sortTabs(group)
-  return sorted.find(tabHasMarks) ?? sorted[0]
+  let pool = sorted
+  if (state.filterAnalyzer || state.filterModel) {
+    const matching = sorted.filter(matchesRunFilters)
+    if (matching.length > 0) pool = matching
+  }
+  return pool.find(tabHasMarks) ?? pool[0]
 }
 
 // Repo identifier (slug or URL) for a finding, matching the `Repo:`
