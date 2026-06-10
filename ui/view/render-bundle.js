@@ -567,6 +567,13 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes, packageDirs) {
 const _bundleHighlightCache = new Map()
 const _bundleHighlightPending = new Set()
 
+// Copy glyph for the Code slide's copy-path button — same two-rect
+// shape and stroke weight as the finding card's copy action.
+const COPY_PATH_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
+  <rect x="3" y="2.5" width="8" height="10" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+  <rect x="5.5" y="5" width="8" height="9" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+</svg>`
+
 // Pick the worst severity (top of SEVERITIES order) among the
 // findings on a given line so the gutter dot reads as the most
 // urgent issue. Multiple findings on one line still resolve to a
@@ -826,6 +833,30 @@ let _bundleTreeMapBundle = null
 // so the user can drill in. Selected file gets a `current` class
 // for the highlight strip; the click target is the data-bundle-
 // view-source delegate (same one the Files tab uses).
+// Aggregate issue count + worst severity across every file under a
+// dir node — the rollup chip a directory row shows so issue
+// hotspots stay visible while the subtree is collapsed. Walks the
+// (already-remapped) file values, so lookups hit the orig-path-keyed
+// issueIndex directly. O(subtree) per dir, O(files × depth) for the
+// whole tree — fine at bundle scale.
+function dirIssueStats(node, issueIndex) {
+  let count = 0
+  let worst = null
+  if (!issueIndex || issueIndex.size === 0) return { count, worst }
+  const walk = (n) => {
+    for (const full of n.files.values()) {
+      const findings = issueIndex.get(full)
+      if (!findings || findings.length === 0) continue
+      count += findings.length
+      const sev = _topSeverityOf(findings)
+      if (worst === null || (SEVERITY_ORDER[sev] ?? 0) > (SEVERITY_ORDER[worst] ?? 0)) worst = sev
+    }
+    for (const d of n.dirs.values()) walk(d)
+  }
+  walk(node)
+  return { count, worst }
+}
+
 function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null, parentPath = '', expandAll = false) {
   const dirs = [...node.dirs.entries()].toSorted(([a], [b]) => a.localeCompare(b))
   const files = [...node.files.entries()].toSorted(([a], [b]) => a.localeCompare(b))
@@ -873,9 +904,17 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
   return html`<ul class=${classMap({ 'bundle-code-tree': true, root: depth === 0 })}>
     ${repeat(dirs, ([name]) => `${parentPath}/${name}`, ([name, child]) => {
       const childPath = parentPath ? `${parentPath}/${name}` : name
+      // Rollup chip — total findings under this dir, colored by the
+      // worst severity present, so a collapsed subtree still shows
+      // where the issues live (the per-file chips only help once
+      // it's expanded).
+      const stats = dirIssueStats(child, issueIndex)
       return html`<li class="bundle-code-tree-dir">
         <details ?open=${computeOpen(childPath, child)}>
-          <summary @click=${onSummaryClick(childPath)}>${name}</summary>
+          <summary @click=${onSummaryClick(childPath)}>
+            <span class="bundle-code-tree-dirname">${name}</span>
+            ${stats.count > 0 ? html`<span class=${`bundle-code-tree-count sev-${stats.worst}`} title=${`${stats.count} ${stats.count === 1 ? 'issue' : 'issues'} inside`}>${stats.count}</span>` : nothing}
+          </summary>
           ${renderBundleSourceTree(child, currentPath, depth + 1, issueIndex, childPath, expandAll)}
         </details>
       </li>`
@@ -1095,14 +1134,62 @@ function renderBundleCodeIssuesResults(details, query, currentPath, prefix = '')
   </div>`
 }
 
+// Default file for the Code slide when nothing is selected yet —
+// the tab used to open on a "pick a file" placeholder, making the
+// first paint useless. Preference order:
+//   1. the file carrying the worst matched finding (severity, then
+//      match count, then path order for determinism) — opening on
+//      the hottest file matches the triage intent of the app;
+//   2. the stasis entry point — the bundle's natural root (v0
+//      stasis has an empty entries set and falls through);
+//   3. the largest source — for bundles without findings, the main
+//      chunk is the most informative default.
+// Only files with actual string content qualify (a sourcemap can
+// list sources without carrying their text). Returns null when
+// nothing qualifies; the caller keeps the placeholder for that.
+function pickDefaultBundleCodeFile(details, sources, issueIndex) {
+  let bestFile = null
+  let bestSev = -1
+  let bestCount = 0
+  for (const [file, findings] of issueIndex) {
+    if (typeof sources.get(file) !== 'string') continue
+    const sev = SEVERITY_ORDER[_topSeverityOf(findings)] ?? 0
+    if (sev > bestSev
+        || (sev === bestSev && findings.length > bestCount)
+        || (sev === bestSev && findings.length === bestCount
+            && (bestFile === null || file.localeCompare(bestFile) < 0))) {
+      bestFile = file
+      bestSev = sev
+      bestCount = findings.length
+    }
+  }
+  if (bestFile) return bestFile
+  if (details.kind === 'stasis' && details.bundle) {
+    for (const entry of details.bundle.entries) {
+      if (typeof sources.get(entry) === 'string') return entry
+    }
+  }
+  let largest = null
+  let largestLen = -1
+  for (const [file, content] of sources) {
+    if (typeof content !== 'string') continue
+    if (content.length > largestLen) {
+      largest = file
+      largestLen = content.length
+    }
+  }
+  return largest
+}
+
 // Code slide — directory-tree rail on the left + the same
 // source-viewer body (line-numbered gutter, prism highlight,
 // per-line dot + side panel) on the right. Reuses
 // renderBundleSourceLines / renderBundleSourceFindingPanel so the
 // inspect features (line dots, finding panel, source highlight)
 // behave identically to the modal version. Selection lives on
-// state.bundleSourceFile; null shows a placeholder asking the
-// user to pick a file.
+// state.bundleSourceFile; on a fresh visit (tab switch nulls the
+// pointer) a default file is auto-opened via
+// pickDefaultBundleCodeFile.
 function renderBundleCodeView(details) {
   if (!details || (!details.json && !details.bundle)) return nothing
   const sources = bundleSourcesAsMap(details)
@@ -1137,19 +1224,30 @@ function renderBundleCodeView(details) {
     for (const d of n.dirs.values()) remap(d)
   }
   remap(tree)
-  const path = state.bundleSourceFile
+  // Per-file finding index for the tree's count chips, the default-
+  // file pick, and the Issues-mode hidden-when-empty gate. Computed
+  // once and reused — the tree walk reads it as
+  // Map<originalPath, Finding[]>.
+  const issueIndex = details.fileHashes
+    ? bundleFindingsByFile(details.fileHashes, 'issues')
+    : new Map()
+  let path = state.bundleSourceFile
+  if (!path) {
+    // Render-time selection write — same pattern as the slide's tab
+    // coercions. The tab-switch handler nulls the pointer on entry,
+    // so this runs once per visit; writing the pick back to state
+    // keeps it sticky across re-renders (a hash pass landing later
+    // must not swap the file under the reader by re-deriving a
+    // different "worst" file).
+    path = pickDefaultBundleCodeFile(details, sources, issueIndex)
+    if (path) state.bundleSourceFile = path
+  }
   const content = path ? sources.get(path) : null
   // Per-file findings + line dots — same source-viewer pipeline
   // the modal uses; the panel renders inside the slide rather
   // than as an overlay so the user can read source + finding
   // details side by side.
   const { fileFindings, lineFindings } = bundleViewerFindings(details, path, content)
-  // Per-file finding index for the tree's right-side count chips
-  // and the Issues-mode hidden-when-empty gate. Computed once and
-  // reused — the tree walk reads it as Map<originalPath, Finding[]>.
-  const issueIndex = details.fileHashes
-    ? bundleFindingsByFile(details.fileHashes, 'issues')
-    : new Map()
   // Search state — three modes share a single query field. Issues
   // mode is hidden when the bundle has no matched findings; the
   // selector falls back to Files automatically.
@@ -1179,20 +1277,69 @@ function renderBundleCodeView(details) {
     </aside>
     <div class=${classMap({ 'bundle-code-main': true, 'with-panel': state.bundleSourceFindingIdx != null })}>
       ${path
-        ? html`<header class="bundle-code-main-bar">
-            <span class="bundle-code-main-path mono" title=${path}>${path}</span>
-          </header>
-          <div class="bundle-code-main-body">
-            <div class="bundle-source-code-wrap">
-              ${typeof content === 'string'
-                ? renderBundleSourceLines(content, path, details.integrity, lineFindings)
-                : html`<div class="bundle-source-empty">Source content not bundled.</div>`}
-            </div>
-            ${renderBundleSourceFindingPanel(fileFindings)}
-          </div>`
+        ? renderBundleCodeMain(details, path, content, fileFindings, lineFindings)
         : html`<div class="bundle-code-placeholder">Pick a file from the tree to view its source.</div>`}
     </div>
   </div>`
+}
+
+// Main pane of the Code slide — header bar (path + copy button +
+// file stats + issue stepper) over the shared source-viewer body.
+// The stepper cycles the side panel through the open file's
+// findings in line order; its (idx, line) pairs ride in a JSON
+// attribute so the events.js delegate steps without re-deriving
+// the per-file findings.
+function renderBundleCodeMain(details, path, content, fileFindings, lineFindings) {
+  const lineCount = typeof content === 'string' ? content.split('\n').length : 0
+  const byteSize = typeof content === 'string' ? new TextEncoder().encode(content).byteLength : 0
+  const issueOrder = fileFindings
+    .map((f, idx) => ({ idx, line: parseInt(f.line, 10) || 0 }))
+    .toSorted((a, b) => a.line - b.line || a.idx - b.idx)
+  return html`<header class="bundle-code-main-bar">
+      <span class="bundle-code-main-path mono" title=${path}>${path}</span>
+      <button
+        type="button"
+        class="bundle-code-copy-path"
+        data-copy-path=${path}
+        title="Copy file path"
+        aria-label="Copy file path"
+      >${COPY_PATH_ICON}</button>
+      <span class="bundle-code-main-spacer"></span>
+      ${typeof content === 'string'
+        ? html`<span class="bundle-code-main-stats">${lineCount.toLocaleString()} ${lineCount === 1 ? 'line' : 'lines'} · ${formatBytes(byteSize)}</span>`
+        : nothing}
+      ${fileFindings.length > 0 ? html`<span
+        class="bundle-code-main-issues"
+        data-bundle-code-issue-order=${JSON.stringify(issueOrder)}
+      >
+        <span
+          class=${`bundle-code-tree-count sev-${_topSeverityOf(fileFindings)}`}
+          title=${`${fileFindings.length} ${fileFindings.length === 1 ? 'issue' : 'issues'} in this file`}
+        >${fileFindings.length}</span>
+        <button
+          type="button"
+          class="bundle-code-issue-step"
+          data-bundle-code-issue-step="-1"
+          title="Previous issue"
+          aria-label="Previous issue"
+        >‹</button>
+        <button
+          type="button"
+          class="bundle-code-issue-step"
+          data-bundle-code-issue-step="1"
+          title="Next issue"
+          aria-label="Next issue"
+        >›</button>
+      </span>` : nothing}
+    </header>
+    <div class="bundle-code-main-body">
+      <div class="bundle-source-code-wrap">
+        ${typeof content === 'string'
+          ? renderBundleSourceLines(content, path, details.integrity, lineFindings)
+          : html`<div class="bundle-source-empty">Source content not bundled.</div>`}
+      </div>
+      ${renderBundleSourceFindingPanel(fileFindings)}
+    </div>`
 }
 
 // ── Search tab — github-style full-bundle code search ────────────

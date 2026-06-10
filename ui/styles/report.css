@@ -859,10 +859,15 @@ bundle-code-search {
 }
 .bundle-code-tree.root { padding-left: 0; }
 .bundle-code-tree-dir > details > summary {
-  padding: .15rem 0 .15rem .25rem;
+  display: flex; align-items: center; gap: .35rem;
+  padding: .15rem .35rem .15rem .25rem;
   color: var(--text);
   user-select: none;
   list-style: none;
+}
+.bundle-code-tree-dirname {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .bundle-code-tree-dir > details > summary::-webkit-details-marker { display: none; }
 .bundle-code-tree-dir > details > summary::before {
@@ -930,9 +935,13 @@ bundle-code-search {
   display: flex; flex-direction: column;
   min-height: 0;
 }
+/* Main-pane header — path + copy button hug the left, stats and
+   the issue stepper pin right via the spacer. The path shrinks
+   (ellipsis) before anything else gives up space. */
 .bundle-code-main-bar {
   flex-shrink: 0;
-  padding: .5rem .75rem;
+  display: flex; align-items: center; gap: .5rem;
+  padding: .4rem .75rem;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
 }
@@ -940,8 +949,45 @@ bundle-code-search {
   font-size: .8rem;
   color: var(--text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  display: block;
+  min-width: 0;
 }
+.bundle-code-copy-path {
+  flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.35rem; height: 1.35rem;
+  padding: 0;
+  border: 0; border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.bundle-code-copy-path:hover { background: var(--bg); color: var(--text); }
+.bundle-code-copy-path.copied { color: var(--green); }
+.bundle-code-main-spacer { flex: 1; }
+.bundle-code-main-stats {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: .72rem;
+  font-variant-numeric: tabular-nums;
+}
+/* Issue stepper — severity-tinted count pill (shared
+   .bundle-code-tree-count palette) + quiet ‹ › buttons cycling the
+   side panel through the file's findings in line order. */
+.bundle-code-main-issues {
+  flex-shrink: 0;
+  display: inline-flex; align-items: center; gap: .3rem;
+}
+.bundle-code-issue-step {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.35rem; height: 1.35rem;
+  padding: 0;
+  border: 1px solid var(--border); border-radius: 4px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: .85rem; line-height: 1;
+  cursor: pointer;
+}
+.bundle-code-issue-step:hover { border-color: var(--accent, #58a6ff); color: var(--accent, #58a6ff); }
 .bundle-code-main-body {
   flex: 1; min-height: 0;
   display: flex;
