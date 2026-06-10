@@ -58,8 +58,13 @@ function splitDescription(text) {
 // reader still sees the original quote / backtick characters. Returns
 // the raw string when nothing matches so we don't churn out single-
 // child arrays for the common case of plain text.
+// Exported for the bundle views (render-bundle.js), whose finding
+// descriptions — source-viewer side panel, Issues tab rows, code-rail
+// issue results — get the same inline styling. Those render in light
+// DOM, so report.css carries a copy of the .inline-* rules that live
+// in finding-card.css for this card's shadow root.
 const INLINE_HL_RE = /"[^"\n]+"|`[^`\n]+`/gu
-function renderHighlighted(text) {
+export function renderHighlighted(text) {
   if (!text) return text
   INLINE_HL_RE.lastIndex = 0
   const parts = []

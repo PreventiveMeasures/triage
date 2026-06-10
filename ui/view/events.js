@@ -4,7 +4,7 @@ import { commonPrefix, handoffBlock } from './format.js'
 import { activeTabFor, findGroupById, findingRepo, findingReport, groupState, tabKey } from './group.js'
 import { resetFilters } from './filters.js'
 import { refreshGraph2Sidebar, refreshGraph2TopPkgs, render } from './render.js'
-import { refreshBundleGraphSidebar, refreshBundleGraphTopPkgs } from './render-bundle.js'
+import { refreshBundleGraphSidebar, refreshBundleGraphTopPkgs, revealBundleCodeCurrent } from './render-bundle.js'
 import { grantAdvisoriesProxyConsent, retryBundleAdvisories } from './render-bundle-advisories.js'
 import { openCommentDialog } from './dialogs/comment-dialog.js'
 import { openFixLinkDialog } from './dialogs/fix-link-dialog.js'
@@ -58,18 +58,6 @@ function renderPreservingSourceScroll() {
     after.scrollTop = top
     after.scrollLeft = left
   }
-}
-
-// Bring the Code rail's selected file row into view. Deferred a
-// microtask so the just-rendered tree is in the DOM; `nearest`
-// keeps the rail still when the row is already visible (the tree
-// links carry a scroll-margin so an off-screen reveal lands with
-// breathing room rather than flush against the rail edge).
-function revealBundleCodeCurrent() {
-  queueMicrotask(() => {
-    document.querySelector('.bundle-code-rail-body .bundle-code-tree-link.current')
-      ?.scrollIntoView({ block: 'nearest' })
-  })
 }
 
 // Re-render preserving scrollTop on a named container. Picking a row

@@ -30,6 +30,12 @@ import { pkgColor } from './graph/utils.js'
 import { graph2 } from './graph/state.js'
 import { loadedGraphMod } from './graph-attach.js'
 import { ensureBundleAdvisories, renderBundleAdvisoriesTab, showAdvisoriesTab } from './render-bundle-advisories.js'
+// Inline `` `code` `` / "quote" highlighting shared with the finding
+// card so bundle-side descriptions read the same as the findings tab.
+// Module-level circular import (render-finding → render → this
+// module) — safe for the same hoisted-function reason as `render`
+// below.
+import { renderHighlighted } from './render-finding.js'
 // `render` is the orchestrator in `render.js`; bundle code calls it
 // back after async source-highlight completes so the next pass picks
 // up the cached HTML. Module-level circular import — ESM resolves it
@@ -574,6 +580,29 @@ const COPY_PATH_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria
   <rect x="5.5" y="5" width="8" height="9" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
 </svg>`
 
+// Auto-pick bookkeeping for the Code slide. When the pick ran
+// before any findings were indexed (page refresh straight into the
+// Code tab: the hash pass and the OPFS finding index both land
+// AFTER the first parsed render), the fallback file (entry /
+// largest) is remembered here so a later render — once findings
+// arrive — can upgrade the selection to the worst-issue file. The
+// upgrade fires at most once, and only while the selection still IS
+// the untouched fallback; any manual navigation drops the tracking.
+let _bundleCodeAutoPick = null
+
+// Bring the Code rail's selected file row into view. Deferred a
+// microtask so it runs after Lit commits the pass that's currently
+// building templates; `nearest` keeps the rail still when the row
+// is already visible (tree links carry a scroll-margin so an
+// off-screen reveal lands with breathing room). Shared with
+// events.js (tab-switch / rail-mode-change reveals).
+export function revealBundleCodeCurrent() {
+  queueMicrotask(() => {
+    document.querySelector('.bundle-code-rail-body .bundle-code-tree-link.current')
+      ?.scrollIntoView({ block: 'nearest' })
+  })
+}
+
 // Pick the worst severity (top of SEVERITIES order) among the
 // findings on a given line so the gutter dot reads as the most
 // urgent issue. Multiple findings on one line still resolve to a
@@ -697,7 +726,7 @@ function renderBundleSourceFindingPanel(findings) {
         ${lineLabel ? html`<span class="bundle-source-panel-line">${lineLabel}</span>` : nothing}
         ${meta ? html`<span class="bundle-source-panel-meta" title=${meta}>${meta}</span>` : nothing}
       </div>` : nothing}
-      <div class="bundle-source-panel-desc">${f.description ?? ''}</div>
+      <div class="bundle-source-panel-desc">${renderHighlighted(f.description ?? '')}</div>
       ${reports.length > 0 ? html`<div class="bundle-source-panel-reports">
         <div class="bundle-source-panel-reports-label">Reported by</div>
         ${reports.map((name) => {
@@ -1126,7 +1155,7 @@ function renderBundleCodeIssuesResults(details, query, currentPath, prefix = '')
               <span class=${`bundle-code-search-issue-sev sev-${sev}`}>${sev.replaceAll('_', ' ')}</span>
               <span class="bundle-code-search-issue-path mono">${bare}${finding.line ? `:${finding.line}` : ''}</span>
             </div>
-            <div class="bundle-code-search-issue-desc">${finding.description ?? ''}</div>
+            <div class="bundle-code-search-issue-desc">${renderHighlighted(finding.description ?? '')}</div>
           </button>
         </li>`
       })}
@@ -1232,15 +1261,44 @@ function renderBundleCodeView(details) {
     ? bundleFindingsByFile(details.fileHashes, 'issues')
     : new Map()
   let path = state.bundleSourceFile
+  // Any selection that isn't the untouched auto-pick (the user
+  // clicked a file, came in via an Issues click, or switched
+  // bundles) ends the auto-pick's lifecycle — the upgrade below
+  // must never swap a file the user chose.
+  if (_bundleCodeAutoPick
+      && (_bundleCodeAutoPick.bundle !== state.selectedBundle || (path && path !== _bundleCodeAutoPick.path))) {
+    _bundleCodeAutoPick = null
+  }
   if (!path) {
     // Render-time selection write — same pattern as the slide's tab
     // coercions. The tab-switch handler nulls the pointer on entry,
-    // so this runs once per visit; writing the pick back to state
-    // keeps it sticky across re-renders (a hash pass landing later
-    // must not swap the file under the reader by re-deriving a
-    // different "worst" file).
+    // so this runs once per visit and the pick stays sticky across
+    // re-renders, EXCEPT the one-time findings upgrade below.
     path = pickDefaultBundleCodeFile(details, sources, issueIndex)
-    if (path) state.bundleSourceFile = path
+    if (path) {
+      state.bundleSourceFile = path
+      _bundleCodeAutoPick = { bundle: state.selectedBundle, path, hadIssues: issueIndex.size > 0 }
+      // No tab-click fires on a boot restore straight into the Code
+      // tab, so the reveal has to ride the pick itself.
+      revealBundleCodeCurrent()
+    }
+  } else if (_bundleCodeAutoPick && !_bundleCodeAutoPick.hadIssues && issueIndex.size > 0) {
+    // Findings upgrade. A page refresh lands here before the hash
+    // pass and the OPFS finding index finish, so the original pick
+    // could only fall back to the entry / largest file — a file
+    // with zero issues, while the bundle does have matches. Once
+    // findings arrive (the finding-index subscription re-renders),
+    // re-pick ONCE and follow it; the guard above ensures this only
+    // happens while the fallback is still what's on screen.
+    _bundleCodeAutoPick.hadIssues = true
+    const upgraded = pickDefaultBundleCodeFile(details, sources, issueIndex)
+    if (upgraded && upgraded !== path) {
+      path = upgraded
+      state.bundleSourceFile = upgraded
+      state.bundleSourceFindingIdx = null
+      _bundleCodeAutoPick.path = upgraded
+      revealBundleCodeCurrent()
+    }
   }
   const content = path ? sources.get(path) : null
   // Per-file findings + line dots — same source-viewer pipeline
@@ -2145,7 +2203,7 @@ export function renderIssuesGroupedByFile(findingsByFile, { kind, bucketKey } = 
                 <span class="bundle-issues-finding-spacer"></span>
                 ${bundleIssueReportsTemplate(finding, { kind, bucketKey })}
               </div>
-              <div class="bundle-issues-finding-desc">${finding.description ?? ''}</div>`
+              <div class="bundle-issues-finding-desc">${renderHighlighted(finding.description ?? '')}</div>`
               return html`<li class="bundle-issues-finding">
                 ${kind === 'bundle'
                   ? html`<button

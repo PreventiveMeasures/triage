@@ -1457,6 +1457,24 @@ bundle-search {
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
+/* Inline highlights inside bundle-side finding descriptions
+   (Issues tab rows, source-viewer side panel, code-rail issue
+   results) — light-DOM copy of the .inline-* rules finding-card.css
+   keeps in the card's shadow root, so `` `code` `` / "quoted" spans
+   read the same on both surfaces. */
+.inline-quote {
+  background: rgb(from var(--accent) r g b / .1);
+  padding: 1px; border-radius: 3px;
+  color: var(--text);
+}
+.inline-code {
+  background: var(--surface-active);
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .9em;
+  color: var(--text);
+}
 .bundle-issue-sev {
   text-transform: uppercase;
   font-size: .6rem;
