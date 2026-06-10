@@ -1043,8 +1043,12 @@ function renderBundleCodeIssuesResults(details, query, currentPath, prefix = '')
     for (let i = 0; i < findings.length; i++) {
       const f = findings[i]
       const desc = f.description ?? ''
+      // Severity matches both its raw form and the space-separated
+      // form the row label displays, so "high bug" and "high_bug"
+      // both hit `high_bug` findings.
       if (q && !file.toLowerCase().includes(q)
             && !f.severity.includes(q)
+            && !f.severity.replaceAll('_', ' ').includes(q)
             && !desc.toLowerCase().includes(q)) continue
       flat.push({ file, finding: f, fileIdx: i })
     }
@@ -1483,13 +1487,17 @@ function renderBundleSearchResults(sources, query, useRegex, caseSensitive, show
 
 // Line numbers (1-based) in `content` matched by the active search —
 // drives the matched-line highlight in the sidebar's gutter (the same
-// lines the results column marks). Empty when there's no query or the
-// regex doesn't compile.
+// lines the results column marks). Returns `null` when the query
+// can't be evaluated at all (empty, missing content, or a regex that
+// doesn't compile) — the caller treats null as "no signal": keep the
+// sidebar open with no highlight, rather than reading it as a
+// no-match eviction. An empty Set means the query is valid and the
+// file genuinely has zero matches.
 function searchMatchLines(content, query, useRegex, caseSensitive) {
-  const out = new Set()
-  if (!query || typeof content !== 'string') return out
+  if (!query || typeof content !== 'string') return null
   const matcher = buildSearchMatcher(query, useRegex, caseSensitive)
-  if (matcher.error) return out
+  if (matcher.error) return null
+  const out = new Set()
   const lines = content.split('\n')
   for (let i = 0; i < lines.length; i++) {
     if (matcher.ranges(lines[i]).length > 0) out.add(i + 1)
@@ -1550,13 +1558,18 @@ function renderBundleSearchView(details) {
   const useRegex = state.bundleSearchRegex
   const caseSensitive = state.bundleSearchCase
   // Auto-close the sidebar when the open file no longer matches the
-  // current query — it has dropped out of the results list. The
+  // current query — it has dropped out of the results list. Only a
+  // VALID query with zero matches closes it: an empty query (user
+  // cleared the box) or a regex that doesn't compile (an in-progress
+  // pattern like `merge(`) returns null and keeps the file open with
+  // no highlight — evicting on every transient keystroke state lost
+  // the user's place with no way back but re-finding the result. The
   // matched lines are computed once here and handed down to the
   // sidebar's gutter highlight so the file isn't scanned twice.
   let openMatchLines = null
   if (state.bundleSourceFile) {
     const lines = searchMatchLines(sources.get(state.bundleSourceFile), query, useRegex, caseSensitive)
-    if (lines.size === 0) {
+    if (lines && lines.size === 0) {
       state.bundleSourceFile = null
       state.bundleSourceFindingIdx = null
     } else {
@@ -1629,12 +1642,25 @@ function renderBundleSlide(entry) {
   }
   const tab = state.bundleDetailsTab
   const overviewActive = tab === 'overview'
+  // Shared readiness gates for the non-Overview tab bodies. While the
+  // parse is in flight (`bundleDetails` null or still pointing at the
+  // previously-open bundle) every slide tab shows the same Loading
+  // line; a failed parse shows the error. Without this, each tab
+  // fended for itself and most just returned `nothing` — a corrupt
+  // bundle gave blank Issues / Code / Search bodies, an empty Graph /
+  // Terminal slot, and a Compare stuck on "Loading bundle…", with the
+  // parse error only visible on Overview.
+  const details = state.bundleDetails
+  const detailsReady = Boolean(details && details.integrity === entry.integrity)
+  const detailsParsed = detailsReady && !details.error && Boolean(details.json || details.bundle)
   // Kick the fetch lazily — only once the user has actually clicked
   // into the Advisories tab AND granted consent. The cache is
   // module-scoped (keyed by integrity); a re-render with the entry
-  // already cached is a no-op.
-  if (tab === 'advisories' && showAdvisories) {
-    ensureBundleAdvisories(state.bundleDetails, render).catch(() => {})
+  // already cached is a no-op. Gated on `detailsParsed` so the parse
+  // window of a bundle switch can't issue a query for the PREVIOUS
+  // bundle's (still-attached) module inventory.
+  if (tab === 'advisories' && showAdvisories && detailsParsed) {
+    ensureBundleAdvisories(details, render).catch(() => {})
   }
   // Issues is always in the tab strip — the body's empty state
   // ("No issues match this bundle's files.") covers the no-match
@@ -1719,17 +1745,23 @@ function renderBundleSlide(entry) {
     </header>
     <div class=${classMap({ 'bundles-slide-body': true, 'bundles-slide-body-overview': overviewActive })}>
       ${overviewActive
-        ? renderBundleDetails(entry, state.bundleDetails)
-        : choose(tab, [
-            ['terminal', () => html`<div id="bundle-terminal-slot" class="bundle-terminal-slot"></div>`],
-            ['graph', () => html`<div id="bundle-graph-slot" class="bundle-graph-slot"></div>`],
-            ['treemap', () => html`<bundle-treemap .details=${state.bundleDetails}></bundle-treemap>`],
-            ['code', () => renderBundleCodeView(state.bundleDetails)],
-            ['search', () => renderBundleSearchView(state.bundleDetails)],
-            ['compare', () => html`<bundle-compare .details=${state.bundleDetails} .integrity=${entry.integrity}></bundle-compare>`],
-            ['issues', () => renderBundleIssuesList(state.bundleDetails)],
-            ['advisories', () => renderBundleAdvisoriesTab(state.bundleDetails)],
-          ])}
+        ? renderBundleDetails(entry, details)
+        : detailsParsed
+          ? choose(tab, [
+              ['terminal', () => html`<div id="bundle-terminal-slot" class="bundle-terminal-slot"></div>`],
+              ['graph', () => html`<div id="bundle-graph-slot" class="bundle-graph-slot"></div>`],
+              ['treemap', () => html`<bundle-treemap .details=${details}></bundle-treemap>`],
+              ['code', () => renderBundleCodeView(details)],
+              ['search', () => renderBundleSearchView(details)],
+              ['compare', () => html`<bundle-compare .details=${details} .integrity=${entry.integrity}></bundle-compare>`],
+              ['issues', () => renderBundleIssuesList(details)],
+              ['advisories', () => renderBundleAdvisoriesTab(details)],
+            ])
+          : detailsReady
+            ? html`<div class=${classMap({ 'bundles-slide-placeholder': true, 'is-error': Boolean(details.error) })}>
+                ${details.error ? `Failed to parse: ${details.error}` : 'Bundle contents not parsed.'}
+              </div>`
+            : html`<div class="bundles-slide-placeholder">Loading bundle…</div>`}
     </div>
   </div>`
 }
@@ -1947,7 +1979,7 @@ export function renderBundlesList(bundles) {
     return html`<div class="bundles-view bundles-view-empty">
       <p class="bundles-empty-hint">
         ${bundles.length === 0
-          ? 'No bundles yet. Drop a `.map` sourcemap or a `.stasis.code.br` bundle to start.'
+          ? html`No bundles yet. Drop a <code>.map</code> sourcemap or a <code>.stasis.code.br</code> bundle to start.`
           : 'Pick a bundle from the sidebar to open it.'}
       </p>
     </div>`
