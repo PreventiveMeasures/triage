@@ -356,13 +356,19 @@ report.addEventListener('click', (e) => {
   if (bundleTab) {
     const tab = bundleTab.dataset.bundleTab
     if (BUNDLE_TABS.has(tab)) {
-      // Re-clicking the active tab is a no-op. Without this, the
+      // Re-clicking the active tab is a UI no-op. Without this, the
       // reset below wiped the Code slide's open file (and the
       // Search sidebar) on a click that navigates nowhere. The
       // overlay modal can't coexist with a tab click (it covers
       // the strip), so nothing else distinguishes the same-tab
-      // case.
-      if (tab === state.bundleDetailsTab) return
+      // case. Still persist: the render-time coercions (hidden
+      // advisories / compare → 'overview') mutate the tab without
+      // persisting, and the same-tab click is the one chance to
+      // repair that stale suffix.
+      if (tab === state.bundleDetailsTab) {
+        if (state.selectedBundle) persistLastBundle(state.selectedBundle, tab)
+        return
+      }
       // Tear down the canvas when leaving Graph so its rAF /
       // observers stop. attachGraph2Interaction will re-wire on
       // re-entry.

@@ -426,10 +426,13 @@
    the bundle parse is in flight ("Loading bundle…") and when it
    failed ("Failed to parse: …"). Centered like .bundle-code-empty;
    scrolls because `details.error` is unbounded (a JSON.parse
-   SyntaxError on a malformed .map can run long). */
+   SyntaxError on a malformed .map can run long). `safe center` so
+   content taller than the body aligns to start instead of
+   overflowing both edges — a plain `center` would clip the top of
+   the message beyond scroll reach. */
 .bundles-slide-placeholder {
   flex: 1;
-  display: flex; align-items: center; justify-content: center;
+  display: flex; align-items: safe center; justify-content: center;
   color: var(--muted);
   font-size: .85rem;
   padding: 2rem;

@@ -50,6 +50,10 @@ import { bundlePkgOf } from './bundle-pkg-of.js'
 // beyond it (or once a box is too small) a node aggregates so large
 // bundles stay bounded in cell count and readable.
 const MAX_DEPTH = 6
+const HEADER_H = 14   // px reserved at a directory's top for its name
+const PAD = 2         // px inset between a directory and its children
+const MIN_SUBDIVIDE = 24 // px — a box smaller than this is a leaf block
+const MIN_RENDER = 4  // px — rects below this are dropped (invisible)
 
 // Last drill-in location per bundle integrity. The slide body's
 // `choose(tab, …)` tears `<bundle-treemap>` down on every tab
@@ -59,10 +63,6 @@ const MAX_DEPTH = 6
 // path string, not node refs — `_rebuild` re-resolves it against
 // the fresh tree and silently drops paths that no longer exist.
 const _focusPathByBundle = new Map()
-const HEADER_H = 14   // px reserved at a directory's top for its name
-const PAD = 2         // px inset between a directory and its children
-const MIN_SUBDIVIDE = 24 // px — a box smaller than this is a leaf block
-const MIN_RENDER = 4  // px — rects below this are dropped (invisible)
 
 // Black or white label text for legibility over an arbitrary hex
 // fill — leaf cells paint the package hue edge to edge. Standard sRGB

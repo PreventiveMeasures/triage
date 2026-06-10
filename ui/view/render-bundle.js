@@ -1847,6 +1847,18 @@ function renderBundleIssuesList(details) {
       'Hashing this bundle\'s sources so findings from your reports can be matched against them.',
     )
   }
+  // A bundle without source content (a .map missing `sourcesContent`,
+  // a stasis bundle without inline sources) hashes to an empty map —
+  // there's nothing to match, whatever the index holds. Same message
+  // the Code / Search / Treemap tabs show for that bundle shape; the
+  // index-aware tiers below would misdirect ("different build won't
+  // line up") when the truth is there are no sources to compare.
+  if (details.fileHashes.size === 0) {
+    return renderBundleIssuesEmpty(
+      'This bundle doesn\'t carry any source content.',
+      'Issues are matched by source-file hash, so a bundle without inline sources has nothing to match findings against.',
+    )
+  }
   const findingsByFile = bundleFindingsByFile(details.fileHashes, 'issues')
   if (findingsByFile.size === 0) {
     // Three distinct reasons nothing is listed — tell them apart so
@@ -1856,9 +1868,13 @@ function renderBundleIssuesList(details) {
     // self-corrects without a tab flip once findings come in.
     const indexedCount = indexedHashFindingCount()
     if (indexedCount === 0) {
+      // "hash-carrying" matters: markdown-parsed reports (DeepSec,
+      // Claude Security, Codex) index without fileHash, so plain "no
+      // findings are indexed" would tell a user who dropped those to
+      // do something they already did.
       return renderBundleIssuesEmpty(
         'No issues match this bundle\'s files.',
-        'Issues are analyzer findings matched to this bundle by source-file hash. No findings are indexed yet — drop an analyzer report and any matches will appear here automatically.',
+        'Issues are analyzer findings matched to this bundle by source-file hash. No hash-carrying findings are indexed yet — hash matching needs the analyzer\'s native JSON reports; drop one and any matches will appear here automatically.',
       )
     }
     // Raw (pre-triage-filter) match count, mirroring the per-file
