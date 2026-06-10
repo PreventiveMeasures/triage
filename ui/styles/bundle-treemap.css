@@ -27,14 +27,20 @@
 /* Breadcrumb trail (view/bundle-treemap.js `_renderCrumbs`). The
    home crumb keeps the old `.bundle-treemap-title` look so the header
    is unchanged at the root; focused segments follow it, mono to read
-   as path parts. Cursor stays the app-default arrow (the `button`
-   rule in theme.css); hover color/underline signals clickability. */
+   as path parts. The whole trail is chrome, not copy: arrow cursor +
+   unselectable on the nav — theme.css's button rule covers the crumb
+   buttons, but the separators and the current-location span are plain
+   spans whose `-sep` / `-current` suffixes its chrome list doesn't
+   know. Hover color signals clickability. */
 .bundle-treemap-crumbs {
   display: flex;
   align-items: baseline;
   gap: .3rem;
   min-width: 0;
   overflow: hidden;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
 }
 /* Home + ancestors. Shrinks and clips (from its trailing edge, so the
    home crumb survives) before the pinned current crumb gives up any
