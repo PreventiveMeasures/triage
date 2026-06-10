@@ -29,9 +29,9 @@ if (!globalThis[slotKey]) {
 const { buildGraph, buildPackageGraph } = await import('../ui/view/graph/data.js')
 const { bundlePkgOf } = await import('../ui/view/bundle-pkg-of.js')
 
-function graphFrom(treeData, { ownCounts = new Map(), splitOwnDirs = false } = {}) {
+function graphFrom(treeData, { ownCounts = new Map(), severitySets = null, colorSets = null, splitOwnDirs = false } = {}) {
   const files = Object.keys(treeData)
-  return buildGraph(treeData, files, ownCounts, null, null, null, null, {
+  return buildGraph(treeData, files, ownCounts, null, severitySets, colorSets, null, {
     pkgOf: (p) => bundlePkgOf(p, { splitOwnDirs }),
   })
 }
@@ -62,6 +62,46 @@ describe('buildPackageGraph', () => {
     // y's files carry no `size` at all — null, not 0, so the
     // tooltip's byte readout hides instead of claiming "0 B".
     assert.equal(pg.byPkg.get('y').size, null)
+  })
+
+  it('shapes nodes and lookups like a buildGraph result for the default renderer', () => {
+    const pg = buildPackageGraph(graphFrom(tree))
+    // The package name doubles as the node id (`file`), nodeByFile
+    // aliases byPkg, and every node is a hub (package boundary by
+    // definition) so the dot renderer applies the hub chrome.
+    for (const n of pg.nodes) {
+      assert.equal(n.file, n.pkg)
+      assert.equal(n.isHub, true)
+      assert.equal(pg.nodeByFile.get(n.pkg), n)
+    }
+    // All package edges are cross by construction.
+    for (const e of pg.edges) assert.equal(e.cross, true)
+    // adj mirrors the file graph's node → edge-index lists.
+    for (const [pkg, idxs] of pg.adj) {
+      for (const i of idxs) {
+        const e = pg.edges[i]
+        assert.ok(e.a === pkg || e.b === pkg)
+      }
+    }
+    assert.equal(pg.adj.get('__own__').length, 2)
+    // pathText carries member paths (lowercased) for the path filter.
+    assert.ok(pg.byPkg.get('__own__').pathText.includes('src/a.js'))
+    assert.ok(pg.byPkg.get('x').pathText.includes('node_modules/x/i.js'))
+  })
+
+  it('unions per-file severity / color sets onto the package node', () => {
+    const severitySets = new Map([
+      ['src/a.js', new Set(['medium'])],
+      ['src/b.js', new Set(['low'])],
+    ])
+    const colorSets = new Map([['src/a.js', new Set(['red'])]])
+    const pg = buildPackageGraph(graphFrom(tree, { severitySets, colorSets }))
+    assert.deepEqual([...pg.byPkg.get('__own__').severitySet].toSorted(), ['low', 'medium'])
+    assert.deepEqual([...pg.byPkg.get('__own__').colorSet], ['red'])
+    // Clean packages carry null sets — same "no findings" marker a
+    // clean file node has, so the dim predicate treats them alike.
+    assert.equal(pg.byPkg.get('y').severitySet, null)
+    assert.equal(pg.byPkg.get('y').colorSet, null)
   })
 
   it('collapses file links into per-pair edges with counts and directions', () => {
