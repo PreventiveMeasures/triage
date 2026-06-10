@@ -140,6 +140,17 @@ export function findingsForFileHash(hash) {
   return byHash.get(hash)?.list ?? []
 }
 
+// Total hash-keyed findings currently indexed across every OPFS
+// report. The bundle Issues tab's empty state reads it to tell
+// "nothing is indexed yet — drop a report" (0) apart from "findings
+// exist, none reference this bundle's files" (> 0). O(buckets), and
+// only consulted when the tab has nothing to list.
+export function indexedHashFindingCount() {
+  let n = 0
+  for (const bucket of byHash.values()) n += bucket.list.length
+  return n
+}
+
 // Snapshot of the OPFS-wide package index for the cross-report
 // Packages view. Returns Map<pkg, { findings, files, reports }>;
 // findings is the deduped Finding[] (one entry per dedupe key),

@@ -18,7 +18,7 @@ import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 import { BUNDLE_ICON_SVG } from './icons.js'
-import { findingsForFileHash, reportsForFinding, reportsForFindingByPackage, reportsForFindingByRepo, state } from '#client/index.js'
+import { findingsForFileHash, indexedHashFindingCount, reportsForFinding, reportsForFindingByPackage, reportsForFindingByRepo, state } from '#client/index.js'
 import { SEVERITIES, SEVERITY_ORDER, formatBytes, formatRunMeta, stripCommonPathPrefix } from './format.js'
 import { bundlePackageDirs, bundleSourcesAsMap } from './bundle-sources.js'
 import { bundlePkgOf, ownSourceSplittable } from './bundle-pkg-of.js'
@@ -1828,14 +1828,55 @@ function formatFindingLine(line) {
   return Number.isFinite(n) ? `Line ${n}` : ''
 }
 
+// Centered empty state for the Issues tab — a headline plus an
+// explanatory hint. The old single muted line rendered flush against
+// the slide body's top-left corner and gave no clue what "issues"
+// are or why none are listed.
+function renderBundleIssuesEmpty(primary, hint) {
+  return html`<div class="bundle-issues-empty">
+    <p class="bundle-issues-empty-primary">${primary}</p>
+    ${hint ? html`<p class="bundle-issues-empty-hint">${hint}</p>` : nothing}
+  </div>`
+}
+
 function renderBundleIssuesList(details) {
   if (!details || (!details.json && !details.bundle)) return nothing
   if (!details.fileHashes) {
-    return html`<div class="bundle-issues-empty">Computing file hashes…</div>`
+    return renderBundleIssuesEmpty(
+      'Computing file hashes…',
+      'Hashing this bundle\'s sources so findings from your reports can be matched against them.',
+    )
   }
   const findingsByFile = bundleFindingsByFile(details.fileHashes, 'issues')
   if (findingsByFile.size === 0) {
-    return html`<div class="bundle-issues-empty">No issues match this bundle's files.</div>`
+    // Three distinct reasons nothing is listed — tell them apart so
+    // the user knows whether anything (and what) would change that.
+    // The finding-index subscription in events.js re-renders this
+    // view as background indexing lands, so the first message
+    // self-corrects without a tab flip once findings come in.
+    const indexedCount = indexedHashFindingCount()
+    if (indexedCount === 0) {
+      return renderBundleIssuesEmpty(
+        'No issues match this bundle\'s files.',
+        'Issues are analyzer findings matched to this bundle by source-file hash. No findings are indexed yet — drop an analyzer report and any matches will appear here automatically.',
+      )
+    }
+    // Raw (pre-triage-filter) match count, mirroring the per-file
+    // walk bundleFindingsByFile does. Non-zero here means every
+    // match was filtered out as invalid / deleted — say so instead
+    // of pretending nothing ever matched.
+    let matchedAll = 0
+    for (const hash of details.fileHashes.values()) matchedAll += findingsForFileHash(hash).length
+    if (matchedAll > 0) {
+      return renderBundleIssuesEmpty(
+        'All matching issues are dismissed.',
+        `${matchedAll} ${matchedAll === 1 ? 'finding matches' : 'findings match'} this bundle's files, but every one is triaged invalid or deleted.`,
+      )
+    }
+    return renderBundleIssuesEmpty(
+      'No issues match this bundle\'s files.',
+      `None of the ${indexedCount.toLocaleString()} indexed ${indexedCount === 1 ? 'finding' : 'findings'} reference a source file in this bundle — matching compares exact file hashes, so findings from a different build of the same project won't line up.`,
+    )
   }
   return renderIssuesGroupedByFile(findingsByFile, { kind: 'bundle' })
 }

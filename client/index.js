@@ -9,6 +9,7 @@ export {
   findingsForFileHash,
   getPackagesIndex,
   getRepositoriesIndex,
+  indexedHashFindingCount,
   reportsForFinding,
   reportsForFindingByPackage,
   reportsForFindingByRepo,
