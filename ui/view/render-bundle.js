@@ -228,10 +228,6 @@ export function buildBundleGraphData(details) {
     fileFindings.set(file, ff)
   }
   const transitiveCounts = computeTransitiveCounts(tree, ownCounts)
-  // Bundles always graph their full inventory — there's no "All files"
-  // toggle here (a bundle's findings are matched in from other reports
-  // and are often zero, so a filtered-to-issues view could be empty).
-  const files = allFiles
   // Stripped→original mapping the lazy `buildGraphFromPrep` applies
   // to each node's `origFile` field — the selection card's "View
   // source →" button hands the unstripped path to the source viewer
@@ -257,29 +253,65 @@ export function buildBundleGraphData(details) {
   // packages are excluded via the package map so they don't masquerade
   // as splittable own source.
   const canSplitOwnDirs = ownSourceSplittable(allFiles, packageDirOf)
-  // Raw-inputs shape — lazy `ui/graph.js` runs the actual
-  // `buildGraph(...)` in `buildGraphFromPrep`. `pkgOf` rides in
-  // `options` so packaging recognizes both `node_modules/` and
-  // `dependencies/` regardless of the global depsDir picked from
-  // state.reports, which would otherwise miss bundle paths under
-  // whichever dir the loaded reports don't use, plus the stasis
-  // `packageDir` for each node so workspace packages (the PHP
-  // `vendor/<vendor>/<pkg>` case, monorepo `packages/<name>`) split out
-  // instead of collapsing under a shared parent dir. `graph2.splitOwnDirs`
-  // (topbar "Split dirs" toggle) decides whether own source fans out
-  // into per-directory groups or collapses into one `__own__` bucket;
-  // it's read here so flipping it + re-rendering rebuilds the graph
-  // with the new package set. AND-ed with `canSplitOwnDirs` so a
-  // bundle that can't be split stays merged regardless of a toggle
-  // value persisted from a previous, splittable bundle — its hidden
-  // toggle can't be the reason the grouping looks different.
+  // `pkgOf` rides in `options` so packaging recognizes both
+  // `node_modules/` and `dependencies/` regardless of the global
+  // depsDir picked from state.reports, which would otherwise miss
+  // bundle paths under whichever dir the loaded reports don't use,
+  // plus the stasis `packageDir` for each node so workspace packages
+  // (the PHP `vendor/<vendor>/<pkg>` case, monorepo `packages/<name>`)
+  // split out instead of collapsing under a shared parent dir.
+  // `graph2.splitOwnDirs` (topbar "Split dirs" toggle) decides whether
+  // own source fans out into per-directory groups or collapses into
+  // one `__own__` bucket; it's read here so flipping it + re-rendering
+  // rebuilds the graph with the new package set. AND-ed with
+  // `canSplitOwnDirs` so a bundle that can't be split stays merged
+  // regardless of a toggle value persisted from a previous, splittable
+  // bundle — its hidden toggle can't be the reason the grouping looks
+  // different.
   const splitOwnDirs = graph2.splitOwnDirs && canSplitOwnDirs
+  const pkgOf = (p) => bundlePkgOf(p, { splitOwnDirs, packageDir: packageDirOf?.(p) })
+  // `canPackagesView` gates the topbar "Packages" toggle (and the
+  // mode itself, via the flag buildGraphFromPrep stamps on the
+  // graph): a package-level view needs 3+ packages under the
+  // CURRENT classifier — with 2 it's a dumbbell that says nothing
+  // the file view doesn't. Counted on the full inventory (not the
+  // focus-narrowed set below) so the toggle doesn't vanish while
+  // drilled into a single package. Early exit at 3, same pattern
+  // as ownSourceSplittable.
+  const pkgSet = new Set()
+  for (const f of allFiles) {
+    pkgSet.add(pkgOf(f))
+    if (pkgSet.size >= 3) break
+  }
+  const canPackagesView = pkgSet.size >= 3
+  // Package-focus mode narrows to the focused package's files, same
+  // semantics as the findings-tab path in buildGraph2Data (no
+  // showAll sub-filter here — bundles always graph their full
+  // inventory). A stale focus left over from a previously viewed
+  // bundle (or invalidated by a Split-dirs flip) matches nothing;
+  // clear it and fall through to the full graph so the canvas
+  // doesn't open on an empty focus with a dead back-button.
+  let files = allFiles
+  if (graph2.focusedPkg) {
+    const focusFiles = allFiles.filter((f) => pkgOf(f) === graph2.focusedPkg)
+    if (focusFiles.length > 0) files = focusFiles
+    else graph2.focusedPkg = null
+  }
+  // Same staleness rule for the file selection: a `selected` carried
+  // over from another bundle (or a report) names a file this tree
+  // doesn't have. At file altitude that only costs an unhelpful
+  // "File not in current view" card; at package altitude it would
+  // put that card over a package canvas. Clear it like the focus.
+  if (graph2.selected && !Object.hasOwn(tree, graph2.selected)) graph2.selected = null
+  // Raw-inputs shape — lazy `ui/graph.js` runs the actual
+  // `buildGraph(...)` in `buildGraphFromPrep`.
   return {
     treeData: tree, files, ownCounts, transitiveCounts,
     severitySets, colorSets, fileFindings,
-    options: { pkgOf: (p) => bundlePkgOf(p, { splitOwnDirs, packageDir: packageDirOf?.(p) }) },
+    options: { pkgOf },
     strippedToOrig,
     canSplitOwnDirs,
+    canPackagesView,
   }
 }
 

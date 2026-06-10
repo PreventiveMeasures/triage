@@ -198,6 +198,125 @@ export function assignHubs(graph) {
   }
 }
 
+// Package-level view of a buildGraph result — one node per package,
+// edges aggregated from the file graph's cross-package edges. Used
+// by the canvas when the bundle Graph tab's "Packages" toggle is on.
+// Pure derivation: positions are seeded 0,0 for the canvas layout
+// pass to overwrite, same contract as buildGraph's nodes.
+//
+// Shaped like a buildGraph result on purpose. The packages view
+// mirrors the package-focus split — rich v1-style chrome up to 50
+// packages, the default dot renderer past that — and the default
+// path reads file-node fields, so package nodes carry them too:
+//   file             — the package name doubles as the node id
+//                      (hover / selection keys, position cache)
+//   pkg / label      — group key (colors) and display name
+//                      ('own source' for the synthetic __own__)
+//   issue / own / totalIssues — aggregated finding counts, same
+//                      fields a file node has so the severity ring,
+//                      renderSevChips, and the tooltip reuse
+//   severitySet / colorSet — unions across the package's files, so
+//                      the topbar highlight filters dim packages
+//                      with the same any-finding-matches semantics
+//   pathText         — every member file path, lowercased, so the
+//                      path filter matches the aggregate
+//   isHub            — true: at package altitude every node sits on
+//                      a package boundary by assignHubs' definition,
+//                      so they get the hub chrome (ring, halo,
+//                      mid-zoom labels)
+//   fileCount / size — node weight + byte sum for the tooltip
+//
+// Edge shape mirrors a file edge ({a, b, cross, fromLo, fromHi} with
+// a < b; always cross — intra edges collapse away) plus `count`, the
+// number of file-level import pairs collapsed in, which the rich
+// renderer maps to stroke width. Direction flags aggregate per side:
+// fromLo = some file in `a` imports into `b`.
+//
+// `nodeByFile` / `byPkg` are the same Map (id IS the package);
+// `adj` mirrors the file graph's node → edge-index lists.
+// `importsOf` (pkg → [imported pkgs]) feeds the force layout, same
+// signature the file-level solver consumes.
+export function buildPackageGraph(graph) {
+  const nodes = graph.packages.map((pkg) => {
+    const files = graph.byPkg.get(pkg) ?? []
+    const own = {}
+    for (const sev of SEVERITIES) own[sev] = 0
+    const severitySet = new Set()
+    const colorSet = new Set()
+    const paths = []
+    let totalIssues = 0
+    let size = 0
+    let hasSize = false
+    for (const n of files) {
+      totalIssues += n.totalIssues
+      if (n.own) for (const sev of SEVERITIES) own[sev] += n.own[sev] ?? 0
+      if (n.severitySet) for (const s of n.severitySet) severitySet.add(s)
+      if (n.colorSet) for (const c of n.colorSet) colorSet.add(c)
+      if (typeof n.size === 'number') { size += n.size; hasSize = true }
+      paths.push(n.file)
+    }
+    return {
+      file: pkg,
+      pkg,
+      label: pkg === '__own__' ? 'own source' : pkg,
+      fileCount: files.length,
+      size: hasSize ? size : null,
+      own,
+      totalIssues,
+      issue: topIssueOf(own),
+      severitySet: severitySet.size > 0 ? severitySet : null,
+      colorSet: colorSet.size > 0 ? colorSet : null,
+      pathText: paths.join('\n').toLowerCase(),
+      isHub: true,
+      x: 0, y: 0,
+      deg: 0,
+    }
+  })
+  const byPkg = new Map(nodes.map((n) => [n.pkg, n]))
+
+  const edgeMap = new Map()
+  for (const e of graph.edges) {
+    if (!e.cross) continue
+    const pa = graph.nodeByFile.get(e.a)?.pkg
+    const pb = graph.nodeByFile.get(e.b)?.pkg
+    if (!pa || !pb || pa === pb) continue
+    const [lo, hi] = pa < pb ? [pa, pb] : [pb, pa]
+    const k = `${lo}\0${hi}`
+    let edge = edgeMap.get(k)
+    if (!edge) {
+      edge = { a: lo, b: hi, cross: true, count: 0, fromLo: false, fromHi: false }
+      edgeMap.set(k, edge)
+      byPkg.get(lo).deg++
+      byPkg.get(hi).deg++
+    }
+    edge.count++
+    // File-edge direction flags are in lo/hi FILE order; map them
+    // into lo/hi PACKAGE order (the packages may sort opposite to
+    // their files). e.fromLo = file e.a imports e.b = pkg pa → pb.
+    const paIsLo = pa === lo
+    if (e.fromLo) { if (paIsLo) edge.fromLo = true; else edge.fromHi = true }
+    if (e.fromHi) { if (paIsLo) edge.fromHi = true; else edge.fromLo = true }
+  }
+  const edges = [...edgeMap.values()]
+
+  const adj = new Map()
+  for (let i = 0; i < edges.length; i++) {
+    const e = edges[i]
+    if (!adj.has(e.a)) adj.set(e.a, [])
+    if (!adj.has(e.b)) adj.set(e.b, [])
+    adj.get(e.a).push(i)
+    adj.get(e.b).push(i)
+  }
+
+  const importsOf = new Map(nodes.map((n) => [n.pkg, []]))
+  for (const e of edges) {
+    if (e.fromLo) importsOf.get(e.a).push(e.b)
+    if (e.fromHi) importsOf.get(e.b).push(e.a)
+  }
+
+  return { nodes, byPkg, nodeByFile: byPkg, edges, adj, importsOf }
+}
+
 // Color helper — re-export so callers don't have to know about
 // graph/utils.js's two-arg form when they already have a node.
 export function nodeColor(n) {

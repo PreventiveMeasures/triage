@@ -103,6 +103,21 @@ export function renderTopBar(graph, options) {
     title="Split your own source into a group per top-level directory (off: one 'own source' group)"
   ><span>Split dirs</span><span class="g2-switch"></span></button>` : null
 
+  // "Packages" — bundle Graph tab only (gated by the caller's
+  // `showPackagesView`, which requires 3+ packages under the current
+  // grouping). On: the canvas collapses to one node per package
+  // (per top-level dir under Split dirs) with aggregated import
+  // edges. Same rebuild-on-flip contract as the toggles above —
+  // the layout and hit-testing operate on a different node set.
+  const showPackagesView = options.showPackagesView ?? false
+  const packagesViewBtn = showPackagesView ? html`<button
+    type="button"
+    class=${classMap({ 'g2-topbar-toggle': true, on: graph2.packagesView })}
+    data-g2-packages-view
+    aria-pressed=${String(graph2.packagesView)}
+    title="Show one node per package with aggregated import edges (off: one node per file)"
+  ><span>Packages</span><span class="g2-switch"></span></button>` : null
+
   // When the topbar carries an extra row (Findings-tab embed), the
   // view-mode chooser + All files + Trash sit on the new top row,
   // and the main row keeps the data-shaping filters (severity /
@@ -113,6 +128,7 @@ export function renderTopBar(graph, options) {
       ${extraTopRow}
       ${allFilesBtn}
       ${splitOwnBtn}
+      ${packagesViewBtn}
       <div class="g2-spacer"></div>
       ${triageBtn}
     </div>` : null}
@@ -149,6 +165,7 @@ export function renderTopBar(graph, options) {
     </div>
     ${extraTopRow ? null : allFilesBtn}
     ${extraTopRow ? null : splitOwnBtn}
+    ${extraTopRow ? null : packagesViewBtn}
     <div class="g2-spacer"></div>
     ${extraTopRow ? null : triageBtn}
     <!-- Fullscreen — toggles body.report-fullscreen. The sidebar

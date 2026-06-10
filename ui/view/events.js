@@ -645,12 +645,36 @@ report.addEventListener('click', (e) => {
   // the package set, the colors, and the spiral clustering, so the
   // graph rebuilds. A solo'd / focused package name may no longer
   // exist after the flip (e.g. `src` → `__own__`), so clear both;
-  // the file set is unchanged, so `selected` stays valid.
+  // the file set is unchanged, so `selected` stays valid at file
+  // altitude — but when the flip lands back on the packages view
+  // (focus was just cleared), a surviving file selection would put
+  // a file card over a package canvas, so it clears there.
   const g2SplitOwn = pathClosest(e, '[data-g2-split-own]')
   if (g2SplitOwn) {
     graph2.splitOwnDirs = !graph2.splitOwnDirs
     graph2.layoutCache = null
     graph2.solo = null
+    graph2.focusedPkg = null
+    if (graph2.packagesView) graph2.selected = null
+    cleanupGraph2()
+    render()
+    return
+  }
+  // Packages-view toggle (bundle Graph tab) — flips the canvas
+  // between one-node-per-file and one-node-per-package. The node
+  // set, layout, and hit-testing all change, so tear down + rebuild
+  // like the other graph-reshaping toggles. File selection is a
+  // file-level concept — clear it so the sidebar doesn't show a
+  // file card over a package canvas; a solo'd package stays (it's
+  // the packages view's selection) and so does the focus drill-in
+  // wiring through it. Exits package-focus mode for the same
+  // reason the selection clears: the user asked for a different
+  // altitude, not a different slice.
+  const g2PackagesView = pathClosest(e, '[data-g2-packages-view]')
+  if (g2PackagesView) {
+    graph2.packagesView = !graph2.packagesView
+    graph2.layoutCache = null
+    graph2.selected = null
     graph2.focusedPkg = null
     cleanupGraph2()
     render()
@@ -686,10 +710,19 @@ report.addEventListener('click', (e) => {
   // Back-to-full from the package-focus mode — restores the
   // spiral over the whole file set. Selection is kept (it's
   // valid in both modes since the file still exists in the
-  // full graph).
+  // full graph) — EXCEPT when the back lands on the packages
+  // view (focus suspended it; clearing focus resumes it): a
+  // file picked inside the drill-in has no node on the package
+  // canvas, and the sidebar would show its file card desynced
+  // from the solo ring. Same file-card-over-package-canvas rule
+  // the Packages toggle handler applies. graph2.packagesView may
+  // be a stale `true` on a graph whose gate is off (< 3
+  // packages, file altitude resumes) — over-clearing there costs
+  // a selection, which beats under-clearing at package altitude.
   if (pathClosest(e, '#g2-back-to-full')) {
     graph2.focusedPkg = null
     graph2.layoutCache = null
+    if (graph2.packagesView) graph2.selected = null
     cleanupGraph2()
     render()
     return
