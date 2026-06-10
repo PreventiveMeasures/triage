@@ -5,7 +5,7 @@ import { activeTabFor, findGroupById, findingRepo, findingReport, groupState, ta
 import { resetFilters } from './filters.js'
 import { refreshGraph2Sidebar, refreshGraph2TopPkgs, render } from './render.js'
 import { refreshBundleGraphSidebar, refreshBundleGraphTopPkgs } from './render-bundle.js'
-import { grantAdvisoriesProxyConsent } from './render-bundle-advisories.js'
+import { grantAdvisoriesProxyConsent, retryBundleAdvisories } from './render-bundle-advisories.js'
 import { openCommentDialog } from './dialogs/comment-dialog.js'
 import { openFixLinkDialog } from './dialogs/fix-link-dialog.js'
 import { downloadReportsAsMarkdown } from './markdown-export.js'
@@ -356,6 +356,19 @@ report.addEventListener('click', (e) => {
   if (bundleTab) {
     const tab = bundleTab.dataset.bundleTab
     if (BUNDLE_TABS.has(tab)) {
+      // Re-clicking the active tab is a UI no-op. Without this, the
+      // reset below wiped the Code slide's open file (and the
+      // Search sidebar) on a click that navigates nowhere. The
+      // overlay modal can't coexist with a tab click (it covers
+      // the strip), so nothing else distinguishes the same-tab
+      // case. Still persist: the render-time coercions (hidden
+      // advisories / compare → 'overview') mutate the tab without
+      // persisting, and the same-tab click is the one chance to
+      // repair that stale suffix.
+      if (tab === state.bundleDetailsTab) {
+        if (state.selectedBundle) persistLastBundle(state.selectedBundle, tab)
+        return
+      }
       // Tear down the canvas when leaving Graph so its rAF /
       // observers stop. attachGraph2Interaction will re-wire on
       // re-entry.
@@ -388,6 +401,14 @@ report.addEventListener('click', (e) => {
   // the next pass and kicks the fetch.
   if (e.target.closest('[data-advisories-consent]')) {
     grantAdvisoriesProxyConsent()
+    render()
+    return
+  }
+  // Advisories tab — Retry after a failed fetch. Drops the sticky
+  // error entry and re-issues the lookup; the immediate render()
+  // paints the loading line while the new request is in flight.
+  if (e.target.closest('[data-advisories-retry]')) {
+    retryBundleAdvisories(state.bundleDetails, render).catch(() => {})
     render()
     return
   }
@@ -1665,6 +1686,10 @@ report.addEventListener('bundle-swap', (e) => {
   state.bundleSourceFindingIdx = null
   state.bundleCodeSearchQuery = ''
   state.bundleCodeSearchMode = 'files'
+  state.bundleSearchQuery = ''
+  state.bundleSearchRegex = false
+  state.bundleSearchCase = false
+  state.bundleSearchContext = true
   state.bundleDetailsTab = 'compare'
   graph2.showAll = true
   state.shownTriage = null
@@ -1928,6 +1953,13 @@ document.addEventListener('keydown', (e) => {
     return
   }
   if (state.bundleSourceFile) {
+    // The Code slide is the one place `bundleSourceFile` is plain
+    // navigation state (the tree's selected file) rather than an
+    // overlay — the modal there is suppressed and the pane has no
+    // close affordance. Escape deselecting it dumped the user on
+    // the "pick a file" placeholder mid-read. The Search sidebar
+    // stays Esc-closable: its × button advertises the key.
+    if (state.currentView === 'bundles' && state.bundleDetailsTab === 'code') return
     state.bundleSourceFile = null
     render()
   }

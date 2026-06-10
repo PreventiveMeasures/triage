@@ -129,11 +129,12 @@ function queryToWire(query) {
 // Kick the fetch if it hasn't been started for this bundle yet.
 // Idempotent: a re-render that runs while the fetch is in flight
 // finds the `loading` entry and skips re-issuing. Resolved AND
-// errored entries are sticky for the rest of the session — the cache
-// is keyed by bundle `integrity` (SRI hash of bundle bytes), so a
-// re-open of the same bundle returns the previous result without
-// re-hitting the registry, and a transient error stays visible until
-// the user reloads. Memory is bounded by the unique-bundle count
+// errored entries are sticky — the cache is keyed by bundle
+// `integrity` (SRI hash of bundle bytes), so a re-open of the same
+// bundle returns the previous result without re-hitting the
+// registry. An errored entry stays until the user clicks the error
+// state's Retry button (`retryBundleAdvisories` below), which drops
+// it and re-issues. Memory is bounded by the unique-bundle count
 // per session (each entry is a few KB).
 export async function ensureBundleAdvisories(details, renderFn) {
   if (!details?.integrity) return
@@ -194,6 +195,20 @@ export async function ensureBundleAdvisories(details, renderFn) {
     cache.set(integrity, { state: 'error', reason: err?.message ?? 'fetch-failed', query })
   }
   renderFn()
+}
+
+// Drop a sticky error entry and re-issue the lookup. Wired to the
+// error state's Retry button (events.js `data-advisories-retry`
+// delegate) so a transient failure — relay restarting, offline
+// moment — doesn't wedge the tab for the rest of the session.
+// No-op unless the cached entry is actually an error: `loading`
+// must not be re-entered (double fetch) and `ok` is the result we
+// wanted anyway.
+export async function retryBundleAdvisories(details, renderFn) {
+  if (!details?.integrity) return
+  if (cache.get(details.integrity)?.state !== 'error') return
+  cache.delete(details.integrity)
+  await ensureBundleAdvisories(details, renderFn)
 }
 
 // Severity ordering. The npm advisories endpoint emits
@@ -264,7 +279,10 @@ export function renderBundleAdvisoriesTab(details) {
     return html`<div class="bundle-advisories-empty">Loading advisories from npm registry…</div>`
   }
   if (entry.state === 'error') {
-    return html`<div class="bundle-advisories-empty is-error">Failed to fetch advisories: ${entry.reason}</div>`
+    return html`<div class="bundle-advisories-empty is-error">
+      <span>Failed to fetch advisories: ${entry.reason}</span>
+      <button type="button" class="bundle-advisories-retry" data-advisories-retry>Retry</button>
+    </div>`
   }
   // `ok` branch — paint the per-package sections. The tab is
   // hidden by `bundleHasAdvisoryCandidates` when the bundle has no

@@ -55,6 +55,15 @@ const PAD = 2         // px inset between a directory and its children
 const MIN_SUBDIVIDE = 24 // px — a box smaller than this is a leaf block
 const MIN_RENDER = 4  // px — rects below this are dropped (invisible)
 
+// Last drill-in location per bundle integrity. The slide body's
+// `choose(tab, …)` tears `<bundle-treemap>` down on every tab
+// switch, so the focus has to outlive the element for a Treemap →
+// Code → Treemap round trip to land back where the user was (same
+// reason the terminal caches its element). Holds the focused dir's
+// path string, not node refs — `_rebuild` re-resolves it against
+// the fresh tree and silently drops paths that no longer exist.
+const _focusPathByBundle = new Map()
+
 // Black or white label text for legibility over an arbitrary hex
 // fill — leaf cells paint the package hue edge to edge. Standard sRGB
 // relative-luminance split, no per-theme table to keep in sync.
@@ -317,7 +326,9 @@ class BundleTreemap extends LitElement {
   _rebuild() {
     this._root = null
     // A new bundle invalidates the old node refs — drop any drill-in
-    // so we don't render a focus path into a tree that no longer exists.
+    // so we don't render a focus path into a tree that no longer
+    // exists. This bundle's own remembered focus (path-keyed, not
+    // ref-keyed) is re-resolved at the end once the new tree stands.
     this._focus = []
     this._dirByPath = new Map()
     this._meta = { files: 0, total: 0, prefix: '' }
@@ -381,6 +392,18 @@ class BundleTreemap extends LitElement {
     this._dirByPath = dirByPath
     this._meta = { files, total, prefix }
     this._status = 'ok'
+    // Restore this bundle's remembered drill-in onto the fresh node
+    // refs — the element is rebuilt on every tab switch, so without
+    // this a Treemap → Code → Treemap round trip always landed back
+    // at the root. Defensive existence check: integrity is the
+    // content hash, so the path should always resolve, but a missing
+    // entry must fall back to the root rather than a dead focus.
+    const remembered = this.details?.integrity ? _focusPathByBundle.get(this.details.integrity) : null
+    if (remembered) {
+      const node = dirByPath.get(remembered)
+      if (node) this._focus = this._chainTo(node)
+      else _focusPathByBundle.delete(this.details.integrity)
+    }
   }
 
   // The subtree currently filling the plot — the deepest focused node,
@@ -389,16 +412,33 @@ class BundleTreemap extends LitElement {
     return this._focus.length > 0 ? this._focus.at(-1) : this._root
   }
 
-  // Drill into a directory: rebuild the focus chain root→node by
-  // walking parent pointers (excluding the virtual root) so the
-  // breadcrumb is correct even when the click lands several levels
-  // below the current focus. Files and empty nodes aren't navigable.
-  _drillInto(node) {
-    if (!node || node.isFile || !node.children || node.children.size === 0) return
+  // Focus chain root→node, built by walking parent pointers
+  // (excluding the virtual root) so the breadcrumb is correct even
+  // when the target sits several levels below the current focus.
+  _chainTo(node) {
     const chain = []
     for (let n = node; n && n !== this._root; n = n.parent) chain.push(n)
     chain.reverse()
-    this._focus = chain
+    return chain
+  }
+
+  // Record the current focus in the per-bundle store so it survives
+  // the element teardown a tab switch triggers. Root focus deletes
+  // the entry rather than storing '' — `_rebuild`'s restore treats
+  // absence as "start at the root".
+  _rememberFocus() {
+    const integrity = this.details?.integrity
+    if (!integrity) return
+    const path = this._focus.at(-1)?.path
+    if (path) _focusPathByBundle.set(integrity, path)
+    else _focusPathByBundle.delete(integrity)
+  }
+
+  // Drill into a directory. Files and empty nodes aren't navigable.
+  _drillInto(node) {
+    if (!node || node.isFile || !node.children || node.children.size === 0) return
+    this._focus = this._chainTo(node)
+    this._rememberFocus()
     this._hideTooltip()
   }
 
@@ -410,6 +450,7 @@ class BundleTreemap extends LitElement {
     const next = index < 0 ? [] : this._focus.slice(0, index + 1)
     if (next.length === this._focus.length) return
     this._focus = next
+    this._rememberFocus()
     this._hideTooltip()
   }
 

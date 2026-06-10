@@ -422,6 +422,24 @@
   overflow: hidden;
 }
 
+/* Shared body placeholder for the non-Overview tabs — shown while
+   the bundle parse is in flight ("Loading bundle…") and when it
+   failed ("Failed to parse: …"). Centered like .bundle-code-empty;
+   scrolls because `details.error` is unbounded (a JSON.parse
+   SyntaxError on a malformed .map can run long). `safe center` so
+   content taller than the body aligns to start instead of
+   overflowing both edges — a plain `center` would clip the top of
+   the message beyond scroll reach. */
+.bundles-slide-placeholder {
+  flex: 1;
+  display: flex; align-items: safe center; justify-content: center;
+  color: var(--muted);
+  font-size: .85rem;
+  padding: 2rem;
+  overflow-y: auto;
+}
+.bundles-slide-placeholder.is-error { color: var(--critical); }
+
 /* Overview tab — metadata block on top, three independently-
    scrollable columns (Packages / Files / Reports) below. The body
    is a non-scrolling flex column; the columns row owns the
@@ -1252,10 +1270,36 @@ bundle-search {
   font-size: .72rem;
   margin-bottom: .5rem;
 }
+/* Issues empty state — centered in the slide body. The bundle tab
+   renders a headline + explanatory hint (computing / nothing
+   indexed / no hash overlap / all dismissed); the package and
+   repository slides put a plain muted line in the same shell, so
+   the container keeps the muted text defaults. Replaces a bare
+   line that sat flush against the slide body's top-left corner. */
 .bundle-issues-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: .45rem;
+  padding: 2rem;
+  text-align: center;
   color: var(--muted);
   font-size: .78rem;
-  padding: .5rem 0;
+}
+.bundle-issues-empty-primary {
+  margin: 0;
+  color: var(--text);
+  font-size: .9rem;
+  font-weight: 600;
+}
+.bundle-issues-empty-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: .78rem;
+  line-height: 1.5;
+  max-width: 34rem;
 }
 /* Issues list — grouped by file. Each group is a `<li>` with a
    sticky-feeling header (path + count) followed by the individual
@@ -1668,6 +1712,10 @@ bundle-search {
     font-size: .85rem;
     text-align: center;
     margin: 0;
+  }
+  & .bundles-empty-hint code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .9em;
   }
 }
 
@@ -2690,10 +2738,26 @@ body.report-fullscreen {
   color: var(--muted);
   font-size: .78rem;
   padding: .75rem;
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  flex-wrap: wrap;
 }
 .bundle-advisories-empty.is-error {
   color: var(--critical);
 }
+/* Retry after a failed advisories fetch — quiet bordered button so
+   the error line stays the loud part. */
+.bundle-advisories-retry {
+  padding: .2rem .7rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: .72rem;
+  cursor: pointer;
+}
+.bundle-advisories-retry:hover { border-color: var(--accent, #58a6ff); color: var(--accent, #58a6ff); }
 .bundle-advisories-list {
   list-style: none; margin: 0; padding: 0;
   display: flex; flex-direction: column;
