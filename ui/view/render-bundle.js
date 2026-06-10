@@ -574,6 +574,13 @@ const COPY_PATH_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria
   <rect x="5.5" y="5" width="8" height="9" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
 </svg>`
 
+// Fold glyph (chevrons toward center) for the file rail's
+// collapse-all button.
+const COLLAPSE_ALL_ICON = html`<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <path d="M5 3.5L8 6.5l3-3"/>
+  <path d="M5 12.5L8 9.5l3 3"/>
+</svg>`
+
 // Pick the worst severity (top of SEVERITIES order) among the
 // findings on a given line so the gutter dot reads as the most
 // urgent issue. Multiple findings on one line still resolve to a
@@ -1259,11 +1266,36 @@ function renderBundleCodeView(details) {
     ? state.bundleCodeSearchMode
     : 'files'
   const query = state.bundleCodeSearchQuery
+  // Collapse every directory in one click — writes an explicit
+  // `false` per dir path into the user-toggle map (the same store
+  // `<summary>` clicks feed), so the collapsed state survives
+  // re-renders exactly like a manual toggle would. Shown only while
+  // the rail is in unfiltered Files mode: search-result modes don't
+  // show the tree, and an active filter force-expands it (the
+  // writes would look like a no-op until the filter clears).
+  const collapseAllTreeDirs = () => {
+    const walk = (n, parentPath) => {
+      for (const [name, child] of n.dirs) {
+        const p = parentPath ? `${parentPath}/${name}` : name
+        _bundleTreeUserOpen.set(p, false)
+        walk(child, p)
+      }
+    }
+    walk(tree, '')
+    render()
+  }
   return html`<div class="bundle-code-view">
     <aside class="bundle-code-rail">
       <div class="bundle-code-rail-head">
         <span class="bundle-code-rail-label">Files</span>
         <span class="bundle-code-rail-count">${allPaths.length}</span>
+        ${searchMode === 'files' && !query ? html`<button
+          type="button"
+          class="bundle-code-rail-collapse"
+          title="Collapse all directories"
+          aria-label="Collapse all directories"
+          @click=${collapseAllTreeDirs}
+        >${COLLAPSE_ALL_ICON}</button>` : nothing}
       </div>
       ${prefix ? html`<div class="bundle-code-rail-prefix mono" title=${prefix}>${prefix}</div>` : nothing}
       <bundle-code-search .modes=${searchModes}></bundle-code-search>

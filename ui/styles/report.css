@@ -594,11 +594,12 @@
   background: var(--surface);
 }
 .bundle-code-rail-head {
-  display: flex; align-items: baseline; justify-content: space-between;
-  padding: .5rem .75rem;
+  display: flex; align-items: center; gap: .4rem;
+  padding: .4rem .5rem .4rem .75rem;
   border-bottom: 1px solid var(--border);
 }
 .bundle-code-rail-label {
+  flex: 1;
   text-transform: uppercase;
   letter-spacing: .05em;
   font-size: .68rem;
@@ -606,10 +607,25 @@
   font-weight: 600;
 }
 .bundle-code-rail-count {
+  flex-shrink: 0;
   color: var(--muted);
   font-size: .72rem;
   font-variant-numeric: tabular-nums;
 }
+/* Collapse-all — quiet icon button on the head's right edge, shown
+   only in unfiltered Files mode (search-result modes don't render
+   the tree; an active filter force-expands it). */
+.bundle-code-rail-collapse {
+  flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.35rem; height: 1.35rem;
+  padding: 0;
+  border: 0; border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.bundle-code-rail-collapse:hover { background: var(--bg); color: var(--text); }
 .bundle-code-rail-prefix {
   padding: .25rem .75rem;
   font-size: .68rem;
@@ -620,6 +636,12 @@
 .bundle-code-rail-body {
   flex: 1; min-height: 0;
   overflow: auto;
+  /* Scrolling the tree past either end must not chain into the
+     surrounding slide / page — same containment the app sidebar's
+     #file-list uses. stable gutter so the tree doesn't reflow when
+     the scrollbar appears. */
+  overscroll-behavior: none;
+  scrollbar-gutter: stable;
   -webkit-app-region: no-drag; app-region: no-drag;
   padding: .35rem .25rem .5rem;
 }
@@ -886,6 +908,10 @@ bundle-code-search {
   color: var(--muted);
   font: inherit;
   border-radius: 3px;
+  /* Breathing room when the reveal-current scrollIntoView (events.js
+     revealBundleCodeCurrent) brings an off-screen row in — without
+     it the row lands flush against the rail edge. */
+  scroll-margin-block: 1.5rem;
 }
 .bundle-code-tree-link:hover {
   background: var(--bg);
