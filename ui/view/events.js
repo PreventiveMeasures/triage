@@ -468,6 +468,36 @@ report.addEventListener('click', (e) => {
     }
     return
   }
+  // Code slide — issue stepper (‹ ›) in the main bar. Cycles
+  // bundleSourceFindingIdx through the open file's findings in line
+  // order (wrapping), opening the side panel on each, and scrolls
+  // the finding's line into view. The line-ordered (idx, line)
+  // pairs ride in a JSON attribute on the stepper container so the
+  // handler doesn't re-derive the per-file findings.
+  const issueStep = e.target.closest('[data-bundle-code-issue-step]')
+  if (issueStep) {
+    const holder = issueStep.closest('[data-bundle-code-issue-order]')
+    let order = null
+    try { order = JSON.parse(holder?.dataset.bundleCodeIssueOrder ?? 'null') } catch {}
+    if (Array.isArray(order) && order.length > 0) {
+      const step = issueStep.dataset.bundleCodeIssueStep === '-1' ? -1 : 1
+      const pos = order.findIndex((o) => o.idx === state.bundleSourceFindingIdx)
+      // No selection yet: forward starts at the first finding,
+      // backward at the last — both feel like "begin from my end".
+      const next = pos === -1
+        ? (step > 0 ? order[0] : order.at(-1))
+        : order[(pos + step + order.length) % order.length]
+      state.bundleSourceFindingIdx = next.idx
+      renderPreservingSourceScroll()
+      if (next.line > 0) {
+        queueMicrotask(() => {
+          const row = document.querySelector(`.bundle-source-lineno-row[data-line="${next.line}"]`)
+          if (row) row.scrollIntoView({ block: 'center', behavior: 'smooth' })
+        })
+      }
+    }
+    return
+  }
   const sourceOpen = pathClosest(e, '[data-bundle-view-source]')
   if (sourceOpen) {
     const path = sourceOpen.dataset.bundleViewSource
@@ -476,14 +506,19 @@ report.addEventListener('click', (e) => {
     // result is clicked; opens the side panel directly on that
     // finding and (after render) scrolls the source viewer to
     // its line. Plain Files-mode / Code-mode clicks omit the
-    // attribute and keep the previous bundleSourceFindingIdx
-    // (which the tab-switch reset already cleared).
+    // attribute: a re-click on the open file keeps the pointer,
+    // but a different file drops it — the index is a position in
+    // the PREVIOUS file's findings array, so carrying it over
+    // opened the side panel on an arbitrary finding of the new
+    // file (or pointed past its end).
     const findingIdxAttr = sourceOpen.dataset.bundleViewFindingIdx
     const findingIdx = findingIdxAttr === undefined ? null : parseInt(findingIdxAttr, 10)
     const lineAttr = sourceOpen.dataset.bundleViewLine
     const line = lineAttr ? parseInt(lineAttr, 10) : null
+    const pathChanged = state.bundleSourceFile !== path
     state.bundleSourceFile = path
     if (Number.isFinite(findingIdx)) state.bundleSourceFindingIdx = findingIdx
+    else if (pathChanged) state.bundleSourceFindingIdx = null
     // Preserve the scroll position of whichever list-style
     // container the click came from. Code rail (tree / search
     // results), Issues slide (file-grouped list), and Code source
@@ -869,6 +904,21 @@ report.addEventListener('click', (e) => {
       navigator.clipboard.writeText(text).then(() => {
         copyReport.classList.add('copied')
         setTimeout(() => copyReport.classList.remove('copied'), 1000)
+        return null
+      }).catch(() => {})
+    } catch {}
+    return
+  }
+  // Code slide — copy the open file's full (un-stripped) path. Same
+  // convenience semantics as the report-name copy above: silent
+  // no-op without clipboard access, brief color pulse on success.
+  const copyPath = pathClosest(e, '[data-copy-path]')
+  if (copyPath) {
+    const text = copyPath.dataset.copyPath
+    try {
+      navigator.clipboard.writeText(text).then(() => {
+        copyPath.classList.add('copied')
+        setTimeout(() => copyPath.classList.remove('copied'), 1000)
         return null
       }).catch(() => {})
     } catch {}
