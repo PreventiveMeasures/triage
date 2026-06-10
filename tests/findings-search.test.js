@@ -36,6 +36,7 @@ function reset() {
   state.filterColors = new Set()
   state.filterSources = new Set()
   state.filterAnalyzer = ''
+  state.filterModel = ''
   state.filterRepo = ''
   state.filterConfMin = 0
   state.filterConfMax = 10

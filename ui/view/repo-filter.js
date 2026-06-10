@@ -4,12 +4,14 @@
 // the parent gates rendering on `state.currentWorkspace` and on
 // the option list having more than one repo to choose between.
 //
-// Mirrors `<analyzer-select>`: single-select dropdown with an
-// implicit "All repositories" entry, plus an explicit `(no repo)`
-// bucket for findings whose repo can't be derived (no `repo.github`
-// and no `_repoFallback` URL). The `(no repo)` value rides
-// `NO_REPO_SENTINEL` (a control character) so it can't collide with a
-// legitimate repo slug.
+// Native single-select dropdown with an implicit "All repositories"
+// entry, plus an explicit `(no repo)` bucket for findings whose repo
+// can't be derived (no `repo.github` and no `_repoFallback` URL). The
+// `(no repo)` value rides `NO_REPO_SENTINEL` (a control character) so
+// it can't collide with a legitimate repo slug. (`<analyzer-select>`
+// used to share this exact shape before it grew the two-dimension
+// popover panel; this component remains the reference for the plain
+// native-select pattern.)
 //
 // Reactivity: extends StateElement, so reads of `state.filterRepo`
 // during render() are tracked. `live()` binds the native select's

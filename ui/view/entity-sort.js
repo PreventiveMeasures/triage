@@ -12,7 +12,7 @@
 // The native `<select>` value is bound through Lit's `live()`
 // directive so a stale-filter clear in the parent's pipeline
 // actually updates the visible selection — same reasoning as
-// `<analyzer-select>`'s `live()` binding.
+// `<repo-filter>`'s `live()` binding.
 //
 // Properties:
 //   * `kind` — `"packages"` or `"repositories"`. Required (no

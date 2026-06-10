@@ -38,7 +38,7 @@
     /* Transparent so the glass-shell toolbar shows through — matches
        the sibling `conf-filter` / `source-filter` / `.sev-chip`
        treatment in the same row. Chevron is drawn by the
-       `analyzer-select` / `findings-sort` host `::after` below since
+       `repo-filter` / `findings-sort` host `::after` below since
        pseudo-elements don't apply to <select>. */
     background: transparent;
   }
@@ -50,8 +50,10 @@
      `<select>` has the right padding (1.7rem → chevron at .55rem
      from the right with the glyph itself ~.4rem wide).
      `pointer-events: none` on the chevron lets a click fall
-     through to the select. */
-  & :is(analyzer-select, repo-filter, findings-sort) {
+     through to the select. (`analyzer-select` left this list when it
+     became a custom dropdown — its trigger is a real <button>, so
+     the chevron is an inline svg; see the analyzer-btn rules below.) */
+  & :is(repo-filter, findings-sort) {
     position: relative;
     display: inline-block;
 
@@ -65,6 +67,46 @@
       transform: translateY(-70%) rotate(45deg);
       pointer-events: none;
     }
+  }
+
+  /* Analyzer / model filter — custom dropdown (trigger pill + a
+     two-column popover panel, see view/analyzer-select.js). The host
+     stays position: relative as the panel's conceptual anchor; the
+     panel itself is top-layer with fixed coords from the component.
+     Trigger mirrors the sort select's chrome (30px transparent pill,
+     muted chevron, 8.5rem min-width so picking a longer value
+     doesn't shove its neighbours around for short selections). */
+  & analyzer-select {
+    position: relative;
+    display: inline-block;
+  }
+  & .analyzer-btn {
+    display: inline-flex; align-items: center; gap: .45rem;
+    height: 30px; box-sizing: border-box;
+    padding: .3rem .55rem;
+    min-width: 8.5rem;
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px;
+    font-family: inherit; font-size: .8rem; font-weight: 500;
+
+    &:hover { border-color: var(--accent); }
+    &:focus-visible { border-color: var(--accent); outline: none; }
+    /* Any analyzer / model filter applied → accent the label so the
+       narrowed state reads at a glance (matches the active source /
+       view-mode chips). */
+    &.active { color: var(--accent); }
+
+    & .analyzer-btn-label {
+      flex: 1;
+      text-align: left;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      /* Combination labels (`Claude Security · opus 4 7`) can get
+         long — cap and ellipsize instead of letting the trigger eat
+         the filter row. */
+      max-width: 18rem;
+    }
+    & svg { color: var(--muted); flex-shrink: 0; }
   }
 
   /* Confidence slider track tint + thumb fill flow off the toolbar's
@@ -129,6 +171,86 @@
     display: inline-flex; align-items: center; gap: .25rem;
     color: var(--muted);
     & input { margin: 0; }
+  }
+}
+
+/* Analyzer / model dropdown panel — native popover (top layer, so no
+   toolbar overflow or stacking context can clip it), one
+   `.analyzer-menu-col` per dimension with a hairline separator
+   between. Fixed coords come from the component's beforetoggle /
+   updated() positioning; inset: auto + margin: 0 zero out the UA's
+   auto-centering of popover="auto" so those coords take effect
+   (same recipe as `.triage-menu` in finding-row.css). */
+.analyzer-menu[popover] {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  align-items: stretch;
+  gap: .35rem;
+  padding: .3rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgb(0 0 0 / .25);
+  font-size: .825rem;
+  /* WCO: the popover sits in the top layer above body's drag baseline.
+     Row buttons are no-drag via the central `button` selector, but the
+     panel's own padding / gap pixels would inherit drag and eat clicks
+     landing on the chrome between rows. */
+  -webkit-app-region: no-drag; app-region: no-drag;
+}
+/* Hidden state — the popover API toggles `:popover-open`; keep the
+   stack tight (display: none) when closed. */
+.analyzer-menu[popover]:not(:popover-open) { display: none; }
+.analyzer-menu[popover]:popover-open { display: flex; }
+.analyzer-menu-sep { border-left: 1px solid var(--border); }
+.analyzer-menu-col {
+  display: flex; flex-direction: column;
+  gap: 1px;
+  min-width: 9rem;
+  /* Long model lists (big workspace merges) scroll inside their
+     column instead of growing the panel past the viewport — the
+     component's positioning only flips above/below, it doesn't
+     shrink the panel. */
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.analyzer-menu-head {
+  padding: .25rem .5rem .2rem;
+  color: var(--muted);
+  font-size: .68rem; font-weight: 600;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+.analyzer-menu-item {
+  display: flex; align-items: center; gap: .45rem;
+  background: transparent;
+  border: 0; border-radius: 3px;
+  padding: .3rem .5rem;
+  color: var(--text);
+  text-align: left;
+  font-family: inherit; font-size: .78rem;
+
+  /* Fixed-width tick slot — the ✓ appears in place on the active row
+     instead of shifting every label to the right. */
+  &::before { content: ''; width: .8rem; flex-shrink: 0; }
+  &.active::before { content: '✓'; color: var(--accent); }
+  &:hover { background: var(--surface); }
+  /* Cross-filtered to zero by the other column's selection — dimmed
+     as "no findings carry this combination" but still clickable (an
+     empty result is visible and recoverable; a disabled row would
+     trap the user into clearing dimensions in a fixed order). */
+  &.zero { opacity: .45; }
+
+  & .analyzer-menu-label {
+    flex: 1;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    max-width: 16rem;
+  }
+  & .analyzer-menu-count {
+    color: var(--muted);
+    font-size: .7rem; font-weight: 600;
+    font-variant-numeric: tabular-nums;
   }
 }
 

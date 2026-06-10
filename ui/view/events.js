@@ -1609,11 +1609,15 @@ document.addEventListener('download-requested', () => {
   downloadReportsAsMarkdown(state.reports)
 })
 
-// `<analyzer-select>` dispatches this on native change; it owns its
-// `<select>`, so there's no id-keyed branch in a generic change
-// listener.
+// `<analyzer-select>` dispatches this when a row in its analyzer /
+// model popover is picked. detail always carries BOTH dimensions
+// (the clicked one updated, the other passed through unchanged), so
+// one listener writes the pair without knowing which column was
+// clicked. The component owns its popover, so there's no id-keyed
+// branch in a generic change listener.
 report.addEventListener('analyzer-change', (e) => {
-  state.filterAnalyzer = e.detail.value
+  state.filterAnalyzer = e.detail.analyzer
+  state.filterModel = e.detail.model
   render()
 })
 // `<repo-filter>` dispatches this on native change. Mirrors

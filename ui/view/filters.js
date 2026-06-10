@@ -1,5 +1,5 @@
 import { state } from '#client/index.js'
-import { SEVERITY_ORDER, findingText, isModule } from './format.js'
+import { SEVERITY_ORDER, findingText, isModule, prettyModel } from './format.js'
 import { primaryTab, tabKey } from './group.js'
 
 // Stand-in for the "no analyzer" bucket in the analyzer dropdown.
@@ -22,6 +22,29 @@ export const NULL_ANALYZER_SENTINEL = '\u0000'
 // source-stays-text reason as NULL_ANALYZER_SENTINEL above.
 export const NO_REPO_SENTINEL = '\u0001'
 
+// Third control-character sentinel — the "(no model)" bucket in the
+// model column of the analyzer/model dropdown (`<analyzer-select>`).
+// Distinct byte from the two above for the same no-silent-coupling
+// reason: the analyzer and model dimensions sit side by side in one
+// control, so sharing NULL_ANALYZER_SENTINEL would make a "(none)"
+// analyzer and a "(no model)" selection indistinguishable in state.
+// Written as the `\u0002` escape — see NULL_ANALYZER_SENTINEL for why
+// not a literal control byte.
+export const NULL_MODEL_SENTINEL = '\u0002'
+
+// A finding's model dimension for the analyzer/model dropdown — the
+// pretty display name (the form the header combo tags and per-finding
+// run-meta lines already show), so vendor-prefixed spellings of the
+// same model (`anthropic/claude-opus-4-7` vs `claude-opus-4-7`)
+// collapse into one filterable bucket instead of two identical-looking
+// options. `null` when the finding carries no model (source-marked
+// imports never stamp run meta onto findings). `||` rather than `??`
+// so a blank-string model joins the null bucket instead of becoming an
+// empty option label.
+export function modelOfFinding(f) {
+  return prettyModel(f.model) || null
+}
+
 // Resolve a finding's repo to a single string key, or null when no
 // repo signal is available. Mirrors `repoOf` in
 // client/bundle-finding-index.js — kept local because that helper
@@ -38,6 +61,7 @@ export function resetFilters() {
   state.filterColors = new Set()
   state.filterSources = new Set()
   state.filterAnalyzer = ''
+  state.filterModel = ''
   state.filterRepo = ''
   state.filterConfMin = 0
   state.filterConfMax = 10
@@ -82,16 +106,28 @@ export function matchesFilters(f) {
   // NOT evaluated here — they're GROUP-level (see matchesAnnotationFilters
   // / applyFilters) so 'with' / 'without' stay complementary across a
   // dedup group.
-  // Analyzer filter — single-select dropdown. Empty = no filter.
-  // Findings with no analyzer (`_analyzer === null`) match
-  // NULL_ANALYZER_SENTINEL; other values are straight string
-  // equality. applyFilters runs this at the GROUP level via
-  // `g.some(...)`, so a dedup group shows in full when any entry
-  // matches — same group-visibility as severity / color.
+  // Analyzer filter — one dimension of the `<analyzer-select>`
+  // dropdown. Empty = no filter. Findings with no analyzer
+  // (`_analyzer === null`) match NULL_ANALYZER_SENTINEL; other values
+  // are straight string equality. applyFilters runs this at the GROUP
+  // level via `g.some(...)`, so a dedup group shows in full when any
+  // entry matches — same group-visibility as severity / color.
   if (state.filterAnalyzer) {
     const a = f._analyzer ?? null
     const want = state.filterAnalyzer === NULL_ANALYZER_SENTINEL ? null : state.filterAnalyzer
     if (a !== want) return false
+  }
+  // Model filter — the other `<analyzer-select>` dimension, matched on
+  // `modelOfFinding` (the pretty name; see that helper for why).
+  // Findings with no model match NULL_MODEL_SENTINEL. Evaluated in the
+  // same per-finding pass as the analyzer check above, so selecting
+  // both dimensions means "SOME finding carries this exact
+  // analyzer+model combination" — not one finding with the analyzer
+  // and a different one with the model.
+  if (state.filterModel) {
+    const m = modelOfFinding(f)
+    const want = state.filterModel === NULL_MODEL_SENTINEL ? null : state.filterModel
+    if (m !== want) return false
   }
   // Repo filter — single-select dropdown shown only in workspace
   // view (parent gates the chip on `state.currentWorkspace` + a
@@ -172,7 +208,8 @@ function matchesAnnotationFilters(group) {
 
 export function applyFilters(groups) {
   // Per-tab existential filters (severity / color / source / analyzer /
-  // repo / search) via `g.some`, AND the group-level annotation filters.
+  // model / repo / search) via `g.some`, AND the group-level annotation
+  // filters.
   return groups.filter((g) => g.some(matchesFilters) && matchesAnnotationFilters(g))
 }
 

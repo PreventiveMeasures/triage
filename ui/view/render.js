@@ -9,7 +9,7 @@ import { isBundleInRemote, isInRemote, remoteCount, triageSync } from './client-
 import { dropZone, report } from './dom.js'
 import { SEVERITIES, configureDepsDir, fileLink, findingDisplayName, formatRunMeta, isModule, lineLink, prettyModel, stripExportMarker } from './format.js'
 import { activeTabFor, getMergedGroups, groupKey, groupState, primaryTab, tabKey } from './group.js'
-import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, applyFilters, applySorting, repoOfFinding } from './filters.js'
+import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, applySorting, modelOfFinding, repoOfFinding } from './filters.js'
 import { ANALYZER_LABELS } from './analyzer-select.js'
 import { FLAG_ICON, badgeLabel, findingCardGid, firstLine } from './render-finding.js'
 import { computeFindingCountsByFile, computeTransitiveCounts, fileHasFindings, mergeReportsTree } from './file-counts.js'
@@ -688,7 +688,7 @@ function triageFilterTemplate(colorCounts) {
 // `state.shownTriage` via StateElement and self-gates its visibility,
 // so the host drops it in unconditionally.
 
-function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCounts, flags, analyzerOptions, repoOptions) {
+function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCounts, flags, analyzerSelect, repoOptions) {
   const { showSource, showConfidence, showPriority, showGraphMode, showFileSort, kanbanMode, showRepo, hasComment, hasFix, hasFlagged } = flags
   // The findings tab gains a "graph" view-mode option when a
   // tree-bearing report is loaded (showGraphMode). The focus and
@@ -728,22 +728,29 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
          needs. -->
     <div class="toolbar-row sev-row">
       ${severityChipsTemplate(counts)}
-      <!-- Analyzer dropdown — visible only when the loaded reports
-           involve more than one distinct analyzer (otherwise there is
-           nothing to choose between). Single-select with an empty
-           default ("All analyzers" = no filter); a finding whose
-           effective analyzer is absent (no per-finding type on a
-           native dump) gets a synthetic "(none)" option whose value
-           is the NULL_ANALYZER_SENTINEL — that sentinel can't collide
-           with a legitimate analyzer literally named "null", which
-           would otherwise resolve to the same <option value="null">
-           and be indistinguishable in the dropdown. Component owns
-           its select + the friendly
-           ANALYZER_LABELS lookup; reads state.filterAnalyzer itself
-           via StateElement and uses live() so stale-filter clears in
-           the parent's pipeline actually update the visible
-           selection. -->
-      ${analyzerOptions.length > 1 ? html`<analyzer-select .options=${analyzerOptions}></analyzer-select>` : nothing}
+      <!-- Analyzer / model dropdown — visible only when at least one
+           of the two dimensions has more than one distinct value
+           across the loaded reports (otherwise there is nothing to
+           choose between; a column whose dimension doesn't vary is
+           likewise omitted inside the panel). The component owns the
+           trigger pill + the two-column popover, the friendly
+           ANALYZER_LABELS lookup, and the cross-filtered counts (run
+           over .groups = allGroups, the same denominator as the
+           result count). Values with no carrier get synthetic
+           "(none)" / "(no model)" rows riding NULL_ANALYZER_SENTINEL
+           / NULL_MODEL_SENTINEL — control characters that can't
+           collide with an analyzer or model literally named "null".
+           Reads state.filterAnalyzer / state.filterModel itself via
+           StateElement, so stale-filter clears in the parent's
+           pipeline above re-render the trigger label and row
+           highlights on their own. -->
+      ${analyzerSelect.analyzers.length > 1 || analyzerSelect.models.length > 1
+        ? html`<analyzer-select
+            .analyzers=${analyzerSelect.analyzers}
+            .models=${analyzerSelect.models}
+            .groups=${analyzerSelect.groups}
+          ></analyzer-select>`
+        : nothing}
       <!-- Repo dropdown — only meaningful in workspace view (single-
            file mode usually has one repo). Hidden when the loaded
            reports involve a single repo (no choice to make).
@@ -1543,16 +1550,22 @@ function renderImpl() {
     }
   }
   const knownRepo = perFindingRepos.size === 1 ? [...perFindingRepos][0] : null
-  // Distinct analyzers across the loaded reports — feeds the
-  // toolbar's analyzer dropdown. Built from mergedGroups (not the
-  // shownTriage-filtered allGroups) so the option list stays stable
-  // when the user flips between live and trash views. Sorted for a
-  // stable display order: known source-marked imports first (in
-  // ANALYZER_LABELS' order), the null sentinel last, the rest
-  // alphabetical between them.
+  // Distinct analyzers + models across the loaded reports — the two
+  // dimension lists for the toolbar's analyzer/model dropdown. Built
+  // from mergedGroups (not the shownTriage-filtered allGroups) so the
+  // option lists stay stable when the user flips between live and
+  // trash views. Analyzers sort for a stable display order: known
+  // source-marked imports first (in ANALYZER_LABELS' order), the null
+  // bucket last, the rest alphabetical between them. Models (pretty
+  // names — see modelOfFinding) sort alphabetically with the null
+  // bucket pinned last, same shape as the repo options below.
   const analyzerSet = new Set()
+  const modelSet = new Set()
   for (const g of mergedGroups) {
-    for (const f of g) analyzerSet.add(f._analyzer ?? null)
+    for (const f of g) {
+      analyzerSet.add(f._analyzer ?? null)
+      modelSet.add(modelOfFinding(f))
+    }
   }
   const knownOrder = Object.keys(ANALYZER_LABELS)
   const analyzerOptions = [...analyzerSet].toSorted((a, b) => {
@@ -1561,13 +1574,30 @@ function renderImpl() {
     if (ai !== bi) return ai - bi
     return String(a ?? '').localeCompare(String(b ?? ''))
   })
-  // If the previously-selected analyzer is no longer present (report
-  // unload / workspace switch), clear the filter so a stale
-  // selection can't silently empty the list. Matches the same
+  const modelOptions = [...modelSet].toSorted((a, b) => {
+    if (a == null && b == null) return 0
+    if (a == null) return 1
+    if (b == null) return -1
+    return a.localeCompare(b)
+  })
+  // If the previously-selected analyzer / model is no longer present
+  // (report unload / workspace switch), clear that dimension so a
+  // stale selection can't silently empty the list. Matches the same
   // guard pattern used for source / confidence / sort below.
+  //
+  // Also clear when the dimension stops VARYING (size < 2): its
+  // column is omitted from the panel then, so a retained selection —
+  // vacuous as a filter, since every finding carries the lone value —
+  // would keep the trigger in its accented "filtering" state with no
+  // row left to clear it from. Same philosophy as filterSources being
+  // force-cleared when no modules path exists.
   if (state.filterAnalyzer) {
     const want = state.filterAnalyzer === NULL_ANALYZER_SENTINEL ? null : state.filterAnalyzer
-    if (!analyzerSet.has(want)) state.filterAnalyzer = ''
+    if (!analyzerSet.has(want) || analyzerSet.size < 2) state.filterAnalyzer = ''
+  }
+  if (state.filterModel) {
+    const want = state.filterModel === NULL_MODEL_SENTINEL ? null : state.filterModel
+    if (!modelSet.has(want) || modelSet.size < 2) state.filterModel = ''
   }
   // Distinct repos across the loaded reports — feeds the workspace
   // view's repo dropdown. Same shape as the analyzer set above: built
@@ -1736,7 +1766,13 @@ function renderImpl() {
       hasComment,
       hasFix,
       hasFlagged,
-    }, analyzerOptions, repoOptions)
+    },
+    // Analyzer/model dropdown wiring: counts inside the panel run
+    // over allGroups (the current triage bucket) so they preview
+    // filter-click results against the same denominator as the
+    // "X of Y" result count — while the option LISTS come from
+    // mergedGroups above so they stay stable across live/trash flips.
+    { analyzers: analyzerOptions, models: modelOptions, groups: allGroups }, repoOptions)
 
     // Empty-state line — slot-based so the typeLabel (which can carry
     // user-controlled analyzer-type strings) flows through Lit's

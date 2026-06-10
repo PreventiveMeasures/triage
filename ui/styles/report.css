@@ -2353,7 +2353,7 @@ body.report-fullscreen {
 /* Sort dropdown — strip the native chevron (Chrome/Safari draw wildly
    different glyphs) and paint our own via the entity-sort host's
    `::after`, same two-rotated-borders pattern as the findings
-   `analyzer-select` / `findings-sort` rule in toolbar.css.
+   `repo-filter` / `findings-sort` rule in toolbar.css.
    `appearance: none` is paired with the WebKit prefix for Safari
    < 15. */
 .packages-toolbar .packages-sort {

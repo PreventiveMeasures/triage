@@ -80,6 +80,7 @@ export interface State {
   filterColors: Set<string>
   filterSources: Set<string>
   filterAnalyzer: string
+  filterModel: string
   filterRepo: string
   filterConfMin: number
   filterConfMax: number
@@ -405,23 +406,37 @@ export const state: State = store<State>({
   // chip switches to it (clearing the other), clicking the active
   // chip again clears the set entirely.
   filterSources: new Set<string>(),
-  // Analyzer filter — single-select dropdown above the toolbar. Empty
-  // string = no filter. Otherwise the value matches a finding's
-  // `_analyzer` (the report's `source` for DeepSec / Codex Security /
-  // Claude Security imports, or the per-finding `type` for analyzer-
-  // native JSON dumps). `NULL_ANALYZER_SENTINEL` (a null character,
-  // exported from view/filters.js) selects findings whose effective
-  // analyzer is absent (`_analyzer === null`) — picked over the bare
-  // word `'null'` so a legitimate analyzer literally named `"null"`
-  // stays distinguishable. The selector is hidden when the loaded
-  // reports involve only one distinct analyzer — there's nothing to
-  // choose between.
+  // Analyzer + model filters — the two dimensions of the toolbar's
+  // `<analyzer-select>` dropdown (one column per dimension; setting
+  // both narrows to findings carrying that exact analyzer+model
+  // combination). Empty string = no filter on that dimension.
+  //
+  // `filterAnalyzer` matches a finding's `_analyzer` (the report's
+  // `source` for DeepSec / Codex Security / Claude Security imports,
+  // or the per-finding `type` for analyzer-native JSON dumps).
+  // `NULL_ANALYZER_SENTINEL` (a control character, exported from
+  // view/filters.js) selects findings whose effective analyzer is
+  // absent (`_analyzer === null`) — picked over the bare word `'null'`
+  // so a legitimate analyzer literally named `"null"` stays
+  // distinguishable.
+  //
+  // `filterModel` matches `modelOfFinding(f)` — the PRETTY model name
+  // (`prettyModel(f.model)`, the same form the header combo tags and
+  // per-finding run-meta lines display), so vendor-prefixed spellings
+  // of one model collapse into a single bucket. `NULL_MODEL_SENTINEL`
+  // selects findings with no model (source-marked imports never stamp
+  // one).
+  //
+  // The selector is hidden when neither dimension has more than one
+  // distinct value across the loaded reports — nothing to choose
+  // between.
   filterAnalyzer: '',
+  filterModel: '',
   // Repository filter — single-select dropdown, only meaningful in
   // workspace view (single-file mode usually has one repo). Empty
   // string = no filter. Otherwise the value matches a finding's
   // resolved repo (`f.repo?.github ?? f._repoFallback`).
-  // `NO_REPO_SENTINEL` (a null character, exported from
+  // `NO_REPO_SENTINEL` (a control character, exported from
   // view/filters.js) selects findings with no derivable repo —
   // picked over the bare word `'null'` so a legitimate repo slug
   // literally named `"null"` stays distinguishable. The selector

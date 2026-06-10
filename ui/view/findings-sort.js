@@ -6,8 +6,8 @@
 // option list driven by parent flags (file sort only when a tree
 // exists, confidence/priority options only when the dataset surfaces
 // those fields) and uses different CSS — the findings host shares the
-// `& :is(analyzer-select, findings-sort)` chevron rule in toolbar.css
-// with the analyzer dropdown, while `<entity-sort>` has its own offset
+// `& :is(repo-filter, findings-sort)` chevron rule in toolbar.css
+// with the repo dropdown, while `<entity-sort>` has its own offset
 // in report.css. Folding them would require either threading styling
 // and option-shape props through one component or splitting the
 // template into two barely-shared branches, so they stay as two thin
