@@ -15,8 +15,11 @@
 //                   `session.error` until `dismissError()`.
 //   `busy`        — per-socket inflight cap dropped the save
 //                   (transport backpressure). Recoverable; the
-//                   client clears `pending` and re-arms
-//                   `pendingSave` for the next natural trigger.
+//                   client clears `pending`, re-arms `pendingSave`,
+//                   and schedules a short timed retry — without the
+//                   timer an idle client (no further edit /
+//                   broadcast / reconnect) would strand its last
+//                   edit unsynced indefinitely.
 //   `stale-base`  — concurrent commit advanced the head past the
 //                   client's claimed base. The server emits the
 //                   typed frame AFTER a `workspace-state` catch-up

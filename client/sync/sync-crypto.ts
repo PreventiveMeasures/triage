@@ -417,13 +417,24 @@ async function frameAndPad(value: unknown): Promise<Uint8Array<ArrayBuffer>> {
   return out
 }
 
+// Cap on the DECOMPRESSED size of an inbound changeset. The compressed
+// payload is already bounded (~1 MiB by the relay's ciphertext cap +
+// the pow-2 padding buckets), but gzip expands up to ~1032:1, so a
+// hostile seed holder could ship a ~1 GiB bomb that OOMs every peer on
+// decrypt. 64 MiB is orders of magnitude above any real changeset
+// while keeping the worst case bounded; a trip throws out of
+// `decryptJson`, which `applyChainToBase`'s decrypt catch turns into
+// its stop-and-recover path (keyframe-heal bump, then handleChain's
+// gap re-subscribe / full-state push).
+const MAX_DECOMPRESSED_BYTES = 64 * 1024 * 1024
+
 async function unframeAndUngzip(plaintext: Uint8Array<ArrayBuffer>): Promise<unknown> {
   if (plaintext.length < 4) throw new Error('plaintext too short')
   const view = new DataView(plaintext.buffer, plaintext.byteOffset, plaintext.byteLength)
   const len = view.getUint32(0, false)
   if (len + 4 > plaintext.length) throw new Error('length prefix exceeds buffer')
   const compressed = plaintext.subarray(4, 4 + len) as Uint8Array<ArrayBuffer>
-  const json = await gunzipBytes(compressed)
+  const json = await gunzipBytes(compressed, { maxBytes: MAX_DECOMPRESSED_BYTES })
   return JSON.parse(decodeUtf8(json))
 }
 

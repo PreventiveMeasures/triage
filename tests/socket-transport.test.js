@@ -755,6 +755,8 @@ describe('socket-transport: SSE fallback', () => {
     assert.ok(await awaitFetch(1), 'SSE POST issued')
     assert.equal(fetchCalls[0].url, 'http://test.invalid/api/sync/sse')
     assert.equal(fetchCalls[0].opts.method, 'POST')
+    assert.equal(JSON.parse(fetchCalls[0].opts.body).id, undefined,
+      'opening POST carries no continuation id')
     t.close()
   })
 
@@ -791,8 +793,10 @@ describe('socket-transport: SSE fallback', () => {
     const p = t.runAuthFlow()
     // The 100ms debounce window means the password POST takes ~100ms.
     assert.ok(await awaitFetch(2, 500))
-    assert.equal(fetchCalls[1].url, 'http://test.invalid/api/sync/sse?id=sid-xyz')
+    assert.equal(fetchCalls[1].url, 'http://test.invalid/api/sync/sse',
+      'sid never rides the URL (access-log leak)')
     const body = JSON.parse(fetchCalls[1].opts.body)
+    assert.equal(body.id, 'sid-xyz', 'continuation sid rides the body')
     assert.equal(body.password, 'p1', 'password rides on the body')
     // The authenticate frame itself is intercepted (not sent on the
     // wire) — only password + frames go out. No `frames` field.
@@ -814,11 +818,13 @@ describe('socket-transport: SSE fallback', () => {
     lastStream().pushEvent('session', 'sid-A')
     lastStream().pushMessage({ type: 'challenge', nonce: 'nonce-A' })
     await delay(10)
-    // Trigger an outbound send so the test can observe the next POST's URL.
+    // Trigger an outbound send so the test can observe the next POST's body.
     t.send({ type: 'ping' })
     assert.ok(await awaitFetch(2, 500))
-    assert.equal(fetchCalls[1].url, 'http://test.invalid/api/sync/sse?id=sid-A',
-      'continuation POST echoes the latched sid')
+    assert.equal(fetchCalls[1].url, 'http://test.invalid/api/sync/sse',
+      'sid never rides the URL')
+    assert.equal(JSON.parse(fetchCalls[1].opts.body).id, 'sid-A',
+      'continuation POST echoes the latched sid in the body')
     // Simulate a different replica picking up the session — server
     // emits a fresh `session` event with a NEW id + a new challenge.
     lastStream().pushEvent('session', 'sid-B')
@@ -829,7 +835,7 @@ describe('socket-transport: SSE fallback', () => {
     // Next POST should carry the new id.
     t.send({ type: 'ping' })
     assert.ok(await awaitFetch(3, 500))
-    assert.equal(fetchCalls[2].url, 'http://test.invalid/api/sync/sse?id=sid-B',
+    assert.equal(JSON.parse(fetchCalls[2].opts.body).id, 'sid-B',
       'next POST switches to the new sid')
     t.close()
   })

@@ -8,9 +8,10 @@
 //
 // One route, POSTs only:
 //
-//   POST /api/sync/sse[?id=<sid>]
+//   POST /api/sync/sse
 //       Request body:
-//         { password?: string,                   — cached client password
+//         { id?: string,                         — session continuation token
+//           password?: string,                   — cached client password
 //           frames?:   Array<protocol-frame>     — WS-style JSON frames
 //         }
 //       Response:
@@ -25,14 +26,23 @@
 //         carrying the WS protocol's JSON envelopes.
 //
 // Continuation: each POST replaces the previous POST's response as the
-// session's downstream channel. If the `?id=<sid>` in the URL matches
-// a session this replica knows, the session continues (new outbound
-// stream attached, old one end()ed). If the id is unknown (different
-// replica picked up the POST, or session expired), a fresh session
-// with a new id is created and announced via the first `session`
-// event; the client uses the new id on all subsequent POSTs and re-
-// sends its subscribe frames on the next POST (its `frames` carry the
-// signed subscribes — they always do, see client/sync/sse-transport.ts).
+// session's downstream channel. If the body's `id` matches a session
+// this replica knows, the session continues (new outbound stream
+// attached, old one end()ed). If the id is unknown (different replica
+// picked up the POST, or session expired), a fresh session with a new
+// id is created and announced via the first `session` event; the
+// client uses the new id on all subsequent POSTs and re-sends its
+// subscribe frames on the next POST (its `frames` carry the signed
+// subscribes — they always do, see client/sync/sse-transport.ts).
+//
+// The id rides the JSON body, NOT the URL: the sid is a live bearer
+// capability (whoever presents it attaches to the session's downstream
+// and inherits its operator-auth flag), and a query-string token leaks
+// into proxy / LB access logs — the same reason the objstore bearer
+// tokens ride the Authorization header, never the URL. A legacy
+// `?id=<sid>` query form is still ACCEPTED (older client bundles sent
+// it; rejecting would churn them through a fresh session per POST),
+// but current clients never emit it.
 //
 // Why POSTs only: a long-lived GET pins the client to one replica via
 // TCP affinity, which would mean POSTs from the same client must be
@@ -106,8 +116,10 @@ export type SseServer = {
 // Inbound POST body. Every field optional — an empty-body POST is a
 // valid "wake the session" probe (the response stream rides on every
 // POST), and a body that carries only `password` or only `frames` is
-// a normal partial update.
+// a normal partial update. `id` is the session continuation token
+// (see the header's "Continuation" note for why it rides the body).
 type SseBody = {
+  id?: unknown
   password?: unknown
   frames?: unknown
 }
@@ -116,12 +128,13 @@ export function installSseServer(deps: SseServerDeps): SseServer {
   const { peerDeps, isShuttingDown, maxSessions, maxBodyBytes, debug } = deps
 
   // Active SSE sessions, keyed by the random session id `createSession`
-  // mints on the first POST that lacks a `?id=` (or whose id this
-  // replica doesn't recognise) and that subsequent POSTs echo back to
-  // continue the session. Bounded by `maxSessions` — over the cap, new
-  // POSTs get a 503. POSTs against an unknown id are NOT 404'd — they
-  // mint a fresh session instead, so a multi-replica deployment doesn't
-  // require sticky LB routing to recover.
+  // mints on the first POST that carries no continuation id (or whose
+  // id this replica doesn't recognise) and that subsequent POSTs echo
+  // back (body `id` field) to continue the session. Bounded by
+  // `maxSessions` — over the cap, new POSTs get a 503. POSTs against an
+  // unknown id are NOT 404'd — they mint a fresh session instead, so a
+  // multi-replica deployment doesn't require sticky LB routing to
+  // recover.
   const sessions = new Map<string, SseSession>()
 
   function dropSession(sid: string): void {
@@ -251,6 +264,12 @@ export function installSseServer(deps: SseServerDeps): SseServer {
           return
         }
       }
+      // Resolve the continuation token: the JSON body's `id` is the
+      // canonical carrier; the `?id=` query form is the legacy
+      // fallback for older client bundles (see the header note — a
+      // query sid leaks into access logs). Body wins when both are
+      // present (current clients only ever send one).
+      const sid = parseSid(body.id) ?? sidFromUrl
       // Look up the session by id (if the client sent one). If found
       // and alive, attach the new response and dispatch. If not (or
       // session is closed), mint a fresh one — the response stream
@@ -265,8 +284,8 @@ export function installSseServer(deps: SseServerDeps): SseServer {
       // through to createSession with `res` still header-virgin, so
       // the new session can writeSseHeaders without ERR_HTTP_HEADERS_SENT.
       let session: SseSession | null = null
-      if (sidFromUrl) {
-        const existing = sessions.get(sidFromUrl)
+      if (sid) {
+        const existing = sessions.get(sid)
         if (existing && existing.readyState === existing.OPEN && existing.attachResponse(res)) {
           writeSseHeaders(res)
           session = existing
@@ -333,25 +352,33 @@ export function installSseServer(deps: SseServerDeps): SseServer {
   return { handle, sessions: () => sessions.values(), keepaliveTimer }
 }
 
-// Bare-bones query parse for `id=<base64url>`. Avoids URLSearchParams
+// Shape gate for a continuation token from either carrier (body `id`
+// field or the legacy `?id=` query). The {1,64} bound is a
+// deliberately lenient sanity gate: anything outside the base64url
+// alphabet is rejected; an unrecognised sid just gets a fresh session
+// from createSession (no failure mode), and the wide length window
+// keeps a future randomId-length change from silently breaking old
+// clients that round-trip a longer/shorter token. Returns null on
+// missing / non-string / malformed.
+function parseSid(v: unknown): string | null {
+  if (typeof v !== 'string') return null
+  if (!/^[A-Za-z0-9_-]{1,64}$/u.test(v)) return null
+  return v
+}
+
+// Bare-bones query parse for the LEGACY `id=<base64url>` carrier
+// (older client bundles; current clients send the sid in the POST
+// body — see the header's "Continuation" note). Avoids URLSearchParams
 // (which decodes percent-escapes) — `randomId()` mints a 22-char
 // base64url string echoed back unchanged, so no escapes are possible
-// on the legitimate path. The {1,64} bound is a deliberately lenient
-// sanity gate: anything outside the base64url alphabet is rejected; an
-// unrecognised sid just gets a fresh session from createSession (no
-// failure mode), and the wide length window keeps a future
-// randomId-length change from silently breaking old clients that
-// round-trip a longer/shorter token. Returns null on missing /
-// malformed.
+// on the legitimate path.
 function parseSidQuery(query: string | undefined): string | null {
   if (typeof query !== 'string') return null
   for (const part of query.split('&')) {
     const eq = part.indexOf('=')
     if (eq <= 0) continue
     if (part.slice(0, eq) !== 'id') continue
-    const v = part.slice(eq + 1)
-    if (!/^[A-Za-z0-9_-]{1,64}$/u.test(v)) return null
-    return v
+    return parseSid(part.slice(eq + 1))
   }
   return null
 }

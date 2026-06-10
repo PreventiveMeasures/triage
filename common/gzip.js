@@ -17,9 +17,37 @@ export async function gzipBytes(bytes) {
   return new Uint8Array(await new Response(stream).arrayBuffer())
 }
 
-export async function gunzipBytes(bytes) {
+// `maxBytes` (optional) caps the DECOMPRESSED size: gzip expands up to
+// ~1032:1, so a small hostile payload can balloon to GiBs and OOM the
+// process before any content validation runs. Callers decompressing
+// peer-controlled bytes (sync-crypto's inbound changesets) pass a cap;
+// the read then aborts with a throw the moment the budget is crossed,
+// instead of materialising the full expansion. Uncapped callers keep
+// the one-shot Response read.
+export async function gunzipBytes(bytes, { maxBytes } = {}) {
   const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))
-  return new Uint8Array(await new Response(stream).arrayBuffer())
+  if (maxBytes == null) return new Uint8Array(await new Response(stream).arrayBuffer())
+  const reader = stream.getReader()
+  const chunks = []
+  let total = 0
+  for (;;) {
+    const { value, done } = await reader.read()
+    if (done) break
+    total += value.length
+    if (total > maxBytes) {
+      // Cancel so the DecompressionStream stops inflating the rest.
+      try { await reader.cancel() } catch {}
+      throw new Error(`gunzipBytes: decompressed size exceeds ${maxBytes}-byte cap`)
+    }
+    chunks.push(value)
+  }
+  const out = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    out.set(chunk, offset)
+    offset += chunk.length
+  }
+  return out
 }
 
 export async function gzipText(text) {

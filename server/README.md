@@ -721,7 +721,7 @@ session-scoped and DO NOT close the WS; only transport failures reconnect.
 | Bad signature on save / subscribe | Silent drop | Open | Legit signer retries; persistent bad-sig surfaces as `'encrypt/sign failed: …'` after `maxConsecutiveFailures` (5). |
 | Shape-invalid save field (newline, non-base64) | Silent drop | Open | Same as bad sig — legit clients never produce these. |
 | Save ciphertext > 2 MiB (`MAX_CIPHERTEXT_LEN`) | `workspace-save-error { too-large }` after sig verify | Open | Client clears `pending`, sets `session.error`; cleared via `dismissError` / lifecycle handlers. |
-| Save dropped by inflight cap | `workspace-save-error { busy }` before the handler IIFE | Open | Client clears `pending`, re-arms `pendingSave`; no `session.error` (recoverable). |
+| Save dropped by inflight cap | `workspace-save-error { busy }` before the handler IIFE | Open | Client clears `pending`, re-arms `pendingSave`, and schedules a timed retry (~2 s); no `session.error` (recoverable). |
 | Save `base` ≠ server head | `workspace-state` catch-up then `workspace-save-error { stale-base }` | Open | `handleChain` clears `pending` first; recoverable (catch-up rebases). |
 | `objstore-put-begin` over the 100-resource cap (new resource) | `objstore-put-error { workspace-full }` after sig verify | Open | Re-uploads of existing resourceTags still succeed. |
 | Total WS frame > 4 MiB (`maxPayload`) | `ws` closes with 1009 | **Closed** | Reconnects; shouldn't happen given the 2 MiB ciphertext cap. |
@@ -744,9 +744,17 @@ subscribe / fetch from another connection (both bind the per-socket
 `connectionNonce`).
 
 It **can**, as any relay: drop / reorder / delay messages (DoS), observe
-traffic patterns (size, timing, edit cadence per tag), and synthesise
-garbage revisions — which clients reject on signature verification (skip +
-advance, not a full resync).
+traffic patterns (size, timing, edit cadence per tag), synthesise garbage
+revisions — which clients reject on signature verification and recover
+from via the gap re-subscribe / full-state-push ladder — and **equivocate**:
+serve different subscribers divergent views of one chain (truncated for
+one peer, current for another). Clients verify each revision's content
+and continuity but have no cross-client view of global consistency, so a
+forked view persists until the relay shows both peers the same chain
+again; keyframes then converge each peer to whatever chain it was shown.
+Within a single honest deployment forks can't arise (the gated INSERT
+linearises the chain) — equivocation is purely a malicious/compromised
+relay behaviour, listed here so the trust boundary is explicit.
 
 ## License
 

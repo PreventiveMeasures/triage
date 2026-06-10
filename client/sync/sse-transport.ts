@@ -7,8 +7,8 @@
 //
 // Wire (server side in server/sse-server.ts) — POSTs only:
 //
-//   POST <httpUrl>[?id=<sid>]
-//     body: { password?: string, frames?: object[] }
+//   POST <httpUrl>
+//     body: { id?: string, password?: string, frames?: object[] }
 //     response: text/event-stream
 //
 // Each POST opens a fresh `text/event-stream` response that becomes the
@@ -18,12 +18,14 @@
 // into one POST. The session id is a server-minted continuation token:
 // on the first POST the client sends none, and the server's first
 // `session` event carries the assigned id; on subsequent POSTs the
-// client echoes it in `?id=`. If a POST lands on a replica that
-// doesn't recognise the id (LB routed elsewhere, session expired), the
-// replica mints a fresh id, returns it in the new response's `session`
-// event, and the client switches over. Subscriptions ride re-sendable
-// signed frames on the next POST; auth state rides the cached password
-// on every POST.
+// client echoes it as the body's `id` field — NEVER in the URL, where
+// it would leak into proxy / LB access logs (the sid is a live bearer
+// capability for the session's downstream). If a POST lands on a
+// replica that doesn't recognise the id (LB routed elsewhere, session
+// expired), the replica mints a fresh id, returns it in the new
+// response's `session` event, and the client switches over.
+// Subscriptions ride re-sendable signed frames on the next POST; auth
+// state rides the cached password on every POST.
 //
 // No EventSource: the SSE downstream is read via the streaming
 // response body of each POST (fetch + ReadableStream). EventSource only
@@ -158,7 +160,8 @@ export class SseTransport extends EventTarget implements WebSocketLike {
 
   private readonly baseUrl: string
   // Server-minted continuation token. Null until the first response's
-  // `session` event lands. Echoed in `?id=` on every subsequent POST.
+  // `session` event lands. Echoed as the `id` body field on every
+  // subsequent POST (never the URL — see the header note on log leak).
   // A new value mid-life means the previous session was lost (replica
   // takeover or timeout) and a fresh session was minted — the outer
   // transport observes a new `challenge` frame and re-subscribes.
@@ -302,12 +305,11 @@ export class SseTransport extends EventTarget implements WebSocketLike {
     // about to ship.
     const frames = this.outbound
     this.outbound = []
-    const body: { password?: string; frames?: PendingFrame[] } = {}
+    const body: { id?: string; password?: string; frames?: PendingFrame[] } = {}
+    if (this.sessionId != null) body.id = this.sessionId
     if (this.cachedPassword != null) body.password = this.cachedPassword
     if (frames.length > 0) body.frames = frames
-    const url = this.sessionId == null
-      ? this.baseUrl
-      : `${this.baseUrl}?id=${encodeURIComponent(this.sessionId)}`
+    const url = this.baseUrl
     // Stamp this POST and (re)arm the liveness watchdog up front:
     // issuing a POST is itself a sign of life and opens a fresh
     // downstream, so it refreshes the window even before the response's

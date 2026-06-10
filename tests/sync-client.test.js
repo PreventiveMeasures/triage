@@ -32,7 +32,7 @@ const { bootServer } = await import('./_helpers.js')
 
 // ─────────── client modules ───────────
 
-const { triageSync, mutateAllSessions, setHeartbeatTimings, setKeyframeInterval } = await import('../client/sync/triage-sync.ts')
+const { triageSync, mutateAllSessions, setHeartbeatTimings, setKeyframeInterval, setBusyRetryDelay } = await import('../client/sync/triage-sync.ts')
 const { state } = await import('../client/state.ts')
 const { saveTriage } = await import('../client/triage.js')
 const { upsertWorkspace, deleteWorkspace, addReportToWorkspace, setReportWorkspace } = await import('../client/workspaces.js')
@@ -827,6 +827,73 @@ describe('triage-sync client', () => {
     triageSync.setServerUrl('')
     await deleteWorkspace(wsId)
     await relay.close()
+  })
+
+  it('a `busy` save-error retries on a timer without further edits', async () => {
+    // The busy NACK clears `pending` and re-arms `pendingSave`, but on
+    // an idle client nothing else flushes it — no follow-up edit, no
+    // peer broadcast, no reconnect — so the last edit would sit
+    // unsynced indefinitely. Pin the timed retry: the relay sheds the
+    // first save with `busy` and accepts the second; the second can
+    // ONLY come from the retry timer (no other trigger fires here).
+    const wsId = `ws-${Math.random().toString(36).slice(2, 10)}`
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: randomBase64(), reports: ['t.md'] })
+    setReports([{ id: 'finding-A', _id: 'finding-A' }], 't.md')
+    clearTriageState()
+
+    let saves = 0
+    const relay = await startFakeRelay((sock) => {
+      sock.on('message', (data) => {
+        const msg = JSON.parse(data.toString())
+        if (msg.type === 'workspace-subscribe') {
+          sock.send(JSON.stringify({ type: 'workspace-subscribed', workspaceTag: msg.workspaceTag }))
+          return
+        }
+        if (msg.type !== 'workspace-save') return
+        saves += 1
+        if (saves === 1) {
+          // Shed the first save the way the inflight-cap NACK does.
+          sock.send(JSON.stringify({
+            type: 'workspace-save-error', workspaceTag: msg.workspaceTag,
+            base: msg.base ?? null, reason: 'busy',
+          }))
+          return
+        }
+        // Accept the retry: ack with the content-addressed id the
+        // client computed (handleAck matches on base AND id).
+        void (async () => {
+          const id = await cryptoMod.computeRevisionId({
+            publicKeyB64: msg.workspaceTag, base: msg.base ?? null,
+            keyframe: msg.keyframe === true,
+            nonceB64: msg.nonce, ciphertextB64: msg.ciphertext,
+          })
+          sock.send(JSON.stringify({
+            type: 'workspace-save-ack', workspaceTag: msg.workspaceTag,
+            base: msg.base ?? null, id,
+          }))
+        })()
+      })
+    })
+
+    setBusyRetryDelay(30)
+    try {
+      triageSync.openSession(wsId)
+      triageSync.setServerUrl(relay.url)
+      await waitFor(statusOnline, 'sync online')
+      patchEntry(state.triage, 'finding-A', { color: 'red' })
+      await saveTriage()
+      // No further edits from here on — only the busy-retry timer can
+      // produce the second save.
+      await waitFor(() => saves >= 2, 'timed retry re-sent the save')
+      await waitFor(() => settledAfterAck(wsId), 'retry acked and folded in')
+      assert.equal(triageSync.sessionInfo(wsId).error, null, 'busy never marks session.error')
+    } finally {
+      setBusyRetryDelay(2_000)
+      triageSync.closeSession()
+      triageSync.setServerUrl('')
+      await deleteWorkspace(wsId)
+      await relay.close()
+    }
   })
 
   it('heartbeat closes the socket when the server stops responding to pings', async () => {

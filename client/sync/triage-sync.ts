@@ -149,6 +149,13 @@ type Session = {
   consecutiveFailures: number
   error: string | null
   keyDerivationGen?: number
+  // One-shot timer kicking a retry after a `busy` save-error. The NACK
+  // re-arms `pendingSave`, but on an otherwise-idle client nothing else
+  // would flush it (no edit, no broadcast, no reconnect) — so the last
+  // edit could sit unsynced indefinitely. Armed in `handleSaveError`'s
+  // recoverable branch, cleared by the lifecycle paths that reset send
+  // state. Null when disarmed.
+  busyRetryTimer: ReturnType<typeof setTimeout> | null
   // `ensureSubscription` callers awaiting the NEXT
   // `workspace-subscribed` ack's objstore inventory snapshot; each
   // resolved + cleared when that ack lands. Always a fresh ack
@@ -313,6 +320,12 @@ let keyframeInterval = 100
 // to status `'error'` so the UI can warn. Mutable so a test can
 // drop it to 1.
 let maxConsecutiveFailures = 5
+
+// Delay before retrying a save the server shed with the `busy` NACK
+// (per-socket inflight cap — self-inflicted backpressure, not global
+// overload, so a fixed cadence is enough; each retry is one save).
+// Mutable so tests can shrink it.
+let busyRetryDelayMs = 2_000
 
 // True only when all gates align: URL exists, user hasn't flipped
 // off, sidebar isn't suppressing, AND ≥1 workspace exists. The
@@ -521,6 +534,34 @@ function sessionIsLive(session: Session): boolean {
   return sessions.get(session.workspaceId) === session
 }
 
+// Arm the one-shot busy-retry kick. Single timer per session — a
+// second `busy` landing while one is armed is absorbed (the armed
+// fire covers it). The fire re-checks the world before sending:
+// session still live, no sticky error, the `pendingSave` intent still
+// standing (a chain/ack may have flushed it already — then this is a
+// no-op), and no newer save already in flight (`pending` set means an
+// ack path owns the follow-up).
+function armBusyRetry(session: Session): void {
+  if (session.busyRetryTimer != null) return
+  session.busyRetryTimer = setTimeout(() => {
+    session.busyRetryTimer = null
+    if (!sessionIsLive(session)) return
+    if (session.error || session.pending || !session.pendingSave) return
+    session.pendingSave = false
+    trySendSave(session)
+  }, busyRetryDelayMs)
+  // Browser timer ids are numbers and ignore this; in Node (tests) a
+  // pending retry alone must not keep the event loop alive.
+  session.busyRetryTimer.unref?.()
+}
+
+function clearBusyRetry(session: Session): void {
+  if (session.busyRetryTimer != null) {
+    clearTimeout(session.busyRetryTimer)
+    session.busyRetryTimer = null
+  }
+}
+
 // Drop session's content-encryption key material before releasing
 // the session. `session.key` is the raw 32-byte HKDF output from
 // `deriveSessionKey`; zeroing it mirrors `objstore.ts`'s
@@ -529,6 +570,10 @@ function sessionIsLive(session: Session): boolean {
 // CryptoKey — runtime owns its erasure when the ref drops, so that's
 // best-effort.
 function wipeSessionKey(session: Session): void {
+  // Releasing the session also disarms its pending busy retry — the
+  // fire-time `sessionIsLive` guard would no-op anyway, but holding a
+  // live timer on a torn-down session is just a leak.
+  clearBusyRetry(session)
   if (session.key) {
     try { session.key.fill(0) } catch {}
     session.key = null
@@ -991,26 +1036,34 @@ function trySendSave(session: Session): void {
 }
 
 // Apply a chain of revisions (each `{ base, id, nonce, ciphertext,
-// signature }`) to baseState. Three checks per revision:
+// signature }`) to baseState. Four checks per revision:
 //   1. continuity — `base` must equal the current baseRevision so
-//      out-of-order/gappy chains can't silently corrupt state. A
-//      break triggers a resync (clear baseRevision; next save
-//      resends full state).
-//   2. signature — Ed25519 sig must verify against the session's
-//      public key (= workspaceTag). Bad-sig revs are skipped;
-//      baseState holds for the next rev in the chain.
-//   3. decrypt — AEAD tag check using AAD from (workspaceTag, base);
-//      a failure is likewise skipped, not fatal.
-// Skipping malformed individual revs keeps one bad message from
-// poisoning every reconnecting client; only an explicit continuity
-// break (which signature-verified attackers can't cause) requests a
-// full resync.
+//      out-of-order/gappy chains can't silently corrupt state.
+//   2. shape + signature — Ed25519 sig must verify against the
+//      session's public key (= workspaceTag).
+//   3. content-address — `id` must equal the SHA-256 of the same
+//      canonical bytes, else the relay is relabeling a revision.
+//   4. decrypt — AEAD tag check using AAD from (workspaceTag, base).
+// ANY failed check STOPS the apply and returns false. (Two benign
+// cases `continue` instead: a non-object array entry, and a revision
+// whose id already equals the current baseRevision — the idempotent
+// re-delivery skip. Neither advances the cursor.) Revisions already
+// applied from this chain keep their effect (each was individually
+// verified), but we never advance `baseRevision` past a revision we
+// couldn't independently authenticate — advancing on the relay's
+// say-so would let it drive our chain cursor (audit M1 round-4; note
+// a skip-and-continue alternative can't work anyway: the NEXT
+// revision's `base` points at the bad one's id, so the chain breaks
+// continuity right after). Recovery is owned by the caller,
+// `handleChain`: one gap-filling re-subscribe from the current
+// baseRevision, then a full state push if THAT chain also breaks.
 //
-// Each skip path bumps `savesSinceKeyframe` to the threshold so the
-// NEXT save is a keyframe (full state, diff against {}). This heals
-// peers who DID apply the bad rev (different verify versions, older
-// clients) and diverged — the keyframe overwrites their baseState
-// wholesale, pulling everyone back into agreement. Audit M5.
+// The shape / signature / content-address / decrypt failure paths
+// bump `savesSinceKeyframe` to the threshold so the NEXT save is a
+// keyframe (full state, diff against {}). This heals peers who DID
+// apply the bad rev (different verify versions, older clients) and
+// diverged — the keyframe overwrites their baseState wholesale,
+// pulling everyone back into agreement. Audit M5.
 async function applyChainToBase(session: Session, revisions: WireRevision[]): Promise<boolean> {
   for (const rev of revisions) {
     if (!rev || typeof rev !== 'object') continue
@@ -1472,13 +1525,17 @@ function handleSaveError(session: Session, wire: WireMessage): void {
     : 'rejected'
   session.pending = null
   if ((RECOVERABLE_SAVE_ERROR_REASONS as ReadonlySet<string>).has(reason)) {
-    // Recoverable — re-arm for the next natural trigger. Don't bump
+    // Recoverable — re-arm for the next natural trigger AND schedule a
+    // timed retry: on an idle client no edit / broadcast / reconnect
+    // may ever come, and the re-armed `pendingSave` would otherwise
+    // strand the last edit unsynced indefinitely. Don't bump
     // consecutiveFailures or set error (that forces the user to
     // dismissError() before saves flow again). The recoverable set
     // lives in `common/save-error-reason.ts`, pinned by
     // `tests/save-error-reason-taxonomy.test.js`; `'stale-base'` is
     // deliberately NOT recoverable — see that module's docstring.
     session.pendingSave = true
+    armBusyRetry(session)
     return
   }
   session.consecutiveFailures = (session.consecutiveFailures ?? 0) + 1
@@ -1546,6 +1603,10 @@ function onTransportDisconnected(_reason: string): void {
     session.subscribeAcked = false
     session.resyncAttempted = false
     session.pendingSave = true
+    // The reconnect path owns the resend now (onConnected flushes
+    // pendingSave); a busy retry firing against a closed socket would
+    // just bail in trySendSave, but disarm for hygiene.
+    clearBusyRetry(session)
   }
   emitStatusIfChanged()
 }
@@ -1621,6 +1682,12 @@ export function setMaxConsecutiveFailures(n: number): void {
   if (typeof n === 'number' && n >= 1) maxConsecutiveFailures = n
 }
 
+// Test-only knob: shorten the busy-retry delay so a unit test can
+// observe the timed re-send without waiting the production 2 s.
+export function setBusyRetryDelay(ms: number): void {
+  if (typeof ms === 'number' && ms >= 0) busyRetryDelayMs = ms
+}
+
 // Per-session reset helpers shared by the setServerUrl / setEnabled /
 // setForcedOff toggles below.
 
@@ -1655,6 +1722,7 @@ function deactivateSession(session: Session): void {
   session.subscribed = false
   session.subscribeAcked = false
   session.resyncAttempted = false
+  clearBusyRetry(session)
 }
 
 export const triageSync = {
@@ -1899,6 +1967,7 @@ export const triageSync = {
       // stops retrying and `currentStatus()` aggregates to `'error'`.
       // `dismissError()` clears and retries.
       error: null,
+      busyRetryTimer: null,
       objstoreResourceWaiters: [],
     }
     sessions.set(workspaceId, newSession)
@@ -2072,6 +2141,12 @@ onSyncHostInstalled((host) => {
   // so a deletion landing during init still has its handler wired
   // (audit L5).
   host.onWorkspaceDeleted((workspaceId) => {
+    // Disarm any pending busy retry before dropping the entry — the
+    // fire-time `sessionIsLive` guard would no-op it anyway, but this
+    // path bypasses `wipeSessionKey`, so clear explicitly (same hygiene
+    // note as there).
+    const doomed = sessions.get(workspaceId)
+    if (doomed) clearBusyRetry(doomed)
     const removed = sessions.delete(workspaceId)
     // Fire-and-forget — guard the rejection (Web Locks can fail on
     // tab teardown) so it can't surface as an unhandledrejection.
@@ -2120,6 +2195,10 @@ onSyncHostInstalled((host) => {
     oldSession.key = null
     oldSession.verifyingKey = null
     oldSession.workspaceTag = null
+    // Disarm any pending busy retry alongside the key disarm — the
+    // rotation paths below drop the entry via `sessions.delete` (both
+    // the IIFE and its catch), bypassing `wipeSessionKey`'s clear.
+    clearBusyRetry(oldSession)
     // Invalidate any in-flight key derivation too: a kickKeyDerivation
     // IIFE started under the OLD privateKey may still be awaiting, and
     // nulling the fields above doesn't stop it — its commit guard only

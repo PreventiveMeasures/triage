@@ -5,18 +5,22 @@
 //
 // Wire shape under test (server side: server/sse-server.ts):
 //
-//   POST /api/sync/sse[?id=<sid>]
-//       body: { password?, frames? }
+//   POST /api/sync/sse
+//       body: { id?, password?, frames? }
 //       response: text/event-stream
 //                 first event on a fresh session: `session\ndata: <sid>`
 //                 then default `message` events carrying protocol JSON
 //                 stream stays open until next POST takes over
 //
 //   Continuation:
-//     - POST with ?id matching a known session → response stream
+//     - POST whose body `id` matches a known session → response stream
 //       attaches to the same session; previous response is closed.
-//     - POST with ?id NOT known to this replica → fresh session minted,
-//       new id announced via the `session` event; client switches.
+//       (The sid rides the BODY, not the URL — a query sid would leak
+//       into access logs. The legacy `?id=` query form is still
+//       accepted for older client bundles; pinned below.)
+//     - POST with an id NOT known to this replica → fresh session
+//       minted, new id announced via the `session` event; client
+//       switches.
 
 import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
@@ -57,11 +61,14 @@ async function signSubscribe(sk, tag, from, connectionNonce) {
 // the response body manually so each test can assert on the wire
 // shape (session event → challenge frame → subsequent broadcasts).
 async function postSse(baseUrl, body, sid = null) {
-  const url = sid == null ? `${baseUrl}/api/sync/sse` : `${baseUrl}/api/sync/sse?id=${encodeURIComponent(sid)}`
-  const res = await fetch(url, {
+  // Continuation token rides the JSON body (`id`), never the URL —
+  // matching the production client. The legacy `?id=` query carrier
+  // has its own dedicated test below.
+  const payload = sid == null ? (body ?? {}) : { id: sid, ...body }
+  const res = await fetch(`${baseUrl}/api/sync/sse`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body ?? {}),
+    body: JSON.stringify(payload),
   })
   return res
 }
@@ -237,6 +244,28 @@ describe('SSE+POST transport', { concurrency: false }, () => {
     })
     const ack = await read.recvFrame((m) => m.type === 'workspace-subscribed')
     assert.equal(ack.workspaceTag, tag)
+    session.close()
+  })
+
+  it('legacy ?id= query continuation still attaches (older client bundles)', async () => {
+    // Pre-body-id clients sent the sid as `?id=<sid>`. The server keeps
+    // accepting that carrier — rejecting it would churn an old bundle
+    // through a fresh session (new challenge, re-subscribe) on every
+    // POST. Same-session proof: a subscribe signed over the ORIGINAL
+    // challenge nonce verifies, which only works if the query-continued
+    // POST attached to the same session rather than minting a new one.
+    const { sk, tag } = await makeKp()
+    const session = await openSession(httpOrigin)
+    const subSig = await signSubscribe(sk, tag, null, session.nonce)
+    const res = await fetch(`${httpOrigin}/api/sync/sse?id=${encodeURIComponent(session.sid)}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ frames: [{ type: 'workspace-subscribe', workspaceTag: tag, from: null, signature: subSig }] }),
+    })
+    const read = readSse(res)
+    const ack = await read.recvFrame((m) => m.type === 'workspace-subscribed')
+    assert.equal(ack.workspaceTag, tag)
+    read.cancel()
     session.close()
   })
 
