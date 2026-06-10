@@ -42,6 +42,13 @@ function createImpl() {
     // only — toggled via the topbar's "Split dirs" pill; flipping it
     // rebuilds the graph (different packages → different layout).
     splitOwnDirs: false,
+    // Package-level view — one node per package (or per top-level
+    // dir under Split dirs) instead of one per file, edges
+    // aggregated from the cross-package imports. Bundle Graph tab
+    // only, via the topbar's "Packages" pill; the pill (and the
+    // mode) only engage when the bundle has 3+ packages — see
+    // `canPackagesView` in buildBundleGraphData. Off by default.
+    packagesView: false,
     selected: null,        // file path or null
     // Package focus mode — when set, the canvas drops the spiral
     // and renders ONLY this package's intra-imports in graph v1

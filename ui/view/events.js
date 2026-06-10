@@ -656,6 +656,26 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
+  // Packages-view toggle (bundle Graph tab) — flips the canvas
+  // between one-node-per-file and one-node-per-package. The node
+  // set, layout, and hit-testing all change, so tear down + rebuild
+  // like the other graph-reshaping toggles. File selection is a
+  // file-level concept — clear it so the sidebar doesn't show a
+  // file card over a package canvas; a solo'd package stays (it's
+  // the packages view's selection) and so does the focus drill-in
+  // wiring through it. Exits package-focus mode for the same
+  // reason the selection clears: the user asked for a different
+  // altitude, not a different slice.
+  const g2PackagesView = pathClosest(e, '[data-g2-packages-view]')
+  if (g2PackagesView) {
+    graph2.packagesView = !graph2.packagesView
+    graph2.layoutCache = null
+    graph2.selected = null
+    graph2.focusedPkg = null
+    cleanupGraph2()
+    render()
+    return
+  }
   // Triage view selector in graph v2's topbar — flips
   // state.shownTriage to the picked bucket (or back to live when
   // re-clicking the active button). Canvas teardown + cache

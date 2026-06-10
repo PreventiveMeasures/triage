@@ -78,5 +78,11 @@ export function buildGraphFromPrep(prep) {
   if (prep.strippedToOrig) {
     for (const n of graph.nodes) n.origFile = prep.strippedToOrig.get(n.file)
   }
+  // Bundle-only "Packages" mode gate (3+ packages on the full
+  // inventory; see buildBundleGraphData). Stamped on the graph so
+  // the canvas can AND it with the `graph2.packagesView` toggle —
+  // a toggle value persisted from another bundle can't flip a
+  // 2-package (or findings-tab) graph into package mode.
+  graph.canPackagesView = prep.canPackagesView ?? false
   return graph
 }

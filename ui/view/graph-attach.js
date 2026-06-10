@@ -82,7 +82,7 @@ export async function attachGraphLayout(slot, prep, options, refreshSidebar, ref
     await host.updateComplete
     refreshSidebar()
     refreshTopPkgs()
-    mod.attachGraph2Interaction(slot, graph, refreshSidebar)
+    mod.attachGraph2Interaction(slot, graph, refreshSidebar, refreshTopPkgs)
     return host
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)

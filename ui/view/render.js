@@ -1362,6 +1362,10 @@ function renderImpl() {
               // group (default) vs. a group per top-level directory.
               // Hidden when own source can't be split (≤1 own bucket).
               showSplitOwnDirs: prep.canSplitOwnDirs,
+              // Bundle-only "Packages" toggle — per-file graph
+              // (default) vs. one node per package. Hidden below 3
+              // packages, where the package graph carries no signal.
+              showPackagesView: prep.canPackagesView,
             }
             // First open of the graph tab triggers the dynamic
             // import of `ui/graph.js` (LitElement + ~37 KB shadow
