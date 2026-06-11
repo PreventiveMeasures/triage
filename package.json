@@ -1,6 +1,6 @@
 {
   "name": "@preventive/triage",
-  "version": "1.0.0-alpha.8",
+  "version": "1.0.0-alpha.9",
   "description": "Client & relay server for triaging of automated reports",
   "license": "MIT",
   "author": {
