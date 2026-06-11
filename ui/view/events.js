@@ -75,9 +75,12 @@ function renderPreservingScrollOf(selector) {
 
 // Row-internal interactions (tab switch, triage popover, mark-color,
 // comment / fix save, details-panel close) re-render after mutating
-// per-tab state. In table mode that subtree lives inside
-// `<finding-table>`, so a bare render() resets scrollTop on
-// `.findings-table-list`. Call this instead.
+// per-tab state. Steady-state table renders now diff in place (the
+// persistent `<finding-table>` stays connected across them — see
+// render.js), so a bare render() no longer resets scrollTop on
+// `.findings-table-list`; this wrapper stays as a safeguard for the
+// renders that DO rebuild the scroller (cross-view / cross-shape
+// re-entry recreating the body slots).
 function renderPreservingTableScroll() {
   if (state.viewMode === 'table') renderPreservingScrollOf('.findings-table-list')
   else render()

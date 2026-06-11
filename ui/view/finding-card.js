@@ -78,9 +78,12 @@ class FindingCard extends StateElement {
   connectedCallback() {
     super.connectedCallback()
     // Force a render after every (re)connect so StateElement's wrapped
-    // render() runs and re-registers a fresh autorun. render.js
-    // recreates these on every render() call; also covers a card moved
-    // between parents (e.g. table-details aside vs. file-group body).
+    // render() runs and re-registers a fresh autorun. Lit's keyed
+    // repeat keeps cards connected across steady-state list renders,
+    // but view-mode switches rebuild them and a card can move between
+    // parents (e.g. table-details aside vs. file-group body) —
+    // reconnects where Lit wouldn't re-render on its own when `group`
+    // didn't change.
     if (this.hasUpdated) this.requestUpdate()
   }
 }

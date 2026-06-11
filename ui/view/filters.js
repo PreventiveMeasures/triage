@@ -286,8 +286,16 @@ const SORTERS = {
 // each group's primary tab (see sortTabs / primaryTab). 'file' sort
 // is handled by the grouping below; an unrecognised `state.sortBy`
 // falls back to insertion order via the 0 cmp.
+//
+// Decorate-sort-undecorate: resolve each group's primary tab once (N
+// calls) rather than inside the comparator (2·N·log N calls —
+// primaryTab re-sorts a multi-tab group's tabs on every call, which
+// dominated large-list renders).
 export function applySorting(groups) {
   const cmp = SORTERS[state.sortBy]
   if (!cmp) return [...groups]
-  return [...groups].toSorted((a, b) => cmp(primaryTab(a), primaryTab(b)))
+  return groups
+    .map((g) => ({ p: primaryTab(g), g }))
+    .toSorted((a, b) => cmp(a.p, b.p))
+    .map((x) => x.g)
 }

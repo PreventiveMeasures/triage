@@ -240,8 +240,9 @@ function reportChipTemplate(group) {
 // `mark-color` event `{ detail: { color } }`; events.js's delegate
 // on `report` resolves the gid via the same `[data-gid]` walk used
 // for the other buttons.
-function actionButtonsTemplate(group, sortedTabs, groupSt, activeKey, context = null) {
+function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = null) {
   const reportChip = reportChipTemplate(group)
+  const activeKey = tabKey(activeTab)
   const activeEntry = state.triage.get(activeKey)
   const activeColor = activeEntry?.color ?? null
   const activeComment = activeEntry?.comment ?? ''
@@ -271,9 +272,8 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeKey, context = 
   // gitlab / self-hosted / unknown base), so non-GitHub findings keep
   // the plain copy + Claude pair. Sits between copy and Claude:
   // copy | issue | claude.
-  const activeFinding = activeTabFor(group)
-  const findingRepoId = findingRepo(activeFinding)
-  const issueHref = githubIssueUrl(findingRepoId, { title: issueTitle(activeFinding), body: issueBody(activeFinding) })
+  const findingRepoId = findingRepo(activeTab)
+  const issueHref = githubIssueUrl(findingRepoId, { title: issueTitle(activeTab), body: issueBody(activeTab) })
   const issueBtn = issueHref
     ? html`<a class="mark-issue" href=${issueHref} target="_blank" rel="noopener" title="Create a pre-filled GitHub issue for this finding" aria-label="Create a GitHub issue for this finding">${ISSUE_ICON}${isFocus ? html`<span class="mark-btn-label">Issue</span>` : nothing}</a>`
     : nothing
@@ -293,7 +293,7 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeKey, context = 
   const menuTitle = groupSt.hasConflict
     ? 'change triage state (colors mismatch — acts per-tab)'
     : (sortedTabs.length > 1 ? 'change triage state for the whole group' : 'change triage state')
-  return html`${reportChip}<span class="mark-action-group">${commentBtn}${fixBtn}${flagBtn}</span><span class="mark-action-group">${copyBtn}${issueBtn}${claudeBtn}</span>${picker}${triageMenuTemplate(group, menuTitle, context)}`
+  return html`${reportChip}<span class="mark-action-group">${commentBtn}${fixBtn}${flagBtn}</span><span class="mark-action-group">${copyBtn}${issueBtn}${claudeBtn}</span>${picker}${triageMenuTemplate(group, menuTitle, context, groupSt, activeTab)}`
 }
 
 // Triage menu — chevron button toggling a popover with the Fixed /
@@ -341,10 +341,11 @@ function positionTriagePopover(e) {
   popover.style.left = `${left}px`
 }
 
-function triageMenuTemplate(group, title, context = null) {
+// `groupSt` / `activeTab` arrive precomputed from actionButtonsTemplate
+// (which got them from the row / card template) so a single row render
+// resolves them once rather than once per nested helper.
+function triageMenuTemplate(group, title, context, groupSt, activeTab) {
   const gid = tabKey(group[0])
-  const groupSt = groupState(group)
-  const activeTab = activeTabFor(group)
   const activeKey = tabKey(activeTab)
   // Active tab's "current" bucket — triage state, else 'ignored'
   // when the per-report ignore key is set, else null. For
@@ -654,7 +655,7 @@ export function findingCardInnerTemplate(g, opts = {}) {
         ${liftCommit ? nothing : commitRef}
         ${sortedTabs.length > 1 ? html`<div class="tabs">${sortedTabs.map((f) => tabTemplate(f, tabKey(f) === activeKey))}</div>` : nothing}
       </div>
-      ${actionButtonsTemplate(g, sortedTabs, groupSt, activeKey, context)}
+      ${actionButtonsTemplate(g, sortedTabs, groupSt, active, context)}
     </div>
   `
 }
@@ -714,7 +715,7 @@ export function tableRowInnerTemplate(g) {
       <div class="meta-row">
         <span class="row-loc">${rowLocationTemplate(f)}${exportPart}</span>
         <div class="marks">
-          ${actionButtonsTemplate(g, sortedTabs, groupSt, activeKey)}
+          ${actionButtonsTemplate(g, sortedTabs, groupSt, active)}
         </div>
       </div>
       ${sortedTabs.length > 1 ? html`<div class="tabs-row"><div class="tabs">${sortedTabs.map((tabF) => tabTemplate(tabF, tabKey(tabF) === activeKey))}</div></div>` : nothing}

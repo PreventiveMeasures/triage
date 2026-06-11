@@ -322,7 +322,8 @@ function buildAnalyzerTags(findings, fields = COMBO_FIELDS) {
 // Tool name comes from the source marker when every loaded report
 // agrees on one (`Claude Security findings`, `Codex Security
 // findings`, `DeepSec findings`); otherwise it's `Findings`.
-function headerTemplate(totalCount, fileNames, repoInputUseful, knownRepo, treeFileCount) {
+function headerTemplate(mergedGroups, fileNames, repoInputUseful, knownRepo, treeFileCount) {
+  const totalCount = mergedGroups.length
   const sources = new Set(state.reports.map((r) => r.source))
   const singleSource = sources.size === 1 ? [...sources][0] : null
   // Workspace mode wins over the source-based title — the user
@@ -389,7 +390,7 @@ function headerTemplate(totalCount, fileNames, repoInputUseful, knownRepo, treeF
   let statusBarTpl = nothing
   if (totalCount > 0) {
     const sevCounts = {}
-    for (const g of getMergedGroups()) {
+    for (const g of mergedGroups) {
       const sev = primaryTab(g).severity
       if (sev) sevCounts[sev] = (sevCounts[sev] || 0) + 1
     }
@@ -776,6 +777,24 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
   </div>`
 }
 
+// Sort dedup groups by a comparator over each group's primary tab,
+// resolving primaryTab once per group instead of inside the
+// comparator (it re-sorts a multi-tab group's tabs on every call —
+// O(N log N) of that dominated large-list renders). Mirrors
+// applySorting's decoration in filters.js.
+function sortGroupsByPrimary(groups, cmp) {
+  return groups
+    .map((g) => ({ p: primaryTab(g), g }))
+    .toSorted((a, b) => cmp(a.p, b.p))
+    .map((x) => x.g)
+}
+
+// file → line ordering for the 'file' sort's flat variants (table
+// view + flat list), matching the file-grouped layout's intra-file
+// order.
+const fileLineCmp = (pa, pb) =>
+  pa.file.localeCompare(pb.file) || parseInt(pa.line, 10) - parseInt(pb.line, 10)
+
 // Render the body of the findings tab — table view (compact 2-row
 // blocks, never grouped by file) or list view (per-finding cards,
 // optionally grouped by file). `applySorting` already ordered
@@ -797,11 +816,20 @@ let pendingTableItems = null
 let prevFocusedIdx = 0
 
 // Persistent <finding-table> instance, kept across render() calls so
-// the row list (and its StateElement reactivity) survives the
-// innerHTML reset. We detach this element BEFORE replacing
-// report.innerHTML — the bare `.remove()` is enough to keep it alive
-// in JS — and reinsert it into the new HTML's `.finding-table-slot`
-// placeholder afterwards. Stays null until the first time the table
+// the row list (and its StateElement reactivity in each
+// <finding-row>) survives view switches. It lives as a plain
+// appended child INSIDE the body template's static
+// `.finding-table-slot` div — Lit only manages its template parts,
+// so it never touches (or evicts) the foreign child, and successive
+// table-view renders diff the surrounding layout in place while the
+// table and its rows stay connected (no per-render reconnect /
+// re-render of every row, and the list's scroll position survives
+// natively). Updates flow through the `items` / `selectedGid`
+// properties; rows with unchanged group identity skip re-rendering
+// entirely. When a render drops the table view (view-mode switch,
+// graph shape, empty list), Lit removes the slot div and the table
+// disconnects — the JS reference here keeps it alive for reuse on
+// the next table render. Stays null until the first time the table
 // view renders with non-empty items.
 let persistentFindingTable = null
 
@@ -986,10 +1014,7 @@ function findingsBodyTemplate(filtered) {
     // stash the sorted list in pendingTableItems so render() can
     // assign it as a property after innerHTML lands.
     const items = state.sortBy === 'file'
-      ? [...filtered].toSorted((a, b) => {
-        const pa = primaryTab(a), pb = primaryTab(b)
-        return pa.file.localeCompare(pb.file) || parseInt(pa.line, 10) - parseInt(pb.line, 10)
-      })
+      ? sortGroupsByPrimary(filtered, fileLineCmp)
       : filtered
     if (items.length === 0) return nothing
     // Re-validate against the current filtered set so a stale gid
@@ -1005,11 +1030,14 @@ function findingsBodyTemplate(filtered) {
     // selected.
     const layoutClass = selectedGroup ? 'findings-table-layout open' : 'findings-table-layout'
     return html`<div class=${layoutClass}>
-      <!-- Placeholder div — render() reattaches the persistent
-           <finding-table> here after innerHTML lands. Keeping the
-           table element across renders preserves its <finding-row>
-           children (and StateElement-driven reactivity inside them),
-           avoiding a full shadow-DOM rebuild on every state change. -->
+      <!-- Static (binding-free) placeholder div — render() appends
+           the persistent <finding-table> inside it after the body
+           lands, and Lit's diffing leaves foreign children of static
+           elements alone. Keeping the table element connected across
+           renders preserves its <finding-row> children (and the
+           StateElement-driven reactivity inside them) plus the
+           list's scroll position, avoiding a full shadow-DOM rebuild
+           on every state change. -->
       <div class="findings-table-list"><div class="finding-table-slot"></div></div>
       ${selectedGroup ? html`<aside class="findings-table-details" id="findings-table-details">
         <header class="findings-table-details-bar">
@@ -1202,7 +1230,7 @@ function findingsBodyTemplate(filtered) {
     const fileKeys = state.sortBy === 'file' ? [...byFile.keys()].toSorted() : [...byFile.keys()]
     return html`${repeat(fileKeys, (file) => file, (file) => {
       const items = state.sortBy === 'file'
-        ? byFile.get(file).toSorted((a, b) => parseInt(primaryTab(a).line, 10) - parseInt(primaryTab(b).line, 10))
+        ? sortGroupsByPrimary(byFile.get(file), (pa, pb) => parseInt(pa.line, 10) - parseInt(pb.line, 10))
         : byFile.get(file)
       // All findings under one file share the same `repo.github` (it's
       // a property of the source file's package), so probe the first
@@ -1226,10 +1254,7 @@ function findingsBodyTemplate(filtered) {
   // ordering with line-within-file, which the file-grouped path
   // achieves by sorting per-file.
   const items = state.sortBy === 'file'
-    ? [...filtered].toSorted((a, b) => {
-      const pa = primaryTab(a), pb = primaryTab(b)
-      return pa.file.localeCompare(pb.file) || parseInt(pa.line, 10) - parseInt(pb.line, 10)
-    })
+    ? sortGroupsByPrimary(filtered, fileLineCmp)
     : filtered
   // Each group's location header carries the FULL line row (file +
   // line + exportName + run-meta) for the active tab. The in-body
@@ -1445,14 +1470,22 @@ function renderImpl() {
   // applyFilters, so the "X of Y" counter and severity stats reflect
   // the set currently being viewed (live groups, or the trash).
   const mergedGroups = getMergedGroups()
+  // Kanban view shows every triage bucket as a column, so it
+  // ignores the shownTriage single-bucket filter entirely; every
+  // other view-mode (table / list / grouped / graph) honours it.
+  const isKanban = state.viewMode === 'kanban'
   // Per-bucket counts drive the toolbar's triage-state segmented
   // selector. Conflict groups stay in the "live" bucket (their
   // commonTriage is null) regardless of which states their member
-  // tabs carry — matching the original behaviour.
+  // tabs carry — matching the original behaviour. The shownTriage
+  // bucket split shares this loop so groupState — the priciest
+  // per-group helper — runs once per group here, not twice.
   const triageCounts = { inprogress: 0, fixed: 0, invalid: 0, deleted: 0, ignored: 0 }
+  const allGroups = []
   for (const g of mergedGroups) {
     const t = groupState(g).commonTriage
     if (t) triageCounts[t]++
+    if (isKanban || t === state.shownTriage) allGroups.push(g)
   }
   // The annotation filter group (comment | fix | flag) self-gates per
   // chip like the triage selector: a chip shows only once at least one
@@ -1469,13 +1502,6 @@ function renderImpl() {
       if (e.flagged === true) hasFlagged = true
     }
   }
-  // Kanban view shows every triage bucket as a column, so it
-  // ignores the shownTriage single-bucket filter entirely; every
-  // other view-mode (table / list / grouped / graph) honours it.
-  const isKanban = state.viewMode === 'kanban'
-  const allGroups = isKanban
-    ? mergedGroups
-    : mergedGroups.filter((g) => groupState(g).commonTriage === state.shownTriage)
   // Preserve first-seen order for the type label so "security, correctness"
   // reads in load order rather than alphabetical.
   const types = [...new Set(state.reports.map((r) => r.type))]
@@ -1492,6 +1518,15 @@ function renderImpl() {
   const counts = { critical: 0, high: 0, medium: 0, low: 0, high_bug: 0, bug: 0, informational: 0 }
   const colorCounts = { red: 0, blue: 0, green: 0, gray: 0, none: 0 }
   for (const g of allGroups) {
+    // Single-finding groups (the common case) need no distinct-value
+    // Sets — count the lone tab's severity/color directly.
+    if (g.length === 1) {
+      const f = g[0]
+      counts[f.severity] = (counts[f.severity] || 0) + 1
+      const c = state.triage.get(tabKey(f))?.color ?? 'none'
+      colorCounts[c] = (colorCounts[c] || 0) + 1
+      continue
+    }
     const sevs = new Set(g.map((f) => f.severity))
     for (const s of sevs) counts[s] = (counts[s] || 0) + 1
     const cols = new Set(g.map((f) => state.triage.get(tabKey(f))?.color ?? 'none'))
@@ -1532,9 +1567,15 @@ function renderImpl() {
   // dataset would have nothing to reorder at the file level, so drop
   // the option from the dropdown and guard against a stale selection
   // below (matches the confidence / priority drops).
-  const findingFiles = new Set()
-  for (const g of mergedGroups) for (const f of g) findingFiles.add(f.file)
-  const hasMultipleFiles = findingFiles.size > 1
+  let hasMultipleFiles = false
+  let sawFirstFile = false
+  let firstFindingFile
+  outer: for (const g of mergedGroups) {
+    for (const f of g) {
+      if (!sawFirstFile) { sawFirstFile = true; firstFindingFile = f.file }
+      else if (f.file !== firstFindingFile) { hasMultipleFiles = true; break outer }
+    }
+  }
   // Repo URL input is useful only when at least one finding could
   // benefit from it: non-node_modules AND no per-finding repo.github.
   const repoInputUseful = mergedGroups.some((g) => g.some((f) => !f.repo?.github && !isModule(f.file)))
@@ -1674,7 +1715,7 @@ function renderImpl() {
   // diff in place rather than rebuilding the chrome on every
   // render() (see the slot-reuse PRs in the bundles / files /
   // findings paths).
-  const headerTpl = headerTemplate(mergedGroups.length, fileNames, repoInputUseful, knownRepo, treeFileCount)
+  const headerTpl = headerTemplate(mergedGroups, fileNames, repoInputUseful, knownRepo, treeFileCount)
 
   if (state.currentView === 'files') {
     const findingCounts = computeFindingCountsByFile(mergedGroups)
@@ -1747,6 +1788,11 @@ function renderImpl() {
   let toolbarTpl = nothing
   let emptyStateTpl = nothing
   let bodyTemplate = nothing
+  // Reset unconditionally (not just on the non-graph path) so a
+  // graph-mode render can't reattach a stale item list from the
+  // last table render.
+  pendingTableItems = null
+  pendingFindingCards.clear()
 
   if (!renderGraphInBody) {
     toolbarTpl = toolbarTemplate(filtered.length, allGroups.length, triageCounts, counts, colorCounts, {
@@ -1795,27 +1841,7 @@ function renderImpl() {
         : html`<p style="color:var(--green)">No ${typeLabel} issues found.</p>`
     }
 
-    pendingTableItems = null
-    pendingFindingCards.clear()
     bodyTemplate = findingsBodyTemplate(filtered)
-  }
-
-  // Detach the persistent <finding-table> (if mounted) before any
-  // innerHTML reset so the element + its <finding-row> children
-  // survive. `.remove()` fires disconnectedCallback on the subtree,
-  // but the JS reference keeps everything alive; the reattach below
-  // brings the same instances back into the document, where Lit's
-  // diff happily reuses the existing children when items / selection
-  // change.
-  // Track whether we tore the table out of bodySlot — the slot's
-  // Lit part-cache still references the now-orphaned `.finding-table-slot`
-  // marker (replaceWith'd by the persistent table on the previous
-  // render). Lit can't safely diff against that stale tree, so the
-  // bodySlot recreate below uses this flag to drop the cache even
-  // when this render isn't going back into the table view.
-  const detachedPersistentTable = !!(persistentFindingTable && persistentFindingTable.isConnected)
-  if (detachedPersistentTable) {
-    persistentFindingTable.remove()
   }
 
   // Slot-reuse: only rebuild the chrome when the structure
@@ -1854,30 +1880,19 @@ function renderImpl() {
   if (emptyStateSlot) litRender(emptyStateTpl, emptyStateSlot)
 
   // Now that the slots are in the DOM, litRender the Lit-templated
-  // findings body into its placeholder. The body template covers
-  // every viewMode (table / list / grouped); the table case still
-  // emits a `.finding-table-slot` div inside the template, which
-  // the `<finding-table>` reattach below targets.
-  // The post-render reattach below mutates `.finding-table-slot`
-  // inside the bodyTemplate output (`slot.replaceWith(...)`),
-  // which leaves Lit's part-cache for bodySlot pointing at
-  // orphaned nodes — next render then diffs against a stale tree
-  // and can render the body empty (or, when the previous render
-  // had a selection-details aside whose `<finding-card>` ChildPart
-  // committed primitive text, crashes inside `_commitText` because
-  // the cached `_$startNode.nextSibling` was ejected with the
-  // detached <finding-table>). Recreating bodySlot resets the
-  // cache; we do it whenever we're about to render the table view
-  // (pendingTableItems truthy) AND whenever we just detached a
-  // previously-mounted persistent table (cache is poisoned even if
-  // this render is going to nothing / list / grouped).
-  let bodySlot = document.querySelector('#findings-body-slot')
-  if (bodySlot && (pendingTableItems || detachedPersistentTable)) {
-    const fresh = document.createElement('div')
-    fresh.id = 'findings-body-slot'
-    bodySlot.replaceWith(fresh)
-    bodySlot = fresh
-  }
+  // findings body into its placeholder and let Lit diff it in place
+  // across renders. The body template covers every viewMode (table /
+  // list / grouped); the table case emits a static (binding-free)
+  // `.finding-table-slot` div which the reattach below appends the
+  // persistent <finding-table> INTO — Lit never tracks or touches a
+  // static element's foreign children, so the part-cache stays valid
+  // and the table (with its <finding-row> subtree, scroll position,
+  // and per-row StateElement autoruns) survives successive renders
+  // without disconnecting. (The previous design replaceWith'd the
+  // slot div, which orphaned nodes out of Lit's part-cache and
+  // forced a full bodySlot rebuild — reconnecting and re-rendering
+  // every row — on each render.)
+  const bodySlot = document.querySelector('#findings-body-slot')
   if (bodySlot) litRender(bodyTemplate, bodySlot)
 
   // Graph view-mode: render the graph2 layout into the
@@ -1894,17 +1909,12 @@ function renderImpl() {
       // Triage bucket counts across every loaded report's groups —
       // the findings-tab graph's topbar uses this for its triage
       // selector (In progress / Fixed / Invalid / Deleted / Ignored).
-      // Computed here (in the main bundle) rather than inside
-      // `renderTopBar` so the lazy `ui/graph.js` bundle stays free
-      // of `groupState` / `state` imports.
-      const findingsTriageCounts = { inprogress: 0, fixed: 0, invalid: 0, deleted: 0, ignored: 0 }
-      for (const g of getMergedGroups()) {
-        const t = groupState(g).commonTriage
-        if (t) findingsTriageCounts[t]++
-      }
+      // `triageCounts` was already tallied over mergedGroups above
+      // (in the main bundle, so the lazy `ui/graph.js` bundle stays
+      // free of `groupState` / `state` imports) — reuse it.
       const options = {
         extraTopRow: viewModeRow,
-        triageCounts: findingsTriageCounts,
+        triageCounts,
         triageStates: ['inprogress', 'fixed', 'invalid', 'deleted', 'ignored'],
       }
       // First open of the graph view-mode kicks the dynamic
@@ -1924,7 +1934,12 @@ function renderImpl() {
   // <finding-table> custom element after the DOM lands. Stashing the
   // items via a property (rather than serialising through an
   // attribute) keeps object identity and avoids a JSON round-trip on
-  // every re-render.
+  // every re-render. The element is appended as a child of the
+  // static `.finding-table-slot` div (NOT replaceWith — see the
+  // bodySlot comment above): on a steady-state table render it's
+  // already in place and only the property updates run; it moves /
+  // reconnects only when the slot itself was rebuilt (cross-view or
+  // cross-shape entry).
   if (pendingTableItems) {
     const slot = report.querySelector('.finding-table-slot')
     if (slot) {
@@ -1933,7 +1948,9 @@ function renderImpl() {
       }
       persistentFindingTable.items = pendingTableItems
       persistentFindingTable.selectedGid = state.tableSelectedGid
-      slot.replaceWith(persistentFindingTable)
+      if (persistentFindingTable.parentNode !== slot) {
+        slot.append(persistentFindingTable)
+      }
     }
   }
   // Pair each <finding-card> with its dedup group via the gid stamped
