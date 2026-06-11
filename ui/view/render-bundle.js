@@ -21,6 +21,7 @@ import { BUNDLE_ICON_SVG } from './icons.js'
 import { findingsForFileHash, indexedHashFindingCount, reportsForFinding, reportsForFindingByPackage, reportsForFindingByRepo, state } from '#client/index.js'
 import { SEVERITIES, SEVERITY_ORDER, formatBytes, formatRunMeta, stripCommonPathPrefix } from './format.js'
 import { bundlePackageDirs, bundleSourcesAsMap } from './bundle-sources.js'
+import { buildSearchMatcher, runBundleSearch } from './bundle-search-scan.js'
 import { bundlePkgOf, ownSourceSplittable } from './bundle-pkg-of.js'
 import { tabKey } from './group.js'
 import { computeFileHash } from '../../common/finding-id.js'
@@ -1408,16 +1409,16 @@ function renderBundleCodeMain(details, path, content, fileFindings, lineFindings
 // Plain queries match as a case-insensitive substring; the `.*`
 // modifier (state.bundleSearchRegex) switches to a case-insensitive
 // regular expression, matched per line.
+//
+// The scan itself (matching, scan caps, and the typing-refinement
+// history that keeps per-keystroke cost off the full bundle) lives
+// in bundle-search-scan.js; this section owns the rendering.
 
-// Per-keystroke caps. A bare `.` regex (or a one-char substring)
-// matches almost everything, so bound the work + DOM: stop after
-// SEARCH_MAX_TOTAL_HITS matches or SEARCH_MAX_FILES files and flag
-// the result set as truncated. Lines clip to SEARCH_MAX_LINE chars
-// (minified bundles ship single 100k-char lines).
-const SEARCH_MAX_TOTAL_HITS = 5000
-const SEARCH_MAX_FILES = 500
+// Display-side cap: rendered lines clip to SEARCH_MAX_LINE chars
+// (minified bundles ship single 100k-char lines). The scan caps
+// (total hits / files / marks per line) live with the scan engine in
+// bundle-search-scan.js.
 const SEARCH_MAX_LINE = 400
-const SEARCH_MAX_MARKS_PER_LINE = 50
 
 // Context radius (lines above + below each match) scales INVERSELY
 // with the total hit count: a handful of matches can afford a
@@ -1429,73 +1430,6 @@ function searchContextRadius(totalHits) {
   if (totalHits <= 40) return 4
   if (totalHits <= 120) return 3
   return 2
-}
-
-// Compile a user pattern for the regex modifier. Unicode mode first
-// (stricter, consistent with the rest of the codebase); fall back to
-// legacy mode for the patterns `u` rejects but a user reasonably
-// types as a plain regex — a bare `{` / `}`, a redundant escape — so
-// searching for those literals still works. `i` rides in unless the
-// case-sensitivity toggle is on. Returns `{ re }` or `{ error }`.
-function compileSearchRegex(pattern, caseSensitive) {
-  const unicodeFlags = caseSensitive ? 'gu' : 'giu'
-  const legacyFlags = caseSensitive ? 'g' : 'gi'
-  try {
-    return { re: new RegExp(pattern, unicodeFlags) }
-  } catch {
-    try {
-      // Intentionally legacy (no `u`): `u` mode rejects patterns a
-      // user reasonably types to search code — a bare `{` / `}`, a
-      // redundant escape — and we want those to match as literals.
-      // eslint-disable-next-line require-unicode-regexp
-      return { re: new RegExp(pattern, legacyFlags) }
-    } catch (err) {
-      return { error: err.message }
-    }
-  }
-}
-
-// Build a per-line matcher: `.ranges(line)` returns the [start,end]
-// character spans that match, capped per line. Substring mode is an
-// `indexOf` walk (case-folded unless `caseSensitive`); regex mode
-// execs the compiled pattern globally, skipping zero-width matches so
-// `^` / `$` / `a*` can't spin. Returns `{ error }` when the regex
-// doesn't compile.
-function buildSearchMatcher(query, useRegex, caseSensitive) {
-  if (useRegex) {
-    const compiled = compileSearchRegex(query, caseSensitive)
-    if (compiled.error) return { error: compiled.error }
-    const { re } = compiled
-    return {
-      ranges(line) {
-        re.lastIndex = 0
-        const out = []
-        let m
-        while ((m = re.exec(line)) !== null) {
-          if (m[0].length === 0) { re.lastIndex++; continue }
-          out.push([m.index, m.index + m[0].length])
-          if (out.length >= SEARCH_MAX_MARKS_PER_LINE) break
-        }
-        return out
-      },
-    }
-  }
-  const needle = caseSensitive ? query : query.toLowerCase()
-  const len = needle.length
-  return {
-    ranges(line) {
-      const hay = caseSensitive ? line : line.toLowerCase()
-      const out = []
-      let from = 0
-      let idx
-      while ((idx = hay.indexOf(needle, from)) !== -1) {
-        out.push([idx, idx + len])
-        from = idx + len
-        if (out.length >= SEARCH_MAX_MARKS_PER_LINE) break
-      }
-      return out
-    },
-  }
 }
 
 // Expand each hit line into a ±radius window, merging windows that
@@ -1624,9 +1558,12 @@ function renderSearchFile(fileResult, prefix, radius) {
   </section>`
 }
 
-// Scan every source for the active query, collecting per-file hit
-// lines (capped), then render file groups with context snippets.
-function renderBundleSearchResults(sources, query, useRegex, caseSensitive, showContext) {
+// Scan every source for the active query (through the refinement
+// history in bundle-search-scan.js, keyed by the bundle's integrity —
+// typing forward only re-checks the previous keystroke's hit lines
+// instead of re-walking the bundle), then render file groups with
+// context snippets.
+function renderBundleSearchResults(details, sources, query, useRegex, caseSensitive, showContext) {
   if (!query) {
     return html`<div class="bundle-search-results">
       <div class="bundle-search-hint">
@@ -1637,38 +1574,20 @@ function renderBundleSearchResults(sources, query, useRegex, caseSensitive, show
       </div>
     </div>`
   }
-  const matcher = buildSearchMatcher(query, useRegex, caseSensitive)
-  if (matcher.error) {
+  const result = runBundleSearch(details.integrity ?? '', sources, query, useRegex, caseSensitive)
+  if (result.error) {
     return html`<div class="bundle-search-results">
       <div class="bundle-search-error">
         <span class="bundle-search-error-label">Invalid regular expression</span>
-        <span class="bundle-search-error-msg mono">${matcher.error}</span>
+        <span class="bundle-search-error-msg mono">${result.error}</span>
       </div>
     </div>`
   }
+  const { fileResults, totalHits, truncated } = result
   // Stable display prefix from ALL sources, so it doesn't jump as the
   // matched-file set shifts between keystrokes.
   const allPaths = [...sources.keys()].toSorted()
   const { prefix } = stripCommonPathPrefix(allPaths)
-  const fileResults = []
-  let totalHits = 0
-  let truncated = false
-  for (const path of allPaths) {
-    const content = sources.get(path)
-    if (typeof content !== 'string') continue
-    const lines = content.split('\n')
-    const hits = []
-    for (let i = 0; i < lines.length; i++) {
-      const ranges = matcher.ranges(lines[i])
-      if (ranges.length === 0) continue
-      hits.push({ ln: i + 1, ranges })
-      totalHits++
-      if (totalHits >= SEARCH_MAX_TOTAL_HITS) { truncated = true; break }
-    }
-    if (hits.length > 0) fileResults.push({ path, lines, hits })
-    if (truncated) break
-    if (fileResults.length >= SEARCH_MAX_FILES) { truncated = true; break }
-  }
   if (fileResults.length === 0) {
     return html`<div class="bundle-search-results">
       <div class="bundle-search-empty">No matches.</div>
@@ -1798,7 +1717,7 @@ function renderBundleSearchView(details) {
       ><span>Context</span><span class="bundle-search-switch" aria-hidden="true"></span></button>
     </div>
     <div class="bundle-search-main">
-      ${renderBundleSearchResults(sources, query, useRegex, caseSensitive, showContext)}
+      ${renderBundleSearchResults(details, sources, query, useRegex, caseSensitive, showContext)}
       ${renderBundleSearchSide(details, sources, openMatchLines)}
     </div>
   </div>`
