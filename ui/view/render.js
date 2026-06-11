@@ -1568,10 +1568,11 @@ function renderImpl() {
   // the option from the dropdown and guard against a stale selection
   // below (matches the confidence / priority drops).
   let hasMultipleFiles = false
+  let sawFirstFile = false
   let firstFindingFile
   outer: for (const g of mergedGroups) {
     for (const f of g) {
-      if (firstFindingFile === undefined) firstFindingFile = f.file
+      if (!sawFirstFile) { sawFirstFile = true; firstFindingFile = f.file }
       else if (f.file !== firstFindingFile) { hasMultipleFiles = true; break outer }
     }
   }

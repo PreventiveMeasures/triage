@@ -1,0 +1,198 @@
+// `ui/view/group.js` — groupState's group-level triage rollup, plus
+// the single-tab fast paths on sortTabs / primaryTab / activeTabFor.
+//
+// groupState was rewritten from a Set-based pass to a single
+// allocation-free pass (first-seen + conflict flags); these tables
+// pin the rollup semantics the rewrite must preserve, including the
+// doc-comment examples on the function itself:
+//   - unannotated tabs are neutral (never conflict on their own)
+//   - a colored-only tab occupies its own bucket slot, so it
+//     conflicts with a bucket-bearing sibling (deleted-vs-not)
+//   - two distinct non-null colors conflict; color-only vs no-color
+//     does not
+//   - ignore behaves as its own bucket: it rolls up to
+//     commonTriage 'ignored' but never counts toward anyTriage /
+//     allTriaged
+//   - empty-annotation groups: no conflict, no color, no bucket
+
+import assert from 'node:assert/strict'
+import { describe, it } from 'node:test'
+
+import './_polyfills.js'
+
+// `ui/view/group.js` reaches `./format.js` → `./frontend-global.js`,
+// which throws at module-load when the `@rray/frontend` slot isn't
+// installed (production: view.js installs lit + StateElement at
+// boot). Tests don't run that boot path, so install a stub before
+// the import chain evaluates — none of the symbols are called by
+// the helpers under test, the stub just lets the module load.
+const slotKey = Symbol.for('@rray/frontend')
+if (!globalThis[slotKey]) {
+  globalThis[slotKey] = {
+    LitElement: class {}, html: () => null, nothing: null, render: () => null,
+    unsafeCSS: () => null, StateElement: class {}, classMap: () => null,
+    repeat: () => null, styleMap: () => null,
+  }
+}
+
+const { state } = await import('../client/state.ts')
+const { activeTabFor, groupState, primaryTab, sortTabs } = await import('../ui/view/group.js')
+
+const REPORT = 'report-a.json'
+
+let nextId = 0
+// One finding (= one tab). `ann` carries the triage-entry fields to
+// install in state.triage for it: { color?, triage?, ignored? } —
+// `ignored: true` writes the per-report ignoredReports list keyed to
+// this finding's `_reportName`.
+function tab(ann = null, extra = {}) {
+  const f = {
+    id: `t${nextId++}`,
+    severity: 'high',
+    file: 'src/a.js',
+    line: '1',
+    description: 'finding',
+    _reportName: REPORT,
+    ...extra,
+  }
+  if (ann) {
+    const entry = {}
+    if (ann.color) entry.color = ann.color
+    if (ann.triage) entry.triage = ann.triage
+    if (ann.ignored) entry.ignoredReports = [REPORT]
+    state.triage.set(f.id, entry)
+  }
+  return f
+}
+
+function reset() {
+  state.triage.clear()
+  state.activeTabByGroup.clear()
+  state.filterAnalyzer = ''
+  state.filterModel = ''
+}
+
+// Each case: name, tab annotations (null = unannotated), expected
+// rollup fields. Mirrors + extends the examples in groupState's doc
+// comment (A/B/C are tabs in one dedup group).
+const CASES = [
+  {
+    name: 'all tabs unannotated → neutral rollup',
+    tabs: [null, null, null],
+    expect: { hasConflict: false, commonColor: null, commonTriage: null, anyTriage: false, allTriaged: false },
+  },
+  {
+    name: 'single colored tab → common color, still live',
+    tabs: [{ color: 'green' }],
+    expect: { hasConflict: false, commonColor: 'green', commonTriage: null, anyTriage: false, allTriaged: false },
+  },
+  {
+    name: 'A(green, deleted), B(), C() → no conflict, deleted',
+    tabs: [{ color: 'green', triage: 'deleted' }, null, null],
+    expect: { hasConflict: false, commonColor: 'green', commonTriage: 'deleted', anyTriage: true, allTriaged: true },
+  },
+  {
+    name: 'A(green, deleted), B(deleted), C() → no conflict, deleted',
+    tabs: [{ color: 'green', triage: 'deleted' }, { triage: 'deleted' }, null],
+    expect: { hasConflict: false, commonColor: 'green', commonTriage: 'deleted', anyTriage: true, allTriaged: true },
+  },
+  {
+    name: 'A(green, deleted), B(red) → conflict (colors disagree)',
+    tabs: [{ color: 'green', triage: 'deleted' }, { color: 'red' }],
+    expect: { hasConflict: true, commonColor: null, commonTriage: null },
+  },
+  {
+    name: 'A(green), B(blue) → conflict (colors disagree)',
+    tabs: [{ color: 'green' }, { color: 'blue' }],
+    expect: { hasConflict: true, commonColor: null, commonTriage: null },
+  },
+  {
+    name: 'A(green, deleted), B(green) → conflict (deleted vs annotated-undeleted)',
+    tabs: [{ color: 'green', triage: 'deleted' }, { color: 'green' }],
+    expect: { hasConflict: true, commonColor: null, commonTriage: null },
+  },
+  {
+    name: 'A(green, fixed), B(green, deleted) → conflict (buckets disagree)',
+    tabs: [{ color: 'green', triage: 'fixed' }, { color: 'green', triage: 'deleted' }],
+    expect: { hasConflict: true, commonColor: null, commonTriage: null },
+  },
+  {
+    name: 'color-only tab never conflicts with an unannotated sibling',
+    tabs: [{ color: 'red' }, null],
+    expect: { hasConflict: false, commonColor: 'red', commonTriage: null, anyTriage: false, allTriaged: false },
+  },
+  {
+    name: 'bucket-only consensus without colors',
+    tabs: [{ triage: 'fixed' }, { triage: 'fixed' }],
+    expect: { hasConflict: false, commonColor: null, commonTriage: 'fixed', anyTriage: true, allTriaged: true },
+  },
+  {
+    name: 'ignored tab rolls up as its own bucket (not anyTriage / allTriaged)',
+    tabs: [{ ignored: true }],
+    expect: { hasConflict: false, commonColor: null, commonTriage: 'ignored', anyTriage: false, allTriaged: false },
+  },
+  {
+    name: 'explicit triage beats the ignore list on the same tab',
+    tabs: [{ triage: 'invalid', ignored: true }],
+    expect: { hasConflict: false, commonColor: null, commonTriage: 'invalid', anyTriage: true, allTriaged: true },
+  },
+  {
+    name: 'inprogress vs ignored siblings → conflict (buckets disagree)',
+    tabs: [{ triage: 'inprogress' }, { ignored: true }],
+    expect: { hasConflict: true, commonColor: null, commonTriage: null },
+  },
+]
+
+describe('groupState rollup', () => {
+  for (const c of CASES) {
+    it(c.name, () => {
+      reset()
+      const group = c.tabs.map((ann) => tab(ann))
+      const st = groupState(group)
+      for (const [k, v] of Object.entries(c.expect)) {
+        assert.equal(st[k], v, `${k}: expected ${v}, got ${st[k]}`)
+      }
+      // Convenience flags must track commonTriage exactly.
+      assert.equal(st.isDeleted, st.commonTriage === 'deleted')
+      assert.equal(st.isFixed, st.commonTriage === 'fixed')
+      assert.equal(st.isInvalid, st.commonTriage === 'invalid')
+      assert.equal(st.isInProgress, st.commonTriage === 'inprogress')
+      assert.equal(st.isIgnored, st.commonTriage === 'ignored')
+    })
+  }
+})
+
+describe('single-tab fast paths', () => {
+  it('sortTabs / primaryTab / activeTabFor resolve to the lone member', () => {
+    reset()
+    const f = tab({ color: 'blue', triage: 'fixed' })
+    const group = [f]
+    assert.deepEqual(sortTabs(group), [f])
+    assert.equal(primaryTab(group), f)
+    assert.equal(activeTabFor(group), f)
+  })
+
+  it('multi-tab sortTabs orders colored first, then severity, then confidence', () => {
+    reset()
+    const low = tab(null, { severity: 'low', confidence: 9 })
+    const highA = tab(null, { severity: 'high', confidence: 3 })
+    const highB = tab(null, { severity: 'high', confidence: 8 })
+    const coloredLow = tab({ color: 'red' }, { severity: 'informational', confidence: 1 })
+    const group = [low, highA, highB, coloredLow]
+    const sorted = sortTabs(group)
+    assert.deepEqual(sorted.map((f) => f.id), [coloredLow.id, highB.id, highA.id, low.id])
+    // Input order untouched; primary is the sort head.
+    assert.deepEqual(group.map((f) => f.id), [low.id, highA.id, highB.id, coloredLow.id])
+    assert.equal(primaryTab(group), coloredLow)
+  })
+
+  it('activeTabFor honors a stored pick on multi-tab groups', () => {
+    reset()
+    const a = tab(null, { severity: 'high', confidence: 9 })
+    const b = tab(null, { severity: 'low', confidence: 1 })
+    const group = [a, b]
+    assert.equal(activeTabFor(group), a)
+    state.activeTabByGroup.set(a.id, b.id)
+    assert.equal(activeTabFor(group), b)
+  })
+})
