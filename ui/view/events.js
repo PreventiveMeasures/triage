@@ -92,6 +92,9 @@ function renderPreservingTableScroll() {
 // input responsive and collapses bursts (held key / paste / IME) into
 // a single scan. The query state is written synchronously, so a frame
 // already pending just picks up the newest value when it fires.
+// (The scan itself also refines forward-typed queries from the
+// previous keystroke's result — see bundle-search-scan.js — so the
+// per-frame cost usually drops to re-checking prior hit lines.)
 let _bundleSearchRaf = 0
 function renderBundleSearchDebounced() {
   if (_bundleSearchRaf) return
