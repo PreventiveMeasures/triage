@@ -65,6 +65,24 @@
    `.finding` class so external selectors like `.flat-group .finding`
    still match the card from this stylesheet. */
 
+/* Render-on-demand for long lists (mirrors the finding-row rule in
+   view/finding-table.css): offscreen flat-list cards and grouped-view
+   cards skip style / layout / paint via `content-visibility: auto`,
+   so large reports render in viewport-proportional time. The
+   estimate stands in for a typical card until its first paint, after
+   which the `auto` keyword pins the real size for stable scrolling.
+   Scoped to the list containers so the table-details aside and the
+   focus / kanban detail cards (single, always on screen) keep plain
+   rendering. Gated off print so paginated output never interacts
+   with containment. */
+@media not print {
+  .flat-group,
+  .file-body > finding-card {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 11rem;
+  }
+}
+
 /* ── Table view ─────────────────────────────────────────────────────
    With a row selected, the view splits into a list column (left) and
    a sticky details panel (right): 3fr:2fr, capped 1200px:800px. With

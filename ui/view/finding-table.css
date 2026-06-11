@@ -14,3 +14,22 @@
   margin-bottom: 1rem;
   max-width: 1200px;
 }
+
+/* Render-on-demand for long lists: `content-visibility: auto` lets
+   the engine skip style / layout / paint for offscreen rows (the
+   table regularly holds thousands), so initial render and scrolling
+   cost scale with the viewport instead of the dataset. The
+   placeholder estimate (~one two-line row) sizes not-yet-rendered
+   rows for scrollbar geometry; the `auto` keyword pins each row's
+   real size after its first paint so scroll positions stay stable.
+   Open triage popovers are unaffected — the popover API lifts them
+   to the top layer, outside the row's paint containment. Gated off
+   print: the spec treats auto-hidden content as renderable for
+   printing anyway, but excluding print sidesteps engine quirks with
+   fragmentation across page breaks. */
+@media not print {
+  finding-row {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 3.2rem;
+  }
+}

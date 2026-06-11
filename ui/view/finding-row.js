@@ -80,10 +80,11 @@ class FindingRow extends StateElement {
     super.connectedCallback()
     this.addEventListener('click', this._onClick)
     // Force a render after every (re)connect so StateElement's wrapped
-    // render() runs and re-registers a fresh autorun. render.js
-    // detaches and re-inserts the persistent <finding-table> on each
-    // render() call: this element disconnects (StateElement disposes
-    // its autorun) then reconnects, but if neither `group` nor
+    // render() runs and re-registers a fresh autorun. The persistent
+    // <finding-table> stays connected across steady-state table
+    // renders, but a view-mode / shape switch detaches and later
+    // re-inserts it: this element disconnects (StateElement disposes
+    // its autorun) then reconnects, and if neither `group` nor
     // `selected` changed Lit wouldn't call render on its own and
     // reactivity would silently break.
     if (this.hasUpdated) this.requestUpdate()

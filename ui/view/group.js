@@ -37,7 +37,15 @@ export function isIgnored(f) {
 // dropdowns) and the last-resort default active tab (the full
 // default-tab resolution — explicit pick, analyzer/model-filter match,
 // annotation marker — lives in activeTabFor below).
+//
+// Returns the group array itself for ≤1-tab groups (the overwhelmingly
+// common case — most dedup groups hold a single finding): there is
+// nothing to reorder, and this helper sits on the hottest render path
+// (per group per render, several times per row/card template), so the
+// copy + toSorted would be pure allocation churn. Callers treat the
+// result as read-only either way.
 export function sortTabs(group) {
+  if (group.length <= 1) return group
   return [...group].toSorted((a, b) => {
     const aColored = state.triage.get(tabKey(a))?.color ? 1 : 0
     const bColored = state.triage.get(tabKey(b))?.color ? 1 : 0
@@ -51,7 +59,7 @@ export function sortTabs(group) {
   })
 }
 
-export function primaryTab(group) { return sortTabs(group)[0] }
+export function primaryTab(group) { return group.length === 1 ? group[0] : sortTabs(group)[0] }
 
 // Whether a tab (finding) carries an annotation marker — a comment, a
 // fix link, or a raised attention flag, i.e. the glyphs the tab strip
@@ -64,6 +72,11 @@ export function tabHasMarks(f) {
 }
 
 export function activeTabFor(group) {
+  // Single-tab fast path: every branch below resolves to the lone
+  // member, so skip the lookups (this runs several times per row/card
+  // template). Skipping the state reads is reactivity-safe — the
+  // result can't change, so an observer needn't subscribe to them.
+  if (group.length === 1) return group[0]
   const stored = state.activeTabByGroup.get(groupKey(group))
   if (stored) {
     const match = group.find((f) => tabKey(f) === stored)
@@ -138,34 +151,66 @@ export function findingRepo(f) {
 //   A(green, fixed), B(green, deleted), C()→ conflict (triage disagrees: fixed vs deleted)
 export function groupState(group) {
   // Per-tab "bucket": triage value if set, else 'ignored' if the
-  // tab is in the ignore set, else null (live). Ignore behaves
+  // tab is in the ignore set, else undefined (live). Ignore behaves
   // like a fourth bucket for rollup / conflict detection but
   // mutates differently (per-report key) and doesn't propagate
   // cross-report at the action layer (see events.js).
-  const annotated = group
-    .map((f) => {
-      const k = tabKey(f)
-      const entry = state.triage.get(k)
-      const bucket = entry?.triage ?? (isIgnored(f) ? 'ignored' : undefined)
-      return { color: entry?.color, bucket }
-    })
-    .filter((t) => t.color !== undefined || t.bucket !== undefined)
-  const colors = new Set(annotated.map((t) => t.color).filter((c) => c !== undefined))
-  // Distinct bucket values across annotated tabs. Sentinel for
-  // "annotated but no bucket" so a colored-only tab disagrees
-  // with a bucket-bearing sibling — matches the original
-  // deleted-vs-not semantic where an annotated-undeleted tab
-  // broke the consensus with an annotated-deleted one.
-  const NONE = Symbol('none')
-  const buckets = new Set(annotated.map((t) => t.bucket ?? NONE))
-  const hasConflict = colors.size > 1 || buckets.size > 1
-  const commonColor = !hasConflict && colors.size === 1 ? [...colors][0] : null
-  const bucketVals = annotated.map((t) => t.bucket).filter(Boolean)
-  const anyTriage = bucketVals.some((b) => b !== 'ignored')
-  const allTriaged = annotated.length > 0 && annotated.every((t) => Boolean(t.bucket) && t.bucket !== 'ignored')
+  //
+  // Single allocation-free pass — this is the hottest helper in the
+  // findings render path (once per group in the orchestrator, again
+  // per row/card template), so distinct-value tracking happens with
+  // first-seen + conflict flags rather than intermediate arrays/Sets.
+  // We only ever need "zero / one / more than one distinct values"
+  // plus the first member, which the flags capture exactly. The
+  // observable reads (state.triage.get per tab; isIgnored only when
+  // the entry carries no triage) are unchanged so observer-util
+  // dependency tracking stays identical.
+  let annotatedCount = 0
+  // Distinct non-undefined colors across annotated tabs.
+  let colorsConflict = false
+  let firstColor
+  let sawColor = false
+  // Distinct bucket slots across annotated tabs, where "annotated but
+  // no bucket" (a colored-only tab, bucket === undefined) counts as
+  // its own value so it disagrees with a bucket-bearing sibling —
+  // matches the original deleted-vs-not semantic where an
+  // annotated-undeleted tab broke consensus with an annotated-deleted
+  // one.
+  let bucketsConflict = false
+  let firstBucketSlot
+  let sawBucketSlot = false
+  // First truthy bucket in group order (= the rollup's common bucket
+  // when there's no conflict).
+  let firstTriage = null
+  let anyTriage = false
+  // Every annotated tab carries a truthy bucket !== 'ignored'.
+  let allBucketed = true
+  for (const f of group) {
+    const entry = state.triage.get(tabKey(f))
+    const bucket = entry?.triage ?? (isIgnored(f) ? 'ignored' : undefined)
+    const color = entry?.color
+    if (color === undefined && bucket === undefined) continue
+    annotatedCount++
+    if (color !== undefined) {
+      if (!sawColor) { sawColor = true; firstColor = color }
+      else if (color !== firstColor) colorsConflict = true
+    }
+    if (!sawBucketSlot) { sawBucketSlot = true; firstBucketSlot = bucket }
+    else if (bucket !== firstBucketSlot) bucketsConflict = true
+    if (bucket) {
+      if (firstTriage === null) firstTriage = bucket
+      if (bucket === 'ignored') allBucketed = false
+      else anyTriage = true
+    } else {
+      allBucketed = false
+    }
+  }
+  const hasConflict = colorsConflict || bucketsConflict
+  const commonColor = !hasConflict && sawColor ? firstColor : null
+  const allTriaged = annotatedCount > 0 && allBucketed
   // Common bucket — null when no consensus or live; one of
   // 'inprogress' / 'fixed' / 'invalid' / 'deleted' / 'ignored' otherwise.
-  const commonTriage = !hasConflict && bucketVals.length > 0 ? bucketVals[0] : null
+  const commonTriage = !hasConflict && firstTriage !== null ? firstTriage : null
   return {
     hasConflict, commonColor, anyTriage, allTriaged, commonTriage,
     // Convenience flags so downstream code that asks "is this group in
