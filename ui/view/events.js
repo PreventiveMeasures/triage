@@ -4,7 +4,7 @@ import { commonPrefix, handoffBlock } from './format.js'
 import { activeTabFor, findGroupById, findingRepo, findingReport, groupState, tabKey } from './group.js'
 import { resetFilters } from './filters.js'
 import { refreshGraph2Sidebar, refreshGraph2TopPkgs, render } from './render.js'
-import { refreshBundleGraphSidebar, refreshBundleGraphTopPkgs } from './render-bundle.js'
+import { refreshBundleGraphSidebar, refreshBundleGraphTopPkgs, revealBundleCodeCurrent } from './render-bundle.js'
 import { grantAdvisoriesProxyConsent, retryBundleAdvisories } from './render-bundle-advisories.js'
 import { openCommentDialog } from './dialogs/comment-dialog.js'
 import { openFixLinkDialog } from './dialogs/fix-link-dialog.js'
@@ -383,6 +383,11 @@ report.addEventListener('click', (e) => {
       state.bundleSourceFindingIdx = null
       if (state.selectedBundle) persistLastBundle(state.selectedBundle, tab)
       render()
+      // The Code slide auto-opens a default file on entry (see
+      // pickDefaultBundleCodeFile); bring its tree row into view —
+      // the worst-issue file can live deep in a long node_modules
+      // subtree the rail opens scrolled past.
+      if (tab === 'code') revealBundleCodeCurrent()
     }
     return
   }
@@ -1702,11 +1707,14 @@ report.addEventListener('repo-change', (e) => {
 })
 // `<bundle-code-search>` dispatches this when a Files / Code /
 // Issues mode tab is clicked in the bundle code rail's search row.
+// Switching back to Files rebuilds the tree at its remembered
+// scroll-top, which may be far from the open file — reveal it.
 report.addEventListener('bundle-search-mode-change', (e) => {
   const mode = e.detail?.mode
   if (mode !== 'files' && mode !== 'code' && mode !== 'issues') return
   state.bundleCodeSearchMode = mode
   render()
+  if (mode === 'files') revealBundleCodeCurrent()
 })
 // `<bundle-search>` (the Search tab's github-style bar) dispatches
 // this when the trailing `.*` modifier is clicked — flip between

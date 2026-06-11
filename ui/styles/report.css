@@ -620,6 +620,12 @@
 .bundle-code-rail-body {
   flex: 1; min-height: 0;
   overflow: auto;
+  /* Scrolling the tree past either end must not chain into the
+     surrounding slide / page — same containment the app sidebar's
+     #file-list uses. stable gutter so the tree doesn't reflow when
+     the scrollbar appears. */
+  overscroll-behavior: none;
+  scrollbar-gutter: stable;
   -webkit-app-region: no-drag; app-region: no-drag;
   padding: .35rem .25rem .5rem;
 }
@@ -886,6 +892,10 @@ bundle-code-search {
   color: var(--muted);
   font: inherit;
   border-radius: 3px;
+  /* Breathing room when the reveal-current scrollIntoView (events.js
+     revealBundleCodeCurrent) brings an off-screen row in — without
+     it the row lands flush against the rail edge. */
+  scroll-margin-block: 1.5rem;
 }
 .bundle-code-tree-link:hover {
   background: var(--bg);
@@ -1446,6 +1456,24 @@ bundle-search {
   font-size: .75rem;
   line-height: 1.45;
   overflow-wrap: anywhere;
+}
+/* Inline highlights inside bundle-side finding descriptions
+   (Issues tab rows, source-viewer side panel, code-rail issue
+   results) — light-DOM copy of the .inline-* rules finding-card.css
+   keeps in the card's shadow root, so `` `code` `` / "quoted" spans
+   read the same on both surfaces. */
+.inline-quote {
+  background: rgb(from var(--accent) r g b / .1);
+  padding: 1px; border-radius: 3px;
+  color: var(--text);
+}
+.inline-code {
+  background: var(--surface-active);
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .9em;
+  color: var(--text);
 }
 .bundle-issue-sev {
   text-transform: uppercase;
