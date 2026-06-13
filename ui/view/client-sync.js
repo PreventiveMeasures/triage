@@ -32,7 +32,7 @@
 // duplicated `client/triage.js` would receive the notifier and the
 // main bundle's `saveTriage` would never fan the change out.
 
-import { getSecureItem } from '#client/index.js'
+import { getSecureItem, readCachedServerInfo } from '#client/index.js'
 import { applyDefaultSyncHost } from '#client/sync-host.js'
 
 let realModule = null
@@ -50,8 +50,22 @@ function userWantsSync() {
   catch { return true }
 }
 
+// The e2e sync chunk must NEVER load against a managed server — managed sync is
+// a separate protocol (and a managed deployment has no /api/sync plane). The
+// detected mode is cached in localStorage (written by the sidebar's
+// /api/config + server-info handling), so the proxy self-gates here with no
+// boot-order coupling: every load trigger — `loadSync`, the data-method
+// wrappers (`openWorkspace` fires on each workspace switch via ingest.js), and
+// `setEnabled(true)` — funnels through this check. Unknown/e2e → allowed.
+function syncBlockedByMode() {
+  try { return readCachedServerInfo()?.mode === 'managed' }
+  catch { return false }
+}
+
 function loadSyncOnce() {
   if (loadPromise) return loadPromise
+  // Managed server → never pull the e2e sync chunk (see syncBlockedByMode).
+  if (syncBlockedByMode() && !realModule) return Promise.resolve(null)
   loadPromise = (async () => {
     // Path held in a variable so esbuild can't statically resolve
     // it — keeps `ui/client-sync.js` (and its transitive sync /
@@ -219,6 +233,7 @@ export function setHydrationConflictResolver(fn) {
 // the main one). No-op'ing avoids dragging the lazy chunk in just
 // to immediately discard it.
 async function callIfWanted(method, args) {
+  if (syncBlockedByMode()) return undefined
   if (!userWantsSync() && !realModule) return undefined
   return (await loadSyncOnce())[method](...args)
 }
@@ -269,6 +284,7 @@ export const triageSync = {
   // default and the next reload would auto-resume).
   setEnabled(value) {
     if (value === true) {
+      if (syncBlockedByMode()) return Promise.resolve(null)
       return loadSyncOnce().then((m) => {
         m.triageSync.setEnabled(true)
         // Reopen the presence sessions the matching `setEnabled(false)`
