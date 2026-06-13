@@ -1,8 +1,8 @@
-// Same-origin gate for the WS upgrade and REST data plane. We don't
-// support cross-origin browser clients, so any Origin header present
-// on an incoming request MUST match the server's own host (derived
-// from `req.headers.host`, or from `X-Forwarded-Host` /
-// `X-Forwarded-Proto` when a trusted reverse proxy is in front).
+// Same-origin gate, shared by the e2e and managed servers (server-common).
+// We don't support cross-origin browser clients, so any Origin header present
+// on an incoming request MUST match the server's own host (derived from
+// `req.headers.host`, or from `X-Forwarded-Host` / `X-Forwarded-Proto` when a
+// trusted reverse proxy is in front).
 //
 // Why "present-must-match" rather than "always required":
 // - Browser WebSocket handshakes always carry Origin (RFC 6455), so a

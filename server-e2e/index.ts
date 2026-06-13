@@ -75,7 +75,7 @@
 import { type WebSocket, WebSocketServer } from 'ws'
 import { errMsg, errStack } from './util.ts'
 import type { PeerRegistry } from './peer.ts'
-import { LOOPBACK_HOSTS, createOriginGate } from './origin.ts'
+import { LOOPBACK_HOSTS, createOriginGate } from '../server-common/origin.ts'
 import { createHub } from './hub.ts'
 import { createAuth } from './auth.ts'
 import { createSyncHandlers } from './sync-handlers.ts'
