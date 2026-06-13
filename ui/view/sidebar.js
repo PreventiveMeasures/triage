@@ -2,7 +2,7 @@ import { LitElement, html, render as litRender, nothing, unsafeCSS } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { CONFIG_PATH, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, getCount, getPackagesIndex, getRepositoriesIndex, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, parseServerInfo, readCachedServerInfo, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, state, writeCachedServerInfo } from '#client/index.js'
-import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, triageSync } from './client-sync.js'
+import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, setSyncForceDisabled, triageSync } from './client-sync.js'
 import { login as managedLogin, logout as managedLogout, probeSession as managedProbeSession } from './client-managed.js'
 import sidebarCSS from './sidebar.css'
 import fileIconCSS from '../styles/file-icon.css'
@@ -1000,9 +1000,17 @@ function renderAuthStatus() {
   authBtn.dataset.authed = session ? '1' : '0'
 }
 
+// Brand tag shows the live server mode (e2e / managed / standalone) in place of
+// the old build label.
+function renderBrandTag() {
+  const tag = root?.querySelector('.brand-tag')
+  if (tag) tag.textContent = state.serverMode
+}
+
 function renderSyncStatus(status) {
   const btn = root?.querySelector('#sync-status')
   if (!btn) return
+  renderBrandTag()
   // A refused cross-mode switch pins sync OFF and explains why — checked
   // FIRST so no later render (visibility / status change) can clear the
   // forced-off and silently reconnect to a wrong-protocol server.
@@ -1025,6 +1033,14 @@ function renderSyncStatus(status) {
     btn.hidden = true
     triageSync.setForcedOff(true)
     renderAuthStatus()
+    return
+  }
+  // Standalone (no backend / no /api/config): a purely local app — no workspace
+  // sync, no online/offline toggle, no auth. Hide both controls.
+  if (state.serverMode === 'standalone') {
+    btn.hidden = true
+    const standaloneAuthBtn = root?.querySelector('#auth-status')
+    if (standaloneAuthBtn) standaloneAuthBtn.hidden = true
     return
   }
   const authBtn = root?.querySelector('#auth-status')
@@ -1473,12 +1489,22 @@ async function refreshManagedSession() {
 // frame (kept) then catches any later change.
 async function detectServerModeIfUnknown() {
   if (readCachedServerInfo()) return
+  let status = 0
   let info = null
   try {
     const res = await fetch(CONFIG_PATH, { credentials: 'same-origin', headers: { accept: 'application/json' } })
+    status = res.status
     if (res.ok) info = parseServerInfo(await res.json())
   } catch { /* offline / unreachable — stay on the default until a frame arrives */ }
-  if (info) applyServerInfo(info)
+  if (info) { applyServerInfo(info); return }
+  if (status === 404) {
+    // No /api/config → a backend-less (standalone) deployment: purely local, no
+    // sync. Runtime-only — deliberately NOT cached (a static host could gain a
+    // backend later) — and the e2e sync chunk is hard-disabled.
+    state.serverMode = 'standalone'
+    setSyncForceDisabled(true)
+    renderSyncStatus(triageSync.status)
+  }
 }
 
 function mount(host) {

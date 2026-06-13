@@ -115,7 +115,7 @@ export interface State {
   // login/logout). Seeded from the localStorage cache so the first paint is
   // correct, then confirmed by the `server-info` connect frame (see sidebar
   // `applyServerInfo`).
-  serverMode: ServerMode
+  serverMode: ServerMode | 'standalone'
   // Managed-mode entry points (login path + cookie name) when managed; null
   // for e2e.
   managed: ManagedServerInfo | null

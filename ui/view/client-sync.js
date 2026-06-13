@@ -57,7 +57,15 @@ function userWantsSync() {
 // boot-order coupling: every load trigger — `loadSync`, the data-method
 // wrappers (`openWorkspace` fires on each workspace switch via ingest.js), and
 // `setEnabled(true)` — funnels through this check. Unknown/e2e → allowed.
+let syncForceDisabled = false
+
+// Runtime hard-disable for the e2e sync chunk — used by standalone mode, whose
+// "no /api/config" result is deliberately never cached, so the cache check
+// below can't see it. The sidebar sets this on detecting standalone.
+export function setSyncForceDisabled(disabled) { syncForceDisabled = Boolean(disabled) }
+
 function syncBlockedByMode() {
+  if (syncForceDisabled) return true
   try { return readCachedServerInfo()?.mode === 'managed' }
   catch { return false }
 }
