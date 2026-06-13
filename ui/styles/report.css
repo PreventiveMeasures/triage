@@ -462,6 +462,48 @@
   padding: .75rem .75rem 0;
   flex-shrink: 0;
 }
+/* Exports column — a sibling "column" to the metadata blocks in
+   `.bundles-detail-meta-row`, holding the bundle's export actions
+   (Download bundle, with more to follow). A size container so the
+   inner button row can react to the column's own width. */
+.bundles-overview-exports {
+  container-type: inline-size;
+}
+/* The buttons. They keep their natural width and wrap, so they stack
+   while the column is narrow and flow into a row once it widens.
+   Right-aligned (hugging the column's right edge) while it sits as the
+   rightmost side column; the @container rule below left-aligns them
+   once the column spans its own wider line and reads as a row. */
+.bundles-overview-exports-row {
+  display: flex;
+  flex-wrap: wrap;
+  place-content: flex-start flex-end;
+  align-items: flex-start;
+  gap: .4rem;
+}
+/* Spanned onto its own line → left-aligned row. The grow split on
+   `.bundles-detail-meta-row` keeps the column at its ~160px floor while
+   it shares a line, so it only crosses this width once it's alone. */
+@container (width >= 240px) {
+  .bundles-overview-exports-row { place-content: flex-start; }
+}
+/* Individual export button. Matches the sibling bundle action buttons
+   (.bundles-slide-back / .bundle-code-issue-step): a quiet bordered
+   chip with the standard accent border+text on hover, and the default
+   cursor theme.css gives chrome buttons (no pointer override). */
+.bundles-download-btn {
+  display: inline-flex; align-items: center; gap: .4rem;
+  padding: .3rem .6rem;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: .78rem;
+
+  & > svg { display: block; flex-shrink: 0; }
+  &:hover { border-color: var(--accent); color: var(--accent); }
+}
 .bundles-overview-columns {
   /* Wide layout — flex auto-distributes equal-width columns
      regardless of count (2 with Reports absent, 3 with Reports
@@ -1586,19 +1628,19 @@ bundle-search {
     & dd { margin: 0; font-size: .78rem; word-break: break-all; }
     & dd.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .68rem; }
   }
-  /* The overview pairs its two meta blocks (name/integrity/size +
-     parse details) in this row. `auto-fit` packs as many 700px
-     columns as fit: two side-by-side once the summary spans ~1400px,
-     a single full-width column below that. `min(700px, 100%)` keeps
-     the 700px floor from overflowing a narrow panel; the row gap
-     carries the stacked-spacing the child metas drop below. */
+  /* The overview lays its meta blocks + exports out as columns in a
+     wrapping flex row: name/integrity/size, parse-details, then the
+     exports column, each with its own min width (700 / 500 / 160px)
+     so the narrower columns peel onto their own line before the wide
+     one does. `min(…, 100%)` keeps each floor from overflowing a panel
+     narrower than it; the row gap carries the stacked spacing. */
   & .bundles-detail-meta-row {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(700px, 100%), 1fr));
+    display: flex;
+    flex-wrap: wrap;
     gap: .75rem 2rem;
     margin: 0 0 .75rem;
-    /* Top-align the two columns instead of stretching the shorter one
-       to the taller's height: a stretched inner grid spreads its auto
+    /* Top-align the columns instead of stretching the shorter ones to
+       the tallest's height: a stretched inner grid spreads its auto
        rows, which drifts the `align-self: center` dt labels off their
        top-aligned dd values (visible when the columns hold a different
        number of rows, e.g. 3 vs 4). Natural height keeps each row's
@@ -1606,6 +1648,19 @@ bundle-search {
     align-items: start;
 
     & .bundles-detail-meta { margin: 0; }
+    /* Per-column min widths before wrapping. The two meta blocks are
+       targeted by position (name/integrity/size first, parse-details
+       second); the exports column by class so it keeps its 160px floor
+       wherever it lands — the parse-details block is absent on the
+       loading / error / un-parsed branches. The meta blocks take a far
+       larger grow so they soak up a shared line's slack and the exports
+       column holds its ~160px floor beside them (staying below the
+       container-query threshold that would left-align its buttons);
+       alone on its own line the exports column still fills (grow > 0)
+       and its buttons flow into a left-aligned row. */
+    & > .bundles-detail-meta:nth-child(1) { flex: 99 1 700px; min-width: min(700px, 100%); }
+    & > .bundles-detail-meta:nth-child(2) { flex: 99 1 500px; min-width: min(500px, 100%); }
+    & > .bundles-overview-exports { flex: 1 1 160px; min-width: min(160px, 100%); }
   }
   & .bundles-overview-placeholder {
     padding: .75rem;

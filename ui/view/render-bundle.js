@@ -403,7 +403,12 @@ function renderBundleSizeDistribution(items) {
 // `sources` and `sizes` are parallel arrays — same indices, same
 // length. Sizes may be null when content wasn't shipped in the
 // bundle (uncommon for sourcemaps).
-function renderBundleSourcesPanel(meta, extras, sources, sizes, packageDirs) {
+//
+// `exportsCol` is the Overview's exports column (Download bundle, …),
+// built once by the caller (`renderBundleDetails`) so it rides every
+// Overview branch — parsed or not — from a single source. It renders
+// as the third column of `.bundles-detail-meta-row`.
+function renderBundleSourcesPanel(meta, extras, sources, sizes, packageDirs, exportsCol) {
   const { prefix, stripped } = stripCommonPathPrefix(sources)
   // Compute packages from the STRIPPED paths so the visualization
   // reflects what differs between files (a shared `dist/src/...`
@@ -528,6 +533,7 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes, packageDirs) {
           <dt>Sources</dt><dd>${sources.length}</dd>
           ${prefix ? html`<dt>Prefix</dt><dd class="mono">${prefix}</dd>` : nothing}
         </dl>
+        ${exportsCol ?? nothing}
       </div>
       ${issueTotal > 0 ? html`<div class="bundles-issue-summary tree-count-chips">${issueChips}</div>` : nothing}
     </div>
@@ -2168,6 +2174,37 @@ export function renderBundlesList(bundles) {
   return renderBundleSlide(selectedEntry)
 }
 
+// Tray-with-down-arrow glyph for the Overview's "Download bundle"
+// button. Stroke-based (`currentColor`) so it tracks the button's
+// text color on hover, same treatment as the COPY_PATH_ICON above.
+const DOWNLOAD_ICON = html`<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <path d="M8 2v8"/>
+  <path d="m4.5 7 3.5 3.5L11.5 7"/>
+  <path d="M2.5 13h11"/>
+</svg>`
+
+// Exports column for the Overview's `.bundles-detail-meta-row` — a
+// sibling "column" to the metadata blocks holding the bundle's export
+// actions. Currently just "Download bundle"; more export buttons land
+// alongside it. Carries just the integrity; the events.js delegate
+// reads the bytes back via `readBundle` (envelope peeled, .map
+// de-gzipped), fronts the unencrypted-download confirmation, and saves
+// under the bundle's original filename. The bytes live on disk
+// regardless of parse state, so the caller renders this on every
+// Overview branch.
+function bundleExportsColumn(entry) {
+  // Inner `-row` wrapper holds the buttons so the outer column can be a
+  // size container (CSS): the buttons right-align while the column sits
+  // narrow and flip to a left-aligned row once it spans its own line.
+  return html`<div class="bundles-overview-exports">
+    <div class="bundles-overview-exports-row">
+      <button type="button" class="bundles-download-btn" data-bundle-download=${entry.integrity}>
+        ${DOWNLOAD_ICON}<span>Download bundle</span>
+      </button>
+    </div>
+  </div>`
+}
+
 // Right-panel content for the open bundle. Until events.js finishes
 // the readBundle + parse, `state.bundleDetails` is null (or stale
 // for a previous selection); show a Loading… placeholder. For .map
@@ -2182,6 +2219,10 @@ function renderBundleDetails(entry, details) {
       ? html`<dt>Size</dt><dd>${formatBytes(details.size)}</dd>`
       : nothing}
   </dl>`
+  // The bundle's bytes live on disk regardless of whether the parse
+  // below succeeds (or has even finished), so the exports column
+  // rides every branch — loading, error, and parsed alike.
+  const exportsCol = bundleExportsColumn(entry)
   // Loading / error / un-parsed states share the same `.bundles-overview`
   // shell as the parsed-content branch so the Overview body's flex
   // layout + summary padding apply consistently — without the wrapper
@@ -2192,12 +2233,16 @@ function renderBundleDetails(entry, details) {
   // to be useful and pushed the columns down on every open.
   if (!details || details.integrity !== entry.integrity) {
     return html`<div class="bundles-overview">
-      <div class="bundles-overview-summary">${meta}</div>
+      <div class="bundles-overview-summary">
+        <div class="bundles-detail-meta-row">${meta}${exportsCol}</div>
+      </div>
     </div>`
   }
   if (details.error) {
     return html`<div class="bundles-overview">
-      <div class="bundles-overview-summary">${meta}</div>
+      <div class="bundles-overview-summary">
+        <div class="bundles-detail-meta-row">${meta}${exportsCol}</div>
+      </div>
       <div class="bundles-overview-placeholder is-error">Failed to parse: ${details.error}</div>
     </div>`
   }
@@ -2216,7 +2261,7 @@ function renderBundleDetails(entry, details) {
     `
     // Sourcemaps carry no package metadata — pass null so the panel
     // falls back to the path heuristic for bucketing.
-    return renderBundleSourcesPanel(meta, extras, sources, sizes, null)
+    return renderBundleSourcesPanel(meta, extras, sources, sizes, null, exportsCol)
   }
   if (details.kind === 'stasis' && details.bundle) {
     const bundle = details.bundle
@@ -2251,14 +2296,16 @@ function renderBundleDetails(entry, details) {
     `
     // Stasis records authoritative package boundaries — feed them in so
     // workspace packages bucket apart from their shared parent dir.
-    return renderBundleSourcesPanel(meta, extras, sourceNames, sizes, bundlePackageDirs(details))
+    return renderBundleSourcesPanel(meta, extras, sourceNames, sizes, bundlePackageDirs(details), exportsCol)
   }
   // Stasis without a parsed bundle — likely a brotli decompression
   // that failed silently (no error path filled in). Fall back to
   // the metadata block above plus a generic "not parsed" line,
   // wrapped in the same shell so layout is consistent.
   return html`<div class="bundles-overview">
-    <div class="bundles-overview-summary">${meta}</div>
+    <div class="bundles-overview-summary">
+      <div class="bundles-detail-meta-row">${meta}${exportsCol}</div>
+    </div>
     <div class="bundles-overview-placeholder">Bundle contents not parsed.</div>
   </div>`
 }

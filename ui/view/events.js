@@ -1,5 +1,5 @@
-import { VIEW_MODE_KEY, isReportIgnored, patchEntry, saveRepoUrlFor, saveTriage, setReportIgnored, state, subscribeToBundleFindingIndex } from '#client/index.js'
-import { report } from './dom.js'
+import { VIEW_MODE_KEY, isEncryptionEnabled, isReportIgnored, patchEntry, readBundle, saveRepoUrlFor, saveTriage, setReportIgnored, state, subscribeToBundleFindingIndex } from '#client/index.js'
+import { downloadBlob, report } from './dom.js'
 import { commonPrefix, handoffBlock } from './format.js'
 import { activeTabFor, findGroupById, findingRepo, findingReport, groupState, tabKey } from './group.js'
 import { resetFilters } from './filters.js'
@@ -7,6 +7,7 @@ import { refreshGraph2Sidebar, refreshGraph2TopPkgs, render } from './render.js'
 import { refreshBundleGraphSidebar, refreshBundleGraphTopPkgs, revealBundleCodeCurrent } from './render-bundle.js'
 import { grantAdvisoriesProxyConsent, retryBundleAdvisories } from './render-bundle-advisories.js'
 import { openCommentDialog } from './dialogs/comment-dialog.js'
+import { openDownloadBundleDialog } from './dialogs/download-bundle-dialog.js'
 import { openExportConfirmDialog } from './dialogs/export-confirm-dialog.js'
 import { openFixLinkDialog } from './dialogs/fix-link-dialog.js'
 import { downloadReportsAsMarkdown } from './markdown-export.js'
@@ -396,6 +397,31 @@ report.addEventListener('click', (e) => {
       // subtree the rail opens scrolled past.
       if (tab === 'code') revealBundleCodeCurrent()
     }
+    return
+  }
+  // Bundle Overview — "Download bundle" button. Saving the bundle
+  // reads its bytes back from OPFS (envelope peeled, .map de-gzipped)
+  // and writes them to disk under the original filename. The bytes
+  // leave the vault DECRYPTED and carry every bundled source, so a
+  // confirmation dialog fronts the write. `readBundle` can reject
+  // (vault locked, OPFS gone) — surface that rather than failing
+  // silently. The entry lookup also guards a stale integrity left in
+  // the DOM after the bundle was deleted in another tab.
+  const bundleDownload = e.target.closest('[data-bundle-download]')
+  if (bundleDownload) {
+    const integrity = bundleDownload.dataset.bundleDownload
+    const entry = (state.bundles ?? []).find((b) => b.integrity === integrity)
+    if (!entry) return
+    ;(async () => {
+      const { confirmed } = await openDownloadBundleDialog({ name: entry.name, encrypted: isEncryptionEnabled() })
+      if (!confirmed) return
+      try {
+        const bytes = await readBundle(integrity)
+        downloadBlob(new Blob([bytes], { type: 'application/octet-stream' }), entry.name)
+      } catch (err) {
+        alert(`Failed to download bundle: ${err.message}`)
+      }
+    })()
     return
   }
   // Search tab — Context show/hide pill in the header. Flips whether
