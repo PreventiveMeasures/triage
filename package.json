@@ -81,6 +81,7 @@
     "server-e2e/ws-server.ts",
     "server-e2e/config.example.json",
     "server-common/origin.ts",
+    "server-managed/avatar-store.ts",
     "server-managed/cli.js",
     "server-managed/config.ts",
     "server-managed/crypto.ts",

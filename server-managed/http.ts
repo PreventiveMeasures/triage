@@ -7,8 +7,10 @@
 //   GET  /api/oauth/github/login → 302 to GitHub (+ state cookie)
 //   GET  /api/oauth/github/callback → the OAuth hook (see github-oauth.ts)
 //   GET  /api/auth/session       → { user, csrfToken } | 401
+//   GET  /api/auth/avatar        → cached GitHub avatar bytes | 401/404
 //   POST /api/auth/logout        → same-origin + CSRF, drops the session
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import type { AvatarStore } from './avatar-store.ts'
 import type { ManagedConfig } from './config.ts'
 import type { ManagedDb } from './db.ts'
 import type { OriginGate } from '../server-common/origin.ts'
@@ -17,11 +19,13 @@ import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, handleCallba
 import { clearCookie, endSession, readSession } from './session.ts'
 
 const SESSION_PATH = '/api/auth/session'
+const AVATAR_PATH = '/api/auth/avatar'
 const LOGOUT_PATH = '/api/auth/logout'
 
 export interface ManagedHttpDeps {
   config: ManagedConfig
   db: ManagedDb
+  avatarStore: AvatarStore
   originGate: OriginGate
   isShuttingDown: () => boolean
   track: (p: Promise<unknown>) => void
@@ -45,7 +49,7 @@ function firstHeader(v: string | string[] | undefined): string | null {
 }
 
 export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
-  const { config, db, originGate, isShuttingDown, track } = deps
+  const { config, db, avatarStore, originGate, isShuttingDown, track } = deps
 
   async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url ?? '/', 'http://localhost')
@@ -71,7 +75,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (path === CALLBACK_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }
       try {
-        const result = await handleCallback(url.searchParams, cookie, { config, db })
+        const result = await handleCallback(url.searchParams, cookie, { config, db, avatarStore })
         res.writeHead(302, { location: result.location, 'set-cookie': result.setCookies, 'cache-control': 'no-store' })
         res.end()
       } catch (err) {
@@ -86,9 +90,24 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       const s = await readSession(config, db, cookie, Date.now())
       if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
       sendJson(res, 200, {
-        user: { id: s.user.githubUserId, login: s.user.login, name: s.user.name, avatarUrl: s.user.avatarUrl },
+        user: { id: s.user.uuid, login: s.user.login, name: s.user.name },
         csrfToken: s.session.csrfToken,
       })
+      return
+    }
+    // Cached GitHub avatar, served same-origin (the page CSP forbids github's CDN).
+    if (path === AVATAR_PATH) {
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      const s = await readSession(config, db, cookie, Date.now())
+      if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
+      const avatar = await avatarStore.get(s.user.uuid)
+      if (avatar == null) { sendJson(res, 404, { error: 'no-avatar' }); return }
+      res.writeHead(200, {
+        'content-type': avatar.contentType,
+        'content-length': String(avatar.bytes.length),
+        'cache-control': 'private, max-age=600',
+      })
+      res.end(avatar.bytes)
       return
     }
     // Logout — a mutation: same-origin gate + double-submit CSRF.

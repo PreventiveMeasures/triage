@@ -4,7 +4,9 @@
 // DB. Runnable directly (`node server-managed/index.ts`) via the
 // `import.meta.main` gate, or through the exported `start()` (see cli.js).
 import { createServer } from 'node:http'
+import { dirname, join } from 'node:path'
 import { createOriginGate } from '../server-common/origin.ts'
+import { createDiskAvatarStore } from './avatar-store.ts'
 import { loadManagedConfig } from './config.ts'
 import { openSqliteManagedDb } from './db.ts'
 import { createManagedRequestHandler } from './http.ts'
@@ -16,6 +18,8 @@ const SESSION_GC_INTERVAL_MS = 3_600_000
 export function start(): void {
   const config = loadManagedConfig()
   const db = openSqliteManagedDb(config.dbPath)
+  // Avatars cache on disk beside the DB (data/avatars/<uuid>) for now.
+  const avatarStore = createDiskAvatarStore(join(dirname(config.dbPath), 'avatars'))
   const originGate = createOriginGate(config.host, config.trustProxyEnv)
 
   let shuttingDown = false
@@ -26,7 +30,7 @@ export function start(): void {
   }
 
   const server = createServer(createManagedRequestHandler({
-    config, db, originGate, isShuttingDown: () => shuttingDown, track,
+    config, db, avatarStore, originGate, isShuttingDown: () => shuttingDown, track,
   }))
 
   const gcTimer = setInterval(() => {

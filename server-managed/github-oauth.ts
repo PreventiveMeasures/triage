@@ -11,6 +11,8 @@
 // The user token is used ONLY for the one identity read and then DISCARDED —
 // installation-token / repo access is later work, so nothing GitHub-derived
 // beyond {id, login, name, avatar} is persisted yet.
+import { Buffer } from 'node:buffer'
+import type { AvatarStore } from './avatar-store.ts'
 import type { ManagedConfig } from './config.ts'
 import type { ManagedDb, ManagedUser } from './db.ts'
 import { randomToken, safeEqual } from './crypto.ts'
@@ -36,7 +38,7 @@ export class OAuthError extends Error {
 }
 
 export interface CallbackResult { location: string; setCookies: string[] }
-export interface CallbackDeps { config: ManagedConfig; db: ManagedDb; now?: number; fetchImpl?: typeof fetch }
+export interface CallbackDeps { config: ManagedConfig; db: ManagedDb; avatarStore?: AvatarStore; now?: number; fetchImpl?: typeof fetch }
 
 // GET /api/oauth/github/login — redirect to GitHub, stashing the CSRF state.
 export function buildLoginRedirect(config: ManagedConfig): { location: string; setCookie: string } {
@@ -69,7 +71,15 @@ export async function handleCallback(
   }
   const token = await exchangeCode(config, code, fetchImpl)
   const user = await fetchIdentity(token, fetchImpl)
-  const { setCookie } = await createSession(config, db, user, now)
+  const { setCookie, uuid } = await createSession(config, db, user, now)
+  // Cache the avatar for same-origin serving (the page's CSP forbids loading
+  // github's CDN directly). Best-effort: a fetch/store failure must not break
+  // login, and the avatar endpoint just 404s until a later login fills it.
+  if (deps.avatarStore != null && user.avatarUrl != null) {
+    await cacheAvatar(deps.avatarStore, uuid, user.avatarUrl, fetchImpl).catch((err) => {
+      console.warn('managed: avatar cache failed:', err)
+    })
+  }
   // Clear the spent state cookie, set the session cookie, land on the app.
   return {
     location: '/',
@@ -130,4 +140,22 @@ function parseGithubUser(body: unknown): ManagedUser | null {
     name: typeof name === 'string' ? name : null,
     avatarUrl: typeof avatar === 'string' ? avatar : null,
   }
+}
+
+// Fetch the user's GitHub avatar and cache it for same-origin serving. The host
+// is validated (githubusercontent.com over https) as SSRF defence-in-depth,
+// even though the URL comes from GitHub's own /user response.
+async function cacheAvatar(store: AvatarStore, uuid: string, avatarUrl: string, fetchImpl: typeof fetch): Promise<void> {
+  if (!isGithubAvatarUrl(avatarUrl)) return
+  const res = await fetchImpl(avatarUrl)
+  const contentType = res.headers.get('content-type') ?? ''
+  if (!res.ok || !contentType.startsWith('image/')) return
+  await store.put(uuid, contentType, Buffer.from(await res.arrayBuffer()))
+}
+
+function isGithubAvatarUrl(raw: string): boolean {
+  let url: URL
+  try { url = new URL(raw) } catch { return false }
+  return url.protocol === 'https:'
+    && (url.hostname === 'avatars.githubusercontent.com' || url.hostname.endsWith('.githubusercontent.com'))
 }

@@ -6,7 +6,7 @@
 // Async throughout — the store (db.ts) is async so a future non-SQLite
 // backend slots in without touching these helpers.
 import type { ManagedConfig } from './config.ts'
-import type { ManagedDb, ManagedSession, ManagedUser } from './db.ts'
+import type { ManagedDb, ManagedSession, ManagedUser, StoredUser } from './db.ts'
 import { hashToken, randomToken } from './crypto.ts'
 
 // Base name for the short-lived OAuth-state cookie; `__Host-` is prefixed via
@@ -50,21 +50,21 @@ export function parseCookies(header: string | undefined): Map<string, string> {
 // set and the CSRF token (also persisted on the row).
 export async function createSession(
   config: ManagedConfig, db: ManagedDb, user: ManagedUser, now: number,
-): Promise<{ setCookie: string; csrfToken: string }> {
+): Promise<{ setCookie: string; csrfToken: string; uuid: string }> {
   const token = randomToken()
   const csrfToken = randomToken()
-  await db.upsertUser(user, now)
+  const uuid = await db.upsertUser(user, now)
   await db.createSession({ id: hashToken(token), githubUserId: user.githubUserId, csrfToken, expiresAt: now + config.sessionTtlMs }, now)
   const setCookie = buildCookie(config.sessionCookieName, token, {
     maxAgeS: Math.floor(config.sessionTtlMs / 1000), secure: config.cookieSecure, sameSite: 'Lax',
   })
-  return { setCookie, csrfToken }
+  return { setCookie, csrfToken, uuid }
 }
 
 // Resolve the current session (+ user) from the request's cookies, or null.
 export function readSession(
   config: ManagedConfig, db: ManagedDb, cookieHeader: string | undefined, now: number,
-): Promise<{ session: ManagedSession; user: ManagedUser } | null> {
+): Promise<{ session: ManagedSession; user: StoredUser } | null> {
   const token = parseCookies(cookieHeader).get(config.sessionCookieName)
   if (token == null || token === '') return Promise.resolve(null)
   return db.sessionWithUser(hashToken(token), now)

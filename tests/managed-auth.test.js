@@ -32,7 +32,20 @@ function makeFetch(responses) {
     const u = String(url)
     if (u.includes('login/oauth/access_token')) return jsonResponse(responses.token ?? {})
     if (u.includes('api.github.com/user')) return jsonResponse(responses.user ?? {})
+    if (u.startsWith('https://avatars.githubusercontent.com/')) {
+      return Promise.resolve(new Response(responses.avatar ?? new Uint8Array([0x89, 0x50, 0x4e, 0x47]), { status: 200, headers: { 'content-type': 'image/png' } }))
+    }
     return jsonResponse({}, 404)
+  }
+}
+
+// In-memory AvatarStore double — mirrors createDiskAvatarStore's interface.
+function fakeAvatarStore() {
+  const map = new Map()
+  return {
+    map,
+    put(uuid, contentType, bytes) { map.set(uuid, { contentType, bytes }); return Promise.resolve() },
+    get(uuid) { return Promise.resolve(map.get(uuid) ?? null) },
   }
 }
 
@@ -97,6 +110,26 @@ test('handleCallback: valid state mints a session for the GitHub identity', asyn
   assert.ok(s)
   assert.equal(s.user.githubUserId, 7)
   assert.equal(s.user.login, 'mona')
+  await db.close()
+})
+
+test('handleCallback: caches the user avatar through the store, keyed by uuid', async () => {
+  const db = openSqliteManagedDb(':memory:')
+  const avatarStore = fakeAvatarStore()
+  const state = 'avst'
+  const fetchImpl = makeFetch({
+    token: { access_token: 'gho_x' },
+    user: { id: 9, login: 'ava', name: 'Ava', avatar_url: 'https://avatars.githubusercontent.com/u/9?v=4' },
+  })
+  const result = await handleCallback(new URLSearchParams({ code: 'c', state }), `dvstate=${state}`, { config, db, avatarStore, fetchImpl })
+  const sessionCookie = result.setCookies.find((c) => c.startsWith('dvsid='))
+  const s = await readSession(config, db, cookiePair(sessionCookie), Date.now())
+  assert.ok(s)
+  assert.match(s.user.uuid, /^[0-9a-f-]{36}$/u)
+  const cached = avatarStore.map.get(s.user.uuid)
+  assert.ok(cached, 'avatar cached under the user uuid')
+  assert.equal(cached.contentType, 'image/png')
+  assert.ok(cached.bytes.length > 0)
   await db.close()
 })
 
