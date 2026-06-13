@@ -50,15 +50,15 @@ export function parseCookies(header: string | undefined): Map<string, string> {
 // set and the CSRF token (also persisted on the row).
 export async function createSession(
   config: ManagedConfig, db: ManagedDb, user: ManagedUser, now: number,
-): Promise<{ setCookie: string; csrfToken: string; uuid: string }> {
+): Promise<{ setCookie: string; csrfToken: string; userId: string }> {
   const token = randomToken()
   const csrfToken = randomToken()
-  const uuid = await db.upsertUser(user, now)
-  await db.createSession({ id: hashToken(token), githubUserId: user.githubUserId, csrfToken, expiresAt: now + config.sessionTtlMs }, now)
+  const userId = await db.upsertUser(user, now)
+  await db.createSession({ id: hashToken(token), userId, csrfToken, expiresAt: now + config.sessionTtlMs }, now)
   const setCookie = buildCookie(config.sessionCookieName, token, {
     maxAgeS: Math.floor(config.sessionTtlMs / 1000), secure: config.cookieSecure, sameSite: 'Lax',
   })
-  return { setCookie, csrfToken, uuid }
+  return { setCookie, csrfToken, userId }
 }
 
 // Resolve the current session (+ user) from the request's cookies, or null.

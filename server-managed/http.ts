@@ -90,7 +90,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       const s = await readSession(config, db, cookie, Date.now())
       if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
       sendJson(res, 200, {
-        user: { id: s.user.uuid, login: s.user.login, name: s.user.name },
+        user: { id: s.user.id, login: s.user.login, name: s.user.name },
         csrfToken: s.session.csrfToken,
       })
       return
@@ -100,7 +100,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (method !== 'GET') { send405(res, 'GET'); return }
       const s = await readSession(config, db, cookie, Date.now())
       if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
-      const avatar = await avatarStore.get(s.user.uuid)
+      const avatar = await avatarStore.get(s.user.id)
       if (avatar == null) { sendJson(res, 404, { error: 'no-avatar' }); return }
       res.writeHead(200, {
         'content-type': avatar.contentType,

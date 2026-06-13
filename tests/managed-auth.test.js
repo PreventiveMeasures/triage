@@ -69,7 +69,7 @@ test('session: create → read → expire → end', async () => {
 
   const s = await readSession(config, db, cookie, now)
   assert.ok(s)
-  assert.equal(s.user.githubUserId, 42)
+  assert.match(s.user.id, /^[0-9a-f-]{36}$/u)
   assert.equal(s.user.login, 'octocat')
   assert.equal(s.session.csrfToken, csrfToken)
 
@@ -108,7 +108,7 @@ test('handleCallback: valid state mints a session for the GitHub identity', asyn
 
   const s = await readSession(config, db, cookiePair(sessionCookie), Date.now())
   assert.ok(s)
-  assert.equal(s.user.githubUserId, 7)
+  assert.match(s.user.id, /^[0-9a-f-]{36}$/u)
   assert.equal(s.user.login, 'mona')
   await db.close()
 })
@@ -125,8 +125,8 @@ test('handleCallback: caches the user avatar through the store, keyed by uuid', 
   const sessionCookie = result.setCookies.find((c) => c.startsWith('dvsid='))
   const s = await readSession(config, db, cookiePair(sessionCookie), Date.now())
   assert.ok(s)
-  assert.match(s.user.uuid, /^[0-9a-f-]{36}$/u)
-  const cached = avatarStore.map.get(s.user.uuid)
+  assert.match(s.user.id, /^[0-9a-f-]{36}$/u)
+  const cached = avatarStore.map.get(s.user.id)
   assert.ok(cached, 'avatar cached under the user uuid')
   assert.equal(cached.contentType, 'image/png')
   assert.ok(cached.bytes.length > 0)
