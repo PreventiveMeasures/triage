@@ -60,3 +60,30 @@ export function bundlePackageDirs(details) {
   }
   return map
 }
+
+// Map each named npm dependency a (stasis) bundle carries to the set of
+// concrete versions present for it: `Map<name, Set<version>>`. Only
+// `node_modules/...` modules that carry both a name and a non-empty
+// version string count — stasis v1 `scope: 'full'` bundles merge
+// workspace / own-source entries into the same `Bundle.modules` Map
+// (often `version: '0.0.0'` or null), and those aren't upstream
+// dependencies, so they're filtered out by the directory key. A package
+// can map to more than one version (pnpm keeps duplicate majors side by
+// side), hence the Set.
+//
+// Shared by the Advisories tab (a bulk registry lookup keyed on these
+// pairs) and the Compare slide (the dependency version-update diff).
+// Returns an empty Map for sourcemaps and v0 stasis bundles — neither
+// carries per-module version metadata.
+export function bundlePackageVersions(details) {
+  const versions = new Map()
+  if (details?.kind !== 'stasis' || !details.bundle?.modules) return versions
+  for (const [dir, info] of details.bundle.modules) {
+    if (!dir.includes('node_modules')) continue
+    if (!info?.name || typeof info.version !== 'string' || !info.version) continue
+    let set = versions.get(info.name)
+    if (!set) { set = new Set(); versions.set(info.name, set) }
+    set.add(info.version)
+  }
+  return versions
+}
