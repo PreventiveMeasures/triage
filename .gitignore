@@ -10,3 +10,4 @@ playground
 .claude/worktrees/
 server-e2e/data/
 server-e2e/config.json
+server-managed/data/

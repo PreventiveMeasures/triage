@@ -147,7 +147,10 @@ function parseGithubUser(body: unknown): ManagedUser | null {
 // even though the URL comes from GitHub's own /user response.
 async function cacheAvatar(store: AvatarStore, id: string, avatarUrl: string, fetchImpl: typeof fetch): Promise<void> {
   if (!isGithubAvatarUrl(avatarUrl)) return
-  const res = await fetchImpl(avatarUrl)
+  // `redirect: 'manual'` so a 3xx off the (validated) avatars host can't bounce
+  // the fetch to an internal address — an opaque-redirect / 3xx fails the
+  // `res.ok` + image check below and is skipped (SSRF defence-in-depth).
+  const res = await fetchImpl(avatarUrl, { redirect: 'manual' })
   const contentType = res.headers.get('content-type') ?? ''
   if (!res.ok || !contentType.startsWith('image/')) return
   await store.put(id, contentType, Buffer.from(await res.arrayBuffer()))
