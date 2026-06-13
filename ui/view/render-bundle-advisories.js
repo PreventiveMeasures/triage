@@ -23,6 +23,7 @@
 
 import { html, nothing } from 'lit'
 import { bundleKind } from './ingest.js'
+import { bundlePackageVersions } from './bundle-sources.js'
 
 const cache = new Map()
 
@@ -44,29 +45,19 @@ export function grantAdvisoriesProxyConsent() {
   try { localStorage.setItem(CONSENT_KEY, '1') } catch {}
 }
 
-// Collect every (packageName → Set<version>) the stasis bundle
-// names in its `modules` map. Stasis v1 + scope='full' bundles
-// merge workspace sources (key = `"."` or another `!includes
-// 'node_modules'` path) into the same `Bundle.modules` Map as the
-// node_modules deps, so we filter by the directory key — only
-// entries under a `node_modules/...` path are upstream packages
-// we can usefully look up against the npm registry. The own-
-// source workspace `@scope/foo @ 0.0.0` would otherwise get sent
-// to the registry as a real query (and either resolve to an
-// unrelated public package or to nothing). Versions without a
-// known value are also skipped — the registry endpoint requires
-// concrete version strings (no `null`).
+// Collect every (packageName → Set<version>) the stasis bundle names
+// in its `modules` map, restricted to upstream `node_modules/...`
+// dependencies with concrete versions — exactly the bulk query the
+// registry's advisories endpoint takes. This is the shared
+// `bundlePackageVersions` extractor (see bundle-sources.js): stasis v1
+// `scope: 'full'` bundles merge workspace sources into the same
+// `Bundle.modules` Map, so the own-source `@scope/foo @ 0.0.0` would
+// otherwise get sent to the registry as a real query (and resolve to
+// an unrelated public package, or to nothing); the helper filters those
+// out by directory key, and drops versionless (`null`) entries the
+// endpoint can't accept.
 function bundleAdvisoryQuery(details) {
-  const query = new Map()
-  if (!details || details.kind !== 'stasis' || !details.bundle) return query
-  for (const [dir, info] of details.bundle.modules) {
-    if (!dir.includes('node_modules')) continue
-    if (!info?.name || typeof info.version !== 'string' || !info.version) continue
-    let set = query.get(info.name)
-    if (!set) { set = new Set(); query.set(info.name, set) }
-    set.add(info.version)
-  }
-  return query
+  return bundlePackageVersions(details)
 }
 
 // True when the parsed bundle has at least one stasis module that
@@ -79,6 +70,12 @@ function bundleAdvisoryQuery(details) {
 // Module-private — callers go through `showAdvisoriesTab` below
 // which adds the parse-window optimistic-show layer for
 // stasis-by-filename bundles.
+//
+// Keeps its own copy of the `bundlePackageVersions` filter (node_modules
+// dir + name + concrete version) rather than calling it: this is a
+// first-match predicate, so it returns on the first qualifying module
+// instead of building the whole Map. If that filter rule changes, update
+// it here too.
 function bundleHasAdvisoryCandidates(details) {
   if (!details || details.kind !== 'stasis' || !details.bundle) return false
   for (const [dir, info] of details.bundle.modules) {

@@ -279,6 +279,48 @@ button.bundle-compare-row-link:hover { background: var(--surface-active); }
 }
 .bundle-compare-row-delta.up { color: var(--green); }
 .bundle-compare-row-delta.down { color: var(--critical); }
+
+/* Dependency version updates (see view/bundle-compare.js
+   _renderVersionUpdates). The "Updated" list is a neutral card: each
+   row's `old → new` already carries the up / down / changed color, so
+   the container stays untinted rather than fight the per-row accent.
+   Added / removed dependencies reuse the tinted group cards. */
+.bundle-compare-ver-changes {
+  margin-bottom: .6rem;
+  padding: .45rem .6rem;
+  border-radius: 6px;
+  background: rgb(from var(--muted) r g b / .06);
+}
+.bundle-compare-ver-changes .bundle-compare-group-title { color: var(--text); }
+/* `old → new` cell, pinned right of the package name like the size
+   columns; mono + tabular so version numbers line up across rows. */
+.bundle-compare-ver {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: baseline;
+  gap: .3rem;
+  font-size: .68rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+}
+.bundle-compare-ver-from,
+.bundle-compare-ver-arrow { color: var(--muted); }
+.bundle-compare-ver-to { font-weight: 600; color: var(--muted); }
+.bundle-compare-ver-to.up { color: var(--green); }
+.bundle-compare-ver-to.down { color: var(--critical); }
+.bundle-compare-ver-to.changed { color: var(--medium); }
+.bundle-compare-ver-dir { font-weight: 600; color: var(--muted); }
+.bundle-compare-ver-dir.up { color: var(--green); }
+.bundle-compare-ver-dir.down { color: var(--critical); }
+.bundle-compare-ver-dir.changed { color: var(--medium); }
+/* Version label on an added / removed dependency row. */
+.bundle-compare-dep-ver {
+  flex-shrink: 0;
+  font-size: .68rem;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+}
 .bundle-compare-more {
   padding: .2rem .35rem;
   font-size: .68rem;

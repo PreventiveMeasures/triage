@@ -201,3 +201,123 @@ export function computeBundleDiff(base, other, pkgOf) {
     packages: { onlyBase: pkgOnlyBase, onlyOther: pkgOnlyOther, changed: pkgChanged },
   }
 }
+
+// Split a version into its dotted-numeric core and its prerelease tail,
+// dropping any `+build` metadata (semver ignores it for precedence).
+// `1.2.3-rc.1+sha` → { core: '1.2.3', pre: 'rc.1' }.
+function splitVersion(v) {
+  const s = String(v).trim()
+  const noBuild = s.split('+', 1)[0]
+  const dash = noBuild.indexOf('-')
+  return dash === -1
+    ? { core: noBuild, pre: '' }
+    : { core: noBuild.slice(0, dash), pre: noBuild.slice(dash + 1) }
+}
+
+// Lightweight semver-ish comparison, enough to sort versions ascending
+// and label an update ↑/↓. Compares the dotted-numeric core part by
+// part (a missing part counts as 0); on an equal core a release ranks
+// above a prerelease (`1.0.0` > `1.0.0-rc.1`) and two prereleases
+// compare by their dot identifiers (numeric where both are numeric,
+// else lexical) per the semver precedence rules. NOT a full
+// implementation — a non-numeric core segment falls back to a string
+// compare of the whole version so ordering stays total and stable.
+export function compareSemver(a, b) {
+  if (a === b) return 0
+  const A = splitVersion(a)
+  const B = splitVersion(b)
+  const ap = A.core.split('.')
+  const bp = B.core.split('.')
+  for (let i = 0; i < Math.max(ap.length, bp.length); i++) {
+    const x = Number(ap[i] ?? 0)
+    const y = Number(bp[i] ?? 0)
+    if (Number.isNaN(x) || Number.isNaN(y)) return a < b ? -1 : 1
+    if (x !== y) return x < y ? -1 : 1
+  }
+  if (A.pre === B.pre) return 0
+  // A core with no prerelease is the higher (released) version.
+  if (!A.pre) return 1
+  if (!B.pre) return -1
+  const ai = A.pre.split('.')
+  const bi = B.pre.split('.')
+  for (let i = 0; i < Math.max(ai.length, bi.length); i++) {
+    const x = ai[i]
+    const y = bi[i]
+    if (x === undefined) return -1
+    if (y === undefined) return 1
+    if (x === y) continue
+    const xNum = /^\d+$/u.test(x)
+    const yNum = /^\d+$/u.test(y)
+    // Numeric identifiers always rank below non-numeric ones (semver),
+    // and compare numerically against each other.
+    if (xNum && yNum) return Number(x) < Number(y) ? -1 : 1
+    if (xNum !== yNum) return xNum ? -1 : 1
+    return x < y ? -1 : 1
+  }
+  return 0
+}
+
+// True when two ascending-sorted version arrays hold the same members.
+function sameVersions(a, b) {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+  return true
+}
+
+// Direction of a version move, from the highest version on each side
+// (last after the ascending sort): a newer max → 'up', an older max →
+// 'down', an equal max with a different set (a pnpm dedupe, or an added
+// duplicate major) → 'changed'.
+function versionDirection(baseSorted, otherSorted) {
+  const cmp = compareSemver(otherSorted.at(-1), baseSorted.at(-1))
+  return cmp > 0 ? 'up' : cmp < 0 ? 'down' : 'changed'
+}
+
+// Diff two `Map<packageName, Set<version>>` inventories (as
+// `bundlePackageVersions` returns for each bundle) into the dependency
+// version changes between them. Mirrors the file/package diff framing:
+// `base` is the open bundle, `other` the one compared against.
+//
+//   {
+//     updated: [{ pkg, baseVersions: [...], otherVersions: [...],
+//                 direction: 'up' | 'down' | 'changed' }],
+//     added:   [{ pkg, versions: [...] }],   // dependency only in other
+//     removed: [{ pkg, versions: [...] }],   // dependency only in base
+//     totals:  { baseDeps, otherDeps },      // distinct package counts
+//   }
+//
+// `updated` is the headline — a package present on BOTH sides whose set
+// of versions changed (the "what did this bump pull in?" answer);
+// packages whose versions are byte-for-byte the same are dropped.
+// Version arrays are sorted ascending; the three lists are sorted by
+// package name so the dependency list reads alphabetically.
+export function computeVersionUpdates(baseVersions, otherVersions) {
+  const updated = []
+  const added = []
+  const removed = []
+  const names = new Set([...baseVersions.keys(), ...otherVersions.keys()])
+  for (const pkg of names) {
+    const bSet = baseVersions.get(pkg)
+    const oSet = otherVersions.get(pkg)
+    if (bSet && oSet) {
+      const b = [...bSet].toSorted(compareSemver)
+      const o = [...oSet].toSorted(compareSemver)
+      if (sameVersions(b, o)) continue
+      updated.push({ pkg, baseVersions: b, otherVersions: o, direction: versionDirection(b, o) })
+    } else if (bSet) {
+      removed.push({ pkg, versions: [...bSet].toSorted(compareSemver) })
+    } else {
+      added.push({ pkg, versions: [...oSet].toSorted(compareSemver) })
+    }
+  }
+  const byPkg = (a, b) => a.pkg.localeCompare(b.pkg)
+  updated.sort(byPkg)
+  added.sort(byPkg)
+  removed.sort(byPkg)
+  return {
+    updated,
+    added,
+    removed,
+    totals: { baseDeps: baseVersions.size, otherDeps: otherVersions.size },
+  }
+}

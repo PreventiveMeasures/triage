@@ -34,9 +34,9 @@ import { state } from '#client/index.js'
 import { formatBytes, stripCommonPathPrefix } from './format.js'
 import { pkgColor } from './graph/utils.js'
 import { bundlePkgOf } from './bundle-pkg-of.js'
-import { bundlePackageDirs, bundleSourcesAsMap } from './bundle-sources.js'
+import { bundlePackageDirs, bundlePackageVersions, bundleSourcesAsMap } from './bundle-sources.js'
 import { buildBundleDetails } from './bundle-load.js'
-import { computeBundleDiff } from './bundle-compare-diff.js'
+import { computeBundleDiff, computeVersionUpdates } from './bundle-compare-diff.js'
 
 // Cap each file group's rendered rows so a pathological compare (a
 // stasis bundle vendoring thousands of files against an unrelated
@@ -64,6 +64,19 @@ function formatDelta(n) {
   return `${sign}${Math.abs(n).toLocaleString()} B`
 }
 
+// Signed count for a summary metric delta: `+3` / `−2` / `±0`. Same
+// typographic minus as formatDelta; used by the Files and Deps metrics.
+function formatCountDelta(n) {
+  if (n === 0) return '±0'
+  return `${n > 0 ? '+' : '−'}${Math.abs(n).toLocaleString()}`
+}
+
+// CSS direction suffix for a signed number: 'up' (green) / 'down'
+// (red) / '' (neutral). Shared by the metric deltas and version rows.
+function dirClass(n) {
+  return n > 0 ? 'up' : n < 0 ? 'down' : ''
+}
+
 // Percent change of a byte delta against the base total. Empty when
 // the base is zero (every byte is new, so a percentage is meaningless).
 function formatPct(delta, baseBytes) {
@@ -77,6 +90,12 @@ function formatPct(delta, baseBytes) {
 // (non-dependency) files; spell it out in the package lists.
 function pkgLabel(pkg) {
   return pkg === '__own__' ? 'own source' : pkg
+}
+
+// A dependency's version list, comma-joined — usually one entry, more
+// when pnpm kept duplicate majors side by side.
+function versionList(versions) {
+  return versions.join(', ')
 }
 
 class BundleCompare extends LitElement {
@@ -272,6 +291,77 @@ class BundleCompare extends LitElement {
     </section>`
   }
 
+  // One "Version changes" row: package dot + name, then `old → new`
+  // with the new side colored by direction (↑ green / ↓ red / changed
+  // amber) and a matching glyph. The direction is also spelled out in
+  // the title for screen readers.
+  _versionRow(r) {
+    const glyph = r.direction === 'up' ? '↑' : r.direction === 'down' ? '↓' : '±'
+    const word = r.direction === 'up' ? 'Upgraded' : r.direction === 'down' ? 'Downgraded' : 'Changed'
+    return html`<li><div class="bundle-compare-row" title=${`${r.pkg} · ${word}`}>
+      <span class="bundle-compare-pkg-dot" style=${styleMap({ background: pkgColor(r.pkg) })}></span>
+      <span class="bundle-compare-row-path">${r.pkg}</span>
+      <span class="bundle-compare-ver">
+        <span class="bundle-compare-ver-from">${versionList(r.baseVersions)}</span>
+        <span class="bundle-compare-ver-arrow" aria-hidden="true">→</span>
+        <span class=${`bundle-compare-ver-to ${r.direction}`}>${versionList(r.otherVersions)}</span>
+        <span class=${`bundle-compare-ver-dir ${r.direction}`} aria-hidden="true">${glyph}</span>
+      </span>
+    </div></li>`
+  }
+
+  // One added / removed dependency group — package name + the
+  // version(s) it carried on the side it appears on. Same tinted card
+  // and accent scheme as the file / package groups.
+  _depGroup(title, rows, kind) {
+    if (rows.length === 0) return nothing
+    const shown = rows.slice(0, MAX_ROWS)
+    const hidden = rows.length - shown.length
+    return html`<section class=${`bundle-compare-group bundle-compare-${kind}`}>
+      <header class="bundle-compare-group-head">
+        <span class="bundle-compare-dot" aria-hidden="true"></span>
+        <span class="bundle-compare-group-title">${title}</span>
+        <span class="bundle-compare-group-count">${rows.length}</span>
+      </header>
+      <ul class="bundle-compare-rows">
+        ${repeat(shown, (r) => r.pkg, (r) => html`<li><div class="bundle-compare-row" title=${r.pkg}>
+          <span class="bundle-compare-pkg-dot" style=${styleMap({ background: pkgColor(r.pkg) })}></span>
+          <span class="bundle-compare-row-path">${r.pkg}</span>
+          <span class="bundle-compare-dep-ver">${versionList(r.versions)}</span>
+        </div></li>`)}
+      </ul>
+      ${hidden > 0 ? html`<div class="bundle-compare-more">and ${hidden.toLocaleString()} more…</div>` : nothing}
+    </section>`
+  }
+
+  // Dependency-update section: version bumps for deps on both sides
+  // (the headline — "what did this bump pull in?"), then any deps added
+  // / removed wholesale. Returns `nothing` when nothing changed so the
+  // section only shows for stasis pairs with real version movement.
+  _renderVersionUpdates(vu, baseName, otherName) {
+    const { updated, added, removed } = vu
+    if (updated.length === 0 && added.length === 0 && removed.length === 0) return nothing
+    const shownUpdated = updated.slice(0, MAX_ROWS)
+    const hiddenUpdated = updated.length - shownUpdated.length
+    return html`<section class="bundle-compare-section">
+      <h3 class="bundle-compare-section-head">Dependency updates</h3>
+      ${updated.length > 0 ? html`<div class="bundle-compare-ver-changes">
+        <header class="bundle-compare-group-head">
+          <span class="bundle-compare-group-title">Updated</span>
+          <span class="bundle-compare-group-count">${updated.length}</span>
+        </header>
+        <ul class="bundle-compare-rows">
+          ${repeat(shownUpdated, (r) => r.pkg, (r) => this._versionRow(r))}
+        </ul>
+        ${hiddenUpdated > 0 ? html`<div class="bundle-compare-more">and ${hiddenUpdated.toLocaleString()} more…</div>` : nothing}
+      </div>` : nothing}
+      ${added.length > 0 || removed.length > 0 ? html`<div class="bundle-compare-cols">
+        ${this._depGroup(`Removed · only in ${baseName}`, removed, 'removed')}
+        ${this._depGroup(`Added · only in ${otherName}`, added, 'added')}
+      </div>` : nothing}
+    </section>`
+  }
+
   // Compute (or reuse the memo of) the diff for the current pairing.
   _diffFor() {
     const key = `${this.integrity}|${this._targetIntegrity}`
@@ -305,25 +395,46 @@ class BundleCompare extends LitElement {
         { packageDir: packageDirs?.get(p) },
       )
       this._diff = computeBundleDiff(baseSources, otherSources, pkgOf)
+      // Dependency version changes come from the stasis per-module
+      // `{ name, version }` metadata, not the path/byte walk above, so
+      // they're computed alongside and hung off the same memo. Empty for
+      // sourcemap / v0 pairs (no version metadata) — the section then
+      // renders nothing.
+      this._diff.versionUpdates = computeVersionUpdates(
+        bundlePackageVersions(this.details),
+        bundlePackageVersions(this._otherDetails),
+      )
       this._diffKey = key
     }
     return this._diff
   }
 
-  // Summary band — file + size deltas plus the four bucket chips. Sits
-  // under the picker once a comparison is live.
-  _renderSummary(totals) {
+  // Summary band — file + size (+ dependency) deltas plus the four
+  // bucket chips. Sits under the picker once a comparison is live.
+  _renderSummary(diff) {
+    const totals = diff.totals
+    const vt = diff.versionUpdates.totals
+    // Dependency count only means something when at least one side
+    // carries version metadata (stasis v1); hide the metric for
+    // sourcemap / v0 pairs rather than show a hollow `0 → 0`.
+    const showDeps = vt.baseDeps > 0 || vt.otherDeps > 0
+    const depDelta = vt.otherDeps - vt.baseDeps
     return html`<div class="bundle-compare-summary">
       <div class="bundle-compare-metric">
         <span class="bundle-compare-metric-label">Files</span>
         <span class="bundle-compare-metric-value">${totals.baseFiles.toLocaleString()} → ${totals.otherFiles.toLocaleString()}</span>
-        <span class=${`bundle-compare-metric-delta ${totals.fileDelta > 0 ? 'up' : totals.fileDelta < 0 ? 'down' : ''}`}>${totals.fileDelta === 0 ? '±0' : `${totals.fileDelta > 0 ? '+' : '−'}${Math.abs(totals.fileDelta).toLocaleString()}`}</span>
+        <span class=${`bundle-compare-metric-delta ${dirClass(totals.fileDelta)}`}>${formatCountDelta(totals.fileDelta)}</span>
       </div>
       <div class="bundle-compare-metric">
         <span class="bundle-compare-metric-label">Size</span>
         <span class="bundle-compare-metric-value">${formatBytes(totals.baseBytes)} → ${formatBytes(totals.otherBytes)}</span>
-        <span class=${`bundle-compare-metric-delta ${totals.byteDelta > 0 ? 'up' : totals.byteDelta < 0 ? 'down' : ''}`}>${formatDelta(totals.byteDelta)}${(() => { const p = formatPct(totals.byteDelta, totals.baseBytes); return p ? html`${' '}<span class="bundle-compare-pct">(${p})</span>` : nothing })()}</span>
+        <span class=${`bundle-compare-metric-delta ${dirClass(totals.byteDelta)}`}>${formatDelta(totals.byteDelta)}${(() => { const p = formatPct(totals.byteDelta, totals.baseBytes); return p ? html`${' '}<span class="bundle-compare-pct">(${p})</span>` : nothing })()}</span>
       </div>
+      ${showDeps ? html`<div class="bundle-compare-metric">
+        <span class="bundle-compare-metric-label">Deps</span>
+        <span class="bundle-compare-metric-value">${vt.baseDeps.toLocaleString()} → ${vt.otherDeps.toLocaleString()}</span>
+        <span class=${`bundle-compare-metric-delta ${dirClass(depDelta)}`}>${formatCountDelta(depDelta)}</span>
+      </div>` : nothing}
       <div class="bundle-compare-chips">
         <span class="bundle-compare-chip removed">−${totals.onlyBaseFiles.toLocaleString()} removed</span>
         <span class="bundle-compare-chip added">+${totals.onlyOtherFiles.toLocaleString()} added</span>
@@ -411,7 +522,7 @@ class BundleCompare extends LitElement {
     return html`<div class="bundle-compare">
       <header class="bundle-compare-head">
         ${picker}
-        ${this._baseReady && ready ? this._renderSummary(this._diffFor().totals) : nothing}
+        ${this._baseReady && ready ? this._renderSummary(this._diffFor()) : nothing}
       </header>
       <div class="bundle-compare-body">${body}</div>
     </div>`
@@ -443,6 +554,7 @@ class BundleCompare extends LitElement {
         Changes from <strong>${baseName}</strong> to <strong>${otherName}</strong>
         ${prefix ? html` · <span class="mono">${prefix}</span>` : nothing}
       </div>
+      ${this._renderVersionUpdates(diff.versionUpdates, baseName, otherName)}
       ${diff.totals.identical
         ? html`<div class="bundle-compare-identical">These two bundles carry identical sources (${diff.totals.unchangedFiles.toLocaleString()} ${diff.totals.unchangedFiles === 1 ? 'file' : 'files'}).</div>`
         : html`

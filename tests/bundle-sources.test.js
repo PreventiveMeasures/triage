@@ -12,7 +12,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-const { bundlePackageDirs } = await import('../ui/view/bundle-sources.js')
+const { bundlePackageDirs, bundlePackageVersions } = await import('../ui/view/bundle-sources.js')
 
 // Minimal stand-in for an `@exodus/stasis` Bundle: the helper only
 // touches `.modules` (a Map<dir, { files }>), so that's all we build.
@@ -58,5 +58,40 @@ describe('bundlePackageDirs', () => {
     assert.equal(bundlePackageDirs({ kind: 'stasis' }), null)
     assert.equal(bundlePackageDirs(null), null)
     assert.equal(bundlePackageDirs(undefined), null)
+  })
+})
+
+describe('bundlePackageVersions', () => {
+  it('maps each node_modules dependency to its version set', () => {
+    const versions = bundlePackageVersions(stasisDetails([
+      ['node_modules/lodash', { name: 'lodash', version: '4.17.21', files: {} }],
+      ['node_modules/@scope/pkg', { name: '@scope/pkg', version: '1.2.0', files: {} }],
+    ]))
+    assert.deepEqual([...versions.get('lodash')], ['4.17.21'])
+    assert.deepEqual([...versions.get('@scope/pkg')], ['1.2.0'])
+  })
+
+  it('collects duplicate majors of one package into a single set', () => {
+    const versions = bundlePackageVersions(stasisDetails([
+      ['node_modules/.pnpm/foo@1.0.0/node_modules/foo', { name: 'foo', version: '1.0.0', files: {} }],
+      ['node_modules/.pnpm/foo@2.0.0/node_modules/foo', { name: 'foo', version: '2.0.0', files: {} }],
+    ]))
+    assert.deepEqual([...versions.get('foo')].toSorted(), ['1.0.0', '2.0.0'])
+  })
+
+  it('skips workspace / own-source entries and versionless modules', () => {
+    const versions = bundlePackageVersions(stasisDetails([
+      ['.', { name: null, version: null, files: {} }],                       // own source
+      ['vendor/aws/aws-sdk-php', { name: 'aws-sdk-php', version: '3.0.0', files: {} }], // workspace, not node_modules
+      ['node_modules/bar', { name: 'bar', version: '', files: {} }],          // no concrete version
+      ['node_modules/baz', { name: 'baz', version: '1.0.0', files: {} }],     // kept
+    ]))
+    assert.deepEqual([...versions.keys()], ['baz'])
+  })
+
+  it('returns an empty map for sourcemaps and unparsed bundles', () => {
+    assert.equal(bundlePackageVersions({ kind: 'sourcemap', json: {} }).size, 0)
+    assert.equal(bundlePackageVersions({ kind: 'stasis' }).size, 0)
+    assert.equal(bundlePackageVersions(null).size, 0)
   })
 })
