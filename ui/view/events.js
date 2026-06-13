@@ -1421,6 +1421,28 @@ function navigateKanban(direction) {
   }
 }
 
+// True when the active text selection was drawn *inside* `el` — i.e.
+// the click currently bubbling is the tail of a drag-select on `el`
+// itself (mousedown + mouseup both land inside it, so the browser
+// still fires a click on release). Activation handlers use this to
+// defer to an in-element text selection while letting ordinary clicks
+// through.
+//
+// The check is scoped to `el` on purpose. A selection living somewhere
+// ELSE on the page must not block a click here — most importantly a
+// highlight inside a finding-card's shadow tree, which Firefox
+// surfaces on the document selection (Chromium keeps it on the card's
+// own shadow root instead). `Node.contains` doesn't cross shadow
+// boundaries, so that finding selection is never "inside" a light-DOM
+// card and `anchorNode` lands outside `el` → returns false → the click
+// goes through. Using `anchorNode` (where the drag began) rather than
+// "any selection exists" is what distinguishes a genuine on-card grab
+// from stale state elsewhere.
+function selectionAnchoredIn(el) {
+  const sel = window.getSelection?.()
+  return !!sel && !sel.isCollapsed && el.contains(sel.anchorNode)
+}
+
 report.addEventListener('click', (e) => {
   // × button inside the modal — close. Listed first so the card
   // toggle below doesn't intercept clicks landing here when the
@@ -1437,9 +1459,12 @@ report.addEventListener('click', (e) => {
   // without needing a separate trip through the backdrop.
   const card = e.target.closest?.('.kanban-card[data-kanban-source]')
   if (card) {
-    // Skip when the user is grabbing text (selection clicks fire
-    // a click after mouseup with a non-empty selection range).
-    if (window.getSelection?.()?.toString()) return
+    // Defer only to a drag-select drawn on the card itself — that
+    // click is really the tail of a text grab. A leftover highlight
+    // anywhere else (e.g. inside the open detail modal's finding-card)
+    // must not swallow a genuine open/toggle click. See
+    // selectionAnchoredIn.
+    if (selectionAnchoredIn(card)) return
     const gid = card.dataset.gid
     if (!gid) return
     setKanbanPopoverGid(state.kanbanPopoverGid === gid ? null : gid)
@@ -1471,8 +1496,24 @@ document.addEventListener('keydown', (e) => {
 // to that gid. The handler also scrolls the now-active card into
 // view inside the sidebar so chaining clicks keeps the queue
 // oriented around the cursor.
+
+// Clear any active text selection before a focus navigation swaps the
+// finding in. The old highlight points into the focused card's shadow
+// nodes, which the re-render replaces — left in place it smears across
+// the incoming finding and, on keyboard nav (which never went through
+// the click guard), visibly lingers over unrelated text. Firefox keeps
+// a shadow-tree selection on the document selection while Chromium
+// keeps it on the card's own shadow root, so clear both — mirroring the
+// dual-root lookup in terminal.js's click-to-focus guard.
+function clearFocusSelection() {
+  window.getSelection?.()?.removeAllRanges()
+  const card = report.querySelector('.focus-pane-card finding-card')
+  card?.shadowRoot?.getSelection?.()?.removeAllRanges()
+}
+
 function setFocusGid(gid) {
   if (!gid || state.focusGid === gid) return
+  clearFocusSelection()
   state.focusGid = gid
   render()
   // Post-render: bring the new active card into view in the
@@ -1524,10 +1565,13 @@ report.addEventListener('click', (e) => {
   }
   const card = e.target.closest?.('.focus-side-card[data-focus-select]')
   if (!card) return
-  // Skip when the user is text-selecting (click fires after mouseup
-  // with a non-empty selection range, same gotcha the kanban card
-  // handler dodges).
-  if (window.getSelection?.()?.toString()) return
+  // Defer only to a drag-select drawn on the card itself, same gotcha
+  // the kanban card handler dodges. The old guard skipped on *any*
+  // page selection, so a highlight left in the focused finding — whose
+  // shadow-tree text Firefox surfaces on the document selection —
+  // silently swallowed every up-next click until the user cleared it.
+  // See selectionAnchoredIn.
+  if (selectionAnchoredIn(card)) return
   const gid = card.dataset.gid
   if (gid) setFocusGid(gid)
 })
