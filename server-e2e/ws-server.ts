@@ -16,6 +16,7 @@ import { Buffer } from 'node:buffer'
 import type { IncomingMessage as HttpRequest } from 'node:http'
 import { decodeUtf8 } from '../common/utf8.js'
 import type { SaveErrorReason } from '../common/save-error-reason.ts'
+import type { ServerInfo } from '../common/server-info.ts'
 import { Peer, type PeerRegistry } from './peer.ts'
 import { errMsg, errStack, randomId } from './util.ts'
 import type { SaveMsg, SubscribeMsg } from './sign.ts'
@@ -36,6 +37,9 @@ type IncomingMessage = {
 // SSE path doesn't need them.
 export type PeerConnectionDeps = {
   peers: PeerRegistry
+  // The mode this server advertises, emitted as the first `server-info`
+  // frame on every connection (see setupPeerConnection).
+  serverInfo: ServerInfo
   send: (socket: WebSocket, msg: object) => void
   unsubscribeAll: (socket: WebSocket) => void
   handleSave: (socket: WebSocket, msg: SaveMsg) => Promise<void>
@@ -60,7 +64,7 @@ export type WsServerDeps = PeerConnectionDeps & {
 // `as unknown as WebSocket`; only the subset both expose is used.
 export function setupPeerConnection(socket: WebSocket, req: HttpRequest, deps: PeerConnectionDeps): void {
   const {
-    peers, send, unsubscribeAll, handleSave, handleSubscribe, handleAuthenticate,
+    peers, serverInfo, send, unsubscribeAll, handleSave, handleSubscribe, handleAuthenticate,
     sendSaveError, objstore, track, isShuttingDown, maxInflightPerSocket, debug,
   } = deps
   if (debug) console.log(`connect from ${req.socket.remoteAddress}`)
@@ -71,13 +75,20 @@ export function setupPeerConnection(socket: WebSocket, req: HttpRequest, deps: P
   const peer = new Peer(randomId())
   peers.set(socket, peer)
   socket.on('pong', () => { peer.alive = true })
-  // Issue the per-connection challenge nonce BEFORE the client can
-  // send anything that needs it. The client signs it into every
-  // `workspace-subscribe` (see canonicalSubscribe in server-e2e/sign.ts);
-  // a captured subscribe frame can't be replayed from a different
-  // connection because that connection's nonce differs and the
+  // Issue the per-connection challenge nonce FIRST — before the client can
+  // send anything that needs it, AND as frame #0 so clients/tests that
+  // positionally read the first frame as the challenge keep working. The
+  // client signs it into every `workspace-subscribe` (see canonicalSubscribe
+  // in server-e2e/sign.ts); a captured subscribe frame can't be replayed from
+  // a different connection because that connection's nonce differs and the
   // signature won't verify against the new canonical bytes. Round-9 H2.
   send(socket, { type: 'challenge', nonce: peer.challenge })
+  // Then advertise the sync protocol (the mode probe), right after the
+  // challenge — the WS plane and the SSE fallback share this path. A client
+  // uses it to detect the mode, cache it, and refuse a cross-mode switch.
+  // Unauthenticated + mode-agnostic; an older client ignores it (predicate
+  // readers skip it; the workspaceTag demux drops it).
+  send(socket, { type: 'server-info', ...serverInfo })
   // Per-socket handlers are DELIBERATELY NOT serialized (vs the
   // client-side `messageQueue = messageQueue.then(...)` Promise
   // chain inside `client/triage-sync.ts:onTransportMessage`).

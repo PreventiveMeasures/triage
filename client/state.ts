@@ -1,5 +1,6 @@
 import { store } from '@rray/frontend/state-management'
 import { getItem as getSecureItem, mutate as mutateSecureItem, onAfterHydrate, setItem as setSecureItem } from './secure-storage.js'
+import { type ManagedServerInfo, type ServerMode, readCachedServerInfo } from './sync/server-mode.ts'
 
 export const VIEW_MODE_KEY = 'deepview.viewMode'
 export const REPO_URLS_KEY = 'deepview.repoUrls'
@@ -108,6 +109,23 @@ export interface State {
   kanbanPopoverGid: string | null
   focusGid: string | null
   focusCodeTick: number
+  // ── server protocol (detected from the `server-info` connect frame) ──
+  // Which sync protocol the configured server speaks; drives mode-aware UI
+  // (managed mode hides workspace export and swaps the offline toggle for
+  // login/logout). Seeded from the localStorage cache so the first paint is
+  // correct, then confirmed by the `server-info` connect frame (see sidebar
+  // `applyServerInfo`).
+  serverMode: ServerMode
+  // Managed-mode entry points (login path + cookie name) when managed; null
+  // for e2e.
+  managed: ManagedServerInfo | null
+  // True when the server reported a DIFFERENT protocol than the cached one —
+  // a cross-mode switch we refuse for now (explicit migration UI is future
+  // work); sync stays paused while set.
+  serverModeMismatch: boolean
+  // The logged-in managed user (null when logged out / e2e). Populated by the
+  // managed session probe once that backend lands.
+  managedSession: { login: string } | null
 }
 
 // Hoisted so the `state` object literal below can call it during its
@@ -245,6 +263,10 @@ export async function importRepoUrls(
 //
 // Graph-tab state lives separately in `./graph2/state.js` because it
 // has its own teardown semantics tied to the canvas lifecycle.
+// Cached server protocol (from the last `server-info` connect frame), read
+// once so the initial render is mode-correct before the live frame confirms it.
+const INITIAL_SERVER_INFO = readCachedServerInfo()
+
 export const state: State = store<State>({
   // Exactly one OPFS-backed report is active at a time — the sidebar
   // switches between them; merging is gone. Headless callers
@@ -551,6 +573,17 @@ export const state: State = store<State>({
   // next manual render (the user reproduced this as "code loads
   // but doesn't appear until I navigate").
   focusCodeTick: 0,
+  // Sync protocol of the configured server (e2e vs managed), seeded from the
+  // localStorage cache so mode-aware UI is correct on first paint; the live
+  // `server-info` connect frame confirms / updates it.
+  serverMode: INITIAL_SERVER_INFO?.mode ?? 'e2e',
+  managed: INITIAL_SERVER_INFO?.managed ?? null,
+  // Set when the server reports a different protocol than the cached one; the
+  // switch is refused (migration is future work) and sync stays paused.
+  serverModeMismatch: false,
+  // Logged-in managed user, or null (e2e / logged out). Future managed
+  // session probe populates this.
+  managedSession: null,
 })
 
 // Cross-tab propagation: a sibling tab's `saveRepoUrlFor` writes

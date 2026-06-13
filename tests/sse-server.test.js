@@ -233,6 +233,16 @@ describe('SSE+POST transport', { concurrency: false }, () => {
     session.close()
   })
 
+  it('emits a server-info frame (mode probe) right after the challenge', async () => {
+    const session = await openSession(httpOrigin)
+    // openSession already consumed the `session` event + the `challenge`
+    // frame; `server-info` is the next server→client frame on the same read.
+    const info = await session.currentRead.recvFrame((m) => m.type === 'server-info')
+    assert.equal(info.mode, 'e2e', 'e2e boot advertises e2e')
+    assert.equal(info.managed, null, 'managed is null for e2e')
+    session.close()
+  })
+
   it('continuation POST against same sid attaches to same session', async () => {
     const { sk, tag } = await makeKp()
     const session = await openSession(httpOrigin)

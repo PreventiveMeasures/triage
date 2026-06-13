@@ -93,6 +93,10 @@ export type SocketTransport = {
   // Force teardown. Idempotent. Acquisitions held after `close()`
   // are stale handles whose `release()` is a no-op.
   close(): void
+  // Force-close + lock the socket against (re)open even while consumers
+  // still hold acquires — used to fail closed on a cross-protocol mismatch.
+  // `false` unlocks and reopens if still acquired.
+  setProtocolLocked(locked: boolean): void
   // Test seam. Pass `0` to `pingMs` to disable.
   setHeartbeatTimings(opts: { pingMs?: number; pongMs?: number }): void
   // Re-arm "silent cached-password replay" so the NEXT
@@ -139,6 +143,11 @@ export function createSocketTransport(deps: SocketTransportDeps): SocketTranspor
   let connectionNonce: string | null = null
   let acquireCount = 0
   let transportClosed = false
+  // True once a cross-protocol mismatch is detected (see setProtocolLocked):
+  // the socket is force-closed and refuses to (re)open even while consumers
+  // (e.g. objstore) hold acquires, so a refused server can't keep a live
+  // socket. Cleared only by an explicit unlock.
+  let protocolLocked = false
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
   let reconnectDelayMs = INITIAL_RECONNECT_DELAY
   let pingIntervalId: ReturnType<typeof setInterval> | null = null
@@ -160,6 +169,7 @@ export function createSocketTransport(deps: SocketTransportDeps): SocketTranspor
   function scheduleReconnect(): void {
     clearReconnect()
     if (transportClosed) return
+    if (protocolLocked) return
     if (acquireCount === 0) return
     if (!serverUrl) return
     reconnectTimer = setTimeout(() => {
@@ -389,6 +399,7 @@ export function createSocketTransport(deps: SocketTransportDeps): SocketTranspor
 
   function openSocket(): void {
     if (transportClosed) return
+    if (protocolLocked) return
     if (socket) return
     if (acquireCount === 0) return
     if (!serverUrl) return
@@ -408,6 +419,7 @@ export function createSocketTransport(deps: SocketTransportDeps): SocketTranspor
     // would otherwise construct an orphan SseTransport that immediately
     // POSTs to the server.
     if (transportClosed) return
+    if (protocolLocked) return
     if (acquireCount === 0) return
     if (!serverUrl) return
     let next: WebSocketLike
@@ -562,6 +574,22 @@ export function createSocketTransport(deps: SocketTransportDeps): SocketTranspor
     cachedPasswordTriedOnThisSocket = false
   }
 
+  // Fail-closed on a cross-protocol mismatch: close the socket and refuse to
+  // (re)open it (the open gates above check `protocolLocked`) even while
+  // consumers like objstore still hold acquires — so a refused server can't
+  // keep a live socket via another plane's acquire. `false` unlocks and
+  // reopens if still acquired.
+  function setProtocolLocked(locked: boolean): void {
+    if (locked === protocolLocked) return
+    protocolLocked = locked
+    if (locked) {
+      clearReconnect()
+      teardownCurrentSocket('protocol-locked')
+    } else if (acquireCount > 0 && serverUrl) {
+      openSocket()
+    }
+  }
+
   return {
     acquire,
     setServerUrl,
@@ -572,6 +600,7 @@ export function createSocketTransport(deps: SocketTransportDeps): SocketTranspor
     isSse: () => socket != null && currentIsSse,
     runAuthFlow,
     close,
+    setProtocolLocked,
     setHeartbeatTimings,
     resetCachedReplayGuard,
   }

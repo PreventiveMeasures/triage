@@ -5,6 +5,7 @@ import { applyChangeset, changesetEmpty, collectChainConflicts, computeChangeset
 import type { Changeset, Conflict, TriageStateMap } from './triage-changeset.ts'
 import { applyHydrationDecisions, applyToReactiveState, effectiveLocalState, hydrateStateFromBaseState } from './triage-state-projection.ts'
 import { dropPersistedSession, loadAllSessionsResult, loadPersistedSession, mutateAllSessions, onPersistenceDegraded, persistenceDegraded, prunePersistedSessions, setPersistenceDegraded } from './triage-session-store.ts'
+import { type ServerInfo, parseServerInfo } from './server-mode.ts'
 
 // The triage data model + the pure changeset algebra live in
 // triage-changeset.ts; per-workspace session persistence + the
@@ -369,6 +370,20 @@ function hasWorkspaces(): boolean {
 // though the WS layer looks fine. `online` requires the ack OR no
 // active session (the empty state, nothing to subscribe to).
 const statusListeners = new Set<StatusListener>()
+// Listeners for the server's `server-info` connect frame (the mode probe).
+// The UI subscribes to learn which protocol the connected server speaks; a
+// subscriber registered after the frame arrived gets the last value at once.
+type ServerInfoListener = (info: ServerInfo) => void
+const serverInfoListeners = new Set<ServerInfoListener>()
+let lastServerInfo: ServerInfo | null = null
+function handleServerInfoFrame(wire: unknown): void {
+  const info = parseServerInfo(wire)
+  if (info == null) return
+  lastServerInfo = info
+  for (const fn of serverInfoListeners) {
+    try { fn(info) } catch (err) { console.warn('Triage sync: onServerInfo listener failed:', err) }
+  }
+}
 function currentStatus(): SyncStatus {
   if (!isActive()) return 'off'
   // A non-recoverable session error takes precedence — the user must
@@ -1457,6 +1472,10 @@ async function handleChain(session: Session, revisions: unknown): Promise<void> 
 }
 
 async function handleMessage(wire: WireMessage): Promise<void> {
+  // The server's mode advertisement (`server-info`) — handled BEFORE the
+  // `workspaceTag` demux below, as it carries no tag. Notifies the UI, which
+  // caches the mode and refuses a cross-mode switch (see onServerInfo).
+  if (wire.type === 'server-info') { handleServerInfoFrame(wire); return }
   // Server accepted `authenticate { password }`. The transport
   // already resolved the auth round-trip; kick every session whose
   // `pendingSave`/`subscribed` was deferred by the gate. The socket
@@ -1923,6 +1942,24 @@ export const triageSync = {
   onStatusChange(listener: StatusListener): () => void {
     statusListeners.add(listener)
     return () => statusListeners.delete(listener)
+  },
+
+  // Subscribe to the server's `server-info` connect frame (mode probe). Fires
+  // on each connect; a subscriber registered after the frame already arrived
+  // gets the last-seen value immediately.
+  onServerInfo(listener: (info: ServerInfo) => void): () => void {
+    serverInfoListeners.add(listener)
+    if (lastServerInfo != null) { try { listener(lastServerInfo) } catch {} }
+    return () => serverInfoListeners.delete(listener)
+  },
+
+  // Hard-lock the SHARED socket closed on a confirmed cross-protocol mismatch
+  // (fail-closed): closes it and refuses to (re)open even while other
+  // consumers (objstore presence) still hold transport acquires. `false`
+  // unlocks. Called by the sidebar's applyServerInfo. Distinct from
+  // `setForcedOff` (which only pauses THIS plane's acquire).
+  setProtocolLocked(locked: boolean): void {
+    transport.setProtocolLocked(locked)
   },
 
   // Called at the tail of saveTriage(). Inside applyChainToBase /

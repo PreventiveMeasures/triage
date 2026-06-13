@@ -560,8 +560,9 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
     // is triage-sync's subscribe ack — we ride that subscribe and receive
     // its `resources` inventory snapshot via the `WorkspaceSubscription`
     // token (triage-sync hands it over), not by observing the ack here.
-    // `authenticated` is transport-internal-but-passed-through.
-    if (msg.type === 'workspace-state' || msg.type === 'workspace-save-ack' || msg.type === 'workspace-save-error' || msg.type === 'workspace-subscribed' || msg.type === 'authenticated') return
+    // `authenticated` is transport-internal-but-passed-through; `server-info`
+    // is the server's mode advertisement (consumed by triage-sync).
+    if (msg.type === 'workspace-state' || msg.type === 'workspace-save-ack' || msg.type === 'workspace-save-error' || msg.type === 'workspace-subscribed' || msg.type === 'authenticated' || msg.type === 'server-info') return
 
     // Request-response correlation: first matching waiter wins,
     // else queue for a later `recv`.

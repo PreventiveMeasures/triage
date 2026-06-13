@@ -82,6 +82,7 @@ import { createSyncHandlers } from './sync-handlers.ts'
 import { WS_UPGRADE_PATH, createHttpServer } from './http.ts'
 import { installWsServer } from './ws-server.ts'
 import { SSE_OPEN_PATH, installSseServer } from './sse-server.ts'
+import type { ServerInfo } from '../common/server-info.ts'
 import { createLifecycle } from './lifecycle.ts'
 import { loadConfig } from './config.ts'
 import { type Handle, openDb } from './db.ts'
@@ -341,12 +342,17 @@ const wss = new WebSocketServer({ noServer: true, maxPayload: 4 * 1024 * 1024 })
 // every server object exists.
 const { track, isShuttingDown, install: installLifecycle } = createLifecycle()
 
+// The sync protocol this build advertises — emitted as a `server-info` frame
+// right after the challenge on every connection. This is the e2e boot, so it
+// always advertises e2e.
+const SERVER_INFO: ServerInfo = { mode: 'e2e', managed: null }
+
 // Shared per-connection dispatch surface. Both the WS plane
 // (installWsServer below) and the SSE+POST fallback (installSseServer
 // below) drive `setupPeerConnection` with this; one Peer per accepted
 // connection, one message-handler tree.
 const peerConnectionDeps = {
-  peers, send, unsubscribeAll,
+  peers, serverInfo: SERVER_INFO, send, unsubscribeAll,
   handleSave, handleSubscribe, handleAuthenticate, sendSaveError, objstore,
   track, isShuttingDown,
   maxInflightPerSocket: MAX_INFLIGHT_PER_SOCKET,
