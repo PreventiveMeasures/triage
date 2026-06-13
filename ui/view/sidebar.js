@@ -1,7 +1,7 @@
 import { LitElement, html, render as litRender, nothing, unsafeCSS } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, getCount, getPackagesIndex, getRepositoriesIndex, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, state } from '#client/index.js'
+import { addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, getCount, getPackagesIndex, getRepositoriesIndex, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, readCachedServerInfo, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, state, writeCachedServerInfo } from '#client/index.js'
 import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, triageSync } from './client-sync.js'
 import sidebarCSS from './sidebar.css'
 import fileIconCSS from '../styles/file-icon.css'
@@ -852,6 +852,10 @@ async function onSidebarClick(e) {
     return
   }
   if (e.target.closest('#sync-status')) {
+    // Paused on a protocol mismatch: the badge is informational — a click
+    // must not churn the (locked) socket or persist toggles. (Clearing it
+    // needs an explicit migration; TODO.)
+    if (state.serverModeMismatch) return
     // Click toggles the persisted user-enabled flag rather than
     // the URL itself — disable then re-enable should resume against
     // the same endpoint, not lose a console-set URL. If no URL is
@@ -869,6 +873,21 @@ async function onSidebarClick(e) {
       triageSync.setEnabled(true)
     } else {
       triageSync.setEnabled(false)
+    }
+    return
+  }
+  if (e.target.closest('#auth-status')) {
+    // Managed-mode login/logout. Login hands off to the server's OAuth entry
+    // point; logout clears the server session then reloads so the app
+    // re-probes and repaints logged-out. (Both endpoints + CSRF land with the
+    // managed backend; `managedSession` is null until then, so the logout
+    // branch is currently dormant.)
+    if (state.managedSession) {
+      void fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' })
+        .catch(() => {})
+        .finally(() => { location.reload() })
+    } else if (state.managed?.loginPath) {
+      location.href = state.managed.loginPath
     }
     return
   }
@@ -967,9 +986,48 @@ function syncButtonVisible() {
   return listWorkspaces().length > 0
 }
 
+// Managed-mode auth control — replaces the offline/online toggle. Shows
+// "Log in" (→ the server's OAuth entry) when logged out, "Log out (user)"
+// when a managed session exists. `state.managedSession` is populated by the
+// future managed session probe; until then it stays null (logged out).
+function renderAuthStatus() {
+  const authBtn = root?.querySelector('#auth-status')
+  if (!authBtn) return
+  authBtn.hidden = false
+  const session = state.managedSession
+  authBtn.textContent = session ? `Log out (${session.login})` : 'Log in'
+  authBtn.dataset.authed = session ? '1' : '0'
+}
+
 function renderSyncStatus(status) {
   const btn = root?.querySelector('#sync-status')
   if (!btn) return
+  // A refused cross-mode switch pins sync OFF and explains why — checked
+  // FIRST so no later render (visibility / status change) can clear the
+  // forced-off and silently reconnect to a wrong-protocol server.
+  if (state.serverModeMismatch) {
+    const mismatchAuthBtn = root?.querySelector('#auth-status')
+    if (mismatchAuthBtn) mismatchAuthBtn.hidden = true
+    triageSync.setForcedOff(true)
+    triageSync.setProtocolLocked(true)
+    btn.hidden = false
+    btn.dataset.status = 'paused'
+    btn.title = 'This server speaks a different sync protocol than this app is set up for. Switching isn’t supported yet.'
+    const mismatchLabel = btn.querySelector('.sync-label')
+    if (mismatchLabel) mismatchLabel.textContent = 'Sync paused'
+    return
+  }
+  // Managed mode replaces the offline/online toggle with login/logout (sync
+  // is session-based there, not a user-toggled WS): hide the sync button,
+  // pause the e2e sync layer, and paint the auth control instead.
+  if (state.serverMode === 'managed') {
+    btn.hidden = true
+    triageSync.setForcedOff(true)
+    renderAuthStatus()
+    return
+  }
+  const authBtn = root?.querySelector('#auth-status')
+  if (authBtn) authBtn.hidden = true
   const visible = syncButtonVisible()
   // Single trigger for the lazy `client-sync.js` chunk: sync is
   // worth loading only when the status button is visible (a usable
@@ -1364,6 +1422,37 @@ async function onSidebarDrop(e) {
 // so an event fired inside the tree reaches them with `e.target`
 // un-retargeted — `e.target.closest(...)` matches shadow elements
 // directly, exactly as it did against the light-DOM `#sidebar`.
+// Apply the server's advertised mode — delivered by its `server-info` connect
+// frame via `triageSync.onServerInfo` — to `state`, refusing a cross-mode
+// switch (managed↔e2e) until an explicit migration exists. `state.serverMode`
+// is seeded from the localStorage cache (see state.ts); this confirms it on
+// connect and updates the cache. A MISMATCH is refused — flag it (surfaced in
+// the sync badge) and keep sync paused, rather than silently reinterpreting
+// local data under the other protocol.
+function applyServerInfo(info) {
+  const cached = readCachedServerInfo()
+  const cls = classifyServerMode(cached ? cached.mode : null, info.mode)
+  if (cls === 'mismatch') {
+    state.serverModeMismatch = true
+    // Fail-closed: pause THIS plane AND hard-lock the SHARED socket so the
+    // mode-unaware objstore plane can't keep it open to the wrong server.
+    triageSync.setForcedOff(true)
+    triageSync.setProtocolLocked(true)
+    console.warn(`sync: server is '${info.mode}' but this client is bound to '${cached?.mode}' — refusing to switch (migration not yet supported)`)
+    renderSyncStatus(triageSync.status)
+    return
+  }
+  state.serverModeMismatch = false
+  // Clear any stale lock from a prior mismatch this session.
+  triageSync.setProtocolLocked(false)
+  const changed = state.serverMode !== info.mode
+  state.serverMode = info.mode
+  state.managed = info.managed
+  writeCachedServerInfo(info)
+  renderSyncStatus(triageSync.status)
+  if (changed) renderSidebar()
+}
+
 function mount(host) {
   hostEl = host
   root = host.renderRoot
@@ -1381,6 +1470,10 @@ function mount(host) {
   root.querySelector('#sidebar-search-input')?.addEventListener('input', onSearchInput)
   renderSyncStatus(triageSync.status)
   renderSidebar()
+  // Learn the server's protocol from its `server-info` connect frame (refuses
+  // a cross-mode switch); state.serverMode is meanwhile seeded from the
+  // localStorage cache (see state.ts) so the first paint is mode-correct.
+  triageSync.onServerInfo(applyServerInfo)
 }
 
 // `<app-sidebar>` — the report / workspace / bundle picker. Shadow
@@ -1431,6 +1524,7 @@ class AppSidebar extends LitElement {
           <span class="sync-dot" aria-hidden="true"></span>
           <span class="sync-label">Sync off</span>
         </button>
+        <button id="auth-status" type="button" hidden></button>
       </div>
     `
   }

@@ -327,6 +327,7 @@ export const triageSync = {
   refreshSession(id) { deferCall('refreshSession', [id]) },
   dismissError(id) { deferCall('dismissError', [id]) },
   setForcedOff(v) { deferCall('setForcedOff', [v]) },
+  setProtocolLocked(v) { deferCall('setProtocolLocked', [v]) },
   setServerUrl(url) { deferCall('setServerUrl', [url]) },
   getServerUrl() { return realModule ? realModule.triageSync.getServerUrl() : null },
   notify() { deferCall('notify', []) },
@@ -334,6 +335,9 @@ export const triageSync = {
   // Subscriptions — pure queue, no load trigger.
   onStatusChange(cb) {
     return deferSubscription(cb, (m, fn) => m.triageSync.onStatusChange(fn))
+  },
+  onServerInfo(cb) {
+    return deferSubscription(cb, (m, fn) => m.triageSync.onServerInfo(fn))
   },
   onPersistenceDegraded(cb) {
     return deferSubscription(cb, (m, fn) => m.triageSync.onPersistenceDegraded(fn))

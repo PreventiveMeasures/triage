@@ -68,6 +68,12 @@ export {
 } from './state.ts'
 
 export {
+  classifyServerMode,
+  readCachedServerInfo,
+  writeCachedServerInfo,
+} from './sync/server-mode.ts'
+
+export {
   deleteBundle,
   deleteFile,
   gunzipBytes,
