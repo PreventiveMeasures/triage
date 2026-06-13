@@ -68,7 +68,9 @@ export {
 } from './state.ts'
 
 export {
+  CONFIG_PATH,
   classifyServerMode,
+  parseServerInfo,
   readCachedServerInfo,
   writeCachedServerInfo,
 } from './sync/server-mode.ts'

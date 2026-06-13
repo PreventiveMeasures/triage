@@ -1188,6 +1188,14 @@ describe('triage-sync server', { concurrency: true }, () => {
     assert.deepEqual(await res.json(), { error: 'not-found' })
   })
 
+  it('GET /api/config → 200 server-info JSON (mode probe; e2e advertises e2e)', async () => {
+    const httpUrl = serverUrl.replace(/^ws:/u, 'http:').replace('/api/sync', '/api/config')
+    const res = await fetch(httpUrl)
+    assert.equal(res.status, 200)
+    assert.equal(res.headers.get('content-type'), 'application/json')
+    assert.deepEqual(await res.json(), { mode: 'e2e', managed: null })
+  })
+
   it('WS upgrade outside /api/sync → 404 with JSON body (not just socket destroy)', async () => {
     // Raw HTTP/1.1 upgrade request to a non-sync path. Asserts the
     // full response writes BEFORE FIN — a regression to bare

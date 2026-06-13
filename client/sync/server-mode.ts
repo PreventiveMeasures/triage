@@ -12,8 +12,9 @@
 // here so the client's import surface stays put and a shape change is a
 // compile error on both sides.
 
-import type { ManagedServerInfo, ServerInfo, ServerMode } from '../../common/server-info.ts'
+import { CONFIG_PATH, type ManagedServerInfo, type ServerInfo, type ServerMode } from '../../common/server-info.ts'
 export type { ManagedServerInfo, ServerInfo, ServerMode }
+export { CONFIG_PATH }
 
 // localStorage slot holding the last-confirmed ServerInfo as JSON. Global
 // (not per-URL): the cache reflects the protocol the local data set is bound

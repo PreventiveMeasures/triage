@@ -35,7 +35,8 @@
     "./package.json": "./package.json"
   },
   "bin": {
-    "triage-server": "server-e2e/cli.js"
+    "triage-server": "server-e2e/cli.js",
+    "triage-managed-server": "server-managed/cli.js"
   },
   "files": [
     "api/reap.ts",
@@ -68,7 +69,6 @@
     "server-e2e/objstore/store-neon.ts",
     "server-e2e/objstore/store.ts",
     "server-e2e/objstore/tokens.ts",
-    "server-e2e/origin.ts",
     "server-e2e/peer.ts",
     "server-e2e/pubsub.ts",
     "server-e2e/sign.ts",
@@ -80,10 +80,21 @@
     "server-e2e/validation.ts",
     "server-e2e/ws-server.ts",
     "server-e2e/config.example.json",
+    "server-common/origin.ts",
+    "server-managed/avatar-store.ts",
+    "server-managed/cli.js",
+    "server-managed/config.ts",
+    "server-managed/crypto.ts",
+    "server-managed/db.ts",
+    "server-managed/github-oauth.ts",
+    "server-managed/http.ts",
+    "server-managed/index.ts",
+    "server-managed/session.ts",
     "common/save-error-reason.ts",
     "common/utf8.d.ts",
     "common/utf8.js",
     "out/brotli-fallback.js",
+    "out/client-managed.js",
     "out/client-sync.js",
     "out/graph.js",
     "out/icon-maskable.svg",
@@ -99,13 +110,14 @@
   ],
   "scripts": {
     "lint": "node --run lint:js && node --run lint:css && node --run lint:ts",
-    "lint:js": "oxlint -c .oxlintrc.json --ignore-pattern=ui/logs.js ./tests/ ./common/ ./server-e2e/ ./client/ ./ui/ ./api/",
+    "lint:js": "oxlint -c .oxlintrc.json --ignore-pattern=ui/logs.js ./tests/ ./common/ ./server-common/ ./server-e2e/ ./server-managed/ ./client/ ./ui/ ./api/",
     "lint:css": "stylelint 'ui/**/*.css'",
     "lint:ts": "tsc --noEmit",
     "prepack": "node --run build",
     "build": "node build.js build",
     "serve": "node build.js serve",
     "server": "node server-e2e/index.ts",
+    "server-managed": "node server-managed/index.ts",
     "test": "node --js-base-64 --experimental-test-module-mocks --test ./tests/*.test.js"
   },
   "devDependencies": {

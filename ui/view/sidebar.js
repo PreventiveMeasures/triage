@@ -1,8 +1,9 @@
 import { LitElement, html, render as litRender, nothing, unsafeCSS } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, getCount, getPackagesIndex, getRepositoriesIndex, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, readCachedServerInfo, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, state, writeCachedServerInfo } from '#client/index.js'
-import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, triageSync } from './client-sync.js'
+import { CONFIG_PATH, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, getCount, getPackagesIndex, getRepositoriesIndex, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, parseServerInfo, readCachedServerInfo, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, state, writeCachedServerInfo } from '#client/index.js'
+import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, setSyncForceDisabled, triageSync } from './client-sync.js'
+import { login as managedLogin, logout as managedLogout, probeSession as managedProbeSession } from './client-managed.js'
 import sidebarCSS from './sidebar.css'
 import fileIconCSS from '../styles/file-icon.css'
 import { initEncryptionToggle } from './encryption-toggle.js'
@@ -180,7 +181,12 @@ function groupHeaderTemplate(label, opts = {}) {
 // mirroring the "Delete current" button below.
 const WORKSPACE_PLUS_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9"/></svg>`
 function workspaceHeaderTemplate() {
-  return html`<li class="file-group-header workspace-header"><span class="group-label">Workspaces</span><span class="workspace-header-actions"><button type="button" class="workspace-add" data-action="new-workspace" title="Create a new workspace" aria-label="Create a new workspace">${WORKSPACE_PLUS_ICON}</button></span></li>`
+  // Managed mode has no client-side workspace creation — a different management
+  // surface is coming — so drop the "+" affordance there.
+  const actions = state.serverMode === 'managed'
+    ? nothing
+    : html`<span class="workspace-header-actions"><button type="button" class="workspace-add" data-action="new-workspace" title="Create a new workspace" aria-label="Create a new workspace">${WORKSPACE_PLUS_ICON}</button></span>`
+  return html`<li class="file-group-header workspace-header"><span class="group-label">Workspaces</span>${actions}</li>`
 }
 
 // Packages + Repositories navigation buttons live as
@@ -465,7 +471,7 @@ export async function renderSidebar() {
     (b) => !claimedBundles.has(b.integrity) && matchesSearch(b.name),
   )
   litRender(html`
-    ${workspaceHeaderTemplate()}
+    ${state.serverMode === 'managed' && workspaces.length === 0 ? nothing : workspaceHeaderTemplate()}
     ${repeat(visibleWorkspaces, (w) => w.id, (w) => {
       // Reports split into present vs missing, mirroring the bundle
       // split below:
@@ -642,6 +648,7 @@ async function onSidebarClick(e) {
     return
   }
   if (e.target.closest('[data-action="new-workspace"]')) {
+    if (state.serverMode === 'managed') return
     const name = await openNewWorkspaceDialog()
     if (name) {
       // First-use prompt fires here too (not just on file drop) so
@@ -876,22 +883,20 @@ async function onSidebarClick(e) {
     }
     return
   }
+  if (e.target.closest('[data-action="managed-logout"]')) {
+    // Logout row inside the account menu — clears the server session (with the
+    // double-submit CSRF token) then reloads so the app re-probes logged-out.
+    void managedLogout(state.managedSession?.csrfToken)
+    return
+  }
   if (e.target.closest('#auth-status')) {
-    // Managed-mode login/logout. Login hands off to the server's OAuth entry
-    // point; logout clears the server session then reloads so the app
-    // re-probes and repaints logged-out. (Both endpoints + CSRF land with the
-    // managed backend; `managedSession` is null until then, so the logout
-    // branch is currently dormant.)
-    if (state.managedSession) {
-      void fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' })
-        .catch(() => {})
-        .finally(() => { location.reload() })
-    } else if (state.managed?.loginPath) {
-      location.href = state.managed.loginPath
-    }
+    // Logged in → the button is a popovertarget that opens the account menu
+    // (the browser toggles it); logged out → it hands off to the OAuth login.
+    if (state.managedSession == null) managedLogin(state.managed?.loginPath)
     return
   }
   if (e.target.closest('#sidebar-toggle')) {
+    if (state.serverMode === 'managed') return
     hostEl.classList.toggle('collapsed')
     try { localStorage.setItem('deepview.sidebarCollapsed', hostEl.classList.contains('collapsed') ? '1' : '0') } catch {}
   }
@@ -994,14 +999,70 @@ function renderAuthStatus() {
   const authBtn = root?.querySelector('#auth-status')
   if (!authBtn) return
   authBtn.hidden = false
+  const menu = root?.querySelector('#user-menu')
   const session = state.managedSession
-  authBtn.textContent = session ? `Log out (${session.login})` : 'Log in'
-  authBtn.dataset.authed = session ? '1' : '0'
+  if (session == null) {
+    authBtn.dataset.authed = '0'
+    authBtn.removeAttribute('popovertarget')
+    authBtn.setAttribute('aria-label', 'Log in')
+    litRender(html`Log in`, authBtn)
+    if (menu) litRender(nothing, menu)
+    return
+  }
+  // Logged in: the button becomes the avatar, opening the account popover menu.
+  const initial = (session.login[0] ?? '?').toUpperCase()
+  authBtn.dataset.authed = '1'
+  authBtn.setAttribute('popovertarget', 'user-menu')
+  authBtn.setAttribute('aria-label', `Account: ${session.login}`)
+  litRender(avatarTemplate(initial), authBtn)
+  if (menu) {
+    litRender(html`
+      <div class="user-card">
+        ${avatarTemplate(initial, true)}
+        <span class="user-id">
+          <span class="user-login">${session.login}</span>
+          ${session.name ? html`<span class="user-name">${session.name}</span>` : nothing}
+        </span>
+      </div>
+      <button type="button" class="user-menu-row" data-action="managed-logout">Log out</button>
+    `, menu)
+  }
+}
+
+// Avatar disc: the cached avatar (served same-origin from /api/auth/avatar)
+// over a fallback initial that shows when there's no avatar (the img 404s).
+function avatarTemplate(initial, large = false) {
+  return html`<span class=${large ? 'user-avatar user-avatar-lg' : 'user-avatar'}>
+    <span class="user-avatar-fallback">${initial}</span>
+    <img alt="" src="/api/auth/avatar" @error=${onAvatarError}>
+  </span>`
+}
+
+function onAvatarError(e) {
+  // No cached avatar → hide the broken img so the initial fallback shows.
+  e.currentTarget.classList.add('broken')
+}
+
+// Brand tag shows the live server mode (e2e / managed / standalone) in place of
+// the old build label.
+function renderBrandTag() {
+  const tag = root?.querySelector('.brand-tag')
+  if (tag) tag.textContent = state.serverMode
+}
+
+// Managed mode pins the sidebar open — no collapse affordance (a fuller
+// management surface lives here). The mode is mirrored onto the host so CSS can
+// hide the collapse toggle.
+function applyCollapsibility() {
+  if (hostEl) hostEl.dataset.mode = state.serverMode
+  if (state.serverMode === 'managed') hostEl?.classList.remove('collapsed')
 }
 
 function renderSyncStatus(status) {
   const btn = root?.querySelector('#sync-status')
   if (!btn) return
+  renderBrandTag()
+  applyCollapsibility()
   // A refused cross-mode switch pins sync OFF and explains why — checked
   // FIRST so no later render (visibility / status change) can clear the
   // forced-off and silently reconnect to a wrong-protocol server.
@@ -1026,9 +1087,24 @@ function renderSyncStatus(status) {
     renderAuthStatus()
     return
   }
+  // Standalone (no backend / no /api/config): a purely local app — no workspace
+  // sync, no online/offline toggle, no auth. Hide both controls.
+  if (state.serverMode === 'standalone') {
+    btn.hidden = true
+    const standaloneAuthBtn = root?.querySelector('#auth-status')
+    if (standaloneAuthBtn) standaloneAuthBtn.hidden = true
+    return
+  }
   const authBtn = root?.querySelector('#auth-status')
   if (authBtn) authBtn.hidden = true
   const visible = syncButtonVisible()
+  // Don't kick e2e sync until the server mode is CONFIRMED (cached). On a cold
+  // first visit `serverMode` defaults to 'e2e', but the server may be managed
+  // or standalone — neither of which must ever pull the client-sync chunk. The
+  // /api/config probe writes the cache (e2e/managed) before re-rendering, so a
+  // returning visitor (cache present) is unaffected; only a first visit waits
+  // one probe RTT. (managed/standalone return early above and never reach here.)
+  const modeConfirmed = readCachedServerInfo() != null
   // Single trigger for the lazy `client-sync.js` chunk: sync is
   // worth loading only when the status button is visible (a usable
   // URL exists AND at least one workspace exists) AND the user
@@ -1036,7 +1112,7 @@ function renderSyncStatus(status) {
   // workspaces, or one who turned sync off, never downloads the
   // chunk. `loadSync` is idempotent (shares one in-flight promise),
   // so re-running on every sidebar render is cheap once kicked.
-  if (visible && triageSync.isEnabled()) {
+  if (visible && modeConfirmed && triageSync.isEnabled()) {
     loadSync().catch((err) => { console.warn('sync: load failed', err) })
   }
   // Auto-prime the default sync URL the first time any workspace
@@ -1046,7 +1122,7 @@ function renderSyncStatus(status) {
   // explicitly turned sync off via the status button (`isEnabled()`
   // reads the persisted toggle, default true) or when a custom URL
   // is already configured via the console API.
-  if (visible && !triageSync.getServerUrl() && DEFAULT_SYNC_URL && triageSync.isEnabled()) {
+  if (visible && modeConfirmed && !triageSync.getServerUrl() && DEFAULT_SYNC_URL && triageSync.isEnabled()) {
     triageSync.setServerUrl(DEFAULT_SYNC_URL)
   }
   // Visibility doubles as an active gate: when the button can't
@@ -1451,6 +1527,60 @@ function applyServerInfo(info) {
   writeCachedServerInfo(info)
   renderSyncStatus(triageSync.status)
   if (changed) renderSidebar()
+  if (info.mode === 'managed') void refreshManagedSession()
+}
+
+// Probe the managed server for the current session (lazy client/managed chunk)
+// and repaint the auth control. Only reached in managed mode.
+async function refreshManagedSession() {
+  try {
+    state.managedSession = await managedProbeSession()
+    renderAuthStatus()
+  } catch (err) {
+    console.warn('managed: session probe failed:', err)
+  }
+}
+
+// Cold-start mode detection. With nothing cached we don't yet know the server's
+// protocol — and a managed server has no WS plane whose connect frame would
+// tell us — so GET /api/config to learn it up front and feed the same
+// applyServerInfo path. Skipped once the mode is known (cached); the WS connect
+// frame (kept) then catches any later change.
+async function detectServerModeIfUnknown() {
+  if (readCachedServerInfo()) return
+  let status = 0
+  let info = null
+  try {
+    const res = await fetch(CONFIG_PATH, { credentials: 'same-origin', headers: { accept: 'application/json' } })
+    status = res.status
+    if (res.ok) info = parseServerInfo(await res.json())
+  } catch { /* offline / unreachable — stay on the default until a frame arrives */ }
+  if (info) { applyServerInfo(info); return }
+  if (status === 404) {
+    // No /api/config → a backend-less (standalone) deployment: purely local, no
+    // sync. Runtime-only — deliberately NOT cached (a static host could gain a
+    // backend later) — and the e2e sync chunk is hard-disabled.
+    state.serverMode = 'standalone'
+    setSyncForceDisabled(true)
+    renderSyncStatus(triageSync.status)
+    renderSidebar()
+  }
+}
+
+// The account menu is a native popover (top layer); position it just above the
+// auth button on open, since popover="auto" otherwise centers in the viewport.
+function positionUserMenuOnOpen() {
+  const menu = root?.querySelector('#user-menu')
+  const trigger = root?.querySelector('#auth-status')
+  if (!menu || !trigger) return
+  menu.addEventListener('beforetoggle', (e) => {
+    if (e.newState !== 'open') return
+    const r = trigger.getBoundingClientRect()
+    menu.style.left = `${Math.round(r.left)}px`
+    menu.style.bottom = `${Math.round(window.innerHeight - r.top + 6)}px`
+    menu.style.top = 'auto'
+    menu.style.right = 'auto'
+  })
 }
 
 function mount(host) {
@@ -1468,12 +1598,19 @@ function mount(host) {
   fileList.addEventListener('mouseover', onFileListMouseover)
   fileList.addEventListener('mouseout', onFileListMouseout)
   root.querySelector('#sidebar-search-input')?.addEventListener('input', onSearchInput)
+  positionUserMenuOnOpen()
   renderSyncStatus(triageSync.status)
   renderSidebar()
   // Learn the server's protocol from its `server-info` connect frame (refuses
   // a cross-mode switch); state.serverMode is meanwhile seeded from the
   // localStorage cache (see state.ts) so the first paint is mode-correct.
   triageSync.onServerInfo(applyServerInfo)
+  // Cold start (mode not yet cached): probe GET /api/config so we detect a
+  // managed server, which has no WS connect frame to announce itself.
+  void detectServerModeIfUnknown()
+  // If the cached mode is already managed, probe the session now so the auth
+  // control paints logged-in/out without waiting for a connect frame.
+  if (state.serverMode === 'managed') void refreshManagedSession()
 }
 
 // `<app-sidebar>` — the report / workspace / bundle picker. Shadow
@@ -1526,6 +1663,7 @@ class AppSidebar extends LitElement {
         </button>
         <button id="auth-status" type="button" hidden></button>
       </div>
+      <div id="user-menu" popover class="user-menu"></div>
     `
   }
 

@@ -23,3 +23,8 @@ export interface ServerInfo {
   mode: ServerMode
   managed: ManagedServerInfo | null
 }
+
+// The mode-probe route. A client GETs this to learn a server's protocol up
+// front — a managed server has no WS plane to carry the connect frame — and
+// the response body is the same `ServerInfo` shape emitted as that frame.
+export const CONFIG_PATH = '/api/config'

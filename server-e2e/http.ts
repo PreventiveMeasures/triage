@@ -10,6 +10,7 @@ import { type IncomingMessage as HttpRequest, type Server, type ServerResponse, 
 import { Buffer } from 'node:buffer'
 import { fileURLToPath } from 'node:url'
 import type { WebSocketServer } from 'ws'
+import { CONFIG_PATH, type ServerInfo } from '../common/server-info.ts'
 import { type ObjstoreRestDeps, handleRest, matchRoute } from './objstore/rest.ts'
 import { SSE_OPEN_PATH, type SseServer } from './sse-server.ts'
 import { dispatchNpmAdvisories } from './npm-proxy.ts'
@@ -40,6 +41,10 @@ type HasHeaders = { headers: HttpRequest['headers'] }
 export type HttpServerDeps = {
   wss: WebSocketServer
   restDeps: ObjstoreRestDeps
+  // This server's `server-info` (mode advertisement), served as JSON at
+  // GET /api/config so a client can detect the protocol without a sync
+  // connection (the WS connect frame stays the source of truth).
+  serverInfo: ServerInfo
   // SSE+POST fallback. Owns its own session map + lifecycle; we just
   // give it first crack at requests that match `SSE_OPEN_PATH`. Same
   // same-origin / shutdown gates run BEFORE the dispatch so the SSE
@@ -109,7 +114,7 @@ function dispatchSaveRest(
 }
 
 export function createHttpServer(deps: HttpServerDeps): Server {
-  const { wss, restDeps, sseServer, isOriginAllowed, isShuttingDown, track, handleSaveRest, restPutIdleTimeoutMs, debug } = deps
+  const { wss, restDeps, sseServer, serverInfo, isOriginAllowed, isShuttingDown, track, handleSaveRest, restPutIdleTimeoutMs, debug } = deps
   // Static-file plane (see ./static.ts). The directory is the
   // `build.js build` output sibling to this file; the loader handles
   // enumeration, pre-compression, and ETag derivation. Plugged in after
@@ -117,6 +122,19 @@ export function createHttpServer(deps: HttpServerDeps): Server {
   const handleStatic = loadStatic(fileURLToPath(new URL('../out', import.meta.url)))
 
   const httpServer = createServer((req: HttpRequest, res: ServerResponse) => {
+    // Static mode probe: GET /api/config → this server's `server-info` as JSON.
+    // A client uses it to detect the protocol up front; the WS connect frame
+    // stays the source of truth and catches a later mode change. Public, no body.
+    if (typeof req.url === 'string' && req.url.split('?', 1)[0] === CONFIG_PATH) {
+      if (req.method !== 'GET') {
+        res.writeHead(405, { 'content-type': 'application/json', allow: 'GET' })
+        res.end(JSON.stringify({ error: 'method-not-allowed' }))
+        return
+      }
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+      res.end(JSON.stringify(serverInfo))
+      return
+    }
     // SSE+POST fallback plane. Same-origin gate first (Origin header
     // is set by the browser on cross-origin EventSource + fetch, so
     // a hostile origin would surface here just like it does on the
