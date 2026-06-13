@@ -135,4 +135,22 @@
      shows meta, in-body line-row stays hidden), so meta is neither
      doubled nor dropped. */
   .flat-group.multi-case .flat-group-loc .run-meta { display: none; }
+
+  /* Focus view-mode. The right-hand "Up next" queue (prev/next nav +
+     the compact card list) is interactive navigation chrome — useless
+     on paper, so drop it. With it gone, unwind the focus layout's
+     flex/grid + per-pane scroll containers back to normal block flow
+     so the focused finding-card (and its inline Code panel, when one
+     is mounted) print in full down the page instead of clipping to the
+     on-screen scroll viewport — the same reason list/grouped views
+     paginate cleanly. The view-mode swap pipeline (events.js) only
+     maps table → list, so a report printed from focus mode stays in
+     focus and yields the single focused card. */
+  .focus-sidebar { display: none !important; }
+  .focus-view,
+  .focus-main,
+  .focus-main.with-code { display: block !important; }
+  .focus-pane,
+  .focus-pane-code,
+  .focus-code-body { overflow: visible !important; }
 }

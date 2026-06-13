@@ -7,6 +7,7 @@ import { refreshGraph2Sidebar, refreshGraph2TopPkgs, render } from './render.js'
 import { refreshBundleGraphSidebar, refreshBundleGraphTopPkgs, revealBundleCodeCurrent } from './render-bundle.js'
 import { grantAdvisoriesProxyConsent, retryBundleAdvisories } from './render-bundle-advisories.js'
 import { openCommentDialog } from './dialogs/comment-dialog.js'
+import { openExportConfirmDialog } from './dialogs/export-confirm-dialog.js'
 import { openFixLinkDialog } from './dialogs/fix-link-dialog.js'
 import { downloadReportsAsMarkdown } from './markdown-export.js'
 
@@ -1662,6 +1663,18 @@ window.addEventListener('afterprint', restoreAfterPrint)
 document.addEventListener('print-requested', async () => {
   if (state.reports.length === 0) return
   if (printSavedMode !== null) return
+  // Confirm what's leaving first — the dialog restates the active
+  // filters + included/excluded counts. The confirm click is itself a
+  // user gesture, so the subsequent window.print() stays
+  // user-activated (same microtask-drain reasoning as the
+  // updateComplete await below). Cancel / Esc abort with no print.
+  const { confirmed } = await openExportConfirmDialog('print')
+  if (!confirmed) return
+  // Re-check the re-entrancy guard: the top-of-handler check ran before
+  // the await, and `printSavedMode` isn't set until prepareForPrint
+  // below — so a print started during the dialog (a stray beforeprint,
+  // or a second print-requested) could otherwise race past it.
+  if (printSavedMode !== null) return
   prepareForPrint()
   try {
     // `updateComplete` resolves after the element's render() has
@@ -1685,9 +1698,13 @@ document.addEventListener('print-requested', async () => {
 // Markdown download — pairs with the print button (same top-right
 // stack). Pure data export: no view-mode swap needed since we
 // serialize state.reports + per-finding triage / marker / comment
-// state directly, without going through the DOM.
-document.addEventListener('download-requested', () => {
+// state directly, without going through the DOM. Like print, it
+// fronts the export with the confirm dialog so the user sees the
+// filtered selection (and counts) before the file is written.
+document.addEventListener('download-requested', async () => {
   if (state.reports.length === 0) return
+  const { confirmed } = await openExportConfirmDialog('download')
+  if (!confirmed) return
   downloadReportsAsMarkdown(state.reports)
 })
 

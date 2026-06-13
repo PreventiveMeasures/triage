@@ -1,7 +1,8 @@
 import { state } from '#client/index.js'
 import { downloadBlob } from './dom.js'
+import { applyFilters } from './filters.js'
 import { commonPrefix, findingDisplayName, stripExportMarker } from './format.js'
-import { isIgnored, tabKey } from './group.js'
+import { groupState, isIgnored, tabKey } from './group.js'
 
 // Markdown serializer for the "download report" toolbar button —
 // produces a single `.md` file from `state.reports`, grouped by
@@ -10,6 +11,13 @@ import { isIgnored, tabKey } from './group.js'
 // ignoredIds / comments) is included where set so the export is a
 // snapshot of the viewer's current annotations, not just the raw
 // JSON the report was loaded from.
+//
+// The export honours the active filters the same way the print/PDF
+// path does: each report contributes only the findings visible under
+// the current triage bucket (live / trash) and toolbar filters
+// (severity / source / confidence / search / …), so a downloaded
+// report matches what the viewer sees on screen and would get on
+// paper. See `visibleGroups` below.
 
 const SEVERITY_LABELS = {
   critical: 'Critical',
@@ -90,13 +98,28 @@ function findingToMarkdown(f) {
   return lines.join('\n')
 }
 
-// One report → markdown. Findings flattened from groups[] (a group
-// is a list of cases for the same finding, see ingest / group.js);
-// each case is its own subsection so the order matches the
-// list/grouped views. Sorted by severity descending so the doc
-// opens with the most urgent findings.
-function reportToMarkdown(report) {
-  const findings = (report.groups ?? []).flat()
+// Groups of a report visible under the current view: the active
+// triage bucket (live = null / a trash bucket) narrowed by the
+// toolbar filters. Mirrors render.js's on-screen set — bucket split
+// (`commonTriage === state.shownTriage`) then `applyFilters`, which
+// keeps a dedup group when ANY of its tabs matches (group-level
+// visibility, same as the table / list / grouped views). This is the
+// same set the print/PDF path captures off the rendered DOM.
+function visibleGroups(report) {
+  const inBucket = (report.groups ?? []).filter(
+    (g) => groupState(g).commonTriage === state.shownTriage,
+  )
+  return applyFilters(inBucket)
+}
+
+// One report → markdown. `groups` is the pre-filtered visible set
+// (see visibleGroups); findings are flattened from it (a group is a
+// list of cases for the same finding, see ingest / group.js) so each
+// case is its own subsection, matching the list/grouped views. Sorted
+// by severity descending so the doc opens with the most urgent
+// findings.
+function reportToMarkdown(report, groups) {
+  const findings = groups.flat()
   const lines = [`# ${report.fileName}`, '']
   if (report.source) {
     lines.push(`**Source:** ${report.source}`)
@@ -130,7 +153,16 @@ export function reportsToMarkdown(reports) {
   // Multiple-report mode: keep each report's H1 and separate them
   // with a horizontal rule. Mirrors how the print button stamps
   // commonPrefix(fileNames) as the document title for batches.
-  return reports.map(reportToMarkdown).join('\n---\n\n')
+  // Reports with nothing left after filtering are dropped entirely
+  // (no empty "Findings: 0" section), matching the PDF, which prints
+  // no page for a report whose findings are all filtered out.
+  const sections = []
+  for (const report of reports) {
+    const groups = visibleGroups(report)
+    if (groups.length === 0) continue
+    sections.push(reportToMarkdown(report, groups))
+  }
+  return sections.join('\n---\n\n')
 }
 
 // Mirror the print button's filename heuristic: single report uses

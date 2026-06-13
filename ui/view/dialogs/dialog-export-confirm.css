@@ -1,0 +1,49 @@
+/* `<export-confirm-dialog>` layer on top of dialog-base.css. The base
+   supplies the `dialog` frame, `.nwd-intro` / `.nwd-note` body text,
+   and the `.nwd-actions` footer; this adds the count headline and the
+   active-filters definition list. */
+
+/* Count headline — the "X of Y findings included" line. Sized up from
+   body copy so the number the user is committing to reads at a glance,
+   in the accent color to anchor the dialog. */
+.ecd-count {
+  margin: 0;
+  font-size: 1.02rem;
+  color: var(--text);
+
+  & strong { color: var(--accent); font-weight: 700; }
+}
+/* Secondary "N filtered out" clause — muted so it reads as a footnote
+   to the included count rather than competing with it. */
+.ecd-excluded {
+  margin: .25rem 0 0;
+  color: var(--muted); font-size: .82rem;
+}
+
+/* Active-filters list: a two-column definition list (label → value).
+   `align-items: baseline` keeps multi-line values aligned to their
+   label's first line. */
+.ecd-filters {
+  margin: .9rem 0 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: .3rem .7rem;
+  font-size: .82rem;
+}
+.ecd-filters dt {
+  color: var(--muted); font-weight: 600;
+  white-space: nowrap;
+}
+.ecd-filters dd {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+/* "Active filters" / "No filters" caption above the list. */
+.ecd-filters-label {
+  margin: .9rem 0 0;
+  font-size: .76rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .05em;
+  color: var(--muted);
+}
+.ecd-filters-label + .ecd-filters { margin-top: .35rem; }

@@ -18,40 +18,71 @@ export const SEVERITY_ORDER = {
 // recognizable color hint without competing with vuln tiers in the
 // summary slots.
 export const SEVERITIES = ['critical', 'high', 'medium', 'low', 'high_bug', 'bug', 'informational']
-// "Module" = third-party dependency. The canonical layout is
-// `node_modules/`; some build systems (Rust crates, etc.) vendor
-// under `dependencies/` instead. Both can occur side-by-side in the
-// same project — `dependencies/` may be a regular source dir when
-// `node_modules/` is also present — so the active deps dir is
-// chosen contextually: prefer `node_modules` when ANY path in the
-// loaded reports has it, fall back to `dependencies` otherwise.
+// "Module" = third-party dependency. Recognised vendor-directory
+// layouts, in detection precedence: `node_modules/` (npm/pnpm/yarn),
+// `vendor/` (PHP Composer, Go modules), and the generic
+// `dependencies/`. Several can occur side-by-side in the same project
+// — and `dependencies/` (or `vendor/`) may itself be a regular source
+// dir — so ONE active deps dir is chosen contextually: prefer
+// `node_modules` when ANY loaded path has it, else `vendor`, else fall
+// back to `dependencies`. Committing to the most specific present
+// marker avoids misclassifying an ordinary source folder as
+// third-party.
 //
 // `configureDepsDir(reports)` is called from render.js at the start
 // of every render; the helpers below (isModule / stripPackagePrefix
 // / packageOf via depsDirName) consult `depsDir` so reclassifying
-// happens once per render, not per call.
+// happens once per render, not per call. The matchers are cached on
+// `depsDir` (rebuilt only when it changes) so the hot `isModule` path
+// stays a single stateless `RegExp.test`.
+
+// Segment matcher `(^|/)<dir>/` — `dir` must be a whole path segment,
+// so `vendor/` matches `app/vendor/x` but not `my-vendor-lib/x`.
+function depsSegRe(dir) { return new RegExp(`(^|/)${dir}/`, 'u') }
+// Package-prefix matcher `<dir>/<pkg>/<rest>` where `<pkg>` is a bare
+// name or an `@scope/name` pair; captures `<rest>` for stripping.
+function depsStripRe(dir) { return new RegExp(`^(?:.*/)?${dir}/(?:@[^/]+/[^/]+|[^/]+)/(.*)$`, 'u') }
+
+// Detection matchers for the two non-fallback markers, built once.
+const NODE_MODULES_RE = depsSegRe('node_modules')
+const VENDOR_RE = depsSegRe('vendor')
+
 let depsDir = 'node_modules'
+let moduleRe = depsSegRe(depsDir)
+let stripRe = depsStripRe(depsDir)
+
+function setDepsDir(dir) {
+  if (dir === depsDir) return
+  depsDir = dir
+  moduleRe = depsSegRe(dir)
+  stripRe = depsStripRe(dir)
+}
 
 export function configureDepsDir(reports) {
-  const has = (s) => /(^|\/)node_modules\//u.test(s)
   let hasNodeModules = false
+  let hasVendor = false
+  // Returns true once `node_modules` is seen — the highest-precedence
+  // marker, so scanning can stop the moment it appears.
+  const note = (s) => {
+    if (!hasNodeModules && NODE_MODULES_RE.test(s)) hasNodeModules = true
+    if (!hasVendor && VENDOR_RE.test(s)) hasVendor = true
+    return hasNodeModules
+  }
   outer: for (const r of reports) {
     for (const g of r.groups ?? []) {
-      for (const f of g) if (has(f.file)) { hasNodeModules = true; break outer }
+      for (const f of g) if (note(f.file)) break outer
     }
     if (r.tree) {
-      for (const p of Object.keys(r.tree)) if (has(p)) { hasNodeModules = true; break outer }
+      for (const p of Object.keys(r.tree)) if (note(p)) break outer
     }
   }
-  depsDir = hasNodeModules ? 'node_modules' : 'dependencies'
+  setDepsDir(hasNodeModules ? 'node_modules' : hasVendor ? 'vendor' : 'dependencies')
 }
 
 export function depsDirName() { return depsDir }
 
 export function isModule(file) {
-  return depsDir === 'node_modules'
-    ? /(^|\/)node_modules\//u.test(file)
-    : /(^|\/)dependencies\//u.test(file)
+  return moduleRe.test(file)
 }
 
 // File size formatter — bytes with thousand-separators and a `B`
@@ -103,13 +134,11 @@ export function stripCommonPathPrefix(paths) {
 // `dependencies/@org/pkg/sub/x.js` → `sub/x.js`. Greedy `.*\/` runs to
 // the LAST `/<deps-dir>/` so nested layouts strip the innermost
 // package, matching the package-name extraction at export time.
-// Uses the active `depsDir` so a `dependencies/` path is only
-// stripped when that's what the project's vendor dir actually is.
+// Uses the active `depsDir` (via the cached `stripRe`) so a
+// `dependencies/` path is only stripped when that's what the
+// project's vendor dir actually is.
 export function stripPackagePrefix(file) {
-  const re = depsDir === 'node_modules'
-    ? /^(?:.*\/)?node_modules\/(?:@[^/]+\/[^/]+|[^/]+)\/(.*)$/u
-    : /^(?:.*\/)?dependencies\/(?:@[^/]+\/[^/]+|[^/]+)\/(.*)$/u
-  return file.match(re)?.[1] ?? file
+  return file.match(stripRe)?.[1] ?? file
 }
 
 // Strip `[export: <name>]` markers from prose when they match the
