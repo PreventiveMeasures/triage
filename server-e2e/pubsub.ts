@@ -1,5 +1,5 @@
 // Cross-instance pub/sub for real-time WS broadcasts. The triage-sync
-// fan-out is an in-memory subscriber map (e2e-server/hub.ts) by design — it
+// fan-out is an in-memory subscriber map (server-e2e/hub.ts) by design — it
 // routes a commit only to peers on the SAME instance. A multi-instance
 // deployment behind a load balancer needs commit-landed-on-A to reach
 // peers-on-B with the same latency the hub gives same-instance peers.
@@ -65,7 +65,7 @@ export type BusMessage =
   | { kind: 'objput'; tag: string; res: string }
   | { kind: 'objdel'; tag: string; res: string; ver: number }
 
-// Receiver wired up by the hub layer (see e2e-server/index.ts). Each handler
+// Receiver wired up by the hub layer (see server-e2e/index.ts). Each handler
 // runs once per remote message; failures are logged but don't crash the
 // LISTEN loop — a missed broadcast surfaces to clients on reconnect
 // (chain re-pull). Async because the workspace-revision handler does a
@@ -164,7 +164,7 @@ type NeonState = {
   // In-flight bus-message handler promises. `dispatchNotification`
   // fires handlers fire-and-forget, but `stop()` awaits this set before
   // returning so the lifecycle's `handle.close()` (which runs after
-  // `pubsub.stop()` — see closeDb in e2e-server/index.ts) can't race a
+  // `pubsub.stop()` — see closeDb in server-e2e/index.ts) can't race a
   // handler mid-`handle.revisionById.get` / `getLive`.
   pendingHandlers: Set<Promise<void>>
 }
@@ -333,7 +333,7 @@ export function createNeonPubSub(deps: NeonPubSubDeps): PubSub {
       if (state.connectAttempt) { try { await state.connectAttempt } catch {} }
       // Drain in-flight bus-message handlers BEFORE returning. The
       // lifecycle teardown runs `pubsub.stop()` and THEN
-      // `handle.close()` (see closeDb in e2e-server/index.ts); a handler
+      // `handle.close()` (see closeDb in server-e2e/index.ts); a handler
       // still in `handle.revisionById.get` / `getLive` would otherwise
       // throw against a closed DB. `allSettled` so one handler's
       // rejection doesn't abort the drain.

@@ -8,5 +8,5 @@ playground
 *.tgz
 .cache
 .claude/worktrees/
-e2e-server/data/
-e2e-server/config.json
+server-e2e/data/
+server-e2e/config.json

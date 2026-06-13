@@ -83,7 +83,7 @@
         "client/storage.js",
         "client/passkey-vault.js",
         "client/workspaces.js",
-        "e2e-server/objstore/store.ts"
+        "server-e2e/objstore/store.ts"
       ],
       "rules": {
         "max-lines": "off",
@@ -92,9 +92,9 @@
     },
     {
       "files": [
-        "e2e-server/sync-handlers.ts",
-        "e2e-server/sse-server.ts",
-        "e2e-server/ws-server.ts"
+        "server-e2e/sync-handlers.ts",
+        "server-e2e/sse-server.ts",
+        "server-e2e/ws-server.ts"
       ],
       "rules": {
         "max-lines-per-function": "off"
@@ -102,7 +102,7 @@
     },
     {
       "files": [
-        "e2e-server/sse-session.ts"
+        "server-e2e/sse-session.ts"
       ],
       "rules": {
         "unicorn/prefer-event-target": "off"

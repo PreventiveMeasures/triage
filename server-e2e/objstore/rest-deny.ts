@@ -3,7 +3,7 @@
 // envelope so clients parse one shape; the 409 variant additionally
 // carries the live version/incarnation so a PUT / put-begin can rebase.
 // Reasons (400/401/403/404/405/409/410/411/500/503) are documented in
-// e2e-server/README.md and the client decides recovery from the code —
+// server-e2e/README.md and the client decides recovery from the code —
 // probe-distinguishing defense isn't a goal: the richer PUT/GET reasons are
 // reachable only after the bearer-token check, while the public surfaces (an
 // unauthed GET/PUT, or the signature-authed POST mint) expose only

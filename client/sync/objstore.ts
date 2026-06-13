@@ -1,5 +1,5 @@
 // Client for the v1.objstore extension. Pair with the triage-sync
-// relay (see e2e-server/README.md). Two planes:
+// relay (see server-e2e/README.md). Two planes:
 //
 // - **WS control plane**. A single multiplexed WebSocket per client
 //   (`createObjstoreClient`) — every workspace the client opens
@@ -616,7 +616,7 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
   // The REST mint endpoint for (tag, res) — same `/api/objstore/...` route
   // as GET/PUT, validated against the captured origin. POST here mints a
   // fetch/put token without the SSE round-trip (see the REST handlers in
-  // e2e-server/objstore/rest.ts).
+  // server-e2e/objstore/rest.ts).
   const restMintUrl = (workspaceTag: string, resourceTag: string) =>
     buildObjstoreUrl(`/api/objstore/${workspaceTag}/${resourceTag}`)
 
@@ -1451,7 +1451,7 @@ async function parseRestConflict(res: Response): Promise<{ version: number; inca
 // every later legitimate fetch trip the `version < last.version`
 // guard (a permanent fetch DoS), and a non-finite/`NaN` value defeats
 // the monotonic comparison outright. Mirrors the server's
-// `isSafeNonNegativeInt` (e2e-server/objstore/sign.ts).
+// `isSafeNonNegativeInt` (server-e2e/objstore/sign.ts).
 //
 // This gate is the trust boundary for EVERY relay-controlled numeric
 // metadata field that can feed `noteVersion` / `assertFreshOrLater` —

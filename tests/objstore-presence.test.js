@@ -1,5 +1,5 @@
 // End-to-end tests for `client/sync/objstore-presence.js` against a
-// spawned `e2e-server/index.ts` relay. Validates the cache wiring:
+// spawned `server-e2e/index.ts` relay. Validates the cache wiring:
 // openWorkspace opens an encrypted objstore session, snapshots
 // `list()`, decodes each remote tag back to a fileName via
 // `fetchByTag` in the background, and re-renders the badge via

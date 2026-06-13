@@ -1,5 +1,5 @@
 // Race-condition + complex-scenario tests for the triage-sync
-// relay (the WS plane in `e2e-server/index.ts` + `e2e-server/db.ts`).
+// relay (the WS plane in `server-e2e/index.ts` + `server-e2e/db.ts`).
 //
 // Sibling of tests/sync-server.test.js — that file pins single-
 // client lifecycle + signature gates. This one targets:
@@ -13,7 +13,7 @@
 // `commitRevision` keeps the chain from forking with NO write lock:
 // its single gated INSERT reads head + MAX(seq) from one snapshot and
 // the `UNIQUE(workspace_tag, seq)` PK rejects a racer on the same seq
-// (see `commitRevisionSqlite` in e2e-server/db.ts). Tests below exercise
+// (see `commitRevisionSqlite` in server-e2e/db.ts). Tests below exercise
 // that under real WS contention — production ordering is what matters.
 
 import assert from 'node:assert/strict'
@@ -481,7 +481,7 @@ describe('triage-sync server races', { concurrency: true }, () => {
   })
 
   it('a subscriber that closes mid-broadcast does NOT abort the broadcast for remaining peers', async () => {
-    // The broadcast loop in e2e-server/index.ts:277 snapshots subscribers
+    // The broadcast loop in server-e2e/index.ts:277 snapshots subscribers
     // before iterating, and sendRaw try/catches per-subscriber. A
     // subscriber that's transitioning to CLOSED mid-broadcast must
     // not skip every subscriber after it in iteration order.
@@ -893,7 +893,7 @@ describe('triage-sync server races', { concurrency: true }, () => {
   })
 
   it('stale-base catch-up after a keyframe is bounded by the keyframe (chainFrom optimization)', async () => {
-    // e2e-server/db.ts:285-292: chainFrom skips past the most recent
+    // server-e2e/db.ts:285-292: chainFrom skips past the most recent
     // keyframe when the `from` cursor is null OR unknown. The
     // keyframe replaces the running baseState, so anything older
     // is redundant — sending it would waste bytes on a O(history)
@@ -1047,11 +1047,11 @@ describe('triage-sync server races', { concurrency: true }, () => {
   //     (silent drop on sig-canonical mismatch is intentional;
   //     a typed error would weaken the chain-poisoning defense).
   //   - Cross-workspace `from` id: by-design keyframe fallback per
-  //     e2e-server/index.ts:583-588. The schema has no per-workspace
+  //     server-e2e/index.ts:583-588. The schema has no per-workspace
   //     id index by design; the comment is explicit that "client
   //     lying about `from` just means a smaller catch-up".
   //   - Per-socket in-flight cap: already implemented at
-  //     e2e-server/index.ts:210 (`MAX_INFLIGHT_PER_SOCKET = 64`) and
+  //     server-e2e/index.ts:210 (`MAX_INFLIGHT_PER_SOCKET = 64`) and
   //     enforced at line 767 (silent drop above cap, with `ping`
   //     exempt so the heartbeat keeps responding under shed).
   //
@@ -1087,7 +1087,7 @@ describe('triage-sync server races', { concurrency: true }, () => {
       // The loser receives TWO classes of `workspace-state` frames
       // both arriving on the same socket: the BROADCAST of the
       // winner's commit (fan-out to subscribers, see
-      // e2e-server/index.ts:539), and the LOSER'S OWN catch-up emitted
+      // server-e2e/index.ts:539), and the LOSER'S OWN catch-up emitted
       // from the stale-base branch. Their relative ordering depends
       // on whether c1's commit fan-out fires before or after c2's
       // stale-base handler runs — non-deterministic to the wire.
@@ -1135,11 +1135,11 @@ describe('triage-sync server races', { concurrency: true }, () => {
   })
 
   it('subscribe with `from = id-from-a-different-workspace` falls back to the target workspace\'s keyframe path (by-design, not an error)', async () => {
-    // e2e-server/index.ts:583-588: "Client lying about `from` just means
+    // server-e2e/index.ts:583-588: "Client lying about `from` just means
     // they get a smaller catch-up — their subsequent saves will
     // reveal stale state on the usual base-mismatch path."
     //
-    // The `seqOfId` query (e2e-server/db.ts:225-228) is keyed on
+    // The `seqOfId` query (server-e2e/db.ts:225-228) is keyed on
     // (workspace_tag, id). An id from another workspace doesn't
     // match for this workspace; the cursor falls through to the
     // keyframe-or-full-chain path. The client gets the workspace
@@ -1175,8 +1175,8 @@ describe('triage-sync server races', { concurrency: true }, () => {
     } finally { writerA.ws.close() }
   })
 
-  it('per-socket in-flight cap exists (e2e-server/index.ts:210); ping responds even under flood (cap is per-CONCURRENT, not per-total)', async () => {
-    // e2e-server/index.ts:210, 766-771: per-socket cap on CONCURRENT
+  it('per-socket in-flight cap exists (server-e2e/index.ts:210); ping responds even under flood (cap is per-CONCURRENT, not per-total)', async () => {
+    // server-e2e/index.ts:210, 766-771: per-socket cap on CONCURRENT
     // async-handler count (MAX_INFLIGHT_PER_SOCKET = 64). Above
     // the cap, non-ping frames are silently dropped (consistent
     // with bad-shape paths). `ping` is explicitly exempt at line

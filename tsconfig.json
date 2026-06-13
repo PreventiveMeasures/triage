@@ -32,5 +32,5 @@
 
     "types": ["node"]
   },
-  "include": ["e2e-server/**/*.ts", "client/**/*.ts", "common/**/*.d.ts", "api/**/*.ts"]
+  "include": ["server-e2e/**/*.ts", "client/**/*.ts", "common/**/*.d.ts", "api/**/*.ts"]
 }

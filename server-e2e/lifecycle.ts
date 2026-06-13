@@ -14,7 +14,7 @@ export type ShutdownDeps = {
   httpServer: Server
   wss: WebSocketServer
   heartbeatTimer: ReturnType<typeof setInterval>
-  // The SSE keepalive-sweep timer (e2e-server/sse-server.ts). Cleared on
+  // The SSE keepalive-sweep timer (server-e2e/sse-server.ts). Cleared on
   // shutdown alongside `heartbeatTimer` so a tick can't write a keepalive
   // comment to a session the close loop below is already tearing down.
   sseKeepaliveTimer: ReturnType<typeof setInterval>

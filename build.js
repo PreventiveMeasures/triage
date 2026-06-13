@@ -118,12 +118,12 @@ if (mode === 'build') {
   // dev origin on PROXY_PORT (default 8000), esbuild lives behind it.
   // Single-origin dev means the UI's WebSocket / objstore fetches can
   // use plain relative URLs and skip CORS, matching the production
-  // topology where a fronting nginx routes `/api/*` to e2e-server/ and
+  // topology where a fronting nginx routes `/api/*` to server-e2e/ and
   // `/*` to the static bundle.
   const esb = await ctx.serve({ host: '127.0.0.1', port: 0, servedir: 'ui' })
 
-  // Backend target = e2e-server/index.ts. Default to its env-var defaults
-  // (HOST=127.0.0.1, PORT=8765) so a plain `node e2e-server/index.ts` on
+  // Backend target = server-e2e/index.ts. Default to its env-var defaults
+  // (HOST=127.0.0.1, PORT=8765) so a plain `node server-e2e/index.ts` on
   // the side Just Works; override with BACKEND_HOST / BACKEND_PORT
   // when the operator picked custom values for the server process.
   const backendHost = process.env['BACKEND_HOST'] ?? '127.0.0.1'
@@ -131,7 +131,7 @@ if (mode === 'build') {
   const proxyHost = process.env['PROXY_HOST'] ?? '127.0.0.1'
   const proxyPort = Number(process.env['PROXY_PORT'] ?? 8000)
 
-  // Same `/api/*` prefix convention `e2e-server/index.ts` enforces for the
+  // Same `/api/*` prefix convention `server-e2e/index.ts` enforces for the
   // WS upgrade path + REST routes. Keep this in sync with the server's
   // `WS_UPGRADE_PATH` and `matchRoute` if either ever moves off `/api`.
   const isApi = (url) => typeof url === 'string' && url.startsWith('/api/')
@@ -150,7 +150,7 @@ if (mode === 'build') {
     })
     upstream.on('error', (err) => {
       // Backend down is the common case during dev (operator hasn't
-      // started `node e2e-server/index.ts` yet); emit a readable 502 so
+      // started `node server-e2e/index.ts` yet); emit a readable 502 so
       // the browser console shows the cause instead of a generic
       // connection reset.
       const body = `Dev proxy: ${target.label} (${target.host}:${target.port}) unreachable — ${err.message}\n`

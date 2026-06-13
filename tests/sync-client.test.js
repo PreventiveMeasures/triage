@@ -2575,7 +2575,7 @@ describe('triage-sync client', () => {
   })
 
   it('setForcedOff(false) re-runs key derivation when keys never landed (PR #10 audit round-8 F1)', async () => {
-    // Third F1 path — e2e-server/README.md's error-handling matrix lists
+    // Third F1 path — server-e2e/README.md's error-handling matrix lists
     // setForcedOff(false) alongside setServerUrl and setEnabled(true)
     // as a lifecycle handler that clears `session.error` AND re-kicks
     // key derivation. The other two paths have F1 regression tests
@@ -4443,7 +4443,7 @@ const cryptoMod = await import('../client/sync/sync-crypto.ts')
 const { WebSocketServer } = await import('ws')
 
 // In-process WebSocket server the test fully controls. Used for
-// scenarios the real server (e2e-server/index.ts) won't ever produce —
+// scenarios the real server (server-e2e/index.ts) won't ever produce —
 // content-id mismatches, bad signatures, bogus continuity in the
 // chain — so we can exercise the client's defensive skip / resync
 // paths without altering the relay.

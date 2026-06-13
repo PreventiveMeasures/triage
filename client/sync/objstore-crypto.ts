@@ -1,5 +1,5 @@
 // Canonical signing payloads + Ed25519 sign helpers for the
-// v1.objstore WS plane. Wire-byte mirror of `e2e-server/objstore/sign.ts`
+// v1.objstore WS plane. Wire-byte mirror of `server-e2e/objstore/sign.ts`
 // so a server-side `verifyEd25519(workspaceTag, canonical, signature)`
 // reproduces the same bytes the client signed.
 //
@@ -16,7 +16,7 @@ const FETCH_DOMAIN = 'deepview-objstore.v1.fetch'
 // from the WS FETCH so a captured WS-fetch signature can't be replayed
 // as a REST mint, and vice versa. Binds a client timestamp instead of
 // the connection nonce; the server enforces a freshness window + a
-// replay cache in its place. See e2e-server/objstore/rest.ts.
+// replay cache in its place. See server-e2e/objstore/rest.ts.
 const FETCH_REST_DOMAIN = 'deepview-objstore.v1.fetch-rest'
 // REST put-begin mint (POST /api/objstore/{tag}/{res}, op:'put') — a
 // DISTINCT domain from the WS PUT so a captured WS put-begin signature
@@ -51,14 +51,14 @@ export type ObjstoreDeleteFields = {
 }
 
 // Null-or-int → '' or decimal string. Matches `intOrEmpty` in
-// `e2e-server/objstore/sign.ts`; the server's verify path uses the
+// `server-e2e/objstore/sign.ts`; the server's verify path uses the
 // same coercion, so any reachable client-side `null | number`
 // produces identical canonical bytes.
 function intOrEmpty(v: number | null): string {
   return v == null ? '' : String(v)
 }
 
-// Mirror of `strOrEmpty` in e2e-server/objstore/sign.ts — '' when null,
+// Mirror of `strOrEmpty` in server-e2e/objstore/sign.ts — '' when null,
 // the base64url incarnation id verbatim otherwise. Keeps the canonical
 // bytes byte-identical with the server verifier.
 function incOrEmpty(v: string | null): string {

@@ -1,5 +1,5 @@
 // SQLite + filesystem-backed object store for the v1.objstore
-// protocol extension. Sibling of `e2e-server/db.ts`; shares the
+// protocol extension. Sibling of `server-e2e/db.ts`; shares the
 // underlying DatabaseSync handle but keeps its own tables.
 //
 //   workspace_object         — one row per LIVE resource (no
@@ -150,7 +150,7 @@ export type DeleteResult =
   | { ok: true; deletedVersion: number }
   | { ok: false; reason: 'not-found' | 'conflict'; conflict?: ObjectRow }
 
-// Async statement shapes are shared with e2e-server/db.ts via
+// Async statement shapes are shared with server-e2e/db.ts via
 // ../db-stmt.ts — same `.get/.all/.run` → Promise contract across
 // both planes.
 
@@ -186,7 +186,7 @@ export type Handle = {
   db?: DatabaseSync
   // Byte-plane backend (local FS or Vercel Blob). All bytes-side
   // operations go through this — there is no direct fs.* call in
-  // store / rest / reaper. Selected at boot in e2e-server/index.ts.
+  // store / rest / reaper. Selected at boot in server-e2e/index.ts.
   blob: BlobBackend
   // Storage root for the FS backend — set only when `blob` was
   // constructed from `openFsBlobBackend(dir)`. Production code
@@ -247,7 +247,7 @@ export type Handle = {
   // returned. The reaper passes `Date.now() - stagingTtlMs` so the
   // index `workspace_object_staging_begun_at_idx` is used and the
   // sweep is O(stale-rows) instead of O(in-flight-uploads-cluster-
-  // wide). DB-layout audit `e2e-server/objstore/store.ts:312`.
+  // wide). DB-layout audit `server-e2e/objstore/store.ts:312`.
   listAllStaging: AllStmt<[number], { workspace_tag: string; resource_tag: string; staging_id: string; begun_at: number }>
   listLiveTags: AllStmt<[], { workspace_tag: string }>
   countLive: GetStmt<[string], { c: number }>
@@ -255,7 +255,7 @@ export type Handle = {
 
 // Narrowing alias for the SQLite-backed Handle: `db` is guaranteed
 // to be set. `openObjstore` returns this so call sites (production
-// shutdown plumbing in `e2e-server/index.ts` + the entire SQLite-only
+// shutdown plumbing in `server-e2e/index.ts` + the entire SQLite-only
 // test suite in `tests/server-objstore.test.js`) can reach
 // `handle.db.prepare(...)` without an optional-chain or non-null
 // assertion. A Neon-backed Handle (`openNeonObjstore`) keeps the
@@ -352,7 +352,7 @@ export function openObjstore(db: DatabaseSync, dir: string): SqliteHandle {
   mkdirSync(dir, { recursive: true })
   db.exec(SCHEMA)
   // Fail-loud on a pre-existing non-STRICT table — same rationale as
-  // e2e-server/db.ts: `CREATE TABLE IF NOT EXISTS … STRICT` doesn't
+  // server-e2e/db.ts: `CREATE TABLE IF NOT EXISTS … STRICT` doesn't
   // upgrade an existing non-STRICT table, and dropping strict type
   // affinity opens an operator-attack path. PR #4 review F3.
   for (const name of ['workspace_object', 'workspace_object_staging']) {
@@ -362,7 +362,7 @@ export function openObjstore(db: DatabaseSync, dir: string): SqliteHandle {
   const blob = openFsBlobBackend(dir)
   // No `close` method on the returned Handle: the underlying
   // `DatabaseSync` is owned by the caller (in production, the
-  // workspace_revision handle in `e2e-server/db.ts`, closed from
+  // workspace_revision handle in `server-e2e/db.ts`, closed from
   // `shutdown()`; tests close their own DB). A `close()` here would
   // mislead — it could only no-op or leak, never close the caller-
   // owned connection.

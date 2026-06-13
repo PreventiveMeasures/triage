@@ -13,7 +13,7 @@
 import assert from 'node:assert/strict'
 import { after, before, beforeEach, describe, it } from 'node:test'
 import { createServer } from 'node:http'
-import { dispatchNpmAdvisories, matchNpmAdvisoriesRoute } from '../e2e-server/npm-proxy.ts'
+import { dispatchNpmAdvisories, matchNpmAdvisoriesRoute } from '../server-e2e/npm-proxy.ts'
 
 const UPSTREAM_PREFIX = 'https://registry.npmjs.org/'
 

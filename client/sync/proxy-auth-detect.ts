@@ -29,7 +29,7 @@
 // redirect* response (`res.type === 'opaqueredirect'`, status 0) rather
 // than following it. The relay itself never 3xx-redirects any
 // `/api/sync*` route — it answers 101 / 200 / 4xx / 5xx (see
-// e2e-server/http.ts + e2e-server/sse-server.ts) — so an opaque redirect there
+// server-e2e/http.ts + server-e2e/sse-server.ts) — so an opaque redirect there
 // can ONLY be an intermediary bouncing us to an auth endpoint. We never
 // need to read WHERE it redirects (the target is cross-origin and
 // opaque anyway); the redirect's mere existence on a route that should

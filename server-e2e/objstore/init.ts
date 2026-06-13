@@ -15,7 +15,7 @@ import { errStack } from '../util.ts'
 
 export type ObjstoreInitDeps = {
   // Pre-opened storage handle, sharing the SQLite connection with
-  // the workspace_revision handle in e2e-server/db.ts.
+  // the workspace_revision handle in server-e2e/db.ts.
   handle: Handle
   reapIntervalMs: number
   // Hard off-switch (OBJSTORE_REAP_DISABLED). When true, NEITHER the boot
@@ -28,7 +28,7 @@ export type ObjstoreInitDeps = {
   broadcast: (tag: string, msg: object, except: WebSocket | null) => void
   // Cross-instance pub/sub publishers. SQLite mode passes no-ops; Neon
   // mode passes Postgres LISTEN/NOTIFY-backed implementations. See
-  // e2e-server/pubsub.ts for the bus design.
+  // server-e2e/pubsub.ts for the bus design.
   publishObjPut: (tag: string, resourceTag: string) => void
   publishObjDeleted: (tag: string, resourceTag: string, version: number) => void
   getNonce: (socket: WebSocket) => string | undefined
@@ -45,7 +45,7 @@ export type ObjstoreInitDeps = {
   // process behaviour). Multi-replica deployments MUST supply a
   // shared secret here so a token minted on one replica's WS plane
   // validates on another replica's REST plane (the WS-to-REST hop
-  // is not load-balancer-pinned). See e2e-server/index.ts boot logic
+  // is not load-balancer-pinned). See server-e2e/index.ts boot logic
   // for the env var (`OBJSTORE_TOKEN_SECRET`).
   tokenSecret?: TokenSecret
   // New-workspace operator gate for the REST put-begin mint — returns

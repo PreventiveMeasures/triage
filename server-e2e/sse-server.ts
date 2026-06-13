@@ -57,7 +57,7 @@ import { type PeerConnectionDeps, setupPeerConnection } from './ws-server.ts'
 import { SseSession } from './sse-session.ts'
 import { errMsg, randomId } from './util.ts'
 
-// Same prefix the WS upgrade lives under (e2e-server/http.ts WS_UPGRADE_PATH
+// Same prefix the WS upgrade lives under (server-e2e/http.ts WS_UPGRADE_PATH
 // = '/api/sync'); subroute keeps the SSE plane sibling to the upgrade
 // path so the same `location` block routes both.
 export const SSE_OPEN_PATH = '/api/sync/sse'
@@ -85,7 +85,7 @@ export type SseServerDeps = {
   // transport into it. Closure over the same handler / hub / objstore
   // / track / debug surface the WS path uses.
   peerDeps: PeerConnectionDeps
-  // Shutdown gate. Mirror of the REST + WS branches in e2e-server/http.ts:
+  // Shutdown gate. Mirror of the REST + WS branches in server-e2e/http.ts:
   // an SSE POST arriving on an existing keep-alive socket after
   // SIGTERM should be rejected, not dispatched against a draining DB.
   isShuttingDown: () => boolean
@@ -93,7 +93,7 @@ export type SseServerDeps = {
   // 503 the open request. Caps the SSE-side equivalent of `wss.clients`.
   maxSessions: number
   // Max body size for one POST. Matches the WS `maxPayload` in
-  // e2e-server/index.ts so the SSE plane can't accept frames the WS plane
+  // server-e2e/index.ts so the SSE plane can't accept frames the WS plane
   // would reject. The POST body envelope can hold multiple frames so
   // the per-frame budget is the same as the WS plane after the
   // dispatcher splits them.

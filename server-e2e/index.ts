@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // DeepView triage-sync relay server. WebSocket front-end, SQLite
 // backing store. Implements the protocol described in
-// `client/triage-sync.js` (and `e2e-server/sign.ts` for the canonical
+// `client/triage-sync.js` (and `server-e2e/sign.ts` for the canonical
 // signature payloads):
 //
 //   server → client  challenge           { nonce } — emitted on every
@@ -120,14 +120,14 @@ const { trustProxy: TRUST_PROXY, isOriginAllowed } = createOriginGate(HOST, TRUS
 // MB of fan-out broadcasts in this buffer with no backpressure on
 // the broadcast loop. Drop the message when the buffer crosses the
 // cap; the heartbeat will eventually close a peer that never
-// drains. Transport audit `e2e-server/index.ts:225`.
+// drains. Transport audit `server-e2e/index.ts:225`.
 const MAX_BUFFERED_BYTES = 16 * 1024 * 1024
 // Per-socket in-flight async-handler cap (MAX_INFLIGHT_PER_SOCKET,
 // env-validated in config). Each inbound text frame spawns a
 // `track(handler)` IIFE; an authorised peer firing valid frames could
 // otherwise grow the set without bound, stretching SIGTERM drain time.
 // Saves dropped at the cap surface as a typed `busy` NACK. Transport
-// audit `e2e-server/index.ts:590`.
+// audit `server-e2e/index.ts:590`.
 
 // Per-connection state registry. One `Peer` per accepted socket holds
 // the challenge nonce, auth flag, heartbeat liveness, in-flight count,
@@ -140,7 +140,7 @@ const peers: PeerRegistry = new WeakMap()
 // within the declared Content-Length holds the staging fd and an
 // inFlightSids slot until the global staging TTL reaps it. Aborting
 // the per-chunk-idle period closes that window. Transport audit
-// `e2e-server/objstore/rest.ts:218`.
+// `server-e2e/objstore/rest.ts:218`.
 const REST_PUT_IDLE_TIMEOUT_MS = 30_000
 
 // Server-driven WS heartbeat. Every `HEARTBEAT_INTERVAL_MS` we walk
@@ -459,7 +459,7 @@ installLifecycle({
 await startupReap
 
 // Bind the HTTP/WS plane on the configured PORT/HOST. Exported so a
-// launcher (e2e-server/cli.js — the triage-server bin) or any `import`er can
+// launcher (server-e2e/cli.js — the triage-server bin) or any `import`er can
 // start serving. The top-level `await startupReap` above means the server
 // is fully ready — DB open, DDL bootstrapped, objstore reaper swept — by
 // the time the import resolves.
@@ -473,7 +473,7 @@ export { httpServer, wss }
 // entry script) skip the auto-start so consumers can own the bind — e.g.
 // wrap CF Access / framework-preset shims around the assembled
 // `httpServer`, or just call `start()` when ready. Direct invocation via
-// `node e2e-server/index.ts` (or the `triage-server` bin) still listens.
+// `node server-e2e/index.ts` (or the `triage-server` bin) still listens.
 if (import.meta.main) {
   start()
 }

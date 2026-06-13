@@ -73,7 +73,7 @@ export function setupPeerConnection(socket: WebSocket, req: HttpRequest, deps: P
   socket.on('pong', () => { peer.alive = true })
   // Issue the per-connection challenge nonce BEFORE the client can
   // send anything that needs it. The client signs it into every
-  // `workspace-subscribe` (see canonicalSubscribe in e2e-server/sign.ts);
+  // `workspace-subscribe` (see canonicalSubscribe in server-e2e/sign.ts);
   // a captured subscribe frame can't be replayed from a different
   // connection because that connection's nonce differs and the
   // signature won't verify against the new canonical bytes. Round-9 H2.
@@ -86,10 +86,10 @@ export function setupPeerConnection(socket: WebSocket, req: HttpRequest, deps: P
   // boundaries inside the handlers. Per-resource correctness needs
   // no in-process lock: `commitRevision` resolves concurrent saves
   // via its single gated INSERT (one snapshot + the
-  // `UNIQUE(workspace_tag, seq)` PK — see `e2e-server/db.ts`), and the
+  // `UNIQUE(workspace_tag, seq)` PK — see `server-e2e/db.ts`), and the
   // objstore handlers (`commitPut` / `beginPut` / `deleteObject`)
   // via the version compare-and-set + content-addressing (see
-  // `e2e-server/objstore/store.ts`), backed by post-await
+  // `server-e2e/objstore/store.ts`), backed by post-await
   // `readyState === OPEN` rechecks in every objstore handler. The
   // unbounded fan-out is capped by `maxInflightPerSocket` (see
   // also the `'busy'` NACK at the cap below). Concurrent dispatch
@@ -129,7 +129,7 @@ export function setupPeerConnection(socket: WebSocket, req: HttpRequest, deps: P
     // shedding load. Pings go through a fast inline `send(pong)`
     // path BELOW that doesn't bump the per-socket inflight counter,
     // so a ping-spam at the cap can't outrun the gate. Transport
-    // audit `e2e-server/index.ts:590` + post-#58 audit follow-up.
+    // audit `server-e2e/index.ts:590` + post-#58 audit follow-up.
     if (parsed.type === 'ping') {
       send(socket, { type: 'pong' })
       return

@@ -106,9 +106,9 @@ async function handlePutBegin(deps: ObjstoreDeps, socket: WebSocket, msg: Objsto
   const resourceTag = msg.resourceTag
   // Auth gate for the FIRST action against a never-before-seen
   // workspace tag (no rows in workspace_revision AND none in
-  // workspace_object). Mirrors handleSave in e2e-server/index.ts; runs
+  // workspace_object). Mirrors handleSave in server-e2e/index.ts; runs
   // AFTER sig verify so `unauthorized` only reaches a legitimate
-  // signer. Config-driven (e2e-server/config.json `password`), no-op when
+  // signer. Config-driven (server-e2e/config.json `password`), no-op when
   // unconfigured.
   if (deps.authGate && deps.sendUnauthorized && await deps.authGate(socket, tag)) {
     if (socket.readyState !== socket.OPEN) return
@@ -228,7 +228,7 @@ async function handleFetch(deps: ObjstoreDeps, socket: WebSocket, msg: ObjstoreF
 // the reaper's TTL pass within `STAGING_TTL_MS_DEFAULT` — no per-
 // socket bookkeeping is needed on disconnect today. If that ever
 // changes, wire a `cleanupSocket(socket)` into both this bundle and
-// e2e-server/index.ts's close handler.
+// server-e2e/index.ts's close handler.
 
 export type ObjstoreHandlers = {
   handlePutBegin: (s: WebSocket, m: ObjstorePutBeginMsg) => Promise<void>

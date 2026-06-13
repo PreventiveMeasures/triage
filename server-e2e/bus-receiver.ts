@@ -1,6 +1,6 @@
 // Cross-instance bus receiver: maps a `BusMessage` envelope (lookup
 // hint + sender from the Postgres LISTEN/NOTIFY channel) into a local
-// wire broadcast. Pulled out of `e2e-server/index.ts` so the rev / objput /
+// wire broadcast. Pulled out of `server-e2e/index.ts` so the rev / objput /
 // objdel branches — including the keyframe boolean coercion and the
 // `objectMetaWire` shape — are testable without bringing up the whole
 // server.

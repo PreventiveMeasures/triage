@@ -1,11 +1,11 @@
 // Unit tests for the REST fetch-mint anti-replay guard
-// (e2e-server/objstore/fetch-mint-guard.ts). Pure logic — `now` is injected
+// (server-e2e/objstore/fetch-mint-guard.ts). Pure logic — `now` is injected
 // so freshness/expiry are deterministic without timers.
 
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { createFetchMintGuard } from '../e2e-server/objstore/fetch-mint-guard.ts'
+import { createFetchMintGuard } from '../server-e2e/objstore/fetch-mint-guard.ts'
 
 describe('fetch-mint-guard', () => {
   it('admits a fresh signature once, then rejects the replay', () => {

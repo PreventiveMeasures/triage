@@ -105,7 +105,7 @@ export type ObjstoreRestDeps = {
 // concurrent same-token PUT is rejected (409) before it can open a
 // second writer. The slot is held only across body + commit, released
 // in a `finally`, and bounded by the REST idle-body timeout in
-// e2e-server/http.ts so a slow-loris can't pin it. NOT a commit lock —
+// server-e2e/http.ts so a slow-loris can't pin it. NOT a commit lock —
 // commits stay lock-free on the version-CAS above. Per-process: the
 // Vercel multi-replica path leans on `allowOverwrite: true` + the
 // commit CAS + content-addressing for cross-replica correctness (a

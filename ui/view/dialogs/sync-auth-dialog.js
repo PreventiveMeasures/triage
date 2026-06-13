@@ -1,7 +1,7 @@
 // `<sync-auth-dialog>` — operator-side password prompt for the
 // triage-sync server's first-action gate. Fires when the relay
 // emits `unauthorized` for a workspace tag it hasn't seen before
-// (see e2e-server/index.ts `requiresAuth` + `workspaceExists` and the
+// (see server-e2e/index.ts `requiresAuth` + `workspaceExists` and the
 // matching client wiring in client/sync/triage-sync.ts's `runAuthFlow`).
 //
 // Extends `AppDialog`: shadow DOM with the shared dialog frame +

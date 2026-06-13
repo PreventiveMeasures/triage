@@ -5,7 +5,7 @@
 // surrounding transport (refcount, reconnect backoff, heartbeat, auth
 // flow) doesn't have to branch on the wire underneath.
 //
-// Wire (server side in e2e-server/sse-server.ts) — POSTs only:
+// Wire (server side in server-e2e/sse-server.ts) — POSTs only:
 //
 //   POST <httpUrl>
 //     body: { id?: string, password?: string, frames?: object[] }
@@ -49,8 +49,8 @@ export type WebSocketLike = {
 // Translates `ws://host/path` → `http://host/path` so the adapter can
 // derive the POST endpoint from the same URL the caller would have
 // passed `new WebSocket(...)`. The server mounts the SSE plane at the
-// same path as the WS upgrade — see e2e-server/http.ts `WS_UPGRADE_PATH`
-// and `e2e-server/sse-server.ts SSE_OPEN_PATH` which is
+// same path as the WS upgrade — see server-e2e/http.ts `WS_UPGRADE_PATH`
+// and `server-e2e/sse-server.ts SSE_OPEN_PATH` which is
 // `${WS_UPGRADE_PATH}/sse`.
 // Scheme-convert (ws→http / wss→https) and strip any `?…` build/debug tags,
 // yielding the http(s) base at the WS upgrade path. The SSE (`/sse`) and
@@ -72,7 +72,7 @@ export function wsUrlToSseUrl(wsUrl: string): string {
   return `${wsUrlToHttpBase(wsUrl)}/sse`
 }
 
-// The session-independent REST save plane (e2e-server/http.ts SAVE_REST_PATH =
+// The session-independent REST save plane (server-e2e/http.ts SAVE_REST_PATH =
 // `${WS_UPGRADE_PATH}/save`). triage-sync POSTs saves here in SSE mode so a
 // save doesn't take over the event-stream.
 export function wsUrlToSaveUrl(wsUrl: string): string {
@@ -92,7 +92,7 @@ const FLUSH_MAX_WAIT_MS = 5_000
 
 // Client-side liveness ceiling for the live SSE downstream. The server
 // writes a `:` keepalive comment to every open session's response every
-// e2e-server/sse-server.ts KEEPALIVE_SWEEP_MS (30s), so a healthy live
+// server-e2e/sse-server.ts KEEPALIVE_SWEEP_MS (30s), so a healthy live
 // stream delivers SOME bytes at least that often even when idle. If
 // NOTHING arrives within this window — no keepalive, no data, and no
 // EOF (a wedged TLS-terminating proxy that holds the socket open but

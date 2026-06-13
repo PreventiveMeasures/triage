@@ -389,7 +389,7 @@ describe('triage-sync server', { concurrency: true }, () => {
   })
 
   it('broadcast stringify-once: every subscriber receives byte-equal frame', async () => {
-    // Pins the `sendRaw(socket, payload)` path in e2e-server/index.ts's
+    // Pins the `sendRaw(socket, payload)` path in server-e2e/index.ts's
     // `broadcast()`: stringify ONCE, send the same string N times.
     // A regression that calls `send(s, msg)` per subscriber would
     // still parse-equal but could differ in key order or whitespace
@@ -1221,13 +1221,13 @@ describe('triage-sync server', { concurrency: true }, () => {
 })
 
 describe('triage-sync server CLI', () => {
-  it('reports the default storage paths under e2e-server/data in --help', () => {
-    const proc = spawnSync(process.execPath, ['e2e-server/index.ts', '--help'], {
+  it('reports the default storage paths under server-e2e/data in --help', () => {
+    const proc = spawnSync(process.execPath, ['server-e2e/index.ts', '--help'], {
       cwd: path.resolve(import.meta.dirname, '..'),
       encoding: 'utf8',
     })
     assert.equal(proc.status, 0)
-    assert.match(proc.stdout, /DB_PATH\s+sqlite file \(default:\s+e2e-server\/data\/data\.db\)/u)
+    assert.match(proc.stdout, /DB_PATH\s+sqlite file \(default:\s+server-e2e\/data\/data\.db\)/u)
     assert.match(proc.stdout, /OBJSTORE_DIR\s+object store root \(default:\s+\.\/objstore/u)
     assert.match(proc.stdout, /next to DB_PATH/u)
   })
@@ -1361,7 +1361,7 @@ describe('triage-sync server: graceful shutdown', () => {
 })
 
 // Same-origin gate on WS upgrade + REST plane (transport audit
-// `e2e-server/index.ts:530` + `e2e-server/objstore/rest.ts:103`). The
+// `server-e2e/index.ts:530` + `server-e2e/objstore/rest.ts:103`). The
 // expected origin is derived from `req.headers.host` directly, or
 // from `X-Forwarded-Host` / `X-Forwarded-Proto` when TRUST_PROXY is
 // on. TRUST_PROXY defaults to ON for loopback binds (the typical
@@ -1440,7 +1440,7 @@ describe('triage-sync server: same-origin gate', () => {
       // attacker page that sets matching X-Forwarded-Host + Origin
       // CANNOT bypass the gate. Expected origin falls back to
       // req.headers.host, so Origin must match the literal Host
-      // header. Audit `e2e-server/index.ts:171` regression.
+      // header. Audit `server-e2e/index.ts:171` regression.
       assert.equal(
         await rawUpgrade(port, 'https://triage.space', `127.0.0.1:${port}`, 'triage.space', 'https'),
         403,

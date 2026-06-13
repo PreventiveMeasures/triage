@@ -1,4 +1,4 @@
-// `e2e-server/db.ts` — revision storage. Schema migration from the
+// `server-e2e/db.ts` — revision storage. Schema migration from the
 // pre-keyframe column shape, `chainFrom` cutoff semantics (stale
 // `from`, last-keyframe-as-root, full chain pre-keyframe), and the
 // inserted / duplicate / stale-base outcomes of `commitRevision`.
@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
-import { chainFrom, commitRevision, headFor, openDb, revisionExists } from '../e2e-server/db.ts'
+import { chainFrom, commitRevision, headFor, openDb, revisionExists } from '../server-e2e/db.ts'
 
 let tmpCounter = 0
 function freshDb() {
@@ -582,7 +582,7 @@ describe('commitRevision — concurrency via the single gated INSERT (no lock)',
     // loud rather than silently bypassing the commit. Wire `tryCommit`
     // to the real primitive so the dispatcher reaches it; the guard
     // then trips on the absent statement.
-    const { commitRevisionSqlite } = await import('../e2e-server/db.ts')
+    const { commitRevisionSqlite } = await import('../server-e2e/db.ts')
     const handle = { tryCommit: (input) => commitRevisionSqlite(handle, input) }
     await assert.rejects(
       () => commitRevision(handle, rev({ id: 'x' })),

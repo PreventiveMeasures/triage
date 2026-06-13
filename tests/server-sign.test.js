@@ -1,6 +1,6 @@
-// `e2e-server/sign.ts` direct unit tests. Uses the test-friendly
+// `server-e2e/sign.ts` direct unit tests. Uses the test-friendly
 // composition wrapper `verifySaveSigAndCanonical` for the save-path
-// negatives — production `handleSave` (e2e-server/index.ts) does NOT
+// negatives — production `handleSave` (server-e2e/index.ts) does NOT
 // call that wrapper; it composes `canonicalSave` +
 // `computeRevisionIdFromCanonical` + `verifyEd25519` separately so
 // the dup-precheck (`revisionExists`) can interleave between
@@ -20,7 +20,7 @@ import {
   computeRevisionIdFromCanonical,
   verifySaveSigAndCanonical,
   verifySubscribeSig,
-} from '../e2e-server/sign.ts'
+} from '../server-e2e/sign.ts'
 
 const SAVE_DOMAIN = 'deepview-triage-sync.v1.save'
 const SUBSCRIBE_DOMAIN = 'deepview-triage-sync.v1.subscribe'

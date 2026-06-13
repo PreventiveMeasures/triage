@@ -13,7 +13,7 @@
 // `keyframe` is `1` for a revision the client emits with full state
 // baked in (rather than a delta). The wire flag is covered by the
 // signature, so the column value MUST match the signed canonical
-// bytes: `canonicalSave` (e2e-server/sign.ts, via `handleSave`) encodes
+// bytes: `canonicalSave` (server-e2e/sign.ts, via `handleSave`) encodes
 // `keyframe ? '1' : ''` into the bytes `verifyEd25519` checks, so a
 // mismatched wire flag fails verify and never reaches this column.
 // Client-driven: the server stores what the client sent and treats
@@ -84,7 +84,7 @@ const SCHEMA = `
 
 // Row shape from the chain queries. `keyframe` is stored as INTEGER
 // (0 / 1); the raw row carries the integer — `chainForWire` in
-// e2e-server/index.ts normalises to a strict boolean before broadcasting.
+// server-e2e/index.ts normalises to a strict boolean before broadcasting.
 // `base` is nullable on the very first revision.
 export type RevisionRow = {
   base: string | null
@@ -126,7 +126,7 @@ export type CommitResult =
 // reach into `db` directly (e.g. `openObjstore`, test-only fixture
 // SQL) are SQLite-coupled by construction; passing them a Neon-backed
 // Handle is the operator's mistake to catch at the `if (DATABASE_URL)`
-// switch in `e2e-server/index.ts`.
+// switch in `server-e2e/index.ts`.
 //
 // `tryCommit` is the backend-specific atomic-commit primitive
 // `commitRevision` dispatches through. SQLite runs one synchronous
@@ -154,7 +154,7 @@ export type Handle = {
   revisionExists: GetStmt<[string, string], unknown>
   // Single-revision fetch by content-addressed id. The cross-instance
   // pubsub receiver uses this to assemble a `workspace-state` from a
-  // NOTIFY hint (see `e2e-server/pubsub.ts`).
+  // NOTIFY hint (see `server-e2e/pubsub.ts`).
   revisionById: GetStmt<[string, string], RevisionRow>
   gatedInsert?: GetStmt<[string, string, string | null, number, string, string, string, number], { seq: number }>
   tryCommit: (input: RevisionInsert) => Promise<CommitResult>
@@ -164,11 +164,11 @@ export type Handle = {
 // Narrowing alias for the SQLite-backed Handle: `db` is guaranteed
 // set. `openDb` returns this so call sites needing direct
 // `DatabaseSync` access (e.g. `openObjstore(handle.db, …)` in
-// `e2e-server/index.ts`'s SQLite branch) reach `handle.db` without an
+// `server-e2e/index.ts`'s SQLite branch) reach `handle.db` without an
 // optional-chain or non-null assertion. A Neon-backed Handle
 // (`openNeonDb`) keeps the wider `db?: DatabaseSync` shape, so routing
 // one into a SQLite-coupled call site is a compile-time error. Mirrors
-// `e2e-server/objstore/store.ts`.
+// `server-e2e/objstore/store.ts`.
 export type SqliteHandle = Handle & { db: DatabaseSync }
 
 export function openDb(path: string): SqliteHandle {

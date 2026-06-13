@@ -101,7 +101,7 @@ export type SyncHandlersDeps = {
 export type SyncHandlers = {
   handleSave: (socket: WebSocket, msg: SaveMsg) => Promise<void>
   // Session-independent REST save plane (`POST /api/sync/save`), wired into
-  // the HTTP dispatcher in e2e-server/http.ts. Runs the same pipeline as
+  // the HTTP dispatcher in server-e2e/http.ts. Runs the same pipeline as
   // `handleSave` and renders the outcome as a JSON response.
   handleSaveRest: (req: IncomingMessage, res: ServerResponse) => Promise<void>
   handleSubscribe: (socket: WebSocket, msg: SubscribeMsg) => Promise<void>
@@ -299,7 +299,7 @@ export function createSyncHandlers(deps: SyncHandlersDeps): SyncHandlers {
   // maps the outcome to a JSON + HTTP status the client switches on. SSE-mode
   // clients POST here so a save doesn't take over their event-stream; a 401
   // routes them to the in-band frame (which runs the operator auth flow).
-  // Mounted + gated (same-origin, shutdown, idle-timeout) in e2e-server/http.ts.
+  // Mounted + gated (same-origin, shutdown, idle-timeout) in server-e2e/http.ts.
   async function handleSaveRest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const body = await readSaveBody(req)
     if (!body || typeof body !== 'object') { respondJson(res, 400, { reason: 'bad-request' }); return }

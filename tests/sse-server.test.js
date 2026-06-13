@@ -3,7 +3,7 @@
 // client involvement), so the test pins the server-side wire protocol
 // independently of the client adapter.
 //
-// Wire shape under test (server side: e2e-server/sse-server.ts):
+// Wire shape under test (server side: server-e2e/sse-server.ts):
 //
 //   POST /api/sync/sse
 //       body: { id?, password?, frames? }
@@ -394,7 +394,7 @@ describe('SSE+POST transport', { concurrency: false }, () => {
 
   it('password field on POST silently authenticates against a password-gated server', async () => {
     // Pre-write a password-gated config, then boot a server pointing
-    // at it. The config-path env var is honoured by e2e-server/config.ts;
+    // at it. The config-path env var is honoured by server-e2e/config.ts;
     // boot reads the file before binding.
     const path = await import('node:path')
     const fs = await import('node:fs')

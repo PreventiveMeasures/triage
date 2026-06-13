@@ -10,7 +10,7 @@
 // api/reap.ts reads env ONCE at module load, so each case imports a FRESH
 // module instance after setting env — a unique `?case=` query busts the module
 // cache so the top-level `const {…} = env` re-evaluates. The deps it imports
-// (e2e-server/objstore/*) are specifier-cached and shared, so only reap.ts re-runs.
+// (server-e2e/objstore/*) are specifier-cached and shared, so only reap.ts re-runs.
 
 import assert from 'node:assert/strict'
 import { test } from 'node:test'

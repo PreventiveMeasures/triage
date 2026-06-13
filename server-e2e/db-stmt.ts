@@ -1,5 +1,5 @@
-// Shared async-statement primitives. Both `e2e-server/db.ts` (workspace_revision
-// chain) and `e2e-server/objstore/store.ts` (objstore tables) expose Handles
+// Shared async-statement primitives. Both `server-e2e/db.ts` (workspace_revision
+// chain) and `server-e2e/objstore/store.ts` (objstore tables) expose Handles
 // whose statements look like `{ get(...) → Promise<…>, all(...) → Promise<[…]>,
 // run(...) → Promise<void> }`. The underlying `node:sqlite` driver is
 // synchronous; the wrappers below catch sync errors and route them through

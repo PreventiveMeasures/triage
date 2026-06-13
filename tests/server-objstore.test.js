@@ -1,4 +1,4 @@
-// `e2e-server/objstore/` — DB + filesystem layer for the v1.objstore
+// `server-e2e/objstore/` — DB + filesystem layer for the v1.objstore
 // extension. WS-round-trip coverage lives in
 // tests/sync-server-objstore.test.js; this file targets the
 // storage module directly.
@@ -11,10 +11,10 @@ import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { createHash } from 'node:crypto'
 
-import { MAX_RESOURCES_PER_WORKSPACE, abortPut, beginPut, commitPut, deleteObject, getLive, listLive, openObjstore } from '../e2e-server/objstore/store.ts'
-import { liveFilePath, stagingFilePath } from '../e2e-server/objstore/fs.ts'
-import { reapOrphans } from '../e2e-server/objstore/reaper.ts'
-import { initObjstore } from '../e2e-server/objstore/init.ts'
+import { MAX_RESOURCES_PER_WORKSPACE, abortPut, beginPut, commitPut, deleteObject, getLive, listLive, openObjstore } from '../server-e2e/objstore/store.ts'
+import { liveFilePath, stagingFilePath } from '../server-e2e/objstore/fs.ts'
+import { reapOrphans } from '../server-e2e/objstore/reaper.ts'
+import { initObjstore } from '../server-e2e/objstore/init.ts'
 
 let counter = 0
 function freshHandle() {
@@ -791,7 +791,7 @@ describe('readFileSync end-to-end', () => {
 describe('input validation', () => {
   it('rejects non-base64url tag shapes at the wire boundary', async () => {
     // Spot-check the validator regexes by importing them.
-    const { isValidTag, isValidContentHash, isValidSignature, isValidStagingId } = await import('../e2e-server/objstore/store.ts')
+    const { isValidTag, isValidContentHash, isValidSignature, isValidStagingId } = await import('../server-e2e/objstore/store.ts')
     assert.equal(isValidTag(''), false)
     assert.equal(isValidTag('a'.repeat(257)), false, 'caps at 256 chars')
     assert.equal(isValidTag('a/b'), false, 'no `/` in base64url')
@@ -813,7 +813,7 @@ describe('token payload validation', () => {
     // through IEEE-754 (e.g. `2 ** 53 + 1 === 2 ** 53`) and could
     // spoof equality against a different actual Content-Length /
     // live row version.
-    const { newTokenSecret, signToken, verifyToken } = await import('../e2e-server/objstore/tokens.ts')
+    const { newTokenSecret, signToken, verifyToken } = await import('../server-e2e/objstore/tokens.ts')
     const secret = newTokenSecret()
     const okPayload = { op: 'put', tag: 't', res: 'r', sid: 's', len: 1024, exp: Date.now() + 60_000 }
     assert.ok(verifyToken(secret, signToken(secret, okPayload)))
@@ -825,7 +825,7 @@ describe('token payload validation', () => {
   })
 
   it('verifyToken rejects a forged signature even when payload shape is valid', async () => {
-    const { newTokenSecret, signToken, verifyToken } = await import('../e2e-server/objstore/tokens.ts')
+    const { newTokenSecret, signToken, verifyToken } = await import('../server-e2e/objstore/tokens.ts')
     const secret = newTokenSecret()
     const otherSecret = newTokenSecret()
     const tok = signToken(otherSecret, { op: 'put', tag: 't', res: 'r', sid: 's', len: 1, exp: Date.now() + 60_000 })
@@ -833,7 +833,7 @@ describe('token payload validation', () => {
   })
 
   it('verifyToken rejects an expired token', async () => {
-    const { newTokenSecret, signToken, verifyToken } = await import('../e2e-server/objstore/tokens.ts')
+    const { newTokenSecret, signToken, verifyToken } = await import('../server-e2e/objstore/tokens.ts')
     const secret = newTokenSecret()
     const exp = Date.now() - 1
     const tok = signToken(secret, { op: 'get', tag: 't', res: 'r', ver: 1, inc: 'i', exp })
@@ -841,7 +841,7 @@ describe('token payload validation', () => {
   })
 
   it('extractBearer is case-insensitive on scheme but strict on shape', async () => {
-    const { extractBearer } = await import('../e2e-server/objstore/tokens.ts')
+    const { extractBearer } = await import('../server-e2e/objstore/tokens.ts')
     assert.equal(extractBearer('Bearer abc.def'), 'abc.def')
     assert.equal(extractBearer('bearer abc.def'), 'abc.def')
     assert.equal(extractBearer('Bearer  abc.def  '), 'abc.def', 'trailing whitespace tolerated')
@@ -860,7 +860,7 @@ describe('token payload validation', () => {
   })
 
   it('verifyToken rejects payloads with bad op / negative len / negative ver / non-finite exp', async () => {
-    const { newTokenSecret, signToken, verifyToken } = await import('../e2e-server/objstore/tokens.ts')
+    const { newTokenSecret, signToken, verifyToken } = await import('../server-e2e/objstore/tokens.ts')
     const secret = newTokenSecret()
     const now = Date.now() + 60_000
     // Helper: sign whatever payload shape we pass (signToken doesn't

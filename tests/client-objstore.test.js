@@ -1,5 +1,5 @@
 // End-to-end tests for the client/objstore.ts session module
-// against a spawned `e2e-server/index.ts` relay. Exercises the public
+// against a spawned `server-e2e/index.ts` relay. Exercises the public
 // API (`session.put` / `.fetch` / `.fetchByTag` / `.delete` /
 // `.list` / `.onPut` / `.onDeleted`) which encrypts plaintext
 // (fileName, content) internally before any wire frame leaves the
@@ -212,7 +212,7 @@ describe('client/objstore session', { concurrency: true }, () => {
   })
 
   it('workspace-full: 101st distinct resource → put-error reason=workspace-full', async () => {
-    const { MAX_RESOURCES_PER_WORKSPACE } = await import('../e2e-server/objstore/store.ts')
+    const { MAX_RESOURCES_PER_WORKSPACE } = await import('../server-e2e/objstore/store.ts')
     const { keys } = await makeKeys()
     const session = await createObjstoreSession({ serverUrl, httpOrigin, keys })
     try {
