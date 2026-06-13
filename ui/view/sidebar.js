@@ -883,13 +883,16 @@ async function onSidebarClick(e) {
     }
     return
   }
+  if (e.target.closest('[data-action="managed-logout"]')) {
+    // Logout row inside the account menu — clears the server session (with the
+    // double-submit CSRF token) then reloads so the app re-probes logged-out.
+    void managedLogout(state.managedSession?.csrfToken)
+    return
+  }
   if (e.target.closest('#auth-status')) {
-    // Managed-mode login/logout via the lazy client/managed chunk. Login hands
-    // off to the server's OAuth entry; logout clears the server session
-    // (sending the double-submit CSRF token) then reloads so the app re-probes
-    // and repaints logged-out.
-    if (state.managedSession) void managedLogout(state.managedSession.csrfToken)
-    else managedLogin(state.managed?.loginPath)
+    // Logged in → the button is a popovertarget that opens the account menu
+    // (the browser toggles it); logged out → it hands off to the OAuth login.
+    if (state.managedSession == null) managedLogin(state.managed?.loginPath)
     return
   }
   if (e.target.closest('#sidebar-toggle')) {
@@ -995,9 +998,48 @@ function renderAuthStatus() {
   const authBtn = root?.querySelector('#auth-status')
   if (!authBtn) return
   authBtn.hidden = false
+  const menu = root?.querySelector('#user-menu')
   const session = state.managedSession
-  authBtn.textContent = session ? `Log out (${session.login})` : 'Log in'
-  authBtn.dataset.authed = session ? '1' : '0'
+  if (session == null) {
+    authBtn.dataset.authed = '0'
+    authBtn.removeAttribute('popovertarget')
+    authBtn.setAttribute('aria-label', 'Log in')
+    litRender(html`Log in`, authBtn)
+    if (menu) litRender(nothing, menu)
+    return
+  }
+  // Logged in: the button becomes the avatar, opening the account popover menu.
+  const initial = (session.login[0] ?? '?').toUpperCase()
+  authBtn.dataset.authed = '1'
+  authBtn.setAttribute('popovertarget', 'user-menu')
+  authBtn.setAttribute('aria-label', `Account: ${session.login}`)
+  litRender(avatarTemplate(initial), authBtn)
+  if (menu) {
+    litRender(html`
+      <div class="user-card">
+        ${avatarTemplate(initial, true)}
+        <span class="user-id">
+          <span class="user-login">${session.login}</span>
+          ${session.name ? html`<span class="user-name">${session.name}</span>` : nothing}
+        </span>
+      </div>
+      <button type="button" class="user-menu-row" data-action="managed-logout">Log out</button>
+    `, menu)
+  }
+}
+
+// Avatar disc: the cached avatar (served same-origin from /api/auth/avatar)
+// over a fallback initial that shows when there's no avatar (the img 404s).
+function avatarTemplate(initial, large = false) {
+  return html`<span class=${large ? 'user-avatar user-avatar-lg' : 'user-avatar'}>
+    <span class="user-avatar-fallback">${initial}</span>
+    <img alt="" src="/api/auth/avatar" @error=${onAvatarError}>
+  </span>`
+}
+
+function onAvatarError(e) {
+  // No cached avatar → hide the broken img so the initial fallback shows.
+  e.currentTarget.classList.add('broken')
 }
 
 // Brand tag shows the live server mode (e2e / managed / standalone) in place of
@@ -1507,6 +1549,22 @@ async function detectServerModeIfUnknown() {
   }
 }
 
+// The account menu is a native popover (top layer); position it just above the
+// auth button on open, since popover="auto" otherwise centers in the viewport.
+function positionUserMenuOnOpen() {
+  const menu = root?.querySelector('#user-menu')
+  const trigger = root?.querySelector('#auth-status')
+  if (!menu || !trigger) return
+  menu.addEventListener('beforetoggle', (e) => {
+    if (e.newState !== 'open') return
+    const r = trigger.getBoundingClientRect()
+    menu.style.left = `${Math.round(r.left)}px`
+    menu.style.bottom = `${Math.round(window.innerHeight - r.top + 6)}px`
+    menu.style.top = 'auto'
+    menu.style.right = 'auto'
+  })
+}
+
 function mount(host) {
   hostEl = host
   root = host.renderRoot
@@ -1522,6 +1580,7 @@ function mount(host) {
   fileList.addEventListener('mouseover', onFileListMouseover)
   fileList.addEventListener('mouseout', onFileListMouseout)
   root.querySelector('#sidebar-search-input')?.addEventListener('input', onSearchInput)
+  positionUserMenuOnOpen()
   renderSyncStatus(triageSync.status)
   renderSidebar()
   // Learn the server's protocol from its `server-info` connect frame (refuses
@@ -1586,6 +1645,7 @@ class AppSidebar extends LitElement {
         </button>
         <button id="auth-status" type="button" hidden></button>
       </div>
+      <div id="user-menu" popover class="user-menu"></div>
     `
   }
 
