@@ -387,7 +387,7 @@ window.addEventListener('hashchange', () => {
     // overlay onto; collapsing it would strand close / min / max over a
     // 32px strip, so ignore the persisted flag and pin the sidebar open.
     const isAppHeader = window.matchMedia?.('(display-mode: window-controls-overlay)').matches
-    if (!isAppHeader && localStorage.getItem('deepview.sidebarCollapsed') === '1') sidebar.classList.add('collapsed')
+    if (!isAppHeader && state.serverMode !== 'managed' && localStorage.getItem('deepview.sidebarCollapsed') === '1') sidebar.classList.add('collapsed')
     // Installed-PWA modes (standalone OR window-controls-overlay) —
     // launched as a standalone app, not a browser tab, so app-level
     // page zoom (ctrl/cmd+wheel, ctrl/cmd+ +/-/0, touch-pinch) should be

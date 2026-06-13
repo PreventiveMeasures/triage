@@ -43,6 +43,8 @@
 :host(.collapsed) #sync-status {
   padding: .25rem; border: 0;
 }
+/* Managed mode pins the sidebar open — hide the collapse toggle. */
+:host([data-mode='managed']) #sidebar-toggle { display: none; }
 
 .sidebar-header {
   display: flex; align-items: center; gap: .5rem;
@@ -665,6 +667,5 @@ sidebar-delete-current button {
   background: transparent; border: 0; border-radius: 4px;
   padding: .4rem .5rem;
   font: inherit; font-size: .82rem; color: var(--text);
-  cursor: pointer;
 }
 .user-menu-row:hover { background: rgb(from var(--text) r g b / .08); }

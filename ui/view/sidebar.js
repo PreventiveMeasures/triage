@@ -896,6 +896,7 @@ async function onSidebarClick(e) {
     return
   }
   if (e.target.closest('#sidebar-toggle')) {
+    if (state.serverMode === 'managed') return
     hostEl.classList.toggle('collapsed')
     try { localStorage.setItem('deepview.sidebarCollapsed', hostEl.classList.contains('collapsed') ? '1' : '0') } catch {}
   }
@@ -1049,10 +1050,19 @@ function renderBrandTag() {
   if (tag) tag.textContent = state.serverMode
 }
 
+// Managed mode pins the sidebar open — no collapse affordance (a fuller
+// management surface lives here). The mode is mirrored onto the host so CSS can
+// hide the collapse toggle.
+function applyCollapsibility() {
+  if (hostEl) hostEl.dataset.mode = state.serverMode
+  if (state.serverMode === 'managed') hostEl?.classList.remove('collapsed')
+}
+
 function renderSyncStatus(status) {
   const btn = root?.querySelector('#sync-status')
   if (!btn) return
   renderBrandTag()
+  applyCollapsibility()
   // A refused cross-mode switch pins sync OFF and explains why — checked
   // FIRST so no later render (visibility / status change) can clear the
   // forced-off and silently reconnect to a wrong-protocol server.
