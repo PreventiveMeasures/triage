@@ -47,6 +47,7 @@ function reset() {
   state.shownTriage = null
   state.workspaceMerges = []
   state.reports = []
+  state.viewMode = 'table'
 }
 
 // One single-finding group per finding (the common shape). Confidence
@@ -138,6 +139,24 @@ describe('exportSelectionSummary — print vs download basis', () => {
     const download = exportSelectionSummary('download')
     assert.equal(download.total, 2)
     assert.equal(download.included, 2)
+  })
+})
+
+describe('exportSelectionSummary — focus mode print', () => {
+  beforeEach(reset)
+
+  it('flags focusedOnly only for print in the focus view-mode', () => {
+    loadFindings(makeFinding('A'), makeFinding('B'))
+    state.viewMode = 'focus'
+    // Print from focus emits just the focused finding…
+    assert.equal(exportSelectionSummary('print').focusedOnly, true)
+    // …but the counts still describe the whole filtered queue, not 1.
+    assert.equal(exportSelectionSummary('print').included, 2)
+    // Download ignores view-mode (markdown serializes the full set).
+    assert.equal(exportSelectionSummary('download').focusedOnly, false)
+    // Any other view-mode prints the full filtered set.
+    state.viewMode = 'list'
+    assert.equal(exportSelectionSummary('print').focusedOnly, false)
   })
 })
 

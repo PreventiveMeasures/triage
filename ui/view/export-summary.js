@@ -114,5 +114,13 @@ export function exportSelectionSummary(mode) {
     excluded: total - included,
     filters: activeFilterDescriptions(),
     bucketLabel: state.shownTriage ? (TRIAGE_LABELS[state.shownTriage] ?? state.shownTriage) : null,
+    // Focus view-mode prints ONLY the single focused finding: the print
+    // pipeline swaps table → list but leaves focus as-is, so the printed
+    // DOM is the one focused finding-card (the "Up next" queue is hidden
+    // on paper). The included/total counts above still describe the
+    // filtered set (the focus queue), but `focusedOnly` tells the dialog
+    // that print emits just one of them. Download is unaffected —
+    // markdown serializes the full filtered set regardless of view-mode.
+    focusedOnly: mode === 'print' && state.viewMode === 'focus',
   }
 }

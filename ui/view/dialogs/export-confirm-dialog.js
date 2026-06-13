@@ -33,6 +33,9 @@ class ExportConfirmDialog extends AppDialog {
     filters: { attribute: false },
     // Non-null only when viewing a trash bucket (e.g. 'Deleted').
     bucketLabel: { type: String },
+    // Print from the focus view-mode emits only the single focused
+    // finding (not the whole filtered set) — see export-summary.js.
+    focusedOnly: { type: Boolean },
   }
 
   constructor() {
@@ -43,6 +46,7 @@ class ExportConfirmDialog extends AppDialog {
     this.total = 0
     this.filters = []
     this.bucketLabel = null
+    this.focusedOnly = false
   }
 
   // Focus the primary action — this is a non-destructive confirm, so
@@ -65,6 +69,17 @@ class ExportConfirmDialog extends AppDialog {
   _countSection() {
     if (this.total === 0) {
       return html`<p class="ecd-count">No findings to ${this.mode === 'print' ? 'print' : 'download'}.</p>`
+    }
+    // Focus view-mode: print emits only the focused finding. Lead with
+    // that, and point the user to list / grouped to print the whole
+    // filtered set (the focus queue, sized `included`). Only when the
+    // queue is non-empty — with everything filtered out there's nothing
+    // focused, so fall through to the normal "0 of N" (disabled) copy.
+    if (this.focusedOnly && this.included > 0) {
+      return html`
+        <p class="ecd-count">Only the <strong>focused</strong> finding will be printed.</p>
+        <p class="ecd-excluded">Focus mode prints just the finding you're viewing. Switch to the list or grouped view to print all ${this.included} matching ${this.included === 1 ? 'finding' : 'findings'}.</p>
+      `
     }
     // "All N" only when nothing is filtered at all; with active filters
     // that happen to exclude nothing, "N of N" makes the filtering
@@ -96,9 +111,11 @@ class ExportConfirmDialog extends AppDialog {
   render() {
     const isPrint = this.mode === 'print'
     const title = isPrint ? 'Print report' : 'Download report'
-    const intro = isPrint
-      ? 'Prints only the findings matching your current filters — the same set shown on screen. Use the toolbar to change the selection first.'
-      : 'Downloads a Markdown file of the findings matching your current filters — the same set shown on screen. Use the toolbar to change the selection first.'
+    const intro = this.focusedOnly
+      ? "You're in focus mode — printing outputs just the finding you're focused on."
+      : isPrint
+        ? 'Prints only the findings matching your current filters — the same set shown on screen. Use the toolbar to change the selection first.'
+        : 'Downloads a Markdown file of the findings matching your current filters — the same set shown on screen. Use the toolbar to change the selection first.'
     return html`<dialog @close=${this._onClose}>
       <header>
         <h3>${title}</h3>
@@ -143,6 +160,7 @@ export function openExportConfirmDialog(mode) {
       total: summary.total,
       filters: summary.filters,
       bucketLabel: summary.bucketLabel,
+      focusedOnly: summary.focusedOnly,
     })
     const settle = (confirmed) => { el.remove(); resolve({ confirmed }) }
     el.addEventListener('resolve', (e) => settle(Boolean(e.detail?.confirmed)))
