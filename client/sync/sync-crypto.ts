@@ -41,7 +41,7 @@ const ED25519_PKCS8_HEADER = new Uint8Array([
 // revision id (string) once the chain has rolled past genesis,
 // nullable on the very first save. `keyframe === true` exactly is
 // what the canonical bytes serialize as `'1'`; anything else
-// becomes `''` (matches server/sign.ts's `canonicalSave`).
+// becomes `''` (matches e2e-server/sign.ts's `canonicalSave`).
 export type SavePayload = {
   publicKeyB64: string
   base: string | number | null | undefined

@@ -171,7 +171,7 @@ export function createHttpServer(deps: HttpServerDeps): Server {
       // that holds a valid token (e.g. via XSS that read a freshly-minted
       // one) would PUT with its own Origin header — caught here.
       // Same-origin XHR/fetch may omit Origin; that path is allowed (see
-      // `isOriginAllowed`). Transport audit `server/objstore/rest.ts:103`.
+      // `isOriginAllowed`). Transport audit `e2e-server/objstore/rest.ts:103`.
       if (!isOriginAllowed(req)) {
         res.writeHead(403, { 'content-type': 'application/json' })
         res.end(JSON.stringify({ error: 'origin-denied' }))
@@ -183,7 +183,7 @@ export function createHttpServer(deps: HttpServerDeps): Server {
       // blob within its declared Content-Length; POST carries the small
       // fetch-mint JSON body. `req.setTimeout` fires on inactivity; we
       // destroy the request, aborting the body pipeline.
-      // Transport audit `server/objstore/rest.ts:218`.
+      // Transport audit `e2e-server/objstore/rest.ts:218`.
       if (req.method === 'PUT' || req.method === 'POST') {
         req.setTimeout(restPutIdleTimeoutMs, () => {
           if (debug) console.warn(`REST ${req.method} idle ${restPutIdleTimeoutMs}ms → abort`)

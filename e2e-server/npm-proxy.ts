@@ -8,7 +8,7 @@
 // the request body and answers with the upstream's JSON.
 //
 // The route is mounted at `/api/npm-advisories`. The same-origin
-// gate runs inside `dispatchNpmAdvisories` below (server/http.ts
+// gate runs inside `dispatchNpmAdvisories` below (e2e-server/http.ts
 // calls the dispatcher directly without a pre-check), so any
 // browser request from a foreign origin is rejected with 403 before
 // we ever issue a fetch — non-browser callers that omit Origin are

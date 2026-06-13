@@ -1,8 +1,8 @@
-// Test-only: exercise `server/db-neon.ts`'s Neon code path against an
+// Test-only: exercise `e2e-server/db-neon.ts`'s Neon code path against an
 // in-process Postgres (PGlite) instead of a real Neon endpoint, so the
 // previously-untested Neon backend runs under the same suite as SQLite.
 //
-// `openNeonDb` dynamically imports `server/neon-driver.ts` — the single
+// `openNeonDb` dynamically imports `e2e-server/neon-driver.ts` — the single
 // re-export wrapper for the optional `@neondatabase/serverless` peer
 // dep. We mock THAT local module so the import resolves to a
 // PGlite-backed shim of the driver's `neon()` callable. Mocking the
@@ -22,9 +22,9 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { PGlite } from '@electric-sql/pglite'
 
-import { openNeonDb } from '../server/db-neon.ts'
-import { openNeonObjstore } from '../server/objstore/store-neon.ts'
-import { openFsBlobBackend } from '../server/objstore/blob-fs.ts'
+import { openNeonDb } from '../e2e-server/db-neon.ts'
+import { openNeonObjstore } from '../e2e-server/objstore/store-neon.ts'
+import { openFsBlobBackend } from '../e2e-server/objstore/blob-fs.ts'
 
 // One PGlite instance shared across the whole file. WASM init costs
 // ~1-2s, so creating an instance per test would dominate the suite's
@@ -100,7 +100,7 @@ function makeNeonSql(pg) {
 // which holds no connection — HTTP is stateless), so it hands back a
 // shim over the shared instance immediately; PGlite's own methods await
 // readiness internally on first use.
-mock.module('../server/neon-driver.ts', {
+mock.module('../e2e-server/neon-driver.ts', {
   namedExports: { neon: () => makeNeonSql(sharedInstance()) },
 })
 

@@ -4,7 +4,7 @@
 //
 // The resolver runs each time the relay's first-action gate fires
 // (server-side `requiresAuth(socket) && !workspaceExists(tag)` in
-// server/index.ts) and the client has no cached password to replay
+// e2e-server/index.ts) and the client has no cached password to replay
 // silently. Returning the entered string sends
 // `authenticate { password }` over the wire; returning null cancels
 // — the pending save sits in `pendingSave` until a future trigger

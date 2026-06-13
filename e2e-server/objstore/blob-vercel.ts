@@ -1,5 +1,5 @@
 // Vercel Blob Private Storage BlobBackend. Paired with the Neon DB
-// plane in `server/index.ts` when `BLOB_READ_WRITE_TOKEN` is set;
+// plane in `e2e-server/index.ts` when `BLOB_READ_WRITE_TOKEN` is set;
 // the combination is the supported multi-replica deployment shape
 // (Neon for metadata, Vercel Blob for bytes — both serverless, both
 // HTTP-backed, no shared filesystem required).
@@ -363,7 +363,7 @@ function buildOpenLiveReader(sdk: VercelBlobSdk, token: string): BlobBackend['op
       // `not-found` would emit a 404 the FS backend never emits for the
       // same condition (blob-fs.ts maps ENOENT → `unavailable`), telling
       // the client the resource is gone for good when it should refetch.
-      // See server/README.md's GET status table.
+      // See e2e-server/README.md's GET status table.
       if (isNotFound(err)) return { ok: false, reason: 'unavailable', detail: 'vercel-get-not-found' }
       throw err
     }
@@ -493,7 +493,7 @@ export type VercelBlobBackendOptions = {
   // Vercel Blob R/W token, typically from BLOB_READ_WRITE_TOKEN.
   // The SDK also reads it from process.env, but passing it
   // explicitly here keeps the env-var → boot config path single-
-  // sourced through server/index.ts (matches the Neon DATABASE_URL
+  // sourced through e2e-server/index.ts (matches the Neon DATABASE_URL
   // handling — env-read at boot, threaded as a parameter).
   token: string
   // Test seam: inject a stub of the @vercel/blob module to avoid

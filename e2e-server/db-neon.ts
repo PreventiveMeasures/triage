@@ -4,7 +4,7 @@
 // dialect on the wire.
 //
 // `@neondatabase/serverless` is an OPTIONAL peer dep — selected by
-// the `DATABASE_URL` branch in `server/index.ts`. The peer dep
+// the `DATABASE_URL` branch in `e2e-server/index.ts`. The peer dep
 // itself is loaded lazily via the dynamic `import()` inside
 // `openNeonDb` below, so a SQLite-only deployment never installs it
 // (`autoInstallPeers: false` in `pnpm-workspace.yaml`) and never
@@ -340,7 +340,7 @@ export async function openNeonDb(connectionString: string): Promise<Handle> {
   // in-process Postgres (PGlite) via `mock.module`: that hook can only
   // intercept a specifier it can RESOLVE, and the optional peer dep
   // isn't installed in a SQLite-only checkout. The wrapper path always
-  // resolves — see `server/neon-driver.ts`. Cast through `unknown`
+  // resolves — see `e2e-server/neon-driver.ts`. Cast through `unknown`
   // because the wrapper's `export *` re-exports a `@ts-ignore`'d
   // (possibly-absent) module, so tsc can't see `neon`'s type here.
   const mod = (await import('./neon-driver.ts')) as unknown as { neon: (url: string) => NeonSql }

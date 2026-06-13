@@ -1,12 +1,12 @@
 // Guard: every server source file must be listed in package.json `files`.
 //
 // The server ships as raw .ts run through strip-types-loader (the
-// `triage-server` bin → server/cli.js, and the `./server` export →
-// server/index.ts). `files` is the npm publish allowlist, so a server module
+// `triage-server` bin → e2e-server/cli.js, and the `./server` export →
+// e2e-server/index.ts). `files` is the npm publish allowlist, so a server module
 // that's absent from it is simply MISSING from the published package and the
 // server throws on import at startup. There's no bundler to paper over it.
 //
-// This catches the "added a new server/*.ts but forgot to list it" class of
+// This catches the "added a new e2e-server/*.ts but forgot to list it" class of
 // bug — which is exactly how the objstore REST-mint modules (rest-mint.ts,
 // rest-deny.ts, fetch-mint-guard.ts) shipped unpublished until this guard.
 
@@ -20,12 +20,12 @@ test('package.json "files" lists every server source file (publish allowlist)', 
   const root = fileURLToPath(new URL('..', import.meta.url))
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
   const allow = new Set(pkg.files)
-  // Tracked files only — skips gitignored operator state (server/config.json,
-  // server/data/*) that must NOT be published.
-  const tracked = execSync('git ls-files server', { cwd: root, encoding: 'utf8' })
+  // Tracked files only — skips gitignored operator state (e2e-server/config.json,
+  // e2e-server/data/*) that must NOT be published.
+  const tracked = execSync('git ls-files e2e-server', { cwd: root, encoding: 'utf8' })
     .trim().split('\n').filter(Boolean)
-  // Every runtime source module (.ts/.js) under server/ is published; type
-  // decls and the colocated-nothing test files (there are none under server/,
+  // Every runtime source module (.ts/.js) under e2e-server/ is published; type
+  // decls and the colocated-nothing test files (there are none under e2e-server/,
   // but guard anyway) are not runtime imports.
   const needsPublish = tracked.filter((f) =>
     /\.(ts|js)$/u.test(f) && !f.endsWith('.d.ts') && !/\.test\.(ts|js)$/u.test(f))
@@ -39,7 +39,7 @@ test('package.json "files" lists every server source file (publish allowlist)', 
 
 // Every `exports` target must be in `files` too — an entry point that isn't
 // published resolves to a missing file for consumers (e.g. the `./reap`
-// Vercel-cron handler lives under `api/`, outside the `server/` scan above).
+// Vercel-cron handler lives under `api/`, outside the `e2e-server/` scan above).
 test('package.json "files" includes every exports target', () => {
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
   const allow = new Set(pkg.files)

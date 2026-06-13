@@ -42,7 +42,7 @@ function signSubscribe(sk, tag, from, connectionNonce) {
 }
 
 function signPut(sk, fields, connectionNonce) {
-  // Field order mirrors server/objstore/sign.ts:canonicalObjstorePut —
+  // Field order mirrors e2e-server/objstore/sign.ts:canonicalObjstorePut —
   // prevIncarnation rides between prevVersion and contentHash, '' when
   // null (matching `strOrEmpty`). A numeric prevVersion always carries a
   // valid incarnation id; the pair is inseparable (verifyObjstorePutSig's
@@ -59,7 +59,7 @@ function signPut(sk, fields, connectionNonce) {
 
 function signDelete(sk, fields, connectionNonce) {
   // prevIncarnation rides between prevVersion and the nonce, '' when null
-  // (server/objstore/sign.ts:canonicalObjstoreDelete).
+  // (e2e-server/objstore/sign.ts:canonicalObjstoreDelete).
   return sign(sk, encodeUtf8([
     DELETE_DOMAIN, fields.workspaceTag, fields.resourceTag,
     fields.prevVersion == null ? '' : String(fields.prevVersion),
@@ -74,7 +74,7 @@ function signFetch(sk, tag, resourceTag, connectionNonce) {
 
 function syntheticHash() { return b64url(crypto.getRandomValues(new Uint8Array(32))) }
 // A wire-valid incarnation id (16 random bytes → 22 base64url chars,
-// matching server/objstore/store.ts:randomId + isValidIncarnation).
+// matching e2e-server/objstore/store.ts:randomId + isValidIncarnation).
 // Used where a non-null prevIncarnation must accompany a non-null
 // prevVersion to satisfy the `validPrevPair` gate but the exact value
 // is irrelevant — e.g. preconditioning a delete against a row that
@@ -585,7 +585,7 @@ describe('v1.objstore server (REST-primary)', { concurrency: true }, () => {
     // prevVersion (2^53, 1.5, ...) would pass the wire gate, reach
     // sig verify, fail there. Now rejected up-front for parity with
     // `handleDelete:116`. Input-validation audit
-    // `server/objstore/handlers.ts:76`. (NaN / Infinity aren't
+    // `e2e-server/objstore/handlers.ts:76`. (NaN / Infinity aren't
     // testable over JSON — they serialise to `null` — but the same
     // gate covers them deterministically since `Number.isSafeInteger`
     // is false for both.)
@@ -916,7 +916,7 @@ describe('v1.objstore server (REST-primary)', { concurrency: true }, () => {
   })
 
   // NOTE on Transform overrun coverage: the Transform-in-pipeline
-  // byte counter at server/objstore/rest.ts has a defensive
+  // byte counter at e2e-server/objstore/rest.ts has a defensive
   // `cb(new Error('overrun'))` branch for `received > declared`. We
   // confirmed empirically that this branch is NOT reachable from
   // legitimate HTTP clients: Node's HTTP parser rejects a body that
@@ -928,12 +928,12 @@ describe('v1.objstore server (REST-primary)', { concurrency: true }, () => {
   // test would require export gymnastics. Documented gap.
 
   it('101st NEW resource per workspace → objstore-put-error { reason: workspace-full } (H1 cap)', async () => {
-    // Audit round-9 H1: server/objstore/store.ts caps live rows per
+    // Audit round-9 H1: e2e-server/objstore/store.ts caps live rows per
     // workspace at MAX_RESOURCES_PER_WORKSPACE (100). DB-level
     // coverage is in tests/server-objstore.test.js; this exercises
     // the WS handler path that translates the storage rejection
     // into the typed wire frame.
-    const { MAX_RESOURCES_PER_WORKSPACE } = await import('../server/objstore/store.ts')
+    const { MAX_RESOURCES_PER_WORKSPACE } = await import('../e2e-server/objstore/store.ts')
     const { sk, tag } = await makeKp()
     const c = await connect(serverUrl)
     await subscribeWS(c, sk, tag)

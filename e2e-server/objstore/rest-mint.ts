@@ -9,7 +9,7 @@
 // fetch/put return the SAME token shape the WS path sends, for the UNCHANGED
 // bearer-token GET / PUT byte transfers; delete mutates in place and returns
 // `{ deletedVersion }` (no token — there are no bytes to move). See
-// server/README.md "REST endpoints & tokens".
+// e2e-server/README.md "REST endpoints & tokens".
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Buffer } from 'node:buffer'

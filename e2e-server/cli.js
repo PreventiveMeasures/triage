@@ -3,7 +3,7 @@
 //
 // Node refuses to strip TypeScript types from files under node_modules
 // (ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING), so once this package is
-// installed as a dependency, server/index.ts can't be executed directly.
+// installed as a dependency, e2e-server/index.ts can't be executed directly.
 // This launcher registers the built-in-type-stripping hook FIRST
 // (synchronous, in-thread — see ../strip-types-loader.js), then loads the
 // server with the hook active and starts it.

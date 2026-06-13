@@ -21,13 +21,13 @@ export type Hub = {
   // WS-originated broadcasts pass the originator so it doesn't see its
   // own message echoed back. Local-only: callers that ALSO want a
   // cross-instance fan-out are expected to publish to the pubsub bus
-  // alongside this call (server/pubsub.ts). The hub deliberately stays
+  // alongside this call (e2e-server/pubsub.ts). The hub deliberately stays
   // ignorant of the bus so its transport invariants (backpressure cap,
   // stringify-once, terminate-on-overflow) are unchanged.
   broadcast(tag: string, msg: object, except: WebSocket | null): void
   // Broadcasts an ALREADY-SERIALISED payload to every local subscriber
   // for `tag`. Used by the pubsub bus receiver
-  // (server/bus-receiver.ts, wired up from server/index.ts) to relay
+  // (e2e-server/bus-receiver.ts, wired up from e2e-server/index.ts) to relay
   // a remote-instance event into this instance's fan-out. No `except`:
   // the originator is on a different instance by construction.
   broadcastLocalRaw(tag: string, payload: string): void
@@ -71,7 +71,7 @@ export function createHub(deps: { peers: PeerRegistry; maxBufferedBytes: number;
     // kernel yet — a slow / blackholed peer accumulates them unboundedly
     // during fan-out broadcasts. Drop above the cap and terminate the
     // socket so the heartbeat doesn't keep it alive on ping/pong while
-    // every broadcast piles up. Transport audit `server/index.ts:225`.
+    // every broadcast piles up. Transport audit `e2e-server/index.ts:225`.
     if (socket.bufferedAmount > maxBufferedBytes) {
       if (debug) console.warn(`drop broadcast: socket buffered ${socket.bufferedAmount}B > cap`)
       try { socket.terminate() } catch {}

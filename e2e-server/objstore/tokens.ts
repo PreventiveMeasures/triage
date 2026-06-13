@@ -119,7 +119,7 @@ function isValidPayload(v: unknown): v is TokenPayload {
   // different actual value, or — for `exp` — claim a
   // `Number.MAX_SAFE_INTEGER + 1` expiry that compares ambiguously near
   // the IEEE-754 boundary. Matches the codebase's other safe-int gates
-  // (server/objstore/sign.ts, rest.ts, handlers.ts).
+  // (e2e-server/objstore/sign.ts, rest.ts, handlers.ts).
   if (!Number.isSafeInteger(o['exp']) || (o['exp'] as number) < 0) return false
   if (o['op'] === 'put') {
     return typeof o['sid'] === 'string'

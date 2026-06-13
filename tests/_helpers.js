@@ -1,14 +1,14 @@
 // Shared test utilities — currently only the server-spawn boilerplate
 // that every server-driven test repeats. Co-locates the contract so a
 // fix (e.g. pinning CONFIG_PATH to dodge a developer's local
-// `server/config.json`) lands in one place instead of 13.
+// `e2e-server/config.json`) lands in one place instead of 13.
 
 import { spawn } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
-// Boot a fresh `server/index.ts` against a per-test temp dir and
+// Boot a fresh `e2e-server/index.ts` against a per-test temp dir and
 // resolve when the listening banner appears on stdout. Returns the
 // spawned process, the temp dir, the resolved port, the derived URLs,
 // and a teardown that kills the proc and removes the dir.
@@ -19,7 +19,7 @@ import path from 'node:path'
 // `loadConfig` treats ENOENT as `{}` (no password gate); tests that
 // want a real config just pre-write the file before calling.
 // Pinning CONFIG_PATH inside the temp dir matters because the
-// server's default resolves `server/config.json` next to the source,
+// server's default resolves `e2e-server/config.json` next to the source,
 // which is git-ignored and can hold a password on a developer's
 // checkout — leaking that file into spawned-server tests turns every
 // "first action" (workspace create / save) into an unauthorized
@@ -36,7 +36,7 @@ import path from 'node:path'
 export async function bootServer({ dir = null, env = {} } = {}) {
   const ownsDir = dir == null
   const serverDir = dir ?? mkdtempSync(path.join(tmpdir(), 'deepview-test-'))
-  const proc = spawn(process.execPath, ['server/index.ts'], {
+  const proc = spawn(process.execPath, ['e2e-server/index.ts'], {
     env: {
       ...process.env,
       PORT: '0',

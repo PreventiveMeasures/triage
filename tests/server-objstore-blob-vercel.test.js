@@ -17,11 +17,11 @@ import { pipeline } from 'node:stream/promises'
 import { DatabaseSync } from 'node:sqlite'
 import { createHash } from 'node:crypto'
 
-import { openVercelBlobBackend } from '../server/objstore/blob-vercel.ts'
-import { abortPut, beginPut, commitPut, deleteObject, getLive, openObjstore } from '../server/objstore/store.ts'
-import { reapOrphans } from '../server/objstore/reaper.ts'
-import { handleRest } from '../server/objstore/rest.ts'
-import { mintGetToken, newTokenSecret } from '../server/objstore/tokens.ts'
+import { openVercelBlobBackend } from '../e2e-server/objstore/blob-vercel.ts'
+import { abortPut, beginPut, commitPut, deleteObject, getLive, openObjstore } from '../e2e-server/objstore/store.ts'
+import { reapOrphans } from '../e2e-server/objstore/reaper.ts'
+import { handleRest } from '../e2e-server/objstore/rest.ts'
+import { mintGetToken, newTokenSecret } from '../e2e-server/objstore/tokens.ts'
 
 // 64-byte b64url, 86 chars no padding (SIG_RE)
 function b64u64() { return 'a'.repeat(86) }
@@ -168,7 +168,7 @@ function mockSdk() {
 // Construct a Handle whose DB plane is SQLite (in a temp dir) and
 // whose byte plane is the Vercel BlobBackend driven by a mock SDK.
 // This is the pairing for the test — the same shape production code
-// builds in server/index.ts (modulo SQLite ↔ Neon on the DB plane).
+// builds in e2e-server/index.ts (modulo SQLite ↔ Neon on the DB plane).
 let counter = 0
 async function freshVercelHandle() {
   const dir = mkdtempSync(path.join(tmpdir(), `deepview-vercel-${++counter}-`))
@@ -181,7 +181,7 @@ async function freshVercelHandle() {
   const vercel = await openVercelBlobBackend({ token: 'test-token', sdk })
   handle.blob = vercel
   // Vercel-backed handles do not carry a `dir` field in production
-  // (server/index.ts builds the Neon handle from openNeonObjstore,
+  // (e2e-server/index.ts builds the Neon handle from openNeonObjstore,
   // which doesn't set `dir`). Match that shape for the tests so a
   // stray test that reads handle.dir on the Vercel path would
   // fail loudly rather than silently using the unused FS root.

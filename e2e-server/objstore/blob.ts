@@ -11,7 +11,7 @@
 //                         the Neon DB plane for multi-replica
 //                         deployments)
 //
-// Selected at boot in `server/index.ts` and passed to `openObjstore`
+// Selected at boot in `e2e-server/index.ts` and passed to `openObjstore`
 // / `openNeonObjstore`. The DB-plane code in ./store.ts, ./rest.ts,
 // and ./reaper.ts goes through `handle.blob.*` and is backend-
 // agnostic — no `if (vercel) … else` branching in consumers.

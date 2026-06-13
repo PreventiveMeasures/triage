@@ -180,7 +180,7 @@ export function createSocketTransport(deps: SocketTransportDeps): SocketTranspor
     // also bounce the session to a replica that doesn't know its id → fresh
     // challenge → re-subscribe. The server keeps SSE sessions alive on its
     // own (periodic keepalive comment + TCP keepalive + response-close
-    // reaping; see server/sse-server.ts), so the client needn't prove
+    // reaping; see e2e-server/sse-server.ts), so the client needn't prove
     // liveness by POSTing. WS still pings — the unanswered pong is its only
     // dead-socket signal, and a WS ping is a cheap control frame (no churn).
     if (currentIsSse) return

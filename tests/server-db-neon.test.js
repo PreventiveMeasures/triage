@@ -1,5 +1,5 @@
-// Runs the backend-agnostic `server/db.ts` revision-storage suite
-// against the NEON backend (`server/db-neon.ts`) instead of SQLite,
+// Runs the backend-agnostic `e2e-server/db.ts` revision-storage suite
+// against the NEON backend (`e2e-server/db-neon.ts`) instead of SQLite,
 // using an in-process Postgres (PGlite) standing in for the real Neon
 // driver (see `_neon-pglite.js`). The Neon path — `openNeonDb`,
 // `tryCommitNeon`, the durability gate, the BIGINT coercion — had zero
@@ -22,8 +22,8 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { chainFrom, commitRevision, headFor, revisionExists } from '../server/db.ts'
-import { assertDurableSyncCommit, openNeonDb } from '../server/db-neon.ts'
+import { chainFrom, commitRevision, headFor, revisionExists } from '../e2e-server/db.ts'
+import { assertDurableSyncCommit, openNeonDb } from '../e2e-server/db-neon.ts'
 import { failNextCommit, freshNeonDb } from './_neon-pglite.js'
 
 let idCounter = 0

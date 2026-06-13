@@ -38,7 +38,7 @@ See the "Cross-instance broadcasts" detail in the Neon section.
 | `PORT`                 | `8765`                |                                                |
 | `HOST`                 | `127.0.0.1`           |                                                |
 | `DEBUG`                | —                     | `DEBUG=1` logs every message                   |
-| `DB_PATH`              | `server/data/data.db` | SQLite mode only                               |
+| `DB_PATH`              | `e2e-server/data/data.db` | SQLite mode only                               |
 | `OBJSTORE_DIR`         | next to `DB_PATH`     | SQLite mode only — on-disk blob bytes          |
 | `DATABASE_URL`         | —                     | set → Neon mode (Postgres connection string)   |
 | `BLOB_READ_WRITE_TOKEN`| —                     | Neon mode, **required** — Vercel Blob R/W token |
@@ -89,7 +89,7 @@ server **fails fast at boot** if any required companion is missing:
 - **`TRUST_PROXY=1`** — make the same-origin gate honour `X-Forwarded-Host`
   / `-Proto` instead of the internal container hostname; otherwise every
   browser request behind a load balancer / TLS terminator 403s. This isn't
-  Neon-specific — the gate (`server/origin.ts`) defaults on for a loopback
+  Neon-specific — the gate (`e2e-server/origin.ts`) defaults on for a loopback
   `HOST` and off otherwise in *any* mode, so a SQLite deploy on a public
   bind behind a proxy needs it too. Neon mode just additionally **fails
   fast at boot** when it's missing on a non-loopback `HOST` (a SQLite
@@ -101,9 +101,9 @@ The drivers are `optional` peer deps and `pnpm-workspace.yaml` sets
 
 ### Cross-instance broadcasts (Postgres LISTEN/NOTIFY)
 
-The WS fan-out is still an in-memory subscriber map (`server/hub.ts`),
+The WS fan-out is still an in-memory subscriber map (`e2e-server/hub.ts`),
 but Neon mode wires a Postgres LISTEN/NOTIFY bus
-(`server/pubsub.ts`) alongside it so live broadcasts reach peers on
+(`e2e-server/pubsub.ts`) alongside it so live broadcasts reach peers on
 *other* instances too. Each commit fans out twice: locally over the
 in-memory subscriber map, then onto the bus; the receiving instance
 re-fans-out into its own subscriber map. A client on instance A sees
@@ -184,7 +184,7 @@ workspace tag** behind a shared password. Copy the example config and set
 one:
 
 ```sh
-cp server/config.example.json server/config.json
+cp e2e-server/config.example.json e2e-server/config.json
 ```
 
 ```json
@@ -400,7 +400,7 @@ objstore-deleted      { workspaceTag, resourceTag, version }
 ```
 
 Canonical signing payloads are the source of truth in
-`server/objstore/sign.ts` (`canonicalObjstorePut` / `…Delete` / `…Fetch` /
+`e2e-server/objstore/sign.ts` (`canonicalObjstorePut` / `…Delete` / `…Fetch` /
 `…FetchRest`); JSON key order on the wire is irrelevant but the signed
 byte order is fixed by those builders. `*-error` / `*-conflict` frames are sent after
 sig verify, so only legit signers see them.
@@ -415,7 +415,7 @@ All routes match `/api/objstore/{workspaceTag}/{resourceTag}`. The `PUT`/
 never the URL (querystring tokens leak via access logs / referer). The
 `POST` route is a REST alternative to the WS `objstore-fetch` /
 `objstore-put-begin` / `objstore-delete` handshakes
-(`server/objstore/rest-mint.ts`): authed by an Ed25519 signature in the JSON
+(`e2e-server/objstore/rest-mint.ts`): authed by an Ed25519 signature in the JSON
 body (no live socket, no bearer token) — useful when running these ops
 independent of the SSE session (e.g. so an SSE replica hop can't interrupt
 them; the client uses it in SSE mode). The body's `op` selects `fetch` (→
@@ -424,7 +424,7 @@ shape the WS path sends for the same `GET` / `PUT` route — or `delete`, which
 mutates in place and returns `{ deletedVersion }` (no token; there are no
 bytes to move). In place of the WS connection nonce it binds a client
 timestamp; the server enforces a ±60s freshness window + a single-use replay
-dedup (`server/objstore/fetch-mint-guard.ts`), so a retry must re-sign with a
+dedup (`e2e-server/objstore/fetch-mint-guard.ts`), so a retry must re-sign with a
 fresh `ts` rather than resend the same body. The `put` op also runs the
 new-workspace operator gate — since REST has no socket auth state, a
 never-seen workspace under a configured password gets 401 and the client
@@ -593,14 +593,14 @@ ${workspaceTag}/.staging/${stagingId}.bin    -- in-flight
 Same columns, primary keys, and value-domain `CHECK` constraints
 (`version >= 0`, `content_length >= 0`, …) in both modes. The difference
 is type enforcement: SQLite adds `STRICT` for column types
-(`server/objstore/store.ts`), while Neon relies on native Postgres types
+(`e2e-server/objstore/store.ts`), while Neon relies on native Postgres types
 (`BIGINT`, etc.) and carries the same `CHECK`s
-(`server/objstore/store-neon.ts`).
+(`e2e-server/objstore/store-neon.ts`).
 
 The byte path is `${OBJSTORE_DIR}/…` on the FS backend and a private
 Vercel Blob pathname on the Neon backend; consumers (`store`, `rest`,
 `reaper`) go through a backend-agnostic `BlobBackend` interface
-(`server/objstore/blob.ts`). Bytes live outside the metadata store to keep
+(`e2e-server/objstore/blob.ts`). Bytes live outside the metadata store to keep
 multi-MB blobs off the DB path. Live blobs are content-addressed, so the
 row's `content_hash` literally names its blob — a metadata-vs-bytes desync
 is impossible and commit is a plain version compare-and-set. Ordering is
@@ -685,7 +685,7 @@ saves on one tag are kept fork-safe by a single gated INSERT whose
 head-check and `COALESCE(MAX(seq),0)+1` read one statement snapshot, so a
 racer is forced onto either the same `seq` (rejected by the PK) or a
 no-longer-matching head (gated out). The loser gets `stale-base`. A
-UNIQUE-violation recovery branch (`catch` in `server/db.ts`) re-routes a
+UNIQUE-violation recovery branch (`catch` in `e2e-server/db.ts`) re-routes a
 PK/UNIQUE collision through `revisionExists` + `headFor`, emerging as
 `inserted` or `stale-base`, never a silent fork.
 

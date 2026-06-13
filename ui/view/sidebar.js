@@ -68,7 +68,7 @@ function countLoadedRepositories() {
 //     dev proxy (local) routes `/api/*` → relay, `/*` → the static
 //     UI bundle, no upgrade-header gymnastics. Localhost gets the
 //     same shape as a self-hosted deploy: the dev proxy on :8000
-//     forwards `/api/sync` to `server/index.ts` on :8765, so
+//     forwards `/api/sync` to `e2e-server/index.ts` on :8765, so
 //     `ws://127.0.0.1:8000/api/sync` Just Works.
 // A user who wants to override either default can still call
 // `DeepView.triageSync.setServerUrl('wss://…')` from the console;

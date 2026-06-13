@@ -121,7 +121,7 @@ async function reapStaleStagingRows(handle: Handle, now: number, stagingTtlMs: n
   // Push the staleness filter into SQL so the
   // `workspace_object_staging_begun_at_idx` index handles the scan.
   // The snapshot is O(stale-rows) cluster-wide. DB-layout audit
-  // `server/objstore/store.ts`.
+  // `e2e-server/objstore/store.ts`.
   const staleBefore = now - stagingTtlMs
   const staging = await handle.listAllStaging.all(staleBefore) as StagingRow[]
   for (const s of staging) {

@@ -1,4 +1,4 @@
-// Race-condition + complex-scenario tests for `server/objstore/`.
+// Race-condition + complex-scenario tests for `e2e-server/objstore/`.
 //
 // Sibling of tests/server-objstore.test.js (which pins the core
 // happy-path + single-event semantics). This file targets the
@@ -8,7 +8,7 @@
 // keeps a stagingId minted under one resource from being usable
 // against another. The objstore plane takes NO in-process lock; its
 // races are resolved by the version-CAS + content-addressing + the
-// reaper's atomic conditional staging delete (see server/objstore).
+// reaper's atomic conditional staging delete (see e2e-server/objstore).
 //
 // User data is the priority: anywhere a race could promote a
 // truncated upload, drop a live row whose file still exists (or
@@ -33,9 +33,9 @@ import {
   getLive,
   listLive,
   openObjstore,
-} from '../server/objstore/store.ts'
-import { liveFilePath } from '../server/objstore/fs.ts'
-import { reapOrphans } from '../server/objstore/reaper.ts'
+} from '../e2e-server/objstore/store.ts'
+import { liveFilePath } from '../e2e-server/objstore/fs.ts'
+import { reapOrphans } from '../e2e-server/objstore/reaper.ts'
 
 let counter = 0
 function freshHandle() {
@@ -1591,7 +1591,7 @@ describe('crash-recovery / partial-state cleanup', () => {
       // content-addressed live path + upsertLive (the row references
       // that same hash), SKIP the final deleteStaging (the "crash"
       // point).
-      const { durableRenameStagedToLive } = await import('../server/objstore/fs.ts')
+      const { durableRenameStagedToLive } = await import('../e2e-server/objstore/fs.ts')
       const hHalf = chash('half-commit')
       const livePath = liveFilePath(objDir, 'ws-1', hHalf)
       const renamed = await durableRenameStagedToLive(b.filePath, livePath)
@@ -1665,7 +1665,7 @@ describe('crash-recovery / partial-state cleanup', () => {
         const t = `crashed-commit-${i}`
         const b = await beginPut(handle, fakeBegin({ resourceTag: t, expectedLength: 4 }))
         writeStaging(b.filePath, Buffer.alloc(4))
-        const { durableRenameStagedToLive } = await import('../server/objstore/fs.ts')
+        const { durableRenameStagedToLive } = await import('../e2e-server/objstore/fs.ts')
         // Promote to the content-addressed path; the live row
         // references that same hash (the metadata-vs-bytes binding).
         const h = chash(t)
@@ -1824,7 +1824,7 @@ describe('reaper × in-flight upload (slow streaming body)', () => {
 describe('reaper × orphan row (row stays, file gone)', () => {
   it.todo('reapOrphans should clean live rows whose file is missing (currently leaves them pointing at nothing)', async () => {
     // OBSERVATION: the inline comment in
-    // `server/objstore/rest.ts handleRestGet` says of the 503
+    // `e2e-server/objstore/rest.ts handleRestGet` says of the 503
     // path:
     //
     //   "the live row is there but the file is missing / wrong

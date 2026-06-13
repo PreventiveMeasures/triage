@@ -4,7 +4,7 @@
 // dialect on the wire.
 //
 // `@neondatabase/serverless` is an OPTIONAL peer dep — selected by
-// the `DATABASE_URL` branch in `server/index.ts`. The peer dep
+// the `DATABASE_URL` branch in `e2e-server/index.ts`. The peer dep
 // itself is loaded lazily inside `openNeonObjstore` below. A single
 // Neon project / database holds both `workspace_revision` and the
 // two objstore tables; each plane opens its own stateless
@@ -13,7 +13,7 @@
 // release.
 //
 // Byte plane: passed in as a `BlobBackend` (./blob.ts). The
-// supported pairings selected by server/index.ts are:
+// supported pairings selected by e2e-server/index.ts are:
 //   - Neon + Vercel Blob Private Storage (multi-replica, the only
 //     pairing that survives a replica restart without local-disk
 //     coordination). Activated by setting BLOB_READ_WRITE_TOKEN
@@ -309,7 +309,7 @@ export async function openNeonObjstore(connectionString: string, blob: BlobBacke
   // local `../neon-driver.ts` re-export wrapper so the peer dep stays
   // optional AND tests can mock the driver (a local path is always
   // resolvable; the bare specifier isn't when the dep is absent). See
-  // `server/neon-driver.ts`. Cast through `unknown` because the
+  // `e2e-server/neon-driver.ts`. Cast through `unknown` because the
   // wrapper's `export *` re-exports a `@ts-ignore`'d module.
   const mod = (await import('../neon-driver.ts')) as unknown as { neon: (url: string) => NeonSql }
   const sql: NeonSql = mod.neon(connectionString)

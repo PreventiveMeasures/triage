@@ -1,5 +1,5 @@
 // End-to-end coverage of the cross-instance bus RECEIVER path
-// (`server/bus-receiver.ts`). The pubsub tests in `tests/pubsub.test.js`
+// (`e2e-server/bus-receiver.ts`). The pubsub tests in `tests/pubsub.test.js`
 // exercise parse / dispatch / self-filter on the wire (PGlite is
 // single-connection so they can't reproduce genuine multi-replica
 // A→B); this file fills the gap by driving the receiver directly
@@ -18,10 +18,10 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { Buffer } from 'node:buffer'
 
-import { createHub } from '../server/hub.ts'
-import { commitRevision } from '../server/db.ts'
-import { createBusReceiver } from '../server/bus-receiver.ts'
-import { beginPut, commitPut } from '../server/objstore/store.ts'
+import { createHub } from '../e2e-server/hub.ts'
+import { commitRevision } from '../e2e-server/db.ts'
+import { createBusReceiver } from '../e2e-server/bus-receiver.ts'
+import { beginPut, commitPut } from '../e2e-server/objstore/store.ts'
 import { writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { createHash } from 'node:crypto'

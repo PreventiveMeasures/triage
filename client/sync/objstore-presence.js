@@ -1367,7 +1367,7 @@ export async function putFile(workspaceId, fileName, content) {
   const result = await retryOnConflict((prev) => entry.session.put({ fileName, content, prev }))
   // Advance the local version baseline so the matching `onPut`
   // self-echo (the relay broadcasts with `except: null`, see
-  // `server/objstore/handlers.ts:190` / `server/objstore/rest.ts`
+  // `e2e-server/objstore/handlers.ts:190` / `e2e-server/objstore/rest.ts`
   // — the originator IS included in the fan-out) hits the parity
   // branch and skips the replace-refetch. Without this, every
   // `putFile` would round-trip the just-uploaded bytes back to

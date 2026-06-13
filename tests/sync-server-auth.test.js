@@ -1,6 +1,6 @@
 // End-to-end tests for the operator-side password gate on the
 // triage-sync relay. Each test boots its own server child process so
-// the `server/config.json` (or absence) is scoped per-case — the
+// the `e2e-server/config.json` (or absence) is scoped per-case — the
 // shared-server pattern other suites use doesn't fit here because
 // the password is read once at process start.
 //
@@ -58,7 +58,7 @@ async function signSubscribe(sk, tag, from, connectionNonce) {
 }
 
 async function buildObjstorePut(sk, tag, resourceTag, prevVersion, prevIncarnation, expectedLength, contentHash, connectionNonce) {
-  // Canonical encoding mirrors server/objstore/sign.ts:canonicalObjstorePut
+  // Canonical encoding mirrors e2e-server/objstore/sign.ts:canonicalObjstorePut
   // (fields positional newline-joined; null prev_version → empty
   // string via `intOrEmpty`; null prev_incarnation → empty string via
   // `strOrEmpty`; the per-connection challenge nonce is the LAST field
@@ -339,7 +339,7 @@ describe('triage-sync server: first-action password gate (password configured)',
 
   it('objstore-put-begin against a fresh tag is blocked with unauthorized { kind: "gated", workspaceTag, resourceTag }', async () => {
     const { sk, tag } = await makeKp()
-    // resourceTag must match server/objstore/store.ts:TAG_RE (base64url alphabet).
+    // resourceTag must match e2e-server/objstore/store.ts:TAG_RE (base64url alphabet).
     const resourceTag = b64url(crypto.getRandomValues(new Uint8Array(16)))
     const expectedLength = 64
     // Content hash is 43 base64url chars (SHA-256 of 32 bytes, no padding).
@@ -427,7 +427,7 @@ describe('triage-sync server: first-action password gate (password configured)',
     // The gate's `workspaceExists` check reads workspace_revision +
     // workspace_object (committed rows), NOT workspace_object_staging
     // (in-flight uploads) — see `countLive` SQL in
-    // server/objstore/store.ts. Two separate invariants matter here:
+    // e2e-server/objstore/store.ts. Two separate invariants matter here:
     //   (a) a blocked put-begin inserts NO staging row at all (the
     //       sig-verify-then-gate ordering bails before beginPut), so
     //       even an attacker who could persuade `workspaceExists` to
@@ -464,7 +464,7 @@ describe('triage-sync server: malformed config', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'deepview-sync-auth-bad-'))
     const configPath = path.join(dir, 'config.json')
     writeFileSync(configPath, 'not json {')
-    const proc = spawn(process.execPath, ['server/index.ts'], {
+    const proc = spawn(process.execPath, ['e2e-server/index.ts'], {
       env: { ...process.env, PORT: '0', HOST: '127.0.0.1', DB_PATH: path.join(dir, 'data.db'), CONFIG_PATH: configPath },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
@@ -484,7 +484,7 @@ describe('triage-sync server: malformed config', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'deepview-sync-auth-typed-'))
     const configPath = path.join(dir, 'config.json')
     writeFileSync(configPath, JSON.stringify({ password: 1234 }))
-    const proc = spawn(process.execPath, ['server/index.ts'], {
+    const proc = spawn(process.execPath, ['e2e-server/index.ts'], {
       env: { ...process.env, PORT: '0', HOST: '127.0.0.1', DB_PATH: path.join(dir, 'data.db'), CONFIG_PATH: configPath },
       stdio: ['ignore', 'pipe', 'pipe'],
     })

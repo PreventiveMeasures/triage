@@ -92,7 +92,7 @@ export function canonicalSave(
   // confusing diff in the canonical bytes rather than a clean drop.
   // Mirrors the `isSafeNonNegativeInt` rigor that the objstore
   // canonical builders apply. Input-validation audit
-  // `server/sign.ts:88`.
+  // `e2e-server/sign.ts:88`.
   if (typeof workspaceTag !== 'string') throw new TypeError('canonicalSave: workspaceTag must be string')
   if (typeof nonce !== 'string') throw new TypeError('canonicalSave: nonce must be string')
   if (typeof ciphertext !== 'string') throw new TypeError('canonicalSave: ciphertext must be string')
@@ -122,7 +122,7 @@ function canonicalSubscribe(
   return encodeUtf8([SUBSCRIBE_DOMAIN, workspaceTag as string, fromStr, connectionNonce].join('\n'))
 }
 
-// Exported because the v1.objstore signing module (server/objstore/sign.ts)
+// Exported because the v1.objstore signing module (e2e-server/objstore/sign.ts)
 // reuses it for its four verifiers — same workspaceTag-as-pubkey contract,
 // same domain-separated canonical bytes. Keeping the WebCrypto plumbing
 // in one place avoids drift between the triage-sync and objstore verify
@@ -157,7 +157,7 @@ export async function verifyEd25519(
 // `{ ok: false, canonical: null }` on bad shape / bad sig;
 // `{ ok: true, canonical: <bytes> }` on success.
 //
-// NOT used by `server/index.ts handleSave`. Production composes
+// NOT used by `e2e-server/index.ts handleSave`. Production composes
 // the smaller helpers (`canonicalSave`, `computeRevisionIdFromCanonical`,
 // `verifyEd25519`) separately so the dup-precheck via
 // `revisionExists` can fire BEFORE Ed25519-verify and skip the
@@ -204,7 +204,7 @@ export async function computeRevisionIdFromCanonical(canonical: Uint8Array<Array
 
 // `connectionNonce` is the per-socket challenge the server issued
 // to the originating connection (see `Peer.challenge` in
-// server/peer.ts). The client signs a canonical that includes the
+// e2e-server/peer.ts). The client signs a canonical that includes the
 // nonce; verifying against the SAME nonce here is what blocks
 // cross-connection replay of a captured subscribe frame. Audit
 // round-9 H2.

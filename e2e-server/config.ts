@@ -45,11 +45,11 @@ function intEnv(name: string, def: number, min: number, max: number, hint = ''):
   return n
 }
 
-const HELP = `Usage: node server/index.ts
+const HELP = `Usage: node e2e-server/index.ts
 Environment:
   PORT                       listen port (default 8765)
   HOST                       bind host (default 127.0.0.1)
-  DB_PATH                    sqlite file (default: server/data/data.db);
+  DB_PATH                    sqlite file (default: e2e-server/data/data.db);
                              ignored when DATABASE_URL is set
   DATABASE_URL               Neon Postgres connection string; if set,
                              selects the Neon backend instead of
@@ -103,7 +103,7 @@ Environment:
                              that need to deterministically
                              exercise the cap.
   CONFIG_PATH                operator config JSON path (default:
-                             server/config.json). Currently the
+                             e2e-server/config.json). Currently the
                              only field is { "password": "..." }
                              which gates first-action creation of
                              a new workspace on the

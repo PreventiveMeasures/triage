@@ -1,5 +1,5 @@
 // Full-stack race-condition + complex-scenario tests for the
-// v1.objstore extension. Boots a real server (server/index.ts in a
+// v1.objstore extension. Boots a real server (e2e-server/index.ts in a
 // child process) and drives it with the production client
 // (client/objstore.ts) over real WS + REST round-trips.
 //
@@ -426,9 +426,9 @@ describe('objstore client/server races', { concurrency: true }, () => {
   })
 
   it('onDeleted fires for OWN deletes (broadcast symmetry with onPut)', async () => {
-    // PUT broadcasts in `server/objstore/rest.ts` are emitted with
+    // PUT broadcasts in `e2e-server/objstore/rest.ts` are emitted with
     // `except: null` (every subscriber including the originator
-    // sees them); DELETE broadcasts in `server/objstore/handlers.ts`
+    // sees them); DELETE broadcasts in `e2e-server/objstore/handlers.ts`
     // used to be emitted with `except: socket` (originator excluded).
     // PR fixing this aligned DELETE with the PUT semantics so
     // `session.onDeleted` now fires on own deletes — same as

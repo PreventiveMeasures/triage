@@ -1,6 +1,6 @@
 // Vercel Cron entry point for the objstore orphan reaper.
 //
-// The relay's in-process reaper (server/objstore/init.ts) is a boot sweep plus
+// The relay's in-process reaper (e2e-server/objstore/init.ts) is a boot sweep plus
 // a periodic setInterval — both need a long-lived process. For a serverless
 // deployment (no persistent event loop to host the periodic sweep), or any
 // deployment that sets OBJSTORE_REAP_DISABLED to take GC out-of-band, this
@@ -12,14 +12,14 @@
 // Neon (DATABASE_URL) + Vercel Blob (BLOB_READ_WRITE_TOKEN) only — the local-FS
 // / SQLite backend is single-process and reaps in-process. Opens its own
 // objstore handle (the Neon HTTP callable is stateless — nothing to close, see
-// server/objstore/store.ts) rather than booting the WS/SSE relay.
+// e2e-server/objstore/store.ts) rather than booting the WS/SSE relay.
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { env } from 'node:process'
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
-import { reapOrphans } from '../server/objstore/reaper.ts'
-import { openNeonObjstore } from '../server/objstore/store-neon.ts'
-import { openVercelBlobBackend } from '../server/objstore/blob-vercel.ts'
+import { reapOrphans } from '../e2e-server/objstore/reaper.ts'
+import { openNeonObjstore } from '../e2e-server/objstore/store-neon.ts'
+import { openVercelBlobBackend } from '../e2e-server/objstore/blob-vercel.ts'
 
 // Config read once at module load. Vercel sets env at cold start and it's
 // fixed for the function instance's lifetime, so there's nothing to re-read
@@ -27,7 +27,7 @@ import { openVercelBlobBackend } from '../server/objstore/blob-vercel.ts'
 // BLOB_READ_WRITE_TOKEN select the Neon + Vercel Blob backend.
 const { CRON_SECRET, DATABASE_URL, BLOB_READ_WRITE_TOKEN } = env
 
-// Constant-time bearer check, mirroring server/auth.ts's password gate: HMAC
+// Constant-time bearer check, mirroring e2e-server/auth.ts's password gate: HMAC
 // both the expected `Bearer ${CRON_SECRET}` and the received Authorization
 // header under a per-process random key, then timingSafeEqual the fixed-length
 // digests. Hashing to a fixed length sidesteps timingSafeEqual's

@@ -106,7 +106,7 @@ export const CHAIN_FROM_SQL =
 export const REVISION_EXISTS_SQL =
   `SELECT 1 AS one FROM workspace_revision WHERE workspace_tag = $1 AND id = $2`
 // Fetch a single revision row by content-addressed id. The cross-instance
-// pubsub (server/pubsub.ts) NOTIFY payload carries only `(tag, revisionId)`
+// pubsub (e2e-server/pubsub.ts) NOTIFY payload carries only `(tag, revisionId)`
 // because the full `workspace-state` broadcast envelope is bounded by
 // `MAX_CIPHERTEXT_LEN` (2 MiB) and Postgres NOTIFY caps payloads at ~8 KB.
 // The receiver re-fetches the row from this shared table to construct the

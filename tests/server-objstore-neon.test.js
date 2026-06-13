@@ -1,5 +1,5 @@
 // Runs the backend-agnostic v1.objstore storage suite against the NEON
-// backend (`server/objstore/store-neon.ts`) instead of SQLite, with an
+// backend (`e2e-server/objstore/store-neon.ts`) instead of SQLite, with an
 // in-process Postgres (PGlite) standing in for the real driver and a
 // REAL filesystem byte plane (the same `openFsBlobBackend` the SQLite
 // path uses). `openNeonObjstore` has no direct coverage otherwise.
@@ -30,9 +30,9 @@ import { Buffer } from 'node:buffer'
 import { closeSync, existsSync, openSync, readFileSync, rmSync, statSync, utimesSync, writeSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 
-import { MAX_RESOURCES_PER_WORKSPACE, abortPut, beginPut, commitPut, deleteObject, getLive, listLive } from '../server/objstore/store.ts'
-import { liveFilePath, stagingFilePath } from '../server/objstore/fs.ts'
-import { reapOrphans } from '../server/objstore/reaper.ts'
+import { MAX_RESOURCES_PER_WORKSPACE, abortPut, beginPut, commitPut, deleteObject, getLive, listLive } from '../e2e-server/objstore/store.ts'
+import { liveFilePath, stagingFilePath } from '../e2e-server/objstore/fs.ts'
+import { reapOrphans } from '../e2e-server/objstore/reaper.ts'
 import { freshNeonObjstore, twoNeonReplicas } from './_neon-pglite.js'
 
 function b64u64() { return 'a'.repeat(86) }

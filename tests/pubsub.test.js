@@ -1,4 +1,4 @@
-// Cross-instance pub/sub round-trip (`server/pubsub.ts`). Exercises the
+// Cross-instance pub/sub round-trip (`e2e-server/pubsub.ts`). Exercises the
 // LISTEN+NOTIFY loop against PGlite — single-connection by design, so
 // this confirms parse / dispatch / self-filter on ONE process; the
 // genuine multi-replica fan-out (instance A → instance B) is out of
@@ -15,7 +15,7 @@ import assert from 'node:assert/strict'
 import { after, describe, it } from 'node:test'
 import { PGlite } from '@electric-sql/pglite'
 
-import { CHANNEL, createNeonPubSub, createNoopPubSub } from '../server/pubsub.ts'
+import { CHANNEL, createNeonPubSub, createNoopPubSub } from '../e2e-server/pubsub.ts'
 
 // One PGlite instance per file — same rationale as `_neon-pglite.js`
 // (WASM init cost). Each test holds its own Client adapter, so two
@@ -294,7 +294,7 @@ describe('createNeonPubSub — LISTEN/NOTIFY round-trip on PGlite', () => {
   it('stop drains in-flight handler promises before returning', async () => {
     // `onBusMessage` hits the DB (`handle.revisionById.get` /
     // `getLive`); the lifecycle teardown runs `pubsub.stop()` and THEN
-    // `handle.close()` (see closeDb in server/index.ts). Without the
+    // `handle.close()` (see closeDb in e2e-server/index.ts). Without the
     // pendingHandlers drain, a handler mid-DB-query would race the
     // close and throw. Stage a slow handler and assert `stop()` waits
     // for it.
