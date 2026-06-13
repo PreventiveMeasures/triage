@@ -3,6 +3,7 @@ import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, getCount, getPackagesIndex, getRepositoriesIndex, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, readCachedServerInfo, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, state, writeCachedServerInfo } from '#client/index.js'
 import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, triageSync } from './client-sync.js'
+import { login as managedLogin, logout as managedLogout, probeSession as managedProbeSession } from './client-managed.js'
 import sidebarCSS from './sidebar.css'
 import fileIconCSS from '../styles/file-icon.css'
 import { initEncryptionToggle } from './encryption-toggle.js'
@@ -877,18 +878,12 @@ async function onSidebarClick(e) {
     return
   }
   if (e.target.closest('#auth-status')) {
-    // Managed-mode login/logout. Login hands off to the server's OAuth entry
-    // point; logout clears the server session then reloads so the app
-    // re-probes and repaints logged-out. (Both endpoints + CSRF land with the
-    // managed backend; `managedSession` is null until then, so the logout
-    // branch is currently dormant.)
-    if (state.managedSession) {
-      void fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' })
-        .catch(() => {})
-        .finally(() => { location.reload() })
-    } else if (state.managed?.loginPath) {
-      location.href = state.managed.loginPath
-    }
+    // Managed-mode login/logout via the lazy client/managed chunk. Login hands
+    // off to the server's OAuth entry; logout clears the server session
+    // (sending the double-submit CSRF token) then reloads so the app re-probes
+    // and repaints logged-out.
+    if (state.managedSession) void managedLogout(state.managedSession.csrfToken)
+    else managedLogin(state.managed?.loginPath)
     return
   }
   if (e.target.closest('#sidebar-toggle')) {
@@ -1451,6 +1446,18 @@ function applyServerInfo(info) {
   writeCachedServerInfo(info)
   renderSyncStatus(triageSync.status)
   if (changed) renderSidebar()
+  if (info.mode === 'managed') void refreshManagedSession()
+}
+
+// Probe the managed server for the current session (lazy client/managed chunk)
+// and repaint the auth control. Only reached in managed mode.
+async function refreshManagedSession() {
+  try {
+    state.managedSession = await managedProbeSession()
+    renderAuthStatus()
+  } catch (err) {
+    console.warn('managed: session probe failed:', err)
+  }
 }
 
 function mount(host) {
@@ -1474,6 +1481,9 @@ function mount(host) {
   // a cross-mode switch); state.serverMode is meanwhile seeded from the
   // localStorage cache (see state.ts) so the first paint is mode-correct.
   triageSync.onServerInfo(applyServerInfo)
+  // If the cached mode is already managed, probe the session now so the auth
+  // control paints logged-in/out without waiting for a connect frame.
+  if (state.serverMode === 'managed') void refreshManagedSession()
 }
 
 // `<app-sidebar>` — the report / workspace / bundle picker. Shadow
