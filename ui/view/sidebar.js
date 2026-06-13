@@ -1098,6 +1098,13 @@ function renderSyncStatus(status) {
   const authBtn = root?.querySelector('#auth-status')
   if (authBtn) authBtn.hidden = true
   const visible = syncButtonVisible()
+  // Don't kick e2e sync until the server mode is CONFIRMED (cached). On a cold
+  // first visit `serverMode` defaults to 'e2e', but the server may be managed
+  // or standalone — neither of which must ever pull the client-sync chunk. The
+  // /api/config probe writes the cache (e2e/managed) before re-rendering, so a
+  // returning visitor (cache present) is unaffected; only a first visit waits
+  // one probe RTT. (managed/standalone return early above and never reach here.)
+  const modeConfirmed = readCachedServerInfo() != null
   // Single trigger for the lazy `client-sync.js` chunk: sync is
   // worth loading only when the status button is visible (a usable
   // URL exists AND at least one workspace exists) AND the user
@@ -1105,7 +1112,7 @@ function renderSyncStatus(status) {
   // workspaces, or one who turned sync off, never downloads the
   // chunk. `loadSync` is idempotent (shares one in-flight promise),
   // so re-running on every sidebar render is cheap once kicked.
-  if (visible && triageSync.isEnabled()) {
+  if (visible && modeConfirmed && triageSync.isEnabled()) {
     loadSync().catch((err) => { console.warn('sync: load failed', err) })
   }
   // Auto-prime the default sync URL the first time any workspace
@@ -1115,7 +1122,7 @@ function renderSyncStatus(status) {
   // explicitly turned sync off via the status button (`isEnabled()`
   // reads the persisted toggle, default true) or when a custom URL
   // is already configured via the console API.
-  if (visible && !triageSync.getServerUrl() && DEFAULT_SYNC_URL && triageSync.isEnabled()) {
+  if (visible && modeConfirmed && !triageSync.getServerUrl() && DEFAULT_SYNC_URL && triageSync.isEnabled()) {
     triageSync.setServerUrl(DEFAULT_SYNC_URL)
   }
   // Visibility doubles as an active gate: when the button can't
@@ -1556,6 +1563,7 @@ async function detectServerModeIfUnknown() {
     state.serverMode = 'standalone'
     setSyncForceDisabled(true)
     renderSyncStatus(triageSync.status)
+    renderSidebar()
   }
 }
 

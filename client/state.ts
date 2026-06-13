@@ -123,9 +123,9 @@ export interface State {
   // a cross-mode switch we refuse for now (explicit migration UI is future
   // work); sync stays paused while set.
   serverModeMismatch: boolean
-  // The logged-in managed user (null when logged out / e2e). Populated by the
-  // managed session probe once that backend lands.
-  managedSession: { login: string } | null
+  // The logged-in managed user (null when logged out / e2e / standalone),
+  // populated by the managed session probe (client/managed/session.js).
+  managedSession: { id: string; login: string; name: string | null; avatarUrl: string | null; csrfToken: string | null } | null
 }
 
 // Hoisted so the `state` object literal below can call it during its
