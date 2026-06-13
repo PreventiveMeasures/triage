@@ -181,7 +181,12 @@ function groupHeaderTemplate(label, opts = {}) {
 // mirroring the "Delete current" button below.
 const WORKSPACE_PLUS_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9"/></svg>`
 function workspaceHeaderTemplate() {
-  return html`<li class="file-group-header workspace-header"><span class="group-label">Workspaces</span><span class="workspace-header-actions"><button type="button" class="workspace-add" data-action="new-workspace" title="Create a new workspace" aria-label="Create a new workspace">${WORKSPACE_PLUS_ICON}</button></span></li>`
+  // Managed mode has no client-side workspace creation — a different management
+  // surface is coming — so drop the "+" affordance there.
+  const actions = state.serverMode === 'managed'
+    ? nothing
+    : html`<span class="workspace-header-actions"><button type="button" class="workspace-add" data-action="new-workspace" title="Create a new workspace" aria-label="Create a new workspace">${WORKSPACE_PLUS_ICON}</button></span>`
+  return html`<li class="file-group-header workspace-header"><span class="group-label">Workspaces</span>${actions}</li>`
 }
 
 // Packages + Repositories navigation buttons live as
@@ -466,7 +471,7 @@ export async function renderSidebar() {
     (b) => !claimedBundles.has(b.integrity) && matchesSearch(b.name),
   )
   litRender(html`
-    ${workspaceHeaderTemplate()}
+    ${state.serverMode === 'managed' && workspaces.length === 0 ? nothing : workspaceHeaderTemplate()}
     ${repeat(visibleWorkspaces, (w) => w.id, (w) => {
       // Reports split into present vs missing, mirroring the bundle
       // split below:
@@ -643,6 +648,7 @@ async function onSidebarClick(e) {
     return
   }
   if (e.target.closest('[data-action="new-workspace"]')) {
+    if (state.serverMode === 'managed') return
     const name = await openNewWorkspaceDialog()
     if (name) {
       // First-use prompt fires here too (not just on file drop) so
