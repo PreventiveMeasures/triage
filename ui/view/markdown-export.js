@@ -1,16 +1,21 @@
 import { state } from '#client/index.js'
-import { downloadBlob } from './dom.js'
 import { applyFilters } from './filters.js'
 import { commonPrefix, findingDisplayName, stripExportMarker } from './format.js'
 import { groupState, isIgnored, tabKey } from './group.js'
 
 // Markdown serializer for the "download report" toolbar button —
-// produces a single `.md` file from `state.reports`, grouped by
-// severity tier so the most important findings sit at the top of
-// the document. Per-user triage state (triageState / markers /
-// ignoredIds / comments) is included where set so the export is a
-// snapshot of the viewer's current annotations, not just the raw
-// JSON the report was loaded from.
+// produces a single `.md` document from `state.reports`, grouped by
+// severity tier so the most important findings sit at the top. Per-user
+// triage state (triageState / markers / ignoredIds / comments) is
+// included where set so the export is a snapshot of the viewer's
+// current annotations, not just the raw JSON the report was loaded
+// from.
+//
+// Pure serialization only (no DOM): the actual file download lives in
+// download-reports.js so this module — and its CSV sibling — stay
+// unit-testable without a DOM. Also exports the shared group-selection
+// (`reportGroupsForExport`) and filename (`exportFilename`) helpers the
+// CSV serializer reuses.
 //
 // The export honours the active filters the same way the print/PDF
 // path does: each report contributes only the findings visible under
@@ -112,6 +117,15 @@ function visibleGroups(report) {
   return applyFilters(inBucket)
 }
 
+// Groups a report contributes to an export. Default: the visible set
+// (current triage bucket + active filters). With `all`, every group in
+// the report regardless of filters or triage bucket — the dialog's
+// "export everything" escape hatch. Shared by the markdown and CSV
+// serializers so both honour the same toggle.
+export function reportGroupsForExport(report, all) {
+  return all ? (report.groups ?? []) : visibleGroups(report)
+}
+
 // One report → markdown. `groups` is the pre-filtered visible set
 // (see visibleGroups); findings are flattened from it (a group is a
 // list of cases for the same finding, see ingest / group.js) so each
@@ -149,7 +163,7 @@ function reportToMarkdown(report, groups) {
   return lines.join('\n').trimEnd() + '\n'
 }
 
-export function reportsToMarkdown(reports) {
+export function reportsToMarkdown(reports, { all = false } = {}) {
   // Multiple-report mode: keep each report's H1 and separate them
   // with a horizontal rule. Mirrors how the print button stamps
   // commonPrefix(fileNames) as the document title for batches.
@@ -158,7 +172,7 @@ export function reportsToMarkdown(reports) {
   // no page for a report whose findings are all filtered out.
   const sections = []
   for (const report of reports) {
-    const groups = visibleGroups(report)
+    const groups = reportGroupsForExport(report, all)
     if (groups.length === 0) continue
     sections.push(reportToMarkdown(report, groups))
   }
@@ -168,20 +182,14 @@ export function reportsToMarkdown(reports) {
 // Mirror the print button's filename heuristic: single report uses
 // its own name, multiple reports use the common prefix (so a batch
 // of `security-foo.json` / `security-bar.json` saves as
-// `security-.md`). The `.json` suffix is stripped before appending
-// `.md` so we don't end up with `report.json.md`.
-function targetFilename(reports) {
+// `security-.csv`). The `.json` suffix is stripped before appending
+// `ext` (bare, e.g. 'md' / 'csv') so we don't end up with
+// `report.json.md`.
+export function exportFilename(reports, ext) {
   const names = reports.map((r) => r.fileName)
   let target = ''
   if (names.length === 1) target = names[0]
   else if (names.length > 1) target = commonPrefix(names)
   target = target.replace(/\.json$/u, '')
-  return `${target || 'deepview-report'}.md`
-}
-
-export function downloadReportsAsMarkdown(reports) {
-  if (reports.length === 0) return
-  const md = reportsToMarkdown(reports)
-  const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' })
-  downloadBlob(blob, targetFilename(reports))
+  return `${target || 'deepview-report'}.${ext}`
 }

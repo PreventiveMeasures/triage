@@ -114,6 +114,18 @@ describe('exportSelectionSummary — counts', () => {
     assert.equal(s.included, 1)
     assert.equal(s.bucketLabel, 'Deleted')
   })
+
+  it('everythingCount counts every group across reports, ignoring filters and bucket', () => {
+    const a = makeFinding('A', { severity: 'critical' })
+    const b = makeFinding('B', { severity: 'low' })
+    const c = makeFinding('C')
+    loadFindings(a, b, c)
+    state.triage = new Map([[c.id, { triage: 'deleted' }]]) // c in trash
+    state.filterSeverities = new Set(['critical']) // filter narrows the live set
+    const s = exportSelectionSummary('download')
+    assert.equal(s.included, 1) // only the critical live finding matches
+    assert.equal(s.everythingCount, 3) // but everything is all 3 groups
+  })
 })
 
 describe('exportSelectionSummary — print vs download basis', () => {

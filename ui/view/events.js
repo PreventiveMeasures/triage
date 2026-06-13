@@ -9,7 +9,7 @@ import { grantAdvisoriesProxyConsent, retryBundleAdvisories } from './render-bun
 import { openCommentDialog } from './dialogs/comment-dialog.js'
 import { openExportConfirmDialog } from './dialogs/export-confirm-dialog.js'
 import { openFixLinkDialog } from './dialogs/fix-link-dialog.js'
-import { downloadReportsAsMarkdown } from './markdown-export.js'
+import { downloadReports } from './download-reports.js'
 
 // When another OPFS report finishes parsing, re-render if the user is
 // viewing a bundle — Issues tab and Graph view both pull from the
@@ -1695,17 +1695,18 @@ document.addEventListener('print-requested', async () => {
   }
 })
 
-// Markdown download — pairs with the print button (same top-right
-// stack). Pure data export: no view-mode swap needed since we
-// serialize state.reports + per-finding triage / marker / comment
-// state directly, without going through the DOM. Like print, it
-// fronts the export with the confirm dialog so the user sees the
-// filtered selection (and counts) before the file is written.
+// File download — pairs with the print button (same top-right stack).
+// Pure data export: no view-mode swap needed since we serialize
+// state.reports + per-finding triage / marker / comment state directly,
+// without going through the DOM. The confirm dialog reports the
+// filtered selection (and counts) and collects the chosen format
+// (Markdown / CSV) and whether to bypass the filters ("export
+// everything") before the file is written.
 document.addEventListener('download-requested', async () => {
   if (state.reports.length === 0) return
-  const { confirmed } = await openExportConfirmDialog('download')
+  const { confirmed, format, all } = await openExportConfirmDialog('download')
   if (!confirmed) return
-  downloadReportsAsMarkdown(state.reports)
+  downloadReports(state.reports, { format, all })
 })
 
 // `<analyzer-select>` dispatches this when a row in its analyzer /

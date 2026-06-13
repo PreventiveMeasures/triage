@@ -99,11 +99,12 @@ function currentBucketGroups(mode) {
   return groups.filter((g) => groupState(g).commonTriage === state.shownTriage)
 }
 
-// `{ included, total, excluded, filters, bucketLabel }` for the
-// confirm dialog. `included` runs applyFilters over the bucket (the
-// exact predicate both export paths use); `bucketLabel` is non-null
-// only when viewing a trash bucket, to flag that the export is scoped
-// to e.g. Deleted rather than the live findings.
+// `{ included, total, excluded, filters, bucketLabel, everythingCount,
+// focusedOnly }` for the confirm dialog. `included` runs applyFilters
+// over the bucket (the exact predicate both export paths use);
+// `bucketLabel` is non-null only when viewing a trash bucket, to flag
+// that the export is scoped to e.g. Deleted rather than the live
+// findings.
 export function exportSelectionSummary(mode) {
   const bucket = currentBucketGroups(mode)
   const total = bucket.length
@@ -114,6 +115,11 @@ export function exportSelectionSummary(mode) {
     excluded: total - included,
     filters: activeFilterDescriptions(),
     bucketLabel: state.shownTriage ? (TRIAGE_LABELS[state.shownTriage] ?? state.shownTriage) : null,
+    // Count behind the download dialog's "export everything" toggle:
+    // every group in every loaded report, ignoring both the toolbar
+    // filters and the triage bucket. Per-report basis (no merge) to
+    // match what the markdown / CSV "all" export iterates.
+    everythingCount: state.reports.reduce((n, r) => n + (r.groups?.length ?? 0), 0),
     // Focus view-mode prints ONLY the single focused finding: the print
     // pipeline swaps table → list but leaves focus as-is, so the printed
     // DOM is the one focused finding-card (the "Up next" queue is hidden

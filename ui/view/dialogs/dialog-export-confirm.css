@@ -47,3 +47,53 @@
   color: var(--muted);
 }
 .ecd-filters-label + .ecd-filters { margin-top: .35rem; }
+
+/* Download-only controls (format switch + "export everything"),
+   stacked above the count so the count reflects the chosen scope. */
+.ecd-options {
+  display: flex; flex-direction: column; gap: .55rem;
+  margin: 0 0 .85rem;
+  padding-bottom: .85rem;
+  border-bottom: 1px solid var(--border);
+}
+.ecd-field {
+  display: flex; align-items: center; gap: .6rem;
+}
+.ecd-field-label {
+  font-size: .8rem; font-weight: 600; color: var(--muted);
+}
+
+/* Segmented format toggle (Markdown | CSV) — bordered pill with the
+   active segment filled in the accent color. */
+.ecd-segmented {
+  display: inline-flex;
+  border: 1px solid var(--border); border-radius: 6px;
+  overflow: hidden;
+}
+.ecd-seg-btn {
+  background: transparent; border: 0;
+  color: var(--text); font: inherit; font-size: .8rem;
+  padding: .3rem .8rem;
+
+  & + & { border-left: 1px solid var(--border); }
+  &:hover:not(.active) { color: var(--accent); }
+  &.active { background: var(--accent); color: var(--surface); }
+}
+
+/* "Export everything" checkbox row. */
+.ecd-check {
+  display: flex; align-items: baseline; gap: .45rem;
+  font-size: .82rem; color: var(--text);
+
+  & input { margin: 0; flex-shrink: 0; }
+  & em { color: var(--muted); font-style: normal; }
+}
+
+/* Unencrypted-export caution — a muted note with a left accent rule so
+   it reads as a standing privacy reminder, not an error. */
+.ecd-warn {
+  margin: .9rem 0 0;
+  padding-left: .55rem;
+  border-left: 2px solid var(--border);
+  color: var(--muted); font-size: .76rem; line-height: 1.45;
+}
