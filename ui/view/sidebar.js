@@ -1,7 +1,7 @@
 import { LitElement, html, render as litRender, nothing, unsafeCSS } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, getCount, getPackagesIndex, getRepositoriesIndex, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, readCachedServerInfo, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, state, writeCachedServerInfo } from '#client/index.js'
+import { CONFIG_PATH, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, getCount, getPackagesIndex, getRepositoriesIndex, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, parseServerInfo, readCachedServerInfo, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, state, writeCachedServerInfo } from '#client/index.js'
 import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, triageSync } from './client-sync.js'
 import { login as managedLogin, logout as managedLogout, probeSession as managedProbeSession } from './client-managed.js'
 import sidebarCSS from './sidebar.css'
@@ -1460,6 +1460,21 @@ async function refreshManagedSession() {
   }
 }
 
+// Cold-start mode detection. With nothing cached we don't yet know the server's
+// protocol — and a managed server has no WS plane whose connect frame would
+// tell us — so GET /api/config to learn it up front and feed the same
+// applyServerInfo path. Skipped once the mode is known (cached); the WS connect
+// frame (kept) then catches any later change.
+async function detectServerModeIfUnknown() {
+  if (readCachedServerInfo()) return
+  let info = null
+  try {
+    const res = await fetch(CONFIG_PATH, { credentials: 'same-origin', headers: { accept: 'application/json' } })
+    if (res.ok) info = parseServerInfo(await res.json())
+  } catch { /* offline / unreachable — stay on the default until a frame arrives */ }
+  if (info) applyServerInfo(info)
+}
+
 function mount(host) {
   hostEl = host
   root = host.renderRoot
@@ -1481,6 +1496,9 @@ function mount(host) {
   // a cross-mode switch); state.serverMode is meanwhile seeded from the
   // localStorage cache (see state.ts) so the first paint is mode-correct.
   triageSync.onServerInfo(applyServerInfo)
+  // Cold start (mode not yet cached): probe GET /api/config so we detect a
+  // managed server, which has no WS connect frame to announce itself.
+  void detectServerModeIfUnknown()
   // If the cached mode is already managed, probe the session now so the auth
   // control paints logged-in/out without waiting for a connect frame.
   if (state.serverMode === 'managed') void refreshManagedSession()

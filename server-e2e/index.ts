@@ -382,7 +382,7 @@ const sseServer = installSseServer({
 // drain uses `track`. The WS connection handler is wired on `wss`
 // below.
 const httpServer = createHttpServer({
-  wss, restDeps: objstoreRestDeps, sseServer, isOriginAllowed,
+  wss, restDeps: objstoreRestDeps, sseServer, serverInfo: SERVER_INFO, isOriginAllowed,
   isShuttingDown, track, handleSaveRest,
   restPutIdleTimeoutMs: REST_PUT_IDLE_TIMEOUT_MS, debug: DEBUG,
 })

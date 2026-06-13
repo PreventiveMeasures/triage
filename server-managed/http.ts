@@ -3,7 +3,7 @@
 // server doesn't speak the e2e sync protocol yet). Every handler is async; the
 // boot's `track()` keeps in-flight requests drainable on shutdown.
 //
-//   GET  /api/sync/info          → { mode:'managed', managed:{ loginPath, cookieName } }  (public)
+//   GET  /api/config             → { mode:'managed', managed:{ loginPath, cookieName } }  (public)
 //   GET  /api/oauth/github/login → 302 to GitHub (+ state cookie)
 //   GET  /api/oauth/github/callback → the OAuth hook (see github-oauth.ts)
 //   GET  /api/auth/session       → { user, csrfToken } | 401
@@ -12,12 +12,12 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { ManagedConfig } from './config.ts'
 import type { ManagedDb } from './db.ts'
 import type { OriginGate } from '../server-common/origin.ts'
+import { CONFIG_PATH } from '../common/server-info.ts'
 import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, handleCallback } from './github-oauth.ts'
 import { clearCookie, endSession, readSession } from './session.ts'
 
 const SESSION_PATH = '/api/auth/session'
 const LOGOUT_PATH = '/api/auth/logout'
-const SYNC_INFO_PATH = '/api/sync/info'
 
 export interface ManagedHttpDeps {
   config: ManagedConfig
@@ -53,8 +53,8 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     const method = req.method ?? 'GET'
     const cookie = req.headers.cookie
 
-    // Public mode probe — lets a client detect the managed protocol.
-    if (path === SYNC_INFO_PATH) {
+    // Public mode probe — lets a client detect the managed protocol up front.
+    if (path === CONFIG_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }
       sendJson(res, 200, { mode: 'managed', managed: { loginPath: LOGIN_PATH, cookieName: config.sessionCookieName } })
       return
