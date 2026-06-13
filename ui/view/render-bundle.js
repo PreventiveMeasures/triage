@@ -21,6 +21,7 @@ import { BUNDLE_ICON_SVG } from './icons.js'
 import { findingsForFileHash, indexedHashFindingCount, reportsForFinding, reportsForFindingByPackage, reportsForFindingByRepo, state } from '#client/index.js'
 import { SEVERITIES, SEVERITY_ORDER, formatBytes, formatRunMeta, stripCommonPathPrefix } from './format.js'
 import { bundlePackageDirs, bundleSourcesAsMap } from './bundle-sources.js'
+import { bundleHasSbomComponents } from './sbom.js'
 import { buildSearchMatcher, runBundleSearch } from './bundle-search-scan.js'
 import { bundlePkgOf, ownSourceSplittable } from './bundle-pkg-of.js'
 import { tabKey } from './group.js'
@@ -2183,16 +2184,27 @@ const DOWNLOAD_ICON = html`<svg viewBox="0 0 16 16" width="12" height="12" fill=
   <path d="M2.5 13h11"/>
 </svg>`
 
+// SPDX (Linux Foundation) brand mark — monochrome, from the CC0 Simple
+// Icons set. Fill-based glyph (`currentColor`) so it tints with the
+// button text like the other icons. The sibling CycloneDX segment
+// stays text-only on purpose: that logo is CC BY-ND (no derivatives),
+// so a monochrome variant can't be shipped.
+const SPDX_ICON = html`<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true">
+  <path d="M0 0v24H8.222l2.089-2.373 2.09-2.374V13.2H18.978l2.51-2.488L24 8.223V0H12zm5.2 5.2h13.791L12.2 12c-3.735 3.74-6.838 6.8-6.896 6.8-.057 0-.104-3.06-.104-6.8zm8.4 8.8v10H24V14h-5.2z"/>
+</svg>`
+
 // Exports column for the Overview's `.bundles-detail-meta-row` — a
 // sibling "column" to the metadata blocks holding the bundle's export
-// actions. Currently just "Download bundle"; more export buttons land
-// alongside it. Carries just the integrity; the events.js delegate
-// reads the bytes back via `readBundle` (envelope peeled, .map
-// de-gzipped), fronts the unencrypted-download confirmation, and saves
-// under the bundle's original filename. The bytes live on disk
-// regardless of parse state, so the caller renders this on every
-// Overview branch.
-function bundleExportsColumn(entry) {
+// actions. "Download bundle" saves the raw artifact (events.js reads
+// the bytes via `readBundle`, fronts the unencrypted-download
+// confirmation, and saves under the original filename); it's always
+// present since the bytes live on disk regardless of parse state. The
+// SPDX / CycloneDX SBOM exports are derived from the parsed stasis
+// module inventory, so they only appear once that's available and
+// carries at least one named+versioned component (`details` is null /
+// sourcemap / un-parsed on the other Overview branches → bundle-only).
+function bundleExportsColumn(entry, details) {
+  const hasSbom = bundleHasSbomComponents(details)
   // Inner `-row` wrapper holds the buttons so the outer column can be a
   // size container (CSS): the buttons right-align while the column sits
   // narrow and flip to a left-aligned row once it spans its own line.
@@ -2201,6 +2213,10 @@ function bundleExportsColumn(entry) {
       <button type="button" class="bundles-download-btn" data-bundle-download=${entry.integrity}>
         ${DOWNLOAD_ICON}<span>Download bundle</span>
       </button>
+      ${hasSbom ? html`<div class="bundles-export-pair">
+        <button type="button" class="bundles-download-btn" data-bundle-export-sbom="cyclonedx" title="Export a CycloneDX SBOM (.cdx.json)">CycloneDX</button>
+        <button type="button" class="bundles-download-btn" data-bundle-export-sbom="spdx" title="Export an SPDX SBOM (.spdx.json)">${SPDX_ICON}<span>SPDX</span></button>
+      </div>` : nothing}
     </div>
   </div>`
 }
@@ -2221,8 +2237,10 @@ function renderBundleDetails(entry, details) {
   </dl>`
   // The bundle's bytes live on disk regardless of whether the parse
   // below succeeds (or has even finished), so the exports column
-  // rides every branch — loading, error, and parsed alike.
-  const exportsCol = bundleExportsColumn(entry)
+  // rides every branch — loading, error, and parsed alike. `details`
+  // gates the SBOM exports (parsed stasis only); on the loading / error
+  // branches it's null / mismatched, so only "Download bundle" shows.
+  const exportsCol = bundleExportsColumn(entry, details)
   // Loading / error / un-parsed states share the same `.bundles-overview`
   // shell as the parsed-content branch so the Overview body's flex
   // layout + summary padding apply consistently — without the wrapper

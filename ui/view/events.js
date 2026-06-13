@@ -11,6 +11,7 @@ import { openDownloadBundleDialog } from './dialogs/download-bundle-dialog.js'
 import { openExportConfirmDialog } from './dialogs/export-confirm-dialog.js'
 import { openFixLinkDialog } from './dialogs/fix-link-dialog.js'
 import { downloadReportsAsMarkdown } from './markdown-export.js'
+import { bundleToCycloneDx, bundleToSpdx, sbomBaseName } from './sbom.js'
 
 // When another OPFS report finishes parsing, re-render if the user is
 // viewing a bundle — Issues tab and Graph view both pull from the
@@ -422,6 +423,28 @@ report.addEventListener('click', (e) => {
         alert(`Failed to download bundle: ${err.message}`)
       }
     })()
+    return
+  }
+  // Bundle Overview — SPDX / CycloneDX SBOM export. Serialized from the
+  // already-parsed stasis module inventory (no bytes re-read, no
+  // network), so it's synchronous; the button only renders once
+  // `bundleDetails` is the parsed stasis bundle. Re-check that the
+  // open details still match the selected bundle before serializing —
+  // a cross-tab switch could have swapped it under the click.
+  const sbomExport = e.target.closest('[data-bundle-export-sbom]')
+  if (sbomExport) {
+    const format = sbomExport.dataset.bundleExportSbom
+    const details = state.bundleDetails
+    const entry = (state.bundles ?? []).find((b) => b.integrity === state.selectedBundle)
+    if (!entry || !details || details.integrity !== entry.integrity) return
+    try {
+      const cdx = format === 'cyclonedx'
+      const text = cdx ? bundleToCycloneDx(details, entry) : bundleToSpdx(details, entry)
+      const filename = `${sbomBaseName(entry.name)}.${cdx ? 'cdx' : 'spdx'}.json`
+      downloadBlob(new Blob([text], { type: 'application/json' }), filename)
+    } catch (err) {
+      alert(`Failed to export ${format === 'cyclonedx' ? 'CycloneDX' : 'SPDX'}: ${err.message}`)
+    }
     return
   }
   // Search tab — Context show/hide pill in the header. Flips whether
