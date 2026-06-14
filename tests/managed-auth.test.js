@@ -138,6 +138,41 @@ test('GET /api/admin/users: admin-only (401 unauth, 403 non-admin, 200 admin)', 
   await db.close()
 })
 
+test('GET /api/avatar/<id>: any session may fetch a user avatar by id (401 unauth, 404 missing)', async () => {
+  const db = openSqliteManagedDb(':memory:')
+  const now = Date.now()
+  const sess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
+  const s = await readSession(config, db, cookiePair(sess.setCookie), now)
+  const avatarStore = fakeAvatarStore()
+  await avatarStore.put(s.user.id, 'image/png', Buffer.from([1, 2, 3]))
+
+  let pending = Promise.resolve()
+  const handler = createManagedRequestHandler({
+    config, db, avatarStore,
+    originGate: { trustProxy: false, isOriginAllowed: () => true },
+    isShuttingDown: () => false, track: (p) => { pending = p },
+  })
+  function mockRes() {
+    return {
+      statusCode: 0, body: '', ended: false,
+      writeHead(code) { this.statusCode = code; return this },
+      end(b) { if (b != null) this.body += b; this.ended = true; return this },
+      get headersSent() { return this.ended },
+    }
+  }
+  async function get(url, cookie) {
+    const res = mockRes()
+    handler({ method: 'GET', url, headers: cookie ? { cookie } : {} }, res)
+    await pending
+    return res
+  }
+  const ck = cookiePair(sess.setCookie)
+  assert.equal((await get(`/api/avatar/${s.user.id}`, null)).statusCode, 401)
+  assert.equal((await get(`/api/avatar/${s.user.id}`, ck)).statusCode, 200)
+  assert.equal((await get('/api/avatar/00000000-0000-4000-8000-000000000000', ck)).statusCode, 404)
+  await db.close()
+})
+
 test('buildLoginRedirect: GitHub authorize URL with a matching state cookie', () => {
   const { location, setCookie } = buildLoginRedirect(config)
   const u = new URL(location)

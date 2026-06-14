@@ -7,7 +7,7 @@
 //   GET  /api/oauth/github/login → 302 to GitHub (+ state cookie)
 //   GET  /api/oauth/github/callback → the OAuth hook (see github-oauth.ts)
 //   GET  /api/auth/session       → { user, csrfToken } | 401
-//   GET  /api/auth/avatar        → cached GitHub avatar bytes | 401/404
+//   GET  /api/avatar/<id>        → cached avatar bytes by user id | 401/404
 //   GET  /api/admin/users        → admin-only user list | 401/403
 //   POST /api/auth/logout        → same-origin + CSRF, drops the session
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -20,7 +20,7 @@ import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, handleCallba
 import { clearCookie, endSession, readSession } from './session.ts'
 
 const SESSION_PATH = '/api/auth/session'
-const AVATAR_PATH = '/api/auth/avatar'
+const AVATAR_PREFIX = '/api/avatar/'
 const LOGOUT_PATH = '/api/auth/logout'
 const ADMIN_USERS_PATH = '/api/admin/users'
 
@@ -108,12 +108,14 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       })
       return
     }
-    // Cached GitHub avatar, served same-origin (the page CSP forbids github's CDN).
-    if (path === AVATAR_PATH) {
+    // Cached avatar by user id, served same-origin (the page CSP forbids the
+    // github CDN). The id in the path keys the browser cache per user, so a user
+    // switch never serves a stale avatar. Any valid session may fetch one.
+    if (path.startsWith(AVATAR_PREFIX)) {
       if (method !== 'GET') { send405(res, 'GET'); return }
       const s = await readSession(config, db, cookie, Date.now())
       if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
-      await serveAvatar(res, avatarStore, s.user.id)
+      await serveAvatar(res, avatarStore, path.slice(AVATAR_PREFIX.length))
       return
     }
     // Admin: list users (admin-only).

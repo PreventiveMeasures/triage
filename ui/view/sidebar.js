@@ -1021,11 +1021,11 @@ function renderAuthStatus() {
   authBtn.dataset.authed = '1'
   authBtn.setAttribute('popovertarget', 'user-menu')
   authBtn.setAttribute('aria-label', `Account: ${session.login}`)
-  litRender(avatarTemplate(initial), authBtn)
+  litRender(avatarTemplate(initial, session.id), authBtn)
   if (menu) {
     litRender(html`
       <div class="user-card">
-        ${avatarTemplate(initial, true)}
+        ${avatarTemplate(initial, session.id, true)}
         <span class="user-id">
           <span class="user-login">${session.login}</span>
           ${session.name ? html`<span class="user-name">${session.name}</span>` : nothing}
@@ -1037,12 +1037,15 @@ function renderAuthStatus() {
   }
 }
 
-// Avatar disc: the cached avatar (served same-origin from /api/auth/avatar)
-// over a fallback initial that shows when there's no avatar (the img 404s).
-function avatarTemplate(initial, large = false) {
+// Avatar disc: the cached avatar (served same-origin from /api/avatar/<id>) over
+// a fallback initial that shows when there's no avatar (the img 404s). The id in
+// the path keys the browser cache per user — a fixed URL would serve the
+// previous user's cached avatar (cache-control: private, max-age) after a switch.
+function avatarTemplate(initial, userId, large = false) {
+  const src = `/api/avatar/${encodeURIComponent(userId)}`
   return html`<span class=${large ? 'user-avatar user-avatar-lg' : 'user-avatar'}>
     <span class="user-avatar-fallback">${initial}</span>
-    <img alt="" src="/api/auth/avatar" @error=${onAvatarError}>
+    <img alt="" src=${src} @error=${onAvatarError}>
   </span>`
 }
 
