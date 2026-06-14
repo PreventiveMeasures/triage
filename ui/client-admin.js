@@ -157,11 +157,10 @@ const REPO_ICON = html`<svg class="repo-icon" viewBox="0 0 16 16" width="16" hei
   <path d="M2 2.75A2.75 2.75 0 0 1 4.75 0h7.5a.75.75 0 0 1 .75.75v10.5a.75.75 0 0 1-.75.75H4.5a1 1 0 0 0 0 2h8a.75.75 0 0 1 0 1.5h-8A2.5 2.5 0 0 1 2 13V2.75Zm2.75-.25a1.25 1.25 0 0 0-1.25 1.25v7.32c.317-.114.66-.07 1 .18V2.5h-.5a.25.25 0 0 0 .75 0Zm6.75 0H5.5v8.5h6V2.5Z"/>
 </svg>`
 
-// Repositories — full-view page for admin/manage. Read-only: the list is the
-// user's own repos (the server lists them with the user's GitHub token). Public
-// repos need no install; "Connect a repository" installs the App so the user's
-// private repos appear too. Own chunk, so it fetches its own data (no main-
-// bundle state).
+// Repositories — full-view page for admin/manage. Read-only: the server merges
+// the user's PUBLIC repos (their login token) with PRIVATE repos from a separate
+// installed App. "Connect a repository" installs that App on the private repos
+// you want. Own chunk, so it fetches its own data (no main-bundle state).
 class ManagedAdminRepos extends LitElement {
   static properties = {
     _data: { state: true },

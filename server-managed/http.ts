@@ -20,7 +20,7 @@ import type { ManagedDb, ManagedSession, StoredUser } from './db.ts'
 import type { OriginGate } from '../server-common/origin.ts'
 import { isRole } from '../common/managed/roles.ts'
 import { CONFIG_PATH } from '../common/server-info.ts'
-import { GithubApiError, installUrl, listUserRepos } from './github-app.ts'
+import { type ConnectedRepo, GithubApiError, githubAppConfigured, installUrl, listInstalledRepos, listUserRepos, mergeRepos } from './github-app.ts'
 import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, ensureUserAccessToken, handleCallback } from './github-oauth.ts'
 import { clearCookie, endSession, readSession } from './session.ts'
 
@@ -124,32 +124,50 @@ async function handleSetRole(req: IncomingMessage, res: ServerResponse, deps: Ma
   sendJson(res, 200, { ok: true })
 }
 
-// GET /api/admin/repositories — the logged-in user's repositories, for the
-// "Manage repositories" page. Visible to admin OR manage. Read-only (no
-// mutation), so no CSRF, like /api/admin/users. Listed with the user's persisted
-// GitHub token (refreshed on demand). `installUrl` is the optional App-install
-// link to make private repos visible; `tokenMissing:true` (no/invalid token)
-// tells the page to ask the user to log in again. Upstream GitHub failures
-// surface as the GithubApiError status.
+// Public repos from the user's login token (best-effort). Returns the list and
+// whether the token is missing/stale (→ the page prompts re-login).
+async function listPublicRepos(token: string | null): Promise<[ConnectedRepo[], boolean]> {
+  if (token == null) return [[], true]
+  try {
+    return [await listUserRepos(token), false]
+  } catch (err) {
+    if (err instanceof GithubApiError && err.status === 401) return [[], true]
+    console.warn('managed: public repo list failed:', err)
+    return [[], false]
+  }
+}
+
+// Private repos from the separate App's installations (best-effort). Off or
+// failing → empty, so a private-side problem never blanks the public list.
+async function listPrivateRepos(config: ManagedConfig): Promise<ConnectedRepo[]> {
+  if (!githubAppConfigured(config)) return []
+  try {
+    return await listInstalledRepos(config)
+  } catch (err) {
+    console.warn('managed: private repo list failed:', err)
+    return []
+  }
+}
+
+// GET /api/admin/repositories — the user's repositories for the "Manage
+// repositories" page. Visible to admin OR manage. Read-only (no mutation), so no
+// CSRF, like /api/admin/users. Merges two sources: PUBLIC via the user's login
+// token (refreshed on demand) and PRIVATE via the separate App's installation
+// tokens. `installUrl` is the App-install link; `tokenMissing:true` tells the
+// page to ask the user to log in again.
 async function handleListRepositories(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   if ((req.method ?? 'GET') !== 'GET') { send405(res, 'GET'); return }
   const s = await readSession(deps.config, deps.db, cookie, Date.now())
   if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
   if (s.user.role !== 'admin' && s.user.role !== 'manage') { sendJson(res, 403, { error: 'forbidden' }); return }
-  const link = installUrl(deps.config)
   const token = await ensureUserAccessToken(deps.config, deps.db, s.user.id, Date.now())
-  if (token == null) { sendJson(res, 200, { installUrl: link, repositories: [], tokenMissing: true }); return }
-  try {
-    const repositories = await listUserRepos(token)
-    sendJson(res, 200, { installUrl: link, repositories, tokenMissing: false })
-  } catch (err) {
-    if (err instanceof GithubApiError) {
-      // A 401 = the stored token went stale/revoked → ask the user to re-login.
-      if (err.status === 401) { sendJson(res, 200, { installUrl: link, repositories: [], tokenMissing: true }); return }
-      sendJson(res, err.status, { error: err.message }); return
-    }
-    throw err
-  }
+  const [publicRepos, tokenMissing] = await listPublicRepos(token)
+  const privateRepos = await listPrivateRepos(deps.config)
+  sendJson(res, 200, {
+    installUrl: installUrl(deps.config),
+    repositories: mergeRepos(publicRepos, privateRepos),
+    tokenMissing,
+  })
 }
 
 export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {

@@ -5,12 +5,13 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Readable } from 'node:stream'
+import { createVerify, generateKeyPairSync } from 'node:crypto'
 
 import { hashToken, randomToken, safeEqual } from '../server-managed/crypto.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createSession, endSession, readSession } from '../server-managed/session.ts'
 import { OAuthError, buildLoginRedirect, ensureUserAccessToken, handleCallback, refreshUserToken } from '../server-managed/github-oauth.ts'
-import { installUrl, listUserRepos } from '../server-managed/github-app.ts'
+import { appJwt, githubAppConfigured, installUrl, listInstalledRepos, listUserRepos, mergeRepos } from '../server-managed/github-app.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 
 const config = {
@@ -309,6 +310,60 @@ test('handleCallback: GitHub refusing the code surfaces as 502', async () => {
 test('github-app: installUrl builds from the optional slug (null when unset)', () => {
   assert.equal(installUrl({ ...config }), null)
   assert.equal(installUrl({ ...config, githubAppSlug: 'my-app' }), 'https://github.com/apps/my-app/installations/new')
+})
+
+test('github-app: appJwt is a verifiable RS256 JWT; githubAppConfigured needs id + key', () => {
+  const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
+  const pem = privateKey.export({ type: 'pkcs1', format: 'pem' })
+  const now = 1_700_000_000_000
+  const [h, p, sig] = appJwt('appid-9', pem, now).split('.')
+  assert.deepEqual(JSON.parse(Buffer.from(h, 'base64url').toString('utf8')), { alg: 'RS256', typ: 'JWT' })
+  const payload = JSON.parse(Buffer.from(p, 'base64url').toString('utf8'))
+  assert.equal(payload.iss, 'appid-9')
+  assert.ok(payload.exp - payload.iat <= 600, 'lifetime within GitHub 10-min cap')
+  assert.ok(createVerify('RSA-SHA256').update(`${h}.${p}`).verify(publicKey, Buffer.from(sig, 'base64url')), 'signature verifies')
+
+  // The separate repositories App is "configured" only with id AND key.
+  assert.equal(githubAppConfigured({ ...config }), false)
+  assert.equal(githubAppConfigured({ ...config, githubAppId: '1' }), false)
+  assert.equal(githubAppConfigured({ ...config, githubAppId: '1', githubAppPrivateKey: pem }), true)
+})
+
+test('mergeRepos: unions sources, dedupes by full name, sorts (later source wins)', () => {
+  const pub = [{ fullName: 'o/zeta', private: false, htmlUrl: '' }, { fullName: 'o/alpha', private: false, htmlUrl: '' }]
+  const priv = [{ fullName: 'o/alpha', private: true, htmlUrl: '' }, { fullName: 'o/beta', private: true, htmlUrl: '' }]
+  const merged = mergeRepos(pub, priv)
+  assert.deepEqual(merged.map((r) => r.fullName), ['o/alpha', 'o/beta', 'o/zeta'])
+  assert.equal(merged.find((r) => r.fullName === 'o/alpha').private, true)
+})
+
+test('listInstalledRepos: aggregates the separate App\'s installations, skips archived', async () => {
+  const pem = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs1', format: 'pem' })
+  const cfg = { ...config, githubAppId: '1', githubAppPrivateKey: pem, githubAppSlug: 'app' }
+  const calls = []
+  const fetchImpl = (url, opts) => {
+    const u = String(url)
+    calls.push(`${opts?.method ?? 'GET'} ${u}`)
+    if (u.endsWith('/app/installations?per_page=100')) return jsonResponse([{ id: 11 }, { id: 22 }])
+    if (u.includes('/app/installations/11/access_tokens')) return jsonResponse({ token: 'tok-11' })
+    if (u.includes('/app/installations/22/access_tokens')) return jsonResponse({ token: 'tok-22' })
+    if (u.includes('/installation/repositories')) {
+      const repos = opts.headers.authorization === 'Bearer tok-11'
+        ? [{ full_name: 'o/zeta', private: true, html_url: 'https://github.com/o/zeta' },
+           { full_name: 'o/alpha', private: true, html_url: 'https://github.com/o/alpha' }]
+        // install 22 re-sees alpha (dupe), adds beta, and an archived repo to skip
+        : [{ full_name: 'o/alpha', private: true, html_url: 'https://github.com/o/alpha' },
+           { full_name: 'o/beta', private: true, html_url: 'https://github.com/o/beta' },
+           { full_name: 'o/old', private: true, archived: true, html_url: 'https://github.com/o/old' }]
+      return jsonResponse({ total_count: repos.length, repositories: repos })
+    }
+    return jsonResponse({}, 404)
+  }
+  const repos = await listInstalledRepos(cfg, fetchImpl)
+  assert.deepEqual(repos.map((r) => r.fullName), ['o/alpha', 'o/beta', 'o/zeta']) // o/old archived-skipped
+  // One installation-token mint per installation; not configured → empty + no calls.
+  assert.equal(calls.filter((c) => c.startsWith('POST')).length, 2)
+  assert.deepEqual(await listInstalledRepos({ ...config }, fetchImpl), [])
 })
 
 test('listUserRepos: paginates GET /user/repos, dedupes + sorts (read-only)', async () => {

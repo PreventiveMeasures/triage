@@ -1,9 +1,10 @@
 // Managed-server boot config (SYNC_MODE=managed), parsed once at startup and
 // failing fast on a missing / invalid required value — the same discipline as
-// server-e2e/config.ts. Auth (GitHub identity + sessions) is required; an
-// optional GitHub App slug enables the "Connect a repository" install link (so
-// private repos become visible to the user's token); the sync protocol is not
-// parsed here yet.
+// server-e2e/config.ts. Auth (GitHub identity + sessions) is required. An
+// optional, SEPARATE GitHub App (id + private key + slug) enables PRIVATE repo
+// listing via installation tokens — kept distinct from the login App so its
+// Contents permission never lands on the login consent. The sync protocol is
+// not parsed here yet.
 import { env } from 'node:process'
 
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost'])
@@ -26,10 +27,14 @@ export interface ManagedConfig {
   cookieSecure: boolean
   sessionCookieName: string
   sessionTtlMs: number
-  // Optional GitHub App slug — builds the "Connect a repository" install URL
-  // (github.com/apps/<slug>/installations/new). Installing the App is how a
-  // user's PRIVATE repos become visible to their token; public repos list with
-  // no install. Null → no install link is offered (public-only listing).
+  // Optional SEPARATE GitHub App for PRIVATE repository access — distinct from
+  // the login App above. It carries the Contents: Read permission (so its
+  // consent never touches login) and is read via installation tokens: the id +
+  // PEM private key mint them; the slug builds the "Connect a repository"
+  // install URL. id/key absent → private repos are off (public-only listing);
+  // slug absent → no install link.
+  githubAppId: string | null
+  githubAppPrivateKey: string | null
   githubAppSlug: string | null
 }
 
@@ -84,6 +89,15 @@ export function loadManagedConfig(): ManagedConfig {
     cookieSecure,
     sessionCookieName,
     sessionTtlMs: intEnv('SESSION_TTL_MS', 1_209_600_000, 60_000, 7_776_000_000),
+    githubAppId: env['GITHUB_APP_ID'] ?? null,
+    githubAppPrivateKey: normalizePem(env['GITHUB_APP_PRIVATE_KEY']),
     githubAppSlug: env['GITHUB_APP_SLUG'] ?? null,
   }
+}
+
+// PEM private keys are awkward in env vars; accept a literal multi-line value or
+// one with escaped newlines (`\n`). Empty/absent → null (private repos off).
+function normalizePem(raw: string | undefined): string | null {
+  if (raw == null || raw === '') return null
+  return raw.includes('\\n') ? raw.replaceAll('\\n', '\n') : raw
 }
