@@ -4,9 +4,19 @@
 // bundle, nor to non-admin / e2e / standalone sessions. First page: the users
 // list (with per-user role pickers), rendered as a full view by
 // <managed-admin-users> (created by render.js when currentView is 'admin-users').
+//
+// This is a SEPARATE chunk, so importing the main bundle's `state` would get a
+// duplicated (empty) copy — the current user (for the CSRF token + self-disable)
+// is fetched here from /api/auth/session instead.
 import { LitElement, css, html, nothing } from 'lit'
-import { state } from '#client/index.js'
-import { ROLES } from '../common/roles.ts'
+import { ROLES } from '../common/managed/roles.ts'
+
+async function fetchSession() {
+  const res = await fetch('/api/auth/session', { credentials: 'same-origin', headers: { accept: 'application/json' } })
+  if (!res.ok) return null
+  const body = await res.json()
+  return { id: body?.user?.id ?? null, csrfToken: typeof body?.csrfToken === 'string' ? body.csrfToken : null }
+}
 
 async function fetchUsers() {
   const res = await fetch('/api/admin/users', { credentials: 'same-origin', headers: { accept: 'application/json' } })
@@ -62,6 +72,8 @@ class ManagedAdminUsers extends LitElement {
     super()
     this._users = null
     this._error = null
+    this._me = null
+    this._csrf = null
   }
 
   connectedCallback() {
@@ -72,8 +84,14 @@ class ManagedAdminUsers extends LitElement {
   async _load() {
     this._error = null
     this._users = null
-    try { this._users = await fetchUsers() }
-    catch (err) { this._error = String(err?.message ?? err) }
+    try {
+      const [session, users] = await Promise.all([fetchSession(), fetchUsers()])
+      this._me = session?.id ?? null
+      this._csrf = session?.csrfToken ?? null
+      this._users = users
+    } catch (err) {
+      this._error = String(err?.message ?? err)
+    }
   }
 
   render() {
@@ -92,7 +110,7 @@ class ManagedAdminUsers extends LitElement {
 
   _row(u) {
     const initial = (u.login?.[0] ?? '?').toUpperCase()
-    const isSelf = u.id === state.managedSession?.id
+    const isSelf = u.id === this._me
     return html`<li>
       <span class="avatar">
         <span>${initial}</span>
@@ -114,7 +132,7 @@ class ManagedAdminUsers extends LitElement {
     const prev = u.role
     if (role === prev) return
     try {
-      await setRole(u.id, role, state.managedSession?.csrfToken)
+      await setRole(u.id, role, this._csrf)
       u.role = role
     } catch (err) {
       console.warn('admin: set role failed:', err)

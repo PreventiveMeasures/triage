@@ -15,9 +15,9 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Buffer } from 'node:buffer'
 import type { AvatarStore } from './avatar-store.ts'
 import type { ManagedConfig } from './config.ts'
-import type { ManagedDb } from './db.ts'
+import type { ManagedDb, ManagedSession, StoredUser } from './db.ts'
 import type { OriginGate } from '../server-common/origin.ts'
-import { isRole } from '../common/roles.ts'
+import { isRole } from '../common/managed/roles.ts'
 import { CONFIG_PATH } from '../common/server-info.ts'
 import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, handleCallback } from './github-oauth.ts'
 import { clearCookie, endSession, readSession } from './session.ts'
@@ -79,15 +79,36 @@ async function readJsonBody(req: IncomingMessage): Promise<unknown> {
   return JSON.parse(Buffer.concat(chunks).toString('utf8') || 'null')
 }
 
-// POST /api/admin/set-role — an admin sets ANOTHER user's role. A mutation:
-// same-origin + double-submit CSRF, admin-only, and refused for the caller's own
-// id so an admin can't drop their own admin (keeps at least one admin).
+// Validate a mutation: same-origin gate + an authenticated session whose
+// double-submit CSRF token matches the X-CSRF-Token header. Returns the session,
+// or null after having already sent the 401/403.
+async function checkMutation(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<{ session: ManagedSession; user: StoredUser } | null> {
+  if (!deps.originGate.isOriginAllowed(req)) { sendJson(res, 403, { error: 'origin-denied' }); return null }
+  const s = await readSession(deps.config, deps.db, cookie, Date.now())
+  if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return null }
+  const csrf = firstHeader(req.headers['x-csrf-token'])
+  if (csrf == null) { sendJson(res, 403, { error: 'csrf-missing' }); return null }
+  if (csrf !== s.session.csrfToken) { sendJson(res, 403, { error: 'csrf-mismatch' }); return null }
+  return s
+}
+
+// POST /api/auth/logout — drop the session (same-origin + CSRF).
+async function handleLogout(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
+  if ((req.method ?? 'GET') !== 'POST') { send405(res, 'POST'); return }
+  const s = await checkMutation(req, res, deps, cookie)
+  if (s == null) return
+  await endSession(deps.config, deps.db, cookie)
+  res.writeHead(204, { 'set-cookie': clearCookie(deps.config.sessionCookieName, deps.config.cookieSecure), 'cache-control': 'no-store' })
+  res.end()
+}
+
+// POST /api/admin/set-role — an admin sets ANOTHER user's role. Admin-only, and
+// refused for the caller's own id so an admin can't drop their own admin (keeps
+// at least one admin).
 async function handleSetRole(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   if ((req.method ?? 'GET') !== 'POST') { send405(res, 'POST'); return }
-  if (!deps.originGate.isOriginAllowed(req)) { sendJson(res, 403, { error: 'origin-denied' }); return }
-  const s = await readSession(deps.config, deps.db, cookie, Date.now())
-  const csrf = firstHeader(req.headers['x-csrf-token'])
-  if (s == null || csrf == null || csrf !== s.session.csrfToken) { sendJson(res, 403, { error: 'csrf' }); return }
+  const s = await checkMutation(req, res, deps, cookie)
+  if (s == null) return
   if (s.user.role !== 'admin') { sendJson(res, 403, { error: 'forbidden' }); return }
   let body: unknown
   try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
@@ -101,7 +122,7 @@ async function handleSetRole(req: IncomingMessage, res: ServerResponse, deps: Ma
 }
 
 export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
-  const { config, db, avatarStore, originGate, isShuttingDown, track } = deps
+  const { config, db, avatarStore, isShuttingDown, track } = deps
 
   async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url ?? '/', 'http://localhost')
@@ -167,18 +188,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       return
     }
     if (path === SET_ROLE_PATH) { await handleSetRole(req, res, deps, cookie); return }
-    // Logout — a mutation: same-origin gate + double-submit CSRF.
-    if (path === LOGOUT_PATH) {
-      if (method !== 'POST') { send405(res, 'POST'); return }
-      if (!originGate.isOriginAllowed(req)) { sendJson(res, 403, { error: 'origin-denied' }); return }
-      const s = await readSession(config, db, cookie, Date.now())
-      const csrf = firstHeader(req.headers['x-csrf-token'])
-      if (s == null || csrf == null || csrf !== s.session.csrfToken) { sendJson(res, 403, { error: 'csrf' }); return }
-      await endSession(config, db, cookie)
-      res.writeHead(204, { 'set-cookie': clearCookie(config.sessionCookieName, config.cookieSecure), 'cache-control': 'no-store' })
-      res.end()
-      return
-    }
+    if (path === LOGOUT_PATH) { await handleLogout(req, res, deps, cookie); return }
     sendJson(res, 404, { error: 'not-found' }, { connection: 'close' })
   }
 

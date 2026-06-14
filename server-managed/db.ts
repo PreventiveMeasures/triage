@@ -7,7 +7,7 @@
 // numeric id: identity is just one provider, so nothing downstream (sessions,
 // avatars, the client API) is locked to GitHub. `github_user_id` is kept only
 // as the unique lookup key for the OAuth upsert; sessions reference `user_id`.
-// Each user carries a `role` (see common/roles.ts); the FIRST registered user
+// Each user carries a `role` (see common/managed/roles.ts); the FIRST registered user
 // is `admin`, later users default to `none`.
 //
 // SQLite impl mirrors server-e2e/db.ts: WAL, FULL sync, foreign keys, STRICT
@@ -16,7 +16,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import type { Role } from '../common/roles.ts'
+import type { Role } from '../common/managed/roles.ts'
 
 const SQLITE_SCHEMA = `
 CREATE TABLE IF NOT EXISTS managed_user (
