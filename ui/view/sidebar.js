@@ -4,7 +4,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { CONFIG_PATH, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, getCount, getPackagesIndex, getRepositoriesIndex, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, parseServerInfo, readCachedServerInfo, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, state, writeCachedServerInfo } from '#client/index.js'
 import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, setSyncForceDisabled, triageSync } from './client-sync.js'
 import { login as managedLogin, logout as managedLogout, probeSession as managedProbeSession } from './client-managed.js'
-import { loadAdminUsersBundle } from './client-admin.js'
+import { loadAdminReposBundle, loadAdminUsersBundle } from './client-admin.js'
 import sidebarCSS from './sidebar.css'
 import fileIconCSS from '../styles/file-icon.css'
 import { initEncryptionToggle, refreshEncryptionToggle } from './encryption-toggle.js'
@@ -891,6 +891,13 @@ async function onSidebarClick(e) {
     void navigateToAdminUsers()
     return
   }
+  if (e.target.closest('[data-action="manage-repos"]')) {
+    // Admin/manage: navigate to the connected-repositories page (same lazy admin
+    // bundle, which defines the <managed-admin-repos> element render() paints).
+    root?.querySelector('#user-menu')?.hidePopover?.()
+    void navigateToManageRepos()
+    return
+  }
   if (e.target.closest('[data-action="managed-logout"]')) {
     // Logout row inside the account menu — clears the server session (with the
     // double-submit CSRF token) then reloads so the app re-probes logged-out.
@@ -1033,6 +1040,7 @@ function renderAuthStatus() {
         </span>
       </div>
       ${session.role === 'admin' ? html`<button type="button" class="user-menu-row" data-action="admin-users">Manage users</button>` : nothing}
+      ${session.role === 'admin' || session.role === 'manage' ? html`<button type="button" class="user-menu-row" data-action="manage-repos">Manage repositories</button>` : nothing}
       <button type="button" class="user-menu-row" data-action="managed-logout">Log out</button>
     `, menu)
   }
@@ -1562,6 +1570,17 @@ async function navigateToAdminUsers() {
   try { await loadAdminUsersBundle() }
   catch (err) { console.warn('admin: bundle load failed:', err); return }
   state.currentView = 'admin-users'
+  render()
+  renderSidebar()
+}
+
+// Navigate to the connected-repositories page: load the admin bundle (which
+// defines <managed-admin-repos>), then switch the view + repaint. Reachable by
+// admin and manage roles (the account menu gates the entry point).
+async function navigateToManageRepos() {
+  try { await loadAdminReposBundle() }
+  catch (err) { console.warn('admin: repos bundle load failed:', err); return }
+  state.currentView = 'manage-repos'
   render()
   renderSidebar()
 }

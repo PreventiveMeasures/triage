@@ -86,6 +86,7 @@
     "server-managed/config.ts",
     "server-managed/crypto.ts",
     "server-managed/db.ts",
+    "server-managed/github-app.ts",
     "server-managed/github-oauth.ts",
     "server-managed/http.ts",
     "server-managed/index.ts",

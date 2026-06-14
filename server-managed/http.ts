@@ -10,6 +10,7 @@
 //   GET  /api/avatar/<id>        → cached avatar bytes by user id | 401/404
 //   GET  /api/admin/users        → admin-only user list | 401/403
 //   POST /api/admin/set-role     → admin sets another user's role | 401/403/404
+//   GET  /api/admin/repositories → admin|manage GitHub App repo list | 401/403
 //   POST /api/auth/logout        → same-origin + CSRF, drops the session
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Buffer } from 'node:buffer'
@@ -19,6 +20,7 @@ import type { ManagedDb, ManagedSession, StoredUser } from './db.ts'
 import type { OriginGate } from '../server-common/origin.ts'
 import { isRole } from '../common/managed/roles.ts'
 import { CONFIG_PATH } from '../common/server-info.ts'
+import { GithubAppError, githubAppConfigured, installUrl, listConnectedRepos } from './github-app.ts'
 import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, handleCallback } from './github-oauth.ts'
 import { clearCookie, endSession, readSession } from './session.ts'
 
@@ -27,6 +29,7 @@ const AVATAR_PREFIX = '/api/avatar/'
 const LOGOUT_PATH = '/api/auth/logout'
 const ADMIN_USERS_PATH = '/api/admin/users'
 const SET_ROLE_PATH = '/api/admin/set-role'
+const ADMIN_REPOS_PATH = '/api/admin/repositories'
 
 export interface ManagedHttpDeps {
   config: ManagedConfig
@@ -121,6 +124,28 @@ async function handleSetRole(req: IncomingMessage, res: ServerResponse, deps: Ma
   sendJson(res, 200, { ok: true })
 }
 
+// GET /api/admin/repositories — the repositories the GitHub App can read, for
+// the "Manage repositories" page. Visible to admin OR manage. Read-only (no
+// mutation), so no CSRF, like /api/admin/users. When the App isn't configured
+// the response is `configured:false` so the page renders a setup notice instead
+// of an error; an upstream GitHub failure surfaces as the GithubAppError status.
+async function handleListRepositories(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
+  if ((req.method ?? 'GET') !== 'GET') { send405(res, 'GET'); return }
+  const s = await readSession(deps.config, deps.db, cookie, Date.now())
+  if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
+  if (s.user.role !== 'admin' && s.user.role !== 'manage') { sendJson(res, 403, { error: 'forbidden' }); return }
+  if (!githubAppConfigured(deps.config)) {
+    sendJson(res, 200, { configured: false, installUrl: null, repositories: [] }); return
+  }
+  try {
+    const repositories = await listConnectedRepos(deps.config)
+    sendJson(res, 200, { configured: true, installUrl: installUrl(deps.config), repositories })
+  } catch (err) {
+    if (err instanceof GithubAppError) { sendJson(res, err.status, { error: err.message }); return }
+    throw err
+  }
+}
+
 export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
   const { config, db, avatarStore, isShuttingDown, track } = deps
 
@@ -188,6 +213,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       return
     }
     if (path === SET_ROLE_PATH) { await handleSetRole(req, res, deps, cookie); return }
+    if (path === ADMIN_REPOS_PATH) { await handleListRepositories(req, res, deps, cookie); return }
     if (path === LOGOUT_PATH) { await handleLogout(req, res, deps, cookie); return }
     sendJson(res, 404, { error: 'not-found' }, { connection: 'close' })
   }

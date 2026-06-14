@@ -1,8 +1,8 @@
 // Managed-server boot config (SYNC_MODE=managed), parsed once at startup and
 // failing fast on a missing / invalid required value — the same discipline as
-// server-e2e/config.ts. This first slice is AUTH ONLY (GitHub identity +
-// sessions); GitHub App installation tokens, repo discovery, and the sync
-// protocol are intentionally NOT parsed here yet.
+// server-e2e/config.ts. Auth (GitHub identity + sessions) is required; optional
+// GitHub App credentials enable READ-ONLY repository connections; the sync
+// protocol is not parsed here yet.
 import { env } from 'node:process'
 
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost'])
@@ -13,9 +13,8 @@ export interface ManagedConfig {
   dbPath: string
   debug: boolean
   trustProxyEnv: string | undefined
-  // GitHub user-to-server OAuth (identity). For a GitHub App these are the
-  // App's client credentials; the App id / private key (installation tokens)
-  // arrive with the later repo-discovery work, not here.
+  // GitHub App user-authorization (identity) credentials — the App's client id
+  // + secret, used by the login flow.
   githubClientId: string
   githubClientSecret: string
   // Absolute callback registered with GitHub, e.g.
@@ -26,6 +25,12 @@ export interface ManagedConfig {
   cookieSecure: boolean
   sessionCookieName: string
   sessionTtlMs: number
+  // Optional GitHub App credentials for repository connections (READ-ONLY): the
+  // App id + PEM private key mint installation tokens to LIST connected repos;
+  // the slug builds the install URL. All absent → the repos feature is off.
+  githubAppId: string | null
+  githubAppPrivateKey: string | null
+  githubAppSlug: string | null
 }
 
 function fail(msg: string): never {
@@ -79,5 +84,15 @@ export function loadManagedConfig(): ManagedConfig {
     cookieSecure,
     sessionCookieName,
     sessionTtlMs: intEnv('SESSION_TTL_MS', 1_209_600_000, 60_000, 7_776_000_000),
+    githubAppId: env['GITHUB_APP_ID'] ?? null,
+    githubAppPrivateKey: normalizePem(env['GITHUB_APP_PRIVATE_KEY']),
+    githubAppSlug: env['GITHUB_APP_SLUG'] ?? null,
   }
+}
+
+// PEM private keys are awkward in env vars; accept a literal multi-line value or
+// one with escaped newlines (`\n`). Empty/absent → null (repos feature off).
+function normalizePem(raw: string | undefined): string | null {
+  if (raw == null || raw === '') return null
+  return raw.includes('\\n') ? raw.replaceAll('\\n', '\n') : raw
 }

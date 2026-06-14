@@ -1478,6 +1478,22 @@ function renderImpl() {
     document.title = 'DeepView — users'
     return
   }
+  // Managed admin: connected GitHub repositories as a full page. The same
+  // lazily-loaded admin bundle defines <managed-admin-repos> (loaded by the
+  // sidebar's "Manage repositories"); the element fetches + paints itself. The
+  // sidebar gates the entry point to admin|manage roles.
+  if (state.currentView === 'manage-repos') {
+    let slot = document.querySelector('#manage-repos-slot')
+    if (!slot || !report.contains(slot) || report.firstElementChild !== slot) {
+      report.innerHTML = '<div id="manage-repos-slot"></div>'
+      slot = document.querySelector('#manage-repos-slot')
+    }
+    if (slot && !slot.firstElementChild) slot.append(document.createElement('managed-admin-repos'))
+    report.classList.add('active')
+    dropZone.classList.add('hidden')
+    document.title = 'DeepView — repositories'
+    return
+  }
   if (state.reports.length === 0) return
   // Merge across all loaded reports. Every entry is a Finding[] (a dedup
   // group); single findings were wrapped at ingest, so downstream code
