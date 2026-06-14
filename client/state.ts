@@ -7,7 +7,7 @@ export const REPO_URLS_KEY = 'deepview.repoUrls'
 const VALID_VIEW_MODES = new Set(['grouped', 'list', 'table', 'kanban', 'focus'])
 
 export type ViewMode = 'table' | 'list' | 'grouped' | 'kanban' | 'focus'
-export type CurrentView = 'findings' | 'files' | 'bundles'
+export type CurrentView = 'findings' | 'files' | 'bundles' | 'admin-users'
 export type TriageBucket = 'inprogress' | 'fixed' | 'invalid' | 'deleted'
 
 // Tri-state for the toolbar annotation filters (comment / fix / flag):

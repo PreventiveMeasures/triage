@@ -4,7 +4,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { CONFIG_PATH, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, getCount, getPackagesIndex, getRepositoriesIndex, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, parseServerInfo, readCachedServerInfo, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, state, writeCachedServerInfo } from '#client/index.js'
 import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, setSyncForceDisabled, triageSync } from './client-sync.js'
 import { login as managedLogin, logout as managedLogout, probeSession as managedProbeSession } from './client-managed.js'
-import { openAdminUsers } from './client-admin.js'
+import { loadAdminUsersBundle } from './client-admin.js'
 import sidebarCSS from './sidebar.css'
 import fileIconCSS from '../styles/file-icon.css'
 import { initEncryptionToggle, refreshEncryptionToggle } from './encryption-toggle.js'
@@ -885,9 +885,10 @@ async function onSidebarClick(e) {
     return
   }
   if (e.target.closest('[data-action="admin-users"]')) {
-    // Admin: open the lazily-loaded managed admin users dialog.
+    // Admin: navigate to the users page (lazily loads the admin bundle that
+    // defines the <managed-admin-users> element render() paints).
     root?.querySelector('#user-menu')?.hidePopover?.()
-    void openAdminUsers()
+    void navigateToAdminUsers()
     return
   }
   if (e.target.closest('[data-action="managed-logout"]')) {
@@ -1553,6 +1554,16 @@ async function refreshManagedSession() {
   } catch (err) {
     console.warn('managed: session probe failed:', err)
   }
+}
+
+// Navigate to the admin users page: load the admin bundle (which defines the
+// <managed-admin-users> element), then switch the view + repaint.
+async function navigateToAdminUsers() {
+  try { await loadAdminUsersBundle() }
+  catch (err) { console.warn('admin: bundle load failed:', err); return }
+  state.currentView = 'admin-users'
+  render()
+  renderSidebar()
 }
 
 // Cold-start mode detection. With nothing cached we don't yet know the server's

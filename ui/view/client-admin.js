@@ -2,6 +2,8 @@
 // the chunk is dynamically imported via a variable path so esbuild keeps it out
 // of the main view bundle, and it's only ever loaded when an admin invokes it
 // (the sidebar "Manage users" row, shown only when state.managedSession.isAdmin).
+// Importing the chunk defines the <managed-admin-users> custom element that
+// render.js paints for the 'admin-users' view.
 let loadPromise = null
 
 function loadAdminOnce() {
@@ -18,6 +20,4 @@ function loadAdminOnce() {
   return loadPromise
 }
 
-export async function openAdminUsers() {
-  return (await loadAdminOnce()).openAdminUsers()
-}
+export function loadAdminUsersBundle() { return loadAdminOnce() }

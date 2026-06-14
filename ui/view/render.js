@@ -1463,6 +1463,21 @@ function renderImpl() {
     document.title = 'DeepView — repositories'
     return
   }
+  // Managed admin: the users list as a full page. The lazily-loaded admin
+  // bundle defines <managed-admin-users> (loaded by the sidebar's "Manage
+  // users"); the element fetches + paints itself.
+  if (state.currentView === 'admin-users') {
+    let slot = document.querySelector('#admin-users-slot')
+    if (!slot || !report.contains(slot) || report.firstElementChild !== slot) {
+      report.innerHTML = '<div id="admin-users-slot"></div>'
+      slot = document.querySelector('#admin-users-slot')
+    }
+    if (slot && !slot.firstElementChild) slot.append(document.createElement('managed-admin-users'))
+    report.classList.add('active')
+    dropZone.classList.add('hidden')
+    document.title = 'DeepView — users'
+    return
+  }
   if (state.reports.length === 0) return
   // Merge across all loaded reports. Every entry is a Finding[] (a dedup
   // group); single findings were wrapped at ingest, so downstream code
