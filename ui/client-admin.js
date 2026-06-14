@@ -43,14 +43,14 @@ class ManagedAdminUsers extends LitElement {
   static styles = css`
     :host { display: block; padding: 1.5rem clamp(1rem, 4vw, 2.5rem); color: var(--text); }
     .wrap { max-width: 48rem; margin: 0 auto; }
-    h1 { font-size: 1.15rem; font-weight: 600; margin: 0 0 1rem; }
+    h1 { font-size: 1.15rem; font-weight: 600; margin: 0 0 1rem; user-select: none; }
     .users { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
     .users li { display: flex; align-items: center; gap: .7rem; padding: .55rem .85rem; }
     .users li + li { border-top: 1px solid var(--border); }
     .avatar {
       position: relative; flex-shrink: 0; width: 28px; height: 28px;
       border-radius: 50%; overflow: hidden; background: var(--accent);
-      display: inline-grid; place-items: center;
+      display: inline-grid; place-items: center; user-select: none;
     }
     .avatar > span { font-size: .8rem; font-weight: 600; color: var(--bg); text-transform: uppercase; }
     .avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
