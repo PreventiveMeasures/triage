@@ -152,15 +152,28 @@ async function fetchRepositories() {
   return res.json()
 }
 
+// Toggle whether a repo is in the operate-on set (the server verifies access +
+// records the read context, or drops the row). CSRF via the double-submit token.
+async function selectRepository(repoId, selected, csrfToken) {
+  const headers = { 'content-type': 'application/json' }
+  if (csrfToken) headers['x-csrf-token'] = csrfToken
+  const res = await fetch('/api/admin/repositories/select', {
+    method: 'POST', credentials: 'same-origin', headers, body: JSON.stringify({ repoId, selected }),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+}
+
 // GitHub repo glyph (book-with-bookmark), tinted via currentColor.
 const REPO_ICON = html`<svg class="repo-icon" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">
   <path d="M2 2.75A2.75 2.75 0 0 1 4.75 0h7.5a.75.75 0 0 1 .75.75v10.5a.75.75 0 0 1-.75.75H4.5a1 1 0 0 0 0 2h8a.75.75 0 0 1 0 1.5h-8A2.5 2.5 0 0 1 2 13V2.75Zm2.75-.25a1.25 1.25 0 0 0-1.25 1.25v7.32c.317-.114.66-.07 1 .18V2.5h-.5a.25.25 0 0 0 .75 0Zm6.75 0H5.5v8.5h6V2.5Z"/>
 </svg>`
 
-// Repositories — full-view page for admin/manage. Read-only: the server merges
-// the user's PUBLIC repos (their login token) with PRIVATE repos from a separate
-// installed App. "Connect a repository" installs that App on the private repos
-// you want. Own chunk, so it fetches its own data (no main-bundle state).
+// Repositories — full-view page for admin/manage. The server merges the user's
+// PUBLIC repos (their login token) with PRIVATE repos from a separate installed
+// App; checking a row selects it for the workspace to operate on (the server
+// records enough context to read its contents). "Connect a repository" installs
+// the App on the private repos you want. Own chunk, so it fetches its own data
+// (session for the CSRF token + the repo list); no main-bundle state.
 class ManagedAdminRepos extends LitElement {
   static properties = {
     _data: { state: true },
@@ -178,9 +191,11 @@ class ManagedAdminRepos extends LitElement {
       border-radius: 6px; padding: .35rem .7rem; white-space: nowrap;
     }
     .connect:hover { opacity: .9; }
+    .hint { color: var(--muted); font-size: .82rem; margin: 0 0 .8rem; }
     .repos { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
     .repos li { display: flex; align-items: center; gap: .6rem; padding: .55rem .85rem; }
     .repos li + li { border-top: 1px solid var(--border); }
+    .select { flex-shrink: 0; width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
     .repo-icon { flex-shrink: 0; color: var(--muted); }
     .full-name { font-weight: 600; font-size: .9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .badge {
@@ -198,6 +213,7 @@ class ManagedAdminRepos extends LitElement {
     super()
     this._data = null
     this._error = null
+    this._csrf = null
   }
 
   connectedCallback() {
@@ -209,7 +225,9 @@ class ManagedAdminRepos extends LitElement {
     this._error = null
     this._data = null
     try {
-      this._data = await fetchRepositories()
+      const [session, data] = await Promise.all([fetchSession(), fetchRepositories()])
+      this._csrf = session?.csrfToken ?? null
+      this._data = data
     } catch (err) {
       this._error = String(err?.message ?? err)
     }
@@ -239,16 +257,32 @@ class ManagedAdminRepos extends LitElement {
         ? html`Use “Connect a repository” to install the GitHub App on the private repositories you want to read.`
         : html`Public repositories you own appear here.`}</p>`
     }
-    return html`<ul class="repos">${repos.map((r) => this._row(r))}</ul>`
+    return html`<p class="hint">Check a repository to operate on it — we'll read its contents.</p>
+      <ul class="repos">${repos.map((r) => this._row(r))}</ul>`
   }
 
   _row(r) {
     return html`<li>
+      <input type="checkbox" class="select" .checked=${r.selected === true}
+        title=${r.selected ? 'Selected — remove from the operate-on set' : 'Select this repository to operate on'}
+        @change=${(e) => this._toggle(r, e.target)}>
       ${REPO_ICON}
       <span class="full-name">${r.fullName}</span>
       ${r.private ? html`<span class="badge">private</span>` : nothing}
       ${r.htmlUrl ? html`<a class="open" href=${r.htmlUrl} target="_blank" rel="noopener noreferrer">open</a>` : nothing}
     </li>`
+  }
+
+  async _toggle(r, el) {
+    const next = el.checked
+    try {
+      await selectRepository(r.id, next, this._csrf)
+      r.selected = next
+    } catch (err) {
+      console.warn('admin: repo selection failed:', err)
+      el.checked = !next // revert the box; server rejected the change
+    }
+    this.requestUpdate() // refresh the row (checked state + title) from r.selected
   }
 }
 customElements.define('managed-admin-repos', ManagedAdminRepos)

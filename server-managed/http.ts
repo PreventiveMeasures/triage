@@ -10,7 +10,8 @@
 //   GET  /api/avatar/<id>        → cached avatar bytes by user id | 401/404
 //   GET  /api/admin/users        → admin-only user list | 401/403
 //   POST /api/admin/set-role     → admin sets another user's role | 401/403/404
-//   GET  /api/admin/repositories → admin|manage user's repo list | 401/403
+//   GET  /api/admin/repositories → admin|manage repo list (each flagged selected) | 401/403
+//   POST /api/admin/repositories/select → admin|manage selects/deselects a repo | 401/403
 //   POST /api/auth/logout        → same-origin + CSRF, drops the session
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Buffer } from 'node:buffer'
@@ -20,7 +21,7 @@ import type { ManagedDb, ManagedSession, StoredUser } from './db.ts'
 import type { OriginGate } from '../server-common/origin.ts'
 import { isRole } from '../common/managed/roles.ts'
 import { CONFIG_PATH } from '../common/server-info.ts'
-import { type ConnectedRepo, GithubApiError, githubAppConfigured, installUrl, listInstalledRepos, listUserRepos, mergeRepos } from './github-app.ts'
+import { collectRepos, installUrl } from './github-app.ts'
 import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, ensureUserAccessToken, handleCallback } from './github-oauth.ts'
 import { clearCookie, endSession, readSession } from './session.ts'
 
@@ -30,6 +31,7 @@ const LOGOUT_PATH = '/api/auth/logout'
 const ADMIN_USERS_PATH = '/api/admin/users'
 const SET_ROLE_PATH = '/api/admin/set-role'
 const ADMIN_REPOS_PATH = '/api/admin/repositories'
+const SELECT_REPO_PATH = '/api/admin/repositories/select'
 
 export interface ManagedHttpDeps {
   config: ManagedConfig
@@ -124,50 +126,72 @@ async function handleSetRole(req: IncomingMessage, res: ServerResponse, deps: Ma
   sendJson(res, 200, { ok: true })
 }
 
-// Public repos from the user's login token (best-effort). Returns the list and
-// whether the token is missing/stale (→ the page prompts re-login).
-async function listPublicRepos(token: string | null): Promise<[ConnectedRepo[], boolean]> {
-  if (token == null) return [[], true]
-  try {
-    return [await listUserRepos(token), false]
-  } catch (err) {
-    if (err instanceof GithubApiError && err.status === 401) return [[], true]
-    console.warn('managed: public repo list failed:', err)
-    return [[], false]
-  }
-}
-
-// Private repos from the separate App's installations (best-effort). Off or
-// failing → empty, so a private-side problem never blanks the public list.
-async function listPrivateRepos(config: ManagedConfig): Promise<ConnectedRepo[]> {
-  if (!githubAppConfigured(config)) return []
-  try {
-    return await listInstalledRepos(config)
-  } catch (err) {
-    console.warn('managed: private repo list failed:', err)
-    return []
-  }
+// admin OR manage — the roles allowed to view + select repositories (matches the
+// "Manage repositories" menu gate). Sends 403 and returns false otherwise.
+function requireRepoRole(res: ServerResponse, user: StoredUser): boolean {
+  if (user.role === 'admin' || user.role === 'manage') return true
+  sendJson(res, 403, { error: 'forbidden' })
+  return false
 }
 
 // GET /api/admin/repositories — the user's repositories for the "Manage
-// repositories" page. Visible to admin OR manage. Read-only (no mutation), so no
-// CSRF, like /api/admin/users. Merges two sources: PUBLIC via the user's login
-// token (refreshed on demand) and PRIVATE via the separate App's installation
-// tokens. `installUrl` is the App-install link; `tokenMissing:true` tells the
-// page to ask the user to log in again.
+// repositories" page, each flagged `selected` (whether it's in the operate-on
+// set). Visible to admin OR manage. Read-only (no mutation), so no CSRF, like
+// /api/admin/users. Merges PUBLIC (the user's login token, refreshed on demand)
+// + PRIVATE (the App's installation tokens). `installUrl` is the App-install
+// link; `tokenMissing:true` tells the page to ask the user to log in again.
 async function handleListRepositories(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   if ((req.method ?? 'GET') !== 'GET') { send405(res, 'GET'); return }
   const s = await readSession(deps.config, deps.db, cookie, Date.now())
   if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
-  if (s.user.role !== 'admin' && s.user.role !== 'manage') { sendJson(res, 403, { error: 'forbidden' }); return }
+  if (!requireRepoRole(res, s.user)) return
   const token = await ensureUserAccessToken(deps.config, deps.db, s.user.id, Date.now())
-  const [publicRepos, tokenMissing] = await listPublicRepos(token)
-  const privateRepos = await listPrivateRepos(deps.config)
+  const { repositories, tokenMissing } = await collectRepos(deps.config, token)
+  const selected = new Set((await deps.db.listSelectedRepos()).map((r) => r.repoId))
   sendJson(res, 200, {
     installUrl: installUrl(deps.config),
-    repositories: mergeRepos(publicRepos, privateRepos),
+    repositories: repositories.map((r) => ({
+      id: r.id, fullName: r.fullName, private: r.private, htmlUrl: r.htmlUrl, selected: selected.has(r.id),
+    })),
     tokenMissing,
   })
+}
+
+// The select half of the toggle: re-list the caller's reachable repos to VERIFY
+// access (never trust a client-supplied id) and capture the server-derived read
+// context (installation id, default branch). A PRIVATE repo with no installation
+// can't be read server-side → 409. Stores via selectRepo (upsert).
+async function selectRepository(res: ServerResponse, deps: ManagedHttpDeps, userId: string, repoId: number): Promise<void> {
+  const token = await ensureUserAccessToken(deps.config, deps.db, userId, Date.now())
+  const { repositories } = await collectRepos(deps.config, token)
+  const repo = repositories.find((r) => r.id === repoId)
+  if (repo == null) { sendJson(res, 404, { error: 'repo-not-accessible' }); return }
+  if (repo.private && repo.installationId == null) { sendJson(res, 409, { error: 'repo-not-readable' }); return }
+  await deps.db.selectRepo({
+    repoId: repo.id, fullName: repo.fullName, private: repo.private,
+    installationId: repo.installationId, defaultBranch: repo.defaultBranch,
+    htmlUrl: repo.htmlUrl, addedBy: userId,
+  }, Date.now())
+  sendJson(res, 200, { ok: true, selected: true })
+}
+
+// POST /api/admin/repositories/select — admin|manage toggles whether a repo is
+// in the operate-on set. Mutation: same-origin + CSRF. Body { repoId, selected }.
+// selected:true verifies + records the read context; selected:false drops the row.
+async function handleSelectRepository(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
+  if ((req.method ?? 'GET') !== 'POST') { send405(res, 'POST'); return }
+  const s = await checkMutation(req, res, deps, cookie)
+  if (s == null) return
+  if (!requireRepoRole(res, s.user)) return
+  let body: unknown
+  try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
+  const repoId = (body as { repoId?: unknown } | null)?.repoId
+  const selected = (body as { selected?: unknown } | null)?.selected
+  if (typeof repoId !== 'number' || !Number.isSafeInteger(repoId) || typeof selected !== 'boolean') {
+    sendJson(res, 400, { error: 'bad-request' }); return
+  }
+  if (!selected) { await deps.db.deselectRepo(repoId); sendJson(res, 200, { ok: true, selected: false }); return }
+  await selectRepository(res, deps, s.user.id, repoId)
 }
 
 export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
@@ -238,6 +262,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     }
     if (path === SET_ROLE_PATH) { await handleSetRole(req, res, deps, cookie); return }
     if (path === ADMIN_REPOS_PATH) { await handleListRepositories(req, res, deps, cookie); return }
+    if (path === SELECT_REPO_PATH) { await handleSelectRepository(req, res, deps, cookie); return }
     if (path === LOGOUT_PATH) { await handleLogout(req, res, deps, cookie); return }
     sendJson(res, 404, { error: 'not-found' }, { connection: 'close' })
   }

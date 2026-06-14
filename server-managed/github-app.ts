@@ -21,11 +21,17 @@ const PER_PAGE = 100
 // Pagination safety bound (100/page) so a runaway listing can't spin forever.
 const MAX_PAGES = 20
 
-// One listed repository — the read-only subset the UI shows.
+// One listed repository. Carries the context to read its contents later:
+// `installationId` mints an App installation token (Contents: Read) for a repo
+// reached through an installation — null for a public repo listed off the user
+// token, readable without the App — and `defaultBranch` is the ref to read.
 export interface ConnectedRepo {
+  id: number
   fullName: string
   private: boolean
   htmlUrl: string
+  defaultBranch: string
+  installationId: number | null
 }
 
 // A failure carrying the HTTP status the router should surface. 401 passes
@@ -81,18 +87,26 @@ async function githubJson(url: string, token: string, fetchImpl: typeof fetch, m
   try { return await res.json() } catch { throw new GithubApiError(502, 'github-malformed') }
 }
 
-// Validate one repo object into a ConnectedRepo (or null to skip). Archived
-// repos are skipped — read-only history, not triage targets.
-function parseRepo(raw: unknown): ConnectedRepo | null {
+// Validate one repo object into a ConnectedRepo (or null to skip), tagging it
+// with the installation it was reached through (null for the user-token path). A
+// missing numeric id or full name → skip (can't key/locate it). Archived repos
+// are skipped — read-only history, not triage targets.
+function parseRepo(raw: unknown, installationId: number | null): ConnectedRepo | null {
   if (raw == null || typeof raw !== 'object') return null
   if ((raw as { archived?: unknown }).archived === true) return null
+  const id = (raw as { id?: unknown }).id
   const fullName = (raw as { full_name?: unknown }).full_name
+  if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) return null
   if (typeof fullName !== 'string' || fullName === '') return null
   const htmlUrl = (raw as { html_url?: unknown }).html_url
+  const branch = (raw as { default_branch?: unknown }).default_branch
   return {
+    id,
     fullName,
     private: (raw as { private?: unknown }).private === true,
     htmlUrl: typeof htmlUrl === 'string' ? htmlUrl : '',
+    defaultBranch: typeof branch === 'string' ? branch : '',
+    installationId,
   }
 }
 
@@ -108,7 +122,7 @@ export async function listUserRepos(accessToken: string, fetchImpl: typeof fetch
     const body = await githubJson(url, accessToken, fetchImpl)
     if (!Array.isArray(body)) break
     for (const r of body) {
-      const repo = parseRepo(r)
+      const repo = parseRepo(r, null)
       if (repo != null) byName.set(repo.fullName, repo)
     }
     if (body.length < PER_PAGE) break
@@ -154,13 +168,14 @@ async function mintInstallationToken(jwt: string, installId: number, fetchImpl: 
   return token
 }
 
-// The `repositories` array of one /installation/repositories page → ConnectedRepo[].
-function repoPage(body: unknown): ConnectedRepo[] {
+// The `repositories` array of one /installation/repositories page → ConnectedRepo[],
+// each tagged with the installation id that can read it.
+function repoPage(body: unknown, installationId: number): ConnectedRepo[] {
   const repositories = (body as { repositories?: unknown }).repositories
   if (!Array.isArray(repositories)) return []
   const out: ConnectedRepo[] = []
   for (const r of repositories) {
-    const repo = parseRepo(r)
+    const repo = parseRepo(r, installationId)
     if (repo != null) out.push(repo)
   }
   return out
@@ -168,14 +183,14 @@ function repoPage(body: unknown): ConnectedRepo[] {
 
 // Every repository one installation can read, paginated by the page count from
 // `total_count` (avoids Link-header parsing).
-async function listInstallationRepos(token: string, fetchImpl: typeof fetch): Promise<ConnectedRepo[]> {
+async function listInstallationRepos(token: string, installationId: number, fetchImpl: typeof fetch): Promise<ConnectedRepo[]> {
   const pageUrl = (page: number): string => `${GITHUB_API}/installation/repositories?per_page=${PER_PAGE}&page=${page}`
   const first = await githubJson(pageUrl(1), token, fetchImpl) as { total_count?: unknown }
-  const repos = repoPage(first)
+  const repos = repoPage(first, installationId)
   const total = typeof first.total_count === 'number' ? first.total_count : repos.length
   const pages = Math.min(Math.ceil(total / PER_PAGE), MAX_PAGES)
   for (let page = 2; page <= pages; page++) {
-    repos.push(...repoPage(await githubJson(pageUrl(page), token, fetchImpl)))
+    repos.push(...repoPage(await githubJson(pageUrl(page), token, fetchImpl), installationId))
   }
   return repos
 }
@@ -190,7 +205,50 @@ export async function listInstalledRepos(config: ManagedConfig, fetchImpl: typeo
   const byName = new Map<string, ConnectedRepo>()
   for (const id of await listInstallationIds(jwt, fetchImpl)) {
     const token = await mintInstallationToken(jwt, id, fetchImpl)
-    for (const repo of await listInstallationRepos(token, fetchImpl)) byName.set(repo.fullName, repo)
+    for (const repo of await listInstallationRepos(token, id, fetchImpl)) byName.set(repo.fullName, repo)
   }
   return [...byName.values()].toSorted((a, b) => a.fullName.localeCompare(b.fullName))
+}
+
+// Mint a token to READ a selected repo's contents: an installation token (the
+// App's Contents: Read) when the repo was reached through an installation, or
+// null for a public repo readable unauthenticated. This is the whole point of
+// persisting `installationId` — the stored context is enough to read.
+export async function repoAccessToken(config: ManagedConfig, installationId: number | null, fetchImpl: typeof fetch = globalThis.fetch): Promise<string | null> {
+  const { githubAppId, githubAppPrivateKey } = config
+  if (installationId == null || githubAppId == null || githubAppPrivateKey == null) return null
+  return await mintInstallationToken(appJwt(githubAppId, githubAppPrivateKey), installationId, fetchImpl)
+}
+
+// ── merged listing ──
+
+export interface RepoListing {
+  repositories: ConnectedRepo[]
+  tokenMissing: boolean
+}
+
+// Every repo a user can reach, merged (deduped + sorted): PUBLIC via their login
+// token + PRIVATE via the App's installations. Each source is best-effort so one
+// failing never blanks the other; `tokenMissing` flags a missing/stale user
+// token (→ the page prompts re-login). A repo seen on both sides keeps the
+// installation tag (private listed last → wins the merge).
+export async function collectRepos(config: ManagedConfig, userToken: string | null, fetchImpl: typeof fetch = globalThis.fetch): Promise<RepoListing> {
+  let tokenMissing = userToken == null
+  const lists: ConnectedRepo[][] = []
+  if (userToken != null) {
+    try {
+      lists.push(await listUserRepos(userToken, fetchImpl))
+    } catch (err) {
+      if (err instanceof GithubApiError && err.status === 401) tokenMissing = true
+      else console.warn('managed: public repo list failed:', err)
+    }
+  }
+  if (githubAppConfigured(config)) {
+    try {
+      lists.push(await listInstalledRepos(config, fetchImpl))
+    } catch (err) {
+      console.warn('managed: private repo list failed:', err)
+    }
+  }
+  return { repositories: mergeRepos(...lists), tokenMissing }
 }

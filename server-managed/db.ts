@@ -1,7 +1,9 @@
 // Managed-server store: the user-identity + session tables backing GitHub
-// auth. The `ManagedDb` interface is backend-agnostic and ASYNC so a future
-// PostgreSQL backend can be added without refactoring any caller — but SQLite
-// is the ONLY implementation for now (no alternative storage is wired yet).
+// auth, plus the `selected_repo` table — the repositories an admin/manage user
+// has chosen for the workspace to operate on. The `ManagedDb` interface is
+// backend-agnostic and ASYNC so a future PostgreSQL backend can be added
+// without refactoring any caller — but SQLite is the ONLY implementation for
+// now (no alternative storage is wired yet).
 //
 // Users are keyed by a server-assigned `id` (an opaque uuid), NOT the GitHub
 // numeric id: identity is just one provider, so nothing downstream (sessions,
@@ -46,6 +48,27 @@ CREATE TABLE IF NOT EXISTS managed_session (
 
 CREATE INDEX IF NOT EXISTS managed_session_user_idx ON managed_session(user_id);
 CREATE INDEX IF NOT EXISTS managed_session_expires_idx ON managed_session(expires_at);
+
+-- Repositories selected to operate on. Keyed by GitHub's numeric repo id
+-- (stable across renames). The row carries everything needed to read the repo's
+-- contents server-side later: installation_id mints an App installation token
+-- (Contents: Read) for PRIVATE repos — NULL means a PUBLIC repo readable without
+-- the App — and full_name + default_branch locate the contents. added_by is the
+-- selector, nulled (not cascaded) if that user is removed so the selection
+-- survives.
+CREATE TABLE IF NOT EXISTS selected_repo (
+  repo_id         INTEGER PRIMARY KEY,
+  full_name       TEXT NOT NULL,
+  is_private      INTEGER NOT NULL,
+  installation_id INTEGER,
+  default_branch  TEXT NOT NULL,
+  html_url        TEXT NOT NULL,
+  added_by        TEXT REFERENCES managed_user(id) ON DELETE SET NULL,
+  added_at        INTEGER NOT NULL,
+  updated_at      INTEGER NOT NULL
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS selected_repo_full_name_idx ON selected_repo(full_name);
 `
 
 // A managed user identity (the subset of GitHub's `GET /user` we keep). Input
@@ -92,6 +115,26 @@ export interface ManagedSession {
   expiresAt: number
 }
 
+// A repository selected for the workspace to operate on, with the context to
+// read its contents: `installationId` mints an App installation token (Contents:
+// Read) for a PRIVATE repo — null for a PUBLIC repo readable without the App —
+// and `fullName` + `defaultBranch` locate the contents
+// (GET /repos/{fullName}/contents?ref={defaultBranch}).
+export interface SelectedRepo {
+  repoId: number
+  fullName: string
+  private: boolean
+  installationId: number | null
+  defaultBranch: string
+  htmlUrl: string
+  addedBy: string | null
+  addedAt: number
+}
+
+// What a caller supplies to select (upsert) a repo; the store stamps the
+// timestamps.
+export type SelectedRepoInput = Omit<SelectedRepo, 'addedAt'>
+
 // Backend-agnostic store surface (SQLite + PostgreSQL implementations).
 export interface ManagedDb {
   // Upsert the identity; returns the user's opaque id (stable across logins).
@@ -106,6 +149,12 @@ export interface ManagedDb {
   // Persist / read a user's GitHub token (for on-demand repo listing).
   setUserTokens(id: string, tokens: UserTokens): Promise<void>
   getUserTokens(id: string): Promise<UserTokens | null>
+  // Repo selection ("operate on"). selectRepo upserts by repo id, refreshing the
+  // mutable context while keeping the original added_by/added_at; deselectRepo
+  // resolves true iff a row was removed.
+  selectRepo(repo: SelectedRepoInput, now: number): Promise<void>
+  deselectRepo(repoId: number): Promise<boolean>
+  listSelectedRepos(): Promise<SelectedRepo[]>
   close(): Promise<void>
 }
 
@@ -157,6 +206,52 @@ function prepareStatements(db: DatabaseSync) {
     ),
     deleteSessionStmt: db.prepare(`DELETE FROM managed_session WHERE id = ?`),
     deleteExpiredStmt: db.prepare(`DELETE FROM managed_session WHERE expires_at <= ?`),
+    upsertRepoStmt: db.prepare(
+      `INSERT INTO selected_repo (repo_id, full_name, is_private, installation_id, default_branch, html_url, added_by, added_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(repo_id) DO UPDATE SET
+         full_name = excluded.full_name, is_private = excluded.is_private,
+         installation_id = excluded.installation_id, default_branch = excluded.default_branch,
+         html_url = excluded.html_url, updated_at = excluded.updated_at`,
+    ),
+    deleteRepoStmt: db.prepare(`DELETE FROM selected_repo WHERE repo_id = ?`),
+    selectReposStmt: db.prepare(
+      `SELECT repo_id AS repoId, full_name AS fullName, is_private AS priv,
+              installation_id AS installId, default_branch AS branch, html_url AS htmlUrl,
+              added_by AS addedBy, added_at AS addedAt
+         FROM selected_repo ORDER BY full_name ASC`,
+    ),
+  }
+}
+
+type RepoRow = {
+  repoId: number; fullName: string; priv: number; installId: number | null
+  branch: string; htmlUrl: string; addedBy: string | null; addedAt: number
+}
+
+// The repo-selection slice of ManagedDb, split out to keep openSqliteManagedDb
+// within the per-function line budget. Closes over its prepared statements.
+function selectedRepoMethods(stmts: ReturnType<typeof prepareStatements>) {
+  const { upsertRepoStmt, deleteRepoStmt, selectReposStmt } = stmts
+  return {
+    selectRepo(repo: SelectedRepoInput, now: number): Promise<void> {
+      upsertRepoStmt.run(
+        repo.repoId, repo.fullName, repo.private ? 1 : 0, repo.installationId,
+        repo.defaultBranch, repo.htmlUrl, repo.addedBy, now, now,
+      )
+      return Promise.resolve()
+    },
+    deselectRepo(repoId: number): Promise<boolean> {
+      return Promise.resolve(Number(deleteRepoStmt.run(repoId).changes) > 0)
+    },
+    listSelectedRepos(): Promise<SelectedRepo[]> {
+      const rows = selectReposStmt.all() as RepoRow[]
+      return Promise.resolve(rows.map((r) => ({
+        repoId: r.repoId, fullName: r.fullName, private: r.priv === 1,
+        installationId: r.installId, defaultBranch: r.branch, htmlUrl: r.htmlUrl,
+        addedBy: r.addedBy, addedAt: r.addedAt,
+      })))
+    },
   }
 }
 
@@ -173,10 +268,11 @@ export function openSqliteManagedDb(path: string): ManagedDb {
     throw err
   }
 
+  const stmts = prepareStatements(db)
   const {
     upsertUserStmt, selectUserIdStmt, insertSessionStmt, selectSessionStmt, selectUsersStmt,
     updateRoleStmt, updateTokensStmt, selectTokensStmt, deleteSessionStmt, deleteExpiredStmt,
-  } = prepareStatements(db)
+  } = stmts
 
   // The driver is synchronous; each method returns a resolved promise so a
   // synchronous throw still surfaces as the caller's awaited rejection.
@@ -223,6 +319,7 @@ export function openSqliteManagedDb(path: string): ManagedDb {
       if (row == null || row.access == null) return Promise.resolve(null)
       return Promise.resolve({ accessToken: row.access, refreshToken: row.refresh, expiresAt: row.exp })
     },
+    ...selectedRepoMethods(stmts),
     close() {
       db.close()
       return Promise.resolve()

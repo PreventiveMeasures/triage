@@ -11,7 +11,7 @@ import { hashToken, randomToken, safeEqual } from '../server-managed/crypto.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createSession, endSession, readSession } from '../server-managed/session.ts'
 import { OAuthError, buildLoginRedirect, ensureUserAccessToken, handleCallback, refreshUserToken } from '../server-managed/github-oauth.ts'
-import { appJwt, githubAppConfigured, installUrl, listInstalledRepos, listUserRepos, mergeRepos } from '../server-managed/github-app.ts'
+import { appJwt, collectRepos, githubAppConfigured, installUrl, listInstalledRepos, listUserRepos, mergeRepos, repoAccessToken } from '../server-managed/github-app.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 
 const config = {
@@ -349,12 +349,12 @@ test('listInstalledRepos: aggregates the separate App\'s installations, skips ar
     if (u.includes('/app/installations/22/access_tokens')) return jsonResponse({ token: 'tok-22' })
     if (u.includes('/installation/repositories')) {
       const repos = opts.headers.authorization === 'Bearer tok-11'
-        ? [{ full_name: 'o/zeta', private: true, html_url: 'https://github.com/o/zeta' },
-           { full_name: 'o/alpha', private: true, html_url: 'https://github.com/o/alpha' }]
+        ? [{ id: 1, full_name: 'o/zeta', private: true, html_url: 'https://github.com/o/zeta' },
+           { id: 2, full_name: 'o/alpha', private: true, html_url: 'https://github.com/o/alpha' }]
         // install 22 re-sees alpha (dupe), adds beta, and an archived repo to skip
-        : [{ full_name: 'o/alpha', private: true, html_url: 'https://github.com/o/alpha' },
-           { full_name: 'o/beta', private: true, html_url: 'https://github.com/o/beta' },
-           { full_name: 'o/old', private: true, archived: true, html_url: 'https://github.com/o/old' }]
+        : [{ id: 2, full_name: 'o/alpha', private: true, html_url: 'https://github.com/o/alpha' },
+           { id: 3, full_name: 'o/beta', private: true, html_url: 'https://github.com/o/beta' },
+           { id: 4, full_name: 'o/old', private: true, archived: true, html_url: 'https://github.com/o/old' }]
       return jsonResponse({ total_count: repos.length, repositories: repos })
     }
     return jsonResponse({}, 404)
@@ -376,16 +376,16 @@ test('listUserRepos: paginates GET /user/repos, dedupes + sorts (read-only)', as
     // Full first page (length === per_page) → a second page is fetched.
     if (page === '1') {
       return jsonResponse(Array.from({ length: 100 }, (_, i) => (
-        { full_name: `o/r${String(i).padStart(3, '0')}`, private: false, html_url: `https://github.com/o/r${i}` }
+        { id: i + 1, full_name: `o/r${String(i).padStart(3, '0')}`, private: false, html_url: `https://github.com/o/r${i}` }
       )))
     }
     // Short second page → stop; re-sends r000 (dupe), a later name, + an
     // archived repo that must be excluded.
     if (page === '2') {
       return jsonResponse([
-        { full_name: 'o/zeta', private: false, html_url: 'https://github.com/o/zeta' },
-        { full_name: 'o/r000', private: true, html_url: 'https://github.com/o/r000' },
-        { full_name: 'o/old', private: false, archived: true, html_url: 'https://github.com/o/old' },
+        { id: 201, full_name: 'o/zeta', private: false, html_url: 'https://github.com/o/zeta' },
+        { id: 1, full_name: 'o/r000', private: true, html_url: 'https://github.com/o/r000' },
+        { id: 202, full_name: 'o/old', private: false, archived: true, html_url: 'https://github.com/o/old' },
       ])
     }
     return jsonResponse([])
@@ -400,6 +400,57 @@ test('listUserRepos: paginates GET /user/repos, dedupes + sorts (read-only)', as
   // Stopped after the short 2nd page (no page 3); GET-only, no writes.
   assert.equal(calls.length, 2)
   assert.ok(calls.every((c) => c.startsWith('GET')))
+})
+
+test('db: selectRepo upserts (keeps added_at/by), listSelectedRepos reads, deselectRepo removes', async () => {
+  const db = openSqliteManagedDb(':memory:')
+  const uid = await db.upsertUser({ githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, 1000)
+  await db.selectRepo({ repoId: 42, fullName: 'o/repo', private: true, installationId: 7, defaultBranch: 'main', htmlUrl: 'https://github.com/o/repo', addedBy: uid }, 2000)
+  let rows = await db.listSelectedRepos()
+  assert.deepEqual(rows, [{ repoId: 42, fullName: 'o/repo', private: true, installationId: 7, defaultBranch: 'main', htmlUrl: 'https://github.com/o/repo', addedBy: uid, addedAt: 2000 }])
+  // Re-select refreshes the mutable context (rename, now public, no install) but
+  // keeps the original added_at (audit).
+  await db.selectRepo({ repoId: 42, fullName: 'o/renamed', private: false, installationId: null, defaultBranch: 'dev', htmlUrl: 'https://github.com/o/renamed', addedBy: uid }, 5000)
+  rows = await db.listSelectedRepos()
+  assert.equal(rows.length, 1)
+  assert.deepEqual([rows[0].fullName, rows[0].private, rows[0].installationId, rows[0].addedAt], ['o/renamed', false, null, 2000])
+  assert.equal(await db.deselectRepo(42), true)
+  assert.equal(await db.deselectRepo(42), false) // already gone → false
+  assert.deepEqual(await db.listSelectedRepos(), [])
+  await db.close()
+})
+
+test('collectRepos: merges public + private (install-tagged); tokenMissing without a user token', async () => {
+  const pem = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs1', format: 'pem' })
+  const cfg = { ...config, githubAppId: '1', githubAppPrivateKey: pem, githubAppSlug: 'app' }
+  const fetchImpl = (url) => {
+    const u = String(url)
+    if (u.includes('/user/repos')) return jsonResponse([{ id: 1, full_name: 'o/pub', private: false, default_branch: 'main', html_url: 'h' }])
+    if (u.endsWith('/app/installations?per_page=100')) return jsonResponse([{ id: 9 }])
+    if (u.includes('/access_tokens')) return jsonResponse({ token: 'tok' })
+    if (u.includes('/installation/repositories')) return jsonResponse({ total_count: 1, repositories: [{ id: 2, full_name: 'o/priv', private: true, default_branch: 'release', html_url: 'h' }] })
+    return jsonResponse({}, 404)
+  }
+  const out = await collectRepos(cfg, 'user-token', fetchImpl)
+  assert.equal(out.tokenMissing, false)
+  // Both sources, sorted; private carries its installation id + default branch.
+  assert.deepEqual(out.repositories.map((r) => [r.fullName, r.private, r.installationId, r.defaultBranch]),
+    [['o/priv', true, 9, 'release'], ['o/pub', false, null, 'main']])
+  // No user token → public skipped + tokenMissing, but private still lists.
+  const noTok = await collectRepos(cfg, null, fetchImpl)
+  assert.equal(noTok.tokenMissing, true)
+  assert.deepEqual(noTok.repositories.map((r) => r.fullName), ['o/priv'])
+})
+
+test('repoAccessToken: installation id → installation token; null for public/unconfigured', async () => {
+  const pem = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs1', format: 'pem' })
+  const cfg = { ...config, githubAppId: '1', githubAppPrivateKey: pem }
+  const fetchImpl = (url, opts) => (String(url).includes('/app/installations/7/access_tokens') && opts?.method === 'POST'
+    ? jsonResponse({ token: 'inst-tok' })
+    : jsonResponse({}, 404))
+  assert.equal(await repoAccessToken(cfg, 7, fetchImpl), 'inst-tok') // private repo → installation token
+  assert.equal(await repoAccessToken(cfg, null, fetchImpl), null) // public repo → no token needed
+  assert.equal(await repoAccessToken({ ...config }, 7, fetchImpl), null) // App not configured
 })
 
 test('refreshUserToken: posts grant_type=refresh_token, parses the new token set', async () => {
@@ -494,5 +545,76 @@ test('GET /api/admin/repositories: admin|manage only; no stored token → tokenM
   // No slug + no token persisted for this user → the tokenMissing response.
   assert.deepEqual(JSON.parse(asManage.body), { installUrl: null, repositories: [], tokenMissing: true })
   assert.equal((await get(cookiePair(adminSess.setCookie))).statusCode, 200)
+  await db.close()
+})
+
+test('POST /api/admin/repositories/select: admin|manage + CSRF; verifies access, persists, marks, deselects', async () => {
+  const db = openSqliteManagedDb(':memory:')
+  const now = Date.now()
+  const adminSess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
+  const noneSess = await createSession(config, db, { githubUserId: 2, login: 'bob', name: null, avatarUrl: null }, now + 1000)
+  const admin = (await readSession(config, db, cookiePair(adminSess.setCookie), now)).user
+  // A non-expiring token so collectRepos can list the admin's public repos.
+  await db.setUserTokens(admin.id, { accessToken: 'gho_x', refreshToken: null, expiresAt: null })
+
+  let pending = Promise.resolve()
+  const handler = createManagedRequestHandler({
+    config, db, avatarStore: fakeAvatarStore(),
+    originGate: { trustProxy: false, isOriginAllowed: () => true },
+    isShuttingDown: () => false, track: (p) => { pending = p },
+  })
+  function mockRes() {
+    return {
+      statusCode: 0, body: '', ended: false,
+      writeHead(c) { this.statusCode = c; return this },
+      end(b) { if (b != null) this.body += b; this.ended = true; return this },
+      get headersSent() { return this.ended },
+    }
+  }
+  async function post(cookie, csrf, payload) {
+    const res = mockRes()
+    const headers = { 'content-type': 'application/json' }
+    if (cookie) headers.cookie = cookie
+    if (csrf) headers['x-csrf-token'] = csrf
+    const req = new Readable({ read() {} })
+    req.method = 'POST'; req.url = '/api/admin/repositories/select'; req.headers = headers
+    handler(req, res)
+    req.push(JSON.stringify(payload)); req.push(null)
+    await pending
+    return res
+  }
+  async function get(cookie) {
+    const res = mockRes()
+    handler({ method: 'GET', url: '/api/admin/repositories', headers: { cookie } }, res)
+    await pending
+    return res
+  }
+  const aCk = cookiePair(adminSess.setCookie)
+
+  // authz / CSRF / validation (no GitHub call reached)
+  assert.equal((await post(cookiePair(noneSess.setCookie), noneSess.csrfToken, { repoId: 1, selected: true })).statusCode, 403) // 'none'
+  assert.equal((await post(aCk, null, { repoId: 1, selected: true })).statusCode, 403) // CSRF missing
+  assert.equal((await post(aCk, adminSess.csrfToken, { repoId: 'x', selected: true })).statusCode, 400) // bad repoId
+
+  // Stub GitHub so collectRepos sees one reachable public repo (id 55).
+  const realFetch = globalThis.fetch
+  globalThis.fetch = (url) => (String(url).includes('/user/repos')
+    ? jsonResponse([{ id: 55, full_name: 'o/pub', private: false, default_branch: 'main', html_url: 'https://github.com/o/pub' }])
+    : jsonResponse({}, 404))
+  try {
+    assert.equal((await post(aCk, adminSess.csrfToken, { repoId: 999, selected: true })).statusCode, 404) // not reachable
+    assert.equal((await post(aCk, adminSess.csrfToken, { repoId: 55, selected: true })).statusCode, 200)
+    const stored = await db.listSelectedRepos()
+    assert.deepEqual([stored.length, stored[0].fullName, stored[0].addedBy], [1, 'o/pub', admin.id])
+    // The listing now flags it selected.
+    const listed = JSON.parse((await get(aCk)).body).repositories.find((r) => r.id === 55)
+    assert.equal(listed.selected, true)
+  } finally {
+    globalThis.fetch = realFetch
+  }
+
+  // Deselect drops the row (no GitHub needed).
+  assert.equal((await post(aCk, adminSess.csrfToken, { repoId: 55, selected: false })).statusCode, 200)
+  assert.deepEqual(await db.listSelectedRepos(), [])
   await db.close()
 })
