@@ -151,7 +151,10 @@ async function handleListRepositories(req: IncomingMessage, res: ServerResponse,
   sendJson(res, 200, {
     installUrl: installUrl(deps.config),
     repositories: repositories.map((r) => ({
-      id: r.id, fullName: r.fullName, private: r.private, htmlUrl: r.htmlUrl, selected: selected.has(r.id),
+      id: r.id, fullName: r.fullName, private: r.private, htmlUrl: r.htmlUrl,
+      // `installed` = reached through the App (readable) — the default tab lists
+      // only these; `selected` = in the operate-on set.
+      installed: r.installationId != null, selected: selected.has(r.id),
     })),
     tokenMissing,
   })

@@ -606,9 +606,10 @@ test('POST /api/admin/repositories/select: admin|manage + CSRF; verifies access,
     assert.equal((await post(aCk, adminSess.csrfToken, { repoId: 55, selected: true })).statusCode, 200)
     const stored = await db.listSelectedRepos()
     assert.deepEqual([stored.length, stored[0].fullName, stored[0].addedBy], [1, 'o/pub', admin.id])
-    // The listing now flags it selected.
+    // The listing now flags it selected; a public repo (no installation) is not
+    // installed, so the default "Manage repositories" tab filters it out.
     const listed = JSON.parse((await get(aCk)).body).repositories.find((r) => r.id === 55)
-    assert.equal(listed.selected, true)
+    assert.deepEqual([listed.selected, listed.installed], [true, false])
   } finally {
     globalThis.fetch = realFetch
   }

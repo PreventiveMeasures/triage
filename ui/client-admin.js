@@ -168,22 +168,25 @@ const REPO_ICON = html`<svg class="repo-icon" viewBox="0 0 16 16" width="16" hei
   <path d="M2 2.75A2.75 2.75 0 0 1 4.75 0h7.5a.75.75 0 0 1 .75.75v10.5a.75.75 0 0 1-.75.75H4.5a1 1 0 0 0 0 2h8a.75.75 0 0 1 0 1.5h-8A2.5 2.5 0 0 1 2 13V2.75Zm2.75-.25a1.25 1.25 0 0 0-1.25 1.25v7.32c.317-.114.66-.07 1 .18V2.5h-.5a.25.25 0 0 0 .75 0Zm6.75 0H5.5v8.5h6V2.5Z"/>
 </svg>`
 
-// Repositories — full-view page for admin/manage. The server merges the user's
-// PUBLIC repos (their login token) with PRIVATE repos from a separate installed
-// App; checking a row selects it for the workspace to operate on (the server
-// records enough context to read its contents). "Connect a repository" installs
-// the App on the private repos you want. Own chunk, so it fetches its own data
+// Repositories — full-view page for admin/manage, in two tabs:
+//   "Manage repositories" (default) — only repos connected through the GitHub
+//      App (installed), i.e. the ones whose contents we can actually read.
+//   "Select repositories" — every reachable repo (PUBLIC via the login token +
+//      PRIVATE via the installed App) with a checkbox to add/remove it from the
+//      operate-on set; the server records enough context to read each one.
+// "Connect a repository" installs the App. Own chunk, so it fetches its own data
 // (session for the CSRF token + the repo list); no main-bundle state.
 class ManagedAdminRepos extends LitElement {
   static properties = {
     _data: { state: true },
     _error: { state: true },
+    _tab: { state: true },
   }
 
   static styles = css`
     :host { display: block; padding: 1.5rem clamp(1rem, 4vw, 2.5rem); color: var(--text); }
     .wrap { max-width: 48rem; margin: 0 auto; }
-    .head { display: flex; align-items: center; gap: 1rem; margin: 0 0 1rem; }
+    .head { display: flex; align-items: center; gap: 1rem; margin: 0 0 .75rem; }
     h1 { font-size: 1.15rem; font-weight: 600; margin: 0; user-select: none; }
     .connect {
       margin-left: auto; flex-shrink: 0; font-size: .85rem; font-weight: 600;
@@ -191,6 +194,14 @@ class ManagedAdminRepos extends LitElement {
       border-radius: 6px; padding: .35rem .7rem; white-space: nowrap;
     }
     .connect:hover { opacity: .9; }
+    .tabs { display: flex; gap: .25rem; margin: 0 0 1rem; border-bottom: 1px solid var(--border); }
+    .tab {
+      font: inherit; font-size: .85rem; font-weight: 600; color: var(--muted);
+      background: none; border: none; border-bottom: 2px solid transparent;
+      margin-bottom: -1px; padding: .4rem .55rem; cursor: pointer; user-select: none;
+    }
+    .tab:hover { color: var(--text); }
+    .tab.active { color: var(--text); border-bottom-color: var(--accent); }
     .hint { color: var(--muted); font-size: .82rem; margin: 0 0 .8rem; }
     .repos { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
     .repos li { display: flex; align-items: center; gap: .6rem; padding: .55rem .85rem; }
@@ -214,6 +225,7 @@ class ManagedAdminRepos extends LitElement {
     this._data = null
     this._error = null
     this._csrf = null
+    this._tab = 'manage' // 'manage' (installed only) | 'select' (all + checkboxes)
   }
 
   connectedCallback() {
@@ -240,6 +252,12 @@ class ManagedAdminRepos extends LitElement {
         <h1>Repositories</h1>
         ${url ? html`<a class="connect" href=${url} target="_blank" rel="noopener noreferrer">Connect a repository</a>` : nothing}
       </div>
+      <div class="tabs" role="tablist">
+        <button type="button" role="tab" class="tab ${this._tab === 'manage' ? 'active' : ''}"
+          aria-selected=${this._tab === 'manage'} @click=${() => { this._tab = 'manage' }}>Manage repositories</button>
+        <button type="button" role="tab" class="tab ${this._tab === 'select' ? 'active' : ''}"
+          aria-selected=${this._tab === 'select'} @click=${() => { this._tab = 'select' }}>Select repositories</button>
+      </div>
       ${this._body()}
     </div>`
   }
@@ -247,25 +265,50 @@ class ManagedAdminRepos extends LitElement {
   _body() {
     if (this._error != null) return html`<p class="msg error">Couldn't load repositories: ${this._error}</p>`
     if (this._data == null) return html`<p class="msg">Loading…</p>`
-    if (this._data.tokenMissing) {
+    const repos = Array.isArray(this._data.repositories) ? this._data.repositories : []
+    if (repos.length === 0 && this._data.tokenMissing) {
       return html`<p class="msg">We don't have current GitHub access for your account. Please
         <strong>log out and log back in</strong> to grant repository access.</p>`
     }
-    const repos = Array.isArray(this._data.repositories) ? this._data.repositories : []
-    if (repos.length === 0) {
-      return html`<p class="msg">No repositories found. ${this._data.installUrl
-        ? html`Use “Connect a repository” to install the GitHub App on the private repositories you want to read.`
-        : html`Public repositories you own appear here.`}</p>`
-    }
-    return html`<p class="hint">Check a repository to operate on it — we'll read its contents.</p>
-      <ul class="repos">${repos.map((r) => this._row(r))}</ul>`
+    return this._tab === 'select' ? this._selectView(repos) : this._manageView(repos)
   }
 
-  _row(r) {
+  // Default tab — only repositories connected through the GitHub App (installed),
+  // the ones whose contents we can read.
+  _manageView(repos) {
+    const installed = repos.filter((r) => r.installed)
+    if (installed.length === 0) {
+      return html`<p class="msg">No repositories connected yet. ${this._data.installUrl
+        ? html`Use “Connect a repository” to install the GitHub App on the repositories you want to read.`
+        : html`Install the GitHub App on the repositories you want to read.`}</p>`
+    }
+    return html`<p class="hint">Connected through the GitHub App — we can read these repositories.</p>
+      <ul class="repos">${installed.map((r) => this._row(r, false))}</ul>`
+  }
+
+  // "Select repositories" tab — every reachable repo, with a checkbox to add it
+  // to / remove it from the operate-on set.
+  _selectView(repos) {
+    if (repos.length === 0) {
+      return html`<p class="msg">No repositories found. ${this._data.installUrl
+        ? html`Use “Connect a repository” to install the GitHub App on the private repositories you want.`
+        : html`Public repositories you own appear here.`}</p>`
+    }
+    return html`
+      ${this._data.tokenMissing
+        ? html`<p class="hint">Some public repositories may be hidden — log out and back in to refresh GitHub access.</p>`
+        : nothing}
+      <p class="hint">Check a repository to operate on it — we'll read its contents.</p>
+      <ul class="repos">${repos.map((r) => this._row(r, true))}</ul>`
+  }
+
+  _row(r, selectable) {
     return html`<li>
-      <input type="checkbox" class="select" .checked=${r.selected === true}
-        title=${r.selected ? 'Selected — remove from the operate-on set' : 'Select this repository to operate on'}
-        @change=${(e) => this._toggle(r, e.target)}>
+      ${selectable
+        ? html`<input type="checkbox" class="select" .checked=${r.selected === true}
+            title=${r.selected ? 'Selected — remove from the operate-on set' : 'Select this repository to operate on'}
+            @change=${(e) => this._toggle(r, e.target)}>`
+        : nothing}
       ${REPO_ICON}
       <span class="full-name">${r.fullName}</span>
       ${r.private ? html`<span class="badge">private</span>` : nothing}
