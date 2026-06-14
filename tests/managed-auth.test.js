@@ -5,13 +5,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Readable } from 'node:stream'
-import { createVerify, generateKeyPairSync } from 'node:crypto'
 
 import { hashToken, randomToken, safeEqual } from '../server-managed/crypto.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createSession, endSession, readSession } from '../server-managed/session.ts'
-import { OAuthError, buildLoginRedirect, handleCallback } from '../server-managed/github-oauth.ts'
-import { appJwt, githubAppConfigured, installUrl, listConnectedRepos } from '../server-managed/github-app.ts'
+import { OAuthError, buildLoginRedirect, ensureUserAccessToken, handleCallback, refreshUserToken } from '../server-managed/github-oauth.ts'
+import { installUrl, listUserRepos } from '../server-managed/github-app.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 
 const config = {
@@ -307,57 +306,100 @@ test('handleCallback: GitHub refusing the code surfaces as 502', async () => {
   await db.close()
 })
 
-test('github-app: appJwt is a verifiable RS256 JWT; configured/installUrl helpers', () => {
-  const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
-  const pem = privateKey.export({ type: 'pkcs1', format: 'pem' })
-  const now = 1_700_000_000_000
-  const jwt = appJwt('appid-123', pem, now)
-  const [h, p, sig] = jwt.split('.')
-  assert.deepEqual(JSON.parse(Buffer.from(h, 'base64url').toString('utf8')), { alg: 'RS256', typ: 'JWT' })
-  const payload = JSON.parse(Buffer.from(p, 'base64url').toString('utf8'))
-  assert.equal(payload.iss, 'appid-123')
-  assert.equal(payload.iat, Math.floor(now / 1000) - 60)
-  assert.ok(payload.exp - payload.iat <= 600, 'lifetime within GitHub 10-min cap')
-  assert.ok(createVerify('RSA-SHA256').update(`${h}.${p}`).verify(publicKey, Buffer.from(sig, 'base64url')), 'signature verifies')
-
-  // configured needs all three creds; installUrl builds from the slug.
-  const base = { ...config }
-  assert.equal(githubAppConfigured(base), false)
-  assert.equal(installUrl(base), null)
-  const full = { ...config, githubAppId: 'a', githubAppPrivateKey: pem, githubAppSlug: 'my-app' }
-  assert.equal(githubAppConfigured(full), true)
-  assert.equal(installUrl(full), 'https://github.com/apps/my-app/installations/new')
+test('github-app: installUrl builds from the optional slug (null when unset)', () => {
+  assert.equal(installUrl({ ...config }), null)
+  assert.equal(installUrl({ ...config, githubAppSlug: 'my-app' }), 'https://github.com/apps/my-app/installations/new')
 })
 
-test('listConnectedRepos: aggregates across installations, dedupes + sorts (read-only)', async () => {
-  const pem = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs1', format: 'pem' })
-  const cfg = { ...config, githubAppId: '1', githubAppPrivateKey: pem, githubAppSlug: 'app' }
+test('listUserRepos: paginates GET /user/repos, dedupes + sorts (read-only)', async () => {
   const calls = []
   const fetchImpl = (url, opts) => {
     const u = String(url)
     calls.push(`${opts?.method ?? 'GET'} ${u}`)
-    if (u.endsWith('/app/installations?per_page=100')) return jsonResponse([{ id: 11 }, { id: 22 }])
-    if (u.includes('/app/installations/11/access_tokens')) return jsonResponse({ token: 'tok-11' })
-    if (u.includes('/app/installations/22/access_tokens')) return jsonResponse({ token: 'tok-22' })
-    if (u.includes('/installation/repositories')) {
-      const repos = opts.headers.authorization === 'Bearer tok-11'
-        ? [{ full_name: 'o/zeta', private: false, html_url: 'https://github.com/o/zeta' },
-           { full_name: 'o/alpha', private: true, html_url: 'https://github.com/o/alpha' }]
-        // install 22 re-sees alpha (dupe) and adds beta
-        : [{ full_name: 'o/alpha', private: true, html_url: 'https://github.com/o/alpha' },
-           { full_name: 'o/beta', private: false, html_url: 'https://github.com/o/beta' }]
-      return jsonResponse({ total_count: repos.length, repositories: repos })
+    assert.equal(opts.headers.authorization, 'Bearer utok')
+    const page = new URL(u).searchParams.get('page')
+    // Full first page (length === per_page) → a second page is fetched.
+    if (page === '1') {
+      return jsonResponse(Array.from({ length: 100 }, (_, i) => (
+        { full_name: `o/r${String(i).padStart(3, '0')}`, private: false, html_url: `https://github.com/o/r${i}` }
+      )))
     }
-    return jsonResponse({}, 404)
+    // Short second page → stop; re-sends r000 (dupe) + a later name.
+    if (page === '2') {
+      return jsonResponse([
+        { full_name: 'o/zeta', private: false, html_url: 'https://github.com/o/zeta' },
+        { full_name: 'o/r000', private: true, html_url: 'https://github.com/o/r000' },
+      ])
+    }
+    return jsonResponse([])
   }
-  const repos = await listConnectedRepos(cfg, fetchImpl)
-  assert.deepEqual(repos.map((r) => r.fullName), ['o/alpha', 'o/beta', 'o/zeta'])
-  assert.equal(repos.find((r) => r.fullName === 'o/alpha').private, true)
-  // One installation-token mint per installation (read-only flow, no writes).
-  assert.equal(calls.filter((c) => c.startsWith('POST')).length, 2)
+  const repos = await listUserRepos('utok', fetchImpl)
+  // 100 from page 1 + zeta from page 2; r000 deduped to one entry, sorted.
+  assert.equal(repos.length, 101)
+  assert.equal(repos[0].fullName, 'o/r000')
+  assert.equal(repos.at(-1).fullName, 'o/zeta')
+  assert.equal(repos.find((r) => r.fullName === 'o/r000').private, true) // last page wins
+  // Stopped after the short 2nd page (no page 3); GET-only, no writes.
+  assert.equal(calls.length, 2)
+  assert.ok(calls.every((c) => c.startsWith('GET')))
 })
 
-test('GET /api/admin/repositories: admin|manage only; unconfigured → configured:false', async () => {
+test('refreshUserToken: posts grant_type=refresh_token, parses the new token set', async () => {
+  const now = 1_700_000_000_000
+  const fetchImpl = (url, opts) => {
+    assert.match(String(url), /login\/oauth\/access_token/u)
+    const sent = JSON.parse(opts.body)
+    assert.equal(sent.grant_type, 'refresh_token')
+    assert.equal(sent.refresh_token, 'r-old')
+    return jsonResponse({ access_token: 'a-new', refresh_token: 'r-new', expires_in: 28800 })
+  }
+  const t = await refreshUserToken(config, 'r-old', now, fetchImpl)
+  assert.deepEqual(t, { accessToken: 'a-new', refreshToken: 'r-new', expiresAt: now + 28800 * 1000 })
+})
+
+test('ensureUserAccessToken: valid passthrough, refresh when expired, null when unrefreshable', async () => {
+  const db = openSqliteManagedDb(':memory:')
+  const now = Date.now()
+  const sess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
+  const me = (await readSession(config, db, cookiePair(sess.setCookie), now)).user
+
+  // No token stored → null.
+  assert.equal(await ensureUserAccessToken(config, db, me.id, now), null)
+
+  // Valid (non-expiring) token → returned as-is, fetch never called.
+  await db.setUserTokens(me.id, { accessToken: 'fresh', refreshToken: null, expiresAt: null })
+  assert.equal(await ensureUserAccessToken(config, db, me.id, now, () => { throw new Error('no fetch') }), 'fresh')
+
+  // Expired + refresh token → refreshed and re-persisted.
+  await db.setUserTokens(me.id, { accessToken: 'old', refreshToken: 'r1', expiresAt: now - 1 })
+  const refreshFetch = () => jsonResponse({ access_token: 'new', refresh_token: 'r2', expires_in: 3600 })
+  assert.equal(await ensureUserAccessToken(config, db, me.id, now, refreshFetch), 'new')
+  const stored = await db.getUserTokens(me.id)
+  assert.deepEqual([stored.accessToken, stored.refreshToken, stored.expiresAt], ['new', 'r2', now + 3600 * 1000])
+
+  // Expired with NO refresh token → null (caller prompts re-login).
+  await db.setUserTokens(me.id, { accessToken: 'old2', refreshToken: null, expiresAt: now - 1 })
+  assert.equal(await ensureUserAccessToken(config, db, me.id, now), null)
+  await db.close()
+})
+
+test('handleCallback: persists the user token for later repo listing', async () => {
+  const db = openSqliteManagedDb(':memory:')
+  const state = 'tk'
+  const now = 1_700_000_000_000
+  const fetchImpl = makeFetch({
+    token: { access_token: 'gho_user', refresh_token: 'ghr', expires_in: 28800 },
+    user: { id: 5, login: 'tok', name: null, avatar_url: null },
+  })
+  const result = await handleCallback(new URLSearchParams({ code: 'c', state }), `dvstate=${state}`, { config, db, now, fetchImpl })
+  const sessionCookie = result.setCookies.find((c) => c.startsWith('dvsid='))
+  const s = await readSession(config, db, cookiePair(sessionCookie), now)
+  const tokens = await db.getUserTokens(s.user.id)
+  assert.deepEqual([tokens.accessToken, tokens.refreshToken, tokens.expiresAt], ['gho_user', 'ghr', now + 28800 * 1000])
+  await db.close()
+})
+
+test('GET /api/admin/repositories: admin|manage only; no stored token → tokenMissing', async () => {
   const db = openSqliteManagedDb(':memory:')
   const now = Date.now()
   const adminSess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
@@ -391,8 +433,8 @@ test('GET /api/admin/repositories: admin|manage only; unconfigured → configure
   assert.equal((await get(cookiePair(noneSess.setCookie))).statusCode, 403) // 'none' role
   const asManage = await get(cookiePair(manageSess.setCookie))
   assert.equal(asManage.statusCode, 200)
-  // config carries no GitHub App creds → the not-configured response shape.
-  assert.deepEqual(JSON.parse(asManage.body), { configured: false, installUrl: null, repositories: [] })
+  // No slug + no token persisted for this user → the tokenMissing response.
+  assert.deepEqual(JSON.parse(asManage.body), { installUrl: null, repositories: [], tokenMissing: true })
   assert.equal((await get(cookiePair(adminSess.setCookie))).statusCode, 200)
   await db.close()
 })

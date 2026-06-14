@@ -26,6 +26,12 @@ CREATE TABLE IF NOT EXISTS managed_user (
   name           TEXT,
   avatar_url     TEXT,
   role           TEXT NOT NULL DEFAULT 'none',
+  -- GitHub user-to-server token, persisted so the repositories page can list
+  -- the user's repos (GET /user/repos) on demand. Refresh token + expiry are
+  -- null for non-expiring tokens (GitHub App with expiring tokens disabled).
+  gh_access_token      TEXT,
+  gh_refresh_token     TEXT,
+  gh_token_expires_at  INTEGER,
   created_at     INTEGER NOT NULL,
   updated_at     INTEGER NOT NULL
 ) STRICT;
@@ -71,6 +77,14 @@ export interface AdminUser {
   createdAt: number
 }
 
+// A user's persisted GitHub user-to-server token. `refreshToken` / `expiresAt`
+// are null when the App issues non-expiring tokens.
+export interface UserTokens {
+  accessToken: string
+  refreshToken: string | null
+  expiresAt: number | null
+}
+
 export interface ManagedSession {
   id: string
   userId: string
@@ -89,6 +103,9 @@ export interface ManagedDb {
   listUsers(): Promise<AdminUser[]>
   // Set a user's role; resolves true iff a matching user row was updated.
   setUserRole(id: string, role: Role): Promise<boolean>
+  // Persist / read a user's GitHub token (for on-demand repo listing).
+  setUserTokens(id: string, tokens: UserTokens): Promise<void>
+  getUserTokens(id: string): Promise<UserTokens | null>
   close(): Promise<void>
 }
 
@@ -98,6 +115,50 @@ type SessionRow = {
 }
 
 type UserRow = { id: string; login: string; name: string | null; role: Role; created: number }
+
+// Prepare every statement the store uses, returned as a bag the factory
+// destructures — keeps openSqliteManagedDb itself small (one place per query).
+function prepareStatements(db: DatabaseSync) {
+  return {
+    // role: the FIRST registered user (table empty at insert time) is admin;
+    // later users default to none. The subquery evaluates before this row is
+    // added. ON CONFLICT keeps an existing user's role untouched.
+    upsertUserStmt: db.prepare(
+      `INSERT INTO managed_user (id, github_user_id, login, name, avatar_url, role, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, (SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM managed_user) THEN 'admin' ELSE 'none' END), ?, ?)
+       ON CONFLICT(github_user_id) DO UPDATE SET
+         login = excluded.login, name = excluded.name,
+         avatar_url = excluded.avatar_url, updated_at = excluded.updated_at`,
+    ),
+    selectUserIdStmt: db.prepare(`SELECT id FROM managed_user WHERE github_user_id = ?`),
+    insertSessionStmt: db.prepare(
+      `INSERT INTO managed_session (id, user_id, csrf_token, created_at, expires_at) VALUES (?, ?, ?, ?, ?)`,
+    ),
+    selectSessionStmt: db.prepare(
+      `SELECT s.id AS id, s.csrf_token AS csrf, s.expires_at AS exp,
+              u.id AS uid, u.login AS login, u.name AS name, u.avatar_url AS avatar, u.role AS role
+         FROM managed_session s
+         JOIN managed_user u ON u.id = s.user_id
+        WHERE s.id = ? AND s.expires_at > ?`,
+    ),
+    selectUsersStmt: db.prepare(
+      `SELECT id, login, name, role, created_at AS created
+         FROM managed_user ORDER BY created_at ASC, login ASC`,
+    ),
+    updateRoleStmt: db.prepare(`UPDATE managed_user SET role = ?, updated_at = ? WHERE id = ?`),
+    updateTokensStmt: db.prepare(
+      `UPDATE managed_user
+          SET gh_access_token = ?, gh_refresh_token = ?, gh_token_expires_at = ?, updated_at = ?
+        WHERE id = ?`,
+    ),
+    selectTokensStmt: db.prepare(
+      `SELECT gh_access_token AS access, gh_refresh_token AS refresh, gh_token_expires_at AS exp
+         FROM managed_user WHERE id = ?`,
+    ),
+    deleteSessionStmt: db.prepare(`DELETE FROM managed_session WHERE id = ?`),
+    deleteExpiredStmt: db.prepare(`DELETE FROM managed_session WHERE expires_at <= ?`),
+  }
+}
 
 export function openSqliteManagedDb(path: string): ManagedDb {
   mkdirSync(dirname(path), { recursive: true })
@@ -112,34 +173,10 @@ export function openSqliteManagedDb(path: string): ManagedDb {
     throw err
   }
 
-  const upsertUserStmt = db.prepare(
-    // role: the FIRST registered user (table empty at insert time) is admin;
-    // later users default to none. The subquery evaluates before this row is
-    // added. ON CONFLICT keeps an existing user's role untouched.
-    `INSERT INTO managed_user (id, github_user_id, login, name, avatar_url, role, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, (SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM managed_user) THEN 'admin' ELSE 'none' END), ?, ?)
-     ON CONFLICT(github_user_id) DO UPDATE SET
-       login = excluded.login, name = excluded.name,
-       avatar_url = excluded.avatar_url, updated_at = excluded.updated_at`,
-  )
-  const selectUserIdStmt = db.prepare(`SELECT id FROM managed_user WHERE github_user_id = ?`)
-  const insertSessionStmt = db.prepare(
-    `INSERT INTO managed_session (id, user_id, csrf_token, created_at, expires_at) VALUES (?, ?, ?, ?, ?)`,
-  )
-  const selectSessionStmt = db.prepare(
-    `SELECT s.id AS id, s.csrf_token AS csrf, s.expires_at AS exp,
-            u.id AS uid, u.login AS login, u.name AS name, u.avatar_url AS avatar, u.role AS role
-       FROM managed_session s
-       JOIN managed_user u ON u.id = s.user_id
-      WHERE s.id = ? AND s.expires_at > ?`,
-  )
-  const selectUsersStmt = db.prepare(
-    `SELECT id, login, name, role, created_at AS created
-       FROM managed_user ORDER BY created_at ASC, login ASC`,
-  )
-  const updateRoleStmt = db.prepare(`UPDATE managed_user SET role = ?, updated_at = ? WHERE id = ?`)
-  const deleteSessionStmt = db.prepare(`DELETE FROM managed_session WHERE id = ?`)
-  const deleteExpiredStmt = db.prepare(`DELETE FROM managed_session WHERE expires_at <= ?`)
+  const {
+    upsertUserStmt, selectUserIdStmt, insertSessionStmt, selectSessionStmt, selectUsersStmt,
+    updateRoleStmt, updateTokensStmt, selectTokensStmt, deleteSessionStmt, deleteExpiredStmt,
+  } = prepareStatements(db)
 
   // The driver is synchronous; each method returns a resolved promise so a
   // synchronous throw still surfaces as the caller's awaited rejection.
@@ -176,6 +213,15 @@ export function openSqliteManagedDb(path: string): ManagedDb {
     },
     setUserRole(id, role) {
       return Promise.resolve(Number(updateRoleStmt.run(role, Date.now(), id).changes) > 0)
+    },
+    setUserTokens(id, tokens) {
+      updateTokensStmt.run(tokens.accessToken, tokens.refreshToken, tokens.expiresAt, Date.now(), id)
+      return Promise.resolve()
+    },
+    getUserTokens(id) {
+      const row = selectTokensStmt.get(id) as { access: string | null; refresh: string | null; exp: number | null } | undefined
+      if (row == null || row.access == null) return Promise.resolve(null)
+      return Promise.resolve({ accessToken: row.access, refreshToken: row.refresh, expiresAt: row.exp })
     },
     close() {
       db.close()

@@ -12,13 +12,15 @@
 //                                      GitHub identity, upsert the user, mint a
 //                                      session, set the cookie, 302 to the app.
 //
-// The user token is used ONLY for the one identity read and then DISCARDED —
-// installation-token / repo access is later work, so nothing GitHub-derived
-// beyond {id, login, name, avatar} is persisted yet.
+// The user-to-server token is read for the identity AND persisted (see
+// db.setUserTokens): the "Manage repositories" page lists the user's repos with
+// it on demand (GET /user/repos — public repos with no App install; private
+// ones once the App is installed). `ensureUserAccessToken` refreshes it when the
+// App issues expiring tokens.
 import { Buffer } from 'node:buffer'
 import type { AvatarStore } from './avatar-store.ts'
 import type { ManagedConfig } from './config.ts'
-import type { ManagedDb, ManagedUser } from './db.ts'
+import type { ManagedDb, ManagedUser, UserTokens } from './db.ts'
 import { randomToken, safeEqual } from './crypto.ts'
 import { STATE_COOKIE, buildCookie, clearCookie, cookieName, createSession, parseCookies } from './session.ts'
 
@@ -74,9 +76,11 @@ export async function handleCallback(
   if (!code || !state || !stateCookie || !safeEqual(state, stateCookie)) {
     throw new OAuthError(400, 'invalid-oauth-state')
   }
-  const token = await exchangeCode(config, code, fetchImpl)
-  const user = await fetchIdentity(token, fetchImpl)
+  const tokens = await exchangeCode(config, code, now, fetchImpl)
+  const user = await fetchIdentity(tokens.accessToken, fetchImpl)
   const { setCookie, userId } = await createSession(config, db, user, now)
+  // Persist the user token so the repositories page can list repos on demand.
+  await db.setUserTokens(userId, tokens)
   // Cache the avatar for same-origin serving (the page's CSP forbids loading
   // github's CDN directly). Best-effort: a fetch/store failure must not break
   // login, and the avatar endpoint just 404s until a later login fills it.
@@ -92,17 +96,32 @@ export async function handleCallback(
   }
 }
 
-// Exchange the authorization code for a user-to-server access token.
-async function exchangeCode(config: ManagedConfig, code: string, fetchImpl: typeof fetch): Promise<string> {
+// Exchange the authorization code for a user-to-server token set.
+function exchangeCode(config: ManagedConfig, code: string, now: number, fetchImpl: typeof fetch): Promise<UserTokens> {
+  return postToken({
+    client_id: config.githubClientId, client_secret: config.githubClientSecret,
+    code, redirect_uri: config.oauthCallbackUrl,
+  }, now, fetchImpl)
+}
+
+// Refresh an expiring user-to-server token (GitHub Apps with expiring tokens
+// enabled). Returns the fresh token set; OAuthError(502) on any failure.
+export function refreshUserToken(config: ManagedConfig, refreshToken: string, now: number, fetchImpl: typeof fetch = globalThis.fetch): Promise<UserTokens> {
+  return postToken({
+    client_id: config.githubClientId, client_secret: config.githubClientSecret,
+    grant_type: 'refresh_token', refresh_token: refreshToken,
+  }, now, fetchImpl)
+}
+
+// POST the GitHub token endpoint and parse the {access_token, refresh_token?,
+// expires_in?} body into a UserTokens (expiry resolved to an absolute ms time).
+async function postToken(payload: Record<string, string>, now: number, fetchImpl: typeof fetch): Promise<UserTokens> {
   let res: Response
   try {
     res = await fetchImpl(GITHUB_TOKEN_URL, {
       method: 'POST',
       headers: { 'accept': 'application/json', 'content-type': 'application/json' },
-      body: JSON.stringify({
-        client_id: config.githubClientId, client_secret: config.githubClientSecret,
-        code, redirect_uri: config.oauthCallbackUrl,
-      }),
+      body: JSON.stringify(payload),
     })
   } catch { throw new OAuthError(502, 'github-token-unreachable') }
   if (!res.ok) throw new OAuthError(502, `github-token-status-${res.status}`)
@@ -110,7 +129,34 @@ async function exchangeCode(config: ManagedConfig, code: string, fetchImpl: type
   try { body = await res.json() } catch { throw new OAuthError(502, 'github-token-malformed') }
   const tok = (body as { access_token?: unknown }).access_token
   if (typeof tok !== 'string' || tok === '') throw new OAuthError(502, 'github-token-denied')
-  return tok
+  const refresh = (body as { refresh_token?: unknown }).refresh_token
+  const expiresIn = (body as { expires_in?: unknown }).expires_in
+  return {
+    accessToken: tok,
+    refreshToken: typeof refresh === 'string' && refresh !== '' ? refresh : null,
+    expiresAt: typeof expiresIn === 'number' && expiresIn > 0 ? now + expiresIn * 1000 : null,
+  }
+}
+
+// Resolve a usable access token for a user: the stored one if still valid, else
+// refreshed (when a refresh token is on file) and re-persisted. Null when there
+// is no token or it's expired and unrefreshable — the caller prompts re-login.
+// A 60s skew margin avoids handing back a token about to expire mid-request.
+export async function ensureUserAccessToken(
+  config: ManagedConfig, db: ManagedDb, userId: string, now: number, fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<string | null> {
+  const tokens = await db.getUserTokens(userId)
+  if (tokens == null) return null
+  if (tokens.expiresAt == null || tokens.expiresAt > now + 60_000) return tokens.accessToken
+  if (tokens.refreshToken == null) return null
+  try {
+    const fresh = await refreshUserToken(config, tokens.refreshToken, now, fetchImpl)
+    await db.setUserTokens(userId, fresh)
+    return fresh.accessToken
+  } catch (err) {
+    console.warn('managed: token refresh failed:', err)
+    return null
+  }
 }
 
 // Read the authenticated user's identity (`GET /user`).

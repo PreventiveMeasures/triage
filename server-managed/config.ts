@@ -1,8 +1,9 @@
 // Managed-server boot config (SYNC_MODE=managed), parsed once at startup and
 // failing fast on a missing / invalid required value — the same discipline as
-// server-e2e/config.ts. Auth (GitHub identity + sessions) is required; optional
-// GitHub App credentials enable READ-ONLY repository connections; the sync
-// protocol is not parsed here yet.
+// server-e2e/config.ts. Auth (GitHub identity + sessions) is required; an
+// optional GitHub App slug enables the "Connect a repository" install link (so
+// private repos become visible to the user's token); the sync protocol is not
+// parsed here yet.
 import { env } from 'node:process'
 
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost'])
@@ -25,11 +26,10 @@ export interface ManagedConfig {
   cookieSecure: boolean
   sessionCookieName: string
   sessionTtlMs: number
-  // Optional GitHub App credentials for repository connections (READ-ONLY): the
-  // App id + PEM private key mint installation tokens to LIST connected repos;
-  // the slug builds the install URL. All absent → the repos feature is off.
-  githubAppId: string | null
-  githubAppPrivateKey: string | null
+  // Optional GitHub App slug — builds the "Connect a repository" install URL
+  // (github.com/apps/<slug>/installations/new). Installing the App is how a
+  // user's PRIVATE repos become visible to their token; public repos list with
+  // no install. Null → no install link is offered (public-only listing).
   githubAppSlug: string | null
 }
 
@@ -84,15 +84,6 @@ export function loadManagedConfig(): ManagedConfig {
     cookieSecure,
     sessionCookieName,
     sessionTtlMs: intEnv('SESSION_TTL_MS', 1_209_600_000, 60_000, 7_776_000_000),
-    githubAppId: env['GITHUB_APP_ID'] ?? null,
-    githubAppPrivateKey: normalizePem(env['GITHUB_APP_PRIVATE_KEY']),
     githubAppSlug: env['GITHUB_APP_SLUG'] ?? null,
   }
-}
-
-// PEM private keys are awkward in env vars; accept a literal multi-line value or
-// one with escaped newlines (`\n`). Empty/absent → null (repos feature off).
-function normalizePem(raw: string | undefined): string | null {
-  if (raw == null || raw === '') return null
-  return raw.includes('\\n') ? raw.replaceAll('\\n', '\n') : raw
 }

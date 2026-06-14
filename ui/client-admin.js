@@ -157,10 +157,11 @@ const REPO_ICON = html`<svg class="repo-icon" viewBox="0 0 16 16" width="16" hei
   <path d="M2 2.75A2.75 2.75 0 0 1 4.75 0h7.5a.75.75 0 0 1 .75.75v10.5a.75.75 0 0 1-.75.75H4.5a1 1 0 0 0 0 2h8a.75.75 0 0 1 0 1.5h-8A2.5 2.5 0 0 1 2 13V2.75Zm2.75-.25a1.25 1.25 0 0 0-1.25 1.25v7.32c.317-.114.66-.07 1 .18V2.5h-.5a.25.25 0 0 0 .75 0Zm6.75 0H5.5v8.5h6V2.5Z"/>
 </svg>`
 
-// Connected GitHub repositories — full-view page for admin/manage. Read-only:
-// the list comes from the GitHub App's installation tokens (see
-// server-managed/github-app.ts); "Connect a repository" hands off to GitHub's
-// App-install page. Own chunk, so it fetches its own data (no main-bundle state).
+// Repositories — full-view page for admin/manage. Read-only: the list is the
+// user's own repos (the server lists them with the user's GitHub token). Public
+// repos need no install; "Connect a repository" installs the App so the user's
+// private repos appear too. Own chunk, so it fetches its own data (no main-
+// bundle state).
 class ManagedAdminRepos extends LitElement {
   static properties = {
     _data: { state: true },
@@ -192,7 +193,6 @@ class ManagedAdminRepos extends LitElement {
     .open:hover { text-decoration: underline; }
     .msg { color: var(--muted); font-size: .9rem; line-height: 1.5; }
     .msg.error { color: var(--critical, #c00); }
-    code { font-size: .85em; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 0 .25em; }
   `
 
   constructor() {
@@ -230,15 +230,15 @@ class ManagedAdminRepos extends LitElement {
   _body() {
     if (this._error != null) return html`<p class="msg error">Couldn't load repositories: ${this._error}</p>`
     if (this._data == null) return html`<p class="msg">Loading…</p>`
-    if (!this._data.configured) {
-      return html`<p class="msg">The GitHub App isn't configured on this server. An operator needs to set
-        <code>GITHUB_APP_ID</code>, <code>GITHUB_APP_PRIVATE_KEY</code>, and <code>GITHUB_APP_SLUG</code>,
-        granting the App the repository <strong>Contents: Read-only</strong> permission.</p>`
+    if (this._data.tokenMissing) {
+      return html`<p class="msg">We don't have current GitHub access for your account. Please
+        <strong>log out and log back in</strong> to grant repository access.</p>`
     }
     const repos = Array.isArray(this._data.repositories) ? this._data.repositories : []
     if (repos.length === 0) {
-      return html`<p class="msg">No repositories connected yet. Use “Connect a repository” to install the
-        GitHub App on the repositories you want to read.</p>`
+      return html`<p class="msg">No repositories found. ${this._data.installUrl
+        ? html`Use “Connect a repository” to install the GitHub App on the private repositories you want to read.`
+        : html`Public repositories you own appear here.`}</p>`
     }
     return html`<ul class="repos">${repos.map((r) => this._row(r))}</ul>`
   }
