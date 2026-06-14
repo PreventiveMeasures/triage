@@ -237,7 +237,7 @@ test('buildLoginRedirect: GitHub authorize URL with a matching state cookie', ()
   assert.equal(u.origin + u.pathname, 'https://github.com/login/oauth/authorize')
   assert.equal(u.searchParams.get('client_id'), 'cid')
   assert.equal(u.searchParams.get('redirect_uri'), config.oauthCallbackUrl)
-  assert.equal(u.searchParams.get('scope'), 'read:user')
+  assert.equal(u.searchParams.get('scope'), null) // GitHub App user-auth: no scope
   const state = u.searchParams.get('state')
   assert.ok(state)
   assert.equal(cookiePair(setCookie), `dvstate=${state}`)

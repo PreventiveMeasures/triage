@@ -1,4 +1,8 @@
-// GitHub user-to-server OAuth (identity) for the managed server.
+// GitHub App user-authorization (identity) for the managed server. This is the
+// GitHub *App* user-to-server flow, NOT an OAuth App: the authorize request
+// carries NO `scope` (a GitHub App's permissions live on the App itself), so
+// login asks for identity only — repo access is a SEPARATE installation flow
+// (later work), keeping the broad "act on your behalf" ask off of login.
 //
 //   GET /api/oauth/github/login     → 302 to github.com/login/oauth/authorize
 //                                      with a CSRF `state` mirrored into a
@@ -21,7 +25,6 @@ import { STATE_COOKIE, buildCookie, clearCookie, cookieName, createSession, pars
 const GITHUB_AUTHORIZE_URL = 'https://github.com/login/oauth/authorize'
 const GITHUB_TOKEN_URL = 'https://github.com/login/oauth/access_token'
 const GITHUB_USER_URL = 'https://api.github.com/user'
-const OAUTH_SCOPE = 'read:user'
 const STATE_TTL_S = 600
 
 export const LOGIN_PATH = '/api/oauth/github/login'
@@ -40,13 +43,15 @@ export class OAuthError extends Error {
 export interface CallbackResult { location: string; setCookies: string[] }
 export interface CallbackDeps { config: ManagedConfig; db: ManagedDb; avatarStore?: AvatarStore; now?: number; fetchImpl?: typeof fetch }
 
-// GET /api/oauth/github/login — redirect to GitHub, stashing the CSRF state.
+// GET /api/oauth/github/login — redirect to GitHub, stashing the CSRF state. No
+// `scope` is sent: as the GitHub App user-authorization flow, the App's own
+// permission set governs access, so login requests identity only (repo access
+// is granted separately by installing the App).
 export function buildLoginRedirect(config: ManagedConfig): { location: string; setCookie: string } {
   const state = randomToken()
   const u = new URL(GITHUB_AUTHORIZE_URL)
   u.searchParams.set('client_id', config.githubClientId)
   u.searchParams.set('redirect_uri', config.oauthCallbackUrl)
-  u.searchParams.set('scope', OAUTH_SCOPE)
   u.searchParams.set('state', state)
   u.searchParams.set('allow_signup', 'false')
   const setCookie = buildCookie(cookieName(config, STATE_COOKIE), state, {
