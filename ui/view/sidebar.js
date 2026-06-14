@@ -7,7 +7,7 @@ import { login as managedLogin, logout as managedLogout, probeSession as managed
 import { openAdminUsers } from './client-admin.js'
 import sidebarCSS from './sidebar.css'
 import fileIconCSS from '../styles/file-icon.css'
-import { initEncryptionToggle } from './encryption-toggle.js'
+import { initEncryptionToggle, refreshEncryptionToggle } from './encryption-toggle.js'
 import { render } from './render.js'
 
 // Set on mount (`<app-sidebar>` firstUpdated). `hostEl` is the
@@ -1064,6 +1064,9 @@ function renderBrandTag() {
 function applyCollapsibility() {
   if (hostEl) hostEl.dataset.mode = state.serverMode
   if (state.serverMode === 'managed') hostEl?.classList.remove('collapsed')
+  // Mode also drives the encryption toggle's visibility (hidden when managed +
+  // encryption off); refresh it here since mode isn't a vault-state event.
+  refreshEncryptionToggle()
 }
 
 function renderSyncStatus(status) {

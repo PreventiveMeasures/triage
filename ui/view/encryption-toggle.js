@@ -16,7 +16,7 @@
 // there's no path forward and the button would just be confusing.
 
 import { html, render as litRender } from 'lit'
-import { disableEncryption, isEncryptionEnabled, isPasskeyEnvironmentSupported, isUnlocked, migrateOpfsBundlesDecrypt, migrateOpfsFilesDecrypt, migrateSecureStorageToPlaintext, migrateTriageToPlaintext, onVaultStateChange } from '#client/index.js'
+import { disableEncryption, isEncryptionEnabled, isPasskeyEnvironmentSupported, isUnlocked, migrateOpfsBundlesDecrypt, migrateOpfsFilesDecrypt, migrateSecureStorageToPlaintext, migrateTriageToPlaintext, onVaultStateChange, state } from '#client/index.js'
 import { openPasskeySetupDialog } from './dialogs/passkey-setup-dialog.js'
 import { openPasskeyUnlockDialog } from './dialogs/passkey-unlock-dialog.js'
 
@@ -42,8 +42,14 @@ function render() {
     button.hidden = true
     return
   }
-  button.hidden = false
   const enabled = isEncryptionEnabled()
+  // Managed mode with encryption OFF → hide the toggle entirely (a managed
+  // deployment doesn't surface passkey encryption as an opt-in there).
+  if (!enabled && state.serverMode === 'managed') {
+    button.hidden = true
+    return
+  }
+  button.hidden = false
   const unlocked = isUnlocked()
   // Three states keyed on (enabled, unlocked). `.encrypted` paints
   // the closed-lock + accent treatment; `.locked-pending` overrides
@@ -128,6 +134,11 @@ async function handleEnable() {
 // at module load; now that the sidebar is a shadow-DOM component the
 // wiring is deferred until the host hands us the live element.
 // Idempotent on a repeat call with the same element.
+// Re-evaluate visibility on demand — the sidebar calls this when the server
+// mode changes (mode is not a vault-state event, so `render`'s usual
+// `onVaultStateChange` trigger wouldn't fire for it).
+export function refreshEncryptionToggle() { render() }
+
 export function initEncryptionToggle(el) {
   if (!el || el === button) return
   button = el
