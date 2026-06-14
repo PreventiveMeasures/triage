@@ -324,20 +324,23 @@ test('listUserRepos: paginates GET /user/repos, dedupes + sorts (read-only)', as
         { full_name: `o/r${String(i).padStart(3, '0')}`, private: false, html_url: `https://github.com/o/r${i}` }
       )))
     }
-    // Short second page → stop; re-sends r000 (dupe) + a later name.
+    // Short second page → stop; re-sends r000 (dupe), a later name, + an
+    // archived repo that must be excluded.
     if (page === '2') {
       return jsonResponse([
         { full_name: 'o/zeta', private: false, html_url: 'https://github.com/o/zeta' },
         { full_name: 'o/r000', private: true, html_url: 'https://github.com/o/r000' },
+        { full_name: 'o/old', private: false, archived: true, html_url: 'https://github.com/o/old' },
       ])
     }
     return jsonResponse([])
   }
   const repos = await listUserRepos('utok', fetchImpl)
-  // 100 from page 1 + zeta from page 2; r000 deduped to one entry, sorted.
+  // 100 from page 1 + zeta from page 2; r000 deduped, o/old archived-skipped.
   assert.equal(repos.length, 101)
   assert.equal(repos[0].fullName, 'o/r000')
   assert.equal(repos.at(-1).fullName, 'o/zeta')
+  assert.ok(!repos.some((r) => r.fullName === 'o/old'), 'archived repo excluded')
   assert.equal(repos.find((r) => r.fullName === 'o/r000').private, true) // last page wins
   // Stopped after the short 2nd page (no page 3); GET-only, no writes.
   assert.equal(calls.length, 2)

@@ -61,8 +61,10 @@ async function githubGet(url: string, token: string, fetchImpl: typeof fetch): P
 }
 
 // Validate one repo object from the API into a ConnectedRepo (or null to skip).
+// Archived repos are skipped — they're read-only history, not triage targets.
 function parseRepo(raw: unknown): ConnectedRepo | null {
   if (raw == null || typeof raw !== 'object') return null
+  if ((raw as { archived?: unknown }).archived === true) return null
   const fullName = (raw as { full_name?: unknown }).full_name
   if (typeof fullName !== 'string' || fullName === '') return null
   const htmlUrl = (raw as { html_url?: unknown }).html_url
