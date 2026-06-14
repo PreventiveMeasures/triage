@@ -9,6 +9,7 @@ import { hashToken, randomToken, safeEqual } from '../server-managed/crypto.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createSession, endSession, readSession } from '../server-managed/session.ts'
 import { OAuthError, buildLoginRedirect, handleCallback } from '../server-managed/github-oauth.ts'
+import { createManagedRequestHandler } from '../server-managed/http.ts'
 
 const config = {
   port: 8765, host: '127.0.0.1', dbPath: ':memory:', debug: false, trustProxyEnv: undefined,
@@ -79,6 +80,61 @@ test('session: create → read → expire → end', async () => {
 
   await endSession(config, db, cookie)
   assert.equal(await readSession(config, db, cookie, now), null)
+  await db.close()
+})
+
+test('db: first registered user is admin; later users are not; listUsers reflects it', async () => {
+  const db = openSqliteManagedDb(':memory:')
+  const now = Date.now()
+  const first = await createSession(config, db, { githubUserId: 1, login: 'alice', name: 'Alice', avatarUrl: null }, now)
+  const second = await createSession(config, db, { githubUserId: 2, login: 'bob', name: null, avatarUrl: null }, now + 1000)
+
+  assert.equal((await readSession(config, db, cookiePair(first.setCookie), now)).user.isAdmin, true)
+  assert.equal((await readSession(config, db, cookiePair(second.setCookie), now)).user.isAdmin, false)
+
+  // A returning first user keeps admin (the upsert doesn't touch is_admin).
+  await createSession(config, db, { githubUserId: 1, login: 'alice2', name: 'Alice R', avatarUrl: null }, now + 2000)
+  const sAlice = await readSession(config, db, cookiePair(first.setCookie), now)
+  assert.equal(sAlice.user.isAdmin, true)
+  assert.equal(sAlice.user.login, 'alice2')
+
+  const users = await db.listUsers()
+  assert.deepEqual(users.map((u) => [u.login, u.isAdmin]), [['alice2', true], ['bob', false]])
+  await db.close()
+})
+
+test('GET /api/admin/users: admin-only (401 unauth, 403 non-admin, 200 admin)', async () => {
+  const db = openSqliteManagedDb(':memory:')
+  const now = Date.now()
+  const admin = await createSession(config, db, { githubUserId: 1, login: 'alice', name: 'Alice', avatarUrl: null }, now)
+  const plain = await createSession(config, db, { githubUserId: 2, login: 'bob', name: null, avatarUrl: null }, now + 1000)
+
+  let pending = Promise.resolve()
+  const handler = createManagedRequestHandler({
+    config, db, avatarStore: fakeAvatarStore(),
+    originGate: { trustProxy: false, isOriginAllowed: () => true },
+    isShuttingDown: () => false, track: (p) => { pending = p },
+  })
+  function mockRes() {
+    return {
+      statusCode: 0, body: '', ended: false,
+      writeHead(s) { this.statusCode = s; return this },
+      end(b) { if (b != null) this.body += b; this.ended = true; return this },
+      get headersSent() { return this.ended },
+    }
+  }
+  async function call(cookie) {
+    const res = mockRes()
+    handler({ method: 'GET', url: '/api/admin/users', headers: cookie ? { cookie } : {} }, res)
+    await pending
+    return res
+  }
+
+  assert.equal((await call(null)).statusCode, 401)
+  assert.equal((await call(cookiePair(plain.setCookie))).statusCode, 403)
+  const ok = await call(cookiePair(admin.setCookie))
+  assert.equal(ok.statusCode, 200)
+  assert.equal(JSON.parse(ok.body).users.length, 2)
   await db.close()
 })
 

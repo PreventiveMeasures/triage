@@ -7,6 +7,7 @@
 // numeric id: identity is just one provider, so nothing downstream (sessions,
 // avatars, the client API) is locked to GitHub. `github_user_id` is kept only
 // as the unique lookup key for the OAuth upsert; sessions reference `user_id`.
+// The FIRST registered user is flagged `is_admin`.
 //
 // SQLite impl mirrors server-e2e/db.ts: WAL, FULL sync, foreign keys, STRICT
 // tables, `CREATE TABLE IF NOT EXISTS` at open.
@@ -22,6 +23,7 @@ CREATE TABLE IF NOT EXISTS managed_user (
   login          TEXT NOT NULL,
   name           TEXT,
   avatar_url     TEXT,
+  is_admin       INTEGER NOT NULL DEFAULT 0,
   created_at     INTEGER NOT NULL,
   updated_at     INTEGER NOT NULL
 ) STRICT;
@@ -55,6 +57,16 @@ export interface StoredUser {
   login: string
   name: string | null
   avatarUrl: string | null
+  isAdmin: boolean
+}
+
+// A user row for the admin users list.
+export interface AdminUser {
+  id: string
+  login: string
+  name: string | null
+  isAdmin: boolean
+  createdAt: number
 }
 
 export interface ManagedSession {
@@ -72,13 +84,16 @@ export interface ManagedDb {
   sessionWithUser(id: string, now: number): Promise<{ session: ManagedSession; user: StoredUser } | null>
   deleteSession(id: string): Promise<void>
   deleteExpiredSessions(now: number): Promise<number>
+  listUsers(): Promise<AdminUser[]>
   close(): Promise<void>
 }
 
 type SessionRow = {
   id: string; csrf: string; exp: number
-  uid: string; login: string; name: string | null; avatar: string | null
+  uid: string; login: string; name: string | null; avatar: string | null; admin: number
 }
+
+type UserRow = { id: string; login: string; name: string | null; admin: number; created: number }
 
 export function openSqliteManagedDb(path: string): ManagedDb {
   mkdirSync(dirname(path), { recursive: true })
@@ -94,8 +109,11 @@ export function openSqliteManagedDb(path: string): ManagedDb {
   }
 
   const upsertUserStmt = db.prepare(
-    `INSERT INTO managed_user (id, github_user_id, login, name, avatar_url, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
+    // is_admin: the FIRST registered user (table empty at insert time) becomes
+    // admin — the subquery evaluates before this row is added. ON CONFLICT keeps
+    // an existing user's is_admin untouched.
+    `INSERT INTO managed_user (id, github_user_id, login, name, avatar_url, is_admin, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, (SELECT NOT EXISTS(SELECT 1 FROM managed_user)), ?, ?)
      ON CONFLICT(github_user_id) DO UPDATE SET
        login = excluded.login, name = excluded.name,
        avatar_url = excluded.avatar_url, updated_at = excluded.updated_at`,
@@ -106,10 +124,14 @@ export function openSqliteManagedDb(path: string): ManagedDb {
   )
   const selectSessionStmt = db.prepare(
     `SELECT s.id AS id, s.csrf_token AS csrf, s.expires_at AS exp,
-            u.id AS uid, u.login AS login, u.name AS name, u.avatar_url AS avatar
+            u.id AS uid, u.login AS login, u.name AS name, u.avatar_url AS avatar, u.is_admin AS admin
        FROM managed_session s
        JOIN managed_user u ON u.id = s.user_id
       WHERE s.id = ? AND s.expires_at > ?`,
+  )
+  const selectUsersStmt = db.prepare(
+    `SELECT id, login, name, is_admin AS admin, created_at AS created
+       FROM managed_user ORDER BY created_at ASC, login ASC`,
   )
   const deleteSessionStmt = db.prepare(`DELETE FROM managed_session WHERE id = ?`)
   const deleteExpiredStmt = db.prepare(`DELETE FROM managed_session WHERE expires_at <= ?`)
@@ -133,7 +155,7 @@ export function openSqliteManagedDb(path: string): ManagedDb {
       if (row == null) return Promise.resolve(null)
       return Promise.resolve({
         session: { id: row.id, userId: row.uid, csrfToken: row.csrf, expiresAt: row.exp },
-        user: { id: row.uid, login: row.login, name: row.name, avatarUrl: row.avatar },
+        user: { id: row.uid, login: row.login, name: row.name, avatarUrl: row.avatar, isAdmin: row.admin === 1 },
       })
     },
     deleteSession(id) {
@@ -142,6 +164,10 @@ export function openSqliteManagedDb(path: string): ManagedDb {
     },
     deleteExpiredSessions(now) {
       return Promise.resolve(Number(deleteExpiredStmt.run(now).changes))
+    },
+    listUsers() {
+      const rows = selectUsersStmt.all() as UserRow[]
+      return Promise.resolve(rows.map((r) => ({ id: r.id, login: r.login, name: r.name, isAdmin: r.admin === 1, createdAt: r.created })))
     },
     close() {
       db.close()

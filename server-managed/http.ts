@@ -8,6 +8,7 @@
 //   GET  /api/oauth/github/callback → the OAuth hook (see github-oauth.ts)
 //   GET  /api/auth/session       → { user, csrfToken } | 401
 //   GET  /api/auth/avatar        → cached GitHub avatar bytes | 401/404
+//   GET  /api/admin/users        → admin-only user list | 401/403
 //   POST /api/auth/logout        → same-origin + CSRF, drops the session
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { AvatarStore } from './avatar-store.ts'
@@ -21,6 +22,7 @@ import { clearCookie, endSession, readSession } from './session.ts'
 const SESSION_PATH = '/api/auth/session'
 const AVATAR_PATH = '/api/auth/avatar'
 const LOGOUT_PATH = '/api/auth/logout'
+const ADMIN_USERS_PATH = '/api/admin/users'
 
 export interface ManagedHttpDeps {
   config: ManagedConfig
@@ -46,6 +48,17 @@ function firstHeader(v: string | string[] | undefined): string | null {
   if (typeof v === 'string') return v
   if (Array.isArray(v) && v.length > 0) return v[0] ?? null
   return null
+}
+
+async function serveAvatar(res: ServerResponse, avatarStore: AvatarStore, userId: string): Promise<void> {
+  const avatar = await avatarStore.get(userId)
+  if (avatar == null) { sendJson(res, 404, { error: 'no-avatar' }); return }
+  res.writeHead(200, {
+    'content-type': avatar.contentType,
+    'content-length': String(avatar.bytes.length),
+    'cache-control': 'private, max-age=600',
+  })
+  res.end(avatar.bytes)
 }
 
 export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
@@ -90,7 +103,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       const s = await readSession(config, db, cookie, Date.now())
       if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
       sendJson(res, 200, {
-        user: { id: s.user.id, login: s.user.login, name: s.user.name },
+        user: { id: s.user.id, login: s.user.login, name: s.user.name, isAdmin: s.user.isAdmin },
         csrfToken: s.session.csrfToken,
       })
       return
@@ -100,14 +113,16 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (method !== 'GET') { send405(res, 'GET'); return }
       const s = await readSession(config, db, cookie, Date.now())
       if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
-      const avatar = await avatarStore.get(s.user.id)
-      if (avatar == null) { sendJson(res, 404, { error: 'no-avatar' }); return }
-      res.writeHead(200, {
-        'content-type': avatar.contentType,
-        'content-length': String(avatar.bytes.length),
-        'cache-control': 'private, max-age=600',
-      })
-      res.end(avatar.bytes)
+      await serveAvatar(res, avatarStore, s.user.id)
+      return
+    }
+    // Admin: list users (admin-only).
+    if (path === ADMIN_USERS_PATH) {
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      const s = await readSession(config, db, cookie, Date.now())
+      if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
+      if (!s.user.isAdmin) { sendJson(res, 403, { error: 'forbidden' }); return }
+      sendJson(res, 200, { users: await db.listUsers() })
       return
     }
     // Logout — a mutation: same-origin gate + double-submit CSRF.
