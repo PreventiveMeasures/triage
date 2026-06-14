@@ -1032,7 +1032,7 @@ function renderAuthStatus() {
           ${session.name ? html`<span class="user-name">${session.name}</span>` : nothing}
         </span>
       </div>
-      ${session.isAdmin ? html`<button type="button" class="user-menu-row" data-action="admin-users">Manage users</button>` : nothing}
+      ${session.role === 'admin' ? html`<button type="button" class="user-menu-row" data-action="admin-users">Manage users</button>` : nothing}
       <button type="button" class="user-menu-row" data-action="managed-logout">Log out</button>
     `, menu)
   }

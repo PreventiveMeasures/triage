@@ -9,12 +9,15 @@
 //   GET  /api/auth/session       → { user, csrfToken } | 401
 //   GET  /api/avatar/<id>        → cached avatar bytes by user id | 401/404
 //   GET  /api/admin/users        → admin-only user list | 401/403
+//   POST /api/admin/set-role     → admin sets another user's role | 401/403/404
 //   POST /api/auth/logout        → same-origin + CSRF, drops the session
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { Buffer } from 'node:buffer'
 import type { AvatarStore } from './avatar-store.ts'
 import type { ManagedConfig } from './config.ts'
 import type { ManagedDb } from './db.ts'
 import type { OriginGate } from '../server-common/origin.ts'
+import { isRole } from '../common/roles.ts'
 import { CONFIG_PATH } from '../common/server-info.ts'
 import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, handleCallback } from './github-oauth.ts'
 import { clearCookie, endSession, readSession } from './session.ts'
@@ -23,6 +26,7 @@ const SESSION_PATH = '/api/auth/session'
 const AVATAR_PREFIX = '/api/avatar/'
 const LOGOUT_PATH = '/api/auth/logout'
 const ADMIN_USERS_PATH = '/api/admin/users'
+const SET_ROLE_PATH = '/api/admin/set-role'
 
 export interface ManagedHttpDeps {
   config: ManagedConfig
@@ -59,6 +63,41 @@ async function serveAvatar(res: ServerResponse, avatarStore: AvatarStore, userId
     'cache-control': 'private, max-age=600',
   })
   res.end(avatar.bytes)
+}
+
+const MAX_BODY_BYTES = 4096
+
+async function readJsonBody(req: IncomingMessage): Promise<unknown> {
+  const chunks: Buffer[] = []
+  let size = 0
+  for await (const chunk of req) {
+    const c = chunk as Buffer
+    size += c.length
+    if (size > MAX_BODY_BYTES) { req.destroy(); throw new Error('too-large') }
+    chunks.push(c)
+  }
+  return JSON.parse(Buffer.concat(chunks).toString('utf8') || 'null')
+}
+
+// POST /api/admin/set-role — an admin sets ANOTHER user's role. A mutation:
+// same-origin + double-submit CSRF, admin-only, and refused for the caller's own
+// id so an admin can't drop their own admin (keeps at least one admin).
+async function handleSetRole(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
+  if ((req.method ?? 'GET') !== 'POST') { send405(res, 'POST'); return }
+  if (!deps.originGate.isOriginAllowed(req)) { sendJson(res, 403, { error: 'origin-denied' }); return }
+  const s = await readSession(deps.config, deps.db, cookie, Date.now())
+  const csrf = firstHeader(req.headers['x-csrf-token'])
+  if (s == null || csrf == null || csrf !== s.session.csrfToken) { sendJson(res, 403, { error: 'csrf' }); return }
+  if (s.user.role !== 'admin') { sendJson(res, 403, { error: 'forbidden' }); return }
+  let body: unknown
+  try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
+  const userId = (body as { userId?: unknown } | null)?.userId
+  const role = (body as { role?: unknown } | null)?.role
+  if (typeof userId !== 'string' || !isRole(role)) { sendJson(res, 400, { error: 'bad-request' }); return }
+  if (userId === s.user.id) { sendJson(res, 403, { error: 'cannot-change-own-role' }); return }
+  const ok = await deps.db.setUserRole(userId, role)
+  if (!ok) { sendJson(res, 404, { error: 'not-found' }); return }
+  sendJson(res, 200, { ok: true })
 }
 
 export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
@@ -103,7 +142,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       const s = await readSession(config, db, cookie, Date.now())
       if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
       sendJson(res, 200, {
-        user: { id: s.user.id, login: s.user.login, name: s.user.name, isAdmin: s.user.isAdmin },
+        user: { id: s.user.id, login: s.user.login, name: s.user.name, role: s.user.role },
         csrfToken: s.session.csrfToken,
       })
       return
@@ -123,10 +162,11 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (method !== 'GET') { send405(res, 'GET'); return }
       const s = await readSession(config, db, cookie, Date.now())
       if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
-      if (!s.user.isAdmin) { sendJson(res, 403, { error: 'forbidden' }); return }
+      if (s.user.role !== 'admin') { sendJson(res, 403, { error: 'forbidden' }); return }
       sendJson(res, 200, { users: await db.listUsers() })
       return
     }
+    if (path === SET_ROLE_PATH) { await handleSetRole(req, res, deps, cookie); return }
     // Logout — a mutation: same-origin gate + double-submit CSRF.
     if (path === LOGOUT_PATH) {
       if (method !== 'POST') { send405(res, 'POST'); return }

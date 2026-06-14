@@ -4,6 +4,7 @@
 // a live server can't easily prove (CSRF, token exchange, session lifecycle).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { Readable } from 'node:stream'
 
 import { hashToken, randomToken, safeEqual } from '../server-managed/crypto.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
@@ -83,23 +84,27 @@ test('session: create → read → expire → end', async () => {
   await db.close()
 })
 
-test('db: first registered user is admin; later users are not; listUsers reflects it', async () => {
+test('db: first user is admin, later users none; setUserRole + listUsers reflect roles', async () => {
   const db = openSqliteManagedDb(':memory:')
   const now = Date.now()
   const first = await createSession(config, db, { githubUserId: 1, login: 'alice', name: 'Alice', avatarUrl: null }, now)
   const second = await createSession(config, db, { githubUserId: 2, login: 'bob', name: null, avatarUrl: null }, now + 1000)
 
-  assert.equal((await readSession(config, db, cookiePair(first.setCookie), now)).user.isAdmin, true)
-  assert.equal((await readSession(config, db, cookiePair(second.setCookie), now)).user.isAdmin, false)
+  const alice = (await readSession(config, db, cookiePair(first.setCookie), now)).user
+  const bob = (await readSession(config, db, cookiePair(second.setCookie), now)).user
+  assert.equal(alice.role, 'admin')
+  assert.equal(bob.role, 'none')
 
-  // A returning first user keeps admin (the upsert doesn't touch is_admin).
+  // A returning first user keeps admin (the upsert doesn't touch role).
   await createSession(config, db, { githubUserId: 1, login: 'alice2', name: 'Alice R', avatarUrl: null }, now + 2000)
-  const sAlice = await readSession(config, db, cookiePair(first.setCookie), now)
-  assert.equal(sAlice.user.isAdmin, true)
-  assert.equal(sAlice.user.login, 'alice2')
+  assert.equal((await readSession(config, db, cookiePair(first.setCookie), now)).user.role, 'admin')
+
+  assert.equal(await db.setUserRole(bob.id, 'triage'), true)
+  assert.equal((await readSession(config, db, cookiePair(second.setCookie), now)).user.role, 'triage')
+  assert.equal(await db.setUserRole('00000000-0000-4000-8000-000000000000', 'view'), false)
 
   const users = await db.listUsers()
-  assert.deepEqual(users.map((u) => [u.login, u.isAdmin]), [['alice2', true], ['bob', false]])
+  assert.deepEqual(users.map((u) => [u.login, u.role]), [['alice2', 'admin'], ['bob', 'triage']])
   await db.close()
 })
 
@@ -135,6 +140,59 @@ test('GET /api/admin/users: admin-only (401 unauth, 403 non-admin, 200 admin)', 
   const ok = await call(cookiePair(admin.setCookie))
   assert.equal(ok.statusCode, 200)
   assert.equal(JSON.parse(ok.body).users.length, 2)
+  await db.close()
+})
+
+test('POST /api/admin/set-role: admin-only mutation, CSRF, not-self', async () => {
+  const db = openSqliteManagedDb(':memory:')
+  const now = Date.now()
+  const adminSess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
+  const userSess = await createSession(config, db, { githubUserId: 2, login: 'bob', name: null, avatarUrl: null }, now + 1000)
+  const admin = (await readSession(config, db, cookiePair(adminSess.setCookie), now)).user
+  const bob = (await readSession(config, db, cookiePair(userSess.setCookie), now)).user
+
+  let pending = Promise.resolve()
+  const handler = createManagedRequestHandler({
+    config, db, avatarStore: fakeAvatarStore(),
+    originGate: { trustProxy: false, isOriginAllowed: () => true },
+    isShuttingDown: () => false, track: (p) => { pending = p },
+  })
+  function mockRes() {
+    return {
+      statusCode: 0, body: '', ended: false,
+      writeHead(c) { this.statusCode = c; return this },
+      end(b) { if (b != null) this.body += b; this.ended = true; return this },
+      get headersSent() { return this.ended },
+    }
+  }
+  async function post(cookie, csrf, payload) {
+    const res = mockRes()
+    const headers = { 'content-type': 'application/json' }
+    if (cookie) headers.cookie = cookie
+    if (csrf) headers['x-csrf-token'] = csrf
+    const req = new Readable({ read() {} })
+    req.method = 'POST'
+    req.url = '/api/admin/set-role'
+    req.headers = headers
+    handler(req, res)
+    req.push(JSON.stringify(payload))
+    req.push(null)
+    await pending
+    return res
+  }
+  const aCk = cookiePair(adminSess.setCookie)
+
+  // Non-admin (bob) is refused.
+  assert.equal((await post(cookiePair(userSess.setCookie), userSess.csrfToken, { userId: admin.id, role: 'none' })).statusCode, 403)
+  // Missing CSRF is refused.
+  assert.equal((await post(aCk, null, { userId: bob.id, role: 'view' })).statusCode, 403)
+  // Admin can't change their OWN role.
+  assert.equal((await post(aCk, adminSess.csrfToken, { userId: admin.id, role: 'view' })).statusCode, 403)
+  // Invalid role → 400.
+  assert.equal((await post(aCk, adminSess.csrfToken, { userId: bob.id, role: 'wizard' })).statusCode, 400)
+  // Admin sets bob → triage.
+  assert.equal((await post(aCk, adminSess.csrfToken, { userId: bob.id, role: 'triage' })).statusCode, 200)
+  assert.equal((await readSession(config, db, cookiePair(userSess.setCookie), now)).user.role, 'triage')
   await db.close()
 })
 

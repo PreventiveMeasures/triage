@@ -2,15 +2,26 @@
 // lazily and ONLY when an admin opens it (the sidebar "Manage users" row, which
 // navigates to the 'admin-users' view). None of this ships in the main view
 // bundle, nor to non-admin / e2e / standalone sessions. First page: the users
-// list, rendered as a full view by <managed-admin-users> (created by render.js
-// when currentView is 'admin-users').
+// list (with per-user role pickers), rendered as a full view by
+// <managed-admin-users> (created by render.js when currentView is 'admin-users').
 import { LitElement, css, html, nothing } from 'lit'
+import { state } from '#client/index.js'
+import { ROLES } from '../common/roles.ts'
 
 async function fetchUsers() {
   const res = await fetch('/api/admin/users', { credentials: 'same-origin', headers: { accept: 'application/json' } })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   const body = await res.json()
   return Array.isArray(body?.users) ? body.users : []
+}
+
+async function setRole(userId, role, csrfToken) {
+  const headers = { 'content-type': 'application/json' }
+  if (csrfToken) headers['x-csrf-token'] = csrfToken
+  const res = await fetch('/api/admin/set-role', {
+    method: 'POST', credentials: 'same-origin', headers, body: JSON.stringify({ userId, role }),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
 }
 
 class ManagedAdminUsers extends LitElement {
@@ -24,7 +35,7 @@ class ManagedAdminUsers extends LitElement {
     .wrap { max-width: 48rem; margin: 0 auto; }
     h1 { font-size: 1.15rem; font-weight: 600; margin: 0 0 1rem; }
     .users { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-    .users li { display: flex; align-items: center; gap: .7rem; padding: .6rem .85rem; }
+    .users li { display: flex; align-items: center; gap: .7rem; padding: .55rem .85rem; }
     .users li + li { border-top: 1px solid var(--border); }
     .avatar {
       position: relative; flex-shrink: 0; width: 28px; height: 28px;
@@ -37,11 +48,12 @@ class ManagedAdminUsers extends LitElement {
     .who { display: flex; flex-direction: column; min-width: 0; }
     .login { font-weight: 600; font-size: .9rem; }
     .name { color: var(--muted); font-size: .8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .admin {
-      margin-left: auto; flex-shrink: 0; font-size: .64rem; text-transform: uppercase;
-      letter-spacing: .04em; color: var(--accent);
-      border: 1px solid var(--accent); border-radius: 999px; padding: .05rem .45rem;
+    .role {
+      margin-left: auto; flex-shrink: 0; font: inherit; font-size: .82rem;
+      color: var(--text); background: var(--bg);
+      border: 1px solid var(--border); border-radius: 6px; padding: .2rem .4rem;
     }
+    .role:disabled { opacity: .55; }
     .msg { color: var(--muted); font-size: .9rem; }
     .msg.error { color: var(--critical, #c00); }
   `
@@ -80,6 +92,7 @@ class ManagedAdminUsers extends LitElement {
 
   _row(u) {
     const initial = (u.login?.[0] ?? '?').toUpperCase()
+    const isSelf = u.id === state.managedSession?.id
     return html`<li>
       <span class="avatar">
         <span>${initial}</span>
@@ -89,8 +102,25 @@ class ManagedAdminUsers extends LitElement {
         <span class="login">${u.login}</span>
         ${u.name ? html`<span class="name">${u.name}</span>` : nothing}
       </span>
-      ${u.isAdmin ? html`<span class="admin">admin</span>` : nothing}
+      <select class="role" ?disabled=${isSelf}
+        title=${isSelf ? 'You can’t change your own role' : 'Change role'}
+        @change=${(e) => this._changeRole(u, e.target.value, e.target)}>
+        ${ROLES.map((r) => html`<option value=${r} ?selected=${r === u.role}>${r}</option>`)}
+      </select>
     </li>`
+  }
+
+  async _changeRole(u, role, selectEl) {
+    const prev = u.role
+    if (role === prev) return
+    try {
+      await setRole(u.id, role, state.managedSession?.csrfToken)
+      u.role = role
+    } catch (err) {
+      console.warn('admin: set role failed:', err)
+      selectEl.value = prev
+    }
+    this.requestUpdate()
   }
 }
 customElements.define('managed-admin-users', ManagedAdminUsers)
