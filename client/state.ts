@@ -125,7 +125,7 @@ export interface State {
   serverModeMismatch: boolean
   // The logged-in managed user (null when logged out / e2e / standalone),
   // populated by the managed session probe (client/managed/session.js).
-  managedSession: { id: string; login: string; name: string | null; avatarUrl: string | null; csrfToken: string | null } | null
+  managedSession: { id: string; login: string; name: string | null; avatarUrl: string | null; isAdmin: boolean; csrfToken: string | null } | null
 }
 
 // Hoisted so the `state` object literal below can call it during its

@@ -23,6 +23,7 @@ export async function probeSession() {
     login: user.login,
     name: typeof user.name === 'string' ? user.name : null,
     avatarUrl: typeof user.avatarUrl === 'string' ? user.avatarUrl : null,
+    isAdmin: user.isAdmin === true,
     csrfToken: typeof body.csrfToken === 'string' ? body.csrfToken : null,
   }
 }

@@ -94,6 +94,7 @@
     "common/utf8.d.ts",
     "common/utf8.js",
     "out/brotli-fallback.js",
+    "out/client-admin.js",
     "out/client-managed.js",
     "out/client-sync.js",
     "out/graph.js",

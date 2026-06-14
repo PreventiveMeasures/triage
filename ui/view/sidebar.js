@@ -4,6 +4,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { CONFIG_PATH, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, getCount, getPackagesIndex, getRepositoriesIndex, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, parseServerInfo, readCachedServerInfo, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, state, writeCachedServerInfo } from '#client/index.js'
 import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, setSyncForceDisabled, triageSync } from './client-sync.js'
 import { login as managedLogin, logout as managedLogout, probeSession as managedProbeSession } from './client-managed.js'
+import { openAdminUsers } from './client-admin.js'
 import sidebarCSS from './sidebar.css'
 import fileIconCSS from '../styles/file-icon.css'
 import { initEncryptionToggle } from './encryption-toggle.js'
@@ -883,6 +884,12 @@ async function onSidebarClick(e) {
     }
     return
   }
+  if (e.target.closest('[data-action="admin-users"]')) {
+    // Admin: open the lazily-loaded managed admin users dialog.
+    root?.querySelector('#user-menu')?.hidePopover?.()
+    void openAdminUsers()
+    return
+  }
   if (e.target.closest('[data-action="managed-logout"]')) {
     // Logout row inside the account menu — clears the server session (with the
     // double-submit CSRF token) then reloads so the app re-probes logged-out.
@@ -1024,6 +1031,7 @@ function renderAuthStatus() {
           ${session.name ? html`<span class="user-name">${session.name}</span>` : nothing}
         </span>
       </div>
+      ${session.isAdmin ? html`<button type="button" class="user-menu-row" data-action="admin-users">Manage users</button>` : nothing}
       <button type="button" class="user-menu-row" data-action="managed-logout">Log out</button>
     `, menu)
   }
