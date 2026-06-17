@@ -926,3 +926,88 @@ test('report↔bundle auto-link (both upload orders) + optional repo link', asyn
   assert.equal((await upload('/api/admin/reports', aCk, csrf, '{}', { 'x-repo-id': '999999' })).statusCode, 400)
   await db.close()
 })
+
+test('db: teams — create/list/delete, repo (+path) & member (+perms) links, FK cascade', async () => {
+  const db = openSqliteManagedDb(':memory:')
+  const now = Date.now()
+  const uid = await db.upsertUser({ githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
+  await db.selectRepo({ repoId: 7, fullName: 'o/r', private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: uid }, now)
+  const tId = randomUUID()
+  assert.equal(await db.createTeam(tId, 'Blue', now), true)
+  assert.equal(await db.createTeam(randomUUID(), 'Blue', now), false) // name taken (UNIQUE)
+  assert.deepEqual(await db.getTeam(tId), { id: tId, name: 'Blue' })
+  assert.deepEqual(await db.listUserOptions(), [{ id: uid, login: 'alice' }])
+
+  await db.setTeamRepo(tId, 7, 'src/app')
+  await db.setTeamMember(tId, uid, { dependencies: true, security: false })
+  let [t] = await db.listTeams()
+  assert.deepEqual(t.repos, [{ repoId: 7, fullName: 'o/r', path: 'src/app' }])
+  assert.deepEqual(t.members, [{ userId: uid, login: 'alice', dependencies: true, security: false }])
+
+  // Upsert: refresh the path (→ null) + flip perms.
+  await db.setTeamRepo(tId, 7, null)
+  await db.setTeamMember(tId, uid, { dependencies: true, security: true })
+  ;[t] = await db.listTeams()
+  assert.equal(t.repos[0].path, null)
+  assert.deepEqual([t.members[0].dependencies, t.members[0].security], [true, true])
+
+  // Deselecting the repo cascades the team_repo link away.
+  await db.deselectRepo(7)
+  ;[t] = await db.listTeams()
+  assert.deepEqual(t.repos, [])
+
+  assert.equal(await db.removeTeamMember(tId, uid), true)
+  assert.equal(await db.removeTeamMember(tId, uid), false) // already gone
+  assert.equal(await db.deleteTeam(tId), true)
+  assert.deepEqual(await db.listTeams(), [])
+  await db.close()
+})
+
+test('teams API: admin|manage gating, create (409 dup), repo/member links + perms, CSRF', async () => {
+  const db = openSqliteManagedDb(':memory:')
+  const now = Date.now()
+  const adminSess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
+  const noneSess = await createSession(config, db, { githubUserId: 2, login: 'bob', name: null, avatarUrl: null }, now + 1000)
+  const admin = (await readSession(config, db, cookiePair(adminSess.setCookie), now)).user
+  const bob = (await readSession(config, db, cookiePair(noneSess.setCookie), now)).user
+  await db.selectRepo({ repoId: 7, fullName: 'o/r', private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: admin.id }, now)
+  const { upload, send } = bundleHarness(db)
+  const aCk = cookiePair(adminSess.setCookie)
+  const csrf = adminSess.csrfToken
+  const T = '/api/admin/teams'
+
+  // list gating + payload (pickers + permission keys)
+  assert.equal((await send('GET', T, null)).statusCode, 401)
+  assert.equal((await send('GET', T, cookiePair(noneSess.setCookie))).statusCode, 403) // 'none'
+  const payload = JSON.parse((await send('GET', T, aCk)).body)
+  assert.deepEqual(payload.permissions, ['dependencies', 'security'])
+  assert.ok(payload.users.some((u) => u.login === 'alice'))
+  assert.ok(payload.repos.some((r) => r.repoId === 7))
+
+  // create: role + CSRF + duplicate-name
+  assert.equal((await upload(T, cookiePair(noneSess.setCookie), noneSess.csrfToken, JSON.stringify({ name: 'Blue' }))).statusCode, 403)
+  assert.equal((await upload(T, aCk, null, JSON.stringify({ name: 'Blue' }))).statusCode, 403) // CSRF missing
+  const created = await upload(T, aCk, csrf, JSON.stringify({ name: 'Blue' }))
+  assert.equal(created.statusCode, 201)
+  const teamId = JSON.parse(created.body).id
+  assert.equal((await upload(T, aCk, csrf, JSON.stringify({ name: 'Blue' }))).statusCode, 409) // dup
+
+  // set-repo validates the selected set; set-member validates team + user
+  assert.equal((await upload('/api/admin/teams/set-repo', aCk, csrf, JSON.stringify({ teamId, repoId: 999 }))).statusCode, 400) // not selected
+  assert.equal((await upload('/api/admin/teams/set-repo', aCk, csrf, JSON.stringify({ teamId, repoId: 7, path: 'pkg/a' }))).statusCode, 200)
+  assert.equal((await upload('/api/admin/teams/set-member', aCk, csrf, JSON.stringify({ teamId, userId: bob.id, dependencies: true }))).statusCode, 200)
+  assert.equal((await upload('/api/admin/teams/set-member', aCk, csrf, JSON.stringify({ teamId: 'nope', userId: bob.id }))).statusCode, 404)
+  assert.equal((await upload('/api/admin/teams/set-member', aCk, csrf, JSON.stringify({ teamId, userId: 'nope' }))).statusCode, 404)
+
+  // the list reflects the links, the path, and the per-member perms
+  const team = JSON.parse((await send('GET', T, aCk)).body).teams.find((t) => t.id === teamId)
+  assert.deepEqual(team.repos, [{ repoId: 7, fullName: 'o/r', path: 'pkg/a' }])
+  assert.deepEqual(team.members, [{ userId: bob.id, login: 'bob', dependencies: true, security: false }])
+
+  // unlink + delete
+  assert.equal((await upload('/api/admin/teams/remove-member', aCk, csrf, JSON.stringify({ teamId, userId: bob.id }))).statusCode, 200)
+  assert.equal((await upload('/api/admin/teams/remove-repo', aCk, csrf, JSON.stringify({ teamId, repoId: 7 }))).statusCode, 200)
+  assert.equal((await upload('/api/admin/teams/delete', aCk, csrf, JSON.stringify({ teamId }))).statusCode, 200)
+  assert.equal((await upload('/api/admin/teams/delete', aCk, csrf, JSON.stringify({ teamId }))).statusCode, 404) // gone
+  await db.close()
+})

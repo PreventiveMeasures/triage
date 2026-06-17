@@ -13,6 +13,7 @@
 // is fetched here from /api/auth/session instead.
 import { LitElement, css, html, nothing } from 'lit'
 import { ROLES } from '../common/managed/roles.ts'
+import { VISIBILITY_PERMISSION_LABELS } from '../common/managed/permissions.ts'
 
 async function fetchSession() {
   const res = await fetch('/api/auth/session', { credentials: 'same-origin', headers: { accept: 'application/json' } })
@@ -723,4 +724,225 @@ class ManagedAdminBundles extends LitElement {
 }
 customElements.define('managed-admin-bundles', ManagedAdminBundles)
 
-export { ManagedAdminBundles, ManagedAdminReports, ManagedAdminRepos, ManagedAdminUsers }
+async function fetchTeams() {
+  const res = await fetch('/api/admin/teams', { credentials: 'same-origin', headers: { accept: 'application/json' } })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+// POST a team mutation (create / delete / link / unlink). CSRF via the
+// double-submit token. Surfaces 409 (duplicate name) as a friendly word.
+async function postTeam(path, csrfToken, body) {
+  const headers = { 'content-type': 'application/json' }
+  if (csrfToken) headers['x-csrf-token'] = csrfToken
+  const res = await fetch(path, { method: 'POST', credentials: 'same-origin', headers, body: JSON.stringify(body) })
+  if (!res.ok) throw new Error(res.status === 409 ? 'name already taken' : `HTTP ${res.status}`)
+}
+
+// Teams — full-view page for admin/manage. Create teams; per team, link repos
+// (with an optional subpath) and members (with per-member visibility
+// permissions — dependencies / security, both off by default). Own chunk,
+// fetches its own data (session for CSRF + the teams payload).
+class ManagedAdminTeams extends LitElement {
+  static properties = {
+    _data: { state: true },
+    _error: { state: true },
+    _busy: { state: true },
+  }
+
+  static styles = css`
+    :host { display: block; padding: 1.5rem clamp(1rem, 4vw, 2.5rem); color: var(--text); }
+    .wrap { max-width: 48rem; margin: 0 auto; }
+    .head { display: flex; align-items: center; gap: .5rem; margin: 0 0 1rem; }
+    h1 { font-size: 1.15rem; font-weight: 600; margin: 0 auto 0 0; user-select: none; }
+    input, select {
+      font: inherit; font-size: .82rem; color: var(--text); background: var(--bg);
+      border: 1px solid var(--border); border-radius: 6px; padding: .25rem .4rem;
+    }
+    .new-name { width: 12rem; }
+    .btn {
+      font: inherit; font-size: .82rem; font-weight: 600; color: var(--bg); background: var(--accent);
+      border: none; border-radius: 6px; padding: .3rem .6rem; cursor: pointer; white-space: nowrap;
+    }
+    .btn:hover { opacity: .9; }
+    .btn:disabled { opacity: .55; cursor: default; }
+    .team { border: 1px solid var(--border); border-radius: 8px; padding: .85rem; margin: 0 0 1rem; }
+    .team-head { display: flex; align-items: center; gap: .6rem; margin: 0 0 .6rem; }
+    .team-name { font-weight: 600; font-size: 1rem; }
+    .sub { margin: .5rem 0 0; }
+    .sub-title { font-size: .72rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 .3rem; }
+    .links { list-style: none; margin: 0 0 .4rem; padding: 0; }
+    .links li { display: flex; align-items: center; gap: .6rem; padding: .25rem 0; }
+    .ln { font-size: .88rem; }
+    .path { color: var(--muted); font-size: .82rem; }
+    .perms { margin-left: auto; display: flex; gap: .8rem; }
+    .perm { display: inline-flex; align-items: center; gap: .25rem; font-size: .8rem; color: var(--muted); user-select: none; }
+    .add-row { display: flex; align-items: center; gap: .4rem; margin: .3rem 0 0; flex-wrap: wrap; }
+    .add-row select { max-width: 16rem; }
+    .x { font: inherit; font-size: .8rem; color: var(--critical, #c00); background: none; border: none; cursor: pointer; padding: 0; }
+    .x:hover { text-decoration: underline; }
+    .delete { margin-left: auto; }
+    .muted { color: var(--muted); font-size: .82rem; margin: 0 0 .3rem; }
+    .msg { color: var(--muted); font-size: .9rem; }
+    .msg.error { color: var(--critical, #c00); }
+  `
+
+  constructor() {
+    super()
+    this._data = null
+    this._error = null
+    this._csrf = null
+    this._busy = false
+  }
+
+  connectedCallback() {
+    super.connectedCallback()
+    void this._load()
+  }
+
+  async _load() {
+    this._error = null
+    try {
+      const [session, data] = await Promise.all([fetchSession(), fetchTeams()])
+      this._csrf = session?.csrfToken ?? null
+      this._data = data
+    } catch (err) {
+      this._error = String(err?.message ?? err)
+    }
+  }
+
+  // Run a mutation then reload; surfaces failures on the page.
+  async _do(fn) {
+    if (this._busy) return
+    this._busy = true
+    this._error = null
+    try { await fn() } catch (err) { this._error = String(err?.message ?? err) }
+    finally { this._busy = false; await this._load() }
+  }
+
+  render() {
+    return html`<div class="wrap">
+      <div class="head">
+        <h1>Teams</h1>
+        <input class="new-name" type="text" placeholder="New team name" maxlength="100"
+          @keydown=${(e) => { if (e.key === 'Enter') this._create() }}>
+        <button class="btn" ?disabled=${this._busy} @click=${() => this._create()}>Create</button>
+      </div>
+      ${this._body()}
+    </div>`
+  }
+
+  _body() {
+    if (this._error != null && this._data == null) return html`<p class="msg error">Couldn't load teams: ${this._error}</p>`
+    if (this._data == null) return html`<p class="msg">Loading…</p>`
+    const teams = Array.isArray(this._data.teams) ? this._data.teams : []
+    return html`
+      ${this._error == null ? nothing : html`<p class="msg error">${this._error}</p>`}
+      ${teams.length === 0 ? html`<p class="msg">No teams yet. Create one above.</p>` : teams.map((t) => this._team(t))}`
+  }
+
+  _team(team) {
+    return html`<div class="team">
+      <div class="team-head">
+        <span class="team-name">${team.name}</span>
+        <button class="x delete" @click=${() => this._deleteTeam(team)}>delete team</button>
+      </div>
+      <div class="sub">
+        <div class="sub-title">Repositories</div>
+        ${team.repos.length === 0 ? html`<p class="muted">No repositories linked.</p>`
+          : html`<ul class="links">${team.repos.map((r) => this._repoRow(team, r))}</ul>`}
+        ${this._addRepoRow(team)}
+      </div>
+      <div class="sub">
+        <div class="sub-title">Members</div>
+        ${team.members.length === 0 ? html`<p class="muted">No members.</p>`
+          : html`<ul class="links">${team.members.map((m) => this._memberRow(team, m))}</ul>`}
+        ${this._addMemberRow(team)}
+      </div>
+    </div>`
+  }
+
+  _repoRow(team, r) {
+    return html`<li>
+      <span class="ln">${r.fullName}${r.path ? html` <span class="path">/${r.path}</span>` : nothing}</span>
+      <button class="x" @click=${() => this._do(() => postTeam('/api/admin/teams/remove-repo', this._csrf, { teamId: team.id, repoId: r.repoId }))}>remove</button>
+    </li>`
+  }
+
+  _addRepoRow(team) {
+    const repos = Array.isArray(this._data.repos) ? this._data.repos : []
+    if (repos.length === 0) return html`<p class="muted">No selected repositories to link — pick some on “Manage repositories”.</p>`
+    const linked = new Set(team.repos.map((r) => r.repoId))
+    return html`<div class="add-row">
+      <select class="add-repo-sel">
+        <option value="">Add repository…</option>
+        ${repos.map((r) => html`<option value=${r.repoId}>${r.fullName}${linked.has(r.repoId) ? ' — update path' : ''}</option>`)}
+      </select>
+      <input class="add-repo-path" type="text" placeholder="subpath (optional)" maxlength="500">
+      <button class="btn" @click=${(e) => this._addRepo(team, e)}>add</button>
+    </div>`
+  }
+
+  _memberRow(team, m) {
+    const perms = Array.isArray(this._data.permissions) ? this._data.permissions : []
+    return html`<li>
+      <span class="ln">${m.login}</span>
+      <span class="perms">
+        ${perms.map((p) => html`<label class="perm">
+          <input type="checkbox" .checked=${m[p] === true}
+            @change=${(e) => this._togglePerm(team, m, p, e.target.checked)}>
+          ${VISIBILITY_PERMISSION_LABELS[p] ?? p}
+        </label>`)}
+      </span>
+      <button class="x" @click=${() => this._do(() => postTeam('/api/admin/teams/remove-member', this._csrf, { teamId: team.id, userId: m.userId }))}>remove</button>
+    </li>`
+  }
+
+  _addMemberRow(team) {
+    const users = Array.isArray(this._data.users) ? this._data.users : []
+    const member = new Set(team.members.map((m) => m.userId))
+    return html`<div class="add-row">
+      <select class="add-member-sel">
+        <option value="">Add member…</option>
+        ${users.map((u) => html`<option value=${u.id} ?disabled=${member.has(u.id)}>${u.login}${member.has(u.id) ? ' (member)' : ''}</option>`)}
+      </select>
+      <button class="btn" @click=${(e) => this._addMember(team, e)}>add</button>
+    </div>`
+  }
+
+  _create() {
+    const input = this.renderRoot.querySelector('.new-name')
+    const name = input?.value.trim()
+    if (!name) return
+    void this._do(async () => { await postTeam('/api/admin/teams', this._csrf, { name }); if (input) input.value = '' })
+  }
+
+  _deleteTeam(team) {
+    if (!globalThis.confirm?.(`Delete team “${team.name}”? Its repo + member links are removed.`)) return
+    void this._do(() => postTeam('/api/admin/teams/delete', this._csrf, { teamId: team.id }))
+  }
+
+  _addRepo(team, e) {
+    const row = e.target.closest('.add-row')
+    const repoId = Number(row?.querySelector('.add-repo-sel')?.value)
+    if (!Number.isSafeInteger(repoId) || repoId <= 0) return
+    const path = row?.querySelector('.add-repo-path')?.value ?? ''
+    void this._do(() => postTeam('/api/admin/teams/set-repo', this._csrf, { teamId: team.id, repoId, path }))
+  }
+
+  _addMember(team, e) {
+    const userId = e.target.closest('.add-row')?.querySelector('.add-member-sel')?.value
+    if (!userId) return
+    void this._do(() => postTeam('/api/admin/teams/set-member', this._csrf, { teamId: team.id, userId }))
+  }
+
+  _togglePerm(team, m, perm, checked) {
+    const perms = {}
+    for (const p of (this._data.permissions ?? [])) perms[p] = m[p] === true
+    perms[perm] = checked
+    void this._do(() => postTeam('/api/admin/teams/set-member', this._csrf, { teamId: team.id, userId: m.userId, ...perms }))
+  }
+}
+customElements.define('managed-admin-teams', ManagedAdminTeams)
+
+export { ManagedAdminBundles, ManagedAdminReports, ManagedAdminRepos, ManagedAdminTeams, ManagedAdminUsers }

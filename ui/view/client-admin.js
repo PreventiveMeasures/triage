@@ -3,10 +3,10 @@
 // of the main view bundle, and it's only ever loaded when a privileged user
 // invokes one of its pages from the sidebar account menu. Importing the chunk
 // defines the <managed-admin-users> (admin), <managed-admin-repos>,
-// <managed-admin-reports> and <managed-admin-bundles> (all admin|manage) custom
-// elements that render.js paints for the 'admin-users' / 'manage-repos' /
-// 'manage-reports' / 'manage-bundles' views. All entry points share one chunk
-// load.
+// <managed-admin-reports>, <managed-admin-bundles> and <managed-admin-teams>
+// (all admin|manage) custom elements that render.js paints for the
+// 'admin-users' / 'manage-repos' / 'manage-reports' / 'manage-bundles' /
+// 'manage-teams' views. All entry points share one chunk load.
 let loadPromise = null
 
 function loadAdminOnce() {
@@ -27,3 +27,4 @@ export function loadAdminUsersBundle() { return loadAdminOnce() }
 export function loadAdminReposBundle() { return loadAdminOnce() }
 export function loadAdminReportsBundle() { return loadAdminOnce() }
 export function loadAdminBundlesBundle() { return loadAdminOnce() }
+export function loadAdminTeamsBundle() { return loadAdminOnce() }
