@@ -83,7 +83,9 @@
         "client/storage.js",
         "client/passkey-vault.js",
         "client/workspaces.js",
-        "server-e2e/objstore/store.ts"
+        "server-e2e/objstore/store.ts",
+        "server-managed/db.ts",
+        "server-managed/http.ts"
       ],
       "rules": {
         "max-lines": "off",

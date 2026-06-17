@@ -9,6 +9,7 @@ import { createOriginGate } from '../server-common/origin.ts'
 import { createDiskAvatarStore } from './avatar-store.ts'
 import { loadManagedConfig } from './config.ts'
 import { openSqliteManagedDb } from './db.ts'
+import { createDiskReportStore } from './report-store.ts'
 import { createManagedRequestHandler } from './http.ts'
 
 // Expired-session sweep period. Lookups already exclude expired rows
@@ -20,6 +21,8 @@ export function start(): void {
   const db = openSqliteManagedDb(config.dbPath)
   // Avatars cache on disk beside the DB (data/avatars/<uuid>) for now.
   const avatarStore = createDiskAvatarStore(join(dirname(config.dbPath), 'avatars'))
+  // Uploaded report bytes live on disk beside the DB too (data/reports/<uuid>).
+  const reportStore = createDiskReportStore(join(dirname(config.dbPath), 'reports'))
   const originGate = createOriginGate(config.host, config.trustProxyEnv)
 
   let shuttingDown = false
@@ -30,7 +33,7 @@ export function start(): void {
   }
 
   const server = createServer(createManagedRequestHandler({
-    config, db, avatarStore, originGate, isShuttingDown: () => shuttingDown, track,
+    config, db, avatarStore, reportStore, originGate, isShuttingDown: () => shuttingDown, track,
   }))
 
   const gcTimer = setInterval(() => {

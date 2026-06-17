@@ -36,6 +36,9 @@ export interface ManagedConfig {
   githubAppId: string | null
   githubAppPrivateKey: string | null
   githubAppSlug: string | null
+  // Max accepted size (bytes) for an uploaded report on the "Manage reports"
+  // page. Reports are findings dumps (JSON / markdown / CSV), small to a few MB.
+  maxReportBytes: number
 }
 
 function fail(msg: string): never {
@@ -92,6 +95,7 @@ export function loadManagedConfig(): ManagedConfig {
     githubAppId: env['GITHUB_APP_ID'] ?? null,
     githubAppPrivateKey: normalizePem(env['GITHUB_APP_PRIVATE_KEY']),
     githubAppSlug: env['GITHUB_APP_SLUG'] ?? null,
+    maxReportBytes: intEnv('MAX_REPORT_BYTES', 10_485_760, 1, 104_857_600),
   }
 }
 

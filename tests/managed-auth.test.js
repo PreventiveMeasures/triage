@@ -5,7 +5,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Readable } from 'node:stream'
-import { createVerify, generateKeyPairSync } from 'node:crypto'
+import { createVerify, generateKeyPairSync, randomUUID } from 'node:crypto'
 
 import { hashToken, randomToken, safeEqual } from '../server-managed/crypto.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
@@ -19,6 +19,7 @@ const config = {
   githubClientId: 'cid', githubClientSecret: 'secret',
   oauthCallbackUrl: 'http://127.0.0.1:8765/api/oauth/github/callback',
   cookieSecure: false, sessionCookieName: 'dvsid', sessionTtlMs: 3_600_000,
+  maxReportBytes: 10_485_760,
 }
 
 // "name=value; Path=/; …" → "name=value" (the Cookie request-header form).
@@ -50,6 +51,17 @@ function fakeAvatarStore() {
     map,
     put(uuid, contentType, bytes) { map.set(uuid, { contentType, bytes }); return Promise.resolve() },
     get(uuid) { return Promise.resolve(map.get(uuid) ?? null) },
+  }
+}
+
+// In-memory ReportStore double — mirrors createDiskReportStore's interface.
+function fakeReportStore() {
+  const map = new Map()
+  return {
+    map,
+    put(id, bytes) { map.set(id, bytes); return Promise.resolve() },
+    get(id) { return Promise.resolve(map.get(id) ?? null) },
+    delete(id) { map.delete(id); return Promise.resolve() },
   }
 }
 
@@ -118,7 +130,7 @@ test('GET /api/admin/users: admin-only (401 unauth, 403 non-admin, 200 admin)', 
 
   let pending = Promise.resolve()
   const handler = createManagedRequestHandler({
-    config, db, avatarStore: fakeAvatarStore(),
+    config, db, avatarStore: fakeAvatarStore(), reportStore: fakeReportStore(),
     originGate: { trustProxy: false, isOriginAllowed: () => true },
     isShuttingDown: () => false, track: (p) => { pending = p },
   })
@@ -155,7 +167,7 @@ test('POST /api/admin/set-role: admin-only mutation, CSRF, not-self', async () =
 
   let pending = Promise.resolve()
   const handler = createManagedRequestHandler({
-    config, db, avatarStore: fakeAvatarStore(),
+    config, db, avatarStore: fakeAvatarStore(), reportStore: fakeReportStore(),
     originGate: { trustProxy: false, isOriginAllowed: () => true },
     isShuttingDown: () => false, track: (p) => { pending = p },
   })
@@ -208,7 +220,7 @@ test('GET /api/avatar/<id>: any session may fetch a user avatar by id (401 unaut
 
   let pending = Promise.resolve()
   const handler = createManagedRequestHandler({
-    config, db, avatarStore,
+    config, db, avatarStore, reportStore: fakeReportStore(),
     originGate: { trustProxy: false, isOriginAllowed: () => true },
     isShuttingDown: () => false, track: (p) => { pending = p },
   })
@@ -519,7 +531,7 @@ test('GET /api/admin/repositories: admin|manage only; no stored token → tokenM
 
   let pending = Promise.resolve()
   const handler = createManagedRequestHandler({
-    config, db, avatarStore: fakeAvatarStore(),
+    config, db, avatarStore: fakeAvatarStore(), reportStore: fakeReportStore(),
     originGate: { trustProxy: false, isOriginAllowed: () => true },
     isShuttingDown: () => false, track: (p) => { pending = p },
   })
@@ -559,7 +571,7 @@ test('POST /api/admin/repositories/select: admin|manage + CSRF; verifies access,
 
   let pending = Promise.resolve()
   const handler = createManagedRequestHandler({
-    config, db, avatarStore: fakeAvatarStore(),
+    config, db, avatarStore: fakeAvatarStore(), reportStore: fakeReportStore(),
     originGate: { trustProxy: false, isOriginAllowed: () => true },
     isShuttingDown: () => false, track: (p) => { pending = p },
   })
@@ -617,5 +629,146 @@ test('POST /api/admin/repositories/select: admin|manage + CSRF; verifies access,
   // Deselect drops the row (no GitHub needed).
   assert.equal((await post(aCk, adminSess.csrfToken, { repoId: 55, selected: false })).statusCode, 200)
   assert.deepEqual(await db.listSelectedRepos(), [])
+  await db.close()
+})
+
+test('db: reports — insert records metadata + attribution, list joins login, get reads, delete removes', async () => {
+  const db = openSqliteManagedDb(':memory:')
+  const now = Date.now()
+  const uid = await db.upsertUser({ githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
+  const id = randomUUID()
+  await db.insertReport({ id, filename: 'scan.json', contentType: 'application/json', byteSize: 42, sha256: 'h4sh', uploadedBy: uid }, now)
+
+  const list = await db.listReports()
+  assert.equal(list.length, 1)
+  assert.deepEqual(
+    [list[0].id, list[0].filename, list[0].byteSize, list[0].sha256, list[0].uploadedByLogin, list[0].uploadedAt],
+    [id, 'scan.json', 42, 'h4sh', 'alice', now],
+  )
+
+  const rec = await db.getReport(id)
+  assert.deepEqual([rec.filename, rec.contentType, rec.uploadedBy], ['scan.json', 'application/json', uid])
+  assert.equal(await db.getReport(randomUUID()), null) // unknown id → null
+
+  assert.equal(await db.deleteReport(id), true)
+  assert.equal(await db.deleteReport(id), false) // already gone → false
+  assert.deepEqual(await db.listReports(), [])
+  await db.close()
+})
+
+test('GET /api/admin/reports: admin|manage only (401 unauth, 403 none, 200 admin|manage)', async () => {
+  const db = openSqliteManagedDb(':memory:')
+  const now = Date.now()
+  const adminSess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
+  const manageSess = await createSession(config, db, { githubUserId: 2, login: 'bob', name: null, avatarUrl: null }, now + 1000)
+  const noneSess = await createSession(config, db, { githubUserId: 3, login: 'cy', name: null, avatarUrl: null }, now + 2000)
+  await db.setUserRole((await readSession(config, db, cookiePair(manageSess.setCookie), now)).user.id, 'manage')
+
+  let pending = Promise.resolve()
+  const handler = createManagedRequestHandler({
+    config, db, avatarStore: fakeAvatarStore(), reportStore: fakeReportStore(),
+    originGate: { trustProxy: false, isOriginAllowed: () => true },
+    isShuttingDown: () => false, track: (p) => { pending = p },
+  })
+  function mockRes() {
+    return {
+      statusCode: 0, body: '', ended: false,
+      writeHead(c) { this.statusCode = c; return this },
+      end(b) { if (b != null) this.body += b; this.ended = true; return this },
+      get headersSent() { return this.ended },
+    }
+  }
+  async function get(cookie) {
+    const res = mockRes()
+    handler({ method: 'GET', url: '/api/admin/reports', headers: cookie ? { cookie } : {} }, res)
+    await pending
+    return res
+  }
+
+  assert.equal((await get(null)).statusCode, 401)
+  assert.equal((await get(cookiePair(noneSess.setCookie))).statusCode, 403)
+  assert.equal((await get(cookiePair(manageSess.setCookie))).statusCode, 200)
+  const ok = await get(cookiePair(adminSess.setCookie))
+  assert.equal(ok.statusCode, 200)
+  assert.deepEqual(JSON.parse(ok.body), { reports: [], maxBytes: config.maxReportBytes })
+  await db.close()
+})
+
+test('reports upload/download/delete: CSRF + role, sanitised filename, attribution, 413/400/404', async () => {
+  const db = openSqliteManagedDb(':memory:')
+  const now = Date.now()
+  const adminSess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
+  const noneSess = await createSession(config, db, { githubUserId: 2, login: 'bob', name: null, avatarUrl: null }, now + 1000)
+  const admin = (await readSession(config, db, cookiePair(adminSess.setCookie), now)).user
+  // Small cap so the too-large path is cheap to exercise.
+  const smallCap = { ...config, maxReportBytes: 64 }
+
+  let pending = Promise.resolve()
+  const handler = createManagedRequestHandler({
+    config: smallCap, db, avatarStore: fakeAvatarStore(), reportStore: fakeReportStore(),
+    originGate: { trustProxy: false, isOriginAllowed: () => true },
+    isShuttingDown: () => false, track: (p) => { pending = p },
+  })
+  function mockRes() {
+    return {
+      statusCode: 0, headers: {}, body: '', ended: false,
+      writeHead(c, h) { this.statusCode = c; if (h) this.headers = h; return this },
+      end(b) { if (b != null) this.body += b; this.ended = true; return this },
+      get headersSent() { return this.ended },
+    }
+  }
+  async function upload(cookie, csrf, body, extraHeaders = {}) {
+    const res = mockRes()
+    const headers = { 'content-type': 'application/json', ...extraHeaders }
+    if (cookie) headers.cookie = cookie
+    if (csrf) headers['x-csrf-token'] = csrf
+    const req = new Readable({ read() {} })
+    req.method = 'POST'; req.url = '/api/admin/reports'; req.headers = headers
+    handler(req, res)
+    if (body) req.push(body)
+    req.push(null)
+    await pending
+    return res
+  }
+  async function send(method, url, cookie, csrf) {
+    const res = mockRes()
+    const headers = cookie ? { cookie } : {}
+    if (csrf) headers['x-csrf-token'] = csrf
+    handler({ method, url, headers }, res)
+    await pending
+    return res
+  }
+  const aCk = cookiePair(adminSess.setCookie)
+
+  // authz / CSRF / validation (no bytes stored)
+  assert.equal((await upload(cookiePair(noneSess.setCookie), noneSess.csrfToken, '{}')).statusCode, 403) // 'none'
+  assert.equal((await upload(aCk, null, '{}')).statusCode, 403) // CSRF missing
+  assert.equal((await upload(aCk, adminSess.csrfToken, '')).statusCode, 400) // empty body
+  assert.equal((await upload(aCk, adminSess.csrfToken, 'x'.repeat(100))).statusCode, 413) // over the 64-byte cap
+
+  // Upload succeeds; the filename header is URL-decoded + path-stripped.
+  const up = await upload(aCk, adminSess.csrfToken, '{"findings":[]}', { 'x-report-filename': encodeURIComponent(`sub/dir/scan${String.fromCodePoint(0x7f)}.json`) })
+  assert.equal(up.statusCode, 201)
+  const { id } = JSON.parse(up.body)
+  assert.match(id, /^[0-9a-f-]{36}$/u)
+
+  // It lists with the sanitised filename + uploader attribution.
+  const listed = JSON.parse((await send('GET', '/api/admin/reports', aCk)).body).reports
+  assert.equal(listed.length, 1)
+  assert.deepEqual([listed[0].id, listed[0].filename, listed[0].uploadedByLogin], [id, 'sub_dir_scan.json', admin.login])
+
+  // Download returns the stored bytes + recorded content-type + a filename.
+  const dl = await send('GET', `/api/admin/reports/${id}`, aCk)
+  assert.equal(dl.statusCode, 200)
+  assert.equal(dl.body, '{"findings":[]}')
+  assert.equal(dl.headers['content-type'], 'application/json')
+  assert.match(dl.headers['content-disposition'], /filename="sub_dir_scan\.json"/u)
+  assert.equal((await send('GET', `/api/admin/reports/${randomUUID()}`, aCk)).statusCode, 404) // unknown id
+
+  // Delete needs CSRF; then the row is gone and a repeat 404s.
+  assert.equal((await send('DELETE', `/api/admin/reports/${id}`, aCk, null)).statusCode, 403) // CSRF missing
+  assert.equal((await send('DELETE', `/api/admin/reports/${id}`, aCk, adminSess.csrfToken)).statusCode, 200)
+  assert.deepEqual(await db.listReports(), [])
+  assert.equal((await send('DELETE', `/api/admin/reports/${id}`, aCk, adminSess.csrfToken)).statusCode, 404)
   await db.close()
 })

@@ -12,12 +12,18 @@
 //   POST /api/admin/set-role     → admin sets another user's role | 401/403/404
 //   GET  /api/admin/repositories → admin|manage repo list (each flagged selected) | 401/403
 //   POST /api/admin/repositories/select → admin|manage selects/deselects a repo | 401/403
+//   GET  /api/admin/reports      → admin|manage list of uploaded reports | 401/403
+//   POST /api/admin/reports      → admin|manage uploads a report (raw body) | 401/403/413
+//   GET  /api/admin/reports/<id> → admin|manage downloads a stored report | 401/403/404
+//   DELETE /api/admin/reports/<id> → admin|manage deletes a report | 401/403/404
 //   POST /api/auth/logout        → same-origin + CSRF, drops the session
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Buffer } from 'node:buffer'
+import { createHash, randomUUID } from 'node:crypto'
 import type { AvatarStore } from './avatar-store.ts'
 import type { ManagedConfig } from './config.ts'
 import type { ManagedDb, ManagedSession, StoredUser } from './db.ts'
+import type { ReportStore } from './report-store.ts'
 import type { OriginGate } from '../server-common/origin.ts'
 import { isRole } from '../common/managed/roles.ts'
 import { CONFIG_PATH } from '../common/server-info.ts'
@@ -32,11 +38,14 @@ const ADMIN_USERS_PATH = '/api/admin/users'
 const SET_ROLE_PATH = '/api/admin/set-role'
 const ADMIN_REPOS_PATH = '/api/admin/repositories'
 const SELECT_REPO_PATH = '/api/admin/repositories/select'
+const ADMIN_REPORTS_PATH = '/api/admin/reports'
+const REPORT_PREFIX = '/api/admin/reports/'
 
 export interface ManagedHttpDeps {
   config: ManagedConfig
   db: ManagedDb
   avatarStore: AvatarStore
+  reportStore: ReportStore
   originGate: OriginGate
   isShuttingDown: () => boolean
   track: (p: Promise<unknown>) => void
@@ -70,18 +79,26 @@ async function serveAvatar(res: ServerResponse, avatarStore: AvatarStore, userId
   res.end(avatar.bytes)
 }
 
-const MAX_BODY_BYTES = 4096
+const MAX_JSON_BODY_BYTES = 4096
 
-async function readJsonBody(req: IncomingMessage): Promise<unknown> {
+// Buffer the request body, aborting (and throwing 'too-large') once it exceeds
+// `maxBytes` — bounds memory on the JSON mutations (small) and the report
+// upload (config.maxReportBytes) alike.
+async function readBodyBytes(req: IncomingMessage, maxBytes: number): Promise<Buffer> {
   const chunks: Buffer[] = []
   let size = 0
   for await (const chunk of req) {
     const c = chunk as Buffer
     size += c.length
-    if (size > MAX_BODY_BYTES) { req.destroy(); throw new Error('too-large') }
+    if (size > maxBytes) { req.destroy(); throw new Error('too-large') }
     chunks.push(c)
   }
-  return JSON.parse(Buffer.concat(chunks).toString('utf8') || 'null')
+  return Buffer.concat(chunks)
+}
+
+async function readJsonBody(req: IncomingMessage): Promise<unknown> {
+  const buf = await readBodyBytes(req, MAX_JSON_BODY_BYTES)
+  return JSON.parse(buf.toString('utf8') || 'null')
 }
 
 // Validate a mutation: same-origin gate + an authenticated session whose
@@ -126,12 +143,23 @@ async function handleSetRole(req: IncomingMessage, res: ServerResponse, deps: Ma
   sendJson(res, 200, { ok: true })
 }
 
-// admin OR manage — the roles allowed to view + select repositories (matches the
-// "Manage repositories" menu gate). Sends 403 and returns false otherwise.
-function requireRepoRole(res: ServerResponse, user: StoredUser): boolean {
+// admin OR manage — the roles allowed into the management pages (repositories,
+// reports), matching the sidebar account-menu gate. Sends 403 + returns false
+// otherwise.
+function requireManageRole(res: ServerResponse, user: StoredUser): boolean {
   if (user.role === 'admin' || user.role === 'manage') return true
   sendJson(res, 403, { error: 'forbidden' })
   return false
+}
+
+// A read endpoint open to admin|manage: resolve the session (401 if absent),
+// then gate on the role (403). Returns the session, or null after the response
+// was already sent. No CSRF — reads aren't mutations (cf. /api/admin/users).
+async function readManageSession(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<{ session: ManagedSession; user: StoredUser } | null> {
+  const s = await readSession(deps.config, deps.db, cookie, Date.now())
+  if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return null }
+  if (!requireManageRole(res, s.user)) return null
+  return s
 }
 
 // GET /api/admin/repositories — the user's repositories for the "Manage
@@ -142,9 +170,8 @@ function requireRepoRole(res: ServerResponse, user: StoredUser): boolean {
 // link; `tokenMissing:true` tells the page to ask the user to log in again.
 async function handleListRepositories(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   if ((req.method ?? 'GET') !== 'GET') { send405(res, 'GET'); return }
-  const s = await readSession(deps.config, deps.db, cookie, Date.now())
-  if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
-  if (!requireRepoRole(res, s.user)) return
+  const s = await readManageSession(res, deps, cookie)
+  if (s == null) return
   const token = await ensureUserAccessToken(deps.config, deps.db, s.user.id, Date.now())
   const { repositories, tokenMissing } = await collectRepos(deps.config, token)
   const selected = new Set((await deps.db.listSelectedRepos()).map((r) => r.repoId))
@@ -185,7 +212,7 @@ async function handleSelectRepository(req: IncomingMessage, res: ServerResponse,
   if ((req.method ?? 'GET') !== 'POST') { send405(res, 'POST'); return }
   const s = await checkMutation(req, res, deps, cookie)
   if (s == null) return
-  if (!requireRepoRole(res, s.user)) return
+  if (!requireManageRole(res, s.user)) return
   let body: unknown
   try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
   const repoId = (body as { repoId?: unknown } | null)?.repoId
@@ -195,6 +222,102 @@ async function handleSelectRepository(req: IncomingMessage, res: ServerResponse,
   }
   if (!selected) { await deps.db.deselectRepo(repoId); sendJson(res, 200, { ok: true, selected: false }); return }
   await selectRepository(res, deps, s.user.id, repoId)
+}
+
+// Strip a client-supplied report filename to a safe display string. The bytes
+// are keyed by a server uuid, so this is for display + Content-Disposition only:
+// URL-decoded if encoded, control chars + path separators removed, length-capped.
+// Falls back to 'report.json'.
+function sanitizeReportFilename(raw: string | null): string {
+  if (raw == null || raw === '') return 'report.json'
+  let decoded = raw
+  try { decoded = decodeURIComponent(raw) } catch { decoded = raw }
+  // Build the cleaned name char-by-char: drop control chars, fold path
+  // separators to '_' (avoids a control-character regex).
+  let cleaned = ''
+  for (const ch of decoded) {
+    const code = ch.codePointAt(0) ?? 0
+    if (code < 0x20 || code === 0x7f) continue
+    cleaned += ch === '/' || ch === '\\' ? '_' : ch
+  }
+  return cleaned.trim().slice(0, 200) || 'report.json'
+}
+
+// GET /api/admin/reports — the uploaded reports for the "Manage reports" page.
+// Visible to admin|manage. Read-only, so no CSRF (like /api/admin/users).
+// `maxBytes` lets the page show / pre-check the upload size cap.
+async function handleListReports(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
+  const s = await readManageSession(res, deps, cookie)
+  if (s == null) return
+  sendJson(res, 200, { reports: await deps.db.listReports(), maxBytes: deps.config.maxReportBytes })
+}
+
+// POST /api/admin/reports — upload a report. Mutation: same-origin + CSRF,
+// admin|manage. The body is the raw report bytes (any findings format — JSON /
+// markdown / CSV — archived as-is, like the e2e objstore; the server parses them
+// downstream). The display name rides the X-Report-Filename header. Bytes are
+// written first (keyed by a fresh uuid) then the metadata row — a failed insert
+// drops the orphan blob. 413 over the cap, 400 on an empty body.
+async function handleUploadReport(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
+  const s = await checkMutation(req, res, deps, cookie)
+  if (s == null) return
+  if (!requireManageRole(res, s.user)) return
+  let bytes: Buffer
+  try {
+    bytes = await readBodyBytes(req, deps.config.maxReportBytes)
+  } catch (err) {
+    const tooLarge = err instanceof Error && err.message === 'too-large'
+    sendJson(res, tooLarge ? 413 : 400, { error: tooLarge ? 'too-large' : 'bad-body' })
+    return
+  }
+  if (bytes.length === 0) { sendJson(res, 400, { error: 'empty' }); return }
+  const id = randomUUID()
+  const filename = sanitizeReportFilename(firstHeader(req.headers['x-report-filename']))
+  const contentType = (firstHeader(req.headers['content-type']) ?? '').split(';', 1)[0]!.trim() || 'application/json'
+  const sha256 = createHash('sha256').update(bytes).digest('base64url')
+  await deps.reportStore.put(id, bytes)
+  try {
+    await deps.db.insertReport({ id, filename, contentType, byteSize: bytes.length, sha256, uploadedBy: s.user.id }, Date.now())
+  } catch (err) {
+    await deps.reportStore.delete(id).catch(() => {})
+    throw err
+  }
+  sendJson(res, 201, { id, filename, byteSize: bytes.length, sha256 })
+}
+
+// GET /api/admin/reports/<id> — download a stored report (admin|manage). Serves
+// the bytes with the recorded content-type + filename. 404 when there's no such
+// report; 503 when the row exists but the bytes don't (store desync).
+async function handleGetReport(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string): Promise<void> {
+  const s = await readManageSession(res, deps, cookie)
+  if (s == null) return
+  const rec = await deps.db.getReport(id)
+  if (rec == null) { sendJson(res, 404, { error: 'no-report' }); return }
+  const bytes = await deps.reportStore.get(id)
+  if (bytes == null) { sendJson(res, 503, { error: 'unavailable' }); return }
+  // The stored filename is already control-/path-stripped (sanitizeReportFilename
+  // at upload); only a double-quote could break the quoted Content-Disposition.
+  const dispoName = rec.filename.replaceAll('"', '')
+  res.writeHead(200, {
+    'content-type': rec.contentType,
+    'content-length': String(bytes.length),
+    'content-disposition': `attachment; filename="${dispoName}"`,
+    'cache-control': 'no-store',
+  })
+  res.end(bytes)
+}
+
+// DELETE /api/admin/reports/<id> — remove a report (admin|manage). Mutation:
+// same-origin + CSRF. Drops the row, then best-effort the bytes; 404 when there
+// was no such report.
+async function handleDeleteReport(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string): Promise<void> {
+  const s = await checkMutation(req, res, deps, cookie)
+  if (s == null) return
+  if (!requireManageRole(res, s.user)) return
+  const existed = await deps.db.deleteReport(id)
+  await deps.reportStore.delete(id).catch((err) => { console.warn('managed: report bytes delete failed:', err) })
+  if (!existed) { sendJson(res, 404, { error: 'no-report' }); return }
+  sendJson(res, 200, { ok: true })
 }
 
 export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
@@ -266,6 +389,19 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (path === SET_ROLE_PATH) { await handleSetRole(req, res, deps, cookie); return }
     if (path === ADMIN_REPOS_PATH) { await handleListRepositories(req, res, deps, cookie); return }
     if (path === SELECT_REPO_PATH) { await handleSelectRepository(req, res, deps, cookie); return }
+    // Reports: list / upload on the exact path, download / delete per-id on the
+    // prefix. Method-dispatched here since each path carries two verbs.
+    if (path === ADMIN_REPORTS_PATH) {
+      if (method === 'GET') { await handleListReports(res, deps, cookie); return }
+      if (method === 'POST') { await handleUploadReport(req, res, deps, cookie); return }
+      send405(res, 'GET, POST'); return
+    }
+    if (path.startsWith(REPORT_PREFIX)) {
+      const id = path.slice(REPORT_PREFIX.length)
+      if (method === 'GET') { await handleGetReport(res, deps, cookie, id); return }
+      if (method === 'DELETE') { await handleDeleteReport(req, res, deps, cookie, id); return }
+      send405(res, 'GET, DELETE'); return
+    }
     if (path === LOGOUT_PATH) { await handleLogout(req, res, deps, cookie); return }
     sendJson(res, 404, { error: 'not-found' }, { connection: 'close' })
   }

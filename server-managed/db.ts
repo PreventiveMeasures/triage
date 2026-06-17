@@ -1,6 +1,8 @@
 // Managed-server store: the user-identity + session tables backing GitHub
-// auth, plus the `selected_repo` table — the repositories an admin/manage user
-// has chosen for the workspace to operate on. The `ManagedDb` interface is
+// auth, the `selected_repo` table (repositories an admin/manage user chose for
+// the workspace to operate on), and the `managed_report` table (reports
+// uploaded via the "Manage reports" page; the bytes live in the report-store,
+// this row holds the metadata + attribution). The `ManagedDb` interface is
 // backend-agnostic and ASYNC so a future PostgreSQL backend can be added
 // without refactoring any caller — but SQLite is the ONLY implementation for
 // now (no alternative storage is wired yet).
@@ -69,6 +71,23 @@ CREATE TABLE IF NOT EXISTS selected_repo (
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS selected_repo_full_name_idx ON selected_repo(full_name);
+
+-- Reports uploaded to the server (the "Manage reports" page). A managed server
+-- is TRUSTED, so the bytes are stored in the clear (in the report-store, keyed
+-- by this opaque uuid id) for the server to operate on later; this row carries
+-- the metadata + attribution. uploaded_by is the uploader, nulled (not cascaded)
+-- on user removal so the report -- and the record that it was uploaded -- survives.
+CREATE TABLE IF NOT EXISTS managed_report (
+  id            TEXT PRIMARY KEY,
+  filename      TEXT NOT NULL,
+  content_type  TEXT NOT NULL,
+  byte_size     INTEGER NOT NULL,
+  sha256        TEXT NOT NULL,
+  uploaded_by   TEXT REFERENCES managed_user(id) ON DELETE SET NULL,
+  uploaded_at   INTEGER NOT NULL
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS managed_report_uploaded_at_idx ON managed_report(uploaded_at);
 `
 
 // A managed user identity (the subset of GitHub's `GET /user` we keep). Input
@@ -135,6 +154,36 @@ export interface SelectedRepo {
 // timestamps.
 export type SelectedRepoInput = Omit<SelectedRepo, 'addedAt'>
 
+// A stored report's metadata. The bytes live in the report-store keyed by `id`;
+// `contentType` + `filename` ride here so a download can label them, `sha256`
+// (base64url) is the content hash for integrity, `uploadedBy` is the opaque
+// uploader id (null once that user is removed).
+export interface ReportRecord {
+  id: string
+  filename: string
+  contentType: string
+  byteSize: number
+  sha256: string
+  uploadedBy: string | null
+  uploadedAt: number
+}
+
+// What the upload handler supplies to record a report; the store stamps
+// uploaded_at.
+export type ReportRecordInput = Omit<ReportRecord, 'uploadedAt'>
+
+// A report row for the "Manage reports" list — like ReportRecord but resolving
+// the uploader to their login (null when since removed) for display.
+export interface AdminReport {
+  id: string
+  filename: string
+  contentType: string
+  byteSize: number
+  sha256: string
+  uploadedByLogin: string | null
+  uploadedAt: number
+}
+
 // Backend-agnostic store surface (SQLite + PostgreSQL implementations).
 export interface ManagedDb {
   // Upsert the identity; returns the user's opaque id (stable across logins).
@@ -155,6 +204,14 @@ export interface ManagedDb {
   selectRepo(repo: SelectedRepoInput, now: number): Promise<void>
   deselectRepo(repoId: number): Promise<boolean>
   listSelectedRepos(): Promise<SelectedRepo[]>
+  // Reports ("Manage reports"). insertReport records an uploaded report's
+  // metadata (bytes are written to the report-store separately); listReports
+  // joins the uploader login for the admin list; getReport reads one row (for
+  // download); deleteReport resolves true iff a row was removed.
+  insertReport(report: ReportRecordInput, now: number): Promise<void>
+  listReports(): Promise<AdminReport[]>
+  getReport(id: string): Promise<ReportRecord | null>
+  deleteReport(id: string): Promise<boolean>
   close(): Promise<void>
 }
 
@@ -221,6 +278,26 @@ function prepareStatements(db: DatabaseSync) {
               added_by AS addedBy, added_at AS addedAt
          FROM selected_repo ORDER BY full_name ASC`,
     ),
+    insertReportStmt: db.prepare(
+      `INSERT INTO managed_report (id, filename, content_type, byte_size, sha256, uploaded_by, uploaded_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ),
+    // LEFT JOIN so a report whose uploader was removed (uploaded_by → NULL) still
+    // lists, with a null login.
+    selectReportsStmt: db.prepare(
+      `SELECT r.id AS id, r.filename AS filename, r.content_type AS contentType,
+              r.byte_size AS byteSize, r.sha256 AS sha256, u.login AS uploadedByLogin,
+              r.uploaded_at AS uploadedAt
+         FROM managed_report r
+         LEFT JOIN managed_user u ON u.id = r.uploaded_by
+        ORDER BY r.uploaded_at DESC, r.filename ASC`,
+    ),
+    selectReportStmt: db.prepare(
+      `SELECT id, filename, content_type AS contentType, byte_size AS byteSize,
+              sha256, uploaded_by AS uploadedBy, uploaded_at AS uploadedAt
+         FROM managed_report WHERE id = ?`,
+    ),
+    deleteReportStmt: db.prepare(`DELETE FROM managed_report WHERE id = ?`),
   }
 }
 
@@ -251,6 +328,48 @@ function selectedRepoMethods(stmts: ReturnType<typeof prepareStatements>) {
         installationId: r.installId, defaultBranch: r.branch, htmlUrl: r.htmlUrl,
         addedBy: r.addedBy, addedAt: r.addedAt,
       })))
+    },
+  }
+}
+
+type ReportListRow = {
+  id: string; filename: string; contentType: string; byteSize: number
+  sha256: string; uploadedByLogin: string | null; uploadedAt: number
+}
+type ReportRow = {
+  id: string; filename: string; contentType: string; byteSize: number
+  sha256: string; uploadedBy: string | null; uploadedAt: number
+}
+
+// The report slice of ManagedDb, split out (like selectedRepoMethods) to keep
+// openSqliteManagedDb small. Closes over its prepared statements.
+function reportMethods(stmts: ReturnType<typeof prepareStatements>) {
+  const { insertReportStmt, selectReportsStmt, selectReportStmt, deleteReportStmt } = stmts
+  return {
+    insertReport(report: ReportRecordInput, now: number): Promise<void> {
+      insertReportStmt.run(
+        report.id, report.filename, report.contentType, report.byteSize,
+        report.sha256, report.uploadedBy, now,
+      )
+      return Promise.resolve()
+    },
+    listReports(): Promise<AdminReport[]> {
+      const rows = selectReportsStmt.all() as ReportListRow[]
+      return Promise.resolve(rows.map((r) => ({
+        id: r.id, filename: r.filename, contentType: r.contentType, byteSize: r.byteSize,
+        sha256: r.sha256, uploadedByLogin: r.uploadedByLogin, uploadedAt: r.uploadedAt,
+      })))
+    },
+    getReport(id: string): Promise<ReportRecord | null> {
+      const row = selectReportStmt.get(id) as ReportRow | undefined
+      if (row == null) return Promise.resolve(null)
+      return Promise.resolve({
+        id: row.id, filename: row.filename, contentType: row.contentType, byteSize: row.byteSize,
+        sha256: row.sha256, uploadedBy: row.uploadedBy, uploadedAt: row.uploadedAt,
+      })
+    },
+    deleteReport(id: string): Promise<boolean> {
+      return Promise.resolve(Number(deleteReportStmt.run(id).changes) > 0)
     },
   }
 }
@@ -320,6 +439,7 @@ export function openSqliteManagedDb(path: string): ManagedDb {
       return Promise.resolve({ accessToken: row.access, refreshToken: row.refresh, expiresAt: row.exp })
     },
     ...selectedRepoMethods(stmts),
+    ...reportMethods(stmts),
     close() {
       db.close()
       return Promise.resolve()

@@ -4,7 +4,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { CONFIG_PATH, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, getCount, getPackagesIndex, getRepositoriesIndex, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, parseServerInfo, readCachedServerInfo, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, state, writeCachedServerInfo } from '#client/index.js'
 import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, setSyncForceDisabled, triageSync } from './client-sync.js'
 import { login as managedLogin, logout as managedLogout, probeSession as managedProbeSession } from './client-managed.js'
-import { loadAdminReposBundle, loadAdminUsersBundle } from './client-admin.js'
+import { loadAdminReportsBundle, loadAdminReposBundle, loadAdminUsersBundle } from './client-admin.js'
 import sidebarCSS from './sidebar.css'
 import fileIconCSS from '../styles/file-icon.css'
 import { initEncryptionToggle, refreshEncryptionToggle } from './encryption-toggle.js'
@@ -898,6 +898,13 @@ async function onSidebarClick(e) {
     void navigateToManageRepos()
     return
   }
+  if (e.target.closest('[data-action="manage-reports"]')) {
+    // Admin/manage: navigate to the uploaded-reports page (same lazy admin
+    // bundle, which defines the <managed-admin-reports> element render() paints).
+    root?.querySelector('#user-menu')?.hidePopover?.()
+    void navigateToManageReports()
+    return
+  }
   if (e.target.closest('[data-action="managed-logout"]')) {
     // Logout row inside the account menu — clears the server session (with the
     // double-submit CSRF token) then reloads so the app re-probes logged-out.
@@ -1041,6 +1048,7 @@ function renderAuthStatus() {
       </div>
       ${session.role === 'admin' ? html`<button type="button" class="user-menu-row" data-action="admin-users">Manage users</button>` : nothing}
       ${session.role === 'admin' || session.role === 'manage' ? html`<button type="button" class="user-menu-row" data-action="manage-repos">Manage repositories</button>` : nothing}
+      ${session.role === 'admin' || session.role === 'manage' ? html`<button type="button" class="user-menu-row" data-action="manage-reports">Manage reports</button>` : nothing}
       <button type="button" class="user-menu-row" data-action="managed-logout">Log out</button>
     `, menu)
   }
@@ -1581,6 +1589,17 @@ async function navigateToManageRepos() {
   try { await loadAdminReposBundle() }
   catch (err) { console.warn('admin: repos bundle load failed:', err); return }
   state.currentView = 'manage-repos'
+  render()
+  renderSidebar()
+}
+
+// Navigate to the uploaded-reports page: load the admin bundle (which defines
+// <managed-admin-reports>), then switch the view + repaint. Reachable by admin
+// and manage roles (the account menu gates the entry point).
+async function navigateToManageReports() {
+  try { await loadAdminReportsBundle() }
+  catch (err) { console.warn('admin: reports bundle load failed:', err); return }
+  state.currentView = 'manage-reports'
   render()
   renderSidebar()
 }
