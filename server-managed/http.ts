@@ -16,14 +16,19 @@
 //   POST /api/admin/reports      → admin|manage uploads a report (raw body) | 401/403/413
 //   GET  /api/admin/reports/<id> → admin|manage downloads a stored report | 401/403/404
 //   DELETE /api/admin/reports/<id> → admin|manage deletes a report | 401/403/404
+//   GET  /api/admin/bundles      → admin|manage list of uploaded bundles | 401/403
+//   POST /api/admin/bundles      → admin|manage uploads a bundle (raw body) | 401/403/413
+//   GET  /api/admin/bundles/<id> → admin|manage downloads a stored bundle | 401/403/404
+//   DELETE /api/admin/bundles/<id> → admin|manage deletes a bundle | 401/403/404
 //   POST /api/auth/logout        → same-origin + CSRF, drops the session
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Buffer } from 'node:buffer'
 import { createHash, randomUUID } from 'node:crypto'
 import type { AvatarStore } from './avatar-store.ts'
+import type { BlobStore } from './blob-store.ts'
+import { bundleIntegrity, bundleKind, reportBundleHashes } from './bundle.ts'
 import type { ManagedConfig } from './config.ts'
 import type { ManagedDb, ManagedSession, StoredUser } from './db.ts'
-import type { ReportStore } from './report-store.ts'
 import type { OriginGate } from '../server-common/origin.ts'
 import { isRole } from '../common/managed/roles.ts'
 import { CONFIG_PATH } from '../common/server-info.ts'
@@ -40,12 +45,15 @@ const ADMIN_REPOS_PATH = '/api/admin/repositories'
 const SELECT_REPO_PATH = '/api/admin/repositories/select'
 const ADMIN_REPORTS_PATH = '/api/admin/reports'
 const REPORT_PREFIX = '/api/admin/reports/'
+const ADMIN_BUNDLES_PATH = '/api/admin/bundles'
+const BUNDLE_PREFIX = '/api/admin/bundles/'
 
 export interface ManagedHttpDeps {
   config: ManagedConfig
   db: ManagedDb
   avatarStore: AvatarStore
-  reportStore: ReportStore
+  reportStore: BlobStore
+  bundleStore: BlobStore
   originGate: OriginGate
   isShuttingDown: () => boolean
   track: (p: Promise<unknown>) => void
@@ -224,12 +232,12 @@ async function handleSelectRepository(req: IncomingMessage, res: ServerResponse,
   await selectRepository(res, deps, s.user.id, repoId)
 }
 
-// Strip a client-supplied report filename to a safe display string. The bytes
+// Strip a client-supplied upload filename to a safe display string. The bytes
 // are keyed by a server uuid, so this is for display + Content-Disposition only:
 // URL-decoded if encoded, control chars + path separators removed, length-capped.
-// Falls back to 'report.json'.
-function sanitizeReportFilename(raw: string | null): string {
-  if (raw == null || raw === '') return 'report.json'
+// Falls back to `fallback` when nothing usable remains.
+function sanitizeFilename(raw: string | null, fallback: string): string {
+  if (raw == null || raw === '') return fallback
   let decoded = raw
   try { decoded = decodeURIComponent(raw) } catch { decoded = raw }
   // Build the cleaned name char-by-char: drop control chars, fold path
@@ -240,24 +248,62 @@ function sanitizeReportFilename(raw: string | null): string {
     if (code < 0x20 || code === 0x7f) continue
     cleaned += ch === '/' || ch === '\\' ? '_' : ch
   }
-  return cleaned.trim().slice(0, 200) || 'report.json'
+  return cleaned.trim().slice(0, 200) || fallback
+}
+
+// The selected repos a report / bundle can be linked to, for the upload UI's
+// repo picker. Minimal shape (id + full name).
+function selectableRepos(repos: { repoId: number; fullName: string }[]): { repoId: number; fullName: string }[] {
+  return repos.map((r) => ({ repoId: r.repoId, fullName: r.fullName }))
+}
+
+// Resolve the optional X-Repo-Id upload header to a selected repo id, or null
+// when absent. Validates the id is currently in the selected-repos set (so the
+// FK can't dangle); on a bad / unknown id sends 400 and returns { ok: false }.
+async function resolveUploadRepoId(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps): Promise<{ ok: true; repoId: number | null } | { ok: false }> {
+  const raw = firstHeader(req.headers['x-repo-id'])
+  if (raw == null || raw === '') return { ok: true, repoId: null }
+  const n = Number(raw)
+  if (!Number.isSafeInteger(n)) { sendJson(res, 400, { error: 'bad-repo' }); return { ok: false } }
+  const selected = await deps.db.listSelectedRepos()
+  if (!selected.some((r) => r.repoId === n)) { sendJson(res, 400, { error: 'repo-not-selected' }); return { ok: false } }
+  return { ok: true, repoId: n }
 }
 
 // GET /api/admin/reports — the uploaded reports for the "Manage reports" page.
 // Visible to admin|manage. Read-only, so no CSRF (like /api/admin/users).
-// `maxBytes` lets the page show / pre-check the upload size cap.
+// `maxBytes` lets the page show / pre-check the upload size cap; `repos` feeds
+// the upload repo picker.
 async function handleListReports(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   const s = await readManageSession(res, deps, cookie)
   if (s == null) return
-  sendJson(res, 200, { reports: await deps.db.listReports(), maxBytes: deps.config.maxReportBytes })
+  sendJson(res, 200, {
+    reports: await deps.db.listReports(),
+    maxBytes: deps.config.maxReportBytes,
+    repos: selectableRepos(await deps.db.listSelectedRepos()),
+  })
+}
+
+// Resolve a report's bundle link from its embedded `bundleHashes`: the first
+// declared integrity that has a stored bundle wins (bundleId set). When none is
+// stored yet, keep the first declared integrity so a later bundle upload of it
+// re-links (see linkReportsToBundle). Returns the (bundleId, integrity) to store.
+async function resolveReportBundle(deps: ManagedHttpDeps, bytes: Buffer): Promise<{ bundleId: string | null; integrity: string | null }> {
+  const hashes = reportBundleHashes(bytes)
+  for (const h of hashes) {
+    const b = await deps.db.getBundleByIntegrity(h)
+    if (b != null) return { bundleId: b.id, integrity: h }
+  }
+  return { bundleId: null, integrity: hashes[0] ?? null }
 }
 
 // POST /api/admin/reports — upload a report. Mutation: same-origin + CSRF,
 // admin|manage. The body is the raw report bytes (any findings format — JSON /
 // markdown / CSV — archived as-is, like the e2e objstore; the server parses them
-// downstream). The display name rides the X-Report-Filename header. Bytes are
-// written first (keyed by a fresh uuid) then the metadata row — a failed insert
-// drops the orphan blob. 413 over the cap, 400 on an empty body.
+// downstream). Display name rides X-Report-Filename; an optional X-Repo-Id links
+// it to a selected repo; the bundle link is auto-resolved from the report's
+// bundleHashes. Bytes are written first (keyed by a fresh uuid) then the metadata
+// row — a failed insert drops the orphan blob. 413 over the cap, 400 on empty.
 async function handleUploadReport(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   const s = await checkMutation(req, res, deps, cookie)
   if (s == null) return
@@ -271,18 +317,24 @@ async function handleUploadReport(req: IncomingMessage, res: ServerResponse, dep
     return
   }
   if (bytes.length === 0) { sendJson(res, 400, { error: 'empty' }); return }
+  const repo = await resolveUploadRepoId(req, res, deps)
+  if (!repo.ok) return
   const id = randomUUID()
-  const filename = sanitizeReportFilename(firstHeader(req.headers['x-report-filename']))
+  const filename = sanitizeFilename(firstHeader(req.headers['x-report-filename']), 'report.json')
   const contentType = (firstHeader(req.headers['content-type']) ?? '').split(';', 1)[0]!.trim() || 'application/json'
   const sha256 = createHash('sha256').update(bytes).digest('base64url')
+  const { bundleId, integrity } = await resolveReportBundle(deps, bytes)
   await deps.reportStore.put(id, bytes)
   try {
-    await deps.db.insertReport({ id, filename, contentType, byteSize: bytes.length, sha256, uploadedBy: s.user.id }, Date.now())
+    await deps.db.insertReport({
+      id, filename, contentType, byteSize: bytes.length, sha256,
+      uploadedBy: s.user.id, repoId: repo.repoId, bundleId, bundleIntegrity: integrity,
+    }, Date.now())
   } catch (err) {
     await deps.reportStore.delete(id).catch(() => {})
     throw err
   }
-  sendJson(res, 201, { id, filename, byteSize: bytes.length, sha256 })
+  sendJson(res, 201, { id, filename, byteSize: bytes.length, sha256, repoId: repo.repoId, bundleId })
 }
 
 // GET /api/admin/reports/<id> — download a stored report (admin|manage). Serves
@@ -317,6 +369,99 @@ async function handleDeleteReport(req: IncomingMessage, res: ServerResponse, dep
   const existed = await deps.db.deleteReport(id)
   await deps.reportStore.delete(id).catch((err) => { console.warn('managed: report bytes delete failed:', err) })
   if (!existed) { sendJson(res, 404, { error: 'no-report' }); return }
+  sendJson(res, 200, { ok: true })
+}
+
+// GET /api/admin/bundles — the uploaded bundles for the "Manage bundles" page.
+// admin|manage, read-only (no CSRF). `maxBytes` is the upload cap; `repos` feeds
+// the upload repo picker.
+async function handleListBundles(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
+  const s = await readManageSession(res, deps, cookie)
+  if (s == null) return
+  sendJson(res, 200, {
+    bundles: await deps.db.listBundles(),
+    maxBytes: deps.config.maxBundleBytes,
+    repos: selectableRepos(await deps.db.listSelectedRepos()),
+  })
+}
+
+// POST /api/admin/bundles — upload a bundle. Mutation: same-origin + CSRF,
+// admin|manage. Raw bytes; X-Bundle-Filename names it, optional X-Repo-Id links
+// a repo. The bundle's identity is its content hash (sha512), UNIQUE — a
+// re-upload of identical bytes dedupes to the existing row (no second copy).
+// After storing, any reports that declared this integrity but weren't linked yet
+// get attached (auto-link). 413 over the cap, 400 on empty.
+async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
+  const s = await checkMutation(req, res, deps, cookie)
+  if (s == null) return
+  if (!requireManageRole(res, s.user)) return
+  let bytes: Buffer
+  try {
+    bytes = await readBodyBytes(req, deps.config.maxBundleBytes)
+  } catch (err) {
+    const tooLarge = err instanceof Error && err.message === 'too-large'
+    sendJson(res, tooLarge ? 413 : 400, { error: tooLarge ? 'too-large' : 'bad-body' })
+    return
+  }
+  if (bytes.length === 0) { sendJson(res, 400, { error: 'empty' }); return }
+  const repo = await resolveUploadRepoId(req, res, deps)
+  if (!repo.ok) return
+  const integrity = bundleIntegrity(bytes)
+  const filename = sanitizeFilename(firstHeader(req.headers['x-bundle-filename']), 'bundle')
+  const existing = await deps.db.getBundleByIntegrity(integrity)
+  if (existing != null) {
+    // Same bytes already stored → dedupe; the link to any referencing reports
+    // was already made when this integrity first landed.
+    sendJson(res, 200, { id: existing.id, integrity, filename: existing.filename, deduped: true })
+    return
+  }
+  const id = randomUUID()
+  await deps.bundleStore.put(id, bytes)
+  try {
+    await deps.db.insertBundle({
+      id, integrity, filename, kind: bundleKind(filename),
+      byteSize: bytes.length, uploadedBy: s.user.id, repoId: repo.repoId,
+    }, Date.now())
+  } catch (err) {
+    await deps.bundleStore.delete(id).catch(() => {})
+    throw err
+  }
+  // Auto-link reports that declared this integrity before the bundle existed.
+  await deps.db.linkReportsToBundle(integrity, id)
+  sendJson(res, 201, { id, integrity, filename, byteSize: bytes.length, repoId: repo.repoId })
+}
+
+// GET /api/admin/bundles/<id> — download a stored bundle (admin|manage). Bytes
+// are opaque archives, so served as application/octet-stream. 404 no such
+// bundle; 503 row-without-bytes (store desync).
+async function handleGetBundle(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string): Promise<void> {
+  const s = await readManageSession(res, deps, cookie)
+  if (s == null) return
+  const rec = await deps.db.getBundle(id)
+  if (rec == null) { sendJson(res, 404, { error: 'no-bundle' }); return }
+  const bytes = await deps.bundleStore.get(id)
+  if (bytes == null) { sendJson(res, 503, { error: 'unavailable' }); return }
+  const dispoName = rec.filename.replaceAll('"', '')
+  res.writeHead(200, {
+    'content-type': 'application/octet-stream',
+    'content-length': String(bytes.length),
+    'content-disposition': `attachment; filename="${dispoName}"`,
+    'cache-control': 'no-store',
+  })
+  res.end(bytes)
+}
+
+// DELETE /api/admin/bundles/<id> — remove a bundle (admin|manage). Mutation:
+// same-origin + CSRF. Drops the row (referencing reports' bundle_id null out via
+// the FK; their bundle_integrity stays, so a re-upload re-links), then the bytes
+// best-effort. 404 when there was no such bundle.
+async function handleDeleteBundle(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string): Promise<void> {
+  const s = await checkMutation(req, res, deps, cookie)
+  if (s == null) return
+  if (!requireManageRole(res, s.user)) return
+  const existed = await deps.db.deleteBundle(id)
+  await deps.bundleStore.delete(id).catch((err) => { console.warn('managed: bundle bytes delete failed:', err) })
+  if (!existed) { sendJson(res, 404, { error: 'no-bundle' }); return }
   sendJson(res, 200, { ok: true })
 }
 
@@ -400,6 +545,19 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       const id = path.slice(REPORT_PREFIX.length)
       if (method === 'GET') { await handleGetReport(res, deps, cookie, id); return }
       if (method === 'DELETE') { await handleDeleteReport(req, res, deps, cookie, id); return }
+      send405(res, 'GET, DELETE'); return
+    }
+    // Bundles: list / upload on the exact path, download / delete per-id on the
+    // prefix (same shape as reports).
+    if (path === ADMIN_BUNDLES_PATH) {
+      if (method === 'GET') { await handleListBundles(res, deps, cookie); return }
+      if (method === 'POST') { await handleUploadBundle(req, res, deps, cookie); return }
+      send405(res, 'GET, POST'); return
+    }
+    if (path.startsWith(BUNDLE_PREFIX)) {
+      const id = path.slice(BUNDLE_PREFIX.length)
+      if (method === 'GET') { await handleGetBundle(res, deps, cookie, id); return }
+      if (method === 'DELETE') { await handleDeleteBundle(req, res, deps, cookie, id); return }
       send405(res, 'GET, DELETE'); return
     }
     if (path === LOGOUT_PATH) { await handleLogout(req, res, deps, cookie); return }

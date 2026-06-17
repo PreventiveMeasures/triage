@@ -12,6 +12,7 @@ import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createSession, endSession, readSession } from '../server-managed/session.ts'
 import { OAuthError, buildLoginRedirect, ensureUserAccessToken, handleCallback, refreshUserToken } from '../server-managed/github-oauth.ts'
 import { appJwt, collectRepos, githubAppConfigured, installUrl, listInstalledRepos, listUserRepos, mergeRepos, repoAccessToken } from '../server-managed/github-app.ts'
+import { bundleIntegrity } from '../server-managed/bundle.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 
 const config = {
@@ -19,7 +20,7 @@ const config = {
   githubClientId: 'cid', githubClientSecret: 'secret',
   oauthCallbackUrl: 'http://127.0.0.1:8765/api/oauth/github/callback',
   cookieSecure: false, sessionCookieName: 'dvsid', sessionTtlMs: 3_600_000,
-  maxReportBytes: 10_485_760,
+  maxReportBytes: 10_485_760, maxBundleBytes: 104_857_600,
 }
 
 // "name=value; Path=/; …" → "name=value" (the Cookie request-header form).
@@ -54,8 +55,9 @@ function fakeAvatarStore() {
   }
 }
 
-// In-memory ReportStore double — mirrors createDiskReportStore's interface.
-function fakeReportStore() {
+// In-memory BlobStore double — mirrors createDiskBlobStore's interface (backs
+// both the report + bundle stores).
+function fakeBlobStore() {
   const map = new Map()
   return {
     map,
@@ -130,7 +132,7 @@ test('GET /api/admin/users: admin-only (401 unauth, 403 non-admin, 200 admin)', 
 
   let pending = Promise.resolve()
   const handler = createManagedRequestHandler({
-    config, db, avatarStore: fakeAvatarStore(), reportStore: fakeReportStore(),
+    config, db, avatarStore: fakeAvatarStore(), reportStore: fakeBlobStore(), bundleStore: fakeBlobStore(),
     originGate: { trustProxy: false, isOriginAllowed: () => true },
     isShuttingDown: () => false, track: (p) => { pending = p },
   })
@@ -167,7 +169,7 @@ test('POST /api/admin/set-role: admin-only mutation, CSRF, not-self', async () =
 
   let pending = Promise.resolve()
   const handler = createManagedRequestHandler({
-    config, db, avatarStore: fakeAvatarStore(), reportStore: fakeReportStore(),
+    config, db, avatarStore: fakeAvatarStore(), reportStore: fakeBlobStore(), bundleStore: fakeBlobStore(),
     originGate: { trustProxy: false, isOriginAllowed: () => true },
     isShuttingDown: () => false, track: (p) => { pending = p },
   })
@@ -220,7 +222,7 @@ test('GET /api/avatar/<id>: any session may fetch a user avatar by id (401 unaut
 
   let pending = Promise.resolve()
   const handler = createManagedRequestHandler({
-    config, db, avatarStore, reportStore: fakeReportStore(),
+    config, db, avatarStore, reportStore: fakeBlobStore(), bundleStore: fakeBlobStore(),
     originGate: { trustProxy: false, isOriginAllowed: () => true },
     isShuttingDown: () => false, track: (p) => { pending = p },
   })
@@ -531,7 +533,7 @@ test('GET /api/admin/repositories: admin|manage only; no stored token → tokenM
 
   let pending = Promise.resolve()
   const handler = createManagedRequestHandler({
-    config, db, avatarStore: fakeAvatarStore(), reportStore: fakeReportStore(),
+    config, db, avatarStore: fakeAvatarStore(), reportStore: fakeBlobStore(), bundleStore: fakeBlobStore(),
     originGate: { trustProxy: false, isOriginAllowed: () => true },
     isShuttingDown: () => false, track: (p) => { pending = p },
   })
@@ -571,7 +573,7 @@ test('POST /api/admin/repositories/select: admin|manage + CSRF; verifies access,
 
   let pending = Promise.resolve()
   const handler = createManagedRequestHandler({
-    config, db, avatarStore: fakeAvatarStore(), reportStore: fakeReportStore(),
+    config, db, avatarStore: fakeAvatarStore(), reportStore: fakeBlobStore(), bundleStore: fakeBlobStore(),
     originGate: { trustProxy: false, isOriginAllowed: () => true },
     isShuttingDown: () => false, track: (p) => { pending = p },
   })
@@ -637,7 +639,7 @@ test('db: reports — insert records metadata + attribution, list joins login, g
   const now = Date.now()
   const uid = await db.upsertUser({ githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
   const id = randomUUID()
-  await db.insertReport({ id, filename: 'scan.json', contentType: 'application/json', byteSize: 42, sha256: 'h4sh', uploadedBy: uid }, now)
+  await db.insertReport({ id, filename: 'scan.json', contentType: 'application/json', byteSize: 42, sha256: 'h4sh', uploadedBy: uid, repoId: null, bundleId: null, bundleIntegrity: null }, now)
 
   const list = await db.listReports()
   assert.equal(list.length, 1)
@@ -666,7 +668,7 @@ test('GET /api/admin/reports: admin|manage only (401 unauth, 403 none, 200 admin
 
   let pending = Promise.resolve()
   const handler = createManagedRequestHandler({
-    config, db, avatarStore: fakeAvatarStore(), reportStore: fakeReportStore(),
+    config, db, avatarStore: fakeAvatarStore(), reportStore: fakeBlobStore(), bundleStore: fakeBlobStore(),
     originGate: { trustProxy: false, isOriginAllowed: () => true },
     isShuttingDown: () => false, track: (p) => { pending = p },
   })
@@ -690,7 +692,7 @@ test('GET /api/admin/reports: admin|manage only (401 unauth, 403 none, 200 admin
   assert.equal((await get(cookiePair(manageSess.setCookie))).statusCode, 200)
   const ok = await get(cookiePair(adminSess.setCookie))
   assert.equal(ok.statusCode, 200)
-  assert.deepEqual(JSON.parse(ok.body), { reports: [], maxBytes: config.maxReportBytes })
+  assert.deepEqual(JSON.parse(ok.body), { reports: [], maxBytes: config.maxReportBytes, repos: [] })
   await db.close()
 })
 
@@ -705,7 +707,7 @@ test('reports upload/download/delete: CSRF + role, sanitised filename, attributi
 
   let pending = Promise.resolve()
   const handler = createManagedRequestHandler({
-    config: smallCap, db, avatarStore: fakeAvatarStore(), reportStore: fakeReportStore(),
+    config: smallCap, db, avatarStore: fakeAvatarStore(), reportStore: fakeBlobStore(), bundleStore: fakeBlobStore(),
     originGate: { trustProxy: false, isOriginAllowed: () => true },
     isShuttingDown: () => false, track: (p) => { pending = p },
   })
@@ -770,5 +772,157 @@ test('reports upload/download/delete: CSRF + role, sanitised filename, attributi
   assert.equal((await send('DELETE', `/api/admin/reports/${id}`, aCk, adminSess.csrfToken)).statusCode, 200)
   assert.deepEqual(await db.listReports(), [])
   assert.equal((await send('DELETE', `/api/admin/reports/${id}`, aCk, adminSess.csrfToken)).statusCode, 404)
+  await db.close()
+})
+
+test('db: bundles — insert/get/list/delete, integrity dedup-key, report link + FK null on delete', async () => {
+  const db = openSqliteManagedDb(':memory:')
+  const now = Date.now()
+  const uid = await db.upsertUser({ githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
+  await db.selectRepo({ repoId: 7, fullName: 'o/r', private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: uid }, now)
+  const bId = randomUUID()
+  await db.insertBundle({ id: bId, integrity: 'sha512-AAA', filename: 'a.map', kind: 'sourcemap', byteSize: 10, uploadedBy: uid, repoId: 7 }, now)
+
+  assert.equal((await db.getBundleByIntegrity('sha512-AAA')).id, bId)
+  assert.equal((await db.getBundle(bId)).filename, 'a.map')
+  assert.equal(await db.getBundleByIntegrity('sha512-NOPE'), null)
+  const [bl] = await db.listBundles()
+  assert.deepEqual([bl.filename, bl.kind, bl.uploadedByLogin, bl.repoFullName], ['a.map', 'sourcemap', 'alice', 'o/r'])
+
+  // A report that declared this integrity before the bundle landed → link it now.
+  const rId = randomUUID()
+  await db.insertReport({ id: rId, filename: 'r.json', contentType: 'application/json', byteSize: 5, sha256: 'h', uploadedBy: uid, repoId: null, bundleId: null, bundleIntegrity: 'sha512-AAA' }, now)
+  await db.linkReportsToBundle('sha512-AAA', bId)
+  const [rl] = await db.listReports()
+  assert.deepEqual([rl.bundleId, rl.bundleFilename, rl.bundleIntegrity], [bId, 'a.map', 'sha512-AAA'])
+
+  // Deleting the bundle nulls the report's bundle_id (FK SET NULL) but keeps the
+  // declared integrity, so a re-upload can re-link.
+  assert.equal(await db.deleteBundle(bId), true)
+  const [rl2] = await db.listReports()
+  assert.deepEqual([rl2.bundleId, rl2.bundleFilename, rl2.bundleIntegrity], [null, null, 'sha512-AAA'])
+  assert.equal(await db.deleteBundle(bId), false) // already gone
+  await db.close()
+})
+
+// Shared HTTP harness for the bundle / link tests: a handler over in-memory
+// stores + an always-allow origin gate, with raw-body upload + plain send.
+function bundleHarness(db, cfg = config) {
+  let pending = Promise.resolve()
+  const handler = createManagedRequestHandler({
+    config: cfg, db, avatarStore: fakeAvatarStore(), reportStore: fakeBlobStore(), bundleStore: fakeBlobStore(),
+    originGate: { trustProxy: false, isOriginAllowed: () => true },
+    isShuttingDown: () => false, track: (p) => { pending = p },
+  })
+  function mockRes() {
+    return {
+      statusCode: 0, headers: {}, body: '', ended: false,
+      writeHead(c, h) { this.statusCode = c; if (h) this.headers = h; return this },
+      end(b) { if (b != null) this.body += b; this.ended = true; return this },
+      get headersSent() { return this.ended },
+    }
+  }
+  async function upload(url, cookie, csrf, body, extraHeaders = {}) {
+    const res = mockRes()
+    const headers = { 'content-type': 'application/json', ...extraHeaders }
+    if (cookie) headers.cookie = cookie
+    if (csrf) headers['x-csrf-token'] = csrf
+    const req = new Readable({ read() {} })
+    req.method = 'POST'; req.url = url; req.headers = headers
+    handler(req, res)
+    if (body) req.push(body)
+    req.push(null)
+    await pending
+    return res
+  }
+  async function send(method, url, cookie, csrf) {
+    const res = mockRes()
+    const headers = cookie ? { cookie } : {}
+    if (csrf) headers['x-csrf-token'] = csrf
+    handler({ method, url, headers }, res)
+    await pending
+    return res
+  }
+  return { upload, send }
+}
+
+test('bundles upload/download/delete: CSRF + role, sha512 dedup, kind, 413/400/404', async () => {
+  const db = openSqliteManagedDb(':memory:')
+  const now = Date.now()
+  const adminSess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
+  const noneSess = await createSession(config, db, { githubUserId: 2, login: 'bob', name: null, avatarUrl: null }, now + 1000)
+  const { upload, send } = bundleHarness(db, { ...config, maxBundleBytes: 64 })
+  const aCk = cookiePair(adminSess.setCookie)
+  const B = '/api/admin/bundles'
+
+  // authz / CSRF / validation
+  assert.equal((await upload(B, cookiePair(noneSess.setCookie), noneSess.csrfToken, '{}')).statusCode, 403) // 'none'
+  assert.equal((await upload(B, aCk, null, '{}')).statusCode, 403) // CSRF missing
+  assert.equal((await upload(B, aCk, adminSess.csrfToken, '')).statusCode, 400) // empty
+  assert.equal((await upload(B, aCk, adminSess.csrfToken, 'x'.repeat(100))).statusCode, 413) // over the 64-byte cap
+
+  // Upload → 201 with the content-addressed integrity; '.map' → sourcemap kind.
+  const body = '{"stasis":1}'
+  const up = await upload(B, aCk, adminSess.csrfToken, body, { 'x-bundle-filename': encodeURIComponent('app.js.map') })
+  assert.equal(up.statusCode, 201)
+  const { id, integrity } = JSON.parse(up.body)
+  assert.match(id, /^[0-9a-f-]{36}$/u)
+  assert.equal(integrity, bundleIntegrity(Buffer.from(body)))
+  const listed = JSON.parse((await send('GET', B, aCk)).body).bundles
+  assert.deepEqual([listed.length, listed[0].kind, listed[0].uploadedByLogin], [1, 'sourcemap', 'alice'])
+
+  // Re-upload identical bytes → dedupe to the same row (no second copy).
+  const dup = await upload(B, aCk, adminSess.csrfToken, body, { 'x-bundle-filename': encodeURIComponent('copy.map') })
+  assert.equal(dup.statusCode, 200)
+  assert.deepEqual([JSON.parse(dup.body).id, JSON.parse(dup.body).deduped], [id, true])
+  assert.equal(JSON.parse((await send('GET', B, aCk)).body).bundles.length, 1)
+
+  // Download → octet-stream bytes; delete (CSRF) → gone; repeat → 404.
+  const dl = await send('GET', `/api/admin/bundles/${id}`, aCk)
+  assert.equal(dl.statusCode, 200)
+  assert.equal(dl.body, body)
+  assert.equal(dl.headers['content-type'], 'application/octet-stream')
+  assert.equal((await send('DELETE', `/api/admin/bundles/${id}`, aCk, null)).statusCode, 403) // CSRF missing
+  assert.equal((await send('DELETE', `/api/admin/bundles/${id}`, aCk, adminSess.csrfToken)).statusCode, 200)
+  assert.equal((await send('DELETE', `/api/admin/bundles/${id}`, aCk, adminSess.csrfToken)).statusCode, 404)
+  await db.close()
+})
+
+test('report↔bundle auto-link (both upload orders) + optional repo link', async () => {
+  const db = openSqliteManagedDb(':memory:')
+  const now = Date.now()
+  const adminSess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
+  const admin = (await readSession(config, db, cookiePair(adminSess.setCookie), now)).user
+  await db.selectRepo({ repoId: 42, fullName: 'o/repo', private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: admin.id }, now)
+  const { upload, send } = bundleHarness(db)
+  const aCk = cookiePair(adminSess.setCookie)
+  const csrf = adminSess.csrfToken
+
+  // ── Order A: bundle first, then a report that references it + links a repo ──
+  const bundleA = '{"a":1}'
+  const integA = bundleIntegrity(Buffer.from(bundleA))
+  const upB = await upload('/api/admin/bundles', aCk, csrf, bundleA, { 'x-bundle-filename': encodeURIComponent('a.map') })
+  const bundleAId = JSON.parse(upB.body).id
+  const upR = await upload('/api/admin/reports', aCk, csrf, JSON.stringify({ bundleHashes: [integA] }), { 'x-repo-id': '42' })
+  assert.equal(upR.statusCode, 201)
+  assert.deepEqual([JSON.parse(upR.body).bundleId, JSON.parse(upR.body).repoId], [bundleAId, 42])
+  let reports = JSON.parse((await send('GET', '/api/admin/reports', aCk)).body).reports
+  const rA = reports.find((r) => r.id === JSON.parse(upR.body).id)
+  assert.deepEqual([rA.bundleFilename, rA.repoFullName, rA.bundleIntegrity], ['a.map', 'o/repo', integA])
+
+  // ── Order B: report first (bundle absent → unlinked), then the bundle ──
+  const bundleB = '{"b":2}'
+  const integB = bundleIntegrity(Buffer.from(bundleB))
+  const upR2 = await upload('/api/admin/reports', aCk, csrf, JSON.stringify({ bundleHashes: [integB] }))
+  const r2Id = JSON.parse(upR2.body).id
+  assert.equal(JSON.parse(upR2.body).bundleId, null) // not stored yet
+  await upload('/api/admin/bundles', aCk, csrf, bundleB, { 'x-bundle-filename': encodeURIComponent('b.map') })
+  reports = JSON.parse((await send('GET', '/api/admin/reports', aCk)).body).reports
+  const r2 = reports.find((r) => r.id === r2Id)
+  assert.equal(r2.bundleFilename, 'b.map') // auto-linked on bundle upload
+  assert.equal(r2.bundleIntegrity, integB)
+
+  // Unknown repo id on upload → 400 (validated against the selected set).
+  assert.equal((await upload('/api/admin/reports', aCk, csrf, '{}', { 'x-repo-id': '999999' })).statusCode, 400)
   await db.close()
 })

@@ -337,12 +337,14 @@ async function fetchReports() {
 }
 
 // Upload one report file: the raw bytes as the body, the display name in the
-// X-Report-Filename header, CSRF via the double-submit token. The server stores
-// the bytes + records the metadata/attribution. Throws with the status word the
+// X-Report-Filename header, an optional repo link in X-Repo-Id, CSRF via the
+// double-submit token. The server stores the bytes + records the
+// metadata/attribution + auto-links the bundle. Throws with the status word the
 // row surfaces (e.g. 413 → too large).
-async function uploadReport(file, csrfToken) {
+async function uploadReport(file, csrfToken, repoId) {
   const headers = { 'content-type': file.type || 'application/json', 'x-report-filename': encodeURIComponent(file.name) }
   if (csrfToken) headers['x-csrf-token'] = csrfToken
+  if (repoId != null) headers['x-repo-id'] = String(repoId)
   const res = await fetch('/api/admin/reports', { method: 'POST', credentials: 'same-origin', headers, body: file })
   if (!res.ok) throw new Error(res.status === 413 ? 'too large' : `HTTP ${res.status}`)
   return res.json()
@@ -354,12 +356,34 @@ async function deleteReport(id, csrfToken) {
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
 }
 
-// Human byte size (B / KB / MB) for the report rows.
+// Human byte size (B / KB / MB) for the report / bundle rows.
 function formatBytes(n) {
   if (typeof n !== 'number' || !Number.isFinite(n)) return ''
   if (n < 1024) return `${n} B`
   if (n < 1_048_576) return `${(n / 1024).toFixed(1)} KB`
   return `${(n / 1_048_576).toFixed(1)} MB`
+}
+
+// Shared upload-page chrome (reports + bundles): an optional repo picker — only
+// shown when the workspace has selected repos — plus the file-picker trigger.
+// `selected` is the chosen repo id (number) or '' for none.
+function repoPickerTemplate(repos, selected, onChange) {
+  if (!Array.isArray(repos) || repos.length === 0) return nothing
+  return html`<select class="repo-select" title="Link uploads to a repository"
+    @change=${(e) => onChange(e.target.value === '' ? '' : Number(e.target.value))}>
+    <option value="" ?selected=${selected === ''}>No repo</option>
+    ${repos.map((r) => html`<option value=${r.repoId} ?selected=${r.repoId === selected}>${r.fullName}</option>`)}
+  </select>`
+}
+
+// Open a file picker (hidden input, created on demand) and hand the chosen files
+// to `onFiles`. `multiple` allows batch uploads.
+function pickFiles(onFiles, multiple = true) {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.multiple = multiple
+  input.addEventListener('change', () => { onFiles([...input.files]) }, { once: true })
+  input.click()
 }
 
 // Document glyph (file-with-lines), tinted via currentColor.
@@ -391,6 +415,12 @@ class ManagedAdminReports extends LitElement {
     }
     .upload:hover { opacity: .9; }
     .upload:disabled { opacity: .55; cursor: default; }
+    .repo-select {
+      margin-left: auto; flex-shrink: 0; font: inherit; font-size: .82rem;
+      color: var(--text); background: var(--bg);
+      border: 1px solid var(--border); border-radius: 6px; padding: .2rem .4rem; max-width: 16rem;
+    }
+    .repo-select + .upload { margin-left: .5rem; }
     .hint { color: var(--muted); font-size: .82rem; margin: 0 0 .8rem; }
     .reports { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
     .reports li { display: flex; align-items: center; gap: .6rem; padding: .55rem .85rem; }
@@ -417,6 +447,7 @@ class ManagedAdminReports extends LitElement {
     this._error = null
     this._csrf = null
     this._busy = false
+    this._repoId = '' // '' = no repo link; otherwise a selected repo id
   }
 
   connectedCallback() {
@@ -440,7 +471,8 @@ class ManagedAdminReports extends LitElement {
     return html`<div class="wrap">
       <div class="head">
         <h1>Reports</h1>
-        <button type="button" class="upload" ?disabled=${this._busy} @click=${() => this._pickFiles()}>
+        ${repoPickerTemplate(this._data?.repos, this._repoId, (v) => { this._repoId = v })}
+        <button type="button" class="upload" ?disabled=${this._busy} @click=${() => pickFiles((files) => void this._upload(files))}>
           ${this._busy ? 'Uploading…' : 'Upload report'}
         </button>
       </div>
@@ -463,7 +495,12 @@ class ManagedAdminReports extends LitElement {
   _row(r) {
     const who = r.uploadedByLogin ? `by ${r.uploadedByLogin}` : 'uploader removed'
     const when = Number.isFinite(r.uploadedAt) ? new Date(r.uploadedAt).toLocaleString() : ''
-    const meta = [who, when, formatBytes(r.byteSize)].filter(Boolean).join(' · ')
+    // bundle: linked filename when present; else note the report declared a
+    // bundle that isn't uploaded yet (so the link is pending).
+    const bundle = r.bundleFilename ? `bundle: ${r.bundleFilename}`
+      : (r.bundleIntegrity ? 'bundle: (not uploaded)' : null)
+    const meta = [who, when, formatBytes(r.byteSize), r.repoFullName ? `repo: ${r.repoFullName}` : null, bundle]
+      .filter(Boolean).join(' · ')
     return html`<li>
       ${REPORT_ICON}
       <span class="who">
@@ -477,22 +514,13 @@ class ManagedAdminReports extends LitElement {
     </li>`
   }
 
-  // Open a file picker (hidden input, created on demand) and upload whatever is
-  // chosen — sequentially, so one failure stops cleanly.
-  _pickFiles() {
-    const input = document.createElement('input')
-    input.type = 'file'
-    input.multiple = true
-    input.addEventListener('change', () => { void this._upload([...input.files]) }, { once: true })
-    input.click()
-  }
-
   async _upload(files) {
     if (files.length === 0 || this._busy) return
     this._busy = true
     this._error = null
     try {
-      for (const file of files) await uploadReport(file, this._csrf)
+      const repoId = this._repoId === '' ? null : this._repoId
+      for (const file of files) await uploadReport(file, this._csrf, repoId)
     } catch (err) {
       this._error = `Upload failed: ${String(err?.message ?? err)}`
     } finally {
@@ -513,4 +541,186 @@ class ManagedAdminReports extends LitElement {
 }
 customElements.define('managed-admin-reports', ManagedAdminReports)
 
-export { ManagedAdminReports, ManagedAdminRepos, ManagedAdminUsers }
+async function fetchBundles() {
+  const res = await fetch('/api/admin/bundles', { credentials: 'same-origin', headers: { accept: 'application/json' } })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+// Upload one bundle file: raw bytes as the body, name in X-Bundle-Filename, an
+// optional repo link in X-Repo-Id, CSRF token. The server content-addresses it
+// (sha512) — re-uploading identical bytes dedupes — and auto-links any reports
+// that declared its integrity.
+async function uploadBundle(file, csrfToken, repoId) {
+  const headers = { 'content-type': 'application/octet-stream', 'x-bundle-filename': encodeURIComponent(file.name) }
+  if (csrfToken) headers['x-csrf-token'] = csrfToken
+  if (repoId != null) headers['x-repo-id'] = String(repoId)
+  const res = await fetch('/api/admin/bundles', { method: 'POST', credentials: 'same-origin', headers, body: file })
+  if (!res.ok) throw new Error(res.status === 413 ? 'too large' : `HTTP ${res.status}`)
+  return res.json()
+}
+
+async function deleteBundle(id, csrfToken) {
+  const headers = csrfToken ? { 'x-csrf-token': csrfToken } : {}
+  const res = await fetch(`/api/admin/bundles/${encodeURIComponent(id)}`, { method: 'DELETE', credentials: 'same-origin', headers })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+}
+
+// Package/box glyph, tinted via currentColor.
+const BUNDLE_ICON = html`<svg class="report-icon" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">
+  <path d="M8.878.392a1.75 1.75 0 0 0-1.756 0l-5.25 3.045A1.75 1.75 0 0 0 1 4.951v6.098c0 .624.332 1.2.872 1.514l5.25 3.045a1.75 1.75 0 0 0 1.756 0l5.25-3.045c.54-.313.872-.89.872-1.514V4.951c0-.624-.332-1.2-.872-1.514ZM7.875 1.69a.25.25 0 0 1 .25 0l4.63 2.685L8 7.133 3.245 4.375Zm-5.125 4.4 4.5 2.61v5.317l-4.375-2.537a.25.25 0 0 1-.125-.216Zm6 7.927V8.7l4.5-2.61v3.96a.25.25 0 0 1-.125.216Z"/>
+</svg>`
+
+// Bundles — full-view page for admin/manage. Uploads a bundle (sourcemap /
+// stasis archive, content-addressed by sha512 so dupes collapse) and lists what's
+// stored, with download + delete, uploader/repo attribution, and the kind. Own
+// chunk, fetches its own data; no main-bundle state.
+class ManagedAdminBundles extends LitElement {
+  static properties = {
+    _data: { state: true },
+    _error: { state: true },
+    _busy: { state: true },
+  }
+
+  static styles = css`
+    :host { display: block; padding: 1.5rem clamp(1rem, 4vw, 2.5rem); color: var(--text); }
+    .wrap { max-width: 48rem; margin: 0 auto; }
+    .head { display: flex; align-items: center; gap: 1rem; margin: 0 0 .75rem; }
+    h1 { font-size: 1.15rem; font-weight: 600; margin: 0; user-select: none; }
+    .upload {
+      flex-shrink: 0; font: inherit; font-size: .85rem; font-weight: 600;
+      color: var(--bg); background: var(--accent); border: none; cursor: pointer;
+      border-radius: 6px; padding: .35rem .7rem; white-space: nowrap;
+    }
+    .upload:hover { opacity: .9; }
+    .upload:disabled { opacity: .55; cursor: default; }
+    .repo-select {
+      margin-left: auto; flex-shrink: 0; font: inherit; font-size: .82rem;
+      color: var(--text); background: var(--bg);
+      border: 1px solid var(--border); border-radius: 6px; padding: .2rem .4rem; max-width: 16rem;
+    }
+    .repo-select + .upload { margin-left: .5rem; }
+    .head > .upload:only-of-type { margin-left: auto; }
+    .hint { color: var(--muted); font-size: .82rem; margin: 0 0 .8rem; }
+    .reports { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    .reports li { display: flex; align-items: center; gap: .6rem; padding: .55rem .85rem; }
+    .reports li + li { border-top: 1px solid var(--border); }
+    .report-icon { flex-shrink: 0; color: var(--muted); }
+    .who { display: flex; flex-direction: column; min-width: 0; }
+    .filename { font-weight: 600; font-size: .9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .meta { color: var(--muted); font-size: .78rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .badge {
+      flex-shrink: 0; font-size: .7rem; font-weight: 600; text-transform: uppercase;
+      letter-spacing: .03em; color: var(--muted); border: 1px solid var(--border);
+      border-radius: 999px; padding: .05rem .4rem;
+    }
+    .actions { margin-left: auto; flex-shrink: 0; display: flex; gap: .7rem; align-items: center; }
+    .download { font-size: .82rem; color: var(--accent); text-decoration: none; }
+    .download:hover { text-decoration: underline; }
+    .delete {
+      font: inherit; font-size: .82rem; color: var(--critical, #c00); background: none;
+      border: none; cursor: pointer; padding: 0;
+    }
+    .delete:hover { text-decoration: underline; }
+    .msg { color: var(--muted); font-size: .9rem; line-height: 1.5; }
+    .msg.error { color: var(--critical, #c00); }
+  `
+
+  constructor() {
+    super()
+    this._data = null
+    this._error = null
+    this._csrf = null
+    this._busy = false
+    this._repoId = ''
+  }
+
+  connectedCallback() {
+    super.connectedCallback()
+    void this._load()
+  }
+
+  async _load() {
+    this._error = null
+    this._data = null
+    try {
+      const [session, data] = await Promise.all([fetchSession(), fetchBundles()])
+      this._csrf = session?.csrfToken ?? null
+      this._data = data
+    } catch (err) {
+      this._error = String(err?.message ?? err)
+    }
+  }
+
+  render() {
+    return html`<div class="wrap">
+      <div class="head">
+        <h1>Bundles</h1>
+        ${repoPickerTemplate(this._data?.repos, this._repoId, (v) => { this._repoId = v })}
+        <button type="button" class="upload" ?disabled=${this._busy} @click=${() => pickFiles((files) => void this._upload(files))}>
+          ${this._busy ? 'Uploading…' : 'Upload bundle'}
+        </button>
+      </div>
+      ${this._body()}
+    </div>`
+  }
+
+  _body() {
+    if (this._error != null) return html`<p class="msg error">Couldn't load bundles: ${this._error}</p>`
+    if (this._data == null) return html`<p class="msg">Loading…</p>`
+    const bundles = Array.isArray(this._data.bundles) ? this._data.bundles : []
+    if (bundles.length === 0) {
+      return html`<p class="msg">No bundles uploaded yet. Use “Upload bundle” to add a sourcemap or
+        stasis archive for the server to operate on; reports auto-link by content hash.</p>`
+    }
+    return html`<p class="hint">Bundles stored on the server.</p>
+      <ul class="reports">${bundles.map((b) => this._row(b))}</ul>`
+  }
+
+  _row(b) {
+    const who = b.uploadedByLogin ? `by ${b.uploadedByLogin}` : 'uploader removed'
+    const when = Number.isFinite(b.uploadedAt) ? new Date(b.uploadedAt).toLocaleString() : ''
+    const meta = [who, when, formatBytes(b.byteSize), b.repoFullName ? `repo: ${b.repoFullName}` : null]
+      .filter(Boolean).join(' · ')
+    return html`<li title=${b.integrity ?? ''}>
+      ${BUNDLE_ICON}
+      <span class="who">
+        <span class="filename">${b.filename}</span>
+        <span class="meta">${meta}</span>
+      </span>
+      ${b.kind ? html`<span class="badge">${b.kind}</span>` : nothing}
+      <span class="actions">
+        <a class="download" href=${`/api/admin/bundles/${encodeURIComponent(b.id)}`}>download</a>
+        <button type="button" class="delete" @click=${() => this._delete(b)}>delete</button>
+      </span>
+    </li>`
+  }
+
+  async _upload(files) {
+    if (files.length === 0 || this._busy) return
+    this._busy = true
+    this._error = null
+    try {
+      const repoId = this._repoId === '' ? null : this._repoId
+      for (const file of files) await uploadBundle(file, this._csrf, repoId)
+    } catch (err) {
+      this._error = `Upload failed: ${String(err?.message ?? err)}`
+    } finally {
+      this._busy = false
+      await this._load()
+    }
+  }
+
+  async _delete(b) {
+    if (!globalThis.confirm?.(`Delete “${b.filename}”? Linked reports will keep their pending link.`)) return
+    try {
+      await deleteBundle(b.id, this._csrf)
+    } catch (err) {
+      this._error = `Delete failed: ${String(err?.message ?? err)}`
+    }
+    await this._load()
+  }
+}
+customElements.define('managed-admin-bundles', ManagedAdminBundles)
+
+export { ManagedAdminBundles, ManagedAdminReports, ManagedAdminRepos, ManagedAdminUsers }

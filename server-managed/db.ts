@@ -72,22 +72,49 @@ CREATE TABLE IF NOT EXISTS selected_repo (
 
 CREATE INDEX IF NOT EXISTS selected_repo_full_name_idx ON selected_repo(full_name);
 
+-- Bundles uploaded to the server (the "Manage bundles" page). Like reports, the
+-- bytes are stored in the clear (blob-store, keyed by this opaque uuid id) for
+-- the server to operate on. integrity is the content hash (sha512-<base64>,
+-- byte-identical to the client's) so re-uploading the same bytes dedupes (UNIQUE);
+-- it is also the key a report's bundleHashes match to auto-link.
+-- uploaded_by / repo_id are the (nullable) user + repo links, both nulled (not
+-- cascaded) when the referenced user / selected repo goes away.
+CREATE TABLE IF NOT EXISTS managed_bundle (
+  id           TEXT PRIMARY KEY,
+  integrity    TEXT NOT NULL UNIQUE,
+  filename     TEXT NOT NULL,
+  kind         TEXT,
+  byte_size    INTEGER NOT NULL,
+  uploaded_by  TEXT REFERENCES managed_user(id) ON DELETE SET NULL,
+  repo_id      INTEGER REFERENCES selected_repo(repo_id) ON DELETE SET NULL,
+  uploaded_at  INTEGER NOT NULL
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS managed_bundle_uploaded_at_idx ON managed_bundle(uploaded_at);
+
 -- Reports uploaded to the server (the "Manage reports" page). A managed server
--- is TRUSTED, so the bytes are stored in the clear (in the report-store, keyed
--- by this opaque uuid id) for the server to operate on later; this row carries
--- the metadata + attribution. uploaded_by is the uploader, nulled (not cascaded)
--- on user removal so the report -- and the record that it was uploaded -- survives.
+-- is TRUSTED, so the bytes are stored in the clear (blob-store, keyed by this
+-- opaque uuid id) for the server to operate on later; this row carries the
+-- metadata + attribution. uploaded_by / repo_id are the (nullable) user + repo
+-- links, nulled (not cascaded) when the user / selected repo goes away. bundle_id
+-- is the (nullable) auto-resolved link to a stored bundle; bundle_integrity is
+-- the report's declared primary bundle (from its bundleHashes), kept so a later
+-- bundle upload of that integrity can re-link.
 CREATE TABLE IF NOT EXISTS managed_report (
-  id            TEXT PRIMARY KEY,
-  filename      TEXT NOT NULL,
-  content_type  TEXT NOT NULL,
-  byte_size     INTEGER NOT NULL,
-  sha256        TEXT NOT NULL,
-  uploaded_by   TEXT REFERENCES managed_user(id) ON DELETE SET NULL,
-  uploaded_at   INTEGER NOT NULL
+  id               TEXT PRIMARY KEY,
+  filename         TEXT NOT NULL,
+  content_type     TEXT NOT NULL,
+  byte_size        INTEGER NOT NULL,
+  sha256           TEXT NOT NULL,
+  uploaded_by      TEXT REFERENCES managed_user(id) ON DELETE SET NULL,
+  repo_id          INTEGER REFERENCES selected_repo(repo_id) ON DELETE SET NULL,
+  bundle_id        TEXT REFERENCES managed_bundle(id) ON DELETE SET NULL,
+  bundle_integrity TEXT,
+  uploaded_at      INTEGER NOT NULL
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS managed_report_uploaded_at_idx ON managed_report(uploaded_at);
+CREATE INDEX IF NOT EXISTS managed_report_bundle_integrity_idx ON managed_report(bundle_integrity);
 `
 
 // A managed user identity (the subset of GitHub's `GET /user` we keep). Input
@@ -154,7 +181,7 @@ export interface SelectedRepo {
 // timestamps.
 export type SelectedRepoInput = Omit<SelectedRepo, 'addedAt'>
 
-// A stored report's metadata. The bytes live in the report-store keyed by `id`;
+// A stored report's metadata. The bytes live in the blob-store keyed by `id`;
 // `contentType` + `filename` ride here so a download can label them, `sha256`
 // (base64url) is the content hash for integrity, `uploadedBy` is the opaque
 // uploader id (null once that user is removed).
@@ -169,11 +196,24 @@ export interface ReportRecord {
 }
 
 // What the upload handler supplies to record a report; the store stamps
-// uploaded_at.
-export type ReportRecordInput = Omit<ReportRecord, 'uploadedAt'>
+// uploaded_at. `repoId` / `bundleId` are the (nullable) repo + auto-resolved
+// bundle links; `bundleIntegrity` is the report's declared primary bundle (kept
+// so a later bundle upload of that integrity re-links it).
+export interface ReportRecordInput {
+  id: string
+  filename: string
+  contentType: string
+  byteSize: number
+  sha256: string
+  uploadedBy: string | null
+  repoId: number | null
+  bundleId: string | null
+  bundleIntegrity: string | null
+}
 
-// A report row for the "Manage reports" list — like ReportRecord but resolving
-// the uploader to their login (null when since removed) for display.
+// A report row for the "Manage reports" list — adds display joins: uploader
+// login, repo full name, and the linked bundle's filename (each null when
+// absent / since removed).
 export interface AdminReport {
   id: string
   filename: string
@@ -181,6 +221,43 @@ export interface AdminReport {
   byteSize: number
   sha256: string
   uploadedByLogin: string | null
+  repoId: number | null
+  repoFullName: string | null
+  bundleId: string | null
+  bundleFilename: string | null
+  bundleIntegrity: string | null
+  uploadedAt: number
+}
+
+// A stored bundle's metadata. Bytes live in the blob-store keyed by `id`;
+// `integrity` (sha512-<base64>) is the content-addressed identity (UNIQUE),
+// matched against a report's bundleHashes to auto-link.
+export interface ManagedBundle {
+  id: string
+  integrity: string
+  filename: string
+  kind: string | null
+  byteSize: number
+  uploadedBy: string | null
+  repoId: number | null
+  uploadedAt: number
+}
+
+// What the upload handler supplies to record a bundle; the store stamps
+// uploaded_at.
+export type BundleInput = Omit<ManagedBundle, 'uploadedAt'>
+
+// A bundle row for the "Manage bundles" list — adds the uploader login + repo
+// full name display joins (null when absent / since removed).
+export interface AdminBundle {
+  id: string
+  integrity: string
+  filename: string
+  kind: string | null
+  byteSize: number
+  uploadedByLogin: string | null
+  repoId: number | null
+  repoFullName: string | null
   uploadedAt: number
 }
 
@@ -205,13 +282,27 @@ export interface ManagedDb {
   deselectRepo(repoId: number): Promise<boolean>
   listSelectedRepos(): Promise<SelectedRepo[]>
   // Reports ("Manage reports"). insertReport records an uploaded report's
-  // metadata (bytes are written to the report-store separately); listReports
-  // joins the uploader login for the admin list; getReport reads one row (for
-  // download); deleteReport resolves true iff a row was removed.
+  // metadata (bytes are written to the blob-store separately); listReports joins
+  // the uploader login + repo + linked-bundle filename for the admin list;
+  // getReport reads one row (for download); deleteReport resolves true iff a row
+  // was removed.
   insertReport(report: ReportRecordInput, now: number): Promise<void>
   listReports(): Promise<AdminReport[]>
   getReport(id: string): Promise<ReportRecord | null>
   deleteReport(id: string): Promise<boolean>
+  // Bundles ("Manage bundles"). insertBundle records an uploaded bundle (bytes
+  // in the blob-store); getBundleByIntegrity dedupes uploads + resolves a
+  // report's bundleHashes; getBundle reads one row (download); listBundles joins
+  // uploader login + repo; deleteBundle resolves true iff a row was removed
+  // (referencing reports' bundle_id null out via the FK). linkReportsToBundle
+  // attaches a freshly-stored bundle to the (still-unlinked) reports that
+  // declared its integrity.
+  insertBundle(bundle: BundleInput, now: number): Promise<void>
+  getBundleByIntegrity(integrity: string): Promise<ManagedBundle | null>
+  getBundle(id: string): Promise<ManagedBundle | null>
+  listBundles(): Promise<AdminBundle[]>
+  deleteBundle(id: string): Promise<boolean>
+  linkReportsToBundle(integrity: string, bundleId: string): Promise<void>
   close(): Promise<void>
 }
 
@@ -279,17 +370,21 @@ function prepareStatements(db: DatabaseSync) {
          FROM selected_repo ORDER BY full_name ASC`,
     ),
     insertReportStmt: db.prepare(
-      `INSERT INTO managed_report (id, filename, content_type, byte_size, sha256, uploaded_by, uploaded_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO managed_report (id, filename, content_type, byte_size, sha256, uploaded_by, repo_id, bundle_id, bundle_integrity, uploaded_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ),
-    // LEFT JOIN so a report whose uploader was removed (uploaded_by → NULL) still
-    // lists, with a null login.
+    // LEFT JOINs so a report whose uploader / repo / bundle was removed (the FK
+    // nulled) still lists, with null display fields.
     selectReportsStmt: db.prepare(
       `SELECT r.id AS id, r.filename AS filename, r.content_type AS contentType,
               r.byte_size AS byteSize, r.sha256 AS sha256, u.login AS uploadedByLogin,
+              r.repo_id AS repoId, sr.full_name AS repoFullName,
+              r.bundle_id AS bundleId, b.filename AS bundleFilename, r.bundle_integrity AS bundleIntegrity,
               r.uploaded_at AS uploadedAt
          FROM managed_report r
          LEFT JOIN managed_user u ON u.id = r.uploaded_by
+         LEFT JOIN selected_repo sr ON sr.repo_id = r.repo_id
+         LEFT JOIN managed_bundle b ON b.id = r.bundle_id
         ORDER BY r.uploaded_at DESC, r.filename ASC`,
     ),
     selectReportStmt: db.prepare(
@@ -298,6 +393,35 @@ function prepareStatements(db: DatabaseSync) {
          FROM managed_report WHERE id = ?`,
     ),
     deleteReportStmt: db.prepare(`DELETE FROM managed_report WHERE id = ?`),
+    insertBundleStmt: db.prepare(
+      `INSERT INTO managed_bundle (id, integrity, filename, kind, byte_size, uploaded_by, repo_id, uploaded_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ),
+    selectBundleByIntegrityStmt: db.prepare(
+      `SELECT id, integrity, filename, kind, byte_size AS byteSize,
+              uploaded_by AS uploadedBy, repo_id AS repoId, uploaded_at AS uploadedAt
+         FROM managed_bundle WHERE integrity = ?`,
+    ),
+    selectBundleStmt: db.prepare(
+      `SELECT id, integrity, filename, kind, byte_size AS byteSize,
+              uploaded_by AS uploadedBy, repo_id AS repoId, uploaded_at AS uploadedAt
+         FROM managed_bundle WHERE id = ?`,
+    ),
+    selectBundlesStmt: db.prepare(
+      `SELECT b.id AS id, b.integrity AS integrity, b.filename AS filename, b.kind AS kind,
+              b.byte_size AS byteSize, u.login AS uploadedByLogin,
+              b.repo_id AS repoId, sr.full_name AS repoFullName, b.uploaded_at AS uploadedAt
+         FROM managed_bundle b
+         LEFT JOIN managed_user u ON u.id = b.uploaded_by
+         LEFT JOIN selected_repo sr ON sr.repo_id = b.repo_id
+        ORDER BY b.uploaded_at DESC, b.filename ASC`,
+    ),
+    deleteBundleStmt: db.prepare(`DELETE FROM managed_bundle WHERE id = ?`),
+    // Attach a freshly-stored bundle to the reports that declared its integrity
+    // but haven't been linked yet (bundle uploaded after the report).
+    linkReportsToBundleStmt: db.prepare(
+      `UPDATE managed_report SET bundle_id = ? WHERE bundle_integrity = ? AND bundle_id IS NULL`,
+    ),
   }
 }
 
@@ -334,7 +458,10 @@ function selectedRepoMethods(stmts: ReturnType<typeof prepareStatements>) {
 
 type ReportListRow = {
   id: string; filename: string; contentType: string; byteSize: number
-  sha256: string; uploadedByLogin: string | null; uploadedAt: number
+  sha256: string; uploadedByLogin: string | null
+  repoId: number | null; repoFullName: string | null
+  bundleId: string | null; bundleFilename: string | null; bundleIntegrity: string | null
+  uploadedAt: number
 }
 type ReportRow = {
   id: string; filename: string; contentType: string; byteSize: number
@@ -349,7 +476,8 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>) {
     insertReport(report: ReportRecordInput, now: number): Promise<void> {
       insertReportStmt.run(
         report.id, report.filename, report.contentType, report.byteSize,
-        report.sha256, report.uploadedBy, now,
+        report.sha256, report.uploadedBy, report.repoId, report.bundleId,
+        report.bundleIntegrity, now,
       )
       return Promise.resolve()
     },
@@ -357,7 +485,10 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>) {
       const rows = selectReportsStmt.all() as ReportListRow[]
       return Promise.resolve(rows.map((r) => ({
         id: r.id, filename: r.filename, contentType: r.contentType, byteSize: r.byteSize,
-        sha256: r.sha256, uploadedByLogin: r.uploadedByLogin, uploadedAt: r.uploadedAt,
+        sha256: r.sha256, uploadedByLogin: r.uploadedByLogin,
+        repoId: r.repoId, repoFullName: r.repoFullName,
+        bundleId: r.bundleId, bundleFilename: r.bundleFilename, bundleIntegrity: r.bundleIntegrity,
+        uploadedAt: r.uploadedAt,
       })))
     },
     getReport(id: string): Promise<ReportRecord | null> {
@@ -370,6 +501,62 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>) {
     },
     deleteReport(id: string): Promise<boolean> {
       return Promise.resolve(Number(deleteReportStmt.run(id).changes) > 0)
+    },
+  }
+}
+
+type BundleRow = {
+  id: string; integrity: string; filename: string; kind: string | null; byteSize: number
+  uploadedBy: string | null; repoId: number | null; uploadedAt: number
+}
+type BundleListRow = {
+  id: string; integrity: string; filename: string; kind: string | null; byteSize: number
+  uploadedByLogin: string | null; repoId: number | null; repoFullName: string | null; uploadedAt: number
+}
+
+function mapBundle(r: BundleRow): ManagedBundle {
+  return {
+    id: r.id, integrity: r.integrity, filename: r.filename, kind: r.kind,
+    byteSize: r.byteSize, uploadedBy: r.uploadedBy, repoId: r.repoId, uploadedAt: r.uploadedAt,
+  }
+}
+
+// The bundle slice of ManagedDb. Closes over its prepared statements.
+function bundleMethods(stmts: ReturnType<typeof prepareStatements>) {
+  const {
+    insertBundleStmt, selectBundleByIntegrityStmt, selectBundleStmt,
+    selectBundlesStmt, deleteBundleStmt, linkReportsToBundleStmt,
+  } = stmts
+  return {
+    insertBundle(bundle: BundleInput, now: number): Promise<void> {
+      insertBundleStmt.run(
+        bundle.id, bundle.integrity, bundle.filename, bundle.kind,
+        bundle.byteSize, bundle.uploadedBy, bundle.repoId, now,
+      )
+      return Promise.resolve()
+    },
+    getBundleByIntegrity(integrity: string): Promise<ManagedBundle | null> {
+      const row = selectBundleByIntegrityStmt.get(integrity) as BundleRow | undefined
+      return Promise.resolve(row == null ? null : mapBundle(row))
+    },
+    getBundle(id: string): Promise<ManagedBundle | null> {
+      const row = selectBundleStmt.get(id) as BundleRow | undefined
+      return Promise.resolve(row == null ? null : mapBundle(row))
+    },
+    listBundles(): Promise<AdminBundle[]> {
+      const rows = selectBundlesStmt.all() as BundleListRow[]
+      return Promise.resolve(rows.map((r) => ({
+        id: r.id, integrity: r.integrity, filename: r.filename, kind: r.kind, byteSize: r.byteSize,
+        uploadedByLogin: r.uploadedByLogin, repoId: r.repoId, repoFullName: r.repoFullName,
+        uploadedAt: r.uploadedAt,
+      })))
+    },
+    deleteBundle(id: string): Promise<boolean> {
+      return Promise.resolve(Number(deleteBundleStmt.run(id).changes) > 0)
+    },
+    linkReportsToBundle(integrity: string, bundleId: string): Promise<void> {
+      linkReportsToBundleStmt.run(bundleId, integrity)
+      return Promise.resolve()
     },
   }
 }
@@ -440,6 +627,7 @@ export function openSqliteManagedDb(path: string): ManagedDb {
     },
     ...selectedRepoMethods(stmts),
     ...reportMethods(stmts),
+    ...bundleMethods(stmts),
     close() {
       db.close()
       return Promise.resolve()

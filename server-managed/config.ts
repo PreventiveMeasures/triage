@@ -39,6 +39,10 @@ export interface ManagedConfig {
   // Max accepted size (bytes) for an uploaded report on the "Manage reports"
   // page. Reports are findings dumps (JSON / markdown / CSV), small to a few MB.
   maxReportBytes: number
+  // Max accepted size (bytes) for an uploaded bundle (sourcemap / stasis
+  // archive). Bundles run larger than reports, so a higher cap (default 100 MiB,
+  // matching the e2e objstore per-upload cap).
+  maxBundleBytes: number
 }
 
 function fail(msg: string): never {
@@ -96,6 +100,7 @@ export function loadManagedConfig(): ManagedConfig {
     githubAppPrivateKey: normalizePem(env['GITHUB_APP_PRIVATE_KEY']),
     githubAppSlug: env['GITHUB_APP_SLUG'] ?? null,
     maxReportBytes: intEnv('MAX_REPORT_BYTES', 10_485_760, 1, 104_857_600),
+    maxBundleBytes: intEnv('MAX_BUNDLE_BYTES', 104_857_600, 1, 1_073_741_824),
   }
 }
 

@@ -1510,6 +1510,22 @@ function renderImpl() {
     document.title = 'DeepView — reports'
     return
   }
+  // Managed admin: uploaded bundles as a full page. The same lazily-loaded admin
+  // bundle defines <managed-admin-bundles> (loaded by the sidebar's "Manage
+  // bundles"); the element fetches + paints itself. The sidebar gates the entry
+  // point to admin|manage roles.
+  if (state.currentView === 'manage-bundles') {
+    let slot = document.querySelector('#manage-bundles-slot')
+    if (!slot || !report.contains(slot) || report.firstElementChild !== slot) {
+      report.innerHTML = '<div id="manage-bundles-slot"></div>'
+      slot = document.querySelector('#manage-bundles-slot')
+    }
+    if (slot && !slot.firstElementChild) slot.append(document.createElement('managed-admin-bundles'))
+    report.classList.add('active')
+    dropZone.classList.add('hidden')
+    document.title = 'DeepView — bundles'
+    return
+  }
   if (state.reports.length === 0) return
   // Merge across all loaded reports. Every entry is a Finding[] (a dedup
   // group); single findings were wrapped at ingest, so downstream code
