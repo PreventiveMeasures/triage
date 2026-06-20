@@ -929,6 +929,67 @@ test('report↔bundle auto-link (both upload orders) + optional repo link', asyn
   await db.close()
 })
 
+test('reports/bundles set-repo: db attach/detach + endpoint (role, CSRF, validation, 404)', async () => {
+  const db = openSqliteManagedDb(':memory:')
+  const now = Date.now()
+  const adminSess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
+  const noneSess = await createSession(config, db, { githubUserId: 2, login: 'bob', name: null, avatarUrl: null }, now + 1000)
+  const admin = (await readSession(config, db, cookiePair(adminSess.setCookie), now)).user
+  await db.selectRepo({ repoId: 7, fullName: 'o/r', private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: admin.id }, now)
+  const reportId = randomUUID()
+  await db.insertReport({ id: reportId, filename: 'r.json', contentType: 'application/json', byteSize: 2, sha256: 'x', uploadedBy: admin.id, repoId: null, bundleId: null, bundleIntegrity: null }, now)
+  const bundleId = randomUUID()
+  await db.insertBundle({ id: bundleId, integrity: 'sha512-Z', filename: 'b.map', kind: 'sourcemap', byteSize: 3, uploadedBy: admin.id, repoId: null }, now)
+
+  // db layer: attach, detach, and not-found.
+  assert.equal(await db.setReportRepo(reportId, 7), true)
+  assert.equal((await db.listReports())[0].repoId, 7)
+  assert.equal(await db.setReportRepo(reportId, null), true)
+  assert.equal((await db.listReports())[0].repoId, null)
+  assert.equal(await db.setReportRepo(randomUUID(), 7), false) // no such report
+  assert.equal(await db.setBundleRepo(bundleId, 7), true)
+  assert.equal((await db.listBundles())[0].repoId, 7)
+
+  let pending = Promise.resolve()
+  const handler = createManagedRequestHandler({
+    config, db, avatarStore: fakeAvatarStore(), reportStore: fakeBlobStore(), bundleStore: fakeBlobStore(),
+    originGate: { trustProxy: false, isOriginAllowed: () => true },
+    isShuttingDown: () => false, track: (p) => { pending = p },
+  })
+  function mockRes() {
+    return {
+      statusCode: 0, body: '', ended: false,
+      writeHead(c) { this.statusCode = c; return this },
+      end(b) { if (b != null) this.body += b; this.ended = true; return this },
+      get headersSent() { return this.ended },
+    }
+  }
+  async function post(path, cookie, csrf, payload) {
+    const res = mockRes()
+    const headers = { 'content-type': 'application/json' }
+    if (cookie) headers.cookie = cookie
+    if (csrf) headers['x-csrf-token'] = csrf
+    const req = new Readable({ read() {} })
+    req.method = 'POST'; req.url = path; req.headers = headers
+    handler(req, res); req.push(JSON.stringify(payload)); req.push(null)
+    await pending
+    return res
+  }
+  const aCk = cookiePair(adminSess.setCookie); const csrf = adminSess.csrfToken
+  const RR = '/api/admin/reports/set-repo'
+  assert.equal((await post(RR, cookiePair(noneSess.setCookie), noneSess.csrfToken, { reportId, repoId: 7 })).statusCode, 403) // 'none'
+  assert.equal((await post(RR, aCk, null, { reportId, repoId: 7 })).statusCode, 403) // CSRF missing
+  assert.equal((await post(RR, aCk, csrf, { reportId, repoId: 999 })).statusCode, 400) // repo not selected
+  assert.equal((await post(RR, aCk, csrf, { reportId: 'nope', repoId: 7 })).statusCode, 404) // no such report
+  assert.equal((await post(RR, aCk, csrf, { reportId, repoId: 7 })).statusCode, 200) // attach
+  assert.equal((await db.listReports())[0].repoId, 7)
+  assert.equal((await post(RR, aCk, csrf, { reportId, repoId: null })).statusCode, 200) // detach
+  assert.equal((await db.listReports())[0].repoId, null)
+  // bundle endpoint: the set-repo exact path is matched before the per-id prefix.
+  assert.equal((await post('/api/admin/bundles/set-repo', aCk, csrf, { bundleId, repoId: 7 })).statusCode, 200)
+  await db.close()
+})
+
 test('db: teams — create/list/delete, repo (+path) & member (+perms) links, FK cascade', async () => {
   const db = openSqliteManagedDb(':memory:')
   const now = Date.now()

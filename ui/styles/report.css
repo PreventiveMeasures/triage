@@ -5,6 +5,17 @@
    max-width wrapper (.findings-content below) since long
    description text + code blocks read better at typewriter
    widths than at 2400px wide. */
+
+/* The managed admin "Manage reports" / "Manage bundles" pages mount full-height
+   inside #report's flex column (via these slots), so the whole panel — not just
+   the short content area — is a drag&drop upload target. */
+#manage-reports-slot,
+#manage-bundles-slot {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+}
+
 #report {
   display: none; padding: 1rem 1.5rem; width: 100%; box-sizing: border-box;
 

@@ -354,6 +354,9 @@ export interface ManagedDb {
   listReports(): Promise<AdminReport[]>
   getReport(id: string): Promise<ReportRecord | null>
   deleteReport(id: string): Promise<boolean>
+  // Attach / detach a report's repo link (repoId null = detach); resolves true
+  // iff the report exists. The caller validates repoId is a selected repo.
+  setReportRepo(id: string, repoId: number | null): Promise<boolean>
   // Bundles ("Manage bundles"). insertBundle records an uploaded bundle (bytes
   // in the blob-store); getBundleByIntegrity dedupes uploads + resolves a
   // report's bundleHashes; getBundle reads one row (download); listBundles joins
@@ -366,6 +369,9 @@ export interface ManagedDb {
   getBundle(id: string): Promise<ManagedBundle | null>
   listBundles(): Promise<AdminBundle[]>
   deleteBundle(id: string): Promise<boolean>
+  // Attach / detach a bundle's repo link (repoId null = detach); resolves true
+  // iff the bundle exists. The caller validates repoId is a selected repo.
+  setBundleRepo(id: string, repoId: number | null): Promise<boolean>
   linkReportsToBundle(integrity: string, bundleId: string): Promise<void>
   // Teams ("Manage teams"). createTeam inserts a team (false iff the name is
   // taken); renameTeam changes a team's name ('name-taken' iff another team
@@ -479,6 +485,7 @@ function prepareStatements(db: DatabaseSync) {
          FROM managed_report WHERE id = ?`,
     ),
     deleteReportStmt: db.prepare(`DELETE FROM managed_report WHERE id = ?`),
+    setReportRepoStmt: db.prepare(`UPDATE managed_report SET repo_id = ? WHERE id = ?`),
     insertBundleStmt: db.prepare(
       `INSERT INTO managed_bundle (id, integrity, filename, kind, byte_size, uploaded_by, repo_id, uploaded_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -503,6 +510,7 @@ function prepareStatements(db: DatabaseSync) {
         ORDER BY b.uploaded_at DESC, b.filename ASC`,
     ),
     deleteBundleStmt: db.prepare(`DELETE FROM managed_bundle WHERE id = ?`),
+    setBundleRepoStmt: db.prepare(`UPDATE managed_bundle SET repo_id = ? WHERE id = ?`),
     // Attach a freshly-stored bundle to the reports that declared its integrity
     // but haven't been linked yet (bundle uploaded after the report).
     linkReportsToBundleStmt: db.prepare(
@@ -593,7 +601,7 @@ type ReportRow = {
 // The report slice of ManagedDb, split out (like selectedRepoMethods) to keep
 // openSqliteManagedDb small. Closes over its prepared statements.
 function reportMethods(stmts: ReturnType<typeof prepareStatements>) {
-  const { insertReportStmt, selectReportsStmt, selectReportStmt, deleteReportStmt } = stmts
+  const { insertReportStmt, selectReportsStmt, selectReportStmt, deleteReportStmt, setReportRepoStmt } = stmts
   return {
     insertReport(report: ReportRecordInput, now: number): Promise<void> {
       insertReportStmt.run(
@@ -624,6 +632,9 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>) {
     deleteReport(id: string): Promise<boolean> {
       return Promise.resolve(Number(deleteReportStmt.run(id).changes) > 0)
     },
+    setReportRepo(id: string, repoId: number | null): Promise<boolean> {
+      return Promise.resolve(Number(setReportRepoStmt.run(repoId, id).changes) > 0)
+    },
   }
 }
 
@@ -647,7 +658,7 @@ function mapBundle(r: BundleRow): ManagedBundle {
 function bundleMethods(stmts: ReturnType<typeof prepareStatements>) {
   const {
     insertBundleStmt, selectBundleByIntegrityStmt, selectBundleStmt,
-    selectBundlesStmt, deleteBundleStmt, linkReportsToBundleStmt,
+    selectBundlesStmt, deleteBundleStmt, setBundleRepoStmt, linkReportsToBundleStmt,
   } = stmts
   return {
     insertBundle(bundle: BundleInput, now: number): Promise<void> {
@@ -675,6 +686,9 @@ function bundleMethods(stmts: ReturnType<typeof prepareStatements>) {
     },
     deleteBundle(id: string): Promise<boolean> {
       return Promise.resolve(Number(deleteBundleStmt.run(id).changes) > 0)
+    },
+    setBundleRepo(id: string, repoId: number | null): Promise<boolean> {
+      return Promise.resolve(Number(setBundleRepoStmt.run(repoId, id).changes) > 0)
     },
     linkReportsToBundle(integrity: string, bundleId: string): Promise<void> {
       linkReportsToBundleStmt.run(bundleId, integrity)

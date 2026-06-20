@@ -357,6 +357,16 @@ async function deleteReport(id, csrfToken) {
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
 }
 
+// Attach a stored report to a repo (repoId) or detach it (null). CSRF token.
+async function setReportRepo(id, repoId, csrfToken) {
+  const headers = { 'content-type': 'application/json' }
+  if (csrfToken) headers['x-csrf-token'] = csrfToken
+  const res = await fetch('/api/admin/reports/set-repo', {
+    method: 'POST', credentials: 'same-origin', headers, body: JSON.stringify({ reportId: id, repoId }),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+}
+
 // Human byte size (B / KB / MB) for the report / bundle rows.
 function formatBytes(n) {
   if (typeof n !== 'number' || !Number.isFinite(n)) return ''
@@ -365,15 +375,35 @@ function formatBytes(n) {
   return `${(n / 1_048_576).toFixed(1)} MB`
 }
 
-// Shared upload-page chrome (reports + bundles): an optional repo picker — only
-// shown when the workspace has selected repos — plus the file-picker trigger.
-// `selected` is the chosen repo id (number) or '' for none.
+// A repo <select>'s options: "No repository" + each selected repo, with
+// `current` (a repo id, or null/'' for none) preselected. Shared by the upload
+// picker and the per-row attach control.
+function repoOptions(repos, current) {
+  return html`
+    <option value="" ?selected=${current == null || current === ''}>No repository</option>
+    ${repos.map((r) => html`<option value=${r.repoId} ?selected=${Number(current) === r.repoId}>${r.fullName}</option>`)}`
+}
+
+// Upload picker (reports + bundles): a labelled dropdown setting which repo NEW
+// uploads attach to. Only shown once repos have been selected on "Manage
+// repositories". `onChange` gets the repo id, or null for none.
 function repoPickerTemplate(repos, selected, onChange) {
   if (!Array.isArray(repos) || repos.length === 0) return nothing
-  return html`<select class="repo-select" title="Link uploads to a repository"
-    @change=${(e) => onChange(e.target.value === '' ? '' : Number(e.target.value))}>
-    <option value="" ?selected=${selected === ''}>No repo</option>
-    ${repos.map((r) => html`<option value=${r.repoId} ?selected=${r.repoId === selected}>${r.fullName}</option>`)}
+  return html`<label class="repo-picker">
+    <span class="repo-picker-label">Attach uploads to</span>
+    <select class="repo-select" @change=${(e) => onChange(e.target.value === '' ? null : Number(e.target.value))}>
+      ${repoOptions(repos, selected)}
+    </select>
+  </label>`
+}
+
+// Per-row attach control: change which repo an already-stored report / bundle is
+// attached to (or none). `onPick` gets the repo id, or null to detach.
+function repoRowSelect(repos, current, onPick) {
+  if (!Array.isArray(repos) || repos.length === 0) return nothing
+  return html`<select class="repo-attach" title="Attach to a repository"
+    @change=${(e) => onPick(e.target.value === '' ? null : Number(e.target.value))}>
+    ${repoOptions(repos, current)}
   </select>`
 }
 
@@ -437,7 +467,7 @@ class ManagedAdminReports extends LitElement {
   }
 
   static styles = css`
-    :host { display: block; position: relative; padding: 1.5rem clamp(1rem, 4vw, 2.5rem); color: var(--text); }
+    :host { display: block; position: relative; flex: 1 1 auto; padding: 1.5rem clamp(1rem, 4vw, 2.5rem); color: var(--text); }
     .wrap { max-width: 48rem; margin: 0 auto; }
     .dropzone {
       position: absolute; inset: .6rem; z-index: 5; display: grid; place-items: center;
@@ -447,19 +477,24 @@ class ManagedAdminReports extends LitElement {
     }
     .head { display: flex; align-items: center; gap: 1rem; margin: 0 0 .75rem; }
     h1 { font-size: 1.15rem; font-weight: 600; margin: 0; user-select: none; }
+    .head-actions { margin-left: auto; flex-shrink: 0; display: flex; align-items: center; gap: .5rem; }
+    .repo-picker { display: inline-flex; align-items: center; gap: .4rem; }
+    .repo-picker-label { font-size: .8rem; color: var(--muted); white-space: nowrap; }
+    .repo-select {
+      font: inherit; font-size: .82rem; color: var(--text); background: var(--bg);
+      border: 1px solid var(--border); border-radius: 6px; padding: .2rem .4rem; max-width: 14rem;
+    }
+    .repo-attach {
+      flex-shrink: 0; font: inherit; font-size: .78rem; color: var(--muted); background: var(--bg);
+      border: 1px solid var(--border); border-radius: 6px; padding: .1rem .3rem; max-width: 11rem;
+    }
     .upload {
-      margin-left: auto; flex-shrink: 0; font: inherit; font-size: .85rem; font-weight: 600;
+      flex-shrink: 0; font: inherit; font-size: .85rem; font-weight: 600;
       color: var(--bg); background: var(--accent); border: none; cursor: pointer;
       border-radius: 6px; padding: .35rem .7rem; white-space: nowrap;
     }
     .upload:hover { opacity: .9; }
     .upload:disabled { opacity: .55; cursor: default; }
-    .repo-select {
-      margin-left: auto; flex-shrink: 0; font: inherit; font-size: .82rem;
-      color: var(--text); background: var(--bg);
-      border: 1px solid var(--border); border-radius: 6px; padding: .2rem .4rem; max-width: 16rem;
-    }
-    .repo-select + .upload { margin-left: .5rem; }
     .hint { color: var(--muted); font-size: .82rem; margin: 0 0 .8rem; }
     .reports { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
     .reports li { display: flex; align-items: center; gap: .6rem; padding: .55rem .85rem; }
@@ -486,7 +521,7 @@ class ManagedAdminReports extends LitElement {
     this._error = null
     this._csrf = null
     this._busy = false
-    this._repoId = '' // '' = no repo link; otherwise a selected repo id
+    this._repoId = null // null = no repo link; otherwise a selected repo id (for new uploads)
     this._dragOver = false
     this._teardownDrop = null
     this._queue = [] // files awaiting upload; a drop during an in-flight upload joins it
@@ -521,10 +556,12 @@ class ManagedAdminReports extends LitElement {
       <div class="wrap">
       <div class="head">
         <h1>Reports</h1>
-        ${repoPickerTemplate(this._data?.repos, this._repoId, (v) => { this._repoId = v })}
-        <button type="button" class="upload" ?disabled=${this._busy} @click=${() => pickFiles((files) => void this._upload(files))}>
-          ${this._busy ? 'Uploading…' : 'Upload report'}
-        </button>
+        <div class="head-actions">
+          ${repoPickerTemplate(this._data?.repos, this._repoId, (v) => { this._repoId = v })}
+          <button type="button" class="upload" ?disabled=${this._busy} @click=${() => pickFiles((files) => void this._upload(files))}>
+            ${this._busy ? 'Uploading…' : 'Upload report'}
+          </button>
+        </div>
       </div>
       ${this._body()}
     </div>`
@@ -549,8 +586,7 @@ class ManagedAdminReports extends LitElement {
     // bundle that isn't uploaded yet (so the link is pending).
     const bundle = r.bundleFilename ? `bundle: ${r.bundleFilename}`
       : (r.bundleIntegrity ? 'bundle: (not uploaded)' : null)
-    const meta = [who, when, formatBytes(r.byteSize), r.repoFullName ? `repo: ${r.repoFullName}` : null, bundle]
-      .filter(Boolean).join(' · ')
+    const meta = [who, when, formatBytes(r.byteSize), bundle].filter(Boolean).join(' · ')
     return html`<li>
       ${REPORT_ICON}
       <span class="who">
@@ -558,10 +594,20 @@ class ManagedAdminReports extends LitElement {
         <span class="meta">${meta}</span>
       </span>
       <span class="actions">
+        ${repoRowSelect(this._data?.repos, r.repoId, (repoId) => this._setRepo(r, repoId))}
         <a class="download" href=${`/api/admin/reports/${encodeURIComponent(r.id)}`}>download</a>
         <button type="button" class="delete" @click=${() => this._delete(r)}>delete</button>
       </span>
     </li>`
+  }
+
+  async _setRepo(r, repoId) {
+    try {
+      await setReportRepo(r.id, repoId, this._csrf)
+    } catch (err) {
+      this._error = `Couldn't change repo: ${String(err?.message ?? err)}`
+    }
+    await this._load()
   }
 
   async _upload(files) {
@@ -573,8 +619,7 @@ class ManagedAdminReports extends LitElement {
     try {
       while (this._queue.length > 0) {
         const file = this._queue.shift()
-        const repoId = this._repoId === '' ? null : this._repoId
-        await uploadReport(file, this._csrf, repoId)
+        await uploadReport(file, this._csrf, this._repoId)
       }
     } catch (err) {
       this._queue = [] // fail-fast: drop the rest of the batch (matches the old behaviour)
@@ -622,6 +667,16 @@ async function deleteBundle(id, csrfToken) {
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
 }
 
+// Attach a stored bundle to a repo (repoId) or detach it (null). CSRF token.
+async function setBundleRepo(id, repoId, csrfToken) {
+  const headers = { 'content-type': 'application/json' }
+  if (csrfToken) headers['x-csrf-token'] = csrfToken
+  const res = await fetch('/api/admin/bundles/set-repo', {
+    method: 'POST', credentials: 'same-origin', headers, body: JSON.stringify({ bundleId: id, repoId }),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+}
+
 // Package/box glyph, tinted via currentColor.
 const BUNDLE_ICON = html`<svg class="report-icon" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">
   <path d="M8.878.392a1.75 1.75 0 0 0-1.756 0l-5.25 3.045A1.75 1.75 0 0 0 1 4.951v6.098c0 .624.332 1.2.872 1.514l5.25 3.045a1.75 1.75 0 0 0 1.756 0l5.25-3.045c.54-.313.872-.89.872-1.514V4.951c0-.624-.332-1.2-.872-1.514ZM7.875 1.69a.25.25 0 0 1 .25 0l4.63 2.685L8 7.133 3.245 4.375Zm-5.125 4.4 4.5 2.61v5.317l-4.375-2.537a.25.25 0 0 1-.125-.216Zm6 7.927V8.7l4.5-2.61v3.96a.25.25 0 0 1-.125.216Z"/>
@@ -640,7 +695,7 @@ class ManagedAdminBundles extends LitElement {
   }
 
   static styles = css`
-    :host { display: block; position: relative; padding: 1.5rem clamp(1rem, 4vw, 2.5rem); color: var(--text); }
+    :host { display: block; position: relative; flex: 1 1 auto; padding: 1.5rem clamp(1rem, 4vw, 2.5rem); color: var(--text); }
     .wrap { max-width: 48rem; margin: 0 auto; }
     .dropzone {
       position: absolute; inset: .6rem; z-index: 5; display: grid; place-items: center;
@@ -650,6 +705,17 @@ class ManagedAdminBundles extends LitElement {
     }
     .head { display: flex; align-items: center; gap: 1rem; margin: 0 0 .75rem; }
     h1 { font-size: 1.15rem; font-weight: 600; margin: 0; user-select: none; }
+    .head-actions { margin-left: auto; flex-shrink: 0; display: flex; align-items: center; gap: .5rem; }
+    .repo-picker { display: inline-flex; align-items: center; gap: .4rem; }
+    .repo-picker-label { font-size: .8rem; color: var(--muted); white-space: nowrap; }
+    .repo-select {
+      font: inherit; font-size: .82rem; color: var(--text); background: var(--bg);
+      border: 1px solid var(--border); border-radius: 6px; padding: .2rem .4rem; max-width: 14rem;
+    }
+    .repo-attach {
+      flex-shrink: 0; font: inherit; font-size: .78rem; color: var(--muted); background: var(--bg);
+      border: 1px solid var(--border); border-radius: 6px; padding: .1rem .3rem; max-width: 11rem;
+    }
     .upload {
       flex-shrink: 0; font: inherit; font-size: .85rem; font-weight: 600;
       color: var(--bg); background: var(--accent); border: none; cursor: pointer;
@@ -657,13 +723,6 @@ class ManagedAdminBundles extends LitElement {
     }
     .upload:hover { opacity: .9; }
     .upload:disabled { opacity: .55; cursor: default; }
-    .repo-select {
-      margin-left: auto; flex-shrink: 0; font: inherit; font-size: .82rem;
-      color: var(--text); background: var(--bg);
-      border: 1px solid var(--border); border-radius: 6px; padding: .2rem .4rem; max-width: 16rem;
-    }
-    .repo-select + .upload { margin-left: .5rem; }
-    .head > .upload:only-of-type { margin-left: auto; }
     .hint { color: var(--muted); font-size: .82rem; margin: 0 0 .8rem; }
     .reports { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
     .reports li { display: flex; align-items: center; gap: .6rem; padding: .55rem .85rem; }
@@ -695,7 +754,7 @@ class ManagedAdminBundles extends LitElement {
     this._error = null
     this._csrf = null
     this._busy = false
-    this._repoId = ''
+    this._repoId = null // null = no repo link; otherwise a selected repo id (for new uploads)
     this._dragOver = false
     this._teardownDrop = null
     this._queue = [] // files awaiting upload; a drop during an in-flight upload joins it
@@ -730,10 +789,12 @@ class ManagedAdminBundles extends LitElement {
       <div class="wrap">
       <div class="head">
         <h1>Bundles</h1>
-        ${repoPickerTemplate(this._data?.repos, this._repoId, (v) => { this._repoId = v })}
-        <button type="button" class="upload" ?disabled=${this._busy} @click=${() => pickFiles((files) => void this._upload(files))}>
-          ${this._busy ? 'Uploading…' : 'Upload bundle'}
-        </button>
+        <div class="head-actions">
+          ${repoPickerTemplate(this._data?.repos, this._repoId, (v) => { this._repoId = v })}
+          <button type="button" class="upload" ?disabled=${this._busy} @click=${() => pickFiles((files) => void this._upload(files))}>
+            ${this._busy ? 'Uploading…' : 'Upload bundle'}
+          </button>
+        </div>
       </div>
       ${this._body()}
     </div>`
@@ -754,8 +815,7 @@ class ManagedAdminBundles extends LitElement {
   _row(b) {
     const who = b.uploadedByLogin ? `by ${b.uploadedByLogin}` : 'uploader removed'
     const when = Number.isFinite(b.uploadedAt) ? new Date(b.uploadedAt).toLocaleString() : ''
-    const meta = [who, when, formatBytes(b.byteSize), b.repoFullName ? `repo: ${b.repoFullName}` : null]
-      .filter(Boolean).join(' · ')
+    const meta = [who, when, formatBytes(b.byteSize)].filter(Boolean).join(' · ')
     return html`<li title=${b.integrity ?? ''}>
       ${BUNDLE_ICON}
       <span class="who">
@@ -764,10 +824,20 @@ class ManagedAdminBundles extends LitElement {
       </span>
       ${b.kind ? html`<span class="badge">${b.kind}</span>` : nothing}
       <span class="actions">
+        ${repoRowSelect(this._data?.repos, b.repoId, (repoId) => this._setRepo(b, repoId))}
         <a class="download" href=${`/api/admin/bundles/${encodeURIComponent(b.id)}`}>download</a>
         <button type="button" class="delete" @click=${() => this._delete(b)}>delete</button>
       </span>
     </li>`
+  }
+
+  async _setRepo(b, repoId) {
+    try {
+      await setBundleRepo(b.id, repoId, this._csrf)
+    } catch (err) {
+      this._error = `Couldn't change repo: ${String(err?.message ?? err)}`
+    }
+    await this._load()
   }
 
   async _upload(files) {
@@ -779,8 +849,7 @@ class ManagedAdminBundles extends LitElement {
     try {
       while (this._queue.length > 0) {
         const file = this._queue.shift()
-        const repoId = this._repoId === '' ? null : this._repoId
-        await uploadBundle(file, this._csrf, repoId)
+        await uploadBundle(file, this._csrf, this._repoId)
       }
     } catch (err) {
       this._queue = [] // fail-fast: drop the rest of the batch (matches the old behaviour)

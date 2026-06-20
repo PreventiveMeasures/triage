@@ -17,10 +17,12 @@
 //   POST /api/admin/reports      → admin|manage uploads a report (raw body) | 401/403/413
 //   GET  /api/admin/reports/<id> → admin|manage downloads a stored report | 401/403/404
 //   DELETE /api/admin/reports/<id> → admin|manage deletes a report | 401/403/404
+//   POST /api/admin/reports/set-repo → admin|manage attaches/detaches a report's repo | 401/403/404
 //   GET  /api/admin/bundles      → admin|manage list of uploaded bundles | 401/403
 //   POST /api/admin/bundles      → admin|manage uploads a bundle (raw body) | 401/403/413
 //   GET  /api/admin/bundles/<id> → admin|manage downloads a stored bundle | 401/403/404
 //   DELETE /api/admin/bundles/<id> → admin|manage deletes a bundle | 401/403/404
+//   POST /api/admin/bundles/set-repo → admin|manage attaches/detaches a bundle's repo | 401/403/404
 //   GET  /api/admin/teams        → admin|manage teams (+ members/repos) + pickers | 401/403
 //   POST /api/admin/teams        → admin|manage creates a team | 401/403/409
 //   POST /api/admin/teams/rename → admin|manage renames a team | 401/403/404/409
@@ -52,8 +54,10 @@ const SET_ROLE_PATH = '/api/admin/set-role'
 const ADMIN_REPOS_PATH = '/api/admin/repositories'
 const SELECT_REPO_PATH = '/api/admin/repositories/select'
 const ADMIN_REPORTS_PATH = '/api/admin/reports'
+const REPORT_SET_REPO_PATH = '/api/admin/reports/set-repo'
 const REPORT_PREFIX = '/api/admin/reports/'
 const ADMIN_BUNDLES_PATH = '/api/admin/bundles'
+const BUNDLE_SET_REPO_PATH = '/api/admin/bundles/set-repo'
 const BUNDLE_PREFIX = '/api/admin/bundles/'
 const MY_TEAMS_PATH = '/api/teams'
 const ADMIN_TEAMS_PATH = '/api/admin/teams'
@@ -287,6 +291,46 @@ async function resolveUploadRepoId(req: IncomingMessage, res: ServerResponse, de
   const selected = await deps.db.listSelectedRepos()
   if (!selected.some((r) => r.repoId === n)) { sendJson(res, 400, { error: 'repo-not-selected' }); return { ok: false } }
   return { ok: true, repoId: n }
+}
+
+// True iff `repoId` may be linked to a report / bundle: null (detach) or a
+// currently-selected repo id (so the FK can't dangle and you can only attach to
+// a managed repo).
+async function repoIdAllowed(deps: ManagedHttpDeps, repoId: unknown): Promise<boolean> {
+  if (repoId == null) return true
+  if (typeof repoId !== 'number' || !Number.isSafeInteger(repoId)) return false
+  return (await deps.db.listSelectedRepos()).some((r) => r.repoId === repoId)
+}
+
+// POST /api/admin/reports/set-repo — attach / detach a stored report's repo
+// link. Mutation: same-origin + CSRF, admin|manage. Body { reportId, repoId }
+// where repoId is null (detach) or a currently-selected repo id.
+async function handleSetReportRepo(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
+  const s = await manageMutation(req, res, deps, cookie)
+  if (s == null) return
+  let body: unknown
+  try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
+  const reportId = (body as { reportId?: unknown } | null)?.reportId
+  const repoId = (body as { repoId?: unknown } | null)?.repoId ?? null
+  if (typeof reportId !== 'string') { sendJson(res, 400, { error: 'bad-request' }); return }
+  if (!(await repoIdAllowed(deps, repoId))) { sendJson(res, 400, { error: 'bad-repo' }); return }
+  if (!(await deps.db.setReportRepo(reportId, repoId as number | null))) { sendJson(res, 404, { error: 'no-report' }); return }
+  sendJson(res, 200, { ok: true })
+}
+
+// POST /api/admin/bundles/set-repo — attach / detach a stored bundle's repo link
+// (same shape as reports). Body { bundleId, repoId }.
+async function handleSetBundleRepo(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
+  const s = await manageMutation(req, res, deps, cookie)
+  if (s == null) return
+  let body: unknown
+  try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
+  const bundleId = (body as { bundleId?: unknown } | null)?.bundleId
+  const repoId = (body as { repoId?: unknown } | null)?.repoId ?? null
+  if (typeof bundleId !== 'string') { sendJson(res, 400, { error: 'bad-request' }); return }
+  if (!(await repoIdAllowed(deps, repoId))) { sendJson(res, 400, { error: 'bad-repo' }); return }
+  if (!(await deps.db.setBundleRepo(bundleId, repoId as number | null))) { sendJson(res, 404, { error: 'no-bundle' }); return }
+  sendJson(res, 200, { ok: true })
 }
 
 // GET /api/admin/reports — the uploaded reports for the "Manage reports" page.
@@ -731,6 +775,12 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (method === 'POST') { await handleUploadReport(req, res, deps, cookie); return }
       send405(res, 'GET, POST'); return
     }
+    // set-repo is an exact sub-path; check it before the per-id prefix (a report
+    // id is a uuid, so it never collides with "set-repo").
+    if (path === REPORT_SET_REPO_PATH) {
+      if (method !== 'POST') { send405(res, 'POST'); return }
+      await handleSetReportRepo(req, res, deps, cookie); return
+    }
     if (path.startsWith(REPORT_PREFIX)) {
       const id = path.slice(REPORT_PREFIX.length)
       if (method === 'GET') { await handleGetReport(res, deps, cookie, id); return }
@@ -743,6 +793,10 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (method === 'GET') { await handleListBundles(res, deps, cookie); return }
       if (method === 'POST') { await handleUploadBundle(req, res, deps, cookie); return }
       send405(res, 'GET, POST'); return
+    }
+    if (path === BUNDLE_SET_REPO_PATH) {
+      if (method !== 'POST') { send405(res, 'POST'); return }
+      await handleSetBundleRepo(req, res, deps, cookie); return
     }
     if (path.startsWith(BUNDLE_PREFIX)) {
       const id = path.slice(BUNDLE_PREFIX.length)
