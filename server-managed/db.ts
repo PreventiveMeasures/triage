@@ -325,6 +325,19 @@ export type UserOption = {
   login: string
 }
 
+// A team as shown in a member's own sidebar: the team name plus the reports
+// attached to the team's repos (id + filename, newest first). A report shows
+// under a team when its repo is one of the team's linked repos.
+export interface UserTeamReport {
+  id: string
+  filename: string
+}
+export interface UserTeam {
+  id: string
+  name: string
+  reports: UserTeamReport[]
+}
+
 // Backend-agnostic store surface (SQLite + PostgreSQL implementations).
 export interface ManagedDb {
   // Upsert the identity; returns the user's opaque id (stable across logins).
@@ -388,9 +401,13 @@ export interface ManagedDb {
   getTeam(id: string): Promise<{ id: string; name: string } | null>
   listTeams(): Promise<AdminTeam[]>
   listUserOptions(): Promise<UserOption[]>
-  // The teams a given user belongs to (id + name, name-sorted) — for that user's
-  // own sidebar Teams section. Any user; only their own memberships.
-  listTeamsForUser(userId: string): Promise<{ id: string; name: string }[]>
+  // The teams a given user belongs to (name-sorted), each with the reports
+  // attached to that team's repos — for that user's own sidebar Teams section.
+  // Any user; only their own memberships.
+  listTeamsForUser(userId: string): Promise<UserTeam[]>
+  // Whether `userId` may read `reportId`: true iff the report's repo belongs to
+  // a team the user is a member of. Backs the team-scoped report view endpoint.
+  userCanReadReport(userId: string, reportId: string): Promise<boolean>
   setTeamRepo(teamId: string, repoId: number, path: string | null): Promise<void>
   removeTeamRepo(teamId: string, repoId: number): Promise<boolean>
   setTeamMember(teamId: string, userId: string, perms: TeamUserPermissions): Promise<void>
@@ -528,6 +545,23 @@ function prepareStatements(db: DatabaseSync) {
       `SELECT t.id AS id, t.name AS name
          FROM team_user tu JOIN managed_team t ON t.id = tu.team_id
         WHERE tu.user_id = ? ORDER BY t.name ASC`,
+    ),
+    // Reports attached to the repos of the user's teams, tagged by team (a report
+    // shows under every team whose repo it's attached to). Newest first.
+    selectUserTeamReportsStmt: db.prepare(
+      `SELECT tr.team_id AS teamId, r.id AS id, r.filename AS filename
+         FROM team_user tu
+         JOIN team_repo tr ON tr.team_id = tu.team_id
+         JOIN managed_report r ON r.repo_id = tr.repo_id
+        WHERE tu.user_id = ?
+        ORDER BY r.uploaded_at DESC, r.filename ASC`,
+    ),
+    // A report is readable by a user iff its repo is in one of that user's teams.
+    selectReportReadableStmt: db.prepare(
+      `SELECT 1 FROM managed_report r
+         JOIN team_repo tr ON tr.repo_id = r.repo_id
+         JOIN team_user tu ON tu.team_id = tr.team_id
+        WHERE r.id = ? AND tu.user_id = ? LIMIT 1`,
     ),
     selectUserOptionsStmt: db.prepare(`SELECT id, login FROM managed_user ORDER BY login ASC`),
     selectTeamReposStmt: db.prepare(
@@ -707,9 +741,9 @@ type TeamMemberRow = { teamId: string; userId: string; login: string; viewDepend
 function teamMethods(stmts: ReturnType<typeof prepareStatements>) {
   const {
     insertTeamStmt, selectTeamByNameStmt, renameTeamStmt, deleteTeamStmt, selectTeamStmt,
-    selectTeamsStmt, selectTeamsForUserStmt, selectUserOptionsStmt, selectTeamReposStmt,
-    selectTeamMembersStmt, upsertTeamRepoStmt, deleteTeamRepoStmt, upsertTeamMemberStmt,
-    deleteTeamMemberStmt,
+    selectTeamsStmt, selectTeamsForUserStmt, selectUserTeamReportsStmt, selectReportReadableStmt,
+    selectUserOptionsStmt, selectTeamReposStmt, selectTeamMembersStmt, upsertTeamRepoStmt,
+    deleteTeamRepoStmt, upsertTeamMemberStmt, deleteTeamMemberStmt,
   } = stmts
   return {
     createTeam(id: string, name: string, now: number): Promise<boolean> {
@@ -735,8 +769,18 @@ function teamMethods(stmts: ReturnType<typeof prepareStatements>) {
     listUserOptions(): Promise<UserOption[]> {
       return Promise.resolve((selectUserOptionsStmt.all() as UserOption[]).map((u) => ({ id: u.id, login: u.login })))
     },
-    listTeamsForUser(userId: string): Promise<{ id: string; name: string }[]> {
-      return Promise.resolve(selectTeamsForUserStmt.all(userId) as { id: string; name: string }[])
+    listTeamsForUser(userId: string): Promise<UserTeam[]> {
+      const teams = selectTeamsForUserStmt.all(userId) as { id: string; name: string }[]
+      const reportsByTeam = new Map<string, UserTeamReport[]>()
+      for (const r of selectUserTeamReportsStmt.all(userId) as { teamId: string; id: string; filename: string }[]) {
+        const list = reportsByTeam.get(r.teamId) ?? []
+        list.push({ id: r.id, filename: r.filename })
+        reportsByTeam.set(r.teamId, list)
+      }
+      return Promise.resolve(teams.map((t) => ({ id: t.id, name: t.name, reports: reportsByTeam.get(t.id) ?? [] })))
+    },
+    userCanReadReport(userId: string, reportId: string): Promise<boolean> {
+      return Promise.resolve(selectReportReadableStmt.get(reportId, userId) != null)
     },
     listTeams(): Promise<AdminTeam[]> {
       const teams = selectTeamsStmt.all() as TeamRow[]

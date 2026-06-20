@@ -1085,6 +1085,66 @@ test('GET /api/teams + db.listTeamsForUser: a user sees only their own teams', a
   await db.close()
 })
 
+test('team reports: attached reports surface in /api/teams; /api/reports/<id> is team-gated', async () => {
+  const db = openSqliteManagedDb(':memory:')
+  const now = Date.now()
+  const aliceSess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
+  const bobSess = await createSession(config, db, { githubUserId: 2, login: 'bob', name: null, avatarUrl: null }, now + 1000)
+  const alice = (await readSession(config, db, cookiePair(aliceSess.setCookie), now)).user
+  const bob = (await readSession(config, db, cookiePair(bobSess.setCookie), now)).user
+  // repo 7 selected; team Blue holds repo 7 with alice as member; report attached to 7.
+  await db.selectRepo({ repoId: 7, fullName: 'o/r', private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: alice.id }, now)
+  const team = randomUUID()
+  await db.createTeam(team, 'Blue', now)
+  await db.setTeamRepo(team, 7, null)
+  await db.setTeamMember(team, alice.id, { dependencies: false, security: false })
+  const reportId = randomUUID()
+  await db.insertReport({ id: reportId, filename: 'scan.json', contentType: 'application/json', byteSize: 5, sha256: 'x', uploadedBy: alice.id, repoId: 7, bundleId: null, bundleIntegrity: null }, now)
+  // An unattached report (repoId null) must NOT surface under any team.
+  await db.insertReport({ id: randomUUID(), filename: 'loose.json', contentType: 'application/json', byteSize: 2, sha256: 'y', uploadedBy: alice.id, repoId: null, bundleId: null, bundleIntegrity: null }, now)
+
+  // db: alice's team carries the attached report; bob is in no team.
+  const aliceTeams = await db.listTeamsForUser(alice.id)
+  assert.deepEqual(aliceTeams.map((t) => t.name), ['Blue'])
+  assert.deepEqual(aliceTeams[0].reports.map((r) => r.filename), ['scan.json']) // only the attached one
+  assert.deepEqual(await db.listTeamsForUser(bob.id), [])
+  assert.equal(await db.userCanReadReport(alice.id, reportId), true)
+  assert.equal(await db.userCanReadReport(bob.id, reportId), false)
+
+  // endpoint: alice views the bytes (text/plain + nosniff), bob 404s, unauth 401.
+  const reportStore = fakeBlobStore()
+  await reportStore.put(reportId, Buffer.from('{"findings":[]}'))
+  let pending = Promise.resolve()
+  const handler = createManagedRequestHandler({
+    config, db, avatarStore: fakeAvatarStore(), reportStore, bundleStore: fakeBlobStore(),
+    originGate: { trustProxy: false, isOriginAllowed: () => true },
+    isShuttingDown: () => false, track: (p) => { pending = p },
+  })
+  function mockRes() {
+    return {
+      statusCode: 0, headers: {}, body: '', ended: false,
+      writeHead(c, h) { this.statusCode = c; if (h) this.headers = h; return this },
+      end(b) { if (b != null) this.body += b; this.ended = true; return this },
+      get headersSent() { return this.ended },
+    }
+  }
+  async function get(cookie, id) {
+    const res = mockRes()
+    handler({ method: 'GET', url: `/api/reports/${id}`, headers: cookie ? { cookie } : {} }, res)
+    await pending
+    return res
+  }
+  assert.equal((await get(null, reportId)).statusCode, 401) // unauthenticated
+  assert.equal((await get(cookiePair(bobSess.setCookie), reportId)).statusCode, 404) // not in the team
+  const ok = await get(cookiePair(aliceSess.setCookie), reportId)
+  assert.equal(ok.statusCode, 200)
+  assert.equal(ok.body, '{"findings":[]}')
+  assert.equal(ok.headers['content-type'], 'text/plain; charset=utf-8')
+  assert.equal(ok.headers['x-content-type-options'], 'nosniff')
+  assert.equal((await get(cookiePair(aliceSess.setCookie), randomUUID())).statusCode, 404) // unknown id
+  await db.close()
+})
+
 test('teams API: admin|manage gating, create (409 dup), repo/member links + perms, CSRF', async () => {
   const db = openSqliteManagedDb(':memory:')
   const now = Date.now()

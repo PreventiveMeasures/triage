@@ -126,9 +126,10 @@ export interface State {
   // The logged-in managed user (null when logged out / e2e / standalone),
   // populated by the managed session probe (client/managed/session.js).
   managedSession: { id: string; login: string; name: string | null; avatarUrl: string | null; role: string; csrfToken: string | null } | null
-  // The managed user's team memberships, shown in the sidebar above Workspaces.
-  // Populated alongside the session probe; empty when logged out / e2e.
-  managedTeams: { id: string; name: string }[]
+  // The managed user's teams (each with the reports attached to the team's
+  // repos), shown in the sidebar above Workspaces. Populated alongside the
+  // session probe; empty when logged out / e2e.
+  managedTeams: { id: string; name: string; reports: { id: string; filename: string }[] }[]
 }
 
 // Hoisted so the `state` object literal below can call it during its

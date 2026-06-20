@@ -28,6 +28,10 @@ export async function probeTeams() {
   return (await loadManagedOnce()).probeTeams()
 }
 
+export async function fetchReport(id) {
+  return (await loadManagedOnce()).fetchReport(id)
+}
+
 export async function login(loginPath) {
   return (await loadManagedOnce()).login(loginPath)
 }

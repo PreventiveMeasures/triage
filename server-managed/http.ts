@@ -7,7 +7,8 @@
 //   GET  /api/oauth/github/login → 302 to GitHub (+ state cookie)
 //   GET  /api/oauth/github/callback → the OAuth hook (see github-oauth.ts)
 //   GET  /api/auth/session       → { user, csrfToken } | 401
-//   GET  /api/teams              → the current user's team memberships | 401
+//   GET  /api/teams              → the current user's teams + their reports | 401
+//   GET  /api/reports/<id>       → view a report reachable via team membership | 401/404
 //   GET  /api/avatar/<id>        → cached avatar bytes by user id | 401/404
 //   GET  /api/admin/users        → admin-only user list | 401/403
 //   POST /api/admin/set-role     → admin sets another user's role | 401/403/404
@@ -60,6 +61,7 @@ const ADMIN_BUNDLES_PATH = '/api/admin/bundles'
 const BUNDLE_SET_REPO_PATH = '/api/admin/bundles/set-repo'
 const BUNDLE_PREFIX = '/api/admin/bundles/'
 const MY_TEAMS_PATH = '/api/teams'
+const MY_REPORT_PREFIX = '/api/reports/'
 const ADMIN_TEAMS_PATH = '/api/admin/teams'
 const TEAM_DELETE_PATH = '/api/admin/teams/delete'
 const TEAM_RENAME_PATH = '/api/admin/teams/rename'
@@ -571,13 +573,34 @@ function normalizeTeamPath(raw: unknown): { ok: true; path: string | null } | { 
   return { ok: true, path: path === '' ? null : path }
 }
 
-// GET /api/teams — the CURRENT user's team memberships (id + name), for the
-// sidebar's per-user Teams section. Any authenticated user (not just
-// admin|manage), and a user only ever sees the teams they belong to.
+// GET /api/teams — the CURRENT user's teams, each with the reports attached to
+// the team's repos, for the sidebar's per-user Teams section. Any authenticated
+// user (not just admin|manage); a user only ever sees their own teams.
 async function handleMyTeams(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   const s = await readSession(deps.config, deps.db, cookie, Date.now())
   if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
   sendJson(res, 200, { teams: await deps.db.listTeamsForUser(s.user.id) })
+}
+
+// GET /api/reports/<id> — view a report a team member can reach (its repo is in
+// one of the user's teams). Any authenticated user; NOT gated to admin|manage.
+// Serves the raw content as text/plain (+ nosniff) for in-app rendering — the
+// client renders it without caching to OPFS. 404 covers both "no such report"
+// and "not reachable" (so team membership isn't probeable); 503 = row without
+// bytes (store desync).
+async function handleViewReport(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string): Promise<void> {
+  const s = await readSession(deps.config, deps.db, cookie, Date.now())
+  if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
+  if (!(await deps.db.userCanReadReport(s.user.id, id))) { sendJson(res, 404, { error: 'no-report' }); return }
+  const bytes = await deps.reportStore.get(id)
+  if (bytes == null) { sendJson(res, 503, { error: 'unavailable' }); return }
+  res.writeHead(200, {
+    'content-type': 'text/plain; charset=utf-8',
+    'content-length': String(bytes.length),
+    'x-content-type-options': 'nosniff',
+    'cache-control': 'no-store',
+  })
+  res.end(bytes)
 }
 
 // GET /api/admin/teams — every team (members + repos inlined) plus the pickers
@@ -803,6 +826,12 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (method === 'GET') { await handleGetBundle(res, deps, cookie, id); return }
       if (method === 'DELETE') { await handleDeleteBundle(req, res, deps, cookie, id); return }
       send405(res, 'GET, DELETE'); return
+    }
+    // Team-scoped report view (any authenticated user who's in a team holding
+    // the report's repo). Distinct prefix from /api/admin/reports/.
+    if (path.startsWith(MY_REPORT_PREFIX)) {
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      await handleViewReport(res, deps, cookie, path.slice(MY_REPORT_PREFIX.length)); return
     }
     // The signed-in user's own team memberships (any authenticated user).
     if (path === MY_TEAMS_PATH) {

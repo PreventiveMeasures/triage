@@ -3,7 +3,7 @@ import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { CONFIG_PATH, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, getCount, getPackagesIndex, getRepositoriesIndex, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, parseServerInfo, readCachedServerInfo, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, state, writeCachedServerInfo } from '#client/index.js'
 import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, setSyncForceDisabled, triageSync } from './client-sync.js'
-import { login as managedLogin, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams } from './client-managed.js'
+import { fetchReport as fetchManagedReport, login as managedLogin, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams } from './client-managed.js'
 import { loadAdminBundlesBundle, loadAdminReportsBundle, loadAdminReposBundle, loadAdminTeamsBundle, loadAdminUsersBundle } from './client-admin.js'
 import sidebarCSS from './sidebar.css'
 import fileIconCSS from '../styles/file-icon.css'
@@ -199,7 +199,29 @@ function teamsSectionTemplate() {
   if (teams.length === 0) return nothing
   return html`
     ${groupHeaderTemplate('Teams')}
-    ${repeat(teams, (t) => t.id, (t) => html`<li class="file-item team-item"><span class="team-name">${TEAM_ICON}<span class="team-label">${t.name}</span></span></li>`)}`
+    ${repeat(teams, (t) => t.id, (t) => html`
+      <li class="file-item team-item"><span class="team-name">${TEAM_ICON}<span class="team-label">${t.name}</span></span></li>
+      ${repeat(Array.isArray(t.reports) ? t.reports : [], (r) => r.id, (r) => teamReportTemplate(r))}`)}`
+}
+
+// A clickable report row under its team (managed mode). Reuses the indented
+// file-row chrome but carries no `data-file`, so the file-click delegate ignores
+// it — opening is handled by its own @click, which renders the report from the
+// server WITHOUT caching it to OPFS.
+function teamReportTemplate(r) {
+  return html`<li class="file-item indented team-report-item">
+    <button type="button" class="file-name" data-tooltip=${r.filename} @click=${() => void openTeamReport(r)}>
+      ${unsafeHTML(FILE_ICONS.default)}<span class="file-label">${r.filename}</span>
+    </button>
+  </li>`
+}
+
+// Fetch a managed team report's content and render it in place via switchToFile
+// (which, given content, reads/writes no OPFS — the report is never cached).
+async function openTeamReport(r) {
+  const content = await fetchManagedReport(r.id)
+  if (content == null) { console.warn('managed: could not load team report', r.id); return }
+  await switchToFile(r.filename, content)
 }
 
 // Packages + Repositories navigation buttons live as

@@ -33,17 +33,37 @@ export async function probeSession() {
   }
 }
 
-// GET /api/teams → the signed-in user's team memberships ([{ id, name }]), or
-// [] when unauthenticated / on any failure. Kept on `state.managedTeams` and
-// shown in the sidebar's per-user Teams section (above Workspaces). Never
-// throws, so a probe failure can't break the session refresh.
+// GET /api/teams → the signed-in user's teams, each with the reports attached to
+// the team's repos ([{ id, name, reports: [{ id, filename }] }]), or [] when
+// unauthenticated / on any failure. Kept on `state.managedTeams` and shown in the
+// sidebar's per-user Teams section. Never throws, so a probe failure can't break
+// the session refresh.
 export async function probeTeams() {
   const body = await getJson('/api/teams')
   const teams = body?.teams
   if (!Array.isArray(teams)) return []
   return teams
     .filter((t) => t != null && typeof t.id === 'string' && typeof t.name === 'string')
-    .map((t) => ({ id: t.id, name: t.name }))
+    .map((t) => ({
+      id: t.id,
+      name: t.name,
+      reports: Array.isArray(t.reports)
+        ? t.reports
+          .filter((r) => r != null && typeof r.id === 'string' && typeof r.filename === 'string')
+          .map((r) => ({ id: r.id, filename: r.filename }))
+        : [],
+    }))
+}
+
+// GET /api/reports/<id> → a team report's raw text content for in-app viewing.
+// The caller renders it WITHOUT caching to OPFS. null on failure / no access.
+export async function fetchReport(id) {
+  let res
+  try {
+    res = await fetch(`/api/reports/${encodeURIComponent(id)}`, { credentials: 'same-origin' })
+  } catch { return null }
+  if (!res.ok) return null
+  try { return await res.text() } catch { return null }
 }
 
 // Hand off to the server's OAuth entry — a top-level navigation to GitHub and
