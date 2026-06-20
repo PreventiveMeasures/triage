@@ -226,6 +226,13 @@ async function uploadReportToWorkspaces(name, workspaces) {
 }
 
 export async function addFiles(files) {
+  // On a managed server the local (OPFS / "local storage") ingest path is
+  // disabled: uploads belong server-side, via the admin "Manage reports" /
+  // "Manage bundles" pages. So a drop / file-pick anywhere in the app chrome
+  // here must NOT write to disk — bail before any of the pipeline runs. This is
+  // the single choke point for every entry (document drop, the empty-screen
+  // drop-zone, and the file picker).
+  if (state.serverMode === 'managed') return
   // First-import nudge: ask once whether to enable passkey encryption
   // before this drop's files hit disk, so an accepted enable seals the
   // very first write rather than landing plaintext then re-writing the

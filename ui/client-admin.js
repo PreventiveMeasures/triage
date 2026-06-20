@@ -401,6 +401,7 @@ function installFileDropZone(host, onFiles, onState) {
   const onDrop = (e) => {
     if (!hasFiles(e)) return
     e.preventDefault()
+    e.stopPropagation() // this page owns the drop — don't let the app's global drop handler also see it
     depth = 0
     onState(false)
     onFiles([...e.dataTransfer.files])
