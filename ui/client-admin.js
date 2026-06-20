@@ -387,6 +387,36 @@ function pickFiles(onFiles, multiple = true) {
   input.click()
 }
 
+// Wire file drag&drop onto a host element: `onFiles(File[])` fires on drop, and
+// `onState(active)` toggles as a file drag enters / leaves (drives the drop
+// overlay). Enter/leave are tracked with a depth counter so moving over child
+// nodes doesn't flicker the overlay, and only drags that actually carry files
+// are handled (so dragging text / a link is ignored). Returns a teardown.
+function installFileDropZone(host, onFiles, onState) {
+  let depth = 0
+  const hasFiles = (e) => Array.from(e.dataTransfer?.types ?? []).includes('Files')
+  const onEnter = (e) => { if (!hasFiles(e)) return; e.preventDefault(); depth += 1; onState(true) }
+  const onOver = (e) => { if (hasFiles(e)) e.preventDefault() } // preventDefault marks us a drop target
+  const onLeave = (e) => { if (!hasFiles(e)) return; depth = Math.max(0, depth - 1); if (depth === 0) onState(false) }
+  const onDrop = (e) => {
+    if (!hasFiles(e)) return
+    e.preventDefault()
+    depth = 0
+    onState(false)
+    onFiles([...e.dataTransfer.files])
+  }
+  host.addEventListener('dragenter', onEnter)
+  host.addEventListener('dragover', onOver)
+  host.addEventListener('dragleave', onLeave)
+  host.addEventListener('drop', onDrop)
+  return () => {
+    host.removeEventListener('dragenter', onEnter)
+    host.removeEventListener('dragover', onOver)
+    host.removeEventListener('dragleave', onLeave)
+    host.removeEventListener('drop', onDrop)
+  }
+}
+
 // Document glyph (file-with-lines), tinted via currentColor.
 const REPORT_ICON = html`<svg class="report-icon" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">
   <path d="M2 1.75C2 .784 2.784 0 3.75 0h6.586c.464 0 .909.184 1.237.513l2.914 2.914c.329.328.513.773.513 1.237v9.586A1.75 1.75 0 0 1 13.25 16h-9.5A1.75 1.75 0 0 1 2 14.25Zm1.75-.25a.25.25 0 0 0-.25.25v12.5c0 .138.112.25.25.25h9.5a.25.25 0 0 0 .25-.25V6h-2.75A1.75 1.75 0 0 1 10 4.25V1.5Zm7.75.689V4.25c0 .138.112.25.25.25h2.061ZM4.5 8.75A.75.75 0 0 1 5.25 8h5.5a.75.75 0 0 1 0 1.5h-5.5A.75.75 0 0 1 4.5 8.75Zm0 2.5a.75.75 0 0 1 .75-.75h5.5a.75.75 0 0 1 0 1.5h-5.5a.75.75 0 0 1-.75-.75Z"/>
@@ -402,11 +432,18 @@ class ManagedAdminReports extends LitElement {
     _data: { state: true },
     _error: { state: true },
     _busy: { state: true },
+    _dragOver: { state: true },
   }
 
   static styles = css`
-    :host { display: block; padding: 1.5rem clamp(1rem, 4vw, 2.5rem); color: var(--text); }
+    :host { display: block; position: relative; padding: 1.5rem clamp(1rem, 4vw, 2.5rem); color: var(--text); }
     .wrap { max-width: 48rem; margin: 0 auto; }
+    .dropzone {
+      position: absolute; inset: .6rem; z-index: 5; display: grid; place-items: center;
+      border: 2px dashed var(--accent); border-radius: 10px;
+      background: rgb(from var(--bg) r g b / .9); color: var(--accent);
+      font-size: 1rem; font-weight: 600; pointer-events: none;
+    }
     .head { display: flex; align-items: center; gap: 1rem; margin: 0 0 .75rem; }
     h1 { font-size: 1.15rem; font-weight: 600; margin: 0; user-select: none; }
     .upload {
@@ -449,11 +486,20 @@ class ManagedAdminReports extends LitElement {
     this._csrf = null
     this._busy = false
     this._repoId = '' // '' = no repo link; otherwise a selected repo id
+    this._dragOver = false
+    this._teardownDrop = null
+    this._queue = [] // files awaiting upload; a drop during an in-flight upload joins it
   }
 
   connectedCallback() {
     super.connectedCallback()
     void this._load()
+    this._teardownDrop = installFileDropZone(this, (files) => void this._upload(files), (active) => { this._dragOver = active })
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback()
+    this._teardownDrop?.()
   }
 
   async _load() {
@@ -469,7 +515,9 @@ class ManagedAdminReports extends LitElement {
   }
 
   render() {
-    return html`<div class="wrap">
+    return html`
+      ${this._dragOver ? html`<div class="dropzone">Drop reports to upload</div>` : nothing}
+      <div class="wrap">
       <div class="head">
         <h1>Reports</h1>
         ${repoPickerTemplate(this._data?.repos, this._repoId, (v) => { this._repoId = v })}
@@ -486,8 +534,8 @@ class ManagedAdminReports extends LitElement {
     if (this._data == null) return html`<p class="msg">Loading…</p>`
     const reports = Array.isArray(this._data.reports) ? this._data.reports : []
     if (reports.length === 0) {
-      return html`<p class="msg">No reports uploaded yet. Use “Upload report” to add a findings report
-        (JSON, markdown, or CSV) for the server to operate on.</p>`
+      return html`<p class="msg">No reports uploaded yet. Drag &amp; drop files here, or use “Upload report”,
+        to add a findings report (JSON, markdown, or CSV) for the server to operate on.</p>`
     }
     return html`<p class="hint">Reports stored on the server.</p>
       <ul class="reports">${reports.map((r) => this._row(r))}</ul>`
@@ -516,13 +564,19 @@ class ManagedAdminReports extends LitElement {
   }
 
   async _upload(files) {
-    if (files.length === 0 || this._busy) return
+    if (files.length === 0) return
+    this._queue.push(...files) // queue first so a drop mid-upload isn't silently lost
+    if (this._busy) return // the running drain will pick these up
     this._busy = true
     this._error = null
     try {
-      const repoId = this._repoId === '' ? null : this._repoId
-      for (const file of files) await uploadReport(file, this._csrf, repoId)
+      while (this._queue.length > 0) {
+        const file = this._queue.shift()
+        const repoId = this._repoId === '' ? null : this._repoId
+        await uploadReport(file, this._csrf, repoId)
+      }
     } catch (err) {
+      this._queue = [] // fail-fast: drop the rest of the batch (matches the old behaviour)
       this._error = `Upload failed: ${String(err?.message ?? err)}`
     } finally {
       this._busy = false
@@ -581,11 +635,18 @@ class ManagedAdminBundles extends LitElement {
     _data: { state: true },
     _error: { state: true },
     _busy: { state: true },
+    _dragOver: { state: true },
   }
 
   static styles = css`
-    :host { display: block; padding: 1.5rem clamp(1rem, 4vw, 2.5rem); color: var(--text); }
+    :host { display: block; position: relative; padding: 1.5rem clamp(1rem, 4vw, 2.5rem); color: var(--text); }
     .wrap { max-width: 48rem; margin: 0 auto; }
+    .dropzone {
+      position: absolute; inset: .6rem; z-index: 5; display: grid; place-items: center;
+      border: 2px dashed var(--accent); border-radius: 10px;
+      background: rgb(from var(--bg) r g b / .9); color: var(--accent);
+      font-size: 1rem; font-weight: 600; pointer-events: none;
+    }
     .head { display: flex; align-items: center; gap: 1rem; margin: 0 0 .75rem; }
     h1 { font-size: 1.15rem; font-weight: 600; margin: 0; user-select: none; }
     .upload {
@@ -634,11 +695,20 @@ class ManagedAdminBundles extends LitElement {
     this._csrf = null
     this._busy = false
     this._repoId = ''
+    this._dragOver = false
+    this._teardownDrop = null
+    this._queue = [] // files awaiting upload; a drop during an in-flight upload joins it
   }
 
   connectedCallback() {
     super.connectedCallback()
     void this._load()
+    this._teardownDrop = installFileDropZone(this, (files) => void this._upload(files), (active) => { this._dragOver = active })
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback()
+    this._teardownDrop?.()
   }
 
   async _load() {
@@ -654,7 +724,9 @@ class ManagedAdminBundles extends LitElement {
   }
 
   render() {
-    return html`<div class="wrap">
+    return html`
+      ${this._dragOver ? html`<div class="dropzone">Drop bundles to upload</div>` : nothing}
+      <div class="wrap">
       <div class="head">
         <h1>Bundles</h1>
         ${repoPickerTemplate(this._data?.repos, this._repoId, (v) => { this._repoId = v })}
@@ -671,8 +743,8 @@ class ManagedAdminBundles extends LitElement {
     if (this._data == null) return html`<p class="msg">Loading…</p>`
     const bundles = Array.isArray(this._data.bundles) ? this._data.bundles : []
     if (bundles.length === 0) {
-      return html`<p class="msg">No bundles uploaded yet. Use “Upload bundle” to add a sourcemap or
-        stasis archive for the server to operate on; reports auto-link by content hash.</p>`
+      return html`<p class="msg">No bundles uploaded yet. Drag &amp; drop files here, or use “Upload bundle”,
+        to add a sourcemap or stasis archive for the server to operate on; reports auto-link by content hash.</p>`
     }
     return html`<p class="hint">Bundles stored on the server.</p>
       <ul class="reports">${bundles.map((b) => this._row(b))}</ul>`
@@ -698,13 +770,19 @@ class ManagedAdminBundles extends LitElement {
   }
 
   async _upload(files) {
-    if (files.length === 0 || this._busy) return
+    if (files.length === 0) return
+    this._queue.push(...files) // queue first so a drop mid-upload isn't silently lost
+    if (this._busy) return // the running drain will pick these up
     this._busy = true
     this._error = null
     try {
-      const repoId = this._repoId === '' ? null : this._repoId
-      for (const file of files) await uploadBundle(file, this._csrf, repoId)
+      while (this._queue.length > 0) {
+        const file = this._queue.shift()
+        const repoId = this._repoId === '' ? null : this._repoId
+        await uploadBundle(file, this._csrf, repoId)
+      }
     } catch (err) {
+      this._queue = [] // fail-fast: drop the rest of the batch (matches the old behaviour)
       this._error = `Upload failed: ${String(err?.message ?? err)}`
     } finally {
       this._busy = false
