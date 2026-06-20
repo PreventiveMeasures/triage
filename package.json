@@ -93,6 +93,7 @@
     "server-managed/session.ts",
     "common/managed/roles.ts",
     "common/managed/permissions.ts",
+    "common/managed/report-filter.ts",
     "common/save-error-reason.ts",
     "common/server-info.ts",
     "common/utf8.d.ts",

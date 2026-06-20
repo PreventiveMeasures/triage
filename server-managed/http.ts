@@ -42,6 +42,7 @@ import type { ManagedDb, ManagedSession, StoredUser } from './db.ts'
 import type { OriginGate } from '../server-common/origin.ts'
 import { isRole, roleAtLeast } from '../common/managed/roles.ts'
 import { VISIBILITY_PERMISSIONS, parseTeamUserPermissions } from '../common/managed/permissions.ts'
+import { filterReportContent } from '../common/managed/report-filter.ts'
 import { CONFIG_PATH } from '../common/server-info.ts'
 import { collectRepos, installUrl } from './github-app.ts'
 import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, ensureUserAccessToken, handleCallback } from './github-oauth.ts'
@@ -609,13 +610,26 @@ async function handleViewReport(res: ServerResponse, deps: ManagedHttpDeps, cook
   if (!(await canViewReport(deps, s.user, id))) { sendJson(res, 404, { error: 'no-report' }); return }
   const bytes = await deps.reportStore.get(id)
   if (bytes == null) { sendJson(res, 503, { error: 'unavailable' }); return }
+  const out = await viewerReportBytes(deps, s.user, id, bytes)
   res.writeHead(200, {
     'content-type': 'text/plain; charset=utf-8',
-    'content-length': String(bytes.length),
+    'content-length': String(out.length),
     'x-content-type-options': 'nosniff',
     'cache-control': 'no-store',
   })
-  res.end(bytes)
+  res.end(out)
+}
+
+// Apply the viewer's visibility-permission filter to a report's bytes. Admin and
+// manage roles see the report whole; everyone else (triage / view — 'none' can't
+// reach here) has dependency / security findings they lack permission for
+// stripped server-side, per their team memberships. Unchanged → original bytes.
+async function viewerReportBytes(deps: ManagedHttpDeps, user: StoredUser, reportId: string, bytes: Buffer): Promise<Buffer> {
+  if (user.role === 'admin' || user.role === 'manage') return bytes
+  const perms = await deps.db.reportPermissionsFor(user.id, reportId)
+  const text = bytes.toString('utf8')
+  const filtered = filterReportContent(text, perms)
+  return filtered === text ? bytes : Buffer.from(filtered, 'utf8')
 }
 
 // GET /api/admin/teams — every team (members + repos inlined) plus the pickers

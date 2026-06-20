@@ -13,6 +13,7 @@ import { createSession, endSession, readSession } from '../server-managed/sessio
 import { OAuthError, buildLoginRedirect, ensureUserAccessToken, handleCallback, refreshUserToken } from '../server-managed/github-oauth.ts'
 import { appJwt, collectRepos, githubAppConfigured, installUrl, listInstalledRepos, listUserRepos, mergeRepos, repoAccessToken } from '../server-managed/github-app.ts'
 import { bundleIntegrity } from '../server-managed/bundle.ts'
+import { filterReportContent } from '../common/managed/report-filter.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 
 const config = {
@@ -1159,6 +1160,95 @@ test('team reports: read iff admin, OR (>=view role AND in a team holding the re
   const teamsOf = async (sess) => JSON.parse((await req('/api/teams', cookiePair(sess.setCookie))).body).teams
   assert.deepEqual((await teamsOf(viewerSess)).map((t) => [t.name, t.reports.map((r) => r.filename)]), [['Blue', ['scan.json']]])
   assert.deepEqual((await teamsOf(nonerSess)).map((t) => [t.name, t.reports.length]), [['Blue', 0]])
+  await db.close()
+})
+
+test('filterReportContent: strips dependency + security findings per the viewer permissions', () => {
+  const report = JSON.stringify({
+    source: 'native',
+    findings: [
+      { id: 'own', file: 'src/a.js', type: 'correctness' },
+      { id: 'dep', file: 'node_modules/lodash/x.js', type: 'correctness' },
+      { id: 'secAnalyzer', file: 'src/b.js', analyzer: 'codex-security' },
+      // a dedup group: the primary is correctness, but a duplicate is stamped security.
+      [{ id: 'secDup', file: 'src/c.js', type: 'correctness' }, { id: 'secDupB', file: 'src/c.js', security: true }],
+      { id: 'secFlag', file: 'src/d.js', security: true },
+    ],
+  })
+  const ids = (s) => JSON.parse(s).findings.map((e) => (Array.isArray(e) ? e[0].id : e.id))
+
+  assert.deepEqual(ids(filterReportContent(report, { dependencies: true, security: true })), ['own', 'dep', 'secAnalyzer', 'secDup', 'secFlag'])
+  assert.deepEqual(ids(filterReportContent(report, { dependencies: false, security: true })), ['own', 'secAnalyzer', 'secDup', 'secFlag']) // dep dropped
+  assert.deepEqual(ids(filterReportContent(report, { dependencies: true, security: false })), ['own', 'dep']) // analyzer/dup/flag security dropped
+  assert.deepEqual(ids(filterReportContent(report, { dependencies: false, security: false })), ['own'])
+})
+
+test('filterReportContent: report-level security source, non-JSON + no-strip passthrough', () => {
+  // Whole report from a security analyzer (source includes "security") → every
+  // finding is security; a viewer without that permission sees none.
+  const sec = JSON.stringify({ source: 'claude-security', findings: [{ id: 'x', file: 'src/a.js' }, { id: 'y', file: 'src/b.js' }] })
+  assert.deepEqual(JSON.parse(filterReportContent(sec, { dependencies: true, security: false })).findings, [])
+  assert.equal(JSON.parse(filterReportContent(sec, { dependencies: true, security: true })).findings.length, 2)
+  // Non-JSON (markdown) and JSON-without-findings pass through byte-for-byte.
+  const md = '# Findings\n- something'
+  assert.equal(filterReportContent(md, { dependencies: false, security: false }), md)
+  const noFindings = JSON.stringify({ hello: 'world' })
+  assert.equal(filterReportContent(noFindings, { dependencies: false, security: false }), noFindings)
+})
+
+test('GET /api/reports/<id>: server-side content filter by viewer permissions (admin/manage exempt)', async () => {
+  const db = openSqliteManagedDb(':memory:')
+  const now = Date.now()
+  const adminSess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
+  const viewerSess = await createSession(config, db, { githubUserId: 2, login: 'viewer', name: null, avatarUrl: null }, now + 1000)
+  const admin = (await readSession(config, db, cookiePair(adminSess.setCookie), now)).user
+  const viewer = (await readSession(config, db, cookiePair(viewerSess.setCookie), now)).user
+  await db.setUserRole(viewer.id, 'view')
+  await db.selectRepo({ repoId: 7, fullName: 'o/r', private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: admin.id }, now)
+  const team = randomUUID()
+  await db.createTeam(team, 'Blue', now)
+  await db.setTeamRepo(team, 7, null)
+  await db.setTeamMember(team, viewer.id, { dependencies: false, security: true }) // may see security, NOT dependencies
+  const reportId = randomUUID()
+  await db.insertReport({ id: reportId, filename: 'scan.json', contentType: 'application/json', byteSize: 5, sha256: 'x', uploadedBy: admin.id, repoId: 7, bundleId: null, bundleIntegrity: null }, now)
+  const content = JSON.stringify({ source: 'native', findings: [
+    { id: 'own', file: 'src/a.js' },
+    { id: 'dep', file: 'node_modules/x/y.js' },
+    { id: 'sec', file: 'src/b.js', security: true },
+  ] })
+  const reportStore = fakeBlobStore()
+  await reportStore.put(reportId, Buffer.from(content))
+
+  assert.deepEqual(await db.reportPermissionsFor(viewer.id, reportId), { dependencies: false, security: true })
+
+  let pending = Promise.resolve()
+  const handler = createManagedRequestHandler({
+    config, db, avatarStore: fakeAvatarStore(), reportStore, bundleStore: fakeBlobStore(),
+    originGate: { trustProxy: false, isOriginAllowed: () => true },
+    isShuttingDown: () => false, track: (p) => { pending = p },
+  })
+  function mockRes() {
+    return {
+      statusCode: 0, headers: {}, body: '', ended: false,
+      writeHead(c, h) { this.statusCode = c; if (h) this.headers = h; return this },
+      end(b) { if (b != null) this.body += b; this.ended = true; return this },
+      get headersSent() { return this.ended },
+    }
+  }
+  async function view(sess, id) {
+    const res = mockRes()
+    handler({ method: 'GET', url: `/api/reports/${id}`, headers: { cookie: cookiePair(sess.setCookie) } }, res)
+    await pending
+    return res
+  }
+  // admin is exempt → sees the whole report; viewer (deps off) → 'dep' stripped, 'sec' kept.
+  const adminBody = (await view(adminSess, reportId)).body
+  assert.deepEqual(JSON.parse(adminBody).findings.map((f) => f.id), ['own', 'dep', 'sec'])
+  const viewerRes = await view(viewerSess, reportId)
+  assert.equal(viewerRes.statusCode, 200)
+  assert.deepEqual(JSON.parse(viewerRes.body).findings.map((f) => f.id), ['own', 'sec'])
+  // content-length must match the FILTERED body, not the original.
+  assert.equal(Number(viewerRes.headers['content-length']), Buffer.byteLength(viewerRes.body))
   await db.close()
 })
 

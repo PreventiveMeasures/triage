@@ -408,6 +408,10 @@ export interface ManagedDb {
   // Whether `userId` may read `reportId`: true iff the report's repo belongs to
   // a team the user is a member of. Backs the team-scoped report view endpoint.
   userCanReadReport(userId: string, reportId: string): Promise<boolean>
+  // The viewer's effective visibility permissions for a report, OR'd across the
+  // teams (holding the report's repo) the user belongs to — drives the content
+  // filter (a viewer without a permission has those findings stripped).
+  reportPermissionsFor(userId: string, reportId: string): Promise<TeamUserPermissions>
   setTeamRepo(teamId: string, repoId: number, path: string | null): Promise<void>
   removeTeamRepo(teamId: string, repoId: number): Promise<boolean>
   setTeamMember(teamId: string, userId: string, perms: TeamUserPermissions): Promise<void>
@@ -562,6 +566,16 @@ function prepareStatements(db: DatabaseSync) {
          JOIN team_repo tr ON tr.repo_id = r.repo_id
          JOIN team_user tu ON tu.team_id = tr.team_id
         WHERE r.id = ? AND tu.user_id = ? LIMIT 1`,
+    ),
+    // The viewer's effective visibility permissions for a report: OR'd (MAX over
+    // 0/1) across the memberships of teams that hold the report's repo. NULLs
+    // (no such membership) read as 0 = no permission.
+    selectReportPermsStmt: db.prepare(
+      `SELECT MAX(tu.view_dependencies) AS dependencies, MAX(tu.view_security) AS security
+         FROM managed_report r
+         JOIN team_repo tr ON tr.repo_id = r.repo_id
+         JOIN team_user tu ON tu.team_id = tr.team_id AND tu.user_id = ?
+        WHERE r.id = ?`,
     ),
     selectUserOptionsStmt: db.prepare(`SELECT id, login FROM managed_user ORDER BY login ASC`),
     selectTeamReposStmt: db.prepare(
@@ -742,8 +756,8 @@ function teamMethods(stmts: ReturnType<typeof prepareStatements>) {
   const {
     insertTeamStmt, selectTeamByNameStmt, renameTeamStmt, deleteTeamStmt, selectTeamStmt,
     selectTeamsStmt, selectTeamsForUserStmt, selectUserTeamReportsStmt, selectReportReadableStmt,
-    selectUserOptionsStmt, selectTeamReposStmt, selectTeamMembersStmt, upsertTeamRepoStmt,
-    deleteTeamRepoStmt, upsertTeamMemberStmt, deleteTeamMemberStmt,
+    selectReportPermsStmt, selectUserOptionsStmt, selectTeamReposStmt, selectTeamMembersStmt,
+    upsertTeamRepoStmt, deleteTeamRepoStmt, upsertTeamMemberStmt, deleteTeamMemberStmt,
   } = stmts
   return {
     createTeam(id: string, name: string, now: number): Promise<boolean> {
@@ -781,6 +795,10 @@ function teamMethods(stmts: ReturnType<typeof prepareStatements>) {
     },
     userCanReadReport(userId: string, reportId: string): Promise<boolean> {
       return Promise.resolve(selectReportReadableStmt.get(reportId, userId) != null)
+    },
+    reportPermissionsFor(userId: string, reportId: string): Promise<TeamUserPermissions> {
+      const row = selectReportPermsStmt.get(userId, reportId) as { dependencies: number | null; security: number | null } | undefined
+      return Promise.resolve({ dependencies: row?.dependencies === 1, security: row?.security === 1 })
     },
     listTeams(): Promise<AdminTeam[]> {
       const teams = selectTeamsStmt.all() as TeamRow[]
