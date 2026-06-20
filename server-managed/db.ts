@@ -87,6 +87,9 @@ CREATE TABLE IF NOT EXISTS managed_bundle (
   kind         TEXT,
   byte_size    INTEGER NOT NULL,
   uploaded_by  TEXT REFERENCES managed_user(id) ON DELETE SET NULL,
+  -- Durable snapshot of the uploader's login at upload time, so "who uploaded
+  -- this" survives the uploader being removed (when uploaded_by nulls out).
+  uploaded_by_login TEXT,
   repo_id      INTEGER REFERENCES selected_repo(repo_id) ON DELETE SET NULL,
   uploaded_at  INTEGER NOT NULL
 ) STRICT;
@@ -108,6 +111,8 @@ CREATE TABLE IF NOT EXISTS managed_report (
   byte_size        INTEGER NOT NULL,
   sha256           TEXT NOT NULL,
   uploaded_by      TEXT REFERENCES managed_user(id) ON DELETE SET NULL,
+  -- Durable snapshot of the uploader's login (see managed_bundle).
+  uploaded_by_login TEXT,
   repo_id          INTEGER REFERENCES selected_repo(repo_id) ON DELETE SET NULL,
   bundle_id        TEXT REFERENCES managed_bundle(id) ON DELETE SET NULL,
   bundle_integrity TEXT,
@@ -242,6 +247,7 @@ export interface ReportRecordInput {
   byteSize: number
   sha256: string
   uploadedBy: string | null
+  uploadedByLogin: string | null
   repoId: number | null
   bundleId: string | null
   bundleIntegrity: string | null
@@ -280,8 +286,8 @@ export interface ManagedBundle {
 }
 
 // What the upload handler supplies to record a bundle; the store stamps
-// uploaded_at.
-export type BundleInput = Omit<ManagedBundle, 'uploadedAt'>
+// uploaded_at. `uploadedByLogin` is the durable uploader-login snapshot.
+export type BundleInput = Omit<ManagedBundle, 'uploadedAt'> & { uploadedByLogin: string | null }
 
 // A bundle row for the "Manage bundles" list — adds the uploader login + repo
 // full name display joins (null when absent / since removed).
@@ -483,14 +489,14 @@ function prepareStatements(db: DatabaseSync) {
          FROM selected_repo ORDER BY full_name ASC`,
     ),
     insertReportStmt: db.prepare(
-      `INSERT INTO managed_report (id, filename, content_type, byte_size, sha256, uploaded_by, repo_id, bundle_id, bundle_integrity, uploaded_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO managed_report (id, filename, content_type, byte_size, sha256, uploaded_by, uploaded_by_login, repo_id, bundle_id, bundle_integrity, uploaded_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ),
     // LEFT JOINs so a report whose uploader / repo / bundle was removed (the FK
     // nulled) still lists, with null display fields.
     selectReportsStmt: db.prepare(
       `SELECT r.id AS id, r.filename AS filename, r.content_type AS contentType,
-              r.byte_size AS byteSize, r.sha256 AS sha256, u.login AS uploadedByLogin,
+              r.byte_size AS byteSize, r.sha256 AS sha256, COALESCE(u.login, r.uploaded_by_login) AS uploadedByLogin,
               r.repo_id AS repoId, sr.full_name AS repoFullName,
               r.bundle_id AS bundleId, b.filename AS bundleFilename, r.bundle_integrity AS bundleIntegrity,
               r.uploaded_at AS uploadedAt
@@ -508,8 +514,8 @@ function prepareStatements(db: DatabaseSync) {
     deleteReportStmt: db.prepare(`DELETE FROM managed_report WHERE id = ?`),
     setReportRepoStmt: db.prepare(`UPDATE managed_report SET repo_id = ? WHERE id = ?`),
     insertBundleStmt: db.prepare(
-      `INSERT INTO managed_bundle (id, integrity, filename, kind, byte_size, uploaded_by, repo_id, uploaded_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO managed_bundle (id, integrity, filename, kind, byte_size, uploaded_by, uploaded_by_login, repo_id, uploaded_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ),
     selectBundleByIntegrityStmt: db.prepare(
       `SELECT id, integrity, filename, kind, byte_size AS byteSize,
@@ -523,7 +529,7 @@ function prepareStatements(db: DatabaseSync) {
     ),
     selectBundlesStmt: db.prepare(
       `SELECT b.id AS id, b.integrity AS integrity, b.filename AS filename, b.kind AS kind,
-              b.byte_size AS byteSize, u.login AS uploadedByLogin,
+              b.byte_size AS byteSize, COALESCE(u.login, b.uploaded_by_login) AS uploadedByLogin,
               b.repo_id AS repoId, sr.full_name AS repoFullName, b.uploaded_at AS uploadedAt
          FROM managed_bundle b
          LEFT JOIN managed_user u ON u.id = b.uploaded_by
@@ -654,7 +660,7 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>) {
     insertReport(report: ReportRecordInput, now: number): Promise<void> {
       insertReportStmt.run(
         report.id, report.filename, report.contentType, report.byteSize,
-        report.sha256, report.uploadedBy, report.repoId, report.bundleId,
+        report.sha256, report.uploadedBy, report.uploadedByLogin ?? null, report.repoId, report.bundleId,
         report.bundleIntegrity, now,
       )
       return Promise.resolve()
@@ -712,7 +718,7 @@ function bundleMethods(stmts: ReturnType<typeof prepareStatements>) {
     insertBundle(bundle: BundleInput, now: number): Promise<void> {
       insertBundleStmt.run(
         bundle.id, bundle.integrity, bundle.filename, bundle.kind,
-        bundle.byteSize, bundle.uploadedBy, bundle.repoId, now,
+        bundle.byteSize, bundle.uploadedBy, bundle.uploadedByLogin ?? null, bundle.repoId, now,
       )
       return Promise.resolve()
     },
@@ -837,6 +843,13 @@ function teamMethods(stmts: ReturnType<typeof prepareStatements>) {
   }
 }
 
+// Add `column` to `table` if it's missing (a lightweight migration for DBs that
+// predate the column; `table`/`column` are code constants, never user input).
+function ensureColumn(db: DatabaseSync, table: string, column: string, type: string): void {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
+  if (!cols.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`)
+}
+
 export function openSqliteManagedDb(path: string): ManagedDb {
   mkdirSync(dirname(path), { recursive: true })
   const db = new DatabaseSync(path)
@@ -845,6 +858,10 @@ export function openSqliteManagedDb(path: string): ManagedDb {
     db.exec('PRAGMA synchronous = FULL;')
     db.exec('PRAGMA foreign_keys = ON;')
     db.exec(SQLITE_SCHEMA)
+    // Migrate DBs created before a column existed (CREATE TABLE IF NOT EXISTS
+    // never alters an already-present table). Idempotent — skipped on fresh DBs.
+    ensureColumn(db, 'managed_report', 'uploaded_by_login', 'TEXT')
+    ensureColumn(db, 'managed_bundle', 'uploaded_by_login', 'TEXT')
   } catch (err) {
     try { db.close() } catch {}
     throw err

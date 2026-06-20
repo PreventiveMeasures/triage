@@ -394,7 +394,7 @@ async function handleUploadReport(req: IncomingMessage, res: ServerResponse, dep
   try {
     await deps.db.insertReport({
       id, filename, contentType, byteSize: bytes.length, sha256,
-      uploadedBy: s.user.id, repoId: repo.repoId, bundleId, bundleIntegrity: integrity,
+      uploadedBy: s.user.id, uploadedByLogin: s.user.login, repoId: repo.repoId, bundleId, bundleIntegrity: integrity,
     }, Date.now())
   } catch (err) {
     await deps.reportStore.delete(id).catch(() => {})
@@ -490,7 +490,7 @@ async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, dep
   try {
     await deps.db.insertBundle({
       id, integrity, filename, kind: bundleKind(filename),
-      byteSize: bytes.length, uploadedBy: s.user.id, repoId: repo.repoId,
+      byteSize: bytes.length, uploadedBy: s.user.id, uploadedByLogin: s.user.login, repoId: repo.repoId,
     }, Date.now())
   } catch (err) {
     await deps.bundleStore.delete(id).catch(() => {})

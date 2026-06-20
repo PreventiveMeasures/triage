@@ -659,6 +659,22 @@ test('db: reports — insert records metadata + attribution, list joins login, g
   await db.close()
 })
 
+test('db: uploader login is saved durably — the snapshot survives a removed uploader', async () => {
+  const db = openSqliteManagedDb(':memory:')
+  const now = Date.now()
+  const uid = await db.upsertUser({ githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
+  // Normal upload (uploader present) → the list shows the login.
+  await db.insertReport({ id: randomUUID(), filename: 'r.json', contentType: 'application/json', byteSize: 1, sha256: 'x', uploadedBy: uid, uploadedByLogin: 'alice', repoId: null, bundleId: null, bundleIntegrity: null }, now)
+  // A report whose uploader is already gone (uploaded_by NULL) keeps the durable
+  // login snapshot — "who uploaded it" isn't lost.
+  await db.insertReport({ id: randomUUID(), filename: 'g.json', contentType: 'application/json', byteSize: 1, sha256: 'y', uploadedBy: null, uploadedByLogin: 'ghost', repoId: null, bundleId: null, bundleIntegrity: null }, now)
+  assert.deepEqual((await db.listReports()).map((r) => [r.filename, r.uploadedByLogin]), [['g.json', 'ghost'], ['r.json', 'alice']])
+  // Bundles snapshot the uploader the same way.
+  await db.insertBundle({ id: randomUUID(), integrity: 'sha512-A', filename: 'a.map', kind: 'sourcemap', byteSize: 1, uploadedBy: null, uploadedByLogin: 'ghost', repoId: null }, now)
+  assert.equal((await db.listBundles())[0].uploadedByLogin, 'ghost')
+  await db.close()
+})
+
 test('GET /api/admin/reports: admin|manage only (401 unauth, 403 none, 200 admin|manage)', async () => {
   const db = openSqliteManagedDb(':memory:')
   const now = Date.now()
