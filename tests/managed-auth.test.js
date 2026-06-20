@@ -1090,8 +1090,10 @@ test('team reports: attached reports surface in /api/teams; /api/reports/<id> is
   const now = Date.now()
   const aliceSess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
   const bobSess = await createSession(config, db, { githubUserId: 2, login: 'bob', name: null, avatarUrl: null }, now + 1000)
+  const carolSess = await createSession(config, db, { githubUserId: 3, login: 'carol', name: null, avatarUrl: null }, now + 2000)
   const alice = (await readSession(config, db, cookiePair(aliceSess.setCookie), now)).user
   const bob = (await readSession(config, db, cookiePair(bobSess.setCookie), now)).user
+  const carol = (await readSession(config, db, cookiePair(carolSess.setCookie), now)).user
   // repo 7 selected; team Blue holds repo 7 with alice as member; report attached to 7.
   await db.selectRepo({ repoId: 7, fullName: 'o/r', private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: alice.id }, now)
   const team = randomUUID()
@@ -1102,14 +1104,24 @@ test('team reports: attached reports surface in /api/teams; /api/reports/<id> is
   await db.insertReport({ id: reportId, filename: 'scan.json', contentType: 'application/json', byteSize: 5, sha256: 'x', uploadedBy: alice.id, repoId: 7, bundleId: null, bundleIntegrity: null }, now)
   // An unattached report (repoId null) must NOT surface under any team.
   await db.insertReport({ id: randomUUID(), filename: 'loose.json', contentType: 'application/json', byteSize: 2, sha256: 'y', uploadedBy: alice.id, repoId: null, bundleId: null, bundleIntegrity: null }, now)
+  // carol IS a team member, but of a DIFFERENT team (Green) holding a different
+  // repo (8) — she must NOT be able to read the report attached to repo 7.
+  await db.selectRepo({ repoId: 8, fullName: 'o/other', private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: alice.id }, now)
+  const green = randomUUID()
+  await db.createTeam(green, 'Green', now)
+  await db.setTeamRepo(green, 8, null)
+  await db.setTeamMember(green, carol.id, { dependencies: false, security: false })
 
   // db: alice's team carries the attached report; bob is in no team.
   const aliceTeams = await db.listTeamsForUser(alice.id)
   assert.deepEqual(aliceTeams.map((t) => t.name), ['Blue'])
   assert.deepEqual(aliceTeams[0].reports.map((r) => r.filename), ['scan.json']) // only the attached one
   assert.deepEqual(await db.listTeamsForUser(bob.id), [])
+  // carol's team (Green) lists no reports (repo 8 has none), and she can't read repo 7's report.
+  assert.deepEqual((await db.listTeamsForUser(carol.id)).map((t) => [t.name, t.reports.length]), [['Green', 0]])
   assert.equal(await db.userCanReadReport(alice.id, reportId), true)
-  assert.equal(await db.userCanReadReport(bob.id, reportId), false)
+  assert.equal(await db.userCanReadReport(bob.id, reportId), false) // in no team
+  assert.equal(await db.userCanReadReport(carol.id, reportId), false) // in a team, but not one holding repo 7
 
   // endpoint: alice views the bytes (text/plain + nosniff), bob 404s, unauth 401.
   const reportStore = fakeBlobStore()
@@ -1135,7 +1147,8 @@ test('team reports: attached reports surface in /api/teams; /api/reports/<id> is
     return res
   }
   assert.equal((await get(null, reportId)).statusCode, 401) // unauthenticated
-  assert.equal((await get(cookiePair(bobSess.setCookie), reportId)).statusCode, 404) // not in the team
+  assert.equal((await get(cookiePair(bobSess.setCookie), reportId)).statusCode, 404) // in no team
+  assert.equal((await get(cookiePair(carolSess.setCookie), reportId)).statusCode, 404) // in a team, but not one holding repo 7
   const ok = await get(cookiePair(aliceSess.setCookie), reportId)
   assert.equal(ok.statusCode, 200)
   assert.equal(ok.body, '{"findings":[]}')
