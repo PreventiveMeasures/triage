@@ -126,6 +126,9 @@ export interface State {
   // The logged-in managed user (null when logged out / e2e / standalone),
   // populated by the managed session probe (client/managed/session.js).
   managedSession: { id: string; login: string; name: string | null; avatarUrl: string | null; role: string; csrfToken: string | null } | null
+  // The managed user's team memberships, shown in the sidebar above Workspaces.
+  // Populated alongside the session probe; empty when logged out / e2e.
+  managedTeams: { id: string; name: string }[]
 }
 
 // Hoisted so the `state` object literal below can call it during its
@@ -584,6 +587,8 @@ export const state: State = store<State>({
   // Logged-in managed user, or null (e2e / logged out). Future managed
   // session probe populates this.
   managedSession: null,
+  // The managed user's teams (sidebar Teams section); the session probe fills it.
+  managedTeams: [],
 })
 
 // Cross-tab propagation: a sibling tab's `saveRepoUrlFor` writes

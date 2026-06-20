@@ -24,6 +24,10 @@ export async function probeSession() {
   return (await loadManagedOnce()).probeSession()
 }
 
+export async function probeTeams() {
+  return (await loadManagedOnce()).probeTeams()
+}
+
 export async function login(loginPath) {
   return (await loadManagedOnce()).login(loginPath)
 }

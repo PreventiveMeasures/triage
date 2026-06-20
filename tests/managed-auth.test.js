@@ -965,6 +965,65 @@ test('db: teams — create/list/delete, repo (+path) & member (+perms) links, FK
   await db.close()
 })
 
+test('db: renameTeam — ok, same-name idempotent, name-taken, not-found', async () => {
+  const db = openSqliteManagedDb(':memory:')
+  const now = Date.now()
+  const a = randomUUID(); const b = randomUUID()
+  await db.createTeam(a, 'Alpha', now)
+  await db.createTeam(b, 'Beta', now)
+  assert.equal(await db.renameTeam(a, 'Alpha 2', now), 'ok')
+  assert.equal((await db.getTeam(a)).name, 'Alpha 2')
+  assert.equal(await db.renameTeam(a, 'Alpha 2', now), 'ok') // same name is idempotent
+  assert.equal(await db.renameTeam(a, 'Beta', now), 'name-taken') // taken by b
+  assert.equal((await db.getTeam(a)).name, 'Alpha 2') // unchanged after the clash
+  assert.equal(await db.renameTeam(randomUUID(), 'Gamma', now), 'not-found')
+  await db.close()
+})
+
+test('GET /api/teams + db.listTeamsForUser: a user sees only their own teams', async () => {
+  const db = openSqliteManagedDb(':memory:')
+  const now = Date.now()
+  const aliceSess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
+  const bobSess = await createSession(config, db, { githubUserId: 2, login: 'bob', name: null, avatarUrl: null }, now + 1000)
+  const alice = (await readSession(config, db, cookiePair(aliceSess.setCookie), now)).user
+  const bob = (await readSession(config, db, cookiePair(bobSess.setCookie), now)).user
+  const blue = randomUUID(); const red = randomUUID()
+  await db.createTeam(blue, 'Blue', now)
+  await db.createTeam(red, 'Red', now)
+  await db.setTeamMember(blue, alice.id, { dependencies: false, security: false })
+  await db.setTeamMember(red, alice.id, { dependencies: false, security: false })
+  await db.setTeamMember(blue, bob.id, { dependencies: false, security: false })
+
+  // db: alice in Blue+Red (name-sorted), bob in Blue only.
+  assert.deepEqual((await db.listTeamsForUser(alice.id)).map((t) => t.name), ['Blue', 'Red'])
+  assert.deepEqual((await db.listTeamsForUser(bob.id)).map((t) => t.name), ['Blue'])
+
+  let pending = Promise.resolve()
+  const handler = createManagedRequestHandler({
+    config, db, avatarStore: fakeAvatarStore(), reportStore: fakeBlobStore(), bundleStore: fakeBlobStore(),
+    originGate: { trustProxy: false, isOriginAllowed: () => true },
+    isShuttingDown: () => false, track: (p) => { pending = p },
+  })
+  function mockRes() {
+    return {
+      statusCode: 0, body: '', ended: false,
+      writeHead(c) { this.statusCode = c; return this },
+      end(b) { if (b != null) this.body += b; this.ended = true; return this },
+      get headersSent() { return this.ended },
+    }
+  }
+  async function get(cookie) {
+    const res = mockRes()
+    handler({ method: 'GET', url: '/api/teams', headers: cookie ? { cookie } : {} }, res)
+    await pending
+    return res
+  }
+  assert.equal((await get(null)).statusCode, 401) // unauthenticated
+  // bob is role 'none' but logged in → still sees his own team (Blue only).
+  assert.deepEqual(JSON.parse((await get(cookiePair(bobSess.setCookie))).body).teams.map((t) => t.name), ['Blue'])
+  await db.close()
+})
+
 test('teams API: admin|manage gating, create (409 dup), repo/member links + perms, CSRF', async () => {
   const db = openSqliteManagedDb(':memory:')
   const now = Date.now()
@@ -994,6 +1053,14 @@ test('teams API: admin|manage gating, create (409 dup), repo/member links + perm
   const teamId = JSON.parse(created.body).id
   assert.equal((await upload(T, aCk, csrf, JSON.stringify({ name: 'Blue' }))).statusCode, 409) // dup
 
+  // rename: CSRF + validation, 409 onto another team's name, 404 unknown, 200 ok
+  assert.equal((await upload(T, aCk, csrf, JSON.stringify({ name: 'Crimson' }))).statusCode, 201) // a second team to clash with
+  assert.equal((await upload('/api/admin/teams/rename', aCk, null, JSON.stringify({ teamId, name: 'Z' }))).statusCode, 403) // CSRF missing
+  assert.equal((await upload('/api/admin/teams/rename', aCk, csrf, JSON.stringify({ teamId, name: '   ' }))).statusCode, 400) // blank
+  assert.equal((await upload('/api/admin/teams/rename', aCk, csrf, JSON.stringify({ teamId: 'nope', name: 'Z' }))).statusCode, 404) // no such team
+  assert.equal((await upload('/api/admin/teams/rename', aCk, csrf, JSON.stringify({ teamId, name: 'Crimson' }))).statusCode, 409) // taken
+  assert.equal((await upload('/api/admin/teams/rename', aCk, csrf, JSON.stringify({ teamId, name: 'Indigo' }))).statusCode, 200) // ok
+
   // set-repo validates the selected set; set-member validates team + user
   assert.equal((await upload('/api/admin/teams/set-repo', aCk, csrf, JSON.stringify({ teamId, repoId: 999 }))).statusCode, 400) // not selected
   // A messy-but-valid subpath normalises (leading + duplicate separators dropped → 'pkg/a', asserted below).
@@ -1006,6 +1073,7 @@ test('teams API: admin|manage gating, create (409 dup), repo/member links + perm
 
   // the list reflects the links, the path, and the per-member perms
   const team = JSON.parse((await send('GET', T, aCk)).body).teams.find((t) => t.id === teamId)
+  assert.equal(team.name, 'Indigo') // the rename above stuck
   assert.deepEqual(team.repos, [{ repoId: 7, fullName: 'o/r', path: 'pkg/a' }])
   assert.deepEqual(team.members, [{ userId: bob.id, login: 'bob', dependencies: true, security: false }])
 

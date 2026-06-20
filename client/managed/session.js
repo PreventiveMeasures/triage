@@ -4,18 +4,23 @@
 // server (server-managed/): probe the current session, hand off to the GitHub
 // OAuth login, and log out. Future managed-client features can grow here.
 
+// One same-origin GET → parsed JSON, or null on any failure (network, non-2xx,
+// or a malformed body). The single place the probes' fetch policy lives.
+async function getJson(url) {
+  let res
+  try {
+    res = await fetch(url, { credentials: 'same-origin', headers: { accept: 'application/json' } })
+  } catch { return null }
+  if (!res.ok) return null
+  try { return await res.json() } catch { return null }
+}
+
 // GET /api/auth/session → the signed-in user + CSRF token, or null when the
 // request is unauthenticated / fails. The returned shape is what the sidebar
 // keeps on `state.managedSession` (renderAuthStatus reads `.login`; logout
 // reads `.csrfToken`).
 export async function probeSession() {
-  let res
-  try {
-    res = await fetch('/api/auth/session', { credentials: 'same-origin', headers: { accept: 'application/json' } })
-  } catch { return null }
-  if (!res.ok) return null
-  let body
-  try { body = await res.json() } catch { return null }
+  const body = await getJson('/api/auth/session')
   const user = body?.user
   if (user == null || typeof user.login !== 'string') return null
   return {
@@ -26,6 +31,19 @@ export async function probeSession() {
     role: typeof user.role === 'string' ? user.role : 'none',
     csrfToken: typeof body.csrfToken === 'string' ? body.csrfToken : null,
   }
+}
+
+// GET /api/teams → the signed-in user's team memberships ([{ id, name }]), or
+// [] when unauthenticated / on any failure. Kept on `state.managedTeams` and
+// shown in the sidebar's per-user Teams section (above Workspaces). Never
+// throws, so a probe failure can't break the session refresh.
+export async function probeTeams() {
+  const body = await getJson('/api/teams')
+  const teams = body?.teams
+  if (!Array.isArray(teams)) return []
+  return teams
+    .filter((t) => t != null && typeof t.id === 'string' && typeof t.name === 'string')
+    .map((t) => ({ id: t.id, name: t.name }))
 }
 
 // Hand off to the server's OAuth entry — a top-level navigation to GitHub and

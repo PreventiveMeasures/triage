@@ -368,17 +368,23 @@ export interface ManagedDb {
   deleteBundle(id: string): Promise<boolean>
   linkReportsToBundle(integrity: string, bundleId: string): Promise<void>
   // Teams ("Manage teams"). createTeam inserts a team (false iff the name is
-  // taken); deleteTeam drops it (cascading its links); listTeams returns every
-  // team with its repos + members inlined; listUserOptions is the id+login set
-  // for the member picker. The set*/remove* pairs maintain the link tables:
+  // taken); renameTeam changes a team's name ('name-taken' iff another team
+  // already has it, 'not-found' iff no such team, 'ok' otherwise — same name is
+  // idempotent); deleteTeam drops it (cascading its links); listTeams returns
+  // every team with its repos + members inlined; listUserOptions is the id+login
+  // set for the member picker. The set*/remove* pairs maintain the link tables:
   // setTeamRepo upserts a repo link + its optional path, setTeamMember upserts a
   // membership + its visibility permissions (each resolves true iff a row was
   // written / removed; the caller validates the team/repo/user exist first).
   createTeam(id: string, name: string, now: number): Promise<boolean>
+  renameTeam(id: string, name: string, now: number): Promise<'ok' | 'name-taken' | 'not-found'>
   deleteTeam(id: string): Promise<boolean>
   getTeam(id: string): Promise<{ id: string; name: string } | null>
   listTeams(): Promise<AdminTeam[]>
   listUserOptions(): Promise<UserOption[]>
+  // The teams a given user belongs to (id + name, name-sorted) — for that user's
+  // own sidebar Teams section. Any user; only their own memberships.
+  listTeamsForUser(userId: string): Promise<{ id: string; name: string }[]>
   setTeamRepo(teamId: string, repoId: number, path: string | null): Promise<void>
   removeTeamRepo(teamId: string, repoId: number): Promise<boolean>
   setTeamMember(teamId: string, userId: string, perms: TeamUserPermissions): Promise<void>
@@ -507,7 +513,14 @@ function prepareStatements(db: DatabaseSync) {
     insertTeamStmt: db.prepare(`INSERT OR IGNORE INTO managed_team (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)`),
     deleteTeamStmt: db.prepare(`DELETE FROM managed_team WHERE id = ?`),
     selectTeamStmt: db.prepare(`SELECT id, name FROM managed_team WHERE id = ?`),
+    selectTeamByNameStmt: db.prepare(`SELECT id FROM managed_team WHERE name = ?`),
+    renameTeamStmt: db.prepare(`UPDATE managed_team SET name = ?, updated_at = ? WHERE id = ?`),
     selectTeamsStmt: db.prepare(`SELECT id, name FROM managed_team ORDER BY name ASC`),
+    selectTeamsForUserStmt: db.prepare(
+      `SELECT t.id AS id, t.name AS name
+         FROM team_user tu JOIN managed_team t ON t.id = tu.team_id
+        WHERE tu.user_id = ? ORDER BY t.name ASC`,
+    ),
     selectUserOptionsStmt: db.prepare(`SELECT id, login FROM managed_user ORDER BY login ASC`),
     selectTeamReposStmt: db.prepare(
       `SELECT tr.team_id AS teamId, tr.repo_id AS repoId, sr.full_name AS fullName, tr.path AS path
@@ -679,13 +692,24 @@ type TeamMemberRow = { teamId: string; userId: string; login: string; viewDepend
 // workspace has.
 function teamMethods(stmts: ReturnType<typeof prepareStatements>) {
   const {
-    insertTeamStmt, deleteTeamStmt, selectTeamStmt, selectTeamsStmt, selectUserOptionsStmt,
-    selectTeamReposStmt, selectTeamMembersStmt, upsertTeamRepoStmt, deleteTeamRepoStmt,
-    upsertTeamMemberStmt, deleteTeamMemberStmt,
+    insertTeamStmt, selectTeamByNameStmt, renameTeamStmt, deleteTeamStmt, selectTeamStmt,
+    selectTeamsStmt, selectTeamsForUserStmt, selectUserOptionsStmt, selectTeamReposStmt,
+    selectTeamMembersStmt, upsertTeamRepoStmt, deleteTeamRepoStmt, upsertTeamMemberStmt,
+    deleteTeamMemberStmt,
   } = stmts
   return {
     createTeam(id: string, name: string, now: number): Promise<boolean> {
       return Promise.resolve(Number(insertTeamStmt.run(id, name, now, now).changes) > 0)
+    },
+    renameTeam(id: string, name: string, now: number): Promise<'ok' | 'name-taken' | 'not-found'> {
+      // The driver is synchronous, so these reads + the update run with no await
+      // between them — the existence + name-clash checks can't race a concurrent
+      // rename, and we get to distinguish 404 (no team) from 409 (name taken).
+      if (selectTeamStmt.get(id) == null) return Promise.resolve('not-found')
+      const clash = selectTeamByNameStmt.get(name) as { id: string } | undefined
+      if (clash != null && clash.id !== id) return Promise.resolve('name-taken')
+      renameTeamStmt.run(name, now, id)
+      return Promise.resolve('ok')
     },
     deleteTeam(id: string): Promise<boolean> {
       return Promise.resolve(Number(deleteTeamStmt.run(id).changes) > 0)
@@ -696,6 +720,9 @@ function teamMethods(stmts: ReturnType<typeof prepareStatements>) {
     },
     listUserOptions(): Promise<UserOption[]> {
       return Promise.resolve((selectUserOptionsStmt.all() as UserOption[]).map((u) => ({ id: u.id, login: u.login })))
+    },
+    listTeamsForUser(userId: string): Promise<{ id: string; name: string }[]> {
+      return Promise.resolve(selectTeamsForUserStmt.all(userId) as { id: string; name: string }[])
     },
     listTeams(): Promise<AdminTeam[]> {
       const teams = selectTeamsStmt.all() as TeamRow[]

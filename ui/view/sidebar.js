@@ -3,7 +3,7 @@ import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { CONFIG_PATH, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, getCount, getPackagesIndex, getRepositoriesIndex, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, parseServerInfo, readCachedServerInfo, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, state, writeCachedServerInfo } from '#client/index.js'
 import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, setSyncForceDisabled, triageSync } from './client-sync.js'
-import { login as managedLogin, logout as managedLogout, probeSession as managedProbeSession } from './client-managed.js'
+import { login as managedLogin, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams } from './client-managed.js'
 import { loadAdminBundlesBundle, loadAdminReportsBundle, loadAdminReposBundle, loadAdminTeamsBundle, loadAdminUsersBundle } from './client-admin.js'
 import sidebarCSS from './sidebar.css'
 import fileIconCSS from '../styles/file-icon.css'
@@ -190,6 +190,18 @@ function workspaceHeaderTemplate() {
   return html`<li class="file-group-header workspace-header"><span class="group-label">Workspaces</span>${actions}</li>`
 }
 
+// The signed-in user's team memberships (managed mode), rendered ABOVE the
+// Workspaces section. Static label rows for now — teams have no dedicated view
+// yet. Renders nothing outside managed mode or when the user is in no teams.
+function teamsSectionTemplate() {
+  if (state.serverMode !== 'managed') return nothing
+  const teams = Array.isArray(state.managedTeams) ? state.managedTeams : []
+  if (teams.length === 0) return nothing
+  return html`
+    ${groupHeaderTemplate('Teams')}
+    ${repeat(teams, (t) => t.id, (t) => html`<li class="file-item team-item"><span class="team-name">${TEAM_ICON}<span class="team-label">${t.name}</span></span></li>`)}`
+}
+
 // Packages + Repositories navigation buttons live as
 // `<sidebar-view-button>` StateElements (see
 // view/sidebar-view-button.js). Each reads `state.currentView`
@@ -294,6 +306,8 @@ function missingReportItemTemplate(name, workspaceId) {
 // Workspace glyph — see `BUNDLE_ICON` above for the SVG-source
 // rationale; wrapped once at module load with `unsafeHTML`.
 const WORKSPACE_ICON = html`${unsafeHTML(WORKSPACE_ICON_SVG)}`
+// People glyph for the per-user Teams section (above Workspaces, managed mode).
+const TEAM_ICON = html`<svg class="team-icon" viewBox="0 0 16 16" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M5.5 8a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Zm0 1C3.2 9 1.75 10.2 1.75 11.6V13h7.5v-1.4C9.25 10.2 7.8 9 5.5 9Zm5.25-1a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm.25 1c-.43 0-.83.05-1.2.15.86.62 1.45 1.5 1.45 2.45V13h3.25v-1.3C14.5 10.1 13.15 9 11 9Z"/></svg>`
 // Download glyph used by the per-workspace export button — a
 // downward arrow over a tray. Sized to match the "+" affordance in
 // the section header.
@@ -472,6 +486,7 @@ export async function renderSidebar() {
     (b) => !claimedBundles.has(b.integrity) && matchesSearch(b.name),
   )
   litRender(html`
+    ${teamsSectionTemplate()}
     ${state.serverMode === 'managed' && workspaces.length === 0 ? nothing : workspaceHeaderTemplate()}
     ${repeat(visibleWorkspaces, (w) => w.id, (w) => {
       // Reports split into present vs missing, mirroring the bundle
@@ -1060,11 +1075,15 @@ function renderAuthStatus() {
           ${session.name ? html`<span class="user-name">${session.name}</span>` : nothing}
         </span>
       </div>
-      ${session.role === 'admin' ? html`<button type="button" class="user-menu-row" data-action="admin-users">Manage users</button>` : nothing}
-      ${session.role === 'admin' || session.role === 'manage' ? html`<button type="button" class="user-menu-row" data-action="manage-repos">Manage repositories</button>` : nothing}
-      ${session.role === 'admin' || session.role === 'manage' ? html`<button type="button" class="user-menu-row" data-action="manage-reports">Manage reports</button>` : nothing}
-      ${session.role === 'admin' || session.role === 'manage' ? html`<button type="button" class="user-menu-row" data-action="manage-bundles">Manage bundles</button>` : nothing}
-      ${session.role === 'admin' || session.role === 'manage' ? html`<button type="button" class="user-menu-row" data-action="manage-teams">Manage teams</button>` : nothing}
+      ${session.role === 'admin' || session.role === 'manage' ? html`
+        <div class="user-menu-group" role="group" aria-label="Manage">
+          <div class="user-menu-group-label">Manage</div>
+          ${session.role === 'admin' ? html`<button type="button" class="user-menu-row" data-action="admin-users">Users</button>` : nothing}
+          <button type="button" class="user-menu-row" data-action="manage-repos">Repositories</button>
+          <button type="button" class="user-menu-row" data-action="manage-reports">Reports</button>
+          <button type="button" class="user-menu-row" data-action="manage-bundles">Bundles</button>
+          <button type="button" class="user-menu-row" data-action="manage-teams">Teams</button>
+        </div>` : nothing}
       <button type="button" class="user-menu-row" data-action="managed-logout">Log out</button>
     `, menu)
   }
@@ -1583,6 +1602,10 @@ async function refreshManagedSession() {
   try {
     state.managedSession = await managedProbeSession()
     renderAuthStatus()
+    // The user's teams (sidebar Teams section). probeTeams never throws; empty
+    // when logged out. Repaint the sidebar so the section reflects the result.
+    state.managedTeams = state.managedSession == null ? [] : await managedProbeTeams()
+    renderSidebar()
   } catch (err) {
     console.warn('managed: session probe failed:', err)
   }

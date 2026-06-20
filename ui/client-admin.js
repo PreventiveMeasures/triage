@@ -748,6 +748,7 @@ class ManagedAdminTeams extends LitElement {
     _data: { state: true },
     _error: { state: true },
     _busy: { state: true },
+    _renamingId: { state: true },
   }
 
   static styles = css`
@@ -769,6 +770,7 @@ class ManagedAdminTeams extends LitElement {
     .team { border: 1px solid var(--border); border-radius: 8px; padding: .85rem; margin: 0 0 1rem; }
     .team-head { display: flex; align-items: center; gap: .6rem; margin: 0 0 .6rem; }
     .team-name { font-weight: 600; font-size: 1rem; }
+    .rename-input { width: 12rem; }
     .sub { margin: .5rem 0 0; }
     .sub-title { font-size: .72rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 .3rem; }
     .links { list-style: none; margin: 0 0 .4rem; padding: 0; }
@@ -793,6 +795,7 @@ class ManagedAdminTeams extends LitElement {
     this._error = null
     this._csrf = null
     this._busy = false
+    this._renamingId = null
   }
 
   connectedCallback() {
@@ -844,8 +847,14 @@ class ManagedAdminTeams extends LitElement {
   _team(team) {
     return html`<div class="team">
       <div class="team-head">
-        <span class="team-name">${team.name}</span>
-        <button class="x delete" @click=${() => this._deleteTeam(team)}>delete team</button>
+        ${this._renamingId === team.id
+          ? html`<input class="rename-input" type="text" .value=${team.name} maxlength="100"
+              @keydown=${(e) => this._renameKey(e, team)}>
+            <button class="btn" ?disabled=${this._busy} @click=${(e) => this._saveRename(team, e)}>save</button>
+            <button class="x" @click=${() => { this._renamingId = null }}>cancel</button>`
+          : html`<span class="team-name">${team.name}</span>
+            <button class="x" @click=${() => { this._renamingId = team.id }}>rename</button>
+            <button class="x delete" @click=${() => this._deleteTeam(team)}>delete team</button>`}
       </div>
       <div class="sub">
         <div class="sub-title">Repositories</div>
@@ -920,6 +929,21 @@ class ManagedAdminTeams extends LitElement {
   _deleteTeam(team) {
     if (!globalThis.confirm?.(`Delete team “${team.name}”? Its repo + member links are removed.`)) return
     void this._do(() => postTeam('/api/admin/teams/delete', this._csrf, { teamId: team.id }))
+  }
+
+  _renameKey(e, team) {
+    if (e.key === 'Enter') this._saveRename(team, e)
+    else if (e.key === 'Escape') this._renamingId = null
+  }
+
+  // Commit an inline rename: read the input, exit edit mode, and (when the name
+  // actually changed) POST it. A blank or unchanged name just cancels.
+  _saveRename(team, e) {
+    if (this._busy) return // another mutation is in flight — keep the edit box open (Enter isn't gated by the disabled button)
+    const name = e.target.closest('.team-head')?.querySelector('.rename-input')?.value.trim() ?? ''
+    this._renamingId = null
+    if (name === '' || name === team.name) return
+    void this._do(() => postTeam('/api/admin/teams/rename', this._csrf, { teamId: team.id, name }))
   }
 
   _addRepo(team, e) {

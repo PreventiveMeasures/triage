@@ -7,6 +7,7 @@
 //   GET  /api/oauth/github/login → 302 to GitHub (+ state cookie)
 //   GET  /api/oauth/github/callback → the OAuth hook (see github-oauth.ts)
 //   GET  /api/auth/session       → { user, csrfToken } | 401
+//   GET  /api/teams              → the current user's team memberships | 401
 //   GET  /api/avatar/<id>        → cached avatar bytes by user id | 401/404
 //   GET  /api/admin/users        → admin-only user list | 401/403
 //   POST /api/admin/set-role     → admin sets another user's role | 401/403/404
@@ -22,6 +23,7 @@
 //   DELETE /api/admin/bundles/<id> → admin|manage deletes a bundle | 401/403/404
 //   GET  /api/admin/teams        → admin|manage teams (+ members/repos) + pickers | 401/403
 //   POST /api/admin/teams        → admin|manage creates a team | 401/403/409
+//   POST /api/admin/teams/rename → admin|manage renames a team | 401/403/404/409
 //   POST /api/admin/teams/delete → admin|manage deletes a team | 401/403/404
 //   POST /api/admin/teams/{set,remove}-repo   → admin|manage links/unlinks a repo (+path) | 401/403/404
 //   POST /api/admin/teams/{set,remove}-member → admin|manage links/unlinks a user (+perms) | 401/403/404
@@ -53,8 +55,10 @@ const ADMIN_REPORTS_PATH = '/api/admin/reports'
 const REPORT_PREFIX = '/api/admin/reports/'
 const ADMIN_BUNDLES_PATH = '/api/admin/bundles'
 const BUNDLE_PREFIX = '/api/admin/bundles/'
+const MY_TEAMS_PATH = '/api/teams'
 const ADMIN_TEAMS_PATH = '/api/admin/teams'
 const TEAM_DELETE_PATH = '/api/admin/teams/delete'
+const TEAM_RENAME_PATH = '/api/admin/teams/rename'
 const TEAM_SET_REPO_PATH = '/api/admin/teams/set-repo'
 const TEAM_REMOVE_REPO_PATH = '/api/admin/teams/remove-repo'
 const TEAM_SET_MEMBER_PATH = '/api/admin/teams/set-member'
@@ -523,6 +527,15 @@ function normalizeTeamPath(raw: unknown): { ok: true; path: string | null } | { 
   return { ok: true, path: path === '' ? null : path }
 }
 
+// GET /api/teams — the CURRENT user's team memberships (id + name), for the
+// sidebar's per-user Teams section. Any authenticated user (not just
+// admin|manage), and a user only ever sees the teams they belong to.
+async function handleMyTeams(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
+  const s = await readSession(deps.config, deps.db, cookie, Date.now())
+  if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
+  sendJson(res, 200, { teams: await deps.db.listTeamsForUser(s.user.id) })
+}
+
 // GET /api/admin/teams — every team (members + repos inlined) plus the pickers
 // the page needs: all users (member dropdown), selected repos (repo dropdown),
 // and the visibility-permission keys. admin|manage, read-only (no CSRF).
@@ -549,6 +562,23 @@ async function handleCreateTeam(req: IncomingMessage, res: ServerResponse, deps:
   const id = randomUUID()
   if (!(await deps.db.createTeam(id, name, Date.now()))) { sendJson(res, 409, { error: 'name-taken' }); return }
   sendJson(res, 201, { id, name })
+}
+
+// POST /api/admin/teams/rename — rename a team. Body { teamId, name }. 404 if no
+// such team; 409 if the new name is already taken by another team.
+async function handleRenameTeam(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
+  const s = await manageMutation(req, res, deps, cookie)
+  if (s == null) return
+  let body: unknown
+  try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
+  const teamId = (body as { teamId?: unknown } | null)?.teamId
+  const rawName = (body as { name?: unknown } | null)?.name
+  const name = typeof rawName === 'string' ? rawName.trim() : ''
+  if (typeof teamId !== 'string' || name === '' || name.length > MAX_TEAM_NAME) { sendJson(res, 400, { error: 'bad-name' }); return }
+  const result = await deps.db.renameTeam(teamId, name, Date.now())
+  if (result === 'not-found') { sendJson(res, 404, { error: 'no-team' }); return }
+  if (result === 'name-taken') { sendJson(res, 409, { error: 'name-taken' }); return }
+  sendJson(res, 200, { ok: true, name })
 }
 
 // POST /api/admin/teams/delete — drop a team (its links cascade). Body { teamId }.
@@ -720,6 +750,11 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (method === 'DELETE') { await handleDeleteBundle(req, res, deps, cookie, id); return }
       send405(res, 'GET, DELETE'); return
     }
+    // The signed-in user's own team memberships (any authenticated user).
+    if (path === MY_TEAMS_PATH) {
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      await handleMyTeams(res, deps, cookie); return
+    }
     // Teams: list / create on the exact path; the link mutations are POST-only
     // action sub-paths (each carries its ids in the JSON body).
     if (path === ADMIN_TEAMS_PATH) {
@@ -727,10 +762,11 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (method === 'POST') { await handleCreateTeam(req, res, deps, cookie); return }
       send405(res, 'GET, POST'); return
     }
-    if (path === TEAM_DELETE_PATH || path === TEAM_SET_REPO_PATH || path === TEAM_REMOVE_REPO_PATH
+    if (path === TEAM_DELETE_PATH || path === TEAM_RENAME_PATH || path === TEAM_SET_REPO_PATH || path === TEAM_REMOVE_REPO_PATH
       || path === TEAM_SET_MEMBER_PATH || path === TEAM_REMOVE_MEMBER_PATH) {
       if (method !== 'POST') { send405(res, 'POST'); return }
       if (path === TEAM_DELETE_PATH) { await handleDeleteTeam(req, res, deps, cookie); return }
+      if (path === TEAM_RENAME_PATH) { await handleRenameTeam(req, res, deps, cookie); return }
       if (path === TEAM_SET_REPO_PATH) { await handleSetTeamRepo(req, res, deps, cookie); return }
       if (path === TEAM_REMOVE_REPO_PATH) { await handleRemoveTeamRepo(req, res, deps, cookie); return }
       if (path === TEAM_SET_MEMBER_PATH) { await handleSetTeamMember(req, res, deps, cookie); return }
