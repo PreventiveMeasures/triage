@@ -96,6 +96,7 @@ async function serveAvatar(res: ServerResponse, avatarStore: AvatarStore, userId
   res.writeHead(200, {
     'content-type': avatar.contentType,
     'content-length': String(avatar.bytes.length),
+    'x-content-type-options': 'nosniff',
     'cache-control': 'private, max-age=600',
   })
   res.end(avatar.bytes)
@@ -352,8 +353,11 @@ async function handleUploadReport(req: IncomingMessage, res: ServerResponse, dep
 }
 
 // GET /api/admin/reports/<id> — download a stored report (admin|manage). Serves
-// the bytes with the recorded content-type + filename. 404 when there's no such
-// report; 503 when the row exists but the bytes don't (store desync).
+// the bytes with the recorded content-type + filename. The recorded content-type
+// is uploader-supplied, so the response is forced to download
+// (Content-Disposition: attachment) AND marked `nosniff` — it can't be sniffed
+// or rendered inline against the app origin. 404 when there's no such report;
+// 503 when the row exists but the bytes don't (store desync).
 async function handleGetReport(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string): Promise<void> {
   const s = await readManageSession(res, deps, cookie)
   if (s == null) return
@@ -368,6 +372,7 @@ async function handleGetReport(res: ServerResponse, deps: ManagedHttpDeps, cooki
     'content-type': rec.contentType,
     'content-length': String(bytes.length),
     'content-disposition': `attachment; filename="${dispoName}"`,
+    'x-content-type-options': 'nosniff',
     'cache-control': 'no-store',
   })
   res.end(bytes)
@@ -438,6 +443,11 @@ async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, dep
     }, Date.now())
   } catch (err) {
     await deps.bundleStore.delete(id).catch(() => {})
+    // A concurrent upload of identical bytes can insert this integrity (UNIQUE)
+    // between our dedup check and this insert — treat that as a dedup, not a 500.
+    // Any other failure rethrows.
+    const raced = await deps.db.getBundleByIntegrity(integrity)
+    if (raced != null) { sendJson(res, 200, { id: raced.id, integrity, filename: raced.filename, deduped: true }); return }
     throw err
   }
   // Auto-link reports that declared this integrity before the bundle existed.
@@ -460,6 +470,7 @@ async function handleGetBundle(res: ServerResponse, deps: ManagedHttpDeps, cooki
     'content-type': 'application/octet-stream',
     'content-length': String(bytes.length),
     'content-disposition': `attachment; filename="${dispoName}"`,
+    'x-content-type-options': 'nosniff',
     'cache-control': 'no-store',
   })
   res.end(bytes)
@@ -488,18 +499,28 @@ async function manageMutation(req: IncomingMessage, res: ServerResponse, deps: M
   return s
 }
 
-// Normalise an optional team-repo subpath: trim, drop control chars, length-cap;
-// empty → null (the whole repo). Kept verbatim otherwise (it's a path, not a
-// filename — separators are meaningful).
-function normalizeTeamPath(raw: unknown): string | null {
-  if (typeof raw !== 'string') return null
-  let out = ''
+// Normalise an optional team-repo subpath into a clean RELATIVE path inside the
+// repo: trim, drop control chars, fold both separators, drop empty + '.'
+// segments, and REJECT any '..' segment so the subpath can't escape the repo
+// subtree once the (later) data plane reads from it. `{ ok:false }` = traversal
+// (the handler 400s); `{ path:null }` = the whole repo. Result is '/'-joined and
+// length-capped.
+function normalizeTeamPath(raw: unknown): { ok: true; path: string | null } | { ok: false } {
+  if (typeof raw !== 'string') return { ok: true, path: null }
+  let cleaned = ''
   for (const ch of raw.trim()) {
     const code = ch.codePointAt(0) ?? 0
     if (code < 0x20 || code === 0x7f) continue
-    out += ch
+    cleaned += ch
   }
-  return out.slice(0, MAX_TEAM_PATH) || null
+  const segments: string[] = []
+  for (const seg of cleaned.replaceAll('\\', '/').split('/')) {
+    if (seg === '' || seg === '.') continue
+    if (seg === '..') return { ok: false }
+    segments.push(seg)
+  }
+  const path = segments.join('/').slice(0, MAX_TEAM_PATH)
+  return { ok: true, path: path === '' ? null : path }
 }
 
 // GET /api/admin/teams — every team (members + repos inlined) plus the pickers
@@ -554,9 +575,11 @@ async function handleSetTeamRepo(req: IncomingMessage, res: ServerResponse, deps
   if (typeof teamId !== 'string' || typeof repoId !== 'number' || !Number.isSafeInteger(repoId)) {
     sendJson(res, 400, { error: 'bad-request' }); return
   }
+  const path = normalizeTeamPath((body as { path?: unknown }).path)
+  if (!path.ok) { sendJson(res, 400, { error: 'bad-path' }); return }
   if ((await deps.db.getTeam(teamId)) == null) { sendJson(res, 404, { error: 'no-team' }); return }
   if (!(await deps.db.listSelectedRepos()).some((r) => r.repoId === repoId)) { sendJson(res, 400, { error: 'repo-not-selected' }); return }
-  await deps.db.setTeamRepo(teamId, repoId, normalizeTeamPath((body as { path?: unknown }).path))
+  await deps.db.setTeamRepo(teamId, repoId, path.path)
   sendJson(res, 200, { ok: true })
 }
 

@@ -765,6 +765,7 @@ test('reports upload/download/delete: CSRF + role, sanitised filename, attributi
   assert.equal(dl.body, '{"findings":[]}')
   assert.equal(dl.headers['content-type'], 'application/json')
   assert.match(dl.headers['content-disposition'], /filename="sub_dir_scan\.json"/u)
+  assert.equal(dl.headers['x-content-type-options'], 'nosniff') // uploader content-type can't be sniffed inline
   assert.equal((await send('GET', `/api/admin/reports/${randomUUID()}`, aCk)).statusCode, 404) // unknown id
 
   // Delete needs CSRF; then the row is gone and a repeat 404s.
@@ -882,6 +883,7 @@ test('bundles upload/download/delete: CSRF + role, sha512 dedup, kind, 413/400/4
   assert.equal(dl.statusCode, 200)
   assert.equal(dl.body, body)
   assert.equal(dl.headers['content-type'], 'application/octet-stream')
+  assert.equal(dl.headers['x-content-type-options'], 'nosniff')
   assert.equal((await send('DELETE', `/api/admin/bundles/${id}`, aCk, null)).statusCode, 403) // CSRF missing
   assert.equal((await send('DELETE', `/api/admin/bundles/${id}`, aCk, adminSess.csrfToken)).statusCode, 200)
   assert.equal((await send('DELETE', `/api/admin/bundles/${id}`, aCk, adminSess.csrfToken)).statusCode, 404)
@@ -994,7 +996,10 @@ test('teams API: admin|manage gating, create (409 dup), repo/member links + perm
 
   // set-repo validates the selected set; set-member validates team + user
   assert.equal((await upload('/api/admin/teams/set-repo', aCk, csrf, JSON.stringify({ teamId, repoId: 999 }))).statusCode, 400) // not selected
-  assert.equal((await upload('/api/admin/teams/set-repo', aCk, csrf, JSON.stringify({ teamId, repoId: 7, path: 'pkg/a' }))).statusCode, 200)
+  // A messy-but-valid subpath normalises (leading + duplicate separators dropped → 'pkg/a', asserted below).
+  assert.equal((await upload('/api/admin/teams/set-repo', aCk, csrf, JSON.stringify({ teamId, repoId: 7, path: '/pkg//a/' }))).statusCode, 200)
+  // A '..' subpath is refused — it can't escape the repo subtree.
+  assert.equal((await upload('/api/admin/teams/set-repo', aCk, csrf, JSON.stringify({ teamId, repoId: 7, path: 'pkg/../../etc' }))).statusCode, 400)
   assert.equal((await upload('/api/admin/teams/set-member', aCk, csrf, JSON.stringify({ teamId, userId: bob.id, dependencies: true }))).statusCode, 200)
   assert.equal((await upload('/api/admin/teams/set-member', aCk, csrf, JSON.stringify({ teamId: 'nope', userId: bob.id }))).statusCode, 404)
   assert.equal((await upload('/api/admin/teams/set-member', aCk, csrf, JSON.stringify({ teamId, userId: 'nope' }))).statusCode, 404)
