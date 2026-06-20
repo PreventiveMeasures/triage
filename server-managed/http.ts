@@ -8,7 +8,7 @@
 //   GET  /api/oauth/github/callback → the OAuth hook (see github-oauth.ts)
 //   GET  /api/auth/session       → { user, csrfToken } | 401
 //   GET  /api/teams              → the current user's teams + their reports | 401
-//   GET  /api/reports/<id>       → view a report reachable via team membership | 401/404
+//   GET  /api/reports/<id>       → view a report: admin, or ≥view role + team membership | 401/404
 //   GET  /api/avatar/<id>        → cached avatar bytes by user id | 401/404
 //   GET  /api/admin/users        → admin-only user list | 401/403
 //   POST /api/admin/set-role     → admin sets another user's role | 401/403/404
@@ -40,7 +40,7 @@ import { bundleIntegrity, bundleKind, reportBundleHashes } from './bundle.ts'
 import type { ManagedConfig } from './config.ts'
 import type { ManagedDb, ManagedSession, StoredUser } from './db.ts'
 import type { OriginGate } from '../server-common/origin.ts'
-import { isRole } from '../common/managed/roles.ts'
+import { isRole, roleAtLeast } from '../common/managed/roles.ts'
 import { VISIBILITY_PERMISSIONS, parseTeamUserPermissions } from '../common/managed/permissions.ts'
 import { CONFIG_PATH } from '../common/server-info.ts'
 import { collectRepos, installUrl } from './github-app.ts'
@@ -579,19 +579,34 @@ function normalizeTeamPath(raw: unknown): { ok: true; path: string | null } | { 
 async function handleMyTeams(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   const s = await readSession(deps.config, deps.db, cookie, Date.now())
   if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
-  sendJson(res, 200, { teams: await deps.db.listTeamsForUser(s.user.id) })
+  const teams = await deps.db.listTeamsForUser(s.user.id)
+  // Report rows need at least a 'view' role (matches canViewReport) — a 'none'
+  // member sees the team but no openable reports, so strip them.
+  const gated = roleAtLeast(s.user.role, 'view') ? teams : teams.map((t) => ({ ...t, reports: [] }))
+  sendJson(res, 200, { teams: gated })
 }
 
-// GET /api/reports/<id> — view a report a team member can reach (its repo is in
-// one of the user's teams). Any authenticated user; NOT gated to admin|manage.
+// Server-side authorization to view a report through the team endpoint: an admin
+// may read any existing report; everyone else needs AT LEAST a 'view' role AND
+// membership of a team holding the report's repo. (A 'none' member of such a team
+// is refused — team membership alone is not enough.) The same gate filters the
+// /api/teams listing, so the sidebar never shows a report the user can't open.
+async function canViewReport(deps: ManagedHttpDeps, user: StoredUser, reportId: string): Promise<boolean> {
+  if (!roleAtLeast(user.role, 'view')) return false
+  if (user.role === 'admin') return (await deps.db.getReport(reportId)) != null
+  return deps.db.userCanReadReport(user.id, reportId)
+}
+
+// GET /api/reports/<id> — view a report the caller is authorized to read (see
+// canViewReport: admin, or ≥view role + team membership for the report's repo).
 // Serves the raw content as text/plain (+ nosniff) for in-app rendering — the
-// client renders it without caching to OPFS. 404 covers both "no such report"
-// and "not reachable" (so team membership isn't probeable); 503 = row without
-// bytes (store desync).
+// client renders it without caching to OPFS. 404 covers "no such report" AND
+// "not authorized" (so neither existence nor membership is probeable); 503 = row
+// without bytes (store desync).
 async function handleViewReport(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string): Promise<void> {
   const s = await readSession(deps.config, deps.db, cookie, Date.now())
   if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
-  if (!(await deps.db.userCanReadReport(s.user.id, id))) { sendJson(res, 404, { error: 'no-report' }); return }
+  if (!(await canViewReport(deps, s.user, id))) { sendJson(res, 404, { error: 'no-report' }); return }
   const bytes = await deps.reportStore.get(id)
   if (bytes == null) { sendJson(res, 503, { error: 'unavailable' }); return }
   res.writeHead(200, {

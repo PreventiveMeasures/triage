@@ -1085,45 +1085,32 @@ test('GET /api/teams + db.listTeamsForUser: a user sees only their own teams', a
   await db.close()
 })
 
-test('team reports: attached reports surface in /api/teams; /api/reports/<id> is team-gated', async () => {
+test('team reports: read iff admin, OR (>=view role AND in a team holding the repo)', async () => {
   const db = openSqliteManagedDb(':memory:')
   const now = Date.now()
-  const aliceSess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
-  const bobSess = await createSession(config, db, { githubUserId: 2, login: 'bob', name: null, avatarUrl: null }, now + 1000)
-  const carolSess = await createSession(config, db, { githubUserId: 3, login: 'carol', name: null, avatarUrl: null }, now + 2000)
-  const alice = (await readSession(config, db, cookiePair(aliceSess.setCookie), now)).user
-  const bob = (await readSession(config, db, cookiePair(bobSess.setCookie), now)).user
-  const carol = (await readSession(config, db, cookiePair(carolSess.setCookie), now)).user
-  // repo 7 selected; team Blue holds repo 7 with alice as member; report attached to 7.
-  await db.selectRepo({ repoId: 7, fullName: 'o/r', private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: alice.id }, now)
-  const team = randomUUID()
-  await db.createTeam(team, 'Blue', now)
-  await db.setTeamRepo(team, 7, null)
-  await db.setTeamMember(team, alice.id, { dependencies: false, security: false })
+  // alice = first user = admin, deliberately NOT in any team (tests the admin bypass).
+  const adminSess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
+  const viewerSess = await createSession(config, db, { githubUserId: 2, login: 'viewer', name: null, avatarUrl: null }, now + 1000)
+  const nonerSess = await createSession(config, db, { githubUserId: 3, login: 'noner', name: null, avatarUrl: null }, now + 2000)
+  const outsiderSess = await createSession(config, db, { githubUserId: 4, login: 'outsider', name: null, avatarUrl: null }, now + 3000)
+  const admin = (await readSession(config, db, cookiePair(adminSess.setCookie), now)).user
+  const viewer = (await readSession(config, db, cookiePair(viewerSess.setCookie), now)).user
+  const noner = (await readSession(config, db, cookiePair(nonerSess.setCookie), now)).user
+  const outsider = (await readSession(config, db, cookiePair(outsiderSess.setCookie), now)).user
+  await db.setUserRole(viewer.id, 'view')
+  await db.setUserRole(outsider.id, 'view') // noner stays 'none'
+
+  // repo 7 in team Blue (viewer + noner are members); repo 8 in team Green (outsider).
+  await db.selectRepo({ repoId: 7, fullName: 'o/r', private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: admin.id }, now)
+  await db.selectRepo({ repoId: 8, fullName: 'o/other', private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: admin.id }, now)
+  const blue = randomUUID(); await db.createTeam(blue, 'Blue', now); await db.setTeamRepo(blue, 7, null)
+  await db.setTeamMember(blue, viewer.id, { dependencies: false, security: false })
+  await db.setTeamMember(blue, noner.id, { dependencies: false, security: false })
+  const green = randomUUID(); await db.createTeam(green, 'Green', now); await db.setTeamRepo(green, 8, null)
+  await db.setTeamMember(green, outsider.id, { dependencies: false, security: false })
   const reportId = randomUUID()
-  await db.insertReport({ id: reportId, filename: 'scan.json', contentType: 'application/json', byteSize: 5, sha256: 'x', uploadedBy: alice.id, repoId: 7, bundleId: null, bundleIntegrity: null }, now)
-  // An unattached report (repoId null) must NOT surface under any team.
-  await db.insertReport({ id: randomUUID(), filename: 'loose.json', contentType: 'application/json', byteSize: 2, sha256: 'y', uploadedBy: alice.id, repoId: null, bundleId: null, bundleIntegrity: null }, now)
-  // carol IS a team member, but of a DIFFERENT team (Green) holding a different
-  // repo (8) — she must NOT be able to read the report attached to repo 7.
-  await db.selectRepo({ repoId: 8, fullName: 'o/other', private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: alice.id }, now)
-  const green = randomUUID()
-  await db.createTeam(green, 'Green', now)
-  await db.setTeamRepo(green, 8, null)
-  await db.setTeamMember(green, carol.id, { dependencies: false, security: false })
+  await db.insertReport({ id: reportId, filename: 'scan.json', contentType: 'application/json', byteSize: 5, sha256: 'x', uploadedBy: admin.id, repoId: 7, bundleId: null, bundleIntegrity: null }, now)
 
-  // db: alice's team carries the attached report; bob is in no team.
-  const aliceTeams = await db.listTeamsForUser(alice.id)
-  assert.deepEqual(aliceTeams.map((t) => t.name), ['Blue'])
-  assert.deepEqual(aliceTeams[0].reports.map((r) => r.filename), ['scan.json']) // only the attached one
-  assert.deepEqual(await db.listTeamsForUser(bob.id), [])
-  // carol's team (Green) lists no reports (repo 8 has none), and she can't read repo 7's report.
-  assert.deepEqual((await db.listTeamsForUser(carol.id)).map((t) => [t.name, t.reports.length]), [['Green', 0]])
-  assert.equal(await db.userCanReadReport(alice.id, reportId), true)
-  assert.equal(await db.userCanReadReport(bob.id, reportId), false) // in no team
-  assert.equal(await db.userCanReadReport(carol.id, reportId), false) // in a team, but not one holding repo 7
-
-  // endpoint: alice views the bytes (text/plain + nosniff), bob 404s, unauth 401.
   const reportStore = fakeBlobStore()
   await reportStore.put(reportId, Buffer.from('{"findings":[]}'))
   let pending = Promise.resolve()
@@ -1140,21 +1127,38 @@ test('team reports: attached reports surface in /api/teams; /api/reports/<id> is
       get headersSent() { return this.ended },
     }
   }
-  async function get(cookie, id) {
+  async function req(url, cookie) {
     const res = mockRes()
-    handler({ method: 'GET', url: `/api/reports/${id}`, headers: cookie ? { cookie } : {} }, res)
+    handler({ method: 'GET', url, headers: cookie ? { cookie } : {} }, res)
     await pending
     return res
   }
-  assert.equal((await get(null, reportId)).statusCode, 401) // unauthenticated
-  assert.equal((await get(cookiePair(bobSess.setCookie), reportId)).statusCode, 404) // in no team
-  assert.equal((await get(cookiePair(carolSess.setCookie), reportId)).statusCode, 404) // in a team, but not one holding repo 7
-  const ok = await get(cookiePair(aliceSess.setCookie), reportId)
-  assert.equal(ok.statusCode, 200)
-  assert.equal(ok.body, '{"findings":[]}')
-  assert.equal(ok.headers['content-type'], 'text/plain; charset=utf-8')
-  assert.equal(ok.headers['x-content-type-options'], 'nosniff')
-  assert.equal((await get(cookiePair(aliceSess.setCookie), randomUUID())).statusCode, 404) // unknown id
+  const view = (sess, id) => req(`/api/reports/${id}`, sess && cookiePair(sess.setCookie))
+
+  // GET /api/reports/<id> — the access rule, enforced SERVER-SIDE.
+  assert.equal((await view(null, reportId)).statusCode, 401) // unauthenticated
+  const okAdmin = await view(adminSess, reportId)
+  assert.equal(okAdmin.statusCode, 200) // admin, NOT in any team → still allowed
+  assert.equal(okAdmin.body, '{"findings":[]}')
+  assert.equal(okAdmin.headers['content-type'], 'text/plain; charset=utf-8')
+  assert.equal(okAdmin.headers['x-content-type-options'], 'nosniff')
+  assert.equal((await view(viewerSess, reportId)).statusCode, 200) // >=view + member of the team holding repo 7
+  assert.equal((await view(nonerSess, reportId)).statusCode, 404) // IN the team, but role 'none' → refused
+  assert.equal((await view(outsiderSess, reportId)).statusCode, 404) // >=view, but wrong team (no repo 7)
+  assert.equal((await view(adminSess, randomUUID())).statusCode, 404) // admin, but the report doesn't exist
+
+  // The db check is team-only (the role gate lives in the handler): viewer AND noner
+  // are both members of Blue, but only viewer's role clears the endpoint above.
+  assert.equal(await db.userCanReadReport(viewer.id, reportId), true)
+  assert.equal(await db.userCanReadReport(noner.id, reportId), true)
+  assert.equal(await db.userCanReadReport(outsider.id, reportId), false)
+  assert.equal(await db.userCanReadReport(admin.id, reportId), false) // admin isn't a member
+
+  // GET /api/teams matches the rule: viewer sees the report; noner (role 'none') sees
+  // the team but NO reports (stripped server-side).
+  const teamsOf = async (sess) => JSON.parse((await req('/api/teams', cookiePair(sess.setCookie))).body).teams
+  assert.deepEqual((await teamsOf(viewerSess)).map((t) => [t.name, t.reports.map((r) => r.filename)]), [['Blue', ['scan.json']]])
+  assert.deepEqual((await teamsOf(nonerSess)).map((t) => [t.name, t.reports.length]), [['Blue', 0]])
   await db.close()
 })
 
