@@ -10,7 +10,7 @@ importers:
     dependencies:
       ws:
         specifier: ^8.20.1
-        version: 8.20.1
+        version: 8.21.0
     devDependencies:
       '@electric-sql/pglite':
         specifier: ^0.4.5
@@ -975,8 +975,8 @@ packages:
     resolution: {integrity: sha512-OTIk8iR8/aCRWBqvxrzxR0hgxWpnYBblY1S5hDWBQfk/VFmJwzmJgQFN3WsoUKHISv2eAwe+PpbUzyL1CKTLXg==, tarball: https://registry.npmjs.org/write-file-atomic/-/write-file-atomic-7.0.1.tgz}
     engines: {node: ^20.17.0 || >=22.9.0}
 
-  ws@8.20.1:
-    resolution: {integrity: sha512-It4dO0K5v//JtTXuPkfEOaI3uUN87iYPnqo/ZzqCoG3g8uhA66QUMs/SrM0YK7/NAu+r4LMh/9dq2A7k+rHs+w==, tarball: https://registry.npmjs.org/ws/-/ws-8.20.1.tgz}
+  ws@8.21.0:
+    resolution: {integrity: sha512-Vsp28b7DRcimFQvrqu2Wek3z1iYxDCWqHYB8Qsnk/S4RfaCQzPGPyBNuVjJV3cd6UiKtUtp6sNM77gWvzcCH+g==, tarball: https://registry.npmjs.org/ws/-/ws-8.21.0.tgz}
     engines: {node: '>=10.0.0'}
     peerDependencies:
       bufferutil: ^4.0.1
@@ -1765,4 +1765,4 @@ snapshots:
     dependencies:
       signal-exit: 4.1.0
 
-  ws@8.20.1: {}
+  ws@8.21.0: {}
