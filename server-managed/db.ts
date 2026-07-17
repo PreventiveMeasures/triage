@@ -22,6 +22,7 @@ import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import type { Role } from '../common/managed/roles.ts'
 import type { TeamUserPermissions } from '../common/managed/permissions.ts'
+import type { TriageEntryPatch } from '../common/managed/triage.ts'
 
 const SQLITE_SCHEMA = `
 CREATE TABLE IF NOT EXISTS managed_user (
@@ -121,6 +122,27 @@ CREATE TABLE IF NOT EXISTS managed_report (
 
 CREATE INDEX IF NOT EXISTS managed_report_uploaded_at_idx ON managed_report(uploaded_at);
 CREATE INDEX IF NOT EXISTS managed_report_bundle_integrity_idx ON managed_report(bundle_integrity);
+
+-- Per-finding triage annotations on a stored report — the managed (trusted-
+-- plaintext) counterpart of the client's localStorage triage map; the wire
+-- shape lives in common/managed/triage.ts. One row per (report, finding),
+-- whole-entry replace, NULL columns are unset. flagged is tri-state: NULL
+-- unset / 1 flagged / 0 an explicit un-flag tombstone. updated_by is the last
+-- writer (nulled when that user is removed); updated_by_login is the durable
+-- login snapshot (see managed_bundle). Rows die with their report (CASCADE).
+CREATE TABLE IF NOT EXISTS report_triage (
+  report_id        TEXT NOT NULL REFERENCES managed_report(id) ON DELETE CASCADE,
+  finding_id       TEXT NOT NULL,
+  color            TEXT,
+  triage           TEXT,
+  comment          TEXT,
+  fix              TEXT,
+  flagged          INTEGER,
+  updated_by       TEXT REFERENCES managed_user(id) ON DELETE SET NULL,
+  updated_by_login TEXT,
+  updated_at       INTEGER NOT NULL,
+  PRIMARY KEY (report_id, finding_id)
+) STRICT;
 
 -- Teams group users + repos for access scoping. A team has just a name here;
 -- the two link tables below carry the many-many relations.
@@ -271,6 +293,20 @@ export interface AdminReport {
   uploadedAt: number
 }
 
+// A stored per-finding triage row for one report, with the last writer's login
+// resolved like listReports (live login, falling back to the durable
+// snapshot). `flagged` maps the tri-state column: null unset, true/false set.
+export interface ReportTriageRow {
+  findingId: string
+  color: string | null
+  triage: string | null
+  comment: string | null
+  fix: string | null
+  flagged: boolean | null
+  updatedByLogin: string | null
+  updatedAt: number
+}
+
 // A stored bundle's metadata. Bytes live in the blob-store keyed by `id`;
 // `integrity` (sha512-<base64>) is the content-addressed identity (UNIQUE),
 // matched against a report's bundleHashes to auto-link.
@@ -376,6 +412,12 @@ export interface ManagedDb {
   // Attach / detach a report's repo link (repoId null = detach); resolves true
   // iff the report exists. The caller validates repoId is a selected repo.
   setReportRepo(id: string, repoId: number | null): Promise<boolean>
+  // Per-finding triage annotations on a report. listReportTriage reads every
+  // row for a report (the endpoint filters to the viewer's visible findings);
+  // setReportTriage replaces one (report, finding) row wholesale, stamping the
+  // writer — a null/empty entry deletes the row instead.
+  listReportTriage(reportId: string): Promise<ReportTriageRow[]>
+  setReportTriage(reportId: string, findingId: string, entry: TriageEntryPatch | null, updatedBy: string | null, updatedByLogin: string | null, now: number): Promise<void>
   // Bundles ("Manage bundles"). insertBundle records an uploaded bundle (bytes
   // in the blob-store); getBundleByIntegrity dedupes uploads + resolves a
   // report's bundleHashes; getBundle reads one row (download); listBundles joins
@@ -513,6 +555,25 @@ function prepareStatements(db: DatabaseSync) {
     ),
     deleteReportStmt: db.prepare(`DELETE FROM managed_report WHERE id = ?`),
     setReportRepoStmt: db.prepare(`UPDATE managed_report SET repo_id = ? WHERE id = ?`),
+    upsertReportTriageStmt: db.prepare(
+      `INSERT INTO report_triage (report_id, finding_id, color, triage, comment, fix, flagged, updated_by, updated_by_login, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(report_id, finding_id) DO UPDATE SET
+         color = excluded.color, triage = excluded.triage, comment = excluded.comment,
+         fix = excluded.fix, flagged = excluded.flagged, updated_by = excluded.updated_by,
+         updated_by_login = excluded.updated_by_login, updated_at = excluded.updated_at`,
+    ),
+    deleteReportTriageStmt: db.prepare(`DELETE FROM report_triage WHERE report_id = ? AND finding_id = ?`),
+    // COALESCE the live login over the durable snapshot, like selectReportsStmt.
+    selectReportTriageStmt: db.prepare(
+      `SELECT t.finding_id AS findingId, t.color AS color, t.triage AS triage,
+              t.comment AS comment, t.fix AS fix, t.flagged AS flagged,
+              COALESCE(u.login, t.updated_by_login) AS updatedByLogin, t.updated_at AS updatedAt
+         FROM report_triage t
+         LEFT JOIN managed_user u ON u.id = t.updated_by
+        WHERE t.report_id = ?
+        ORDER BY t.finding_id ASC`,
+    ),
     insertBundleStmt: db.prepare(
       `INSERT INTO managed_bundle (id, integrity, filename, kind, byte_size, uploaded_by, uploaded_by_login, repo_id, uploaded_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -688,6 +749,45 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>) {
     },
     setReportRepo(id: string, repoId: number | null): Promise<boolean> {
       return Promise.resolve(Number(setReportRepoStmt.run(repoId, id).changes) > 0)
+    },
+  }
+}
+
+type ReportTriageDbRow = {
+  findingId: string; color: string | null; triage: string | null
+  comment: string | null; fix: string | null; flagged: number | null
+  updatedByLogin: string | null; updatedAt: number
+}
+
+// The per-finding report-triage slice of ManagedDb. Closes over its prepared
+// statements. A null/empty entry deletes the row — the store never keeps
+// empty shells, mirroring the client's triage map.
+function reportTriageMethods(stmts: ReturnType<typeof prepareStatements>) {
+  const { upsertReportTriageStmt, deleteReportTriageStmt, selectReportTriageStmt } = stmts
+  return {
+    listReportTriage(reportId: string): Promise<ReportTriageRow[]> {
+      const rows = selectReportTriageStmt.all(reportId) as ReportTriageDbRow[]
+      return Promise.resolve(rows.map((r) => ({
+        findingId: r.findingId, color: r.color, triage: r.triage, comment: r.comment, fix: r.fix,
+        flagged: r.flagged == null ? null : r.flagged === 1,
+        updatedByLogin: r.updatedByLogin, updatedAt: r.updatedAt,
+      })))
+    },
+    setReportTriage(reportId: string, findingId: string, entry: TriageEntryPatch | null, updatedBy: string | null, updatedByLogin: string | null, now: number): Promise<void> {
+      // `flagged: false` is a real value (the explicit un-flag tombstone), so
+      // emptiness is "every field null-or-absent", not falsiness.
+      const empty = entry == null || (entry.color == null && entry.triage == null
+        && entry.comment == null && entry.fix == null && entry.flagged == null)
+      if (empty) {
+        deleteReportTriageStmt.run(reportId, findingId)
+        return Promise.resolve()
+      }
+      upsertReportTriageStmt.run(
+        reportId, findingId, entry.color ?? null, entry.triage ?? null, entry.comment ?? null,
+        entry.fix ?? null, entry.flagged == null ? null : (entry.flagged ? 1 : 0),
+        updatedBy, updatedByLogin, now,
+      )
+      return Promise.resolve()
     },
   }
 }
@@ -920,6 +1020,7 @@ export function openSqliteManagedDb(path: string): ManagedDb {
     },
     ...selectedRepoMethods(stmts),
     ...reportMethods(stmts),
+    ...reportTriageMethods(stmts),
     ...bundleMethods(stmts),
     ...teamMethods(stmts),
     close() {

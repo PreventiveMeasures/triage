@@ -130,6 +130,11 @@ export interface State {
   // repos), shown in the sidebar above Workspaces. Populated alongside the
   // session probe; empty when logged out / e2e.
   managedTeams: { id: string; name: string; reports: { id: string; filename: string }[] }[]
+  // The open managed team report (server id + filename) when the active view
+  // came from the sidebar's Teams section; null otherwise. Keys the
+  // server-side triage hydrate/push for that report (ui/view/managed-triage.js).
+  // Set by openTeamReport, cleared whenever the view switches away.
+  managedReport: { id: string; filename: string } | null
 }
 
 // Hoisted so the `state` object literal below can call it during its
@@ -590,6 +595,8 @@ export const state: State = store<State>({
   managedSession: null,
   // The managed user's teams (sidebar Teams section); the session probe fills it.
   managedTeams: [],
+  // The open managed team report; openTeamReport sets it, view switches clear it.
+  managedReport: null,
 })
 
 // Cross-tab propagation: a sibling tab's `saveRepoUrlFor` writes

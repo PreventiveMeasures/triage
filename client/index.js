@@ -110,6 +110,7 @@ export {
   migrateTriageToEncrypted,
   migrateTriageToPlaintext,
   saveTriage,
+  setTriageChangeNotifier,
   setTriageReloadNotifier,
 } from './triage.js'
 
@@ -117,6 +118,7 @@ export {
   bucketOf,
   isReportIgnored,
   patchEntry,
+  setEntry,
   setReportIgnored,
 } from './triage-entry.ts'
 

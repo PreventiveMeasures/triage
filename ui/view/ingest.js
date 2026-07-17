@@ -401,6 +401,9 @@ export async function switchToFile(name, content) {
   state.workspaceMerges = []
   state.currentFile = name
   state.currentWorkspace = null
+  // Drop the managed open-report slot — openTeamReport re-claims it after its
+  // own switchToFile, so any other switch stops the server triage push.
+  state.managedReport = null
   // Switching to a regular report drops out of the bundles / packages
   // view — the user clicked a file row to see its findings.
   if (state.currentView === 'bundles' || state.currentView === 'packages' || state.currentView === 'repositories') {
@@ -509,6 +512,7 @@ export async function switchToWorkspace(workspaceId) {
   state.workspaceMerges = []
   state.currentFile = null
   state.currentWorkspace = workspaceId
+  state.managedReport = null
   state.repoUrl = ''
   state.repoEditing = false
   graph2.selected = null
@@ -669,6 +673,7 @@ export async function deleteCurrent({ triage = 'keep', deleteFromRemoteWorkspace
 function clearActiveView() {
   state.currentFile = null
   state.currentWorkspace = null
+  state.managedReport = null
   state.selectedBundle = null
   state.bundleDetails = null
   state.bundleSourceFile = null
