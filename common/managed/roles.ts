@@ -6,8 +6,10 @@
 //   triage — can triage findings
 //   view   — read-only
 //   none   — no access
-// Only `admin` is enforced today (the admin endpoints + UI); the rest are
-// stored + assignable, with their enforcement a later step.
+// Enforcement so far: `admin` gates the admin endpoints + UI, `manage` joins
+// it on the management surface (repos / reports / bundles / teams), `view` is
+// the floor for reading team reports, and `triage` is the floor for writing
+// per-finding report triage (admin/manage bypass the membership checks).
 export type Role = 'admin' | 'manage' | 'triage' | 'view' | 'none'
 
 export const ROLES: readonly Role[] = ['admin', 'manage', 'triage', 'view', 'none']

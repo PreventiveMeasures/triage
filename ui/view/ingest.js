@@ -529,6 +529,9 @@ export async function switchToFile(name, content, { workspaceId } = {}) {
   state.currentFile = name
   state.currentWorkspace = null
   state.currentLinks = null
+  // Drop the managed open-report slot — openTeamReport re-claims it after its
+  // own switchToFile, so any other switch stops the server triage push.
+  state.managedReport = null
   // Switching to a regular report drops out of the bundles / packages
   // / links view — the user clicked a file row to see its findings.
   // (A links file lands back on 'links' below, once the read confirms
@@ -694,6 +697,7 @@ export async function switchToWorkspace(workspaceId) {
   state.currentWorkspace = workspaceId
   state.currentReportWorkspace = null
   state.currentLinks = null
+  state.managedReport = null
   state.repoUrl = ''
   state.repoEditing = false
   resetGraph2()
@@ -874,6 +878,7 @@ function clearActiveView() {
   state.currentWorkspace = null
   state.currentReportWorkspace = null
   state.currentLinks = null
+  state.managedReport = null
   state.selectedBundle = null
   state.bundleDetails = null
   state.bundleSourceFile = null

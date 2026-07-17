@@ -66,6 +66,38 @@ export async function fetchReport(id) {
   try { return await res.text() } catch { return null }
 }
 
+// GET /api/reports/<id>/triage → the server's per-finding triage entries for a
+// team report, as `{ <findingId>: { color?, triage?, comment?, fix?, flagged? } }`
+// (already restricted server-side to the findings this viewer may see), or
+// null on any failure / no access. `ignoredReports` never rides this wire —
+// the per-report ignore stays a client-local concept.
+export async function fetchReportTriage(id) {
+  const body = await getJson(`/api/reports/${encodeURIComponent(id)}/triage`)
+  const entries = body?.entries
+  return entries != null && typeof entries === 'object' && !Array.isArray(entries) ? entries : null
+}
+
+// POST /api/reports/<id>/triage → push locally-changed triage entries
+// (`{ <findingId>: entry | null }`; null clears the server's row), sending the
+// double-submit CSRF token the server requires for mutations. Resolves true on
+// success, false on any failure (network / auth / validation) — pushes are
+// best-effort, the caller retries via its diff on the next change.
+export async function pushReportTriage(id, entries, csrfToken) {
+  let res
+  try {
+    res = await fetch(`/api/reports/${encodeURIComponent(id)}/triage`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        'content-type': 'application/json',
+        ...(csrfToken ? { 'x-csrf-token': csrfToken } : {}),
+      },
+      body: JSON.stringify({ entries }),
+    })
+  } catch { return false }
+  return res.ok
+}
+
 // Hand off to the server's OAuth entry — a top-level navigation to GitHub and
 // back to the app (callback sets the session cookie).
 export function login(loginPath) {
