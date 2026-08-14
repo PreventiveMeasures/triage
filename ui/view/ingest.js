@@ -13,16 +13,11 @@ import { parseMarkdownFindings } from '../../common/parse-md.js'
 import { parseCodexCsvToScans } from '../../common/parse-codex.js'
 import { parseDeepsecFindings } from '../../common/parse-deepsec.js'
 import { deriveFindingId } from '../../common/finding-id.js'
+import { inheritReportMeta } from '../../common/report-meta.js'
 import { importWorkspaceFromGzip } from './workspace-import.js'
 import { maybePromptFirstImport } from './first-import-prompt.js'
 import { openPasskeyUnlockDialog } from './dialogs/passkey-unlock-dialog.js'
 
-// Run-level meta fields the analyzer emits at the top of each report
-// (and that the deduplicate command stamps on each finding individually).
-// `ingestReport` lifts any of these from the header onto each finding so
-// the renderer can show per-finding mode info uniformly, without
-// branching on whether the file came from a deduplicated dump.
-const META_FIELDS = ['type', 'model', 'think', 'effort', 'exportsMode']
 // localStorage key for the last-viewed file — restored on page load so
 // the user picks back up where they left off. The stored value is the
 // OPFS filename for a single-file view; prefixed with `ws:` for a
@@ -989,16 +984,12 @@ export async function ingestReport(name, content, gen = null) {
       // Register ids as we stamp so duplicate entries WITHIN this drop
       // are caught too.
       //
-      // Inherit run-level meta (type / effort / exportsMode) from the
-      // header onto findings that carry NO per-finding meta, but ONLY
-      // for native analyzer JSON dumps (no `data.source`). A finding
-      // out of the deduplicate command already has its own per-source
-      // meta (each source's header projected onto it); a missing field
-      // there means "that source run didn't have it" — mixing in the
-      // dedup dump's top-level meta would mask that gap (e.g. effort=max
-      // on a finding whose source run had no effort flag). For codex /
-      // claude-security imports the report-level type is a whole-file
-      // category label, not a per-finding analyzer descriptor.
+      // Inherit run-level meta (type / model / think / effort /
+      // exportsMode) from the header onto each finding, field by field —
+      // see inheritReportMeta. A finding out of the deduplicate command
+      // carries its own `model` (one per source run) while the rest of
+      // the run meta stays in the header, so filling gaps individually
+      // is what keeps such a finding's analyzer from reading as "none".
       //
       // Plain for-loop rather than .map — the callback would close over
       // the outer loop's `data` / `name` / `repoFallback`, which
@@ -1019,14 +1010,7 @@ export async function ingestReport(name, content, gen = null) {
           _reportName: name,
           _bundleHashes: data.bundleHashes ?? [],
         }
-        if (!data.source) {
-          const hasOwnMeta = META_FIELDS.some((k) => filled[k] !== undefined)
-          if (!hasOwnMeta) {
-            for (const key of META_FIELDS) {
-              if (data[key] !== undefined) filled[key] = data[key]
-            }
-          }
-        }
+        inheritReportMeta(filled, data)
         // Effective analyzer string for the toolbar's analyzer filter.
         // Source-marked reports (deepsec / codex-security /
         // claude-security) use their tool name; native JSON dumps use
