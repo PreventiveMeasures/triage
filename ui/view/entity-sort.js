@@ -9,10 +9,19 @@
 // change. events.js's single listener writes the matching
 // `state.${kind}SortBy` slot and calls render().
 //
-// The native `<select>` value is bound through Lit's `live()`
-// directive so a stale-filter clear in the parent's pipeline
-// actually updates the visible selection — same reasoning as
-// `<repo-filter>`'s `live()` binding.
+// The active sort is bound twice, same split as `<findings-sort>`
+// (see the comment there for the full reasoning): `?selected=` on
+// the options so the FIRST paint of a freshly-built element shows
+// the real sort — Lit commits the `<select>`'s own bindings before
+// its options exist, so `.value=` alone leaves the browser falling
+// back to the first option — and `.value=` through Lit's `live()`
+// for every later render, where a stale-filter clear in the
+// parent's pipeline has to move the native value because the
+// attribute is ignored once the user has picked something. The
+// Packages / Repositories pages rebuild their slot wholesale on
+// cross-view entry (`report.innerHTML` in render.js), so returning
+// to the page with a non-default sort is exactly the first-paint
+// case.
 //
 // Properties:
 //   * `kind` — `"packages"` or `"repositories"`. Required (no
@@ -64,7 +73,8 @@ class EntitySort extends StateElement {
       .value=${live(state[config.stateKey])}
       @change=${this._onChange}
     >
-      ${OPTIONS.map(([value, label]) => html`<option value=${value}>${label}</option>`)}
+      ${OPTIONS.map(([value, label]) =>
+        html`<option value=${value} ?selected=${state[config.stateKey] === value}>${label}</option>`)}
     </select>`
   }
 
