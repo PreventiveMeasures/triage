@@ -18,6 +18,70 @@ export const SEVERITY_ORDER = {
 // recognizable color hint without competing with vuln tiers in the
 // summary slots.
 export const SEVERITIES = ['critical', 'high', 'medium', 'low', 'high_bug', 'bug', 'informational']
+
+// ── Corrected severity ───────────────────────────────────────────────
+// A finding may carry an application-specific `correctedSeverity` (plus a
+// free-text `correctedSeverityReason`) emitted in the report data — a
+// per-report re-rating of the analyzer's intrinsic `severity`. Unlike
+// `severity` (which is hashed into the finding id, so it's identical for
+// every occurrence of an id — see common/finding-id.js), the corrected
+// value is PER-REPORT: the same finding id can carry a different corrected
+// severity in different reports. When the same id is deduped across
+// reports at ingest, each occurrence's effective severity is preserved on
+// the survivor in `f._correctedByReport` (a { [reportName]: { severity,
+// reason } } map) so the divergence stays visible; see ingest.js.
+//
+// These helpers are the SINGLE place every display / count / sort consumer
+// resolves severity through, so the original-vs-corrected switch and the
+// invalid-tier fallback are defined once. Severity used for IDENTITY
+// (the id fingerprint, dedupe keys) must stay raw `f.severity` and never
+// route through here. This module stays free of any `#client/...` import
+// (it rides the lazy graph bundle — see fileUrl's note), so the switch
+// MODE is passed in by callers (`state.severityMode`) rather than read
+// from `state` here.
+
+// A corrected value is honored only when it names a known tier; an
+// unrecognised string (some importers don't validate severities) falls
+// back to the intrinsic severity rather than sorting to rank 0 and
+// rendering an uncolored badge.
+function validCorrected(corrected) {
+  return corrected != null && corrected in SEVERITY_ORDER ? corrected : null
+}
+
+// The finding's own effective severity — its corrected value when valid,
+// else the intrinsic severity. The finding object always carries its own
+// report's correction (it IS that report's finding), so no report key is
+// needed here; cross-report divergence is surfaced via correctedVariants.
+export function effectiveSeverity(f) {
+  return validCorrected(f?.correctedSeverity) ?? f?.severity
+}
+
+// True when the finding carries a valid correction that actually changes
+// the tier — the trigger for the dual badge / reason affordance.
+export function hasSeverityCorrection(f) {
+  const c = validCorrected(f?.correctedSeverity)
+  return c != null && c !== f?.severity
+}
+
+// Switch-aware accessor: every display / count / sort site calls this with
+// the current mode (`state.severityMode`) instead of reading `f.severity`.
+// `'original'` shows the intrinsic value; anything else (default
+// `'corrected'`) shows the effective value.
+export function displayedSeverity(f, mode) {
+  return mode === 'original' ? f?.severity : effectiveSeverity(f)
+}
+
+// Per-report effective-severity map for a deduped survivor, returned ONLY
+// when the correction diverges across the reports the id appeared in
+// (size > 1 distinct tiers). Drives the "varies across reports" hint and
+// its tooltip. `null` when there's no map or no divergence.
+export function correctedVariants(f) {
+  const byReport = f?._correctedByReport
+  if (!byReport) return null
+  const tiers = new Set(Object.values(byReport).map((v) => v?.severity))
+  return tiers.size > 1 ? byReport : null
+}
+
 // "Module" = third-party dependency. Recognised vendor-directory
 // layouts, in detection precedence: `node_modules/` (npm/pnpm/yarn),
 // `vendor/` (PHP Composer, Go modules), and the generic

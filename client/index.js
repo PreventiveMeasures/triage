@@ -61,6 +61,7 @@ export {
 } from './secure-storage.js'
 
 export {
+  SEVERITY_MODE_KEY,
   VIEW_MODE_KEY,
   loadRepoUrlFor,
   saveRepoUrlFor,

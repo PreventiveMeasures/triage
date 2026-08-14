@@ -7,7 +7,7 @@ import { FILE_ICONS } from './file-display.js'
 import { listBundles, listWorkspaces, state } from '#client/index.js'
 import { isBundleInRemote, isInRemote, remoteCount, triageSync } from './client-sync.js'
 import { dropZone, report } from './dom.js'
-import { SEVERITIES, configureDepsDir, fileLink, findingDisplayName, formatRunMeta, isModule, lineLink, prettyModel, stripExportMarker } from './format.js'
+import { SEVERITIES, configureDepsDir, displayedSeverity, fileLink, findingDisplayName, formatRunMeta, hasSeverityCorrection, isModule, lineLink, prettyModel, stripExportMarker } from './format.js'
 import { activeTabFor, getMergedGroups, groupKey, groupState, primaryTab, tabKey } from './group.js'
 import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, applySorting, modelOfFinding, repoOfFinding } from './filters.js'
 import { ANALYZER_LABELS } from './analyzer-select.js'
@@ -63,7 +63,7 @@ export function buildGraph2Data() {
   // and severity-row counts all reflect the active tab's split.
   const visibleGroups = allGroups.filter((g) =>
     groupState(g).commonTriage === state.shownTriage)
-  const findingCounts = computeFindingCountsByFile(visibleGroups)
+  const findingCounts = computeFindingCountsByFile(visibleGroups, state.severityMode)
   const transitiveCounts = computeTransitiveCounts(treeData, findingCounts)
   // Per-file Sets driving the topbar severity / triage chip counts
   // AND the canvas dim predicate. Each finding contributes its
@@ -81,13 +81,14 @@ export function buildGraph2Data() {
   const fileFindings = new Map()
   for (const g of visibleGroups) {
     for (const f of g) {
+      const sev = displayedSeverity(f, state.severityMode)
       if (!severitySets.has(f.file)) severitySets.set(f.file, new Set())
-      severitySets.get(f.file).add(f.severity)
+      severitySets.get(f.file).add(sev)
       const color = state.triage.get(tabKey(f))?.color ?? 'none'
       if (!colorSets.has(f.file)) colorSets.set(f.file, new Set())
       colorSets.get(f.file).add(color)
       if (!fileFindings.has(f.file)) fileFindings.set(f.file, [])
-      fileFindings.get(f.file).push({ severity: f.severity, color })
+      fileFindings.get(f.file).push({ severity: sev, color })
     }
   }
   // Package-focus mode narrows to files in the focused package, with
@@ -391,7 +392,7 @@ function headerTemplate(mergedGroups, fileNames, repoInputUseful, knownRepo, tre
   if (totalCount > 0) {
     const sevCounts = {}
     for (const g of mergedGroups) {
-      const sev = primaryTab(g).severity
+      const sev = displayedSeverity(primaryTab(g), state.severityMode)
       if (sev) sevCounts[sev] = (sevCounts[sev] || 0) + 1
     }
     const presentSevs = SEVERITIES.filter((s) => sevCounts[s] > 0)
@@ -690,7 +691,7 @@ function triageFilterTemplate(colorCounts) {
 // so the host drops it in unconditionally.
 
 function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCounts, flags, analyzerSelect, repoOptions) {
-  const { showSource, showConfidence, showPriority, showGraphMode, showFileSort, kanbanMode, showRepo, hasComment, hasFix, hasFlagged } = flags
+  const { showSource, showConfidence, showPriority, showGraphMode, showFileSort, kanbanMode, showRepo, hasComment, hasFix, hasFlagged, showSeverityMode } = flags
   // The findings tab gains a "graph" view-mode option when a
   // tree-bearing report is loaded (showGraphMode). The focus and
   // kanban modes sit between grouped and graph. Switching to graph
@@ -728,6 +729,10 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
          at the row's right edge and the per-chip toggle cover those
          needs. -->
     <div class="toolbar-row sev-row">
+      <!-- Corrected / Original severity lens — leads the row, immediately
+           left of the chips it governs. Self-gated by showSeverityMode
+           (a correction is present, or the user is parked in original). -->
+      ${showSeverityMode ? html`<severity-mode-switch></severity-mode-switch><div class="sep"></div>` : nothing}
       ${severityChipsTemplate(counts)}
       <!-- Analyzer / model dropdown — visible only when at least one
            of the two dimensions has more than one distinct value
@@ -896,7 +901,11 @@ function kanbanCardTemplate(g, opts = {}) {
   if (!groupSt.hasConflict && groupSt.commonColor) classes[`mark-${groupSt.commonColor}`] = true
   const lineNum = parseInt(activeTab.line, 10)
   const lineSuffix = Number.isFinite(lineNum) ? `:${lineNum}` : ''
-  const letter = SEVERITY_LETTERS[activeTab.severity] ?? '?'
+  const kanbanSev = displayedSeverity(activeTab, state.severityMode)
+  const letter = SEVERITY_LETTERS[kanbanSev] ?? '?'
+  // Append `*` (a shape cue, not color-only) when the shown severity is a
+  // correction; the title / aria-label spell out the original.
+  const sevCorrected = hasSeverityCorrection(activeTab) && state.severityMode !== 'original'
   // Attention flag sits directly under the severity badge (top-right
   // of the card). Display-only here — the card is a drag/click target,
   // so toggling lives in the detail popover's finding-card; we only
@@ -904,10 +913,10 @@ function kanbanCardTemplate(g, opts = {}) {
   const flagged = state.triage.get(tabKey(activeTab))?.flagged === true
   const inner = html`<div class="kanban-badge-col">
       <span
-        class=${`kanban-badge sev-${activeTab.severity}`}
-        title=${badgeLabel(activeTab.severity)}
-        aria-label=${badgeLabel(activeTab.severity)}
-      >${letter}</span>
+        class=${`kanban-badge sev-${kanbanSev}`}
+        title=${sevCorrected ? `${badgeLabel(kanbanSev)} — corrected from ${badgeLabel(activeTab.severity)}` : badgeLabel(kanbanSev)}
+        aria-label=${sevCorrected ? `Severity ${badgeLabel(kanbanSev)}, corrected from ${badgeLabel(activeTab.severity)}` : `Severity ${badgeLabel(kanbanSev)}`}
+      >${letter}${sevCorrected ? '*' : ''}</span>
       ${flagged ? html`<span class="kanban-flag" title="Flagged" aria-label="Flagged">${FLAG_ICON}</span>` : nothing}
     </div>
     <span class="kanban-title">${title}</span>
@@ -1571,8 +1580,15 @@ function renderImpl() {
   // independent of the active filters) — or while its filter is on, so a
   // left-active filter can always be switched off. One pass for all three.
   let hasComment = false, hasFix = false, hasFlagged = false
+  // Same single pass also detects whether ANY finding carries a severity
+  // correction — gates the <severity-mode-switch> (scanned over the full
+  // loaded set, not just the active filter). Checked before the triage
+  // early-continue since a correction is report data, independent of any
+  // triage entry.
+  let hasCorrectedSeverity = false
   for (const g of mergedGroups) {
     for (const f of g) {
+      if (hasSeverityCorrection(f)) hasCorrectedSeverity = true
       const e = state.triage.get(tabKey(f))
       if (!e) continue
       if (e.comment) hasComment = true
@@ -1600,12 +1616,13 @@ function renderImpl() {
     // Sets — count the lone tab's severity/color directly.
     if (g.length === 1) {
       const f = g[0]
-      counts[f.severity] = (counts[f.severity] || 0) + 1
+      const sev = displayedSeverity(f, state.severityMode)
+      counts[sev] = (counts[sev] || 0) + 1
       const c = state.triage.get(tabKey(f))?.color ?? 'none'
       colorCounts[c] = (colorCounts[c] || 0) + 1
       continue
     }
-    const sevs = new Set(g.map((f) => f.severity))
+    const sevs = new Set(g.map((f) => displayedSeverity(f, state.severityMode)))
     for (const s of sevs) counts[s] = (counts[s] || 0) + 1
     const cols = new Set(g.map((f) => state.triage.get(tabKey(f))?.color ?? 'none'))
     for (const c of cols) colorCounts[c] = (colorCounts[c] || 0) + 1
@@ -1796,7 +1813,7 @@ function renderImpl() {
   const headerTpl = headerTemplate(mergedGroups, fileNames, repoInputUseful, knownRepo, treeFileCount)
 
   if (state.currentView === 'files') {
-    const findingCounts = computeFindingCountsByFile(mergedGroups)
+    const findingCounts = computeFindingCountsByFile(mergedGroups, state.severityMode)
     // Reuse the existing slots across renders so Lit's part-cache
     // (keyed on each slot element) survives — without this guard
     // every render() wiped #report, the slot elements were fresh,
@@ -1890,6 +1907,10 @@ function renderImpl() {
       hasComment,
       hasFix,
       hasFlagged,
+      // Corrected/Original lens switch — shown only when a correction
+      // exists in the loaded set, or while parked in 'original' so the
+      // user can always flip back (mirrors the annotation-filter rule).
+      showSeverityMode: hasCorrectedSeverity || state.severityMode === 'original',
     },
     // Analyzer/model dropdown wiring: counts inside the panel run
     // over allGroups (the current triage bucket) so they preview

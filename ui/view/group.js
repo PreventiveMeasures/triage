@@ -1,5 +1,5 @@
 import { getPackagesIndex, isReportIgnored, state } from '#client/index.js'
-import { SEVERITY_ORDER } from './format.js'
+import { SEVERITY_ORDER, displayedSeverity } from './format.js'
 // NOTE: filters.js imports from this module too (primaryTab / tabKey).
 // The cycle is deliberate and benign: both sides only call across
 // inside function bodies, never during module evaluation, so whichever
@@ -50,8 +50,8 @@ export function sortTabs(group) {
     const aColored = state.triage.get(tabKey(a))?.color ? 1 : 0
     const bColored = state.triage.get(tabKey(b))?.color ? 1 : 0
     if (aColored !== bColored) return bColored - aColored
-    const aSev = SEVERITY_ORDER[a.severity] || 0
-    const bSev = SEVERITY_ORDER[b.severity] || 0
+    const aSev = SEVERITY_ORDER[displayedSeverity(a, state.severityMode)] || 0
+    const bSev = SEVERITY_ORDER[displayedSeverity(b, state.severityMode)] || 0
     if (aSev !== bSev) return bSev - aSev
     const aConf = a.confidence ?? -1
     const bConf = b.confidence ?? -1

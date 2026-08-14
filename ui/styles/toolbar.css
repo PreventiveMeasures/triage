@@ -380,6 +380,34 @@ source-filter {
   }
 }
 
+/* Corrected / Original severity lens — a muted `Severity` label followed
+   by a 2-chip bordered pill, mirroring `source-filter`'s shell. Single
+   chip always active (no empty state), so no toggle-off recolor needed
+   beyond `.active`. Governs what the severity chips to its right count. */
+severity-mode-switch {
+  display: inline-flex; align-items: center; gap: .4rem;
+  height: 30px; box-sizing: border-box;
+
+  & .severity-mode-label {
+    color: var(--muted); font-size: .7rem; font-weight: 500; letter-spacing: .04em;
+  }
+  & .severity-mode-chips {
+    display: inline-flex; height: 30px; box-sizing: border-box;
+    border: 1px solid var(--border); border-radius: 4px; overflow: hidden;
+  }
+  & .severity-mode-chip {
+    background: transparent; border: none; color: var(--muted);
+    padding: 0 .55rem;
+    display: inline-flex; align-items: center;
+    transition: background .12s, color .12s;
+    font-family: inherit; font-size: .75rem; cursor: pointer;
+
+    &:not(:last-child) { border-right: 1px solid var(--border); }
+    &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
+    &.active { color: var(--accent); background: var(--surface-active); }
+  }
+}
+
 /* Flag filter — a single flag-icon chip right after the Sources /
    Dependencies switch. Same pill chrome as source-filter; accent +
    filled cloth when the flagged-only filter is on. */

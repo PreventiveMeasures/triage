@@ -275,6 +275,57 @@
   &.informational { background: var(--info); color: #fff; }
 }
 
+/* Corrected-severity dual badge — see severityBadge() in render-finding.js.
+   The primary chip reuses `.badge`; the companion shows the OTHER severity
+   (struck original when showing corrected; outlined corrected target when
+   showing original) plus a ▲/▼ direction glyph, so the corrected/original
+   distinction carries a shape cue, never color alone. The full / compact
+   variants stack the companion under the primary so the fixed-width score
+   column never widens. Outline tints reuse the per-theme severity tokens
+   via relative-color syntax, so all four themes retune automatically. */
+.badge-pair { display: inline-flex; align-items: center; gap: .25rem; }
+.badge-pair-full,
+.badge-pair-compact { flex-direction: column; gap: .15rem; }
+
+.badge-orig-wrap { display: inline-flex; align-items: center; gap: .15rem; line-height: 1; }
+.badge-arrow, .badge-corr-mark { font-size: .6rem; line-height: 1; color: var(--muted); }
+.badge-arrow.up, .badge-corr-mark.up { color: var(--high); }
+.badge-pre { font-size: .55rem; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
+
+.badge-orig {
+  display: inline-block; font-size: .58rem; font-weight: 600; text-transform: uppercase;
+  padding: .08rem .3rem; border-radius: 3px; letter-spacing: .03em; line-height: 1;
+  background: transparent; color: var(--muted); border: 1px solid var(--border);
+
+  &.struck { text-decoration: line-through; text-decoration-thickness: 1px; }
+  &.critical      { border-color: rgb(from var(--critical) r g b / .55); }
+  &.high          { border-color: rgb(from var(--high) r g b / .55); }
+  &.medium        { border-color: rgb(from var(--medium) r g b / .55); }
+  &.low           { border-color: rgb(from var(--low) r g b / .55); }
+  &.high_bug      { border-color: rgb(from var(--high-bug) r g b / .55); }
+  &.bug           { border-color: rgb(from var(--bug) r g b / .55); }
+  &.informational { border-color: rgb(from var(--info) r g b / .55); }
+}
+
+/* "varies across reports" chip — a deduped finding whose correction
+   differs between the reports it appeared in (workspace view). */
+.badge-varies {
+  font-size: .55rem; font-weight: 600; text-transform: uppercase; letter-spacing: .03em;
+  padding: .08rem .3rem; border-radius: 3px; line-height: 1;
+  background: transparent; color: var(--muted); border: 1px dashed var(--border);
+}
+
+/* Inline explanation of a severity correction in the card body — mirrors
+   the .conf-reason note (muted italic, dashed divider above). */
+.severity-reason {
+  margin-top: .4rem; padding-top: .35rem; border-top: 1px dashed var(--border);
+  font-size: .82em; font-style: italic; color: var(--muted);
+}
+.severity-reason-label {
+  font-style: normal; font-weight: 600; text-transform: uppercase;
+  font-size: .85em; letter-spacing: .04em; margin-right: .35rem;
+}
+
 .tab {
   background: transparent; color: var(--text);
   border: 1px solid var(--border); border-radius: 4px;
@@ -725,6 +776,14 @@
     &.bug           { background: #4d4538 !important; color: #fff !important; }
     &.informational { background: #0550ae !important; color: #fff !important; }
   }
+  /* Dual-badge companion + correction note print as plain dark-gray text
+     (no fill) so paper reads `HIGH  ▼ was C̶R̶I̶T̶`. */
+  .badge-orig {
+    background: transparent !important; color: #555 !important; border-color: #999 !important;
+  }
+  .badge-varies { color: #555 !important; border-color: #999 !important; }
+  .badge-arrow, .badge-corr-mark, .badge-pre { color: #555 !important; }
+  .severity-reason { color: #555 !important; }
   /* Strip on-screen link colors so a linked filename reads
      identically to the bare-text fallback. */
   a, .line-num, .line-num a { color: inherit; }

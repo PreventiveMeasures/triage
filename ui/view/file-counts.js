@@ -6,7 +6,7 @@
 // module, and `treeAnchor` is the Files tab's in-page anchor ID
 // generator (render-files.js tree cards + events.js scroll-to-file).
 
-import { SEVERITIES } from './format.js'
+import { SEVERITIES, displayedSeverity } from './format.js'
 
 // File path → in-page anchor id. Replaces every non-word char with
 // an underscore so paths with `/` `.` `@` (node_modules / scoped
@@ -25,13 +25,14 @@ const emptyCounts = () => Object.fromEntries(SEVERITIES.map((s) => [s, 0]))
 // surface findings density per file at a glance. Counts INDIVIDUAL
 // findings (not groups) so the numbers match the per-file stats a
 // user would otherwise scan in the findings view.
-export function computeFindingCountsByFile(allGroups) {
+export function computeFindingCountsByFile(allGroups, mode) {
   const counts = new Map()
   for (const g of allGroups) {
     for (const f of g) {
       if (!counts.has(f.file)) counts.set(f.file, emptyCounts())
       const c = counts.get(f.file)
-      if (c[f.severity] !== undefined) c[f.severity]++
+      const sev = displayedSeverity(f, mode)
+      if (c[sev] !== undefined) c[sev]++
     }
   }
   return counts

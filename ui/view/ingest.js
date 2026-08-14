@@ -4,6 +4,7 @@ import { closeWorkspace as closePresence, deleteBundleFromRemote, deleteFromRemo
 import { openImportConflictDialog } from './dialogs/import-conflict-dialog.js'
 import { dropZone, report } from './dom.js'
 import { toGroup } from './group.js'
+import { effectiveSeverity } from './format.js'
 import { resetFilters } from './filters.js'
 import { render } from './render.js'
 import { renderSidebar } from './sidebar.js'
@@ -914,14 +915,48 @@ export async function ingestReport(name, content, gen = null) {
     // dropping the entry.
     const seenIds = new Set()
     const idToGroupKey = new Map()
+    // id → the SURVIVING finding object for that id (first occurrence
+    // wins, matching the dedup below). Lets the dedup branches stamp a
+    // dropped duplicate's per-report effective severity onto the survivor
+    // so an application-specific correction that DIFFERS across reports
+    // stays visible in the merged view — see recordCorrectedVariant and
+    // format.js correctedVariants. The dropped duplicate object itself is
+    // discarded as before; only its corrected severity is preserved.
+    const idToFinding = new Map()
     for (let ri = 0; ri < state.reports.length; ri++) {
       const r = state.reports[ri]
       for (let gi = 0; gi < r.groups.length; gi++) {
         const g = r.groups[gi]
         const key = `${ri}:${gi}`
         for (const f of g) {
-          if (f.id) { seenIds.add(f.id); idToGroupKey.set(f.id, key) }
+          if (f.id) {
+            seenIds.add(f.id); idToGroupKey.set(f.id, key)
+            if (!idToFinding.has(f.id)) idToFinding.set(f.id, f)
+          }
         }
+      }
+    }
+    // Record a deduped duplicate's effective severity onto the survivor,
+    // keyed by report name. Only builds the `_correctedByReport` map when
+    // a correction is actually present on either side — same id implies an
+    // identical INTRINSIC severity (it's in the id fingerprint), so two
+    // occurrences can only diverge via a correction. Seeds the survivor's
+    // own entry on first divergence so the map fully describes every
+    // report's value. Defined outside the entry loop (no per-iteration
+    // closure) so oxlint's no-loop-func stays happy.
+    const recordCorrectedVariant = (survivor, dupReportName, dup) => {
+      if (!survivor || (!dup.correctedSeverity && !survivor.correctedSeverity)) return
+      if (!survivor._correctedByReport) {
+        survivor._correctedByReport = {
+          [survivor._reportName ?? '']: {
+            severity: effectiveSeverity(survivor),
+            reason: survivor.correctedSeverityReason,
+          },
+        }
+      }
+      survivor._correctedByReport[dupReportName ?? ''] = {
+        severity: effectiveSeverity(dup),
+        reason: dup.correctedSeverityReason,
       }
     }
     // Derive deterministic ids for findings lacking one — must run
@@ -976,6 +1011,9 @@ export async function ingestReport(name, content, gen = null) {
         if (matchedGroupKeys.size > 1) {
           state.workspaceMerges.push(new Set(entryMergeIds))
         }
+        // Preserve each dropped duplicate's corrected severity on its
+        // survivor before discarding the entry.
+        for (const m of seenMembers) recordCorrectedVariant(idToFinding.get(m.id), name, m)
         dupeCount += seenMembers.length; continue
       }
       // Stamp a session-local `_id` on each member as a fallback key
@@ -1017,6 +1055,7 @@ export async function ingestReport(name, content, gen = null) {
         // the per-finding `type` (undefined → null, a stable sentinel
         // for the "no analyzer" bucket).
         filled._analyzer = data.source ?? (filled.type ?? null)
+        if (filled.id && !idToFinding.has(filled.id)) idToFinding.set(filled.id, filled)
         stamped.push(filled)
       }
       // Stamp the new members' group key so a later partial-dupe entry
@@ -1036,6 +1075,7 @@ export async function ingestReport(name, content, gen = null) {
         // groups holding the seen members via a workspace merge.
         dupeCount += seenMembers.length
         state.workspaceMerges.push(new Set(entryMergeIds))
+        for (const m of seenMembers) recordCorrectedVariant(idToFinding.get(m.id), name, m)
       }
       const newGroupKey = `${state.reports.length}:${groups.length}`
       for (const f of newMembers) {

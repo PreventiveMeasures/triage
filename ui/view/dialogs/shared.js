@@ -7,6 +7,12 @@ import { html, nothing } from 'lit'
 // fix-link, and triage-conflict dialogs. Palette is themed via
 // theme.css per-severity custom properties; the `.conflict-sev` /
 // `.sev-*` rules live in dialog-severity.css (shared shadow layer).
+//
+// Takes an ALREADY-RESOLVED severity string: callers holding a finding
+// pass `displayedSeverity(f, state.severityMode)` so the chip agrees
+// with the card the dialog was opened from (see view/format.js). The
+// conflict dialog passes the sync metadata's severity as-is — wire
+// metadata carries no correction.
 export function severityBadge(sev) {
   if (!sev) return nothing
   const label = sev.replaceAll('_', ' ')

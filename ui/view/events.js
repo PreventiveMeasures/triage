@@ -1,4 +1,4 @@
-import { VIEW_MODE_KEY, isEncryptionEnabled, isReportIgnored, patchEntry, readBundle, saveRepoUrlFor, saveTriage, setReportIgnored, state, subscribeToBundleFindingIndex } from '#client/index.js'
+import { SEVERITY_MODE_KEY, VIEW_MODE_KEY, isEncryptionEnabled, isReportIgnored, patchEntry, readBundle, saveRepoUrlFor, saveTriage, setReportIgnored, state, subscribeToBundleFindingIndex } from '#client/index.js'
 import { downloadBlob, report } from './dom.js'
 import { commonPrefix, handoffBlock } from './format.js'
 import { activeTabFor, findGroupById, findingRepo, findingReport, groupState, tabKey } from './group.js'
@@ -2034,6 +2034,19 @@ report.addEventListener('view-mode-change', (e) => {
   // filters / sort / loaded report have moved on. Letting it default
   // back to the first-filtered item is the friendlier behaviour.
   if (state.viewMode !== 'focus') state.focusGid = null
+  render()
+})
+
+// `<severity-mode-switch>` — flip the global Corrected / Original severity
+// lens. Mirrors view-mode-change: set the slot, persist to localStorage
+// (state.ts reads it back on boot), full re-render. A full render is
+// needed because the mode changes badges, severity-chip counts, the
+// severity sort order, and the header status bar across the whole view.
+report.addEventListener('severity-mode-change', (e) => {
+  const mode = e.detail?.mode
+  if (mode !== 'corrected' && mode !== 'original') return
+  state.severityMode = mode
+  try { localStorage.setItem(SEVERITY_MODE_KEY, mode) } catch {}
   render()
 })
 
