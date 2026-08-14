@@ -44,6 +44,25 @@
    paints location info above the card (flat-group mode). */
 :host([in-group]) .line-row { display: none; }
 
+/* With that row gone, whatever follows it becomes the description
+   column's first visible block — and its top margin, which exists to
+   separate it from the row above, turns into stray padding that drops
+   the opening line of prose below the severity badge it should start
+   level with. Only bites when the description has no title line
+   (`splitDescription` leaves a one-paragraph description as a plain
+   `.desc`, which carries the gap); with a `.desc-title` first there's
+   no margin to shed. `.conf-reason` also sheds its divider chrome —
+   a dashed rule across the top of the column is a separator with
+   nothing left above it to separate.
+   Screen always hides the row; print re-shows it on `.multi-case`
+   cards (see the @media print block), where the margin is doing its
+   real job again — hence the media split instead of one blanket
+   rule. */
+@media not print {
+  :host([in-group]) .line-row + * { margin-top: 0; }
+  :host([in-group]) .line-row + .conf-reason { padding-top: 0; border-top: 0; }
+}
+
 .tabs { display: flex; gap: .25rem; flex-wrap: wrap; }
 
 .marks-left {
@@ -670,6 +689,12 @@
      in-body row (active included). Single-tab in-group findings keep
      the screen rule and stay hidden so file:line isn't doubled. */
   :host([in-group].multi-case) .tab-body .line-row { display: flex; }
+  /* Same first-visible-block reset as the screen rule up top, minus
+     the `.multi-case` cards the rule above just gave their line row
+     back — there the following block's top margin is a real gap
+     again. */
+  :host([in-group]:not(.multi-case)) .line-row + * { margin-top: 0; }
+  :host([in-group]:not(.multi-case)) .line-row + .conf-reason { padding-top: 0; border-top: 0; }
   /* In print at 9pt the line-row crowds: `(found analyzing X)` between
      file:line and run-meta forces meta onto a wrapped second line.
      Push the discovered-in span onto its own row so meta stays on the
