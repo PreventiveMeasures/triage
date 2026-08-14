@@ -14,12 +14,27 @@
 // components paired by the same `sort-change` dispatch contract.
 //
 // Reactivity: extends StateElement, reads `state.sortBy` via the
-// autorun. Native `<select>` value bound through Lit's `live()`
-// directive so a stale-filter clear in the parent's pipeline
-// (e.g. `state.sortBy` reset when its option drops out of view)
-// actually moves the browser-native `value` rather than just
-// flipping a `?selected=` attribute the browser ignores after user
-// interaction.
+// autorun. The active sort is bound TWICE — both bindings are load-
+// bearing, at opposite ends of the element's life:
+//
+//   * `?selected=` on each `<option>` carries the FIRST paint. Lit
+//     commits an element's own bindings before the child parts
+//     nested inside it (parts run in document order), so the
+//     `.value=` below lands on a `<select>` that has no options
+//     yet; the browser drops a value it can't match and then, once
+//     the options do arrive with none of them marked selected,
+//     falls back to the first one. That silently showed `Severity ↓`
+//     over a list really ordered by priority — the ingest default
+//     whenever findings carry `priority` (see resetFilters in
+//     filters.js), which every view inherits and the kanban board
+//     makes most visible. The attribute rides along with the option
+//     itself, so it is in place before the browser picks.
+//   * `.value=` through Lit's `live()` directive covers every later
+//     render — a stale-filter clear in the parent's pipeline
+//     (e.g. `state.sortBy` reset when its option drops out of view)
+//     has to move the browser-native `value`, because the
+//     `?selected=` attribute above is ignored on an option the user
+//     has already interacted with.
 //
 // Dispatches `sort-change(detail: { kind: "findings", value })`
 // on native change, matching `<entity-sort>`'s dispatch shape so
@@ -54,7 +69,8 @@ class FindingsSort extends StateElement {
   }
 
   render() {
-    const opt = (value, label) => html`<option value=${value}>${label}</option>`
+    const opt = (value, label) =>
+      html`<option value=${value} ?selected=${state.sortBy === value}>${label}</option>`
     return html`<select
       class="sort-select"
       aria-label="Sort findings"
