@@ -27,6 +27,7 @@ import { addFindingToBucket, dropKeyFromBucket, indexFindingByVersion, isPlaceho
 import { listFiles, onFileMutated, readFile } from './storage.js'
 import { loadRepoUrlFor, onRepoUrlChanged } from './state.ts'
 import { flattenFindings, parseReport } from '../common/report-findings.js'
+import { inheritReportMeta } from '../common/report-meta.js'
 
 const byHash = new Map()
 const byPackage = new Map()
@@ -204,25 +205,6 @@ export function reportsForFindingByRepo(repo, finding) {
   return set ? [...set] : []
 }
 
-// Run-level meta keys mirrored from ingest.js's META_FIELDS. The
-// bundle viewer's source panel reads these through prettyModel +
-// the meta chain — without inheritance from the report header, the
-// chain stays empty for every finding that doesn't carry per-
-// finding meta inline (most do not).
-const META_FIELDS = ['type', 'model', 'think', 'effort', 'exportsMode']
-
-// Inherit run-level meta from the report header onto a finding
-// that carries none of its own — same rule ingest.js follows.
-// In-place mutation is safe: bucket dedupe + index pass don't
-// rely on the absence of meta fields, and callers haven't held
-// onto the finding before this point.
-function inheritReportMeta(f, data) {
-  if (META_FIELDS.some((k) => f[k] !== undefined)) return
-  for (const key of META_FIELDS) {
-    if (data[key] !== undefined) f[key] = data[key]
-  }
-}
-
 function extractFindings(data) {
   // DeepView-native dumps carry findings under `groups` (array of
   // Finding[]) or a flat `findings` array. Either shape works.
@@ -234,19 +216,24 @@ function extractFindings(data) {
   // so the cross-report Packages view picks them up. The hash-
   // keyed bucket below filters on fileHash separately.
   //
-  // Run-level meta (type / model / effort / mode / think) is
-  // inherited from the report header. Source-marked formats
-  // (those with `data.source` set) opt out: their report-level
-  // `type` is a category label, not a per-finding analyzer
-  // descriptor.
+  // Run-level meta (type / model / think / effort / exportsMode) is
+  // inherited from the report header, field by field, under the same
+  // rule the report view follows — see common/report-meta.js (which
+  // also holds the source-marked opt-out). The bundle viewer's source
+  // panel reads these through prettyModel + the meta chain; without
+  // the inheritance the chain stays empty for every finding that
+  // doesn't carry per-finding meta inline (most do not).
+  //
+  // In-place mutation is safe: bucket dedupe + the index pass don't
+  // rely on the absence of meta fields, and callers haven't held onto
+  // the finding before this point.
   const list = Array.isArray(data?.findings)
     ? data.findings
     : Array.isArray(data?.groups) ? data.groups : null
   if (!list) return []
-  const inheritMeta = !data?.source
   const out = []
   for (const f of flattenFindings(list)) {
-    if (inheritMeta) inheritReportMeta(f, data)
+    inheritReportMeta(f, data)
     out.push(f)
   }
   return out

@@ -695,16 +695,17 @@ describe('bundle-finding-index — extract shape variants', () => {
     assert.ok(getPackagesIndex().get(tag), 'subsequent JSON report still indexes after a skipped non-JSON one')
   })
 
-  it('inherits run-level meta from the report header onto findings without their own', async () => {
+  it('inherits run-level meta from the report header field by field', async () => {
     const tag = `meta-${Date.now()}`
     await seedReport({
       type: 'analysis',
       model: 'claude-opus-4-7',
       effort: 'high',
       findings: [
-        // No per-finding meta → inherit from header
+        // No per-finding meta → inherit the header's
         { id: `${tag}-1`, severity: 'high', file: `node_modules/${tag}/x.js`, description: 'a' },
-        // Has its own meta → keep
+        // Own model (the deduplicate command's shape) → keeps it, and
+        // still inherits the fields it doesn't specify
         { id: `${tag}-2`, severity: 'high', file: `node_modules/${tag}/y.js`, description: 'b', model: 'other-model' },
       ],
     })
@@ -715,6 +716,8 @@ describe('bundle-finding-index — extract shape variants', () => {
     assert.equal(f1.model, 'claude-opus-4-7', 'inherits model from report header')
     assert.equal(f1.effort, 'high', 'inherits effort from report header')
     assert.equal(f2.model, 'other-model', 'preserves per-finding meta')
+    assert.equal(f2.type, 'analysis', 'still inherits the header type it lacks')
+    assert.equal(f2.effort, 'high', 'still inherits the header effort it lacks')
   })
 
   it('does NOT inherit report-level meta when data.source is set (codex/claude-security)', async () => {
