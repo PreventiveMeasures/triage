@@ -22,7 +22,18 @@ const BUNDLE_META_SLOT = '__meta__'
 // origins where OPFS is unavailable (file://, older browsers) we
 // transparently fall back to localStorage with each report stored
 // gzipped + base64 under a fixed prefix. Both layers key by basename;
-// filename collisions overwrite.
+// filename collisions overwrite. Because "unavailable" can be a
+// TRANSIENT condition (see readLsRaw below), reads and listings
+// consult both layers and converge stranded LS entries back into
+// OPFS; OPFS wins when a name exists in both.
+//
+// NOTE on browser eviction: everything here lives in the origin's
+// best-effort storage bucket unless the app has been granted
+// persistent storage (client/persistence.js) — browsers may evict
+// the whole bucket (OPFS + LS + IDB at once) under disk pressure,
+// and Safari's ITP deletes it after 7 days of Safari use without
+// user interaction with the origin. That eviction happens outside
+// our code; this module can only make it visible and less likely.
 const OPFS_DIR = 'deepview-reports'
 const OPFS_BUNDLES_DIR = 'deepview-bundles'
 const LS_REPORT_PREFIX = 'deepview.report:'
@@ -127,9 +138,13 @@ async function quarantineEmptyEntry(name, observedAtGen) {
     const dir = await getOpfsDir()
     if (dir) {
       try { await dir.removeEntry(name) } catch {}
-    } else {
-      localStorage.removeItem(LS_REPORT_PREFIX + name)
     }
+    // BOTH backends, mirroring deleteFile: with the listFiles union
+    // and the stranded-LS read fallback in place, the corrupt bytes
+    // may live in the localStorage shadow rather than (or alongside)
+    // OPFS — leaving the shadow behind would keep a ghost row alive
+    // that re-serves the quarantined entry on the next read.
+    removeLsShadow(name)
     bumpWriteGen(name)
     notifyFileMutated(name, 'delete')
   })
@@ -176,6 +191,40 @@ async function sealForStorage(bytes, sealFn, slot, label, onAbort = () => {}) {
 
 function getOpfsDir() {
   return openOpfsDir(OPFS_DIR, { create: true, warnOnce: true })
+}
+
+// Guarded accessors for the gzipped-localStorage fallback layer.
+// These exist because the two backends can hold entries at the SAME
+// time: `openOpfsDir` treats ANY `getDirectory()` failure as "OPFS
+// unavailable", so a transient OPFS error (browser bug, pressure,
+// a torn-down storage bucket mid-eviction) silently routes saves
+// into localStorage. When OPFS comes back on the next page load,
+// those entries are stranded — before the union in `listFiles` they
+// were invisible (and looked exactly like "the browser deleted my
+// reports"). Reads fall back to LS on an OPFS miss, saves/deletes
+// clear the LS shadow, and the read path migrates stranded entries
+// back into OPFS.
+//
+// The single-entry helpers guard their localStorage access (a
+// throwing read degrades to "no fallback copy", a throwing remove
+// to "shadow stays — cleared on the next save"); `listLsNames`
+// deliberately does NOT: listFiles enumeration failures must
+// PROPAGATE so triage-GC's reachability walk can't mistake
+// "enumeration failed" for "no files" and wipe live triage (audit
+// round-2 review #8 pins this).
+function readLsRaw(name) {
+  try { return localStorage.getItem(LS_REPORT_PREFIX + name) } catch { return null }
+}
+function removeLsShadow(name) {
+  try { localStorage.removeItem(LS_REPORT_PREFIX + name) } catch {}
+}
+function listLsNames() {
+  const names = []
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i)
+    if (key && key.startsWith(LS_REPORT_PREFIX)) names.push(key.slice(LS_REPORT_PREFIX.length))
+  }
+  return names
 }
 
 // `gunzipBytes` is re-exported (the UI + sync-host consume it). The
@@ -255,19 +304,20 @@ function notifyFileMutated(name, kind) {
   }
 }
 
+// Union of BOTH backends, not just the active one. A report saved
+// into the LS fallback during a transient OPFS outage must stay
+// visible once OPFS recovers — enumerating only the OPFS dir made
+// such entries vanish from the sidebar while their bytes were still
+// on disk (indistinguishable, to the user, from browser eviction).
+// The same name in both backends dedupes to one entry; `readFile`
+// prefers the OPFS copy.
 export async function listFiles() {
+  const names = new Set(listLsNames())
   const dir = await getOpfsDir()
   if (dir) {
-    const names = []
-    for await (const [name] of dir.entries()) names.push(name)
-    return names.toSorted()
+    for await (const [name] of dir.entries()) names.add(name)
   }
-  const names = []
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i)
-    if (key && key.startsWith(LS_REPORT_PREFIX)) names.push(key.slice(LS_REPORT_PREFIX.length))
-  }
-  return names.toSorted()
+  return [...names].toSorted()
 }
 
 // preserves async signature so a sync-throwing NUL-name validation
@@ -386,6 +436,13 @@ export async function saveFile(name, content) {
     // advance and skips cache.set with its now-stale bytes. Audit
     // round-12 H8.
     bumpWriteGen(name)
+    // The OPFS write committed — drop any stranded LS-fallback copy
+    // of the same name (left by a save during a transient OPFS
+    // outage). Without this the shadow diverges: it keeps the OLD
+    // content and would resurface it via the readFile fallback on
+    // the next outage. Only after a successful commit, so a failed
+    // OPFS write never orphans the sole surviving copy.
+    removeLsShadow(name)
     notifyFileMutated(name, 'save')
     return
   }
@@ -422,7 +479,43 @@ export async function readFile(name) {
   const promise = (async () => {
     const dir = await getOpfsDir()
     if (dir) {
-      const fh = await dir.getFileHandle(name)
+      let fh
+      try {
+        fh = await dir.getFileHandle(name)
+      } catch (err) {
+        // OPFS miss with the dir live: the entry may be stranded in
+        // the gzipped-localStorage fallback (saved there during a
+        // transient OPFS outage — see readLsRaw above). Serve the LS
+        // copy and migrate it back into OPFS fire-and-forget via
+        // saveFile, which clears the LS shadow itself after its OPFS
+        // commit — so if OPFS flakes again mid-migration, the write
+        // lands back in LS in place and nothing is lost. Any error
+        // other than "not found in OPFS" (or no LS copy either)
+        // propagates unchanged.
+        if (err instanceof DOMException && err.name === 'NotFoundError') {
+          const stored = readLsRaw(name)
+          if (stored !== null) {
+            let lsBytes = Uint8Array.fromBase64(stored)
+            lsBytes = await peelOpfsEnvelope(lsBytes, name)
+            // Same corruption-artifact detection as the two primary
+            // branches — a stranded entry can be a gzip-of-nothing
+            // launder artifact too, and serving it here (or feeding
+            // it to the migration below) would resurrect exactly the
+            // empty-report shape quarantine exists to kill. Must run
+            // BEFORE gunzip: gzip('') decompresses cleanly to ''.
+            if (isEmptyPayload(lsBytes)) {
+              await quarantineEmptyEntry(name, startedAtGen)
+              throw new Error(`File not found: ${name}`)
+            }
+            const text = decodeUtf8(await gunzipBytes(lsBytes))
+            saveFile(name, text).catch((migrateErr) => {
+              console.warn(`storage: stranded-localStorage migration of "${name}" failed:`, migrateErr)
+            })
+            return text
+          }
+        }
+        throw err
+      }
       const file = await fh.getFile()
       let bytes = new Uint8Array(await file.arrayBuffer())
       // Envelope-aware: a passkey-encrypted file starts with the
@@ -506,11 +599,24 @@ export async function readFileBytes(name) {
   const dir = await getOpfsDir()
   let bytes
   if (dir) {
-    const fh = await dir.getFileHandle(name)
-    const file = await fh.getFile()
-    bytes = new Uint8Array(await file.arrayBuffer())
+    let fh = null
+    // Same stranded-LS fallback as readFile: an OPFS miss with the
+    // dir live checks the localStorage shadow before failing. No
+    // migration here — this is the bytes-level path (objstore
+    // upload); the text-level readFile owns moving entries back.
+    try { fh = await dir.getFileHandle(name) }
+    catch (err) {
+      if (!(err instanceof DOMException) || err.name !== 'NotFoundError') throw err
+      const stored = readLsRaw(name)
+      if (stored === null) throw err
+      bytes = Uint8Array.fromBase64(stored)
+    }
+    if (fh) {
+      const file = await fh.getFile()
+      bytes = new Uint8Array(await file.arrayBuffer())
+    }
   } else {
-    const stored = localStorage.getItem(LS_REPORT_PREFIX + name)
+    const stored = readLsRaw(name)
     if (stored === null) throw new Error(`File not found: ${name}`)
     bytes = Uint8Array.fromBase64(stored)
   }
@@ -583,6 +689,8 @@ export async function saveFileBytes(name, bytes) {
         throw err
       }
       bumpWriteGen(name)
+      // Post-commit LS-shadow cleanup — same rationale as saveFile.
+      removeLsShadow(name)
       notifyFileMutated(name, 'save')
       return
     }
@@ -634,6 +742,11 @@ export async function deleteFile(name) {
           throw err
         }
       }
+      // Also drop any stranded LS-fallback copy, so it can't
+      // resurrect the "deleted" name in the listFiles union (or be
+      // served by the readFile fallback) after the OPFS entry is
+      // gone.
+      removeLsShadow(name)
       // Post-commit bump — a readFile that started AFTER our pre-bump
       // but captured the File snapshot before `removeEntry` resolved
       // would otherwise observe a matching gen and re-cache the
@@ -927,28 +1040,43 @@ export async function readBundle(integrity) {
 async function rawReadAndWrite(name, transform) {
   const dir = await getOpfsDir()
   if (dir) {
-    const fh = await dir.getFileHandle(name)
-    const file = await fh.getFile()
-    const bytes = new Uint8Array(await file.arrayBuffer())
-    const next = await transform(bytes)
-    if (next === null) return
-    cache.delete(name)
-    inFlight.delete(name)
-    bumpWriteGen(name)
-    const writeFh = await dir.getFileHandle(name, { create: true })
-    try {
-      await writeOpfsFile(writeFh, next)
-    } catch (err) {
-      // Same zero-length cleanup as saveFile's catch — a migration
-      // write that truncated the entry without committing leaves the
-      // name absent (cloud-recoverable), not empty.
-      await removeIfTruncated(dir, writeFh, name)
-      throw err
+    // A name from the union'd listFiles may live only in the LS
+    // fallback (stranded by a transient OPFS outage). Fall through
+    // to the LS branch below on an OPFS miss instead of throwing, so
+    // the encryption sweep covers BOTH backends — otherwise a
+    // stranded entry would sit out an enable migration in plaintext
+    // while the vault reports everything encrypted. A name that's in
+    // NEITHER backend (deleted mid-sweep) falls through to the LS
+    // branch's `stored === null` return — same silent skip the
+    // migrate callers' NotFoundError swallow used to provide.
+    let fh = null
+    try { fh = await dir.getFileHandle(name) }
+    catch (err) {
+      if (!(err instanceof DOMException) || err.name !== 'NotFoundError') throw err
     }
-    bumpWriteGen(name)
-    return
+    if (fh) {
+      const file = await fh.getFile()
+      const bytes = new Uint8Array(await file.arrayBuffer())
+      const next = await transform(bytes)
+      if (next === null) return
+      cache.delete(name)
+      inFlight.delete(name)
+      bumpWriteGen(name)
+      const writeFh = await dir.getFileHandle(name, { create: true })
+      try {
+        await writeOpfsFile(writeFh, next)
+      } catch (err) {
+        // Same zero-length cleanup as saveFile's catch — a migration
+        // write that truncated the entry without committing leaves the
+        // name absent (cloud-recoverable), not empty.
+        await removeIfTruncated(dir, writeFh, name)
+        throw err
+      }
+      bumpWriteGen(name)
+      return
+    }
   }
-  const stored = localStorage.getItem(LS_REPORT_PREFIX + name)
+  const stored = readLsRaw(name)
   if (stored === null) return
   const bytes = Uint8Array.fromBase64(stored)
   const next = await transform(bytes)
