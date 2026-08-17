@@ -186,20 +186,36 @@ describe('counts cache (setCount / getCount / removeCount / getKind)', () => {
     assert.equal(getCount('whatever'), undefined)
   })
 
-  it('reads legacy bare-number entries via a fresh module instance', async () => {
+  it('drops a pre-version blob so stale sources re-analyze (fresh module instance)', async () => {
     // counts.js memoizes its in-process cache, so we need a fresh
     // module instance to exercise the lazy load() path against a
-    // pre-existing legacy blob. Cache-bust the import URL to get one.
-    // The counts cache reads through secure-storage, so we also need
-    // to re-hydrate that layer's cache from the just-written LS
-    // value before the fresh import does its first load().
+    // pre-existing blob. Cache-bust the import URL to get one. The
+    // counts cache reads through secure-storage, so we also re-hydrate
+    // that layer's cache from the just-written LS value first.
+    //
+    // A blob without the current `__v` is discarded wholesale: nothing
+    // else ever re-analyzes a cached entry (`ensureCounts` skips names
+    // already present), so a parser-chain change would otherwise leave
+    // files bucketed under whatever source a pre-change import detected
+    // — concretely, a piolium report imported before its parser existed
+    // stayed under the sidebar's Claude Security bucket forever. The
+    // sidebar's lazy fill recomputes each dropped entry once instead.
     globalThis.localStorage.clear()
-    globalThis.localStorage.setItem(COUNTS_KEY, JSON.stringify({ 'legacy.json': 42 }))
+    globalThis.localStorage.setItem(COUNTS_KEY, JSON.stringify({
+      'legacy.json': 42,
+      'report.md': { count: 1, source: 'claude-security' },
+    }))
     const { hydrate: hydrateSecureStorage } = await import('../client/secure-storage.js')
     await hydrateSecureStorage()
-    const fresh = await import(`../client/counts.js?legacy=${Date.now()}`)
-    assert.equal(fresh.getCount('legacy.json'), 42, 'count read from bare-number entry')
-    assert.equal(fresh.getKind('legacy.json'), undefined, 'source absent on legacy entry')
+    const fresh = await import(`../client/counts.js?vdrop=${Date.now()}`)
+    assert.equal(fresh.getCount('legacy.json'), undefined, 'legacy bare-number entry dropped')
+    assert.equal(fresh.getKind('report.md'), undefined, 'pre-version source dropped')
+    // Writes stamp the current version, so a same-version reload keeps
+    // the refreshed entries.
+    fresh.setCount('report.md', 3, 'piolium')
+    const again = await import(`../client/counts.js?vkeep=${Date.now()}`)
+    assert.equal(again.getCount('report.md'), 3)
+    assert.equal(again.getKind('report.md'), 'piolium')
   })
 })
 
