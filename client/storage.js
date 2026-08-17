@@ -467,6 +467,26 @@ export async function saveFile(name, content) {
   })
 }
 
+// Read + decode one gzipped-localStorage entry: peel the envelope,
+// quarantine an empty/corrupt launder artifact (throws the standard
+// not-found shape — see isEmptyPayload), gunzip to text. Returns
+// null when there is no LS copy. Single canonical path shared by
+// readFile's LS-primary branch (no OPFS) and its stranded-LS
+// fallback (OPFS live, entry only in LS) so the two can't drift.
+async function readLsEntryText(name, startedAtGen) {
+  const stored = readLsRaw(name)
+  if (stored === null) return null
+  let lsBytes = Uint8Array.fromBase64(stored)
+  lsBytes = await peelOpfsEnvelope(lsBytes, name)
+  // Same corruption-artifact detection as the OPFS branch — must run
+  // BEFORE gunzip: gzip('') decompresses cleanly to ''.
+  if (isEmptyPayload(lsBytes)) {
+    await quarantineEmptyEntry(name, startedAtGen)
+    throw new Error(`File not found: ${name}`)
+  }
+  return decodeUtf8(await gunzipBytes(lsBytes))
+}
+
 export async function readFile(name) {
   if (cache.has(name)) return cache.get(name)
   if (inFlight.has(name)) return inFlight.get(name)
@@ -486,28 +506,16 @@ export async function readFile(name) {
         // OPFS miss with the dir live: the entry may be stranded in
         // the gzipped-localStorage fallback (saved there during a
         // transient OPFS outage — see readLsRaw above). Serve the LS
-        // copy and migrate it back into OPFS fire-and-forget via
-        // saveFile, which clears the LS shadow itself after its OPFS
-        // commit — so if OPFS flakes again mid-migration, the write
-        // lands back in LS in place and nothing is lost. Any error
-        // other than "not found in OPFS" (or no LS copy either)
-        // propagates unchanged.
+        // copy (readLsEntryText quarantines a corrupt one) and
+        // migrate it back into OPFS fire-and-forget via saveFile,
+        // which clears the LS shadow itself after its OPFS commit —
+        // so if OPFS flakes again mid-migration, the write lands
+        // back in LS in place and nothing is lost. Any error other
+        // than "not found in OPFS" (or no LS copy either) propagates
+        // unchanged.
         if (err instanceof DOMException && err.name === 'NotFoundError') {
-          const stored = readLsRaw(name)
-          if (stored !== null) {
-            let lsBytes = Uint8Array.fromBase64(stored)
-            lsBytes = await peelOpfsEnvelope(lsBytes, name)
-            // Same corruption-artifact detection as the two primary
-            // branches — a stranded entry can be a gzip-of-nothing
-            // launder artifact too, and serving it here (or feeding
-            // it to the migration below) would resurrect exactly the
-            // empty-report shape quarantine exists to kill. Must run
-            // BEFORE gunzip: gzip('') decompresses cleanly to ''.
-            if (isEmptyPayload(lsBytes)) {
-              await quarantineEmptyEntry(name, startedAtGen)
-              throw new Error(`File not found: ${name}`)
-            }
-            const text = decodeUtf8(await gunzipBytes(lsBytes))
+          const text = await readLsEntryText(name, startedAtGen)
+          if (text !== null) {
             saveFile(name, text).catch((migrateErr) => {
               console.warn(`storage: stranded-localStorage migration of "${name}" failed:`, migrateErr)
             })
@@ -562,17 +570,9 @@ export async function readFile(name) {
       })
       return text
     }
-    const stored = localStorage.getItem(LS_REPORT_PREFIX + name)
-    if (stored === null) throw new Error(`File not found: ${name}`)
-    let lsBytes = Uint8Array.fromBase64(stored)
-    lsBytes = await peelOpfsEnvelope(lsBytes, name)
-    // Same corruption-artifact detection as the OPFS branch above.
-    if (isEmptyPayload(lsBytes)) {
-      await quarantineEmptyEntry(name, startedAtGen)
-      throw new Error(`File not found: ${name}`)
-    }
-    const plain = await gunzipBytes(lsBytes)
-    return decodeUtf8(plain)
+    const text = await readLsEntryText(name, startedAtGen)
+    if (text === null) throw new Error(`File not found: ${name}`)
+    return text
   })()
   inFlight.set(name, promise)
   try {
