@@ -4,6 +4,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { CONFIG_PATH, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, getCount, getPackagesIndex, getRepositoriesIndex, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, parseServerInfo, readCachedServerInfo, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, state, writeCachedServerInfo } from '#client/index.js'
 import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, setSyncForceDisabled, triageSync } from './client-sync.js'
 import { fetchReport as fetchManagedReport, login as managedLogin, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams } from './client-managed.js'
+import { hydrateManagedReportTriage, initManagedTriagePush } from './managed-triage.js'
 import { loadAdminBundlesBundle, loadAdminReportsBundle, loadAdminReposBundle, loadAdminTeamsBundle, loadAdminUsersBundle } from './client-admin.js'
 import sidebarCSS from './sidebar.css'
 import fileIconCSS from '../styles/file-icon.css'
@@ -218,10 +219,16 @@ function teamReportTemplate(r) {
 
 // Fetch a managed team report's content and render it in place via switchToFile
 // (which, given content, reads/writes no OPFS — the report is never cached).
+// Then claim the open-report slot + hydrate the server-side triage entries.
 async function openTeamReport(r) {
   const content = await fetchManagedReport(r.id)
   if (content == null) { console.warn('managed: could not load team report', r.id); return }
   await switchToFile(r.filename, content)
+  // switchToFile cleared the slot; only claim it when this report is still the
+  // active view (a faster concurrent switch may have superseded this load).
+  if (state.currentFile !== r.filename) return
+  state.managedReport = { id: r.id, filename: r.filename }
+  await hydrateManagedReportTriage(r.id)
 }
 
 // Packages + Repositories navigation buttons live as
@@ -1624,6 +1631,9 @@ async function refreshManagedSession() {
   try {
     state.managedSession = await managedProbeSession()
     renderAuthStatus()
+    // Claim the triage change-notifier for the server push — a no-op unless
+    // the session's role can write triage (reads still hydrate without it).
+    initManagedTriagePush()
     // The user's teams (sidebar Teams section). probeTeams never throws; empty
     // when logged out. Repaint the sidebar so the section reflects the result.
     state.managedTeams = state.managedSession == null ? [] : await managedProbeTeams()

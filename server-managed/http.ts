@@ -9,6 +9,8 @@
 //   GET  /api/auth/session       → { user, csrfToken } | 401
 //   GET  /api/teams              → the current user's teams + their reports | 401
 //   GET  /api/reports/<id>       → view a report: admin, or ≥view role + team membership | 401/404
+//   GET  /api/reports/<id>/triage → per-finding triage entries for a viewable report | 401/404
+//   POST /api/reports/<id>/triage → write triage entries: admin|manage, or ≥triage role + membership | 401/403/404
 //   GET  /api/avatar/<id>        → cached avatar bytes by user id | 401/404
 //   GET  /api/admin/users        → admin-only user list | 401/403
 //   POST /api/admin/set-role     → admin sets another user's role | 401/403/404
@@ -38,11 +40,14 @@ import type { AvatarStore } from './avatar-store.ts'
 import type { BlobStore } from './blob-store.ts'
 import { bundleIntegrity, bundleKind, reportBundleHashes } from './bundle.ts'
 import type { ManagedConfig } from './config.ts'
-import type { ManagedDb, ManagedSession, StoredUser } from './db.ts'
+import type { ManagedDb, ManagedSession, ReportTriageRow, StoredUser } from './db.ts'
 import type { OriginGate } from '../server-common/origin.ts'
 import { isRole, roleAtLeast } from '../common/managed/roles.ts'
 import { VISIBILITY_PERMISSIONS, parseTeamUserPermissions } from '../common/managed/permissions.ts'
 import { filterReportContent } from '../common/managed/report-filter.ts'
+import type { TriageEntryPatch } from '../common/managed/triage.ts'
+import { isTriageBucket, parseTriageEntryPatch } from '../common/managed/triage.ts'
+import { backfillFindingIds, flattenFindings, parseReport } from '../common/report-findings.js'
 import { CONFIG_PATH } from '../common/server-info.ts'
 import { collectRepos, installUrl } from './github-app.ts'
 import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, ensureUserAccessToken, handleCallback } from './github-oauth.ts'
@@ -63,6 +68,7 @@ const BUNDLE_SET_REPO_PATH = '/api/admin/bundles/set-repo'
 const BUNDLE_PREFIX = '/api/admin/bundles/'
 const MY_TEAMS_PATH = '/api/teams'
 const MY_REPORT_PREFIX = '/api/reports/'
+const MY_REPORT_TRIAGE_SUFFIX = '/triage'
 const ADMIN_TEAMS_PATH = '/api/admin/teams'
 const TEAM_DELETE_PATH = '/api/admin/teams/delete'
 const TEAM_RENAME_PATH = '/api/admin/teams/rename'
@@ -72,6 +78,12 @@ const TEAM_SET_MEMBER_PATH = '/api/admin/teams/set-member'
 const TEAM_REMOVE_MEMBER_PATH = '/api/admin/teams/remove-member'
 const MAX_TEAM_NAME = 100
 const MAX_TEAM_PATH = 500
+// Caps on the triage write endpoint: a JSON body above the default 4 KiB cap
+// (entry batches carry free text), a bounded entry count per request, and a
+// sane finding-id length (real ids are 36-char uuids).
+const MAX_TRIAGE_BODY_BYTES = 262_144
+const MAX_TRIAGE_ENTRIES = 200
+const MAX_FINDING_ID = 100
 
 export interface ManagedHttpDeps {
   config: ManagedConfig
@@ -130,8 +142,10 @@ async function readBodyBytes(req: IncomingMessage, maxBytes: number): Promise<Bu
   return Buffer.concat(chunks)
 }
 
-async function readJsonBody(req: IncomingMessage): Promise<unknown> {
-  const buf = await readBodyBytes(req, MAX_JSON_BODY_BYTES)
+// `maxBytes` overrides the small default for the one endpoint whose JSON body
+// legitimately grows (triage entry batches).
+async function readJsonBody(req: IncomingMessage, maxBytes = MAX_JSON_BODY_BYTES): Promise<unknown> {
+  const buf = await readBodyBytes(req, maxBytes)
   return JSON.parse(buf.toString('utf8') || 'null')
 }
 
@@ -632,6 +646,106 @@ async function viewerReportBytes(deps: ManagedHttpDeps, user: StoredUser, report
   return filtered === text ? bytes : Buffer.from(filtered, 'utf8')
 }
 
+// Server-side authorization to WRITE per-finding triage on a report: admin and
+// manage may annotate any existing report; everyone else needs AT LEAST a
+// 'triage' role AND membership of a team holding the report's repo. The caller
+// reports any failure as 404 — the same "neither existence nor denial is
+// probeable" rule as canViewReport.
+async function canTriageReport(deps: ManagedHttpDeps, user: StoredUser, reportId: string): Promise<boolean> {
+  if (user.role === 'admin' || user.role === 'manage') return (await deps.db.getReport(reportId)) != null
+  if (!roleAtLeast(user.role, 'triage')) return false
+  return deps.db.userCanReadReport(user.id, reportId)
+}
+
+// The finding ids a non-admin/manage viewer may see in a report: the stored
+// bytes run through the viewer's content filter (viewerReportBytes' rule),
+// then parse + flatten + id-backfill THE SAME WAY the client ingests them, so
+// the set matches the ids that viewer's client renders and keys triage by.
+// null = unrestricted (admin/manage see the whole report); missing bytes or an
+// unparseable report yield an empty set (nothing is provably visible).
+async function visibleFindingIds(deps: ManagedHttpDeps, user: StoredUser, reportId: string): Promise<Set<string> | null> {
+  if (user.role === 'admin' || user.role === 'manage') return null
+  const ids = new Set<string>()
+  const bytes = await deps.reportStore.get(reportId)
+  if (bytes == null) return ids
+  const perms = await deps.db.reportPermissionsFor(user.id, reportId)
+  const data = parseReport(filterReportContent(bytes.toString('utf8'), perms)) as { findings?: unknown } | null | undefined
+  if (!Array.isArray(data?.findings)) return ids
+  const findings = flattenFindings(data.findings)
+  await backfillFindingIds(findings)
+  for (const f of findings) {
+    const id = (f as { id?: unknown }).id
+    if (typeof id === 'string' && id !== '') ids.add(id)
+  }
+  return ids
+}
+
+// A stored triage row → its wire entry: only set fields present, and `false`
+// kept for flagged (the explicit un-flag tombstone must round-trip).
+function triageWireEntry(row: ReportTriageRow): TriageEntryPatch {
+  const e: TriageEntryPatch = {}
+  if (row.color != null) e.color = row.color
+  if (isTriageBucket(row.triage)) e.triage = row.triage
+  if (row.comment != null) e.comment = row.comment
+  if (row.fix != null) e.fix = row.fix
+  if (row.flagged != null) e.flagged = row.flagged
+  return e
+}
+
+// GET /api/reports/<id>/triage — the stored per-finding triage entries for a
+// report the caller may view (canViewReport; 404 hides existence and denial
+// alike, matching handleViewReport). A non-admin/manage viewer only receives
+// entries for findings their visibility permissions keep in the report — an
+// entry on a stripped finding must not leak that the finding exists.
+async function handleGetReportTriage(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string): Promise<void> {
+  const s = await readSession(deps.config, deps.db, cookie, Date.now())
+  if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
+  if (!(await canViewReport(deps, s.user, id))) { sendJson(res, 404, { error: 'no-report' }); return }
+  const visible = await visibleFindingIds(deps, s.user, id)
+  const entries: Record<string, TriageEntryPatch> = {}
+  for (const row of await deps.db.listReportTriage(id)) {
+    if (visible != null && !visible.has(row.findingId)) continue
+    entries[row.findingId] = triageWireEntry(row)
+  }
+  sendJson(res, 200, { entries })
+}
+
+// POST /api/reports/<id>/triage — write per-finding triage entries. Mutation:
+// same-origin + CSRF, then canTriageReport (404 on any failure — role too low,
+// no membership, or no such report). Body { entries: { <findingId>: entry|null } }
+// — whole-entry replace, last write wins, null clears the row; each entry
+// validates through parseTriageEntryPatch (400 on a malformed one). A
+// non-admin/manage writer may only touch findings their visibility permissions
+// keep in the report — a stripped finding id 404s without revealing it exists.
+async function handleSetReportTriage(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string): Promise<void> {
+  const s = await checkMutation(req, res, deps, cookie)
+  if (s == null) return
+  if (!(await canTriageReport(deps, s.user, id))) { sendJson(res, 404, { error: 'no-report' }); return }
+  let body: unknown
+  try { body = await readJsonBody(req, MAX_TRIAGE_BODY_BYTES) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
+  const raw = (body as { entries?: unknown } | null)?.entries
+  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) { sendJson(res, 400, { error: 'bad-request' }); return }
+  const pairs = Object.entries(raw)
+  if (pairs.length > MAX_TRIAGE_ENTRIES) { sendJson(res, 400, { error: 'too-many-entries' }); return }
+  const parsed: [string, TriageEntryPatch | null][] = []
+  for (const [findingId, value] of pairs) {
+    const patch = parseTriageEntryPatch(value)
+    if (patch === 'invalid' || findingId === '' || findingId.length > MAX_FINDING_ID) {
+      sendJson(res, 400, { error: 'bad-entry' }); return
+    }
+    parsed.push([findingId, patch])
+  }
+  const visible = await visibleFindingIds(deps, s.user, id)
+  if (visible != null && parsed.some(([findingId]) => !visible.has(findingId))) {
+    sendJson(res, 404, { error: 'no-finding' }); return
+  }
+  const now = Date.now()
+  for (const [findingId, patch] of parsed) {
+    await deps.db.setReportTriage(id, findingId, patch, s.user.id, s.user.login, now)
+  }
+  sendJson(res, 200, { ok: true })
+}
+
 // GET /api/admin/teams — every team (members + repos inlined) plus the pickers
 // the page needs: all users (member dropdown), selected repos (repo dropdown),
 // and the visibility-permission keys. admin|manage, read-only (no CSRF).
@@ -855,6 +969,15 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (method === 'GET') { await handleGetBundle(res, deps, cookie, id); return }
       if (method === 'DELETE') { await handleDeleteBundle(req, res, deps, cookie, id); return }
       send405(res, 'GET, DELETE'); return
+    }
+    // Per-finding triage on a viewable report. The '/triage' suffix is matched
+    // before the bare per-id slice below (a report id is a uuid, so it never
+    // ends in '/triage') — same trick as REPORT_SET_REPO_PATH above.
+    if (path.startsWith(MY_REPORT_PREFIX) && path.endsWith(MY_REPORT_TRIAGE_SUFFIX)) {
+      const id = path.slice(MY_REPORT_PREFIX.length, -MY_REPORT_TRIAGE_SUFFIX.length)
+      if (method === 'GET') { await handleGetReportTriage(res, deps, cookie, id); return }
+      if (method === 'POST') { await handleSetReportTriage(req, res, deps, cookie, id); return }
+      send405(res, 'GET, POST'); return
     }
     // Team-scoped report view (any authenticated user who's in a team holding
     // the report's repo). Distinct prefix from /api/admin/reports/.

@@ -32,6 +32,14 @@ export async function fetchReport(id) {
   return (await loadManagedOnce()).fetchReport(id)
 }
 
+export async function fetchReportTriage(id) {
+  return (await loadManagedOnce()).fetchReportTriage(id)
+}
+
+export async function pushReportTriage(id, entries, csrfToken) {
+  return (await loadManagedOnce()).pushReportTriage(id, entries, csrfToken)
+}
+
 export async function login(loginPath) {
   return (await loadManagedOnce()).login(loginPath)
 }
