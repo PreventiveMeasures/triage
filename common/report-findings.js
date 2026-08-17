@@ -10,19 +10,24 @@
 // unrecognised, and never derives ids. Don't fold it in here.
 
 import { parseDeepsecFindings } from './parse-deepsec.js'
+import { parsePioliumFindings } from './parse-piolium.js'
 import { parseMarkdownFindings } from './parse-md.js'
 import { deriveFindingId } from './finding-id.js'
 
 // Parse report `content` into its `{ findings, source, ... }` object:
-// analyzer-native JSON first, falling back to the DeepSec / Claude-
-// security markdown parsers when `JSON.parse` throws. Returns the parsed
-// object (callers read the field they need — `findings`, `groups`,
-// `source`) or null/undefined when unrecognised.
+// analyzer-native JSON first, falling back to the DeepSec / Piolium /
+// Claude-security markdown parsers when `JSON.parse` throws. Tightly
+// guarded formats come first; parse-md is last because it accepts any
+// h1-led document. Returns the parsed object (callers read the field
+// they need — `findings`, `groups`, `source`) or null/undefined when
+// unrecognised.
 export function parseReport(content) {
   try {
     return JSON.parse(content)
   } catch {
-    return parseDeepsecFindings(content) ?? parseMarkdownFindings(content)
+    return parseDeepsecFindings(content)
+      ?? parsePioliumFindings(content)
+      ?? parseMarkdownFindings(content)
   }
 }
 

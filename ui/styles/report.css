@@ -95,12 +95,12 @@
     /* Pill chip naming the active report file. Pairs the type-
        specific brand sticker (eye for DeepView, Anthropic logo for
        Claude Security, OpenAI for Codex Security, Vercel for
-       DeepSec — see view/file-display.js's FILE_ICONS) with the
-       filename so the chip reads as "this is a Claude / Codex /
-       DeepSec / DeepView report" at a glance. Min-height matches
-       the sibling repo-chip (which is sized by its 18px pencil
-       button + .125rem padding) so all three pills in the title
-       row share the same height. */
+       DeepSec, shield for Piolium — see view/file-display.js's
+       FILE_ICONS) with the filename so the chip reads as "this is a
+       Claude / Codex / DeepSec / Piolium / DeepView report" at a
+       glance. Min-height matches the sibling repo-chip (which is
+       sized by its 18px pencil button + .125rem padding) so all
+       three pills in the title row share the same height. */
     & .file-chip {
       display: inline-flex; align-items: center; gap: .375rem;
       /* Click-to-copy target — keep the default arrow (never a pointer)
@@ -1603,6 +1603,7 @@ bundle-search {
 .bundle-issue-reports .brand-claude   { & .bg { fill: #d97757; } & .fg { fill: #fff; } }
 .bundle-issue-reports .brand-codex    { & .bg { fill: #fff; stroke: #000; stroke-width: .5; } & .fg { fill: #000; } }
 .bundle-issue-reports .brand-vercel   { & .bg { fill: #000; stroke: #fff; stroke-width: .5; } & .fg { fill: #fff; } }
+.bundle-issue-reports .brand-piolium  { & .bg { fill: #fbb829; } & .fg { fill: #1c1b19; } }
 .bundle-issue-reports-more {
   color: var(--muted);
   font-size: .68rem;
@@ -1866,6 +1867,7 @@ bundle-search {
     & .bundles-report-chip .brand-claude   { & .bg { fill: #d97757; } & .fg { fill: #fff; } }
     & .bundles-report-chip .brand-codex    { & .bg { fill: #fff; stroke: #000; stroke-width: .5; } & .fg { fill: #000; } }
     & .bundles-report-chip .brand-vercel   { & .bg { fill: #000; stroke: #fff; stroke-width: .5; } & .fg { fill: #fff; } }
+    & .bundles-report-chip .brand-piolium  { & .bg { fill: #fbb829; } & .fg { fill: #1c1b19; } }
   }
 
   /* Empty placeholder rendered when no bundle is selected — the
@@ -2221,6 +2223,7 @@ body.report-fullscreen {
   & .brand-claude   { & .bg { fill: #d97757; } & .fg { fill: #fff; } }
   & .brand-codex    { & .bg { fill: #fff; stroke: #000; stroke-width: .5; } & .fg { fill: #000; } }
   & .brand-vercel   { & .bg { fill: #000; stroke: #fff; stroke-width: .5; } & .fg { fill: #fff; } }
+  & .brand-piolium  { & .bg { fill: #fbb829; } & .fg { fill: #1c1b19; } }
 }
 .bundle-source-panel-report:hover { border-color: var(--accent, #2563eb); }
 .bundle-source-empty {
