@@ -622,28 +622,38 @@ sidebar-delete-current button {
    painted where the button shouldn't be reachable. */
 #sync-status[hidden] { display: none; }
 
-/* Storage-at-risk warning — full-width row under the actions bar
-   (see view/storage-status.js). Warning-only: it renders solely when
-   the origin's bucket is confirmed best-effort (evictable); healthy
-   storage shows nothing. Amber dot mirrors the sync-dot idiom;
-   click requests persist(). */
+/* Storage-at-risk warning — banner ABOVE the actions row (see
+   view/storage-status.js). Warning-only: renders solely when local
+   reports/bundles exist AND the origin's bucket is confirmed
+   best-effort (evictable); an empty or healthy profile shows
+   nothing. Click requests persist().
+
+   Margins match the search box's .55rem gutter so the banner aligns
+   with the rest of the sidebar chrome; tint rides the
+   medium-severity amber, text hue mirrors the encryption toggle's
+   `.locked-pending` warning treatment. */
 #storage-status {
-  display: flex; align-items: center; gap: .35rem;
-  width: 100%;
-  padding: .1rem .55rem .35rem;
-  background: transparent; border: 0; color: var(--muted);
-  font-size: .68rem; font-family: inherit;
+  display: flex; align-items: center; gap: .4rem;
+  margin: .3rem .55rem .45rem;
+  padding: .3rem .55rem;
+  background: rgb(from var(--medium) r g b / .12);
+  border: 1px solid rgb(from var(--medium) r g b / .3);
+  border-radius: 5px;
+  color: light-dark(#b25b00, #f0a060);
+  font-size: .72rem; font-family: inherit;
   cursor: pointer; text-align: left;
   /* WCO drag surface opt-out — same rationale as .sidebar-actions. */
   -webkit-app-region: no-drag; app-region: no-drag;
 
-  &:hover { color: var(--text); }
+  &:hover {
+    background: rgb(from var(--medium) r g b / .18);
+    border-color: rgb(from var(--medium) r g b / .5);
+  }
 
   & .storage-dot {
     width: 7px; height: 7px; border-radius: 50%;
     background: var(--medium);
     flex-shrink: 0;
-    box-shadow: 0 0 0 1px rgb(from var(--text) r g b / .15);
   }
 }
 /* Same specificity dance as #sync-status[hidden] above. */

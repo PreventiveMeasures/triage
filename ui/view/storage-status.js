@@ -4,12 +4,15 @@
 // touching a delete button (see client/persistence.js for the
 // per-engine rules). Three concerns live here:
 //
-//   1. Paint: a WARNING-ONLY row under the sidebar actions. It
-//      renders solely when the bucket is confirmed best-effort
+//   1. Paint: a WARNING-ONLY banner above the sidebar actions row.
+//      It renders solely when there is local data to lose (reports
+//      or bundles) AND the bucket is confirmed best-effort
 //      ("Storage at risk", explanation + usage in the tooltip) —
-//      a granted or unknowable persistence state paints NOTHING.
-//      Healthy storage is the expected steady state; a permanent
-//      "everything is fine" ornament is just visual noise.
+//      an empty profile, a granted, or an unknowable persistence
+//      state paints NOTHING. Healthy storage is the expected steady
+//      state; a permanent "everything is fine" ornament is just
+//      visual noise, and warning about data that doesn't exist is
+//      worse.
 //   2. Auto-request policy: ask for persistent storage once per
 //      session, and only once there is local data to protect —
 //      Firefox shows a permission prompt on persist(), and popping
@@ -36,6 +39,11 @@ let button = null
 // Last getStorageInfo snapshot driving the paint. Null until the
 // first refresh resolves (button stays hidden).
 let info = null
+// Whether any local reports/bundles exist — the "is there anything
+// to lose" half of the paint predicate, refreshed together with
+// `info`. Defaults to false so the banner can't flash on an empty
+// profile before the first probe lands.
+let hasLocalData = false
 // One auto-request per session (manual clicks are always allowed).
 // Guards the Firefox prompt from re-firing on every import.
 let autoRequested = false
@@ -67,10 +75,12 @@ function formatStorageSize(n) {
 
 function paint() {
   if (!button) return
-  // Warning-only: paint solely on a CONFIRMED best-effort bucket.
-  // Granted, unknowable, and unsupported all hide the row — no
-  // "everything is fine" ornament.
-  if (!info || info.persisted !== false) {
+  // Warning-only: paint solely when there is local data to lose AND
+  // the bucket is CONFIRMED best-effort. An empty profile, a
+  // granted, an unknowable, and an unsupported state all hide the
+  // banner — no "everything is fine" ornament, no warning about
+  // data that doesn't exist.
+  if (!info || info.persisted !== false || !hasLocalData) {
     button.hidden = true
     return
   }
@@ -82,13 +92,43 @@ function paint() {
   button.title = 'Reports, bundles and triage are in best-effort storage — the browser may delete them all under disk pressure or after long inactivity. '
     + (isItpGoverned()
       ? 'On Safari (and all iOS browsers) data is cleared after 7 days without using the site; add this page to your Home Screen or Dock to prevent that.'
-      : 'Click to request persistent storage (browsers grant it silently based on how much you use the site, or after a prompt).')
+      : 'Click to request persistent storage. Firefox asks via a prompt; Chromium-based browsers never prompt and grant it only to sites they consider important — installed as an app, bookmarked, allowed to send notifications, or heavily used.')
     + usageDetail
+}
+
+// Chromium's denial is silent and, from a dev/localhost profile,
+// effectively permanent (the importance heuristics can't pass), so
+// the breadcrumb explains WHY and what would flip it — otherwise a
+// user clicking the banner sees "not granted" with no effect and
+// reads it as a bug.
+function logRequestOutcome(granted, viaGesture) {
+  const suffix = viaGesture ? ' (user gesture)' : ''
+  if (granted) {
+    console.info(`storage: persistent-storage request granted${suffix}`)
+    return
+  }
+  console.info(
+    `storage: persistent-storage request not granted${suffix} — `
+    + (isItpGoverned()
+      ? 'Safari ties persistence to install state; add the app to the Home Screen / Dock.'
+      : 'Chromium-based browsers never prompt and silently deny origins they don\'t consider important; installing the app, bookmarking it, allowing notifications, or regular use flips the heuristic. Firefox shows a prompt instead.'),
+  )
 }
 
 export async function refreshStorageStatus() {
   if (!button) return
-  info = await getStorageInfo()
+  // Both halves of the paint predicate refresh together so the
+  // banner can't show a stale combination (e.g. warn after the last
+  // report was deleted). An enumeration failure reads as "no data"
+  // — for a warning-only surface, failing quiet beats failing loud.
+  const [nextInfo, nextHasData] = await Promise.all([
+    getStorageInfo(),
+    (async () => {
+      try { return (await listFiles()).length > 0 || await hasAnyBundles() } catch { return false }
+    })(),
+  ])
+  info = nextInfo
+  hasLocalData = nextHasData
   paint()
 }
 
@@ -102,25 +142,19 @@ export function scheduleStorageStatusRefresh() {
 }
 
 // The once-per-session auto-request — see the policy note up top.
-// Re-entry is guarded by `autoRequested` being flipped BEFORE the
-// await, so a save-burst can't fire persist() twice.
+// The `autoRequested` re-check after the await guards the flip
+// synchronously, so a save-burst can't fire persist() twice. An
+// enumeration failure inside refreshStorageStatus reads as "no
+// data", which also means the one auto-ask isn't burnt on it.
 async function maybeAutoRequest() {
   if (autoRequested) return
-  info = await getStorageInfo()
-  paint()
-  if (info.persisted !== false) return // granted already, or unknowable
-  let hasData = false
-  try {
-    hasData = (await listFiles()).length > 0 || await hasAnyBundles()
-  } catch {
-    return // enumeration failed — don't burn the one auto-ask on it
-  }
-  if (!hasData || autoRequested) return
+  await refreshStorageStatus()
+  if (info?.persisted !== false || !hasLocalData || autoRequested) return
   autoRequested = true
   const granted = await requestPersistentStorage()
   // Breadcrumb either way — an operator debugging "reports vanished"
   // needs to know whether this profile's bucket was ever protected.
-  console.info(`storage: persistent-storage request ${granted ? 'granted' : 'not granted'}`)
+  logRequestOutcome(granted, false)
   await refreshStorageStatus()
 }
 
@@ -128,7 +162,7 @@ async function onClick() {
   if (info && info.persisted === false) {
     autoRequested = true // a manual ask supersedes the auto one
     const granted = await requestPersistentStorage()
-    console.info(`storage: persistent-storage request ${granted ? 'granted' : 'not granted'} (user gesture)`)
+    logRequestOutcome(granted, true)
   }
   await refreshStorageStatus()
 }

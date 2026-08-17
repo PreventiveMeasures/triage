@@ -1810,6 +1810,10 @@ class AppSidebar extends LitElement {
         <sidebar-view-button kind="repositories"></sidebar-view-button>
       </div>
       <ul id="file-list"></ul>
+      <button id="storage-status" type="button" hidden>
+        <span class="storage-dot" aria-hidden="true"></span>
+        <span class="storage-label"></span>
+      </button>
       <div class="sidebar-actions">
         <sidebar-delete-current></sidebar-delete-current>
         <button id="sync-status" type="button" data-status="off">
@@ -1818,10 +1822,6 @@ class AppSidebar extends LitElement {
         </button>
         <button id="auth-status" type="button" hidden></button>
       </div>
-      <button id="storage-status" type="button" hidden>
-        <span class="storage-dot" aria-hidden="true"></span>
-        <span class="storage-label"></span>
-      </button>
       <div id="user-menu" popover class="user-menu"></div>
     `
   }
