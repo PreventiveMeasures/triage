@@ -340,11 +340,37 @@
 
 .kanban-card .kanban-badge-col {
   grid-area: badge;
-  align-self: start;
+  /* Stretch (not start) so the fix/comment shortcut's margin-top: auto
+     can pin it to the column's bottom edge — directly above the meta
+     row's confidence number. With no shortcut rendered the items stay
+     top-anchored, so this is a no-op for badge + flag alone. */
+  align-self: stretch;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: .3rem;
+}
+/* Fix-link / comment shortcut at the bottom of the badge column, right
+   on top of the confidence number. margin-top: auto soaks up the slack
+   under the badge + flag stack, so on the typical multi-line-title card
+   it fills existing whitespace instead of adding height. Renders as an
+   <a> (URL fix → opens the PR) or a .mark-fix / .mark-comment <button>
+   (dialog via the events.js delegates); both get the same icon-chip
+   look. */
+.kanban-card .kanban-action {
+  margin-top: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  line-height: 0;
+  color: var(--muted);
+  cursor: pointer;
+
+  &:hover { color: var(--accent); }
+  & svg { width: 12px; height: 12px; }
 }
 /* Flag indicator stacked under the severity badge — display-only on the
    compact card (toggling lives in the detail popover's finding-card).

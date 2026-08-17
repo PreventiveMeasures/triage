@@ -7,11 +7,11 @@ import { FILE_ICONS } from './file-display.js'
 import { listBundles, listWorkspaces, state } from '#client/index.js'
 import { isBundleInRemote, isInRemote, remoteCount, triageSync } from './client-sync.js'
 import { dropZone, report } from './dom.js'
-import { SEVERITIES, configureDepsDir, displayedSeverity, fileLink, findingDisplayName, formatRunMeta, hasSeverityCorrection, isModule, lineLink, prettyModel, stripExportMarker } from './format.js'
+import { SEVERITIES, configureDepsDir, displayedSeverity, fileLink, findingDisplayName, formatRunMeta, hasSeverityCorrection, isHttpUrl, isModule, lineLink, prettyModel, stripExportMarker } from './format.js'
 import { activeTabFor, getMergedGroups, groupKey, groupState, primaryTab, tabKey } from './group.js'
 import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, applySorting, modelOfFinding, repoOfFinding } from './filters.js'
 import { ANALYZER_LABELS } from './analyzer-select.js'
-import { FLAG_ICON, badgeLabel, findingCardGid, firstLine } from './render-finding.js'
+import { COMMENT_ICON, FIX_ICON, FLAG_ICON, badgeLabel, findingCardGid, firstLine } from './render-finding.js'
 import { computeFindingCountsByFile, computeTransitiveCounts, fileHasFindings, mergeReportsTree } from './file-counts.js'
 import { renderTreeView } from './render-files.js'
 import { graph2 } from './graph/state.js'
@@ -912,7 +912,27 @@ function kanbanCardTemplate(g, opts = {}) {
   // of the card). Display-only here — the card is a drag/click target,
   // so toggling lives in the detail popover's finding-card; we only
   // surface the indicator when the active tab is flagged.
-  const flagged = state.triage.get(tabKey(activeTab))?.flagged === true
+  const activeEntry = state.triage.get(tabKey(activeTab))
+  const flagged = activeEntry?.flagged === true
+  // Fix-link / comment shortcut — pinned to the bottom of the badge
+  // column, directly above the meta row's confidence number (kanban
+  // variant only; the focus-side queue stays indicator-free). One slot,
+  // fix wins over comment, never both. A URL-shaped fix renders as a
+  // real link (the payoff of surfacing it on the card is one-click
+  // access to the PR); a free-form fix or a comment reuses the
+  // `.mark-fix` / `.mark-comment` classes so the existing dialog
+  // delegates in events.js pick the click up — the kanban modal-toggle
+  // listener skips `.kanban-action` clicks so the popover stays shut.
+  const fix = activeEntry?.fix ?? ''
+  const comment = activeEntry?.comment ?? ''
+  let action = nothing
+  if (isKanban && fix) {
+    action = isHttpUrl(fix)
+      ? html`<a class="kanban-action kanban-fix-link" href=${fix} target="_blank" rel="noopener noreferrer" draggable="false" title=${`Open fix link: ${fix}`} aria-label=${`Open fix link: ${fix}`}>${FIX_ICON}</a>`
+      : html`<button type="button" class="kanban-action mark-fix" title=${`Edit fix link: ${fix}`} aria-label=${`Edit fix link: ${fix}`}>${FIX_ICON}</button>`
+  } else if (isKanban && comment) {
+    action = html`<button type="button" class="kanban-action mark-comment" title=${`Edit comment: ${comment}`} aria-label=${`Edit comment: ${comment}`}>${COMMENT_ICON}</button>`
+  }
   const inner = html`<div class="kanban-badge-col">
       <span
         class=${`kanban-badge sev-${kanbanSev}`}
@@ -920,6 +940,7 @@ function kanbanCardTemplate(g, opts = {}) {
         aria-label=${sevCorrected ? `Severity ${badgeLabel(kanbanSev)}, corrected from ${badgeLabel(activeTab.severity)}` : `Severity ${badgeLabel(kanbanSev)}`}
       >${letter}${sevCorrected ? '*' : ''}</span>
       ${flagged ? html`<span class="kanban-flag" title="Flagged" aria-label="Flagged">${FLAG_ICON}</span>` : nothing}
+      ${action}
     </div>
     <span class="kanban-title">${title}</span>
     <div class="kanban-meta">
