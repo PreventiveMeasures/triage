@@ -64,15 +64,28 @@
 // construction — only the `## Technical Findings Detail` blocks, their
 // `#### Variants` sub-tables, and the `## Summary of Findings` index
 // are read.
+//
+// Structural markdown — `## ` / `### ` headings and the `#### Variants`
+// marker — is only recognized OUTSIDE fenced code blocks. Piolium
+// inlines PoC snippets, and a shell comment like `## step 2` inside a
+// fence must not end the findings section, nor may a fenced `### run
+// this` line fabricate a finding. See fenceRanges below.
 
 // Piolium grades findings CRITICAL / HIGH / MEDIUM (a consistency check
 // in its report assembler rejects Low-severity leakage into
 // `findings/`), but drafts and deferred entries can carry LOW or INFO,
 // so the full ladder is mapped. Anything unrecognized falls back to
-// medium, keeping a finding with an odd tier visible rather than
-// dropping it — same rule the other markdown parsers use.
+// medium at the call sites, keeping a finding with an odd tier visible
+// rather than dropping it — same rule the other markdown parsers use.
+//
+// Only the first whitespace-delimited token is read: bullet values keep
+// wrapped continuation lines (see parseFields) and may carry a trailing
+// parenthetical ("CRITICAL (raised after the PoC ran)"), while the tier
+// itself is always a single word. Backticks/asterisks are shed so a
+// `**CRITICAL**` still reads.
 function mapSeverity(s) {
-  switch ((s || '').trim().toUpperCase()) {
+  const first = ((s || '').trim().split(/\s+/u)[0] || '').replaceAll(/[`*]+/gu, '')
+  switch (first.toUpperCase()) {
     case 'CRITICAL': return 'critical'
     case 'HIGH': return 'high'
     case 'MEDIUM': return 'medium'
@@ -82,17 +95,15 @@ function mapSeverity(s) {
   }
 }
 
-// Finding ids are severity-prefixed and sequential (`C1`, `H2`, `M10`),
-// so the prefix letter is a second source for the tier when the
-// `- **Severity:**` bullet is missing or unrecognized.
+// Finding ids are severity-prefixed and sequential — `C1` / `H2` in the
+// final report, `H-001` in lite consolidation — so the prefix letter is
+// a second source for the tier. Only ids that actually follow that
+// scheme count: a bare leading letter is not enough, or `CVE-2024-1234`
+// would read as critical.
 function severityFromId(id) {
-  switch ((id || '').trim().charAt(0).toUpperCase()) {
-    case 'C': return 'critical'
-    case 'H': return 'high'
-    case 'M': return 'medium'
-    case 'L': return 'low'
-    default: return ''
-  }
+  const m = /^([CHML])-?\d+$/iu.exec((id || '').trim())
+  if (!m) return ''
+  return { C: 'critical', H: 'high', M: 'medium', L: 'low' }[m[1].toUpperCase()]
 }
 
 function stripBold(text) { return text.replaceAll('**', '') }
@@ -134,8 +145,8 @@ export function parsePioliumFindings(content) {
     if (id) seen.add(id)
   }
 
-  for (const block of splitBlocks(sections['technical findings detail'] || '')) {
-    const parsed = parseBlock(block, index)
+  for (const { heading, body } of splitBlocks(sections['technical findings detail'] || '')) {
+    const parsed = parseBlock(heading, body, index)
     if (!parsed) continue
     push(parsed.id, parsed.finding)
     // Variant children (from piolium's variant-hunting phase) appear
@@ -157,13 +168,14 @@ export function parsePioliumFindings(content) {
 
   if (findings.length === 0) return null
 
-  // Repo is stamped per finding, not at the report level: `repo.github`
-  // is a per-finding field everywhere downstream (format.js's fileUrl,
-  // the repo chip, the Repositories view), and a report-level copy would
-  // be read by nothing.
-  const repo = repoOf(text)
-  if (repo) for (const f of findings) f.repo = { ...repo }
-
+  // Deliberately NO repo derivation from the H1 project name: it holds
+  // a monorepo path (`packages/core`) or a free-text label as easily as
+  // an `owner/repo` slug, the two are syntactically indistinguishable,
+  // and a wrong `repo.github` is worse than none — format.js's fileUrl
+  // prefers it over the user-editable repo chip, so a bad guess yields
+  // dead source links the user cannot correct. The repo chip is the
+  // supported way to attach one.
+  //
   // Report-level type stays 'security' for the document.title fallback.
   // Per-finding `type` is deliberately unset: piolium categorizes by
   // severity, not by analyzer, so stamping a synthetic category on
@@ -173,55 +185,74 @@ export function parsePioliumFindings(content) {
   return { type: 'security', source: 'piolium', findings }
 }
 
-// `# Security Audit Report: <project>` names the audited project. When
-// that name is a bare `owner/repo` slug it doubles as the repo the
-// findings belong to, which is what format.js's fileUrl needs to turn a
-// `file` into a source link. Gated tightly — a free-text project name
-// ("Acme Payments API") is not a slug and must not become one. Returns
-// null when the H1 carries no usable slug.
-function repoOf(text) {
-  const m = /^# +Security Audit Report *: *(.+)$/mu.exec(text)
-  if (!m) return null
-  // Trailing `=====` setext underline can land on the same capture when
-  // the title and its underline are not newline-separated.
-  const name = m[1].trim().replace(/[.=\s]+$/u, '')
-  return /^[\w.-]+\/[\w.-]+$/u.test(name) ? { github: name } : null
+// Byte ranges of fenced code blocks (``` / ~~~), fences included. The
+// closing fence must use the opening marker, so a `~~~` line inside a
+// backtick fence stays content. A dangling opening fence runs to end of
+// input — the same reading markdown renderers give it. Computed once
+// per text and consulted by every structural splitter so a PoC line
+// beginning with `## ` / `### ` / `#### ` can't be read as structure.
+function fenceRanges(text) {
+  const ranges = []
+  let open = -1
+  let marker = ''
+  for (const m of text.matchAll(/^ {0,3}(```|~~~).*$/gmu)) {
+    if (open === -1) { open = m.index; marker = m[1] }
+    else if (m[1] === marker) { ranges.push([open, m.index + m[0].length]); open = -1 }
+  }
+  if (open !== -1) ranges.push([open, text.length])
+  return ranges
+}
+
+function inFence(ranges, index) {
+  return ranges.some(([start, end]) => index >= start && index < end)
+}
+
+// Split `text` at every line matching `re` (global + multiline, heading
+// text in capture 1) that sits outside a code fence. Content before the
+// first heading (a setext underline, prose) is dropped, matching the
+// split()-based behavior this replaces.
+function splitByHeading(text, re) {
+  const ranges = fenceRanges(text)
+  const marks = [...text.matchAll(re)].filter((m) => !inFence(ranges, m.index))
+  return marks.map((m, i) => ({
+    heading: m[1],
+    body: text.slice(m.index + m[0].length + 1, i + 1 < marks.length ? marks[i + 1].index : text.length),
+  }))
 }
 
 // Split the document into its `## ` sections, keyed by case-folded
-// header. Setext-style underlines (`-----` / `=====`) that the template
-// puts under each header land at the head of the section body and are
-// dropped by the consumers (splitBlocks discards its preamble,
-// parseIndexTable only reads `|` rows).
+// header. A repeated header CONCATENATES rather than overwrites —
+// concatenated audit runs (`cat a.md b.md`) and reports that split
+// their index into several tables would otherwise silently keep only
+// the last section. Null-prototype object so a section named after an
+// Object.prototype member can't alias an inherited key.
 function parseSections(text) {
-  const sections = {}
-  const parts = text.split(/^## +/mu)
-  for (let i = 1; i < parts.length; i++) {
-    const part = parts[i]
-    const nl = part.indexOf('\n')
-    const header = (nl === -1 ? part : part.slice(0, nl)).trim().toLowerCase()
-    const body = nl === -1 ? '' : part.slice(nl + 1)
-    if (header) sections[header] = body
+  const sections = Object.create(null)
+  for (const { heading, body } of splitByHeading(text, /^## +(.*)$/gmu)) {
+    const header = heading.trim().toLowerCase()
+    if (!header) continue
+    sections[header] = header in sections ? `${sections[header]}\n${body}` : body
   }
   return sections
 }
 
-// Each finding in the detail section starts at `### `. parts[0] is the
-// section preamble (the setext underline), dropped by the slice.
+// Each finding in the detail section starts at `### `.
 function splitBlocks(detail) {
-  return detail.split(/^### +/mu).slice(1).filter((b) => b.trim().length > 0)
+  return splitByHeading(detail, /^### +(.*)$/gmu)
 }
 
 // Rows of a markdown table, as arrays of trimmed cells. Skips the
 // header row's `|---|---|` delimiter and any line that isn't a table
-// row, so prose around the table is ignored.
+// row, so prose around the table is ignored. The delimiter test is a
+// single character class — the previous `[\s:|-]*\|?\s*$` shape had two
+// overlapping whitespace quantifiers and backtracked quadratically on a
+// long space-padded cell.
 function tableRows(text) {
   const rows = []
   for (const line of text.split('\n')) {
     const trimmed = line.trim()
     if (!trimmed.startsWith('|')) continue
-    // Delimiter row — dashes, colons and pipes only.
-    if (/^\|[\s:|-]*\|?\s*$/u.test(trimmed) && trimmed.includes('-')) continue
+    if (/^[\s:|-]+$/u.test(trimmed) && trimmed.includes('-')) continue
     const cells = trimmed.replace(/^\|/u, '').replace(/\|$/u, '').split('|').map((c) => c.trim())
     rows.push(cells)
   }
@@ -232,16 +263,20 @@ function tableRows(text) {
 // case-folded header names, so the two documented column sets — the
 // assembler's `ID | Title | Severity | PoC Status | Parent` and the
 // older `ID | Title | Severity | Status` — both parse without the
-// column order being hardcoded.
+// column order being hardcoded. A re-stated header row (which is how a
+// concatenated duplicate section arrives) is chrome, not data.
 function tableObjects(text) {
   const rows = tableRows(text)
   if (rows.length < 2) return []
   const header = rows[0].map((h) => h.toLowerCase())
-  return rows.slice(1).map((cells) => {
+  const objects = []
+  for (const cells of rows.slice(1)) {
+    if (cells.length === header.length && cells.every((c, i) => c.toLowerCase() === header[i])) continue
     const obj = {}
     header.forEach((name, i) => { if (name) obj[name] = cells[i] ?? '' })
-    return obj
-  })
+    objects.push(obj)
+  }
+  return objects
 }
 
 // `## Summary of Findings` → id → row. Used both to fill gaps in a
@@ -264,22 +299,28 @@ function parseIndexTable(text) {
   return index
 }
 
-function parseBlock(block, index) {
+function parseBlock(heading, body, index) {
   // `### [C1] Command injection in the build hook`
-  const newlineIdx = block.indexOf('\n')
-  const heading = (newlineIdx === -1 ? block : block.slice(0, newlineIdx)).trim()
-  if (!heading) return null
-  const body = newlineIdx === -1 ? '' : block.slice(newlineIdx + 1)
+  const headingText = heading.trim()
+  if (!headingText) return null
 
   // The id is the leading bracketed token; everything after it is the
-  // title. An unbracketed heading is treated as a bare title so a
-  // report that drops the notation still yields a finding.
-  const idMatch = /^\[([^\]]+)\] *(.*)$/u.exec(heading)
-  const id = idMatch ? idMatch[1].trim() : ''
-  const title = (idMatch ? idMatch[2] : heading).trim()
+  // title. An unbracketed heading is treated as a bare title — and it
+  // ADOPTS the index row carrying the same title, so the block and its
+  // row read as one finding (id, severity, PoC status). Without the
+  // adoption the index-fallback loop below would emit the same finding
+  // a second time under its row.
+  const idMatch = /^\[([^\]]+)\] *(.*)$/u.exec(headingText)
+  let id = idMatch ? idMatch[1].trim() : ''
+  const title = (idMatch ? idMatch[2] : headingText).trim()
+  let row = index.get(id)
+  if (!id && title) {
+    for (const r of index.values()) {
+      if (r.title.toLowerCase() === title.toLowerCase()) { id = r.id; row = r; break }
+    }
+  }
 
   const fields = parseFields(body)
-  const row = index.get(id)
 
   // Severity precedence: the block's own bullet, then the index row,
   // then the id's severity prefix. Medium is the final fallback (an
@@ -301,6 +342,9 @@ function parseBlock(block, index) {
     description: buildDescription(title || id, fields),
   }
   if (locationLink) finding.location = locationLink
+  // Last-resort fingerprint discriminator for an unlocated finding —
+  // see fromIndexRow for why.
+  else if (finding.file === 'unknown' && id) finding.location = `piolium:${id}`
   // Auxiliary provenance kept as plain string fields. Nothing renders
   // these specifically today, but they let a future view (or a printed
   // export) cite the audit's own artifacts without re-parsing the
@@ -311,20 +355,21 @@ function parseBlock(block, index) {
   if (row?.status) finding.status = row.status
   if (row?.parent) finding.parent = row.parent
 
-  return { id, finding, variants: parseVariants(body, index) }
+  return { id, finding, variants: parseVariants(body, index, id) }
 }
 
 // `#### Variants` sub-table inside a parent's detail block. Each row is
 // a full finding in its own right (its own id, severity and location),
 // linked back through `parent`.
-function parseVariants(body, index) {
-  const idx = /^#### +Variants\s*$/mu.exec(body)
-  if (!idx) return []
+function parseVariants(body, index, parentId) {
+  const ranges = fenceRanges(body)
+  const start = [...body.matchAll(/^#### +Variants\s*$/gmu)].find((m) => !inFence(ranges, m.index))
+  if (!start) return []
   // Stop at the next heading of any level so a section following the
   // table can't be read as more variant rows.
-  const rest = body.slice(idx.index + idx[0].length)
-  const nextHeading = /^#{1,6} /mu.exec(rest)
-  const table = nextHeading ? rest.slice(0, nextHeading.index) : rest
+  const from = start.index + start[0].length
+  const next = [...body.matchAll(/^#{1,6} /gmu)].find((m) => m.index > from && !inFence(ranges, m.index))
+  const table = body.slice(from, next ? next.index : body.length)
 
   const variants = []
   for (const obj of tableObjects(table)) {
@@ -344,20 +389,28 @@ function parseVariants(body, index) {
       description: stripBold(title || id),
     }
     if (locationLink) finding.location = locationLink
+    else if (finding.file === 'unknown' && id) finding.location = `piolium:${id}`
     const pocStatus = cellValue(obj['poc status']) || row?.pocStatus
     if (pocStatus) finding.pocStatus = pocStatus
-    // The parent's id when the index doesn't name one — inside a
-    // `#### Variants` table the relationship is structural.
-    if (row?.parent) finding.parent = row.parent
+    // The index row's Parent cell when it names one; otherwise the
+    // enclosing block's id — inside a `#### Variants` table the
+    // relationship is structural even when the index doesn't record it.
+    const parent = row?.parent || parentId
+    if (parent) finding.parent = parent
     variants.push({ id, finding })
   }
   return variants
 }
 
-// A finding known only from the `## Summary of Findings` row. No
-// location is available (the index has no path column), so it takes the
-// same `unknown` / `?` placeholders the other markdown parsers use when
-// the source omits them.
+// A finding known only from the `## Summary of Findings` row. The index
+// has no path column, so every row here lands on the same `unknown` /
+// `?` placeholders — and finding-id.js would then derive the SAME uuid
+// for two rows sharing a title and tier, letting ingest's dedupe
+// silently swallow one. The report id is the only discriminator the row
+// carries; it is stamped as the `location` fingerprint field (preferred
+// over file/line by deriveFindingId, and never rendered — its one
+// consumer is the id derivation), namespaced so it reads as an opaque
+// token rather than a URL.
 function fromIndexRow(row) {
   const finding = {
     file: 'unknown',
@@ -365,26 +418,41 @@ function fromIndexRow(row) {
     severity: mapSeverity(row.severity) || severityFromId(row.id) || 'medium',
     description: stripBold(row.title || row.id),
   }
+  if (row.id) finding.location = `piolium:${row.id}`
   if (row.pocStatus) finding.pocStatus = row.pocStatus
   if (row.status) finding.status = row.status
   if (row.parent) finding.parent = row.parent
   return finding
 }
 
-// `- **Field:** value` bullets, case-folded. A value runs to the next
-// bullet, heading, table row or horizontal rule, so a wrapped
-// one-liner keeps its continuation lines instead of being truncated at
-// the first newline.
+// `- **Field:** value` bullets, case-folded, first occurrence wins. A
+// value runs to the next bullet, heading, table row or horizontal rule,
+// so a wrapped one-liner keeps its continuation lines instead of being
+// truncated at the first newline. Fenced code under a bullet (a PoC
+// snippet in a Summary / Evidence value) is all content: fence
+// delimiters toggle, and nothing inside is structural. Null-prototype
+// object so a label like "Constructor" can't alias an inherited key.
 function parseFields(body) {
-  const fields = {}
+  const fields = Object.create(null)
   let key = null
   let buf = []
+  let fence = ''
   const flush = () => {
     if (key && !(key in fields)) fields[key] = buf.join('\n').trim()
     key = null
     buf = []
   }
   for (const line of body.split('\n')) {
+    const fm = /^ {0,3}(```|~~~)/u.exec(line)
+    if (fm && (!fence || fm[1] === fence)) {
+      fence = fence ? '' : fm[1]
+      if (key) buf.push(line)
+      continue
+    }
+    if (fence) {
+      if (key) buf.push(line)
+      continue
+    }
     const bullet = /^\s*[-*] +\*\*([^:*]+):\*\*\s*(.*)$/u.exec(line)
     if (bullet) {
       flush()
@@ -416,15 +484,18 @@ function parseCodeRef(raw) {
   }
   text = text.replaceAll('`', '')
 
-  // A `#L<n>` anchor on the link is the most reliable line source.
+  // A `#L<n>` anchor on the link is the most reliable line source (and
+  // reads the start line of a `#L88-L95` range).
   let line = ''
   const anchor = /#L(\d+)/u.exec(locationLink)
   if (anchor) line = anchor[1]
 
   // First token is the path; the template appends a function qualifier
-  // (`… in runHook()`) that must not become part of it.
+  // (`… in runHook()`) that must not become part of it. A line RANGE
+  // (`src/a.js:88-95` — the normal way to cite a multi-line sink) keeps
+  // its start line and sheds the range from the path.
   const file = text.split(/[\s,]+/u).find(Boolean) || ''
-  const colon = /^(.+):(\d+)$/u.exec(file)
+  const colon = /^(.+):(\d+)(?:-\d+)?$/u.exec(file)
   if (colon) {
     if (!line) line = colon[2]
     return { file: colon[1], line, locationLink }

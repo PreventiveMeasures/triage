@@ -2,8 +2,9 @@
 // function; covers the format guard, the `## Technical Findings Detail`
 // → `### [ID] Title` structure, severity precedence (bullet → index row
 // → id prefix), `Key Code Reference` file/line extraction, the
-// `#### Variants` sub-table, the `## Summary of Findings` fallback, and
-// the sections that must NOT become findings.
+// `#### Variants` sub-table, the `## Summary of Findings` fallback,
+// fenced-code-block handling, repeated sections, and the sections that
+// must NOT become findings.
 
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
@@ -216,6 +217,33 @@ describe('parsePioliumFindings — severity precedence', () => {
     assert.equal(parsePioliumFindings(build({ detail })).findings[0].severity, 'high')
   })
 
+  it("accepts the lite scheme's dashed ids for the prefix fallback", () => {
+    const detail = ['### [H-001] Title', '- **Summary:** body'].join('\n')
+    assert.equal(parsePioliumFindings(build({ detail })).findings[0].severity, 'high')
+  })
+
+  it('does not read a bare leading letter as a severity prefix', () => {
+    // CVE-2024-1234 starts with C but is not a piolium id — it must not
+    // grade as critical.
+    const index = [
+      '| ID | Title | Severity |',
+      '|----|-------|----------|',
+      '| CVE-2024-1234 | Something | ??? |',
+    ].join('\n')
+    assert.equal(parsePioliumFindings(build({ index })).findings[0].severity, 'medium')
+  })
+
+  it('reads the tier from the first token of a wrapped Severity bullet', () => {
+    // parseFields keeps continuation lines on a bullet value; the tier
+    // must still match when a parenthetical wraps under it.
+    const detail = [
+      '### [SEC-001] Cmd inj',
+      '- **Severity:** CRITICAL',
+      '  (raised after the PoC confirmed unauthenticated reachability)',
+    ].join('\n')
+    assert.equal(parsePioliumFindings(build({ detail })).findings[0].severity, 'critical')
+  })
+
   it('defaults to medium for an unrecognized tier and id', () => {
     const detail = ['### [Q1] Title', '- **Severity:** spicy'].join('\n')
     assert.equal(parsePioliumFindings(build({ detail })).findings[0].severity, 'medium')
@@ -231,6 +259,12 @@ describe('parsePioliumFindings — code reference', () => {
     const f = ref('src/a/b.js:42')
     assert.equal(f.file, 'src/a/b.js')
     assert.equal(f.line, '42')
+  })
+
+  it('keeps the start line of a range and sheds it from the path', () => {
+    const f = ref('src/api/invoices.js:88-95 in getInvoice()')
+    assert.equal(f.file, 'src/api/invoices.js')
+    assert.equal(f.line, '88')
   })
 
   it('drops the function qualifier the template appends', () => {
@@ -317,6 +351,25 @@ describe('parsePioliumFindings — variants', () => {
     assert.equal(parsed.findings[1].parent, 'C1')
   })
 
+  it('stamps the enclosing block id as parent when the index does not name one', () => {
+    // No index at all: the `#### Variants` table's position under [C1]
+    // states the relationship structurally.
+    const parsed = parsePioliumFindings(build({ detail }))
+    assert.equal(parsed.findings[1].parent, 'C1')
+    assert.equal(parsed.findings[2].parent, 'C1')
+  })
+
+  it('prefers the structural parent over nothing when the index lacks a Parent column', () => {
+    const index = [
+      '| ID | Title | Severity | Status |',
+      '|----|-------|----------|--------|',
+      '| [C1] | Parent finding | CRITICAL | VALID |',
+      '| [H2] | IDOR variant on invoices | HIGH | VALID |',
+    ].join('\n')
+    const parsed = parsePioliumFindings(build({ index, detail }))
+    assert.equal(parsed.findings[1].parent, 'C1')
+  })
+
   it('stops the variant table at the next heading', () => {
     const md = [
       '## Technical Findings Detail',
@@ -388,6 +441,43 @@ describe('parsePioliumFindings — summary-of-findings index', () => {
     const f = parsePioliumFindings(build({ index: INDEX })).findings[0]
     assert.equal(f.parent, undefined)
   })
+
+  it('an unbracketed heading adopts its index row instead of double-emitting', () => {
+    // parseBlock returns no id for a bare-title heading; without the
+    // title-match adoption the index fallback would emit the same
+    // finding a second time (with different file/line, so ingest's
+    // dedupe could never merge the two).
+    const index = [
+      '| ID | Title | Severity | PoC Status | Parent |',
+      '|----|-------|----------|------------|--------|',
+      '| [C1] | Command injection | CRITICAL | executed | -- |',
+    ].join('\n')
+    const detail = [
+      '### Command injection',
+      '- **Key Code Reference:** src/a.js:1',
+    ].join('\n')
+    const parsed = parsePioliumFindings(build({ index, detail }))
+    assert.equal(parsed.findings.length, 1)
+    const f = parsed.findings[0]
+    assert.equal(f.file, 'src/a.js')
+    assert.equal(f.severity, 'critical')
+    assert.equal(f.pocStatus, 'executed')
+  })
+
+  it('gives index-only findings distinct fingerprints via a location token', () => {
+    // Same title + tier + the shared unknown/? placeholders would
+    // otherwise derive the SAME finding uuid, and ingest's dedupe would
+    // silently swallow all but the first — the report id is the only
+    // discriminator the row carries.
+    const index = [
+      '| ID | Title | Severity | PoC Status | Parent |',
+      '|----|-------|----------|------------|--------|',
+      '| [M1] | Missing authorization check | MEDIUM | executed | -- |',
+      '| [M2] | Missing authorization check | MEDIUM | theoretical | -- |',
+    ].join('\n')
+    const parsed = parsePioliumFindings(build({ index }))
+    assert.deepEqual(parsed.findings.map((f) => f.location), ['piolium:M1', 'piolium:M2'])
+  })
 })
 
 describe('parsePioliumFindings — sections that are not findings', () => {
@@ -415,29 +505,150 @@ describe('parsePioliumFindings — sections that are not findings', () => {
   })
 })
 
-describe('parsePioliumFindings — repository', () => {
-  it('stamps repo.github when the project name is an owner/repo slug', () => {
-    const parsed = parsePioliumFindings(build({ title: 'PreventiveMeasures/triage', detail: DETAIL }))
-    assert.deepEqual(parsed.findings[0].repo, { github: 'PreventiveMeasures/triage' })
-  })
-
-  it('leaves repo unset for a free-text project name', () => {
-    const parsed = parsePioliumFindings(build({ title: 'Acme Payments API', detail: DETAIL }))
-    assert.equal(parsed.findings[0].repo, undefined)
-  })
-
-  it('leaves repo unset for a path-like name with more than one slash', () => {
-    const parsed = parsePioliumFindings(build({ title: 'a/b/c', detail: DETAIL }))
-    assert.equal(parsed.findings[0].repo, undefined)
-  })
-
-  it('gives each finding its own repo object', () => {
+describe('parsePioliumFindings — fenced code blocks', () => {
+  it('a ## line inside a fence does not end the findings section', () => {
+    // Piolium inlines PoC snippets; a shell comment at column 0 used to
+    // truncate `## Technical Findings Detail` and silently drop every
+    // finding after the fence.
     const detail = [
-      '### [C1] First', '- **Severity:** CRITICAL', '',
-      '### [H1] Second', '- **Severity:** HIGH',
+      '### [C1] First',
+      '- **Severity:** CRITICAL',
+      '- **Summary:** x',
+      '',
+      '```sh',
+      '## reproduce',
+      'curl x',
+      '```',
+      '',
+      '### [H1] Second',
+      '- **Severity:** HIGH',
+      '',
+      '### [M1] Third',
+      '- **Severity:** MEDIUM',
     ].join('\n')
-    const parsed = parsePioliumFindings(build({ title: 'o/r', detail }))
-    assert.notEqual(parsed.findings[0].repo, parsed.findings[1].repo)
-    assert.deepEqual(parsed.findings[0].repo, parsed.findings[1].repo)
+    const parsed = parsePioliumFindings(build({ detail }))
+    assert.deepEqual(parsed.findings.map((f) => f.severity), ['critical', 'high', 'medium'])
+  })
+
+  it('keeps the fenced PoC inside the bullet value it belongs to', () => {
+    const detail = [
+      '### [C1] First',
+      '- **Severity:** CRITICAL',
+      '- **Summary:** x',
+      '',
+      '```sh',
+      '## reproduce',
+      'curl x',
+      '```',
+    ].join('\n')
+    const f = parsePioliumFindings(build({ detail })).findings[0]
+    assert.equal(f.description.includes('## reproduce'), true)
+    assert.equal(f.description.includes('curl x'), true)
+  })
+
+  it('a ### line inside a fence does not fabricate a finding', () => {
+    const detail = [
+      '### [C1] Only finding',
+      '- **Severity:** CRITICAL',
+      '- **Summary:** body',
+      '',
+      '```',
+      '### not a finding',
+      '```',
+    ].join('\n')
+    assert.equal(parsePioliumFindings(build({ detail })).findings.length, 1)
+  })
+
+  it('an unterminated fence runs to the end of the input', () => {
+    const detail = [
+      '### [C1] Only finding',
+      '- **Severity:** CRITICAL',
+      '',
+      '```',
+      '### swallowed',
+    ].join('\n')
+    assert.equal(parsePioliumFindings(build({ detail })).findings.length, 1)
+  })
+
+  it('a ~~~ line inside a backtick fence stays content', () => {
+    const detail = [
+      '### [C1] First',
+      '- **Severity:** CRITICAL',
+      '',
+      '```',
+      '~~~',
+      '### still fenced',
+      '```',
+      '',
+      '### [H1] Second',
+      '- **Severity:** HIGH',
+    ].join('\n')
+    const parsed = parsePioliumFindings(build({ detail }))
+    assert.deepEqual(parsed.findings.map((f) => f.severity), ['critical', 'high'])
+  })
+})
+
+describe('parsePioliumFindings — repeated sections', () => {
+  it('concatenated audit runs keep the findings of both', () => {
+    // `cat a.md b.md > all.md` used to be last-write-wins on the
+    // repeated `## Technical Findings Detail` header, silently losing
+    // the first run's findings.
+    const md = [
+      '# Security Audit Report: alpha',
+      '',
+      '## Technical Findings Detail',
+      '',
+      '### [C1] alpha finding',
+      '- **Severity:** CRITICAL',
+      '- **Key Code Reference:** alpha/hook.js:1',
+      '',
+      '# Security Audit Report: beta',
+      '',
+      '## Technical Findings Detail',
+      '',
+      '### [H1] beta finding',
+      '- **Severity:** HIGH',
+      '- **Key Code Reference:** beta/fetch.js:2',
+    ].join('\n')
+    const parsed = parsePioliumFindings(md)
+    assert.deepEqual(
+      parsed.findings.map((f) => [f.severity, f.file]),
+      [['critical', 'alpha/hook.js'], ['high', 'beta/fetch.js']],
+    )
+  })
+
+  it('reads every table of a repeated index, skipping re-stated header rows', () => {
+    const md = [
+      '# Security Audit Report: x',
+      '',
+      '## Summary of Findings',
+      '',
+      '| ID | Title | Severity | PoC Status | Parent |',
+      '|----|-------|----------|------------|--------|',
+      '| [C1] | First | CRITICAL | executed | -- |',
+      '',
+      '## Summary of Findings',
+      '',
+      '| ID | Title | Severity | PoC Status | Parent |',
+      '|----|-------|----------|------------|--------|',
+      '| [H1] | Second | HIGH | executed | -- |',
+    ].join('\n')
+    const parsed = parsePioliumFindings(md)
+    assert.deepEqual(parsed.findings.map((f) => f.description), ['First', 'Second'])
+  })
+})
+
+describe('parsePioliumFindings — no repo derivation', () => {
+  it('never invents a repo from the H1 project name', () => {
+    // Deliberate: "Security Audit Report: <project>" holds a monorepo
+    // path (`packages/core`) or free-text label as easily as an
+    // owner/repo slug, the two are syntactically indistinguishable, and
+    // a wrong repo.github beats the user-editable repo chip in fileUrl —
+    // dead source links the user could not correct. The repo chip is
+    // the supported way to attach one.
+    for (const title of ['PreventiveMeasures/triage', 'packages/core', 'Acme Payments API']) {
+      const parsed = parsePioliumFindings(build({ title, detail: DETAIL }))
+      assert.equal(parsed.findings[0].repo, undefined)
+    }
   })
 })
