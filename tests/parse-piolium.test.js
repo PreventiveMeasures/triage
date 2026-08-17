@@ -331,6 +331,14 @@ describe('parsePioliumFindings — code reference', () => {
     assert.equal(f.file, 'src/b.js')
     assert.equal(f.line, '42')
   })
+
+  it('a backticked path with spaces stays whole', () => {
+    // The backticks exist precisely to delimit paths with spaces — the
+    // chain tail after the span is prose, not part of the path.
+    const f = ref('`long path/sub dir/file.js:1234` (bar), `:1423` (foo), `:10-20` (`fn` text)')
+    assert.equal(f.file, 'long path/sub dir/file.js')
+    assert.equal(f.line, '1234')
+  })
 })
 
 describe('parsePioliumFindings — variants', () => {
@@ -1022,6 +1030,111 @@ describe('parsePioliumFindings — Findings by Severity layout', () => {
     assert.equal(parsed.findings[0].pocStatus, 'executed')
     assert.equal(parsed.findings[1].description, 'Index-only finding')
     assert.equal(parsed.findings[1].pocStatus, 'theoretical')
+  })
+})
+
+describe('parsePioliumFindings — section-level severity groups with full blocks', () => {
+  it('### blocks under ## HIGH parse fully even when one holds #### Variants', () => {
+    // The real deep-mode reports group full `### <id> — Title` blocks
+    // under bare `## <SEVERITY>` sections. `### ` must win over `#### `
+    // there — splitting the section at #### first let one block's
+    // `#### Variants` swallow every `### ` sibling, degrading them all
+    // to bare index rows (title-only, file unknown).
+    const md = [
+      '# Security Audit Report: x',
+      '',
+      '## Summary of Findings',
+      '',
+      '| ID | Title | Severity |',
+      '|----|-------|----------|',
+      '| [p10-001](#p10-001) | Title | HIGH |',
+      '| [p10-002](#p10-002) | Title 2 | HIGH |',
+      '',
+      '---',
+      '',
+      '## HIGH',
+      '',
+      '<a id="p10-001"></a>',
+      '### p10-001 — Title',
+      '',
+      '- **Severity:** HIGH (downgraded from CRITICAL)',
+      '- **Summary:** Description',
+      '- **Impact:** We need this',
+      '- **Root cause:** Also this',
+      '- **Key code:** `long path/sub dir/file.js:1234` (bar), `:1423` (foo), `:10-20` (`fn` text)',
+      '- **PoC:** executed — details',
+      '- **Files:** ignore',
+      '',
+      '#### Variants',
+      '',
+      '| ID | Title | Severity | Location | PoC |',
+      '|----|-------|----------|----------|-----|',
+      '| [p12-001](#p12-001) | Var | MEDIUM | `a.js:5` | executed |',
+      '',
+      '<a id="p10-002"></a>',
+      '### p10-002 — Title 2',
+      '',
+      '- **Severity:** HIGH',
+      '- **Summary:** Second description',
+    ].join('\n')
+    const parsed = parsePioliumFindings(md)
+    assert.equal(parsed.findings.length, 3)
+    const [a, b, v] = parsed.findings
+    // Severity parenthetical ("downgraded from CRITICAL") doesn't break
+    // the tier; the full narrative survives; the spaced path is whole.
+    assert.equal(a.severity, 'high')
+    assert.equal(a.file, 'long path/sub dir/file.js')
+    assert.equal(a.line, '1234')
+    assert.equal(a.description,
+      'Title\n\nDescription\n\nImpact: We need this\n\nRoot Cause: Also this')
+    assert.equal(b.severity, 'high')
+    assert.equal(b.description, 'Title 2\n\nSecond description')
+    // The variant row still lands, parented to its block, without
+    // disturbing the sibling.
+    assert.equal(v.parent, 'P10-001')
+    assert.equal(v.severity, 'medium')
+  })
+})
+
+describe('parsePioliumFindings — preamble metadata', () => {
+  const PREAMBLE = [
+    '# Security Audit Report: acme/widgets',
+    '',
+    '**Target** `acme/widgets` (the widget service)',
+    '**Commit audited** `aab61ce6f2d1e9b1c58a9c1e772c1237e2c9d411` (HEAD at audit start)',
+    '**Audit ID** `2026-08-13T20:16:36.982Z` · **Mode** deep (17-phase) · **Report assembled** Stage 15',
+    '',
+  ].join('\n')
+  const BODY = [
+    '## Technical Findings Detail',
+    '',
+    '### [C1] First',
+    '- **Severity:** CRITICAL',
+    '',
+    '### [H1] Second',
+    '- **Severity:** HIGH',
+  ].join('\n')
+
+  it('stamps the Target repo and audited commit on every finding', () => {
+    const parsed = parsePioliumFindings(PREAMBLE + BODY)
+    for (const f of parsed.findings) {
+      assert.deepEqual(f.repo, { github: 'acme/widgets' })
+      assert.equal(f.commitHash, 'aab61ce6f2d1e9b1c58a9c1e772c1237e2c9d411')
+    }
+    // Own object per finding — downstream mutates f.repo copies.
+    assert.notEqual(parsed.findings[0].repo, parsed.findings[1].repo)
+  })
+
+  it('ignores a Target that is not an owner/repo slug', () => {
+    for (const target of ['the payment service', '`packages/core/api`', '`a/b/c`']) {
+      const md = `# Security Audit Report: x\n\n**Target** ${target}\n\n${BODY}`
+      assert.equal(parsePioliumFindings(md).findings[0].repo, undefined)
+    }
+  })
+
+  it('ignores an elided or non-hex commit', () => {
+    const md = `# Security Audit Report: x\n\n**Commit audited** \`00...11\` (prose)\n\n${BODY}`
+    assert.equal(parsePioliumFindings(md).findings[0].commitHash, undefined)
   })
 })
 

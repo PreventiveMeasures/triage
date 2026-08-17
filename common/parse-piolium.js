@@ -81,7 +81,7 @@ import {
 } from './md-structure.js'
 import {
   codeRefOf, idCell, idFromToken, isVariantsHeading, mapSeverity,
-  parseHeading, severityFromId, severityGroupOf, slugTitle,
+  parseHeading, preambleMeta, severityFromId, severityGroupOf, slugTitle,
 } from './parse-piolium-tokens.js'
 
 const H3_RE = /^### +(.*)$/gmu
@@ -114,6 +114,7 @@ export function parsePioliumFindings(content) {
 
   const sections = parseSections(text)
   const index = parseIndexTable(sections['summary of findings'] || '')
+  const meta = preambleMeta(splitLeading(text, /^## +(.*)$/gmu).head)
 
   const findings = []
   const seen = new Set()
@@ -152,14 +153,20 @@ export function parsePioliumFindings(content) {
 
   if (findings.length === 0) return null
 
-  // Deliberately NO repo derivation from the H1 project name: it holds
-  // a monorepo path (`packages/core`) or a free-text label as easily as
-  // an `owner/repo` slug, the two are syntactically indistinguishable,
-  // and a wrong `repo.github` is worse than none — format.js's fileUrl
-  // prefers it over the user-editable repo chip, so a bad guess yields
-  // dead source links the user cannot correct. The repo chip is the
-  // supported way to attach one.
-  //
+  // The preamble's `**Target**` line names the audited repository —
+  // stamped per finding (repo.github is a per-finding field everywhere
+  // downstream), each with its own object copy. The H1 title ALONE is
+  // still not trusted: its <project> holds a monorepo path
+  // (`packages/core`) as easily as a slug, and a wrong `repo.github` is
+  // worse than none — format.js's fileUrl prefers it over the
+  // user-editable repo chip, so a bad guess yields dead source links
+  // the user cannot correct. `**Commit audited**` rides along the same
+  // way parse-codex keeps its commit_hash column.
+  for (const f of findings) {
+    if (meta.repo) f.repo = { github: meta.repo }
+    if (meta.commitHash && !f.commitHash) f.commitHash = meta.commitHash
+  }
+
   // Report-level type stays 'security' for the document.title fallback.
   // Per-finding `type` is deliberately unset: piolium categorizes by
   // severity, not by analyzer, so stamping a synthetic category on
@@ -175,14 +182,21 @@ export function parsePioliumFindings(content) {
 // at `#### `, in a table, or in a list).
 function parseDetailSection(body, index, pending) {
   const blocks = splitByHeading(body, H3_RE)
-  if (blocks.length === 0) return parseSeverityGroup(body, '', index, pending)
+  return blocks.length === 0
+    ? parseSeverityGroup(body, '', index, pending)
+    : parseDetailBlocks(blocks, index, pending, '')
+}
+
+// The `### ` blocks of a findings section or of a section-level
+// severity group (`## HIGH`), whose tier arrives as `sev`.
+function parseDetailBlocks(blocks, index, pending, sev) {
   const out = []
   let lastId = ''
   for (const { heading, body: blockBody } of blocks) {
     const groupSev = severityGroupOf(heading)
     if (groupSev) { out.push(...parseSeverityGroup(blockBody, groupSev, index, pending)); lastId = ''; continue }
-    if (isVariantsHeading(heading)) { out.push(...parseVariantsBlock(blockBody, index, lastId, pending)); continue }
-    const results = parseFindingBlock(heading, blockBody, index, pending)
+    if (isVariantsHeading(heading)) { out.push(...parseVariantsBlock(blockBody, index, lastId, pending, sev)); continue }
+    const results = parseFindingBlock(heading, blockBody, index, pending, sev)
     out.push(...results)
     lastId = results[0]?.id || lastId
   }
@@ -194,18 +208,18 @@ function parseDetailSection(body, index, pending) {
 // `pending`, and any other `#### ` sub-heading is a full entry of its
 // own (Layout C writes each variant as one, cross-linked via
 // `**Variant of**`).
-function parseFindingBlock(heading, body, index, pending) {
+function parseFindingBlock(heading, body, index, pending, sev = '') {
   const { head, subs } = splitLeading(body, H4_RE)
   const out = []
-  const parent = parseBlock(heading, head, index)
+  const parent = parseBlock(heading, head, index, sev)
   if (parent) out.push({ id: parent.id, finding: parent.finding })
   const parentId = parent?.id || ''
   for (const sub of subs) {
     if (isVariantsHeading(sub.heading)) {
-      pending.push(...variantFindings(sub.body, index, parentId))
+      pending.push(...variantFindings(sub.body, index, parentId, sev))
       continue
     }
-    const entry = parseBlock(sub.heading, sub.body, index)
+    const entry = parseBlock(sub.heading, sub.body, index, sev)
     if (entry) out.push({ id: entry.id, finding: entry.finding })
   }
   return out
@@ -215,30 +229,36 @@ function parseFindingBlock(heading, body, index, pending) {
 // sub-blocks are the variants' full entries. `parentId` is the finding
 // block preceding this one — the structural parent for rows that don't
 // name their own.
-function parseVariantsBlock(body, index, parentId, pending) {
+function parseVariantsBlock(body, index, parentId, pending, sev = '') {
   const { head, subs } = splitLeading(body, H4_RE)
-  pending.push(...variantFindings(head, index, parentId))
+  pending.push(...variantFindings(head, index, parentId, sev))
   const out = []
   for (const sub of subs) {
-    if (isVariantsHeading(sub.heading)) { pending.push(...variantFindings(sub.body, index, '')); continue }
-    const entry = parseBlock(sub.heading, sub.body, index)
+    if (isVariantsHeading(sub.heading)) { pending.push(...variantFindings(sub.body, index, '', sev)); continue }
+    const entry = parseBlock(sub.heading, sub.body, index, sev)
     if (entry) out.push({ id: entry.id, finding: entry.finding })
   }
   return out
 }
 
-// One severity group — a `### Critical` block (or a `## Critical
-// Findings` section) whose content is that tier's findings, in
-// whichever rendering the assembler chose: `#### ` (or `### `)
-// sub-blocks, an id/title table, or a link/bullet list. Also used with
-// sev '' for a findings section that has no `### ` level at all. A
-// group of prose only ("None identified.") yields nothing.
+// One severity group — a `### Critical` block (or a `## HIGH` /
+// `## Critical Findings` section) whose content is that tier's
+// findings, in whichever rendering the assembler chose. A group with
+// `### ` blocks (a section-level group holding full finding blocks,
+// variants tables and all) routes through the same handling as a
+// findings section — `### ` MUST win over `#### ` there, or one
+// `#### Variants` inside any block would swallow every `### ` sibling
+// as its body. Otherwise the findings are `#### ` sub-blocks, an
+// id/title table, or a link/bullet list. Also used with sev '' for a
+// findings section that has no `### ` level at all. A group of prose
+// only ("None identified.") yields nothing.
 function parseSeverityGroup(body, sev, index, pending) {
+  const h3 = splitByHeading(body, H3_RE)
+  if (h3.length > 0) return parseDetailBlocks(h3, index, pending, sev)
+
   const out = []
-  let subs = splitByHeading(body, H4_RE)
-  if (subs.length === 0) subs = splitByHeading(body, H3_RE)
   let lastId = ''
-  for (const { heading, body: subBody } of subs) {
+  for (const { heading, body: subBody } of splitByHeading(body, H4_RE)) {
     if (isVariantsHeading(heading)) {
       pending.push(...variantFindings(subBody, index, lastId, sev))
       continue

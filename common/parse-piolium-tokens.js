@@ -122,6 +122,36 @@ export function parseHeading(headingText) {
   return { id: '', title: text.trim(), link }
 }
 
+// The document preamble (before the first `## ` section) carries the
+// audit's run metadata as `**Label** value` lines:
+//
+//   # Security Audit Report: owner/repo
+//   **Target** `owner/repo` (description)
+//   **Commit audited** `<sha>` (prose)
+//   **Audit ID** `…` · **Mode** deep (17-phase) · **Report assembled** …
+//
+// `**Target**` names the audited repository — an explicit declaration,
+// unlike the H1 title, whose bare <project> may be a monorepo path and
+// is deliberately not trusted on its own. The value is the first
+// backtick span (or leading token), accepted only in strict
+// `owner/repo` shape; the commit likewise only as plain hex. Audit ID /
+// Mode are run bookkeeping with no consumer and are ignored.
+export function preambleMeta(head) {
+  const meta = {}
+  const value = (rest) => (/`([^`]+)`/u.exec(rest)?.[1] ?? rest.split(/\s+/u)[0] ?? '').trim()
+  const target = /^\s*(?:[-*] +)?\*\*Target:?\*\*\s*(.*)$/imu.exec(head || '')
+  if (target) {
+    const v = value(target[1])
+    if (/^[\w.-]+\/[\w.-]+$/u.test(v)) meta.repo = v
+  }
+  const commit = /^\s*(?:[-*] +)?\*\*Commit[^:*]*:?\*\*\s*(.*)$/imu.exec(head || '')
+  if (commit) {
+    const v = value(commit[1])
+    if (/^[0-9a-f]{7,64}$/iu.test(v)) meta.commitHash = v
+  }
+  return meta
+}
+
 // "Key Code Reference" is the assembler's field name for a finding's
 // code location; real reports shorten and reword it (`**Key code:**`),
 // so the observed spellings are all accepted, most specific first.

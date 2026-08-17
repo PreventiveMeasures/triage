@@ -154,20 +154,21 @@ export function parseCodeRef(raw) {
   if (anchor) line = anchor[1]
 
   // The first PATH-SHAPED backtick span is the reference when one
-  // exists — values often read "see `src/a.js:42` and `src/b.js:9`",
-  // where the first quoted path is the finding's location and
-  // everything else is prose or secondary citations. Path-shaped means
-  // a separator or an extension and no call parens, so a quoted
-  // function qualifier (`… in \`runHook()\``) never beats a bare path.
-  // Without a qualifying span, fall back to the first whitespace token
-  // of the de-backticked text (the template appends `… in runHook()`,
-  // which must not join the path). Either way a trailing `#L42`
-  // fragment or `:42` / `:88-95` suffix yields the line; a RANGE keeps
-  // its start line and sheds the rest from the path.
+  // exists — values often read "see `src/a.js:42` and `src/b.js:9`" or
+  // cite a whole call chain, where the first quoted path is the
+  // finding's location and everything else is prose or secondary
+  // citations. Path-shaped means a separator or an extension and no
+  // call parens, so a quoted function qualifier (`… in \`runHook()\``)
+  // never beats a bare path. A chosen span is the WHOLE path — the
+  // backticks exist precisely to delimit paths with spaces — while the
+  // unquoted fallback takes the first whitespace token of the
+  // de-backticked text (the template appends `… in runHook()`, which
+  // must not join the path). Either way a trailing `#L42` fragment or
+  // `:42` / `:88-95` suffix yields the line; a RANGE keeps its start
+  // line and sheds the rest from the path.
   const spans = [...text.matchAll(/`([^`]+)`/gu)].map((m) => m[1].trim())
   const pathish = spans.find((s) => !s.includes('(') && (s.includes('/') || /\.\w/u.test(s)))
-  const candidate = pathish ?? text.replaceAll('`', '')
-  let file = candidate.trim().split(/[\s,]+/u).find(Boolean) || ''
+  let file = pathish ?? (text.replaceAll('`', '').trim().split(/[\s,]+/u).find(Boolean) || '')
   const frag = /^(.*?)#L(\d+)(?:-L?\d+)?$/u.exec(file)
   if (frag) {
     file = frag[1]
