@@ -14,7 +14,7 @@ import { describe, it } from 'node:test'
 
 const { bundlePackageDirs, bundlePackageVersions } = await import('../ui/view/bundle-sources.js')
 
-// Minimal stand-in for an `@exodus/stasis` Bundle: the helper only
+// Minimal stand-in for an `@exodus/stasis-core` Bundle: the helper only
 // touches `.modules` (a Map<dir, { files }>), so that's all we build.
 function stasisDetails(modules) {
   return { kind: 'stasis', bundle: { modules: new Map(modules) } }

@@ -1,7 +1,7 @@
 // SBOM serializers for stasis bundles — CycloneDX (1.5) and SPDX
 // (2.3), both as JSON. A stasis `Bundle` records per-package metadata
 // in its `modules` Map (`Map<dir, { name, version, files }>`, see
-// `@exodus/stasis/bundle`): `node_modules/...` dirs are upstream
+// `@exodus/stasis-core/bundle`): `node_modules/...` dirs are upstream
 // dependencies, non-`node_modules` dirs are workspace packages (the
 // `.` root + any monorepo siblings). That inventory maps onto an SBOM
 // component list, so we can emit a bill of materials straight from a

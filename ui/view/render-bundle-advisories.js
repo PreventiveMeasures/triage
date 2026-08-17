@@ -1,6 +1,6 @@
 // Advisories tab for the bundle slide. Stasis bundles carry
 // per-module `{ name, version }` metadata (see
-// `@exodus/stasis/bundle`'s `Bundle.modules` Map), so we can fan
+// `@exodus/stasis-core/bundle`'s `Bundle.modules` Map), so we can fan
 // out a single bulk lookup against the npm registry's advisories
 // endpoint and surface every CVE / advisory affecting the bundled
 // versions. The relay's `/api/npm-advisories` route proxies the

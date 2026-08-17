@@ -74,10 +74,23 @@ const minifyLitTemplates = {
   },
 }
 
+// `@exodus/stasis-core` (the UI's bundle parser, see view/bundle-load.js)
+// imports node builtins at the top of its util.js; alias them onto the
+// browser shims in ui/shims/ — ui/shims/node-path.js documents what the
+// browser actually reaches. esbuild resolves aliased `./` paths against
+// the working directory (repo root), not the importing file.
+const nodeBuiltinShims = {
+  'node:buffer': './ui/shims/node-buffer.js',
+  'node:fs': './ui/shims/node-fs.js',
+  'node:path': './ui/shims/node-path.js',
+  'node:util': './ui/shims/node-util.js',
+}
+
 const mode = process.argv[2] ?? 'build'
 if (mode === 'build') {
   await esbuild.build({
     bundle: true,
+    alias: nodeBuiltinShims,
     plugins: [minifyLitTemplates, litCssAsText({ minify: true })],
     entryPoints: ['ui/*.js', 'ui/*.css', 'ui/*.html', 'ui/*.svg', 'ui/*.webmanifest'],
     loader: { '.html': 'copy', '.svg': 'copy', '.webmanifest': 'copy' },
@@ -102,6 +115,7 @@ if (mode === 'build') {
   // would try to write over the source.
   const ctx = await esbuild.context({
     bundle: true,
+    alias: nodeBuiltinShims,
     plugins: [litCssAsText()],
     entryPoints: ['ui/*.js', 'ui/*.css'],
     outdir: 'ui',
