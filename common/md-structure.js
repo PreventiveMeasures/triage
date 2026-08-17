@@ -77,26 +77,37 @@ export function tableObjects(text) {
 }
 
 // `**Field:** value` labels (with or without a leading `- ` bullet
-// marker), case-folded, first occurrence wins. A value runs to the next
-// label, heading, table row, horizontal rule, or BLANK LINE — so a
-// wrapped one-liner keeps its immediate continuation lines, while the
+// marker), keyed case-folded with the original label text kept in
+// `labels`, first occurrence wins. A single line can carry several
+// labels joined by ` · ` (`**Severity:** LOW … · **PoC:** blocked`) —
+// each is peeled into its own field. A value runs to the next label,
+// heading, table row, horizontal rule, or BLANK LINE — so a wrapped
+// one-liner keeps its immediate continuation lines, while the
 // paragraph after a label block is body prose, not part of the last
 // label (a `**Key code:** …` line must not swallow the summary
 // paragraph under it). Fenced code opened under a label (a PoC snippet
 // in a Summary / Evidence value) is all content: fence delimiters
 // toggle, and nothing inside is structural. Unlabelled body text is
 // collected as `prose` so callers can use plain paragraphs as the
-// narrative when no label carries it. Null-prototype object so a label
-// like "Constructor" can't alias an inherited key.
+// narrative when no label carries it. Null-prototype objects so a
+// label like "Constructor" can't alias an inherited key.
 export function parseLabelledFields(body) {
   const fields = Object.create(null)
+  const labels = Object.create(null)
   const proseLines = []
   let key = null
+  let keyLabel = ''
   let buf = []
   let fence = ''
+  const setField = (k, label, value) => {
+    if (!k || k in fields) return
+    fields[k] = value.trim()
+    labels[k] = label
+  }
   const flush = () => {
-    if (key && !(key in fields)) fields[key] = buf.join('\n').trim()
+    if (key) setField(key, keyLabel, buf.join('\n'))
     key = null
+    keyLabel = ''
     buf = []
   }
   for (const line of body.split('\n')) {
@@ -118,8 +129,17 @@ export function parseLabelledFields(body) {
     const label = /^\s*(?:[-*] +)?\*\*([^:*]+):\*\*\s*(.*)$/u.exec(line)
     if (label) {
       flush()
-      key = label[1].trim().toLowerCase()
-      buf = [label[2]]
+      let k = label[1].trim()
+      let rest = label[2]
+      let seg
+      while ((seg = /\s+[·•]\s+\*\*([^:*]+):\*\*\s*/u.exec(rest)) !== null) {
+        setField(k.toLowerCase(), k, rest.slice(0, seg.index))
+        k = seg[1].trim()
+        rest = rest.slice(seg.index + seg[0].length)
+      }
+      key = k.toLowerCase()
+      keyLabel = k
+      buf = [rest]
       continue
     }
     // Structural line — ends the current value without starting one.
@@ -128,7 +148,7 @@ export function parseLabelledFields(body) {
     else proseLines.push(line)
   }
   flush()
-  return { fields, prose: proseLines.join('\n').trim() }
+  return { fields, labels, prose: proseLines.join('\n').trim() }
 }
 
 // The code reference is prose-ish: `src/a.js:142 in runHook()`, a
@@ -174,7 +194,10 @@ export function parseCodeRef(raw) {
     file = frag[1]
     if (!line) line = frag[2]
   }
-  const colon = /^(.+):(\d+)(?:-\d+)?$/u.exec(file)
+  // A `:60-90` RANGE is kept whole in `line`: the file:line displays
+  // print it verbatim, and link anchors parseInt() it down to the
+  // start line.
+  const colon = /^(.+):(\d+(?:-\d+)?)$/u.exec(file)
   if (colon) {
     if (!line) line = colon[2]
     return { file: colon[1], line, locationLink }

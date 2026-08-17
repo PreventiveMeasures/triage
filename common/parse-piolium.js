@@ -81,9 +81,9 @@ import {
 } from './md-structure.js'
 import { fromIndexRow, indexRowOf, listFindings, variantFindings } from './parse-piolium-rows.js'
 import {
-  codeRefOf, headerSeverity, idCell, idFromToken, isVariantsHeading,
-  mapSeverity, parseHeading, preambleMeta, severityFromId,
-  severityGroupOf,
+  CODE_REF_FIELDS, codeRefOf, headerSeverity, idCell, idFromToken,
+  isVariantsHeading, mapSeverity, parseHeading, preambleMeta,
+  severityFromId, severityGroupOf,
 } from './parse-piolium-tokens.js'
 
 const H3_RE = /^### +(.*)$/gmu
@@ -115,13 +115,14 @@ function isExcludedHeader(header) {
 // ('## HIGH — 3 findings', '## Confirmed Findings', emoji prefixes), so
 // a non-excluded section whose `### ` (or `#### `) headings carry
 // id-shaped tokens holds findings whatever it is called.
+function headingHasId(heading) {
+  const { id } = parseHeading(heading)
+  return Boolean(id && idFromToken(id))
+}
 function hasIdBlocks(body) {
   const blocks = splitByHeading(body, H3_RE)
   const list = blocks.length > 0 ? blocks : splitByHeading(body, H4_RE)
-  return list.some(({ heading }) => {
-    const { id } = parseHeading(heading)
-    return Boolean(id && idFromToken(id))
-  })
+  return list.some(({ heading }) => headingHasId(heading))
 }
 
 export function parsePioliumFindings(content) {
@@ -245,8 +246,15 @@ function parseFindingBlock(heading, body, index, pending, sev = '') {
   const { head, subs } = splitLeading(body, H4_RE)
   const out = []
   const parent = parseBlock(heading, head, index, sev)
-  if (parent) out.push({ id: parent.id, finding: parent.finding })
-  const parentId = parent?.id || ''
+  // A `### ` heading with NO id and NO index row of its own, holding
+  // id-shaped `#### ` entries, is a CATEGORY grouping (`### Category
+  // name` over `#### p10-015 — Title` blocks) — its entries are the
+  // findings, and emitting the heading itself produced one emptyish
+  // title-only result per category.
+  const isCategory = Boolean(parent) && !parent.id
+    && subs.some((s) => !isVariantsHeading(s.heading) && headingHasId(s.heading))
+  if (parent && !isCategory) out.push({ id: parent.id, finding: parent.finding })
+  const parentId = isCategory ? '' : (parent?.id || '')
   for (const sub of subs) {
     if (isVariantsHeading(sub.heading)) {
       pending.push(...variantFindings(sub.body, index, parentId, sev))
@@ -341,7 +349,7 @@ function parseBlock(heading, body, index, groupSeverity = '') {
     }
   }
 
-  const { fields, prose } = parseLabelledFields(body)
+  const { fields, labels, prose } = parseLabelledFields(body)
 
   // Severity precedence: the block's own bullet, then the index row,
   // then the enclosing severity group, then the id's severity prefix.
@@ -372,7 +380,7 @@ function parseBlock(heading, body, index, groupSeverity = '') {
     file: file || 'unknown',
     line: lineOut,
     severity,
-    description: buildDescription(title || id, fields, proseClean),
+    description: buildDescription(title || id, fields, labels, proseClean),
   }
   if (locationLink) finding.location = locationLink
   // Last-resort fingerprint discriminator for an unlocated finding —
@@ -432,21 +440,32 @@ function parseIndexTable(text) {
   return index
 }
 
-// Description = heading + the narrative content, in report order. The
-// Summary label AND the unlabelled prose body both contribute — a block
-// often carries its labels first and its narrative as the paragraph
-// after them, and dropping either loses the summary. The Impact / Root
-// Cause labels stay `**bold**`, and the source text's own emphasis is
-// kept: the finding card's renderHighlighted renders `**…**` spans as
-// real <strong> emphasis (and markdown-export emits markdown, where
-// they are simply bold). white-space: pre-line on `.desc` keeps the
-// paragraph breaks.
-function buildDescription(title, fields, prose) {
+// Mechanical fields that must not repeat into the description: the
+// severity / code-reference / PoC plumbing, attachments, and
+// cross-links. Everything ELSE a report labels — `Impact`, `Root
+// cause`, but also freely invented ones (`Why it is not HIGH`,
+// `Residual risk`) — is narrative and belongs in the finding's story.
+const NON_NARRATIVE_FIELDS = new Set([
+  ...CODE_REF_FIELDS, 'severity', 'summary', 'files', 'poc',
+  'poc status', 'line', 'lines', 'detailed report', 'proof of concept',
+  'evidence', 'variant of', 'pattern', 'status', 'id', 'title',
+])
+
+// Description = heading + the narrative content, in document order:
+// Summary (label or unlabelled prose — both contribute; a block often
+// carries its labels first and its narrative as the paragraph after
+// them), then every narrative label with its ORIGINAL casing, kept
+// `**bold**` — the finding card's renderHighlighted renders `**…**`
+// spans as real <strong> emphasis, and markdown-export emits markdown,
+// where they are simply bold. white-space: pre-line on `.desc` keeps
+// the paragraph breaks.
+function buildDescription(title, fields, labels, prose) {
   const parts = [title]
   if (fields.summary) parts.push(fields.summary)
   if (prose) parts.push(prose)
-  if (fields.details) parts.push(fields.details)
-  if (fields.impact) parts.push(`**Impact:** ${fields.impact}`)
-  if (fields['root cause']) parts.push(`**Root Cause:** ${fields['root cause']}`)
+  for (const [k, v] of Object.entries(fields)) {
+    if (!v || NON_NARRATIVE_FIELDS.has(k)) continue
+    parts.push(`**${labels[k] || k}:** ${v}`)
+  }
   return parts.filter(Boolean).join('\n\n')
 }

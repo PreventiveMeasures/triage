@@ -167,7 +167,7 @@ export function preambleMeta(head) {
 // Deliberately absent: `files` — real reports use `**Files:**` for
 // attached reproduction data, not the finding's location — and bare
 // `code` (matches PoC-code fields).
-const CODE_REF_FIELDS = [
+export const CODE_REF_FIELDS = [
   'key code reference', 'key code', 'code reference', 'location',
   'affected file', 'file', 'path',
 ]

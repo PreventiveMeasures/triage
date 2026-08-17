@@ -266,10 +266,12 @@ describe('parsePioliumFindings — code reference', () => {
     assert.equal(f.line, '42')
   })
 
-  it('keeps the start line of a range and sheds it from the path', () => {
+  it('keeps a line range whole and sheds it from the path', () => {
+    // Displays print `file:60-90` verbatim; link anchors parseInt() the
+    // range down to its start line.
     const f = ref('src/api/invoices.js:88-95 in getInvoice()')
     assert.equal(f.file, 'src/api/invoices.js')
-    assert.equal(f.line, '88')
+    assert.equal(f.line, '88-95')
   })
 
   it('drops the function qualifier the template appends', () => {
@@ -972,7 +974,7 @@ describe('parsePioliumFindings — Findings by Severity layout', () => {
       'Prototype pollution in config merge',
       'Recursive merge copies proto keys.',
       '**Impact:** Any config consumer gains attacker-set properties.',
-      '**Root Cause:** No key filtering in mergeDeep.',
+      '**Root cause:** No key filtering in mergeDeep.',
     ].join('\n\n'))
     // The `**Files:**` attachments must not become the location.
     assert.notEqual(parent.file, 'poc/merge-poc.js')
@@ -982,7 +984,7 @@ describe('parsePioliumFindings — Findings by Severity layout', () => {
     // `<a id>` anchors stay out of the description.
     assert.equal(variant.severity, 'medium')
     assert.equal(variant.file, 'src/cli/args.js')
-    assert.equal(variant.line, '50')
+    assert.equal(variant.line, '50-60')
     assert.equal(variant.parent, 'P10-011')
     assert.equal(variant.description,
       'Pollution via CLI overrides\n\nCLI overrides reach the same merge.')
@@ -1089,7 +1091,7 @@ describe('parsePioliumFindings — section-level severity groups with full block
     assert.equal(a.file, 'long path/sub dir/file.js')
     assert.equal(a.line, '1234')
     assert.equal(a.description,
-      'Title\n\nDescription\n\n**Impact:** We need this\n\n**Root Cause:** Also this')
+      'Title\n\nDescription\n\n**Impact:** We need this\n\n**Root cause:** Also this')
     assert.equal(b.severity, 'high')
     assert.equal(b.description, 'Title 2\n\nSecond description')
     // The variant row still lands, parented to its block, without
@@ -1196,6 +1198,87 @@ describe('parsePioliumFindings — both forms, once', () => {
     const parsed = parsePioliumFindings(md)
     assert.equal(parsed.findings.length, 1)
     assert.equal(parsed.findings[0].description, 'Real finding')
+  })
+})
+
+describe('parsePioliumFindings — retained-LOW blocks and category groupings', () => {
+  it('parses the compound label line, novel narrative labels, and line range', () => {
+    const md = [
+      '# Security Audit Report: x',
+      '',
+      '## LOW (retained for the record)',
+      '',
+      '<a id="p10-012"></a>',
+      '### p10-012 — Title',
+      '',
+      '- **Severity:** LOW (originally HIGH; prose) · **PoC:** blocked',
+      '- **Summary:** Title',
+      '- **Why it is not HIGH:** Prose, keep',
+      '- **Residual risk:** Prose, keep',
+      '- **Productive by-product:** Prose, keep',
+      '- **Key code:** `file.js:60-90`',
+    ].join('\n')
+    const parsed = parsePioliumFindings(md)
+    assert.equal(parsed.findings.length, 1)
+    const f = parsed.findings[0]
+    // `**Severity:** … · **PoC:** …` — two labels on one line, split at
+    // the middle dot; the parenthetical does not break the tier.
+    assert.equal(f.severity, 'low')
+    assert.equal(f.pocStatus, 'blocked')
+    // Ranges are kept whole in `line`.
+    assert.equal(f.file, 'file.js')
+    assert.equal(f.line, '60-90')
+    // Freely invented narrative labels stay in the description, in
+    // document order, with their ORIGINAL casing, kept bold.
+    assert.equal(f.description, [
+      'Title',
+      'Title',
+      '**Why it is not HIGH:** Prose, keep',
+      '**Residual risk:** Prose, keep',
+      '**Productive by-product:** Prose, keep',
+    ].join('\n\n'))
+  })
+
+  it('a category heading over id entries is not a finding', () => {
+    const md = [
+      '# Security Audit Report: x',
+      '',
+      '## Findings',
+      '',
+      '### Category name',
+      '',
+      '<a id="p10-015"></a>',
+      '#### p10-015 — Title B',
+      '',
+      '- **Severity:** MEDIUM',
+      '- **Summary:** Entry summary',
+      '- **Key code:** `src/b.js:7`',
+      '',
+      '### Second category',
+      '',
+      '#### p10-016 — Title C',
+      '',
+      '- **Severity:** LOW',
+      '- **Summary:** Another entry',
+    ].join('\n')
+    const parsed = parsePioliumFindings(md)
+    assert.deepEqual(parsed.findings.map((f) => f.description),
+      ['Title B\n\nEntry summary', 'Title C\n\nAnother entry'])
+  })
+
+  it('a bare-title finding block without id entries still parses as a finding', () => {
+    const md = [
+      '# Security Audit Report: x',
+      '',
+      '## Technical Findings Detail',
+      '',
+      '### Unlisted finding title',
+      '- **Severity:** HIGH',
+      '- **Summary:** Body',
+    ].join('\n')
+    const parsed = parsePioliumFindings(md)
+    assert.equal(parsed.findings.length, 1)
+    assert.equal(parsed.findings[0].description, 'Unlisted finding title\n\nBody')
   })
 })
 
