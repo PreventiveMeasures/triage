@@ -1453,6 +1453,11 @@ report.addEventListener('click', (e) => {
     setKanbanPopoverGid(null)
     return
   }
+  // Fix-link / comment shortcut on the compact card — the anchor
+  // navigates on its own and the .mark-fix / .mark-comment buttons
+  // open their dialogs via the delegates earlier in this file; none
+  // of them should also toggle the detail modal.
+  if (e.target.closest?.('.kanban-action')) return
   // Kanban card — open / toggle / switch. Backdrop is
   // pointer-events: none in CSS so this branch can also fire for
   // clicks landing on a card that's visually behind the backdrop

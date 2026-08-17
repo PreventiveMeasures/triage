@@ -197,15 +197,17 @@ function commitLinkTemplate(githubRepo, hash) {
 // Speech-bubble glyph for the per-finding comment button. Outline
 // when there's no comment, filled when a comment exists — the
 // has-comment class flips `fill` via finding-card.css /
-// finding-row.css.
-const COMMENT_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
+// finding-row.css. Exported (like FLAG_ICON) for the kanban card's
+// compact comment shortcut in render.js.
+export const COMMENT_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
   <path class="bubble" d="M2.5 3h11a.5.5 0 0 1 .5.5v6.5a.5.5 0 0 1-.5.5H8.4l-3 2.6V10.5H2.5a.5.5 0 0 1-.5-.5V3.5a.5.5 0 0 1 .5-.5z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
 </svg>`
 
 // Wrench glyph for the per-finding fix-link button. Same has-x /
 // outline-vs-fill pattern as the comment icon: empty button = no
-// fix recorded; filled accent = a URL is set.
-const FIX_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
+// fix recorded; filled accent = a URL is set. Exported (like
+// FLAG_ICON) for the kanban card's compact fix shortcut in render.js.
+export const FIX_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
   <path class="wrench" d="M10.4 2.6a3 3 0 0 0-3.6 4.5L2 12l2 2 4.9-4.8a3 3 0 0 0 4.5-3.6l-1.8 1.8-1.5-.4-.4-1.5z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
 </svg>`
 
