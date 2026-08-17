@@ -18,6 +18,7 @@ import { inheritReportMeta } from '../../common/report-meta.js'
 import { importWorkspaceFromGzip } from './workspace-import.js'
 import { maybePromptFirstImport } from './first-import-prompt.js'
 import { openPasskeyUnlockDialog } from './dialogs/passkey-unlock-dialog.js'
+import { openSyncDownloadDialog } from './dialogs/sync-download-dialog.js'
 
 // localStorage key for the last-viewed file — restored on page load so
 // the user picks back up where they left off. The stored value is the
@@ -439,6 +440,56 @@ export async function switchToFile(name, content) {
         // User dismissed the dialog (or a newer switch took over).
         // Clear the about-to-be-current file so the sidebar doesn't
         // leave the row highlighted with no content loaded.
+        if (!isStaleLoad(gen)) {
+          state.currentFile = null
+          await renderSidebar()
+        }
+        return
+      }
+      // A missing file — including a corrupt/empty entry that storage
+      // just quarantined (readFile surfaces both as the same
+      // not-found shape) — is not worth an alert: the bytes are gone
+      // either way. When a workspace's cloud copy still holds the
+      // report, offer to re-download it through the same dialog the
+      // sync badge uses; on success re-enter switchToFile with the
+      // restored bytes. Otherwise (no cloud copy, or the user
+      // declined) just clear the selection like the vault-dismiss
+      // branch above — the quarantine already dropped the sidebar row.
+      const missing = (err instanceof DOMException && err.name === 'NotFoundError')
+        || (typeof err?.message === 'string' && err.message.startsWith('File not found:'))
+      if (missing) {
+        // Same eligibility rule as the Replace-upload flow: only a
+        // workspace whose remote ALREADY carries this report (live
+        // session or persisted presence cache) — opening a session to
+        // a never-uploaded workspace would surface an unwanted
+        // password prompt for a local-only report.
+        const cloudWs = listWorkspaces().find(
+          (w) => Array.isArray(w.reports) && w.reports.includes(name) && isInRemoteOrCached(w.id, name),
+        )
+        if (cloudWs) {
+          try {
+            // The dialog's fetchFile needs an open presence session;
+            // lazy-open mirrors uploadReportToWorkspaces (the user may
+            // not have visited this workspace this session).
+            await openPresence(cloudWs.id)
+            if (isStaleLoad(gen)) return
+            const result = await openSyncDownloadDialog({
+              workspaceId: cloudWs.id,
+              items: [{ kind: 'report', identifier: name }],
+            })
+            if (isStaleLoad(gen)) return
+            if (result?.downloaded?.some((d) => d.kind === 'report' && d.identifier === name)) {
+              await switchToFile(name)
+              return
+            }
+          } catch (redownloadErr) {
+            // Session open / dialog failure — fall through to the
+            // quiet missing-file teardown; the report stays available
+            // through the sync badge's recovery flow.
+            console.warn(`Re-download prompt for missing "${name}" failed:`, redownloadErr)
+            if (isStaleLoad(gen)) return
+          }
+        }
         if (!isStaleLoad(gen)) {
           state.currentFile = null
           await renderSidebar()

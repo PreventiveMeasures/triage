@@ -75,6 +75,80 @@ async function peelOpfsEnvelope(bytes, name) {
   return await openForOpfs(bytes, name)
 }
 
+// A report is never legitimately empty — `saveFile` rejects '' and
+// every ingest path validates through `analyzeContent` first — so empty
+// bytes on disk are always corruption artifacts, in two known shapes:
+//
+//   - a zero-length entry: an OPFS write that truncated the file
+//     (quota failure / tab-kill between `createWritable()` and
+//     `close()`, or a `getFileHandle(create: true)` whose follow-up
+//     write never landed);
+//   - a ~20-byte gzip-of-nothing member (1f 8b … with an all-zero
+//     ISIZE trailer): the legacy-uncompressed branch of `readFile`
+//     used to misread a zero-length entry as a plaintext report,
+//     decode it to '', and write gzip('') back via its fire-and-forget
+//     migration — laundering "obviously truncated" into a valid-looking
+//     empty report that never healed.
+//
+// Both are detected at the read boundary and treated as MISSING: the
+// entry is quarantined (removed) and the read throws the same
+// `File not found:` shape a genuinely absent file produces. Callers'
+// existing not-found tolerance then applies, and for workspace-synced
+// reports the presence layer's claimed-but-absent path
+// (`maybeAutoDownload`, keyed on `listFiles`) restores the bytes from
+// the cloud copy.
+//
+// The ISIZE trailer (total input size mod 2^32, last 4 bytes LE) is
+// zero only for empty input — any real report's gzip carries a nonzero
+// trailer — so the sniff can't misfire on legitimate content.
+function isEmptyPayload(bytes) {
+  if (bytes.length === 0) return true
+  return bytes.length >= 18 && bytes[0] === 0x1f && bytes[1] === 0x8b
+    && bytes.at(-4) === 0 && bytes.at(-3) === 0
+    && bytes.at(-2) === 0 && bytes.at(-1) === 0
+}
+
+// Remove a corrupt (empty) entry so every subsequent probe — listFiles,
+// the sidebar, presence's exists-locally check — agrees the file is
+// gone, instead of a ghost row that errors on every click. Holds the
+// VAULT_LOCK exclusively so no concurrent shared-mode save/delete for
+// the name is mid-flight while we remove the entry. Callers pass the
+// write-gen they captured BEFORE reading: a mismatch (checked again
+// under the lock — saves bump synchronously before queueing on it)
+// means a concurrent writer owns the entry's fate and the empty
+// snapshot we read is stale, so the removal is skipped.
+async function quarantineEmptyEntry(name, observedAtGen) {
+  if (currentWriteGen(name) !== observedAtGen) return
+  console.warn(`storage: report "${name}" is an empty/corrupt on-disk entry — quarantining, will read as missing`)
+  await navigator.locks.request(VAULT_LOCK, { mode: 'exclusive' }, async () => {
+    if (currentWriteGen(name) !== observedAtGen) return
+    bumpWriteGen(name)
+    cache.delete(name)
+    const dir = await getOpfsDir()
+    if (dir) {
+      try { await dir.removeEntry(name) } catch {}
+    } else {
+      localStorage.removeItem(LS_REPORT_PREFIX + name)
+    }
+    bumpWriteGen(name)
+    notifyFileMutated(name, 'delete')
+  })
+}
+
+// Best-effort cleanup after a failed OPFS write: when the failure left
+// a zero-length entry (truncation committed, new bytes didn't), remove
+// it. Absent is strictly better than empty — `readFile` reports
+// not-found and the presence layer can re-download a synced copy —
+// whereas an empty entry used to get laundered into a valid-looking
+// gzip('') report by the legacy-migration path. Only a genuinely
+// zero-length file is removed, so an implementation whose abort
+// preserves the previous bytes (swap-file semantics) keeps them.
+async function removeIfTruncated(dir, fh, name) {
+  try {
+    if ((await fh.getFile()).size === 0) await dir.removeEntry(name)
+  } catch {}
+}
+
 // Seal `bytes` for at-rest storage under the vault session key, with a
 // mid-save consistency guard. Throws (after `onAbort`) when the vault is
 // enabled-but-locked — nothing plaintext lands while encryption is on —
@@ -213,6 +287,16 @@ export async function saveFile(name, content) {
   if (typeof name !== 'string' || name.includes('\0')) {
     throw new Error(`Invalid report name: contains NUL byte or is not a string`)
   }
+  // Empty content is never a legitimate report (every ingest path
+  // validates through analyzeContent first) and empty entries are
+  // treated as corruption at read time (see isEmptyPayload) — reject
+  // at the write boundary so no code path can mint one. This also
+  // breaks the historic corruption loop where readFile's
+  // legacy-migration branch re-saved a truncated zero-length entry as
+  // gzip('').
+  if (content === '') {
+    throw new Error(`Refusing to save empty report "${name}"`)
+  }
   // Bump synchronously BEFORE the async I/O so a concurrent readFile
   // that already started can detect that its result is stale and
   // skip overwriting the cache. Audit round-9 H1.
@@ -290,6 +374,9 @@ export async function saveFile(name, content) {
       // name races the collection. Memory-lifecycle audit
       // `client/storage.js:175`.
       try { await writable.abort(err) } catch {}
+      // Failed write leaving a zero-length entry → remove it so the
+      // name reads as missing (cloud-recoverable) rather than empty.
+      await removeIfTruncated(dir, fh, name)
       throw err
     }
     cache.set(name, content)
@@ -345,6 +432,17 @@ export async function readFile(name) {
       // error here rather than a confusing "gunzip failed" or
       // garbled JSON later.
       bytes = await peelOpfsEnvelope(bytes, name)
+      // Empty on-disk payloads are corruption artifacts (see
+      // isEmptyPayload) — quarantine and surface as missing.
+      // CRITICALLY this must come before the legacy-uncompressed
+      // branch below: a zero-length entry misread as legacy plaintext
+      // used to decode to '' and get REWRITTEN as gzip('') by the
+      // fire-and-forget migration, making the truncation look like a
+      // valid empty report forever after.
+      if (isEmptyPayload(bytes)) {
+        await quarantineEmptyEntry(name, startedAtGen)
+        throw new Error(`File not found: ${name}`)
+      }
       // Gzipped payload (saveFile compresses since v…) — decompress
       // and return the JSON text. Stale uncompressed entries from
       // before the on-disk-gzip flip fall through to the legacy
@@ -375,6 +473,11 @@ export async function readFile(name) {
     if (stored === null) throw new Error(`File not found: ${name}`)
     let lsBytes = Uint8Array.fromBase64(stored)
     lsBytes = await peelOpfsEnvelope(lsBytes, name)
+    // Same corruption-artifact detection as the OPFS branch above.
+    if (isEmptyPayload(lsBytes)) {
+      await quarantineEmptyEntry(name, startedAtGen)
+      throw new Error(`File not found: ${name}`)
+    }
     const plain = await gunzipBytes(lsBytes)
     return decodeUtf8(plain)
   })()
@@ -399,6 +502,7 @@ export async function readFile(name) {
 // inner envelope. So peel here, encrypt over the wire there, and
 // `saveFileBytes` re-wraps with this device's passkey on disk.
 export async function readFileBytes(name) {
+  const startedAtGen = currentWriteGen(name)
   const dir = await getOpfsDir()
   let bytes
   if (dir) {
@@ -411,6 +515,14 @@ export async function readFileBytes(name) {
     bytes = Uint8Array.fromBase64(stored)
   }
   bytes = await peelOpfsEnvelope(bytes, name)
+  // Same corruption-artifact detection as readFile. Load-bearing here:
+  // without it the objstore upload path would ship the corrupt bytes
+  // into the workspace's remote storage, REPLACING the healthy cloud
+  // copy that is the only remaining recovery source for the report.
+  if (isEmptyPayload(bytes)) {
+    await quarantineEmptyEntry(name, startedAtGen)
+    throw new Error(`File not found: ${name}`)
+  }
   return bytes
 }
 
@@ -429,6 +541,15 @@ export async function readFileBytes(name) {
 export async function saveFileBytes(name, bytes) {
   if (typeof name !== 'string' || name.includes('\0')) {
     throw new Error(`Invalid report name: contains NUL byte or is not a string`)
+  }
+  // Mirror saveFile's empty-content rejection on the bytes plane: the
+  // logical on-disk form is gzip(report), so zero bytes or a
+  // gzip-of-nothing member is an empty report either way (see
+  // isEmptyPayload). Callers all validate via analyzeContent before
+  // saving, so this only fires on a bug — better a loud throw than a
+  // corrupt entry minted through the raw-bytes door.
+  if (isEmptyPayload(bytes)) {
+    throw new Error(`Refusing to save empty report bytes for "${name}"`)
   }
   bumpWriteGen(name)
   cache.delete(name)
@@ -457,6 +578,8 @@ export async function saveFileBytes(name, bytes) {
         // with `saveFile` above; memory-lifecycle audit
         // `client/storage.js:175`.
         try { await writable.abort(err) } catch {}
+        // Same zero-length cleanup as saveFile's catch.
+        await removeIfTruncated(dir, fh, name)
         throw err
       }
       bumpWriteGen(name)
@@ -813,7 +936,15 @@ async function rawReadAndWrite(name, transform) {
     inFlight.delete(name)
     bumpWriteGen(name)
     const writeFh = await dir.getFileHandle(name, { create: true })
-    await writeOpfsFile(writeFh, next)
+    try {
+      await writeOpfsFile(writeFh, next)
+    } catch (err) {
+      // Same zero-length cleanup as saveFile's catch — a migration
+      // write that truncated the entry without committing leaves the
+      // name absent (cloud-recoverable), not empty.
+      await removeIfTruncated(dir, writeFh, name)
+      throw err
+    }
     bumpWriteGen(name)
     return
   }
