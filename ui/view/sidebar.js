@@ -118,17 +118,19 @@ let isDraggingBundle = false
 // under "Reports" — broad enough to fit any analyzer-native dump
 // (deduplicate output, single-run output, etc.) without naming the
 // pipeline. Named buckets carry the upstream's product name —
-// DeepSec is Vercel's tool (https://github.com/vercel-labs/deepsec).
+// DeepSec is Vercel's tool (https://github.com/vercel-labs/deepsec);
+// Piolium is Vigolium's (https://github.com/vigolium/piolium).
 const GROUP_LABELS = {
   'default': 'Reports',
   'claude-security': 'Claude Security',
   'codex-security': 'Codex Security',
   'deepsec': 'DeepSec',
+  'piolium': 'Piolium',
 }
 
 // Render order for buckets — default (analyzer dumps) first, then
 // named sources in alphabetical-ish reading order.
-const GROUP_ORDER = ['default', 'claude-security', 'codex-security', 'deepsec']
+const GROUP_ORDER = ['default', 'claude-security', 'codex-security', 'deepsec', 'piolium']
 
 
 // Live module state — the search-box query, applied as a

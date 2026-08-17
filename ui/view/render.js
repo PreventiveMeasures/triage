@@ -155,11 +155,13 @@ export function refreshGraph2TopPkgs() {
 // the same `source` marker — those reports lack the analyzer
 // (model / effort / exportsMode) metadata that the analyzer-combo
 // breakdown builds from, so they get a fixed product name instead.
-// DeepSec is Vercel's tool (https://github.com/vercel-labs/deepsec).
+// DeepSec is Vercel's tool (https://github.com/vercel-labs/deepsec);
+// Piolium is Vigolium's (https://github.com/vigolium/piolium).
 const SOURCE_TITLES = {
   'claude-security': 'Claude Security findings',
   'codex-security': 'Codex Security findings',
   'deepsec': 'DeepSec findings',
+  'piolium': 'Piolium findings',
 }
 
 // Build the repo-chip element for the page header. The actual visual

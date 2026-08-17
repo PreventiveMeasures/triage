@@ -9,9 +9,9 @@
 //     paints both surfaces without duplicating the path data.
 //
 // Report-bucket stickers (default / claude-security / codex-security
-// / deepsec) live in `view/file-display.js` alongside the bucket-
-// detection helpers that consume them; they're imported by name
-// from the same drop-zone boot path.
+// / deepsec / piolium) live in `view/file-display.js` alongside the
+// bucket-detection helpers that consume them; they're imported by
+// name from the same drop-zone boot path.
 
 // Generic bundle glyph — a 3D box / package outline. Stroke-based
 // (uses `currentColor`) rather than the filled `.file-icon.brand-*`

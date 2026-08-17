@@ -13,6 +13,7 @@ import { openBundle, prefetchBundleHashes } from './bundle-load.js'
 import { parseMarkdownFindings } from '../../common/parse-md.js'
 import { parseCodexCsvToScans } from '../../common/parse-codex.js'
 import { parseDeepsecFindings } from '../../common/parse-deepsec.js'
+import { parsePioliumFindings } from '../../common/parse-piolium.js'
 import { deriveFindingId } from '../../common/finding-id.js'
 import { inheritReportMeta } from '../../common/report-meta.js'
 import { importWorkspaceFromGzip } from './workspace-import.js'
@@ -305,12 +306,12 @@ export async function addFiles(files) {
         }
       } else {
         // Validate before persisting — analyzeContent recognises
-        // analyzer-native JSON, DeepSec, and Claude / Codex /
+        // analyzer-native JSON, DeepSec, Piolium, and Claude / Codex /
         // markdown imports. Anything else is rejected so we don't
         // litter OPFS with files the report viewer can't parse.
         const result = analyzeContent(content)
         if (!result.recognized) {
-          throw new Error('not a recognized DeepView, DeepSec, Claude Security, or Codex report')
+          throw new Error('not a recognized DeepView, DeepSec, Piolium, Claude Security, or Codex report')
         }
         const imported = await importReportContent({ name: file.name, content, existingNames })
         if (!imported) continue
@@ -938,14 +939,17 @@ export async function ingestReport(name, content, gen = null) {
     if (stale()) return
     // Primary input is JSON (the analyzer's native dump). On failure,
     // walk the markdown parser chain: DeepSec first (most specific
-    // guard — `## SEVERITY (n)`), then Claude Security (any `# Title`
-    // doc). Each returns the standard { type, findings, … } shape, or
-    // null when the input doesn't match its format.
+    // guard — `## SEVERITY (n)`), then Piolium (`# Security Audit
+    // Report` / `## Technical Findings Detail`), then Claude Security
+    // (any `# Title` doc, so it must stay last). Each returns the
+    // standard { type, findings, … } shape, or null when the input
+    // doesn't match its format.
     let data
     try {
       data = JSON.parse(content)
     } catch (jsonErr) {
       data = parseDeepsecFindings(content)
+        ?? parsePioliumFindings(content)
         ?? parseMarkdownFindings(content)
       if (!data) throw new Error(`Not JSON, and not a recognized markdown format. (JSON error: ${jsonErr.message})`, { cause: jsonErr })
     }

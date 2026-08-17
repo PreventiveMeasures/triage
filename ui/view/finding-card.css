@@ -402,6 +402,7 @@
   & .brand-claude   { & .bg { fill: #d97757; } & .fg { fill: #fff; } }
   & .brand-codex    { & .bg { fill: #fff; stroke: #000; stroke-width: .5; } & .fg { fill: #000; } }
   & .brand-vercel   { & .bg { fill: #000; stroke: #fff; stroke-width: .5; } & .fg { fill: #fff; } }
+  & .brand-piolium  { & .bg { fill: #fbb829; } & .fg { fill: #1c1b19; } }
 }
 
 .mark-action-group {

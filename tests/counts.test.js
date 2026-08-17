@@ -86,12 +86,47 @@ describe('analyzeContent — markdown formats', () => {
     assert.equal(r.recognized, true)
   })
 
+  it('recognizes Piolium markdown', () => {
+    const content = [
+      '# Security Audit Report: example-project',
+      '',
+      '## Technical Findings Detail',
+      '',
+      '### [C1] Command injection in the build hook',
+      '- **Severity:** CRITICAL',
+      '- **Key Code Reference:** src/build/hook.js:142',
+      '',
+      '### [M1] Weak JWT validation',
+      '- **Severity:** MEDIUM',
+    ].join('\n')
+    const r = analyzeContent(content)
+    assert.equal(r.count, 2)
+    assert.equal(r.source, 'piolium')
+    assert.equal(r.recognized, true)
+  })
+
   it('recognizes Claude Security markdown', () => {
     const content = '# A title\n\n---\n**Severity:** medium\n'
     const r = analyzeContent(content)
     assert.equal(r.count, 1)
     assert.equal(r.source, 'claude-security')
     assert.equal(r.recognized, true)
+  })
+
+  it('routes a Piolium report past the generic markdown parser', () => {
+    // parse-md.js accepts any h1-led document, so chain order is what
+    // keeps a piolium report from being read as one Claude Security
+    // finding titled "Security Audit Report: …".
+    const content = [
+      '# Security Audit Report: example-project',
+      '',
+      '## Summary of Findings',
+      '',
+      '| ID | Title | Severity | PoC Status | Parent |',
+      '|----|-------|----------|------------|--------|',
+      '| [C1] | Command injection | CRITICAL | executed | -- |',
+    ].join('\n')
+    assert.equal(analyzeContent(content).source, 'piolium')
   })
 
   it('returns recognized: false for unstructured text', () => {

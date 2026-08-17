@@ -62,6 +62,7 @@ export const ANALYZER_LABELS = {
   'claude-security': 'Claude Security',
   'codex-security':  'Codex Security',
   'deepsec':         'DeepSec',
+  'piolium':         'Piolium',
 }
 
 function analyzerLabel(a) {

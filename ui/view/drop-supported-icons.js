@@ -20,6 +20,7 @@ const ICONS = {
   'claude-security': FILE_ICONS['claude-security'],
   'codex-security': FILE_ICONS['codex-security'],
   'deepsec': FILE_ICONS.deepsec,
+  'piolium': FILE_ICONS.piolium,
   'bundle': BUNDLE_ICON_SVG,
   'workspace': WORKSPACE_ICON_SVG,
 }
