@@ -76,12 +76,14 @@
 // finding (see md-structure.js).
 
 import {
-  cellValue, fenceRanges, inFence, parseCodeRef, parseLabelledFields,
-  splitByHeading, stripBold, tableObjects,
+  fenceRanges, inFence, parseCodeRef, parseLabelledFields,
+  splitByHeading, tableObjects,
 } from './md-structure.js'
+import { fromIndexRow, indexRowOf, listFindings, variantFindings } from './parse-piolium-rows.js'
 import {
-  codeRefOf, idCell, idFromToken, isVariantsHeading, mapSeverity,
-  parseHeading, preambleMeta, severityFromId, severityGroupOf, slugTitle,
+  codeRefOf, headerSeverity, idCell, idFromToken, isVariantsHeading,
+  mapSeverity, parseHeading, preambleMeta, severityFromId,
+  severityGroupOf,
 } from './parse-piolium-tokens.js'
 
 const H3_RE = /^### +(.*)$/gmu
@@ -98,6 +100,28 @@ const DETAIL_HEADERS = new Set([
 ])
 function isDetailHeader(header) {
   return DETAIL_HEADERS.has(header) || header.startsWith('findings by severity')
+}
+
+// Sections that must never be mined for findings even when they carry
+// id-shaped headings or tables: the index (read separately), the
+// deliberately-excluded appendices, and the audit's own narrative
+// sections.
+const EXCLUDED_HEADERS = /^(?:summary of findings|deferred|methodolog|executive|conclusion|attack surface|coverage|discoveries|scope|table of contents|contents|appendix|recommendation|remediation)/u
+function isExcludedHeader(header) {
+  return EXCLUDED_HEADERS.test(header)
+}
+
+// Content-based section recognition: the section names vary run to run
+// ('## HIGH — 3 findings', '## Confirmed Findings', emoji prefixes), so
+// a non-excluded section whose `### ` (or `#### `) headings carry
+// id-shaped tokens holds findings whatever it is called.
+function hasIdBlocks(body) {
+  const blocks = splitByHeading(body, H3_RE)
+  const list = blocks.length > 0 ? blocks : splitByHeading(body, H4_RE)
+  return list.some(({ heading }) => {
+    const { id } = parseHeading(heading)
+    return Boolean(id && idFromToken(id))
+  })
 }
 
 export function parsePioliumFindings(content) {
@@ -133,7 +157,14 @@ export function parsePioliumFindings(content) {
     // level.
     const sectionSev = severityGroupOf(header)
     if (sectionSev) { emit(parseSeverityGroup(body, sectionSev, index, pending)); continue }
-    if (isDetailHeader(header)) emit(parseDetailSection(body, index, pending))
+    if (isDetailHeader(header)) { emit(parseDetailSection(body, index, pending)); continue }
+    // Content-based fallback for every other spelling a run invents
+    // ('## HIGH — 3 findings', '## 🔴 HIGH', '## Confirmed Findings'):
+    // id-shaped block headings mark a findings section, and a leading
+    // severity word on the header still supplies the tier.
+    if (!isExcludedHeader(header) && hasIdBlocks(body)) {
+      emit(parseDetailSection(body, index, pending, headerSeverity(header)))
+    }
   }
 
   for (const v of pending) {
@@ -160,11 +191,13 @@ export function parsePioliumFindings(content) {
   // (`packages/core`) as easily as a slug, and a wrong `repo.github` is
   // worse than none — format.js's fileUrl prefers it over the
   // user-editable repo chip, so a bad guess yields dead source links
-  // the user cannot correct. `**Commit audited**` rides along the same
-  // way parse-codex keeps its commit_hash column.
+  // the user cannot correct. `**Commit audited**` is kept as
+  // `auditedCommit` — deliberately NOT `commitHash`, which the finding
+  // card renders as "introduced in <commit>": the scan commit says
+  // where the audit ran, not where the bug landed.
   for (const f of findings) {
     if (meta.repo) f.repo = { github: meta.repo }
-    if (meta.commitHash && !f.commitHash) f.commitHash = meta.commitHash
+    if (meta.commitHash && !f.auditedCommit) f.auditedCommit = meta.commitHash
   }
 
   // Report-level type stays 'security' for the document.title fallback.
@@ -180,11 +213,11 @@ export function parsePioliumFindings(content) {
 // severity groups, or a `### Variants` block; a section with no `### `
 // level at all is treated as one big group (its findings sit directly
 // at `#### `, in a table, or in a list).
-function parseDetailSection(body, index, pending) {
+function parseDetailSection(body, index, pending, sev = '') {
   const blocks = splitByHeading(body, H3_RE)
   return blocks.length === 0
-    ? parseSeverityGroup(body, '', index, pending)
-    : parseDetailBlocks(blocks, index, pending, '')
+    ? parseSeverityGroup(body, sev, index, pending)
+    : parseDetailBlocks(blocks, index, pending, sev)
 }
 
 // The `### ` blocks of a findings section or of a section-level
@@ -271,10 +304,25 @@ function parseSeverityGroup(body, sev, index, pending) {
   }
   if (out.length > 0) return out
 
+  // An id/title table here is the INDEX in another position — the real
+  // reports put the overview table under `## Findings by Severity` and
+  // the full blocks under per-severity sections, so emitting rows
+  // eagerly double-reported every finding (bare row + full block). Rows
+  // merge into the index instead: blocks adopt their PoC / parent /
+  // severity, and the gated index fallback emits only ids no block
+  // claimed. Rows without an id can't be index-keyed and defer via
+  // pending, as do list items — the same both-forms rule.
   const rows = tableObjects(body).map(indexRowOf).filter((r) => r.id || r.title)
-  if (rows.length > 0) return rows.map((r) => ({ id: r.id, finding: fromIndexRow(r, sev) }))
-
-  return listFindings(body, sev, index)
+  if (rows.length > 0) {
+    for (const r of rows) {
+      if (!r.severity && sev) r.severity = sev
+      if (r.id && !index.has(r.id)) index.set(r.id, r)
+      else if (!r.id) pending.push({ id: '', finding: fromIndexRow(r, sev) })
+    }
+    return []
+  }
+  pending.push(...listFindings(body, sev, index))
+  return []
 }
 
 function parseBlock(heading, body, index, groupSeverity = '') {
@@ -346,112 +394,6 @@ function parseBlock(heading, body, index, groupSeverity = '') {
   return { id, finding }
 }
 
-// Findings rendered as a list — the mode outline says "with links to
-// per-finding report.md", so items usually lead with a
-// `[<id>-<slug>](…/report.md)` link or a bold id, followed by a short
-// summary. Label bullets (`- **Severity:** …`) and "none found"
-// placeholders are not findings.
-function listFindings(body, sev, index) {
-  const out = []
-  for (const line of body.split('\n')) {
-    const m = /^\s{0,3}(?:[-*+]|\d{1,3}[.)])\s+(.+)$/u.exec(line)
-    if (!m) continue
-    let text = m[1].trim()
-    if (/^\*\*[^:*]+:\*\*/u.test(text)) continue
-
-    let link = ''
-    const linked = /^\[([^\]]+)\]\(([^)]+)\)\s*[:—–-]*\s*(.*)$/u.exec(text)
-    if (linked) {
-      link = linked[2].trim()
-      text = linked[3] ? `${linked[1].trim()} ${linked[3].trim()}` : linked[1].trim()
-    } else {
-      const bold = /^\*\*([^*]+)\*\*\s*[:—–-]*\s*(.*)$/u.exec(text)
-      if (bold) text = bold[2] ? `${bold[1].trim()} ${bold[2].trim()}` : bold[1].trim()
-    }
-    if (/^(?:none\b|no |n\/a\b)/iu.test(text)) continue
-
-    const space = text.search(/\s/u)
-    const first = (space === -1 ? text : text.slice(0, space)).replace(/[:.,—–-]+$/u, '')
-    const tok = idFromToken(first)
-    let id = ''
-    let title = text
-    if (tok) {
-      id = tok.id
-      const rest = (space === -1 ? '' : text.slice(space + 1)).replace(/^[:—–-]+\s*/u, '').trim()
-      const slugT = slugTitle(tok.slug)
-      title = slugT && rest ? `${slugT}\n\n${rest}` : (rest || slugT || tok.id)
-    }
-
-    const row = index.get(id)
-    const severity = mapSeverity(row?.severity)
-      || sev
-      || severityFromId(id)
-      || 'medium'
-    const finding = { file: 'unknown', line: '?', severity, description: stripBold(title) }
-    if (id) finding.location = `piolium:${id}`
-    else if (link) finding.location = link
-    if (link.endsWith('report.md')) finding.reportPath = link
-    if (row?.pocStatus) finding.pocStatus = row.pocStatus
-    if (row?.status) finding.status = row.status
-    if (row?.parent) finding.parent = row.parent
-    out.push({ id, finding })
-  }
-  return out
-}
-
-// Variant-table rows → findings, parented to the enclosing block when
-// the row doesn't name a parent. Rows are also REGISTERED as index rows
-// so a variant's own `#### <id>` entry adopts the row's severity / PoC
-// / parent even in a report with no `## Summary of Findings`. Rows
-// without a table fall back to a bullet list at the caller's group
-// severity.
-function variantFindings(tableText, index, parentId, sevFallback = '') {
-  const out = []
-  for (const obj of tableObjects(tableText)) {
-    const row = indexRowOf(obj)
-    if (!row.id && !row.title) continue
-    if (!row.parent && parentId) row.parent = parentId
-    if (row.id && !index.has(row.id)) index.set(row.id, row)
-    out.push({ id: row.id, finding: fromIndexRow(row, sevFallback) })
-  }
-  if (out.length > 0) return out
-  const items = listFindings(tableText, sevFallback, index)
-  for (const e of items) {
-    if (parentId && !e.finding.parent) e.finding.parent = parentId
-  }
-  return items
-}
-
-// A finding known only from a table row. Rows usually carry no path, so
-// they land on the same `unknown` / `?` placeholders — and finding-id.js
-// would then derive the SAME uuid for two rows sharing a title and
-// tier, letting ingest's dedupe silently swallow one. The report id is
-// the only discriminator such a row carries; it is stamped as the
-// `location` fingerprint field (preferred over file/line by
-// deriveFindingId, and never rendered — its one consumer is the id
-// derivation), namespaced so it reads as an opaque token rather than a
-// URL. Variant / group tables may carry a Location column; when they
-// do, it is parsed like any code reference.
-function fromIndexRow(row, sevFallback = '') {
-  const severity = mapSeverity(row.severity)
-    || sevFallback
-    || severityFromId(row.id)
-    || 'medium'
-  const { file, line, locationLink } = parseCodeRef(row.location || '')
-  const finding = {
-    file: file || 'unknown',
-    line,
-    severity,
-    description: stripBold(row.title || row.id),
-  }
-  if (locationLink) finding.location = locationLink
-  else if (finding.file === 'unknown' && row.id) finding.location = `piolium:${row.id}`
-  if (row.pocStatus) finding.pocStatus = row.pocStatus
-  if (row.status) finding.status = row.status
-  if (row.parent) finding.parent = row.parent
-  return finding
-}
-
 // Split the document into its `## ` sections, keyed by case-folded
 // header. A repeated header CONCATENATES rather than overwrites —
 // concatenated audit runs (`cat a.md b.md`) and reports that split
@@ -477,21 +419,6 @@ function splitLeading(body, re) {
   return { head: body.slice(0, first.index), subs: splitByHeading(body, re) }
 }
 
-// Normalize a table-row object to the shared row shape used by the
-// index, variant tables, group tables, and the row→finding conversion.
-// The PoC column appears both as `PoC Status` and plain `PoC`.
-function indexRowOf(obj) {
-  return {
-    id: idCell(obj.id || ''),
-    title: cellValue(obj.title),
-    severity: cellValue(obj.severity),
-    pocStatus: cellValue(obj['poc status'] || obj.poc),
-    status: cellValue(obj.status),
-    parent: idCell(cellValue(obj.parent || '')),
-    location: cellValue(obj.location),
-  }
-}
-
 // `## Summary of Findings` → id → row. Used both to fill gaps in a
 // finding block (the index carries PoC status / parent / verdict that a
 // sparse block may omit) and as the finding source of last resort.
@@ -508,17 +435,18 @@ function parseIndexTable(text) {
 // Description = heading + the narrative content, in report order. The
 // Summary label AND the unlabelled prose body both contribute — a block
 // often carries its labels first and its narrative as the paragraph
-// after them, and dropping either loses the summary. Labels are kept
-// inline (`Impact: …`) so the expanded card reads like the source
-// report; `**bold**` is stripped because the renderer escapes HTML and
-// would otherwise print the asterisks literally. white-space: pre-line
-// on `.desc` keeps paragraph breaks.
+// after them, and dropping either loses the summary. The Impact / Root
+// Cause labels stay `**bold**`, and the source text's own emphasis is
+// kept: the finding card's renderHighlighted renders `**…**` spans as
+// real <strong> emphasis (and markdown-export emits markdown, where
+// they are simply bold). white-space: pre-line on `.desc` keeps the
+// paragraph breaks.
 function buildDescription(title, fields, prose) {
   const parts = [title]
   if (fields.summary) parts.push(fields.summary)
   if (prose) parts.push(prose)
   if (fields.details) parts.push(fields.details)
-  if (fields.impact) parts.push(`Impact: ${fields.impact}`)
-  if (fields['root cause']) parts.push(`Root Cause: ${fields['root cause']}`)
-  return stripBold(parts.filter(Boolean).join('\n\n'))
+  if (fields.impact) parts.push(`**Impact:** ${fields.impact}`)
+  if (fields['root cause']) parts.push(`**Root Cause:** ${fields['root cause']}`)
+  return parts.filter(Boolean).join('\n\n')
 }

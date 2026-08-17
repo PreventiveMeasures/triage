@@ -49,6 +49,15 @@ export function severityGroupOf(heading) {
   return m ? mapSeverity(m[1]) : ''
 }
 
+// A leading severity word on an otherwise free-form section header —
+// `HIGH — 3 findings`, `High: remaining`, `HIGH (3) — confirmed` — for
+// sections recognized by their CONTENT rather than the anchored
+// severityGroupOf shape.
+export function headerSeverity(header) {
+  const m = /^(critical|high|medium|low|informational|info)\b/iu.exec((header || '').trim())
+  return m ? mapSeverity(m[1]) : ''
+}
+
 // A heading that introduces variants (`#### Variants`, `### Variants
 // (2)`), not a finding. Matched wherever finding headings are read, so
 // a variants marker never becomes a finding titled "Variants".

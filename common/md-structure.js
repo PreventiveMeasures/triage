@@ -192,8 +192,9 @@ export function stripBrackets(s) {
   return m ? m[1].trim() : s.trim()
 }
 
-// Table cells use `--` (or `-`) for "not applicable".
+// Table cells use `--` / `-` — or a typographic `—` / `–` — for
+// "not applicable".
 export function cellValue(s) {
   const v = (s || '').trim()
-  return /^-+$/u.test(v) ? '' : v
+  return /^[-–—]+$/u.test(v) ? '' : v
 }
