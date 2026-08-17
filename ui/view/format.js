@@ -330,6 +330,16 @@ function repoBaseUrl(s) {
   return `https://github.com/${trimmed}`
 }
 
+// A bare package reference — `name@1.2.3` or `@scope/name@1.2.3` —
+// names a DEPENDENCY, not a path inside any repository (piolium `Key
+// code` lines cite vulnerable packages this way). The shape is strict:
+// the only allowed slash is the scope separator, so a real path with an
+// `@` in a segment (`src/@types/x.d.ts`) never matches.
+const PKG_REF_RE = /^(?:@[\w.-]+\/)?[\w.-]+@[^/\s@]+$/u
+export function isPkgRef(file) {
+  return PKG_REF_RE.test(file || '')
+}
+
 // `githubRepo` (the per-finding `repo.github` value, e.g. `lodash/lodash`)
 // wins over the user-typed repo URL when available — it points at the
 // actual upstream of a node_modules dependency rather than at the project
@@ -341,7 +351,10 @@ function repoBaseUrl(s) {
 // `#client/...` import — `view/format.js` is in the dependency chain of
 // the lazy `ui/graph.js` bundle (via `SEVERITIES` / `formatBytes`), and
 // pulling in `state` would drag the whole client aggregator with it.
+// A package-reference "file" links to nothing — blob-linking
+// `.../blob/HEAD/name@1.2.3` under either repo would 404.
 export function fileUrl(file, githubRepo, repoFallback) {
+  if (isPkgRef(file)) return null
   if (githubRepo) return `https://github.com/${githubRepo}/blob/HEAD/${stripPackagePrefix(file)}`
   if (isModule(file)) return null
   const base = repoBaseUrl(repoFallback)

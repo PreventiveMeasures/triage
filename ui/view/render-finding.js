@@ -118,19 +118,23 @@ function splitDescription(text) {
   return { title: text.slice(0, nl).trim(), body }
 }
 
-// Render prose with inline highlights for `"quoted"` strings and
-// `` `code` `` spans — matches the prototype's `.summary q` /
-// `.title em` styling (`design/prototypes/DeepView.0.html`). The
-// surrounding delimiters are kept inside the highlighted region so a
-// reader still sees the original quote / backtick characters. Returns
-// the raw string when nothing matches so we don't churn out single-
-// child arrays for the common case of plain text.
+// Render prose with inline highlights for `"quoted"` strings,
+// `` `code` `` spans, and `**bold**` emphasis — the first two match the
+// prototype's `.summary q` / `.title em` styling
+// (`design/prototypes/DeepView.0.html`) and keep their delimiters
+// visible; bold spans render as real `<strong>` emphasis with the
+// asterisks DROPPED, so parser-emitted labels (parse-piolium's
+// `**Impact:**` / `**Root Cause:**`) and source-report emphasis read
+// as emphasis rather than literal markers. Unpaired asterisks stay
+// literal. Returns the raw string when nothing matches so we don't
+// churn out single-child arrays for the common case of plain text.
 // Exported for the bundle views (render-bundle.js), whose finding
 // descriptions — source-viewer side panel, Issues tab rows, code-rail
 // issue results — get the same inline styling. Those render in light
 // DOM, so report.css carries a copy of the .inline-* rules that live
-// in finding-card.css for this card's shadow root.
-const INLINE_HL_RE = /"[^"\n]+"|`[^`\n]+`/gu
+// in finding-card.css for this card's shadow root (`<strong>` needs no
+// rule — the UA styles it in both trees).
+const INLINE_HL_RE = /\*\*[^*\n]+\*\*|"[^"\n]+"|`[^`\n]+`/gu
 export function renderHighlighted(text) {
   if (!text) return text
   INLINE_HL_RE.lastIndex = 0
@@ -139,8 +143,13 @@ export function renderHighlighted(text) {
   let m
   while ((m = INLINE_HL_RE.exec(text)) !== null) {
     if (m.index > lastIdx) parts.push(text.slice(lastIdx, m.index))
-    const cls = m[0].codePointAt(0) === 0x60 /* ` */ ? 'inline-code' : 'inline-quote'
-    parts.push(html`<span class=${cls}>${m[0]}</span>`)
+    const c0 = m[0].codePointAt(0)
+    if (c0 === 0x2A /* * */) {
+      parts.push(html`<strong>${m[0].slice(2, -2)}</strong>`)
+    } else {
+      const cls = c0 === 0x60 /* ` */ ? 'inline-code' : 'inline-quote'
+      parts.push(html`<span class=${cls}>${m[0]}</span>`)
+    }
     lastIdx = m.index + m[0].length
   }
   if (lastIdx === 0) return text

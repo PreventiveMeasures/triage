@@ -77,24 +77,37 @@ export function tableObjects(text) {
 }
 
 // `**Field:** value` labels (with or without a leading `- ` bullet
-// marker), case-folded, first occurrence wins. A value runs to the next
-// label, heading, table row or horizontal rule, so a wrapped one-liner
-// keeps its continuation lines instead of being truncated at the first
-// newline. Fenced code under a label (a PoC snippet in a Summary /
-// Evidence value) is all content: fence delimiters toggle, and nothing
-// inside is structural. Unlabelled body text is collected as `prose` so
-// callers can use plain paragraphs as the narrative when no label
-// carries it. Null-prototype object so a label like "Constructor" can't
-// alias an inherited key.
+// marker), keyed case-folded with the original label text kept in
+// `labels`, first occurrence wins. A single line can carry several
+// labels joined by ` · ` (`**Severity:** LOW … · **PoC:** blocked`) —
+// each is peeled into its own field. A value runs to the next label,
+// heading, table row, horizontal rule, or BLANK LINE — so a wrapped
+// one-liner keeps its immediate continuation lines, while the
+// paragraph after a label block is body prose, not part of the last
+// label (a `**Key code:** …` line must not swallow the summary
+// paragraph under it). Fenced code opened under a label (a PoC snippet
+// in a Summary / Evidence value) is all content: fence delimiters
+// toggle, and nothing inside is structural. Unlabelled body text is
+// collected as `prose` so callers can use plain paragraphs as the
+// narrative when no label carries it. Null-prototype objects so a
+// label like "Constructor" can't alias an inherited key.
 export function parseLabelledFields(body) {
   const fields = Object.create(null)
+  const labels = Object.create(null)
   const proseLines = []
   let key = null
+  let keyLabel = ''
   let buf = []
   let fence = ''
+  const setField = (k, label, value) => {
+    if (!k || k in fields) return
+    fields[k] = value.trim()
+    labels[k] = label
+  }
   const flush = () => {
-    if (key && !(key in fields)) fields[key] = buf.join('\n').trim()
+    if (key) setField(key, keyLabel, buf.join('\n'))
     key = null
+    keyLabel = ''
     buf = []
   }
   for (const line of body.split('\n')) {
@@ -108,11 +121,25 @@ export function parseLabelledFields(body) {
       ;(key ? buf : proseLines).push(line)
       continue
     }
+    if (!line.trim()) {
+      if (key) flush()
+      else proseLines.push(line)
+      continue
+    }
     const label = /^\s*(?:[-*] +)?\*\*([^:*]+):\*\*\s*(.*)$/u.exec(line)
     if (label) {
       flush()
-      key = label[1].trim().toLowerCase()
-      buf = [label[2]]
+      let k = label[1].trim()
+      let rest = label[2]
+      let seg
+      while ((seg = /\s+[·•]\s+\*\*([^:*]+):\*\*\s*/u.exec(rest)) !== null) {
+        setField(k.toLowerCase(), k, rest.slice(0, seg.index))
+        k = seg[1].trim()
+        rest = rest.slice(seg.index + seg[0].length)
+      }
+      key = k.toLowerCase()
+      keyLabel = k
+      buf = [rest]
       continue
     }
     // Structural line — ends the current value without starting one.
@@ -121,7 +148,7 @@ export function parseLabelledFields(body) {
     else proseLines.push(line)
   }
   flush()
-  return { fields, prose: proseLines.join('\n').trim() }
+  return { fields, labels, prose: proseLines.join('\n').trim() }
 }
 
 // The code reference is prose-ish: `src/a.js:142 in runHook()`, a
@@ -139,7 +166,6 @@ export function parseCodeRef(raw) {
     text = link[1].trim()
     locationLink = link[2].trim()
   }
-  text = text.replaceAll('`', '')
 
   // A `#L<n>` anchor on the link is the most reliable line source (and
   // reads the start line of a `#L88-L95` range).
@@ -147,12 +173,31 @@ export function parseCodeRef(raw) {
   const anchor = /#L(\d+)/u.exec(locationLink)
   if (anchor) line = anchor[1]
 
-  // First token is the path; the template appends a function qualifier
-  // (`… in runHook()`) that must not become part of it. A line RANGE
-  // (`src/a.js:88-95` — the normal way to cite a multi-line sink) keeps
-  // its start line and sheds the range from the path.
-  const file = text.split(/[\s,]+/u).find(Boolean) || ''
-  const colon = /^(.+):(\d+)(?:-\d+)?$/u.exec(file)
+  // The first PATH-SHAPED backtick span is the reference when one
+  // exists — values often read "see `src/a.js:42` and `src/b.js:9`" or
+  // cite a whole call chain, where the first quoted path is the
+  // finding's location and everything else is prose or secondary
+  // citations. Path-shaped means a separator or an extension and no
+  // call parens, so a quoted function qualifier (`… in \`runHook()\``)
+  // never beats a bare path. A chosen span is the WHOLE path — the
+  // backticks exist precisely to delimit paths with spaces — while the
+  // unquoted fallback takes the first whitespace token of the
+  // de-backticked text (the template appends `… in runHook()`, which
+  // must not join the path). Either way a trailing `#L42` fragment or
+  // `:42` / `:88-95` suffix yields the line; a RANGE keeps its start
+  // line and sheds the rest from the path.
+  const spans = [...text.matchAll(/`([^`]+)`/gu)].map((m) => m[1].trim())
+  const pathish = spans.find((s) => !s.includes('(') && (s.includes('/') || /\.\w/u.test(s)))
+  let file = pathish ?? (text.replaceAll('`', '').trim().split(/[\s,]+/u).find(Boolean) || '')
+  const frag = /^(.*?)#L(\d+)(?:-L?\d+)?$/u.exec(file)
+  if (frag) {
+    file = frag[1]
+    if (!line) line = frag[2]
+  }
+  // A `:60-90` RANGE is kept whole in `line`: the file:line displays
+  // print it verbatim, and link anchors parseInt() it down to the
+  // start line.
+  const colon = /^(.+):(\d+(?:-\d+)?)$/u.exec(file)
   if (colon) {
     if (!line) line = colon[2]
     return { file: colon[1], line, locationLink }
@@ -170,8 +215,9 @@ export function stripBrackets(s) {
   return m ? m[1].trim() : s.trim()
 }
 
-// Table cells use `--` (or `-`) for "not applicable".
+// Table cells use `--` / `-` — or a typographic `—` / `–` — for
+// "not applicable".
 export function cellValue(s) {
   const v = (s || '').trim()
-  return /^-+$/u.test(v) ? '' : v
+  return /^[-–—]+$/u.test(v) ? '' : v
 }
