@@ -51,16 +51,18 @@
    level with. Only bites when the description has no title line
    (`splitDescription` leaves a one-paragraph description as a plain
    `.desc`, which carries the gap); with a `.desc-title` first there's
-   no margin to shed. `.conf-reason` also sheds its divider chrome —
-   a dashed rule across the top of the column is a separator with
-   nothing left above it to separate.
+   no margin to shed. `.conf-reason` and `.severity-reason` also shed
+   their divider chrome — a dashed rule across the top of the column is
+   a separator with nothing left above it to separate. (`.severity-reason`
+   leads only when the finding carries a correction reason but no
+   description, recommendation, or confidence reason.)
    Screen always hides the row; print re-shows it on `.multi-case`
    cards (see the @media print block), where the margin is doing its
    real job again — hence the media split instead of one blanket
    rule. */
 @media not print {
   :host([in-group]) .line-row + * { margin-top: 0; }
-  :host([in-group]) .line-row + .conf-reason { padding-top: 0; border-top: 0; }
+  :host([in-group]) .line-row + :is(.conf-reason, .severity-reason) { padding-top: 0; border-top: 0; }
 }
 
 .tabs { display: flex; gap: .25rem; flex-wrap: wrap; }
