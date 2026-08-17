@@ -124,3 +124,55 @@ export function awaitListeningPort(proc, timeoutMs = 5_000) {
     proc.once('error', onError)
   })
 }
+
+// Shut down an in-process `ws` WebSocketServer without hanging.
+//
+// `wss.close(cb)` closes the underlying HTTP server, and node fires
+// that callback only once every connection has ended — so a still-open
+// client socket holds it OPEN INDEFINITELY (verified: no callback after
+// seconds, because a healthy peer has no reason to disconnect). A test
+// that awaited a bare `wss.close(resolve)` therefore deadlocked whenever
+// the client it was driving hadn't finished tearing its socket down
+// yet — a load-dependent race, invisible on an idle machine and fatal
+// under `--test-isolation=process` (the child never exits, the runner
+// waits on it forever, and `--test-timeout=0` means nothing intervenes).
+//
+// Terminating live sockets first is the same fallback the production
+// server uses for this exact hazard — see the round-11 F4 note in
+// sync-server.test.js about `ws`'s ~30 s `closeTimeout` when a peer
+// doesn't ack the close frame. `terminate()` is an immediate socket
+// destroy, not a close handshake, so it can't wait on the peer. The
+// timed fallback is pure belt-and-braces: teardown must never be the
+// reason a suite hangs.
+// `.unref()` on the fallback timer so the guard itself can never be
+// what keeps the process alive; a race of two single-resolve promises
+// also keeps the linter's no-multiple-resolved rule satisfied.
+export function closeWebSocketServer(wss, timeoutMs = 5_000) {
+  for (const sock of wss.clients) sock.terminate()
+  const closed = new Promise((resolve) => { wss.close(resolve) })
+  const timed = new Promise((resolve) => { setTimeout(resolve, timeoutMs).unref() })
+  return Promise.race([closed, timed])
+}
+
+// Await a WebSocketServer's `listening` event with an error path.
+//
+// A bare `once('listening', resolve)` has no failure branch: if the
+// listen fails (EADDRINUSE, or EMFILE when a loaded runner has many
+// suites holding sockets at once) the event never fires, `'error'` goes
+// unhandled, and the await hangs forever — the same shape as the
+// close-side deadlock above. Rejecting on `'error'` turns that into a
+// readable failure.
+export function awaitListening(wss, timeoutMs = 5_000) {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => finish(new Error('WebSocketServer listen timeout')), timeoutMs)
+    function finish(err) {
+      clearTimeout(t)
+      wss.removeListener('listening', onListening)
+      wss.removeListener('error', finish)
+      if (err) reject(err); else resolve(wss)
+    }
+    function onListening() { finish(null) }
+    wss.once('listening', onListening)
+    wss.once('error', finish)
+  })
+}

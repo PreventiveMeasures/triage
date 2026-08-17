@@ -28,7 +28,7 @@ import { Buffer } from 'node:buffer'
 // `hasHexBuiltin` at first import.
 await import('./_polyfills.js')
 
-const { bootServer } = await import('./_helpers.js')
+const { awaitListening, bootServer, closeWebSocketServer } = await import('./_helpers.js')
 
 // ─────────── client modules ───────────
 
@@ -1236,7 +1236,7 @@ describe('triage-sync client', () => {
     // off the bare open socket.
     const { WebSocketServer } = await import('ws')
     const wss = new WebSocketServer({ port: 0, host: '127.0.0.1' })
-    await new Promise((resolve) => { wss.once('listening', resolve) })
+    await awaitListening(wss)
     const url = `ws://127.0.0.1:${wss.address().port}`
     // Accept the socket and stay silent — no challenge means the client
     // never gets a nonce, so it can't (and doesn't) subscribe.
@@ -1266,7 +1266,7 @@ describe('triage-sync client', () => {
     triageSync.closeSession()
     triageSync.setServerUrl('')
     await deleteWorkspace(wsId)
-    await new Promise((resolve) => { wss.close(resolve) })
+    await closeWebSocketServer(wss)
   })
 
   it('emits a keyframe after `keyframeInterval` non-keyframe revisions', async () => {
@@ -4449,7 +4449,7 @@ const { WebSocketServer } = await import('ws')
 // paths without altering the relay.
 async function startFakeRelay(onConnection) {
   const wss = new WebSocketServer({ port: 0, host: '127.0.0.1' })
-  await new Promise((resolve) => { wss.once('listening', resolve) })
+  await awaitListening(wss)
   const url = `ws://127.0.0.1:${wss.address().port}`
   // Round-9 H2: the real server emits a `challenge` frame on
   // connect, before the client can subscribe. Mimic that here so
@@ -4462,7 +4462,11 @@ async function startFakeRelay(onConnection) {
   })
   return {
     url,
-    close: () => new Promise((resolve) => { wss.close(resolve) }),
+    // Terminate live sockets before closing — a bare `wss.close(cb)`
+    // never fires its callback while a client is still connected, so
+    // this await used to deadlock the whole file whenever the client
+    // teardown hadn't landed yet. See closeWebSocketServer.
+    close: () => closeWebSocketServer(wss),
   }
 }
 

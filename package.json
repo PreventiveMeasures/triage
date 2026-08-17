@@ -124,7 +124,7 @@
     "serve": "node build.js serve",
     "server": "node server-e2e/index.ts",
     "server-managed": "node server-managed/index.ts",
-    "test": "node --js-base-64 --experimental-test-module-mocks --test ./tests/*.test.js"
+    "test": "node --js-base-64 --experimental-test-module-mocks --test-timeout=120000 --test ./tests/*.test.js"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.4.5",
