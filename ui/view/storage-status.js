@@ -31,6 +31,7 @@
 // rather than pretending the click can help.
 
 import { getStorageInfo, hasAnyBundles, listFiles, onFileMutated, requestPersistentStorage } from '#client/index.js'
+import { openStoragePersistDialog, persistGrantFlavor } from './dialogs/storage-persist-dialog.js'
 
 // Set by `initStorageStatus(el)` once the sidebar has rendered the
 // `#storage-status` button into its shadow DOM. Before that the
@@ -53,15 +54,12 @@ let autoRequested = false
 // number honest without the spam.
 let refreshTimer = 0
 
-// iOS/iPadOS browsers are all WebKit (CriOS / FxiOS / EdgiOS
-// included), and desktop Safari carries no Chrome/Edg/OPR token —
-// so "WebKit and not a Chromium/Blink UA" is the population
-// governed by ITP's 7-day cleanup. The Blink tokens are slash-
-// anchored where a WebKit sibling shares the prefix (EdgiOS vs
-// Edg/, OPT vs OPR/). UA sniffing is fine at tooltip-copy stakes.
+// Browser-flavor detection lives with the instructions dialog
+// (persistGrantFlavor) so tooltip copy, console breadcrumbs, and
+// the dialog's per-engine bodies can't drift apart. 'webkit' is the
+// ITP-governed population (Safari + every iOS browser).
 function isItpGoverned() {
-  const ua = navigator.userAgent
-  return /AppleWebKit/u.test(ua) && !/Chrome\/|Chromium|Edg\/|OPR\/|Android/u.test(ua)
+  return persistGrantFlavor() === 'webkit'
 }
 
 // Human-scale size for the label; navigator.storage.estimate() is
@@ -91,27 +89,40 @@ function paint() {
   button.querySelector('.storage-label').textContent = 'Storage at risk'
   button.title = 'Reports, bundles and triage are in best-effort storage — the browser may delete them all under disk pressure or after long inactivity. '
     + (isItpGoverned()
-      ? 'On Safari (and all iOS browsers) data is cleared after 7 days without using the site; add this page to your Home Screen or Dock to prevent that.'
-      : 'Click to request persistent storage. Firefox asks via a prompt; Chromium-based browsers never prompt and grant it only to sites they consider important — installed as an app, bookmarked, allowed to send notifications, or heavily used.')
+      ? 'Click for how to protect them (on Safari and iOS browsers this needs the app installed to the Home Screen or Dock).'
+      : 'Click to request persistent storage — if the browser declines, instructions for enabling it follow.')
     + usageDetail
 }
 
-// Chromium's denial is silent and, from a dev/localhost profile,
-// effectively permanent (the importance heuristics can't pass), so
-// the breadcrumb explains WHY and what would flip it — otherwise a
-// user clicking the banner sees "not granted" with no effect and
-// reads it as a bug.
+// Chromium's denial is silent, so the breadcrumb explains WHY and
+// what would flip it — otherwise a user clicking the banner sees
+// "not granted" with no effect and reads it as a bug.
+//
+// The `localhost` special case is structural, not a heuristic
+// shortfall: Chromium's important-sites ranking (which gates the
+// grant) keys every signal — engagement, notifications, installed
+// app, bookmarks — by REGISTERABLE DOMAIN, with an explicit
+// fallback to the host only for IP literals
+// (ImportantSitesUtil::GetRegisterableDomainOrIPFromHost). Plain
+// `localhost` has no registerable domain and is not an IP, so its
+// signals are dropped before ranking and persist() can never be
+// granted there, no matter what the user enables. 127.0.0.1 IS an
+// IP literal (and still a secure context), so it can pass.
 function logRequestOutcome(granted, viaGesture) {
   const suffix = viaGesture ? ' (user gesture)' : ''
   if (granted) {
     console.info(`storage: persistent-storage request granted${suffix}`)
     return
   }
+  const localhostNote = !isItpGoverned() && location.hostname === 'localhost'
+    ? ' Note: plain localhost can NEVER pass — Chromium keys site importance by registerable domain (IP literals excepted) and localhost has none; for local testing use 127.0.0.1 instead.'
+    : ''
   console.info(
     `storage: persistent-storage request not granted${suffix} — `
     + (isItpGoverned()
       ? 'Safari ties persistence to install state; add the app to the Home Screen / Dock.'
-      : 'Chromium-based browsers never prompt and silently deny origins they don\'t consider important; installing the app, bookmarking it, allowing notifications, or regular use flips the heuristic. Firefox shows a prompt instead.'),
+      : 'Chromium-based browsers never prompt and silently deny origins they don\'t consider important; installing the app, bookmarking it, allowing notifications, or regular use flips the heuristic (re-evaluated on every request). Firefox shows a prompt instead.')
+    + localhostNote,
   )
 }
 
@@ -163,6 +174,14 @@ async function onClick() {
     autoRequested = true // a manual ask supersedes the auto one
     const granted = await requestPersistentStorage()
     logRequestOutcome(granted, true)
+    if (!granted) {
+      // The denial is silent (Chromium) or structural (WebKit) — a
+      // click that visibly does nothing reads as a bug, so open the
+      // per-engine "how to actually fix this" dialog. Its Try-again
+      // button can itself succeed (resolves 'granted'); either way
+      // the refresh below repaints from the fresh persisted() state.
+      await openStoragePersistDialog()
+    }
   }
   await refreshStorageStatus()
 }
