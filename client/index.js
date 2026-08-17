@@ -52,6 +52,11 @@ export {
 } from './passkey-vault.js'
 
 export {
+  getStorageInfo,
+  requestPersistentStorage,
+} from './persistence.js'
+
+export {
   getItem as getSecureItem,
   hydrate as hydrateSecureStorage,
   migrateToEncrypted as migrateSecureStorageToEncrypted,
@@ -87,6 +92,7 @@ export {
   migrateOpfsBundlesEncrypt,
   migrateOpfsFilesDecrypt,
   migrateOpfsFilesEncrypt,
+  onFileMutated,
   readBundle,
   readFile,
   readFileBytes,

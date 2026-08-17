@@ -39,6 +39,7 @@
   justify-content: center;
 }
 :host(.collapsed) sidebar-delete-current,
+:host(.collapsed) #storage-status,
 :host(.collapsed) #sync-status .sync-label { display: none; }
 :host(.collapsed) #sync-status {
   padding: .25rem; border: 0;
@@ -620,6 +621,33 @@ sidebar-delete-current button {
    the renderer's visibility gate is a no-op and "Sync off" stays
    painted where the button shouldn't be reachable. */
 #sync-status[hidden] { display: none; }
+
+/* Storage-at-risk warning — full-width row under the actions bar
+   (see view/storage-status.js). Warning-only: it renders solely when
+   the origin's bucket is confirmed best-effort (evictable); healthy
+   storage shows nothing. Amber dot mirrors the sync-dot idiom;
+   click requests persist(). */
+#storage-status {
+  display: flex; align-items: center; gap: .35rem;
+  width: 100%;
+  padding: .1rem .55rem .35rem;
+  background: transparent; border: 0; color: var(--muted);
+  font-size: .68rem; font-family: inherit;
+  cursor: pointer; text-align: left;
+  /* WCO drag surface opt-out — same rationale as .sidebar-actions. */
+  -webkit-app-region: no-drag; app-region: no-drag;
+
+  &:hover { color: var(--text); }
+
+  & .storage-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--medium);
+    flex-shrink: 0;
+    box-shadow: 0 0 0 1px rgb(from var(--text) r g b / .15);
+  }
+}
+/* Same specificity dance as #sync-status[hidden] above. */
+#storage-status[hidden] { display: none; }
 
 /* Managed-mode auth control + account menu (replaces the offline/online toggle
    in managed mode). Logged out it is a "Log in" button; logged in it is the
