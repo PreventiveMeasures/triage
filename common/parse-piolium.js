@@ -9,54 +9,54 @@
 // consolidated report already inlines or links each finding).
 //
 // The report is COMPOSED BY AN AGENT, so its structure varies by mode
-// and by run. Two documented layouts anchor the parser; everything else
+// and by run. Three observed layouts anchor the parser; everything else
 // is handled by being liberal within them.
 //
 // Layout A — the pentest template (skills/audit report-templates.md and
-// the report-assembler agent's system prompt):
+// the report-assembler agent's system prompt): a `## Summary of
+// Findings` index table (`| [C1] | Title | CRITICAL | executed | -- |`)
+// plus `## Technical Findings Detail` with `### [C1] Title` blocks of
+// `- **Severity:** / **Summary:** / **Impact:** / **Root Cause:** /
+// **Key Code Reference:** / **PoC Status:**` bullets and an optional
+// `#### Variants` sub-table.
 //
-//   # Security Audit Report: <project>
+// Layout B — the mode task outline (modes/balanced.ts L6c and
+// modes/deep.ts P15: "Executive Summary, Findings by Severity (with
+// links to per-finding report.md), Attack Surface Summary, Coverage
+// Gaps, Methodology Notes"): `## Findings by Severity` with severity
+// groups (`### Critical`, possibly counted `### HIGH (2)` or promoted
+// to `## Critical Findings`) whose findings are `#### ` blocks, an
+// id/title table, or a `- [<id>-<slug>](…/report.md): summary` list.
 //
-//   ## Summary of Findings
-//   | ID | Title | Severity | PoC Status | Parent |
-//   |----|-------|----------|------------|--------|
-//   | [C1] | Command injection in the build hook | CRITICAL | executed | -- |
+// Layout C — real assembler output as observed in the wild: anchored
+// draft-phase ids and per-variant entries,
 //
-//   ## Technical Findings Detail
+//   <a id="p10-011"></a>
+//   ### p10-011 — Title
 //
-//   ### [C1] Command injection in the build hook
-//   - **Severity:** CRITICAL
-//   - **Summary:** <one-sentence description>
-//   - **Impact:** <concrete attacker gain>
-//   - **Root Cause:** <why the bug exists>
-//   - **Key Code Reference:** src/build/hook.js:142 in runHook()
-//   - **PoC Status:** executed
-//   - **Detailed Report:** piolium/findings/C1-<slug>/report.md
+//   - **Severity:** HIGH
+//   - **Summary:** …
+//   - **Impact:** …
+//   - **Root cause:** …
+//   - **Key code:** `src/a.js:20` (`fnA`) → `src/b.js:600` → `src/c.js`
+//   - **PoC:** executed (…)
+//   - **Files:** …reproduction attachments, ignored…
 //
 //   #### Variants
-//   | ID | Title | Severity | Location | PoC Status |
+//   | ID | Title | Severity | Location | PoC |
+//   |----|-------|----------|----------|-----|
+//   | [p12-001](#p12-001) | Variant title | MEDIUM | `src/d.js:50-60` | executed |
 //
-// Layout B — the mode pipelines (modes/balanced.ts L6c and modes/deep.ts
-// P15 both task the assembler with: "Executive Summary, Findings by
-// Severity (with links to per-finding report.md), Attack Surface
-// Summary, Coverage Gaps, Methodology Notes", referencing findings "by
-// their <id>-<slug> directory name"):
+//   <a id="p12-001"></a>
+//   #### p12-001 — Variant title
+//   - **Variant of** [p10-011](#p10-011) · **Pattern** `pattern-id`
+//   - **Summary:** …
 //
-//   ## Findings by Severity
-//
-//   ### Critical
-//
-//   #### [C1-command-injection](findings/C1-command-injection/report.md)
-//   <prose summary>
-//   **Impact:** <attacker gain>
-//
-//   ### High
-//   - [H1-idor-invoices](findings/H1-idor-invoices/report.md): <summary>
-//
-// Severity groups may sit at the `##` level too (`## Critical Findings`)
-// and may carry counts (`### HIGH (2)`); findings inside a group may be
-// `#### ` blocks, an id/title table, or a link/bullet list. A group made
-// of prose only ("None identified.") contributes nothing.
+// Variants exist BOTH as table rows and as their own full entries; the
+// entry is authoritative (it carries the narrative), so table rows are
+// deferred and emitted only for ids no entry covered — never twice, and
+// never as a finding titled "Variants". Table rows are also registered
+// as index rows so an entry adopts its row's severity / PoC / parent.
 //
 // Returned shape matches the rest of the parser chain:
 //   { type, source: 'piolium', findings: [...] }
@@ -70,79 +70,22 @@
 // `## Deferred Findings (triage skip)` (drafts the triage stage
 // deliberately did not promote). Only findings-labelled sections,
 // severity-group sections, and the `## Summary of Findings` index are
-// read.
-//
-// Structural markdown — `## ` / `### ` / `#### ` headings and heading
-// terminators — is only recognized OUTSIDE fenced code blocks. Piolium
-// inlines PoC snippets, and a shell comment like `## step 2` inside a
-// fence must not end the findings section, nor may a fenced `### run
-// this` line fabricate a finding. See fenceRanges below.
+// read. Structural markdown is only recognized OUTSIDE fenced code
+// blocks — piolium inlines PoC snippets, and a fenced `## step 2` line
+// must not end a section nor a fenced `### run this` fabricate a
+// finding (see md-structure.js).
 
 import {
   cellValue, fenceRanges, inFence, parseCodeRef, parseLabelledFields,
-  splitByHeading, stripBold, stripBrackets, tableObjects,
+  splitByHeading, stripBold, tableObjects,
 } from './md-structure.js'
+import {
+  codeRefOf, idCell, idFromToken, isVariantsHeading, mapSeverity,
+  parseHeading, severityFromId, severityGroupOf, slugTitle,
+} from './parse-piolium-tokens.js'
 
-// Piolium grades findings CRITICAL / HIGH / MEDIUM (a consistency check
-// in its report assembler rejects Low-severity leakage into
-// `findings/`), but drafts and deferred entries can carry LOW or INFO,
-// so the full ladder is mapped. Anything unrecognized falls back to
-// medium at the call sites, keeping a finding with an odd tier visible
-// rather than dropping it — same rule the other markdown parsers use.
-//
-// Only the first whitespace-delimited token is read: bullet values keep
-// wrapped continuation lines (see parseLabelledFields) and may carry a
-// parenthetical ("CRITICAL (raised after the PoC ran)"), while the tier
-// itself is always a single word. Backticks/asterisks are shed so a
-// `**CRITICAL**` still reads.
-function mapSeverity(s) {
-  const first = ((s || '').trim().split(/\s+/u)[0] || '').replaceAll(/[`*]+/gu, '')
-  switch (first.toUpperCase()) {
-    case 'CRITICAL': return 'critical'
-    case 'HIGH': return 'high'
-    case 'MEDIUM': return 'medium'
-    case 'LOW': return 'low'
-    case 'INFO': case 'INFORMATIONAL': return 'informational'
-    default: return ''
-  }
-}
-
-// Finding ids are severity-prefixed and sequential — `C1` / `H2` in the
-// final report, `H-001` in lite consolidation — so the prefix letter is
-// a second source for the tier. Only ids that actually follow that
-// scheme count: a bare leading letter is not enough, or `CVE-2024-1234`
-// would read as critical.
-function severityFromId(id) {
-  const m = /^([CHML])-?\d+$/iu.exec((id || '').trim())
-  if (!m) return ''
-  return { C: 'critical', H: 'high', M: 'medium', L: 'low' }[m[1].toUpperCase()]
-}
-
-// A heading that IS a severity — `Critical`, `HIGH (2)`, `Critical
-// Severity`, `High Findings`, `Medium-Risk Findings (3)` — marks a
-// severity GROUP whose content is that tier's findings. Anchored to the
-// full heading so a finding titled "High memory usage in parser" is
-// never mistaken for a group.
-function severityGroupOf(heading) {
-  const m = /^(critical|high|medium|low|informational|info)(?:[ -](?:severity|risk))?(?:[ -]findings?)?(?:\s*\(\d+\))?$/iu
-    .exec((heading || '').trim())
-  return m ? mapSeverity(m[1]) : ''
-}
-
-// Parse a token as a piolium finding id, optionally carrying the
-// directory slug (`C1`, `H-001`, `C1-command-injection`,
-// `M-001-idor`). Ids are normalized to upper case so `[c1]` and its
-// index row `[C1]` meet. Returns null when the token isn't id-shaped.
-function idFromToken(token) {
-  const m = /^([CHML]-?\d{1,4})(?:-([A-Za-z0-9][\w-]*))?$/iu.exec(token || '')
-  return m ? { id: m[1].toUpperCase(), slug: m[2] || '' } : null
-}
-
-// `command-injection` → `command injection` — the human-readable title
-// recovered from an <id>-<slug> directory-name reference.
-function slugTitle(slug) {
-  return (slug || '').replaceAll('-', ' ')
-}
+const H3_RE = /^### +(.*)$/gmu
+const H4_RE = /^#### +(.*)$/gmu
 
 // Section headers whose body holds the findings themselves. Deliberate
 // non-matches: 'summary of findings' (the index table, read
@@ -174,6 +117,10 @@ export function parsePioliumFindings(content) {
 
   const findings = []
   const seen = new Set()
+  // Variant-table rows wait here until the whole document is read: the
+  // real reports also write each variant as its own full entry, and the
+  // entry wins — a row is emitted only when no entry claimed its id.
+  const pending = []
   const push = (id, finding) => {
     findings.push(finding)
     if (id) seen.add(id)
@@ -184,35 +131,20 @@ export function parsePioliumFindings(content) {
     // `## Critical Findings` — a severity group promoted to the section
     // level.
     const sectionSev = severityGroupOf(header)
-    if (sectionSev) { emit(parseSeverityGroup(body, sectionSev, index)); continue }
-    if (!isDetailHeader(header)) continue
-
-    const blocks = splitBlocks(body)
-    if (blocks.length === 0) {
-      // No `### ` level at all — findings sit directly under the `## `
-      // as `#### ` blocks, a table, or a bullet list.
-      emit(parseSeverityGroup(body, '', index))
-      continue
-    }
-    for (const { heading, body: blockBody } of blocks) {
-      const groupSev = severityGroupOf(heading)
-      if (groupSev) { emit(parseSeverityGroup(blockBody, groupSev, index)); continue }
-      const parsed = parseBlock(heading, blockBody, index)
-      if (!parsed) continue
-      push(parsed.id, parsed.finding)
-      // Variant children (from piolium's variant-hunting phase) appear
-      // ONLY under their parent's detail block — the template
-      // explicitly forbids repeating them as standalone entries — so
-      // the sub-table is the only place they can be read from.
-      for (const v of parsed.variants) push(v.id, v.finding)
-    }
+    if (sectionSev) { emit(parseSeverityGroup(body, sectionSev, index, pending)); continue }
+    if (isDetailHeader(header)) emit(parseDetailSection(body, index, pending))
   }
 
-  // Anything the index lists but the detail sections don't describe:
-  // emit it from the table row alone. The index is the authoritative
-  // finding list, so a report whose detail section was truncated (or
-  // which only ever had the table) still triages every finding instead
-  // of silently losing the difference.
+  for (const v of pending) {
+    if (v.id && seen.has(v.id)) continue
+    push(v.id, v.finding)
+  }
+
+  // Anything the index lists but no block described: emit it from the
+  // table row alone. The index is the authoritative finding list, so a
+  // report whose detail section was truncated (or which only ever had
+  // the table) still triages every finding instead of silently losing
+  // the difference.
   for (const row of index.values()) {
     if (seen.has(row.id)) continue
     push(row.id, fromIndexRow(row))
@@ -237,88 +169,92 @@ export function parsePioliumFindings(content) {
   return { type: 'security', source: 'piolium', findings }
 }
 
-// Split the document into its `## ` sections, keyed by case-folded
-// header. A repeated header CONCATENATES rather than overwrites —
-// concatenated audit runs (`cat a.md b.md`) and reports that split
-// their index into several tables would otherwise silently keep only
-// the last section. Null-prototype object so a section named after an
-// Object.prototype member can't alias an inherited key.
-function parseSections(text) {
-  const sections = Object.create(null)
-  for (const { heading, body } of splitByHeading(text, /^## +(.*)$/gmu)) {
-    const header = heading.trim().toLowerCase()
-    if (!header) continue
-    sections[header] = header in sections ? `${sections[header]}\n${body}` : body
+// One findings-labelled `## ` section: `### ` blocks are findings,
+// severity groups, or a `### Variants` block; a section with no `### `
+// level at all is treated as one big group (its findings sit directly
+// at `#### `, in a table, or in a list).
+function parseDetailSection(body, index, pending) {
+  const blocks = splitByHeading(body, H3_RE)
+  if (blocks.length === 0) return parseSeverityGroup(body, '', index, pending)
+  const out = []
+  let lastId = ''
+  for (const { heading, body: blockBody } of blocks) {
+    const groupSev = severityGroupOf(heading)
+    if (groupSev) { out.push(...parseSeverityGroup(blockBody, groupSev, index, pending)); lastId = ''; continue }
+    if (isVariantsHeading(heading)) { out.push(...parseVariantsBlock(blockBody, index, lastId, pending)); continue }
+    const results = parseFindingBlock(heading, blockBody, index, pending)
+    out.push(...results)
+    lastId = results[0]?.id || lastId
   }
-  return sections
+  return out
 }
 
-// Each finding (or severity group) in a detail section starts at `### `.
-function splitBlocks(detail) {
-  return splitByHeading(detail, /^### +(.*)$/gmu)
+// A `### ` finding block. The head (before any `#### `) is the finding
+// itself; a `#### Variants` sub-heading defers its table rows to
+// `pending`, and any other `#### ` sub-heading is a full entry of its
+// own (Layout C writes each variant as one, cross-linked via
+// `**Variant of**`).
+function parseFindingBlock(heading, body, index, pending) {
+  const { head, subs } = splitLeading(body, H4_RE)
+  const out = []
+  const parent = parseBlock(heading, head, index)
+  if (parent) out.push({ id: parent.id, finding: parent.finding })
+  const parentId = parent?.id || ''
+  for (const sub of subs) {
+    if (isVariantsHeading(sub.heading)) {
+      pending.push(...variantFindings(sub.body, index, parentId))
+      continue
+    }
+    const entry = parseBlock(sub.heading, sub.body, index)
+    if (entry) out.push({ id: entry.id, finding: entry.finding })
+  }
+  return out
 }
 
-// Normalize a table-row object to the shared row shape used by the
-// index, group tables, and the row→finding conversion.
-function indexRowOf(obj) {
-  return {
-    id: stripBrackets(obj.id || ''),
-    title: cellValue(obj.title),
-    severity: cellValue(obj.severity),
-    pocStatus: cellValue(obj['poc status']),
-    status: cellValue(obj.status),
-    parent: stripBrackets(cellValue(obj.parent || '')),
-    location: cellValue(obj.location),
+// `### Variants` as its own block: tables defer to pending; `#### <id>`
+// sub-blocks are the variants' full entries. `parentId` is the finding
+// block preceding this one — the structural parent for rows that don't
+// name their own.
+function parseVariantsBlock(body, index, parentId, pending) {
+  const { head, subs } = splitLeading(body, H4_RE)
+  pending.push(...variantFindings(head, index, parentId))
+  const out = []
+  for (const sub of subs) {
+    if (isVariantsHeading(sub.heading)) { pending.push(...variantFindings(sub.body, index, '')); continue }
+    const entry = parseBlock(sub.heading, sub.body, index)
+    if (entry) out.push({ id: entry.id, finding: entry.finding })
   }
+  return out
 }
 
-// `## Summary of Findings` → id → row. Used both to fill gaps in a
-// detail block (the index carries PoC status / parent / verdict that a
-// sparse block may omit) and as the finding source of last resort.
-function parseIndexTable(text) {
-  const index = new Map()
-  for (const obj of tableObjects(text)) {
-    const row = indexRowOf(obj)
-    if (!row.id) continue
-    index.set(row.id, row)
+// One severity group — a `### Critical` block (or a `## Critical
+// Findings` section) whose content is that tier's findings, in
+// whichever rendering the assembler chose: `#### ` (or `### `)
+// sub-blocks, an id/title table, or a link/bullet list. Also used with
+// sev '' for a findings section that has no `### ` level at all. A
+// group of prose only ("None identified.") yields nothing.
+function parseSeverityGroup(body, sev, index, pending) {
+  const out = []
+  let subs = splitByHeading(body, H4_RE)
+  if (subs.length === 0) subs = splitByHeading(body, H3_RE)
+  let lastId = ''
+  for (const { heading, body: subBody } of subs) {
+    if (isVariantsHeading(heading)) {
+      pending.push(...variantFindings(subBody, index, lastId, sev))
+      continue
+    }
+    const parsed = parseBlock(heading, subBody, index, sev)
+    if (parsed) {
+      out.push({ id: parsed.id, finding: parsed.finding })
+      lastId = parsed.id || lastId
+    }
   }
-  return index
-}
+  if (out.length > 0) return out
 
-// A finding heading in any of its observed spellings:
-//   `[C1] Title`                       (pentest template)
-//   `[C1-command-injection](url)`      (mode outline: linked dir name)
-//   `[C1-command-injection](url) rest`
-//   `C1-command-injection`             (bare dir name)
-//   `C1: Title` / `H-001 — Title`      (id + separator + title)
-//   `Title`                            (bare title)
-// Returns { id, title, link } — id '' when the heading carries none,
-// link '' unless the heading's leading token is a markdown link.
-function parseHeading(headingText) {
-  let text = headingText
-  let link = ''
-  const linked = /^\[([^\]]+)\]\(([^)]+)\)\s*[:—–-]*\s*(.*)$/u.exec(text)
-  if (linked) {
-    link = linked[2].trim()
-    text = linked[3] ? `${linked[1].trim()} ${linked[3].trim()}` : linked[1].trim()
-  }
-  const bracket = /^\[([^\]]+)\] *(.*)$/u.exec(text)
-  if (bracket) {
-    const tok = idFromToken(bracket[1].trim())
-    if (tok) return { id: tok.id, title: bracket[2].trim() || slugTitle(tok.slug) || tok.id, link }
-    // Non-id bracket content keeps the loose behavior: the content is
-    // still a usable dedupe key for the seen-set even when it isn't
-    // severity-prefixed (`[SEC-001]`).
-    return { id: bracket[1].trim(), title: bracket[2].trim(), link }
-  }
-  const space = text.search(/\s/u)
-  const first = (space === -1 ? text : text.slice(0, space)).replace(/[:.,—–-]+$/u, '')
-  const tok = idFromToken(first)
-  if (tok) {
-    const rest = (space === -1 ? '' : text.slice(space + 1)).replace(/^[:—–-]+\s*/u, '').trim()
-    return { id: tok.id, title: rest || slugTitle(tok.slug) || tok.id, link }
-  }
-  return { id: '', title: text.trim(), link }
+  const rows = tableObjects(body).map(indexRowOf).filter((r) => r.id || r.title)
+  if (rows.length > 0) return rows.map((r) => ({ id: r.id, finding: fromIndexRow(r, sev) }))
+
+  return listFindings(body, sev, index)
 }
 
 function parseBlock(heading, body, index, groupSeverity = '') {
@@ -349,22 +285,26 @@ function parseBlock(heading, body, index, groupSeverity = '') {
     || severityFromId(id)
     || 'medium'
 
-  // "Key Code Reference" is the assembler's field name; "Location" and
-  // "File" are accepted as aliases since that's what the finding drafts
-  // and variant tables call the same value.
-  const { file, line, locationLink } = parseCodeRef(
-    fields['key code reference'] || fields.location || fields.file || '')
+  const { file, line, locationLink } = parseCodeRef(codeRefOf(fields))
   let lineOut = line
-  if (lineOut === '?' && fields.line) {
-    const n = /\d+/u.exec(fields.line)
+  if (lineOut === '?' && (fields.line || fields.lines)) {
+    const n = /\d+/u.exec(fields.line || fields.lines)
     if (n) lineOut = n[0]
   }
+
+  // `- **Variant of** [p10-011](#p10-011) · …` — colon-less, so it
+  // lands in prose rather than the fields; read the parent from it and
+  // keep it (plus `<a id>` anchor chrome) out of the description.
+  const variantOf = /\*\*Variant of:?\*\*\s*\[?([^\]\s)]+)/iu.exec(body)
+  const proseClean = prose.split('\n')
+    .filter((l) => !/^\s*<a\s[^>]*>\s*<\/a>\s*$/iu.test(l) && !/\*\*Variant of:?\*\*/iu.test(l))
+    .join('\n').trim()
 
   const finding = {
     file: file || 'unknown',
     line: lineOut,
     severity,
-    description: buildDescription(title || id, fields, prose),
+    description: buildDescription(title || id, fields, proseClean),
   }
   if (locationLink) finding.location = locationLink
   // Last-resort fingerprint discriminator for an unlocated finding —
@@ -374,35 +314,16 @@ function parseBlock(heading, body, index, groupSeverity = '') {
   // these specifically today, but they let a future view (or a printed
   // export) cite the audit's own artifacts without re-parsing the
   // source — the same reason parse-md.js keeps its branch / status.
-  const pocStatus = fields['poc status'] || row?.pocStatus
+  const pocStatus = fields['poc status'] || fields.poc || row?.pocStatus
   if (pocStatus) finding.pocStatus = pocStatus
   const reportPath = fields['detailed report'] || (link.endsWith('report.md') ? link : '')
   if (reportPath) finding.reportPath = reportPath
   if (row?.status) finding.status = row.status
-  if (row?.parent) finding.parent = row.parent
+  const variantOfField = fields['variant of'] ? idCell(fields['variant of'].split(/\s+/u)[0]) : ''
+  const parent = row?.parent || variantOfField || (variantOf ? idCell(variantOf[1]) : '')
+  if (parent) finding.parent = parent
 
-  return { id, finding, variants: parseVariants(body, index, id) }
-}
-
-// One severity group — a `### Critical` block (or a `## Critical
-// Findings` section) whose content is that tier's findings, in
-// whichever of the three renderings the assembler chose: `#### `
-// sub-blocks, an id/title table, or a link/bullet list. Also used with
-// sev '' for a findings section that has no `### ` level at all. A
-// group of prose only ("None identified.") yields nothing.
-function parseSeverityGroup(body, sev, index) {
-  const out = []
-  const subs = splitByHeading(body, /^#### +(.*)$/gmu)
-  for (const { heading, body: subBody } of subs) {
-    const parsed = parseBlock(heading, subBody, index, sev)
-    if (parsed) out.push({ id: parsed.id, finding: parsed.finding })
-  }
-  if (out.length > 0) return out
-
-  const rows = tableObjects(body).map(indexRowOf).filter((r) => r.id || r.title)
-  if (rows.length > 0) return rows.map((r) => ({ id: r.id, finding: fromIndexRow(r, sev) }))
-
-  return listFindings(body, sev, index)
+  return { id, finding }
 }
 
 // Findings rendered as a list — the mode outline says "with links to
@@ -458,48 +379,27 @@ function listFindings(body, sev, index) {
   return out
 }
 
-// `#### Variants` sub-table inside a parent's detail block (Layout A).
-// Each row is a full finding in its own right (its own id, severity and
-// location), linked back through `parent`.
-function parseVariants(body, index, parentId) {
-  const ranges = fenceRanges(body)
-  const start = [...body.matchAll(/^#### +Variants\s*$/gmu)].find((m) => !inFence(ranges, m.index))
-  if (!start) return []
-  // Stop at the next heading of any level so a section following the
-  // table can't be read as more variant rows.
-  const from = start.index + start[0].length
-  const next = [...body.matchAll(/^#{1,6} /gmu)].find((m) => m.index > from && !inFence(ranges, m.index))
-  const table = body.slice(from, next ? next.index : body.length)
-
-  const variants = []
-  for (const obj of tableObjects(table)) {
-    const id = stripBrackets(obj.id || '')
-    const title = cellValue(obj.title)
-    if (!id && !title) continue
-    const row = index.get(id)
-    const severity = mapSeverity(cellValue(obj.severity))
-      || mapSeverity(row?.severity)
-      || severityFromId(id)
-      || 'medium'
-    const { file, line, locationLink } = parseCodeRef(cellValue(obj.location))
-    const finding = {
-      file: file || 'unknown',
-      line,
-      severity,
-      description: stripBold(title || id),
-    }
-    if (locationLink) finding.location = locationLink
-    else if (finding.file === 'unknown' && id) finding.location = `piolium:${id}`
-    const pocStatus = cellValue(obj['poc status']) || row?.pocStatus
-    if (pocStatus) finding.pocStatus = pocStatus
-    // The index row's Parent cell when it names one; otherwise the
-    // enclosing block's id — inside a `#### Variants` table the
-    // relationship is structural even when the index doesn't record it.
-    const parent = row?.parent || parentId
-    if (parent) finding.parent = parent
-    variants.push({ id, finding })
+// Variant-table rows → findings, parented to the enclosing block when
+// the row doesn't name a parent. Rows are also REGISTERED as index rows
+// so a variant's own `#### <id>` entry adopts the row's severity / PoC
+// / parent even in a report with no `## Summary of Findings`. Rows
+// without a table fall back to a bullet list at the caller's group
+// severity.
+function variantFindings(tableText, index, parentId, sevFallback = '') {
+  const out = []
+  for (const obj of tableObjects(tableText)) {
+    const row = indexRowOf(obj)
+    if (!row.id && !row.title) continue
+    if (!row.parent && parentId) row.parent = parentId
+    if (row.id && !index.has(row.id)) index.set(row.id, row)
+    out.push({ id: row.id, finding: fromIndexRow(row, sevFallback) })
   }
-  return variants
+  if (out.length > 0) return out
+  const items = listFindings(tableText, sevFallback, index)
+  for (const e of items) {
+    if (parentId && !e.finding.parent) e.finding.parent = parentId
+  }
+  return items
 }
 
 // A finding known only from a table row. Rows usually carry no path, so
@@ -510,8 +410,8 @@ function parseVariants(body, index, parentId) {
 // `location` fingerprint field (preferred over file/line by
 // deriveFindingId, and never rendered — its one consumer is the id
 // derivation), namespaced so it reads as an opaque token rather than a
-// URL. Group tables may carry a Location column; when they do, it is
-// parsed like any code reference.
+// URL. Variant / group tables may carry a Location column; when they
+// do, it is parsed like any code reference.
 function fromIndexRow(row, sevFallback = '') {
   const severity = mapSeverity(row.severity)
     || sevFallback
@@ -532,16 +432,71 @@ function fromIndexRow(row, sevFallback = '') {
   return finding
 }
 
-// Description = heading + the narrative content, in report order.
-// Labels are kept inline (`Impact: …`) so the expanded card reads like
-// the source report; the unlabelled prose body stands in when there is
-// no Summary label (Layout B). `**bold**` is stripped because the
-// renderer escapes HTML and would otherwise print the asterisks
-// literally. white-space: pre-line on `.desc` keeps paragraph breaks.
+// Split the document into its `## ` sections, keyed by case-folded
+// header. A repeated header CONCATENATES rather than overwrites —
+// concatenated audit runs (`cat a.md b.md`) and reports that split
+// their index into several tables would otherwise silently keep only
+// the last section. Null-prototype object so a section named after an
+// Object.prototype member can't alias an inherited key.
+function parseSections(text) {
+  const sections = Object.create(null)
+  for (const { heading, body } of splitByHeading(text, /^## +(.*)$/gmu)) {
+    const header = heading.trim().toLowerCase()
+    if (!header) continue
+    sections[header] = header in sections ? `${sections[header]}\n${body}` : body
+  }
+  return sections
+}
+
+// Like splitByHeading, but keeps the content BEFORE the first heading
+// (the enclosing block's own body) as `head`.
+function splitLeading(body, re) {
+  const ranges = fenceRanges(body)
+  const first = [...body.matchAll(re)].find((m) => !inFence(ranges, m.index))
+  if (!first) return { head: body, subs: [] }
+  return { head: body.slice(0, first.index), subs: splitByHeading(body, re) }
+}
+
+// Normalize a table-row object to the shared row shape used by the
+// index, variant tables, group tables, and the row→finding conversion.
+// The PoC column appears both as `PoC Status` and plain `PoC`.
+function indexRowOf(obj) {
+  return {
+    id: idCell(obj.id || ''),
+    title: cellValue(obj.title),
+    severity: cellValue(obj.severity),
+    pocStatus: cellValue(obj['poc status'] || obj.poc),
+    status: cellValue(obj.status),
+    parent: idCell(cellValue(obj.parent || '')),
+    location: cellValue(obj.location),
+  }
+}
+
+// `## Summary of Findings` → id → row. Used both to fill gaps in a
+// finding block (the index carries PoC status / parent / verdict that a
+// sparse block may omit) and as the finding source of last resort.
+function parseIndexTable(text) {
+  const index = new Map()
+  for (const obj of tableObjects(text)) {
+    const row = indexRowOf(obj)
+    if (!row.id) continue
+    index.set(row.id, row)
+  }
+  return index
+}
+
+// Description = heading + the narrative content, in report order. The
+// Summary label AND the unlabelled prose body both contribute — a block
+// often carries its labels first and its narrative as the paragraph
+// after them, and dropping either loses the summary. Labels are kept
+// inline (`Impact: …`) so the expanded card reads like the source
+// report; `**bold**` is stripped because the renderer escapes HTML and
+// would otherwise print the asterisks literally. white-space: pre-line
+// on `.desc` keeps paragraph breaks.
 function buildDescription(title, fields, prose) {
   const parts = [title]
   if (fields.summary) parts.push(fields.summary)
-  else if (prose) parts.push(prose)
+  if (prose) parts.push(prose)
   if (fields.details) parts.push(fields.details)
   if (fields.impact) parts.push(`Impact: ${fields.impact}`)
   if (fields['root cause']) parts.push(`Root Cause: ${fields['root cause']}`)

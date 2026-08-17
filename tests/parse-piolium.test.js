@@ -306,6 +306,31 @@ describe('parsePioliumFindings — code reference', () => {
     assert.equal(f.file, 'src/a/b.js')
     assert.equal(f.line, '12')
   })
+
+  it('accepts the **Key code:** shorthand', () => {
+    const detail = ['### [H1] Title', '**Key code:** `src/a/b.js:12`'].join('\n')
+    const f = parsePioliumFindings(build({ detail })).findings[0]
+    assert.equal(f.file, 'src/a/b.js')
+    assert.equal(f.line, '12')
+  })
+
+  it('picks the first path-shaped backtick span out of prose', () => {
+    const f = ref('see `src/api/pay.js:9` and `src/api/refund.js:12`')
+    assert.equal(f.file, 'src/api/pay.js')
+    assert.equal(f.line, '9')
+  })
+
+  it('a backticked function qualifier does not beat a bare path', () => {
+    const f = ref('src/a.js:142 in `runHook()`')
+    assert.equal(f.file, 'src/a.js')
+    assert.equal(f.line, '142')
+  })
+
+  it('reads a #L fragment glued to a backticked path', () => {
+    const f = ref('`src/b.js#L42`')
+    assert.equal(f.file, 'src/b.js')
+    assert.equal(f.line, '42')
+  })
 })
 
 describe('parsePioliumFindings — variants', () => {
@@ -818,6 +843,159 @@ describe('parsePioliumFindings — Findings by Severity layout', () => {
     const f = parsePioliumFindings(md).findings[0]
     assert.equal(f.severity, 'low')
     assert.equal(f.description, 'High memory usage in the parser')
+  })
+
+  it('labels first, summary paragraph after — the paragraph reaches the description', () => {
+    // A `**Key code:** …` line must not swallow the paragraph under it:
+    // a blank line ends a label's value, and the trailing prose is the
+    // finding's narrative.
+    const md = [
+      '# Security Audit Report: x',
+      '',
+      '## Findings by Severity',
+      '',
+      '### Critical',
+      '',
+      '#### [C1] Command injection',
+      '',
+      '**Severity:** Critical',
+      '**Key code:** `src/build/hook.js:142`',
+      '',
+      'The build hook shells out with an unsanitized branch name.',
+    ].join('\n')
+    const f = parsePioliumFindings(md).findings[0]
+    assert.equal(f.file, 'src/build/hook.js')
+    assert.equal(f.line, '142')
+    assert.equal(f.severity, 'critical')
+    assert.equal(f.description,
+      'Command injection\n\nThe build hook shells out with an unsanitized branch name.')
+  })
+
+  it('a Summary label and a trailing paragraph both reach the description', () => {
+    const detail = [
+      '### [H1] Title',
+      '- **Summary:** One-liner.',
+      '',
+      'Longer paragraph with the details.',
+    ].join('\n')
+    const f = parsePioliumFindings(build({ detail })).findings[0]
+    assert.equal(f.description, 'Title\n\nOne-liner.\n\nLonger paragraph with the details.')
+  })
+
+  it('a #### Variants sub-heading inside a group is not a finding', () => {
+    const md = [
+      '# Security Audit Report: x',
+      '',
+      '## Findings by Severity',
+      '',
+      '### Critical',
+      '',
+      '#### [C1] Hook injection',
+      '**Key code:** `src/h.js:2`',
+      '',
+      '#### Variants',
+      '',
+      '| ID | Title | Severity | Location | PoC Status |',
+      '|----|-------|----------|----------|------------|',
+      '| [H2] | Variant on invoices | HIGH | src/api.js:5 | executed |',
+      '',
+      '### High',
+      '',
+      '#### [H9] Other',
+      '**Key code:** `src/o.js:1`',
+    ].join('\n')
+    const parsed = parsePioliumFindings(md)
+    // Table variants are DEFERRED (the real reports also write each
+    // variant as its own entry, which wins) — an unclaimed row is
+    // emitted after all blocks.
+    assert.deepEqual(parsed.findings.map((f) => f.description),
+      ['Hook injection', 'Other', 'Variant on invoices'])
+    const variant = parsed.findings[2]
+    assert.equal(variant.severity, 'high')
+    assert.equal(variant.file, 'src/api.js')
+    assert.equal(variant.line, '5')
+    assert.equal(variant.parent, 'C1')
+  })
+
+  it('a variant with its own entry is emitted once, from the entry', () => {
+    // Layout C: anchored draft-phase ids, `**Key code:**` chains,
+    // `**PoC:**` / `**Files:**` labels, and each variant present BOTH
+    // as a table row and as a full `#### <id>` entry.
+    const md = [
+      '# Security Audit Report: my-repo',
+      '',
+      '## Technical Findings Detail',
+      '',
+      '<a id="p10-011"></a>',
+      '### p10-011 — Prototype pollution in config merge',
+      '',
+      '- **Severity:** HIGH',
+      '- **Summary:** Recursive merge copies proto keys.',
+      '- **Impact:** Any config consumer gains attacker-set properties.',
+      '- **Root cause:** No key filtering in mergeDeep.',
+      '- **Key code:** `src/config/merge.js:20` (`mergeDeep`) → `src/config/load.js:600` → `src/boot.js` (`applyConfig`)',
+      '- **PoC:** executed (application chain driven against real modules)',
+      '- **Files:** poc/merge-poc.js, poc/payload.json',
+      '',
+      '#### Variants',
+      '',
+      '| ID | Title | Severity | Location | PoC |',
+      '|----|-------|----------|----------|-----|',
+      '| [p12-001](#p12-001) | Pollution via CLI overrides | MEDIUM | `src/cli/args.js:50-60` | executed |',
+      '',
+      '<a id="p12-001"></a>',
+      '#### p12-001 — Pollution via CLI overrides',
+      '- **Variant of** [p10-011](#p10-011) · **Pattern** `proto-merge`',
+      '- **Summary:** CLI overrides reach the same merge.',
+      '- **Key code:** `src/cli/args.js:50-60` → `parseArgs` → `mergeDeep`',
+      '- **PoC:** executed',
+    ].join('\n')
+    const parsed = parsePioliumFindings(md)
+    assert.equal(parsed.findings.length, 2)
+    const [parent, variant] = parsed.findings
+    // First backticked path of the chain; draft-phase id recognized.
+    assert.equal(parent.severity, 'high')
+    assert.equal(parent.file, 'src/config/merge.js')
+    assert.equal(parent.line, '20')
+    assert.equal(parent.description, [
+      'Prototype pollution in config merge',
+      'Recursive merge copies proto keys.',
+      'Impact: Any config consumer gains attacker-set properties.',
+      'Root Cause: No key filtering in mergeDeep.',
+    ].join('\n\n'))
+    // The `**Files:**` attachments must not become the location.
+    assert.notEqual(parent.file, 'poc/merge-poc.js')
+    // The entry wins over the table row (one finding, not two, and no
+    // finding titled "Variants"); it adopts the row's severity and the
+    // structural parent, and the `**Variant of**` chrome plus the
+    // `<a id>` anchors stay out of the description.
+    assert.equal(variant.severity, 'medium')
+    assert.equal(variant.file, 'src/cli/args.js')
+    assert.equal(variant.line, '50')
+    assert.equal(variant.parent, 'P10-011')
+    assert.equal(variant.description,
+      'Pollution via CLI overrides\n\nCLI overrides reach the same merge.')
+  })
+
+  it('a ### Variants sibling block parents to the preceding finding', () => {
+    const md = [
+      '# Security Audit Report: x',
+      '',
+      '## Technical Findings Detail',
+      '',
+      '### [C1] Hook injection',
+      '- **Severity:** CRITICAL',
+      '- **Key Code Reference:** src/h.js:2',
+      '',
+      '### Variants',
+      '',
+      '| ID | Title | Severity | Location | PoC Status |',
+      '|----|-------|----------|----------|------------|',
+      '| [H2] | Variant | HIGH | src/v.js:1 | executed |',
+    ].join('\n')
+    const parsed = parsePioliumFindings(md)
+    assert.deepEqual(parsed.findings.map((f) => f.description), ['Hook injection', 'Variant'])
+    assert.equal(parsed.findings[1].parent, 'C1')
   })
 
   it('index rows still fill gaps for grouped findings', () => {
