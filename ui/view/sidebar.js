@@ -8,6 +8,7 @@ import { loadAdminBundlesBundle, loadAdminReportsBundle, loadAdminReposBundle, l
 import sidebarCSS from './sidebar.css'
 import fileIconCSS from '../styles/file-icon.css'
 import { initEncryptionToggle, refreshEncryptionToggle } from './encryption-toggle.js'
+import { initStorageStatus, scheduleStorageStatusRefresh } from './storage-status.js'
 import { render } from './render.js'
 
 // Set on mount (`<app-sidebar>` firstUpdated). `hostEl` is the
@@ -411,6 +412,11 @@ export async function renderSidebar() {
   // the OPFS scan. Updated on every sidebar render — drops, deletes,
   // and switchToFile all refresh through here.
   state.bundles = bundleNames
+  // Keep the storage-status line's usage number roughly in step with
+  // whatever mutation triggered this repaint (drops, deletes, bundle
+  // ops, sync downloads). Debounced inside the module; no-op before
+  // mount.
+  scheduleStorageStatusRefresh()
   // Pre-mount calls (boot ordering: view.js's `renderSidebar()`
   // can fire before the `<app-sidebar>` element's first shadow
   // render) still need the `state.bundles` side-effect above, but
@@ -1734,6 +1740,7 @@ function mount(host) {
   root = host.renderRoot
   fileList = root.querySelector('#file-list')
   initEncryptionToggle(root.querySelector('#encryption-toggle'))
+  initStorageStatus(root.querySelector('#storage-status'))
   root.addEventListener('click', onSidebarClick)
   root.addEventListener('dblclick', onSidebarDblclick)
   root.addEventListener('dragstart', onSidebarDragstart)
@@ -1809,6 +1816,10 @@ class AppSidebar extends LitElement {
         </button>
         <button id="auth-status" type="button" hidden></button>
       </div>
+      <button id="storage-status" type="button" hidden>
+        <span class="storage-dot" aria-hidden="true"></span>
+        <span class="storage-label"></span>
+      </button>
       <div id="user-menu" popover class="user-menu"></div>
     `
   }
