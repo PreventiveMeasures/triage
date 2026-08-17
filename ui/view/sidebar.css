@@ -622,12 +622,11 @@ sidebar-delete-current button {
    painted where the button shouldn't be reachable. */
 #sync-status[hidden] { display: none; }
 
-/* Storage persistence status — full-width row under the actions bar
-   (see view/storage-status.js). The dot mirrors the sync-dot idiom:
-     green — persistent storage granted (browser won't auto-evict)
-     amber — best-effort bucket (evictable); click requests persist()
-   No `data-persisted` attribute = the amber default, matching the
-   "unknown leans warning" stance for data-loss surfaces. */
+/* Storage-at-risk warning — full-width row under the actions bar
+   (see view/storage-status.js). Warning-only: it renders solely when
+   the origin's bucket is confirmed best-effort (evictable); healthy
+   storage shows nothing. Amber dot mirrors the sync-dot idiom;
+   click requests persist(). */
 #storage-status {
   display: flex; align-items: center; gap: .35rem;
   width: 100%;
@@ -646,7 +645,6 @@ sidebar-delete-current button {
     flex-shrink: 0;
     box-shadow: 0 0 0 1px rgb(from var(--text) r g b / .15);
   }
-  &[data-persisted] .storage-dot { background: var(--green); }
 }
 /* Same specificity dance as #sync-status[hidden] above. */
 #storage-status[hidden] { display: none; }

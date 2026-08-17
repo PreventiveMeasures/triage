@@ -4,11 +4,12 @@
 // touching a delete button (see client/persistence.js for the
 // per-engine rules). Three concerns live here:
 //
-//   1. Paint: a dot + short label under the sidebar actions row
-//      ("Storage protected · 12.3 MB" / "Storage at risk · …"),
-//      with the full explanation in the tooltip. Hidden when the
-//      environment can't answer either probe (file://, ancient
-//      engines) — an eternally-unknown indicator is noise.
+//   1. Paint: a WARNING-ONLY row under the sidebar actions. It
+//      renders solely when the bucket is confirmed best-effort
+//      ("Storage at risk", explanation + usage in the tooltip) —
+//      a granted or unknowable persistence state paints NOTHING.
+//      Healthy storage is the expected steady state; a permanent
+//      "everything is fine" ornament is just visual noise.
 //   2. Auto-request policy: ask for persistent storage once per
 //      session, and only once there is local data to protect —
 //      Firefox shows a permission prompt on persist(), and popping
@@ -44,13 +45,15 @@ let autoRequested = false
 // number honest without the spam.
 let refreshTimer = 0
 
-// iOS/iPadOS browsers are all WebKit (CriOS / FxiOS included), and
-// desktop Safari carries no Chrome/Edg/OPR token — so "WebKit and
-// not a Chromium/Blink UA" is the population governed by ITP's
-// 7-day cleanup. UA sniffing is fine at tooltip-copy stakes.
+// iOS/iPadOS browsers are all WebKit (CriOS / FxiOS / EdgiOS
+// included), and desktop Safari carries no Chrome/Edg/OPR token —
+// so "WebKit and not a Chromium/Blink UA" is the population
+// governed by ITP's 7-day cleanup. The Blink tokens are slash-
+// anchored where a WebKit sibling shares the prefix (EdgiOS vs
+// Edg/, OPT vs OPR/). UA sniffing is fine at tooltip-copy stakes.
 function isItpGoverned() {
   const ua = navigator.userAgent
-  return /AppleWebKit/u.test(ua) && !/Chrome|Chromium|Edg|OPR|Android/u.test(ua)
+  return /AppleWebKit/u.test(ua) && !/Chrome\/|Chromium|Edg\/|OPR\/|Android/u.test(ua)
 }
 
 // Human-scale size for the label; navigator.storage.estimate() is
@@ -64,33 +67,23 @@ function formatStorageSize(n) {
 
 function paint() {
   if (!button) return
-  // Neither probe answered → nothing truthful to show.
-  if (!info || !info.supported || (info.persisted === null && info.usage === null)) {
+  // Warning-only: paint solely on a CONFIRMED best-effort bucket.
+  // Granted, unknowable, and unsupported all hide the row — no
+  // "everything is fine" ornament.
+  if (!info || info.persisted !== false) {
     button.hidden = true
     return
   }
   button.hidden = false
-  const labelEl = button.querySelector('.storage-label')
-  const usagePart = info.usage === null ? '' : ` · ${formatStorageSize(info.usage)}`
   const usageDetail = info.usage === null || info.quota === null
     ? ''
     : ` Using ${formatStorageSize(info.usage)} of ${formatStorageSize(info.quota)}.`
-  button.toggleAttribute('data-persisted', info.persisted === true)
-  if (info.persisted === true) {
-    labelEl.textContent = `Storage protected${usagePart}`
-    button.title = `Persistent storage granted — the browser won't auto-delete this site's reports, bundles and triage.${usageDetail}`
-  } else if (info.persisted === false) {
-    labelEl.textContent = `Storage at risk${usagePart}`
-    button.title = 'Reports, bundles and triage are in best-effort storage — the browser may delete them all under disk pressure or after long inactivity. '
-      + (isItpGoverned()
-        ? 'On Safari (and all iOS browsers) data is cleared after 7 days without using the site; add this page to your Home Screen or Dock to prevent that.'
-        : 'Click to request persistent storage (browsers grant it silently based on how much you use the site, or after a prompt).')
-      + usageDetail
-  } else {
-    // persisted unknowable but usage known — still worth showing.
-    labelEl.textContent = `Storage${usagePart}`
-    button.title = `Local storage used by reports, bundles and triage.${usageDetail}`
-  }
+  button.querySelector('.storage-label').textContent = 'Storage at risk'
+  button.title = 'Reports, bundles and triage are in best-effort storage — the browser may delete them all under disk pressure or after long inactivity. '
+    + (isItpGoverned()
+      ? 'On Safari (and all iOS browsers) data is cleared after 7 days without using the site; add this page to your Home Screen or Dock to prevent that.'
+      : 'Click to request persistent storage (browsers grant it silently based on how much you use the site, or after a prompt).')
+    + usageDetail
 }
 
 export async function refreshStorageStatus() {
