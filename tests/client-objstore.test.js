@@ -32,8 +32,14 @@ async function makeKeys() {
 // Subscribe to a broadcast event with a timeout. Any test that
 // awaits a broadcast without this wrapper will hang indefinitely
 // if the expected frame never arrives — turning a real bug into
-// a stalled test run.
-function awaitEvent(label, subscribe, timeoutMs = 5_000) {
+// a stalled test run. The bound exists only to convert that hang
+// into a diagnosable failure, so it is sized generously: the timer
+// starts when the listener registers — BEFORE the put/delete that
+// triggers the broadcast is issued — so the window has to cover the
+// triggering ops' full round-trips too, and on a loaded CI runner
+// (every test file runs concurrently, each against its own spawned
+// server) single ops have been observed to take >10s.
+function awaitEvent(label, subscribe, timeoutMs = 60_000) {
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error(`awaitEvent timeout: ${label} did not fire within ${timeoutMs}ms`)), timeoutMs)
     subscribe((value) => { clearTimeout(t); resolve(value) })
