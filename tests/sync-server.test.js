@@ -88,6 +88,12 @@ function connect(url) {
     ws.addEventListener('message', (event) => {
       let msg
       try { msg = JSON.parse(event.data) } catch { return }
+      // Drop the connect-time `server-info` mode advertisement (frame
+      // #1, right behind the challenge) exactly like the production
+      // demux does — no test here reads it off the socket, and under
+      // CI load the server can flush it late enough to land inside an
+      // `expectSilent` measurement window and spuriously fail it.
+      if (msg?.type === 'server-info') return
       for (let i = 0; i < waiters.length; i++) {
         if (waiters[i].predicate(msg)) {
           const w = waiters[i]
