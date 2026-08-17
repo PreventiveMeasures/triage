@@ -67,10 +67,14 @@ describe('storage — saveFile + readFile round-trip', () => {
     assert.equal(await readFile(name), content)
   })
 
-  it('preserves an empty file', async () => {
+  it('rejects empty content (corruption guard — an empty entry is never a report)', async () => {
+    // Empty on-disk payloads are treated as corruption artifacts at
+    // read time (see isEmptyPayload in client/storage.js), so the
+    // write boundary refuses to mint one. Regression guard for the
+    // truncated-entry → gzip('') laundering bug.
     const name = uniqueName('empty')
-    await saveFile(name, '')
-    assert.equal(await readFile(name), '')
+    await assert.rejects(saveFile(name, ''), /Refusing to save empty report/u)
+    await assert.rejects(readFile(name), (err) => err.message.startsWith('File not found:'))
   })
 
   it('overwrites an existing entry', async () => {
