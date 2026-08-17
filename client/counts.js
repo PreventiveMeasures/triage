@@ -7,12 +7,11 @@
 // pre-existing OPFS entries the first time the sidebar surfaces
 // them. Cleared when a file is deleted.
 //
-// Stored as a single JSON blob under `deepview.fileCounts`. Each entry
-// is `{ count, source }`; legacy entries written before the source
-// field existed were bare numbers, and `getCount` / `getKind` handle
-// that shape transparently. Misses return `undefined`, which the
-// sidebar treats as "no badge / unknown bucket yet" — the lazy fetch
-// runs in the background and re-renders when each entry lands.
+// Stored as a single JSON blob under `deepview.fileCounts`, versioned
+// via a reserved `__v` key. Each entry is `{ count, source }`; misses
+// return `undefined`, which the sidebar treats as "no badge / unknown
+// bucket yet" — the lazy fetch runs in the background and re-renders
+// when each entry lands.
 import { readFile } from './storage.js'
 import { parseMarkdownFindings } from '../common/parse-md.js'
 import { parseDeepsecFindings } from '../common/parse-deepsec.js'
@@ -21,6 +20,15 @@ import { getItem as getSecureItem, setItem as setSecureItem } from './secure-sto
 
 const COUNTS_KEY = 'deepview.fileCounts'
 
+// Bump whenever a parser-chain change can re-classify already-imported
+// files: nothing else ever re-analyzes a cached entry (`ensureCounts`
+// skips names already present), so without the version a stale `source`
+// sticks forever — a piolium report imported before its parser existed
+// stayed bucketed under Claude Security while the report view titled it
+// Piolium. A version mismatch drops the whole blob; the sidebar's lazy
+// fill re-analyzes each file once. v2: piolium recognition.
+const COUNTS_VERSION = 2
+
 // File-counts blob contains filenames, which we treat as sensitive
 // metadata (project names, sample identifiers). Reads go through
 // the secure-storage cache (hydrated at boot); writes async-persist.
@@ -28,6 +36,7 @@ let cache = null
 function load() {
   if (cache) return cache
   try { cache = JSON.parse(getSecureItem(COUNTS_KEY) || '{}') } catch { cache = {} }
+  if (cache?.__v !== COUNTS_VERSION) cache = { __v: COUNTS_VERSION }
   return cache
 }
 function persist() {
@@ -37,8 +46,9 @@ function persist() {
 
 // Normalize a cache entry to the `{ count, source }` shape. Legacy
 // entries were bare numbers — accept those and treat the source as
-// unknown.
+// unknown. `__v` is the version marker, not a file entry.
 function entryOf(name) {
+  if (name === '__v') return undefined
   const v = load()[name]
   if (v === undefined) return undefined
   if (typeof v === 'number') return { count: v }

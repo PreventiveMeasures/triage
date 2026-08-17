@@ -1,10 +1,12 @@
 // Piolium markdown findings parser — `common/parse-piolium.js`. Pure
-// function; covers the format guard, the `## Technical Findings Detail`
-// → `### [ID] Title` structure, severity precedence (bullet → index row
-// → id prefix), `Key Code Reference` file/line extraction, the
-// `#### Variants` sub-table, the `## Summary of Findings` fallback,
-// fenced-code-block handling, repeated sections, and the sections that
-// must NOT become findings.
+// function; covers the format guard, the pentest-template layout
+// (`## Technical Findings Detail` → `### [ID] Title`), the mode
+// pipelines' `## Findings by Severity` layout (severity groups holding
+// `#### ` blocks / tables / link lists), severity precedence (bullet →
+// index row → group → id prefix), `Key Code Reference` file/line
+// extraction, the `#### Variants` sub-table, the `## Summary of
+// Findings` fallback, fenced-code-block handling, repeated sections,
+// and the sections that must NOT become findings.
 
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
@@ -635,6 +637,213 @@ describe('parsePioliumFindings — repeated sections', () => {
     ].join('\n')
     const parsed = parsePioliumFindings(md)
     assert.deepEqual(parsed.findings.map((f) => f.description), ['First', 'Second'])
+  })
+})
+
+describe('parsePioliumFindings — Findings by Severity layout', () => {
+  // The mode pipelines (balanced L6c, deep P15) task the assembler with
+  // "Findings by Severity (with links to per-finding report.md)",
+  // referencing findings "by their <id>-<slug> directory name" — a
+  // different layout from the pentest template above. The exact
+  // rendering inside each severity group is the composing agent's
+  // choice, so all three observed forms are covered: #### blocks,
+  // link/bullet lists, and tables.
+
+  it('parses the balanced-mode shape: groups with #### blocks and link lists', () => {
+    const md = [
+      '# Security Audit Report: my-repo',
+      '',
+      '## Executive Summary',
+      'The audit found one critical and two high issues.',
+      '',
+      '## Findings by Severity',
+      '',
+      '### Critical',
+      '',
+      '#### [C1-command-injection](findings/C1-command-injection/report.md)',
+      '',
+      'The build hook shells out with an unsanitized branch name.',
+      '',
+      '**Impact:** RCE on the CI runner.',
+      '',
+      '### High',
+      '',
+      '- [H1-idor-invoices](findings/H1-idor-invoices/report.md): IDOR on the invoices endpoint.',
+      '- [H2-path-traversal](findings/H2-path-traversal/report.md) — Path traversal in the extractor.',
+      '',
+      '### Low',
+      '',
+      'None identified.',
+      '',
+      '## Attack Surface Summary',
+      '',
+      '- [recon](piolium/attack-surface/lite-recon.md)',
+      '',
+      '## Coverage Gaps',
+      '',
+      '- Payment flows were not exercised.',
+      '',
+      '## Methodology Notes',
+      '',
+      'Static analysis plus manual probing.',
+    ].join('\n')
+    const parsed = parsePioliumFindings(md)
+    assert.equal(parsed.source, 'piolium')
+    assert.deepEqual(parsed.findings.map((f) => f.severity), ['critical', 'high', 'high'])
+    const [c1, h1, h2] = parsed.findings
+    // Title recovered from the <id>-<slug> directory name; prose body
+    // and the Impact label folded into the description.
+    assert.equal(c1.description, [
+      'command injection',
+      'The build hook shells out with an unsanitized branch name.',
+      'Impact: RCE on the CI runner.',
+    ].join('\n\n'))
+    assert.equal(c1.location, 'piolium:C1')
+    assert.equal(c1.reportPath, 'findings/C1-command-injection/report.md')
+    assert.equal(h1.description, 'idor invoices\n\nIDOR on the invoices endpoint.')
+    assert.equal(h1.location, 'piolium:H1')
+    assert.equal(h2.description, 'path traversal\n\nPath traversal in the extractor.')
+    // "None identified." placeholder and the Attack Surface / Coverage
+    // Gaps link lists must not become findings.
+    assert.equal(parsed.findings.length, 3)
+  })
+
+  it('reads counted groups and id-prefixed #### headings', () => {
+    const md = [
+      '# Security Audit Report: x',
+      '',
+      '## Findings by Severity',
+      '',
+      '### HIGH (2)',
+      '',
+      '#### H1: Weak session tokens',
+      '- **Severity:** High',
+      '- **Key Code Reference:** src/auth/session.js:33',
+      '',
+      '#### H-002-jwt-audience',
+      'Tokens are accepted for any audience.',
+      '',
+      '### MEDIUM (1)',
+      '',
+      '#### [M1] Verbose errors',
+      '**File:** src/http/errors.js:9',
+    ].join('\n')
+    const parsed = parsePioliumFindings(md)
+    const [h1, h2, m1] = parsed.findings
+    assert.equal(h1.severity, 'high')
+    assert.equal(h1.file, 'src/auth/session.js')
+    assert.equal(h1.line, '33')
+    assert.equal(h1.description, 'Weak session tokens')
+    // Group severity carries when the block names none; slug title +
+    // prose body.
+    assert.equal(h2.severity, 'high')
+    assert.equal(h2.description, 'jwt audience\n\nTokens are accepted for any audience.')
+    assert.equal(h2.location, 'piolium:H-002')
+    // Un-bulleted `**File:**` label still resolves the code reference.
+    assert.equal(m1.severity, 'medium')
+    assert.equal(m1.file, 'src/http/errors.js')
+    assert.equal(m1.line, '9')
+  })
+
+  it('reads a table inside a group, inheriting the group severity', () => {
+    const md = [
+      '# Security Audit Report: x',
+      '',
+      '## Findings by Severity',
+      '',
+      '### Medium',
+      '',
+      '| ID | Title | Location |',
+      '|----|-------|----------|',
+      '| [M1] | Verbose error responses | src/http/errors.js:9 |',
+    ].join('\n')
+    const f = parsePioliumFindings(md).findings[0]
+    assert.equal(f.severity, 'medium')
+    assert.equal(f.description, 'Verbose error responses')
+    assert.equal(f.file, 'src/http/errors.js')
+    assert.equal(f.line, '9')
+  })
+
+  it('accepts a severity group promoted to the section level', () => {
+    const md = [
+      '# Security Audit Report: x',
+      '',
+      '## Critical Findings',
+      '',
+      '#### [C1] Hook injection',
+      '- **Key Code Reference:** src/h.js:2',
+    ].join('\n')
+    const f = parsePioliumFindings(md).findings[0]
+    assert.equal(f.severity, 'critical')
+    assert.equal(f.file, 'src/h.js')
+  })
+
+  it('accepts #### findings directly under a findings section', () => {
+    const md = [
+      '# Security Audit Report: x',
+      '',
+      '## Findings',
+      '',
+      '#### [C1] Hook injection',
+      '- **Key Code Reference:** src/h.js:2',
+    ].join('\n')
+    const parsed = parsePioliumFindings(md)
+    assert.equal(parsed.findings.length, 1)
+    assert.equal(parsed.findings[0].severity, 'critical')
+  })
+
+  it('the Findings by Severity marker alone passes the format guard', () => {
+    const md = [
+      '# Audit of my-repo',
+      '',
+      '## Findings by Severity',
+      '',
+      '### High',
+      '- [H1-idor](findings/H1-idor/report.md): IDOR.',
+    ].join('\n')
+    const parsed = parsePioliumFindings(md)
+    assert.equal(parsed.source, 'piolium')
+    assert.equal(parsed.findings[0].severity, 'high')
+  })
+
+  it('does not mistake a finding title starting with a tier word for a group', () => {
+    const md = [
+      '# Security Audit Report: x',
+      '',
+      '## Technical Findings Detail',
+      '',
+      '### High memory usage in the parser',
+      '- **Severity:** LOW',
+    ].join('\n')
+    const f = parsePioliumFindings(md).findings[0]
+    assert.equal(f.severity, 'low')
+    assert.equal(f.description, 'High memory usage in the parser')
+  })
+
+  it('index rows still fill gaps for grouped findings', () => {
+    const md = [
+      '# Security Audit Report: x',
+      '',
+      '## Summary of Findings',
+      '',
+      '| ID | Title | Severity | PoC Status | Parent |',
+      '|----|-------|----------|------------|--------|',
+      '| [C1] | Command injection | CRITICAL | executed | -- |',
+      '| [M9] | Index-only finding | MEDIUM | theoretical | -- |',
+      '',
+      '## Findings by Severity',
+      '',
+      '### Critical',
+      '',
+      '- [C1-command-injection](findings/C1-command-injection/report.md): Command injection.',
+    ].join('\n')
+    const parsed = parsePioliumFindings(md)
+    assert.equal(parsed.findings.length, 2)
+    // The grouped list entry adopts its index row's PoC status; the
+    // index-only row still lands via the fallback.
+    assert.equal(parsed.findings[0].pocStatus, 'executed')
+    assert.equal(parsed.findings[1].description, 'Index-only finding')
+    assert.equal(parsed.findings[1].pocStatus, 'theoretical')
   })
 })
 
