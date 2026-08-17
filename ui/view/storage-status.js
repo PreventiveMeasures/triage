@@ -96,22 +96,35 @@ function paint() {
     + usageDetail
 }
 
-// Chromium's denial is silent and, from a dev/localhost profile,
-// effectively permanent (the importance heuristics can't pass), so
-// the breadcrumb explains WHY and what would flip it — otherwise a
-// user clicking the banner sees "not granted" with no effect and
-// reads it as a bug.
+// Chromium's denial is silent, so the breadcrumb explains WHY and
+// what would flip it — otherwise a user clicking the banner sees
+// "not granted" with no effect and reads it as a bug.
+//
+// The `localhost` special case is structural, not a heuristic
+// shortfall: Chromium's important-sites ranking (which gates the
+// grant) keys every signal — engagement, notifications, installed
+// app, bookmarks — by REGISTERABLE DOMAIN, with an explicit
+// fallback to the host only for IP literals
+// (ImportantSitesUtil::GetRegisterableDomainOrIPFromHost). Plain
+// `localhost` has no registerable domain and is not an IP, so its
+// signals are dropped before ranking and persist() can never be
+// granted there, no matter what the user enables. 127.0.0.1 IS an
+// IP literal (and still a secure context), so it can pass.
 function logRequestOutcome(granted, viaGesture) {
   const suffix = viaGesture ? ' (user gesture)' : ''
   if (granted) {
     console.info(`storage: persistent-storage request granted${suffix}`)
     return
   }
+  const localhostNote = !isItpGoverned() && location.hostname === 'localhost'
+    ? ' Note: plain localhost can NEVER pass — Chromium keys site importance by registerable domain (IP literals excepted) and localhost has none; for local testing use 127.0.0.1 instead.'
+    : ''
   console.info(
     `storage: persistent-storage request not granted${suffix} — `
     + (isItpGoverned()
       ? 'Safari ties persistence to install state; add the app to the Home Screen / Dock.'
-      : 'Chromium-based browsers never prompt and silently deny origins they don\'t consider important; installing the app, bookmarking it, allowing notifications, or regular use flips the heuristic. Firefox shows a prompt instead.'),
+      : 'Chromium-based browsers never prompt and silently deny origins they don\'t consider important; installing the app, bookmarking it, allowing notifications, or regular use flips the heuristic (re-evaluated on every request). Firefox shows a prompt instead.')
+    + localhostNote,
   )
 }
 
