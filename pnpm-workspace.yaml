@@ -15,5 +15,3 @@ minimumReleaseAgeExclude:
   - "@chalker/*"
   - "@preventive/*"
   - "@rray/*"
-patchedDependencies:
-  '@exodus/stasis-core@1.0.0-beta.3': patches/@exodus__stasis-core@1.0.0-beta.3.patch
