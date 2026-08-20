@@ -199,6 +199,13 @@
    columns lay out edge-to-edge and overflow horizontally inside the
    board when the viewport is too narrow. */
 .kanban-board {
+  /* Board spacings, named because the fullscreen-column rule below
+     has to reproduce the normal card width from them. `--kanban-cols`
+     (the column count) is stamped inline by render.js. */
+  --kanban-gap: .4rem;
+  --kanban-body-pad: .3rem;
+  --kanban-col-border: 1px;
+
   display: grid;
   grid-auto-flow: column;
   grid-auto-columns: minmax(200px, 1fr);
@@ -210,7 +217,7 @@
      the row to the parent (flex: 1 inside the bounded
      findings-content), letting the column bodies scroll. */
   grid-template-rows: minmax(0, 1fr);
-  gap: .4rem;
+  gap: var(--kanban-gap);
   overflow-x: auto;
   flex: 1; min-height: 0;
   scrollbar-width: thin;
@@ -228,7 +235,7 @@
   display: flex; flex-direction: column;
   min-width: 0; min-height: 0;
   background: var(--surface); backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--border); border-radius: 6px;
+  border: var(--kanban-col-border, 1px) solid var(--border); border-radius: 6px;
   box-shadow: var(--shadow-glass);
   overflow: hidden;
   transition: border-color .12s, background .12s;
@@ -252,12 +259,40 @@
   text-transform: uppercase; letter-spacing: .06em;
   color: var(--muted);
 
+  /* Label soaks up the free space so the count and the fullscreen
+     toggle stay pinned to the right edge as a pair, and a label too
+     long for a narrow column ellipsises instead of shoving them out. */
+  & .label {
+    flex: 1 1 auto; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
   & .count {
     font-weight: 500; font-size: .7rem;
     color: var(--muted);
     padding: 0 .35rem; border-radius: 999px;
     background: rgb(from var(--text) r g b / .08);
   }
+}
+
+/* Fullscreen toggle at the right end of the header — hands this
+   column the whole board and back (state.kanbanExpandedColumn; the
+   click handler lives in events.js). Borrows the card's .kanban-action
+   chip treatment so the board's two icon affordances match. */
+.kanban-column-header .kanban-expand {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center; justify-content: center;
+  padding: 0;
+  border: 0; border-radius: 3px;
+  background: none;
+  line-height: 0;
+  color: var(--muted);
+  cursor: pointer;
+
+  &:hover { color: var(--accent); }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  & svg { width: 12px; height: 12px; }
 }
 
 /* Per-column accent — the header label adopts the same bucket color
@@ -275,13 +310,48 @@
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: none;
-  padding: .3rem;
+  padding: var(--kanban-body-pad, .3rem);
   display: flex; flex-direction: column; gap: .25rem;
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
 
   &::-webkit-scrollbar { width: 5px; }
   &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+}
+
+/* Fullscreen column — render.js drops the other columns, so this one
+   takes the board's single grid track edge to edge. Its cards then lay
+   out across `--kanban-cols` tracks (the number of columns the board
+   would have shown) rather than one, so a wide column shows a wide
+   grid of cards instead of a single very long strip.
+
+   The column gap is what keeps the cards exactly the width they had on
+   the normal board. There, each of the N columns is
+   `(W - (N - 1) × gap) / N` wide and gives up `2 × (pad + border)` of
+   that to its own chrome; here a single column pays that once for all N
+   tracks. Folding the N - 1 columns' worth of chrome the board no
+   longer draws back into the inter-card gap — `gap + 2 × pad +
+   2 × border` — makes the tracks come out the same width to the pixel.
+   Row gap keeps the .25rem from the flex layout above.
+
+   `align-content: start` is load-bearing: grid rows are auto-sized, and
+   the default stretch would balloon them to fill a body taller than its
+   cards, so a half-empty column would render enormous ones. */
+.kanban-column.expanded > .kanban-column-body {
+  display: grid;
+  grid-template-columns: repeat(var(--kanban-cols, 6), minmax(0, 1fr));
+  align-content: start;
+  column-gap: calc(
+    var(--kanban-gap, .4rem) +
+    (var(--kanban-body-pad, .3rem) + var(--kanban-col-border, 1px)) * 2
+  );
+}
+
+/* The empty-state line is a grid item too once the column is
+   fullscreen — span every track so it stays centered on the column
+   rather than sitting in the first one. */
+.kanban-column.expanded > .kanban-column-body > .kanban-empty {
+  grid-column: 1 / -1;
 }
 
 .kanban-empty {
