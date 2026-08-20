@@ -865,6 +865,18 @@ function findingCardPlaceholder(g, inGroup = false, context = null) {
     : html`<finding-card data-gid=${gid}></finding-card>`
 }
 
+// Corner brackets pointing outwards / inwards for the kanban column
+// header's fullscreen toggle: outwards = "blow this column up to the
+// whole board", inwards = "put the other columns back". Same 16-unit
+// viewBox and stroke weight as the card action glyphs above so the
+// board's chrome reads as one family.
+const EXPAND_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <path d="M6 2H2v4M10 2h4v4M14 10v4h-4M6 14H2v-4"/>
+</svg>`
+const COLLAPSE_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <path d="M6 2v4H2M10 2v4h4M10 14v-4h4M6 14v-4H2"/>
+</svg>`
+
 // Compact kanban card — tiny colored letter-chip + multi-line
 // title + file:line. The full card (tabs, action buttons, the
 // description body) lives behind a click that opens a centered
@@ -1201,6 +1213,11 @@ function findingsBodyTemplate(filtered) {
     // Drag-and-drop ([data-kanban-source] / [data-kanban-target])
     // moves the card between status columns; the handler lives in
     // events.js.
+    //
+    // Each header also carries a fullscreen toggle: it drops the
+    // other columns and gives this one the whole board (see
+    // `expandedKey` below), for working through a single bucket
+    // when six narrow columns aren't the useful shape.
     const columns = [
       { key: 'untriaged',  label: 'Untriaged',   target: 'untriaged' },
       { key: 'inprogress', label: 'In progress', target: 'inprogress' },
@@ -1216,6 +1233,20 @@ function findingsBodyTemplate(filtered) {
       const slot = buckets.get(key)
       if (slot) slot.push(g)
     }
+    // Fullscreen column. Re-validated against the column list rather
+    // than trusted straight from state, so a key left over from a
+    // renamed / dropped bucket degrades to the normal board instead
+    // of blanking it.
+    const expandedKey = columns.some((c) => c.key === state.kanbanExpandedColumn)
+      ? state.kanbanExpandedColumn
+      : null
+    const shownColumns = expandedKey ? columns.filter((c) => c.key === expandedKey) : columns
+    // Stamped on the board so findings.css can lay the expanded
+    // column's cards out in exactly as many tracks as the board would
+    // otherwise have shown columns — keeping the card width identical
+    // either side of the toggle. Derived from the list above so
+    // adding or removing a bucket needs no matching CSS edit.
+    const boardStyle = { '--kanban-cols': String(columns.length) }
     // Surface the focused group's details modal in the same body
     // template so the popover's lifecycle is bound to the kanban
     // view's lifecycle; switching to a different view-mode unmounts
@@ -1224,16 +1255,25 @@ function findingsBodyTemplate(filtered) {
     const focusGroup = state.kanbanPopoverGid
       ? filtered.find((g) => groupKey(g) === state.kanbanPopoverGid)
       : null
-    return html`<div class="kanban-board">
-      ${repeat(columns, (c) => c.key, (c) => {
+    return html`<div class="kanban-board" style=${styleMap(boardStyle)}>
+      ${repeat(shownColumns, (c) => c.key, (c) => {
         const items = buckets.get(c.key)
+        const isExpanded = c.key === expandedKey
         return html`<div
-          class=${`kanban-column kanban-column-${c.key}`}
+          class=${`kanban-column kanban-column-${c.key}${isExpanded ? ' expanded' : ''}`}
           data-kanban-target=${c.target}
         >
           <div class="kanban-column-header">
             <span class="label">${c.label}</span>
             <span class="count">${items.length}</span>
+            <button
+              type="button"
+              class="kanban-expand"
+              data-kanban-expand=${c.key}
+              aria-pressed=${isExpanded}
+              title=${isExpanded ? 'Show all columns' : `Show only ${c.label}`}
+              aria-label=${isExpanded ? 'Show all columns' : `Show only ${c.label}`}
+            >${isExpanded ? COLLAPSE_ICON : EXPAND_ICON}</button>
           </div>
           <div class="kanban-column-body">
             ${items.length === 0

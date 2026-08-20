@@ -17,6 +17,11 @@ export type ViewMode = 'table' | 'list' | 'grouped' | 'kanban' | 'focus'
 export type SeverityMode = 'corrected' | 'original'
 export type CurrentView = 'findings' | 'files' | 'bundles' | 'admin-users' | 'manage-repos' | 'manage-reports' | 'manage-bundles' | 'manage-teams'
 export type TriageBucket = 'inprogress' | 'fixed' | 'invalid' | 'deleted'
+// One kanban board column. The four real triage buckets plus the two
+// pseudo-buckets the board also shows as columns: 'untriaged' (no
+// `triage` set) and 'ignored' (per-report ignore, which lives outside
+// `TriageEntry.triage`). See the `columns` list in ui/view/render.js.
+export type KanbanColumnKey = TriageBucket | 'untriaged' | 'ignored'
 
 // Tri-state for the toolbar annotation filters (comment / fix / flag):
 // '' = off, 'with' = only findings carrying it, 'without' = only findings
@@ -116,6 +121,7 @@ export interface State {
   filesSearch: string
   filesSelectedFile: string | null
   kanbanPopoverGid: string | null
+  kanbanExpandedColumn: KanbanColumnKey | null
   focusGid: string | null
   focusCodeTick: number
   // ── server protocol (detected from the `server-info` connect frame) ──
@@ -582,6 +588,14 @@ export const state: State = store<State>({
   // popover is a transient inspection affordance. Re-clicking the
   // same card (or clicking the backdrop / pressing Esc) clears it.
   kanbanPopoverGid: null,
+  // Kanban view: key of the column currently shown fullscreen (null =
+  // the regular all-columns board). Set by the expand button in the
+  // column header; the board then renders that column alone, across
+  // the full width, with its cards laid out in as many tracks as the
+  // board would have shown columns — so the cards keep their usual
+  // width. Session-only, like kanbanPopoverGid: which column you last
+  // zoomed into isn't a preference worth restoring on the next visit.
+  kanbanExpandedColumn: null,
   // Focus view: gid of the finding currently displayed in the center
   // pane (null = no explicit pick yet; render falls back to position
   // 0 of the filtered list). Session-only — not persisted, since

@@ -1453,6 +1453,28 @@ report.addEventListener('click', (e) => {
     setKanbanPopoverGid(null)
     return
   }
+  // Fullscreen toggle in a column header — give that column the whole
+  // board, or (clicking the same one again) put the others back.
+  // Ahead of the light-dismiss branch at the bottom so a click here
+  // never doubles as "close the modal".
+  const expandBtn = e.target.closest?.('[data-kanban-expand]')
+  if (expandBtn) {
+    const key = expandBtn.dataset.kanbanExpand
+    const next = state.kanbanExpandedColumn === key ? null : key
+    state.kanbanExpandedColumn = next
+    // An open detail modal is anchored to a card in one specific
+    // column. Expanding a DIFFERENT column unmounts that card, leaving
+    // the modal over a board it no longer belongs to and its close
+    // transition with nothing to morph back into — so close it. Going
+    // back to the full board, or expanding the column the open card
+    // already sits in, keeps it up.
+    if (next && state.kanbanPopoverGid) {
+      const openColumn = kanbanCardEl(state.kanbanPopoverGid)?.closest('.kanban-column')
+      if (openColumn?.dataset.kanbanTarget !== next) state.kanbanPopoverGid = null
+    }
+    render()
+    return
+  }
   // Fix-link / comment shortcut on the compact card — the anchor
   // navigates on its own and the .mark-fix / .mark-comment buttons
   // open their dialogs via the delegates earlier in this file; none
@@ -1483,14 +1505,24 @@ report.addEventListener('click', (e) => {
   if (state.kanbanPopoverGid) setKanbanPopoverGid(null)
 })
 
-// Esc dismisses the popover. Bound to document so it fires
-// regardless of focus location — the modal isn't a `<dialog>`
-// (we manage focus + light dismiss ourselves to keep view-transition
-// in the driver's seat).
+// Esc dismisses the popover, then (a second press) the fullscreen
+// column. Bound to document so it fires regardless of focus location
+// — the modal isn't a `<dialog>` (we manage focus + light dismiss
+// ourselves to keep view-transition in the driver's seat). Unwinding
+// one layer per press means Esc from a card opened inside a fullscreen
+// column doesn't skip straight back to the whole board.
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return
-  if (!state.kanbanPopoverGid) return
-  setKanbanPopoverGid(null)
+  if (state.kanbanPopoverGid) {
+    setKanbanPopoverGid(null)
+    return
+  }
+  // Guarded on the view mode as well: the expansion outlives a trip to
+  // another tab (it's plain state, not torn down on unmount), and Esc
+  // over the table or graph belongs to whatever is on screen there.
+  if (state.viewMode !== 'kanban' || state.kanbanExpandedColumn === null) return
+  state.kanbanExpandedColumn = null
+  render()
 })
 
 // Focus-view selection. The right-hand "up next" queue renders each
