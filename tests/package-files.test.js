@@ -50,3 +50,48 @@ test('package.json "files" includes every exports target', () => {
     .map(([sub, rel]) => `exports["${sub}"] → ${rel}`)
   assert.deepEqual(missing, [], `exports targets missing from "files":\n  ${missing.join('\n  ')}`)
 })
+
+// Inverse guard: the managed server is deliberately NOT released yet.
+//
+// `server-managed/` (the `triage-managed-server` bin) and the `common/managed/`
+// modules it imports at runtime are held back from the publish allowlist while
+// the managed mode is still being built out. The client half stays in the
+// tarball — `out/client-managed.js` / `out/client-admin.js` are inert without a
+// server that advertises `mode: 'managed'` (see common/server-info.ts), so they
+// cost a few KB and change nothing for an e2e deployment.
+//
+// This guard exists because the hold is otherwise one edit deep: `files` is a
+// hand-maintained allowlist that every `managed:` commit has been appending to,
+// and the first guard above only scans `server-e2e/`. That gap is how the
+// managed server came to be published with blob-store.ts and bundle.ts missing
+// — a `triage-managed-server` that throws on import at startup.
+//
+// TO LIFT THE HOLD: delete this test, add `server-managed` (and `common/managed`)
+// to the tracked-source scan in the first test so the allowlist stays complete,
+// then list the files and restore the `triage-managed-server` bin.
+const HELD_BACK = /^(?:\.\/)?(?:server-managed|common\/managed)(?:\/|$)/u
+
+test('managed server is held back from the published package', () => {
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+
+  const listed = pkg.files.filter((f) => HELD_BACK.test(f))
+  assert.deepEqual(
+    listed, [],
+    `managed sources are in the publish allowlist but the managed server is not ` +
+    `released yet — drop them from package.json "files":\n  ${listed.join('\n  ')}`,
+  )
+
+  // A bin pointing into an unpublished tree installs a command that dies on its
+  // first import, which is worse than no command at all.
+  const bins = Object.entries(pkg.bin ?? {})
+    .filter(([, target]) => HELD_BACK.test(target))
+    .map(([name, target]) => `bin["${name}"] → ${target}`)
+  assert.deepEqual(bins, [], `bin entries point into the held-back managed tree:\n  ${bins.join('\n  ')}`)
+
+  // Same for `exports` — and the "every exports target is in files" test above
+  // would only catch this as a missing-file error, not as a released-too-early one.
+  const exported = Object.entries(pkg.exports ?? {})
+    .filter(([, target]) => HELD_BACK.test(target))
+    .map(([sub, target]) => `exports["${sub}"] → ${target}`)
+  assert.deepEqual(exported, [], `exports point into the held-back managed tree:\n  ${exported.join('\n  ')}`)
+})

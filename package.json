@@ -35,8 +35,7 @@
     "./package.json": "./package.json"
   },
   "bin": {
-    "triage-server": "server-e2e/cli.js",
-    "triage-managed-server": "server-managed/cli.js"
+    "triage-server": "server-e2e/cli.js"
   },
   "files": [
     "api/reap.ts",
@@ -81,19 +80,6 @@
     "server-e2e/ws-server.ts",
     "server-e2e/config.example.json",
     "server-common/origin.ts",
-    "server-managed/avatar-store.ts",
-    "server-managed/cli.js",
-    "server-managed/config.ts",
-    "server-managed/crypto.ts",
-    "server-managed/db.ts",
-    "server-managed/github-app.ts",
-    "server-managed/github-oauth.ts",
-    "server-managed/http.ts",
-    "server-managed/index.ts",
-    "server-managed/session.ts",
-    "common/managed/roles.ts",
-    "common/managed/permissions.ts",
-    "common/managed/report-filter.ts",
     "common/save-error-reason.ts",
     "common/server-info.ts",
     "common/utf8.d.ts",
