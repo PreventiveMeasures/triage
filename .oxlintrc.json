@@ -59,6 +59,8 @@
     "unicorn/no-useless-spread": "off",
     "unicorn/no-useless-undefined": "off",
     "unicorn/prefer-math-trunc": "off",
+    "unicorn/prefer-number-coercion": "off",
+    "unicorn/prefer-single-call": "off",
     "unicorn/prefer-top-level-await": "off",
     "import/max-dependencies": "off",
     "import/no-unassigned-import": "off"
