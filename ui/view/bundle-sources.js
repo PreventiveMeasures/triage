@@ -1,6 +1,6 @@
 // Shared helper: given a parsed bundle `details`, return a
 // Map<file, content-string> of its source files. Stasis bundles
-// expose sources via `@exodus/stasis`'s `Bundle.sources` getter
+// expose sources via `@exodus/stasis-core`'s `Bundle.sources` getter
 // (flat Map<projectRelPath, content> from `.modules`); sourcemaps
 // split them across parallel `sources` / `sourcesContent` arrays on
 // the raw .map JSON. Non-string content is skipped — for stasis that

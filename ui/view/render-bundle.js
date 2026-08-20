@@ -57,7 +57,7 @@ let _currentBundlePrep = null
 
 // File → set of resolved import paths. The stasis Bundle exposes
 // imports as Map<conditionsKey, Map<parent, Map<specifier, resolved>>>
-// (see `@exodus/stasis/bundle`); union resolved targets across all
+// (see `@exodus/stasis-core/bundle`); union resolved targets across all
 // condition keys (node, import, module-sync, ...) and dedupe per
 // parent. Sourcemaps have no import info, so the map is empty.
 function bundleImportsAsMap(details) {
@@ -2286,7 +2286,7 @@ function renderBundleDetails(entry, details) {
     const sourceMap = bundle.sources
     const sourceNames = [...sourceMap.keys()]
     // Each `bundle.imports` key is either `*` or a `, `-joined
-    // condition set (see `State#conditionsKey` in @exodus/stasis);
+    // condition set (see `State#conditionsKey` in @exodus/stasis-core);
     // a bundle commonly carries several keys whose underlying
     // conditions overlap (`node, import` + `node, require`),
     // so split / dedupe / sort surfaces a clean unique list of

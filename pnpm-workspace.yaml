@@ -1,6 +1,8 @@
 allowBuilds:
   esbuild: false
 
+autoInstallPeers: false
+
 enableGlobalVirtualStore: false
 
 ignoreWorkspaceRootCheck: true
@@ -9,9 +11,7 @@ linkWorkspacePackages: true
 
 lockfileIncludeTarballUrl: true
 
-autoInstallPeers: false
-
 minimumReleaseAgeExclude:
- - "@chalker/*"
- - "@preventive/*"
- - "@rray/*"
+  - "@chalker/*"
+  - "@preventive/*"
+  - "@rray/*"

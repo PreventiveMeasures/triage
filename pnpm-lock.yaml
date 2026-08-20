@@ -15,9 +15,9 @@ importers:
       '@electric-sql/pglite':
         specifier: ^0.4.5
         version: 0.4.5
-      '@exodus/stasis':
-        specifier: ^1.0.0-alpha.1
-        version: 1.0.0-alpha.1
+      '@exodus/stasis-core':
+        specifier: ^1.0.0-beta.4
+        version: 1.0.0-beta.4
       '@noble/ciphers':
         specifier: ^2.2.0
         version: 2.2.0
@@ -283,8 +283,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@exodus/stasis@1.0.0-alpha.1':
-    resolution: {integrity: sha512-oMREyde3HGM3qBg7GC+s8uWgbq4ZESHApJNLgIwyWqcz4uLykIlmDu8uVzeQKqMDKayYtPeGHXd18ahy1VqNOw==, tarball: https://registry.npmjs.org/@exodus/stasis/-/stasis-1.0.0-alpha.1.tgz}
+  '@exodus/stasis-core@1.0.0-beta.4':
+    resolution: {integrity: sha512-OVwi73QqIIe++le21zTeJUcrw/2DUSg//qcagzU+VdA+P1Kb/qcikLEVwXs1QuY8pu71prjl1ehjzreBzNJEbA==, tarball: https://registry.npmjs.org/@exodus/stasis-core/-/stasis-core-1.0.0-beta.4.tgz}
     engines: {node: '>=24.14.0'}
     hasBin: true
 
@@ -1117,7 +1117,7 @@ snapshots:
   '@esbuild/win32-x64@0.28.1':
     optional: true
 
-  '@exodus/stasis@1.0.0-alpha.1': {}
+  '@exodus/stasis-core@1.0.0-beta.4': {}
 
   '@keyv/bigmap@1.3.1(keyv@5.6.0)':
     dependencies:

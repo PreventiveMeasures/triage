@@ -6,7 +6,7 @@
 // (`.file-item[data-bundle-integrity]` in sidebar.js), the
 // finding-card "Code →" shortcut (`data-finding-code-bundle` in
 // events.js), and the bundle-only drop branch in `ingest.js`.
-import { Bundle } from '@exodus/stasis/bundle'
+import { Bundle } from '@exodus/stasis-core/bundle'
 import { ensureBundleFindingsIndexed, hasBundleFileHashes, readBundle, recordBundleFileHashes, state } from '#client/index.js'
 import { decodeUtf8 } from '../../common/utf8.js'
 import { brotliDecompress } from './brotli-decompress.js'
@@ -21,8 +21,8 @@ import { computeBundleFileHashes } from './render-bundle.js'
 // "failed to parse" placeholder when `details.error` is set.
 //
 // Sourcemap → `details.json` is the raw `.map` JSON. Stasis →
-// `details.bundle` is an `@exodus/stasis` `Bundle` (handles v0 + v1
-// uniformly; .sources / .imports / .modules are Map-shaped).
+// `details.bundle` is an `@exodus/stasis-core` `Bundle` (handles v0 +
+// v1 uniformly; .sources / .imports / .modules are Map-shaped).
 //
 // Exported so non-state-mutating callers (focus view's inline code
 // panel, prefetchBundleHashes below) can parse without touching
@@ -39,11 +39,11 @@ export async function buildBundleDetails(integrity, entry) {
       }
       // Stasis bundles are brotli-compressed JSON snapshots;
       // brotliDecompress dispatches native-or-fallback (see
-      // view/brotli-decompress.js). Bundle.parseCode validates the
+      // view/brotli-decompress.js). Bundle.parse validates the
       // wrapper (version, scope, asserts on tampered shapes) and
       // normalizes both v0 and v1 layouts.
       const decoded = decodeUtf8(await brotliDecompress(bytes))
-      const bundle = Bundle.parseCode(decoded)
+      const bundle = Bundle.parse(decoded)
       return { integrity, kind, size: bytes.byteLength, bundle }
     } catch (err) {
       return { integrity, kind, size: bytes.byteLength, error: err.message }
