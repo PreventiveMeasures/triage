@@ -94,17 +94,15 @@ export function unhideFinding(group, id) {
   state.shownTriage = bucket
   if (state.viewMode === 'kanban') {
     // Kanban ignores `shownTriage` (it shows every bucket as a column),
-    // but has two ways of its own to hide the target: a fullscreen
-    // column drops every OTHER column from the board, and an open
-    // detail modal covers the board entirely. Collapse the first only
-    // when the target sits elsewhere — a link into the column the user
-    // already expanded shouldn't undo their layout — and always drop a
-    // modal left open on some other finding.
+    // but a fullscreen column drops every OTHER column from the board,
+    // so a link into one of them would land on a card that isn't
+    // rendered. Collapse it only when the target sits elsewhere — a
+    // link into the column the user already expanded shouldn't undo
+    // their layout.
     const column = bucket ?? 'untriaged'
     if (state.kanbanExpandedColumn !== null && state.kanbanExpandedColumn !== column) {
       state.kanbanExpandedColumn = null
     }
-    state.kanbanPopoverGid = null
   }
   if (applyFilters([group]).length === 0) {
     const sortBy = state.sortBy
@@ -113,11 +111,20 @@ export function unhideFinding(group, id) {
   }
   const gid = groupKey(group)
   if (group.length > 1) state.activeTabByGroup.set(gid, id)
-  // Per-mode selection. Table opens its details aside on the row and
-  // focus centres the card, both of which are the mode's own "this
-  // one" state; grouped / list / kanban have no selection concept, so
-  // the scroll + flash in the nav module is the whole signal there.
+  // Per-mode selection — each mode's own "this one" state. Table opens
+  // its details aside on the row, focus centres the card, and kanban
+  // opens the detail modal: a board card is a title and a badge, which
+  // is not what someone following a link to a specific finding came to
+  // read. Setting the gid directly (rather than going through events.js's
+  // `setKanbanPopoverGid`) matches what that helper does for a
+  // card-to-card switch — a plain render, no view transition. The morph
+  // animation only makes sense growing out of a card the user just
+  // clicked, and on arrival there was no such click.
+  //
+  // Grouped and list have no selection concept; there the scroll + flash
+  // in the nav module is the whole signal.
   if (state.viewMode === 'table') state.tableSelectedGid = gid
   else if (state.viewMode === 'focus') state.focusGid = gid
+  else if (state.viewMode === 'kanban') state.kanbanPopoverGid = gid
   return gid
 }

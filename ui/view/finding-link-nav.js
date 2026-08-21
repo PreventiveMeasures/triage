@@ -1,7 +1,8 @@
 // Per-finding deep links — DOM half. `revealFinding(ref)` takes a ref
 // parsed out of `#finding=…` (see `client/finding-link.js`) and gets the
 // user looking at it: navigate to the report or workspace holding it,
-// un-hide it, paint, scroll it into view, flash a ring.
+// un-hide it (which in kanban means opening its detail modal), paint,
+// scroll it into view, flash a ring.
 //
 // Resolution walks from cheap to thorough, stopping at the first hit:
 //
@@ -76,11 +77,19 @@ function flash(el) {
 // microtask later still — so they're matched on the `group` property
 // the table assigned rather than on the attribute.
 //
+// Kanban is the third double-up, and resolves the other way: the detail
+// modal `unhideFinding` just opened holds a `<finding-card>` for the
+// same gid, but that one is centred on screen already. What needs
+// positioning is the BOARD card underneath, so dismissing the modal
+// leaves the finding in view instead of wherever its column happened to
+// be scrolled — and `scrollIntoView` on it also brings its column into
+// view on a horizontally-scrolled board.
+//
 // Everywhere else `data-gid` comes from the PARENT template and lands
 // with the synchronous render. `finding-card` is preferred over a bare
-// `[data-gid]` for the focus view's second double-up: the centred card
-// and its "up next" queue entry both carry the gid, and the card is the
-// one the user is reading.
+// `[data-gid]` for the focus view's double-up: the centred card and its
+// "up next" queue entry both carry the gid, and the card is the one the
+// user is reading.
 async function findRenderedFinding(gid) {
   const escaped = CSS.escape(gid)
   if (state.viewMode === 'table') {
@@ -91,6 +100,10 @@ async function findRenderedFinding(gid) {
         if (row.group && tableRowGid(row.group) === gid) return row
       }
     }
+  }
+  if (state.viewMode === 'kanban') {
+    const card = report.querySelector(`.kanban-card[data-gid="${escaped}"]`)
+    if (card) return card
   }
   return report.querySelector(`finding-card[data-gid="${escaped}"]`)
     ?? report.querySelector(`[data-gid="${escaped}"]`)
