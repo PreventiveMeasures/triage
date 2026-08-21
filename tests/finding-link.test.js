@@ -1,10 +1,16 @@
-// Per-finding deep links (`#finding=<id>[&report=…][&ws=…]`).
+// Per-finding deep links (`#finding=<id>[&report=<hint>][&ws=<hint>]`).
 //
-// Two layers, both headless:
-//   * `client/finding-link.js` — the fragment codec. Pins the
-//     round-trip (including ids / report names that carry `&`, `=` and
-//     spaces), the refusal to link a session-local numeric id, and the
-//     rejection rules a hand-mangled fragment has to survive.
+// Three layers, all headless:
+//   * `client/finding-link.js` — the fragment codec plus the 3-byte
+//     location hints. Pins the hint shape / determinism / domain
+//     separation, the round-trip, the refusal to link a session-local
+//     numeric id, and the rejection rules a hand-mangled fragment has
+//     to survive.
+//   * `client/finding-locate.js` — turning a hint back into a local
+//     report, and the scan that finds the finding in ANOTHER report
+//     when no hint matches. Exercised against the real
+//     `client/storage.js`, which falls back to gzipped localStorage
+//     under node — the same substrate the finding-index tests use.
 //   * `ui/view/finding-link.js` — what a link does to `state`: which
 //     group it resolves to, which triage bucket gets shown, when the
 //     toolbar filters are cleared (and when they're deliberately left
@@ -16,8 +22,8 @@
 import assert from 'node:assert/strict'
 import { beforeEach, describe, it } from 'node:test'
 
-// `state.ts` and the client aggregator touch localStorage etc. at
-// module-load time.
+// `state.ts`, `storage.js` and the client aggregator touch localStorage
+// etc. at module-load time.
 import './_polyfills.js'
 
 // `ui/view/finding-link.js` → group.js → format.js → frontend-global.js
@@ -35,10 +41,21 @@ if (!globalThis[slotKey]) {
 
 const {
   buildFindingUrl,
+  computeLinkHint,
   encodeFindingRef,
   extractFindingRef,
+  isLinkHint,
   isLinkableFindingId,
+  knownLinkHint,
 } = await import('../client/finding-link.js')
+
+const {
+  findReportWithFinding,
+  reportForHint,
+} = await import('../client/finding-locate.js')
+
+const { saveFile } = await import('../client/storage.js')
+const { deriveFindingId } = await import('../common/finding-id.js')
 
 const { state } = await import('../client/state.ts')
 const {
@@ -50,6 +67,67 @@ const {
 const UUID_A = '1b4e28ba-2fa1-4d3b-a3f5-cc9f2f6d1a77'
 const UUID_B = '9f2c1d0e-7a44-4b8e-9c31-0d5e6f7a8b90'
 const WS_ID = 'c0ffee00-1111-8222-8333-444455556666'
+
+// Every seeded report gets a unique name: the in-memory storage isn't
+// cleared between tests, and `findReportWithFinding` scans everything.
+let nameCounter = 0
+function uniqueName(stem) {
+  nameCounter += 1
+  return `${stem}-${nameCounter}.json`
+}
+
+describe('finding deep links — location hints', () => {
+  it('derives a 4-character base64url token', async () => {
+    const hint = await computeLinkHint('report', 'security-2024.json')
+    // 3 bytes → exactly 4 base64url chars, no padding.
+    assert.equal(hint.length, 4)
+    assert.match(hint, /^[\w-]{4}$/u)
+    assert.equal(isLinkHint(hint), true)
+  })
+
+  it('is deterministic, and different per value', async () => {
+    const a = await computeLinkHint('report', 'security-2024.json')
+    const again = await computeLinkHint('report', 'security-2024.json')
+    const b = await computeLinkHint('report', 'security-2025.json')
+    assert.equal(a, again)
+    assert.notEqual(a, b)
+  })
+
+  it('separates the report and workspace namespaces', async () => {
+    // Without domain separation a workspace whose id happened to equal a
+    // report's filename would cross-resolve.
+    const shared = 'c0ffee00-1111-8222-8333-444455556666'
+    const asReport = await computeLinkHint('report', shared)
+    const asWorkspace = await computeLinkHint('workspace', shared)
+    assert.notEqual(asReport, asWorkspace)
+  })
+
+  it('yields null rather than throwing on unusable input', async () => {
+    assert.equal(await computeLinkHint('bundle', 'x'), null)
+    assert.equal(await computeLinkHint('report', ''), null)
+    assert.equal(await computeLinkHint('report', null), null)
+  })
+
+  it('memoises so the link builder can read it synchronously', async () => {
+    const name = 'not-yet-hashed.json'
+    // The Link button copies inside a click handler, where an await
+    // would cost the clipboard grant — a cold entry reads as null and
+    // the link is simply built without the hint.
+    assert.equal(knownLinkHint('report', name), null)
+    const hint = await computeLinkHint('report', name)
+    assert.equal(knownLinkHint('report', name), hint)
+    // Namespaced, like the derivation itself.
+    assert.equal(knownLinkHint('workspace', name), null)
+  })
+
+  it('rejects anything that is not a token shape', () => {
+    assert.equal(isLinkHint('abc'), false)
+    assert.equal(isLinkHint('abcde'), false)
+    assert.equal(isLinkHint('ab+d'), false)
+    assert.equal(isLinkHint('security.json'), false)
+    assert.equal(isLinkHint(null), false)
+  })
+})
 
 describe('finding deep links — fragment codec', () => {
   it('rejects ids that would not survive a reload', () => {
@@ -68,10 +146,10 @@ describe('finding deep links — fragment codec', () => {
     assert.equal(isLinkableFindingId('x'.repeat(513)), false)
   })
 
-  it('round-trips id + both location hints', () => {
-    const ref = { id: UUID_A, report: 'security-2024.json', workspace: WS_ID }
+  it('round-trips id + both hint tokens', () => {
+    const ref = { id: UUID_A, report: 'aB3-', workspace: 'x_9Z' }
     const back = extractFindingRef(`#${encodeFindingRef(ref)}`)
-    assert.deepEqual(back, { id: UUID_A, report: 'security-2024.json', workspace: WS_ID })
+    assert.deepEqual(back, ref)
   })
 
   it('omits absent hints and still parses', () => {
@@ -80,21 +158,24 @@ describe('finding deep links — fragment codec', () => {
     assert.deepEqual(extractFindingRef(`#${encoded}`), {
       id: UUID_A, report: null, workspace: null,
     })
-    // Empty-string hints are the shape `findingLinkFor` passes for
-    // "unknown", and must not produce `report=`.
-    assert.equal(encodeFindingRef({ id: UUID_A, report: '', workspace: '' }), `finding=${UUID_A}`)
+    // null / '' are the shapes `findingLinkFor` passes for "not hashed
+    // yet"; they must not produce an empty `report=`.
+    assert.equal(encodeFindingRef({ id: UUID_A, report: null, workspace: '' }), `finding=${UUID_A}`)
   })
 
-  it('survives separators inside the id and the report name', () => {
-    // A report name carrying `&` / `=` / `#` / a space would otherwise
+  it('refuses a plaintext name where a hint token belongs', () => {
+    // The whole point of the tokens is that names never reach the URL;
+    // a caller passing one should fail loudly, not ship a link that
+    // silently lost its hint.
+    assert.throws(() => encodeFindingRef({ id: UUID_A, report: 'security.json' }), TypeError)
+    assert.throws(() => encodeFindingRef({ id: UUID_A, workspace: WS_ID }), TypeError)
+  })
+
+  it('survives separators inside the id', () => {
+    // A codex finding-URL id carrying `&` / `=` / `#` would otherwise
     // split into phantom params on the way back.
-    const ref = {
-      id: 'https://sec.example/f?a=1&b=2#x',
-      report: 'audit &2024= final #3.json',
-      workspace: WS_ID,
-    }
+    const ref = { id: 'https://sec.example/f?a=1&b=2#x', report: 'aB3-', workspace: null }
     const encoded = encodeFindingRef(ref)
-    assert.ok(!encoded.includes(' '), 'spaces must be percent-encoded')
     assert.deepEqual(extractFindingRef(`#${encoded}`), ref)
   })
 
@@ -129,19 +210,85 @@ describe('finding deep links — fragment codec', () => {
 
   it('drops a malformed hint but keeps the id', () => {
     // The id is what identifies the finding; the hints only speed up
-    // finding it, so a broken one must not sink the whole link.
-    assert.deepEqual(extractFindingRef(`#finding=${UUID_A}&report=%zz`), {
-      id: UUID_A, report: null, workspace: null,
-    })
-    assert.deepEqual(extractFindingRef(`#finding=${UUID_A}&report=${'x'.repeat(600)}`), {
-      id: UUID_A, report: null, workspace: null,
-    })
+    // finding it (the scan is the real backstop), so a broken one must
+    // not sink the whole link. This also covers a link from an older
+    // build that spelled the hints out as names.
+    for (const bad of ['%zz', 'security.json', 'toolong', 'ab']) {
+      assert.deepEqual(extractFindingRef(`#finding=${UUID_A}&report=${bad}`), {
+        id: UUID_A, report: null, workspace: null,
+      })
+    }
   })
 
   it('reads the finding param wherever it sits among unknown params', () => {
-    assert.deepEqual(extractFindingRef(`#utm=x&finding=${UUID_A}&ws=${WS_ID}&junk`), {
-      id: UUID_A, report: null, workspace: WS_ID,
+    assert.deepEqual(extractFindingRef(`#utm=x&finding=${UUID_A}&ws=x_9Z&junk`), {
+      id: UUID_A, report: null, workspace: 'x_9Z',
     })
+  })
+})
+
+// ── locating a finding in local storage ──────────────────────────────
+
+describe('finding deep links — finding a report by hint or by scan', () => {
+  it('matches a stored report by its hint token', async () => {
+    const name = uniqueName('hinted')
+    await saveFile(name, JSON.stringify({ findings: [] }))
+    const hint = await computeLinkHint('report', name)
+    assert.equal(await reportForHint(hint), name)
+    // A hint for a name this user doesn't hold matches nothing — which
+    // is exactly when the scan takes over.
+    assert.equal(await reportForHint(await computeLinkHint('report', 'absent.json')), null)
+    assert.equal(await reportForHint(null), null)
+  })
+
+  it('finds the report holding a finding id', async () => {
+    const id = crypto.randomUUID()
+    const other = uniqueName('other')
+    const holder = uniqueName('holder')
+    await saveFile(other, JSON.stringify({ findings: [{ id: crypto.randomUUID(), severity: 'low' }] }))
+    await saveFile(holder, JSON.stringify({ findings: [{ id, severity: 'high' }] }))
+    assert.equal(await findReportWithFinding(id), holder)
+    assert.equal(await findReportWithFinding(crypto.randomUUID()), null)
+  })
+
+  it('looks inside dedup groups', async () => {
+    const id = crypto.randomUUID()
+    const name = uniqueName('grouped')
+    // A report entry is either a single finding or a pre-grouped array.
+    await saveFile(name, JSON.stringify({
+      findings: [[{ id: crypto.randomUUID(), severity: 'low' }, { id, severity: 'high' }]],
+    }))
+    assert.equal(await findReportWithFinding(id), name)
+  })
+
+  it('derives ids for findings that carry none', async () => {
+    // Markdown / DeepSec imports have no exporter-stamped id; the id in
+    // the link was derived at ingest, so the scan has to derive too or
+    // it would never match those reports.
+    const finding = { severity: 'high', description: 'unstamped finding', file: 'src/a.js', line: 3 }
+    const derived = await deriveFindingId(finding)
+    const name = uniqueName('unstamped')
+    await saveFile(name, JSON.stringify({ findings: [finding] }))
+    assert.equal(await findReportWithFinding(derived), name)
+  })
+
+  it('skips reports the caller already searched in memory', async () => {
+    const id = crypto.randomUUID()
+    const name = uniqueName('loaded')
+    await saveFile(name, JSON.stringify({ findings: [{ id, severity: 'high' }] }))
+    assert.equal(await findReportWithFinding(id, { skip: [name] }), null)
+    assert.equal(await findReportWithFinding(id), name)
+  })
+
+  it('keeps scanning past an unparseable report', async () => {
+    const id = crypto.randomUUID()
+    // `parseReport` returns undefined for content no parser claims, and
+    // a `findings` field that isn't an array must not throw — one bad
+    // file on disk can't be allowed to hide every other report.
+    await saveFile(uniqueName('broken'), '{"findings": 7}')
+    const holder = uniqueName('after-broken')
+    await saveFile(holder, JSON.stringify({ findings: [{ id, severity: 'high' }] }))
+    assert.equal(await findReportWithFinding(id), holder)
   })
 })
 
@@ -194,21 +341,33 @@ function reset(groups = []) {
 describe('finding deep links — building a link for a finding', () => {
   beforeEach(() => reset())
 
-  it('carries the finding\'s own report name', () => {
-    const url = findingLinkFor(makeFinding(UUID_A, { _reportName: 'codex.json' }))
-    assert.deepEqual(extractFindingRef(url), {
-      id: UUID_A, report: 'codex.json', workspace: null,
-    })
+  it('carries the hint for the finding\'s own report', async () => {
+    const reportName = uniqueName('linked')
+    const hint = await computeLinkHint('report', reportName)
+    const url = findingLinkFor(makeFinding(UUID_A, { _reportName: reportName }))
+    assert.deepEqual(extractFindingRef(url), { id: UUID_A, report: hint, workspace: null })
+    // The name itself never reaches the URL.
+    assert.ok(!url.includes(reportName))
   })
 
-  it('names the workspace too when one is open', () => {
+  it('hints at the workspace too when one is open', async () => {
     state.currentWorkspace = WS_ID
+    const reportHint = await computeLinkHint('report', 'security.json')
+    const wsHint = await computeLinkHint('workspace', WS_ID)
     const url = findingLinkFor(makeFinding(UUID_A))
     // Both hints ride along so the link resolves for a recipient who
     // has either the workspace or just the report.
     assert.deepEqual(extractFindingRef(url), {
-      id: UUID_A, report: 'security.json', workspace: WS_ID,
+      id: UUID_A, report: reportHint, workspace: wsHint,
     })
+    assert.ok(!url.includes(WS_ID))
+  })
+
+  it('still builds a usable link before the hint is hashed', () => {
+    // Ingest primes the memo, but a report that arrived by some other
+    // path just yields a hint-less link — the receiver's scan finds it.
+    const url = findingLinkFor(makeFinding(UUID_A, { _reportName: 'never-primed.json' }))
+    assert.deepEqual(extractFindingRef(url), { id: UUID_A, report: null, workspace: null })
   })
 
   it('offers no link for a session-local finding', () => {

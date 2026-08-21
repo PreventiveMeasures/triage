@@ -3,15 +3,32 @@
 // user looking at it: navigate to the report or workspace holding it,
 // un-hide it, paint, scroll it into view, flash a ring.
 //
-// Deliberately forgiving about WHERE the finding lives and strict about
-// WHETHER it was found. A link built inside a workspace still lands for
-// a recipient who only attached the single report; but if the id isn't
-// in anything we can reach, the caller gets a reason to show rather
-// than a silent no-op on a pasted link.
+// Resolution walks from cheap to thorough, stopping at the first hit:
+//
+//   1. Already loaded — the recipient is looking at the report (or a
+//      workspace merging it) right now. No navigation at all.
+//   2. The `ws=` hint matches a local workspace → open it.
+//   3. The `report=` hint matches a local report filename → open it.
+//   4. Neither matched, or what they named no longer carries the
+//      finding: scan every other stored report for the id and open
+//      wherever it actually lives.
+//
+// Step 4 is what makes the hashed hints safe to be approximate. They
+// are 3-byte digests of the SENDER's filename / workspace id, so they
+// match only a recipient holding the very same name — and the same
+// finding routinely lives under a different one (a re-run, a re-export,
+// a copy in someone's own workspace). Rather than declare that a dead
+// link, the scan finds the finding and shows it in whichever report
+// does hold it. A stale or colliding hint costs one wasted load.
+//
+// Nothing here fetches from the network: the finding must already be in
+// local storage. A link is a pointer into the recipient's own data, not
+// a transfer — that's what the workspace share link and the export
+// bundle are for.
 //
 // The state rules (which bucket, which filters, which member of a dedup
 // group) live in `finding-link.js`; this module is navigation + paint.
-import { listFiles, listWorkspaces, state } from '#client/index.js'
+import { findReportWithFinding, listWorkspaces, reportForHint, state, workspaceForHint, workspacesHoldingReport } from '#client/index.js'
 import { report } from './dom.js'
 import { findLoadedFinding, unhideFinding } from './finding-link.js'
 import { switchToFile, switchToWorkspace } from './ingest.js'
@@ -23,6 +40,13 @@ import { tableRowGid } from './render-finding.js'
 // read as a persistent selection state the user has to dismiss.
 const FLASH_MS = 1600
 const FLASH_CLASS = 'link-target'
+
+// Shown when every step above came up empty. It deliberately doesn't
+// name a report: the hints are digests, so we never learn the sender's
+// filename — and after step 4 the honest statement is the broader one
+// anyway, that the finding is in none of the reports this user holds.
+const NOT_FOUND = "Couldn't find that finding in any of your reports. "
+  + 'Import the report it came from, then open the link again.'
 
 let flashTimer = null
 
@@ -72,73 +96,75 @@ async function findRenderedFinding(gid) {
     ?? report.querySelector(`[data-gid="${escaped}"]`)
 }
 
-// Switch the app to the report / workspace a link points at, when the
-// hint names one we hold and aren't already on. Returns true when a
-// switch happened (the caller re-resolves against the new report set).
+// Open a report by name, preferring the workspace it belongs to.
 //
-// Workspace first: a link built in workspace mode names both, and the
-// workspace view is where the sender was looking. The report fallback
-// covers the recipient who has the file but never joined the workspace.
+// A report attached to exactly one workspace is normally READ through
+// that workspace — merged with its siblings, deduped across them — so
+// dropping the user into a bare single-file view would show them the
+// finding stripped of the context they'd have reached it with. With
+// zero or several candidate workspaces there's no unambiguous choice,
+// and the single-file view is the honest answer.
+async function openReport(name) {
+  const holders = workspacesHoldingReport(name)
+  if (holders.length === 1) {
+    if (state.currentWorkspace !== holders[0].id) await switchToWorkspace(holders[0].id)
+    return
+  }
+  if (state.currentFile !== name) await switchToFile(name)
+}
+
+// Steps 2 and 3: turn the hint digests back into something local and
+// switch to it. Returns true when a switch happened, so the caller
+// re-runs the lookup against the new report set.
+//
+// Workspace first: a link built in workspace mode carries both hints,
+// and the workspace is where the sender was looking. The report hint
+// then covers the recipient who has the file but never joined the
+// workspace.
 async function navigateToHint({ report: reportHint, workspace }) {
-  const wantsOtherWorkspace = Boolean(workspace) && state.currentWorkspace !== workspace
-  if (wantsOtherWorkspace && listWorkspaces().some((w) => w.id === workspace)) {
-    await switchToWorkspace(workspace)
+  const ws = await workspaceForHint(workspace)
+  if (ws && ws.id !== state.currentWorkspace) {
+    await switchToWorkspace(ws.id)
     return true
   }
-  if (!reportHint || state.currentFile === reportHint) return false
+  const name = await reportForHint(reportHint)
+  if (!name || state.currentFile === name) return false
   // Dropping out of a workspace into a single-file view is the right
   // move when the workspace doesn't hold the hinted report (the link
   // came from elsewhere, or the workspace was never attached) — and the
   // wrong one when it does: we'd already have found the finding above,
   // so the report is loaded and simply no longer carries it. Leaving
   // the merged view there would cost the user their context and still
-  // fail.
+  // fail. The scan (step 4) covers what's left either way.
   const current = state.currentWorkspace
     ? listWorkspaces().find((w) => w.id === state.currentWorkspace)
     : null
-  if (current?.reports.includes(reportHint)) return false
-  const names = await listFiles()
-  if (!names.includes(reportHint)) return false
-  await switchToFile(reportHint)
+  if (current?.reports.includes(name)) return false
+  await openReport(name)
   return true
 }
 
-// Why a ref didn't resolve, phrased as the next thing to do. Runs only
-// on the miss path, so the extra OPFS listing costs nothing that
-// matters: knowing whether the linked report is merely un-opened or
-// genuinely absent is the difference between "open it" and "import it".
-async function missingReason({ report: reportHint, workspace }) {
-  if (reportHint) {
-    const names = await listFiles().catch(() => [])
-    return names.includes(reportHint)
-      ? `Couldn't find that finding in "${reportHint}". The report has probably changed since the link was made.`
-      : `Couldn't find that finding. It was linked from "${reportHint}", which isn't among your reports — import it, then open the link again.`
-  }
-  const wsName = workspace
-    ? listWorkspaces().find((w) => w.id === workspace)?.name
-    : null
-  return wsName
-    ? `Couldn't find that finding in the "${wsName}" workspace. The report holding it may no longer be attached.`
-    : "Couldn't find that finding in your local reports. Import the report it came from, then open the link again."
+// Step 4: the hints got us nowhere, so go looking. Reports already
+// loaded are excluded — their in-memory groups were searched first, so
+// re-reading them off disk could only repeat the miss.
+async function navigateByScan(id) {
+  const loaded = state.reports.map((r) => r.fileName).filter(Boolean)
+  const name = await findReportWithFinding(id, { skip: loaded })
+  if (!name) return false
+  await openReport(name)
+  return true
 }
 
 // Follow a parsed link ref. Resolves to `{ ok: true }` once the finding
 // is on screen, or `{ ok: false, reason }` with a message the caller can
 // show — a link that goes nowhere has to say so, otherwise pasting one
 // into an already-open tab looks like the app ignored the paste.
-//
-// The lookup runs against what's loaded BEFORE navigating as well as
-// after: in a workspace that already holds the finding, re-switching to
-// the hinted report would drop the user out of their merged view for no
-// gain. Only a miss pays for the navigation.
 export async function revealFinding(ref) {
   if (!ref?.id) return { ok: false, reason: 'This link is missing a finding id.' }
   let hit = findLoadedFinding(ref.id)
-  if (!hit) {
-    const moved = await navigateToHint(ref)
-    if (moved) hit = findLoadedFinding(ref.id)
-  }
-  if (!hit) return { ok: false, reason: await missingReason(ref) }
+  if (!hit && await navigateToHint(ref)) hit = findLoadedFinding(ref.id)
+  if (!hit && await navigateByScan(ref.id)) hit = findLoadedFinding(ref.id)
+  if (!hit) return { ok: false, reason: NOT_FOUND }
   const gid = unhideFinding(hit.group, ref.id)
   render()
   const el = await findRenderedFinding(gid)

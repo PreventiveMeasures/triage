@@ -196,12 +196,14 @@ async function handleShareHashIfPresent() {
   return true
 }
 
-// `#finding=<id>[&report=<name>][&ws=<workspaceId>]` → open the report
-// or workspace holding that finding, un-hide it (its triage bucket,
-// and the toolbar filters if they exclude it) and scroll it into view
-// with a brief ring. The counterpart to the per-finding Link button;
-// see `client/finding-link.js` for the fragment format and
-// `view/finding-link{,-nav}.js` for the resolution rules.
+// `#finding=<id>[&report=<hint>][&ws=<hint>]` → open the report or
+// workspace holding that finding, un-hide it (its triage bucket, and
+// the toolbar filters if they exclude it) and scroll it into view with
+// a brief ring. The counterpart to the per-finding Link button; see
+// `client/finding-link.js` for the fragment format (the hints are
+// 3-byte digests, not names) and `view/finding-link{,-nav}.js` for the
+// resolution rules — including the scan that finds the finding in
+// another report when neither hint matches.
 //
 // The fragment is stripped BEFORE the first await, same as the share
 // handler above, for two reasons that happen to coincide: it makes a
@@ -212,11 +214,11 @@ async function handleShareHashIfPresent() {
 // arrived on hours ago.
 //
 // Unlike the share link, a miss is NOT terminal: the caller falls
-// through to the ordinary last-file restore, so a link naming a report
-// the user doesn't have leaves them where they usually start rather
-// than on an empty drop zone. `alert` (not a silent console warn)
-// because a pasted link doing nothing visible is indistinguishable
-// from a broken app.
+// through to the ordinary last-file restore, so a link to a finding the
+// user doesn't hold leaves them where they usually start rather than on
+// an empty drop zone. `alert` (not a silent console warn) because a
+// pasted link doing nothing visible is indistinguishable from a broken
+// app.
 async function handleFindingHashIfPresent() {
   const ref = extractFindingRef()
   if (!ref) return false

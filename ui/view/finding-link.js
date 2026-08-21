@@ -12,7 +12,7 @@
 // storage. A link is a pointer into the recipient's own data, not a
 // transfer — that's what the workspace share link and the export bundle
 // are for.
-import { buildFindingUrl, isLinkableFindingId, state } from '#client/index.js'
+import { buildFindingUrl, isLinkableFindingId, knownLinkHint, state } from '#client/index.js'
 import { applyFilters, resetFilters } from './filters.js'
 import { getMergedGroups, groupKey, groupState, tabKey } from './group.js'
 import { cleanupGraph2 } from './graph/state.js'
@@ -23,19 +23,27 @@ import { cleanupGraph2 } from './graph/state.js'
 // non-null result, so a link that would rot on the next reload is never
 // offered in the first place.
 //
-// Both location hints ride along when known: `report` is the OPFS
-// filename the finding was ingested from (stamped as `_reportName` on
-// every finding), `ws` the workspace being viewed. In workspace mode
-// that means the link names both, so it resolves for a recipient
-// holding either.
+// Both location hints ride along when known: the report the finding was
+// ingested from (`_reportName`, stamped on every finding) and the
+// workspace being viewed — each as the 3-byte digest `computeLinkHint`
+// derives, never the name itself. In workspace mode the link carries
+// both, so it resolves for a recipient holding either.
+//
+// `knownLinkHint` is the SYNCHRONOUS memo read, because this runs inside
+// the Link button's click handler and the clipboard write must not be
+// preceded by an await. Ingest primes the memo for every report it
+// loads, so a miss means a report that arrived by some path that didn't
+// — in which case the hint is simply omitted and the receiver's scan
+// picks up the slack.
 export function findingLinkFor(finding) {
   if (!finding) return null
   const id = tabKey(finding)
   if (!isLinkableFindingId(id)) return null
+  const reportName = finding._reportName || state.currentFile || ''
   return buildFindingUrl({
     id,
-    report: finding._reportName ?? state.currentFile ?? '',
-    workspace: state.currentWorkspace ?? '',
+    report: knownLinkHint('report', reportName),
+    workspace: knownLinkHint('workspace', state.currentWorkspace ?? ''),
   })
 }
 
