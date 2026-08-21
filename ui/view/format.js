@@ -422,6 +422,65 @@ export function findingUrl(f, repoFallback) {
   return Number.isFinite(lineNum) ? `${url}#L${lineNum}` : url
 }
 
+// Reports hard-wrap their markdown, so a paragraph arrives carrying the
+// line breaks the author's editor happened to put in. Markdown reads
+// those as SOFT breaks — they reflow — and honouring them literally
+// renders a column of ragged short lines inside a card that is wider
+// than the source was. `flowText` joins each paragraph back into one
+// run, leaving the blank lines between paragraphs alone.
+//
+// A paragraph is left EXACTLY as written when any of its lines opens
+// something block-level — an indented (code) line, a list marker, a
+// fence, a quote, a heading, a table row. Those are the constructs
+// whose line breaks carry meaning (a piolium PoC snippet, a list of
+// affected files), and `.desc` / `.section-body` keep `pre-wrap` so
+// they still render as the report wrote them.
+const BLOCK_LINE_RE = /^(?:\s+\S|[-*+] |\d+[.)] |>|#{1,6} |\||`{3}|~{3})/u
+
+export function flowText(text) {
+  if (!text) return text
+  // The capturing split keeps the blank-line runs, so paragraph
+  // spacing survives the rejoin untouched.
+  return text.split(/(\n{2,})/u).map((chunk) => {
+    if (/^\n+$/u.test(chunk)) return chunk
+    const lines = chunk.split('\n')
+    if (lines.some((l) => BLOCK_LINE_RE.test(l))) return chunk
+    return lines.map((l) => l.trim()).filter(Boolean).join(' ')
+  }).join('')
+}
+
+// Split a description body into the sections the report wrote it in.
+// A paragraph that OPENS with a `**Label:**` prefix is one: that is how
+// every parser emits its narrative fields — parse-piolium's `**Root
+// Cause:**` / `**Severity note:**` / `**Note:**` and friends (any label
+// the source report carried), parse-md's `**Impact:**` /
+// `**Reproduction:**` — so keying off the emitted markup, rather than
+// matching label words, picks up whatever a report names its sections.
+// The card gives each a small-caps header + body block instead of one
+// bold run buried in the prose (render-finding.js sectionTemplate).
+//
+// Everything else is prose: consecutive unlabelled paragraphs stay in
+// ONE block so their blank-line spacing survives. A label with nothing
+// after it keeps its header and gets an empty body. Returns
+// `[{ label, body }]` in document order, `label` null for prose.
+const SECTION_LABEL_RE = /^\*\*([^*\n]+):\*\*[ \t]*/u
+
+export function descriptionSections(body) {
+  const sections = []
+  for (const para of (body || '').split(/\n{2,}/u)) {
+    if (!para.trim()) continue
+    const m = SECTION_LABEL_RE.exec(para)
+    if (m) {
+      sections.push({ label: m[1].trim(), body: para.slice(m[0].length).trim() })
+      continue
+    }
+    const open = sections.at(-1)
+    if (open && open.label === null) open.body += `\n\n${para}`
+    else sections.push({ label: null, body: para })
+  }
+  return sections
+}
+
 // Source URL for one `## Evidence` row. The row's own link when the
 // report gave one; otherwise the same `HEAD` reconstruction findingUrl
 // falls back to, from the row's file / line under the finding's repo —

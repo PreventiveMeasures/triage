@@ -2,7 +2,7 @@ import { html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { bundlesForFileHash, isLinkableFindingId, isPlaceholderNpmPackage, state } from '#client/index.js'
-import { SEVERITY_ORDER, commitUrl, correctedVariants, displayedSeverity, effectiveSeverity, evidenceLabel, evidenceMarkdown, evidenceUrl, findingDisplayName, findingUrl, formatRunMeta, githubIssueUrl, hasSeverityCorrection, isHttpUrl, markdownLinkToken, parseCommentRefs, stripExportMarker } from './format.js'
+import { SEVERITY_ORDER, commitUrl, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceLabel, evidenceMarkdown, evidenceUrl, findingDisplayName, findingUrl, flowText, formatRunMeta, githubIssueUrl, hasSeverityCorrection, isHttpUrl, markdownLinkToken, parseCommentRefs, stripExportMarker } from './format.js'
 import { activeTabFor, findingRepo, groupKey, groupState, isIgnored, sortTabs, tabKey } from './group.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 
@@ -202,6 +202,19 @@ function renderCommentText(text) {
   })
 }
 
+// One labelled body section — a small-caps header over its text. Used
+// for every `**Label:**` paragraph the description carries (see
+// format.js descriptionSections) and for the finding's own
+// `recommendation` field, so a long section reads as its own block
+// rather than as one bold run the eye slides past. `cls` picks up the
+// per-section colouring (`.recommendation` is green).
+function sectionTemplate(label, body, cls = 'section') {
+  return html`<div class=${cls}>
+    <div class="section-label">${label}</div>
+    ${body ? html`<div class="section-body">${renderHighlighted(flowText(body))}</div>` : nothing}
+  </div>`
+}
+
 // The `## Evidence` list a claude-security import carries — one row per
 // cited site: a link to that site (its own URL from the report, or the
 // reconstruction for a row that named no link) plus the report's note
@@ -214,7 +227,7 @@ function evidenceTemplate(f) {
   if (rows.length === 0) return nothing
   const repoFallback = f._repoFallback ?? state.repoUrl
   return html`<div class="evidence">
-    <div class="evidence-label">Evidence</div>
+    <div class="section-label">Evidence</div>
     <ol class="evidence-list">${rows.map((row) => {
       const label = evidenceLabel(row)
       const url = evidenceUrl(row, f, repoFallback)
@@ -222,7 +235,7 @@ function evidenceTemplate(f) {
         ${url
           ? html`<a class="evidence-ref" href=${url} target="_blank" rel="noopener" title=${url}>${label}</a>`
           : html`<span class="evidence-ref">${label}</span>`}
-        ${row.text ? html`<div class="evidence-note">${renderHighlighted(row.text)}</div>` : nothing}
+        ${row.text ? html`<div class="evidence-note">${renderHighlighted(flowText(row.text))}</div>` : nothing}
       </li>`
     })}</ol>
   </div>`
@@ -731,6 +744,15 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
     }
   }
   const { title: descTitle, body: descBody } = splitDescription(stripExportMarker(f.description, f))
+  // The narrative first, then the evidence list, then the report's
+  // labelled sections — the order a claude-security report writes them
+  // in, and the one that reads right for the formats whose labels all
+  // trail their prose (parse-piolium). `lead` is the prose that opens
+  // the body; everything from the first label on keeps document order.
+  const sections = descriptionSections(descBody)
+  const firstLabel = sections.findIndex((s) => s.label !== null)
+  const lead = firstLabel === -1 ? sections : sections.slice(0, firstLabel)
+  const labelled = firstLabel === -1 ? [] : sections.slice(firstLabel)
   return html`<div class=${classMap({ 'tab-body': true, active: isActive })} data-tid=${key}>
     ${total > 1 ? html`<div class="print-case-label">${idx + 1} of ${total}</div>` : nothing}
     <div class="finding-left">
@@ -747,9 +769,12 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
         ${meta ? html`<span class="run-meta">${meta}</span>` : nothing}
       </div>
       ${descTitle ? html`<div class="desc-title">${descTitle}</div>` : nothing}
-      ${descBody ? html`<div class="desc">${renderHighlighted(descBody)}</div>` : nothing}
+      ${lead.map((s) => html`<div class="desc">${renderHighlighted(flowText(s.body))}</div>`)}
       ${evidenceTemplate(f)}
-      ${f.recommendation ? html`<div class="recommendation">Recommendation: ${renderHighlighted(stripExportMarker(f.recommendation, f))}</div>` : nothing}
+      ${labelled.map((s) => (s.label === null
+        ? html`<div class="desc">${renderHighlighted(flowText(s.body))}</div>`
+        : sectionTemplate(s.label, s.body)))}
+      ${f.recommendation ? sectionTemplate('Recommendation', stripExportMarker(f.recommendation, f), 'recommendation') : nothing}
       ${f.confidenceReason ? html`<div class="conf-reason">${renderHighlighted(stripExportMarker(f.confidenceReason, f))}</div>` : nothing}
       ${hasSeverityCorrection(f) && f.correctedSeverityReason ? html`<div class="severity-reason"><span class="severity-reason-label">Severity correction:</span> ${renderHighlighted(f.correctedSeverityReason)}</div>` : nothing}
       ${comment ? html`<div class="comment-block"><span class="comment-label">Comment:</span> ${renderCommentText(comment)}</div>` : nothing}
