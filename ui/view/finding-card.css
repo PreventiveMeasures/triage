@@ -158,11 +158,17 @@
   /* Small tick in the label's own colour (green under
      `.recommendation`) — at this type size the headers need something
      with weight to hang off, and it echoes the accent rail the comment
-     / fix blocks carry lower down. `print-color-adjust` because a
-     painted background is exactly what a printer drops by default. */
+     / fix blocks carry lower down. It hangs in the GUTTER: the negative
+     margin is its own width plus the gap after it, so the flex line
+     starts that far left and the label text lands back on the same
+     edge as the body under it. A tick that pushed its header out of
+     the text column would be doing the opposite of marking it.
+     `print-color-adjust` because a painted background is exactly what a
+     printer drops by default. */
   &::before {
     content: ''; flex: none;
     width: 2px; height: .58rem;
+    margin-left: calc((2px + .3rem) * -1);
     border-radius: 1px;
     background: currentcolor; opacity: .75;
     -webkit-print-color-adjust: exact; print-color-adjust: exact;
