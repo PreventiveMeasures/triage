@@ -2,7 +2,7 @@ import { html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { bundlesForFileHash, isLinkableFindingId, isPlaceholderNpmPackage, state } from '#client/index.js'
-import { SEVERITY_ORDER, commitUrl, correctedVariants, displayedSeverity, effectiveSeverity, findingDisplayName, findingUrl, formatRunMeta, githubIssueUrl, hasSeverityCorrection, isHttpUrl, markdownLinkToken, parseCommentRefs, stripExportMarker } from './format.js'
+import { SEVERITY_ORDER, commitUrl, correctedVariants, displayedSeverity, effectiveSeverity, evidenceLabel, evidenceMarkdown, evidenceUrl, findingDisplayName, findingUrl, formatRunMeta, githubIssueUrl, hasSeverityCorrection, isHttpUrl, markdownLinkToken, parseCommentRefs, stripExportMarker } from './format.js'
 import { activeTabFor, findingRepo, groupKey, groupState, isIgnored, sortTabs, tabKey } from './group.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 
@@ -202,6 +202,32 @@ function renderCommentText(text) {
   })
 }
 
+// The `## Evidence` list a claude-security import carries — one row per
+// cited site: a link to that site (its own URL from the report, or the
+// reconstruction for a row that named no link) plus the report's note
+// about it. A real `<ol>` rather than the body text's newlines, because
+// a note is usually long enough to wrap and only markup can keep the
+// wrapped lines indented under the reference instead of dropping them
+// back to the margin. Rows that named no line render the bare path.
+function evidenceTemplate(f) {
+  const rows = Array.isArray(f.evidence) ? f.evidence : []
+  if (rows.length === 0) return nothing
+  const repoFallback = f._repoFallback ?? state.repoUrl
+  return html`<div class="evidence">
+    <div class="evidence-label">Evidence</div>
+    <ol class="evidence-list">${rows.map((row) => {
+      const label = evidenceLabel(row)
+      const url = evidenceUrl(row, f, repoFallback)
+      return html`<li>
+        ${url
+          ? html`<a class="evidence-ref" href=${url} target="_blank" rel="noopener" title=${url}>${label}</a>`
+          : html`<span class="evidence-ref">${label}</span>`}
+        ${row.text ? html`<div class="evidence-note">${renderHighlighted(row.text)}</div>` : nothing}
+      </li>`
+    })}</ol>
+  </div>`
+}
+
 // Combined `file:line` link for the table-view row's location cell —
 // the row has no file header above it (unlike the list / grouped
 // views) so file + line live together in one slot. Returns a
@@ -335,6 +361,8 @@ function issueBody(f) {
   const blocks = []
   if (f.file) blocks.push(`File: ${href ? `[${loc}](${href})` : loc}`)
   if (f.description) blocks.push(f.description)
+  const evidence = evidenceMarkdown(f)
+  if (evidence) blocks.push(evidence)
   if (f.confidence !== undefined && f.confidence !== null) blocks.push(`Confidence: ${f.confidence}/10`)
   return blocks.join('\n\n')
 }
@@ -720,6 +748,7 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
       </div>
       ${descTitle ? html`<div class="desc-title">${descTitle}</div>` : nothing}
       ${descBody ? html`<div class="desc">${renderHighlighted(descBody)}</div>` : nothing}
+      ${evidenceTemplate(f)}
       ${f.recommendation ? html`<div class="recommendation">Recommendation: ${renderHighlighted(stripExportMarker(f.recommendation, f))}</div>` : nothing}
       ${f.confidenceReason ? html`<div class="conf-reason">${renderHighlighted(stripExportMarker(f.confidenceReason, f))}</div>` : nothing}
       ${hasSeverityCorrection(f) && f.correctedSeverityReason ? html`<div class="severity-reason"><span class="severity-reason-label">Severity correction:</span> ${renderHighlighted(f.correctedSeverityReason)}</div>` : nothing}

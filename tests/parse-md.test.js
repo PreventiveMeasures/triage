@@ -211,10 +211,10 @@ describe('parseMarkdownFindings — location parsing', () => {
 })
 
 // `## Evidence` — the newer Claude Security layout, a numbered list
-// where each row cites one site. The FIRST row is the finding's
-// location; the whole section also rides along in the description, so
-// the sites past the first survive the import (the renderer linkifies
-// their `[name](url)` refs).
+// where each row cites one site and notes what it shows. The FIRST row
+// is the finding's location; every row lands on `finding.evidence` as
+// structured data (the card renders it as a list, and the text surfaces
+// rebuild the markdown from it), so the description does NOT repeat it.
 describe('parseMarkdownFindings — evidence section', () => {
   const md = (...evidence) => [
     '# T',
@@ -246,10 +246,46 @@ describe('parseMarkdownFindings — evidence section', () => {
     assert.equal(f.location, 'https://github.com/o/r/blob/abc123/libs/libraries/a.ts#L10-L20')
   })
 
+  it('lands every row on `evidence`, ref + note apart', () => {
+    const f = parseMarkdownFindings(md(...TWO_ROWS)).findings[0]
+    assert.deepEqual(f.evidence, [
+      {
+        file: 'libs/libraries/a.ts',
+        line: '10-20',
+        url: 'https://github.com/o/r/blob/abc123/libs/libraries/a.ts#L10-L20',
+        text: 'Entry point that parses the payload.',
+      },
+      {
+        file: 'libs/libraries/b.ts',
+        line: '30',
+        url: 'https://github.com/o/r/blob/abc123/libs/libraries/b.ts#L30',
+        text: 'The sink.',
+      },
+    ])
+  })
+
+  it('keeps the rows out of the description', () => {
+    const f = parseMarkdownFindings(md(...TWO_ROWS)).findings[0]
+    assert.doesNotMatch(f.description, /Evidence/u)
+    assert.doesNotMatch(f.description, /libs\/libraries/u)
+    // The neighbouring sections are untouched.
+    assert.match(f.description, /Something is wrong\./u)
+    assert.match(f.description, /\*\*Impact:\*\* Bad\./u)
+  })
+
+  it('left-trims a note and keeps its own line breaks', () => {
+    const f = parseMarkdownFindings(md(
+      '1. [src/a.ts:10](https://example.com/a.ts#L10)',
+      '   First note line.',
+      '      Second note line.',
+    )).findings[0]
+    assert.equal(f.evidence[0].text, 'First note line.\nSecond note line.')
+  })
+
   it('normalizes an en-dashed line range to a plain hyphen', () => {
     const f = parseMarkdownFindings(md('1. [src/a.ts:10–20](https://example.com/a.ts)')).findings[0]
-    assert.equal(f.file, 'src/a.ts')
-    assert.equal(f.line, '10-20')
+    assert.equal(f.evidence[0].file, 'src/a.ts')
+    assert.equal(f.evidence[0].line, '10-20')
   })
 
   it('reads a range from a `#L10-L20` anchor', () => {
@@ -268,13 +304,12 @@ describe('parseMarkdownFindings — evidence section', () => {
     assert.equal(f.line, '10')
   })
 
-  it('carries the whole list into the description, links intact', () => {
-    const f = parseMarkdownFindings(md(...TWO_ROWS)).findings[0]
-    assert.match(f.description, /\*\*Evidence:\*\*/u)
-    for (const row of TWO_ROWS) assert.ok(f.description.includes(row.trim()), `missing row: ${row}`)
-    // …and in document order: Details, Evidence, Impact.
-    assert.ok(f.description.indexOf('Something is wrong.') < f.description.indexOf('**Evidence:**'))
-    assert.ok(f.description.indexOf('**Evidence:**') < f.description.indexOf('**Impact:** Bad.'))
+  it('leaves `url` unset for a row that carries no link', () => {
+    const f = parseMarkdownFindings(md('1. src/a.ts:10', '   A note.')).findings[0]
+    assert.deepEqual(f.evidence, [{ file: 'src/a.ts', line: '10', text: 'A note.' }])
+    // …while the finding-level `location` keeps its raw-text fallback,
+    // which finding-id.js uses as the id discriminator.
+    assert.equal(f.location, 'src/a.ts:10')
   })
 
   it('accepts bulleted rows', () => {
@@ -283,7 +318,8 @@ describe('parseMarkdownFindings — evidence section', () => {
       '- [src/b.ts:20](https://example.com/b.ts#L20)',
     )).findings[0]
     assert.equal(f.file, 'src/a.ts')
-    assert.equal(f.location, 'https://example.com/a.ts#L10')
+    assert.equal(f.evidence.length, 2)
+    assert.equal(f.evidence[1].url, 'https://example.com/b.ts#L20')
   })
 
   it('never takes a row\'s prose as the location', () => {
@@ -292,29 +328,34 @@ describe('parseMarkdownFindings — evidence section', () => {
       '   Prose under the row, not a reference.',
     )).findings[0]
     assert.equal(f.file, 'src/a.ts')
+    assert.equal(f.evidence.length, 1)
+    assert.equal(f.evidence[0].text, 'Prose under the row, not a reference.')
   })
 
   it('reads a lone unmarked reference line', () => {
     const f = parseMarkdownFindings(md('[src/a.ts:10](https://example.com/a.ts#L10)')).findings[0]
     assert.equal(f.file, 'src/a.ts')
     assert.equal(f.line, '10')
+    assert.equal(f.evidence.length, 1)
   })
 
-  it('picks the linked line out of an unmarked section', () => {
+  it('picks the linked line out of an unmarked section, prose as its note', () => {
     const f = parseMarkdownFindings(md(
       'The flaw sits in the loader:',
       '[src/a.ts:10](https://example.com/a.ts#L10)',
     )).findings[0]
     assert.equal(f.file, 'src/a.ts')
+    assert.equal(f.evidence[0].text, 'The flaw sits in the loader:')
   })
 
-  it('leaves the file unknown when no row names one', () => {
+  it('leaves prose-only evidence in the description, file unknown', () => {
     const f = parseMarkdownFindings(md('Nothing citable here.', 'Only prose.')).findings[0]
     assert.equal(f.file, 'unknown')
     assert.equal(f.line, '?')
     assert.equal(f.location, undefined)
-    // The prose still reaches the reader.
-    assert.match(f.description, /Nothing citable here\./u)
+    assert.equal(f.evidence, undefined)
+    // Nothing parses out of it, so dropping it would lose it.
+    assert.match(f.description, /\*\*Evidence:\*\*\nNothing citable here\./u)
   })
 
   it('lets `## Location` win when a report carries both', () => {
@@ -334,8 +375,8 @@ describe('parseMarkdownFindings — evidence section', () => {
     assert.equal(f.file, 'src/loc.ts')
     assert.equal(f.line, '5')
     assert.equal(f.location, 'https://example.com/loc.ts#L5')
-    // The Evidence list still shows up in the body.
-    assert.match(f.description, /src\/ev\.ts:10/u)
+    // The Evidence rows are still carried.
+    assert.deepEqual(f.evidence, [{ file: 'src/ev.ts', line: '10', url: 'https://example.com/ev.ts#L10' }])
   })
 })
 

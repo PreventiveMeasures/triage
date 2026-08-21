@@ -1,7 +1,7 @@
 import { state } from '#client/index.js'
 import { downloadBlob } from './dom.js'
 import { applyFilters } from './filters.js'
-import { commonPrefix, correctedVariants, effectiveSeverity, findingDisplayName, hasSeverityCorrection, stripExportMarker } from './format.js'
+import { commonPrefix, correctedVariants, effectiveSeverity, evidenceMarkdown, findingDisplayName, hasSeverityCorrection, stripExportMarker } from './format.js'
 import { groupState, isIgnored, tabKey } from './group.js'
 
 // Markdown serializer for the "download report" toolbar button —
@@ -82,6 +82,14 @@ function findingToMarkdown(f) {
 
   if (description) {
     lines.push(description.trim())
+    lines.push('')
+  }
+  // Claude Security's `## Evidence` list lives in structured rows after
+  // parse (see common/parse-md.js), so it's rebuilt here rather than
+  // riding along inside the description.
+  const evidence = evidenceMarkdown(f)
+  if (evidence) {
+    lines.push(evidence)
     lines.push('')
   }
   if (f.recommendation) {

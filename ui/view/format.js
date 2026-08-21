@@ -284,7 +284,7 @@ export function findingDisplayName(f) {
 // the lazy graph bundle (see the `fileUrl` note below), so filters.js
 // matches the comment and fix fields itself; see matchesFilters there.
 export function findingText(f) {
-  return [f.file, f.description, f.recommendation, f.confidenceReason, f.discoveredIn, f.repo?.github].filter(Boolean).join('\n').toLowerCase()
+  return [f.file, f.description, evidenceMarkdown(f), f.recommendation, f.confidenceReason, f.discoveredIn, f.repo?.github].filter(Boolean).join('\n').toLowerCase()
 }
 
 export function prettyModel(model) {
@@ -422,6 +422,40 @@ export function findingUrl(f, repoFallback) {
   return Number.isFinite(lineNum) ? `${url}#L${lineNum}` : url
 }
 
+// Source URL for one `## Evidence` row. The row's own link when the
+// report gave one; otherwise the same `HEAD` reconstruction findingUrl
+// falls back to, from the row's file / line under the finding's repo —
+// so a row citing a path with no link is still reachable.
+export function evidenceUrl(row, f, repoFallback) {
+  return findingUrl({ file: row?.file, line: row?.line, location: row?.url, repo: f?.repo }, repoFallback)
+}
+
+// `file:line` display label for an evidence row — the line is dropped
+// when the row didn't name one ('?'), matching the location displays.
+export function evidenceLabel(row) {
+  return Number.isFinite(parseInt(row?.line, 10)) ? `${row.file}:${row.line}` : (row?.file ?? '')
+}
+
+// The evidence list rebuilt as markdown — the shape it arrived in. The
+// structured rows (not the description) carry it after parse, so every
+// TEXT surface reassembles it from here: the markdown export, the
+// pre-filled GitHub issue body, the clipboard / Claude handoff block,
+// and the search haystack. Empty string for a finding without rows, so
+// callers can `if (block)` rather than special-case the format.
+export function evidenceMarkdown(f) {
+  const rows = Array.isArray(f?.evidence) ? f.evidence : []
+  if (rows.length === 0) return ''
+  const lines = ['**Evidence:**']
+  rows.forEach((row, i) => {
+    const label = evidenceLabel(row)
+    lines.push(`${i + 1}. ${row.url ? `[${label}](${row.url})` : label}`)
+    // Note lines are indented under their row marker, the way the
+    // report wrote them — markdown reads that as one list item.
+    if (row.text) for (const noteLine of row.text.split('\n')) lines.push(`   ${noteLine}`)
+  })
+  return lines.join('\n')
+}
+
 // One inline markdown link — `[label](url)` — as it appears INSIDE a
 // finding description: parse-md.js carries the `## Evidence` list into
 // the body verbatim, links included, so the renderer needs the pair
@@ -478,6 +512,8 @@ export function handoffBlock(f, repo) {
   if (f.file) lines.push(`File: ${f.file}`)
   if (f.line !== undefined && f.line !== null && f.line !== '') lines.push(`Line: ${f.line}`)
   if (f.description) lines.push(`Description: ${f.description}`)
+  const evidence = evidenceMarkdown(f)
+  if (evidence) lines.push(evidence)
   if (f.confidence !== undefined && f.confidence !== null) lines.push(`Confidence: ${f.confidence}/10`)
   return lines.join('\n')
 }

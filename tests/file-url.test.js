@@ -1,5 +1,6 @@
 // `ui/view/format.js` — the source-link builders: `fileUrl` /
-// `isPkgRef`, `findingUrl`, `markdownLinkToken`. Pins the
+// `isPkgRef`, `findingUrl`, `markdownLinkToken`, and the `## Evidence`
+// row helpers (`evidenceUrl` / `evidenceLabel` / `evidenceMarkdown`). Pins the
 // package-reference guard: a piolium `Key code` citing `name@1.2.3` (or
 // `@scope/name@1.2.3`) is a dependency reference, not a repo path, and
 // must not blob-link under the finding's repo — while real paths keep
@@ -24,7 +25,7 @@ if (!globalThis[slotKey]) {
   }
 }
 
-const { fileUrl, findingUrl, isPkgRef, markdownLinkToken } = await import('../ui/view/format.js')
+const { evidenceLabel, evidenceMarkdown, evidenceUrl, fileUrl, findingUrl, isPkgRef, markdownLinkToken } = await import('../ui/view/format.js')
 
 describe('isPkgRef', () => {
   it('matches bare and scoped package references', () => {
@@ -139,5 +140,62 @@ describe('markdownLinkToken', () => {
       markdownLinkToken('[ ](https://example.com/a)'),
       { label: 'https://example.com/a', url: 'https://example.com/a' },
     )
+  })
+})
+
+// `## Evidence` rows (common/parse-md.js) — the card renders them as a
+// list, and every text surface (markdown export, GitHub issue body,
+// clipboard / Claude handoff, search haystack) rebuilds the markdown
+// from `evidenceMarkdown`, so its shape is what those all emit.
+describe('evidence rows', () => {
+  const f = {
+    file: 'a.ts',
+    line: '10-20',
+    repo: { github: 'acme/widgets' },
+    evidence: [
+      { file: 'libs/a.ts', line: '10-20', url: 'https://github.com/o/r/blob/abc/libs/a.ts#L10-L20', text: 'The merge loop.' },
+      { file: 'libs/b.ts', line: '30', text: 'The sink.' },
+      { file: 'libs/c.ts', line: '?' },
+    ],
+  }
+
+  it('labels a row as file:line, dropping an unknown line', () => {
+    assert.equal(evidenceLabel(f.evidence[0]), 'libs/a.ts:10-20')
+    assert.equal(evidenceLabel(f.evidence[2]), 'libs/c.ts')
+  })
+
+  it('links a row by its own URL when the report gave one', () => {
+    assert.equal(evidenceUrl(f.evidence[0], f, ''), 'https://github.com/o/r/blob/abc/libs/a.ts#L10-L20')
+  })
+
+  it('reconstructs a link for a row that carried none', () => {
+    assert.equal(evidenceUrl(f.evidence[1], f, ''), 'https://github.com/acme/widgets/blob/HEAD/libs/b.ts#L30')
+    assert.equal(evidenceUrl(f.evidence[2], f, ''), 'https://github.com/acme/widgets/blob/HEAD/libs/c.ts')
+  })
+
+  it('gives no link when the finding has no repo to resolve against', () => {
+    assert.equal(evidenceUrl(f.evidence[1], { file: 'a.ts' }, ''), null)
+  })
+
+  it('rebuilds the list as markdown, notes indented under their row', () => {
+    assert.equal(evidenceMarkdown(f), [
+      '**Evidence:**',
+      '1. [libs/a.ts:10-20](https://github.com/o/r/blob/abc/libs/a.ts#L10-L20)',
+      '   The merge loop.',
+      '2. libs/b.ts:30',
+      '   The sink.',
+      '3. libs/c.ts',
+    ].join('\n'))
+  })
+
+  it('keeps a multi-line note inside its own row', () => {
+    const md = evidenceMarkdown({ evidence: [{ file: 'a.ts', line: '1', text: 'First.\nSecond.' }] })
+    assert.equal(md, '**Evidence:**\n1. a.ts:1\n   First.\n   Second.')
+  })
+
+  it('is empty for a finding with no rows', () => {
+    assert.equal(evidenceMarkdown({ file: 'a.ts' }), '')
+    assert.equal(evidenceMarkdown({ file: 'a.ts', evidence: [] }), '')
+    assert.equal(evidenceMarkdown(null), '')
   })
 })

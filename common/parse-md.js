@@ -95,12 +95,14 @@ function parseBlock(block) {
   const { sectionsText, metaText } = splitBody(body)
   const sections = parseSections(sectionsText)
   const meta = parseMeta(metaText)
+  const evidence = evidenceRows(sections.evidence || '')
   // The finding's own location: `## Location` when the report carries
   // one (older format), otherwise the FIRST `## Evidence` row — the
-  // primary site, by the convention the newer format follows. The
-  // remaining rows ride along in the description (buildDescription).
+  // primary site, by the convention the newer format follows. Every row
+  // (this one included) also lands on `finding.evidence` below, which
+  // is what the card renders as a list.
   const { file, line, locationLink } = parseLocation(
-    sections.location || evidenceRefs(sections.evidence || '')[0] || '',
+    sections.location || evidence[0]?.ref || '',
   )
 
   // Severity defaults to medium when missing or unrecognized — keeps
@@ -108,11 +110,12 @@ function parseBlock(block) {
   const sevRaw = (meta.severity || '').toLowerCase()
   const severity = VALID_SEVERITIES.has(sevRaw) ? sevRaw : 'medium'
 
-  const description = buildDescription(title, sections)
+  const description = buildDescription(title, sections, evidence.length > 0)
   const recommendation = sections['recommended fix'] || undefined
 
   const finding = { file: file || 'unknown', line, severity, description }
   if (locationLink) finding.location = locationLink
+  if (evidence.length > 0) finding.evidence = evidence.map(evidenceEntry)
   if (recommendation) finding.recommendation = recommendation
   if (meta.repository) finding.repo = { github: meta.repository }
   // Preserve auxiliary metadata as plain string fields. The renderer
@@ -211,33 +214,53 @@ function parseLocation(loc) {
   return { file, line, locationLink }
 }
 
-// The code references of an `## Evidence` section, in document order.
-// Each row leads with the reference and carries its own description on
-// the lines under it:
+// Rows of an `## Evidence` section, in document order. A row leads with
+// the code reference and carries its own note on the lines under it:
 //
 //   1. [libs/a.ts:10–20](https://github.com/o/r/blob/<sha>/libs/a.ts#L10-L20)
 //      Why this line matters.
 //
-// so only the marker line of each item is a reference; the prose below
-// it is not. Numbered (`1.` / `1)`) and bulleted (`-` / `*` / `+`)
-// markers both count. A section written without any list marker still
-// yields its reference when it is a single line, or when one of its
-// lines carries a markdown link — anything else (free prose) yields no
-// reference at all, leaving the file 'unknown' rather than promoting a
-// sentence to a path.
+// so only an item's marker line is a reference; the prose under it is
+// that row's note. Numbered (`1.` / `1)`) and bulleted (`-` / `*` /
+// `+`) markers both open a row. Note lines are left-trimmed: the
+// renderer indents the row (a real `<ol>`, so a note that wraps stays
+// under its reference), and the source's own indentation would only
+// double up on that.
+//
+// A section written without any marker still yields one row when it is
+// a single line, or around the first line carrying a markdown link —
+// free prose yields no rows at all, and parseBlock leaves it in the
+// description as written rather than promoting a sentence to a path.
 const EVIDENCE_ITEM_RE = /^[ \t]*(?:\d+[.)]|[-*+])\s+/u
 const MD_LINK_RE = /\[[^\]]+\]\([^)\s]+\)/u
 
-function evidenceRefs(text) {
-  const lines = text.split('\n')
-  const items = lines.filter((l) => EVIDENCE_ITEM_RE.test(l))
-    .map((l) => l.replace(EVIDENCE_ITEM_RE, '').trim())
-    .filter(Boolean)
-  if (items.length > 0) return items
-  const bare = lines.map((l) => l.trim()).filter(Boolean)
-  const linked = bare.find((l) => MD_LINK_RE.test(l))
-  if (linked) return [linked]
-  return bare.length === 1 ? bare : []
+function evidenceRows(text) {
+  const rows = []
+  for (const line of text.split('\n')) {
+    if (EVIDENCE_ITEM_RE.test(line)) rows.push({ ref: line.replace(EVIDENCE_ITEM_RE, '').trim(), note: [] })
+    else if (rows.length > 0 && line.trim()) rows.at(-1).note.push(line.trim())
+  }
+  if (rows.length === 0) {
+    const bare = text.split('\n').map((l) => l.trim()).filter(Boolean)
+    const at = bare.findIndex((l) => MD_LINK_RE.test(l))
+    if (at === -1 && bare.length !== 1) return []
+    const refAt = at === -1 ? 0 : at
+    rows.push({ ref: bare[refAt], note: bare.filter((_, i) => i !== refAt) })
+  }
+  return rows.filter((r) => r.ref)
+}
+
+// One row as it lands on the finding: the parsed reference plus the
+// report's note. `url` is set only when the row actually carried a
+// markdown link — parseLocation's raw-text fallback is an id
+// discriminator, not something to hand a renderer as an href.
+function evidenceEntry({ ref, note }) {
+  const { file, line, locationLink } = parseLocation(ref)
+  const entry = { file: file || 'unknown', line }
+  if (locationLink && MD_LINK_RE.test(ref)) entry.url = locationLink
+  const text = note.join('\n')
+  if (text) entry.text = text
+  return entry
 }
 
 // Build the description from the title + body sections. Section labels
@@ -249,16 +272,16 @@ function evidenceRefs(text) {
 // same treatment; everything else (line breaks, list bullets, indented
 // continuation lines) survives verbatim, with white-space: pre-wrap on
 // the .desc CSS rule keeping the shape the report wrote.
-function buildDescription(title, sections) {
+function buildDescription(title, sections, hasEvidenceRows) {
   const bodyParts = [title]
   if (sections.details) bodyParts.push(sections.details)
-  // The Evidence list rides along in the body — only its first row
-  // becomes the finding's location, so without this every other cited
-  // site would be dropped on import. Kept as the report wrote it,
-  // markdown links included: the renderer linkifies each `[name](url)`
-  // ref, and its own line / indentation is what makes the list read as
-  // a list on screen.
-  if (sections.evidence) bodyParts.push(`**Evidence:**\n${sections.evidence}`)
+  // An Evidence section that parsed into rows belongs to
+  // `finding.evidence` — the card renders it as a list and the text
+  // surfaces rebuild it from there (format.js evidenceMarkdown), so
+  // repeating it here would only duplicate it. A section that parsed
+  // into NO rows is free prose: it stays in the body, since dropping
+  // it would lose it.
+  if (sections.evidence && !hasEvidenceRows) bodyParts.push(`**Evidence:**\n${sections.evidence}`)
   if (sections.impact) bodyParts.push(`**Impact:** ${sections.impact}`)
   if (sections['reproduction steps']) bodyParts.push(`**Reproduction:** ${sections['reproduction steps']}`)
   return bodyParts.join('\n\n')

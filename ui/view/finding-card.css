@@ -149,6 +149,47 @@
   border-top: 1px dashed var(--border);
 }
 
+/* `## Evidence` list from a claude-security import — one row per cited
+   site, rendered from the finding's structured rows (see
+   render-finding.js evidenceTemplate). A real <ol> is what earns this
+   its own block: the notes are long, and only markup keeps a wrapped
+   note indented under its reference — the body text's leading spaces
+   only ever indent the first line. Markers sit in the padding so the
+   whole row hangs off one edge. */
+.evidence {
+  grid-column: 2; margin-top: .55rem;
+  font-size: .92em;
+}
+.evidence-label {
+  color: var(--muted); font-weight: 600;
+  font-size: .62rem; text-transform: uppercase; letter-spacing: .06em;
+}
+.evidence-list {
+  margin: .25rem 0 0; padding-left: 1.6rem;
+  display: flex; flex-direction: column; gap: .4rem;
+
+  & li::marker { color: var(--muted); font-size: .9em; }
+}
+.evidence-ref {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .92em; overflow-wrap: anywhere;
+  color: var(--accent); text-decoration: none;
+
+  &:hover { text-decoration: underline; }
+}
+/* No link to give this row — same type, muted, so the missing target
+   reads as absent rather than broken. */
+span.evidence-ref { color: var(--muted); }
+/* No `white-space: pre-wrap` here on purpose: the note arrives with the
+   line breaks the report's markdown happened to wrap at, and those are
+   soft breaks — reflowing them to the card's width reads as the
+   paragraph it is, rather than a column of ragged lines. */
+.evidence-note {
+  line-height: 1.5;
+  color: rgb(from var(--text) r g b / .78);
+  margin-top: .1rem;
+}
+
 /* Inline `[label](url)` links carried by the body text — the
    claude-security `## Evidence` list cites every site that way and
    parse-md.js keeps the section in the description (render-finding.js
@@ -836,7 +877,7 @@
      bare-text fallback. The body selectors repeat the on-screen rule's
      specificity so they lose to nothing here. */
   a, .line-num, .line-num a { color: inherit; }
-  .desc a, .recommendation a, .conf-reason a { color: inherit; }
+  .desc a, .recommendation a, .conf-reason a, .evidence-ref { color: inherit; }
 
   /* Inline `` `code` `` spans read as a chip on screen (1px border +
      tinted bg); on paper that chrome crowds dense prose and reads as
