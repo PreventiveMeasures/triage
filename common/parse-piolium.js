@@ -457,7 +457,7 @@ const NON_NARRATIVE_FIELDS = new Set([
 // them), then every narrative label with its ORIGINAL casing, kept
 // `**bold**` — the finding card's renderHighlighted renders `**…**`
 // spans as real <strong> emphasis, and markdown-export emits markdown,
-// where they are simply bold. white-space: pre-line on `.desc` keeps
+// where they are simply bold. white-space: pre-wrap on `.desc` keeps
 // the paragraph breaks.
 function buildDescription(title, fields, labels, prose) {
   const parts = [title]

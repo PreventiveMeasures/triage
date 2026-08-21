@@ -137,7 +137,7 @@ function parseBlock(block, severity) {
 
   // Description = prose minus the bullet metadata lines, with simple
   // **bold** markdown stripped (renderer escapes HTML, so ** would
-  // render literally). white-space: pre-line on .desc preserves any
+  // render literally). white-space: pre-wrap on .desc preserves any
   // remaining paragraph breaks.
   const description = prose
     .split('\n')

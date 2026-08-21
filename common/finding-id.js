@@ -62,8 +62,9 @@ export function findingId(severity, description, fileHash) {
 //
 // Discriminator selection (in order):
 //   - fileHash  — preferred when present (matches `findingId` above)
-//   - location  — used by markdown imports (the URL from `## Location`),
-//                 also a stable identifier
+//   - location  — used by markdown imports (the URL of the first
+//                 `## Evidence` row, or of `## Location` in older
+//                 reports), also a stable identifier
 //   - file/line — last-resort defensive fallback for JSON findings
 //                 that have neither (rare; not what the spec
 //                 prescribes, but better than collapsing two

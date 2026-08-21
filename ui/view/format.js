@@ -284,7 +284,7 @@ export function findingDisplayName(f) {
 // the lazy graph bundle (see the `fileUrl` note below), so filters.js
 // matches the comment and fix fields itself; see matchesFilters there.
 export function findingText(f) {
-  return [f.file, f.description, f.recommendation, f.confidenceReason, f.discoveredIn, f.repo?.github].filter(Boolean).join('\n').toLowerCase()
+  return [f.file, f.description, evidenceMarkdown(f), f.recommendation, f.confidenceReason, f.discoveredIn, f.repo?.github].filter(Boolean).join('\n').toLowerCase()
 }
 
 export function prettyModel(model) {
@@ -368,9 +368,23 @@ export function fileUrl(file, githubRepo, repoFallback) {
   return `${base}/blob/HEAD/${file}`
 }
 
-export function fileLink(file, githubRepo, repoFallback) {
-  const url = fileUrl(file, githubRepo, repoFallback)
-  return url ? html`<a href=${url} target="_blank" rel="noopener">${file}</a>` : file
+// File-level link for a finding's path — the file headers the list /
+// grouped views stack their cards under. Same target as the finding's
+// own `findingUrl` minus the line anchor, so a header and the line
+// links under it resolve to one revision of one file rather than two.
+// Plain text (no `<a>`) when there's nothing to link against.
+export function fileLink(f, repoFallback) {
+  const file = f?.file ?? ''
+  const url = findingUrl(f, repoFallback)
+  if (!url) return file
+  return html`<a href=${stripLineAnchor(url)} target="_blank" rel="noopener">${file}</a>`
+}
+
+// Drop a trailing `#L42` / `#L10-L20` anchor: a file-level link wants
+// the file, not the line one finding in it sits on. Any other fragment
+// is left alone — it isn't ours to interpret.
+function stripLineAnchor(url) {
+  return url.replace(/#L\d+(?:-L?\d+)?$/u, '')
 }
 
 // Returns true only for parseable http:// / https:// URLs. User-
@@ -386,19 +400,147 @@ export function isHttpUrl(s) {
   } catch { return false }
 }
 
-// Returns a "line N" template (linkified when a fileUrl is available)
-// or `nothing` when `line` isn't a finite integer — codex /
-// claude-security imports don't carry line numbers and stub them as
-// '?', and rendering a bare "line ?" adds noise without information.
-// Callers suppress the wrapping `<span class="line-num">` when this
-// returns `nothing`.
-export function lineLink(file, line, githubRepo, repoFallback) {
-  const lineNum = parseInt(line, 10)
+// Source URL for ONE finding's location — every finding-level file /
+// line link routes through here so they all resolve the same target.
+//
+// A markdown import carries the report's OWN link in `f.location` (the
+// `[file:lines](url)` ref of `## Evidence` / `## Location`): an exact
+// ref, usually pinned to the commit the report was produced from, with
+// the line anchor already on it. That beats the `fileUrl()`
+// reconstruction, which can only pin `HEAD` — a different revision, and
+// a 404 once the path moves — and which yields nothing at all for the
+// claude-security reports that name no repository. Non-http `location`
+// values (parse-piolium's `piolium:<id>` placeholder) fall through to
+// the reconstruction, as do JSON findings, which carry no `location`.
+// Returns null when neither source yields a URL.
+export function findingUrl(f, repoFallback) {
+  if (!f) return null
+  if (isHttpUrl(f.location)) return f.location
+  const url = fileUrl(f.file, f.repo?.github, repoFallback)
+  if (!url) return null
+  const lineNum = parseInt(f.line, 10)
+  return Number.isFinite(lineNum) ? `${url}#L${lineNum}` : url
+}
+
+// Reports hard-wrap their markdown, so a paragraph arrives carrying the
+// line breaks the author's editor happened to put in. Markdown reads
+// those as SOFT breaks — they reflow — and honouring them literally
+// renders a column of ragged short lines inside a card that is wider
+// than the source was. `flowText` joins each paragraph back into one
+// run, leaving the blank lines between paragraphs alone.
+//
+// A paragraph is left EXACTLY as written when any of its lines opens
+// something block-level — an indented (code) line, a list marker, a
+// fence, a quote, a heading, a table row. Those are the constructs
+// whose line breaks carry meaning (a piolium PoC snippet, a list of
+// affected files), and `.desc` / `.section-body` keep `pre-wrap` so
+// they still render as the report wrote them.
+const BLOCK_LINE_RE = /^(?:\s+\S|[-*+] |\d+[.)] |>|#{1,6} |\||`{3}|~{3})/u
+
+export function flowText(text) {
+  if (!text) return text
+  // The capturing split keeps the blank-line runs, so paragraph
+  // spacing survives the rejoin untouched.
+  return text.split(/(\n{2,})/u).map((chunk) => {
+    if (/^\n+$/u.test(chunk)) return chunk
+    const lines = chunk.split('\n')
+    if (lines.some((l) => BLOCK_LINE_RE.test(l))) return chunk
+    return lines.map((l) => l.trim()).filter(Boolean).join(' ')
+  }).join('')
+}
+
+// Split a description body into the sections the report wrote it in.
+// A paragraph that OPENS with a `**Label:**` prefix is one: that is how
+// every parser emits its narrative fields — parse-piolium's `**Root
+// Cause:**` / `**Severity note:**` / `**Note:**` and friends (any label
+// the source report carried), parse-md's `**Impact:**` /
+// `**Reproduction:**` — so keying off the emitted markup, rather than
+// matching label words, picks up whatever a report names its sections.
+// The card gives each a small-caps header + body block instead of one
+// bold run buried in the prose (render-finding.js sectionTemplate).
+//
+// Everything else is prose: consecutive unlabelled paragraphs stay in
+// ONE block so their blank-line spacing survives. A label with nothing
+// after it keeps its header and gets an empty body. Returns
+// `[{ label, body }]` in document order, `label` null for prose.
+const SECTION_LABEL_RE = /^\*\*([^*\n]+):\*\*[ \t]*/u
+
+export function descriptionSections(body) {
+  const sections = []
+  for (const para of (body || '').split(/\n{2,}/u)) {
+    if (!para.trim()) continue
+    const m = SECTION_LABEL_RE.exec(para)
+    if (m) {
+      sections.push({ label: m[1].trim(), body: para.slice(m[0].length).trim() })
+      continue
+    }
+    const open = sections.at(-1)
+    if (open && open.label === null) open.body += `\n\n${para}`
+    else sections.push({ label: null, body: para })
+  }
+  return sections
+}
+
+// Source URL for one `## Evidence` row. The row's own link when the
+// report gave one; otherwise the same `HEAD` reconstruction findingUrl
+// falls back to, from the row's file / line under the finding's repo —
+// so a row citing a path with no link is still reachable.
+export function evidenceUrl(row, f, repoFallback) {
+  return findingUrl({ file: row?.file, line: row?.line, location: row?.url, repo: f?.repo }, repoFallback)
+}
+
+// `file:line` display label for an evidence row — the line is dropped
+// when the row didn't name one ('?'), matching the location displays.
+export function evidenceLabel(row) {
+  return Number.isFinite(parseInt(row?.line, 10)) ? `${row.file}:${row.line}` : (row?.file ?? '')
+}
+
+// The evidence list rebuilt as markdown — the shape it arrived in. The
+// structured rows (not the description) carry it after parse, so every
+// TEXT surface reassembles it from here: the markdown export, the
+// pre-filled GitHub issue body, the clipboard / Claude handoff block,
+// and the search haystack. Empty string for a finding without rows, so
+// callers can `if (block)` rather than special-case the format.
+export function evidenceMarkdown(f) {
+  const rows = Array.isArray(f?.evidence) ? f.evidence : []
+  if (rows.length === 0) return ''
+  const lines = ['**Evidence:**']
+  rows.forEach((row, i) => {
+    const label = evidenceLabel(row)
+    lines.push(`${i + 1}. ${row.url ? `[${label}](${row.url})` : label}`)
+    // Note lines are indented under their row marker, the way the
+    // report wrote them — markdown reads that as one list item.
+    if (row.text) for (const noteLine of row.text.split('\n')) lines.push(`   ${noteLine}`)
+  })
+  return lines.join('\n')
+}
+
+// One inline markdown link — `[label](url)` — as it appears INSIDE a
+// finding description: parse-md.js carries the `## Evidence` list into
+// the body verbatim, links included, so the renderer needs the pair
+// back to build an `<a>` (see renderHighlighted in render-finding.js).
+// Returns null unless the target is a well-formed http(s) URL, so a
+// `javascript:` / `data:` href — or a stray `[…](…)` in prose — stays
+// plain text rather than becoming a clickable footgun.
+export function markdownLinkToken(raw) {
+  const m = /^\[([^\]]+)\]\(([^)\s]+)\)$/u.exec(raw)
+  if (!m || !isHttpUrl(m[2])) return null
+  return { label: m[1].trim() || m[2], url: m[2] }
+}
+
+// Returns a "line N" template (linkified when a source URL is
+// available) or `nothing` when the finding's line isn't a finite
+// integer — codex / claude-security imports don't carry line numbers
+// and stub them as '?', and rendering a bare "line ?" adds noise
+// without information. Callers suppress the wrapping `<span
+// class="line-num">` when this returns `nothing`.
+export function lineLink(f, repoFallback) {
+  const lineNum = parseInt(f?.line, 10)
   if (!Number.isFinite(lineNum)) return nothing
-  const url = fileUrl(file, githubRepo, repoFallback)
+  const url = findingUrl(f, repoFallback)
   const text = `line ${lineNum}`
   if (!url) return text
-  return html`<a href=${`${url}#L${lineNum}`} target="_blank" rel="noopener">${text}</a>`
+  return html`<a href=${url} target="_blank" rel="noopener">${text}</a>`
 }
 
 // Commit URL builder + link renderer. Used by codex imports which
@@ -429,6 +571,8 @@ export function handoffBlock(f, repo) {
   if (f.file) lines.push(`File: ${f.file}`)
   if (f.line !== undefined && f.line !== null && f.line !== '') lines.push(`Line: ${f.line}`)
   if (f.description) lines.push(`Description: ${f.description}`)
+  const evidence = evidenceMarkdown(f)
+  if (evidence) lines.push(evidence)
   if (f.confidence !== undefined && f.confidence !== null) lines.push(`Confidence: ${f.confidence}/10`)
   return lines.join('\n')
 }

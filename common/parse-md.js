@@ -12,8 +12,11 @@
 //   ## Details
 //   <Details>
 //
-//   ## Location
-//   [<name>](<url>)
+//   ## Evidence
+//   1. [<name>](<url>)
+//      <Description>
+//   2. [<name>](<url>)
+//      <Description>
 //
 //   ## Impact
 //   <Impact>
@@ -32,10 +35,14 @@
 //   **Branch:** <branch>
 //   **Date created:** <YYYY-MM-DD>
 //
-// All five `## …` sections are optional (any missing one is just
-// dropped from the description); only the title and the metadata
-// block carry mandatory information (severity defaults to medium if
-// absent or unrecognized).
+// Older reports carry a single-line `## Location` ([<name>](<url>))
+// where newer ones list every cited site under `## Evidence`; both are
+// read, and `## Location` wins when a report somehow carries both.
+//
+// Every `## …` section is optional (any missing one is just dropped
+// from the description); only the title and the metadata block carry
+// mandatory information (severity defaults to medium if absent or
+// unrecognized).
 
 const VALID_SEVERITIES = new Set(['critical', 'high', 'medium', 'low', 'high_bug', 'bug', 'informational'])
 
@@ -88,19 +95,27 @@ function parseBlock(block) {
   const { sectionsText, metaText } = splitBody(body)
   const sections = parseSections(sectionsText)
   const meta = parseMeta(metaText)
-  const { file, line, locationLink } = parseLocation(sections.location || '')
+  const evidence = evidenceRows(sections.evidence || '')
+  // The finding's own location: `## Location` when the report carries
+  // one (older format), otherwise the FIRST `## Evidence` row — the
+  // primary site, by the convention the newer format follows. Every row
+  // (this one included) also lands on `finding.evidence` below, which
+  // is what the card renders as a list.
+  const { file, line, locationLink } = parseLocation(
+    sections.location || evidence[0]?.ref || '',
+  )
 
   // Severity defaults to medium when missing or unrecognized — keeps
   // an unparsable finding visible rather than dropping it silently.
   const sevRaw = (meta.severity || '').toLowerCase()
   const severity = VALID_SEVERITIES.has(sevRaw) ? sevRaw : 'medium'
 
-  const description = buildDescription(title, sections)
-  const recommendation = sections['recommended fix']
-    ? stripBold(sections['recommended fix']) : undefined
+  const description = buildDescription(title, sections, evidence.length > 0)
+  const recommendation = sections['recommended fix'] || undefined
 
   const finding = { file: file || 'unknown', line, severity, description }
   if (locationLink) finding.location = locationLink
+  if (evidence.length > 0) finding.evidence = evidence.map(evidenceEntry)
   if (recommendation) finding.recommendation = recommendation
   if (meta.repository) finding.repo = { github: meta.repository }
   // Preserve auxiliary metadata as plain string fields. The renderer
@@ -160,46 +175,114 @@ function parseMeta(metaText) {
   return meta
 }
 
-// Location: prefer a markdown link `[name](url)`. The line number can
-// come from a `#L<n>` anchor in the URL, a `:<n>` suffix on the name,
-// or absent altogether (rendered as `?`). The original link (URL when
-// present, raw text otherwise) is preserved as `locationLink` — the
+// A code reference — one `## Location` line or one `## Evidence` row.
+// Prefer a markdown link `[name](url)`. The line can come from a
+// `#L<n>` / `#L<n>-L<m>` anchor in the URL, a `:<n>` / `:<n>-<m>`
+// suffix on the name, or be absent altogether (rendered as `?`). A
+// RANGE is kept whole (`10-20`): the file:line displays print it
+// verbatim and the link anchors parseInt() it down to the start line,
+// matching how parse-piolium.js carries ranges. En / em dashes (the
+// Evidence template writes `10–20`) normalize to a plain hyphen so one
+// spelling reaches the displays. The original link (URL when present,
+// raw text otherwise) is preserved as `locationLink` — the
 // deterministic id derivation in finding-id.js uses it as the
 // discriminator when no fileHash is available, so two MD imports of
 // the same finding produce the same UUID and dedupe / share triage.
 function parseLocation(loc) {
   let file = '', line = '?', locationLink = ''
-  const linkMatch = loc.match(/\[([^\]]+)\]\(([^)]+)\)/u)
+  const linkMatch = loc.match(/\[([^\]]+)\]\(([^)\s]+)\)/u)
   if (linkMatch) {
     file = linkMatch[1].trim()
-    locationLink = linkMatch[2]
-    const lineFromUrl = linkMatch[2].match(/#L(\d+)/u)
-    if (lineFromUrl) line = lineFromUrl[1]
+    locationLink = linkMatch[2].trim()
+    const lineFromUrl = locationLink.match(/#L(\d+)(?:-L?(\d+))?/u)
+    if (lineFromUrl) line = lineFromUrl[2] ? `${lineFromUrl[1]}-${lineFromUrl[2]}` : lineFromUrl[1]
   } else {
     file = loc.trim()
     locationLink = loc.trim()
   }
-  // `:42` suffix on the file path — common shorthand. Only consume
-  // if we don't already have a line from a `#L<n>` anchor.
-  const colonMatch = file.match(/^(.+):(\d+)$/u)
+  // Backticks some reports wrap the path in are notation, not part of
+  // the path itself.
+  file = file.replaceAll('`', '').trim()
+  // `:42` / `:10–20` suffix on the file path — common shorthand. Only
+  // consume the number if we don't already have one from the anchor;
+  // the path always sheds it either way.
+  const colonMatch = file.match(/^(.+):(\d+)(?:\s*[-–—]\s*L?(\d+))?$/u)
   if (colonMatch) {
     file = colonMatch[1]
-    if (line === '?') line = colonMatch[2]
+    if (line === '?') line = colonMatch[3] ? `${colonMatch[2]}-${colonMatch[3]}` : colonMatch[2]
   }
   return { file, line, locationLink }
 }
 
-// Build the description from the title + body sections. Strip the
-// simple `**bold**` markdown so the renderer's esc() doesn't print the
-// asterisks literally; everything else (line breaks, list bullets,
-// plain text) survives. white-space: pre-line on the .desc CSS rule
-// keeps the paragraph breaks visible.
-function buildDescription(title, sections) {
-  const bodyParts = [title]
-  if (sections.details) bodyParts.push(sections.details)
-  if (sections.impact) bodyParts.push(`Impact: ${sections.impact}`)
-  if (sections['reproduction steps']) bodyParts.push(`Reproduction: ${sections['reproduction steps']}`)
-  return stripBold(bodyParts.join('\n\n'))
+// Rows of an `## Evidence` section, in document order. A row leads with
+// the code reference and carries its own note on the lines under it:
+//
+//   1. [libs/a.ts:10–20](https://github.com/o/r/blob/<sha>/libs/a.ts#L10-L20)
+//      Why this line matters.
+//
+// so only an item's marker line is a reference; the prose under it is
+// that row's note. Numbered (`1.` / `1)`) and bulleted (`-` / `*` /
+// `+`) markers both open a row. Note lines are left-trimmed: the
+// renderer indents the row (a real `<ol>`, so a note that wraps stays
+// under its reference), and the source's own indentation would only
+// double up on that.
+//
+// A section written without any marker still yields one row when it is
+// a single line, or around the first line carrying a markdown link —
+// free prose yields no rows at all, and parseBlock leaves it in the
+// description as written rather than promoting a sentence to a path.
+const EVIDENCE_ITEM_RE = /^[ \t]*(?:\d+[.)]|[-*+])\s+/u
+const MD_LINK_RE = /\[[^\]]+\]\([^)\s]+\)/u
+
+function evidenceRows(text) {
+  const rows = []
+  for (const line of text.split('\n')) {
+    if (EVIDENCE_ITEM_RE.test(line)) rows.push({ ref: line.replace(EVIDENCE_ITEM_RE, '').trim(), note: [] })
+    else if (rows.length > 0 && line.trim()) rows.at(-1).note.push(line.trim())
+  }
+  if (rows.length === 0) {
+    const bare = text.split('\n').map((l) => l.trim()).filter(Boolean)
+    const at = bare.findIndex((l) => MD_LINK_RE.test(l))
+    if (at === -1 && bare.length !== 1) return []
+    const refAt = at === -1 ? 0 : at
+    rows.push({ ref: bare[refAt], note: bare.filter((_, i) => i !== refAt) })
+  }
+  return rows.filter((r) => r.ref)
 }
 
-function stripBold(text) { return text.replaceAll('**', '') }
+// One row as it lands on the finding: the parsed reference plus the
+// report's note. `url` is set only when the row actually carried a
+// markdown link — parseLocation's raw-text fallback is an id
+// discriminator, not something to hand a renderer as an href.
+function evidenceEntry({ ref, note }) {
+  const { file, line, locationLink } = parseLocation(ref)
+  const entry = { file: file || 'unknown', line }
+  if (locationLink && MD_LINK_RE.test(ref)) entry.url = locationLink
+  const text = note.join('\n')
+  if (text) entry.text = text
+  return entry
+}
+
+// Build the description from the title + body sections. Section labels
+// are emitted as `**Label:**`, the same shape parse-piolium gives its
+// labelled fields — render-finding.js's renderHighlighted turns those
+// into real `<strong>` emphasis (asterisks dropped) rather than
+// printing the markers, and the markdown export re-emits them as the
+// markdown they are. The report's own `**bold**` rides along for the
+// same treatment; everything else (line breaks, list bullets, indented
+// continuation lines) survives verbatim, with white-space: pre-wrap on
+// the .desc CSS rule keeping the shape the report wrote.
+function buildDescription(title, sections, hasEvidenceRows) {
+  const bodyParts = [title]
+  if (sections.details) bodyParts.push(sections.details)
+  // An Evidence section that parsed into rows belongs to
+  // `finding.evidence` — the card renders it as a list and the text
+  // surfaces rebuild it from there (format.js evidenceMarkdown), so
+  // repeating it here would only duplicate it. A section that parsed
+  // into NO rows is free prose: it stays in the body, since dropping
+  // it would lose it.
+  if (sections.evidence && !hasEvidenceRows) bodyParts.push(`**Evidence:**\n${sections.evidence}`)
+  if (sections.impact) bodyParts.push(`**Impact:** ${sections.impact}`)
+  if (sections['reproduction steps']) bodyParts.push(`**Reproduction:** ${sections['reproduction steps']}`)
+  return bodyParts.join('\n\n')
+}

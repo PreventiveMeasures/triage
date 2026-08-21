@@ -2,7 +2,7 @@ import { html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { bundlesForFileHash, isLinkableFindingId, isPlaceholderNpmPackage, state } from '#client/index.js'
-import { SEVERITY_ORDER, commitUrl, correctedVariants, displayedSeverity, effectiveSeverity, fileUrl, findingDisplayName, formatRunMeta, githubIssueUrl, hasSeverityCorrection, isHttpUrl, parseCommentRefs, stripExportMarker } from './format.js'
+import { SEVERITY_ORDER, commitUrl, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceLabel, evidenceMarkdown, evidenceUrl, findingDisplayName, findingUrl, flowText, formatRunMeta, githubIssueUrl, hasSeverityCorrection, isHttpUrl, markdownLinkToken, parseCommentRefs, stripExportMarker } from './format.js'
 import { activeTabFor, findingRepo, groupKey, groupState, isIgnored, sortTabs, tabKey } from './group.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 
@@ -118,23 +118,38 @@ function splitDescription(text) {
   return { title: text.slice(0, nl).trim(), body }
 }
 
-// Render prose with inline highlights for `"quoted"` strings,
-// `` `code` `` spans, and `**bold**` emphasis — the first two match the
-// prototype's `.summary q` / `.title em` styling
-// (`design/prototypes/DeepView.0.html`) and keep their delimiters
-// visible; bold spans render as real `<strong>` emphasis with the
-// asterisks DROPPED, so parser-emitted labels (parse-piolium's
-// `**Impact:**` / `**Root Cause:**`) and source-report emphasis read
-// as emphasis rather than literal markers. Unpaired asterisks stay
-// literal. Returns the raw string when nothing matches so we don't
-// churn out single-child arrays for the common case of plain text.
+// Render prose with inline highlights for `[markdown](links)`,
+// `"quoted"` strings, `` `code` `` spans, and `**bold**` emphasis. The
+// quote / code pair match the prototype's `.summary q` / `.title em`
+// styling (`design/prototypes/DeepView.0.html`) and keep their
+// delimiters visible; bold spans render as real `<strong>` emphasis
+// with the asterisks DROPPED, so parser-emitted labels (parse-piolium's
+// `**Impact:**` / `**Root Cause:**`) and source-report emphasis read as
+// emphasis rather than literal markers. Unpaired asterisks stay
+// literal. A `[label](url)` pair becomes a real link, opening in a new
+// tab like every other outbound link here: the claude-security
+// `## Evidence` list cites each site that way and parse-md.js carries
+// that whole section into the description, so these anchors are the
+// only path to the files it names beyond the first. Each href is the
+// report's own, so a row points at ITS file rather than at the
+// finding's; a target `markdownLinkToken` rejects (non-http,
+// malformed) stays plain text. Returns the raw string when nothing
+// matches so we don't churn out single-child arrays for the common
+// case of plain text.
+//
 // Exported for the bundle views (render-bundle.js), whose finding
 // descriptions — source-viewer side panel, Issues tab rows, code-rail
 // issue results — get the same inline styling. Those render in light
 // DOM, so report.css carries a copy of the .inline-* rules that live
 // in finding-card.css for this card's shadow root (`<strong>` needs no
-// rule — the UA styles it in both trees).
-const INLINE_HL_RE = /\*\*[^*\n]+\*\*|"[^"\n]+"|`[^`\n]+`/gu
+// rule — the UA styles it in both trees; anchors take their accent
+// color from theme.css in light DOM and from finding-card.css in the
+// shadow root).
+//
+// The link alternative leads the pattern so a label carrying quotes or
+// backticks is consumed as part of the link rather than chipped up
+// inside it.
+const INLINE_HL_RE = /\[[^\]\n]+\]\([^)\s]+\)|\*\*[^*\n]+\*\*|"[^"\n]+"|`[^`\n]+`/gu
 export function renderHighlighted(text) {
   if (!text) return text
   INLINE_HL_RE.lastIndex = 0
@@ -144,7 +159,12 @@ export function renderHighlighted(text) {
   while ((m = INLINE_HL_RE.exec(text)) !== null) {
     if (m.index > lastIdx) parts.push(text.slice(lastIdx, m.index))
     const c0 = m[0].codePointAt(0)
-    if (c0 === 0x2A /* * */) {
+    if (c0 === 0x5B /* [ */) {
+      const link = markdownLinkToken(m[0])
+      parts.push(link
+        ? html`<a href=${link.url} target="_blank" rel="noopener noreferrer" title=${link.url}>${link.label}</a>`
+        : m[0])
+    } else if (c0 === 0x2A /* * */) {
       parts.push(html`<strong>${m[0].slice(2, -2)}</strong>`)
     } else {
       const cls = c0 === 0x60 /* ` */ ? 'inline-code' : 'inline-quote'
@@ -182,17 +202,55 @@ function renderCommentText(text) {
   })
 }
 
+// One labelled body section — a small-caps header over its text. Used
+// for every `**Label:**` paragraph the description carries (see
+// format.js descriptionSections) and for the finding's own
+// `recommendation` field, so a long section reads as its own block
+// rather than as one bold run the eye slides past. `cls` picks up the
+// per-section colouring (`.recommendation` is green).
+function sectionTemplate(label, body, cls = 'section') {
+  return html`<div class=${cls}>
+    <div class="section-label">${label}</div>
+    ${body ? html`<div class="section-body">${renderHighlighted(flowText(body))}</div>` : nothing}
+  </div>`
+}
+
+// The `## Evidence` list a claude-security import carries — one row per
+// cited site: a link to that site (its own URL from the report, or the
+// reconstruction for a row that named no link) plus the report's note
+// about it. A real `<ol>` rather than the body text's newlines, because
+// a note is usually long enough to wrap and only markup can keep the
+// wrapped lines indented under the reference instead of dropping them
+// back to the margin. Rows that named no line render the bare path.
+function evidenceTemplate(f) {
+  const rows = Array.isArray(f.evidence) ? f.evidence : []
+  if (rows.length === 0) return nothing
+  const repoFallback = f._repoFallback ?? state.repoUrl
+  return html`<div class="evidence">
+    <div class="section-label">Evidence</div>
+    <ol class="evidence-list">${rows.map((row) => {
+      const label = evidenceLabel(row)
+      const url = evidenceUrl(row, f, repoFallback)
+      return html`<li>
+        ${url
+          ? html`<a class="evidence-ref" href=${url} target="_blank" rel="noopener" title=${url}>${label}</a>`
+          : html`<span class="evidence-ref">${label}</span>`}
+        ${row.text ? html`<div class="evidence-note">${renderHighlighted(flowText(row.text))}</div>` : nothing}
+      </li>`
+    })}</ol>
+  </div>`
+}
+
 // Combined `file:line` link for the table-view row's location cell —
 // the row has no file header above it (unlike the list / grouped
 // views) so file + line live together in one slot. Returns a
 // TemplateResult when we have a source URL, plain text otherwise.
 function rowLocationTemplate(f) {
-  const url = fileUrl(f.file, f.repo?.github, f._repoFallback ?? state.repoUrl)
+  const url = findingUrl(f, f._repoFallback ?? state.repoUrl)
   const lineNum = parseInt(f.line, 10)
   const text = Number.isFinite(lineNum) ? `${f.file}:${f.line}` : f.file
   if (!url) return text
-  const target = Number.isFinite(lineNum) ? `${url}#L${lineNum}` : url
-  return html`<a href=${target} target="_blank" rel="noopener">${text}</a>`
+  return html`<a href=${url} target="_blank" rel="noopener">${text}</a>`
 }
 
 // Commit-hash link for the codex `commit_hash` reference. Short SHA
@@ -310,14 +368,14 @@ function issueTitle(f) {
 // file with no resolvable upstream repo). Blocks join with a blank line
 // so the file link and confidence bracket the description paragraph.
 function issueBody(f) {
-  const url = fileUrl(f.file, f.repo?.github, f._repoFallback ?? state.repoUrl)
+  const href = findingUrl(f, f._repoFallback ?? state.repoUrl)
   const lineNum = parseInt(f.line, 10)
-  const hasLine = Number.isFinite(lineNum)
-  const loc = hasLine ? `${f.file}:${lineNum}` : f.file
-  const href = url && hasLine ? `${url}#L${lineNum}` : url
+  const loc = Number.isFinite(lineNum) ? `${f.file}:${f.line}` : f.file
   const blocks = []
   if (f.file) blocks.push(`File: ${href ? `[${loc}](${href})` : loc}`)
   if (f.description) blocks.push(f.description)
+  const evidence = evidenceMarkdown(f)
+  if (evidence) blocks.push(evidence)
   if (f.confidence !== undefined && f.confidence !== null) blocks.push(`Confidence: ${f.confidence}/10`)
   return blocks.join('\n\n')
 }
@@ -640,12 +698,11 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
   // `.flat-group-loc` / `.file-header` already paint the same info
   // above the card. exportName (or `exportName.methodName` when the
   // finding carries both) joins with a comma when present.
-  const url = fileUrl(f.file, f.repo?.github, f._repoFallback ?? state.repoUrl)
+  const url = findingUrl(f, f._repoFallback ?? state.repoUrl)
   const lineNum = parseInt(f.line, 10)
-  const hasLine = Number.isFinite(lineNum)
-  const locText = hasLine ? `${f.file}:${f.line}` : f.file
+  const locText = Number.isFinite(lineNum) ? `${f.file}:${f.line}` : f.file
   const locLink = url
-    ? html`<a href=${hasLine ? `${url}#L${lineNum}` : url} target="_blank" rel="noopener">${locText}</a>`
+    ? html`<a href=${url} target="_blank" rel="noopener">${locText}</a>`
     : locText
   const exportLabel = findingDisplayName(f)
   const lineRowMain = exportLabel
@@ -687,6 +744,15 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
     }
   }
   const { title: descTitle, body: descBody } = splitDescription(stripExportMarker(f.description, f))
+  // The narrative first, then the evidence list, then the report's
+  // labelled sections — the order a claude-security report writes them
+  // in, and the one that reads right for the formats whose labels all
+  // trail their prose (parse-piolium). `lead` is the prose that opens
+  // the body; everything from the first label on keeps document order.
+  const sections = descriptionSections(descBody)
+  const firstLabel = sections.findIndex((s) => s.label !== null)
+  const lead = firstLabel === -1 ? sections : sections.slice(0, firstLabel)
+  const labelled = firstLabel === -1 ? [] : sections.slice(firstLabel)
   return html`<div class=${classMap({ 'tab-body': true, active: isActive })} data-tid=${key}>
     ${total > 1 ? html`<div class="print-case-label">${idx + 1} of ${total}</div>` : nothing}
     <div class="finding-left">
@@ -703,8 +769,12 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
         ${meta ? html`<span class="run-meta">${meta}</span>` : nothing}
       </div>
       ${descTitle ? html`<div class="desc-title">${descTitle}</div>` : nothing}
-      ${descBody ? html`<div class="desc">${renderHighlighted(descBody)}</div>` : nothing}
-      ${f.recommendation ? html`<div class="recommendation">Recommendation: ${renderHighlighted(stripExportMarker(f.recommendation, f))}</div>` : nothing}
+      ${lead.map((s) => html`<div class="desc">${renderHighlighted(flowText(s.body))}</div>`)}
+      ${evidenceTemplate(f)}
+      ${labelled.map((s) => (s.label === null
+        ? html`<div class="desc">${renderHighlighted(flowText(s.body))}</div>`
+        : sectionTemplate(s.label, s.body)))}
+      ${f.recommendation ? sectionTemplate('Recommendation', stripExportMarker(f.recommendation, f), 'recommendation') : nothing}
       ${f.confidenceReason ? html`<div class="conf-reason">${renderHighlighted(stripExportMarker(f.confidenceReason, f))}</div>` : nothing}
       ${hasSeverityCorrection(f) && f.correctedSeverityReason ? html`<div class="severity-reason"><span class="severity-reason-label">Severity correction:</span> ${renderHighlighted(f.correctedSeverityReason)}</div>` : nothing}
       ${comment ? html`<div class="comment-block"><span class="comment-label">Comment:</span> ${renderCommentText(comment)}</div>` : nothing}

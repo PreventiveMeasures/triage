@@ -131,22 +131,111 @@
   color: var(--text);
 }
 .desc {
-  grid-column: 2; white-space: pre-line;
+  grid-column: 2; white-space: pre-wrap;
   font-size: .96em; line-height: 1.6;
   color: rgb(from var(--text) r g b / .82);
   margin-top: .4rem;
 }
+/* Labelled body sections — the report's own narrative fields. Every
+   parser emits them as `**Label:** …` paragraphs (parse-piolium's
+   `**Root Cause:**` / `**Severity note:**` / `**Note:**` and whatever
+   else the source named, parse-md's `**Impact:**` /
+   `**Reproduction:**`); format.js's descriptionSections hands each to
+   the card as a header + body pair so a long section reads as its own
+   block instead of one bold run buried in the prose. The finding's own
+   `recommendation` field and the Evidence list wear the same header. */
+.section,
+.evidence,
 .recommendation {
-  grid-column: 2; white-space: pre-line;
-  font-size: .92em; line-height: 1.55;
-  color: var(--green); margin-top: .4rem;
+  grid-column: 2; margin-top: .55rem;
+  font-size: .92em;
 }
+.section-label {
+  display: flex; align-items: center; gap: .3rem;
+  color: var(--muted); font-weight: 600;
+  font-size: .62rem; text-transform: uppercase; letter-spacing: .06em;
+
+  /* Small tick in the label's own colour (green under
+     `.recommendation`) — at this type size the headers need something
+     with weight to hang off, and it echoes the accent rail the comment
+     / fix blocks carry lower down. It hangs in the GUTTER: the negative
+     margin is its own width plus the gap after it, so the flex line
+     starts that far left and the label text lands back on the same
+     edge as the body under it. A tick that pushed its header out of
+     the text column would be doing the opposite of marking it.
+     `print-color-adjust` because a painted background is exactly what a
+     printer drops by default. */
+  &::before {
+    content: ''; flex: none;
+    width: 2px; height: .58rem;
+    margin-left: calc((2px + .3rem) * -1);
+    border-radius: 1px;
+    background: currentcolor; opacity: .75;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+}
+.section-body {
+  white-space: pre-wrap; line-height: 1.55;
+  color: rgb(from var(--text) r g b / .82);
+  margin-top: .1rem;
+}
+/* The fix is the one section that carries its own colour, header
+   included — a green heading over green text reads as one block rather
+   than as a muted label someone stuck on top of it. */
+.recommendation .section-label,
+.recommendation .section-body { color: var(--green); }
 .conf-reason {
-  grid-column: 2; white-space: pre-line;
+  grid-column: 2; white-space: pre-wrap;
   font-size: .92em; font-style: italic;
   color: var(--muted);
   margin-top: .6rem; padding-top: .55rem;
   border-top: 1px dashed var(--border);
+}
+
+/* `## Evidence` list from a claude-security import — one row per cited
+   site, rendered from the finding's structured rows (see
+   render-finding.js evidenceTemplate). A real <ol> is what earns this
+   its own block: the notes are long, and only markup keeps a wrapped
+   note indented under its reference — the body text's leading spaces
+   only ever indent the first line. Markers sit in the padding so the
+   whole row hangs off one edge. */
+.evidence-list {
+  margin: .25rem 0 0; padding-left: 1.6rem;
+  display: flex; flex-direction: column; gap: .4rem;
+
+  & li::marker { color: var(--muted); font-size: .9em; }
+}
+.evidence-ref {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .92em; overflow-wrap: anywhere;
+  color: var(--accent); text-decoration: none;
+
+  &:hover { text-decoration: underline; }
+}
+/* No link to give this row — same type, muted, so the missing target
+   reads as absent rather than broken. */
+span.evidence-ref { color: var(--muted); }
+/* format.js's flowText has already rejoined the note's soft line breaks
+   (the report wrapped them at its own width, not the card's), so what
+   `pre-wrap` preserves here is only a break that carried meaning — a
+   snippet, a list. Same contract as `.desc` / `.section-body`. */
+.evidence-note {
+  white-space: pre-wrap; line-height: 1.5;
+  color: rgb(from var(--text) r g b / .78);
+  margin-top: .1rem;
+}
+
+/* Inline `[label](url)` links carried by the body text — the
+   claude-security `## Evidence` list cites every site that way and
+   parse-md.js keeps the section in the description (render-finding.js
+   renderHighlighted turns each ref into an anchor). Same accent +
+   hover-underline treatment as the comment / fix-link blocks below;
+   the shadow root gets no `a` styling from theme.css. */
+.desc a,
+.section-body a,
+.conf-reason a {
+  color: var(--accent); text-decoration: none;
+  &:hover { text-decoration: underline; }
 }
 
 /* Inline highlights — `"quoted"` gets a soft accent-tinted chip,
@@ -818,9 +907,12 @@
   .badge-varies { color: #555 !important; border-color: #999 !important; }
   .badge-arrow, .badge-corr-mark, .badge-pre { color: #555 !important; }
   .severity-reason { color: #555 !important; }
-  /* Strip on-screen link colors so a linked filename reads
-     identically to the bare-text fallback. */
+  /* Strip on-screen link colors so a linked filename — or an inline
+     `[label](url)` ref in the body — reads identically to the
+     bare-text fallback. The body selectors repeat the on-screen rule's
+     specificity so they lose to nothing here. */
   a, .line-num, .line-num a { color: inherit; }
+  .desc a, .section-body a, .conf-reason a, .evidence-ref { color: inherit; }
 
   /* Inline `` `code` `` spans read as a chip on screen (1px border +
      tinted bg); on paper that chrome crowds dense prose and reads as

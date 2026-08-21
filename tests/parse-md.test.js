@@ -9,10 +9,16 @@
 //   ## Details
 //   <Details>
 //
-//   ## Location
-//   [<name>](<url>)
+//   ## Evidence
+//   1. [<name>](<url>)
+//      <Description>
+//   2. [<name>](<url>)
+//      <Description>
 //
 //   …other optional sections…
+//
+// Older reports carry `## Location` ([<name>](<url>)) instead; both
+// paths are pinned below.
 //
 //   ---
 //   **Severity:** <critical|high|medium|low>
@@ -109,8 +115,8 @@ describe('parseMarkdownFindings — sections', () => {
     const f = parseMarkdownFindings(md).findings[0]
     assert.match(f.description, /Bad thing/u)
     assert.match(f.description, /It happened\./u)
-    assert.match(f.description, /Impact: Things broke\./u)
-    assert.match(f.description, /Reproduction: Step 1\./u)
+    assert.match(f.description, /\*\*Impact:\*\* Things broke\./u)
+    assert.match(f.description, /\*\*Reproduction:\*\* Step 1\./u)
   })
 
   it('extracts recommendation from Recommended fix section', () => {
@@ -119,11 +125,18 @@ describe('parseMarkdownFindings — sections', () => {
     assert.equal(f.recommendation, 'Do X then Y.')
   })
 
-  it('strips ** bold markers from description', () => {
+  // The renderer turns `**bold**` into real <strong> emphasis, so the
+  // report's own markers are kept rather than stripped — as are the
+  // `**Label:**` prefixes this parser adds.
+  it('keeps ** bold markers for the renderer to emphasize', () => {
     const md = '# T\n\n## Details\nThis **is bold** text.\n\n---\n**Severity:** medium\n'
     const f = parseMarkdownFindings(md).findings[0]
-    assert.match(f.description, /This is bold text\./u)
-    assert.doesNotMatch(f.description, /\*\*/u)
+    assert.match(f.description, /This \*\*is bold\*\* text\./u)
+  })
+
+  it('keeps ** bold markers in the recommendation', () => {
+    const md = '# T\n\n## Recommended fix\nUse **safeMerge()**.\n\n---\n**Severity:** medium\n'
+    assert.equal(parseMarkdownFindings(md).findings[0].recommendation, 'Use **safeMerge()**.')
   })
 
   it('skips missing sections silently', () => {
@@ -194,6 +207,176 @@ describe('parseMarkdownFindings — location parsing', () => {
     assert.equal(f.file, 'src/foo.js')
     assert.equal(f.location, 'src/foo.js')
     assert.equal(f.line, '?')
+  })
+})
+
+// `## Evidence` — the newer Claude Security layout, a numbered list
+// where each row cites one site and notes what it shows. The FIRST row
+// is the finding's location; every row lands on `finding.evidence` as
+// structured data (the card renders it as a list, and the text surfaces
+// rebuild the markdown from it), so the description does NOT repeat it.
+describe('parseMarkdownFindings — evidence section', () => {
+  const md = (...evidence) => [
+    '# T',
+    '',
+    '## Details',
+    'Something is wrong.',
+    '',
+    '## Evidence',
+    ...evidence,
+    '',
+    '## Impact',
+    'Bad.',
+    '',
+    '---',
+    '**Severity:** high',
+  ].join('\n')
+
+  const TWO_ROWS = [
+    '1. [libs/libraries/a.ts:10–20](https://github.com/o/r/blob/abc123/libs/libraries/a.ts#L10-L20)',
+    '   Entry point that parses the payload.',
+    '2. [libs/libraries/b.ts:30](https://github.com/o/r/blob/abc123/libs/libraries/b.ts#L30)',
+    '   The sink.',
+  ]
+
+  it('takes file, line and link from the first row', () => {
+    const f = parseMarkdownFindings(md(...TWO_ROWS)).findings[0]
+    assert.equal(f.file, 'libs/libraries/a.ts')
+    assert.equal(f.line, '10-20')
+    assert.equal(f.location, 'https://github.com/o/r/blob/abc123/libs/libraries/a.ts#L10-L20')
+  })
+
+  it('lands every row on `evidence`, ref + note apart', () => {
+    const f = parseMarkdownFindings(md(...TWO_ROWS)).findings[0]
+    assert.deepEqual(f.evidence, [
+      {
+        file: 'libs/libraries/a.ts',
+        line: '10-20',
+        url: 'https://github.com/o/r/blob/abc123/libs/libraries/a.ts#L10-L20',
+        text: 'Entry point that parses the payload.',
+      },
+      {
+        file: 'libs/libraries/b.ts',
+        line: '30',
+        url: 'https://github.com/o/r/blob/abc123/libs/libraries/b.ts#L30',
+        text: 'The sink.',
+      },
+    ])
+  })
+
+  it('keeps the rows out of the description', () => {
+    const f = parseMarkdownFindings(md(...TWO_ROWS)).findings[0]
+    assert.doesNotMatch(f.description, /Evidence/u)
+    assert.doesNotMatch(f.description, /libs\/libraries/u)
+    // The neighbouring sections are untouched.
+    assert.match(f.description, /Something is wrong\./u)
+    assert.match(f.description, /\*\*Impact:\*\* Bad\./u)
+  })
+
+  it('left-trims a note and keeps its own line breaks', () => {
+    const f = parseMarkdownFindings(md(
+      '1. [src/a.ts:10](https://example.com/a.ts#L10)',
+      '   First note line.',
+      '      Second note line.',
+    )).findings[0]
+    assert.equal(f.evidence[0].text, 'First note line.\nSecond note line.')
+  })
+
+  it('normalizes an en-dashed line range to a plain hyphen', () => {
+    const f = parseMarkdownFindings(md('1. [src/a.ts:10–20](https://example.com/a.ts)')).findings[0]
+    assert.equal(f.evidence[0].file, 'src/a.ts')
+    assert.equal(f.evidence[0].line, '10-20')
+  })
+
+  it('reads a range from a `#L10-L20` anchor', () => {
+    const f = parseMarkdownFindings(md('1. [src/a.ts](https://example.com/a.ts#L10-L20)')).findings[0]
+    assert.equal(f.line, '10-20')
+  })
+
+  it('keeps a single-line reference single', () => {
+    const f = parseMarkdownFindings(md('1. [src/a.ts:10](https://example.com/a.ts#L10)')).findings[0]
+    assert.equal(f.line, '10')
+  })
+
+  it('sheds backticks around the path', () => {
+    const f = parseMarkdownFindings(md('1. [`src/a.ts:10`](https://example.com/a.ts)')).findings[0]
+    assert.equal(f.file, 'src/a.ts')
+    assert.equal(f.line, '10')
+  })
+
+  it('leaves `url` unset for a row that carries no link', () => {
+    const f = parseMarkdownFindings(md('1. src/a.ts:10', '   A note.')).findings[0]
+    assert.deepEqual(f.evidence, [{ file: 'src/a.ts', line: '10', text: 'A note.' }])
+    // …while the finding-level `location` keeps its raw-text fallback,
+    // which finding-id.js uses as the id discriminator.
+    assert.equal(f.location, 'src/a.ts:10')
+  })
+
+  it('accepts bulleted rows', () => {
+    const f = parseMarkdownFindings(md(
+      '- [src/a.ts:10](https://example.com/a.ts#L10)',
+      '- [src/b.ts:20](https://example.com/b.ts#L20)',
+    )).findings[0]
+    assert.equal(f.file, 'src/a.ts')
+    assert.equal(f.evidence.length, 2)
+    assert.equal(f.evidence[1].url, 'https://example.com/b.ts#L20')
+  })
+
+  it('never takes a row\'s prose as the location', () => {
+    const f = parseMarkdownFindings(md(
+      '1. [src/a.ts:10](https://example.com/a.ts#L10)',
+      '   Prose under the row, not a reference.',
+    )).findings[0]
+    assert.equal(f.file, 'src/a.ts')
+    assert.equal(f.evidence.length, 1)
+    assert.equal(f.evidence[0].text, 'Prose under the row, not a reference.')
+  })
+
+  it('reads a lone unmarked reference line', () => {
+    const f = parseMarkdownFindings(md('[src/a.ts:10](https://example.com/a.ts#L10)')).findings[0]
+    assert.equal(f.file, 'src/a.ts')
+    assert.equal(f.line, '10')
+    assert.equal(f.evidence.length, 1)
+  })
+
+  it('picks the linked line out of an unmarked section, prose as its note', () => {
+    const f = parseMarkdownFindings(md(
+      'The flaw sits in the loader:',
+      '[src/a.ts:10](https://example.com/a.ts#L10)',
+    )).findings[0]
+    assert.equal(f.file, 'src/a.ts')
+    assert.equal(f.evidence[0].text, 'The flaw sits in the loader:')
+  })
+
+  it('leaves prose-only evidence in the description, file unknown', () => {
+    const f = parseMarkdownFindings(md('Nothing citable here.', 'Only prose.')).findings[0]
+    assert.equal(f.file, 'unknown')
+    assert.equal(f.line, '?')
+    assert.equal(f.location, undefined)
+    assert.equal(f.evidence, undefined)
+    // Nothing parses out of it, so dropping it would lose it.
+    assert.match(f.description, /\*\*Evidence:\*\*\nNothing citable here\./u)
+  })
+
+  it('lets `## Location` win when a report carries both', () => {
+    const mdBoth = [
+      '# T',
+      '',
+      '## Location',
+      '[src/loc.ts:5](https://example.com/loc.ts#L5)',
+      '',
+      '## Evidence',
+      '1. [src/ev.ts:10](https://example.com/ev.ts#L10)',
+      '',
+      '---',
+      '**Severity:** high',
+    ].join('\n')
+    const f = parseMarkdownFindings(mdBoth).findings[0]
+    assert.equal(f.file, 'src/loc.ts')
+    assert.equal(f.line, '5')
+    assert.equal(f.location, 'https://example.com/loc.ts#L5')
+    // The Evidence rows are still carried.
+    assert.deepEqual(f.evidence, [{ file: 'src/ev.ts', line: '10', url: 'https://example.com/ev.ts#L10' }])
   })
 })
 
