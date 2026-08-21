@@ -534,13 +534,29 @@ describe('finding deep links — un-hiding the target', () => {
     assert.equal(state.focusGid, UUID_A)
     assert.equal(state.tableSelectedGid, null)
 
-    // Grouped / list / kanban have no selection concept — the scroll +
-    // flash in the nav module is the whole signal there.
+    // Kanban opens the detail modal: a board card is a title and a
+    // badge, not what someone following a link came to read.
+    reset([group])
+    state.viewMode = 'kanban'
+    unhideFinding(group, UUID_A)
+    assert.equal(state.kanbanPopoverGid, UUID_A)
+
+    // A modal left open on some OTHER finding is replaced, not just
+    // dismissed — same card-to-card swap a click on that card does.
+    reset([group])
+    state.viewMode = 'kanban'
+    state.kanbanPopoverGid = UUID_B
+    unhideFinding(group, UUID_A)
+    assert.equal(state.kanbanPopoverGid, UUID_A)
+
+    // Grouped / list have no selection concept — the scroll + flash in
+    // the nav module is the whole signal there.
     reset([group])
     state.viewMode = 'grouped'
     unhideFinding(group, UUID_A)
     assert.equal(state.tableSelectedGid, null)
     assert.equal(state.focusGid, null)
+    assert.equal(state.kanbanPopoverGid, null)
   })
 
   it('collapses a kanban fullscreen column that hides the target', () => {
@@ -550,11 +566,8 @@ describe('finding deep links — un-hiding the target', () => {
     // An expanded column drops every other column from the board, so
     // an untriaged target would land on a card that isn't rendered.
     state.kanbanExpandedColumn = 'fixed'
-    state.kanbanPopoverGid = UUID_B
     unhideFinding(group, UUID_A)
     assert.equal(state.kanbanExpandedColumn, null)
-    // A modal left open on another finding covers the board.
-    assert.equal(state.kanbanPopoverGid, null)
   })
 
   it('keeps a kanban fullscreen column the target lives in', () => {
@@ -567,6 +580,7 @@ describe('finding deep links — un-hiding the target', () => {
     // The target is in the expanded column already — undoing the
     // user's layout would be gratuitous.
     assert.equal(state.kanbanExpandedColumn, 'fixed')
+    assert.equal(state.kanbanPopoverGid, UUID_A)
   })
 
   it('drops out of the graph mode, which has no per-finding card', () => {
