@@ -10,6 +10,7 @@ import { openCommentDialog } from './dialogs/comment-dialog.js'
 import { openDownloadBundleDialog } from './dialogs/download-bundle-dialog.js'
 import { openExportConfirmDialog } from './dialogs/export-confirm-dialog.js'
 import { openFixLinkDialog } from './dialogs/fix-link-dialog.js'
+import { findingLinkFor } from './finding-link.js'
 import { downloadReportsAsMarkdown } from './markdown-export.js'
 import { bundleToCycloneDx, bundleToSpdx, sbomBaseName } from './sbom.js'
 
@@ -948,6 +949,29 @@ report.addEventListener('click', (e) => {
       navigator.clipboard.writeText(text).then(() => {
         copyBtn.classList.add('copied')
         setTimeout(() => copyBtn.classList.remove('copied'), 1000)
+        return null
+      }).catch(() => {})
+    } catch {}
+    return
+  }
+  // Link button — copy a `#finding=<id>` URL that reopens the app on
+  // this finding (see view/finding-link-nav.js for what the receiving
+  // side does with it). Per-active-tab like copy, so a multi-tab group links
+  // the member in view rather than the group's primary. Same pulse +
+  // silent-failure semantics as copy: `findingLinkFor` returns null
+  // only for a session-local id, which render-finding.js already
+  // withholds the button for, so the null check is belt-and-braces.
+  const linkBtn = pathClosest(e, '.mark-link')
+  if (linkBtn) {
+    const findingEl = pathClosest(e, '[data-gid]')
+    const group = findingEl ? findGroupById(findingEl.dataset.gid) : null
+    if (!group) return
+    const url = findingLinkFor(activeTabFor(group))
+    if (!url) return
+    try {
+      navigator.clipboard.writeText(url).then(() => {
+        linkBtn.classList.add('copied')
+        setTimeout(() => linkBtn.classList.remove('copied'), 1000)
         return null
       }).catch(() => {})
     } catch {}

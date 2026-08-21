@@ -34,6 +34,12 @@ export {
   setCount,
 } from './counts.js'
 
+export {
+  buildFindingUrl,
+  extractFindingRef,
+  isLinkableFindingId,
+} from './finding-link.js'
+
 export { buildFindingLookupForLoadedReports } from './finding-lookup.js'
 
 export { migrateLegacyFilenames } from './migrate-legacy.js'

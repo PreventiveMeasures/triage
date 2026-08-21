@@ -1,7 +1,7 @@
 import { html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { bundlesForFileHash, isPlaceholderNpmPackage, state } from '#client/index.js'
+import { bundlesForFileHash, isLinkableFindingId, isPlaceholderNpmPackage, state } from '#client/index.js'
 import { SEVERITY_ORDER, commitUrl, correctedVariants, displayedSeverity, effectiveSeverity, fileUrl, findingDisplayName, formatRunMeta, githubIssueUrl, hasSeverityCorrection, isHttpUrl, parseCommentRefs, stripExportMarker } from './format.js'
 import { activeTabFor, findingRepo, groupKey, groupState, isIgnored, sortTabs, tabKey } from './group.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
@@ -219,6 +219,18 @@ const COPY_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidd
   <rect x="5.5" y="5" width="8" height="9" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
 </svg>`
 
+// Chain-link glyph for the `[link]` shortcut button — copies a
+// `#finding=…` deep link to this finding (see view/finding-link.js).
+// Same size + stroke weight as the copy / issue / claude icons so the
+// strip stays uniform.
+const LINK_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
+  <g fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round">
+    <path d="M6.2 11.2H4.8a3.2 3.2 0 0 1 0-6.4h1.4"/>
+    <path d="M9.8 4.8h1.4a3.2 3.2 0 0 1 0 6.4H9.8"/>
+    <path d="M5.6 8h4.8"/>
+  </g>
+</svg>`
+
 // Claude mark for the `[hand off to Claude Code]` shortcut button.
 // Same size + stroke weight as the other action icons.
 const CLAUDE_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
@@ -342,14 +354,24 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = 
   // Confidence` block for the active tab to the clipboard (handler
   // in events.js, active tab resolved via the same gid lookup).
   const copyBtn = html`<button type="button" class="mark-copy" title="Copy file, line, description, confidence to clipboard" aria-label="Copy finding details to clipboard">${COPY_ICON}${isFocus ? html`<span class="mark-btn-label">Copy</span>` : nothing}</button>`
+  // Link button — copies a `#finding=<id>` URL that reopens the app on
+  // THIS finding (handler in events.js; resolution in
+  // view/finding-link.js). Suppressed for a session-local numeric id:
+  // those are handed out by an in-memory counter and re-assigned on the
+  // next load, so the link would point somewhere else — better no
+  // affordance than one that quietly rots. Sits next to Copy, the other
+  // "take this with you" action.
+  const linkBtn = isLinkableFindingId(activeKey)
+    ? html`<button type="button" class="mark-link" title="Copy a link to this finding" aria-label="Copy a link to this finding">${LINK_ICON}${isFocus ? html`<span class="mark-btn-label">Link</span>` : nothing}</button>`
+    : nothing
   // GitHub-issue link — a plain anchor (no JS handoff) to GitHub's
   // pre-filled new-issue form for the finding's repo, with the finding
   // detail (file:line linked to source, description, confidence) as the
   // body. Only rendered when the finding resolves to a github.com repo
   // (issues live on github.com; githubIssueUrl returns null for a
-  // gitlab / self-hosted / unknown base), so non-GitHub findings keep
-  // the plain copy + Claude pair. Sits between copy and Claude:
-  // copy | issue | claude.
+  // gitlab / self-hosted / unknown base), so non-GitHub findings show
+  // the group without it. Third in the handoff group:
+  // copy | link | issue | claude.
   const findingRepoId = findingRepo(activeTab)
   const issueHref = githubIssueUrl(findingRepoId, { title: issueTitle(activeTab), body: issueBody(activeTab) })
   const issueBtn = issueHref
@@ -371,7 +393,7 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = 
   const menuTitle = groupSt.hasConflict
     ? 'change triage state (colors mismatch — acts per-tab)'
     : (sortedTabs.length > 1 ? 'change triage state for the whole group' : 'change triage state')
-  return html`${reportChip}<span class="mark-action-group">${commentBtn}${fixBtn}${flagBtn}</span><span class="mark-action-group">${copyBtn}${issueBtn}${claudeBtn}</span>${picker}${triageMenuTemplate(group, menuTitle, context, groupSt, activeTab)}`
+  return html`${reportChip}<span class="mark-action-group">${commentBtn}${fixBtn}${flagBtn}</span><span class="mark-action-group">${copyBtn}${linkBtn}${issueBtn}${claudeBtn}</span>${picker}${triageMenuTemplate(group, menuTitle, context, groupSt, activeTab)}`
 }
 
 // Triage menu — chevron button toggling a popover with the Fixed /

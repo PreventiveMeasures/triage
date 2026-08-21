@@ -11,11 +11,12 @@
 // `Symbol.for('@rray/frontend')`.
 import './view/frontend-install.js'
 import { sidebar } from './view/dom.js'
-import { attachSharedWorkspace, extractShareEncoded, getSecureItem, hydrateSecureStorage, isDisablingInThisTab, isEncryptionEnabled, isUnlocked, listFiles, listWorkspaces, onVaultStateChange, setTriageReloadNotifier, state, syncObservedAfterHydrate } from '#client/index.js'
+import { attachSharedWorkspace, extractFindingRef, extractShareEncoded, getSecureItem, hydrateSecureStorage, isDisablingInThisTab, isEncryptionEnabled, isUnlocked, listFiles, listWorkspaces, onVaultStateChange, setTriageReloadNotifier, state, syncObservedAfterHydrate } from '#client/index.js'
 import { onAutoDownloaded, onBundleAutoDownloaded, onChange as onPresenceChange, setRedraw, triageSync } from './view/client-sync.js'
 import { renderSidebar } from './view/sidebar.js'
 import { BUNDLE_TABS, LAST_FILE_KEY, switchToFile, switchToWorkspace } from './view/ingest.js'
 import { openBundle } from './view/bundle-load.js'
+import { revealFinding } from './view/finding-link-nav.js'
 import { graph2 } from './view/graph/state.js'
 import { installHydrationConflictResolver } from './view/hydration-conflict.js'
 import { installSyncAuthResolver } from './view/sync-auth.js'
@@ -195,6 +196,41 @@ async function handleShareHashIfPresent() {
   return true
 }
 
+// `#finding=<id>[&report=<name>][&ws=<workspaceId>]` → open the report
+// or workspace holding that finding, un-hide it (its triage bucket,
+// and the toolbar filters if they exclude it) and scroll it into view
+// with a brief ring. The counterpart to the per-finding Link button;
+// see `client/finding-link.js` for the fragment format and
+// `view/finding-link{,-nav}.js` for the resolution rules.
+//
+// The fragment is stripped BEFORE the first await, same as the share
+// handler above, for two reasons that happen to coincide: it makes a
+// re-entrant hashchange a no-op (a second dispatch reads an empty
+// hash), and it keeps the address bar honest — the app reflects no
+// other navigation in the URL, so a fragment left behind would turn
+// every later "copy this URL" into a link to whatever finding the user
+// arrived on hours ago.
+//
+// Unlike the share link, a miss is NOT terminal: the caller falls
+// through to the ordinary last-file restore, so a link naming a report
+// the user doesn't have leaves them where they usually start rather
+// than on an empty drop zone. `alert` (not a silent console warn)
+// because a pasted link doing nothing visible is indistinguishable
+// from a broken app.
+async function handleFindingHashIfPresent() {
+  const ref = extractFindingRef()
+  if (!ref) return false
+  try {
+    history.replaceState(null, '', location.pathname)
+  } catch {}
+  const result = await revealFinding(ref)
+  if (!result.ok) {
+    alert(result.reason)
+    return false
+  }
+  return true
+}
+
 // Boot continuation — everything that touches encrypted data,
 // triage-sync sessions, OPFS reads, or the UI's restored state.
 // Gated behind `bootContinuationRan` so it runs once per page load,
@@ -241,6 +277,12 @@ async function continueBoot() {
   // they were looking at last time.
   const attached = await handleShareHashIfPresent()
   if (attached) return
+  // Finding deep link — same precedence over the last-file restore, and
+  // for the same reason: land the user on what the LINK names, not on
+  // whatever they had open last time. Falls through on a miss (see the
+  // handler) so the restore below still runs.
+  const revealed = await handleFindingHashIfPresent()
+  if (revealed) return
   const last = getSecureItem(LAST_FILE_KEY)
   if (last) {
     if (last.startsWith('ws:')) {
@@ -371,9 +413,19 @@ onVaultStateChange(() => {
 // internally; the catch here is a
 // backstop so an unexpected rejection in an event listener doesn't
 // surface as an unhandledrejection.
+//
+// Finding links ride the same listener. `handleShareHashIfPresent`
+// only strips (and only returns true) for a fragment that actually
+// carried a `share=` payload, so chaining is safe: a `#finding=` hash
+// falls straight through to the second handler, and a share link that
+// failed leaves an already-stripped hash the second handler reads as
+// empty.
 window.addEventListener('hashchange', () => {
   if (!bootContinuationRan) return
-  handleShareHashIfPresent().catch((err) => console.warn('share-link hashchange:', err))
+  ;(async () => {
+    if (await handleShareHashIfPresent()) return
+    await handleFindingHashIfPresent()
+  })().catch((err) => console.warn('deep-link hashchange:', err))
 })
 
 ;(async () => {
