@@ -109,8 +109,7 @@ function parseBlock(block) {
   const severity = VALID_SEVERITIES.has(sevRaw) ? sevRaw : 'medium'
 
   const description = buildDescription(title, sections)
-  const recommendation = sections['recommended fix']
-    ? stripBold(sections['recommended fix']) : undefined
+  const recommendation = sections['recommended fix'] || undefined
 
   const finding = { file: file || 'unknown', line, severity, description }
   if (locationLink) finding.location = locationLink
@@ -241,24 +240,26 @@ function evidenceRefs(text) {
   return bare.length === 1 ? bare : []
 }
 
-// Build the description from the title + body sections. Strip the
-// simple `**bold**` markdown so the renderer's esc() doesn't print the
-// asterisks literally; everything else (line breaks, list bullets,
-// plain text) survives. white-space: pre-line on the .desc CSS rule
-// keeps the paragraph breaks visible.
+// Build the description from the title + body sections. Section labels
+// are emitted as `**Label:**`, the same shape parse-piolium gives its
+// labelled fields — render-finding.js's renderHighlighted turns those
+// into real `<strong>` emphasis (asterisks dropped) rather than
+// printing the markers, and the markdown export re-emits them as the
+// markdown they are. The report's own `**bold**` rides along for the
+// same treatment; everything else (line breaks, list bullets, indented
+// continuation lines) survives verbatim, with white-space: pre-wrap on
+// the .desc CSS rule keeping the shape the report wrote.
 function buildDescription(title, sections) {
   const bodyParts = [title]
   if (sections.details) bodyParts.push(sections.details)
   // The Evidence list rides along in the body — only its first row
   // becomes the finding's location, so without this every other cited
   // site would be dropped on import. Kept as the report wrote it,
-  // markdown links included: the renderer linkifies `[name](url)`
-  // refs (render-finding.js renderHighlighted) and the markdown export
-  // re-emits the description verbatim.
-  if (sections.evidence) bodyParts.push(`Evidence:\n${sections.evidence}`)
-  if (sections.impact) bodyParts.push(`Impact: ${sections.impact}`)
-  if (sections['reproduction steps']) bodyParts.push(`Reproduction: ${sections['reproduction steps']}`)
-  return stripBold(bodyParts.join('\n\n'))
+  // markdown links included: the renderer linkifies each `[name](url)`
+  // ref, and its own line / indentation is what makes the list read as
+  // a list on screen.
+  if (sections.evidence) bodyParts.push(`**Evidence:**\n${sections.evidence}`)
+  if (sections.impact) bodyParts.push(`**Impact:** ${sections.impact}`)
+  if (sections['reproduction steps']) bodyParts.push(`**Reproduction:** ${sections['reproduction steps']}`)
+  return bodyParts.join('\n\n')
 }
-
-function stripBold(text) { return text.replaceAll('**', '') }

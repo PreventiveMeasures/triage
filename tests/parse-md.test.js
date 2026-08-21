@@ -115,8 +115,8 @@ describe('parseMarkdownFindings — sections', () => {
     const f = parseMarkdownFindings(md).findings[0]
     assert.match(f.description, /Bad thing/u)
     assert.match(f.description, /It happened\./u)
-    assert.match(f.description, /Impact: Things broke\./u)
-    assert.match(f.description, /Reproduction: Step 1\./u)
+    assert.match(f.description, /\*\*Impact:\*\* Things broke\./u)
+    assert.match(f.description, /\*\*Reproduction:\*\* Step 1\./u)
   })
 
   it('extracts recommendation from Recommended fix section', () => {
@@ -125,11 +125,18 @@ describe('parseMarkdownFindings — sections', () => {
     assert.equal(f.recommendation, 'Do X then Y.')
   })
 
-  it('strips ** bold markers from description', () => {
+  // The renderer turns `**bold**` into real <strong> emphasis, so the
+  // report's own markers are kept rather than stripped — as are the
+  // `**Label:**` prefixes this parser adds.
+  it('keeps ** bold markers for the renderer to emphasize', () => {
     const md = '# T\n\n## Details\nThis **is bold** text.\n\n---\n**Severity:** medium\n'
     const f = parseMarkdownFindings(md).findings[0]
-    assert.match(f.description, /This is bold text\./u)
-    assert.doesNotMatch(f.description, /\*\*/u)
+    assert.match(f.description, /This \*\*is bold\*\* text\./u)
+  })
+
+  it('keeps ** bold markers in the recommendation', () => {
+    const md = '# T\n\n## Recommended fix\nUse **safeMerge()**.\n\n---\n**Severity:** medium\n'
+    assert.equal(parseMarkdownFindings(md).findings[0].recommendation, 'Use **safeMerge()**.')
   })
 
   it('skips missing sections silently', () => {
@@ -263,11 +270,11 @@ describe('parseMarkdownFindings — evidence section', () => {
 
   it('carries the whole list into the description, links intact', () => {
     const f = parseMarkdownFindings(md(...TWO_ROWS)).findings[0]
-    assert.match(f.description, /Evidence:/u)
+    assert.match(f.description, /\*\*Evidence:\*\*/u)
     for (const row of TWO_ROWS) assert.ok(f.description.includes(row.trim()), `missing row: ${row}`)
     // …and in document order: Details, Evidence, Impact.
-    assert.ok(f.description.indexOf('Something is wrong.') < f.description.indexOf('Evidence:'))
-    assert.ok(f.description.indexOf('Evidence:') < f.description.indexOf('Impact: Bad.'))
+    assert.ok(f.description.indexOf('Something is wrong.') < f.description.indexOf('**Evidence:**'))
+    assert.ok(f.description.indexOf('**Evidence:**') < f.description.indexOf('**Impact:** Bad.'))
   })
 
   it('accepts bulleted rows', () => {
