@@ -291,3 +291,45 @@ export function extractFindingRef(hash) {
   if (!found.id) return null
   return found
 }
+
+// Recognise a finding deep link pasted into free text — the reverse of
+// `buildFindingUrl`, used to linkify comments (see `parseCommentRefs` in
+// `ui/view/format.js`). Returns `{ id, fragment }` with the fragment
+// re-emitted canonically, or null for anything that isn't one of OUR
+// links.
+//
+// "Ours" means the CURRENT host, scheme included. A finding id resolves
+// only against the reader's own local reports, so a link to some other
+// deployment couldn't be followed usefully even if it were offered — and
+// a same-name look-alike on another host is exactly what a linkifier
+// must not present as the real thing. Credentials are refused for the
+// same reason (`https://user@triage.space/…` reads as ours but isn't
+// something the app ever emits).
+//
+// The PATH is deliberately not constrained: the caller renders a
+// fragment-only href, so where the click lands doesn't depend on it, and
+// leaving it free keeps `/` and `/index.html` and a subpath deployment
+// all working.
+//
+// The anti-mutation guard is the one from `githubRefToken`: `new URL`
+// silently rewrites its input (resolving `..`, lower-casing, punycoding
+// IDN homographs, dropping a default port), any of which can let a
+// look-alike round up into a passing link. A candidate that isn't
+// already canonical is refused rather than linkified. Every link this
+// app emits round-trips unchanged, since `buildFindingUrl` builds from
+// `location` itself.
+export function parseFindingUrl(candidate) {
+  if (typeof location === 'undefined') return null
+  let u
+  try { u = new URL(candidate) } catch { return null }
+  if (u.href !== candidate) return null
+  if (u.protocol !== location.protocol) return null
+  if (u.host !== location.host) return null
+  if (u.username || u.password) return null
+  const ref = extractFindingRef(u.hash)
+  if (!ref) return null
+  // Re-emitted rather than passed through, so an unrecognised extra
+  // param or a mangled hint can't ride into the href we hand the
+  // renderer.
+  return { id: ref.id, fragment: encodeFindingRef(ref) }
+}

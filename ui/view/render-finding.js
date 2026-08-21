@@ -158,16 +158,28 @@ export function renderHighlighted(text) {
 }
 
 // Render a triage comment, linkifying any GitHub issue / PR / commit /
-// security-advisory URL the user pasted. parseCommentRefs (format.js) does
-// the strict validation + tokenisation; here we only map its segments to
-// templates — plain `string` runs pass through untouched (an all-prose
-// comment comes back as a single string), and each validated
-// `{ url, label }` becomes a compact `<a>` (`owner/repo#123`,
-// `owner/repo@sha`, `GHSA-xxxx-xxxx-xxxx`) with the full URL in `title`.
+// security-advisory URL the user pasted, plus any per-finding deep link
+// into this instance ("duplicate of https://…/#finding=…").
+// parseCommentRefs (format.js) does the strict validation + tokenisation;
+// here we only map its segments to templates — plain `string` runs pass
+// through untouched (an all-prose comment comes back as a single string),
+// and each validated token becomes a compact `<a>`.
+//
+// The two token kinds render differently on purpose. An external ref
+// (`owner/repo#123`, `owner/repo@sha`, `GHSA-xxxx-xxxx-xxxx`) opens in a
+// new tab with the full URL in `title`. A self-link carries a
+// fragment-only href and must navigate IN PLACE: `target="_blank"` would
+// boot a second copy of the app just to show a finding the reader is
+// already three inches away from. Its `title` names the action rather
+// than the href, which is an opaque id the reader can't act on.
 function renderCommentText(text) {
-  return parseCommentRefs(text).map((seg) => (typeof seg === 'string'
-    ? seg
-    : html`<a href=${seg.url} target="_blank" rel="noopener noreferrer" title=${seg.url}>${seg.label}</a>`))
+  return parseCommentRefs(text).map((seg) => {
+    if (typeof seg === 'string') return seg
+    if (seg.self) {
+      return html`<a class="comment-self-ref" href=${seg.url} title="Show this finding">${seg.label}</a>`
+    }
+    return html`<a href=${seg.url} target="_blank" rel="noopener noreferrer" title=${seg.url}>${seg.label}</a>`
+  })
 }
 
 // Combined `file:line` link for the table-view row's location cell —

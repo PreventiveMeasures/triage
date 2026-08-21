@@ -678,6 +678,12 @@
      anchor below. */
   & a { color: var(--accent); text-decoration: none; }
   & a:hover { text-decoration: underline; }
+  /* A self-ref (`#finding=…`) navigates in place instead of opening a
+     tab, so it carries a standing dotted underline rather than the
+     hover-only one its outbound siblings use: the reader can tell which
+     links leave the page before clicking one. */
+  & a.comment-self-ref { text-decoration: underline dotted; text-underline-offset: 2px; }
+  & a.comment-self-ref:hover { text-decoration: underline solid; }
 }
 .fix-block {
   word-break: break-all;
