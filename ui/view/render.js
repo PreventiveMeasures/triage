@@ -1305,15 +1305,17 @@ function findingsBodyTemplate(filtered) {
         ? sortGroupsByPrimary(byFile.get(file), (pa, pb) => parseInt(pa.line, 10) - parseInt(pb.line, 10))
         : byFile.get(file)
       // All findings under one file share the same `repo.github` (it's
-      // a property of the source file's package), so probe the first
-      // group's primary tab — every other tab in this file would carry
-      // the same value or none at all. The per-report `_repoFallback`
-      // is also a per-file property (every finding from one report
-      // carries the same value), so the same probe gets its fallback.
+      // a property of the source file's package) and the same `file`
+      // (that's the grouping key), so probe the first group's primary
+      // tab — every other tab in this file would carry the same value
+      // or none at all. The per-report `_repoFallback` is also a
+      // per-file property (every finding from one report carries the
+      // same value), so the same probe gets its fallback, and its
+      // report-provided link is the one `fileLink` resolves against.
       const probe = primaryTab(items[0])
       return html`<div class="file-group">
         <div class="file-header">
-          <span>${fileLink(file, probe?.repo?.github, probe?._repoFallback ?? state.repoUrl)}</span>
+          <span>${fileLink(probe, probe?._repoFallback ?? state.repoUrl)}</span>
           <span class="count">${items.length}</span>
         </div>
         <div class="file-body">${repeat(items, (g) => findingCardGid(g), (g) => findingCardPlaceholder(g))}</div>
@@ -1338,13 +1340,13 @@ function findingsBodyTemplate(filtered) {
   // styles/print.css and finding-card.css's @media print block.
   return html`${repeat(items, (g) => findingCardGid(g), (g) => {
     const p = activeTabFor(g)
-    const lineLinkTpl = lineLink(p.file, p.line, p.repo?.github, p._repoFallback ?? state.repoUrl)
+    const lineLinkTpl = lineLink(p, p._repoFallback ?? state.repoUrl)
     const meta = formatRunMeta(p)
     const displayName = findingDisplayName(p)
     const multiCase = g.length > 1
     return html`<div class=${classMap({ 'flat-group': true, 'multi-case': multiCase })}>
       <div class="flat-group-loc">
-        <span class="file">${fileLink(p.file, p.repo?.github, p._repoFallback ?? state.repoUrl)}</span>
+        <span class="file">${fileLink(p, p._repoFallback ?? state.repoUrl)}</span>
         ${lineLinkTpl === nothing ? nothing : html`<span class="line-num">${lineLinkTpl}</span>`}
         ${displayName ? html`<span class="meta">${displayName}</span>` : nothing}
         ${meta ? html`<span class="run-meta">${meta}</span>` : nothing}

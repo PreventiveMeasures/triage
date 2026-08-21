@@ -2,7 +2,7 @@ import { html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { bundlesForFileHash, isLinkableFindingId, isPlaceholderNpmPackage, state } from '#client/index.js'
-import { SEVERITY_ORDER, commitUrl, correctedVariants, displayedSeverity, effectiveSeverity, fileUrl, findingDisplayName, formatRunMeta, githubIssueUrl, hasSeverityCorrection, isHttpUrl, parseCommentRefs, stripExportMarker } from './format.js'
+import { SEVERITY_ORDER, commitUrl, correctedVariants, displayedSeverity, effectiveSeverity, findingDisplayName, findingUrl, formatRunMeta, githubIssueUrl, hasSeverityCorrection, isHttpUrl, markdownLinkToken, parseCommentRefs, stripExportMarker } from './format.js'
 import { activeTabFor, findingRepo, groupKey, groupState, isIgnored, sortTabs, tabKey } from './group.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 
@@ -118,23 +118,38 @@ function splitDescription(text) {
   return { title: text.slice(0, nl).trim(), body }
 }
 
-// Render prose with inline highlights for `"quoted"` strings,
-// `` `code` `` spans, and `**bold**` emphasis — the first two match the
-// prototype's `.summary q` / `.title em` styling
-// (`design/prototypes/DeepView.0.html`) and keep their delimiters
-// visible; bold spans render as real `<strong>` emphasis with the
-// asterisks DROPPED, so parser-emitted labels (parse-piolium's
-// `**Impact:**` / `**Root Cause:**`) and source-report emphasis read
-// as emphasis rather than literal markers. Unpaired asterisks stay
-// literal. Returns the raw string when nothing matches so we don't
-// churn out single-child arrays for the common case of plain text.
+// Render prose with inline highlights for `[markdown](links)`,
+// `"quoted"` strings, `` `code` `` spans, and `**bold**` emphasis. The
+// quote / code pair match the prototype's `.summary q` / `.title em`
+// styling (`design/prototypes/DeepView.0.html`) and keep their
+// delimiters visible; bold spans render as real `<strong>` emphasis
+// with the asterisks DROPPED, so parser-emitted labels (parse-piolium's
+// `**Impact:**` / `**Root Cause:**`) and source-report emphasis read as
+// emphasis rather than literal markers. Unpaired asterisks stay
+// literal. A `[label](url)` pair becomes a real link, opening in a new
+// tab like every other outbound link here: the claude-security
+// `## Evidence` list cites each site that way and parse-md.js carries
+// that whole section into the description, so these anchors are the
+// only path to the files it names beyond the first. Each href is the
+// report's own, so a row points at ITS file rather than at the
+// finding's; a target `markdownLinkToken` rejects (non-http,
+// malformed) stays plain text. Returns the raw string when nothing
+// matches so we don't churn out single-child arrays for the common
+// case of plain text.
+//
 // Exported for the bundle views (render-bundle.js), whose finding
 // descriptions — source-viewer side panel, Issues tab rows, code-rail
 // issue results — get the same inline styling. Those render in light
 // DOM, so report.css carries a copy of the .inline-* rules that live
 // in finding-card.css for this card's shadow root (`<strong>` needs no
-// rule — the UA styles it in both trees).
-const INLINE_HL_RE = /\*\*[^*\n]+\*\*|"[^"\n]+"|`[^`\n]+`/gu
+// rule — the UA styles it in both trees; anchors take their accent
+// color from theme.css in light DOM and from finding-card.css in the
+// shadow root).
+//
+// The link alternative leads the pattern so a label carrying quotes or
+// backticks is consumed as part of the link rather than chipped up
+// inside it.
+const INLINE_HL_RE = /\[[^\]\n]+\]\([^)\s]+\)|\*\*[^*\n]+\*\*|"[^"\n]+"|`[^`\n]+`/gu
 export function renderHighlighted(text) {
   if (!text) return text
   INLINE_HL_RE.lastIndex = 0
@@ -144,7 +159,12 @@ export function renderHighlighted(text) {
   while ((m = INLINE_HL_RE.exec(text)) !== null) {
     if (m.index > lastIdx) parts.push(text.slice(lastIdx, m.index))
     const c0 = m[0].codePointAt(0)
-    if (c0 === 0x2A /* * */) {
+    if (c0 === 0x5B /* [ */) {
+      const link = markdownLinkToken(m[0])
+      parts.push(link
+        ? html`<a href=${link.url} target="_blank" rel="noopener noreferrer" title=${link.url}>${link.label}</a>`
+        : m[0])
+    } else if (c0 === 0x2A /* * */) {
       parts.push(html`<strong>${m[0].slice(2, -2)}</strong>`)
     } else {
       const cls = c0 === 0x60 /* ` */ ? 'inline-code' : 'inline-quote'
@@ -187,12 +207,11 @@ function renderCommentText(text) {
 // views) so file + line live together in one slot. Returns a
 // TemplateResult when we have a source URL, plain text otherwise.
 function rowLocationTemplate(f) {
-  const url = fileUrl(f.file, f.repo?.github, f._repoFallback ?? state.repoUrl)
+  const url = findingUrl(f, f._repoFallback ?? state.repoUrl)
   const lineNum = parseInt(f.line, 10)
   const text = Number.isFinite(lineNum) ? `${f.file}:${f.line}` : f.file
   if (!url) return text
-  const target = Number.isFinite(lineNum) ? `${url}#L${lineNum}` : url
-  return html`<a href=${target} target="_blank" rel="noopener">${text}</a>`
+  return html`<a href=${url} target="_blank" rel="noopener">${text}</a>`
 }
 
 // Commit-hash link for the codex `commit_hash` reference. Short SHA
@@ -310,11 +329,9 @@ function issueTitle(f) {
 // file with no resolvable upstream repo). Blocks join with a blank line
 // so the file link and confidence bracket the description paragraph.
 function issueBody(f) {
-  const url = fileUrl(f.file, f.repo?.github, f._repoFallback ?? state.repoUrl)
+  const href = findingUrl(f, f._repoFallback ?? state.repoUrl)
   const lineNum = parseInt(f.line, 10)
-  const hasLine = Number.isFinite(lineNum)
-  const loc = hasLine ? `${f.file}:${lineNum}` : f.file
-  const href = url && hasLine ? `${url}#L${lineNum}` : url
+  const loc = Number.isFinite(lineNum) ? `${f.file}:${f.line}` : f.file
   const blocks = []
   if (f.file) blocks.push(`File: ${href ? `[${loc}](${href})` : loc}`)
   if (f.description) blocks.push(f.description)
@@ -640,12 +657,11 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
   // `.flat-group-loc` / `.file-header` already paint the same info
   // above the card. exportName (or `exportName.methodName` when the
   // finding carries both) joins with a comma when present.
-  const url = fileUrl(f.file, f.repo?.github, f._repoFallback ?? state.repoUrl)
+  const url = findingUrl(f, f._repoFallback ?? state.repoUrl)
   const lineNum = parseInt(f.line, 10)
-  const hasLine = Number.isFinite(lineNum)
-  const locText = hasLine ? `${f.file}:${f.line}` : f.file
+  const locText = Number.isFinite(lineNum) ? `${f.file}:${f.line}` : f.file
   const locLink = url
-    ? html`<a href=${hasLine ? `${url}#L${lineNum}` : url} target="_blank" rel="noopener">${locText}</a>`
+    ? html`<a href=${url} target="_blank" rel="noopener">${locText}</a>`
     : locText
   const exportLabel = findingDisplayName(f)
   const lineRowMain = exportLabel

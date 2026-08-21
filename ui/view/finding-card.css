@@ -149,6 +149,19 @@
   border-top: 1px dashed var(--border);
 }
 
+/* Inline `[label](url)` links carried by the body text — the
+   claude-security `## Evidence` list cites every site that way and
+   parse-md.js keeps the section in the description (render-finding.js
+   renderHighlighted turns each ref into an anchor). Same accent +
+   hover-underline treatment as the comment / fix-link blocks below;
+   the shadow root gets no `a` styling from theme.css. */
+.desc a,
+.recommendation a,
+.conf-reason a {
+  color: var(--accent); text-decoration: none;
+  &:hover { text-decoration: underline; }
+}
+
 /* Inline highlights — `"quoted"` gets a soft accent-tinted chip,
    `` `code` `` a monospace chip. Both keep the original delimiters
    inside the chip so the reader still sees them. */
@@ -818,9 +831,12 @@
   .badge-varies { color: #555 !important; border-color: #999 !important; }
   .badge-arrow, .badge-corr-mark, .badge-pre { color: #555 !important; }
   .severity-reason { color: #555 !important; }
-  /* Strip on-screen link colors so a linked filename reads
-     identically to the bare-text fallback. */
+  /* Strip on-screen link colors so a linked filename — or an inline
+     `[label](url)` ref in the body — reads identically to the
+     bare-text fallback. The body selectors repeat the on-screen rule's
+     specificity so they lose to nothing here. */
   a, .line-num, .line-num a { color: inherit; }
+  .desc a, .recommendation a, .conf-reason a { color: inherit; }
 
   /* Inline `` `code` `` spans read as a chip on screen (1px border +
      tinted bg); on paper that chrome crowds dense prose and reads as

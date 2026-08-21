@@ -368,9 +368,23 @@ export function fileUrl(file, githubRepo, repoFallback) {
   return `${base}/blob/HEAD/${file}`
 }
 
-export function fileLink(file, githubRepo, repoFallback) {
-  const url = fileUrl(file, githubRepo, repoFallback)
-  return url ? html`<a href=${url} target="_blank" rel="noopener">${file}</a>` : file
+// File-level link for a finding's path — the file headers the list /
+// grouped views stack their cards under. Same target as the finding's
+// own `findingUrl` minus the line anchor, so a header and the line
+// links under it resolve to one revision of one file rather than two.
+// Plain text (no `<a>`) when there's nothing to link against.
+export function fileLink(f, repoFallback) {
+  const file = f?.file ?? ''
+  const url = findingUrl(f, repoFallback)
+  if (!url) return file
+  return html`<a href=${stripLineAnchor(url)} target="_blank" rel="noopener">${file}</a>`
+}
+
+// Drop a trailing `#L42` / `#L10-L20` anchor: a file-level link wants
+// the file, not the line one finding in it sits on. Any other fragment
+// is left alone — it isn't ours to interpret.
+function stripLineAnchor(url) {
+  return url.replace(/#L\d+(?:-L?\d+)?$/u, '')
 }
 
 // Returns true only for parseable http:// / https:// URLs. User-
@@ -386,19 +400,54 @@ export function isHttpUrl(s) {
   } catch { return false }
 }
 
-// Returns a "line N" template (linkified when a fileUrl is available)
-// or `nothing` when `line` isn't a finite integer — codex /
-// claude-security imports don't carry line numbers and stub them as
-// '?', and rendering a bare "line ?" adds noise without information.
-// Callers suppress the wrapping `<span class="line-num">` when this
-// returns `nothing`.
-export function lineLink(file, line, githubRepo, repoFallback) {
-  const lineNum = parseInt(line, 10)
+// Source URL for ONE finding's location — every finding-level file /
+// line link routes through here so they all resolve the same target.
+//
+// A markdown import carries the report's OWN link in `f.location` (the
+// `[file:lines](url)` ref of `## Evidence` / `## Location`): an exact
+// ref, usually pinned to the commit the report was produced from, with
+// the line anchor already on it. That beats the `fileUrl()`
+// reconstruction, which can only pin `HEAD` — a different revision, and
+// a 404 once the path moves — and which yields nothing at all for the
+// claude-security reports that name no repository. Non-http `location`
+// values (parse-piolium's `piolium:<id>` placeholder) fall through to
+// the reconstruction, as do JSON findings, which carry no `location`.
+// Returns null when neither source yields a URL.
+export function findingUrl(f, repoFallback) {
+  if (!f) return null
+  if (isHttpUrl(f.location)) return f.location
+  const url = fileUrl(f.file, f.repo?.github, repoFallback)
+  if (!url) return null
+  const lineNum = parseInt(f.line, 10)
+  return Number.isFinite(lineNum) ? `${url}#L${lineNum}` : url
+}
+
+// One inline markdown link — `[label](url)` — as it appears INSIDE a
+// finding description: parse-md.js carries the `## Evidence` list into
+// the body verbatim, links included, so the renderer needs the pair
+// back to build an `<a>` (see renderHighlighted in render-finding.js).
+// Returns null unless the target is a well-formed http(s) URL, so a
+// `javascript:` / `data:` href — or a stray `[…](…)` in prose — stays
+// plain text rather than becoming a clickable footgun.
+export function markdownLinkToken(raw) {
+  const m = /^\[([^\]]+)\]\(([^)\s]+)\)$/u.exec(raw)
+  if (!m || !isHttpUrl(m[2])) return null
+  return { label: m[1].trim() || m[2], url: m[2] }
+}
+
+// Returns a "line N" template (linkified when a source URL is
+// available) or `nothing` when the finding's line isn't a finite
+// integer — codex / claude-security imports don't carry line numbers
+// and stub them as '?', and rendering a bare "line ?" adds noise
+// without information. Callers suppress the wrapping `<span
+// class="line-num">` when this returns `nothing`.
+export function lineLink(f, repoFallback) {
+  const lineNum = parseInt(f?.line, 10)
   if (!Number.isFinite(lineNum)) return nothing
-  const url = fileUrl(file, githubRepo, repoFallback)
+  const url = findingUrl(f, repoFallback)
   const text = `line ${lineNum}`
   if (!url) return text
-  return html`<a href=${`${url}#L${lineNum}`} target="_blank" rel="noopener">${text}</a>`
+  return html`<a href=${url} target="_blank" rel="noopener">${text}</a>`
 }
 
 // Commit URL builder + link renderer. Used by codex imports which
