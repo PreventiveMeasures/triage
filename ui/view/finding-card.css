@@ -151,14 +151,32 @@
   font-size: .92em;
 }
 .section-label {
+  display: flex; align-items: center; gap: .3rem;
   color: var(--muted); font-weight: 600;
   font-size: .62rem; text-transform: uppercase; letter-spacing: .06em;
+
+  /* Small tick in the label's own colour (green under
+     `.recommendation`) — at this type size the headers need something
+     with weight to hang off, and it echoes the accent rail the comment
+     / fix blocks carry lower down. `print-color-adjust` because a
+     painted background is exactly what a printer drops by default. */
+  &::before {
+    content: ''; flex: none;
+    width: 2px; height: .58rem;
+    border-radius: 1px;
+    background: currentcolor; opacity: .75;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
 }
 .section-body {
   white-space: pre-wrap; line-height: 1.55;
   color: rgb(from var(--text) r g b / .82);
   margin-top: .1rem;
 }
+/* The fix is the one section that carries its own colour, header
+   included — a green heading over green text reads as one block rather
+   than as a muted label someone stuck on top of it. */
+.recommendation .section-label,
 .recommendation .section-body { color: var(--green); }
 .conf-reason {
   grid-column: 2; white-space: pre-wrap;
