@@ -1,13 +1,13 @@
-// Per-finding deep links (`#finding=<id>[&report=<hint>][&ws=<hint>]`).
+// Per-finding deep links (`#finding=<id>[&v=<hints>]`).
 //
 // Three layers, all headless:
 //   * `client/finding-link.js` — the fragment codec plus the 3-byte
 //     location hints. Pins the hint shape / determinism / domain
-//     separation, the round-trip, the refusal to link a session-local
-//     numeric id, and the rejection rules a hand-mangled fragment has
-//     to survive.
-//   * `client/finding-locate.js` — turning a hint back into a local
-//     report, and the scan that finds the finding in ANOTHER report
+//     separation, the 6-byte packing behind `v=`, the round-trip, the
+//     refusal to link a session-local numeric id, and the rejection
+//     rules a hand-mangled fragment has to survive.
+//   * `client/finding-locate.js` — turning half a hint pair back into
+//     a local report, and the scan that finds the finding in ANOTHER report
 //     when no hint matches. Exercised against the real
 //     `client/storage.js`, which falls back to gzipped localStorage
 //     under node — the same substrate the finding-index tests use.
@@ -152,6 +152,44 @@ describe('finding deep links — fragment codec', () => {
     assert.deepEqual(back, ref)
   })
 
+  it('packs both hints into one 6-byte `v=` value', () => {
+    const report = 'aB3-'
+    const workspace = 'x_9Z'
+    // 3 bytes is exactly one base64 group, so the 8 characters really
+    // are the base64 of the 6-byte buffer — not just two tokens glued
+    // together. Pinned because the unpacking is a plain slice, which is
+    // only correct while that holds.
+    const bytes = new Uint8Array(6)
+    bytes.set(Uint8Array.fromBase64(report, { alphabet: 'base64url' }), 0)
+    bytes.set(Uint8Array.fromBase64(workspace, { alphabet: 'base64url' }), 3)
+    const packed = bytes.toBase64({ alphabet: 'base64url', omitPadding: true })
+    assert.equal(packed.length, 8)
+    assert.equal(encodeFindingRef({ id: UUID_A, report, workspace }), `finding=${UUID_A}&v=${packed}`)
+  })
+
+  it('round-trips a one-sided hint pair', () => {
+    // A single-file view has no workspace; a report whose hint hasn't
+    // been hashed yet has no report half. The absent side rides as the
+    // `AAAA` filler so the present one keeps its position.
+    for (const ref of [
+      { id: UUID_A, report: 'aB3-', workspace: null },
+      { id: UUID_A, report: null, workspace: 'x_9Z' },
+    ]) {
+      const encoded = encodeFindingRef(ref)
+      assert.match(encoded, /&v=[\w-]{8}$/u)
+      assert.deepEqual(extractFindingRef(`#${encoded}`), ref)
+    }
+  })
+
+  it('keeps the whole fragment short', () => {
+    // The reason `v=` exists: two named params spent 20 characters
+    // (`&report=aB3-&ws=x_9Z`) to carry 8 characters of payload.
+    assert.equal(
+      buildFindingUrl({ id: UUID_A, report: 'aB3-', workspace: 'x_9Z' }),
+      `#finding=${UUID_A}&v=aB3-x_9Z`,
+    )
+  })
+
   it('omits absent hints and still parses', () => {
     const encoded = encodeFindingRef({ id: UUID_A })
     assert.equal(encoded, `finding=${UUID_A}`)
@@ -159,7 +197,8 @@ describe('finding deep links — fragment codec', () => {
       id: UUID_A, report: null, workspace: null,
     })
     // null / '' are the shapes `findingLinkFor` passes for "not hashed
-    // yet"; they must not produce an empty `report=`.
+    // yet"; with neither half known, `v=` is dropped entirely rather
+    // than shipping eight characters of filler.
     assert.equal(encodeFindingRef({ id: UUID_A, report: null, workspace: '' }), `finding=${UUID_A}`)
   })
 
@@ -211,17 +250,24 @@ describe('finding deep links — fragment codec', () => {
   it('drops a malformed hint but keeps the id', () => {
     // The id is what identifies the finding; the hints only speed up
     // finding it (the scan is the real backstop), so a broken one must
-    // not sink the whole link. This also covers a link from an older
-    // build that spelled the hints out as names.
-    for (const bad of ['%zz', 'security.json', 'toolong', 'ab']) {
-      assert.deepEqual(extractFindingRef(`#finding=${UUID_A}&report=${bad}`), {
+    // not sink the whole link.
+    for (const bad of ['%zz', 'security.json', 'toolong', 'aB3-']) {
+      assert.deepEqual(extractFindingRef(`#finding=${UUID_A}&v=${bad}`), {
         id: UUID_A, report: null, workspace: null,
       })
     }
   })
 
+  it('reads a link from the two-param era as hint-less', () => {
+    // Older builds spelled the hints out as `report=` / `ws=`. Those
+    // params simply go unread now — the id still resolves, via the scan.
+    assert.deepEqual(extractFindingRef(`#finding=${UUID_A}&report=aB3-&ws=x_9Z`), {
+      id: UUID_A, report: null, workspace: null,
+    })
+  })
+
   it('reads the finding param wherever it sits among unknown params', () => {
-    assert.deepEqual(extractFindingRef(`#utm=x&finding=${UUID_A}&ws=x_9Z&junk`), {
+    assert.deepEqual(extractFindingRef(`#utm=x&finding=${UUID_A}&v=AAAAx_9Z&junk`), {
       id: UUID_A, report: null, workspace: 'x_9Z',
     })
   })

@@ -196,11 +196,10 @@ async function handleShareHashIfPresent() {
   return true
 }
 
-// `#finding=<id>[&report=<hint>][&ws=<hint>]` → open the report or
-// workspace holding that finding, un-hide it (its triage bucket, and
-// the toolbar filters if they exclude it) and scroll it into view with
-// a brief ring. The counterpart to the per-finding Link button; see
-// `client/finding-link.js` for the fragment format (the hints are
+// `#finding=<id>[&v=<hints>]` → open the report or workspace holding
+// that finding, un-hide it (its triage bucket, and the toolbar filters
+// if they exclude it) and scroll it into view with a brief ring. The counterpart to the per-finding Link button; see
+// `client/finding-link.js` for the fragment format (`v=` packs two
 // 3-byte digests, not names) and `view/finding-link{,-nav}.js` for the
 // resolution rules — including the scan that finds the finding in
 // another report when neither hint matches.

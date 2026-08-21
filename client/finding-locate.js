@@ -1,6 +1,6 @@
 // Where does a linked finding actually live? The receiving half of
-// `finding-link.js`: turn a 3-byte hint token back into a local report
-// name / workspace, and — when the hint matches nothing, or matches
+// `finding-link.js`: turn one half of a `v=` hint pair back into a
+// local report name / workspace, and — when it matches nothing, or matches
 // something that no longer carries the finding — find the finding by
 // scanning what IS stored locally.
 //
@@ -15,9 +15,9 @@ import { listFiles, readFile } from './storage.js'
 import { listWorkspaces } from './workspaces.js'
 import { backfillFindingIds, flattenFindings, parseReport } from '../common/report-findings.js'
 
-// The workspace a `ws=` hint names, or null. Hashing every local
-// workspace id is a handful of digests over a list that's rarely more
-// than a few entries — no storage reads at all.
+// The workspace named by the `v=` workspace half, or null. Hashing
+// every local workspace id is a handful of digests over a list that's
+// rarely more than a few entries — no storage reads at all.
 export async function workspaceForHint(hint) {
   if (!hint) return null
   const workspaces = listWorkspaces()
@@ -26,9 +26,9 @@ export async function workspaceForHint(hint) {
   return idx === -1 ? null : workspaces[idx]
 }
 
-// The report filename a `report=` hint names, or null. Same shape as
-// above and equally cheap: filenames come from the OPFS directory
-// listing, so no report is read to answer this.
+// The report filename named by the `v=` report half, or null. Same
+// shape as above and equally cheap: filenames come from the OPFS
+// directory listing, so no report is read to answer this.
 //
 // A 24-bit hint can in principle match two names; the first wins and the
 // caller re-checks that the finding is really there, falling back to the

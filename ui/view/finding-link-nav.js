@@ -7,8 +7,8 @@
 //
 //   1. Already loaded — the recipient is looking at the report (or a
 //      workspace merging it) right now. No navigation at all.
-//   2. The `ws=` hint matches a local workspace → open it.
-//   3. The `report=` hint matches a local report filename → open it.
+//   2. The `v=` workspace half matches a local workspace → open it.
+//   3. The `v=` report half matches a local report filename → open it.
 //   4. Neither matched, or what they named no longer carries the
 //      finding: scan every other stored report for the id and open
 //      wherever it actually lives.

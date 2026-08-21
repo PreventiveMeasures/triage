@@ -1,8 +1,8 @@
 // Deep links to a single finding — pure logic side. Encodes the
 // finding's id plus a "where does it live" hint into the URL hash
-// (`#finding=<id>&report=<hint>&ws=<hint>`) and parses the same back on
-// the receiving side, so "look at THIS issue" is a link you can paste
-// into a chat instead of a screenshot plus directions.
+// (`#finding=<id>&v=<hints>`) and parses the same back on the receiving
+// side, so "look at THIS issue" is a link you can paste into a chat
+// instead of a screenshot plus directions.
 //
 // Sibling of `workspace-share-link.js`, and deliberately unlike it in
 // one respect: the id here is NOT a secret. A share link carries the
@@ -94,7 +94,28 @@ export function isLinkableFindingId(id) {
 // at all, and a collision costs only a wrong first guess (the receiver
 // re-checks that the finding is actually there, then scans).
 const HINT_BYTES = 3
+const HINT_CHARS = 4
 const HINT_RE = /^[\w-]{4}$/u
+
+// Both hints travel as ONE `v=` parameter: 6 bytes, 8 base64url
+// characters, report half first. Purely a length decision — two named
+// params spend 20 characters (`&report=aB3-&ws=x_9Z`) to carry 8
+// characters of payload, and a link is something people paste into
+// chat, tickets and commit messages.
+//
+// Concatenating the two 4-character tokens IS the base64 of the 6-byte
+// buffer: 3 bytes is exactly one base64 group, so nothing carries
+// across the halves and either framing produces identical text. That's
+// what lets the packing be a string join and the unpacking a slice,
+// with no encode / decode round trip.
+//
+// `AAAA` (3 zero bytes) marks a half that isn't known — a single-file
+// view has no workspace, and a report whose hint hasn't been hashed yet
+// omits its own. A genuine digest of `AAAA` therefore reads as absent,
+// once per 16.7M values per half; the cost is that the receiver skips
+// straight to the scan, which is where an unmatched hint lands anyway.
+const COMBINED_RE = /^[\w-]{8}$/u
+const NO_HINT = 'AAAA'
 
 // Domain-separated per kind so the same string can't produce a hint
 // that matches in the other namespace — a workspace whose id happened
@@ -157,32 +178,51 @@ export function knownLinkHint(kind, value) {
   return hintCache.get(hintKey(kind, value)) ?? null
 }
 
+// Pack both hints into the `v=` value, or null when neither is known
+// (in which case the param is omitted entirely rather than shipping
+// eight characters of "nothing"). Throws on a non-empty value that
+// isn't a token, so a caller passing a raw filename finds out
+// immediately instead of shipping a hint-less link.
+function packLinkHints(report, workspace) {
+  const halves = []
+  for (const [what, hint] of [['report', report], ['workspace', workspace]]) {
+    if (hint === null || hint === undefined || hint === '') { halves.push(NO_HINT); continue }
+    if (!isLinkHint(hint)) {
+      throw new TypeError(`encodeFindingRef: ${what} must be a link hint token, not a name`)
+    }
+    halves.push(hint)
+  }
+  if (halves.every((h) => h === NO_HINT)) return null
+  return halves.join('')
+}
+
+// Split a validated `v=` value back into its two halves, mapping the
+// `AAAA` filler to null.
+function unpackLinkHints(value) {
+  const halves = [value.slice(0, HINT_CHARS), value.slice(HINT_CHARS)]
+    .map((h) => (h === NO_HINT ? null : h))
+  return { report: halves[0], workspace: halves[1] }
+}
+
 // ── fragment codec ───────────────────────────────────────────────────
 
 // Build the fragment body (no leading '#') for a finding reference.
 // `report` / `workspace` are hint TOKENS (from `computeLinkHint` /
-// `knownLinkHint`), not names — null / undefined omits them, and
-// anything else throws rather than being silently dropped, so a caller
-// that passes a raw filename finds out immediately instead of shipping
-// a hint-less link.
+// `knownLinkHint`), not names; they leave as the single packed `v=`
+// param, which is omitted when neither is known.
 //
 // The id is percent-encoded: usually a uuid with nothing to escape, but
 // the codex importer's finding-URL ids carry `/`, `:`, `?` and —
 // decisively — `&` and `=`, which would otherwise split into phantom
-// params on the way back. Tokens need no encoding (base64url is already
-// fragment-safe) and are emitted verbatim.
+// params on the way back. The packed hints need no encoding (base64url
+// is already fragment-safe) and are emitted verbatim.
 export function encodeFindingRef({ id, report, workspace } = {}) {
   if (!isLinkableFindingId(id)) {
     throw new TypeError('encodeFindingRef: a persistent finding id is required')
   }
   const parts = [`finding=${encodeURIComponent(id)}`]
-  for (const [param, hint] of [['report', report], ['ws', workspace]]) {
-    if (hint === null || hint === undefined || hint === '') continue
-    if (!isLinkHint(hint)) {
-      throw new TypeError(`encodeFindingRef: ${param} must be a link hint token, not a name`)
-    }
-    parts.push(`${param}=${hint}`)
-  }
+  const packed = packLinkHints(report, workspace)
+  if (packed) parts.push(`v=${packed}`)
   return parts.join('&')
 }
 
@@ -198,8 +238,8 @@ export function buildFindingUrl(ref) {
 }
 
 // Extract `{ id, report, workspace }` from a hash string (or
-// `location.hash` when called with no argument), where `report` and
-// `workspace` are hint tokens. Returns null when the fragment carries no
+// `location.hash` when called with no argument), unpacking `v=` back
+// into the two hint tokens. Returns null when the fragment carries no
 // usable `finding=` param — a share link, an in-page anchor, an empty
 // hash, or a payload that fails validation.
 //
@@ -208,10 +248,11 @@ export function buildFindingUrl(ref) {
 // reason is uniformity — one place in the app reads deep links, and a
 // caller that reached for `?finding=` would quietly bypass it.
 //
-// A malformed hint drops just that hint rather than the whole ref: the
-// id is what identifies the finding, and the receiver's scan can still
-// land it. An un-decodable ID, on the other hand, fails the whole parse
-// — there is nothing left to look up.
+// A malformed `v=` drops both hints rather than the whole ref: the id is
+// what identifies the finding, and the receiver's scan can still land
+// it. That also covers a link from an older build, whose separate
+// `report=` / `ws=` params simply go unread. An un-decodable ID, on the
+// other hand, fails the whole parse — there is nothing left to look up.
 export function extractFindingRef(hash) {
   const raw = typeof hash === 'string' ? hash : (typeof location === 'undefined' ? '' : location.hash)
   if (!raw) return null
@@ -224,14 +265,14 @@ export function extractFindingRef(hash) {
     const key = part.slice(0, eq)
     const rawValue = part.slice(eq + 1)
     if (!rawValue) continue
-    // Hints are fixed-width tokens — validated verbatim rather than
-    // decoded, since base64url has nothing `encodeURIComponent` would
-    // have touched. Anything else is a link from another era or a
-    // mangled paste; drop it and let the scan take over.
-    if (key === 'report' || key === 'ws') {
-      if (!isLinkHint(rawValue)) continue
-      if (key === 'report') found.report = rawValue
-      else found.workspace = rawValue
+    // The packed hints are a fixed-width token pair — validated
+    // verbatim rather than decoded, since base64url has nothing
+    // `encodeURIComponent` would have touched. Anything else is a link
+    // from another era or a mangled paste; drop it and let the scan
+    // take over.
+    if (key === 'v') {
+      if (!COMBINED_RE.test(rawValue)) continue
+      Object.assign(found, unpackLinkHints(rawValue))
       continue
     }
     if (key !== 'finding') continue
