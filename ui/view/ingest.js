@@ -1,5 +1,5 @@
 import { render as litRender, nothing } from 'lit'
-import { analyzeContent, deleteBundle, deleteFile, deleteWorkspace, dropBundleFromHashIndex, getSecureItem, listBundles, listFiles, listWorkspaces, loadRepoUrlFor, pruneOrphanTriage, readFile, readFileBytes, removeCount, removeSecureItem, saveBundle, saveFile, saveRepoUrlFor, setBundleWorkspace, setCount, setReportWorkspace, setSecureItem, state, triageLoadPromise } from '#client/index.js'
+import { analyzeContent, computeLinkHint, deleteBundle, deleteFile, deleteWorkspace, dropBundleFromHashIndex, getSecureItem, listBundles, listFiles, listWorkspaces, loadRepoUrlFor, pruneOrphanTriage, readFile, readFileBytes, removeCount, removeSecureItem, saveBundle, saveFile, saveRepoUrlFor, setBundleWorkspace, setCount, setReportWorkspace, setSecureItem, state, triageLoadPromise } from '#client/index.js'
 import { closeWorkspace as closePresence, deleteBundleFromRemote, deleteFromRemote as deletePresence, isInRemoteOrCached, openWorkspace as openPresence, putFile, triageSync } from './client-sync.js'
 import { openImportConflictDialog } from './dialogs/import-conflict-dialog.js'
 import { dropZone, report } from './dom.js'
@@ -553,6 +553,9 @@ export async function switchToWorkspace(workspaceId) {
   if (state.currentView === 'bundles' || state.currentView === 'packages' || state.currentView === 'repositories') {
     state.currentView = 'findings'
   }
+  // Same fire-and-forget prime as ingestReport, for the workspace half
+  // of a deep link's location hint.
+  void computeLinkHint('workspace', workspaceId)
   state.reports = []
   state.workspaceMerges = []
   state.currentFile = null
@@ -931,6 +934,13 @@ export async function leaveWorkspace(workspaceId, mode = 'detach', { triage = 'k
 // relies on that).
 export async function ingestReport(name, content, gen = null) {
   const stale = () => gen !== null && isStaleLoad(gen)
+  // Prime the deep-link hint for this report's name. Fire-and-forget:
+  // the Link button reads the memo synchronously (it copies inside a
+  // click handler, where an await would cost the clipboard grant), so
+  // the hash has to be computed ahead of the click rather than at it.
+  // Nothing downstream waits on this — a link built before it lands
+  // just omits the hint.
+  void computeLinkHint('report', name)
   try {
     // Persistent triage (markers/deletedIds keyed by uuid) loads once
     // at module init; await it before rendering so the first drop

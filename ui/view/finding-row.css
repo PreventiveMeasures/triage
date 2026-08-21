@@ -59,6 +59,19 @@
 :host(.triage-ignored) { opacity: .75; }
 :host(.selected) .row { outline: 2px solid var(--accent); outline-offset: -2px; }
 
+/* Deep-link arrival ring — see the twin block in finding-card.css.
+   Inset box-shadow rather than an outline so it reads THROUGH the
+   `.selected` outline the same arrival puts on this row, instead of
+   fighting it for the one outline slot. */
+:host(.link-target) .row { animation: link-target-flash 1.6s ease-out; }
+@keyframes link-target-flash {
+  0%, 30% { box-shadow: inset 0 0 0 2px var(--accent); }
+  100% { box-shadow: inset 0 0 0 2px rgb(from var(--accent) r g b / 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  :host(.link-target) .row { animation: none; box-shadow: inset 0 0 0 2px var(--accent); }
+}
+
 /* First/last row matches the parent `<finding-table>`'s 6px corner
    radius so a selected edge row's outline traces the rounded clip, not
    a square inside it. Structural host pseudos let the row own this
@@ -283,6 +296,7 @@
 .mark-fix,
 .mark-flag,
 .mark-copy,
+.mark-link,
 .mark-issue,
 .mark-claude {
   background: transparent; border: 0; color: var(--muted);
@@ -300,11 +314,12 @@
 .mark-fix.has-fix,
 .mark-flag.flagged { color: var(--accent); }
 .mark-flag svg { display: block; }
-/* Pulse the copy / claude button briefly after a successful click —
-   class set + cleared by the events.js handler. Buttons share the
-   action-group's border, so the pulse paints cell background + icon
+/* Pulse the copy / link / claude button briefly after a successful
+   click — class set + cleared by the events.js handler. Buttons share
+   the action-group's border, so the pulse paints cell background + icon
    color, not border-color. */
 .mark-copy.copied,
+.mark-link.copied,
 .mark-claude.copied {
   color: var(--green, #4ade80);
   background: color-mix(in srgb, var(--green, #4ade80) 14%, transparent);
@@ -435,6 +450,8 @@
   :host(.triage-ignored) { opacity: 1; }
   :host(.selected) .row,
   :host(.has-conflict) .row { outline: none !important; }
+  /* Same for the transient deep-link ring — see finding-card.css. */
+  :host(.link-target) .row { animation: none; box-shadow: none !important; }
 
   .row { break-inside: avoid; }
 

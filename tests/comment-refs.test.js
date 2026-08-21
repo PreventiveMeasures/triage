@@ -1,13 +1,21 @@
 // `ui/view/format.js` — `parseCommentRefs` turns a free-text triage
-// comment into a segment list (plain `string` runs interleaved with
-// `{ url, label }` link tokens) so the comment renderer can linkify any
-// pasted GitHub issue / PR / commit / security-advisory URL. This pins the
-// STRICT validation: only canonical github.com issue / pull / commit /
-// advisory URLs become links, and every component (owner / repo / number /
-// sha / GHSA id / host / path) is checked.
+// comment into a segment list (plain `string` runs interleaved with link
+// tokens) so the comment renderer can linkify a pasted URL. Two kinds
+// are recognised, and this pins the STRICT validation of both:
+//   * canonical github.com issue / pull / commit / advisory URLs, with
+//     every component (owner / repo / number / sha / GHSA id / host /
+//     path) checked;
+//   * this app's own per-finding deep links (`#finding=…`) — but only on
+//     the host the app is being served from, since a finding id resolves
+//     against the reader's own local reports and nowhere else.
 
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
+
+// `parseFindingUrl` compares a candidate against the current origin;
+// node has no `location`, so stand one up before the import chain
+// evaluates. Test files run in their own process, so this doesn't leak.
+globalThis.location = { protocol: 'https:', host: 'triage.space' }
 
 // format.js → frontend-global.js throws at module load when the
 // `@rray/frontend` slot isn't installed. Tests don't run the boot path
@@ -315,6 +323,82 @@ describe('parseCommentRefs — strict rejections', () => {
     // encodes these, so they are rejected on two independent grounds.)
     assert.ok(hasNoLink('https://github.com/microſoft/vscode/issues/1'))
     assert.ok(hasNoLink('https://github.com/torvalds/Kernel/pull/2'))
+  })
+})
+
+describe('parseCommentRefs — self-links to a finding', () => {
+  const ID = '1b4e28ba-2fa1-4d3b-a3f5-cc9f2f6d1a77'
+  const SELF = `https://triage.space/#finding=${ID}&v=aB3-x_9Z`
+
+  it('linkifies a deep link on the current host', () => {
+    const link = onlyLink(`duplicate of ${SELF}`)
+    // Fragment-only href: a finding id resolves against the reader's own
+    // reports, so the link has to stay on this page (and `self` tells the
+    // renderer not to open a tab).
+    assert.equal(link.url, `#finding=${ID}&v=aB3-x_9Z`)
+    assert.equal(link.self, true)
+    // Abbreviated like the commit label abbreviates a sha.
+    assert.equal(link.label, 'finding 1b4e28ba')
+  })
+
+  it('keeps the surrounding prose intact', () => {
+    assert.deepEqual(parseCommentRefs(`see ${SELF} too`), [
+      'see ',
+      { url: `#finding=${ID}&v=aB3-x_9Z`, label: 'finding 1b4e28ba', self: true },
+      ' too',
+    ])
+  })
+
+  it('links a hint-less deep link too', () => {
+    const link = onlyLink(`https://triage.space/#finding=${ID}`)
+    assert.equal(link.url, `#finding=${ID}`)
+  })
+
+  it('re-emits the fragment canonically', () => {
+    // An unrecognised extra param, and a mangled hint, are dropped rather
+    // than carried into the href.
+    const link = onlyLink(`https://triage.space/#finding=${ID}&v=nope&utm=x`)
+    assert.equal(link.url, `#finding=${ID}`)
+  })
+
+  it('labels a non-uuid id without a meaningless prefix', () => {
+    // The codex importer uses the finding URL as the id.
+    const id = encodeURIComponent('https://sec.example/f/7')
+    const link = onlyLink(`https://triage.space/#finding=${id}`)
+    assert.equal(link.label, 'finding')
+  })
+
+  it('ignores a deep link pointing at another host', () => {
+    // The id would resolve against the reader's OWN reports, so offering
+    // a link that navigates off this instance is worse than plain text.
+    assert.ok(hasNoLink(`https://deepaudit.dev/#finding=${ID}`))
+    assert.ok(hasNoLink(`https://triage.space.evil.com/#finding=${ID}`))
+    assert.ok(hasNoLink(`https://triage.space:8443/#finding=${ID}`))
+  })
+
+  it('ignores a scheme downgrade on the same host', () => {
+    assert.ok(hasNoLink(`http://triage.space/#finding=${ID}`))
+  })
+
+  it('ignores an embedded-credential look-alike', () => {
+    assert.ok(hasNoLink(`https://user@triage.space/#finding=${ID}`))
+  })
+
+  it('ignores a same-host URL whose fragment is not a finding ref', () => {
+    assert.ok(hasNoLink('https://triage.space/#share=abcdef'))
+    assert.ok(hasNoLink('https://triage.space/#finding=42'))
+    assert.ok(hasNoLink('https://triage.space/'))
+  })
+
+  it('accepts any path on the host', () => {
+    // The emitted href is fragment-only, so where the sender's page lived
+    // doesn't change where the click lands — which keeps `/`,
+    // `/index.html` and a subpath deployment all working.
+    assert.equal(onlyLink(`https://triage.space/index.html#finding=${ID}`).url, `#finding=${ID}`)
+  })
+
+  it('trims trailing prose punctuation off a self-link', () => {
+    assert.equal(onlyLink(`fixed in ${SELF}.`).url, `#finding=${ID}&v=aB3-x_9Z`)
   })
 })
 

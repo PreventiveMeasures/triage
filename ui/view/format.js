@@ -1,4 +1,10 @@
 import { html, nothing } from './frontend-global.js'
+// Direct relative import, NOT `#client/index.js`: this module rides in
+// the lazy `ui/graph.js` bundle, and the aggregator would drag `state`
+// and the whole client layer in with it (see fileUrl's note below).
+// `client/finding-link.js` is a leaf — its only import is
+// `common/utf8.js` — so pulling it in costs the codec and nothing else.
+import { parseFindingUrl } from '../../client/finding-link.js'
 
 // Severity ranking — higher = more severe. The ladder splits into
 // two stacks: vulnerabilities on top (critical → low) and bug-class
@@ -446,15 +452,17 @@ export function githubIssueUrl(repo, { title, body } = {}) {
   return qs ? `${base}/issues/new?${qs}` : `${base}/issues/new`
 }
 
-// ── GitHub reference linkification for comments ──────────────────────
+// ── Reference linkification for comments ─────────────────────────────
 //
-// Free-text triage comments routinely paste a GitHub issue / PR / commit
-// URL ("fixed in https://github.com/owner/repo/pull/42"). `parseCommentRefs`
-// splits a comment into a flat list of segments — plain `string` runs
-// interleaved with `{ url, label }` link tokens — so the renderer can
-// wrap only the validated refs in an `<a>` and leave the rest as text.
-// Returning data (not markup) keeps the strict-validation logic pure and
-// unit-testable, and sits this beside the other github URL builders.
+// Free-text triage comments routinely paste a URL — a GitHub issue / PR /
+// commit ("fixed in https://github.com/owner/repo/pull/42"), or one of
+// this app's own per-finding deep links ("duplicate of
+// https://triage.space/#finding=…"). `parseCommentRefs` splits a comment
+// into a flat list of segments — plain `string` runs interleaved with
+// `{ url, label }` link tokens — so the renderer can wrap only the
+// validated refs in an `<a>` and leave the rest as text. Returning data
+// (not markup) keeps the strict-validation logic pure and unit-testable,
+// and sits this beside the other github URL builders.
 //
 // "Strict" = every URL component is checked against GitHub's own naming
 // rules before a link is emitted. A bad owner, an over-long repo, a
@@ -578,6 +586,39 @@ function githubRefToken(candidate) {
   return { url: href, label }
 }
 
+// Short id shown in a self-link's label. Findings carry a uuid in the
+// overwhelming majority of cases (the analyzer's, or the one
+// `common/finding-id.js` derives), and abbreviating it to its first
+// group mirrors how the commit label abbreviates a sha. The codex
+// importer's finding-URL ids have no meaningful prefix to show, so they
+// fall back to the bare word.
+//
+// Lower-case-only and ASCII-explicit for the same reason the github
+// validators are: under `/iu` Unicode case-folding pulls non-ASCII
+// homoglyphs into the class, and every id this app mints is lower-case
+// hex anyway.
+const FINDING_UUID_RE = /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/u
+
+// Validate one candidate URL string as a per-finding deep link into THIS
+// instance and, on success, return its `{ url, label, self }` token.
+// `parseFindingUrl` (client/finding-link.js) owns the strictness — same
+// host + scheme, no credentials, canonical round-trip, a fragment that
+// parses as a finding ref.
+//
+// The href is FRAGMENT-ONLY (`#finding=…`), which is the whole point of
+// the `self` flag: a finding id resolves against the reader's own local
+// reports, so the link has to stay on this page. A relative fragment
+// does that with no rewriting, and clicking it fires the `hashchange`
+// the boot handler in `ui/view.js` already listens for. (Repeat clicks
+// work because that handler strips the fragment once it has acted, so
+// the next click is always a real change.)
+function selfRefToken(candidate) {
+  const found = parseFindingUrl(candidate)
+  if (!found) return null
+  const label = FINDING_UUID_RE.test(found.id) ? `finding ${found.id.slice(0, 8)}` : 'finding'
+  return { url: `#${found.fragment}`, label, self: true }
+}
+
 // Candidate-URL scanner: an `http(s)://` run of URL-legal characters.
 // Stricter than a blanket `\S+` — it stops at whitespace AND at the
 // wrapper / "unwise" characters (`<> " ' \` ( ) { } [ ] | \ ^`) that bound
@@ -608,9 +649,11 @@ function trimTrailingPunct(s) {
 }
 
 // Split `text` into the segment list described above: alternating plain
-// `string` runs and validated `{ url, label }` link tokens. A comment
-// with no recognised github URL (the common case) comes back as a single
-// `[text]` entry; empty / non-string input yields `[]`.
+// `string` runs and validated link tokens — `{ url, label }` for an
+// external github ref, `{ url, label, self: true }` for a fragment-only
+// link into this instance. A comment with no recognised URL (the common
+// case) comes back as a single `[text]` entry; empty / non-string input
+// yields `[]`.
 export function parseCommentRefs(text) {
   if (typeof text !== 'string' || text.length === 0) return []
   const segments = []
@@ -619,7 +662,10 @@ export function parseCommentRefs(text) {
   let m
   while ((m = URL_SCAN_RE.exec(text)) !== null) {
     const trimmed = trimTrailingPunct(m[0])
-    const token = trimmed ? githubRefToken(trimmed) : null
+    // GitHub first, then our own deep links. The two can't both match —
+    // one requires host `github.com`, the other the host this app is
+    // being served from.
+    const token = trimmed ? (githubRefToken(trimmed) ?? selfRefToken(trimmed)) : null
     if (token) {
       if (m.index > lastIndex) segments.push(text.slice(lastIndex, m.index))
       segments.push(token)

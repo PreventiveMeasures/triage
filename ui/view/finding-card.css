@@ -40,6 +40,24 @@
 :host(.mark-gray) .card  { background: var(--mark-gray-bg); }
 :host(.has-conflict) .card { outline: 2px dashed var(--accent); outline-offset: -2px; }
 
+/* Deep-link arrival ring. `link-target` is stamped on the host by
+   view/finding-link-nav.js after it scrolls a `#finding=…` target into
+   view, and cleared on a timer — the animation is the whole signal, so
+   nothing has to be dismissed. Inset box-shadow rather than an outline
+   so it composes with the `.has-conflict` outline above instead of
+   replacing it, and fades via relative-color alpha so a marker tint
+   underneath stays untouched. */
+:host(.link-target) .card { animation: link-target-flash 1.6s ease-out; }
+@keyframes link-target-flash {
+  0%, 30% { box-shadow: inset 0 0 0 2px var(--accent); }
+  100% { box-shadow: inset 0 0 0 2px rgb(from var(--accent) r g b / 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* Same ring, held flat for the same duration — the JS timer removes
+     the class either way. */
+  :host(.link-target) .card { animation: none; box-shadow: inset 0 0 0 2px var(--accent); }
+}
+
 /* Suppressed in-body line row when the parent wrapper already
    paints location info above the card (flat-group mode). */
 :host([in-group]) .line-row { display: none; }
@@ -416,6 +434,7 @@
 .mark-fix,
 .mark-flag,
 .mark-copy,
+.mark-link,
 .mark-issue,
 .mark-claude {
   background: transparent; border: 0; color: var(--muted);
@@ -433,12 +452,13 @@
 .mark-fix.has-fix,
 .mark-flag.flagged { color: var(--accent); }
 .mark-flag svg { display: block; }
-/* Pulse the copy / claude button briefly after a successful click —
-   class set + cleared by events.js around the action (clipboard write
-   for copy, claude:// nav for claude). Buttons share the group's
-   border, so the pulse paints cell background + icon color, not
+/* Pulse the copy / link / claude button briefly after a successful
+   click — class set + cleared by events.js around the action (clipboard
+   write for copy and link, claude:// nav for claude). Buttons share the
+   group's border, so the pulse paints cell background + icon color, not
    border-color. */
 .mark-copy.copied,
+.mark-link.copied,
 .mark-claude.copied {
   color: var(--green, #4ade80);
   background: color-mix(in srgb, var(--green, #4ade80) 14%, transparent);
@@ -609,6 +629,7 @@
 :host([context='focus']) .mark-fix,
 :host([context='focus']) .mark-flag,
 :host([context='focus']) .mark-copy,
+:host([context='focus']) .mark-link,
 :host([context='focus']) .mark-issue,
 :host([context='focus']) .mark-claude {
   height: 1.75rem;
@@ -657,6 +678,12 @@
      anchor below. */
   & a { color: var(--accent); text-decoration: none; }
   & a:hover { text-decoration: underline; }
+  /* A self-ref (`#finding=…`) navigates in place instead of opening a
+     tab, so it carries a standing dotted underline rather than the
+     hover-only one its outbound siblings use: the reader can tell which
+     links leave the page before clicking one. */
+  & a.comment-self-ref { text-decoration: underline dotted; text-underline-offset: 2px; }
+  & a.comment-self-ref:hover { text-decoration: underline solid; }
 }
 .fix-block {
   word-break: break-all;
@@ -705,9 +732,10 @@
   /* Pure on-screen affordance — the bundle source viewer is an
      interactive surface that doesn't have a paper analogue. */
   .finding-code-btn { display: none !important; }
-  /* Same — clipboard copy, GitHub-issue, and claude handoff buttons
-     have no paper meaning. */
+  /* Same — clipboard copy, deep link, GitHub-issue, and claude
+     handoff buttons have no paper meaning. */
   .mark-copy,
+  .mark-link,
   .mark-issue,
   .mark-claude { display: none !important; }
   /* Drop the on-screen pill chrome from the npm chip — on paper
@@ -718,6 +746,9 @@
   :host(.triage-invalid),
   :host(.triage-deleted),
   :host(.triage-ignored) { opacity: 1; }
+  /* A deep-link ring is a transient on-screen cue; on paper it would
+     read as a permanent mark on one arbitrary card. */
+  :host(.link-target) .card { animation: none; box-shadow: none !important; }
   :host(.multi-case) .card::before {
     content: 'Multiple reports of one finding';
     display: block;

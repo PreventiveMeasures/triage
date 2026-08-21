@@ -402,10 +402,25 @@
   &:active { cursor: grabbing; }
   &.dragging { opacity: .45; cursor: grabbing; }
   &.has-conflict { outline: 1px dashed var(--accent); outline-offset: -1px; }
+  /* Deep-link arrival ring — stamped by view/finding-link-nav.js after
+     it scrolls a `#finding=…` target into view and cleared on a timer.
+     Inset box-shadow (not an outline) so it stacks with the `.active` /
+     `.has-conflict` outlines above rather than replacing them. */
+  &.link-target { animation: link-target-flash 1.6s ease-out; }
   &.mark-red   { background: var(--mark-red-bg); }
   &.mark-blue  { background: var(--mark-blue-bg); }
   &.mark-green { background: var(--mark-green-bg); }
   &.mark-gray  { background: var(--mark-gray-bg); }
+}
+
+@keyframes link-target-flash {
+  0%, 30% { box-shadow: inset 0 0 0 2px var(--accent); }
+  100% { box-shadow: inset 0 0 0 2px rgb(from var(--accent) r g b / 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* Same ring, held flat for the same duration — the JS timer removes
+     the class either way. */
+  .kanban-card.link-target { animation: none; box-shadow: inset 0 0 0 2px var(--accent); }
 }
 
 .kanban-card .kanban-badge-col {
