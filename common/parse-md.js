@@ -44,6 +44,8 @@
 // mandatory information (severity defaults to medium if absent or
 // unrecognized).
 
+import { frozenIdBasis } from './parse-md-id.js'
+
 const VALID_SEVERITIES = new Set(['critical', 'high', 'medium', 'low', 'high_bug', 'bug', 'informational'])
 
 export function parseMarkdownFindings(content) {
@@ -132,6 +134,14 @@ function parseBlock(block) {
   // ingest.js would fall back to data.type for every finding and the
   // run-meta line would show the same category for the whole report.
   if (meta.category) finding.type = meta.category.toLowerCase()
+  // The id fingerprint is pinned to the pre-Evidence parse of this same
+  // block (parse-md-id.js) rather than to the fields above: the
+  // description is presentation and has already been reshaped twice,
+  // and every reshape silently re-keys the triage users have stored
+  // against these findings. finding-id.js prefers this when deriving
+  // the uuid. See that module's header before touching any of it.
+  const idBasis = frozenIdBasis(block, { location: locationLink, file: finding.file, line })
+  if (idBasis) finding._idBasis = idBasis
 
   return finding
 }
