@@ -139,9 +139,11 @@ function parseBlock(block) {
   // block (parse-md-id.js) rather than to the fields above: the
   // description is presentation and has already been reshaped twice,
   // and every reshape silently re-keys the triage users have stored
-  // against these findings. finding-id.js prefers this when deriving
-  // the uuid. See that module's header before touching any of it.
-  const idBasis = frozenIdBasis(block, { location: locationLink, file: finding.file, line })
+  // against these findings. Nothing this parser resolves is passed in —
+  // an `## Evidence` report keys exactly as alpha.10 keyed it, evidence
+  // excluded. finding-id.js prefers this when deriving the uuid; see
+  // that module's header before touching any of it.
+  const idBasis = frozenIdBasis(block)
   if (idBasis) finding._idBasis = idBasis
 
   return finding

@@ -107,51 +107,105 @@ describe('markdown finding ids — frozen against the legacy parse', () => {
   })
 })
 
-// `## Evidence` reports carry no `## Location`, so the snapshot alone
-// would fingerprint every finding in one report as file 'unknown' /
-// line '?' — identical prose would then collapse two findings into one
-// id. The basis falls back to the location today's parser resolved (the
-// first evidence row) while still keying the TEXT off the snapshot.
+// `## Evidence` reports carry no `## Location`, and this snapshot
+// predates that section entirely — so their findings key off a
+// description with no evidence in it, by file 'unknown' / line '?',
+// which is exactly what v1.0.0-alpha.10 derived for the same document.
+// Evidence data staying out of the hash is the deliberate trade: an id
+// that leaves something out is recoverable, an id that moves is not.
 describe('markdown finding ids — the `## Evidence` shape', () => {
-  const evidenceReport = (...refs) => refs.map((ref) => [
-    '# Same title everywhere',
+  const evidenceReport = (ref, note) => [
+    '# Prototype pollution in the config merge',
     '',
     '## Details',
-    'Identical prose.',
+    'The loader trusts input.',
     '',
     '## Evidence',
     `1. ${ref}`,
-    '   A note that differs too.',
+    `   ${note}`,
+    '',
+    '## Impact',
+    'RCE.',
     '',
     '---',
-    '**Severity:** high',
-  ].join('\n')).join('\n\n')
+    '**Severity:** critical',
+  ].join('\n')
 
-  it('tells apart findings whose only difference is the evidence', async () => {
-    const [a, b] = await idsOf(evidenceReport(
-      '[src/a.ts:10](https://github.com/o/r/blob/abc/src/a.ts#L10)',
-      '[src/b.ts:20](https://github.com/o/r/blob/abc/src/b.ts#L20)',
-    ))
-    assert.notEqual(a, b)
+  const LINKED = evidenceReport('[src/a.ts:10](https://example.com/a.ts#L10)', 'The merge loop.')
+
+  // Golden: what alpha.10's parser + deriveFindingId produced for this
+  // document, back when it could see none of its Evidence section.
+  const ALPHA_10_ID = '889344d7-2fa6-4482-8506-c540556a1e10'
+
+  it('derives the id alpha.10 derived, evidence excluded', async () => {
+    assert.deepEqual(await idsOf(LINKED), [ALPHA_10_ID])
   })
 
-  it('falls back to the row\'s file / line when it carries no link', () => {
-    const f = parseMarkdownFindings(evidenceReport('src/a.ts:10')).findings[0]
+  it('keys by file `unknown` / line `?`, over a description with no evidence', () => {
+    const f = parseMarkdownFindings(LINKED).findings[0]
     assert.deepEqual(f._idBasis, {
-      severity: 'high',
-      description: 'Same title everywhere\n\nIdentical prose.',
-      // The raw text of an unlinked row is what the legacy code kept as
-      // its location discriminator, so it stays the discriminator here.
-      location: 'src/a.ts:10',
+      severity: 'critical',
+      description: [
+        'Prototype pollution in the config merge',
+        '',
+        'The loader trusts input.',
+        '',
+        'Impact: RCE.',
+      ].join('\n'),
+      file: 'unknown',
+      line: '?',
     })
+    // …while the finding itself resolves the evidence row perfectly well.
+    assert.equal(f.file, 'src/a.ts')
+    assert.equal(f.location, 'https://example.com/a.ts#L10')
   })
 
-  it('keys off the evidence row, not the note under it', async () => {
-    const ref = '[src/a.ts:10](https://github.com/o/r/blob/abc/src/a.ts#L10)'
-    const one = parseMarkdownFindings(evidenceReport(ref)).findings[0]
-    const other = parseMarkdownFindings(
-      evidenceReport(ref).replace('A note that differs too.', 'A completely different note.'),
-    ).findings[0]
-    assert.equal(await deriveFindingId(one), await deriveFindingId(other))
+  it('does not move when the evidence rows change', async () => {
+    const [same] = await idsOf(evidenceReport(
+      '[src/b.ts:20](https://example.com/b.ts#L20)', 'A different note.',
+    ))
+    assert.equal(same, ALPHA_10_ID)
   })
+})
+
+// The breadth pin: one document per shape the parser meets, each with
+// the uuid v1.0.0-alpha.10 derived for it. Regenerating a value here
+// because a test went red is the one thing this file exists to stop —
+// a changed uuid means every marker, bucket, comment and fix a user
+// stored against that finding has been orphaned.
+const ALPHA_10_GOLDEN = [
+  ["location, linked", "# T\n\n## Details\nD **bold**.\n\n## Location\n[src/a.ts:42](https://e.com/a.ts#L42)\n\n## Impact\nI.\n\n---\n**Severity:** high",
+    ["1727e7c7-d672-4074-838f-46cc4c1b98c4"]],
+  ["location, plain text", "# T\n\n## Location\nsrc/a.ts:42\n\n---\n**Severity:** low",
+    ["9fa72e7f-0cf6-469e-b174-e8cd1eac85f5"]],
+  ["location, backticked", "# T\n\n## Location\n[`src/a.ts:42`](https://e.com/a.ts)\n\n---\n**Severity:** low",
+    ["44e18a79-88c0-4c08-acfc-b6c60aa9c8ed"]],
+  ["location, escaped path", "# T\n\n## Location\n[a/b/\\_c\\_c/i.js:1](https://e.com/i.js#L1)\n\n---\n**Severity:** medium",
+    ["07c25115-f481-4bad-9847-cae38fab9215"]],
+  ["location, range", "# T\n\n## Location\n[src/a.ts:10–20](https://e.com/a.ts#L10-L20)\n\n---\n**Severity:** medium",
+    ["bebfed90-182b-4529-ac2f-bb65af378049"]],
+  ["no location at all", "# T\n\n## Details\nJust prose.\n\n---\n**Severity:** bug",
+    ["027a023b-7cd9-43d1-abab-f74de8aaaa49"]],
+  ["evidence, linked rows", "# T\n\n## Details\nD.\n\n## Evidence\n1. [src/a.ts:10](https://e.com/a.ts#L10)\n   note a\n2. [src/b.ts:20](https://e.com/b.ts#L20)\n   note b\n\n## Impact\nI.\n\n---\n**Severity:** critical",
+    ["9948df4a-b290-4bf8-89dc-41b3c30a8b46"]],
+  ["evidence, unlinked row", "# T\n\n## Evidence\n1. src/a.ts:10\n   note\n\n---\n**Severity:** high",
+    ["eeaa24fd-b835-4d44-ad9b-fd00ee155924"]],
+  ["evidence + location", "# T\n\n## Location\n[src/loc.ts:5](https://e.com/loc.ts#L5)\n\n## Evidence\n1. [src/ev.ts:10](https://e.com/ev.ts#L10)\n\n---\n**Severity:** high",
+    ["3aa0baaf-22b5-4309-8ec5-05e7428c9717"]],
+  ["evidence, prose only", "# T\n\n## Evidence\nNothing citable.\nOnly prose.\n\n---\n**Severity:** low",
+    ["50fe443c-3ccd-49a8-b262-a493cb86461b"]],
+  ["all sections + repro", "# T\n\n## Details\nD.\n\n## Location\n[a.ts:1](https://e.com/a.ts#L1)\n\n## Impact\nI.\n\n## Reproduction steps\nR.\n\n## Recommended fix\nF.\n\n---\n**Severity:** critical\n**Repository:** o/r\n**Branch:** main",
+    ["349a9342-61d8-450f-aa0f-21e59986011f"]],
+  ["two findings, one doc", "# A\n\n## Location\n[a.ts:1](https://e.com/a.ts#L1)\n\n---\n**Severity:** high\n\n# B\n\n## Location\n[b.ts:2](https://e.com/b.ts#L2)\n\n---\n**Severity:** low",
+    ["ab8ef4a8-d80d-4a51-b87a-44e2b363eeb9","b4a0bbc7-acdd-47b1-b65b-5ceae738c9a6"]],
+  ["crlf + no severity", "# T\r\n\r\n## Details\r\nD.\r\n\r\n## Location\r\n[a.ts:1](https://e.com/a.ts#L1)\r\n\r\n---\r\n**Status:** Open\r\n",
+    ["bba7a8a4-e0e2-474d-9a2f-b60562385868"]],
+]
+
+describe('markdown finding ids — the alpha.10 golden table', () => {
+  for (const [shape, doc, ids] of ALPHA_10_GOLDEN) {
+    it(`keys ${shape} exactly as alpha.10`, async () => {
+      assert.deepEqual(await idsOf(doc), ids)
+    })
+  }
 })

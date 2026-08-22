@@ -17,35 +17,34 @@
 //
 // DO NOT change the behaviour of anything in this file — not to fix a
 // bug in it, not to share code with parse-md.js, not to make it read
-// better. Every byte it emits is baked into uuids that already exist in
-// users' browsers. A new format that this snapshot cannot describe is
-// handled by `frozenIdBasis`'s fallback below, which takes the CURRENT
-// parse's location (or file / line) as the discriminator while still
-// keying the text off this snapshot.
+// better, not to feed it something the newer format carries. Every byte
+// it emits is baked into uuids that already exist in users' browsers.
+//
+// That holds for the `## Evidence` shape too, which this snapshot
+// predates and therefore cannot see: such a report has no
+// `## Location`, so its findings fingerprint by file 'unknown' / line
+// '?' over a description with no evidence in it — exactly what v1.0.0-
+// alpha.10 derived for the same document. Two findings in one report
+// whose title / details / impact / reproduction and severity are all
+// identical do collide into one id under that rule. That is the old
+// behaviour, deliberately kept: an id that leaves data out of the hash
+// is recoverable, an id that moves is not.
 
 const VALID_SEVERITIES = new Set(['critical', 'high', 'medium', 'low', 'high_bug', 'bug', 'informational'])
 
 // The fingerprint object `deriveFindingId` hashes for one finding
 // block, in the key order the legacy code produced (JSON.stringify is
-// order-sensitive, so the order IS part of the id).
-//
-// `current` carries the values today's parser resolved for the same
-// block — used only when the source carries no `## Location` at all,
-// which is every report in the newer `## Evidence` shape. Without it
-// those findings would all fingerprint as file 'unknown' / line '?'
-// and collide with each other inside one report.
-export function frozenIdBasis(block, current = {}) {
+// order-sensitive, so the order IS part of the id). Nothing but this
+// snapshot feeds it: the discriminator is the legacy location when the
+// source carried one, and the legacy file / line otherwise — the same
+// two branches `deriveFindingId` itself chose between back then.
+export function frozenIdBasis(block) {
   const legacy = legacyBasis(block)
   if (!legacy) return null
-  const { severity, description, hadLocation, location, file, line } = legacy
-  if (hadLocation) {
-    return location
-      ? { severity, description, location }
-      : { severity, description, file, line }
-  }
-  return current.location
-    ? { severity, description, location: current.location }
-    : { severity, description, file: current.file || 'unknown', line: current.line || '?' }
+  const { severity, description, location, file, line } = legacy
+  return location
+    ? { severity, description, location }
+    : { severity, description, file, line }
 }
 
 // The legacy parse of one `# Title` block — severity, description and
@@ -67,7 +66,6 @@ function legacyBasis(block) {
   return {
     severity,
     description: buildDescription(title, sections),
-    hadLocation: Boolean(sections.location),
     location: locationLink,
     file: file || 'unknown',
     line,
