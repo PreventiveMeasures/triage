@@ -12,9 +12,10 @@
 //     `client/storage.js`, which falls back to gzipped localStorage
 //     under node — the same substrate the finding-index tests use.
 //   * `ui/view/finding-link.js` — what a link does to `state`: which
-//     group it resolves to, which triage bucket gets shown, when the
-//     toolbar filters are cleared (and when they're deliberately left
-//     alone), and which member of a dedup group ends up selected.
+//     group it resolves to, when the toolbar filters are cleared (and
+//     when they're deliberately left alone), which member of a dedup
+//     group ends up selected, and what it pointedly does NOT touch —
+//     the triage bucket, whose split is exclusive.
 //
 // The DOM half (`ui/view/finding-link-nav.js`) isn't covered here — it
 // needs a real document; the rules it depends on all live above.
@@ -466,22 +467,25 @@ describe('finding deep links — un-hiding the target', () => {
     assert.equal(state.currentView, 'findings')
   })
 
-  it('switches the triage view to the finding\'s own bucket', () => {
+  it('never repartitions the triage bucket view', () => {
+    // The bucket split is EXCLUSIVE, so adopting the target's bucket
+    // would show it at the price of replacing everything else on
+    // screen. Both directions are equally unwanted:
+    //
+    // live view, link to a fixed finding — the working set must survive
+    // even though the target isn't in it.
     const group = [makeFinding(UUID_A)]
     reset([group])
     state.triage.set(UUID_A, { triage: 'fixed' })
-    // The bucket split is an equality test, so a fixed finding is
-    // invisible until `shownTriage` matches it.
     unhideFinding(group, UUID_A)
-    assert.equal(state.shownTriage, 'fixed')
-  })
+    assert.equal(state.shownTriage, null)
 
-  it('returns to the live view for an untriaged finding', () => {
-    const group = [makeFinding(UUID_A)]
+    // Browsing a bucket, link to an untriaged finding — flipping to
+    // live would empty the bucket the reader was working through.
     reset([group])
     state.shownTriage = 'deleted'
     unhideFinding(group, UUID_A)
-    assert.equal(state.shownTriage, null)
+    assert.equal(state.shownTriage, 'deleted')
   })
 
   it('clears a filter that hides the finding, keeping the sort', () => {

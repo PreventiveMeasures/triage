@@ -182,10 +182,14 @@ export async function revealFinding(ref) {
   render()
   const el = await findRenderedFinding(gid)
   if (!el) {
-    // Rendered nothing for a group we just un-hid. Not fatal — the
-    // navigation + selection above already landed the user on the right
-    // report — so report success rather than sending them chasing a
-    // phantom problem; the missing scroll is the only casualty.
+    // Nothing painted for this group. The expected reason is the triage
+    // bucket: `unhideFinding` deliberately leaves `state.shownTriage`
+    // alone (see its notes), so a link to a finding in a bucket the
+    // reader isn't viewing resolves and navigates but has nothing on
+    // screen to scroll to. Still a success — we're on the right report,
+    // with the right member selected, and the toolbar's triage selector
+    // is one click away. The missing scroll is the only casualty, and
+    // an alert here would fire on an ordinary case.
     return { ok: true }
   }
   el.scrollIntoView({ block: 'center', behavior: 'smooth' })
