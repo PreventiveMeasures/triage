@@ -61,6 +61,10 @@ export function findingId(severity, description, fileHash) {
 // persistent triage on these findings.
 //
 // Discriminator selection (in order):
+//   - _idBasis  — a FROZEN fingerprint the parser stamped (markdown
+//                 imports; see common/parse-md-id.js). Used verbatim:
+//                 it exists precisely so later changes to the rendered
+//                 description can't re-key stored triage.
 //   - fileHash  — preferred when present (matches `findingId` above)
 //   - location  — used by markdown imports (the URL of the first
 //                 `## Evidence` row, or of `## Location` in older
@@ -72,7 +76,9 @@ export function findingId(severity, description, fileHash) {
 export async function deriveFindingId(f) {
   if (typeof crypto?.subtle?.digest !== 'function') return null
   let fingerprint
-  if (f.fileHash) {
+  if (f._idBasis) {
+    fingerprint = f._idBasis
+  } else if (f.fileHash) {
     fingerprint = { severity: f.severity, description: f.description, fileHash: f.fileHash }
   } else if (f.location) {
     fingerprint = { severity: f.severity, description: f.description, location: f.location }

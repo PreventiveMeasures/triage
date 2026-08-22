@@ -44,6 +44,9 @@
 // mandatory information (severity defaults to medium if absent or
 // unrecognized).
 
+import { frozenIdBasis } from './parse-md-id.js'
+import { unescapeMd } from './md-structure.js'
+
 const VALID_SEVERITIES = new Set(['critical', 'high', 'medium', 'low', 'high_bug', 'bug', 'informational'])
 
 export function parseMarkdownFindings(content) {
@@ -132,6 +135,16 @@ function parseBlock(block) {
   // ingest.js would fall back to data.type for every finding and the
   // run-meta line would show the same category for the whole report.
   if (meta.category) finding.type = meta.category.toLowerCase()
+  // The id fingerprint is pinned to the pre-Evidence parse of this same
+  // block (parse-md-id.js) rather than to the fields above: the
+  // description is presentation and has already been reshaped twice,
+  // and every reshape silently re-keys the triage users have stored
+  // against these findings. Nothing this parser resolves is passed in —
+  // an `## Evidence` report keys exactly as alpha.10 keyed it, evidence
+  // excluded. finding-id.js prefers this when deriving the uuid; see
+  // that module's header before touching any of it.
+  const idBasis = frozenIdBasis(block)
+  if (idBasis) finding._idBasis = idBasis
 
   return finding
 }
@@ -201,8 +214,12 @@ function parseLocation(loc) {
     locationLink = loc.trim()
   }
   // Backticks some reports wrap the path in are notation, not part of
-  // the path itself.
-  file = file.replaceAll('`', '').trim()
+  // the path itself, and a `\_` in the label is the report escaping
+  // markdown — the path is the unescaped name, which is what the
+  // displays print and what a reconstructed blob URL has to address.
+  // The link's URL is left exactly as written: reports don't escape
+  // there, and it is the id discriminator (see finding-id.js).
+  file = unescapeMd(file.replaceAll('`', '')).trim()
   // `:42` / `:10–20` suffix on the file path — common shorthand. Only
   // consume the number if we don't already have one from the anchor;
   // the path always sheds it either way.
