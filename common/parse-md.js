@@ -45,6 +45,7 @@
 // unrecognized).
 
 import { frozenIdBasis } from './parse-md-id.js'
+import { unescapeMd } from './md-structure.js'
 
 const VALID_SEVERITIES = new Set(['critical', 'high', 'medium', 'low', 'high_bug', 'bug', 'informational'])
 
@@ -211,8 +212,12 @@ function parseLocation(loc) {
     locationLink = loc.trim()
   }
   // Backticks some reports wrap the path in are notation, not part of
-  // the path itself.
-  file = file.replaceAll('`', '').trim()
+  // the path itself, and a `\_` in the label is the report escaping
+  // markdown — the path is the unescaped name, which is what the
+  // displays print and what a reconstructed blob URL has to address.
+  // The link's URL is left exactly as written: reports don't escape
+  // there, and it is the id discriminator (see finding-id.js).
+  file = unescapeMd(file.replaceAll('`', '')).trim()
   // `:42` / `:10–20` suffix on the file path — common shorthand. Only
   // consume the number if we don't already have one from the anchor;
   // the path always sheds it either way.

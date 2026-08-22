@@ -207,6 +207,18 @@ export function parseCodeRef(raw) {
 
 export function stripBold(text) { return text.replaceAll('**', '') }
 
+// Markdown backslash escapes — `a/b/\_cc\_cc/index.js` is a report
+// escaping the underscores that would otherwise open emphasis, not a
+// path with backslashes in it. Undo them wherever a value is a NAME
+// rather than prose: a file path, a link's label. Only ASCII
+// punctuation can be escaped (CommonMark), so a `\n` or a Windows
+// `C:\path` keeps its backslash.
+const MD_ESCAPE_RE = /\\([!-/:-@[-`{-~])/gu
+
+export function unescapeMd(s) {
+  return typeof s === 'string' ? s.replace(MD_ESCAPE_RE, '$1') : s
+}
+
 // `[X]` → `X` — for id cells / tokens where the brackets are notation,
 // not content. Applied to ids only; a title can legitimately contain
 // square brackets.

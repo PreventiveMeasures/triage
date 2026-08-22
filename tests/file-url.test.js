@@ -121,6 +121,20 @@ describe('markdownLinkToken', () => {
     )
   })
 
+  it('unescapes a label the report escaped for markdown', () => {
+    assert.deepEqual(
+      markdownLinkToken('[a/b/\\_cc\\_cc/index.js:10-20](https://example.com/a.ts#L10-L20)'),
+      { label: 'a/b/_cc_cc/index.js:10-20', url: 'https://example.com/a.ts#L10-L20' },
+    )
+  })
+
+  it('leaves a backslash that escapes nothing markdown escapes', () => {
+    assert.deepEqual(
+      markdownLinkToken('[C:\\path\\to](https://example.com/a.ts)'),
+      { label: 'C:\\path\\to', url: 'https://example.com/a.ts' },
+    )
+  })
+
   it('rejects non-http targets', () => {
     assert.equal(markdownLinkToken('[click](javascript:alert(1))'), null)
     assert.equal(markdownLinkToken('[doc](data:text/html,<b>hi</b>)'), null)

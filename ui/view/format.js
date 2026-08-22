@@ -1,3 +1,4 @@
+import { unescapeMd } from '../../common/md-structure.js'
 import { html, nothing } from './frontend-global.js'
 // Direct relative import, NOT `#client/index.js`: this module rides in
 // the lazy `ui/graph.js` bundle, and the aggregator would drag `state`
@@ -525,7 +526,9 @@ export function evidenceMarkdown(f) {
 export function markdownLinkToken(raw) {
   const m = /^\[([^\]]+)\]\(([^)\s]+)\)$/u.exec(raw)
   if (!m || !isHttpUrl(m[2])) return null
-  return { label: m[1].trim() || m[2], url: m[2] }
+  // The label is a name the report escaped for markdown (`a/b/\_x\_y`);
+  // the href is left as written.
+  return { label: unescapeMd(m[1].trim()) || m[2], url: m[2] }
 }
 
 // Returns a "line N" template (linkified when a source URL is

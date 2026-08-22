@@ -193,6 +193,22 @@ describe('parseMarkdownFindings — location parsing', () => {
     assert.equal(f.line, '7')
   })
 
+  it('unescapes a path the report escaped for markdown', () => {
+    const md = [
+      '# T',
+      '',
+      '## Location',
+      '[a/b/\\_cc\\_cc/index.js:10](https://example.com/a.ts#L10)',
+      '',
+      '---',
+      '**Severity:** medium',
+    ].join('\n')
+    const f = parseMarkdownFindings(md).findings[0]
+    assert.equal(f.file, 'a/b/_cc_cc/index.js')
+    // The URL is left exactly as written — it is the id discriminator.
+    assert.equal(f.location, 'https://example.com/a.ts#L10')
+  })
+
   it('falls back to raw text when no markdown link is present', () => {
     const md = [
       '# T',
@@ -296,6 +312,22 @@ describe('parseMarkdownFindings — evidence section', () => {
   it('keeps a single-line reference single', () => {
     const f = parseMarkdownFindings(md('1. [src/a.ts:10](https://example.com/a.ts#L10)')).findings[0]
     assert.equal(f.line, '10')
+  })
+
+  // Reports escape the markdown metacharacters in a path — an
+  // underscore would otherwise open emphasis — so `\_` is the report's
+  // markup, not part of the name the displays print (and not part of
+  // the path a reconstructed blob URL has to address).
+  it('unescapes a path the report escaped for markdown', () => {
+    const f = parseMarkdownFindings(md(
+      '1. [a/b/\\_cc\\_cc/index.js:10–20](https://example.com/a.ts#L10-L20)',
+    )).findings[0]
+    assert.equal(f.file, 'a/b/_cc_cc/index.js')
+    assert.deepEqual(f.evidence, [{
+      file: 'a/b/_cc_cc/index.js',
+      line: '10-20',
+      url: 'https://example.com/a.ts#L10-L20',
+    }])
   })
 
   it('sheds backticks around the path', () => {
