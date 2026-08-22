@@ -66,16 +66,28 @@ export function findLoadedFinding(id) {
 // below are testable and the nav module stays a thin shell. Returns the
 // group's gid, which is what the nav module scrolls to.
 //
-// Three things can hide a finding that exists:
+// Two things can hide a finding that exists:
 //   1. Another top-level view (bundles / files / packages / …) is up.
-//   2. It sits in a triage bucket the toolbar isn't showing. The bucket
-//      split is an equality test (`commonTriage === state.shownTriage`),
-//      so we adopt the group's own bucket rather than clearing to live.
-//   3. A toolbar filter excludes it. Only cleared when it actually
+//   2. A toolbar filter excludes it. Only cleared when it actually
 //      excludes THIS group — a link shouldn't wipe a carefully built
 //      filter set it was already compatible with. `state.sortBy` is
 //      saved across the reset: `resetFilters` re-derives a default sort
 //      for a fresh ingest, which is not what arriving via a link means.
+//
+// A third could, and deliberately isn't touched: the triage bucket split
+// (`commonTriage === state.shownTriage` in render.js) is an EXCLUSIVE
+// partition, so adopting the target's bucket shows it at the price of
+// replacing everything else on screen — following "duplicate of <link>"
+// out of the live list dropped the reader into the Invalid bucket and
+// their working set vanished. A link should focus one finding, not
+// repartition the view around it. The app's own graph "Findings →" jump
+// sets filters and leaves the bucket alone for the same reason.
+//
+// The cost is that a link to a finding in a bucket the reader isn't
+// viewing lands on the right report but doesn't scroll to anything —
+// the toolbar's triage selector is one click away, and which bucket
+// they're working in is their call, not the link's. Kanban is exempt
+// from the whole question: it renders every bucket as a column.
 //
 // Selecting the linked member (rather than just its group) matters for
 // a multi-tab dedup group: without it the group opens on whichever
@@ -90,16 +102,12 @@ export function unhideFinding(group, id) {
     state.viewMode = 'table'
     cleanupGraph2()
   }
-  const bucket = groupState(group).commonTriage
-  state.shownTriage = bucket
   if (state.viewMode === 'kanban') {
-    // Kanban ignores `shownTriage` (it shows every bucket as a column),
-    // but a fullscreen column drops every OTHER column from the board,
-    // so a link into one of them would land on a card that isn't
-    // rendered. Collapse it only when the target sits elsewhere — a
-    // link into the column the user already expanded shouldn't undo
-    // their layout.
-    const column = bucket ?? 'untriaged'
+    // A fullscreen column drops every OTHER column from the board, so a
+    // link into one of them would land on a card that isn't rendered.
+    // Collapse it only when the target sits elsewhere — a link into the
+    // column the user already expanded shouldn't undo their layout.
+    const column = groupState(group).commonTriage ?? 'untriaged'
     if (state.kanbanExpandedColumn !== null && state.kanbanExpandedColumn !== column) {
       state.kanbanExpandedColumn = null
     }
