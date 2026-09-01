@@ -169,6 +169,11 @@
       display: inline-flex; align-items: center; gap: .5rem;
     }
     & :is(.conf-range, .conf-range-label).replaced { visibility: hidden; }
+    /* Blocked range (nothing on screen to range over): still drawn, so
+       the block keeps its shape and the outcome dropdown on the end
+       keeps working — just visibly out of service. `inert`, set with
+       the class, is what stops the thumbs being dragged. */
+    & :is(.conf-range, .conf-range-label).disabled { opacity: .35; }
 
     /* The outcome dropdown reads as one arrow-down on the end of the
        block rather than a second control: no border of its own (the

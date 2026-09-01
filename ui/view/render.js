@@ -724,12 +724,16 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
       <!-- Confidence range + the revalidation outcome, one block: the
            outcome dropdown sits inside it and REPLACES the range when
            picked (see conf-filter.js). Shown when there is either a
-           confidence to range over or an outcome to offer — the
-           reachable options come from the scan above, so the dropdown
-           can't list one that filters to nothing. -->
+           confidence to range over or an outcome to offer — an
+           unscored finding blocks the range but leaves the dropdown
+           perfectly usable, so in that case the range comes up
+           DISABLED rather than the block being dropped and the
+           revalidation filter with it. The reachable options come from
+           the scan above, so the dropdown can't list one that filters
+           to nothing. -->
       ${showConfidence || revalidateOptions.length > 0
         ? html`<div class="sep"></div><conf-filter
-            ?show-range=${showConfidence}
+            ?range-disabled=${!showConfidence}
             .revalidateOptions=${revalidateOptions}
           ></conf-filter>`
         : nothing}

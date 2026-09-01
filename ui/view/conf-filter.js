@@ -41,10 +41,15 @@
 // modes. The outcome then spans that reserved space (positioned in
 // toolbar.css), which is also what left-aligns it.
 //
-// Mounted when the parent has confidence to show OR an outcome to
-// offer (some reports surface neither); `show-range` says which of the
-// two, since a report can carry a revalidation pass and no confidence
-// at all.
+// Mounted when the parent has confidence to range over OR an outcome
+// to offer. Those come apart: the range is gated on EVERY finding on
+// screen having a spot on the 0—10 scale (see hasAnyConfidence in
+// render.js), and one unscored row blocks it for the whole set — but
+// the outcome dropdown is still perfectly usable there. So a blocked
+// range is DISABLED rather than dropped: `range-disabled` dims it and
+// takes it out of reach, the block keeps its shape, and the dropdown
+// on the end still works. The range reads 0—10 in that state because
+// render.js resets the bounds whenever it blocks the range.
 import { nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { StateElement, html } from '@rray/frontend/state-element'
@@ -52,7 +57,7 @@ import { state } from '#client/index.js'
 
 class ConfFilter extends StateElement {
   static properties = {
-    showRange: { type: Boolean, attribute: 'show-range' },
+    rangeDisabled: { type: Boolean, attribute: 'range-disabled' },
     revalidateOptions: { attribute: false },
   }
 
@@ -60,7 +65,7 @@ class ConfFilter extends StateElement {
 
   constructor() {
     super()
-    this.showRange = false
+    this.rangeDisabled = false
     this.revalidateOptions = []
   }
 
@@ -68,29 +73,38 @@ class ConfFilter extends StateElement {
     const low = state.filterConfMin
     const high = state.filterConfMax
     const outcomes = this.revalidateOptions ?? []
-    // Only a block that HAS a range can have it replaced; without one
-    // the dropdown is the whole control and simply follows its label.
-    const replaced = this.showRange && Boolean(state.filterRevalidate)
-    return html`<span class=${classMap({ 'conf-range-label': true, replaced })}>
-        ${this.showRange ? 'Confidence' : 'Revalidation'}
+    const disabled = this.rangeDisabled
+    // An already-disabled range has nothing left to replace, so the
+    // outcome stays in its arrow slot there rather than spanning a
+    // block whose other half is greyed out anyway. No dropdown at all
+    // and there is nothing to replace it WITH: a stale global outcome
+    // (render.js clears one the loaded set can't reach, so this is
+    // belt-and-braces) must not blank a range that is the whole
+    // control.
+    const replaced = !disabled && outcomes.length > 0 && Boolean(state.filterRevalidate)
+    const title = disabled
+      ? 'No confidence range: some findings on screen carry no confidence score'
+      : nothing
+    return html`<span class=${classMap({ 'conf-range-label': true, replaced, disabled })}>Confidence</span>
+      <span
+        class=${classMap({ 'conf-range': true, replaced, disabled })}
+        title=${title}
+        ?inert=${disabled || replaced}
+      >
+        <range-slider
+          id="conf-range" min="0" max="10" step="1"
+          low=${low}
+          high=${high}
+          aria-label="Confidence range"
+        ></range-slider>
+        <conf-range-mirror
+          id="conf-range-vals"
+          class="conf-vals"
+          for="conf-range"
+          .low=${low}
+          .high=${high}
+        ></conf-range-mirror>
       </span>
-      ${this.showRange
-        ? html`<span class=${classMap({ 'conf-range': true, replaced })}>
-            <range-slider
-              id="conf-range" min="0" max="10" step="1"
-              low=${low}
-              high=${high}
-              aria-label="Confidence range"
-            ></range-slider>
-            <conf-range-mirror
-              id="conf-range-vals"
-              class="conf-vals"
-              for="conf-range"
-              .low=${low}
-              .high=${high}
-            ></conf-range-mirror>
-          </span>`
-        : nothing}
       ${outcomes.length > 0
         ? html`<revalidate-filter class=${classMap({ replaces: replaced })} .options=${outcomes}></revalidate-filter>`
         : nothing}`

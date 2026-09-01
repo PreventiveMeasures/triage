@@ -46,11 +46,14 @@ class RevalidateFilter extends StateElement {
       .value=${live(state.filterRevalidate)}
       @change=${this._onChange}
     >
-      <!-- The clear entry shows a dash only when there is something to
-           clear. Idle it is the SELECTED option, and a native select
-           paints its selected option's text: labelling it there would
-           print a dash in a control that is otherwise just its arrow. -->
-      <option value="" title="No revalidation filter">${state.filterRevalidate ? '-' : ''}</option>
+      <!-- The clear entry is named for what clearing gets you back:
+           the confidence range this dropdown replaced. It carries that
+           name only while there IS something to clear, because idle it
+           is the SELECTED option and a native select paints its
+           selected option's text — labelling it there would print
+           "Confidence" a second time, beside the block's own label, in
+           a control that is otherwise just its arrow. -->
+      <option value="" title="Filter by confidence range instead">${state.filterRevalidate ? 'Confidence' : ''}</option>
       ${this.options.map((o) => html`<option value=${o.value}>${o.label}</option>`)}
     </select>`
   }
