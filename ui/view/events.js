@@ -1838,6 +1838,20 @@ report.addEventListener('repo-change', (e) => {
   state.filterRepo = e.detail.value
   render()
 })
+// `<revalidate-filter>` — the toolbar dropdown for the revalidation
+// pass's outcome. Same shape as the repo filter above: the component
+// owns the select, the state write and re-render land here.
+report.addEventListener('revalidate-change', (e) => {
+  state.filterRevalidate = e.detail.value
+  render()
+})
+// The partial switch inside that dropdown's Confirmed row — a chip the
+// component cycles through PARTIAL_MODES; the write lands here like
+// every other filter's.
+report.addEventListener('partial-change', (e) => {
+  state.filterPartial = e.detail.value
+  render()
+})
 // `<bundle-code-search>` dispatches this when a Files / Code /
 // Issues mode tab is clicked in the bundle code rail's search row.
 // Switching back to Files rebuilds the tree at its remembered

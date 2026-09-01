@@ -2,7 +2,7 @@ import { html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { bundlesForFileHash, isLinkableFindingId, isPlaceholderNpmPackage, state } from '#client/index.js'
-import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceLabel, evidenceMarkdown, evidenceUrl, findingDisplayName, findingUrl, flowText, formatRunMeta, githubIssueUrl, hasSeverityCorrection, isHttpUrl, markdownLinkToken, parseCommentRefs, stripExportMarker } from './format.js'
+import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, hasSeverityCorrection, isHttpUrl, listSegments, locationLabel, markdownLinkToken, parseCommentRefs, revalidateStamp, splitDescription, stripExportMarker } from './format.js'
 import { activeTabFor, findingRepo, groupKey, groupState, isIgnored, sortTabs, tabKey } from './group.js'
 import { highlightedCode } from './code-highlight.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
@@ -90,46 +90,6 @@ export function severityBadge(f, { variant = 'full' } = {}) {
   // target (outlined, not struck — it isn't superseded in this view).
   const other = showingCorrected ? original : corrected
   return html`<span class=${`badge-pair badge-pair-${variant}`} title=${tip} aria-label=${aria}>${primary}<span class="badge-orig-wrap"><span class=${`badge-arrow ${dirWord}`} aria-hidden="true">${arrow}</span>${showingCorrected ? html`<span class="badge-pre" aria-hidden="true">was</span>` : nothing}<span class=${`badge-orig ${other}${showingCorrected ? ' struck' : ''}`}>${badgeLabel(other)}</span></span>${variesChip}</span>`
-}
-
-// First non-empty line of a description, for the table-view title.
-// Markdown findings begin with a literal title line; JSON findings
-// usually have a one-paragraph description and the whole thing
-// becomes the title. CSS handles the visual ellipsis if it overflows.
-export function firstLine(text) {
-  if (!text) return ''
-  for (const line of text.split('\n')) {
-    if (line.trim()) return line.trim()
-  }
-  return ''
-}
-
-// Split a description into title + body for the card view's typographic
-// layout. The first line acts as the title (bold heading) and the rest
-// is the body. We only treat the first line as a title when there's
-// actually a non-empty body after it — a single-line description stays
-// rendered as a plain `.desc` so JSON findings with one-paragraph
-// summaries don't get jarringly bolded.
-//
-// The title is prose like any other and goes through `renderInline`
-// where it's drawn: report titles name the offending symbol in
-// backticks (`` SQL injection in `getUser()` ``) and printing the
-// markdown raw in the one line the reader takes in first is the worst
-// place to do it. Only the INLINE pass — a title is one line, and a
-// lone fence on it would otherwise swallow the whole thing into a
-// code block.
-function splitDescription(text) {
-  if (!text) return { title: '', body: '' }
-  const nl = text.indexOf('\n')
-  if (nl < 0) return { title: '', body: text }
-  // A body that OPENS on a fence has no title line: lifting that first
-  // line out would leave the block unopened, its code rendering as
-  // prose under a `` ```ts `` heading. (A first segment that isn't a
-  // string is a block starting at index 0 — see codeBlockSegments.)
-  if (typeof codeBlockSegments(text)[0] !== 'string') return { title: '', body: text }
-  const body = text.slice(nl + 1).replace(/^\s+/u, '')
-  if (!body) return { title: '', body: text }
-  return { title: text.slice(0, nl).trim(), body }
 }
 
 // Render ONE run of prose with inline highlights for `[markdown](links)`,
@@ -220,25 +180,95 @@ function codeBlockTemplate({ lang, code }) {
   return html`<div class="code-block" data-lang=${lang || nothing}>${lang ? html`<div class="code-block-lang">${lang}</div>` : nothing}<pre><code>${coloured ? unsafeHTML(coloured) : code}</code></pre></div>`
 }
 
-// Render a description body: fenced code blocks as blocks, everything
-// between them as prose (see renderInline above for the inline pass).
+// One run of prose, split at its blank lines into real paragraphs.
+//
+// The blank line a report writes between paragraphs used to render as
+// a literal empty line: the prose blocks are `white-space: pre-wrap`,
+// so the break came through as a full line of space — at these
+// line-heights that reads as a gap between SECTIONS, not between
+// paragraphs. And it can't be styled down, because an empty line is a
+// line box rather than an element: no selector reaches it. Real
+// elements can be spaced, so paragraphs become elements and the gap
+// becomes a margin (`.para`, half the line it replaces).
+//
+// A single-paragraph run — the common case — is returned as the bare
+// inline result, no wrapper. Runs of two or more blank lines collapse
+// to the one paragraph gap: the measure is the measure, however many
+// blank lines the report happened to leave in. Single newlines are
+// untouched, so the line breaks `flowText` deliberately kept (an
+// indented snippet, a table) still render through the pre-wrap.
+//
+// `wrap` keeps even a single paragraph in its element, for a body that
+// draws as several sibling blocks. A bare run is a TEXT NODE, which no
+// selector reaches: the gap between a lead-in line and the list under
+// it has to be a margin on something, and the something is this.
+function proseTemplate(run, { wrap = false } = {}) {
+  const paras = run.split(/\n{2,}/u).filter((p) => p.trim())
+  if (paras.length < 2) {
+    return wrap ? html`<div class="para">${renderInline(run)}</div>` : renderInline(run)
+  }
+  return paras.map((p) => html`<div class="para">${renderInline(p)}</div>`)
+}
+
+// One markdown list as a real `<ol>` / `<ul>` (format.js listSegments
+// cut it out). Reproduction steps and affected-file rundowns used to
+// render as their own source text — the marker sitting in the prose,
+// every item flat against the left margin, a wrapped step running on
+// as if it were the next one. A list element gets the reader the
+// markers, the hanging indent, and the browser's own numbering.
+//
+// Each item's content is rendered by the pass that rendered the body
+// it came out of, which is what puts a nested list, a paragraph, or a
+// fenced snippet INSIDE its item. The recursion terminates because an
+// item is always shorter than the list it came from (its marker and
+// indentation are gone).
+//
+// `start` only when the list doesn't begin at 1: markdown numbers from
+// the first marker, so a rundown continuing at `10.` keeps its place.
+function listTemplate({ ordered, start, items }) {
+  const entries = items.map((item) => html`<li>${renderHighlighted(item)}</li>`)
+  return ordered
+    ? html`<ol class="md-list" start=${start > 1 ? start : nothing}>${entries}</ol>`
+    : html`<ul class="md-list">${entries}</ul>`
+}
+
+// Render a description body: lists as lists, fenced code blocks as
+// blocks, everything between them as prose (see renderInline above for
+// the inline pass).
 //
 // Exported for the bundle views (render-bundle.js), whose finding
 // descriptions — source-viewer side panel, Issues tab rows, code-rail
 // issue results — get the same treatment. Those render in light DOM,
-// so report.css carries a copy of the .inline-* / .code-block rules
-// that live in finding-card.css for this card's shadow root
-// (`<strong>` needs no rule — the UA styles it in both trees; anchors
-// take their accent color from theme.css in light DOM and from
+// so report.css carries a copy of the .inline-* / .code-block /
+// .md-list rules that live in finding-card.css for this card's shadow
+// root (`<strong>` needs no rule — the UA styles it in both trees;
+// anchors take their accent color from theme.css in light DOM and from
 // finding-card.css in the shadow root).
 //
-// A body with no fence in it takes the inline path directly, so the
-// common case costs one extra scan for the fences and nothing else.
-export function renderHighlighted(text) {
+// A body with no list and no fence in it takes the inline path
+// directly, so the common case costs two scans and nothing else.
+//
+// `paragraphs: false` renders a run as ONE flow, blank lines and all,
+// for the compact surfaces that want a finding's prose as a single
+// blob rather than a stack of paragraphs (see proseTemplate). Lists
+// stay out of that mode for the same reason paragraphs do: those
+// surfaces are a line or two of summary in a row or a side panel, and
+// a block element opening a list there would break the line they get.
+export function renderHighlighted(text, { paragraphs = true } = {}) {
   if (!text) return text
-  const segments = codeBlockSegments(text)
-  if (segments.length === 1 && typeof segments[0] === 'string') return renderInline(segments[0])
-  return segments.map((seg) => (typeof seg === 'string' ? renderInline(seg) : codeBlockTemplate(seg)))
+  const blocks = paragraphs ? listSegments(text) : [text]
+  // More than one block means the prose runs have LIST SIBLINGS, and
+  // the gap between them is a margin — which needs an element to sit
+  // on (see proseTemplate's `wrap`).
+  const many = blocks.length > 1
+  const prose = (run) => (paragraphs ? proseTemplate(run, { wrap: many }) : renderInline(run))
+  const flow = (run) => {
+    const segments = codeBlockSegments(run)
+    if (segments.length === 1 && typeof segments[0] === 'string') return prose(segments[0])
+    return segments.map((seg) => (typeof seg === 'string' ? prose(seg) : codeBlockTemplate(seg)))
+  }
+  if (blocks.length === 1 && typeof blocks[0] === 'string') return flow(blocks[0])
+  return blocks.map((b) => (typeof b === 'string' ? flow(b) : listTemplate(b)))
 }
 
 // Render a triage comment, linkifying any GitHub issue / PR / commit /
@@ -266,6 +296,43 @@ function renderCommentText(text) {
   })
 }
 
+// The verdict stamp — `revalidate` itself (confirmed / refuted /
+// unknown), the one word that says which way the pass went.
+//
+// It rides the `.finding-left` rail rather than the verdict prose:
+// the rail is where this card states what the finding IS at a glance
+// (severity, confidence), which is the same question the stamp
+// answers, and inline it read as the first word of the verdict
+// sentence and left the following lines wrapping under it. Rail idiom
+// is value + caption, so it wears a `.value-label` like the two above
+// it — "REFUTED" alone under a confidence ring doesn't say refuted by
+// what.
+//
+// A row stamped `revalidation` gets nothing: that value names the pass
+// rather than a judgement on anything. A stamp shows whether or not
+// the row carries verdict PROSE — the one-word outcome stands on its
+// own, and a report is free to send it without the reasoning.
+function revalidateStampTemplate(f) {
+  const stamp = revalidateStamp(f)
+  if (!stamp) return nothing
+  return html`<span class=${`revalidate-stamp ${stamp}`}>${stamp}</span>
+    <div class="value-label">Revalidation</div>`
+}
+
+// The revalidation pass's reasoning, in the same muted italic under
+// the same dashed divider as the confidence rationale it sits below:
+// both are a remark ABOUT the finding rather than part of it, and a
+// second note that shouted would unbalance the pair. What the pass
+// concluded doesn't need weight here anyway — the one-word outcome is
+// up in the rail (revalidateStampTemplate above).
+function revalidateTemplate(f) {
+  const verdict = stripExportMarker(f.revalidateVerdict, f)
+  if (!verdict) return nothing
+  // One line, like every other `pre-wrap` block on this card: the
+  // template's own newlines would print as whitespace inside it.
+  return html`<div class="revalidate-verdict">${renderHighlighted(flowText(verdict))}</div>`
+}
+
 // One labelled body section — a small-caps header over its text. Used
 // for every `**Label:**` paragraph the description carries (see
 // format.js descriptionSections) and for the finding's own
@@ -282,27 +349,37 @@ function sectionTemplate(label, body, cls = 'section') {
 // The `## Evidence` list a claude-security import carries — one row per
 // cited site: a link to that site (its own URL from the report, or the
 // reconstruction for a row that named no link) plus the report's note
-// about it. A real `<ol>` rather than the body text's newlines, because
-// a note is usually long enough to wrap and only markup can keep the
-// wrapped lines indented under the reference instead of dropping them
-// back to the margin. Rows that named no line render the bare path.
+// about it (`text` / `observation` — see evidenceNote). A real `<ol>`
+// rather than the body text's newlines, because a note is usually long
+// enough to wrap and only markup can keep the wrapped lines indented
+// under the reference instead of dropping them back to the margin.
+// Rows that named no line render the bare path.
+//
+// A `<details>`, closed: the list is a citation apparatus — where the
+// finding was seen, one line per site — and a reader opens a card for
+// the finding, not for its footnotes. Collapsed it costs one line and
+// says how many sites are under it; the disclosure is the native one,
+// so keyboard and screen readers get it for free and the open state
+// belongs to the element rather than to any state we have to carry.
+// Paper has no disclosure, so print forces it open (finding-card.css).
 function evidenceTemplate(f) {
   const rows = Array.isArray(f.evidence) ? f.evidence : []
   if (rows.length === 0) return nothing
   const repoFallback = f._repoFallback ?? state.repoUrl
-  return html`<div class="evidence">
-    <div class="section-label">Evidence</div>
+  return html`<details class="evidence">
+    <summary class="section-label">Evidence<span class="evidence-count">(${rows.length})</span></summary>
     <ol class="evidence-list">${rows.map((row) => {
-      const label = evidenceLabel(row)
+      const label = locationLabel(row)
       const url = evidenceUrl(row, f, repoFallback)
+      const note = evidenceNote(row)
       return html`<li>
         ${url
           ? html`<a class="evidence-ref" href=${url} target="_blank" rel="noopener" title=${url}>${label}</a>`
           : html`<span class="evidence-ref">${label}</span>`}
-        ${row.text ? html`<div class="evidence-note">${renderHighlighted(flowText(row.text))}</div>` : nothing}
+        ${note ? html`<div class="evidence-note">${renderHighlighted(flowText(note))}</div>` : nothing}
       </li>`
     })}</ol>
-  </div>`
+  </details>`
 }
 
 // Combined `file:line` link for the table-view row's location cell —
@@ -414,11 +491,11 @@ function flagButtonTemplate(key, isFocus = false) {
   >${FLAG_ICON}${isFocus ? html`<span class="mark-btn-label">${flagged ? 'Flagged' : 'Flag'}</span>` : nothing}</button>`
 }
 
-// Issue title — the finding's first description line (the table-view
-// title), capped so the pre-filled `?title=` stays a sane length;
+// Issue title — the finding's title (the same one the table view
+// shows), capped so the pre-filled `?title=` stays a sane length;
 // falls back to the file path, then a generic label.
 function issueTitle(f) {
-  const base = firstLine(f.description) || f.file || 'Security finding'
+  const base = findingTitle(f) || f.file || 'Security finding'
   return base.length > 120 ? `${base.slice(0, 119)}…` : base
 }
 
@@ -773,6 +850,14 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
     ? html`<span class="line-num">${locLink}, ${exportLabel}</span>`
     : html`<span class="line-num">${locLink}</span>`
   const meta = formatRunMeta(f)
+  // The file the analyzer was reading when it found this. A note worth
+  // making when it isn't the finding's own location — a bug in `a.js`
+  // spotted while reading `b.js` says something about how it surfaced
+  // — and pure noise when it's the same file, where the row already
+  // reads `src/a.js:42` and the note only adds "(found analyzing
+  // src/a.js)" after it.
+  const foundIn = String(f.discoveredIn ?? '').trim()
+  const discoveredIn = foundIn === String(f.file ?? '').trim() ? '' : foundIn
   // npm chip in the focused finding view's line-row — surfaces the
   // upstream package + version when the analyzer stamped
   // `package: { npm: { name, version? } }` on the finding (links to
@@ -807,12 +892,20 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
       >Code</button>`
     }
   }
-  const { title: descTitle, body: descBody } = splitDescription(stripExportMarker(f.description, f))
+  const { title: descTitle, body: descBody } = splitDescription(f)
   // The narrative first, then the evidence list, then the report's
   // labelled sections — the order a claude-security report writes them
   // in, and the one that reads right for the formats whose labels all
   // trail their prose (parse-piolium). `lead` is the prose that opens
   // the body; everything from the first label on keeps document order.
+  //
+  // The finding's own structured fields (`impact`, `reproduction`,
+  // `recommendation`) follow, in the order a reader needs them: what it
+  // means, how to trigger it, how to fix it. They wear the same header
+  // + body block as the labelled sections above, so a report that
+  // carries them as FIELDS and one that writes `**Impact:**` into its
+  // description read identically — which is what parse-md emits for the
+  // same two names.
   const sections = descriptionSections(descBody)
   const firstLabel = sections.findIndex((s) => s.label !== null)
   const lead = firstLabel === -1 ? sections : sections.slice(0, firstLabel)
@@ -823,13 +916,14 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
       ${severityBadge(f, { variant: 'full' })}
       <div class="value-label">Severity</div>
       ${f.confidence === undefined ? nothing : confTemplate(f)}
+      ${revalidateStampTemplate(f)}
       ${codeButton}
     </div>
     <div>
       <div class="line-row">
         ${lineRowMain}
         ${npmChip}
-        ${f.discoveredIn ? html`<span class="line-num discovered-in">(found analyzing ${f.discoveredIn})</span>` : nothing}
+        ${discoveredIn ? html`<span class="line-num discovered-in">(found analyzing ${discoveredIn})</span>` : nothing}
         ${meta ? html`<span class="run-meta">${meta}</span>` : nothing}
       </div>
       ${descTitle ? html`<div class="desc-title">${renderInline(descTitle)}</div>` : nothing}
@@ -838,8 +932,14 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
       ${labelled.map((s) => (s.label === null
         ? html`<div class="desc">${renderHighlighted(flowText(s.body))}</div>`
         : sectionTemplate(s.label, s.body)))}
+      ${f.impact ? sectionTemplate('Impact', stripExportMarker(f.impact, f)) : nothing}
+      ${f.reproduction ? sectionTemplate('Reproduction', stripExportMarker(f.reproduction, f)) : nothing}
       ${f.recommendation ? sectionTemplate('Recommendation', stripExportMarker(f.recommendation, f), 'recommendation') : nothing}
       ${f.confidenceReason ? html`<div class="conf-reason">${renderHighlighted(stripExportMarker(f.confidenceReason, f))}</div>` : nothing}
+      ${revalidateTemplate(f)}
+      ${f.revalidateRecommendation
+        ? sectionTemplate('Revalidation recommendation', stripExportMarker(f.revalidateRecommendation, f), 'recommendation')
+        : nothing}
       ${hasSeverityCorrection(f) && f.correctedSeverityReason ? html`<div class="severity-reason"><span class="severity-reason-label">Severity correction:</span> ${renderHighlighted(f.correctedSeverityReason)}</div>` : nothing}
       ${comment ? html`<div class="comment-block"><span class="comment-label">Comment:</span> ${renderCommentText(comment)}</div>` : nothing}
       ${fix
@@ -944,7 +1044,7 @@ export function tableRowInnerTemplate(g) {
   const activeKey = tabKey(active)
   const f = active
 
-  const title = firstLine(stripExportMarker(f.description, f))
+  const title = findingTitle(f)
   const typeLabel = formatRunMeta(f)
   const exportLabel = findingDisplayName(f)
   const exportPart = exportLabel ? `, ${exportLabel}` : ''

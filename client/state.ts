@@ -96,6 +96,8 @@ export interface State {
   filterAnalyzer: string
   filterModel: string
   filterRepo: string
+  filterRevalidate: string
+  filterPartial: string
   filterConfMin: number
   filterConfMax: number
   filterInclude: string
@@ -495,6 +497,22 @@ export const state: State = store<State>({
   // is hidden when the loaded reports involve only one distinct
   // repo or aren't a workspace merge.
   filterRepo: '',
+  // Revalidation outcome — empty string = no filter; otherwise a value
+  // from view/format.js's REVALIDATE_FILTERS (`confirmed` / `refuted`),
+  // each covering one or more values of a finding's `revalidate` field.
+  // The dropdown lists only the outcomes the loaded set reaches and is
+  // hidden entirely when it reaches none, so this stays '' for every
+  // report that predates the revalidation pass. A selection that stops
+  // being reachable is cleared in render.js, the same way a stale repo
+  // filter is.
+  filterRevalidate: '',
+  // Where the `partial` rows go while Confirmed is up — '' keeps them
+  // alongside the full confirmations, 'exclude' holds them out, 'only'
+  // leaves nothing else. A chip inside the Confirmed row cycles it
+  // (format.js PARTIAL_MODES / activeRevalidateKinds). Inert under any
+  // other outcome, and cleared in render.js when the loaded set has no
+  // partial rows to sort.
+  filterPartial: '',
   // Confidence range — both bounds always set (the new
   // `<range-slider>` has no "unset" concept). 0 / 10 means "no
   // filter": findings with `f.confidence === undefined` pass when

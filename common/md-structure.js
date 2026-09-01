@@ -12,13 +12,67 @@
 // input — the same reading markdown renderers give it. Computed once
 // per text and consulted by every structural splitter so a code line
 // beginning with `## ` / `### ` / `| ` can't be read as structure.
+//
+// A fence may be INDENTED, and how far it's allowed to be depends on
+// the list around it: three spaces at the top level (markdown's own
+// limit, past which a line is indented code rather than a fence), and
+// three past the content column of the innermost open list item when
+// there is one — which is how a snippet under a numbered step is
+// written:
+//
+//     2. Bar.
+//        ```js
+//        http.request({}, cb)
+//        ```
+//
+// Tracking that column rather than simply widening the limit is what
+// keeps the two readings apart: a block indented FURTHER than its
+// item's text is an indented code block inside that item, and its
+// ``` lines are content — the same call markdown makes. A step past
+// the ninth (`10.`) or a nested bullet pushes the column out, which is
+// why it's tracked instead of assumed.
+const FENCE_RE = /^( *)(```|~~~)/u
+// A list marker and the gap to its text; `m[0].length` is the column
+// the item's continuation lines are indented to.
+const LIST_MARKER_RE = /^( *)(?:[-*+]|\d{1,9}[.)]) +(?=\S)/u
+
 export function fenceRanges(text) {
   const ranges = []
   let open = -1
   let marker = ''
-  for (const m of text.matchAll(/^ {0,3}(```|~~~).*$/gmu)) {
-    if (open === -1) { open = m.index; marker = m[1] }
-    else if (m[1] === marker) { ranges.push([open, m.index + m[0].length]); open = -1 }
+  let openIndent = 0
+  // Content column of the innermost open list item; 0 outside a list.
+  let itemIndent = 0
+  let pos = 0
+  for (const line of text.split('\n')) {
+    const start = pos
+    pos += line.length + 1
+    const fence = FENCE_RE.exec(line)
+    if (open !== -1) {
+      // A closing fence carries the item's indentation too, and needn't
+      // match the opening one's exactly — but the MARKER still has to,
+      // so a ``` inside a ~~~ block stays content.
+      if (fence && fence[2] === marker && fence[1].length <= openIndent + 3) {
+        ranges.push([open, start + line.length])
+        open = -1
+      }
+      continue
+    }
+    if (fence && fence[1].length <= itemIndent + 3) {
+      open = start
+      marker = fence[2]
+      openIndent = fence[1].length
+      continue
+    }
+    // List bookkeeping. A blank line doesn't end an item (a loose list
+    // is still one list); a marker opens or re-opens one at its own
+    // column, and any other line that starts LEFT of the open item's
+    // text has left it.
+    if (!line.trim()) continue
+    const item = LIST_MARKER_RE.exec(line)
+    const indent = /^ */u.exec(line)[0].length
+    if (item && item[1].length <= itemIndent + 3) itemIndent = item[0].length
+    else if (indent < itemIndent) itemIndent = 0
   }
   if (open !== -1) ranges.push([open, text.length])
   return ranges

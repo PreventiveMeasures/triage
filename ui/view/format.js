@@ -89,6 +89,131 @@ export function correctedVariants(f) {
   return tiers.size > 1 ? byReport : null
 }
 
+// ── Revalidation ─────────────────────────────────────────────────────
+// A second pass over a finding. A report stamps `revalidate` with what
+// that pass concluded — `confirmed` (the finding stands), `partial`
+// (part of it does), `refuted` (it doesn't), `unreachable` (nothing
+// can get to the code it's in), `unknown` (the pass couldn't tell) —
+// and carries its reasoning in `revalidateVerdict`, plus, for a
+// refutation, what to do about it in `revalidateRecommendation`.
+//
+// The remaining value, `revalidation`, marks the row that IS the
+// revalidation pass rather than one it judged. It carries no verdict of
+// its own; what it gets instead is first place in its group (group.js
+// sortTabs), because a reader opening a finding that was re-examined
+// wants the re-examination, not whichever original row happened to
+// outrank the others — and its own name in the run-meta line
+// (formatRunMeta below), which is where a card says which run a row
+// came from.
+//
+// Values are case-folded and trimmed: these arrive from JSON a report
+// generator wrote, and an unrecognised one answers "no stamp" rather
+// than leaking into a display.
+// Every value the field can carry.
+export const REVALIDATE_KINDS = ['revalidation', 'refuted', 'unreachable', 'confirmed', 'partial', 'unknown']
+const REVALIDATE_SET = new Set(REVALIDATE_KINDS)
+
+// The row's revalidation outcome, case-folded, or '' when it carries
+// none — which includes an unrecognised value, so a typo in a report
+// can't reach a display or the filter dropdown.
+export function revalidateKind(f) {
+  const v = typeof f?.revalidate === 'string' ? f.revalidate.trim().toLowerCase() : ''
+  return REVALIDATE_SET.has(v) ? v : ''
+}
+
+// The verdict this row was stamped with, or null when it carries none
+// — which includes the revalidation row itself, since `revalidation`
+// names the pass and isn't a judgement on anything.
+export function revalidateStamp(f) {
+  const kind = revalidateKind(f)
+  return kind && kind !== 'revalidation' ? kind : null
+}
+
+export function isRevalidation(f) {
+  return revalidateKind(f) === 'revalidation'
+}
+
+// The verdicts that VOID a row's confidence for the range filter — the
+// one place a verdict changes more than a display (see filters.js).
+// Both say the finding isn't a finding: `refuted` that it doesn't
+// hold, `unreachable` that nothing can get to the code it's in. A
+// number attached to either is a claim the pass withdrew, so the
+// filter reads it as 0 rather than letting it speak for the group.
+const CONFIDENCE_VOIDING = new Set(['refuted', 'unreachable'])
+
+export function voidsConfidence(f) {
+  return CONFIDENCE_VOIDING.has(revalidateKind(f))
+}
+
+// What the toolbar dropdown offers, in the order it lists them —
+// answers to "did the pass leave this standing", running from yes to
+// no. Fewer options than the field has values:
+//
+//   * the `revalidation` row rides CONFIRMED — it is the pass itself,
+//     re-examining a finding it did not knock down, which is the same
+//     answer to that question;
+//   * `partial` rides it too. A partial confirmation is a yes to
+//     "does this still stand" — the pass narrowed the finding rather
+//     than knocking it down — and an option of its own would slice
+//     the standing findings in two for a distinction the reader wants
+//     the STAMP for, not a filter. It keeps its own stamp on the card.
+//   * `unknown` gets no option — a pass that couldn't tell hasn't
+//     answered it at all, so there is nothing to filter to. Those rows
+//     stay visible with no filter on, like every other row.
+export const REVALIDATE_FILTERS = [
+  { value: 'confirmed', label: 'Confirmed', kinds: ['confirmed', 'partial', 'revalidation'] },
+  { value: 'unreachable', label: 'Unreachable', kinds: ['unreachable'] },
+  { value: 'refuted', label: 'Refuted', kinds: ['refuted'] },
+]
+
+// The kinds one dropdown value covers, or null when the value names no
+// option — filters.js reads that as "no filter" rather than hiding
+// every finding behind a value it can't interpret.
+export function revalidateFilterKinds(value) {
+  return REVALIDATE_FILTERS.find((o) => o.value === value)?.kinds ?? null
+}
+
+// How finely Confirmed is drawn, once it has taken the partial rows
+// in. The toolbar cycles a chip through these inside the Confirmed row
+// (revalidate-filter.js), because "did this survive" and "how
+// completely" are one question asked twice, not two filters — and the
+// second only has an answer once the first is Confirmed.
+export const PARTIAL_MODES = ['', 'exclude', 'only']
+
+// The kinds an outcome selection ACTUALLY matches, with that switch
+// applied. All three are the same shape as every other filter here —
+// a list of kinds, matched existentially over the group — so the chip
+// narrows what Confirmed reaches rather than subtracting from it:
+//
+//   ''         everything the pass left standing: the row that IS the
+//              pass, the full confirmations, the partial ones;
+//   'exclude'  the full confirmations only. NOT "everything but the
+//              partials": a group is shown for carrying a `confirmed`
+//              row, not for lacking a `partial` one, so the pass row
+//              on its own no longer stands in for a verdict;
+//   'only'     the partial ones.
+//
+// It bites only on an option that took the partial rows in —
+// Confirmed — so a mode left set from an earlier selection can't
+// silently narrow Refuted or Unreachable, and callers can pass it
+// through without checking which option is up.
+export function activeRevalidateKinds(value, partialMode) {
+  const kinds = revalidateFilterKinds(value)
+  if (!kinds?.includes('partial')) return kinds
+  if (partialMode === 'only') return ['partial']
+  if (partialMode === 'exclude') return ['confirmed']
+  return kinds
+}
+
+// The options worth offering for a given set of present kinds: the
+// toolbar hands this list to the dropdown, and drops the control
+// entirely when it comes back empty — a report whose pass only ever
+// answered `unknown` has nothing here to choose between.
+export function reachableRevalidateFilters(kinds) {
+  const present = new Set(kinds)
+  return REVALIDATE_FILTERS.filter((o) => o.kinds.some((k) => present.has(k)))
+}
+
 // "Module" = third-party dependency. Recognised vendor-directory
 // layouts, in detection precedence: `node_modules/` (npm/pnpm/yarn),
 // `vendor/` (PHP Composer, Go modules), and the generic
@@ -272,8 +397,9 @@ export function findingDisplayName(f) {
 }
 
 // Searchable text for `state.filterInclude`. Joins the user-visible
-// fields (file path, description, recommendation, confidence
-// reasoning, discovery context) plus the per-finding `repo.github`
+// fields (file path, title, description, impact, reproduction,
+// recommendation, confidence reasoning, revalidation verdict + its
+// stamp, discovery context) plus the per-finding `repo.github`
 // slug — the latter so the search field can match findings by their
 // upstream repo (`lodash/lodash`), useful when a merged report mixes
 // findings from many node_modules dependencies.
@@ -285,7 +411,7 @@ export function findingDisplayName(f) {
 // the lazy graph bundle (see the `fileUrl` note below), so filters.js
 // matches the comment and fix fields itself; see matchesFilters there.
 export function findingText(f) {
-  return [f.file, f.description, evidenceMarkdown(f), f.recommendation, f.confidenceReason, f.discoveredIn, f.repo?.github].filter(Boolean).join('\n').toLowerCase()
+  return [f.file, f.title, f.description, f.impact, f.reproduction, evidenceMarkdown(f), f.recommendation, f.confidenceReason, revalidateStamp(f), f.revalidateVerdict, f.revalidateRecommendation, f.discoveredIn, f.repo?.github].filter(Boolean).join('\n').toLowerCase()
 }
 
 export function prettyModel(model) {
@@ -300,8 +426,16 @@ export function prettyModel(model) {
 // flat-group / bundle-source meta rows; consolidating here keeps
 // the field list, separator, and prettyModel application from
 // drifting across call sites.
+//
+// The revalidation row names itself right after the mode it ran in
+// (`security · revalidate · opus 5 · …`): the run that produced it is
+// that mode's revalidation pass, and the meta line is where this card
+// says which run a row came from. Only that row — a verdict row was
+// produced by the pass but is not it, and stamping every judged
+// finding here would say nothing the rail's stamp doesn't already.
 export function formatRunMeta(f) {
-  return [f.type, prettyModel(f.model), f.effort, f.exportsMode].filter(Boolean).join(' · ')
+  return [f.type, isRevalidation(f) ? 'revalidate' : '', prettyModel(f.model), f.effort, f.exportsMode]
+    .filter(Boolean).join(' · ')
 }
 
 // Walk a list of strings and shrink the candidate prefix until every
@@ -568,8 +702,18 @@ export function descriptionSections(body) {
 // Pairing is `fenceRanges`' (common/md-structure.js), the same reading
 // the parsers use — so what a parser treated as code is what the card
 // draws as code, an unclosed fence running to end of input included.
-const FENCE_LINE_RE = /^ {0,3}(`{3,}|~{3,})(.*)$/u
+const FENCE_LINE_RE = /^( *)(`{3,}|~{3,})(.*)$/u
 const LANG_TAG_RE = /^[a-z0-9+#._-]{1,20}$/u
+
+// Up to `n` leading spaces off a line — the shed markdown gives a
+// fenced block's content, which is "up to" rather than "exactly"
+// because a line may start left of its own fence (a blank-ish line
+// padded with fewer spaces) and there is nothing there to remove.
+function shedIndent(line, n) {
+  let i = 0
+  while (i < n && line[i] === ' ') i++
+  return line.slice(i)
+}
 
 function fencedBlock(raw) {
   const lines = raw.split('\n')
@@ -577,17 +721,26 @@ function fencedBlock(raw) {
   // match is there; the `?.` keeps this readable rather than resting
   // the whole function on that.
   const open = FENCE_LINE_RE.exec(lines[0])
-  const marker = (open?.[1] ?? '```').slice(0, 3)
-  const tag = (open?.[2] ?? '').trim().split(/\s+/u)[0].toLowerCase()
+  const marker = (open?.[2] ?? '```').slice(0, 3)
+  const tag = (open?.[3] ?? '').trim().split(/\s+/u)[0].toLowerCase()
   // The last line is the CLOSING fence unless the block dangles at end
   // of input — and a dangling one can still end on a fence line of the
   // other marker (a ``` inside a ~~~ block is content), so the marker
   // has to match for the line to be chrome rather than code.
   const close = lines.length > 1 ? FENCE_LINE_RE.exec(lines.at(-1)) : null
-  const closed = Boolean(close?.[1].startsWith(marker))
+  const closed = Boolean(close?.[2].startsWith(marker))
+  // A block written under a list item is indented to that item's text,
+  // and that indentation belongs to the LIST, not to the snippet:
+  // markdown sheds the opening fence's indent from every line of the
+  // content, and so must we. Kept as written otherwise the `<pre>`
+  // prints the whole snippet shifted right, its own relative
+  // indentation buried under the step number's, and copying a line out
+  // of it pastes the list's whitespace along with the code.
+  const indent = open?.[1].length ?? 0
+  const body = lines.slice(1, closed ? -1 : undefined)
   return {
     lang: LANG_TAG_RE.test(tag) ? tag : '',
-    code: lines.slice(1, closed ? -1 : undefined).join('\n'),
+    code: (indent > 0 ? body.map((l) => shedIndent(l, indent)) : body).join('\n'),
   }
 }
 
@@ -609,6 +762,197 @@ export function codeBlockSegments(text) {
   return segments
 }
 
+// ── Lists ────────────────────────────────────────────────────────────────
+// Reproduction steps, affected-file rundowns, a recommendation's
+// alternatives — the narrative fields arrive as markdown lists as
+// often as prose. They used to render as their own source text: the
+// `.` after the number sitting in the run of prose, every item hanging
+// at the left margin, a wrapped item indistinguishable from the next
+// one. So the lists come out here and the card draws them as lists.
+//
+// `listSegments` splits a body into list blocks and the runs between
+// them, and each item's content comes back with the marker and the
+// item's indentation shed — which makes it a small markdown body of
+// its own, rendered by the same pass that rendered the whole. That
+// recursion is what gets a nested list, a wrapped step, or a fenced
+// snippet under a step (the shape that started all this) drawn INSIDE
+// its item rather than after the list.
+//
+// Text with no list in it comes back as a single-element array holding
+// it unchanged, the same fast path codeBlockSegments offers.
+const LIST_ITEM_RE = /^( *)(?:[-*+]|(\d{1,9})[.)]) +(?=\S)/u
+// `* * *` and `- - -` are horizontal rules, not one-item lists.
+const HRULE_RE = /^ {0,3}([-*_])(?: *\1){2,} *$/u
+
+function leadingSpaces(line) { return /^ */u.exec(line)[0].length }
+
+// Trailing blank lines belong to the gap after an item, not to it.
+function trimTrailingBlank(lines) {
+  let end = lines.length
+  while (end > 0 && !lines[end - 1].trim()) end--
+  return lines.slice(0, end).join('\n')
+}
+
+export function listSegments(text) {
+  const src = typeof text === 'string' ? text : ''
+  if (!src) return [text]
+  const ranges = fenceRanges(src)
+  const lines = src.split('\n')
+  // Line → byte offset, so a candidate marker can be checked against
+  // the fenced ranges: a `- ` or `1. ` inside a snippet is code.
+  const offsets = []
+  let at = 0
+  for (const line of lines) { offsets.push(at); at += line.length + 1 }
+  const startsItem = (i) => !inFence(ranges, offsets[i])
+    && !HRULE_RE.test(lines[i])
+    && LIST_ITEM_RE.test(lines[i])
+
+  const out = []
+  let proseFrom = 0
+  let i = 0
+  const pushProse = (until) => {
+    const run = lines.slice(proseFrom, until).join('\n').replace(/^\n+/u, '').replace(/\n+$/u, '')
+    if (run.trim()) out.push(run)
+  }
+
+  while (i < lines.length) {
+    if (!startsItem(i)) { i++; continue }
+    pushProse(i)
+    const first = LIST_ITEM_RE.exec(lines[i])
+    const ordered = Boolean(first[2])
+    const items = []
+    // The open item: the column its continuation lines sit at, and the
+    // content collected so far with that column shed.
+    let item = null
+    let afterBlank = false
+    while (i < lines.length) {
+      const line = lines[i]
+      // Inside a fence nothing is structural — not a blank line, not a
+      // marker, not a dedent. The snippet is the item's content.
+      if (!inFence(ranges, offsets[i])) {
+        if (!line.trim()) { item.lines.push(''); afterBlank = true; i++; continue }
+        const indent = leadingSpaces(line)
+        const marker = HRULE_RE.test(line) ? null : LIST_ITEM_RE.exec(line)
+        // A marker indented AT LEAST to the open item's text is a
+        // nested list inside it; one to the left of that is the next
+        // item of this list — unless it switches between bullets and
+        // numbers, which starts a list of its own.
+        if (marker && (!item || indent < item.column)) {
+          if (Boolean(marker[2]) !== ordered) break
+          if (item) items.push(trimTrailingBlank(item.lines))
+          item = { column: marker[0].length, lines: [line.slice(marker[0].length)] }
+          afterBlank = false
+          i++
+          continue
+        }
+        // Back at the margin after a blank line: the list is over. Without
+        // the blank it's a wrapped item, which markdown reads as part of
+        // the item however far left the report wrapped it to.
+        if (indent < item.column && afterBlank) break
+      }
+      item.lines.push(shedIndent(line, item.column))
+      afterBlank = false
+      i++
+    }
+    if (item) items.push(trimTrailingBlank(item.lines))
+    // The first number is the one that counts — markdown numbers the
+    // rest in sequence from it, so a rundown that opens at `10.` keeps
+    // its place in the sequence and one that opens at `1.` needs no
+    // start at all.
+    out.push({ ordered, start: ordered ? Number(first[2]) : null, items })
+    proseFrom = i
+  }
+  if (out.length === 0) return [text]
+  pushProse(lines.length)
+  return out
+}
+
+// ── Finding title ────────────────────────────────────────────────────
+// What the finding is CALLED. A report may name it outright in a
+// `title` field; the formats that have no such field put it in the
+// description's first line instead (every markdown import does — the
+// finding's heading becomes that line at parse), and JSON findings
+// usually carry a one-paragraph description that stands in for one.
+// So: the field when it's there, the first line otherwise.
+//
+// Single source for every surface that shows a finding by name — the
+// card's bold heading, the table row, the kanban / focus-queue card,
+// the pre-filled GitHub issue title, the markdown export — so a
+// report's own title is what the reader sees in all of them or in
+// none. The export marker comes off first: it's chrome the exports
+// pipeline injects into the prose, not part of what the finding is
+// called.
+export function firstLine(text) {
+  if (!text) return ''
+  for (const line of text.split('\n')) {
+    if (line.trim()) return line.trim()
+  }
+  return ''
+}
+
+export function findingTitle(f) {
+  const own = typeof f?.title === 'string' ? f.title.trim() : ''
+  return own || firstLine(stripExportMarker(f?.description, f))
+}
+
+// Title + body for the card's typographic layout: a bold heading over
+// a muted body block.
+//
+// With a `title` field the split is already made — the whole
+// description is body. The one adjustment is a description whose first
+// line REPEATS the title (a report carrying the heading in both
+// places): printing it as the heading and again as the body's opening
+// line reads as a stutter, so an exact repeat is dropped.
+//
+// Without one, the description's first line is the title — but only
+// when there's a non-empty body under it. A single-line description
+// stays whole as a plain `.desc`, so JSON findings whose description
+// is one paragraph aren't jarringly bolded; and a description that
+// OPENS on a fence keeps its first line, since lifting that line out
+// would leave the code block unopened and render its code as prose
+// under a `` ```ts `` heading.
+//
+// The title is prose like any other and goes through the inline pass
+// where it's drawn (render-finding.js): report titles name the
+// offending symbol in backticks (`` SQL injection in `getUser()` ``),
+// and the one line the reader takes in first is the worst place to
+// print raw markdown.
+export function splitDescription(f) {
+  const text = stripExportMarker(f?.description, f) || ''
+  const own = typeof f?.title === 'string' ? f.title.trim() : ''
+  if (own) {
+    const body = text.trim()
+    const nl = body.indexOf('\n')
+    const first = (nl < 0 ? body : body.slice(0, nl)).trim()
+    if (first !== own) return { title: own, body }
+    return { title: own, body: nl < 0 ? '' : body.slice(nl + 1).replace(/^\s+/u, '') }
+  }
+  if (!text) return { title: '', body: '' }
+  const nl = text.indexOf('\n')
+  if (nl < 0) return { title: '', body: text }
+  // A first segment that isn't a string is a block starting at index 0
+  // — see codeBlockSegments.
+  if (typeof codeBlockSegments(text)[0] !== 'string') return { title: '', body: text }
+  const body = text.slice(nl + 1).replace(/^\s+/u, '')
+  if (!body) return { title: '', body: text }
+  return { title: text.slice(0, nl).trim(), body }
+}
+
+// The description with the finding's name in front of it — the shape a
+// format WITHOUT a `title` field writes it in, since there the name IS
+// the first line. For the surfaces that show one text blob per finding
+// rather than a heading over a body (the bundle views' issue rows,
+// code-rail results and source-panel descriptions): they leaned on the
+// description opening with the name, and a title-bearing finding would
+// otherwise read there with no name at all. A finding that carries no
+// `title` gets its description back untouched.
+export function titledDescription(f) {
+  const own = typeof f?.title === 'string' ? f.title.trim() : ''
+  if (!own) return stripExportMarker(f?.description, f) || ''
+  const { body } = splitDescription(f)
+  return body ? `${own}\n\n${body}` : own
+}
+
 // Source URL for one `## Evidence` row. The row's own link when the
 // report gave one; otherwise the same `HEAD` reconstruction findingUrl
 // falls back to, from the row's file / line under the finding's repo —
@@ -617,30 +961,60 @@ export function evidenceUrl(row, f, repoFallback) {
   return findingUrl({ file: row?.file, line: row?.line, location: row?.url, repo: f?.repo }, repoFallback)
 }
 
-// `file:line` display label for an evidence row — the line is dropped
-// when the row didn't name one ('?'), matching the location displays.
-export function evidenceLabel(row) {
-  return Number.isFinite(parseInt(row?.line, 10)) ? `${row.file}:${row.line}` : (row?.file ?? '')
+// `file:line` — the shape every location display uses, with the line
+// dropped when there isn't a finite one ('?' on the imports that carry
+// no line numbers). Takes a finding or an evidence row: both carry
+// `file` / `line`, and both print the location the same way. The raw
+// `line` goes through, so a range (`10-20`) survives whole.
+export function locationLabel(x) {
+  return Number.isFinite(parseInt(x?.line, 10)) ? `${x.file}:${x.line}` : (x?.file ?? '')
 }
 
-// The evidence list rebuilt as markdown — the shape it arrived in. The
-// structured rows (not the description) carry it after parse, so every
-// TEXT surface reassembles it from here: the markdown export, the
-// pre-filled GitHub issue body, the clipboard / Claude handoff block,
-// and the search haystack. Empty string for a finding without rows, so
-// callers can `if (block)` rather than special-case the format.
-export function evidenceMarkdown(f) {
+// The row's note. `text` is what parse-md.js writes (the lines a
+// markdown report left under the reference); `observation` is the name
+// a JSON report may use for the same thing. A row carrying BOTH is not
+// a shape any producer here emits, but it costs nothing to read: the
+// observation leads and the text follows under it, rather than one
+// silently winning. Non-string values are ignored — this reads
+// whatever JSON an importer hands us.
+//
+// Single source for both the card's `.evidence-note` and the markdown
+// the text surfaces rebuild, so a row reads the same everywhere and
+// the search haystack (which goes through evidenceMarkdown) matches on
+// an observation the same as on a text.
+export function evidenceNote(row) {
+  const str = (v) => (typeof v === 'string' ? v : '')
+  return `${str(row?.observation)}\n${str(row?.text)}`.trim()
+}
+
+// The evidence rows as a numbered markdown list, no heading — each
+// text surface gives them the heading its own document wants. Note
+// lines are indented under their row marker, the way the report wrote
+// them, so markdown reads them as part of the item. `spaced` puts a
+// blank line between rows, which markdown reads as a loose list: the
+// handoff wants that (its rows carry prose and it is a document in its
+// own right), the compact `**Evidence:**` block below does not.
+function evidenceRows(f, { spaced = false } = {}) {
   const rows = Array.isArray(f?.evidence) ? f.evidence : []
   if (rows.length === 0) return ''
-  const lines = ['**Evidence:**']
-  rows.forEach((row, i) => {
-    const label = evidenceLabel(row)
-    lines.push(`${i + 1}. ${row.url ? `[${label}](${row.url})` : label}`)
-    // Note lines are indented under their row marker, the way the
-    // report wrote them — markdown reads that as one list item.
-    if (row.text) for (const noteLine of row.text.split('\n')) lines.push(`   ${noteLine}`)
-  })
-  return lines.join('\n')
+  return rows.map((row, i) => {
+    const label = locationLabel(row)
+    const lines = [`${i + 1}. ${row.url ? `[${label}](${row.url})` : label}`]
+    const note = evidenceNote(row)
+    if (note) for (const noteLine of note.split('\n')) lines.push(`   ${noteLine}`)
+    return lines.join('\n')
+  }).join(spaced ? '\n\n' : '\n')
+}
+
+// The evidence list as one labelled block — the shape it arrived in.
+// The structured rows (not the description) carry it after parse, so
+// the text surfaces that want it inline reassemble it from here: the
+// markdown export, the pre-filled GitHub issue body, and the search
+// haystack. Empty string for a finding without rows, so callers can
+// `if (block)` rather than special-case the format.
+export function evidenceMarkdown(f) {
+  const rows = evidenceRows(f)
+  return rows ? `**Evidence:**\n${rows}` : ''
 }
 
 // One inline markdown link — `[label](url)` — as it appears INSIDE a
@@ -689,22 +1063,60 @@ export function commitUrl(githubRepo, hash) {
   return `${base}/commit/${hash}`
 }
 
-// Labeled `Repo / File / Line / Description / Confidence` block for a
-// finding `f`. Shared by the copy button, the Claude handoff, and the
-// GitHub-issue body so the three actions carry identical text. `repo`
-// is resolved by the caller (group.findingRepo) so this stays a pure
-// formatter with no `#client/...` dependency (see fileUrl's note on
-// keeping this module out of the client aggregator's import chain).
+// The narrative fields the document carries below the description, as
+// `[heading, field]`, IN CARD ORDER — the sequence the card's tab body
+// reads them in, so the document tells the same story in the same
+// order. A field the finding doesn't carry is skipped, not headed.
+const HANDOFF_SECTIONS = [
+  ['Impact', 'impact'],
+  ['Reproduction', 'reproduction'],
+  ['Recommendation', 'recommendation'],
+  ['Confidence reason', 'confidenceReason'],
+  ['Revalidation verdict', 'revalidateVerdict'],
+  ['Revalidation recommendation', 'revalidateRecommendation'],
+]
+
+// The finding as a markdown DOCUMENT — what the copy button puts on
+// the clipboard and what the Claude handoff sends. It used to be a
+// stack of `Label: value` lines, which read as a form even though most
+// of its values are markdown prose: a description's own paragraphs and
+// fenced blocks ran on from a `Description:` prefix, and the evidence
+// list arrived mid-form under a bold label. Everything below is pasted
+// somewhere that renders markdown, so it is markdown.
+//
+// The shape: a few `Key: value` lines of metadata (the facts that
+// aren't prose), then the finding's name as an H1, its description,
+// its evidence, and one H1 section per HANDOFF_SECTIONS field. Blocks
+// join with a blank line, and every one of them is omitted when the
+// finding doesn't carry it.
+//
+// `repo` is resolved by the caller (group.findingRepo) so this stays a
+// pure formatter with no `#client/...` dependency (see fileUrl's note
+// on keeping this module out of the client aggregator's import chain).
 export function handoffBlock(f, repo) {
-  const lines = []
-  if (repo) lines.push(`Repo: ${repo}`)
-  if (f.file) lines.push(`File: ${f.file}`)
-  if (f.line !== undefined && f.line !== null && f.line !== '') lines.push(`Line: ${f.line}`)
-  if (f.description) lines.push(`Description: ${f.description}`)
-  const evidence = evidenceMarkdown(f)
-  if (evidence) lines.push(evidence)
-  if (f.confidence !== undefined && f.confidence !== null) lines.push(`Confidence: ${f.confidence}/10`)
-  return lines.join('\n')
+  const meta = []
+  if (repo) meta.push(`Repo: ${repo}`)
+  // One `Location:` line rather than the old File / Line pair — it is
+  // one fact, and `file:line` is the form every other surface prints
+  // it in and every editor takes back.
+  const location = locationLabel(f)
+  if (location) meta.push(`Location: ${location}`)
+  if (f?.confidence !== undefined && f?.confidence !== null) meta.push(`Confidence: ${f.confidence}/10`)
+  const revalidate = revalidateKind(f)
+  if (revalidate) meta.push(`Revalidation: ${revalidate}`)
+
+  const blocks = []
+  if (meta.length > 0) blocks.push(meta.join('\n'))
+  const { title, body } = splitDescription(f)
+  if (title) blocks.push(`# ${title}`)
+  if (body) blocks.push(body.trim())
+  const evidence = evidenceRows(f, { spaced: true })
+  if (evidence) blocks.push(`# Evidence\n\n${evidence}`)
+  for (const [heading, field] of HANDOFF_SECTIONS) {
+    const value = stripExportMarker(f?.[field], f)?.trim()
+    if (value) blocks.push(`# ${heading}\n\n${value}`)
+  }
+  return blocks.join('\n\n')
 }
 
 // GitHub "new issue" URL with a pre-filled title + body, or null when

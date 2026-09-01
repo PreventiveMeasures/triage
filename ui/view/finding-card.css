@@ -69,18 +69,19 @@
    level with. Only bites when the description has no title line
    (`splitDescription` leaves a one-paragraph description as a plain
    `.desc`, which carries the gap); with a `.desc-title` first there's
-   no margin to shed. `.conf-reason` and `.severity-reason` also shed
-   their divider chrome — a dashed rule across the top of the column is
-   a separator with nothing left above it to separate. (`.severity-reason`
-   leads only when the finding carries a correction reason but no
-   description, recommendation, or confidence reason.)
+   no margin to shed. The closing notes (`.conf-reason`,
+   `.revalidate-verdict`, `.severity-reason`) also shed their divider
+   chrome — a dashed rule across the top of the column is a separator
+   with nothing left above it to separate. (Each of those leads only
+   when the finding carries it and nothing above it: no description,
+   recommendation, or earlier note.)
    Screen always hides the row; print re-shows it on `.multi-case`
    cards (see the @media print block), where the margin is doing its
    real job again — hence the media split instead of one blanket
    rule. */
 @media not print {
   :host([in-group]) .line-row + * { margin-top: 0; }
-  :host([in-group]) .line-row + :is(.conf-reason, .severity-reason) { padding-top: 0; border-top: 0; }
+  :host([in-group]) .line-row + :is(.conf-reason, .revalidate-verdict, .severity-reason) { padding-top: 0; border-top: 0; }
 }
 
 .tabs { display: flex; gap: .25rem; flex-wrap: wrap; }
@@ -116,6 +117,29 @@
   gap: .25rem .75rem;
   &.active { display: grid; }
 }
+/* The description column has to be allowed to be NARROWER than its
+   content. `1fr` is `minmax(auto, 1fr)`, and that `auto` floor is the
+   widest thing in the track — for a snippet with a long line, the
+   whole line, because a `<pre>` that scrolls still reports its
+   content's width as its minimum. So one long line grew the track
+   past the card and took the section's right edge with it, instead of
+   scrolling: `.code-block`'s `max-width` cap never bit, since it
+   resolves against a column that had already stretched to fit.
+   `min-width: 0` puts the floor back at zero. The track then takes
+   the card's width, the cap resolves against a column that fits — and
+   inside a list item against the ITEM, so the list's own indent comes
+   off it — and the overflow goes where it was meant to, into the
+   `<pre>`'s horizontal scroll. `.finding-left` keeps its own
+   `min-width`, hence the exclusion rather than a blanket rule.
+
+   `overflow-wrap` comes with it: prose is `pre-wrap`, which breaks
+   only at spaces, so with the floor gone a token too long for the
+   line — a deep `node_modules` path, a hash — would run out past the
+   card instead of stretching it. `break-word` breaks one only when it
+   wouldn't fit on a line of its own, so ordinary text is untouched;
+   the snippets are `white-space: pre`, which doesn't wrap at all, so
+   their long lines still scroll rather than folding. */
+.tab-body > :not(.finding-left) { min-width: 0; overflow-wrap: break-word; }
 
 /* Description's first line becomes a bold title; the rest is a muted
    body block. Inline `"quoted"` / `` `code` `` segments get tag-style
@@ -176,22 +200,129 @@
     -webkit-print-color-adjust: exact; print-color-adjust: exact;
   }
 }
+/* Evidence is the one section that collapses (render-finding.js
+   evidenceTemplate makes it a `<details>`), so its header is a
+   `<summary>`: the native disclosure carries the keyboard and
+   screen-reader behaviour, and the open state lives on the element.
+   The UA's own marker is dropped for a chevron that matches the
+   toolbar's — two borders rotated — pointing right when closed and
+   down when open, sitting after the count as the last flex item in
+   the label. */
+summary.section-label {
+  cursor: pointer;
+  list-style: none;
+
+  &::-webkit-details-marker { display: none; }
+
+  &::after {
+    content: ''; flex: none;
+    width: .3rem; height: .3rem;
+    margin-left: .05rem;
+    border-right: 1.5px solid currentcolor;
+    border-bottom: 1.5px solid currentcolor;
+    transform: translateY(-1px) rotate(-45deg);
+    transition: transform .12s;
+    opacity: .8;
+  }
+}
+details[open] > summary.section-label::after { transform: translateY(-2px) rotate(45deg); }
+/* How many sites are under the fold — the one thing a collapsed
+   section owes the reader. */
+.evidence-count { font-weight: 500; opacity: .8; }
+
 .section-body {
   white-space: pre-wrap; line-height: 1.55;
   color: rgb(from var(--text) r g b / .82);
   margin-top: .1rem;
 }
+
+/* Paragraph inside a prose block (`.desc`, `.section-body`, …). These
+   boxes are `pre-wrap`, so the blank line a report writes between
+   paragraphs came through as a literal empty line — a FULL line of
+   space, which at these line-heights reads as a gap between sections
+   rather than between paragraphs. That empty line can't be styled:
+   it's a line box, not an element, and no selector reaches it. So
+   render-finding.js's proseTemplate makes paragraphs real elements and
+   the gap becomes this margin — `.5lh` being, by definition, half the
+   blank line it replaces. */
+.para + .para { margin-top: .5lh; }
+/* A markdown list, drawn as one (render-finding.js listTemplate). The
+   prose boxes are `pre-wrap`, so a list used to arrive as its own
+   source text: `1.` and `-` sitting in the run, every item flat
+   against the left margin, a wrapped step reading as the next one.
+   The element brings the hanging indent that separates them.
+
+   The indent is set in `em` so it tracks the type rather than the
+   root. Items get a smaller gap than paragraphs do (`.para` above): a
+   list is one thought broken into steps, and the paragraph measure
+   between them would read as separate blocks. */
+.md-list {
+  margin: 0;
+  padding-inline-start: 1.2em;
+}
+.md-list li + li { margin-top: .25lh; }
+/* And the paragraph measure where a list meets the prose around it —
+   the lead-in line above it, the sentence that picks up after it. The
+   markdown had a blank line there; listSegments drops it with the rest
+   of the block's chrome, so the space comes back as a margin. */
+.para + .md-list,
+.md-list + .para,
+.md-list + .md-list { margin-top: .5lh; }
+/* The markers are structure, not text: muted, so the eye reads the
+   steps and not their numbering. Off `currentColor` rather than
+   `--text` so they follow whatever colour the block around them
+   carries — under `.recommendation` that is green, and a grey marker
+   beside green text would break the one thing that rule is for. */
+.md-list li::marker { color: rgb(from currentcolor r g b / .45); }
 /* The fix is the one section that carries its own colour, header
    included — a green heading over green text reads as one block rather
    than as a muted label someone stuck on top of it. */
 .recommendation .section-label,
 .recommendation .section-body { color: var(--green); }
-.conf-reason {
+/* The two closing notes: the confidence rationale, and under it the
+   revalidation pass's verdict. One rule because they read as one kind
+   of thing — a remark ABOUT the finding rather than part of it — and
+   the stack only holds together if the second doesn't outweigh the
+   first. The verdict's one-word outcome carries in the rail's stamp;
+   down here it is prose in the same muted italic under the same dashed
+   divider. */
+.conf-reason,
+.revalidate-verdict {
   grid-column: 2; white-space: pre-wrap;
   font-size: .92em; font-style: italic;
   color: var(--muted);
   margin-top: .6rem; padding-top: .55rem;
   border-top: 1px dashed var(--border);
+}
+
+/* Verdict stamp — the card's outlined-chip idiom (`.badge-orig` /
+   `.badge-varies`), coloured by which way the pass went: the finding
+   still stands (critical), it was knocked down (muted — the row is
+   dismissed and so is its chip), or the pass couldn't tell (the amber
+   every other unresolved state on this card wears). Lives in the
+   `.finding-left` rail under the confidence, so it centres with the
+   badge above it and carries no inline margins of its own. `nowrap`
+   because the rail is narrow and "CONFIRMED" would otherwise break
+   across two lines inside its own outline. */
+.revalidate-stamp {
+  display: inline-block;
+  margin-top: .1rem;
+  font-size: .55rem; font-weight: 600; line-height: 1;
+  text-transform: uppercase; letter-spacing: .03em;
+  padding: .14rem .3rem; border-radius: 3px;
+  background: transparent;
+  color: var(--muted); border: 1px solid var(--border);
+  white-space: nowrap;
+
+  /* Red for a finding the pass left standing — the stamp says the
+     vulnerability is real, so it wears the severity colour rather
+     than a reassuring one. Yellow for a PARTIAL confirmation, which
+     is still a yes: narrowed, not knocked down, so it sits a step
+     below the red and well above the muted default the refuted and
+     unreachable stamps keep. */
+  &.confirmed { color: var(--critical); border-color: rgb(from var(--critical) r g b / .55); }
+  &.partial   { color: var(--yellow); border-color: rgb(from var(--yellow) r g b / .55); }
+  &.unknown   { color: var(--warning); border-color: rgb(from var(--warning) r g b / .55); }
 }
 
 /* `## Evidence` list from a claude-security import — one row per cited
@@ -203,9 +334,14 @@
    whole row hangs off one edge. */
 .evidence-list {
   margin: .25rem 0 0; padding-left: 1.6rem;
-  display: flex; flex-direction: column; gap: .4rem;
+  display: flex; flex-direction: column; gap: .15rem;
 
   & li::marker { color: var(--muted); font-size: .9em; }
+  /* Rows that are just a `file:line` reference read as one list and
+     are set tight. A row carrying a NOTE needs the air back: its note
+     wraps, and at the tight gap the last wrapped line runs straight
+     into the next reference. */
+  & li:has(.evidence-note):not(:last-child) { margin-bottom: .3rem; }
 }
 .evidence-ref {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -236,7 +372,8 @@ span.evidence-ref { color: var(--muted); }
 .desc-title a,
 .desc a,
 .section-body a,
-.conf-reason a {
+.conf-reason a,
+.revalidate-verdict a {
   color: var(--accent); text-decoration: none;
   &:hover { text-decoration: underline; }
 }
@@ -1000,6 +1137,10 @@ span.evidence-ref { color: var(--muted); }
     background: transparent !important; color: #555 !important; border-color: #999 !important;
   }
   .badge-varies { color: #555 !important; border-color: #999 !important; }
+  /* The verdict stamp keeps its outline on paper — the shape is what
+     carries it there — but drops the screen colour with everything
+     else in this block. */
+  .revalidate-stamp { color: #555 !important; border-color: #999 !important; }
   .badge-arrow, .badge-corr-mark, .badge-pre { color: #555 !important; }
   .severity-reason { color: #555 !important; }
   /* Strip on-screen link colors so a linked filename — or an inline
@@ -1007,7 +1148,21 @@ span.evidence-ref { color: var(--muted); }
      bare-text fallback. The body selectors repeat the on-screen rule's
      specificity so they lose to nothing here. */
   a, .line-num, .line-num a { color: inherit; }
-  .desc-title a, .desc a, .section-body a, .conf-reason a, .evidence-ref { color: inherit; }
+  .desc-title a, .desc a, .section-body a, .conf-reason a, .revalidate-verdict a, .evidence-ref { color: inherit; }
+
+  /* Evidence collapses on screen, but paper has no disclosure to
+     click: the citations print or they are lost. Both halves of the
+     rule are needed because engines hide a closed `<details>` two
+     different ways — the older one puts `display: none` on the
+     non-summary children, the current one hides the
+     `::details-content` box — and neither override touches the other.
+     The chevron goes with the interaction it stood for. */
+  .evidence:not([open]) > :not(summary) { display: block; }
+  .evidence::details-content { content-visibility: visible; }
+  summary.section-label {
+    cursor: auto;
+    &::after { display: none; }
+  }
 
   /* Inline `` `code` `` spans read as a chip on screen (1px border +
      tinted bg); on paper that chrome crowds dense prose and reads as

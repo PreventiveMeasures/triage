@@ -1,5 +1,5 @@
 import { getPackagesIndex, isReportIgnored, state } from '#client/index.js'
-import { SEVERITY_ORDER, displayedSeverity } from './format.js'
+import { SEVERITY_ORDER, displayedSeverity, isRevalidation } from './format.js'
 // NOTE: filters.js imports from this module too (primaryTab / tabKey).
 // The cycle is deliberate and benign: both sides only call across
 // inside function bodies, never during module evaluation, so whichever
@@ -30,9 +30,18 @@ export function isIgnored(f) {
   return isReportIgnored(state.triage, tabKey(f), findingReport(f))
 }
 
-// Tab sort order within a group: colored tabs first (drawing attention
-// to already-triaged cases), then higher severity, then higher
-// confidence. The first tab after sort is the group's "primary" — the
+// Tab sort order within a group: the revalidation row first, then
+// colored tabs (drawing attention to already-triaged cases), then
+// higher severity, then higher confidence.
+//
+// The revalidation row outranks every other key because it is not a
+// competing account of the finding — it is the pass that went back and
+// re-examined it, so a reader opening the group wants it whatever the
+// original rows claim for themselves. Several of them in one group
+// (a finding revalidated more than once) fall through to the keys
+// below and order among themselves as any other tabs would.
+//
+// The first tab after sort is the group's "primary" — the
 // representative for group-level sorting (file/severity/confidence
 // dropdowns) and the last-resort default active tab (the full
 // default-tab resolution — explicit pick, analyzer/model-filter match,
@@ -47,6 +56,9 @@ export function isIgnored(f) {
 export function sortTabs(group) {
   if (group.length <= 1) return group
   return [...group].toSorted((a, b) => {
+    const aRevalidation = isRevalidation(a) ? 1 : 0
+    const bRevalidation = isRevalidation(b) ? 1 : 0
+    if (aRevalidation !== bRevalidation) return bRevalidation - aRevalidation
     const aColored = state.triage.get(tabKey(a))?.color ? 1 : 0
     const bColored = state.triage.get(tabKey(b))?.color ? 1 : 0
     if (aColored !== bColored) return bColored - aColored

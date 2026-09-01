@@ -7,11 +7,11 @@ import { FILE_ICONS } from './file-display.js'
 import { listBundles, listWorkspaces, state } from '#client/index.js'
 import { isBundleInRemote, isInRemote, remoteCount, triageSync } from './client-sync.js'
 import { dropZone, report } from './dom.js'
-import { SEVERITIES, configureDepsDir, displayedSeverity, fileLink, findingDisplayName, formatRunMeta, hasSeverityCorrection, isHttpUrl, isModule, lineLink, prettyModel, stripExportMarker } from './format.js'
+import { SEVERITIES, configureDepsDir, displayedSeverity, fileLink, findingDisplayName, findingTitle, formatRunMeta, hasSeverityCorrection, isHttpUrl, isModule, lineLink, prettyModel, reachableRevalidateFilters, revalidateKind } from './format.js'
 import { activeTabFor, getMergedGroups, groupKey, groupState, primaryTab, tabKey } from './group.js'
 import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, applySorting, modelOfFinding, repoOfFinding } from './filters.js'
 import { ANALYZER_LABELS } from './analyzer-select.js'
-import { COMMENT_ICON, FIX_ICON, FLAG_ICON, badgeLabel, findingCardGid, firstLine } from './render-finding.js'
+import { COMMENT_ICON, FIX_ICON, FLAG_ICON, badgeLabel, findingCardGid } from './render-finding.js'
 import { computeFindingCountsByFile, computeTransitiveCounts, fileHasFindings, mergeReportsTree } from './file-counts.js'
 import { renderTreeView } from './render-files.js'
 import { graph2 } from './graph/state.js'
@@ -693,7 +693,7 @@ function triageFilterTemplate(colorCounts) {
 // so the host drops it in unconditionally.
 
 function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCounts, flags, analyzerSelect, repoOptions) {
-  const { showSource, showConfidence, showPriority, showGraphMode, showFileSort, kanbanMode, showRepo, hasComment, hasFix, hasFlagged, showSeverityMode } = flags
+  const { showSource, showConfidence, showPriority, showGraphMode, showFileSort, kanbanMode, showRepo, hasComment, hasFix, hasFlagged, showSeverityMode, revalidateOptions, hasPartialKind } = flags
   // The findings tab gains a "graph" view-mode option when a
   // tree-bearing report is loaded (showGraphMode). The focus and
   // kanban modes sit between grouped and graph. Switching to graph
@@ -721,7 +721,23 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
       ${hasComment || hasFix || hasFlagged || state.filterComment || state.filterFix || state.filterFlagged
         ? html`<div class="sep"></div><annotation-filter .hasComment=${hasComment} .hasFix=${hasFix} .hasFlagged=${hasFlagged}></annotation-filter>`
         : nothing}
-      ${showConfidence ? html`<div class="sep"></div><conf-filter></conf-filter>` : nothing}
+      <!-- Confidence range + the revalidation outcome, one block: the
+           outcome dropdown sits inside it and REPLACES the range when
+           picked (see conf-filter.js). Shown when there is either a
+           confidence to range over or an outcome to offer — an
+           unscored finding blocks the range but leaves the dropdown
+           perfectly usable, so in that case the range comes up
+           DISABLED rather than the block being dropped and the
+           revalidation filter with it. The reachable options come from
+           the scan above, so the dropdown can't list one that filters
+           to nothing. -->
+      ${showConfidence || revalidateOptions.length > 0
+        ? html`<div class="sep"></div><conf-filter
+            ?range-disabled=${!showConfidence}
+            .revalidateOptions=${revalidateOptions}
+            ?has-partial=${hasPartialKind}
+          ></conf-filter>`
+        : nothing}
       ${kanbanMode ? nothing : html`<triage-selector .counts=${triageCounts}></triage-selector>`}
     </div>
     <!-- Filter row: severity chips + mark-color triage pill + search
@@ -901,7 +917,7 @@ function kanbanCardTemplate(g, opts = {}) {
   const { variant = 'kanban', active = false } = opts
   const groupSt = groupState(g)
   const activeTab = activeTabFor(g)
-  const title = firstLine(stripExportMarker(activeTab.description, activeTab)) || '(untitled finding)'
+  const title = findingTitle(activeTab) || '(untitled finding)'
   const isKanban = variant === 'kanban'
   const classes = {
     'kanban-card': true,
@@ -1651,9 +1667,18 @@ function renderImpl() {
   // early-continue since a correction is report data, independent of any
   // triage entry.
   let hasCorrectedSeverity = false
+  // …and which values of `revalidate` are present at all, which decide
+  // the outcomes the <revalidate-filter> can offer (one option covers
+  // more than one value — see REVALIDATE_FILTERS). The toolbar drops
+  // the control when nothing reaches an option, so the dropdown never
+  // lists one that filters to nothing. Scanned over the full loaded
+  // set, like the flags above.
+  const revalidateKinds = new Set()
   for (const g of mergedGroups) {
     for (const f of g) {
       if (hasSeverityCorrection(f)) hasCorrectedSeverity = true
+      const kind = revalidateKind(f)
+      if (kind) revalidateKinds.add(kind)
       const e = state.triage.get(tabKey(f))
       if (!e) continue
       if (e.comment) hasComment = true
@@ -1825,6 +1850,20 @@ function renderImpl() {
     const want = state.filterRepo === NO_REPO_SENTINEL ? null : state.filterRepo
     if (!repoSet.has(want)) state.filterRepo = ''
   }
+  // Same for a revalidation outcome the loaded set no longer reaches —
+  // a report unloaded out from under the selection would otherwise
+  // filter every finding away with no visible cause.
+  const revalidateOptions = reachableRevalidateFilters(revalidateKinds)
+  if (state.filterRevalidate && !revalidateOptions.some((o) => o.value === state.filterRevalidate)) {
+    state.filterRevalidate = ''
+  }
+  // The partial switch rides inside the Confirmed option (see
+  // revalidate-filter.js), so it's offered only where there are
+  // partial rows to sort — and a mode left set from a report that had
+  // them is cleared here, or it would keep narrowing Confirmed with no
+  // control on screen to say so.
+  const hasPartialKind = revalidateKinds.has('partial')
+  if (!hasPartialKind) state.filterPartial = ''
   // If a previously-loaded report had node_modules and the user
   // narrowed the source filter, switching to a report without any
   // node_modules paths would leave the filter at 'own' or 'modules'
@@ -1970,6 +2009,8 @@ function renderImpl() {
       // from narrowing to a single repo.
       showRepo: !!state.currentWorkspace,
       hasComment,
+      revalidateOptions,
+      hasPartialKind,
       hasFix,
       hasFlagged,
       // Corrected/Original lens switch — shown only when a correction
