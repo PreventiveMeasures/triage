@@ -5,9 +5,9 @@
 //
 //   * the row that IS the pass (`revalidate: 'revalidation'`) leads its
 //     group, outranking every other tab-sort key;
-//   * a REFUTED row's confidence reads as 0 for the confidence filter,
-//     so it can't float its group over a floor the surviving rows
-//     can't meet;
+//   * a row the pass knocked down — refuted or unreachable — reads as
+//     confidence 0, so it can't float its group over a floor the
+//     surviving rows can't meet;
 //   * the toolbar's outcome filter matches per finding and group-wide
 //     like every other filter, with the revalidation row riding
 //     CONFIRMED.
@@ -36,8 +36,8 @@ const { state } = await import('../client/state.ts')
 const { applyFilters, matchesFilters } = await import('../ui/view/filters.js')
 const { sortTabs } = await import('../ui/view/group.js')
 const {
-  REVALIDATE_FILTERS, REVALIDATE_KINDS, isRefuted, isRevalidation,
-  reachableRevalidateFilters, revalidateKind, revalidateStamp,
+  REVALIDATE_FILTERS, REVALIDATE_KINDS, isRevalidation,
+  reachableRevalidateFilters, revalidateKind, revalidateStamp, voidsConfidence,
 } = await import('../ui/view/format.js')
 
 // Neutralise every other filter so each assertion isolates the
@@ -68,7 +68,7 @@ function makeFinding(id, extra = {}) {
 }
 
 describe('revalidateKind — reading the field', () => {
-  it('takes the four known values, case-folded and trimmed', () => {
+  it('takes every known value, case-folded and trimmed', () => {
     for (const kind of REVALIDATE_KINDS) {
       assert.equal(revalidateKind({ revalidate: kind }), kind)
       assert.equal(revalidateKind({ revalidate: `  ${kind.toUpperCase()} ` }), kind)
@@ -83,10 +83,10 @@ describe('revalidateKind — reading the field', () => {
     assert.equal(revalidateKind(undefined), '')
   })
 
-  it('stamps only the three verdicts — the pass itself is not one', () => {
-    assert.equal(revalidateStamp({ revalidate: 'refuted' }), 'refuted')
-    assert.equal(revalidateStamp({ revalidate: 'confirmed' }), 'confirmed')
-    assert.equal(revalidateStamp({ revalidate: 'unknown' }), 'unknown')
+  it('stamps every verdict — the pass itself is not one', () => {
+    for (const verdict of ['refuted', 'unreachable', 'confirmed', 'unknown']) {
+      assert.equal(revalidateStamp({ revalidate: verdict }), verdict)
+    }
     assert.equal(revalidateStamp({ revalidate: 'revalidation' }), null)
     assert.equal(revalidateStamp({ revalidate: 'nonsense' }), null)
     assert.equal(revalidateStamp({}), null)
@@ -95,9 +95,13 @@ describe('revalidateKind — reading the field', () => {
   it('separates the two predicates the rest of the app keys off', () => {
     assert.equal(isRevalidation({ revalidate: 'revalidation' }), true)
     assert.equal(isRevalidation({ revalidate: 'refuted' }), false)
-    assert.equal(isRefuted({ revalidate: 'refuted' }), true)
-    assert.equal(isRefuted({ revalidate: 'revalidation' }), false)
-    assert.equal(isRefuted({}), false)
+    // Knocked down either way — refuted, or unreachable.
+    assert.equal(voidsConfidence({ revalidate: 'refuted' }), true)
+    assert.equal(voidsConfidence({ revalidate: 'unreachable' }), true)
+    for (const kind of ['revalidation', 'confirmed', 'unknown', 'nonsense', undefined]) {
+      assert.equal(voidsConfidence({ revalidate: kind }), false, String(kind))
+    }
+    assert.equal(voidsConfidence({}), false)
   })
 })
 
@@ -120,7 +124,7 @@ describe('sortTabs — the revalidation row leads its group', () => {
 
   it('does not promote a verdict row — only the pass itself leads', () => {
     const crit = makeFinding('A', { severity: 'critical' })
-    for (const verdict of ['refuted', 'confirmed', 'unknown']) {
+    for (const verdict of ['refuted', 'unreachable', 'confirmed', 'unknown']) {
       const row = makeFinding('B', { severity: 'low', revalidate: verdict })
       assert.deepEqual(sortTabs([crit, row]).map((f) => f.id), ['A', 'B'], verdict)
     }
@@ -137,7 +141,7 @@ describe('sortTabs — the revalidation row leads its group', () => {
 // A group shows in full when any of its rows matches, so a refuted
 // row's confidence would otherwise carry the whole group over a floor
 // its surviving rows can't reach.
-describe('confidence filter — a refuted row reads as 0', () => {
+describe('confidence filter — a knocked-down row reads as 0', () => {
   beforeEach(reset)
 
   const shows = (group, min) => {
@@ -145,21 +149,23 @@ describe('confidence filter — a refuted row reads as 0', () => {
     return applyFilters([group]).length === 1
   }
 
-  it('the group behaves as its highest NON-refuted confidence', () => {
-    const group = [
-      makeFinding('A', { confidence: 3 }),
-      makeFinding('B', { confidence: 10, revalidate: 'refuted' }),
-    ]
-    assert.equal(shows(group, 0), true)
-    assert.equal(shows(group, 3), true)
-    assert.equal(shows(group, 4), false)
-    assert.equal(shows(group, 10), false)
+  it('the group behaves as its highest surviving confidence', () => {
+    for (const knocked of ['refuted', 'unreachable']) {
+      const group = [
+        makeFinding('A', { confidence: 3 }),
+        makeFinding('B', { confidence: 10, revalidate: knocked }),
+      ]
+      assert.equal(shows(group, 0), true, knocked)
+      assert.equal(shows(group, 3), true, knocked)
+      assert.equal(shows(group, 4), false, knocked)
+      assert.equal(shows(group, 10), false, knocked)
+    }
   })
 
-  it('an all-refuted group shows only at the unfiltered floor', () => {
+  it('an all-knocked-down group shows only at the unfiltered floor', () => {
     const group = [
       makeFinding('A', { confidence: 3, revalidate: 'refuted' }),
-      makeFinding('B', { confidence: 10, revalidate: 'refuted' }),
+      makeFinding('B', { confidence: 10, revalidate: 'unreachable' }),
     ]
     assert.equal(shows(group, 0), true)
     assert.equal(shows(group, 1), false)
@@ -173,37 +179,45 @@ describe('confidence filter — a refuted row reads as 0', () => {
     }
   })
 
-  it('does not let a refuted row ride the critical-flag stand-in', () => {
+  it('does not let a knocked-down row ride the critical-flag stand-in', () => {
     // `critical: true` with no confidence normally joins the 10 bucket.
-    const refuted = makeFinding('A', { critical: true, revalidate: 'refuted' })
-    const plain = makeFinding('B', { critical: true })
     state.filterConfMin = 5
-    assert.equal(matchesFilters(refuted), false)
-    assert.equal(matchesFilters(plain), true)
+    assert.equal(matchesFilters(makeFinding('A', { critical: true, revalidate: 'refuted' })), false)
+    assert.equal(matchesFilters(makeFinding('B', { critical: true, revalidate: 'unreachable' })), false)
+    assert.equal(matchesFilters(makeFinding('C', { critical: true })), true)
   })
 
-  it('never caps a refuted row out at the top of the range', () => {
+  it('never caps a knocked-down row out at the top of the range', () => {
     // Reading as 0 means the upper bound can't exclude it either.
     state.filterConfMax = 2
     assert.equal(matchesFilters(makeFinding('A', { confidence: 10, revalidate: 'refuted' })), true)
-    assert.equal(matchesFilters(makeFinding('B', { confidence: 10 })), false)
+    assert.equal(matchesFilters(makeFinding('B', { confidence: 10, revalidate: 'unreachable' })), true)
+    assert.equal(matchesFilters(makeFinding('C', { confidence: 10 })), false)
   })
 })
 
 describe('revalidate filter — the toolbar dropdown', () => {
   beforeEach(reset)
 
-  it('offers two outcomes, confirmed first', () => {
-    assert.deepEqual(REVALIDATE_FILTERS.map((o) => o.value), ['confirmed', 'refuted'])
-    assert.deepEqual(REVALIDATE_FILTERS.map((o) => o.label), ['Confirmed', 'Refuted'])
+  it('offers the outcomes from survived to knocked down', () => {
+    assert.deepEqual(REVALIDATE_FILTERS.map((o) => o.value), ['confirmed', 'unreachable', 'refuted'])
+    assert.deepEqual(REVALIDATE_FILTERS.map((o) => o.label), ['Confirmed', 'Unreachable', 'Refuted'])
   })
 
   it('matches the selected outcome and nothing else', () => {
     state.filterRevalidate = 'refuted'
     assert.equal(matchesFilters(makeFinding('A', { revalidate: 'refuted' })), true)
     assert.equal(matchesFilters(makeFinding('B', { revalidate: 'confirmed' })), false)
-    assert.equal(matchesFilters(makeFinding('C', { revalidate: 'unknown' })), false)
-    assert.equal(matchesFilters(makeFinding('D')), false)
+    assert.equal(matchesFilters(makeFinding('C', { revalidate: 'unreachable' })), false)
+    assert.equal(matchesFilters(makeFinding('D', { revalidate: 'unknown' })), false)
+    assert.equal(matchesFilters(makeFinding('E')), false)
+  })
+
+  it('keeps unreachable to its own option', () => {
+    state.filterRevalidate = 'unreachable'
+    assert.equal(matchesFilters(makeFinding('A', { revalidate: 'unreachable' })), true)
+    assert.equal(matchesFilters(makeFinding('B', { revalidate: 'refuted' })), false)
+    assert.equal(matchesFilters(makeFinding('C', { revalidate: 'confirmed' })), false)
   })
 
   it('takes the revalidation row under Confirmed', () => {
@@ -211,7 +225,8 @@ describe('revalidate filter — the toolbar dropdown', () => {
     assert.equal(matchesFilters(makeFinding('A', { revalidate: 'confirmed' })), true)
     assert.equal(matchesFilters(makeFinding('B', { revalidate: 'revalidation' })), true)
     assert.equal(matchesFilters(makeFinding('C', { revalidate: 'refuted' })), false)
-    assert.equal(matchesFilters(makeFinding('D', { revalidate: 'unknown' })), false)
+    assert.equal(matchesFilters(makeFinding('D', { revalidate: 'unreachable' })), false)
+    assert.equal(matchesFilters(makeFinding('E', { revalidate: 'unknown' })), false)
   })
 
   it('keeps the whole group when any of its rows matches', () => {
@@ -244,7 +259,7 @@ describe('revalidate filter — the toolbar dropdown', () => {
 
   it('is off when empty', () => {
     state.filterRevalidate = ''
-    for (const revalidate of [undefined, 'refuted', 'confirmed', 'unknown', 'revalidation']) {
+    for (const revalidate of [undefined, 'refuted', 'unreachable', 'confirmed', 'unknown', 'revalidation']) {
       assert.equal(matchesFilters(makeFinding('A', { revalidate })), true, String(revalidate))
     }
   })
@@ -253,10 +268,11 @@ describe('revalidate filter — the toolbar dropdown', () => {
   // pass that only ever answered `unknown` shows no dropdown at all.
   it('reaches an outcome only from the kinds that feed it', () => {
     const values = (kinds) => reachableRevalidateFilters(kinds).map((o) => o.value)
-    assert.deepEqual(values(['confirmed', 'refuted', 'revalidation', 'unknown']), ['confirmed', 'refuted'])
+    assert.deepEqual(values(REVALIDATE_KINDS), ['confirmed', 'unreachable', 'refuted'])
     assert.deepEqual(values(['revalidation']), ['confirmed'])
     assert.deepEqual(values(['confirmed']), ['confirmed'])
     assert.deepEqual(values(['refuted']), ['refuted'])
+    assert.deepEqual(values(['unreachable']), ['unreachable'])
     assert.deepEqual(values(['unknown']), [])
     assert.deepEqual(values([]), [])
   })

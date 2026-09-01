@@ -1,5 +1,5 @@
 import { state } from '#client/index.js'
-import { SEVERITY_ORDER, displayedSeverity, findingText, isModule, isRefuted, prettyModel, revalidateFilterKinds, revalidateKind } from './format.js'
+import { SEVERITY_ORDER, displayedSeverity, findingText, isModule, prettyModel, revalidateFilterKinds, revalidateKind, voidsConfidence } from './format.js'
 import { primaryTab, tabKey } from './group.js'
 
 // Stand-in for the "no analyzer" bucket in the analyzer dropdown.
@@ -187,18 +187,18 @@ export function matchesFilters(f) {
   //   * upper at 10 → no upper cap; lets rare confidence > 10 entries
   //     through. Below 10 caps strictly — including the
   //     critical-flagged stand-ins, whose effective value is 10.
-  //   * a REFUTED row reads as 0 whatever number it carries. The
-  //     revalidation pass says the finding isn't real, so its
-  //     confidence is not the group's to claim: a group shows in full
-  //     when any tab matches, and without this a refuted 10 would
+  //   * a row the pass KNOCKED DOWN — refuted, or unreachable — reads
+  //     as 0 whatever number it carries (format.js voidsConfidence).
+  //     Its confidence is not the group's to claim: a group shows in
+  //     full when any tab matches, and without this a refuted 10 would
   //     float the whole group over a floor its surviving rows can't
   //     meet. Reading as 0 leaves it matching only the unfiltered
   //     floor — so `[{plain 3}, {refuted 10}]` behaves as a 3, and
-  //     `[{refuted 3}, {refuted 10}]` shows only at 0. A refuted row
+  //     `[{refuted 3}, {refuted 10}]` shows only at 0. Such a row
   //     flagged `critical` doesn't ride the 10 bucket either, for the
   //     same reason.
   if (!state.filterRevalidate) {
-    const conf = isRefuted(f) ? 0 : f.confidence
+    const conf = voidsConfidence(f) ? 0 : f.confidence
     if (conf === undefined) {
       if (f.critical === true) {
         if (state.filterConfMax < 10) return false

@@ -46,7 +46,11 @@ class RevalidateFilter extends StateElement {
       .value=${live(state.filterRevalidate)}
       @change=${this._onChange}
     >
-      <option value="" title="No revalidation filter">-</option>
+      <!-- The clear entry shows a dash only when there is something to
+           clear. Idle it is the SELECTED option, and a native select
+           paints its selected option's text: labelling it there would
+           print a dash in a control that is otherwise just its arrow. -->
+      <option value="" title="No revalidation filter">${state.filterRevalidate ? '-' : ''}</option>
       ${this.options.map((o) => html`<option value=${o.value}>${o.label}</option>`)}
     </select>`
   }

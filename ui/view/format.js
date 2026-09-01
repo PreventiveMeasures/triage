@@ -107,7 +107,7 @@ export function correctedVariants(f) {
 // generator wrote, and an unrecognised one answers "no stamp" rather
 // than leaking into a display.
 // Every value the field can carry.
-export const REVALIDATE_KINDS = ['revalidation', 'refuted', 'confirmed', 'unknown']
+export const REVALIDATE_KINDS = ['revalidation', 'refuted', 'unreachable', 'confirmed', 'unknown']
 const REVALIDATE_SET = new Set(REVALIDATE_KINDS)
 
 // The row's revalidation outcome, case-folded, or '' when it carries
@@ -130,24 +130,31 @@ export function isRevalidation(f) {
   return revalidateKind(f) === 'revalidation'
 }
 
-// Refuted rows are held out of the confidence filter (see
-// filters.js) — the one place a verdict changes more than a display.
-export function isRefuted(f) {
-  return revalidateKind(f) === 'refuted'
+// The verdicts that VOID a row's confidence for the range filter — the
+// one place a verdict changes more than a display (see filters.js).
+// Both say the finding isn't a finding: `refuted` that it doesn't
+// hold, `unreachable` that nothing can get to the code it's in. A
+// number attached to either is a claim the pass withdrew, so the
+// filter reads it as 0 rather than letting it speak for the group.
+const CONFIDENCE_VOIDING = new Set(['refuted', 'unreachable'])
+
+export function voidsConfidence(f) {
+  return CONFIDENCE_VOIDING.has(revalidateKind(f))
 }
 
-// What the toolbar dropdown offers, in the order it lists them. Two
-// outcomes rather than four kinds: the reader is asking "did the pass
-// leave this standing or knock it down", and
+// What the toolbar dropdown offers, in the order it lists them —
+// answers to "did the pass leave this standing", running from yes to
+// no. Fewer options than the field has values:
 //
 //   * the `revalidation` row rides CONFIRMED — it is the pass itself,
-//     re-examining a finding it did not refute, which is the same
+//     re-examining a finding it did not knock down, which is the same
 //     answer to that question;
 //   * `unknown` gets no option — a pass that couldn't tell hasn't
 //     answered it at all, so there is nothing to filter to. Those rows
 //     stay visible with no filter on, like every other row.
 export const REVALIDATE_FILTERS = [
   { value: 'confirmed', label: 'Confirmed', kinds: ['confirmed', 'revalidation'] },
+  { value: 'unreachable', label: 'Unreachable', kinds: ['unreachable'] },
   { value: 'refuted', label: 'Refuted', kinds: ['refuted'] },
 ]
 

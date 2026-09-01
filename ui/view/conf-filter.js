@@ -28,11 +28,18 @@
 // The block also carries the revalidation-outcome dropdown, when the
 // loaded set reaches one (`<revalidate-filter>`, options resolved by
 // the parent). The two are one control in two modes, not two filters:
-// picking an outcome REPLACES the range, which goes inert and reads as
-// 0—10 (filters.js skips the confidence branch entirely while an
-// outcome is selected). The range keeps its numbers rather than being
-// reset, so clearing the outcome hands the user back the range they
-// had set.
+// picking an outcome REPLACES the range — label and slider give up
+// the block and the outcome takes their place, reading from the left
+// edge where the label was — and the range reads as 0—10 (filters.js
+// skips the confidence branch entirely while an outcome is selected).
+// The range keeps its numbers rather than being reset, so clearing the
+// outcome hands the user back the range they had set.
+//
+// "Replaced" is `visibility`, not `display`: the slider still occupies
+// its box, so the block is exactly as wide either way and the toolbar
+// row doesn't reflow around a filter being switched between its two
+// modes. The outcome then spans that reserved space (positioned in
+// toolbar.css), which is also what left-aligns it.
 //
 // Mounted when the parent has confidence to show OR an outcome to
 // offer (some reports surface neither); `show-range` says which of the
@@ -60,14 +67,15 @@ class ConfFilter extends StateElement {
   render() {
     const low = state.filterConfMin
     const high = state.filterConfMax
-    // `inert` is the visual half of "replaced": dimmed, and unreachable
-    // by pointer or keyboard, so the thumbs can't be dragged to a range
-    // that wouldn't apply. The filtering half is in filters.js.
-    const inert = Boolean(state.filterRevalidate)
     const outcomes = this.revalidateOptions ?? []
-    return html`<span class="conf-range-label">${this.showRange ? 'Confidence' : 'Revalidation'}</span>
+    // Only a block that HAS a range can have it replaced; without one
+    // the dropdown is the whole control and simply follows its label.
+    const replaced = this.showRange && Boolean(state.filterRevalidate)
+    return html`<span class=${classMap({ 'conf-range-label': true, replaced })}>
+        ${this.showRange ? 'Confidence' : 'Revalidation'}
+      </span>
       ${this.showRange
-        ? html`<span class=${classMap({ 'conf-range': true, inert })} ?inert=${inert}>
+        ? html`<span class=${classMap({ 'conf-range': true, replaced })}>
             <range-slider
               id="conf-range" min="0" max="10" step="1"
               low=${low}
@@ -84,7 +92,7 @@ class ConfFilter extends StateElement {
           </span>`
         : nothing}
       ${outcomes.length > 0
-        ? html`<revalidate-filter .options=${outcomes}></revalidate-filter>`
+        ? html`<revalidate-filter class=${classMap({ replaces: replaced })} .options=${outcomes}></revalidate-filter>`
         : nothing}`
   }
 }

@@ -141,6 +141,7 @@
      wrapping div) — the `<conf-filter>` host element IS the layout
      container; no separate wrapper needed. */
   & conf-filter {
+    position: relative;
     display: inline-flex; align-items: center;
     height: 30px; box-sizing: border-box;
     padding: 0 .55rem;
@@ -158,26 +159,32 @@
     & range-slider { margin: 0; }
 
     /* Slider + read-out travel together, so the outcome dropdown can
-       dim the pair as one when it replaces them. `inert` (the
-       attribute, set alongside this class) already takes them out of
-       reach of pointer and keyboard; the opacity is what says so. */
+       take the pair's place as one when it replaces them. `visibility`
+       rather than `display`: the pair keeps its box, so the block is
+       exactly as wide in either mode and the toolbar row doesn't
+       reflow when the filter is switched between them. Hidden also
+       means unreachable by pointer and keyboard, so the thumbs can't
+       be dragged to a range that wouldn't apply. */
     & .conf-range {
       display: inline-flex; align-items: center; gap: .5rem;
-      transition: opacity .12s;
-
-      &.inert { opacity: .4; }
     }
+    & :is(.conf-range, .conf-range-label).replaced { visibility: hidden; }
 
     /* The outcome dropdown reads as one arrow-down on the end of the
        block rather than a second control: no border of its own (the
-       block's is right there), and sized to its content so an
-       unselected "-" is barely wider than the chevron the shared
-       `:is(repo-filter, …)` rule paints. */
+       block's is right there), and a fixed ARROW SLOT wide — just the
+       chevron the shared `:is(repo-filter, …)` rule paints, with the
+       select transparent behind it. The slot is the same width in both
+       modes, which is what keeps the block from changing width when an
+       outcome replaces the range: the value it then shows is drawn out
+       of flow, over the space the hidden label + slider still hold. */
     & revalidate-filter {
       position: relative;
       display: inline-flex; align-items: center;
+      flex: none; width: 1.4rem;
 
       & .sort-select {
+        width: 100%;
         border: 0;
         height: auto;
         min-width: 0;
@@ -185,18 +192,33 @@
         font-size: .72rem;
         color: var(--muted);
         cursor: pointer;
-        /* Sized to the SELECTED option, not the widest one, so an
-           unselected "-" collapses to about the width of the chevron
-           and the control reads as a single arrow on the end of the
-           block. Where `field-sizing` isn't supported the select falls
-           back to its intrinsic width — the same control, just wider
-           when idle. */
-        field-sizing: content;
 
         &:hover { color: var(--text); }
       }
 
       &::after { right: .25rem; }
+
+      /* Replacing the range: the select spans the block instead of its
+         slot, which is what puts the value at the block's left edge —
+         where the reader's eye already is, and where the label it
+         replaced began. `position: static` on the host is what hands
+         that job to the select: with the host unpositioned, both the
+         select and the chevron anchor to the block itself, so the
+         chevron keeps the exact place it sits in when idle
+         (.55rem block padding + .25rem = .8rem). */
+      &.replaces {
+        position: static;
+
+        & .sort-select {
+          position: absolute;
+          inset: 0 .55rem;
+          width: auto;
+          padding-left: 0;
+          color: var(--text);
+        }
+
+        &::after { right: .8rem; }
+      }
     }
   }
 
