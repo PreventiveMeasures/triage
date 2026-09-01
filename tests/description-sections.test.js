@@ -304,6 +304,78 @@ describe('codeBlockSegments', () => {
   })
 })
 
+// A snippet written under a numbered step is INDENTED, to the column
+// of the step's text — that indentation is the list's, not the code's.
+// Two things follow, and both used to be wrong: the fence has to be
+// recognized where the item puts it (a step past the ninth, or a
+// nested bullet, pushes it past the three spaces a top-level fence is
+// allowed), and the block's content has to shed it, or the snippet
+// renders shifted right inside its `<pre>` with the step number's
+// whitespace baked into every line the reader copies out.
+describe('codeBlockSegments — a block inside a list item', () => {
+  it('sheds the item indentation from the code', () => {
+    assert.deepEqual(
+      codeBlockSegments('1. Foo\n2. Bar.\n   ```js\n   http.request({}, cb)\n   ```\n3. Buz'),
+      ['1. Foo\n2. Bar.', { lang: 'js', code: 'http.request({}, cb)' }, '3. Buz'],
+    )
+  })
+
+  it("keeps the code's OWN relative indentation", () => {
+    assert.deepEqual(
+      codeBlockSegments('1. Step\n   ```js\n   if (a) {\n     b()\n   }\n   ```'),
+      ['1. Step', { lang: 'js', code: 'if (a) {\n  b()\n}' }],
+    )
+  })
+
+  // Three spaces is all a TOP-LEVEL fence gets, so the item's own
+  // column has to be tracked: `10.` puts its text at four, and a
+  // nested bullet further still.
+  it('finds a fence past the third column when the list put it there', () => {
+    assert.deepEqual(
+      codeBlockSegments('10. Bar.\n    ```js\n    x()\n    ```\n11. Buz'),
+      ['10. Bar.', { lang: 'js', code: 'x()' }, '11. Buz'],
+    )
+    assert.deepEqual(
+      codeBlockSegments('1. Outer\n   - Inner\n     ```js\n     deep()\n     ```\n2. Next'),
+      ['1. Outer\n   - Inner', { lang: 'js', code: 'deep()' }, '2. Next'],
+    )
+  })
+
+  it('takes a bullet item, and a dangling fence inside one', () => {
+    assert.deepEqual(
+      codeBlockSegments('- Bar.\n  ```js\n  const a = 1\n  ```'),
+      ['- Bar.', { lang: 'js', code: 'const a = 1' }],
+    )
+    assert.deepEqual(
+      codeBlockSegments('1. Step\n   ```js\n   oops()'),
+      ['1. Step', { lang: 'js', code: 'oops()' }],
+    )
+  })
+
+  // The reason the item's column is tracked rather than the limit
+  // simply widened: past it, a block is INDENTED CODE inside the item
+  // and its ``` lines are content — markdown's own reading, and the
+  // one the parsers have always given a four-space block at top level.
+  it('leaves an over-indented block as the indented code it is', () => {
+    const inItem = '1. Step\n\n       ```\n       literal\n       ```\n'
+    assert.deepEqual(codeBlockSegments(inItem), [inItem])
+    const topLevel = 'Text:\n\n    ```\n    literal\n    ```\n'
+    assert.deepEqual(codeBlockSegments(topLevel), [topLevel])
+  })
+
+  it('stops allowing the wider indent once the list is over', () => {
+    const text = '1. Step\n\nBack at top level.\n\n    ```\n    literal\n    ```\n'
+    assert.deepEqual(codeBlockSegments(text), [text])
+  })
+
+  it('still requires the closing fence to match the opening marker', () => {
+    assert.deepEqual(
+      codeBlockSegments('1. Step\n   ```js\n   ~~~\n   x()\n   ```'),
+      ['1. Step', { lang: 'js', code: '~~~\nx()' }],
+    )
+  })
+})
+
 // A report may name the finding outright in a `title` field. The
 // formats that don't have one put the name in the description's first
 // line, so that's the fallback — and the split that follows has to

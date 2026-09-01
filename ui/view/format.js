@@ -665,8 +665,18 @@ export function descriptionSections(body) {
 // Pairing is `fenceRanges`' (common/md-structure.js), the same reading
 // the parsers use — so what a parser treated as code is what the card
 // draws as code, an unclosed fence running to end of input included.
-const FENCE_LINE_RE = /^ {0,3}(`{3,}|~{3,})(.*)$/u
+const FENCE_LINE_RE = /^( *)(`{3,}|~{3,})(.*)$/u
 const LANG_TAG_RE = /^[a-z0-9+#._-]{1,20}$/u
+
+// Up to `n` leading spaces off a line — the shed markdown gives a
+// fenced block's content, which is "up to" rather than "exactly"
+// because a line may start left of its own fence (a blank-ish line
+// padded with fewer spaces) and there is nothing there to remove.
+function shedIndent(line, n) {
+  let i = 0
+  while (i < n && line[i] === ' ') i++
+  return line.slice(i)
+}
 
 function fencedBlock(raw) {
   const lines = raw.split('\n')
@@ -674,17 +684,26 @@ function fencedBlock(raw) {
   // match is there; the `?.` keeps this readable rather than resting
   // the whole function on that.
   const open = FENCE_LINE_RE.exec(lines[0])
-  const marker = (open?.[1] ?? '```').slice(0, 3)
-  const tag = (open?.[2] ?? '').trim().split(/\s+/u)[0].toLowerCase()
+  const marker = (open?.[2] ?? '```').slice(0, 3)
+  const tag = (open?.[3] ?? '').trim().split(/\s+/u)[0].toLowerCase()
   // The last line is the CLOSING fence unless the block dangles at end
   // of input — and a dangling one can still end on a fence line of the
   // other marker (a ``` inside a ~~~ block is content), so the marker
   // has to match for the line to be chrome rather than code.
   const close = lines.length > 1 ? FENCE_LINE_RE.exec(lines.at(-1)) : null
-  const closed = Boolean(close?.[1].startsWith(marker))
+  const closed = Boolean(close?.[2].startsWith(marker))
+  // A block written under a list item is indented to that item's text,
+  // and that indentation belongs to the LIST, not to the snippet:
+  // markdown sheds the opening fence's indent from every line of the
+  // content, and so must we. Kept as written otherwise the `<pre>`
+  // prints the whole snippet shifted right, its own relative
+  // indentation buried under the step number's, and copying a line out
+  // of it pastes the list's whitespace along with the code.
+  const indent = open?.[1].length ?? 0
+  const body = lines.slice(1, closed ? -1 : undefined)
   return {
     lang: LANG_TAG_RE.test(tag) ? tag : '',
-    code: lines.slice(1, closed ? -1 : undefined).join('\n'),
+    code: (indent > 0 ? body.map((l) => shedIndent(l, indent)) : body).join('\n'),
   }
 }
 
