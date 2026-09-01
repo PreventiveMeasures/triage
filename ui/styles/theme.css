@@ -62,6 +62,25 @@
      unambiguously as "info". */
   --info: #218bff;
   --surface-active: #262626;
+  /* Prism syntax palette — the colours the token spans wear inside a
+     highlighted snippet: the bundle source viewer, the focus view's
+     Code panel, and the fenced code blocks in finding descriptions.
+     One-dark / dracula vein, tuned for the dark surfaces. It lives
+     here rather than beside the token rules (styles/report.css)
+     because the code blocks render in the finding-card SHADOW root,
+     which a light-DOM rule can't reach — custom properties inherit
+     across the boundary, so both trees read the same palette. The
+     light-background themes retune it: these are pastels, and a
+     pastel on a white page clears 2.5:1 at best. */
+  --code-comment: #6b7c93;
+  --code-string: #98c379;
+  --code-number: #d19a66;
+  --code-keyword: #c678dd;
+  --code-function: #61afef;
+  --code-operator: #56b6c2;
+  --code-variable: #e06c75;
+  --code-deleted: #ef596f;
+  --code-inserted: #98c379;
   /* Matte = no saturate boost (avoids the "glossy" punched-up look) */
   --glass-blur: blur(10px);
   /* Top-left blob — switched from accent blue to a soft violet so it
@@ -155,6 +174,18 @@ body.theme-light {
   --bug: #6b5e52;
   --info: #218bff;
   --surface-active: #ddf4ff;
+  /* Syntax palette darkened for a white page — the :root pastels
+     wash out on it (see the note there). GitHub's light syntax
+     colours: every one clears 4.5:1 on `--bg`. */
+  --code-comment: #6e7781;
+  --code-string: #0a3069;
+  --code-number: #0550ae;
+  --code-keyword: #cf222e;
+  --code-function: #8250df;
+  --code-operator: #0550ae;
+  --code-variable: #953800;
+  --code-deleted: #82071e;
+  --code-inserted: #116329;
   --gradient-stop-a: rgb(124 58 237 / .10);
   --gradient-stop-b: rgb(207 34 46 / .06);
   --gradient-stop-c: rgb(26 127 55 / .05);
@@ -262,6 +293,17 @@ body.theme-pink {
   --bug: #8c5e6c;
   --info: #218bff;
   --surface-active: #ffd1e8;
+  /* Same reason as `body.theme-light`: the :root syntax pastels are
+     unreadable on a pale page, so the darkened set is used here too. */
+  --code-comment: #6e7781;
+  --code-string: #0a3069;
+  --code-number: #0550ae;
+  --code-keyword: #cf222e;
+  --code-function: #8250df;
+  --code-operator: #0550ae;
+  --code-variable: #953800;
+  --code-deleted: #82071e;
+  --code-inserted: #116329;
   --gradient-stop-a: rgb(255 105 180 / .14);
   --gradient-stop-b: rgb(255 20 147 / .08);
   --gradient-stop-c: rgb(255 192 203 / .06);

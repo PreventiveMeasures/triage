@@ -2356,89 +2356,55 @@ body.report-fullscreen {
   & code { font: inherit; background: transparent; padding: 0; }
 }
 
-/* Prism token theme — minimal palette tuned to the dark surface,
-   in the one-dark / dracula vein. Prism stamps `<span class="token
-   X Y">` where X is the primary kind (keyword / string / …) and Y
-   an optional sub-modifier; we target X only (the kind alone gives
-   enough signal). Shared between the bundle source viewer modal
-   (`.bundle-source-code`) and the focus view's inline Code panel
-   (`.focus-code-source`). */
-.bundle-source-code .token.comment,
-.bundle-source-code .token.prolog,
-.bundle-source-code .token.cdata,
-.focus-code-source .token.comment,
-.focus-code-source .token.prolog,
-.focus-code-source .token.cdata {
-  color: #6b7c93; font-style: italic;
+/* Prism token theme. The palette is theme.css's `--code-*` custom
+   properties rather than literals: the same colours have to reach the
+   copy of these rules that finding-card.css keeps for the card's
+   shadow root, which no light-DOM rule can style — custom properties
+   inherit across that boundary — and holding them in the theme is
+   what lets the light-background themes swap in a set that's legible
+   on a white page.
+
+   Prism stamps `<span class="token X Y">` where X is the primary kind
+   (keyword / string / …) and Y an optional sub-modifier; we target X
+   only (the kind alone gives enough signal). Shared between the
+   bundle source viewer modal (`.bundle-source-code`), the focus
+   view's inline Code panel (`.focus-code-source`), and the fenced
+   code blocks a finding description carries (`.code-block`). */
+.bundle-source-code,
+.focus-code-source,
+.code-block {
+  & .token.comment,
+  & .token.prolog,
+  & .token.cdata { color: var(--code-comment); font-style: italic; }
+  & .token.punctuation { color: var(--muted); }
+  & .token.string,
+  & .token.attr-value,
+  & .token.char,
+  & .token.regex { color: var(--code-string); }
+  & .token.number,
+  & .token.boolean,
+  & .token.constant,
+  & .token.symbol { color: var(--code-number); }
+  & .token.keyword,
+  & .token.builtin,
+  & .token.important,
+  & .token.atrule { color: var(--code-keyword); }
+  & .token.function,
+  & .token.class-name,
+  & .token.tag { color: var(--code-function); }
+  & .token.operator,
+  & .token.entity,
+  & .token.url,
+  & .token.attr-name,
+  & .token.selector { color: var(--code-operator); }
+  & .token.variable,
+  & .token.property,
+  & .token.parameter { color: var(--code-variable); }
+  & .token.deleted { color: var(--code-deleted); }
+  & .token.inserted { color: var(--code-inserted); }
+  & .token.italic { font-style: italic; }
+  & .token.bold { font-weight: bold; }
 }
-.bundle-source-code .token.punctuation,
-.focus-code-source .token.punctuation { color: var(--muted); }
-.bundle-source-code .token.string,
-.bundle-source-code .token.attr-value,
-.bundle-source-code .token.char,
-.bundle-source-code .token.regex,
-.focus-code-source .token.string,
-.focus-code-source .token.attr-value,
-.focus-code-source .token.char,
-.focus-code-source .token.regex {
-  color: #98c379;
-}
-.bundle-source-code .token.number,
-.bundle-source-code .token.boolean,
-.bundle-source-code .token.constant,
-.bundle-source-code .token.symbol,
-.focus-code-source .token.number,
-.focus-code-source .token.boolean,
-.focus-code-source .token.constant,
-.focus-code-source .token.symbol {
-  color: #d19a66;
-}
-.bundle-source-code .token.keyword,
-.bundle-source-code .token.builtin,
-.bundle-source-code .token.important,
-.bundle-source-code .token.atrule,
-.focus-code-source .token.keyword,
-.focus-code-source .token.builtin,
-.focus-code-source .token.important,
-.focus-code-source .token.atrule {
-  color: #c678dd;
-}
-.bundle-source-code .token.function,
-.bundle-source-code .token.class-name,
-.bundle-source-code .token.tag,
-.focus-code-source .token.function,
-.focus-code-source .token.class-name,
-.focus-code-source .token.tag {
-  color: #61afef;
-}
-.bundle-source-code .token.operator,
-.bundle-source-code .token.entity,
-.bundle-source-code .token.url,
-.bundle-source-code .token.attr-name,
-.bundle-source-code .token.selector,
-.focus-code-source .token.operator,
-.focus-code-source .token.entity,
-.focus-code-source .token.url,
-.focus-code-source .token.attr-name,
-.focus-code-source .token.selector {
-  color: #56b6c2;
-}
-.bundle-source-code .token.variable,
-.bundle-source-code .token.property,
-.bundle-source-code .token.parameter,
-.focus-code-source .token.variable,
-.focus-code-source .token.property,
-.focus-code-source .token.parameter {
-  color: #e06c75;
-}
-.bundle-source-code .token.deleted,
-.focus-code-source .token.deleted { color: #ef596f; }
-.bundle-source-code .token.inserted,
-.focus-code-source .token.inserted { color: #98c379; }
-.bundle-source-code .token.italic,
-.focus-code-source .token.italic { font-style: italic; }
-.bundle-source-code .token.bold,
-.focus-code-source .token.bold { font-weight: bold; }
 
 /* Packages view — cross-report aggregation by package. Page-level
    list of rows; each row is a header (dot + name + count summary)

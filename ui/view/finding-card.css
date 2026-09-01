@@ -294,6 +294,46 @@ span.evidence-ref { color: var(--muted); }
     color: var(--text);
   }
   & code { font: inherit; }
+
+  /* Prism token theme — the shadow-root copy of the rules
+     styles/report.css carries for the source viewers, since no
+     light-DOM rule reaches in here. The palette itself is NOT copied:
+     it comes from theme.css's `--code-*` properties, which inherit
+     across the boundary, so the card and the source viewer colour a
+     snippet identically and the light themes retune both at once.
+     Prism stamps `<span class="token X Y">`; X (the kind) is all we
+     key off. */
+  & .token.comment,
+  & .token.prolog,
+  & .token.cdata { color: var(--code-comment); font-style: italic; }
+  & .token.punctuation { color: var(--muted); }
+  & .token.string,
+  & .token.attr-value,
+  & .token.char,
+  & .token.regex { color: var(--code-string); }
+  & .token.number,
+  & .token.boolean,
+  & .token.constant,
+  & .token.symbol { color: var(--code-number); }
+  & .token.keyword,
+  & .token.builtin,
+  & .token.important,
+  & .token.atrule { color: var(--code-keyword); }
+  & .token.function,
+  & .token.class-name,
+  & .token.tag { color: var(--code-function); }
+  & .token.operator,
+  & .token.entity,
+  & .token.url,
+  & .token.attr-name,
+  & .token.selector { color: var(--code-operator); }
+  & .token.variable,
+  & .token.property,
+  & .token.parameter { color: var(--code-variable); }
+  & .token.deleted { color: var(--code-deleted); }
+  & .token.inserted { color: var(--code-inserted); }
+  & .token.italic { font-style: italic; }
+  & .token.bold { font-weight: bold; }
 }
 
 .line-row {
@@ -969,5 +1009,17 @@ span.evidence-ref { color: var(--muted); }
 
     & .code-block-lang { color: #555; border-bottom-color: #bbb; }
     & pre { white-space: pre-wrap; overflow: visible; }
+    /* Syntax colours are a screen affordance: half the palette is
+       pale enough to print as near-white on a mono printer, and on a
+       colour one it competes with the page's black text. Flatten to
+       ink, keeping the comment's lighter gray + italic so a commented
+       line still reads as one. `!important` because the screen rules
+       above name the token KIND (`.token.keyword`) and so outrank a
+       flat `.token` here — the alternative is restating all fourteen
+       of them. */
+    & .token { color: #333 !important; }
+    & .token.comment,
+    & .token.prolog,
+    & .token.cdata { color: #666 !important; }
   }
 }

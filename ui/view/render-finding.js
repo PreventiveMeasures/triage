@@ -4,6 +4,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { bundlesForFileHash, isLinkableFindingId, isPlaceholderNpmPackage, state } from '#client/index.js'
 import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceLabel, evidenceMarkdown, evidenceUrl, findingDisplayName, findingUrl, flowText, formatRunMeta, githubIssueUrl, hasSeverityCorrection, isHttpUrl, markdownLinkToken, parseCommentRefs, stripExportMarker } from './format.js'
 import { activeTabFor, findingRepo, groupKey, groupState, isIgnored, sortTabs, tabKey } from './group.js'
+import { highlightedCode } from './code-highlight.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 
 // All `<finding-row>` / `<finding-card>` shadow-DOM markup is built
@@ -184,19 +185,24 @@ function renderInline(text) {
 // as `data-lang` plus the small header above the code, so the block
 // says what it is — the same thing the tag is there to tell a reader.
 //
-// Syntax highlighting is deliberately NOT wired in: prism lives in its
-// own lazily-imported bundle (prism-highlight.js) whose token theme is
-// scoped to the source viewers' light-DOM containers, and it resolves
-// async — a card would need a highlight cache and a re-render tick to
-// use it. A finding's snippet is a handful of lines, so it reads fine
-// as plain monospace.
+// The tag also colours the block, for the languages
+// prism-highlight.js's allowlist names. Prism can only answer async
+// (its first call downloads the bundle), so the block paints plain on
+// the first pass and repaints coloured when the highlight settles:
+// `highlightedCode` returns null until then, and the `codeBlockTick`
+// read below is what subscribes this card's autorun to that settle.
+// Prism escapes the source, so its HTML goes in via `unsafeHTML`;
+// everything else — an unlisted language, an empty block, the first
+// pass — renders `code` as the text it is.
 //
 // The whole template is one line on purpose: `.desc` / `.section-body`
 // are `white-space: pre-wrap`, and in dev builds (which skip the
 // template minifier) an indented template's own newlines would print
 // as blank lines inside the block's chrome.
 function codeBlockTemplate({ lang, code }) {
-  return html`<div class="code-block" data-lang=${lang || nothing}>${lang ? html`<div class="code-block-lang">${lang}</div>` : nothing}<pre><code>${code}</code></pre></div>`
+  void state.codeBlockTick
+  const coloured = highlightedCode(code, lang)
+  return html`<div class="code-block" data-lang=${lang || nothing}>${lang ? html`<div class="code-block-lang">${lang}</div>` : nothing}<pre><code>${coloured ? unsafeHTML(coloured) : code}</code></pre></div>`
 }
 
 // Render a description body: fenced code blocks as blocks, everything
