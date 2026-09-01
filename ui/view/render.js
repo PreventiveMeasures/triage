@@ -2036,9 +2036,20 @@ function renderImpl() {
     // moved to a triage bucket reads as "All X issues triaged" so
     // the user knows they cleared the queue rather than mistaking it
     // for a no-op load.
+    //
+    // The filters-mismatch line is the one branch kanban sits out.
+    // The board renders either way, and each empty column already
+    // carries its own "No <bucket> findings." — six of them saying
+    // what the line would. It isn't just redundant: the slot is a
+    // flex child of `.findings-content.with-kanban` (report.css), so
+    // the line takes its height out of the board's `flex: 1` share
+    // and pushes the columns down every time a filter empties the
+    // view. The other two branches only fire on an empty loaded set,
+    // where the board has nothing to shift and the line is the only
+    // thing saying why.
     if (state.shownTriage && allGroups.length === 0) {
       emptyStateTpl = html`<p style="color:var(--muted); margin: 1rem 0;">No ${state.shownTriage} findings.</p>`
-    } else if (filtered.length === 0 && allGroups.length > 0) {
+    } else if (filtered.length === 0 && allGroups.length > 0 && !isKanban) {
       emptyStateTpl = html`<p style="color:var(--muted); margin: 1rem 0;">No findings match the current filters.</p>`
     } else if (allGroups.length === 0) {
       emptyStateTpl = mergedGroups.length > 0
