@@ -309,31 +309,37 @@ describe('revalidate filter — the toolbar dropdown', () => {
 
   // Confirmed carries a second question inside it: the option takes
   // the partial confirmations along with the full ones, and a chip in
-  // its row draws that line — everything, the narrowed ones only, or
-  // the clean confirmations only. It is not a second filter, so it has
-  // no effect under any other outcome.
+  // its row draws that line more finely. All three settings are plain
+  // kind lists, matched existentially over the group like every other
+  // filter — the chip NARROWS what Confirmed reaches rather than
+  // subtracting from it.
   describe('the partial switch inside Confirmed', () => {
-    it('cycles included → excluded → only, and back', () => {
+    it('cycles included → full-only → partial-only, and back', () => {
       assert.deepEqual(PARTIAL_MODES, ['', 'exclude', 'only'])
     })
 
-    it('keeps the partial rows by default', () => {
+    it('takes everything the pass left standing by default', () => {
       assert.deepEqual(activeRevalidateKinds('confirmed', ''), ['confirmed', 'partial', 'revalidation'])
       state.filterRevalidate = 'confirmed'
       assert.equal(matchesFilters(makeFinding('A', { revalidate: 'partial' })), true)
       assert.equal(matchesFilters(makeFinding('B', { revalidate: 'confirmed' })), true)
-    })
-
-    it('holds them out when excluded', () => {
-      assert.deepEqual(activeRevalidateKinds('confirmed', 'exclude'), ['confirmed', 'revalidation'])
-      state.filterRevalidate = 'confirmed'
-      state.filterPartial = 'exclude'
-      assert.equal(matchesFilters(makeFinding('A', { revalidate: 'partial' })), false)
-      assert.equal(matchesFilters(makeFinding('B', { revalidate: 'confirmed' })), true)
       assert.equal(matchesFilters(makeFinding('C', { revalidate: 'revalidation' })), true)
     })
 
-    it('leaves nothing else when only', () => {
+    // `− Partial` is "the full confirmations", not "everything but the
+    // partials": a group earns its place by carrying a `confirmed`
+    // row, so the `revalidation` row — which rides Confirmed and is in
+    // most groups — no longer stands in for a verdict here.
+    it('takes only the full confirmations when the partials are off', () => {
+      assert.deepEqual(activeRevalidateKinds('confirmed', 'exclude'), ['confirmed'])
+      state.filterRevalidate = 'confirmed'
+      state.filterPartial = 'exclude'
+      assert.equal(matchesFilters(makeFinding('A', { revalidate: 'confirmed' })), true)
+      assert.equal(matchesFilters(makeFinding('B', { revalidate: 'partial' })), false)
+      assert.equal(matchesFilters(makeFinding('C', { revalidate: 'revalidation' })), false)
+    })
+
+    it('takes only the partial ones when they are all that is wanted', () => {
       assert.deepEqual(activeRevalidateKinds('confirmed', 'only'), ['partial'])
       state.filterRevalidate = 'confirmed'
       state.filterPartial = 'only'
@@ -358,59 +364,35 @@ describe('revalidate filter — the toolbar dropdown', () => {
       assert.equal(matchesFilters(makeFinding('B', { revalidate: 'partial' })), false)
     })
 
-    // `only` is existential over the group like every other filter —
-    // one partial row is the group's verdict, and the whole group
-    // shows.
-    it('keeps the whole group when any row is partial', () => {
+    // One matching row shows the whole group, the rule every filter
+    // here follows — so a group carrying both a full and a partial
+    // confirmation is in all three lists.
+    it('keeps the whole group when any row answers', () => {
       const group = [makeFinding('A', { revalidate: 'confirmed' }), makeFinding('B', { revalidate: 'partial' })]
       state.filterRevalidate = 'confirmed'
-      state.filterPartial = 'only'
-      assert.equal(applyFilters([group])[0].length, 2)
+      for (const mode of PARTIAL_MODES) {
+        state.filterPartial = mode
+        assert.equal(applyFilters([group])[0]?.length, 2, mode)
+      }
     })
 
-    // …so its complement has to be ¬∃, not a per-row negation: a group
-    // that carries a partial row almost always carries something else
-    // Confirmed matches too — a full confirmation, or the
-    // `revalidation` row that rides the option — and a per-row rule
-    // would keep it on screen through that, listing exactly the same
-    // findings under `+` and `−`.
-    it('drops a group carrying a partial row when they are excluded', () => {
-      state.filterRevalidate = 'confirmed'
-      state.filterPartial = 'exclude'
-      const withConfirmed = [makeFinding('A', { revalidate: 'confirmed' }), makeFinding('B', { revalidate: 'partial' })]
-      assert.equal(applyFilters([withConfirmed]).length, 0)
-      const withPassRow = [makeFinding('C', { revalidate: 'revalidation' }), makeFinding('D', { revalidate: 'partial' })]
-      assert.equal(applyFilters([withPassRow]).length, 0)
-      const partials = [[makeFinding('E', { revalidate: 'partial' })]]
-      assert.equal(applyFilters(partials).length, 0)
-      // A group with no partial row is untouched.
-      const clean = [[makeFinding('F', { revalidate: 'revalidation' }), makeFinding('G', { revalidate: 'confirmed' })]]
-      assert.equal(applyFilters(clean)[0].length, 2)
-    })
-
-    // The two halves partition the Confirmed set: every group `+`
-    // shows lands in exactly one of them.
-    it('splits the Confirmed set exactly between the two halves', () => {
+    // The three lists across a revalidation report's shapes — this is
+    // what the chip is for, so it is pinned end to end.
+    it('gives each setting its own list', () => {
       const groups = [
         [makeFinding('A', { revalidate: 'revalidation' }), makeFinding('B', { revalidate: 'partial' })],
         [makeFinding('C', { revalidate: 'revalidation' }), makeFinding('D', { revalidate: 'confirmed' })],
-        [makeFinding('E', { revalidate: 'refuted' })],
+        [makeFinding('E', { revalidate: 'revalidation' })],
+        [makeFinding('F', { revalidate: 'refuted' })],
       ]
       state.filterRevalidate = 'confirmed'
       const ids = (mode) => {
         state.filterPartial = mode
         return applyFilters(groups).map((g) => g[0].id)
       }
-      assert.deepEqual(ids(''), ['A', 'C'])
-      assert.deepEqual(ids('only'), ['A'])
+      assert.deepEqual(ids(''), ['A', 'C', 'E'])
       assert.deepEqual(ids('exclude'), ['C'])
-    })
-
-    it('leaves the group rule off under any other outcome', () => {
-      state.filterRevalidate = 'refuted'
-      state.filterPartial = 'exclude'
-      const group = [makeFinding('A', { revalidate: 'refuted' }), makeFinding('B', { revalidate: 'partial' })]
-      assert.equal(applyFilters([group])[0].length, 2)
+      assert.deepEqual(ids('only'), ['A'])
     })
   })
 

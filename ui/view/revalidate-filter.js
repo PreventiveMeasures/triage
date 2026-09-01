@@ -27,10 +27,11 @@
 // CONFIRMED carries a second question inside it. That option takes the
 // partial confirmations along with the full ones (format.js
 // REVALIDATE_FILTERS), and a reader looking at what survived often
-// wants to draw that line: everything, the narrowed ones only, or the
-// clean confirmations only. It is not a second filter — it has no
-// meaning under any other outcome — so it isn't a second control
-// either. It's a chip INSIDE the Confirmed row, cycling `+ Partial` →
+// wants to draw that line: everything standing, the full
+// confirmations only, or the partial ones only (format.js
+// activeRevalidateKinds has the three kind lists). It is not a second
+// filter — it has no meaning under any other outcome — so it isn't a
+// second control either. It's a chip INSIDE the Confirmed row, cycling `+ Partial` →
 // `− Partial` → `only Partial` on click, riding the block the select
 // already spans. Shown only when Confirmed is up AND the loaded set
 // has partial rows to sort; `partialCycle` dispatches
@@ -62,9 +63,9 @@ import { state } from '#client/index.js'
 const PARTIAL_LABELS = { '': '+ Partial', exclude: '\u2212 Partial', only: 'only Partial' }
 const PARTIAL_CLASSES = { '': 'included', exclude: 'excluded', only: 'only' }
 const PARTIAL_TITLES = {
-  '': 'Partial confirmations included — click to exclude them',
-  exclude: 'Partial confirmations excluded — click to show only those',
-  only: 'Showing only partial confirmations — click to include all',
+  '': 'Confirmed, partial and revalidation rows — click for full confirmations only',
+  exclude: 'Full confirmations only — click to show the partial ones only',
+  only: 'Partial confirmations only — click to show all of them again',
 }
 
 class RevalidateFilter extends StateElement {

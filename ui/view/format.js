@@ -173,17 +173,27 @@ export function revalidateFilterKinds(value) {
   return REVALIDATE_FILTERS.find((o) => o.value === value)?.kinds ?? null
 }
 
-// Where the partial rows go, once Confirmed has taken them in: kept
-// alongside the full confirmations (''), held out ('exclude'), or the
-// only thing left ('only'). The toolbar cycles a chip through these
-// inside the Confirmed row (revalidate-filter.js), because "did this
-// survive" and "how completely" are one question asked twice, not two
-// filters — and the second only has an answer once the first is
-// Confirmed.
+// How finely Confirmed is drawn, once it has taken the partial rows
+// in. The toolbar cycles a chip through these inside the Confirmed row
+// (revalidate-filter.js), because "did this survive" and "how
+// completely" are one question asked twice, not two filters — and the
+// second only has an answer once the first is Confirmed.
 export const PARTIAL_MODES = ['', 'exclude', 'only']
 
 // The kinds an outcome selection ACTUALLY matches, with that switch
-// applied. It bites only on an option that took the partial rows in —
+// applied. All three are the same shape as every other filter here —
+// a list of kinds, matched existentially over the group — so the chip
+// narrows what Confirmed reaches rather than subtracting from it:
+//
+//   ''         everything the pass left standing: the row that IS the
+//              pass, the full confirmations, the partial ones;
+//   'exclude'  the full confirmations only. NOT "everything but the
+//              partials": a group is shown for carrying a `confirmed`
+//              row, not for lacking a `partial` one, so the pass row
+//              on its own no longer stands in for a verdict;
+//   'only'     the partial ones.
+//
+// It bites only on an option that took the partial rows in —
 // Confirmed — so a mode left set from an earlier selection can't
 // silently narrow Refuted or Unreachable, and callers can pass it
 // through without checking which option is up.
@@ -191,7 +201,7 @@ export function activeRevalidateKinds(value, partialMode) {
   const kinds = revalidateFilterKinds(value)
   if (!kinds?.includes('partial')) return kinds
   if (partialMode === 'only') return ['partial']
-  if (partialMode === 'exclude') return kinds.filter((k) => k !== 'partial')
+  if (partialMode === 'exclude') return ['confirmed']
   return kinds
 }
 
