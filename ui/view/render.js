@@ -704,9 +704,17 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
 
   return html`<div class="toolbar">
     <div class="toolbar-row">
-      <!-- View mode leads the row — <view-mode-buttons> renders the
-           table / list / grouped icon group; immediately followed by
-           the Sort dropdown with no separator between them. -->
+      <!-- Groups in both rows are told apart by the row's own gap
+           alone — no divider rules between them. (A div.sep used to
+           sit before source / annotation / confidence and after the
+           severity lens; the row read as a run of bracketed segments,
+           and the segmented controls inside those groups carry their
+           own internal dividers, so the outer ones were a second kind
+           of line saying something weaker.)
+
+           View mode leads the row — <view-mode-buttons> renders the
+           table / list / grouped icon group, immediately followed by
+           the Sort dropdown. -->
       <view-mode-buttons modes=${viewModes}></view-mode-buttons>
       <!-- Sort dropdown — findings-sort owns the native select +
            the conditional option list. Flags arrive as boolean
@@ -717,9 +725,9 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
         ?show-confidence=${showConfidence}
         ?show-priority=${showPriority}
       ></findings-sort>
-      ${showSource ? html`<div class="sep"></div><source-filter></source-filter>` : nothing}
+      ${showSource ? html`<source-filter></source-filter>` : nothing}
       ${hasComment || hasFix || hasFlagged || state.filterComment || state.filterFix || state.filterFlagged
-        ? html`<div class="sep"></div><annotation-filter .hasComment=${hasComment} .hasFix=${hasFix} .hasFlagged=${hasFlagged}></annotation-filter>`
+        ? html`<annotation-filter .hasComment=${hasComment} .hasFix=${hasFix} .hasFlagged=${hasFlagged}></annotation-filter>`
         : nothing}
       <!-- Confidence range + the revalidation outcome, one block: the
            outcome dropdown sits inside it and REPLACES the range when
@@ -732,7 +740,7 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
            the scan above, so the dropdown can't list one that filters
            to nothing. -->
       ${showConfidence || revalidateOptions.length > 0
-        ? html`<div class="sep"></div><conf-filter
+        ? html`<conf-filter
             ?range-disabled=${!showConfidence}
             .revalidateOptions=${revalidateOptions}
             ?has-partial=${hasPartialKind}
@@ -750,7 +758,7 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
       <!-- Corrected / Original severity lens — leads the row, immediately
            left of the chips it governs. Self-gated by showSeverityMode
            (a correction is present, or the user is parked in original). -->
-      ${showSeverityMode ? html`<severity-mode-switch></severity-mode-switch><div class="sep"></div>` : nothing}
+      ${showSeverityMode ? html`<severity-mode-switch></severity-mode-switch>` : nothing}
       ${severityChipsTemplate(counts)}
       <!-- Analyzer / model dropdown — visible only when at least one
            of the two dimensions has more than one distinct value
