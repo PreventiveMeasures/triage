@@ -200,14 +200,15 @@
     -webkit-print-color-adjust: exact; print-color-adjust: exact;
   }
 }
-/* Evidence is the one section that collapses (render-finding.js
-   evidenceTemplate makes it a `<details>`), so its header is a
+/* Header of a section that COLLAPSES — Evidence, Reproduction, and
+   the two recommendations (render-finding.js evidenceTemplate /
+   sectionTemplate make those a `<details>`), so the header is a
    `<summary>`: the native disclosure carries the keyboard and
    screen-reader behaviour, and the open state lives on the element.
    The UA's own marker is dropped for a chevron that matches the
    toolbar's — two borders rotated — pointing right when closed and
-   down when open, sitting after the count as the last flex item in
-   the label. */
+   down when open, sitting last in the label's flex line (after
+   Evidence's count). */
 summary.section-label {
   cursor: pointer;
   list-style: none;
@@ -1150,15 +1151,16 @@ span.evidence-ref { color: var(--muted); }
   a, .line-num, .line-num a { color: inherit; }
   .desc-title a, .desc a, .section-body a, .conf-reason a, .revalidate-verdict a, .evidence-ref { color: inherit; }
 
-  /* Evidence collapses on screen, but paper has no disclosure to
-     click: the citations print or they are lost. Both halves of the
-     rule are needed because engines hide a closed `<details>` two
-     different ways — the older one puts `display: none` on the
-     non-summary children, the current one hides the
+  /* Sections collapse on screen, but paper has no disclosure to
+     click: what is under the fold prints or it is lost. Every
+     `<details>` in this root is one of them, so the rule needs no
+     list. Both halves of it are needed because engines hide a closed
+     `<details>` two different ways — the older one puts `display:
+     none` on the non-summary children, the current one hides the
      `::details-content` box — and neither override touches the other.
      The chevron goes with the interaction it stood for. */
-  .evidence:not([open]) > :not(summary) { display: block; }
-  .evidence::details-content { content-visibility: visible; }
+  details:not([open]) > :not(summary) { display: block; }
+  details::details-content { content-visibility: visible; }
   summary.section-label {
     cursor: auto;
     &::after { display: none; }

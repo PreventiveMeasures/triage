@@ -339,11 +339,33 @@ function revalidateTemplate(f) {
 // `recommendation` field, so a long section reads as its own block
 // rather than as one bold run the eye slides past. `cls` picks up the
 // per-section colouring (`.recommendation` is green).
-function sectionTemplate(label, body, cls = 'section') {
-  return html`<div class=${cls}>
-    <div class="section-label">${label}</div>
-    ${body ? html`<div class="section-body">${renderHighlighted(flowText(body))}</div>` : nothing}
-  </div>`
+//
+// `collapsible` makes it a `<details>`, closed, with its header as the
+// `<summary>` — the same disclosure Evidence wears below, and for the
+// same reason. Reproduction and the two recommendations are what a
+// reader turns to AFTER deciding a finding is worth acting on: steps
+// to follow and a fix to weigh, each often longer than the finding
+// itself. Left open they push the next finding off the screen for
+// every reader still triaging. The native element carries the
+// keyboard and screen-reader behaviour and keeps the open state on
+// itself, so nothing here has to track it — and print forces them all
+// open (see the @media print block in finding-card.css), because paper
+// has no disclosure to click.
+//
+// A section with no body never collapses: a disclosure that opens onto
+// nothing is a trap, not a saving.
+function sectionTemplate(label, body, cls = 'section', { collapsible = false } = {}) {
+  const inner = body ? html`<div class="section-body">${renderHighlighted(flowText(body))}</div>` : nothing
+  if (!collapsible || !body) {
+    return html`<div class=${cls}>
+      <div class="section-label">${label}</div>
+      ${inner}
+    </div>`
+  }
+  return html`<details class=${cls}>
+    <summary class="section-label">${label}</summary>
+    ${inner}
+  </details>`
 }
 
 // The `## Evidence` list a claude-security import carries — one row per
@@ -933,12 +955,12 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
         ? html`<div class="desc">${renderHighlighted(flowText(s.body))}</div>`
         : sectionTemplate(s.label, s.body)))}
       ${f.impact ? sectionTemplate('Impact', stripExportMarker(f.impact, f)) : nothing}
-      ${f.reproduction ? sectionTemplate('Reproduction', stripExportMarker(f.reproduction, f)) : nothing}
-      ${f.recommendation ? sectionTemplate('Recommendation', stripExportMarker(f.recommendation, f), 'recommendation') : nothing}
+      ${f.reproduction ? sectionTemplate('Reproduction', stripExportMarker(f.reproduction, f), 'section', { collapsible: true }) : nothing}
+      ${f.recommendation ? sectionTemplate('Recommendation', stripExportMarker(f.recommendation, f), 'recommendation', { collapsible: true }) : nothing}
       ${f.confidenceReason ? html`<div class="conf-reason">${renderHighlighted(stripExportMarker(f.confidenceReason, f))}</div>` : nothing}
       ${revalidateTemplate(f)}
       ${f.revalidateRecommendation
-        ? sectionTemplate('Revalidation recommendation', stripExportMarker(f.revalidateRecommendation, f), 'recommendation')
+        ? sectionTemplate('Revalidation recommendation', stripExportMarker(f.revalidateRecommendation, f), 'recommendation', { collapsible: true })
         : nothing}
       ${hasSeverityCorrection(f) && f.correctedSeverityReason ? html`<div class="severity-reason"><span class="severity-reason-label">Severity correction:</span> ${renderHighlighted(f.correctedSeverityReason)}</div>` : nothing}
       ${comment ? html`<div class="comment-block"><span class="comment-label">Comment:</span> ${renderCommentText(comment)}</div>` : nothing}
