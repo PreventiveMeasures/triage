@@ -710,6 +710,23 @@ export function evidenceLabel(row) {
   return Number.isFinite(parseInt(row?.line, 10)) ? `${row.file}:${row.line}` : (row?.file ?? '')
 }
 
+// The row's note. `text` is what parse-md.js writes (the lines a
+// markdown report left under the reference); `observation` is the name
+// a JSON report may use for the same thing. A row carrying BOTH is not
+// a shape any producer here emits, but it costs nothing to read: the
+// observation leads and the text follows under it, rather than one
+// silently winning. Non-string values are ignored — this reads
+// whatever JSON an importer hands us.
+//
+// Single source for both the card's `.evidence-note` and the markdown
+// the text surfaces rebuild, so a row reads the same everywhere and
+// the search haystack (which goes through evidenceMarkdown) matches on
+// an observation the same as on a text.
+export function evidenceNote(row) {
+  const str = (v) => (typeof v === 'string' ? v : '')
+  return `${str(row?.observation)}\n${str(row?.text)}`.trim()
+}
+
 // The evidence list rebuilt as markdown — the shape it arrived in. The
 // structured rows (not the description) carry it after parse, so every
 // TEXT surface reassembles it from here: the markdown export, the
@@ -725,7 +742,8 @@ export function evidenceMarkdown(f) {
     lines.push(`${i + 1}. ${row.url ? `[${label}](${row.url})` : label}`)
     // Note lines are indented under their row marker, the way the
     // report wrote them — markdown reads that as one list item.
-    if (row.text) for (const noteLine of row.text.split('\n')) lines.push(`   ${noteLine}`)
+    const note = evidenceNote(row)
+    if (note) for (const noteLine of note.split('\n')) lines.push(`   ${noteLine}`)
   })
   return lines.join('\n')
 }

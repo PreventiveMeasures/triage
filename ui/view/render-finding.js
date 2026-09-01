@@ -2,7 +2,7 @@ import { html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { bundlesForFileHash, isLinkableFindingId, isPlaceholderNpmPackage, state } from '#client/index.js'
-import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceLabel, evidenceMarkdown, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, hasSeverityCorrection, isHttpUrl, markdownLinkToken, parseCommentRefs, splitDescription, stripExportMarker } from './format.js'
+import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceLabel, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, hasSeverityCorrection, isHttpUrl, markdownLinkToken, parseCommentRefs, splitDescription, stripExportMarker } from './format.js'
 import { activeTabFor, findingRepo, groupKey, groupState, isIgnored, sortTabs, tabKey } from './group.js'
 import { highlightedCode } from './code-highlight.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
@@ -270,10 +270,11 @@ function sectionTemplate(label, body, cls = 'section') {
 // The `## Evidence` list a claude-security import carries — one row per
 // cited site: a link to that site (its own URL from the report, or the
 // reconstruction for a row that named no link) plus the report's note
-// about it. A real `<ol>` rather than the body text's newlines, because
-// a note is usually long enough to wrap and only markup can keep the
-// wrapped lines indented under the reference instead of dropping them
-// back to the margin. Rows that named no line render the bare path.
+// about it (`text` / `observation` — see evidenceNote). A real `<ol>`
+// rather than the body text's newlines, because a note is usually long
+// enough to wrap and only markup can keep the wrapped lines indented
+// under the reference instead of dropping them back to the margin.
+// Rows that named no line render the bare path.
 function evidenceTemplate(f) {
   const rows = Array.isArray(f.evidence) ? f.evidence : []
   if (rows.length === 0) return nothing
@@ -283,11 +284,12 @@ function evidenceTemplate(f) {
     <ol class="evidence-list">${rows.map((row) => {
       const label = evidenceLabel(row)
       const url = evidenceUrl(row, f, repoFallback)
+      const note = evidenceNote(row)
       return html`<li>
         ${url
           ? html`<a class="evidence-ref" href=${url} target="_blank" rel="noopener" title=${url}>${label}</a>`
           : html`<span class="evidence-ref">${label}</span>`}
-        ${row.text ? html`<div class="evidence-note">${renderHighlighted(flowText(row.text))}</div>` : nothing}
+        ${note ? html`<div class="evidence-note">${renderHighlighted(flowText(note))}</div>` : nothing}
       </li>`
     })}</ol>
   </div>`

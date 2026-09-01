@@ -31,7 +31,7 @@ if (!globalThis[slotKey]) {
   }
 }
 
-const { codeBlockSegments, descriptionSections, findingTitle, flowText, splitDescription, titledDescription } = await import('../ui/view/format.js')
+const { codeBlockSegments, descriptionSections, evidenceMarkdown, evidenceNote, findingTitle, flowText, splitDescription, titledDescription } = await import('../ui/view/format.js')
 
 describe('descriptionSections — empty input', () => {
   it('returns nothing for empty / missing bodies', () => {
@@ -421,5 +421,75 @@ describe('titledDescription', () => {
 
   it('is just the title when there is no description', () => {
     assert.equal(titledDescription({ title: 'Shell injection' }), 'Shell injection')
+  })
+})
+
+// An evidence row's note arrives as `text` from the markdown parser and
+// may arrive as `observation` from a JSON report. Both are read.
+describe('evidenceNote', () => {
+  it('takes either field on its own', () => {
+    assert.equal(evidenceNote({ text: 'A note.' }), 'A note.')
+    assert.equal(evidenceNote({ observation: 'An observation.' }), 'An observation.')
+  })
+
+  it('puts the observation over the text when a row carries both', () => {
+    assert.equal(
+      evidenceNote({ observation: 'An observation.', text: 'A note.' }),
+      'An observation.\nA note.',
+    )
+  })
+
+  it('trims the pair, so one blank field leaves no stray line', () => {
+    assert.equal(evidenceNote({ observation: '  ', text: 'A note.' }), 'A note.')
+    assert.equal(evidenceNote({ observation: 'An observation.', text: '\n  ' }), 'An observation.')
+  })
+
+  it('keeps the newlines inside a multi-line field', () => {
+    assert.equal(
+      evidenceNote({ observation: 'Line one.\nLine two.', text: 'And the note.' }),
+      'Line one.\nLine two.\nAnd the note.',
+    )
+  })
+
+  it('is empty for a row with neither, and ignores non-strings', () => {
+    assert.equal(evidenceNote({}), '')
+    assert.equal(evidenceNote(undefined), '')
+    assert.equal(evidenceNote({ text: 42, observation: { note: 'x' } }), '')
+    assert.equal(evidenceNote({ text: ['a'], observation: 'Kept.' }), 'Kept.')
+  })
+})
+
+// The text surfaces (markdown export, issue body, handoff, search
+// haystack) all rebuild the list from here, so an observation has to
+// reach them the same way a text does.
+describe('evidenceMarkdown', () => {
+  it('indents the note under its row marker', () => {
+    assert.equal(
+      evidenceMarkdown({ evidence: [{ file: 'src/a.ts', line: '10', observation: 'Tainted here.' }] }),
+      '**Evidence:**\n1. src/a.ts:10\n   Tainted here.',
+    )
+  })
+
+  it('carries both fields of a row that has them', () => {
+    assert.equal(
+      evidenceMarkdown({ evidence: [{ file: 'src/a.ts', line: '10', observation: 'Obs.', text: 'Note.' }] }),
+      '**Evidence:**\n1. src/a.ts:10\n   Obs.\n   Note.',
+    )
+  })
+
+  it('links a row that carried a url, and numbers the rows', () => {
+    assert.equal(
+      evidenceMarkdown({ evidence: [
+        { file: 'src/a.ts', line: '10', url: 'https://example.test/a.ts#L10' },
+        { file: 'src/b.ts', line: '?' },
+      ] }),
+      '**Evidence:**\n1. [src/a.ts:10](https://example.test/a.ts#L10)\n2. src/b.ts',
+    )
+  })
+
+  it('is empty for a finding with no rows', () => {
+    assert.equal(evidenceMarkdown({}), '')
+    assert.equal(evidenceMarkdown({ evidence: [] }), '')
+    assert.equal(evidenceMarkdown(undefined), '')
   })
 })
