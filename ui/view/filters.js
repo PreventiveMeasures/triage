@@ -1,5 +1,5 @@
 import { state } from '#client/index.js'
-import { SEVERITY_ORDER, displayedSeverity, findingText, isModule, prettyModel, revalidateFilterKinds, revalidateKind, voidsConfidence } from './format.js'
+import { SEVERITY_ORDER, activeRevalidateKinds, displayedSeverity, findingText, isModule, prettyModel, revalidateFilterKinds, revalidateKind, voidsConfidence } from './format.js'
 import { primaryTab, tabKey } from './group.js'
 
 // Stand-in for the "no analyzer" bucket in the analyzer dropdown.
@@ -110,6 +110,7 @@ export function resetFilters() {
   // graph-jump paths reset precisely so the finding they navigate to
   // is on screen.
   state.filterRevalidate = ''
+  state.filterPartial = ''
   // Default sort tracks the dataset: if any finding carries a
   // `priority`, sort priority-descending (most important first),
   // else severity. Called on first-ingest only (subsequent loads
@@ -221,7 +222,7 @@ export function matchesFilters(f) {
   // predicate above: a dedup group shows in full when any of its rows
   // carries the selected outcome.
   if (state.filterRevalidate) {
-    const kinds = revalidateFilterKinds(state.filterRevalidate)
+    const kinds = activeRevalidateKinds(state.filterRevalidate, state.filterPartial)
     if (kinds && !kinds.includes(revalidateKind(f))) return false
   }
   // Confidence range — SKIPPED entirely while a revalidation outcome is

@@ -173,6 +173,28 @@ export function revalidateFilterKinds(value) {
   return REVALIDATE_FILTERS.find((o) => o.value === value)?.kinds ?? null
 }
 
+// Where the partial rows go, once Confirmed has taken them in: kept
+// alongside the full confirmations (''), held out ('exclude'), or the
+// only thing left ('only'). The toolbar cycles a chip through these
+// inside the Confirmed row (revalidate-filter.js), because "did this
+// survive" and "how completely" are one question asked twice, not two
+// filters — and the second only has an answer once the first is
+// Confirmed.
+export const PARTIAL_MODES = ['', 'exclude', 'only']
+
+// The kinds an outcome selection ACTUALLY matches, with that switch
+// applied. It bites only on an option that took the partial rows in —
+// Confirmed — so a mode left set from an earlier selection can't
+// silently narrow Refuted or Unreachable, and callers can pass it
+// through without checking which option is up.
+export function activeRevalidateKinds(value, partialMode) {
+  const kinds = revalidateFilterKinds(value)
+  if (!kinds?.includes('partial')) return kinds
+  if (partialMode === 'only') return ['partial']
+  if (partialMode === 'exclude') return kinds.filter((k) => k !== 'partial')
+  return kinds
+}
+
 // The options worth offering for a given set of present kinds: the
 // toolbar hands this list to the dropdown, and drops the control
 // entirely when it comes back empty — a report whose pass only ever

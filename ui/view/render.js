@@ -693,7 +693,7 @@ function triageFilterTemplate(colorCounts) {
 // so the host drops it in unconditionally.
 
 function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCounts, flags, analyzerSelect, repoOptions) {
-  const { showSource, showConfidence, showPriority, showGraphMode, showFileSort, kanbanMode, showRepo, hasComment, hasFix, hasFlagged, showSeverityMode, revalidateOptions } = flags
+  const { showSource, showConfidence, showPriority, showGraphMode, showFileSort, kanbanMode, showRepo, hasComment, hasFix, hasFlagged, showSeverityMode, revalidateOptions, hasPartialKind } = flags
   // The findings tab gains a "graph" view-mode option when a
   // tree-bearing report is loaded (showGraphMode). The focus and
   // kanban modes sit between grouped and graph. Switching to graph
@@ -735,6 +735,7 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
         ? html`<div class="sep"></div><conf-filter
             ?range-disabled=${!showConfidence}
             .revalidateOptions=${revalidateOptions}
+            ?has-partial=${hasPartialKind}
           ></conf-filter>`
         : nothing}
       ${kanbanMode ? nothing : html`<triage-selector .counts=${triageCounts}></triage-selector>`}
@@ -1856,6 +1857,13 @@ function renderImpl() {
   if (state.filterRevalidate && !revalidateOptions.some((o) => o.value === state.filterRevalidate)) {
     state.filterRevalidate = ''
   }
+  // The partial switch rides inside the Confirmed option (see
+  // revalidate-filter.js), so it's offered only where there are
+  // partial rows to sort — and a mode left set from a report that had
+  // them is cleared here, or it would keep narrowing Confirmed with no
+  // control on screen to say so.
+  const hasPartialKind = revalidateKinds.has('partial')
+  if (!hasPartialKind) state.filterPartial = ''
   // If a previously-loaded report had node_modules and the user
   // narrowed the source filter, switching to a report without any
   // node_modules paths would leave the filter at 'own' or 'modules'
@@ -2002,6 +2010,7 @@ function renderImpl() {
       showRepo: !!state.currentWorkspace,
       hasComment,
       revalidateOptions,
+      hasPartialKind,
       hasFix,
       hasFlagged,
       // Corrected/Original lens switch — shown only when a correction

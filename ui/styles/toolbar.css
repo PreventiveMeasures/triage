@@ -224,6 +224,45 @@
 
         &::after { right: .8rem; }
       }
+
+      /* The partial switch, riding inside the Confirmed row (see
+         revalidate-filter.js). It sits ON the select, which spans the
+         whole block — so it needs a layer of its own to take the click
+         that would otherwise open the dropdown. Anchored to the right,
+         clear of the chevron: the select's value starts at the left
+         edge and pinning the chip to the end of that word would mean
+         measuring rendered text. `translateY` off the vertical middle
+         rather than a flex line, since the block it hangs in is the
+         select's box, not a row of its own. */
+      & .partial-cycle {
+        position: absolute;
+        right: 1.75rem;
+        top: 50%;
+        transform: translateY(-50%);
+        z-index: 1;
+        padding: .1rem .3rem;
+        border: 1px solid transparent;
+        border-radius: 3px;
+        background: transparent;
+        font: inherit;
+        font-size: .66rem;
+        line-height: 1.4;
+        white-space: nowrap;
+        color: var(--muted);
+        cursor: pointer;
+
+        &:hover { color: var(--text); border-color: var(--border); }
+        /* Modified: the switch is doing something, and it should be
+           visible without reading the label. Yellow because that is
+           the colour the partial STAMP wears on the card, so the chip
+           and the rows it is sorting are the same idea. */
+        &.on {
+          color: var(--yellow);
+          border-color: rgb(from var(--yellow) r g b / .45);
+          background: rgb(from var(--yellow) r g b / .1);
+        }
+        &:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+      }
     }
   }
 

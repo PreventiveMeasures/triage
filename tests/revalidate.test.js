@@ -36,8 +36,9 @@ const { state } = await import('../client/state.ts')
 const { applyFilters, defaultRevalidateFilter, matchesFilters } = await import('../ui/view/filters.js')
 const { sortTabs } = await import('../ui/view/group.js')
 const {
-  REVALIDATE_FILTERS, REVALIDATE_KINDS, formatRunMeta, isRevalidation,
-  reachableRevalidateFilters, revalidateKind, revalidateStamp, voidsConfidence,
+  PARTIAL_MODES, REVALIDATE_FILTERS, REVALIDATE_KINDS, activeRevalidateKinds,
+  formatRunMeta, isRevalidation, reachableRevalidateFilters, revalidateKind,
+  revalidateStamp, voidsConfidence,
 } = await import('../ui/view/format.js')
 
 // Neutralise every other filter so each assertion isolates the
@@ -50,6 +51,7 @@ function reset() {
   state.filterModel = ''
   state.filterRepo = ''
   state.filterRevalidate = ''
+  state.filterPartial = ''
   state.filterConfMin = 0
   state.filterConfMax = 10
   state.filterInclude = ''
@@ -303,6 +305,70 @@ describe('revalidate filter — the toolbar dropdown', () => {
     for (const revalidate of [undefined, 'refuted', 'unreachable', 'confirmed', 'partial', 'unknown', 'revalidation']) {
       assert.equal(matchesFilters(makeFinding('A', { revalidate })), true, String(revalidate))
     }
+  })
+
+  // Confirmed carries a second question inside it: the option takes
+  // the partial confirmations along with the full ones, and a chip in
+  // its row draws that line — everything, the narrowed ones only, or
+  // the clean confirmations only. It is not a second filter, so it has
+  // no effect under any other outcome.
+  describe('the partial switch inside Confirmed', () => {
+    it('cycles included → excluded → only, and back', () => {
+      assert.deepEqual(PARTIAL_MODES, ['', 'exclude', 'only'])
+    })
+
+    it('keeps the partial rows by default', () => {
+      assert.deepEqual(activeRevalidateKinds('confirmed', ''), ['confirmed', 'partial', 'revalidation'])
+      state.filterRevalidate = 'confirmed'
+      assert.equal(matchesFilters(makeFinding('A', { revalidate: 'partial' })), true)
+      assert.equal(matchesFilters(makeFinding('B', { revalidate: 'confirmed' })), true)
+    })
+
+    it('holds them out when excluded', () => {
+      assert.deepEqual(activeRevalidateKinds('confirmed', 'exclude'), ['confirmed', 'revalidation'])
+      state.filterRevalidate = 'confirmed'
+      state.filterPartial = 'exclude'
+      assert.equal(matchesFilters(makeFinding('A', { revalidate: 'partial' })), false)
+      assert.equal(matchesFilters(makeFinding('B', { revalidate: 'confirmed' })), true)
+      assert.equal(matchesFilters(makeFinding('C', { revalidate: 'revalidation' })), true)
+    })
+
+    it('leaves nothing else when only', () => {
+      assert.deepEqual(activeRevalidateKinds('confirmed', 'only'), ['partial'])
+      state.filterRevalidate = 'confirmed'
+      state.filterPartial = 'only'
+      assert.equal(matchesFilters(makeFinding('A', { revalidate: 'partial' })), true)
+      assert.equal(matchesFilters(makeFinding('B', { revalidate: 'confirmed' })), false)
+      assert.equal(matchesFilters(makeFinding('C', { revalidate: 'revalidation' })), false)
+    })
+
+    // The chip only ever shows under Confirmed, but the mode is kept
+    // across a change of outcome (so coming back restores it) — which
+    // is only safe because it can't narrow an option that never took
+    // the partial rows in the first place.
+    it('is inert under every other outcome', () => {
+      for (const mode of PARTIAL_MODES) {
+        assert.deepEqual(activeRevalidateKinds('refuted', mode), ['refuted'], mode)
+        assert.deepEqual(activeRevalidateKinds('unreachable', mode), ['unreachable'], mode)
+        assert.equal(activeRevalidateKinds('', mode), null, mode)
+      }
+      state.filterRevalidate = 'refuted'
+      state.filterPartial = 'only'
+      assert.equal(matchesFilters(makeFinding('A', { revalidate: 'refuted' })), true)
+      assert.equal(matchesFilters(makeFinding('B', { revalidate: 'partial' })), false)
+    })
+
+    it('keeps the whole group when any row answers', () => {
+      const group = [makeFinding('A', { revalidate: 'confirmed' }), makeFinding('B', { revalidate: 'partial' })]
+      state.filterRevalidate = 'confirmed'
+      state.filterPartial = 'only'
+      assert.equal(applyFilters([group])[0].length, 2)
+      state.filterPartial = 'exclude'
+      assert.equal(applyFilters([group])[0].length, 2)
+      // A group of nothing but partials disappears when they're out.
+      const partials = [[makeFinding('C', { revalidate: 'partial' })]]
+      assert.equal(applyFilters(partials).length, 0)
+    })
   })
 
   // What a freshly-loaded report OPENS on. ingest.js auto-tunes a

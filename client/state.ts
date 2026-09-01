@@ -97,6 +97,7 @@ export interface State {
   filterModel: string
   filterRepo: string
   filterRevalidate: string
+  filterPartial: string
   filterConfMin: number
   filterConfMax: number
   filterInclude: string
@@ -505,6 +506,13 @@ export const state: State = store<State>({
   // being reachable is cleared in render.js, the same way a stale repo
   // filter is.
   filterRevalidate: '',
+  // Where the `partial` rows go while Confirmed is up — '' keeps them
+  // alongside the full confirmations, 'exclude' holds them out, 'only'
+  // leaves nothing else. A chip inside the Confirmed row cycles it
+  // (format.js PARTIAL_MODES / activeRevalidateKinds). Inert under any
+  // other outcome, and cleared in render.js when the loaded set has no
+  // partial rows to sort.
+  filterPartial: '',
   // Confidence range — both bounds always set (the new
   // `<range-slider>` has no "unset" concept). 0 / 10 means "no
   // filter": findings with `f.confidence === undefined` pass when

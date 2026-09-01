@@ -23,13 +23,46 @@
 // `g.some(...)`), so a dedup group shows in full when any of its rows
 // carries the selected outcome — the same rule severity, color and
 // analyzer follow.
+//
+// CONFIRMED carries a second question inside it. That option takes the
+// partial confirmations along with the full ones (format.js
+// REVALIDATE_FILTERS), and a reader looking at what survived often
+// wants to draw that line: everything, the narrowed ones only, or the
+// clean confirmations only. It is not a second filter — it has no
+// meaning under any other outcome — so it isn't a second control
+// either. It's a chip INSIDE the Confirmed row, cycling `+ Partial` →
+// `− Partial` → `only Partial` on click, riding the block the select
+// already spans. Shown only when Confirmed is up AND the loaded set
+// has partial rows to sort; `partialCycle` dispatches
+// `partial-change(detail.value)` and events.js does the write.
+//
+// It sits at the RIGHT of the row, before the chevron, rather than
+// tucked against the word "Confirmed": the select spans the whole
+// block so its value can start at the left edge, and anchoring the
+// chip to that edge would mean measuring the rendered width of a word
+// in whatever font the theme is using. The block has the room, and the
+// two ends read as label and modifier.
+import { nothing } from 'lit'
 import { live } from 'lit/directives/live.js'
+import { classMap } from 'lit/directives/class-map.js'
 import { StateElement, html } from '@rray/frontend/state-element'
+import { PARTIAL_MODES } from './format.js'
 import { state } from '#client/index.js'
+
+// The chip's face for each mode. The sign carries the meaning, so the
+// three read as one control in three positions rather than three
+// labels; `−` is the MINUS SIGN, not a hyphen, so it balances the `+`.
+const PARTIAL_LABELS = { '': '+ Partial', exclude: '\u2212 Partial', only: 'only Partial' }
+const PARTIAL_TITLES = {
+  '': 'Partial confirmations included — click to exclude them',
+  exclude: 'Partial confirmations excluded — click to show only those',
+  only: 'Showing only partial confirmations — click to include all',
+}
 
 class RevalidateFilter extends StateElement {
   static properties = {
     options: { attribute: false },
+    hasPartial: { type: Boolean, attribute: 'has-partial' },
   }
 
   createRenderRoot() { return this }
@@ -37,6 +70,7 @@ class RevalidateFilter extends StateElement {
   constructor() {
     super()
     this.options = []
+    this.hasPartial = false
   }
 
   render() {
@@ -60,7 +94,25 @@ class RevalidateFilter extends StateElement {
       <option value="" hidden></option>
       <option value="">Confidence</option>
       ${this.options.map((o) => html`<option value=${o.value}>${o.label}</option>`)}
-    </select>`
+    </select>
+    ${this.hasPartial && state.filterRevalidate === 'confirmed'
+      ? html`<button
+          type="button"
+          class=${classMap({ 'partial-cycle': true, on: Boolean(state.filterPartial) })}
+          title=${PARTIAL_TITLES[state.filterPartial] ?? PARTIAL_TITLES['']}
+          @click=${this._onPartial}
+        >${PARTIAL_LABELS[state.filterPartial] ?? PARTIAL_LABELS['']}</button>`
+      : nothing}`
+  }
+
+  _onPartial = () => {
+    const at = PARTIAL_MODES.indexOf(state.filterPartial)
+    const next = PARTIAL_MODES[(at + 1) % PARTIAL_MODES.length]
+    this.dispatchEvent(new CustomEvent('partial-change', {
+      detail: { value: next },
+      bubbles: true,
+      composed: true,
+    }))
   }
 
   _onChange = (e) => {

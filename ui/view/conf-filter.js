@@ -59,6 +59,7 @@ class ConfFilter extends StateElement {
   static properties = {
     rangeDisabled: { type: Boolean, attribute: 'range-disabled' },
     revalidateOptions: { attribute: false },
+    hasPartial: { type: Boolean, attribute: 'has-partial' },
   }
 
   createRenderRoot() { return this }
@@ -67,6 +68,7 @@ class ConfFilter extends StateElement {
     super()
     this.rangeDisabled = false
     this.revalidateOptions = []
+    this.hasPartial = false
   }
 
   render() {
@@ -106,7 +108,11 @@ class ConfFilter extends StateElement {
         ></conf-range-mirror>
       </span>
       ${outcomes.length > 0
-        ? html`<revalidate-filter class=${classMap({ replaces: replaced })} .options=${outcomes}></revalidate-filter>`
+        ? html`<revalidate-filter
+            class=${classMap({ replaces: replaced })}
+            .options=${outcomes}
+            ?has-partial=${this.hasPartial}
+          ></revalidate-filter>`
         : nothing}`
   }
 }
