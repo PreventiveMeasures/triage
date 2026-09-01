@@ -31,7 +31,7 @@ if (!globalThis[slotKey]) {
   }
 }
 
-const { codeBlockSegments, descriptionSections, evidenceMarkdown, evidenceNote, findingTitle, flowText, splitDescription, titledDescription } = await import('../ui/view/format.js')
+const { codeBlockSegments, descriptionSections, evidenceMarkdown, evidenceNote, findingTitle, flowText, handoffBlock, splitDescription, titledDescription } = await import('../ui/view/format.js')
 
 describe('descriptionSections — empty input', () => {
   it('returns nothing for empty / missing bodies', () => {
@@ -491,5 +491,115 @@ describe('evidenceMarkdown', () => {
     assert.equal(evidenceMarkdown({}), '')
     assert.equal(evidenceMarkdown({ evidence: [] }), '')
     assert.equal(evidenceMarkdown(undefined), '')
+  })
+})
+
+// What the copy button puts on the clipboard and the Claude handoff
+// sends: the finding as a markdown DOCUMENT, not a stack of
+// `Label: value` lines. Everything it lands in renders markdown, and
+// most of what it carries — the description, every narrative field —
+// already IS markdown.
+describe('handoffBlock', () => {
+  const reported = {
+    file: 'node_modules/@vercel/otel/dist/node/index.js',
+    line: 23,
+    title: 'title',
+    description: 'text text\n\ntext\n\ntext',
+    confidence: 8,
+    evidence: [
+      { file: 'file.js', line: 1, text: 'text' },
+      { file: 'file2.js', line: 2, text: 'text' },
+    ],
+  }
+
+  it('writes the whole finding as markdown', () => {
+    assert.equal(handoffBlock(reported, null), [
+      'Location: node_modules/@vercel/otel/dist/node/index.js:23',
+      'Confidence: 8/10',
+      '',
+      '# title',
+      '',
+      'text text',
+      '',
+      'text',
+      '',
+      'text',
+      '',
+      '# Evidence',
+      '',
+      '1. file.js:1',
+      '   text',
+      '',
+      '2. file2.js:2',
+      '   text',
+    ].join('\n'))
+  })
+
+  it('opens with the facts that are not prose', () => {
+    const meta = handoffBlock({ ...reported, revalidate: 'refuted' }, 'owner/repo').split('\n\n')[0]
+    assert.equal(meta, [
+      'Repo: owner/repo',
+      'Location: node_modules/@vercel/otel/dist/node/index.js:23',
+      'Confidence: 8/10',
+      'Revalidation: refuted',
+    ].join('\n'))
+  })
+
+  it('drops the line from the location when there is not a finite one', () => {
+    assert.match(handoffBlock({ file: 'src/a.ts', line: '?' }, null), /^Location: src\/a\.ts$/u)
+    assert.match(handoffBlock({ file: 'src/a.ts', line: '10-20' }, null), /^Location: src\/a\.ts:10-20$/u)
+  })
+
+  it('gives every narrative field its own section, in the card order', () => {
+    const md = handoffBlock({
+      ...reported,
+      impact: 'i', reproduction: 'r', recommendation: 'rec',
+      confidenceReason: 'cr', revalidateVerdict: 'rv', revalidateRecommendation: 'rr',
+    }, null)
+    assert.deepEqual([...md.matchAll(/^# (.+)$/gmu)].map((m) => m[1]), [
+      'title', 'Evidence', 'Impact', 'Reproduction', 'Recommendation',
+      'Confidence reason', 'Revalidation verdict', 'Revalidation recommendation',
+    ])
+    for (const [heading, value] of [['Impact', 'i'], ['Reproduction', 'r'], ['Recommendation', 'rec'],
+      ['Confidence reason', 'cr'], ['Revalidation verdict', 'rv'], ['Revalidation recommendation', 'rr']]) {
+      assert.ok(md.includes(`# ${heading}\n\n${value}`), heading)
+    }
+  })
+
+  it('omits every block the finding does not carry', () => {
+    assert.equal(handoffBlock({ file: 'src/a.ts' }, null), 'Location: src/a.ts')
+    assert.equal(handoffBlock({ description: 'Just prose.' }, null), 'Just prose.')
+    assert.equal(handoffBlock({}, null), '')
+    assert.equal(handoffBlock(undefined, null), '')
+  })
+
+  it('keeps a description whose first line is the title from repeating it', () => {
+    const md = handoffBlock({ title: 'A title', description: 'A title\n\nThe body.' }, null)
+    assert.equal(md, '# A title\n\nThe body.')
+  })
+
+  it('links an evidence row that carried a url, and spaces the rows', () => {
+    const md = handoffBlock({
+      evidence: [
+        { file: 'a.js', line: 1, url: 'https://x.test/a.js#L1', observation: 'obs' },
+        { file: 'b.js', line: 2 },
+      ],
+    }, null)
+    assert.equal(md, [
+      '# Evidence',
+      '',
+      '1. [a.js:1](https://x.test/a.js#L1)',
+      '   obs',
+      '',
+      '2. b.js:2',
+    ].join('\n'))
+  })
+
+  // The inline `**Evidence:**` block the export / issue body / search
+  // haystack use is the same rows, tight — splitting the row builder
+  // out for the handoff must not have loosened it.
+  it('leaves the inline evidence block tight', () => {
+    const f = { evidence: [{ file: 'a.js', line: 1, text: 'n' }, { file: 'b.js', line: 2 }] }
+    assert.equal(evidenceMarkdown(f), '**Evidence:**\n1. a.js:1\n   n\n2. b.js:2')
   })
 })

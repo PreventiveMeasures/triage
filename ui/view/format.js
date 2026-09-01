@@ -800,10 +800,13 @@ export function evidenceUrl(row, f, repoFallback) {
   return findingUrl({ file: row?.file, line: row?.line, location: row?.url, repo: f?.repo }, repoFallback)
 }
 
-// `file:line` display label for an evidence row — the line is dropped
-// when the row didn't name one ('?'), matching the location displays.
-export function evidenceLabel(row) {
-  return Number.isFinite(parseInt(row?.line, 10)) ? `${row.file}:${row.line}` : (row?.file ?? '')
+// `file:line` — the shape every location display uses, with the line
+// dropped when there isn't a finite one ('?' on the imports that carry
+// no line numbers). Takes a finding or an evidence row: both carry
+// `file` / `line`, and both print the location the same way. The raw
+// `line` goes through, so a range (`10-20`) survives whole.
+export function locationLabel(x) {
+  return Number.isFinite(parseInt(x?.line, 10)) ? `${x.file}:${x.line}` : (x?.file ?? '')
 }
 
 // The row's note. `text` is what parse-md.js writes (the lines a
@@ -823,25 +826,34 @@ export function evidenceNote(row) {
   return `${str(row?.observation)}\n${str(row?.text)}`.trim()
 }
 
-// The evidence list rebuilt as markdown — the shape it arrived in. The
-// structured rows (not the description) carry it after parse, so every
-// TEXT surface reassembles it from here: the markdown export, the
-// pre-filled GitHub issue body, the clipboard / Claude handoff block,
-// and the search haystack. Empty string for a finding without rows, so
-// callers can `if (block)` rather than special-case the format.
-export function evidenceMarkdown(f) {
+// The evidence rows as a numbered markdown list, no heading — each
+// text surface gives them the heading its own document wants. Note
+// lines are indented under their row marker, the way the report wrote
+// them, so markdown reads them as part of the item. `spaced` puts a
+// blank line between rows, which markdown reads as a loose list: the
+// handoff wants that (its rows carry prose and it is a document in its
+// own right), the compact `**Evidence:**` block below does not.
+function evidenceRows(f, { spaced = false } = {}) {
   const rows = Array.isArray(f?.evidence) ? f.evidence : []
   if (rows.length === 0) return ''
-  const lines = ['**Evidence:**']
-  rows.forEach((row, i) => {
-    const label = evidenceLabel(row)
-    lines.push(`${i + 1}. ${row.url ? `[${label}](${row.url})` : label}`)
-    // Note lines are indented under their row marker, the way the
-    // report wrote them — markdown reads that as one list item.
+  return rows.map((row, i) => {
+    const label = locationLabel(row)
+    const lines = [`${i + 1}. ${row.url ? `[${label}](${row.url})` : label}`]
     const note = evidenceNote(row)
     if (note) for (const noteLine of note.split('\n')) lines.push(`   ${noteLine}`)
-  })
-  return lines.join('\n')
+    return lines.join('\n')
+  }).join(spaced ? '\n\n' : '\n')
+}
+
+// The evidence list as one labelled block — the shape it arrived in.
+// The structured rows (not the description) carry it after parse, so
+// the text surfaces that want it inline reassemble it from here: the
+// markdown export, the pre-filled GitHub issue body, and the search
+// haystack. Empty string for a finding without rows, so callers can
+// `if (block)` rather than special-case the format.
+export function evidenceMarkdown(f) {
+  const rows = evidenceRows(f)
+  return rows ? `**Evidence:**\n${rows}` : ''
 }
 
 // One inline markdown link — `[label](url)` — as it appears INSIDE a
@@ -890,25 +902,60 @@ export function commitUrl(githubRepo, hash) {
   return `${base}/commit/${hash}`
 }
 
-// Labeled `Repo / File / Line / Description / Confidence` block for a
-// finding `f`. Shared by the copy button, the Claude handoff, and the
-// GitHub-issue body so the three actions carry identical text. `repo`
-// is resolved by the caller (group.findingRepo) so this stays a pure
-// formatter with no `#client/...` dependency (see fileUrl's note on
-// keeping this module out of the client aggregator's import chain).
+// The narrative fields the document carries below the description, as
+// `[heading, field]`, IN CARD ORDER — the sequence the card's tab body
+// reads them in, so the document tells the same story in the same
+// order. A field the finding doesn't carry is skipped, not headed.
+const HANDOFF_SECTIONS = [
+  ['Impact', 'impact'],
+  ['Reproduction', 'reproduction'],
+  ['Recommendation', 'recommendation'],
+  ['Confidence reason', 'confidenceReason'],
+  ['Revalidation verdict', 'revalidateVerdict'],
+  ['Revalidation recommendation', 'revalidateRecommendation'],
+]
+
+// The finding as a markdown DOCUMENT — what the copy button puts on
+// the clipboard and what the Claude handoff sends. It used to be a
+// stack of `Label: value` lines, which read as a form even though most
+// of its values are markdown prose: a description's own paragraphs and
+// fenced blocks ran on from a `Description:` prefix, and the evidence
+// list arrived mid-form under a bold label. Everything below is pasted
+// somewhere that renders markdown, so it is markdown.
+//
+// The shape: a few `Key: value` lines of metadata (the facts that
+// aren't prose), then the finding's name as an H1, its description,
+// its evidence, and one H1 section per HANDOFF_SECTIONS field. Blocks
+// join with a blank line, and every one of them is omitted when the
+// finding doesn't carry it.
+//
+// `repo` is resolved by the caller (group.findingRepo) so this stays a
+// pure formatter with no `#client/...` dependency (see fileUrl's note
+// on keeping this module out of the client aggregator's import chain).
 export function handoffBlock(f, repo) {
-  const lines = []
-  if (repo) lines.push(`Repo: ${repo}`)
-  if (f.file) lines.push(`File: ${f.file}`)
-  if (f.line !== undefined && f.line !== null && f.line !== '') lines.push(`Line: ${f.line}`)
-  // Only for a finding that names itself in a `title` field: everywhere
-  // else the name is the description's first line and already below.
-  if (typeof f.title === 'string' && f.title.trim()) lines.push(`Title: ${f.title.trim()}`)
-  if (f.description) lines.push(`Description: ${f.description}`)
-  const evidence = evidenceMarkdown(f)
-  if (evidence) lines.push(evidence)
-  if (f.confidence !== undefined && f.confidence !== null) lines.push(`Confidence: ${f.confidence}/10`)
-  return lines.join('\n')
+  const meta = []
+  if (repo) meta.push(`Repo: ${repo}`)
+  // One `Location:` line rather than the old File / Line pair — it is
+  // one fact, and `file:line` is the form every other surface prints
+  // it in and every editor takes back.
+  const location = locationLabel(f)
+  if (location) meta.push(`Location: ${location}`)
+  if (f?.confidence !== undefined && f?.confidence !== null) meta.push(`Confidence: ${f.confidence}/10`)
+  const revalidate = revalidateKind(f)
+  if (revalidate) meta.push(`Revalidation: ${revalidate}`)
+
+  const blocks = []
+  if (meta.length > 0) blocks.push(meta.join('\n'))
+  const { title, body } = splitDescription(f)
+  if (title) blocks.push(`# ${title}`)
+  if (body) blocks.push(body.trim())
+  const evidence = evidenceRows(f, { spaced: true })
+  if (evidence) blocks.push(`# Evidence\n\n${evidence}`)
+  for (const [heading, field] of HANDOFF_SECTIONS) {
+    const value = stripExportMarker(f?.[field], f)?.trim()
+    if (value) blocks.push(`# ${heading}\n\n${value}`)
+  }
+  return blocks.join('\n\n')
 }
 
 // GitHub "new issue" URL with a pre-filled title + body, or null when

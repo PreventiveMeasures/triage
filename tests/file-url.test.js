@@ -1,6 +1,6 @@
 // `ui/view/format.js` — the source-link builders: `fileUrl` /
 // `isPkgRef`, `findingUrl`, `markdownLinkToken`, and the `## Evidence`
-// row helpers (`evidenceUrl` / `evidenceLabel` / `evidenceMarkdown`). Pins the
+// row helpers (`evidenceUrl` / `locationLabel` / `evidenceMarkdown`). Pins the
 // package-reference guard: a piolium `Key code` citing `name@1.2.3` (or
 // `@scope/name@1.2.3`) is a dependency reference, not a repo path, and
 // must not blob-link under the finding's repo — while real paths keep
@@ -25,7 +25,7 @@ if (!globalThis[slotKey]) {
   }
 }
 
-const { evidenceLabel, evidenceMarkdown, evidenceUrl, fileUrl, findingUrl, isPkgRef, markdownLinkToken } = await import('../ui/view/format.js')
+const { evidenceMarkdown, locationLabel, evidenceUrl, fileUrl, findingUrl, isPkgRef, markdownLinkToken } = await import('../ui/view/format.js')
 
 describe('isPkgRef', () => {
   it('matches bare and scoped package references', () => {
@@ -174,8 +174,8 @@ describe('evidence rows', () => {
   }
 
   it('labels a row as file:line, dropping an unknown line', () => {
-    assert.equal(evidenceLabel(f.evidence[0]), 'libs/a.ts:10-20')
-    assert.equal(evidenceLabel(f.evidence[2]), 'libs/c.ts')
+    assert.equal(locationLabel(f.evidence[0]), 'libs/a.ts:10-20')
+    assert.equal(locationLabel(f.evidence[2]), 'libs/c.ts')
   })
 
   it('links a row by its own URL when the report gave one', () => {
