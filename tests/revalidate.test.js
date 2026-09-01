@@ -36,7 +36,7 @@ const { state } = await import('../client/state.ts')
 const { applyFilters, matchesFilters } = await import('../ui/view/filters.js')
 const { sortTabs } = await import('../ui/view/group.js')
 const {
-  REVALIDATE_FILTERS, REVALIDATE_KINDS, isRevalidation,
+  REVALIDATE_FILTERS, REVALIDATE_KINDS, formatRunMeta, isRevalidation,
   reachableRevalidateFilters, revalidateKind, revalidateStamp, voidsConfidence,
 } = await import('../ui/view/format.js')
 
@@ -102,6 +102,32 @@ describe('revalidateKind — reading the field', () => {
       assert.equal(voidsConfidence({ revalidate: kind }), false, String(kind))
     }
     assert.equal(voidsConfidence({}), false)
+  })
+})
+
+// The meta line names the run a row came from, so the pass names
+// itself there — right after the mode it ran in.
+describe('formatRunMeta — the revalidation row names its run', () => {
+  const run = { type: 'security', model: 'claude-opus-5', effort: 'max', exportsMode: 'list' }
+
+  it('inserts revalidate after the base mode', () => {
+    assert.equal(
+      formatRunMeta({ ...run, revalidate: 'revalidation' }),
+      'security · revalidate · opus 5 · max · list',
+    )
+  })
+
+  it('leaves every other row alone', () => {
+    const plain = 'security · opus 5 · max · list'
+    assert.equal(formatRunMeta(run), plain)
+    for (const verdict of ['refuted', 'unreachable', 'confirmed', 'unknown', 'nonsense']) {
+      assert.equal(formatRunMeta({ ...run, revalidate: verdict }), plain, verdict)
+    }
+  })
+
+  it('still elides the fields a run did not carry', () => {
+    assert.equal(formatRunMeta({ type: 'security', revalidate: 'revalidation' }), 'security · revalidate')
+    assert.equal(formatRunMeta({ model: 'claude-opus-5', revalidate: 'revalidation' }), 'revalidate · opus 5')
   })
 })
 

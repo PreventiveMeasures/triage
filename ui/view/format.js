@@ -91,17 +91,20 @@ export function correctedVariants(f) {
 
 // ── Revalidation ─────────────────────────────────────────────────────
 // A second pass over a finding. A report stamps `revalidate` with what
-// that pass concluded — `confirmed` (the finding stands), `refuted` (it
-// doesn't), `unknown` (the pass couldn't tell) — and carries its
-// reasoning in `revalidateVerdict`, plus, for a refutation, what to do
-// about it in `revalidateRecommendation`.
+// that pass concluded — `confirmed` (the finding stands), `refuted`
+// (it doesn't), `unreachable` (nothing can get to the code it's in),
+// `unknown` (the pass couldn't tell) — and carries its reasoning in
+// `revalidateVerdict`, plus, for a refutation, what to do about it in
+// `revalidateRecommendation`.
 //
-// The fourth value, `revalidation`, marks the row that IS the
+// The remaining value, `revalidation`, marks the row that IS the
 // revalidation pass rather than one it judged. It carries no verdict of
 // its own; what it gets instead is first place in its group (group.js
 // sortTabs), because a reader opening a finding that was re-examined
 // wants the re-examination, not whichever original row happened to
-// outrank the others.
+// outrank the others — and its own name in the run-meta line
+// (formatRunMeta below), which is where a card says which run a row
+// came from.
 //
 // Values are case-folded and trimmed: these arrive from JSON a report
 // generator wrote, and an unrecognised one answers "no stamp" rather
@@ -386,8 +389,16 @@ export function prettyModel(model) {
 // flat-group / bundle-source meta rows; consolidating here keeps
 // the field list, separator, and prettyModel application from
 // drifting across call sites.
+//
+// The revalidation row names itself right after the mode it ran in
+// (`security · revalidate · opus 5 · …`): the run that produced it is
+// that mode's revalidation pass, and the meta line is where this card
+// says which run a row came from. Only that row — a verdict row was
+// produced by the pass but is not it, and stamping every judged
+// finding here would say nothing the rail's stamp doesn't already.
 export function formatRunMeta(f) {
-  return [f.type, prettyModel(f.model), f.effort, f.exportsMode].filter(Boolean).join(' · ')
+  return [f.type, isRevalidation(f) ? 'revalidate' : '', prettyModel(f.model), f.effort, f.exportsMode]
+    .filter(Boolean).join(' · ')
 }
 
 // Walk a list of strings and shrink the candidate prefix until every
