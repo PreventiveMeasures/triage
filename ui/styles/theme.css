@@ -38,6 +38,15 @@
      green themes use this amber; light + pink darken it to #9a6700 so
      the badge/label text stays legible on their pale surfaces. */
   --warning: #d97706;
+  /* Yellow for the "partial" revalidation stamp — the pass narrowed a
+     finding rather than confirming or knocking it down, which sits
+     between the confirmed red and the refuted muted grey. Its own
+     token rather than `--medium` (the same hue) because that one is
+     painted as a badge FILL and the pale themes tune it for black
+     text on it; this one is TEXT, so it darkens on a pale surface the
+     way --warning above does. Kept clear of --warning's orange so the
+     two stamps don't read as one. */
+  --yellow: #d29922;
   /* Triage marker palette — single source for the four colors
      surfaced by the per-finding marker UI. Cross the shadow
      boundary so both the `<color-marker>` shadow stylesheet and
@@ -170,6 +179,9 @@ body.theme-light {
   /* Darkened amber (vs :root #d97706) so the In-progress badge/label
      text clears contrast on the light surface. */
   --warning: #9a6700;
+  /* Same darkening for the yellow, and kept greener than the amber
+     above so `partial` and `unknown` still read apart here. */
+  --yellow: #7d6a00;
   --high-bug: #a85a14;
   --bug: #6b5e52;
   --info: #218bff;
@@ -289,6 +301,8 @@ body.theme-pink {
   /* Darkened amber (vs :root #d97706) so the In-progress badge/label
      text clears contrast on the pale pink surface. */
   --warning: #9a6700;
+  /* And the yellow, darkened for the same reason. */
+  --yellow: #7d6a00;
   --high-bug: #a85a14;
   --bug: #8c5e6c;
   --info: #218bff;

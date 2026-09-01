@@ -91,11 +91,11 @@ export function correctedVariants(f) {
 
 // ── Revalidation ─────────────────────────────────────────────────────
 // A second pass over a finding. A report stamps `revalidate` with what
-// that pass concluded — `confirmed` (the finding stands), `refuted`
-// (it doesn't), `unreachable` (nothing can get to the code it's in),
-// `unknown` (the pass couldn't tell) — and carries its reasoning in
-// `revalidateVerdict`, plus, for a refutation, what to do about it in
-// `revalidateRecommendation`.
+// that pass concluded — `confirmed` (the finding stands), `partial`
+// (part of it does), `refuted` (it doesn't), `unreachable` (nothing
+// can get to the code it's in), `unknown` (the pass couldn't tell) —
+// and carries its reasoning in `revalidateVerdict`, plus, for a
+// refutation, what to do about it in `revalidateRecommendation`.
 //
 // The remaining value, `revalidation`, marks the row that IS the
 // revalidation pass rather than one it judged. It carries no verdict of
@@ -110,7 +110,7 @@ export function correctedVariants(f) {
 // generator wrote, and an unrecognised one answers "no stamp" rather
 // than leaking into a display.
 // Every value the field can carry.
-export const REVALIDATE_KINDS = ['revalidation', 'refuted', 'unreachable', 'confirmed', 'unknown']
+export const REVALIDATE_KINDS = ['revalidation', 'refuted', 'unreachable', 'confirmed', 'partial', 'unknown']
 const REVALIDATE_SET = new Set(REVALIDATE_KINDS)
 
 // The row's revalidation outcome, case-folded, or '' when it carries
@@ -152,11 +152,16 @@ export function voidsConfidence(f) {
 //   * the `revalidation` row rides CONFIRMED — it is the pass itself,
 //     re-examining a finding it did not knock down, which is the same
 //     answer to that question;
+//   * `partial` rides it too. A partial confirmation is a yes to
+//     "does this still stand" — the pass narrowed the finding rather
+//     than knocking it down — and an option of its own would slice
+//     the standing findings in two for a distinction the reader wants
+//     the STAMP for, not a filter. It keeps its own stamp on the card.
 //   * `unknown` gets no option — a pass that couldn't tell hasn't
 //     answered it at all, so there is nothing to filter to. Those rows
 //     stay visible with no filter on, like every other row.
 export const REVALIDATE_FILTERS = [
-  { value: 'confirmed', label: 'Confirmed', kinds: ['confirmed', 'revalidation'] },
+  { value: 'confirmed', label: 'Confirmed', kinds: ['confirmed', 'partial', 'revalidation'] },
   { value: 'unreachable', label: 'Unreachable', kinds: ['unreachable'] },
   { value: 'refuted', label: 'Refuted', kinds: ['refuted'] },
 ]

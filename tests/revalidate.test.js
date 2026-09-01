@@ -84,7 +84,7 @@ describe('revalidateKind — reading the field', () => {
   })
 
   it('stamps every verdict — the pass itself is not one', () => {
-    for (const verdict of ['refuted', 'unreachable', 'confirmed', 'unknown']) {
+    for (const verdict of ['refuted', 'unreachable', 'confirmed', 'partial', 'unknown']) {
       assert.equal(revalidateStamp({ revalidate: verdict }), verdict)
     }
     assert.equal(revalidateStamp({ revalidate: 'revalidation' }), null)
@@ -120,7 +120,7 @@ describe('formatRunMeta — the revalidation row names its run', () => {
   it('leaves every other row alone', () => {
     const plain = 'security · opus 5 · max · list'
     assert.equal(formatRunMeta(run), plain)
-    for (const verdict of ['refuted', 'unreachable', 'confirmed', 'unknown', 'nonsense']) {
+    for (const verdict of ['refuted', 'unreachable', 'confirmed', 'partial', 'unknown', 'nonsense']) {
       assert.equal(formatRunMeta({ ...run, revalidate: verdict }), plain, verdict)
     }
   })
@@ -150,7 +150,7 @@ describe('sortTabs — the revalidation row leads its group', () => {
 
   it('does not promote a verdict row — only the pass itself leads', () => {
     const crit = makeFinding('A', { severity: 'critical' })
-    for (const verdict of ['refuted', 'unreachable', 'confirmed', 'unknown']) {
+    for (const verdict of ['refuted', 'unreachable', 'confirmed', 'partial', 'unknown']) {
       const row = makeFinding('B', { severity: 'low', revalidate: verdict })
       assert.deepEqual(sortTabs([crit, row]).map((f) => f.id), ['A', 'B'], verdict)
     }
@@ -228,6 +228,11 @@ describe('revalidate filter — the toolbar dropdown', () => {
   it('offers the outcomes from survived to knocked down', () => {
     assert.deepEqual(REVALIDATE_FILTERS.map((o) => o.value), ['confirmed', 'unreachable', 'refuted'])
     assert.deepEqual(REVALIDATE_FILTERS.map((o) => o.label), ['Confirmed', 'Unreachable', 'Refuted'])
+    // `partial` is a value of the field with a stamp of its own, but
+    // not an option: it rides Confirmed, because a partial
+    // confirmation is still a yes to "does this still stand".
+    assert.equal(REVALIDATE_FILTERS.some((o) => o.value === 'partial'), false)
+    assert.ok(REVALIDATE_KINDS.includes('partial'))
   })
 
   it('matches the selected outcome and nothing else', () => {
@@ -246,13 +251,23 @@ describe('revalidate filter — the toolbar dropdown', () => {
     assert.equal(matchesFilters(makeFinding('C', { revalidate: 'confirmed' })), false)
   })
 
-  it('takes the revalidation row under Confirmed', () => {
+  it('takes the revalidation row and a partial confirmation under Confirmed', () => {
     state.filterRevalidate = 'confirmed'
     assert.equal(matchesFilters(makeFinding('A', { revalidate: 'confirmed' })), true)
     assert.equal(matchesFilters(makeFinding('B', { revalidate: 'revalidation' })), true)
-    assert.equal(matchesFilters(makeFinding('C', { revalidate: 'refuted' })), false)
-    assert.equal(matchesFilters(makeFinding('D', { revalidate: 'unreachable' })), false)
-    assert.equal(matchesFilters(makeFinding('E', { revalidate: 'unknown' })), false)
+    assert.equal(matchesFilters(makeFinding('C', { revalidate: 'partial' })), true)
+    assert.equal(matchesFilters(makeFinding('D', { revalidate: 'refuted' })), false)
+    assert.equal(matchesFilters(makeFinding('E', { revalidate: 'unreachable' })), false)
+    assert.equal(matchesFilters(makeFinding('F', { revalidate: 'unknown' })), false)
+  })
+
+  // A partial confirmation still stands, so it must not read as 0 the
+  // way a refutation does.
+  it('leaves a partial row its confidence', () => {
+    assert.equal(voidsConfidence({ revalidate: 'partial' }), false)
+    state.filterConfMin = 8
+    assert.equal(matchesFilters(makeFinding('A', { confidence: 9, revalidate: 'partial' })), true)
+    assert.equal(matchesFilters(makeFinding('B', { confidence: 3, revalidate: 'partial' })), false)
   })
 
   it('keeps the whole group when any of its rows matches', () => {
@@ -285,7 +300,7 @@ describe('revalidate filter — the toolbar dropdown', () => {
 
   it('is off when empty', () => {
     state.filterRevalidate = ''
-    for (const revalidate of [undefined, 'refuted', 'unreachable', 'confirmed', 'unknown', 'revalidation']) {
+    for (const revalidate of [undefined, 'refuted', 'unreachable', 'confirmed', 'partial', 'unknown', 'revalidation']) {
       assert.equal(matchesFilters(makeFinding('A', { revalidate })), true, String(revalidate))
     }
   })
@@ -297,6 +312,9 @@ describe('revalidate filter — the toolbar dropdown', () => {
     assert.deepEqual(values(REVALIDATE_KINDS), ['confirmed', 'unreachable', 'refuted'])
     assert.deepEqual(values(['revalidation']), ['confirmed'])
     assert.deepEqual(values(['confirmed']), ['confirmed'])
+    // A set the pass only ever partly confirmed still reaches
+    // Confirmed — that option is what those rows answer to.
+    assert.deepEqual(values(['partial']), ['confirmed'])
     assert.deepEqual(values(['refuted']), ['refuted'])
     assert.deepEqual(values(['unreachable']), ['unreachable'])
     assert.deepEqual(values(['unknown']), [])

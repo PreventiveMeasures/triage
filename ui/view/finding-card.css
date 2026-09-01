@@ -314,7 +314,14 @@ details[open] > summary.section-label::after { transform: translateY(-2px) rotat
   color: var(--muted); border: 1px solid var(--border);
   white-space: nowrap;
 
+  /* Red for a finding the pass left standing — the stamp says the
+     vulnerability is real, so it wears the severity colour rather
+     than a reassuring one. Yellow for a PARTIAL confirmation, which
+     is still a yes: narrowed, not knocked down, so it sits a step
+     below the red and well above the muted default the refuted and
+     unreachable stamps keep. */
   &.confirmed { color: var(--critical); border-color: rgb(from var(--critical) r g b / .55); }
+  &.partial   { color: var(--yellow); border-color: rgb(from var(--yellow) r g b / .55); }
   &.unknown   { color: var(--warning); border-color: rgb(from var(--warning) r g b / .55); }
 }
 
