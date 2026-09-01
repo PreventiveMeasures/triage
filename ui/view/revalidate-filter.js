@@ -46,21 +46,32 @@ class RevalidateFilter extends StateElement {
       .value=${live(state.filterRevalidate)}
       @change=${this._onChange}
     >
-      <!-- The clear entry is named for what clearing gets you back:
-           the confidence range this dropdown replaced. It carries that
-           name only while there IS something to clear, because idle it
-           is the SELECTED option and a native select paints its
-           selected option's text — labelling it there would print
-           "Confidence" a second time, beside the block's own label, in
-           a control that is otherwise just its arrow. -->
-      <option value="" title="Filter by confidence range instead">${state.filterRevalidate ? 'Confidence' : ''}</option>
+      <!-- Two entries for "no outcome", sharing a value on purpose
+           (and written without backticks — this is inside a template
+           literal). A native select paints its SELECTED option's text,
+           and idle this is the selection — but idle the control is an
+           arrow slot barely wider than its chevron, so any text there
+           comes out as a clipped sliver of a glyph. The blank one
+           leads, so setting the value to the empty string lands on it
+           and the closed control is truly empty; hidden keeps it out
+           of the menu, where the named one stands for it. That name is
+           what clearing gets you back: the confidence range this
+           dropdown replaced. -->
+      <option value="" hidden></option>
+      <option value="">Confidence</option>
       ${this.options.map((o) => html`<option value=${o.value}>${o.label}</option>`)}
     </select>`
   }
 
   _onChange = (e) => {
+    const { value } = e.target
+    // Clearing lands on the NAMED half of the pair above, which would
+    // then paint its name into the arrow slot. The re-render can't
+    // correct it — live() compares VALUES, and both halves carry the
+    // empty one — so put the selection back on the blank twin here.
+    if (!value) e.target.selectedIndex = 0
     this.dispatchEvent(new CustomEvent('revalidate-change', {
-      detail: { value: e.target.value },
+      detail: { value },
       bubbles: true,
       composed: true,
     }))

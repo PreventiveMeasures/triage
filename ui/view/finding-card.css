@@ -69,18 +69,19 @@
    level with. Only bites when the description has no title line
    (`splitDescription` leaves a one-paragraph description as a plain
    `.desc`, which carries the gap); with a `.desc-title` first there's
-   no margin to shed. `.conf-reason` and `.severity-reason` also shed
-   their divider chrome — a dashed rule across the top of the column is
-   a separator with nothing left above it to separate. (`.severity-reason`
-   leads only when the finding carries a correction reason but no
-   description, recommendation, or confidence reason.)
+   no margin to shed. The closing notes (`.conf-reason`,
+   `.revalidate-verdict`, `.severity-reason`) also shed their divider
+   chrome — a dashed rule across the top of the column is a separator
+   with nothing left above it to separate. (Each of those leads only
+   when the finding carries it and nothing above it: no description,
+   recommendation, or earlier note.)
    Screen always hides the row; print re-shows it on `.multi-case`
    cards (see the @media print block), where the margin is doing its
    real job again — hence the media split instead of one blanket
    rule. */
 @media not print {
   :host([in-group]) .line-row + * { margin-top: 0; }
-  :host([in-group]) .line-row + :is(.conf-reason, .severity-reason) { padding-top: 0; border-top: 0; }
+  :host([in-group]) .line-row + :is(.conf-reason, .revalidate-verdict, .severity-reason) { padding-top: 0; border-top: 0; }
 }
 
 .tabs { display: flex; gap: .25rem; flex-wrap: wrap; }
@@ -197,24 +198,19 @@
    than as a muted label someone stuck on top of it. */
 .recommendation .section-label,
 .recommendation .section-body { color: var(--green); }
-.conf-reason {
+/* The two closing notes: the confidence rationale, and under it the
+   revalidation pass's verdict. One rule because they read as one kind
+   of thing — a remark ABOUT the finding rather than part of it — and
+   the stack only holds together if the second doesn't outweigh the
+   first. The verdict's one-word outcome carries in the rail's stamp;
+   down here it is prose in the same muted italic under the same dashed
+   divider. */
+.conf-reason,
+.revalidate-verdict {
   grid-column: 2; white-space: pre-wrap;
   font-size: .92em; font-style: italic;
   color: var(--muted);
   margin-top: .6rem; padding-top: .55rem;
-  border-top: 1px dashed var(--border);
-}
-
-/* The revalidation pass's verdict — a sharper sibling of the
-   confidence rationale it sits under: same dashed rule and quiet
-   size, but upright and at body contrast rather than muted italic,
-   because it is a conclusion about the finding rather than a note on
-   how it was scored. */
-.revalidate-verdict {
-  grid-column: 2; white-space: pre-wrap;
-  font-size: .92em; line-height: 1.5;
-  color: rgb(from var(--text) r g b / .82);
-  margin-top: .5rem; padding-top: .5rem;
   border-top: 1px dashed var(--border);
 }
 
@@ -288,7 +284,8 @@ span.evidence-ref { color: var(--muted); }
 .desc-title a,
 .desc a,
 .section-body a,
-.conf-reason a {
+.conf-reason a,
+.revalidate-verdict a {
   color: var(--accent); text-decoration: none;
   &:hover { text-decoration: underline; }
 }
@@ -1063,7 +1060,7 @@ span.evidence-ref { color: var(--muted); }
      bare-text fallback. The body selectors repeat the on-screen rule's
      specificity so they lose to nothing here. */
   a, .line-num, .line-num a { color: inherit; }
-  .desc-title a, .desc a, .section-body a, .conf-reason a, .evidence-ref { color: inherit; }
+  .desc-title a, .desc a, .section-body a, .conf-reason a, .revalidate-verdict a, .evidence-ref { color: inherit; }
 
   /* Inline `` `code` `` spans read as a chip on screen (1px border +
      tinted bg); on paper that chrome crowds dense prose and reads as

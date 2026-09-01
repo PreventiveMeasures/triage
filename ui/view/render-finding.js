@@ -277,12 +277,12 @@ function revalidateStampTemplate(f) {
     <div class="value-label">Revalidation</div>`
 }
 
-// The revalidation pass's reasoning, under the confidence rationale it
-// reads as a sharper sibling of: the same dashed rule and quiet type,
-// but a shade more contrast than `.conf-reason`'s muted italic,
-// because a verdict is a conclusion about the finding rather than a
-// note on how it was scored. Its one-word outcome is up in the rail
-// (revalidateStampTemplate above).
+// The revalidation pass's reasoning, in the same muted italic under
+// the same dashed divider as the confidence rationale it sits below:
+// both are a remark ABOUT the finding rather than part of it, and a
+// second note that shouted would unbalance the pair. What the pass
+// concluded doesn't need weight here anyway — the one-word outcome is
+// up in the rail (revalidateStampTemplate above).
 function revalidateTemplate(f) {
   const verdict = stripExportMarker(f.revalidateVerdict, f)
   if (!verdict) return nothing
