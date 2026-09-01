@@ -117,6 +117,29 @@
   gap: .25rem .75rem;
   &.active { display: grid; }
 }
+/* The description column has to be allowed to be NARROWER than its
+   content. `1fr` is `minmax(auto, 1fr)`, and that `auto` floor is the
+   widest thing in the track — for a snippet with a long line, the
+   whole line, because a `<pre>` that scrolls still reports its
+   content's width as its minimum. So one long line grew the track
+   past the card and took the section's right edge with it, instead of
+   scrolling: `.code-block`'s `max-width` cap never bit, since it
+   resolves against a column that had already stretched to fit.
+   `min-width: 0` puts the floor back at zero. The track then takes
+   the card's width, the cap resolves against a column that fits — and
+   inside a list item against the ITEM, so the list's own indent comes
+   off it — and the overflow goes where it was meant to, into the
+   `<pre>`'s horizontal scroll. `.finding-left` keeps its own
+   `min-width`, hence the exclusion rather than a blanket rule.
+
+   `overflow-wrap` comes with it: prose is `pre-wrap`, which breaks
+   only at spaces, so with the floor gone a token too long for the
+   line — a deep `node_modules` path, a hash — would run out past the
+   card instead of stretching it. `break-word` breaks one only when it
+   wouldn't fit on a line of its own, so ordinary text is untouched;
+   the snippets are `white-space: pre`, which doesn't wrap at all, so
+   their long lines still scroll rather than folding. */
+.tab-body > :not(.finding-left) { min-width: 0; overflow-wrap: break-word; }
 
 /* Description's first line becomes a bold title; the rest is a muted
    body block. Inline `"quoted"` / `` `code` `` segments get tag-style
