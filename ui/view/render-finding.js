@@ -850,6 +850,14 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
     ? html`<span class="line-num">${locLink}, ${exportLabel}</span>`
     : html`<span class="line-num">${locLink}</span>`
   const meta = formatRunMeta(f)
+  // The file the analyzer was reading when it found this. A note worth
+  // making when it isn't the finding's own location — a bug in `a.js`
+  // spotted while reading `b.js` says something about how it surfaced
+  // — and pure noise when it's the same file, where the row already
+  // reads `src/a.js:42` and the note only adds "(found analyzing
+  // src/a.js)" after it.
+  const foundIn = String(f.discoveredIn ?? '').trim()
+  const discoveredIn = foundIn === String(f.file ?? '').trim() ? '' : foundIn
   // npm chip in the focused finding view's line-row — surfaces the
   // upstream package + version when the analyzer stamped
   // `package: { npm: { name, version? } }` on the finding (links to
@@ -915,7 +923,7 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
       <div class="line-row">
         ${lineRowMain}
         ${npmChip}
-        ${f.discoveredIn ? html`<span class="line-num discovered-in">(found analyzing ${f.discoveredIn})</span>` : nothing}
+        ${discoveredIn ? html`<span class="line-num discovered-in">(found analyzing ${discoveredIn})</span>` : nothing}
         ${meta ? html`<span class="run-meta">${meta}</span>` : nothing}
       </div>
       ${descTitle ? html`<div class="desc-title">${renderInline(descTitle)}</div>` : nothing}
