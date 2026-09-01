@@ -14,10 +14,19 @@
 // native-select pattern.)
 //
 // Reactivity: extends StateElement, so reads of `state.filterRepo`
-// during render() are tracked. `live()` binds the native select's
-// value so a stale-filter clear in the parent (workspace switch
-// drops the previously-selected repo) reflects on the actual
-// select.value, not just the `?selected` attribute.
+// during render() are tracked. The selection is bound twice, same
+// split as `<findings-sort>` (see the comment there for the full
+// reasoning): `?selected=` on the options so the FIRST paint of a
+// freshly-built element shows the repo actually being filtered on —
+// Lit commits the `<select>`'s own bindings before its options
+// exist, so `.value=` alone leaves the browser falling back to
+// "All repositories" while the filter is live, which a cross-view
+// round trip (the findings chrome is rebuilt from `report.innerHTML`
+// on re-entry) hits with any repo picked. `.value=` through `live()`
+// covers every later render: a stale-filter clear in the parent (a
+// workspace switch dropping the previously-selected repo) has to
+// reach the native select.value, since the attribute is ignored on
+// an option the user has already interacted with.
 //
 // Dispatches `repo-change(detail.value)` on native change.
 import { live } from 'lit/directives/live.js'
@@ -50,11 +59,11 @@ class RepoFilter extends StateElement {
       .value=${live(state.filterRepo)}
       @change=${this._onChange}
     >
-      <option value="">All repositories</option>
+      <option value="" ?selected=${state.filterRepo === ''}>All repositories</option>
       ${this.options.map((r) => {
         const value = r == null ? NO_REPO_SENTINEL : r
         const label = r == null ? '(no repo)' : prettyRepoLabel(r)
-        return html`<option value=${value}>${label}</option>`
+        return html`<option value=${value} ?selected=${state.filterRepo === value}>${label}</option>`
       })}
     </select>`
   }

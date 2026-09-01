@@ -14,6 +14,17 @@
 // under it), which is why the value binding is `live()`: without it the
 // native select would keep showing the cleared option.
 //
+// `?selected=` on the options carries the other end — the FIRST paint,
+// which `live()` can't reach: Lit commits the `<select>`'s own
+// bindings before its options exist, so the value lands on an empty
+// select, the browser drops what it can't match, and the options
+// arriving after leave it on the first one. `state.filterRevalidate`
+// outlives the element (the findings chrome is rebuilt from
+// `report.innerHTML` on cross-view entry), so without the attribute a
+// return trip painted an empty arrow slot over findings the outcome
+// filter was still narrowing. Only the BLANK twin below takes the
+// attribute for the empty value — see the note there.
+//
 // Reactivity: extends StateElement, so the read of
 // `state.filterRevalidate` during render() is tracked.
 //
@@ -99,10 +110,15 @@ class RevalidateFilter extends StateElement {
            and the closed control is truly empty; hidden keeps it out
            of the menu, where the named one stands for it. That name is
            what clearing gets you back: the confidence range this
-           dropdown replaced. -->
-      <option value="" hidden></option>
+           dropdown replaced.
+
+           Which is also why only the blank twin is marked selected
+           below: marking both would leave the browser's reset on the
+           LAST one selected, painting the name into the arrow slot —
+           the same thing _onChange rewinds after a clear. -->
+      <option value="" hidden ?selected=${state.filterRevalidate === ''}></option>
       <option value="">Confidence</option>
-      ${this.options.map((o) => html`<option value=${o.value}>${o.label}</option>`)}
+      ${this.options.map((o) => html`<option value=${o.value} ?selected=${state.filterRevalidate === o.value}>${o.label}</option>`)}
     </select>
     ${this.hasPartial && state.filterRevalidate === 'confirmed'
       ? html`<button
