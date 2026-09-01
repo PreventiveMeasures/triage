@@ -103,6 +103,13 @@ export function resetFilters() {
   state.filterComment = ''
   state.filterFix = ''
   state.filterFlagged = ''
+  // Including the revalidation outcome: this is "no filters", and one
+  // that survived would keep hiding findings after a reset — which
+  // matters more now that a revalidation report can OPEN on it (see
+  // ingest.js maybeDefaultToConfirmed), and that the deep-link and
+  // graph-jump paths reset precisely so the finding they navigate to
+  // is on screen.
+  state.filterRevalidate = ''
   // Default sort tracks the dataset: if any finding carries a
   // `priority`, sort priority-descending (most important first),
   // else severity. Called on first-ingest only (subsequent loads
@@ -110,6 +117,53 @@ export function resetFilters() {
   const hasPriority = state.reports.some((r) =>
     r.groups.some((g) => g.some((f) => f.priority !== undefined)))
   state.sortBy = hasPriority ? 'priority-desc' : 'severity'
+}
+
+// Does the confidence floor leave this group on screen? The rule
+// matchesFilters applies below, with the upper bound at 10 so only the
+// floor bites, hoisted to the group because that is the unit the list
+// shows: a group is on screen when ANY of its rows clears the floor —
+// an unscored row only at floor 0 unless it is flagged `critical`, and
+// a row the pass knocked down reading as 0 whatever number it carries.
+function showsAtConfidence(g, min) {
+  return g.some((f) => {
+    const conf = voidsConfidence(f) ? 0 : f.confidence
+    return conf === undefined ? (f.critical === true || min === 0) : conf >= min
+  })
+}
+
+// The revalidation outcome a freshly-loaded set should OPEN on, given
+// the confidence floor ingest.js just auto-tuned: `'confirmed'` for a
+// revalidation report, `''` (no outcome) for everything else.
+//
+// A revalidation report is one where every group the floor leaves on
+// screen carries a row the second pass stamped. There the range is
+// answering the wrong question — it is about how sure the ORIGINAL
+// analyzer was, and the whole point of the pass is that something
+// looked again — so the pass's own answer leads instead, and "the
+// findings that survived" is what a reader opens such a report for.
+// The two share a toolbar block, so this is the switch the dropdown
+// would make by hand (conf-filter.js); the floor stays set underneath,
+// and clearing the outcome hands back the range that would otherwise
+// have been the default.
+//
+// Two conditions beyond "all of them are stamped":
+//   * something has to BE on screen, or an empty load satisfies "all
+//     of them" vacuously and opens on a filter for no reason;
+//   * Confirmed has to be REACHABLE — a pass that only ever refuted
+//     would otherwise open on an empty screen. (render.js clears an
+//     unreachable outcome anyway, so this is the difference between
+//     not setting it and setting it to be undone.)
+//
+// Pure in its arguments — it reads no state — so ingest.js can call it
+// between writing the floor and the first render.
+export function defaultRevalidateFilter(groups, confMin) {
+  const shown = groups.filter((g) => showsAtConfidence(g, confMin))
+  if (shown.length === 0) return ''
+  if (!shown.every((g) => g.some((f) => revalidateKind(f)))) return ''
+  const confirmed = new Set(revalidateFilterKinds('confirmed'))
+  if (!groups.some((g) => g.some((f) => confirmed.has(revalidateKind(f))))) return ''
+  return 'confirmed'
 }
 
 // Per-tab filter predicate. Factored out so `applyFilters` (group-level)

@@ -33,7 +33,7 @@ if (!globalThis[slotKey]) {
 }
 
 const { state } = await import('../client/state.ts')
-const { applyFilters, matchesFilters } = await import('../ui/view/filters.js')
+const { applyFilters, defaultRevalidateFilter, matchesFilters } = await import('../ui/view/filters.js')
 const { sortTabs } = await import('../ui/view/group.js')
 const {
   REVALIDATE_FILTERS, REVALIDATE_KINDS, formatRunMeta, isRevalidation,
@@ -303,6 +303,88 @@ describe('revalidate filter — the toolbar dropdown', () => {
     for (const revalidate of [undefined, 'refuted', 'unreachable', 'confirmed', 'partial', 'unknown', 'revalidation']) {
       assert.equal(matchesFilters(makeFinding('A', { revalidate })), true, String(revalidate))
     }
+  })
+
+  // What a freshly-loaded report OPENS on. ingest.js auto-tunes a
+  // confidence floor, then asks this whether the set is a revalidation
+  // report — every group that floor leaves on screen carrying a row
+  // the pass stamped — in which case the pass's own answer leads
+  // instead of a range about how sure the original analyzer was.
+  describe('the outcome a first load opens on', () => {
+    const stamped = (id, extra) => makeFinding(id, { revalidate: 'confirmed', ...extra })
+
+    it('opens on Confirmed when the floor leaves only revalidated groups', () => {
+      const groups = [[stamped('A', { confidence: 9 })], [stamped('B', { confidence: 8 })]]
+      assert.equal(defaultRevalidateFilter(groups, 8), 'confirmed')
+    })
+
+    it('stays off when a group on screen carries no stamp at all', () => {
+      const groups = [[stamped('A', { confidence: 9 })], [makeFinding('B', { confidence: 9 })]]
+      assert.equal(defaultRevalidateFilter(groups, 8), '')
+    })
+
+    // Only what the FLOOR shows has to be stamped — an unstamped
+    // group below it is not on screen to disagree.
+    it('ignores the groups the floor already hides', () => {
+      const groups = [[stamped('A', { confidence: 9 })], [makeFinding('B', { confidence: 2 })]]
+      assert.equal(defaultRevalidateFilter(groups, 8), 'confirmed')
+      // Drop the floor and that group is on screen, unstamped.
+      assert.equal(defaultRevalidateFilter(groups, 0), '')
+    })
+
+    // One stamped row is enough for its group, the same rule every
+    // other filter follows.
+    it('takes a group whose stamp is on one of its rows', () => {
+      const groups = [[makeFinding('A', { confidence: 9 }), stamped('B', { confidence: 9 })]]
+      assert.equal(defaultRevalidateFilter(groups, 8), 'confirmed')
+    })
+
+    it('takes any stamp as revalidated, but needs Confirmed to be reachable', () => {
+      // Everything on screen is stamped, and `partial` rides Confirmed.
+      const partial = [[makeFinding('A', { confidence: 9, revalidate: 'partial' })]]
+      assert.equal(defaultRevalidateFilter(partial, 8), 'confirmed')
+      // Stamped throughout, but the pass only ever knocked things
+      // down: opening on Confirmed would open on an empty screen.
+      const refuted = [[makeFinding('A', { confidence: 9, revalidate: 'refuted' })]]
+      assert.equal(defaultRevalidateFilter(refuted, 0), '')
+      const unknown = [[makeFinding('A', { confidence: 9, revalidate: 'unknown' })]]
+      assert.equal(defaultRevalidateFilter(unknown, 8), '')
+      // A refuted set with one surviving finding does open on it.
+      const mixed = [
+        [makeFinding('A', { confidence: 9, revalidate: 'refuted' })],
+        [makeFinding('B', { confidence: 9, revalidate: 'confirmed' })],
+      ]
+      assert.equal(defaultRevalidateFilter(mixed, 0), 'confirmed')
+    })
+
+    it('stays off when the floor leaves nothing on screen', () => {
+      assert.equal(defaultRevalidateFilter([], 0), '')
+      assert.equal(defaultRevalidateFilter([[stamped('A', { confidence: 2 })]], 8), '')
+    })
+
+    // The floor's own reading of what's on screen, which is not just
+    // `confidence >= min`: an unscored row shows only at floor 0
+    // unless it's flagged `critical`, and a knocked-down row reads as
+    // 0 whatever number it carries.
+    it('reads the floor the way the filter does', () => {
+      // A is stamped but unscored; B is scored but unstamped.
+      const unscored = [[stamped('A')], [makeFinding('B', { confidence: 9 })]]
+      // At floor 8 the unscored group drops out, leaving only B —
+      // which carries no stamp, so no outcome.
+      assert.equal(defaultRevalidateFilter(unscored, 8), '')
+      // At floor 0 both show, and B still carries none.
+      assert.equal(defaultRevalidateFilter(unscored, 0), '')
+      // A `critical` row clears any floor without a score.
+      const critical = [[stamped('A', { critical: true })]]
+      assert.equal(defaultRevalidateFilter(critical, 8), 'confirmed')
+      // A refuted 10 reads as 0, so its group is below the floor —
+      // leaving only the stamped group on screen.
+      const knocked = [
+        [stamped('A', { confidence: 9 })],
+        [makeFinding('B', { confidence: 10, revalidate: 'refuted' })],
+      ]
+      assert.equal(defaultRevalidateFilter(knocked, 8), 'confirmed')
+    })
   })
 
   // The toolbar drops the control when this comes back empty, so a

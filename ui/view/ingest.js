@@ -5,7 +5,7 @@ import { openImportConflictDialog } from './dialogs/import-conflict-dialog.js'
 import { dropZone, report } from './dom.js'
 import { toGroup } from './group.js'
 import { effectiveSeverity } from './format.js'
-import { resetFilters } from './filters.js'
+import { defaultRevalidateFilter, resetFilters } from './filters.js'
 import { render } from './render.js'
 import { renderSidebar } from './sidebar.js'
 import { cleanupGraph2, graph2 } from './graph/state.js'
@@ -1205,6 +1205,11 @@ export async function ingestReport(name, content, gen = null) {
       } else {
         state.filterConfMin = 0
       }
+      // The other half of the first-load default: a REVALIDATION
+      // report — one where every group the floor above leaves on
+      // screen carries a row the second pass stamped — opens on
+      // Confirmed instead of the range. See defaultRevalidateFilter.
+      state.filterRevalidate = defaultRevalidateFilter(groups, state.filterConfMin)
     }
     render()
   } catch (err) {
