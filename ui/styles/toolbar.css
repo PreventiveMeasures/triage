@@ -124,9 +124,11 @@
 
     /* Separator dash sits between the two value spans in a dimmer
        tone with breathing room either side — matches the design
-       prototype's `.vals .sep` (faint color, 2px each side).
-       Class is `dash` (not `sep`) so the toolbar's group-separator
-       rule above doesn't apply its vertical border to this span. */
+       prototype's `.vals .sep` (faint color, 2px each side). Named
+       `dash`, not `sep`: this one separates two values inside one
+       control, which is a different thing from the group dividers
+       the toolbar row used to carry between its controls (dropped —
+       the row's `gap` tells the groups apart on its own). */
     & .dash { color: var(--muted); margin: 0 .15rem; }
   }
 
@@ -278,7 +280,6 @@
     &:focus { border-color: var(--accent); outline: none; }
   }
 
-  & .sep { border-left: 1px solid var(--border); height: 1.2rem; }
   & .result-count { color: var(--muted); margin-left: auto; }
 
   & .checkbox-label {
