@@ -31,7 +31,7 @@ if (!globalThis[slotKey]) {
   }
 }
 
-const { codeBlockSegments, descriptionSections, flowText } = await import('../ui/view/format.js')
+const { codeBlockSegments, descriptionSections, findingTitle, flowText, splitDescription, titledDescription } = await import('../ui/view/format.js')
 
 describe('descriptionSections — empty input', () => {
   it('returns nothing for empty / missing bodies', () => {
@@ -301,5 +301,125 @@ describe('codeBlockSegments', () => {
   it('passes empty input through', () => {
     assert.deepEqual(codeBlockSegments(undefined), [undefined])
     assert.deepEqual(codeBlockSegments(null), [null])
+  })
+})
+
+// A report may name the finding outright in a `title` field. The
+// formats that don't have one put the name in the description's first
+// line, so that's the fallback — and the split that follows has to
+// know which of the two it's looking at.
+describe('findingTitle', () => {
+  it('prefers the finding\'s own title field', () => {
+    assert.equal(
+      findingTitle({ title: 'Shell injection', description: 'Something else entirely\n\nBody.' }),
+      'Shell injection',
+    )
+  })
+
+  it('trims the title field', () => {
+    assert.equal(findingTitle({ title: '  Shell injection \n' }), 'Shell injection')
+  })
+
+  it('falls back to the description first line', () => {
+    assert.equal(findingTitle({ description: 'Shell injection\n\nBody.' }), 'Shell injection')
+    assert.equal(findingTitle({ description: '\n\n  Leading blanks skipped\nrest' }), 'Leading blanks skipped')
+  })
+
+  it('falls back when the title is empty, blank, or not a string', () => {
+    for (const title of ['', '   ', null, undefined, 42, { toString: () => 'x' }, ['t']]) {
+      assert.equal(findingTitle({ title, description: 'From the body' }), 'From the body', String(title))
+    }
+  })
+
+  it('is empty when the finding carries neither', () => {
+    assert.equal(findingTitle({}), '')
+    assert.equal(findingTitle({ description: '' }), '')
+    assert.equal(findingTitle(undefined), '')
+  })
+})
+
+describe('splitDescription — with a title field', () => {
+  it('keeps the whole description as body', () => {
+    assert.deepEqual(
+      splitDescription({ title: 'Shell injection', description: 'First line of prose.\n\nSecond paragraph.' }),
+      { title: 'Shell injection', body: 'First line of prose.\n\nSecond paragraph.' },
+    )
+  })
+
+  it('drops a first line that just repeats the title', () => {
+    assert.deepEqual(
+      splitDescription({ title: 'Shell injection', description: 'Shell injection\n\nThe worker pool …' }),
+      { title: 'Shell injection', body: 'The worker pool …' },
+    )
+  })
+
+  it('keeps a first line that merely starts with the title', () => {
+    const description = 'Shell injection is reachable from the worker pool.\n\nMore.'
+    assert.deepEqual(
+      splitDescription({ title: 'Shell injection', description }),
+      { title: 'Shell injection', body: description },
+    )
+  })
+
+  it('takes a title with no description at all', () => {
+    assert.deepEqual(splitDescription({ title: 'Shell injection' }), { title: 'Shell injection', body: '' })
+    assert.deepEqual(
+      splitDescription({ title: 'Shell injection', description: 'Shell injection' }),
+      { title: 'Shell injection', body: '' },
+    )
+  })
+})
+
+describe('splitDescription — without a title field', () => {
+  it('lifts the first line when there is a body under it', () => {
+    assert.deepEqual(
+      splitDescription({ description: 'Shell injection\n\nThe worker pool …' }),
+      { title: 'Shell injection', body: 'The worker pool …' },
+    )
+  })
+
+  it('leaves a single-line description whole', () => {
+    assert.deepEqual(
+      splitDescription({ description: 'One paragraph, no title.' }),
+      { title: '', body: 'One paragraph, no title.' },
+    )
+  })
+
+  it('leaves a description that opens on a fence whole', () => {
+    const description = '```ts\nconst a = 1\n```\n\nProse under it.'
+    assert.deepEqual(splitDescription({ description }), { title: '', body: description })
+  })
+
+  it('takes an empty finding', () => {
+    assert.deepEqual(splitDescription({}), { title: '', body: '' })
+    assert.deepEqual(splitDescription(undefined), { title: '', body: '' })
+  })
+})
+
+// The compact surfaces show one text blob per finding rather than a
+// heading over a body, so they need the name folded back in.
+describe('titledDescription', () => {
+  it('returns the description untouched when there is no title field', () => {
+    const description = 'Shell injection\n\nThe worker pool …'
+    assert.equal(titledDescription({ description }), description)
+    assert.equal(titledDescription({}), '')
+  })
+
+  it('puts the title in front of the body', () => {
+    assert.equal(
+      titledDescription({ title: 'Shell injection', description: 'The worker pool …' }),
+      'Shell injection\n\nThe worker pool …',
+    )
+  })
+
+  it('does not repeat a title the description already opens with', () => {
+    assert.equal(
+      titledDescription({ title: 'Shell injection', description: 'Shell injection\n\nThe worker pool …' }),
+      'Shell injection\n\nThe worker pool …',
+    )
+  })
+
+  it('is just the title when there is no description', () => {
+    assert.equal(titledDescription({ title: 'Shell injection' }), 'Shell injection')
   })
 })

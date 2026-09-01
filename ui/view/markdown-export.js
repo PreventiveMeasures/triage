@@ -1,7 +1,7 @@
 import { state } from '#client/index.js'
 import { downloadBlob } from './dom.js'
 import { applyFilters } from './filters.js'
-import { commonPrefix, correctedVariants, effectiveSeverity, evidenceMarkdown, findingDisplayName, hasSeverityCorrection, stripExportMarker } from './format.js'
+import { commonPrefix, correctedVariants, effectiveSeverity, evidenceMarkdown, findingDisplayName, hasSeverityCorrection, splitDescription, stripExportMarker } from './format.js'
 import { groupState, isIgnored, tabKey } from './group.js'
 
 // Markdown serializer for the "download report" toolbar button —
@@ -44,10 +44,11 @@ function locationStr(f) {
   return Number.isFinite(line) ? `${f.file}:${line}` : f.file
 }
 
-// One finding as a markdown subsection. Description / recommendation
-// / confidenceReason fields can themselves be markdown (claude-
-// security reports are imported from `.md` directly) so they're
-// emitted verbatim — escaping would corrupt the embedded fences.
+// One finding as a markdown subsection. Description / impact /
+// reproduction / recommendation / confidenceReason fields can
+// themselves be markdown (claude-security reports are imported from
+// `.md` directly) so they're emitted verbatim — escaping would
+// corrupt the embedded fences.
 function findingToMarkdown(f) {
   const key = tabKey(f)
   const entry = state.triage.get(key)
@@ -55,7 +56,11 @@ function findingToMarkdown(f) {
   const ignored = isIgnored(f)
   const color = entry?.color
   const comment = entry?.comment ?? ''
-  const description = stripExportMarker(f.description ?? '', f)
+  // Title + body via the same split the card draws: a report that
+  // names the finding in a `title` field gets that name emitted as the
+  // body's first line, which is exactly where a markdown import would
+  // have carried it — so the document reads the same either way.
+  const { title, body: description } = splitDescription(f)
   const displayName = findingDisplayName(f)
 
   const heading = displayName
@@ -80,6 +85,10 @@ function findingToMarkdown(f) {
     lines.push('')
   }
 
+  if (title) {
+    lines.push(title)
+    lines.push('')
+  }
   if (description) {
     lines.push(description.trim())
     lines.push('')
@@ -90,6 +99,14 @@ function findingToMarkdown(f) {
   const evidence = evidenceMarkdown(f)
   if (evidence) {
     lines.push(evidence)
+    lines.push('')
+  }
+  if (f.impact) {
+    lines.push(`**Impact:** ${stripExportMarker(f.impact, f).trim()}`)
+    lines.push('')
+  }
+  if (f.reproduction) {
+    lines.push(`**Reproduction:** ${stripExportMarker(f.reproduction, f).trim()}`)
     lines.push('')
   }
   if (f.recommendation) {

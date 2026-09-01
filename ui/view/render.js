@@ -7,11 +7,11 @@ import { FILE_ICONS } from './file-display.js'
 import { listBundles, listWorkspaces, state } from '#client/index.js'
 import { isBundleInRemote, isInRemote, remoteCount, triageSync } from './client-sync.js'
 import { dropZone, report } from './dom.js'
-import { SEVERITIES, configureDepsDir, displayedSeverity, fileLink, findingDisplayName, formatRunMeta, hasSeverityCorrection, isHttpUrl, isModule, lineLink, prettyModel, stripExportMarker } from './format.js'
+import { SEVERITIES, configureDepsDir, displayedSeverity, fileLink, findingDisplayName, findingTitle, formatRunMeta, hasSeverityCorrection, isHttpUrl, isModule, lineLink, prettyModel } from './format.js'
 import { activeTabFor, getMergedGroups, groupKey, groupState, primaryTab, tabKey } from './group.js'
 import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, applySorting, modelOfFinding, repoOfFinding } from './filters.js'
 import { ANALYZER_LABELS } from './analyzer-select.js'
-import { COMMENT_ICON, FIX_ICON, FLAG_ICON, badgeLabel, findingCardGid, firstLine } from './render-finding.js'
+import { COMMENT_ICON, FIX_ICON, FLAG_ICON, badgeLabel, findingCardGid } from './render-finding.js'
 import { computeFindingCountsByFile, computeTransitiveCounts, fileHasFindings, mergeReportsTree } from './file-counts.js'
 import { renderTreeView } from './render-files.js'
 import { graph2 } from './graph/state.js'
@@ -901,7 +901,7 @@ function kanbanCardTemplate(g, opts = {}) {
   const { variant = 'kanban', active = false } = opts
   const groupSt = groupState(g)
   const activeTab = activeTabFor(g)
-  const title = firstLine(stripExportMarker(activeTab.description, activeTab)) || '(untitled finding)'
+  const title = findingTitle(activeTab) || '(untitled finding)'
   const isKanban = variant === 'kanban'
   const classes = {
     'kanban-card': true,

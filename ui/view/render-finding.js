@@ -2,7 +2,7 @@ import { html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { bundlesForFileHash, isLinkableFindingId, isPlaceholderNpmPackage, state } from '#client/index.js'
-import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceLabel, evidenceMarkdown, evidenceUrl, findingDisplayName, findingUrl, flowText, formatRunMeta, githubIssueUrl, hasSeverityCorrection, isHttpUrl, markdownLinkToken, parseCommentRefs, stripExportMarker } from './format.js'
+import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceLabel, evidenceMarkdown, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, hasSeverityCorrection, isHttpUrl, markdownLinkToken, parseCommentRefs, splitDescription, stripExportMarker } from './format.js'
 import { activeTabFor, findingRepo, groupKey, groupState, isIgnored, sortTabs, tabKey } from './group.js'
 import { highlightedCode } from './code-highlight.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
@@ -90,46 +90,6 @@ export function severityBadge(f, { variant = 'full' } = {}) {
   // target (outlined, not struck — it isn't superseded in this view).
   const other = showingCorrected ? original : corrected
   return html`<span class=${`badge-pair badge-pair-${variant}`} title=${tip} aria-label=${aria}>${primary}<span class="badge-orig-wrap"><span class=${`badge-arrow ${dirWord}`} aria-hidden="true">${arrow}</span>${showingCorrected ? html`<span class="badge-pre" aria-hidden="true">was</span>` : nothing}<span class=${`badge-orig ${other}${showingCorrected ? ' struck' : ''}`}>${badgeLabel(other)}</span></span>${variesChip}</span>`
-}
-
-// First non-empty line of a description, for the table-view title.
-// Markdown findings begin with a literal title line; JSON findings
-// usually have a one-paragraph description and the whole thing
-// becomes the title. CSS handles the visual ellipsis if it overflows.
-export function firstLine(text) {
-  if (!text) return ''
-  for (const line of text.split('\n')) {
-    if (line.trim()) return line.trim()
-  }
-  return ''
-}
-
-// Split a description into title + body for the card view's typographic
-// layout. The first line acts as the title (bold heading) and the rest
-// is the body. We only treat the first line as a title when there's
-// actually a non-empty body after it — a single-line description stays
-// rendered as a plain `.desc` so JSON findings with one-paragraph
-// summaries don't get jarringly bolded.
-//
-// The title is prose like any other and goes through `renderInline`
-// where it's drawn: report titles name the offending symbol in
-// backticks (`` SQL injection in `getUser()` ``) and printing the
-// markdown raw in the one line the reader takes in first is the worst
-// place to do it. Only the INLINE pass — a title is one line, and a
-// lone fence on it would otherwise swallow the whole thing into a
-// code block.
-function splitDescription(text) {
-  if (!text) return { title: '', body: '' }
-  const nl = text.indexOf('\n')
-  if (nl < 0) return { title: '', body: text }
-  // A body that OPENS on a fence has no title line: lifting that first
-  // line out would leave the block unopened, its code rendering as
-  // prose under a `` ```ts `` heading. (A first segment that isn't a
-  // string is a block starting at index 0 — see codeBlockSegments.)
-  if (typeof codeBlockSegments(text)[0] !== 'string') return { title: '', body: text }
-  const body = text.slice(nl + 1).replace(/^\s+/u, '')
-  if (!body) return { title: '', body: text }
-  return { title: text.slice(0, nl).trim(), body }
 }
 
 // Render ONE run of prose with inline highlights for `[markdown](links)`,
@@ -414,11 +374,11 @@ function flagButtonTemplate(key, isFocus = false) {
   >${FLAG_ICON}${isFocus ? html`<span class="mark-btn-label">${flagged ? 'Flagged' : 'Flag'}</span>` : nothing}</button>`
 }
 
-// Issue title — the finding's first description line (the table-view
-// title), capped so the pre-filled `?title=` stays a sane length;
+// Issue title — the finding's title (the same one the table view
+// shows), capped so the pre-filled `?title=` stays a sane length;
 // falls back to the file path, then a generic label.
 function issueTitle(f) {
-  const base = firstLine(f.description) || f.file || 'Security finding'
+  const base = findingTitle(f) || f.file || 'Security finding'
   return base.length > 120 ? `${base.slice(0, 119)}…` : base
 }
 
@@ -807,12 +767,20 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
       >Code</button>`
     }
   }
-  const { title: descTitle, body: descBody } = splitDescription(stripExportMarker(f.description, f))
+  const { title: descTitle, body: descBody } = splitDescription(f)
   // The narrative first, then the evidence list, then the report's
   // labelled sections — the order a claude-security report writes them
   // in, and the one that reads right for the formats whose labels all
   // trail their prose (parse-piolium). `lead` is the prose that opens
   // the body; everything from the first label on keeps document order.
+  //
+  // The finding's own structured fields (`impact`, `reproduction`,
+  // `recommendation`) follow, in the order a reader needs them: what it
+  // means, how to trigger it, how to fix it. They wear the same header
+  // + body block as the labelled sections above, so a report that
+  // carries them as FIELDS and one that writes `**Impact:**` into its
+  // description read identically — which is what parse-md emits for the
+  // same two names.
   const sections = descriptionSections(descBody)
   const firstLabel = sections.findIndex((s) => s.label !== null)
   const lead = firstLabel === -1 ? sections : sections.slice(0, firstLabel)
@@ -838,6 +806,8 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
       ${labelled.map((s) => (s.label === null
         ? html`<div class="desc">${renderHighlighted(flowText(s.body))}</div>`
         : sectionTemplate(s.label, s.body)))}
+      ${f.impact ? sectionTemplate('Impact', stripExportMarker(f.impact, f)) : nothing}
+      ${f.reproduction ? sectionTemplate('Reproduction', stripExportMarker(f.reproduction, f)) : nothing}
       ${f.recommendation ? sectionTemplate('Recommendation', stripExportMarker(f.recommendation, f), 'recommendation') : nothing}
       ${f.confidenceReason ? html`<div class="conf-reason">${renderHighlighted(stripExportMarker(f.confidenceReason, f))}</div>` : nothing}
       ${hasSeverityCorrection(f) && f.correctedSeverityReason ? html`<div class="severity-reason"><span class="severity-reason-label">Severity correction:</span> ${renderHighlighted(f.correctedSeverityReason)}</div>` : nothing}
@@ -944,7 +914,7 @@ export function tableRowInnerTemplate(g) {
   const activeKey = tabKey(active)
   const f = active
 
-  const title = firstLine(stripExportMarker(f.description, f))
+  const title = findingTitle(f)
   const typeLabel = formatRunMeta(f)
   const exportLabel = findingDisplayName(f)
   const exportPart = exportLabel ? `, ${exportLabel}` : ''

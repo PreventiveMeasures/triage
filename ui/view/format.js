@@ -272,8 +272,9 @@ export function findingDisplayName(f) {
 }
 
 // Searchable text for `state.filterInclude`. Joins the user-visible
-// fields (file path, description, recommendation, confidence
-// reasoning, discovery context) plus the per-finding `repo.github`
+// fields (file path, title, description, impact, reproduction,
+// recommendation, confidence reasoning, discovery context) plus the
+// per-finding `repo.github`
 // slug — the latter so the search field can match findings by their
 // upstream repo (`lodash/lodash`), useful when a merged report mixes
 // findings from many node_modules dependencies.
@@ -285,7 +286,7 @@ export function findingDisplayName(f) {
 // the lazy graph bundle (see the `fileUrl` note below), so filters.js
 // matches the comment and fix fields itself; see matchesFilters there.
 export function findingText(f) {
-  return [f.file, f.description, evidenceMarkdown(f), f.recommendation, f.confidenceReason, f.discoveredIn, f.repo?.github].filter(Boolean).join('\n').toLowerCase()
+  return [f.file, f.title, f.description, f.impact, f.reproduction, evidenceMarkdown(f), f.recommendation, f.confidenceReason, f.discoveredIn, f.repo?.github].filter(Boolean).join('\n').toLowerCase()
 }
 
 export function prettyModel(model) {
@@ -609,6 +610,92 @@ export function codeBlockSegments(text) {
   return segments
 }
 
+// ── Finding title ────────────────────────────────────────────────────
+// What the finding is CALLED. A report may name it outright in a
+// `title` field; the formats that have no such field put it in the
+// description's first line instead (every markdown import does — the
+// finding's heading becomes that line at parse), and JSON findings
+// usually carry a one-paragraph description that stands in for one.
+// So: the field when it's there, the first line otherwise.
+//
+// Single source for every surface that shows a finding by name — the
+// card's bold heading, the table row, the kanban / focus-queue card,
+// the pre-filled GitHub issue title, the markdown export — so a
+// report's own title is what the reader sees in all of them or in
+// none. The export marker comes off first: it's chrome the exports
+// pipeline injects into the prose, not part of what the finding is
+// called.
+export function firstLine(text) {
+  if (!text) return ''
+  for (const line of text.split('\n')) {
+    if (line.trim()) return line.trim()
+  }
+  return ''
+}
+
+export function findingTitle(f) {
+  const own = typeof f?.title === 'string' ? f.title.trim() : ''
+  return own || firstLine(stripExportMarker(f?.description, f))
+}
+
+// Title + body for the card's typographic layout: a bold heading over
+// a muted body block.
+//
+// With a `title` field the split is already made — the whole
+// description is body. The one adjustment is a description whose first
+// line REPEATS the title (a report carrying the heading in both
+// places): printing it as the heading and again as the body's opening
+// line reads as a stutter, so an exact repeat is dropped.
+//
+// Without one, the description's first line is the title — but only
+// when there's a non-empty body under it. A single-line description
+// stays whole as a plain `.desc`, so JSON findings whose description
+// is one paragraph aren't jarringly bolded; and a description that
+// OPENS on a fence keeps its first line, since lifting that line out
+// would leave the code block unopened and render its code as prose
+// under a `` ```ts `` heading.
+//
+// The title is prose like any other and goes through the inline pass
+// where it's drawn (render-finding.js): report titles name the
+// offending symbol in backticks (`` SQL injection in `getUser()` ``),
+// and the one line the reader takes in first is the worst place to
+// print raw markdown.
+export function splitDescription(f) {
+  const text = stripExportMarker(f?.description, f) || ''
+  const own = typeof f?.title === 'string' ? f.title.trim() : ''
+  if (own) {
+    const body = text.trim()
+    const nl = body.indexOf('\n')
+    const first = (nl < 0 ? body : body.slice(0, nl)).trim()
+    if (first !== own) return { title: own, body }
+    return { title: own, body: nl < 0 ? '' : body.slice(nl + 1).replace(/^\s+/u, '') }
+  }
+  if (!text) return { title: '', body: '' }
+  const nl = text.indexOf('\n')
+  if (nl < 0) return { title: '', body: text }
+  // A first segment that isn't a string is a block starting at index 0
+  // — see codeBlockSegments.
+  if (typeof codeBlockSegments(text)[0] !== 'string') return { title: '', body: text }
+  const body = text.slice(nl + 1).replace(/^\s+/u, '')
+  if (!body) return { title: '', body: text }
+  return { title: text.slice(0, nl).trim(), body }
+}
+
+// The description with the finding's name in front of it — the shape a
+// format WITHOUT a `title` field writes it in, since there the name IS
+// the first line. For the surfaces that show one text blob per finding
+// rather than a heading over a body (the bundle views' issue rows,
+// code-rail results and source-panel descriptions): they leaned on the
+// description opening with the name, and a title-bearing finding would
+// otherwise read there with no name at all. A finding that carries no
+// `title` gets its description back untouched.
+export function titledDescription(f) {
+  const own = typeof f?.title === 'string' ? f.title.trim() : ''
+  if (!own) return stripExportMarker(f?.description, f) || ''
+  const { body } = splitDescription(f)
+  return body ? `${own}\n\n${body}` : own
+}
+
 // Source URL for one `## Evidence` row. The row's own link when the
 // report gave one; otherwise the same `HEAD` reconstruction findingUrl
 // falls back to, from the row's file / line under the finding's repo —
@@ -700,6 +787,9 @@ export function handoffBlock(f, repo) {
   if (repo) lines.push(`Repo: ${repo}`)
   if (f.file) lines.push(`File: ${f.file}`)
   if (f.line !== undefined && f.line !== null && f.line !== '') lines.push(`Line: ${f.line}`)
+  // Only for a finding that names itself in a `title` field: everywhere
+  // else the name is the description's first line and already below.
+  if (typeof f.title === 'string' && f.title.trim()) lines.push(`Title: ${f.title.trim()}`)
   if (f.description) lines.push(`Description: ${f.description}`)
   const evidence = evidenceMarkdown(f)
   if (evidence) lines.push(evidence)
