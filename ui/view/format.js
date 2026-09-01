@@ -1,4 +1,4 @@
-import { unescapeMd } from '../../common/md-structure.js'
+import { fenceRanges, inFence, unescapeMd } from '../../common/md-structure.js'
 import { html, nothing } from './frontend-global.js'
 // Direct relative import, NOT `#client/index.js`: this module rides in
 // the lazy `ui/graph.js` bundle, and the aggregator would drag `state`
@@ -435,11 +435,12 @@ export function findingUrl(f, repoFallback) {
 // fence, a quote, a heading, a table row. Those are the constructs
 // whose line breaks carry meaning (a piolium PoC snippet, a list of
 // affected files), and `.desc` / `.section-body` keep `pre-wrap` so
-// they still render as the report wrote them.
+// they still render as the report wrote them. (The fence alternatives
+// are belt-and-braces: `flowText` carves every FENCED block out before
+// a line reaches here, so a fence line no longer arrives on this path.)
 const BLOCK_LINE_RE = /^(?:\s+\S|[-*+] |\d+[.)] |>|#{1,6} |\||`{3}|~{3})/u
 
-export function flowText(text) {
-  if (!text) return text
+function flowParagraphs(text) {
   // The capturing split keeps the blank-line runs, so paragraph
   // spacing survives the rejoin untouched.
   return text.split(/(\n{2,})/u).map((chunk) => {
@@ -448,6 +449,42 @@ export function flowText(text) {
     if (lines.some((l) => BLOCK_LINE_RE.test(l))) return chunk
     return lines.map((l) => l.trim()).filter(Boolean).join(' ')
   }).join('')
+}
+
+// One run of prose beside a fenced block. The newlines on a side a
+// fence abuts are peeled off and re-attached around the reflow: that
+// break is what puts the fence on its own line, and `flowParagraphs`
+// — which drops the empty line its split leaves at either edge —
+// would otherwise weld the prose onto the fence.
+function flowRun(run, keepLead, keepTail) {
+  const lead = keepLead ? /^\n*/u.exec(run)[0] : ''
+  const body = run.slice(lead.length)
+  const tail = keepTail ? /\n*$/u.exec(body)[0] : ''
+  return lead + flowParagraphs(body.slice(0, body.length - tail.length)) + tail
+}
+
+// Fenced code is exempt from all of the above: its line breaks are the
+// snippet. Paragraph reflow can't be trusted to leave one alone on its
+// own — a block carrying a BLANK line (a PoC with a gap between setup
+// and trigger) splits into paragraphs, and the halves that hold no
+// fence line read as ordinary hard-wrapped prose and get folded into
+// one line. So the fenced ranges come out first (the same reading the
+// parsers use — common/md-structure.js) and only the prose between
+// them is reflowed, which also means prose sharing a paragraph with a
+// snippet now flows instead of being pinned by it.
+export function flowText(text) {
+  if (!text) return text
+  const ranges = fenceRanges(text)
+  if (ranges.length === 0) return flowParagraphs(text)
+  const out = []
+  let last = 0
+  for (const [start, end] of ranges) {
+    if (start > last) out.push(flowRun(text.slice(last, start), last > 0, true))
+    out.push(text.slice(start, end))
+    last = end
+  }
+  if (last < text.length) out.push(flowRun(text.slice(last), true, false))
+  return out.join('')
 }
 
 // Split a description body into the sections the report wrote it in.
@@ -466,9 +503,28 @@ export function flowText(text) {
 // `[{ label, body }]` in document order, `label` null for prose.
 const SECTION_LABEL_RE = /^\*\*([^*\n]+):\*\*[ \t]*/u
 
+// Paragraph split — blank lines, but only the ones OUTSIDE a fenced
+// code block. A snippet may carry blank lines of its own, and cutting
+// there would tear the block in two: the opening fence would end up in
+// one section and the closing one in the next, so neither half renders
+// as code and both show their bare fence markers.
+function paragraphs(text) {
+  const ranges = fenceRanges(text)
+  if (ranges.length === 0) return text.split(/\n{2,}/u)
+  const parts = []
+  let last = 0
+  for (const m of text.matchAll(/\n{2,}/gu)) {
+    if (inFence(ranges, m.index)) continue
+    parts.push(text.slice(last, m.index))
+    last = m.index + m[0].length
+  }
+  parts.push(text.slice(last))
+  return parts
+}
+
 export function descriptionSections(body) {
   const sections = []
-  for (const para of (body || '').split(/\n{2,}/u)) {
+  for (const para of paragraphs(body || '')) {
     if (!para.trim()) continue
     const m = SECTION_LABEL_RE.exec(para)
     if (m) {
@@ -480,6 +536,77 @@ export function descriptionSections(body) {
     else sections.push({ label: null, body: para })
   }
   return sections
+}
+
+// ── Fenced code blocks ───────────────────────────────────────────────
+// Reports embed snippets — a piolium PoC, the vulnerable lines a
+// claude-security finding quotes — as fenced blocks, and the parsers
+// carry them into the description verbatim. Split a body into the
+// prose runs and the fenced blocks between them, so the card can draw
+// each block as a real `<pre>` instead of leaving the fence markers to
+// print as literal text with the inline pass chipping up whatever
+// quotes and backticks the snippet happened to contain.
+//
+// Prose runs come back as plain strings and blocks as `{ lang, code }`
+// — the same string-or-token shape parseCommentRefs returns. `code` is
+// the content between the fences, verbatim. `lang` is the info
+// string's first word, case-folded (```TS and ```ts are one language)
+// and '' when the fence named none or named something that isn't a
+// language tag: a bare word is a language, while the filename or
+// `{highlight: 1-3}` attribute block other renderers accept there is
+// not, and stamping one onto the block's label would print noise.
+//
+// The newlines BETWEEN a block and the prose around it are dropped
+// with the fences. They exist to put the fence on its own line, and
+// the block is a `<pre>` that carries its own margins — while the
+// prose around it renders into a `white-space: pre-wrap` box, which
+// would print each of those newlines as a blank line above and below
+// every block.
+//
+// Text with no fence in it comes back as a single-element array
+// holding it unchanged, so the caller can take a plain-text fast path.
+// Pairing is `fenceRanges`' (common/md-structure.js), the same reading
+// the parsers use — so what a parser treated as code is what the card
+// draws as code, an unclosed fence running to end of input included.
+const FENCE_LINE_RE = /^ {0,3}(`{3,}|~{3,})(.*)$/u
+const LANG_TAG_RE = /^[a-z0-9+#._-]{1,20}$/u
+
+function fencedBlock(raw) {
+  const lines = raw.split('\n')
+  // `fenceRanges` only ever opens a range on a fence line, so the
+  // match is there; the `?.` keeps this readable rather than resting
+  // the whole function on that.
+  const open = FENCE_LINE_RE.exec(lines[0])
+  const marker = (open?.[1] ?? '```').slice(0, 3)
+  const tag = (open?.[2] ?? '').trim().split(/\s+/u)[0].toLowerCase()
+  // The last line is the CLOSING fence unless the block dangles at end
+  // of input — and a dangling one can still end on a fence line of the
+  // other marker (a ``` inside a ~~~ block is content), so the marker
+  // has to match for the line to be chrome rather than code.
+  const close = lines.length > 1 ? FENCE_LINE_RE.exec(lines.at(-1)) : null
+  const closed = Boolean(close?.[1].startsWith(marker))
+  return {
+    lang: LANG_TAG_RE.test(tag) ? tag : '',
+    code: lines.slice(1, closed ? -1 : undefined).join('\n'),
+  }
+}
+
+export function codeBlockSegments(text) {
+  const ranges = fenceRanges(text || '')
+  if (ranges.length === 0) return [text]
+  const segments = []
+  let last = 0
+  const pushProse = (raw, afterBlock) => {
+    const prose = (afterBlock ? raw.replace(/^\n+/u, '') : raw).replace(/\n+$/u, '')
+    if (prose) segments.push(prose)
+  }
+  for (const [start, end] of ranges) {
+    if (start > last) pushProse(text.slice(last, start), last > 0)
+    segments.push(fencedBlock(text.slice(start, end)))
+    last = end
+  }
+  if (last < text.length) pushProse(text.slice(last), true)
+  return segments
 }
 
 // Source URL for one `## Evidence` row. The row's own link when the

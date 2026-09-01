@@ -2,7 +2,7 @@ import { html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { bundlesForFileHash, isLinkableFindingId, isPlaceholderNpmPackage, state } from '#client/index.js'
-import { SEVERITY_ORDER, commitUrl, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceLabel, evidenceMarkdown, evidenceUrl, findingDisplayName, findingUrl, flowText, formatRunMeta, githubIssueUrl, hasSeverityCorrection, isHttpUrl, markdownLinkToken, parseCommentRefs, stripExportMarker } from './format.js'
+import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceLabel, evidenceMarkdown, evidenceUrl, findingDisplayName, findingUrl, flowText, formatRunMeta, githubIssueUrl, hasSeverityCorrection, isHttpUrl, markdownLinkToken, parseCommentRefs, stripExportMarker } from './format.js'
 import { activeTabFor, findingRepo, groupKey, groupState, isIgnored, sortTabs, tabKey } from './group.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 
@@ -113,12 +113,17 @@ function splitDescription(text) {
   if (!text) return { title: '', body: '' }
   const nl = text.indexOf('\n')
   if (nl < 0) return { title: '', body: text }
+  // A body that OPENS on a fence has no title line: lifting that first
+  // line out would leave the block unopened, its code rendering as
+  // prose under a `` ```ts `` heading. (A first segment that isn't a
+  // string is a block starting at index 0 — see codeBlockSegments.)
+  if (typeof codeBlockSegments(text)[0] !== 'string') return { title: '', body: text }
   const body = text.slice(nl + 1).replace(/^\s+/u, '')
   if (!body) return { title: '', body: text }
   return { title: text.slice(0, nl).trim(), body }
 }
 
-// Render prose with inline highlights for `[markdown](links)`,
+// Render ONE run of prose with inline highlights for `[markdown](links)`,
 // `"quoted"` strings, `` `code` `` spans, and `**bold**` emphasis. The
 // quote / code pair match the prototype's `.summary q` / `.title em`
 // styling (`design/prototypes/DeepView.0.html`) and keep their
@@ -137,21 +142,15 @@ function splitDescription(text) {
 // matches so we don't churn out single-child arrays for the common
 // case of plain text.
 //
-// Exported for the bundle views (render-bundle.js), whose finding
-// descriptions — source-viewer side panel, Issues tab rows, code-rail
-// issue results — get the same inline styling. Those render in light
-// DOM, so report.css carries a copy of the .inline-* rules that live
-// in finding-card.css for this card's shadow root (`<strong>` needs no
-// rule — the UA styles it in both trees; anchors take their accent
-// color from theme.css in light DOM and from finding-card.css in the
-// shadow root).
-//
 // The link alternative leads the pattern so a label carrying quotes or
 // backticks is consumed as part of the link rather than chipped up
 // inside it.
+//
+// Fenced code never reaches here — renderHighlighted splits the blocks
+// out first — so a snippet's quotes and backticks stay the code they
+// are instead of being chipped up as markup.
 const INLINE_HL_RE = /\[[^\]\n]+\]\([^)\s]+\)|\*\*[^*\n]+\*\*|"[^"\n]+"|`[^`\n]+`/gu
-export function renderHighlighted(text) {
-  if (!text) return text
+function renderInline(text) {
   INLINE_HL_RE.lastIndex = 0
   const parts = []
   let lastIdx = 0
@@ -175,6 +174,50 @@ export function renderHighlighted(text) {
   if (lastIdx === 0) return text
   if (lastIdx < text.length) parts.push(text.slice(lastIdx))
   return parts
+}
+
+// One fenced code block as a real `<pre>`. Everything about a snippet
+// that the prose treatment gets wrong is fixed here: the block keeps
+// its own line breaks and indentation, its long lines SCROLL instead
+// of folding (a wrapped line changes what the code says), and the
+// inline pass never sees it. The fence's language tag (```ts) rides in
+// as `data-lang` plus the small header above the code, so the block
+// says what it is — the same thing the tag is there to tell a reader.
+//
+// Syntax highlighting is deliberately NOT wired in: prism lives in its
+// own lazily-imported bundle (prism-highlight.js) whose token theme is
+// scoped to the source viewers' light-DOM containers, and it resolves
+// async — a card would need a highlight cache and a re-render tick to
+// use it. A finding's snippet is a handful of lines, so it reads fine
+// as plain monospace.
+//
+// The whole template is one line on purpose: `.desc` / `.section-body`
+// are `white-space: pre-wrap`, and in dev builds (which skip the
+// template minifier) an indented template's own newlines would print
+// as blank lines inside the block's chrome.
+function codeBlockTemplate({ lang, code }) {
+  return html`<div class="code-block" data-lang=${lang || nothing}>${lang ? html`<div class="code-block-lang">${lang}</div>` : nothing}<pre><code>${code}</code></pre></div>`
+}
+
+// Render a description body: fenced code blocks as blocks, everything
+// between them as prose (see renderInline above for the inline pass).
+//
+// Exported for the bundle views (render-bundle.js), whose finding
+// descriptions — source-viewer side panel, Issues tab rows, code-rail
+// issue results — get the same treatment. Those render in light DOM,
+// so report.css carries a copy of the .inline-* / .code-block rules
+// that live in finding-card.css for this card's shadow root
+// (`<strong>` needs no rule — the UA styles it in both trees; anchors
+// take their accent color from theme.css in light DOM and from
+// finding-card.css in the shadow root).
+//
+// A body with no fence in it takes the inline path directly, so the
+// common case costs one extra scan for the fences and nothing else.
+export function renderHighlighted(text) {
+  if (!text) return text
+  const segments = codeBlockSegments(text)
+  if (segments.length === 1 && typeof segments[0] === 'string') return renderInline(segments[0])
+  return segments.map((seg) => (typeof seg === 'string' ? renderInline(seg) : codeBlockTemplate(seg)))
 }
 
 // Render a triage comment, linkifying any GitHub issue / PR / commit /

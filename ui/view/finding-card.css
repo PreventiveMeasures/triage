@@ -255,6 +255,47 @@ span.evidence-ref { color: var(--muted); }
   color: var(--text);
 }
 
+/* Fenced code blocks — the PoC / vulnerable-lines snippets the reports
+   embed, split out of the prose by format.js's codeBlockSegments and
+   drawn by render-finding.js's codeBlockTemplate. The block gets its
+   own box, and two white-space values that both matter: `normal` on
+   the wrapper, because it sits inside a `pre-wrap` `.desc` where the
+   template's own newlines would otherwise print as blank lines around
+   the chrome; and `pre` on the code itself, so a long line SCROLLS
+   under the reader rather than folding — a wrapped snippet reads as a
+   different snippet. The fence's language tag (```ts) heads the block
+   when it named one. */
+.code-block {
+  white-space: normal;
+  margin: .5rem 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  /* A neutral tint of the text colour rather than `--surface-active`
+     (which `.inline-code` wears): that token is the theme's ACTIVE
+     fill — a saturated blue in the light themes — and a whole block
+     of it reads as a selection, not as code. */
+  background: rgb(from var(--text) r g b / .05);
+  overflow: hidden;
+
+  & .code-block-lang {
+    padding: .15rem .5rem;
+    border-bottom: 1px solid var(--border);
+    color: var(--muted);
+    font-size: .62rem; font-weight: 600;
+    text-transform: uppercase; letter-spacing: .06em;
+  }
+  & pre {
+    margin: 0;
+    padding: .45rem .6rem;
+    overflow-x: auto;
+    white-space: pre;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .85em; line-height: 1.5;
+    color: var(--text);
+  }
+  & code { font: inherit; }
+}
+
 .line-row {
   display: flex; justify-content: space-between;
   align-items: baseline; gap: .5rem; flex-wrap: wrap;
@@ -918,4 +959,15 @@ span.evidence-ref { color: var(--muted); }
      tinted bg); on paper that chrome crowds dense prose and reads as
      noise. Keep the monospace font so code still stands out. */
   .inline-code { border: 0; background: transparent; padding: 0; }
+
+  /* A snippet can't scroll on paper: let its long lines wrap so the
+     block prints whole, and drop the screen fill for a plain outline
+     (a painted background is the first thing a printer discards). */
+  .code-block {
+    background: transparent;
+    border-color: #bbb;
+
+    & .code-block-lang { color: #555; border-bottom-color: #bbb; }
+    & pre { white-space: pre-wrap; overflow: visible; }
+  }
 }

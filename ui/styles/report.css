@@ -1553,6 +1553,41 @@ bundle-search {
   font-size: .9em;
   color: var(--text);
 }
+/* Same story for the fenced code blocks a description carries — a
+   light-DOM copy of finding-card.css's `.code-block` rules, so a
+   snippet in a bundle-side description reads as the same box the card
+   draws (see render-finding.js codeBlockTemplate). `pre` + horizontal
+   scroll rather than wrapping: a folded line reads as different code. */
+.code-block {
+  white-space: normal;
+  margin: .4rem 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  /* A neutral tint of the text colour rather than `--surface-active`
+     (which `.inline-code` wears): that token is the theme's ACTIVE
+     fill — a saturated blue in the light themes — and a whole block
+     of it reads as a selection, not as code. */
+  background: rgb(from var(--text) r g b / .05);
+  overflow: hidden;
+
+  & .code-block-lang {
+    padding: .15rem .5rem;
+    border-bottom: 1px solid var(--border);
+    color: var(--muted);
+    font-size: .62rem; font-weight: 600;
+    text-transform: uppercase; letter-spacing: .06em;
+  }
+  & pre {
+    margin: 0;
+    padding: .4rem .55rem;
+    overflow-x: auto;
+    white-space: pre;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .95em; line-height: 1.5;
+    color: var(--text);
+  }
+  & code { font: inherit; }
+}
 .bundle-issue-sev {
   text-transform: uppercase;
   font-size: .6rem;
