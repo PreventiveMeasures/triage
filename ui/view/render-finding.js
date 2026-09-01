@@ -2,7 +2,7 @@ import { html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { bundlesForFileHash, isLinkableFindingId, isPlaceholderNpmPackage, state } from '#client/index.js'
-import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, hasSeverityCorrection, isHttpUrl, locationLabel, markdownLinkToken, parseCommentRefs, revalidateStamp, splitDescription, stripExportMarker } from './format.js'
+import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, hasSeverityCorrection, isHttpUrl, listSegments, locationLabel, markdownLinkToken, parseCommentRefs, revalidateStamp, splitDescription, stripExportMarker } from './format.js'
 import { activeTabFor, findingRepo, groupKey, groupState, isIgnored, sortTabs, tabKey } from './group.js'
 import { highlightedCode } from './code-highlight.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
@@ -195,38 +195,80 @@ function codeBlockTemplate({ lang, code }) {
 // inline result, no wrapper. Runs of two or more blank lines collapse
 // to the one paragraph gap: the measure is the measure, however many
 // blank lines the report happened to leave in. Single newlines are
-// untouched, so the line breaks `flowText` deliberately kept (a list,
-// an indented snippet, a table) still render through the pre-wrap.
-function proseTemplate(run) {
+// untouched, so the line breaks `flowText` deliberately kept (an
+// indented snippet, a table) still render through the pre-wrap.
+//
+// `wrap` keeps even a single paragraph in its element, for a body that
+// draws as several sibling blocks. A bare run is a TEXT NODE, which no
+// selector reaches: the gap between a lead-in line and the list under
+// it has to be a margin on something, and the something is this.
+function proseTemplate(run, { wrap = false } = {}) {
   const paras = run.split(/\n{2,}/u).filter((p) => p.trim())
-  if (paras.length < 2) return renderInline(run)
+  if (paras.length < 2) {
+    return wrap ? html`<div class="para">${renderInline(run)}</div>` : renderInline(run)
+  }
   return paras.map((p) => html`<div class="para">${renderInline(p)}</div>`)
 }
 
-// Render a description body: fenced code blocks as blocks, everything
-// between them as prose (see renderInline above for the inline pass).
+// One markdown list as a real `<ol>` / `<ul>` (format.js listSegments
+// cut it out). Reproduction steps and affected-file rundowns used to
+// render as their own source text — the marker sitting in the prose,
+// every item flat against the left margin, a wrapped step running on
+// as if it were the next one. A list element gets the reader the
+// markers, the hanging indent, and the browser's own numbering.
+//
+// Each item's content is rendered by the pass that rendered the body
+// it came out of, which is what puts a nested list, a paragraph, or a
+// fenced snippet INSIDE its item. The recursion terminates because an
+// item is always shorter than the list it came from (its marker and
+// indentation are gone).
+//
+// `start` only when the list doesn't begin at 1: markdown numbers from
+// the first marker, so a rundown continuing at `10.` keeps its place.
+function listTemplate({ ordered, start, items }) {
+  const entries = items.map((item) => html`<li>${renderHighlighted(item)}</li>`)
+  return ordered
+    ? html`<ol class="md-list" start=${start > 1 ? start : nothing}>${entries}</ol>`
+    : html`<ul class="md-list">${entries}</ul>`
+}
+
+// Render a description body: lists as lists, fenced code blocks as
+// blocks, everything between them as prose (see renderInline above for
+// the inline pass).
 //
 // Exported for the bundle views (render-bundle.js), whose finding
 // descriptions — source-viewer side panel, Issues tab rows, code-rail
 // issue results — get the same treatment. Those render in light DOM,
-// so report.css carries a copy of the .inline-* / .code-block rules
-// that live in finding-card.css for this card's shadow root
-// (`<strong>` needs no rule — the UA styles it in both trees; anchors
-// take their accent color from theme.css in light DOM and from
+// so report.css carries a copy of the .inline-* / .code-block /
+// .md-list rules that live in finding-card.css for this card's shadow
+// root (`<strong>` needs no rule — the UA styles it in both trees;
+// anchors take their accent color from theme.css in light DOM and from
 // finding-card.css in the shadow root).
 //
-// A body with no fence in it takes the inline path directly, so the
-// common case costs one extra scan for the fences and nothing else.
+// A body with no list and no fence in it takes the inline path
+// directly, so the common case costs two scans and nothing else.
 //
 // `paragraphs: false` renders a run as ONE flow, blank lines and all,
 // for the compact surfaces that want a finding's prose as a single
-// blob rather than a stack of paragraphs (see proseTemplate).
+// blob rather than a stack of paragraphs (see proseTemplate). Lists
+// stay out of that mode for the same reason paragraphs do: those
+// surfaces are a line or two of summary in a row or a side panel, and
+// a block element opening a list there would break the line they get.
 export function renderHighlighted(text, { paragraphs = true } = {}) {
   if (!text) return text
-  const prose = (run) => (paragraphs ? proseTemplate(run) : renderInline(run))
-  const segments = codeBlockSegments(text)
-  if (segments.length === 1 && typeof segments[0] === 'string') return prose(segments[0])
-  return segments.map((seg) => (typeof seg === 'string' ? prose(seg) : codeBlockTemplate(seg)))
+  const blocks = paragraphs ? listSegments(text) : [text]
+  // More than one block means the prose runs have LIST SIBLINGS, and
+  // the gap between them is a margin — which needs an element to sit
+  // on (see proseTemplate's `wrap`).
+  const many = blocks.length > 1
+  const prose = (run) => (paragraphs ? proseTemplate(run, { wrap: many }) : renderInline(run))
+  const flow = (run) => {
+    const segments = codeBlockSegments(run)
+    if (segments.length === 1 && typeof segments[0] === 'string') return prose(segments[0])
+    return segments.map((seg) => (typeof seg === 'string' ? prose(seg) : codeBlockTemplate(seg)))
+  }
+  if (blocks.length === 1 && typeof blocks[0] === 'string') return flow(blocks[0])
+  return blocks.map((b) => (typeof b === 'string' ? flow(b) : listTemplate(b)))
 }
 
 // Render a triage comment, linkifying any GitHub issue / PR / commit /

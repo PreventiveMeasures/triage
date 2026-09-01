@@ -4,10 +4,12 @@
 // rendering one long run of prose with bold labels buried in it;
 // `flowText` rejoins the soft line breaks inside a paragraph;
 // `codeBlockSegments` lifts the fenced snippets out of a body so the
-// card can draw each as a `<pre>` instead of printing its fences.
-// All three read fences the way common/md-structure.js does, so a
-// snippet is never reflowed, split across sections, or chipped up by
-// the inline `` `code` `` / `"quote"` pass.
+// card can draw each as a `<pre>` instead of printing its fences; and
+// `listSegments` lifts the markdown lists out so it can draw those as
+// `<ol>` / `<ul>`. All of them read fences the way
+// common/md-structure.js does, so a snippet is never reflowed, split
+// across sections, cut into list items, or chipped up by the inline
+// `` `code` `` / `"quote"` pass.
 //
 // The split keys off the MARKUP the parsers emit — a paragraph opening
 // with `**Label:**` — not off a list of known label words: parse-piolium
@@ -31,7 +33,7 @@ if (!globalThis[slotKey]) {
   }
 }
 
-const { codeBlockSegments, descriptionSections, evidenceMarkdown, evidenceNote, findingTitle, flowText, handoffBlock, splitDescription, titledDescription } = await import('../ui/view/format.js')
+const { codeBlockSegments, descriptionSections, evidenceMarkdown, evidenceNote, findingTitle, flowText, handoffBlock, listSegments, splitDescription, titledDescription } = await import('../ui/view/format.js')
 
 describe('descriptionSections — empty input', () => {
   it('returns nothing for empty / missing bodies', () => {
@@ -373,6 +375,100 @@ describe('codeBlockSegments — a block inside a list item', () => {
       codeBlockSegments('1. Step\n   ```js\n   ~~~\n   x()\n   ```'),
       ['1. Step', { lang: 'js', code: '~~~\nx()' }],
     )
+  })
+})
+
+// Reproduction steps and affected-file rundowns arrive as markdown
+// lists, and used to render as their own source text — the marker in
+// the run of prose, every item flat against the left margin, a
+// wrapped step reading as the next one. listSegments cuts them out so
+// the card can draw a list as a list. Each item comes back with its
+// marker and indentation shed, which makes it a small markdown body
+// the same pass can render: that is what puts a nested list, a
+// paragraph, or a fenced snippet INSIDE its item.
+describe('listSegments', () => {
+  it('passes text with no list through untouched, in one segment', () => {
+    assert.deepEqual(listSegments('Just prose.\n\nMore of it.'), ['Just prose.\n\nMore of it.'])
+    assert.deepEqual(listSegments(''), [''])
+    assert.deepEqual(listSegments(undefined), [undefined])
+    assert.deepEqual(listSegments(null), [null])
+  })
+
+  it('cuts a list out of the prose around it', () => {
+    assert.deepEqual(listSegments('Steps:\n\n1. One\n2. Two\n\nThat is all.'), [
+      'Steps:',
+      { ordered: true, start: 1, items: ['One', 'Two'] },
+      'That is all.',
+    ])
+  })
+
+  it('reads bullets, and the paren marker', () => {
+    assert.deepEqual(listSegments('- a\n* b\n+ c'), [
+      { ordered: false, start: null, items: ['a', 'b', 'c'] },
+    ])
+    assert.deepEqual(listSegments('1) One\n2) Two'), [
+      { ordered: true, start: 1, items: ['One', 'Two'] },
+    ])
+  })
+
+  // Markdown numbers from the first marker and ignores the rest, so
+  // this is the one number the card needs.
+  it('keeps the number the list starts at', () => {
+    assert.deepEqual(listSegments('10. Ten\n11. Eleven'), [
+      { ordered: true, start: 10, items: ['Ten', 'Eleven'] },
+    ])
+  })
+
+  it('keeps a blank line between items in the same list', () => {
+    assert.deepEqual(listSegments('1. One\n\n2. Two'), [
+      { ordered: true, start: 1, items: ['One', 'Two'] },
+    ])
+  })
+
+  it('keeps a wrapped item whole, at either indent', () => {
+    assert.deepEqual(listSegments('1. A step the report\n   wrapped.\n2. Next.'), [
+      { ordered: true, start: 1, items: ['A step the report\nwrapped.', 'Next.'] },
+    ])
+    // Lazily continued at the margin — markdown reads it as the item's
+    // too, however far left the report wrapped it.
+    assert.deepEqual(listSegments('1. One\ncontinued here\n2. Two'), [
+      { ordered: true, start: 1, items: ['One\ncontinued here', 'Two'] },
+    ])
+  })
+
+  it('leaves a nested list inside its item, to be rendered there', () => {
+    assert.deepEqual(listSegments('1. Outer\n   - Inner a\n   - Inner b\n2. Next'), [
+      { ordered: true, start: 1, items: ['Outer\n- Inner a\n- Inner b', 'Next'] },
+    ])
+  })
+
+  it('leaves a fenced snippet inside its item, dedented with it', () => {
+    assert.deepEqual(listSegments('1. Foo\n2. Bar.\n   ```js\n   http.request({}, cb)\n   ```\n3. Buz'), [
+      { ordered: true, start: 1, items: ['Foo', 'Bar.\n```js\nhttp.request({}, cb)\n```', 'Buz'] },
+    ])
+  })
+
+  it('starts a new list when the marker switches kind', () => {
+    assert.deepEqual(listSegments('- a\n- b\n1. c\n2. d'), [
+      { ordered: false, start: null, items: ['a', 'b'] },
+      { ordered: true, start: 1, items: ['c', 'd'] },
+    ])
+  })
+
+  it('reads no list where markdown reads none', () => {
+    // A marker inside a snippet is code.
+    const fenced = '```sh\n- not an item\n1. also not\n```'
+    assert.deepEqual(listSegments(fenced), [fenced])
+    // `* * *` is a horizontal rule.
+    const rule = 'Before\n\n* * *\n\nAfter'
+    assert.deepEqual(listSegments(rule), [rule])
+  })
+
+  it('ends the list at a paragraph back on the margin', () => {
+    assert.deepEqual(listSegments('- a\n- b\n\nAnd then some prose.'), [
+      { ordered: false, start: null, items: ['a', 'b'] },
+      'And then some prose.',
+    ])
   })
 })
 

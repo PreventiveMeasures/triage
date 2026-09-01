@@ -1561,6 +1561,39 @@ bundle-search {
    paragraphs (the bundle-side descriptions pass `paragraphs: false`
    and stay one blob) measures its gap the same as the card does. */
 .para + .para { margin-top: .5lh; }
+/* Light-DOM copy of finding-card.css's `.md-list` rules, for the
+   bundle views' finding descriptions (see the `.para` note above).
+
+   A markdown list, drawn as one (render-finding.js listTemplate). The
+   prose boxes are `pre-wrap`, so a list used to arrive as its own
+   source text: `1.` and `-` sitting in the run, every item flat
+   against the left margin, a wrapped step reading as the next one.
+   The element brings the hanging indent that separates them.
+
+   The indent is set in `em` so it tracks the type rather than the
+   root, and it is the width of a two-digit marker plus its gap — a
+   rundown that reaches `10.` keeps its text on the same column as the
+   first item's. Items get a smaller gap than paragraphs do (`.para`
+   above): a list is one thought broken into steps, and the paragraph
+   measure between them would read as separate blocks. */
+.md-list {
+  margin: 0;
+  padding-inline-start: 1.9em;
+}
+.md-list li + li { margin-top: .25lh; }
+/* And the paragraph measure where a list meets the prose around it —
+   the lead-in line above it, the sentence that picks up after it. The
+   markdown had a blank line there; listSegments drops it with the rest
+   of the block's chrome, so the space comes back as a margin. */
+.para + .md-list,
+.md-list + .para,
+.md-list + .md-list { margin-top: .5lh; }
+/* The markers are structure, not text: muted, so the eye reads the
+   steps and not their numbering. Off `currentColor` rather than
+   `--text` so they follow whatever colour the block around them
+   carries — under `.recommendation` that is green, and a grey marker
+   beside green text would break the one thing that rule is for. */
+.md-list li::marker { color: rgb(from currentcolor r g b / .45); }
 /* Same story for the fenced code blocks a description carries — a
    light-DOM copy of finding-card.css's `.code-block` rules, so a
    snippet in a bundle-side description reads as the same box the card

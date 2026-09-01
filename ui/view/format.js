@@ -725,6 +725,111 @@ export function codeBlockSegments(text) {
   return segments
 }
 
+// ── Lists ────────────────────────────────────────────────────────────────
+// Reproduction steps, affected-file rundowns, a recommendation's
+// alternatives — the narrative fields arrive as markdown lists as
+// often as prose. They used to render as their own source text: the
+// `.` after the number sitting in the run of prose, every item hanging
+// at the left margin, a wrapped item indistinguishable from the next
+// one. So the lists come out here and the card draws them as lists.
+//
+// `listSegments` splits a body into list blocks and the runs between
+// them, and each item's content comes back with the marker and the
+// item's indentation shed — which makes it a small markdown body of
+// its own, rendered by the same pass that rendered the whole. That
+// recursion is what gets a nested list, a wrapped step, or a fenced
+// snippet under a step (the shape that started all this) drawn INSIDE
+// its item rather than after the list.
+//
+// Text with no list in it comes back as a single-element array holding
+// it unchanged, the same fast path codeBlockSegments offers.
+const LIST_ITEM_RE = /^( *)(?:[-*+]|(\d{1,9})[.)]) +(?=\S)/u
+// `* * *` and `- - -` are horizontal rules, not one-item lists.
+const HRULE_RE = /^ {0,3}([-*_])(?: *\1){2,} *$/u
+
+function leadingSpaces(line) { return /^ */u.exec(line)[0].length }
+
+// Trailing blank lines belong to the gap after an item, not to it.
+function trimTrailingBlank(lines) {
+  let end = lines.length
+  while (end > 0 && !lines[end - 1].trim()) end--
+  return lines.slice(0, end).join('\n')
+}
+
+export function listSegments(text) {
+  const src = typeof text === 'string' ? text : ''
+  if (!src) return [text]
+  const ranges = fenceRanges(src)
+  const lines = src.split('\n')
+  // Line → byte offset, so a candidate marker can be checked against
+  // the fenced ranges: a `- ` or `1. ` inside a snippet is code.
+  const offsets = []
+  let at = 0
+  for (const line of lines) { offsets.push(at); at += line.length + 1 }
+  const startsItem = (i) => !inFence(ranges, offsets[i])
+    && !HRULE_RE.test(lines[i])
+    && LIST_ITEM_RE.test(lines[i])
+
+  const out = []
+  let proseFrom = 0
+  let i = 0
+  const pushProse = (until) => {
+    const run = lines.slice(proseFrom, until).join('\n').replace(/^\n+/u, '').replace(/\n+$/u, '')
+    if (run.trim()) out.push(run)
+  }
+
+  while (i < lines.length) {
+    if (!startsItem(i)) { i++; continue }
+    pushProse(i)
+    const first = LIST_ITEM_RE.exec(lines[i])
+    const ordered = Boolean(first[2])
+    const items = []
+    // The open item: the column its continuation lines sit at, and the
+    // content collected so far with that column shed.
+    let item = null
+    let afterBlank = false
+    while (i < lines.length) {
+      const line = lines[i]
+      // Inside a fence nothing is structural — not a blank line, not a
+      // marker, not a dedent. The snippet is the item's content.
+      if (!inFence(ranges, offsets[i])) {
+        if (!line.trim()) { item.lines.push(''); afterBlank = true; i++; continue }
+        const indent = leadingSpaces(line)
+        const marker = HRULE_RE.test(line) ? null : LIST_ITEM_RE.exec(line)
+        // A marker indented AT LEAST to the open item's text is a
+        // nested list inside it; one to the left of that is the next
+        // item of this list — unless it switches between bullets and
+        // numbers, which starts a list of its own.
+        if (marker && (!item || indent < item.column)) {
+          if (Boolean(marker[2]) !== ordered) break
+          if (item) items.push(trimTrailingBlank(item.lines))
+          item = { column: marker[0].length, lines: [line.slice(marker[0].length)] }
+          afterBlank = false
+          i++
+          continue
+        }
+        // Back at the margin after a blank line: the list is over. Without
+        // the blank it's a wrapped item, which markdown reads as part of
+        // the item however far left the report wrapped it to.
+        if (indent < item.column && afterBlank) break
+      }
+      item.lines.push(shedIndent(line, item.column))
+      afterBlank = false
+      i++
+    }
+    if (item) items.push(trimTrailingBlank(item.lines))
+    // The first number is the one that counts — markdown numbers the
+    // rest in sequence from it, so a rundown that opens at `10.` keeps
+    // its place in the sequence and one that opens at `1.` needs no
+    // start at all.
+    out.push({ ordered, start: ordered ? Number(first[2]) : null, items })
+    proseFrom = i
+  }
+  if (out.length === 0) return [text]
+  pushProse(lines.length)
+  return out
+}
+
 // ── Finding title ────────────────────────────────────────────────────
 // What the finding is CALLED. A report may name it outright in a
 // `title` field; the formats that have no such field put it in the
