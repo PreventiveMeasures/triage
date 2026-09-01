@@ -1,7 +1,7 @@
 import { state } from '#client/index.js'
 import { downloadBlob } from './dom.js'
 import { applyFilters } from './filters.js'
-import { commonPrefix, correctedVariants, effectiveSeverity, evidenceMarkdown, findingDisplayName, hasSeverityCorrection, splitDescription, stripExportMarker } from './format.js'
+import { commonPrefix, correctedVariants, effectiveSeverity, evidenceMarkdown, findingDisplayName, hasSeverityCorrection, revalidateKind, splitDescription, stripExportMarker } from './format.js'
 import { groupState, isIgnored, tabKey } from './group.js'
 
 // Markdown serializer for the "download report" toolbar button —
@@ -45,7 +45,8 @@ function locationStr(f) {
 }
 
 // One finding as a markdown subsection. Description / impact /
-// reproduction / recommendation / confidenceReason fields can
+// reproduction / recommendation / confidenceReason / revalidation
+// fields can
 // themselves be markdown (claude-security reports are imported from
 // `.md` directly) so they're emitted verbatim — escaping would
 // corrupt the embedded fences.
@@ -76,6 +77,11 @@ function findingToMarkdown(f) {
     meta.push(`**Severity:** ${severityLabel(effectiveSeverity(f))} (corrected from ${severityLabel(f.severity)}${varies})`)
   }
   if (f.confidence !== undefined) meta.push(`**Confidence:** ${f.confidence}/10`)
+  // The revalidation outcome rides the meta line so even the row that
+  // IS the pass (`revalidation`, which carries no verdict text of its
+  // own) is marked as one in the document.
+  const revalidate = revalidateKind(f)
+  if (revalidate) meta.push(`**Revalidation:** ${revalidate}`)
   if (triage) meta.push(`**Triage:** ${triage}`)
   else if (ignored) meta.push(`**Ignored**`)
   if (color) meta.push(`**Mark:** ${color}`)
@@ -115,6 +121,14 @@ function findingToMarkdown(f) {
   }
   if (f.confidenceReason) {
     lines.push(`**Confidence reason:** ${stripExportMarker(f.confidenceReason, f).trim()}`)
+    lines.push('')
+  }
+  if (f.revalidateVerdict) {
+    lines.push(`**Revalidation verdict:** ${stripExportMarker(f.revalidateVerdict, f).trim()}`)
+    lines.push('')
+  }
+  if (f.revalidateRecommendation) {
+    lines.push(`**Revalidation recommendation:** ${stripExportMarker(f.revalidateRecommendation, f).trim()}`)
     lines.push('')
   }
   if (hasSeverityCorrection(f) && f.correctedSeverityReason) {

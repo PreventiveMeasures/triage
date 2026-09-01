@@ -53,7 +53,7 @@
      through to the select. (`analyzer-select` left this list when it
      became a custom dropdown — its trigger is a real <button>, so
      the chevron is an inline svg; see the analyzer-btn rules below.) */
-  & :is(repo-filter, findings-sort) {
+  & :is(repo-filter, revalidate-filter, findings-sort) {
     position: relative;
     display: inline-block;
 
@@ -322,8 +322,8 @@ triage-selector.is-empty { display: none; }
    host in this family owns its layout via an element selector
    rule above (view-mode-buttons, triage-selector, slide-triage-tabs,
    triage-filter, severity-chips, source-filter, toolbar-search,
-   conf-filter, analyzer-select, repo-filter, findings-sort,
-   entity-sort). */
+   conf-filter, analyzer-select, repo-filter, revalidate-filter,
+   findings-sort, entity-sort). */
 entity-search { display: contents; }
 
 view-mode-buttons {

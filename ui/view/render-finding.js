@@ -2,7 +2,7 @@ import { html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { bundlesForFileHash, isLinkableFindingId, isPlaceholderNpmPackage, state } from '#client/index.js'
-import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceLabel, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, hasSeverityCorrection, isHttpUrl, markdownLinkToken, parseCommentRefs, splitDescription, stripExportMarker } from './format.js'
+import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceLabel, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, hasSeverityCorrection, isHttpUrl, markdownLinkToken, parseCommentRefs, revalidateStamp, splitDescription, stripExportMarker } from './format.js'
 import { activeTabFor, findingRepo, groupKey, groupState, isIgnored, sortTabs, tabKey } from './group.js'
 import { highlightedCode } from './code-highlight.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
@@ -252,6 +252,27 @@ function renderCommentText(text) {
     }
     return html`<a href=${seg.url} target="_blank" rel="noopener noreferrer" title=${seg.url}>${seg.label}</a>`
   })
+}
+
+// The revalidation pass's verdict on this finding, under the
+// confidence rationale it reads as a sharper sibling of: the same
+// dashed rule and quiet type, but a shade more contrast than
+// `.conf-reason`'s muted italic, because a verdict is a conclusion
+// about the finding rather than a note on how it was scored.
+//
+// The stamp is `revalidate` itself (confirmed / refuted / unknown) —
+// the one word that says which way the pass went, so the reader gets
+// it before the prose. A row stamped `revalidation` has no verdict of
+// its own and renders nothing here; a verdict carrying no recognised
+// stamp still renders its text, since dropping a report's reasoning
+// over an unreadable enum would lose more than it saves.
+function revalidateTemplate(f) {
+  const verdict = stripExportMarker(f.revalidateVerdict, f)
+  if (!verdict) return nothing
+  const stamp = revalidateStamp(f)
+  // One line, like every other `pre-wrap` block on this card: the
+  // template's own newlines would print as whitespace inside it.
+  return html`<div class="revalidate-verdict">${stamp ? html`<span class=${`revalidate-stamp ${stamp}`}>${stamp}</span>` : nothing}${renderHighlighted(flowText(verdict))}</div>`
 }
 
 // One labelled body section — a small-caps header over its text. Used
@@ -840,6 +861,10 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
       ${f.reproduction ? sectionTemplate('Reproduction', stripExportMarker(f.reproduction, f)) : nothing}
       ${f.recommendation ? sectionTemplate('Recommendation', stripExportMarker(f.recommendation, f), 'recommendation') : nothing}
       ${f.confidenceReason ? html`<div class="conf-reason">${renderHighlighted(stripExportMarker(f.confidenceReason, f))}</div>` : nothing}
+      ${revalidateTemplate(f)}
+      ${f.revalidateRecommendation
+        ? sectionTemplate('Revalidation recommendation', stripExportMarker(f.revalidateRecommendation, f), 'recommendation')
+        : nothing}
       ${hasSeverityCorrection(f) && f.correctedSeverityReason ? html`<div class="severity-reason"><span class="severity-reason-label">Severity correction:</span> ${renderHighlighted(f.correctedSeverityReason)}</div>` : nothing}
       ${comment ? html`<div class="comment-block"><span class="comment-label">Comment:</span> ${renderCommentText(comment)}</div>` : nothing}
       ${fix

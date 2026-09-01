@@ -205,6 +205,40 @@
   border-top: 1px dashed var(--border);
 }
 
+/* The revalidation pass's verdict — a sharper sibling of the
+   confidence rationale it sits under: same dashed rule and quiet
+   size, but upright and at body contrast rather than muted italic,
+   because it is a conclusion about the finding rather than a note on
+   how it was scored. */
+.revalidate-verdict {
+  grid-column: 2; white-space: pre-wrap;
+  font-size: .92em; line-height: 1.5;
+  color: rgb(from var(--text) r g b / .82);
+  margin-top: .5rem; padding-top: .5rem;
+  border-top: 1px dashed var(--border);
+}
+
+/* Verdict stamp — the card's outlined-chip idiom (`.badge-orig` /
+   `.badge-varies`), coloured by which way the pass went: the finding
+   still stands (critical), it was knocked down (muted — the row is
+   dismissed and so is its chip), or the pass couldn't tell (the amber
+   every other unresolved state on this card wears). `pre-wrap` on the
+   block would stretch a chip's leading space, so the gap after it is
+   a margin. */
+.revalidate-stamp {
+  display: inline-block; vertical-align: baseline;
+  margin-right: .4rem;
+  font-size: .58rem; font-weight: 600; line-height: 1;
+  text-transform: uppercase; letter-spacing: .04em;
+  padding: .14rem .32rem; border-radius: 3px;
+  background: transparent;
+  color: var(--muted); border: 1px solid var(--border);
+  white-space: nowrap;
+
+  &.confirmed { color: var(--critical); border-color: rgb(from var(--critical) r g b / .55); }
+  &.unknown   { color: var(--warning); border-color: rgb(from var(--warning) r g b / .55); }
+}
+
 /* `## Evidence` list from a claude-security import — one row per cited
    site, rendered from the finding's structured rows (see
    render-finding.js evidenceTemplate). A real <ol> is what earns this
@@ -1016,6 +1050,10 @@ span.evidence-ref { color: var(--muted); }
     background: transparent !important; color: #555 !important; border-color: #999 !important;
   }
   .badge-varies { color: #555 !important; border-color: #999 !important; }
+  /* The verdict stamp keeps its outline on paper — the shape is what
+     carries it there — but drops the screen colour with everything
+     else in this block. */
+  .revalidate-stamp { color: #555 !important; border-color: #999 !important; }
   .badge-arrow, .badge-corr-mark, .badge-pre { color: #555 !important; }
   .severity-reason { color: #555 !important; }
   /* Strip on-screen link colors so a linked filename — or an inline

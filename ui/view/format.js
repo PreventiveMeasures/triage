@@ -89,6 +89,55 @@ export function correctedVariants(f) {
   return tiers.size > 1 ? byReport : null
 }
 
+// ── Revalidation ─────────────────────────────────────────────────────
+// A second pass over a finding. A report stamps `revalidate` with what
+// that pass concluded — `confirmed` (the finding stands), `refuted` (it
+// doesn't), `unknown` (the pass couldn't tell) — and carries its
+// reasoning in `revalidateVerdict`, plus, for a refutation, what to do
+// about it in `revalidateRecommendation`.
+//
+// The fourth value, `revalidation`, marks the row that IS the
+// revalidation pass rather than one it judged. It carries no verdict of
+// its own; what it gets instead is first place in its group (group.js
+// sortTabs), because a reader opening a finding that was re-examined
+// wants the re-examination, not whichever original row happened to
+// outrank the others.
+//
+// Values are case-folded and trimmed: these arrive from JSON a report
+// generator wrote, and an unrecognised one answers "no stamp" rather
+// than leaking into a display.
+// The pass first, then its three verdicts — the order the toolbar
+// dropdown lists them in, so the list reads the same whichever
+// outcomes a report happens to carry.
+export const REVALIDATE_KINDS = ['revalidation', 'refuted', 'confirmed', 'unknown']
+const REVALIDATE_SET = new Set(REVALIDATE_KINDS)
+
+// The row's revalidation outcome, case-folded, or '' when it carries
+// none — which includes an unrecognised value, so a typo in a report
+// can't reach a display or the filter dropdown.
+export function revalidateKind(f) {
+  const v = typeof f?.revalidate === 'string' ? f.revalidate.trim().toLowerCase() : ''
+  return REVALIDATE_SET.has(v) ? v : ''
+}
+
+// The verdict this row was stamped with, or null when it carries none
+// — which includes the revalidation row itself, since `revalidation`
+// names the pass and isn't a judgement on anything.
+export function revalidateStamp(f) {
+  const kind = revalidateKind(f)
+  return kind && kind !== 'revalidation' ? kind : null
+}
+
+export function isRevalidation(f) {
+  return revalidateKind(f) === 'revalidation'
+}
+
+// Refuted rows are held out of the confidence filter (see
+// filters.js) — the one place a verdict changes more than a display.
+export function isRefuted(f) {
+  return revalidateKind(f) === 'refuted'
+}
+
 // "Module" = third-party dependency. Recognised vendor-directory
 // layouts, in detection precedence: `node_modules/` (npm/pnpm/yarn),
 // `vendor/` (PHP Composer, Go modules), and the generic
@@ -273,8 +322,8 @@ export function findingDisplayName(f) {
 
 // Searchable text for `state.filterInclude`. Joins the user-visible
 // fields (file path, title, description, impact, reproduction,
-// recommendation, confidence reasoning, discovery context) plus the
-// per-finding `repo.github`
+// recommendation, confidence reasoning, revalidation verdict + its
+// stamp, discovery context) plus the per-finding `repo.github`
 // slug — the latter so the search field can match findings by their
 // upstream repo (`lodash/lodash`), useful when a merged report mixes
 // findings from many node_modules dependencies.
@@ -286,7 +335,7 @@ export function findingDisplayName(f) {
 // the lazy graph bundle (see the `fileUrl` note below), so filters.js
 // matches the comment and fix fields itself; see matchesFilters there.
 export function findingText(f) {
-  return [f.file, f.title, f.description, f.impact, f.reproduction, evidenceMarkdown(f), f.recommendation, f.confidenceReason, f.discoveredIn, f.repo?.github].filter(Boolean).join('\n').toLowerCase()
+  return [f.file, f.title, f.description, f.impact, f.reproduction, evidenceMarkdown(f), f.recommendation, f.confidenceReason, revalidateStamp(f), f.revalidateVerdict, f.revalidateRecommendation, f.discoveredIn, f.repo?.github].filter(Boolean).join('\n').toLowerCase()
 }
 
 export function prettyModel(model) {

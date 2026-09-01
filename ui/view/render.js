@@ -7,7 +7,7 @@ import { FILE_ICONS } from './file-display.js'
 import { listBundles, listWorkspaces, state } from '#client/index.js'
 import { isBundleInRemote, isInRemote, remoteCount, triageSync } from './client-sync.js'
 import { dropZone, report } from './dom.js'
-import { SEVERITIES, configureDepsDir, displayedSeverity, fileLink, findingDisplayName, findingTitle, formatRunMeta, hasSeverityCorrection, isHttpUrl, isModule, lineLink, prettyModel } from './format.js'
+import { SEVERITIES, configureDepsDir, displayedSeverity, fileLink, findingDisplayName, findingTitle, formatRunMeta, hasSeverityCorrection, isHttpUrl, isModule, lineLink, prettyModel, revalidateKind } from './format.js'
 import { activeTabFor, getMergedGroups, groupKey, groupState, primaryTab, tabKey } from './group.js'
 import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, applySorting, modelOfFinding, repoOfFinding } from './filters.js'
 import { ANALYZER_LABELS } from './analyzer-select.js'
@@ -693,7 +693,7 @@ function triageFilterTemplate(colorCounts) {
 // so the host drops it in unconditionally.
 
 function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCounts, flags, analyzerSelect, repoOptions) {
-  const { showSource, showConfidence, showPriority, showGraphMode, showFileSort, kanbanMode, showRepo, hasComment, hasFix, hasFlagged, showSeverityMode } = flags
+  const { showSource, showConfidence, showPriority, showGraphMode, showFileSort, kanbanMode, showRepo, hasComment, hasFix, hasFlagged, showSeverityMode, revalidateKinds } = flags
   // The findings tab gains a "graph" view-mode option when a
   // tree-bearing report is loaded (showGraphMode). The focus and
   // kanban modes sit between grouped and graph. Switching to graph
@@ -722,6 +722,14 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
         ? html`<div class="sep"></div><annotation-filter .hasComment=${hasComment} .hasFix=${hasFix} .hasFlagged=${hasFlagged}></annotation-filter>`
         : nothing}
       ${showConfidence ? html`<div class="sep"></div><conf-filter></conf-filter>` : nothing}
+      <!-- Revalidation outcome — right of the Confidence range, and
+           only once some finding in the loaded set carries the field.
+           The component owns the native select; the reachable outcomes
+           come from the scan above, so it can't offer one that filters
+           to nothing. -->
+      ${revalidateKinds.length > 0
+        ? html`<div class="sep"></div><revalidate-filter .kinds=${revalidateKinds}></revalidate-filter>`
+        : nothing}
       ${kanbanMode ? nothing : html`<triage-selector .counts=${triageCounts}></triage-selector>`}
     </div>
     <!-- Filter row: severity chips + mark-color triage pill + search
@@ -1651,9 +1659,17 @@ function renderImpl() {
   // early-continue since a correction is report data, independent of any
   // triage entry.
   let hasCorrectedSeverity = false
+  // …and which revalidation outcomes are present at all. The toolbar
+  // drops the <revalidate-filter> when the set is empty (no report in
+  // the loaded set ran the pass) and offers only these values when it
+  // isn't, so the dropdown never lists an outcome that filters to
+  // nothing. Scanned over the full loaded set, like the flags above.
+  const revalidateKinds = new Set()
   for (const g of mergedGroups) {
     for (const f of g) {
       if (hasSeverityCorrection(f)) hasCorrectedSeverity = true
+      const kind = revalidateKind(f)
+      if (kind) revalidateKinds.add(kind)
       const e = state.triage.get(tabKey(f))
       if (!e) continue
       if (e.comment) hasComment = true
@@ -1825,6 +1841,10 @@ function renderImpl() {
     const want = state.filterRepo === NO_REPO_SENTINEL ? null : state.filterRepo
     if (!repoSet.has(want)) state.filterRepo = ''
   }
+  // Same for a revalidation outcome the loaded set no longer carries —
+  // a report unloaded out from under the selection would otherwise
+  // filter every finding away with no visible cause.
+  if (state.filterRevalidate && !revalidateKinds.has(state.filterRevalidate)) state.filterRevalidate = ''
   // If a previously-loaded report had node_modules and the user
   // narrowed the source filter, switching to a report without any
   // node_modules paths would leave the filter at 'own' or 'modules'
@@ -1970,6 +1990,7 @@ function renderImpl() {
       // from narrowing to a single repo.
       showRepo: !!state.currentWorkspace,
       hasComment,
+      revalidateKinds: [...revalidateKinds],
       hasFix,
       hasFlagged,
       // Corrected/Original lens switch — shown only when a correction
