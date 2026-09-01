@@ -1571,14 +1571,12 @@ bundle-search {
    The element brings the hanging indent that separates them.
 
    The indent is set in `em` so it tracks the type rather than the
-   root, and it is the width of a two-digit marker plus its gap — a
-   rundown that reaches `10.` keeps its text on the same column as the
-   first item's. Items get a smaller gap than paragraphs do (`.para`
-   above): a list is one thought broken into steps, and the paragraph
-   measure between them would read as separate blocks. */
+   root. Items get a smaller gap than paragraphs do (`.para` above): a
+   list is one thought broken into steps, and the paragraph measure
+   between them would read as separate blocks. */
 .md-list {
   margin: 0;
-  padding-inline-start: 1.9em;
+  padding-inline-start: 1.2em;
 }
 .md-list li + li { margin-top: .25lh; }
 /* And the paragraph measure where a list meets the prose around it —
