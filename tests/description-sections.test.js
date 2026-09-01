@@ -2,7 +2,12 @@
 // `descriptionSections` splits a description into the sections the
 // report wrote it in, so the card can give each a header instead of
 // rendering one long run of prose with bold labels buried in it;
-// `flowText` rejoins the soft line breaks inside a paragraph.
+// `flowText` rejoins the soft line breaks inside a paragraph;
+// `codeBlockSegments` lifts the fenced snippets out of a body so the
+// card can draw each as a `<pre>` instead of printing its fences.
+// All three read fences the way common/md-structure.js does, so a
+// snippet is never reflowed, split across sections, or chipped up by
+// the inline `` `code` `` / `"quote"` pass.
 //
 // The split keys off the MARKUP the parsers emit — a paragraph opening
 // with `**Label:**` — not off a list of known label words: parse-piolium
@@ -26,7 +31,7 @@ if (!globalThis[slotKey]) {
   }
 }
 
-const { descriptionSections, flowText } = await import('../ui/view/format.js')
+const { codeBlockSegments, descriptionSections, flowText } = await import('../ui/view/format.js')
 
 describe('descriptionSections — empty input', () => {
   it('returns nothing for empty / missing bodies', () => {
@@ -174,5 +179,127 @@ describe('flowText', () => {
   it('passes empty input straight through', () => {
     assert.equal(flowText(''), '')
     assert.equal(flowText(undefined), undefined)
+  })
+})
+
+// A snippet's blank lines belong to the snippet: splitting there would
+// leave the opening fence in one section and the closing one in the
+// next, and neither half would render as code.
+describe('descriptionSections — fenced code', () => {
+  it('keeps a block carrying a blank line in one section', () => {
+    const body = '**PoC:** run it\n```sh\nsetup\n\ntrigger\n```'
+    assert.deepEqual(descriptionSections(body), [
+      { label: 'PoC', body: 'run it\n```sh\nsetup\n\ntrigger\n```' },
+    ])
+  })
+
+  it('does not read a label inside a fence as a section', () => {
+    const body = 'Prose.\n\n```md\n**Impact:** sample output\n\n**Note:** more\n```'
+    assert.deepEqual(descriptionSections(body), [{ label: null, body }])
+  })
+
+  it('still splits on the blank lines after a block closes', () => {
+    const body = '```sh\nsetup\n\ntrigger\n```\n\n**Impact:** boom'
+    assert.deepEqual(descriptionSections(body).map((s) => s.label), [null, 'Impact'])
+  })
+
+  it('runs an unclosed fence to the end of the body', () => {
+    const body = 'Lead.\n\n```sh\nsetup\n\n**Impact:** part of the snippet'
+    assert.deepEqual(descriptionSections(body).map((s) => s.label), [null])
+  })
+})
+
+// flowText reflows the prose AROUND a fence and never the code inside
+// it — including a block whose own blank line used to split it into
+// paragraphs that no longer looked block-level.
+describe('flowText — fenced code', () => {
+  it('leaves a block carrying a blank line alone', () => {
+    const text = '```js\nconst a = 1\n\nconst b = 2\n```'
+    assert.equal(flowText(text), text)
+  })
+
+  it('flows the prose around a block', () => {
+    assert.equal(
+      flowText('Some wrapped\nprose.\n\n```ts\nconst a = 1\n\nconst b = 2\n```\n\nMore wrapped\ntext.'),
+      'Some wrapped prose.\n\n```ts\nconst a = 1\n\nconst b = 2\n```\n\nMore wrapped text.',
+    )
+  })
+
+  it('keeps the break that puts a tight fence on its own line', () => {
+    assert.equal(flowText('Run\nthis:\n```sh\nnpm test\n```'), 'Run this:\n```sh\nnpm test\n```')
+    assert.equal(flowText('```sh\nnpm test\n```\nas root.'), '```sh\nnpm test\n```\nas root.')
+  })
+
+  it('leaves an unclosed fence and everything under it alone', () => {
+    const text = 'Lead:\n\n```sh\nnpm test\n\nnpm run lint'
+    assert.equal(flowText(text), text)
+  })
+})
+
+// The renderer's input: prose runs as plain strings, fenced blocks as
+// { lang, code } tokens (render-finding.js codeBlockTemplate).
+describe('codeBlockSegments', () => {
+  it('returns unfenced text unchanged, in one segment', () => {
+    assert.deepEqual(codeBlockSegments('just prose'), ['just prose'])
+    assert.deepEqual(codeBlockSegments(''), [''])
+  })
+
+  it('reads the language tag off the opening fence', () => {
+    assert.deepEqual(codeBlockSegments('```ts\nconst a: number = 1\n```'), [
+      { lang: 'ts', code: 'const a: number = 1' },
+    ])
+  })
+
+  it('takes an empty block', () => {
+    assert.deepEqual(codeBlockSegments('```ts\n```'), [{ lang: 'ts', code: '' }])
+  })
+
+  it('case-folds the tag and keeps only its first word', () => {
+    assert.deepEqual(codeBlockSegments('```TS title="a b"\nx\n```'), [{ lang: 'ts', code: 'x' }])
+  })
+
+  it('drops an info string that is not a language tag', () => {
+    assert.deepEqual(codeBlockSegments('```{highlight: 1-3}\nx\n```'), [{ lang: '', code: 'x' }])
+    assert.deepEqual(codeBlockSegments('```\nx\n```'), [{ lang: '', code: 'x' }])
+  })
+
+  it('takes tilde fences', () => {
+    assert.deepEqual(codeBlockSegments('~~~python\np = 1\n~~~'), [{ lang: 'python', code: 'p = 1' }])
+  })
+
+  it('keeps a fence of the other marker as content', () => {
+    assert.deepEqual(codeBlockSegments('~~~\ncode\n```'), [{ lang: '', code: 'code\n```' }])
+  })
+
+  it('keeps the blank lines inside a block', () => {
+    assert.deepEqual(codeBlockSegments('```sh\nsetup\n\ntrigger\n```'), [
+      { lang: 'sh', code: 'setup\n\ntrigger' },
+    ])
+  })
+
+  it('drops the newlines that separate a block from its prose', () => {
+    assert.deepEqual(codeBlockSegments('Look:\n\n```js\nx()\n```\n\nDone.'), [
+      'Look:', { lang: 'js', code: 'x()' }, 'Done.',
+    ])
+    assert.deepEqual(codeBlockSegments('Look:\n```js\nx()\n```\nDone.'), [
+      'Look:', { lang: 'js', code: 'x()' }, 'Done.',
+    ])
+  })
+
+  it('takes several blocks, with nothing between them', () => {
+    assert.deepEqual(codeBlockSegments('```a\n1\n```\n\n```b\n2\n```'), [
+      { lang: 'a', code: '1' }, { lang: 'b', code: '2' },
+    ])
+  })
+
+  it('runs an unclosed fence to the end of the input', () => {
+    assert.deepEqual(codeBlockSegments('Lead.\n```ts\nconst a = 1'), [
+      'Lead.', { lang: 'ts', code: 'const a = 1' },
+    ])
+  })
+
+  it('passes empty input through', () => {
+    assert.deepEqual(codeBlockSegments(undefined), [undefined])
+    assert.deepEqual(codeBlockSegments(null), [null])
   })
 })

@@ -2,8 +2,9 @@ import { html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { bundlesForFileHash, isLinkableFindingId, isPlaceholderNpmPackage, state } from '#client/index.js'
-import { SEVERITY_ORDER, commitUrl, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceLabel, evidenceMarkdown, evidenceUrl, findingDisplayName, findingUrl, flowText, formatRunMeta, githubIssueUrl, hasSeverityCorrection, isHttpUrl, markdownLinkToken, parseCommentRefs, stripExportMarker } from './format.js'
+import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceLabel, evidenceMarkdown, evidenceUrl, findingDisplayName, findingUrl, flowText, formatRunMeta, githubIssueUrl, hasSeverityCorrection, isHttpUrl, markdownLinkToken, parseCommentRefs, stripExportMarker } from './format.js'
 import { activeTabFor, findingRepo, groupKey, groupState, isIgnored, sortTabs, tabKey } from './group.js'
+import { highlightedCode } from './code-highlight.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 
 // All `<finding-row>` / `<finding-card>` shadow-DOM markup is built
@@ -109,24 +110,43 @@ export function firstLine(text) {
 // actually a non-empty body after it — a single-line description stays
 // rendered as a plain `.desc` so JSON findings with one-paragraph
 // summaries don't get jarringly bolded.
+//
+// The title is prose like any other and goes through `renderInline`
+// where it's drawn: report titles name the offending symbol in
+// backticks (`` SQL injection in `getUser()` ``) and printing the
+// markdown raw in the one line the reader takes in first is the worst
+// place to do it. Only the INLINE pass — a title is one line, and a
+// lone fence on it would otherwise swallow the whole thing into a
+// code block.
 function splitDescription(text) {
   if (!text) return { title: '', body: '' }
   const nl = text.indexOf('\n')
   if (nl < 0) return { title: '', body: text }
+  // A body that OPENS on a fence has no title line: lifting that first
+  // line out would leave the block unopened, its code rendering as
+  // prose under a `` ```ts `` heading. (A first segment that isn't a
+  // string is a block starting at index 0 — see codeBlockSegments.)
+  if (typeof codeBlockSegments(text)[0] !== 'string') return { title: '', body: text }
   const body = text.slice(nl + 1).replace(/^\s+/u, '')
   if (!body) return { title: '', body: text }
   return { title: text.slice(0, nl).trim(), body }
 }
 
-// Render prose with inline highlights for `[markdown](links)`,
+// Render ONE run of prose with inline highlights for `[markdown](links)`,
 // `"quoted"` strings, `` `code` `` spans, and `**bold**` emphasis. The
 // quote / code pair match the prototype's `.summary q` / `.title em`
-// styling (`design/prototypes/DeepView.0.html`) and keep their
-// delimiters visible; bold spans render as real `<strong>` emphasis
-// with the asterisks DROPPED, so parser-emitted labels (parse-piolium's
-// `**Impact:**` / `**Root Cause:**`) and source-report emphasis read as
-// emphasis rather than literal markers. Unpaired asterisks stay
-// literal. A `[label](url)` pair becomes a real link, opening in a new
+// styling (`design/prototypes/DeepView.0.html`). A quote keeps its
+// marks — they're punctuation, and the sentence reads as the report
+// wrote it — but a code span DROPS its backticks: those are markdown
+// syntax for the chip the CSS already draws, so printing them inside
+// it says the same thing twice. (The chip carries its own padding
+// where the backticks used to sit — see `.inline-code`.) Bold spans
+// likewise render as real `<strong>` emphasis with the asterisks
+// dropped, so parser-emitted labels (parse-piolium's `**Impact:**` /
+// `**Root Cause:**`) and source-report emphasis read as emphasis
+// rather than literal markers. Unpaired asterisks stay literal.
+//
+// A `[label](url)` pair becomes a real link, opening in a new
 // tab like every other outbound link here: the claude-security
 // `## Evidence` list cites each site that way and parse-md.js carries
 // that whole section into the description, so these anchors are the
@@ -137,21 +157,15 @@ function splitDescription(text) {
 // matches so we don't churn out single-child arrays for the common
 // case of plain text.
 //
-// Exported for the bundle views (render-bundle.js), whose finding
-// descriptions — source-viewer side panel, Issues tab rows, code-rail
-// issue results — get the same inline styling. Those render in light
-// DOM, so report.css carries a copy of the .inline-* rules that live
-// in finding-card.css for this card's shadow root (`<strong>` needs no
-// rule — the UA styles it in both trees; anchors take their accent
-// color from theme.css in light DOM and from finding-card.css in the
-// shadow root).
-//
 // The link alternative leads the pattern so a label carrying quotes or
 // backticks is consumed as part of the link rather than chipped up
 // inside it.
+//
+// Fenced code never reaches here — renderHighlighted splits the blocks
+// out first — so a snippet's quotes and backticks stay the code they
+// are instead of being chipped up as markup.
 const INLINE_HL_RE = /\[[^\]\n]+\]\([^)\s]+\)|\*\*[^*\n]+\*\*|"[^"\n]+"|`[^`\n]+`/gu
-export function renderHighlighted(text) {
-  if (!text) return text
+function renderInline(text) {
   INLINE_HL_RE.lastIndex = 0
   const parts = []
   let lastIdx = 0
@@ -166,15 +180,65 @@ export function renderHighlighted(text) {
         : m[0])
     } else if (c0 === 0x2A /* * */) {
       parts.push(html`<strong>${m[0].slice(2, -2)}</strong>`)
+    } else if (c0 === 0x60 /* ` */) {
+      parts.push(html`<span class="inline-code">${m[0].slice(1, -1)}</span>`)
     } else {
-      const cls = c0 === 0x60 /* ` */ ? 'inline-code' : 'inline-quote'
-      parts.push(html`<span class=${cls}>${m[0]}</span>`)
+      parts.push(html`<span class="inline-quote">${m[0]}</span>`)
     }
     lastIdx = m.index + m[0].length
   }
   if (lastIdx === 0) return text
   if (lastIdx < text.length) parts.push(text.slice(lastIdx))
   return parts
+}
+
+// One fenced code block as a real `<pre>`. Everything about a snippet
+// that the prose treatment gets wrong is fixed here: the block keeps
+// its own line breaks and indentation, its long lines SCROLL instead
+// of folding (a wrapped line changes what the code says), and the
+// inline pass never sees it. The fence's language tag (```ts) rides in
+// as `data-lang` plus the small header above the code, so the block
+// says what it is — the same thing the tag is there to tell a reader.
+//
+// The tag also colours the block, for the languages
+// prism-highlight.js's allowlist names. Prism can only answer async
+// (its first call downloads the bundle), so the block paints plain on
+// the first pass and repaints coloured when the highlight settles:
+// `highlightedCode` returns null until then, and the `codeBlockTick`
+// read below is what subscribes this card's autorun to that settle.
+// Prism escapes the source, so its HTML goes in via `unsafeHTML`;
+// everything else — an unlisted language, an empty block, the first
+// pass — renders `code` as the text it is.
+//
+// The whole template is one line on purpose: `.desc` / `.section-body`
+// are `white-space: pre-wrap`, and in dev builds (which skip the
+// template minifier) an indented template's own newlines would print
+// as blank lines inside the block's chrome.
+function codeBlockTemplate({ lang, code }) {
+  void state.codeBlockTick
+  const coloured = highlightedCode(code, lang)
+  return html`<div class="code-block" data-lang=${lang || nothing}>${lang ? html`<div class="code-block-lang">${lang}</div>` : nothing}<pre><code>${coloured ? unsafeHTML(coloured) : code}</code></pre></div>`
+}
+
+// Render a description body: fenced code blocks as blocks, everything
+// between them as prose (see renderInline above for the inline pass).
+//
+// Exported for the bundle views (render-bundle.js), whose finding
+// descriptions — source-viewer side panel, Issues tab rows, code-rail
+// issue results — get the same treatment. Those render in light DOM,
+// so report.css carries a copy of the .inline-* / .code-block rules
+// that live in finding-card.css for this card's shadow root
+// (`<strong>` needs no rule — the UA styles it in both trees; anchors
+// take their accent color from theme.css in light DOM and from
+// finding-card.css in the shadow root).
+//
+// A body with no fence in it takes the inline path directly, so the
+// common case costs one extra scan for the fences and nothing else.
+export function renderHighlighted(text) {
+  if (!text) return text
+  const segments = codeBlockSegments(text)
+  if (segments.length === 1 && typeof segments[0] === 'string') return renderInline(segments[0])
+  return segments.map((seg) => (typeof seg === 'string' ? renderInline(seg) : codeBlockTemplate(seg)))
 }
 
 // Render a triage comment, linkifying any GitHub issue / PR / commit /
@@ -768,7 +832,7 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
         ${f.discoveredIn ? html`<span class="line-num discovered-in">(found analyzing ${f.discoveredIn})</span>` : nothing}
         ${meta ? html`<span class="run-meta">${meta}</span>` : nothing}
       </div>
-      ${descTitle ? html`<div class="desc-title">${descTitle}</div>` : nothing}
+      ${descTitle ? html`<div class="desc-title">${renderInline(descTitle)}</div>` : nothing}
       ${lead.map((s) => html`<div class="desc">${renderHighlighted(flowText(s.body))}</div>`)}
       ${evidenceTemplate(f)}
       ${labelled.map((s) => (s.label === null

@@ -124,6 +124,7 @@ export interface State {
   kanbanExpandedColumn: KanbanColumnKey | null
   focusGid: string | null
   focusCodeTick: number
+  codeBlockTick: number
   // ── server protocol (detected from the `server-info` connect frame) ──
   // Which sync protocol the configured server speaks; drives mode-aware UI
   // (managed mode hides workspace export and swaps the offline toggle for
@@ -615,6 +616,12 @@ export const state: State = store<State>({
   // next manual render (the user reproduced this as "code loads
   // but doesn't appear until I navigate").
   focusCodeTick: 0,
+  // The same trick for the fenced code blocks in finding descriptions:
+  // bumped every time view/code-highlight.js settles a Prism highlight,
+  // and read by the block template so an observer-util consumer (the
+  // `<finding-card>` autorun) repaints the block coloured instead of
+  // sitting on the plain-text first pass until something else renders.
+  codeBlockTick: 0,
   // Sync protocol of the configured server (e2e vs managed), seeded from the
   // localStorage cache so mode-aware UI is correct on first paint; the live
   // `server-info` connect frame confirms / updates it.

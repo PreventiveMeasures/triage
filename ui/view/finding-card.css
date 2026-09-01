@@ -119,7 +119,9 @@
 
 /* Description's first line becomes a bold title; the rest is a muted
    body block. Inline `"quoted"` / `` `code` `` segments get tag-style
-   highlights via render-finding.js's renderHighlighted(). The rationale
+   highlights via render-finding.js's renderHighlighted() — in the
+   title too, which is why `.desc-title` joins the anchor rule below.
+   The rationale
    (`.conf-reason`) sits below a dashed divider in italic muted type so
    it reads as an explanatory note, not body prose. Single-line
    descriptions stay plain `.desc` so one-paragraph JSON findings aren't
@@ -231,6 +233,7 @@ span.evidence-ref { color: var(--muted); }
    renderHighlighted turns each ref into an anchor). Same accent +
    hover-underline treatment as the comment / fix-link blocks below;
    the shadow root gets no `a` styling from theme.css. */
+.desc-title a,
 .desc a,
 .section-body a,
 .conf-reason a {
@@ -239,8 +242,9 @@ span.evidence-ref { color: var(--muted); }
 }
 
 /* Inline highlights — `"quoted"` gets a soft accent-tinted chip,
-   `` `code` `` a monospace chip. Both keep the original delimiters
-   inside the chip so the reader still sees them. */
+   `` `code` `` a monospace one. A quote keeps its marks (punctuation
+   the sentence needs); a code span sheds its backticks, which are
+   markdown syntax for the chip itself — see render-finding.js. */
 .inline-quote {
   background: rgb(from var(--accent) r g b / .1);
   padding: 1px; border-radius: 3px;
@@ -250,9 +254,100 @@ span.evidence-ref { color: var(--muted); }
   background: var(--surface-active);
   border-radius: 3px;
   border: 1px solid var(--border);
+  /* The padding stands in for the backticks, which render-finding.js
+     strips: without it the text sits flush against the chip's border. */
+  padding: 0 .25em;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .9em;
   color: var(--text);
+}
+
+/* Fenced code blocks — the PoC / vulnerable-lines snippets the reports
+   embed, split out of the prose by format.js's codeBlockSegments and
+   drawn by render-finding.js's codeBlockTemplate. The block gets its
+   own box, and two white-space values that both matter: `normal` on
+   the wrapper, because it sits inside a `pre-wrap` `.desc` where the
+   template's own newlines would otherwise print as blank lines around
+   the chrome; and `pre` on the code itself, so a long line SCROLLS
+   under the reader rather than folding — a wrapped snippet reads as a
+   different snippet. The fence's language tag (```ts) heads the block
+   when it named one. */
+.code-block {
+  white-space: normal;
+  margin: .5rem 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  /* A neutral tint of the text colour rather than `--surface-active`
+     (which `.inline-code` wears): that token is the theme's ACTIVE
+     fill — a saturated blue in the light themes — and a whole block
+     of it reads as a selection, not as code. */
+  background: rgb(from var(--text) r g b / .05);
+  overflow: hidden;
+  /* Sized to the code, not to the column: a two-word snippet in a
+     box ruled to the full width reads as an empty panel someone
+     forgot to fill. `fit-content` takes the widest line (or the
+     language header, when that is wider) and the cap hands anything
+     longer back to the `<pre>`'s own horizontal scroll. */
+  width: fit-content;
+  max-width: 100%;
+
+  & .code-block-lang {
+    padding: .15rem .5rem;
+    border-bottom: 1px solid var(--border);
+    color: var(--muted);
+    font-size: .62rem; font-weight: 600;
+    text-transform: uppercase; letter-spacing: .06em;
+  }
+  & pre {
+    margin: 0;
+    padding: .45rem .6rem;
+    overflow-x: auto;
+    white-space: pre;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .85em; line-height: 1.5;
+    color: var(--text);
+  }
+  & code { font: inherit; }
+
+  /* Prism token theme — the shadow-root copy of the rules
+     styles/report.css carries for the source viewers, since no
+     light-DOM rule reaches in here. The palette itself is NOT copied:
+     it comes from theme.css's `--code-*` properties, which inherit
+     across the boundary, so the card and the source viewer colour a
+     snippet identically and the light themes retune both at once.
+     Prism stamps `<span class="token X Y">`; X (the kind) is all we
+     key off. */
+  & .token.comment,
+  & .token.prolog,
+  & .token.cdata { color: var(--code-comment); font-style: italic; }
+  & .token.punctuation { color: var(--muted); }
+  & .token.string,
+  & .token.attr-value,
+  & .token.char,
+  & .token.regex { color: var(--code-string); }
+  & .token.number,
+  & .token.boolean,
+  & .token.constant,
+  & .token.symbol { color: var(--code-number); }
+  & .token.keyword,
+  & .token.builtin,
+  & .token.important,
+  & .token.atrule { color: var(--code-keyword); }
+  & .token.function,
+  & .token.class-name,
+  & .token.tag { color: var(--code-function); }
+  & .token.operator,
+  & .token.entity,
+  & .token.url,
+  & .token.attr-name,
+  & .token.selector { color: var(--code-operator); }
+  & .token.variable,
+  & .token.property,
+  & .token.parameter { color: var(--code-variable); }
+  & .token.deleted { color: var(--code-deleted); }
+  & .token.inserted { color: var(--code-inserted); }
+  & .token.italic { font-style: italic; }
+  & .token.bold { font-weight: bold; }
 }
 
 .line-row {
@@ -912,10 +1007,35 @@ span.evidence-ref { color: var(--muted); }
      bare-text fallback. The body selectors repeat the on-screen rule's
      specificity so they lose to nothing here. */
   a, .line-num, .line-num a { color: inherit; }
-  .desc a, .section-body a, .conf-reason a, .evidence-ref { color: inherit; }
+  .desc-title a, .desc a, .section-body a, .conf-reason a, .evidence-ref { color: inherit; }
 
   /* Inline `` `code` `` spans read as a chip on screen (1px border +
      tinted bg); on paper that chrome crowds dense prose and reads as
-     noise. Keep the monospace font so code still stands out. */
-  .inline-code { border: 0; background: transparent; padding: 0; }
+     noise. Keep the monospace font so code still stands out — and the
+     side padding, which is now the only thing separating the span
+     from the word before it. */
+  .inline-code { border: 0; background: transparent; }
+
+  /* A snippet can't scroll on paper: let its long lines wrap so the
+     block prints whole, and drop the screen fill for a plain outline
+     (a painted background is the first thing a printer discards). */
+  .code-block {
+    background: transparent;
+    border-color: #bbb;
+
+    & .code-block-lang { color: #555; border-bottom-color: #bbb; }
+    & pre { white-space: pre-wrap; overflow: visible; }
+    /* Syntax colours are a screen affordance: half the palette is
+       pale enough to print as near-white on a mono printer, and on a
+       colour one it competes with the page's black text. Flatten to
+       ink, keeping the comment's lighter gray + italic so a commented
+       line still reads as one. `!important` because the screen rules
+       above name the token KIND (`.token.keyword`) and so outrank a
+       flat `.token` here — the alternative is restating all fourteen
+       of them. */
+    & .token { color: #333 !important; }
+    & .token.comment,
+    & .token.prolog,
+    & .token.cdata { color: #666 !important; }
+  }
 }
