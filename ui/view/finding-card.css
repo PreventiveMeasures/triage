@@ -203,9 +203,14 @@
    whole row hangs off one edge. */
 .evidence-list {
   margin: .25rem 0 0; padding-left: 1.6rem;
-  display: flex; flex-direction: column; gap: .4rem;
+  display: flex; flex-direction: column; gap: .15rem;
 
   & li::marker { color: var(--muted); font-size: .9em; }
+  /* Rows that are just a `file:line` reference read as one list and
+     are set tight. A row carrying a NOTE needs the air back: its note
+     wraps, and at the tight gap the last wrapped line runs straight
+     into the next reference. */
+  & li:has(.evidence-note):not(:last-child) { margin-bottom: .3rem; }
 }
 .evidence-ref {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
