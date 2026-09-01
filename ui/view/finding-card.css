@@ -276,6 +276,13 @@ span.evidence-ref { color: var(--muted); }
      of it reads as a selection, not as code. */
   background: rgb(from var(--text) r g b / .05);
   overflow: hidden;
+  /* Sized to the code, not to the column: a two-word snippet in a
+     box ruled to the full width reads as an empty panel someone
+     forgot to fill. `fit-content` takes the widest line (or the
+     language header, when that is wider) and the cap hands anything
+     longer back to the `<pre>`'s own horizontal scroll. */
+  width: fit-content;
+  max-width: 100%;
 
   & .code-block-lang {
     padding: .15rem .5rem;
