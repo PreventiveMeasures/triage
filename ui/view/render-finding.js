@@ -312,12 +312,20 @@ function sectionTemplate(label, body, cls = 'section') {
 // enough to wrap and only markup can keep the wrapped lines indented
 // under the reference instead of dropping them back to the margin.
 // Rows that named no line render the bare path.
+//
+// A `<details>`, closed: the list is a citation apparatus — where the
+// finding was seen, one line per site — and a reader opens a card for
+// the finding, not for its footnotes. Collapsed it costs one line and
+// says how many sites are under it; the disclosure is the native one,
+// so keyboard and screen readers get it for free and the open state
+// belongs to the element rather than to any state we have to carry.
+// Paper has no disclosure, so print forces it open (finding-card.css).
 function evidenceTemplate(f) {
   const rows = Array.isArray(f.evidence) ? f.evidence : []
   if (rows.length === 0) return nothing
   const repoFallback = f._repoFallback ?? state.repoUrl
-  return html`<div class="evidence">
-    <div class="section-label">Evidence</div>
+  return html`<details class="evidence">
+    <summary class="section-label">Evidence<span class="evidence-count">(${rows.length})</span></summary>
     <ol class="evidence-list">${rows.map((row) => {
       const label = evidenceLabel(row)
       const url = evidenceUrl(row, f, repoFallback)
@@ -329,7 +337,7 @@ function evidenceTemplate(f) {
         ${note ? html`<div class="evidence-note">${renderHighlighted(flowText(note))}</div>` : nothing}
       </li>`
     })}</ol>
-  </div>`
+  </details>`
 }
 
 // Combined `file:line` link for the table-view row's location cell —

@@ -177,6 +177,36 @@
     -webkit-print-color-adjust: exact; print-color-adjust: exact;
   }
 }
+/* Evidence is the one section that collapses (render-finding.js
+   evidenceTemplate makes it a `<details>`), so its header is a
+   `<summary>`: the native disclosure carries the keyboard and
+   screen-reader behaviour, and the open state lives on the element.
+   The UA's own marker is dropped for a chevron that matches the
+   toolbar's — two borders rotated — pointing right when closed and
+   down when open, sitting after the count as the last flex item in
+   the label. */
+summary.section-label {
+  cursor: pointer;
+  list-style: none;
+
+  &::-webkit-details-marker { display: none; }
+
+  &::after {
+    content: ''; flex: none;
+    width: .3rem; height: .3rem;
+    margin-left: .05rem;
+    border-right: 1.5px solid currentcolor;
+    border-bottom: 1.5px solid currentcolor;
+    transform: translateY(-1px) rotate(-45deg);
+    transition: transform .12s;
+    opacity: .8;
+  }
+}
+details[open] > summary.section-label::after { transform: translateY(-2px) rotate(45deg); }
+/* How many sites are under the fold — the one thing a collapsed
+   section owes the reader. */
+.evidence-count { font-weight: 500; opacity: .8; }
+
 .section-body {
   white-space: pre-wrap; line-height: 1.55;
   color: rgb(from var(--text) r g b / .82);
@@ -1061,6 +1091,20 @@ span.evidence-ref { color: var(--muted); }
      specificity so they lose to nothing here. */
   a, .line-num, .line-num a { color: inherit; }
   .desc-title a, .desc a, .section-body a, .conf-reason a, .revalidate-verdict a, .evidence-ref { color: inherit; }
+
+  /* Evidence collapses on screen, but paper has no disclosure to
+     click: the citations print or they are lost. Both halves of the
+     rule are needed because engines hide a closed `<details>` two
+     different ways — the older one puts `display: none` on the
+     non-summary children, the current one hides the
+     `::details-content` box — and neither override touches the other.
+     The chevron goes with the interaction it stood for. */
+  .evidence:not([open]) > :not(summary) { display: block; }
+  .evidence::details-content { content-visibility: visible; }
+  summary.section-label {
+    cursor: auto;
+    &::after { display: none; }
+  }
 
   /* Inline `` `code` `` spans read as a chip on screen (1px border +
      tinted bg); on paper that chrome crowds dense prose and reads as
