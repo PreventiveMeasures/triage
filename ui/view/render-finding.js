@@ -180,6 +180,29 @@ function codeBlockTemplate({ lang, code }) {
   return html`<div class="code-block" data-lang=${lang || nothing}>${lang ? html`<div class="code-block-lang">${lang}</div>` : nothing}<pre><code>${coloured ? unsafeHTML(coloured) : code}</code></pre></div>`
 }
 
+// One run of prose, split at its blank lines into real paragraphs.
+//
+// The blank line a report writes between paragraphs used to render as
+// a literal empty line: the prose blocks are `white-space: pre-wrap`,
+// so the break came through as a full line of space — at these
+// line-heights that reads as a gap between SECTIONS, not between
+// paragraphs. And it can't be styled down, because an empty line is a
+// line box rather than an element: no selector reaches it. Real
+// elements can be spaced, so paragraphs become elements and the gap
+// becomes a margin (`.para`, half the line it replaces).
+//
+// A single-paragraph run — the common case — is returned as the bare
+// inline result, no wrapper. Runs of two or more blank lines collapse
+// to the one paragraph gap: the measure is the measure, however many
+// blank lines the report happened to leave in. Single newlines are
+// untouched, so the line breaks `flowText` deliberately kept (a list,
+// an indented snippet, a table) still render through the pre-wrap.
+function proseTemplate(run) {
+  const paras = run.split(/\n{2,}/u).filter((p) => p.trim())
+  if (paras.length < 2) return renderInline(run)
+  return paras.map((p) => html`<div class="para">${renderInline(p)}</div>`)
+}
+
 // Render a description body: fenced code blocks as blocks, everything
 // between them as prose (see renderInline above for the inline pass).
 //
@@ -194,11 +217,16 @@ function codeBlockTemplate({ lang, code }) {
 //
 // A body with no fence in it takes the inline path directly, so the
 // common case costs one extra scan for the fences and nothing else.
-export function renderHighlighted(text) {
+//
+// `paragraphs: false` renders a run as ONE flow, blank lines and all,
+// for the compact surfaces that want a finding's prose as a single
+// blob rather than a stack of paragraphs (see proseTemplate).
+export function renderHighlighted(text, { paragraphs = true } = {}) {
   if (!text) return text
+  const prose = (run) => (paragraphs ? proseTemplate(run) : renderInline(run))
   const segments = codeBlockSegments(text)
-  if (segments.length === 1 && typeof segments[0] === 'string') return renderInline(segments[0])
-  return segments.map((seg) => (typeof seg === 'string' ? renderInline(seg) : codeBlockTemplate(seg)))
+  if (segments.length === 1 && typeof segments[0] === 'string') return prose(segments[0])
+  return segments.map((seg) => (typeof seg === 'string' ? prose(seg) : codeBlockTemplate(seg)))
 }
 
 // Render a triage comment, linkifying any GitHub issue / PR / commit /

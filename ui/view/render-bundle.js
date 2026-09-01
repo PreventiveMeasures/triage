@@ -734,7 +734,7 @@ function renderBundleSourceFindingPanel(findings) {
         ${lineLabel ? html`<span class="bundle-source-panel-line">${lineLabel}</span>` : nothing}
         ${meta ? html`<span class="bundle-source-panel-meta" title=${meta}>${meta}</span>` : nothing}
       </div>` : nothing}
-      <div class="bundle-source-panel-desc">${renderHighlighted(titledDescription(f))}</div>
+      <div class="bundle-source-panel-desc">${renderHighlighted(titledDescription(f), { paragraphs: false })}</div>
       ${reports.length > 0 ? html`<div class="bundle-source-panel-reports">
         <div class="bundle-source-panel-reports-label">Reported by</div>
         ${reports.map((name) => {
@@ -1163,7 +1163,7 @@ function renderBundleCodeIssuesResults(details, query, currentPath, prefix = '')
               <span class=${`bundle-code-search-issue-sev sev-${sev}`}>${sev.replaceAll('_', ' ')}</span>
               <span class="bundle-code-search-issue-path mono">${bare}${finding.line ? `:${finding.line}` : ''}</span>
             </div>
-            <div class="bundle-code-search-issue-desc">${renderHighlighted(titledDescription(finding))}</div>
+            <div class="bundle-code-search-issue-desc">${renderHighlighted(titledDescription(finding), { paragraphs: false })}</div>
           </button>
         </li>`
       })}
@@ -2129,7 +2129,7 @@ export function renderIssuesGroupedByFile(findingsByFile, { kind, bucketKey } = 
                 <span class="bundle-issues-finding-spacer"></span>
                 ${bundleIssueReportsTemplate(finding, { kind, bucketKey })}
               </div>
-              <div class="bundle-issues-finding-desc">${renderHighlighted(titledDescription(finding))}</div>`
+              <div class="bundle-issues-finding-desc">${renderHighlighted(titledDescription(finding), { paragraphs: false })}</div>`
               return html`<li class="bundle-issues-finding">
                 ${kind === 'bundle'
                   ? html`<button

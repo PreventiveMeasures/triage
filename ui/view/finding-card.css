@@ -181,6 +181,17 @@
   color: rgb(from var(--text) r g b / .82);
   margin-top: .1rem;
 }
+
+/* Paragraph inside a prose block (`.desc`, `.section-body`, …). These
+   boxes are `pre-wrap`, so the blank line a report writes between
+   paragraphs came through as a literal empty line — a FULL line of
+   space, which at these line-heights reads as a gap between sections
+   rather than between paragraphs. That empty line can't be styled:
+   it's a line box, not an element, and no selector reaches it. So
+   render-finding.js's proseTemplate makes paragraphs real elements and
+   the gap becomes this margin — `.5lh` being, by definition, half the
+   blank line it replaces. */
+.para + .para { margin-top: .5lh; }
 /* The fix is the one section that carries its own colour, header
    included — a green heading over green text reads as one block rather
    than as a muted label someone stuck on top of it. */

@@ -1556,6 +1556,11 @@ bundle-search {
   font-size: .9em;
   color: var(--text);
 }
+/* Paragraph gap — the light-DOM copy of finding-card.css's `.para`
+   rule, so a prose block out here that takes renderHighlighted's
+   paragraphs (the bundle-side descriptions pass `paragraphs: false`
+   and stay one blob) measures its gap the same as the card does. */
+.para + .para { margin-top: .5lh; }
 /* Same story for the fenced code blocks a description carries — a
    light-DOM copy of finding-card.css's `.code-block` rules, so a
    snippet in a bundle-side description reads as the same box the card
