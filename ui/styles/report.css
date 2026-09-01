@@ -1549,6 +1549,9 @@ bundle-search {
   background: var(--surface-active);
   border-radius: 3px;
   border: 1px solid var(--border);
+  /* The padding stands in for the backticks, which render-finding.js
+     strips: without it the text sits flush against the chip's border. */
+  padding: 0 .25em;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .9em;
   color: var(--text);

@@ -110,6 +110,14 @@ export function firstLine(text) {
 // actually a non-empty body after it — a single-line description stays
 // rendered as a plain `.desc` so JSON findings with one-paragraph
 // summaries don't get jarringly bolded.
+//
+// The title is prose like any other and goes through `renderInline`
+// where it's drawn: report titles name the offending symbol in
+// backticks (`` SQL injection in `getUser()` ``) and printing the
+// markdown raw in the one line the reader takes in first is the worst
+// place to do it. Only the INLINE pass — a title is one line, and a
+// lone fence on it would otherwise swallow the whole thing into a
+// code block.
 function splitDescription(text) {
   if (!text) return { title: '', body: '' }
   const nl = text.indexOf('\n')
@@ -127,12 +135,18 @@ function splitDescription(text) {
 // Render ONE run of prose with inline highlights for `[markdown](links)`,
 // `"quoted"` strings, `` `code` `` spans, and `**bold**` emphasis. The
 // quote / code pair match the prototype's `.summary q` / `.title em`
-// styling (`design/prototypes/DeepView.0.html`) and keep their
-// delimiters visible; bold spans render as real `<strong>` emphasis
-// with the asterisks DROPPED, so parser-emitted labels (parse-piolium's
-// `**Impact:**` / `**Root Cause:**`) and source-report emphasis read as
-// emphasis rather than literal markers. Unpaired asterisks stay
-// literal. A `[label](url)` pair becomes a real link, opening in a new
+// styling (`design/prototypes/DeepView.0.html`). A quote keeps its
+// marks — they're punctuation, and the sentence reads as the report
+// wrote it — but a code span DROPS its backticks: those are markdown
+// syntax for the chip the CSS already draws, so printing them inside
+// it says the same thing twice. (The chip carries its own padding
+// where the backticks used to sit — see `.inline-code`.) Bold spans
+// likewise render as real `<strong>` emphasis with the asterisks
+// dropped, so parser-emitted labels (parse-piolium's `**Impact:**` /
+// `**Root Cause:**`) and source-report emphasis read as emphasis
+// rather than literal markers. Unpaired asterisks stay literal.
+//
+// A `[label](url)` pair becomes a real link, opening in a new
 // tab like every other outbound link here: the claude-security
 // `## Evidence` list cites each site that way and parse-md.js carries
 // that whole section into the description, so these anchors are the
@@ -166,9 +180,10 @@ function renderInline(text) {
         : m[0])
     } else if (c0 === 0x2A /* * */) {
       parts.push(html`<strong>${m[0].slice(2, -2)}</strong>`)
+    } else if (c0 === 0x60 /* ` */) {
+      parts.push(html`<span class="inline-code">${m[0].slice(1, -1)}</span>`)
     } else {
-      const cls = c0 === 0x60 /* ` */ ? 'inline-code' : 'inline-quote'
-      parts.push(html`<span class=${cls}>${m[0]}</span>`)
+      parts.push(html`<span class="inline-quote">${m[0]}</span>`)
     }
     lastIdx = m.index + m[0].length
   }
@@ -817,7 +832,7 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
         ${f.discoveredIn ? html`<span class="line-num discovered-in">(found analyzing ${f.discoveredIn})</span>` : nothing}
         ${meta ? html`<span class="run-meta">${meta}</span>` : nothing}
       </div>
-      ${descTitle ? html`<div class="desc-title">${descTitle}</div>` : nothing}
+      ${descTitle ? html`<div class="desc-title">${renderInline(descTitle)}</div>` : nothing}
       ${lead.map((s) => html`<div class="desc">${renderHighlighted(flowText(s.body))}</div>`)}
       ${evidenceTemplate(f)}
       ${labelled.map((s) => (s.label === null
