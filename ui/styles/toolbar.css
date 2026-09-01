@@ -241,26 +241,32 @@
         transform: translateY(-50%);
         z-index: 1;
         padding: .1rem .3rem;
-        border: 1px solid transparent;
         border-radius: 3px;
-        background: transparent;
         font: inherit;
         font-size: .66rem;
         line-height: 1.4;
         white-space: nowrap;
-        color: var(--muted);
         cursor: pointer;
 
-        &:hover { color: var(--text); border-color: var(--border); }
-        /* Modified: the switch is doing something, and it should be
-           visible without reading the label. Yellow because that is
-           the colour the partial STAMP wears on the card, so the chip
-           and the rows it is sorting are the same idea. */
-        &.on {
-          color: var(--yellow);
-          border-color: rgb(from var(--yellow) r g b / .45);
-          background: rgb(from var(--yellow) r g b / .1);
-        }
+        /* Every mode is a state, the default one included: `+ Partial`
+           says those rows are in and on screen, which is worth showing
+           rather than leaving as a blank the reader has to interpret.
+           So all three wear the chip — one hue each, set once here and
+           picked per class below.
+
+           Green in, red out, yellow for the narrowed rows on their own
+           — the same yellow the partial STAMP wears on the card, so
+           the chip and the rows it is sorting read as one idea. */
+        --chip: var(--muted);
+        color: var(--chip);
+        border: 1px solid rgb(from var(--chip) r g b / .45);
+        background: rgb(from var(--chip) r g b / .1);
+
+        &.included { --chip: var(--green); }
+        &.excluded { --chip: var(--critical); }
+        &.only { --chip: var(--yellow); }
+
+        &:hover { background: rgb(from var(--chip) r g b / .22); }
         &:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
       }
     }

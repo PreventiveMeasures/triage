@@ -36,6 +36,9 @@
 // has partial rows to sort; `partialCycle` dispatches
 // `partial-change(detail.value)` and events.js does the write.
 //
+// The three read green / red / yellow — in, out, and only — so the
+// state is legible before the label is.
+//
 // It sits at the RIGHT of the row, before the chevron, rather than
 // tucked against the word "Confirmed": the select spans the whole
 // block so its value can start at the left edge, and anchoring the
@@ -52,7 +55,12 @@ import { state } from '#client/index.js'
 // The chip's face for each mode. The sign carries the meaning, so the
 // three read as one control in three positions rather than three
 // labels; `−` is the MINUS SIGN, not a hyphen, so it balances the `+`.
+// Every mode is a STATE, including the default one — `+ Partial` says
+// those rows are in and on screen, which is a fact worth showing, not
+// the absence of a setting — so each gets its own class and its own
+// colour (toolbar.css) rather than one of them reading as "off".
 const PARTIAL_LABELS = { '': '+ Partial', exclude: '\u2212 Partial', only: 'only Partial' }
+const PARTIAL_CLASSES = { '': 'included', exclude: 'excluded', only: 'only' }
 const PARTIAL_TITLES = {
   '': 'Partial confirmations included — click to exclude them',
   exclude: 'Partial confirmations excluded — click to show only those',
@@ -98,7 +106,10 @@ class RevalidateFilter extends StateElement {
     ${this.hasPartial && state.filterRevalidate === 'confirmed'
       ? html`<button
           type="button"
-          class=${classMap({ 'partial-cycle': true, on: Boolean(state.filterPartial) })}
+          class=${classMap({
+            'partial-cycle': true,
+            [PARTIAL_CLASSES[state.filterPartial] ?? PARTIAL_CLASSES['']]: true,
+          })}
           title=${PARTIAL_TITLES[state.filterPartial] ?? PARTIAL_TITLES['']}
           @click=${this._onPartial}
         >${PARTIAL_LABELS[state.filterPartial] ?? PARTIAL_LABELS['']}</button>`

@@ -311,11 +311,31 @@ function matchesAnnotationFilters(group) {
   return true
 }
 
+// The `− Partial` half of the switch inside Confirmed, and group-level
+// for the reason matchesAnnotationFilters spells out above: a group
+// shows when ANY of its rows matches, so a per-row "not partial" keeps
+// a group the pass partially confirmed on screen the moment it also
+// carries a full confirmation — or the `revalidation` row that rides
+// Confirmed, which is most of them. `+` and `−` then list the same
+// findings, which is no switch at all.
+//
+// So the two halves partition the Confirmed set exactly, the way
+// 'with' / 'without' do: `only` is ∃ a partial row (the kinds list
+// does that one on its own), `exclude` is ¬∃ one. Off under any
+// outcome that didn't take the partial rows in, same as
+// activeRevalidateKinds.
+function matchesPartialFilter(group) {
+  if (state.filterPartial !== 'exclude') return true
+  if (!revalidateFilterKinds(state.filterRevalidate)?.includes('partial')) return true
+  return !group.some((f) => revalidateKind(f) === 'partial')
+}
+
 export function applyFilters(groups) {
   // Per-tab existential filters (severity / color / source / analyzer /
   // model / repo / search) via `g.some`, AND the group-level annotation
-  // filters.
-  return groups.filter((g) => g.some(matchesFilters) && matchesAnnotationFilters(g))
+  // + partial filters.
+  return groups.filter((g) =>
+    g.some(matchesFilters) && matchesAnnotationFilters(g) && matchesPartialFilter(g))
 }
 
 // Numeric-field comparator factory — the `confidence-*` /
