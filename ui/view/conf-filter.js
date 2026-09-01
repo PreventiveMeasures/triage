@@ -25,32 +25,67 @@
 // `range-change`. This component intercepts neither — it just owns
 // the layout + state-to-prop hand-off.
 //
-// Mounted only when the parent's `showConfidence` flag is true (some
-// reports don't surface confidence); the component doesn't know that
-// flag — visibility stays at the parent.
+// The block also carries the revalidation-outcome dropdown, when the
+// loaded set reaches one (`<revalidate-filter>`, options resolved by
+// the parent). The two are one control in two modes, not two filters:
+// picking an outcome REPLACES the range, which goes inert and reads as
+// 0—10 (filters.js skips the confidence branch entirely while an
+// outcome is selected). The range keeps its numbers rather than being
+// reset, so clearing the outcome hands the user back the range they
+// had set.
+//
+// Mounted when the parent has confidence to show OR an outcome to
+// offer (some reports surface neither); `show-range` says which of the
+// two, since a report can carry a revalidation pass and no confidence
+// at all.
+import { nothing } from 'lit'
+import { classMap } from 'lit/directives/class-map.js'
 import { StateElement, html } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'
 
 class ConfFilter extends StateElement {
+  static properties = {
+    showRange: { type: Boolean, attribute: 'show-range' },
+    revalidateOptions: { attribute: false },
+  }
+
   createRenderRoot() { return this }
+
+  constructor() {
+    super()
+    this.showRange = false
+    this.revalidateOptions = []
+  }
 
   render() {
     const low = state.filterConfMin
     const high = state.filterConfMax
-    return html`<span class="conf-range-label">Confidence</span>
-      <range-slider
-        id="conf-range" min="0" max="10" step="1"
-        low=${low}
-        high=${high}
-        aria-label="Confidence range"
-      ></range-slider>
-      <conf-range-mirror
-        id="conf-range-vals"
-        class="conf-vals"
-        for="conf-range"
-        .low=${low}
-        .high=${high}
-      ></conf-range-mirror>`
+    // `inert` is the visual half of "replaced": dimmed, and unreachable
+    // by pointer or keyboard, so the thumbs can't be dragged to a range
+    // that wouldn't apply. The filtering half is in filters.js.
+    const inert = Boolean(state.filterRevalidate)
+    const outcomes = this.revalidateOptions ?? []
+    return html`<span class="conf-range-label">${this.showRange ? 'Confidence' : 'Revalidation'}</span>
+      ${this.showRange
+        ? html`<span class=${classMap({ 'conf-range': true, inert })} ?inert=${inert}>
+            <range-slider
+              id="conf-range" min="0" max="10" step="1"
+              low=${low}
+              high=${high}
+              aria-label="Confidence range"
+            ></range-slider>
+            <conf-range-mirror
+              id="conf-range-vals"
+              class="conf-vals"
+              for="conf-range"
+              .low=${low}
+              .high=${high}
+            ></conf-range-mirror>
+          </span>`
+        : nothing}
+      ${outcomes.length > 0
+        ? html`<revalidate-filter .options=${outcomes}></revalidate-filter>`
+        : nothing}`
   }
 }
 

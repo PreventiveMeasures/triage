@@ -156,6 +156,48 @@
       letter-spacing: .04em;
     }
     & range-slider { margin: 0; }
+
+    /* Slider + read-out travel together, so the outcome dropdown can
+       dim the pair as one when it replaces them. `inert` (the
+       attribute, set alongside this class) already takes them out of
+       reach of pointer and keyboard; the opacity is what says so. */
+    & .conf-range {
+      display: inline-flex; align-items: center; gap: .5rem;
+      transition: opacity .12s;
+
+      &.inert { opacity: .4; }
+    }
+
+    /* The outcome dropdown reads as one arrow-down on the end of the
+       block rather than a second control: no border of its own (the
+       block's is right there), and sized to its content so an
+       unselected "-" is barely wider than the chevron the shared
+       `:is(repo-filter, …)` rule paints. */
+    & revalidate-filter {
+      position: relative;
+      display: inline-flex; align-items: center;
+
+      & .sort-select {
+        border: 0;
+        height: auto;
+        min-width: 0;
+        padding: 0 .95rem 0 .2rem;
+        font-size: .72rem;
+        color: var(--muted);
+        cursor: pointer;
+        /* Sized to the SELECTED option, not the widest one, so an
+           unselected "-" collapses to about the width of the chevron
+           and the control reads as a single arrow on the end of the
+           block. Where `field-sizing` isn't supported the select falls
+           back to its intrinsic width — the same control, just wider
+           when idle. */
+        field-sizing: content;
+
+        &:hover { color: var(--text); }
+      }
+
+      &::after { right: .25rem; }
+    }
   }
 
   & input[type='text'] {

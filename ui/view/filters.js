@@ -1,5 +1,5 @@
 import { state } from '#client/index.js'
-import { SEVERITY_ORDER, displayedSeverity, findingText, isModule, isRefuted, prettyModel, revalidateKind } from './format.js'
+import { SEVERITY_ORDER, displayedSeverity, findingText, isModule, isRefuted, prettyModel, revalidateFilterKinds, revalidateKind } from './format.js'
 import { primaryTab, tabKey } from './group.js'
 
 // Stand-in for the "no analyzer" bucket in the analyzer dropdown.
@@ -157,14 +157,27 @@ export function matchesFilters(f) {
     const want = state.filterRepo === NO_REPO_SENTINEL ? null : state.filterRepo
     if (r !== want) return false
   }
-  // Revalidation outcome — single-select dropdown shown only when some
-  // finding in the loaded set carries `revalidate` (the toolbar drops
-  // the whole control otherwise, and only offers the outcomes actually
-  // present). Empty = no filter. Group-visibility via applyFilters's
-  // `g.some(...)`, same as every predicate above: a dedup group shows
-  // in full when any of its rows carries the selected outcome.
-  if (state.filterRevalidate && revalidateKind(f) !== state.filterRevalidate) return false
-  // Confidence range. Slider bounds 0..10 always have a value; the
+  // Revalidation outcome — single-select dropdown shown only when the
+  // loaded set has something to choose between (the toolbar drops the
+  // whole control otherwise, and offers only the reachable options).
+  // Empty = no filter. One option can cover more than one value of the
+  // field: CONFIRMED takes the revalidation row too, since that row IS
+  // the pass leaving the finding standing (see REVALIDATE_FILTERS).
+  // Group-visibility via applyFilters's `g.some(...)`, same as every
+  // predicate above: a dedup group shows in full when any of its rows
+  // carries the selected outcome.
+  if (state.filterRevalidate) {
+    const kinds = revalidateFilterKinds(state.filterRevalidate)
+    if (kinds && !kinds.includes(revalidateKind(f))) return false
+  }
+  // Confidence range — SKIPPED entirely while a revalidation outcome is
+  // selected. The two share one toolbar block and the outcome replaces
+  // the range there (conf-filter.js renders it inert), so the bounds
+  // read as 0—10 whatever the slider was left at: a user who narrowed
+  // the range, then asked for the refuted findings, is asking for all
+  // of them. Clearing the outcome hands the range back untouched.
+  //
+  // Slider bounds 0..10 always have a value; the
   // special positions are 0 (lower) and 10 (upper):
   //   * lower at 0 → undefined-confidence findings pass; above 0
   //     means "must have a known confidence", EXCEPT findings flagged
@@ -184,16 +197,18 @@ export function matchesFilters(f) {
   //     `[{refuted 3}, {refuted 10}]` shows only at 0. A refuted row
   //     flagged `critical` doesn't ride the 10 bucket either, for the
   //     same reason.
-  const conf = isRefuted(f) ? 0 : f.confidence
-  if (conf === undefined) {
-    if (f.critical === true) {
-      if (state.filterConfMax < 10) return false
-    } else if (state.filterConfMin > 0) {
-      return false
+  if (!state.filterRevalidate) {
+    const conf = isRefuted(f) ? 0 : f.confidence
+    if (conf === undefined) {
+      if (f.critical === true) {
+        if (state.filterConfMax < 10) return false
+      } else if (state.filterConfMin > 0) {
+        return false
+      }
+    } else {
+      if (conf < state.filterConfMin) return false
+      if (state.filterConfMax < 10 && conf > state.filterConfMax) return false
     }
-  } else {
-    if (conf < state.filterConfMin) return false
-    if (state.filterConfMax < 10 && conf > state.filterConfMax) return false
   }
   if (inc) {
     // Triage annotations (the free-form `comment` and the `fix`

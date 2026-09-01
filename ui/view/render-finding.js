@@ -254,25 +254,41 @@ function renderCommentText(text) {
   })
 }
 
-// The revalidation pass's verdict on this finding, under the
-// confidence rationale it reads as a sharper sibling of: the same
-// dashed rule and quiet type, but a shade more contrast than
-// `.conf-reason`'s muted italic, because a verdict is a conclusion
-// about the finding rather than a note on how it was scored.
+// The verdict stamp — `revalidate` itself (confirmed / refuted /
+// unknown), the one word that says which way the pass went.
 //
-// The stamp is `revalidate` itself (confirmed / refuted / unknown) —
-// the one word that says which way the pass went, so the reader gets
-// it before the prose. A row stamped `revalidation` has no verdict of
-// its own and renders nothing here; a verdict carrying no recognised
-// stamp still renders its text, since dropping a report's reasoning
-// over an unreadable enum would lose more than it saves.
+// It rides the `.finding-left` rail rather than the verdict prose:
+// the rail is where this card states what the finding IS at a glance
+// (severity, confidence), which is the same question the stamp
+// answers, and inline it read as the first word of the verdict
+// sentence and left the following lines wrapping under it. Rail idiom
+// is value + caption, so it wears a `.value-label` like the two above
+// it — "REFUTED" alone under a confidence ring doesn't say refuted by
+// what.
+//
+// A row stamped `revalidation` gets nothing: that value names the pass
+// rather than a judgement on anything. A stamp shows whether or not
+// the row carries verdict PROSE — the one-word outcome stands on its
+// own, and a report is free to send it without the reasoning.
+function revalidateStampTemplate(f) {
+  const stamp = revalidateStamp(f)
+  if (!stamp) return nothing
+  return html`<span class=${`revalidate-stamp ${stamp}`}>${stamp}</span>
+    <div class="value-label">Revalidation</div>`
+}
+
+// The revalidation pass's reasoning, under the confidence rationale it
+// reads as a sharper sibling of: the same dashed rule and quiet type,
+// but a shade more contrast than `.conf-reason`'s muted italic,
+// because a verdict is a conclusion about the finding rather than a
+// note on how it was scored. Its one-word outcome is up in the rail
+// (revalidateStampTemplate above).
 function revalidateTemplate(f) {
   const verdict = stripExportMarker(f.revalidateVerdict, f)
   if (!verdict) return nothing
-  const stamp = revalidateStamp(f)
   // One line, like every other `pre-wrap` block on this card: the
   // template's own newlines would print as whitespace inside it.
-  return html`<div class="revalidate-verdict">${stamp ? html`<span class=${`revalidate-stamp ${stamp}`}>${stamp}</span>` : nothing}${renderHighlighted(flowText(verdict))}</div>`
+  return html`<div class="revalidate-verdict">${renderHighlighted(flowText(verdict))}</div>`
 }
 
 // One labelled body section — a small-caps header over its text. Used
@@ -842,6 +858,7 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
       ${severityBadge(f, { variant: 'full' })}
       <div class="value-label">Severity</div>
       ${f.confidence === undefined ? nothing : confTemplate(f)}
+      ${revalidateStampTemplate(f)}
       ${codeButton}
     </div>
     <div>

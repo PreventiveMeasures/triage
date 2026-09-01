@@ -106,9 +106,7 @@ export function correctedVariants(f) {
 // Values are case-folded and trimmed: these arrive from JSON a report
 // generator wrote, and an unrecognised one answers "no stamp" rather
 // than leaking into a display.
-// The pass first, then its three verdicts — the order the toolbar
-// dropdown lists them in, so the list reads the same whichever
-// outcomes a report happens to carry.
+// Every value the field can carry.
 export const REVALIDATE_KINDS = ['revalidation', 'refuted', 'confirmed', 'unknown']
 const REVALIDATE_SET = new Set(REVALIDATE_KINDS)
 
@@ -136,6 +134,37 @@ export function isRevalidation(f) {
 // filters.js) — the one place a verdict changes more than a display.
 export function isRefuted(f) {
   return revalidateKind(f) === 'refuted'
+}
+
+// What the toolbar dropdown offers, in the order it lists them. Two
+// outcomes rather than four kinds: the reader is asking "did the pass
+// leave this standing or knock it down", and
+//
+//   * the `revalidation` row rides CONFIRMED — it is the pass itself,
+//     re-examining a finding it did not refute, which is the same
+//     answer to that question;
+//   * `unknown` gets no option — a pass that couldn't tell hasn't
+//     answered it at all, so there is nothing to filter to. Those rows
+//     stay visible with no filter on, like every other row.
+export const REVALIDATE_FILTERS = [
+  { value: 'confirmed', label: 'Confirmed', kinds: ['confirmed', 'revalidation'] },
+  { value: 'refuted', label: 'Refuted', kinds: ['refuted'] },
+]
+
+// The kinds one dropdown value covers, or null when the value names no
+// option — filters.js reads that as "no filter" rather than hiding
+// every finding behind a value it can't interpret.
+export function revalidateFilterKinds(value) {
+  return REVALIDATE_FILTERS.find((o) => o.value === value)?.kinds ?? null
+}
+
+// The options worth offering for a given set of present kinds: the
+// toolbar hands this list to the dropdown, and drops the control
+// entirely when it comes back empty — a report whose pass only ever
+// answered `unknown` has nothing here to choose between.
+export function reachableRevalidateFilters(kinds) {
+  const present = new Set(kinds)
+  return REVALIDATE_FILTERS.filter((o) => o.kinds.some((k) => present.has(k)))
 }
 
 // "Module" = third-party dependency. Recognised vendor-directory

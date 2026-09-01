@@ -496,14 +496,14 @@ export const state: State = store<State>({
   // is hidden when the loaded reports involve only one distinct
   // repo or aren't a workspace merge.
   filterRepo: '',
-  // Revalidation outcome — empty string = no filter; otherwise one of
-  // `revalidation` / `refuted` / `confirmed` / `unknown`, matched
-  // against a finding's `revalidate` field (view/format.js
-  // revalidateKind). The dropdown lists only the outcomes actually
-  // present in the loaded set and is hidden entirely when no finding
-  // carries the field, so this stays '' for every report that predates
-  // the revalidation pass. A selection that stops being reachable is
-  // cleared in render.js, the same way a stale repo filter is.
+  // Revalidation outcome — empty string = no filter; otherwise a value
+  // from view/format.js's REVALIDATE_FILTERS (`confirmed` / `refuted`),
+  // each covering one or more values of a finding's `revalidate` field.
+  // The dropdown lists only the outcomes the loaded set reaches and is
+  // hidden entirely when it reaches none, so this stays '' for every
+  // report that predates the revalidation pass. A selection that stops
+  // being reachable is cleared in render.js, the same way a stale repo
+  // filter is.
   filterRevalidate: '',
   // Confidence range — both bounds always set (the new
   // `<range-slider>` has no "unset" concept). 0 / 10 means "no

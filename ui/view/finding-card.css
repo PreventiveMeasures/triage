@@ -222,15 +222,17 @@
    `.badge-varies`), coloured by which way the pass went: the finding
    still stands (critical), it was knocked down (muted — the row is
    dismissed and so is its chip), or the pass couldn't tell (the amber
-   every other unresolved state on this card wears). `pre-wrap` on the
-   block would stretch a chip's leading space, so the gap after it is
-   a margin. */
+   every other unresolved state on this card wears). Lives in the
+   `.finding-left` rail under the confidence, so it centres with the
+   badge above it and carries no inline margins of its own. `nowrap`
+   because the rail is narrow and "CONFIRMED" would otherwise break
+   across two lines inside its own outline. */
 .revalidate-stamp {
-  display: inline-block; vertical-align: baseline;
-  margin-right: .4rem;
-  font-size: .58rem; font-weight: 600; line-height: 1;
-  text-transform: uppercase; letter-spacing: .04em;
-  padding: .14rem .32rem; border-radius: 3px;
+  display: inline-block;
+  margin-top: .1rem;
+  font-size: .55rem; font-weight: 600; line-height: 1;
+  text-transform: uppercase; letter-spacing: .03em;
+  padding: .14rem .3rem; border-radius: 3px;
   background: transparent;
   color: var(--muted); border: 1px solid var(--border);
   white-space: nowrap;

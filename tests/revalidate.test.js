@@ -8,8 +8,9 @@
 //   * a REFUTED row's confidence reads as 0 for the confidence filter,
 //     so it can't float its group over a floor the surviving rows
 //     can't meet;
-//   * the toolbar's outcome filter matches per finding and group-wide,
-//     like every other filter.
+//   * the toolbar's outcome filter matches per finding and group-wide
+//     like every other filter, with the revalidation row riding
+//     CONFIRMED.
 
 import assert from 'node:assert/strict'
 import { beforeEach, describe, it } from 'node:test'
@@ -34,8 +35,10 @@ if (!globalThis[slotKey]) {
 const { state } = await import('../client/state.ts')
 const { applyFilters, matchesFilters } = await import('../ui/view/filters.js')
 const { sortTabs } = await import('../ui/view/group.js')
-const { REVALIDATE_KINDS, isRefuted, isRevalidation, revalidateKind, revalidateStamp } =
-  await import('../ui/view/format.js')
+const {
+  REVALIDATE_FILTERS, REVALIDATE_KINDS, isRefuted, isRevalidation,
+  reachableRevalidateFilters, revalidateKind, revalidateStamp,
+} = await import('../ui/view/format.js')
 
 // Neutralise every other filter so each assertion isolates the
 // dimension under test.
@@ -190,18 +193,29 @@ describe('confidence filter — a refuted row reads as 0', () => {
 describe('revalidate filter — the toolbar dropdown', () => {
   beforeEach(reset)
 
+  it('offers two outcomes, confirmed first', () => {
+    assert.deepEqual(REVALIDATE_FILTERS.map((o) => o.value), ['confirmed', 'refuted'])
+    assert.deepEqual(REVALIDATE_FILTERS.map((o) => o.label), ['Confirmed', 'Refuted'])
+  })
+
   it('matches the selected outcome and nothing else', () => {
-    const refuted = makeFinding('A', { revalidate: 'refuted' })
-    const confirmed = makeFinding('B', { revalidate: 'confirmed' })
-    const bare = makeFinding('C')
     state.filterRevalidate = 'refuted'
-    assert.equal(matchesFilters(refuted), true)
-    assert.equal(matchesFilters(confirmed), false)
-    assert.equal(matchesFilters(bare), false)
+    assert.equal(matchesFilters(makeFinding('A', { revalidate: 'refuted' })), true)
+    assert.equal(matchesFilters(makeFinding('B', { revalidate: 'confirmed' })), false)
+    assert.equal(matchesFilters(makeFinding('C', { revalidate: 'unknown' })), false)
+    assert.equal(matchesFilters(makeFinding('D')), false)
+  })
+
+  it('takes the revalidation row under Confirmed', () => {
+    state.filterRevalidate = 'confirmed'
+    assert.equal(matchesFilters(makeFinding('A', { revalidate: 'confirmed' })), true)
+    assert.equal(matchesFilters(makeFinding('B', { revalidate: 'revalidation' })), true)
+    assert.equal(matchesFilters(makeFinding('C', { revalidate: 'refuted' })), false)
+    assert.equal(matchesFilters(makeFinding('D', { revalidate: 'unknown' })), false)
   })
 
   it('keeps the whole group when any of its rows matches', () => {
-    const group = [makeFinding('A'), makeFinding('B', { revalidate: 'confirmed' })]
+    const group = [makeFinding('A'), makeFinding('B', { revalidate: 'revalidation' })]
     state.filterRevalidate = 'confirmed'
     const [kept] = applyFilters([group])
     assert.equal(kept.length, 2)
@@ -209,9 +223,41 @@ describe('revalidate filter — the toolbar dropdown', () => {
     assert.equal(applyFilters([group]).length, 0)
   })
 
+  // The two share one toolbar block and the outcome REPLACES the range
+  // there, so the bounds read as 0—10 while one is selected.
+  it('takes the confidence range out of play while an outcome is on', () => {
+    state.filterConfMin = 8
+    state.filterConfMax = 9
+    state.filterRevalidate = 'refuted'
+    // Below the floor, above the cap, and carrying no confidence at
+    // all — all three pass, none of which they would without an
+    // outcome selected.
+    assert.equal(matchesFilters(makeFinding('A', { confidence: 1, revalidate: 'refuted' })), true)
+    assert.equal(matchesFilters(makeFinding('B', { confidence: 10, revalidate: 'refuted' })), true)
+    assert.equal(matchesFilters(makeFinding('C', { revalidate: 'refuted' })), true)
+    // The outcome itself still gates.
+    assert.equal(matchesFilters(makeFinding('D', { confidence: 8, revalidate: 'confirmed' })), false)
+    // Clearing it hands the range back untouched.
+    state.filterRevalidate = ''
+    assert.equal(matchesFilters(makeFinding('E', { confidence: 1, revalidate: 'refuted' })), false)
+  })
+
   it('is off when empty', () => {
     state.filterRevalidate = ''
-    assert.equal(matchesFilters(makeFinding('A')), true)
-    assert.equal(matchesFilters(makeFinding('B', { revalidate: 'refuted' })), true)
+    for (const revalidate of [undefined, 'refuted', 'confirmed', 'unknown', 'revalidation']) {
+      assert.equal(matchesFilters(makeFinding('A', { revalidate })), true, String(revalidate))
+    }
+  })
+
+  // The toolbar drops the control when this comes back empty, so a
+  // pass that only ever answered `unknown` shows no dropdown at all.
+  it('reaches an outcome only from the kinds that feed it', () => {
+    const values = (kinds) => reachableRevalidateFilters(kinds).map((o) => o.value)
+    assert.deepEqual(values(['confirmed', 'refuted', 'revalidation', 'unknown']), ['confirmed', 'refuted'])
+    assert.deepEqual(values(['revalidation']), ['confirmed'])
+    assert.deepEqual(values(['confirmed']), ['confirmed'])
+    assert.deepEqual(values(['refuted']), ['refuted'])
+    assert.deepEqual(values(['unknown']), [])
+    assert.deepEqual(values([]), [])
   })
 })
