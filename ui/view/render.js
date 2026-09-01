@@ -7,10 +7,11 @@ import { FILE_ICONS } from './file-display.js'
 import { listBundles, listWorkspaces, state } from '#client/index.js'
 import { isBundleInRemote, isInRemote, remoteCount, triageSync } from './client-sync.js'
 import { dropZone, report } from './dom.js'
-import { SEVERITIES, configureDepsDir, displayedSeverity, fileLink, findingDisplayName, findingTitle, formatRunMeta, hasSeverityCorrection, isHttpUrl, isModule, lineLink, prettyModel, reachableRevalidateFilters, revalidateKind } from './format.js'
+import { SEVERITIES, configureDepsDir, displayedSeverity, fileLink, findingDisplayName, findingTitle, formatRunMeta, hasSeverityCorrection, isHttpUrl, isModule, lineLink, reachableRevalidateFilters, revalidateKind } from './format.js'
 import { activeTabFor, getMergedGroups, groupKey, groupState, primaryTab, tabKey } from './group.js'
 import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, applySorting, modelOfFinding, repoOfFinding } from './filters.js'
 import { ANALYZER_LABELS } from './analyzer-select.js'
+import { COMBO_FIELDS, buildAnalyzerTags } from './analyzer-tags.js'
 import { COMMENT_ICON, FIX_ICON, FLAG_ICON, badgeLabel, findingCardGid } from './render-finding.js'
 import { computeFindingCountsByFile, computeTransitiveCounts, fileHasFindings, mergeReportsTree } from './file-counts.js'
 import { renderTreeView } from './render-files.js'
@@ -191,131 +192,6 @@ function repoChipTemplate(repoInputUseful, knownRepo) {
   }
   if (knownRepo) return html`<repo-chip url=${knownRepo}></repo-chip>`
   return nothing
-}
-
-// Canonical order for analyzer-combo fields. Each finding contributes
-// one combo (a tuple of these four values lifted off the run-meta at
-// ingest); multiple combos arise when the user merges several
-// analyzer outputs into a single view.
-const COMBO_FIELDS = ['type', 'model', 'effort', 'exportsMode']
-
-// Format a single combo-field value as a tag-display string. The
-// type field carries the `analyzer: ` label and always renders (even
-// when null) so the slot is never silently dropped — `analyzer: null`
-// reads as "this run had no analyzer subtype". Pass `typePrefix: false`
-// to render the bare type value without the label, for tuples where the
-// prefix no longer marks a separable factor (see `buildAnalyzerTags`).
-// Non-type fields return null when the value is missing so the caller
-// can drop them; a bare `null` for a missing model / effort / exports
-// just clutters the header.
-function formatComboField(field, value, { typePrefix = true } = {}) {
-  if (field === 'type') return typePrefix ? `analyzer: ${value ?? 'null'}` : `${value ?? 'null'}`
-  if (value == null) return null
-  return value
-}
-
-// Project the loaded findings into a list of meta-row tag strings. The
-// fields aren't independent flags — they describe one analyzer run
-// each — so a naive `Set` per field would drop the cross-field
-// relationship. This routine instead:
-//
-//   1. Builds the list of unique combos across all findings, over
-//      whichever subset of `COMBO_FIELDS` the caller requested.
-//   2. Marks each field "common" when every combo agrees on its value
-//      and "varying" otherwise.
-//   3. Walks the slot order, emitting common fields as single-value
-//      tags at their natural slot. The first time a varying slot is
-//      hit, every combo is emitted as one tag joined by ` · ` over
-//      the varying fields only — preserving the cross-field tuple
-//      while hiding the common columns that would just repeat.
-//
-// `formatComboField` runs at every emission point: the type field
-// gets the `analyzer: ` prefix, and missing non-type values are
-// dropped. A combo whose entire varying-field projection is empty
-// (after null filtering) is skipped entirely so a single all-empty
-// combo doesn't render an empty tag.
-//
-// `fields` defaults to all four slots; pass a narrower list (e.g.
-// without `type`) to suppress a slot — used for source-marked
-// reports where the per-finding `type` is a category, not an
-// analyzer name, and the title already conveys the product.
-//
-// When `model` / `effort` end up as their own chips (i.e. common across
-// every combo, so they aren't folded into the varying-tuple chip), they
-// surface before the `analyzer:` chip — the run identity reads more
-// naturally model-first than analyzer-first. Varying tuples stay at the
-// first-varying slot in canonical order so the tuple text keeps reading
-// `model · effort · exportsMode`.
-//
-// Examples (combos as `type · model · effort · exportsMode`):
-//   `null · opus 4.7 · max · list` + `null · gpt 5.5 · xhigh · list`
-//     → `analyzer: null` `opus 4.7 · max` `gpt 5.5 · xhigh` `list`
-//   `null · opus 4.7 · xhigh · isolate` + `null · opus 4.7 · max · list`
-//     → `opus 4.7` `analyzer: null` `xhigh · isolate` `max · list`
-//   `correctness · null · null · null`  →  `analyzer: correctness`
-//
-// When `type` itself varies inside a multi-field tuple (so it no longer
-// renders as its own standalone chip) AND there are more than two
-// combos, the `analyzer:` prefix no longer labels a separable factor and
-// just repeats down the strip, so it's dropped — each tuple reads as a
-// bare value list:
-//   `null · gpt 5.5 · xhigh · list` + `security · opus 5.8 · max · isolate`
-//   + `correctness · opus 4.7 · max · list`
-//     → `null · gpt 5.5 · xhigh · list` `security · opus 5.8 · max · isolate`
-//       `correctness · opus 4.7 · max · list`
-function buildAnalyzerTags(findings, fields = COMBO_FIELDS) {
-  const comboMap = new Map()
-  for (const f of findings) {
-    const combo = {}
-    for (const k of fields) {
-      combo[k] = k === 'model' ? (prettyModel(f.model) ?? null) : (f[k] ?? null)
-    }
-    const key = fields.map((k) => combo[k] ?? '').join('|')
-    if (!comboMap.has(key)) comboMap.set(key, combo)
-  }
-  const combos = [...comboMap.values()]
-  if (combos.length === 0) return []
-
-  const isCommon = {}
-  for (const k of fields) {
-    isCommon[k] = new Set(combos.map((c) => c[k])).size === 1
-  }
-  const varyingSlots = fields.filter((k) => !isCommon[k])
-
-  // The `analyzer:` prefix only reads as a label when `type` renders as
-  // its own standalone chip — when it's common across every combo, or the
-  // sole varying slot. This routine collapses ALL varying fields into one
-  // `·` tuple (it never factors a product back out), so the moment `type`
-  // shares a varying tuple with another field it's no longer standalone
-  // and the repeated prefix just clutters each tuple. Past two such
-  // combos, drop it and let the type value sit bare at the tuple head.
-  const dropAnalyzerPrefix = combos.length > 2
-    && varyingSlots.includes('type')
-    && varyingSlots.length > 1
-
-  // Promote common model / effort ahead of the analyzer-type chip; the
-  // remaining fields keep their canonical order so varying tuples still
-  // emit at the first-varying slot.
-  const promoted = ['model', 'effort'].filter((k) => fields.includes(k) && isCommon[k])
-  const emitOrder = [...promoted, ...fields.filter((k) => !promoted.includes(k))]
-
-  const tags = []
-  let combosEmitted = false
-  for (const k of emitOrder) {
-    if (isCommon[k]) {
-      const t = formatComboField(k, combos[0][k])
-      if (t != null) tags.push(t)
-    } else if (!combosEmitted) {
-      for (const combo of combos) {
-        const parts = varyingSlots
-          .map((s) => formatComboField(s, combo[s], { typePrefix: !dropAnalyzerPrefix }))
-          .filter((p) => p != null)
-        if (parts.length > 0) tags.push(parts.join(' · '))
-      }
-      combosEmitted = true
-    }
-  }
-  return tags
 }
 
 // Page header. The h1 carries the tool name plus a pill-shaped file
