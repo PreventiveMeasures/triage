@@ -119,19 +119,37 @@ export function activeTabFor(group) {
   return pool.find(tabHasMarks) ?? pool[0]
 }
 
+// The repo a finding's file / line links resolve against — the
+// `repoFallback` argument `fileUrl` / `findingUrl` / `fileLink` /
+// `lineLink` all take. Per-report `_repoFallback` first (stamped at
+// ingest: the report's own `repo.github` declaration when it has one,
+// else the URL typed for that report), so a workspace merge resolves
+// each report against its own repo; the single-file view's
+// `state.repoUrl` fills in behind it.
+//
+// `||`, not `??`: ingest stamps `''` — not absent — on a report with
+// no repo of its own, and `??` would accept that empty string as an
+// answer. Every link then stayed dead after the user typed a URL into
+// the header chip, because nothing re-stamps the loaded findings and
+// the empty stamp short-circuited the chain until a reload. An empty
+// repo is not a repo; only a non-empty one ends the chain.
+export function findingRepoFallback(f) {
+  return f?._repoFallback || state.repoUrl || ''
+}
+
 // Repo identifier (slug or URL) for a finding, matching the `Repo:`
 // line of the copy / Claude / GitHub-issue handoff block: a
 // node_modules file resolves to its package bucket's repo when that
 // bucket maps to exactly one upstream, otherwise the per-finding
-// `repo.github` / resolved `_repoFallback` / user-typed
-// `state.repoUrl`. Returns null when none of those is known.
+// `repo.github` / the resolved fallback above. Returns null when
+// none of those is known.
 export function findingRepo(f) {
   for (const bucket of getPackagesIndex().values()) {
     if (bucket.files.has(f.file)) {
       return (bucket.repos && bucket.repos.size === 1) ? [...bucket.repos][0] : null
     }
   }
-  return f.repo?.github ?? f._repoFallback ?? state.repoUrl ?? null
+  return f.repo?.github || findingRepoFallback(f) || null
 }
 
 // Group-level triage rollup. User spec:

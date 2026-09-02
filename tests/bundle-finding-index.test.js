@@ -223,6 +223,59 @@ describe('bundle-finding-index — reportsForFindingByRepo', () => {
   })
 })
 
+// A report-level `"repo": { "github": "owner/name" }` names the
+// repository the run covered. The index treats it as the per-report
+// repo signal — ahead of the URL the user typed into the header chip,
+// matching the header's own precedence — so own-source findings that
+// carry no `repo.github` of their own still bucket under it.
+describe('bundle-finding-index — report-level repo declaration', () => {
+  it('buckets own-source findings under the declared repo', async () => {
+    const tag = `repo-decl-${Date.now()}`
+    const repo = `acme/${tag}`
+    const name = await seedReport({
+      repo: { github: `https://github.com/${repo}` },
+      findings: [
+        { id: `${tag}-f1`, severity: 'high', file: 'src/a.js', description: 'own source' },
+        // Deps findings stay Packages-only — a project-level repo says
+        // nothing about a dependency's upstream.
+        { id: `${tag}-f2`, severity: 'low', file: `node_modules/${tag}/i.js`, description: 'dep' },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+    const bucket = getRepositoriesIndex().get(repo)
+    assert.ok(bucket, 'declared repo indexed from the URL form, normalised to the slug')
+    assert.deepEqual(bucket.findings.map((f) => f.id), [`${tag}-f1`], 'deps finding not bucketed')
+    assert.deepEqual(reportsForFindingByRepo(repo, bucket.findings[0]), [name])
+  })
+
+  it('outranks the typed repo URL for the same report', async () => {
+    const tag = `repo-decl-wins-${Date.now()}`
+    const declared = `acme/${tag}`
+    const name = uniqueName('rpt')
+    saveRepoUrlFor(name, `https://github.com/typed/${tag}`)
+    await saveFile(name, JSON.stringify({
+      repo: { github: declared },
+      findings: [{ id: `${tag}-f1`, severity: 'high', file: 'src/a.js', description: 'own source' }],
+    }))
+    await ensureBundleFindingsIndexed()
+    assert.ok(getRepositoriesIndex().get(declared), 'declared repo bucketed')
+    assert.equal(getRepositoriesIndex().get(`https://github.com/typed/${tag}`), undefined, 'typed URL unused')
+  })
+
+  it('falls back to the typed URL when the declaration is unusable', async () => {
+    const tag = `repo-decl-bad-${Date.now()}`
+    const typed = `https://github.com/typed/${tag}`
+    const name = uniqueName('rpt')
+    saveRepoUrlFor(name, typed)
+    await saveFile(name, JSON.stringify({
+      repo: { github: 'not-a-slug' },
+      findings: [{ id: `${tag}-f1`, severity: 'high', file: 'src/a.js', description: 'own source' }],
+    }))
+    await ensureBundleFindingsIndexed()
+    assert.ok(getRepositoriesIndex().get(typed), 'typed URL still bucketed')
+  })
+})
+
 describe('bundle-finding-index — package-keyed view', () => {
   it('aggregates findings by package extracted from file path', async () => {
     const tag = `pkg-${Date.now()}`

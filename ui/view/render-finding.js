@@ -3,7 +3,7 @@ import { classMap } from 'lit/directives/class-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { bundlesForFileHash, isLinkableFindingId, isPlaceholderNpmPackage, state } from '#client/index.js'
 import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, hasSeverityCorrection, isHttpUrl, listSegments, locationLabel, markdownLinkToken, parseCommentRefs, revalidateStamp, splitDescription, stripExportMarker } from './format.js'
-import { activeTabFor, findingRepo, groupKey, groupState, isIgnored, sortTabs, tabKey } from './group.js'
+import { activeTabFor, findingRepo, findingRepoFallback, groupKey, groupState, isIgnored, sortTabs, tabKey } from './group.js'
 import { highlightedCode } from './code-highlight.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 
@@ -387,7 +387,7 @@ function sectionTemplate(label, body, cls = 'section', { collapsible = false } =
 function evidenceTemplate(f) {
   const rows = Array.isArray(f.evidence) ? f.evidence : []
   if (rows.length === 0) return nothing
-  const repoFallback = f._repoFallback ?? state.repoUrl
+  const repoFallback = findingRepoFallback(f)
   return html`<details class="evidence">
     <summary class="section-label">Evidence<span class="evidence-count">(${rows.length})</span></summary>
     <ol class="evidence-list">${rows.map((row) => {
@@ -409,7 +409,7 @@ function evidenceTemplate(f) {
 // views) so file + line live together in one slot. Returns a
 // TemplateResult when we have a source URL, plain text otherwise.
 function rowLocationTemplate(f) {
-  const url = findingUrl(f, f._repoFallback ?? state.repoUrl)
+  const url = findingUrl(f, findingRepoFallback(f))
   const lineNum = parseInt(f.line, 10)
   const text = Number.isFinite(lineNum) ? `${f.file}:${f.line}` : f.file
   if (!url) return text
@@ -531,7 +531,7 @@ function issueTitle(f) {
 // file with no resolvable upstream repo). Blocks join with a blank line
 // so the file link and confidence bracket the description paragraph.
 function issueBody(f) {
-  const href = findingUrl(f, f._repoFallback ?? state.repoUrl)
+  const href = findingUrl(f, findingRepoFallback(f))
   const lineNum = parseInt(f.line, 10)
   const loc = Number.isFinite(lineNum) ? `${f.file}:${f.line}` : f.file
   const blocks = []
@@ -861,7 +861,7 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
   // `.flat-group-loc` / `.file-header` already paint the same info
   // above the card. exportName (or `exportName.methodName` when the
   // finding carries both) joins with a comma when present.
-  const url = findingUrl(f, f._repoFallback ?? state.repoUrl)
+  const url = findingUrl(f, findingRepoFallback(f))
   const lineNum = parseInt(f.line, 10)
   const locText = Number.isFinite(lineNum) ? `${f.file}:${f.line}` : f.file
   const locLink = url

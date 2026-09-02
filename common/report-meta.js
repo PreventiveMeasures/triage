@@ -34,3 +34,36 @@ export function inheritReportMeta(finding, data) {
     if (finding[key] == null && data[key] != null) finding[key] = data[key]
   }
 }
+
+// The report-level repo declaration — `"repo": { "github": "owner/name" }`
+// at the top of a native dump, naming the repository the run covered.
+//
+// NOT inherited onto findings the way META_FIELDS are: the per-finding
+// `repo.github` names the upstream of the file THAT finding sits in —
+// a dependency's own repo for anything under `node_modules/` — so
+// stamping the report's repo over it would mislabel every dependency
+// finding and point its file links at paths the project repo doesn't
+// carry. It stays a statement the report makes about itself, which
+// consumers rank ABOVE whatever the findings happen to agree on.
+//
+// Accepts the canonical `owner/name` slug or a github.com URL (some
+// exporters write the full URL, with or without scheme, `.git`, or a
+// trailing `/tree/main`), normalising both to the slug: the form
+// `fileUrl` interpolates, `<repo-chip>` labels, and the Repositories
+// view buckets under alongside analyzer-stamped values.
+//
+// Returns null for anything else — missing, non-string, a non-GitHub
+// URL, a bare owner. A value the link builders would splice into a
+// broken URL is worse than no repo at all.
+const GITHUB_URL_RE = /^(?:https?:\/\/)?(?:www\.)?github\.com\/([^/?#]+)\/([^/?#]+?)(?:\.git)?(?:[/?#].*)?$/iu
+const SLUG_RE = /^[\w.-]+\/[\w.-]+$/u
+
+export function reportRepoGithub(data) {
+  const raw = data?.repo?.github
+  if (typeof raw !== 'string') return null
+  const trimmed = raw.trim().replace(/\/+$/u, '')
+  if (!trimmed) return null
+  const url = GITHUB_URL_RE.exec(trimmed)
+  const slug = (url ? `${url[1]}/${url[2]}` : trimmed).replace(/\.git$/u, '')
+  return SLUG_RE.test(slug) ? slug : null
+}

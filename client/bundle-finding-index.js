@@ -27,7 +27,7 @@ import { addFindingToBucket, dropKeyFromBucket, indexFindingByVersion, isPlaceho
 import { listFiles, onFileMutated, readFile } from './storage.js'
 import { loadRepoUrlFor, onRepoUrlChanged } from './state.ts'
 import { flattenFindings, parseReport } from '../common/report-findings.js'
-import { inheritReportMeta } from '../common/report-meta.js'
+import { inheritReportMeta, reportRepoGithub } from '../common/report-meta.js'
 
 const byHash = new Map()
 const byPackage = new Map()
@@ -98,10 +98,11 @@ function fileIsInDepsPath(f) {
 //   1. `f._repoFallback` — set by `ui/view/ingest.js` on
 //      findings already in `state.reports` (stamps `loadRepoUrlFor
 //      (reportName)`).
-//   2. `reportFallback` — the per-report typed URL passed in by
-//      the index walker. Findings parsed straight from OPFS bytes
-//      don't go through ingest, so `_repoFallback` is absent;
-//      the walker reads the URL itself and threads it down here.
+//   2. `reportFallback` — the per-report repo passed in by the
+//      index walker: the report's own `repo.github` declaration
+//      when it carries one, else the URL the user typed. Findings
+//      parsed straight from OPFS bytes don't go through ingest, so
+//      `_repoFallback` is absent; the walker resolves it instead.
 // Returns null when no signal is available — those findings
 // simply don't appear in Repositories.
 function repoOf(f, reportFallback) {
@@ -463,13 +464,18 @@ async function indexOne(name) {
     if (!data) return false
     const findings = extractFindings(data)
     if (findings.length === 0) return false
-    // Per-report typed URL — set by the user via the page
-    // header's repo-chip. Used as the LAST fallback when neither
+    // Per-report repo — the LAST fallback when neither
     // `f.repo.github` nor `f._repoFallback` is present (the
     // latter never is on freshly-parsed OPFS findings — that
     // stamp lives only on the ingest path's stamped copies).
-    let reportFallback = ''
-    try { reportFallback = loadRepoUrlFor(name) } catch {}
+    // A report-level `repo.github` declaration wins over the URL
+    // the user typed into the header chip, matching what ingest
+    // stamps and what the header shows; slug form buckets these
+    // findings with analyzer-stamped ones for the same repo.
+    let reportFallback = reportRepoGithub(data) ?? ''
+    if (!reportFallback) {
+      try { reportFallback = loadRepoUrlFor(name) } catch {}
+    }
     let added = false
     for (const f of findings) {
       const key = findingDedupeKey(f)
