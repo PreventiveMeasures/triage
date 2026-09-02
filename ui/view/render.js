@@ -8,7 +8,7 @@ import { listBundles, listWorkspaces, state } from '#client/index.js'
 import { isBundleInRemote, isInRemote, remoteCount, triageSync } from './client-sync.js'
 import { dropZone, report } from './dom.js'
 import { SEVERITIES, configureDepsDir, displayedSeverity, fileLink, findingDisplayName, findingTitle, formatRunMeta, hasSeverityCorrection, isHttpUrl, isModule, lineLink, reachableRevalidateFilters, revalidateKind } from './format.js'
-import { activeTabFor, getMergedGroups, groupKey, groupState, primaryTab, tabKey } from './group.js'
+import { activeTabFor, findingRepoFallback, getMergedGroups, groupKey, groupState, primaryTab, tabKey } from './group.js'
 import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, applySorting, modelOfFinding, repoOfFinding } from './filters.js'
 import { ANALYZER_LABELS } from './analyzer-select.js'
 import { COMBO_FIELDS, buildAnalyzerTags } from './analyzer-tags.js'
@@ -1234,7 +1234,7 @@ function findingsBodyTemplate(filtered) {
       const probe = primaryTab(items[0])
       return html`<div class="file-group">
         <div class="file-header">
-          <span>${fileLink(probe, probe?._repoFallback ?? state.repoUrl)}</span>
+          <span>${fileLink(probe, findingRepoFallback(probe))}</span>
           <span class="count">${items.length}</span>
         </div>
         <div class="file-body">${repeat(items, (g) => findingCardGid(g), (g) => findingCardPlaceholder(g))}</div>
@@ -1259,13 +1259,13 @@ function findingsBodyTemplate(filtered) {
   // styles/print.css and finding-card.css's @media print block.
   return html`${repeat(items, (g) => findingCardGid(g), (g) => {
     const p = activeTabFor(g)
-    const lineLinkTpl = lineLink(p, p._repoFallback ?? state.repoUrl)
+    const lineLinkTpl = lineLink(p, findingRepoFallback(p))
     const meta = formatRunMeta(p)
     const displayName = findingDisplayName(p)
     const multiCase = g.length > 1
     return html`<div class=${classMap({ 'flat-group': true, 'multi-case': multiCase })}>
       <div class="flat-group-loc">
-        <span class="file">${fileLink(p, p._repoFallback ?? state.repoUrl)}</span>
+        <span class="file">${fileLink(p, findingRepoFallback(p))}</span>
         ${lineLinkTpl === nothing ? nothing : html`<span class="line-num">${lineLinkTpl}</span>`}
         ${displayName ? html`<span class="meta">${displayName}</span>` : nothing}
         ${meta ? html`<span class="run-meta">${meta}</span>` : nothing}
