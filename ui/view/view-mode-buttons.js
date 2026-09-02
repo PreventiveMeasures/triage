@@ -1,8 +1,13 @@
 // `<view-mode-buttons>` — icon-button group for the toolbar's
-// View: chooser. One button per mode (`table` / `list` / `grouped`
-// / `focus` / `kanban` / `graph`), each carrying an inline SVG glyph
+// View: chooser. One button per mode (`kanban` / `focus` / `table` /
+// `list` / `grouped` / `graph`), each carrying an inline SVG glyph
 // that previews the layout it switches to. The active button picks
 // up an outline + accent recolor via the toolbar's CSS.
+//
+// Order is the triage workflow's, not the layouts' history: the
+// board you sort findings on, then the one you work them through
+// one at a time, then the flat layouts, then the graph. `kanban`
+// leads because it's also the default view (see state.ts).
 //
 // Self-syncs against the global state store via StateElement: reads
 // of `state.viewMode` (or `state.filesViewMode` when `kind="files"`)
@@ -86,7 +91,7 @@ const VIEW_TITLES = {
   graph:   'Graph view (canvas with imports / exports)',
 }
 
-const MODES = ['table', 'list', 'grouped', 'focus', 'kanban', 'graph']
+const MODES = ['kanban', 'focus', 'table', 'list', 'grouped', 'graph']
 
 class ViewModeButtons extends StateElement {
   static properties = {

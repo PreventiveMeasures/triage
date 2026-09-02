@@ -153,6 +153,10 @@
   .focus-view,
   .focus-main,
   .focus-main.with-code { display: block !important; }
+  /* The pane divider is a drag target, not content — and with the
+     grid unwound above it would print as a stray rule between the
+     card and its code. */
+  .focus-splitter { display: none !important; }
   .focus-pane,
   .focus-pane-code,
   .focus-code-body { overflow: visible !important; }

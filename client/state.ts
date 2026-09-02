@@ -5,8 +5,19 @@ import { type ManagedServerInfo, type ServerMode, readCachedServerInfo } from '.
 export const VIEW_MODE_KEY = 'deepview.viewMode'
 export const SEVERITY_MODE_KEY = 'deepview.severityMode'
 export const REPO_URLS_KEY = 'deepview.repoUrls'
+export const FOCUS_SPLIT_KEY = 'deepview.focusSplit'
 const VALID_VIEW_MODES = new Set(['grouped', 'list', 'table', 'kanban', 'focus'])
 const VALID_SEVERITY_MODES = new Set(['corrected', 'original'])
+
+// Focus view: where the divider between the finding-card and the
+// inline Code panel sits, as a percentage of the main pane's width.
+// 50 = an even 1:1 split (the default). The drag clamps to
+// [MIN, MAX] so neither pane can be dragged shut — see
+// `.focus-splitter` in ui/styles/findings.css and
+// ui/view/focus-splitter.js.
+export const FOCUS_SPLIT_DEFAULT = 50
+export const FOCUS_SPLIT_MIN = 20
+export const FOCUS_SPLIT_MAX = 80
 
 export type ViewMode = 'table' | 'list' | 'grouped' | 'kanban' | 'focus'
 // Global display lens for finding severities. 'corrected' (default) shows
@@ -127,6 +138,7 @@ export interface State {
   kanbanExpandedColumn: KanbanColumnKey | null
   focusGid: string | null
   focusCodeTick: number
+  focusSplit: number
   codeBlockTick: number
   // ── server protocol (detected from the `server-info` connect frame) ──
   // Which sync protocol the configured server speaks; drives mode-aware UI
@@ -169,6 +181,32 @@ function readSavedSeverityMode(): SeverityMode | null {
   try {
     const v = localStorage.getItem(SEVERITY_MODE_KEY)
     return v !== null && VALID_SEVERITY_MODES.has(v) ? (v as SeverityMode) : null
+  } catch { return null }
+}
+
+// Normalise a raw split percentage (a drag position, a keyboard
+// nudge, a value read back from localStorage) to something the grid
+// can use: finite, clamped to the pane minimums, and rounded to a
+// tenth of a percent so the persisted value doesn't carry a drag's
+// sub-pixel noise. Non-numeric input falls back to the 1:1 default.
+export function clampFocusSplit(pct: number): number {
+  if (!Number.isFinite(pct)) return FOCUS_SPLIT_DEFAULT
+  const rounded = Math.round(pct * 10) / 10
+  return Math.min(Math.max(rounded, FOCUS_SPLIT_MIN), FOCUS_SPLIT_MAX)
+}
+
+// Same validate-on-read pattern as the view / severity modes, with
+// the clamp standing in for the valid-value set: a stored split from
+// an older build (or a hand-edited one) is pulled back into range
+// rather than thrown away.
+function readSavedFocusSplit(): number | null {
+  try {
+    const raw = localStorage.getItem(FOCUS_SPLIT_KEY)
+    // `Number('')` is 0 — a finite number that would clamp to the
+    // minimum, so an empty entry has to miss explicitly.
+    if (raw === null || raw.trim() === '') return null
+    const pct = Number(raw)
+    return Number.isFinite(pct) ? clampFocusSplit(pct) : null
   } catch { return null }
 }
 
@@ -548,15 +586,18 @@ export const state: State = store<State>({
   // load.
   repoEditing: false,
   sortBy: 'severity',
-  // 'table' (default) renders one compact block per finding, never
-  // grouped — the most scannable layout for triage. 'list' renders
-  // per-finding cards flat in sort order (each in a self-contained
-  // card with its own location header). 'grouped' renders the same
-  // per-finding cards under per-file headers, the original layout.
-  // Selected via the icon-button group in the toolbar; persisted
-  // to localStorage so the choice survives reloads (events.js
-  // writes on click).
-  viewMode: readSavedViewMode() ?? 'table',
+  // 'kanban' (default) lays the findings out as a status board, one
+  // column per triage bucket — the layout that opens on what triage
+  // is actually for, so it leads the chooser and greets a first-time
+  // load. 'focus' walks one finding at a time with a queue beside it.
+  // 'table' renders one compact block per finding, never grouped —
+  // the most scannable flat layout. 'list' renders per-finding cards
+  // flat in sort order (each in a self-contained card with its own
+  // location header). 'grouped' renders the same per-finding cards
+  // under per-file headers, the original layout. Selected via the
+  // icon-button group in the toolbar; persisted to localStorage so
+  // the choice survives reloads (events.js writes on click).
+  viewMode: readSavedViewMode() ?? 'kanban',
   // Severity display lens — 'corrected' (default) or 'original'. Global,
   // persisted to raw localStorage (events.js writes on toggle), so the
   // choice survives reloads like viewMode. The corrected DATA is per-
@@ -643,6 +684,14 @@ export const state: State = store<State>({
   // next manual render (the user reproduced this as "code loads
   // but doesn't appear until I navigate").
   focusCodeTick: 0,
+  // Focus view: how the main pane splits between the finding-card and
+  // the inline Code panel, as the divider's percentage along the pane
+  // (50 = the 1:1 default). Only meaningful while the Code panel is
+  // mounted — a finding with no bundle source gives the card the whole
+  // pane. Persisted to raw localStorage (a layout preference, like
+  // viewMode / severityMode) by ui/view/focus-splitter.js, which also
+  // owns the drag.
+  focusSplit: readSavedFocusSplit() ?? FOCUS_SPLIT_DEFAULT,
   // The same trick for the fenced code blocks in finding descriptions:
   // bumped every time view/code-highlight.js settles a Prism highlight,
   // and read by the block template so an observer-util consumer (the

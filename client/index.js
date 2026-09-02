@@ -81,8 +81,13 @@ export {
 } from './secure-storage.js'
 
 export {
+  FOCUS_SPLIT_DEFAULT,
+  FOCUS_SPLIT_KEY,
+  FOCUS_SPLIT_MAX,
+  FOCUS_SPLIT_MIN,
   SEVERITY_MODE_KEY,
   VIEW_MODE_KEY,
+  clampFocusSplit,
   loadRepoUrlFor,
   saveRepoUrlFor,
   state,

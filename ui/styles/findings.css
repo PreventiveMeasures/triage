@@ -915,10 +915,61 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
   min-width: 0; min-height: 0;
 }
 .focus-main.with-code {
-  /* Roughly 5:6 — the source code typically needs a bit more
-     horizontal room than the finding-card so wide lines don't
-     wrap aggressively. */
-  grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+  /* Card | divider | code. `--focus-split` is where the divider sits
+     as a percentage of the pane — 50 (an even 1:1 split) by default,
+     bound per-render from `state.focusSplit` and moved live while the
+     divider is dragged (view/focus-splitter.js). The divider's own
+     track is `auto`, so it takes the width below and stands in for
+     the column gap the two panes used to sit in — hence the gap going
+     to 0 here. Half that width comes off the card column so the split
+     percentage lands on the divider's CENTRE: the panes are then
+     equal at 50, and the drag math (cursor's fraction of the pane =
+     the split) puts the divider exactly under the cursor.
+     `minmax(0, …)` on both panes keeps a long unwrapped source line
+     from pushing the code column past the width the user picked. */
+  --focus-splitter-width: .75rem;
+
+  grid-template-columns:
+    minmax(0, calc(var(--focus-split, 50) * 1% - var(--focus-splitter-width) / 2))
+    auto
+    minmax(0, 1fr);
+  column-gap: 0;
+}
+
+/* The drag handle itself — a gutter exactly as wide as the column
+   gap it replaced, so the panes sit where they always did. */
+.focus-splitter {
+  display: flex; align-items: center; justify-content: center;
+  width: var(--focus-splitter-width, .75rem);
+  cursor: col-resize;
+  /* Pointer drags belong to the resize handler, not to the scroller
+     underneath — without this a touch drag pans the page instead. */
+  touch-action: none;
+
+  /* A short centred grip, not a full-height rule: both panes already
+     carry their own border, so a third line down the whole pane would
+     read as chrome rather than as something to grab. It takes the
+     accent on hover / focus and runs the full height for the length
+     of a drag, where "this is the edge that's moving" is the point. */
+  &::before {
+    content: '';
+    width: 2px;
+    height: 2.5rem;
+    border-radius: 1px;
+    background: var(--border);
+    transition: background .12s ease;
+  }
+  &:hover::before, &:focus-visible::before { background: var(--accent); }
+  &.dragging::before { height: 100%; background: var(--accent); }
+  &:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+}
+/* Keep the resize cursor (and suppress selection) across BOTH panes
+   for the length of a drag — the pointer is captured by the handle,
+   so it spends the gesture over content that would otherwise show a
+   text caret and highlight as it swept past. */
+.focus-main:has(> .focus-splitter.dragging) {
+  cursor: col-resize;
+  user-select: none;
 }
 
 /* Prev / counter / next group inside the sidebar header. The
@@ -1166,10 +1217,15 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
 }
 
 /* Below a usable two-pane width, fold the Code panel under the
-   finding-card so each pane keeps enough horizontal room to read. */
+   finding-card so each pane keeps enough horizontal room to read.
+   The divider goes with the side-by-side layout it divides: there's
+   no horizontal room left to trade, and dropping it out of the grid
+   leaves exactly the two rows the panes need. The split the user
+   picked stays in state, so widening the window brings it back. */
 @media (width <= 1200px) {
   .focus-main.with-code {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
   }
+  .focus-splitter { display: none; }
 }
