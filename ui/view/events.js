@@ -1872,6 +1872,14 @@ report.addEventListener('partial-change', (e) => {
   state.filterPartial = e.detail.value
   render()
 })
+// `<revalidation-switch>` — the "App" toggle. Taking the layer off
+// changes which rows exist at all (group.js drops the pass's own),
+// which filters the toolbar offers, and what every card draws, so this
+// is a full render like the severity lens rather than a repaint.
+report.addEventListener('revalidation-change', (e) => {
+  state.showRevalidation = e.detail.on
+  render()
+})
 // `<bundle-code-search>` dispatches this when a Files / Code /
 // Issues mode tab is clicked in the bundle code rail's search row.
 // Switching back to Files rebuilds the tree at its remembered

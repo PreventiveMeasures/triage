@@ -1,5 +1,5 @@
 import { getPackagesIndex, isReportIgnored, patchEntry, state } from '#client/index.js'
-import { SEVERITY_ORDER, displayedSeverity, isRevalidation } from './format.js'
+import { SEVERITY_ORDER, displayedSeverity, isRevalidation, isRevalidationRow } from './format.js'
 // NOTE: filters.js imports from this module too (primaryTab / tabKey).
 // The cycle is deliberate and benign: both sides only call across
 // inside function bodies, never during module evaluation, so whichever
@@ -388,10 +388,37 @@ export function syncGroupTriage(group) {
 // the merge only named once). Per-report `state.reports[*].groups` is
 // untouched — single-report views and per-report iteration keep their
 // shape; only the merged display uses this view.
+// Taking the revalidation layer off (the toolbar's "App" switch, see
+// format.js) drops the rows that ARE the pass — and only those. Their
+// duplicates stay: a row the pass judged is still the analyzer's
+// finding about the code, and the code view is the whole point of the
+// switch. A group left with nothing goes with them.
+//
+// Here rather than in a filter because this is the one list every
+// consumer reads — the toolbar counts, the filters, the tab strip, the
+// deep links, the file tallies — so the pass's rows are gone from all
+// of them at once, instead of surviving in whichever count forgot to
+// ask. `isRevalidationRow` reads the raw field on purpose: by the time
+// this runs, the gated reader has already stopped seeing them.
+//
+// Untouched groups keep their identity — the arrays are only rebuilt
+// where something actually comes out — so nothing downstream that
+// keys off a group re-derives for a set that has no pass rows in it.
+function withoutPassRows(groups) {
+  if (state.showRevalidation) return groups
+  if (!groups.some((g) => g.some(isRevalidationRow))) return groups
+  const out = []
+  for (const g of groups) {
+    const kept = g.filter((f) => !isRevalidationRow(f))
+    if (kept.length > 0) out.push(kept.length === g.length ? g : kept)
+  }
+  return out
+}
+
 export function getMergedGroups() {
   const allGroups = state.reports.flatMap((r) => r.groups)
   const merges = state.workspaceMerges
-  if (!merges || merges.length === 0) return allGroups
+  if (!merges || merges.length === 0) return withoutPassRows(allGroups)
   const parent = allGroups.map((_, i) => i)
   const find = (i) => {
     let r = i
@@ -455,7 +482,7 @@ export function getMergedGroups() {
     }
     merged.push(ordered)
   }
-  return merged
+  return withoutPassRows(merged)
 }
 
 export function findGroupById(gid) {

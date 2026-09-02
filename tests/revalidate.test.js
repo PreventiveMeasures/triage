@@ -34,11 +34,12 @@ if (!globalThis[slotKey]) {
 
 const { state } = await import('../client/state.ts')
 const { applyFilters, defaultRevalidateFilter, matchesFilters } = await import('../ui/view/filters.js')
-const { sortTabs } = await import('../ui/view/group.js')
+const { getMergedGroups, sortTabs } = await import('../ui/view/group.js')
 const {
   PARTIAL_MODES, REVALIDATE_FILTERS, REVALIDATE_KINDS, activeRevalidateKinds,
-  formatRunMeta, isRevalidation, reachableRevalidateFilters, revalidateKind,
-  revalidateStamp, voidsConfidence,
+  configureRevalidation, formatRunMeta, hasRevalidateField, isRevalidation,
+  isRevalidationRow, reachableRevalidateFilters, revalidateKind, revalidateStamp,
+  revalidationShown, voidsConfidence,
 } = await import('../ui/view/format.js')
 
 // Neutralise every other filter so each assertion isolates the
@@ -52,6 +53,8 @@ function reset() {
   state.filterRepo = ''
   state.filterRevalidate = ''
   state.filterPartial = ''
+  state.showRevalidation = true
+  configureRevalidation(true)
   state.filterConfMin = 0
   state.filterConfMax = 10
   state.filterInclude = ''
@@ -492,5 +495,118 @@ describe('revalidate filter — the toolbar dropdown', () => {
     assert.deepEqual(values(['unreachable']), ['unreachable'])
     assert.deepEqual(values(['unknown']), [])
     assert.deepEqual(values([]), [])
+  })
+})
+
+// The toolbar's "App" switch takes the whole revalidation layer off.
+// With it on the findings are about the running app — what it reaches,
+// re-rated by the second pass. With it off they are about the code as
+// written: every issue the analyzer found, including the ones the pass
+// ruled out. One switch rather than a filter per consequence, so what
+// is pinned here is that the consequences really do all come off.
+describe('the revalidation layer switch', () => {
+  beforeEach(reset)
+
+  it('reads the field past the switch where it has to', () => {
+    // These two gate the switch and drop the pass's own rows, so they
+    // answer the same either way — otherwise turning the layer off
+    // would hide the control that turns it back on.
+    for (const on of [true, false]) {
+      configureRevalidation(on)
+      assert.equal(hasRevalidateField({ revalidate: 'confirmed' }), true, String(on))
+      assert.equal(hasRevalidateField({ revalidate: 'revalidation' }), true, String(on))
+      assert.equal(hasRevalidateField({}), false, String(on))
+      assert.equal(isRevalidationRow({ revalidate: 'revalidation' }), true, String(on))
+      assert.equal(isRevalidationRow({ revalidate: 'confirmed' }), false, String(on))
+    }
+    // …and an unrecognised value is still no stamp, either way.
+    configureRevalidation(false)
+    assert.equal(hasRevalidateField({ revalidate: 'maybe' }), false)
+  })
+
+  it('answers no stamp for every row while off', () => {
+    configureRevalidation(false)
+    assert.equal(revalidationShown(), false)
+    for (const kind of REVALIDATE_KINDS) {
+      assert.equal(revalidateKind({ revalidate: kind }), '', kind)
+      assert.equal(revalidateStamp({ revalidate: kind }), null, kind)
+      assert.equal(isRevalidation({ revalidate: kind }), false, kind)
+      assert.equal(voidsConfidence({ revalidate: kind }), false, kind)
+    }
+  })
+
+  // Each of these is a consequence of the layer, reached through
+  // revalidateKind — so all of them come off with the one flag.
+  it('stops the pass voiding a confidence', () => {
+    const refuted = makeFinding('A', { confidence: 10, revalidate: 'refuted' })
+    state.filterConfMin = 8
+    assert.equal(matchesFilters(refuted), false, 'reads as 0 while the layer is on')
+    configureRevalidation(false)
+    assert.equal(matchesFilters(refuted), true, 'reads as its own 10 with the layer off')
+  })
+
+  it('stops the pass row leading its group', () => {
+    const crit = makeFinding('A', { severity: 'critical' })
+    const pass = makeFinding('B', { severity: 'low', revalidate: 'revalidation' })
+    assert.deepEqual(sortTabs([crit, pass]).map((f) => f.id), ['B', 'A'])
+    configureRevalidation(false)
+    assert.deepEqual(sortTabs([crit, pass]).map((f) => f.id), ['A', 'B'])
+  })
+
+  it('stops the run-meta line naming the pass', () => {
+    const run = { type: 'security', model: 'claude-opus-5', revalidate: 'revalidation' }
+    assert.equal(formatRunMeta(run), 'security · revalidate · opus 5')
+    configureRevalidation(false)
+    assert.equal(formatRunMeta(run), 'security · opus 5')
+  })
+
+  // Nothing reaches an outcome, so the toolbar drops the dropdown and
+  // the block falls back to the plain Confidence range.
+  it('leaves the outcome dropdown nothing to offer', () => {
+    configureRevalidation(false)
+    const kinds = new Set()
+    for (const kind of REVALIDATE_KINDS) {
+      const k = revalidateKind({ revalidate: kind })
+      if (k) kinds.add(k)
+    }
+    assert.equal(kinds.size, 0)
+    assert.deepEqual(reachableRevalidateFilters(kinds), [])
+    assert.equal(defaultRevalidateFilter([[makeFinding('A', { revalidate: 'confirmed' })]], 0), '')
+  })
+
+  // The rows that ARE the pass go with the layer, and only those:
+  // getMergedGroups is the one list every consumer reads, so dropping
+  // them there takes them out of the counts, the filters, the tab
+  // strips and the deep links at once.
+  it('drops the pass rows, and nothing they were judging', () => {
+    const reports = state.reports
+    const merges = state.workspaceMerges
+    try {
+      state.workspaceMerges = []
+      state.reports = [{ groups: [
+        // A row the pass judged, beside the pass's own row.
+        [makeFinding('A', { revalidate: 'confirmed' }), makeFinding('B', { revalidate: 'revalidation' })],
+        // A group that is nothing BUT the pass.
+        [makeFinding('C', { revalidate: 'revalidation' })],
+        // Untouched by the pass entirely.
+        [makeFinding('D')],
+      ] }]
+      const ids = () => getMergedGroups().map((g) => g.map((f) => f.id))
+      assert.deepEqual(ids(), [['A', 'B'], ['C'], ['D']])
+      state.showRevalidation = false
+      assert.deepEqual(ids(), [['A'], ['D']])
+      // A group nothing came out of keeps its identity, so nothing
+      // downstream re-derives for a set that had no pass rows in it.
+      const before = getMergedGroups()
+      assert.equal(before.at(-1), state.reports[0].groups[2])
+    } finally {
+      state.reports = reports
+      state.workspaceMerges = merges
+    }
+  })
+
+  it('keeps the layer on by default', () => {
+    assert.equal(revalidationShown(), true)
+    assert.equal(revalidateKind({ revalidate: 'confirmed' }), 'confirmed')
   })
 })

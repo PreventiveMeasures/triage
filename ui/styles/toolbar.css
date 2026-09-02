@@ -410,6 +410,28 @@ slide-triage-tabs {
   overflow: hidden;
 }
 .toolbar triage-selector { margin-left: auto; }
+
+/* The App / code lens (revalidation-switch.js) — last on the row, past
+   the triage selector that claims the free space before it, so it sits
+   hard against the right edge whatever else the row is carrying. One
+   chip in the shell every other segmented control here wears, because
+   it IS one: pressed is the app view (the default), unpressed the code
+   as written. The pressed state is a fill rather than a colour, since
+   the row's colours already mean severity and triage bucket. */
+.toolbar revalidation-switch { display: inline-flex; align-items: center; }
+.revalidation-chip {
+  height: 30px; box-sizing: border-box;
+  padding: 0 .7rem;
+  background: transparent;
+  border: 1px solid var(--border); border-radius: 4px;
+  color: var(--muted);
+  font: inherit; font-size: .78rem; font-weight: 500;
+  cursor: pointer;
+
+  &:hover { color: var(--text); }
+  &.on { background: var(--surface-active); color: var(--text); border-color: var(--accent); }
+  &:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+}
 /* No buckets to show → the component renders nothing and tags itself
    `is-empty`; drop the pill chrome so an empty bordered box doesn't linger. */
 triage-selector.is-empty { display: none; }

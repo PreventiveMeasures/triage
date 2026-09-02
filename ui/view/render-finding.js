@@ -2,7 +2,7 @@ import { html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { bundlesForFileHash, isLinkableFindingId, isPlaceholderNpmPackage, state } from '#client/index.js'
-import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, hasSeverityCorrection, isHttpUrl, listSegments, locationLabel, markdownLinkToken, parseCommentRefs, revalidateStamp, splitDescription, stripExportMarker } from './format.js'
+import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, hasSeverityCorrection, isHttpUrl, listSegments, locationLabel, markdownLinkToken, parseCommentRefs, revalidateStamp, revalidationShown, splitDescription, stripExportMarker } from './format.js'
 import { activeTabFor, findingRepo, findingRepoFallback, groupKey, groupState, isIgnored, scopedTriage, sortTabs, tabKey } from './group.js'
 import { highlightedCode } from './code-highlight.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
@@ -326,7 +326,10 @@ function revalidateStampTemplate(f) {
 // concluded doesn't need weight here anyway — the one-word outcome is
 // up in the rail (revalidateStampTemplate above).
 function revalidateTemplate(f) {
-  const verdict = stripExportMarker(f.revalidateVerdict, f)
+  // The pass's own words go with its layer (format.js
+  // revalidationShown): the card showing the code view must not still
+  // be explaining a re-rating that view doesn't apply.
+  const verdict = revalidationShown() ? stripExportMarker(f.revalidateVerdict, f) : ''
   if (!verdict) return nothing
   // One line, like every other `pre-wrap` block on this card: the
   // template's own newlines would print as whitespace inside it.
@@ -972,7 +975,7 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
       ${f.recommendation ? sectionTemplate('Recommendation', stripExportMarker(f.recommendation, f), 'recommendation', { collapsible: true }) : nothing}
       ${f.confidenceReason ? html`<div class="conf-reason">${renderHighlighted(stripExportMarker(f.confidenceReason, f))}</div>` : nothing}
       ${revalidateTemplate(f)}
-      ${f.revalidateRecommendation
+      ${f.revalidateRecommendation && revalidationShown()
         ? sectionTemplate('Revalidation recommendation', stripExportMarker(f.revalidateRecommendation, f), 'recommendation', { collapsible: true })
         : nothing}
       ${hasSeverityCorrection(f) && f.correctedSeverityReason ? html`<div class="severity-reason"><span class="severity-reason-label">Severity correction:</span> ${renderHighlighted(f.correctedSeverityReason)}</div>` : nothing}

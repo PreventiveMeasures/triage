@@ -7,7 +7,7 @@ import { FILE_ICONS } from './file-display.js'
 import { listBundles, listWorkspaces, state } from '#client/index.js'
 import { isBundleInRemote, isInRemote, remoteCount, triageSync } from './client-sync.js'
 import { dropZone, report } from './dom.js'
-import { SEVERITIES, configureDepsDir, displayedSeverity, fileLink, findingDisplayName, findingTitle, formatRunMeta, hasSeverityCorrection, isHttpUrl, isModule, lineLink, reachableRevalidateFilters, revalidateKind } from './format.js'
+import { SEVERITIES, configureDepsDir, configureRevalidation, displayedSeverity, fileLink, findingDisplayName, findingTitle, formatRunMeta, hasRevalidateField, hasSeverityCorrection, isHttpUrl, isModule, lineLink, reachableRevalidateFilters, revalidateKind } from './format.js'
 import { activeTabFor, findingRepoFallback, getMergedGroups, groupKey, groupState, primaryTab, tabKey } from './group.js'
 import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, applySorting, modelOfFinding, repoOfFinding } from './filters.js'
 import { ANALYZER_LABELS } from './analyzer-select.js'
@@ -588,7 +588,7 @@ function triageFilterTemplate(colorCounts) {
 // so the host drops it in unconditionally.
 
 function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCounts, flags, analyzerSelect, repoOptions) {
-  const { showSource, showConfidence, showPriority, showGraphMode, showFileSort, kanbanMode, showRepo, hasComment, hasFix, hasFlagged, showSeverityMode, revalidateOptions, hasPartialKind } = flags
+  const { showSource, showConfidence, showPriority, showGraphMode, showFileSort, kanbanMode, showRepo, hasComment, hasFix, hasFlagged, showSeverityMode, revalidateOptions, hasPartialKind, hasAnyRevalidate } = flags
   // The findings tab gains a "graph" view-mode option when a
   // tree-bearing report is loaded (showGraphMode). The focus and
   // kanban modes sit between grouped and graph. Switching to graph
@@ -642,6 +642,11 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
           ></conf-filter>`
         : nothing}
       ${kanbanMode ? nothing : html`<triage-selector .counts=${triageCounts}></triage-selector>`}
+      <!-- App / code lens — the far right of the row, past the triage
+           selector that claims the free space before it. Shown only
+           where a report carries a revalidation pass; see
+           revalidation-switch.js for what comes off with it. -->
+      ${hasAnyRevalidate ? html`<revalidation-switch></revalidation-switch>` : nothing}
     </div>
     <!-- Filter row: severity chips + mark-color triage pill + search
          field, all inline so they read as one composable filter strip.
@@ -1324,6 +1329,13 @@ function renderImpl() {
   // (fallback). Once per render is enough — every helper call below
   // sees the freshly chosen dir.
   configureDepsDir(state.reports)
+  // Same deal for the revalidation layer — the toolbar's "App" switch.
+  // Hand format.js the mode before anything reads a `revalidate` value
+  // through it, and every helper below sees one answer for this render
+  // (see the note over configureRevalidation). group.js reads
+  // `state.showRevalidation` directly for the row-dropping pass, since
+  // getMergedGroups is reachable from outside a render.
+  configureRevalidation(state.showRevalidation)
   // Print-button body class is owned by an observer-util autorun (see
   // view/print-btn-visibility.js) — render() must not touch it.
   // Bundles view — paints from `state.bundles` (cached by
@@ -1756,6 +1768,14 @@ function renderImpl() {
   // Same for a revalidation outcome the loaded set no longer reaches —
   // a report unloaded out from under the selection would otherwise
   // filter every finding away with no visible cause.
+  // Whether to offer the "App" switch at all. Read off the RAW field
+  // over the loaded reports rather than off `mergedGroups` and the
+  // gated reader: with the layer off, the pass's own rows are gone
+  // from those groups and every remaining row answers '' — so a scan
+  // through either would drop the control the moment it was used, and
+  // there would be no way back. A set that carries no `revalidate`
+  // anywhere is already the code view and gets no switch.
+  const hasAnyRevalidate = state.reports.some((r) => r.groups.some((g) => g.some(hasRevalidateField)))
   const revalidateOptions = reachableRevalidateFilters(revalidateKinds)
   if (state.filterRevalidate && !revalidateOptions.some((o) => o.value === state.filterRevalidate)) {
     state.filterRevalidate = ''
@@ -1914,6 +1934,7 @@ function renderImpl() {
       hasComment,
       revalidateOptions,
       hasPartialKind,
+      hasAnyRevalidate,
       hasFix,
       hasFlagged,
       // Corrected/Original lens switch — shown only when a correction
