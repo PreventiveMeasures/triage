@@ -1,4 +1,4 @@
-import { getPackagesIndex, isReportIgnored, state } from '#client/index.js'
+import { getPackagesIndex, isReportIgnored, patchEntry, state } from '#client/index.js'
 import { SEVERITY_ORDER, displayedSeverity, isRevalidation } from './format.js'
 // NOTE: filters.js imports from this module too (primaryTab / tabKey).
 // The cycle is deliberate and benign: both sides only call across
@@ -28,6 +28,20 @@ export function findingReport(f) {
 }
 export function isIgnored(f) {
   return isReportIgnored(state.triage, tabKey(f), findingReport(f))
+}
+
+// One tab's triage "bucket": its triage value if set, else 'ignored'
+// when the tab sits in its report's ignore set, else undefined (live).
+// Ignore behaves like a fourth bucket for rollup / conflict detection
+// but mutates differently (per-report key, its own store), so every
+// reader goes through this one definition rather than re-deriving it.
+//
+// `entry` is the tab's triage entry when the caller has already read it
+// — groupState reads it for the color axis anyway, and this is the
+// hottest helper in the findings render path, so it must not cost a
+// second observable read per tab.
+export function tabTriage(f, entry = state.triage.get(tabKey(f))) {
+  return entry?.triage ?? (isIgnored(f) ? 'ignored' : undefined)
 }
 
 // Tab sort order within a group: the revalidation row first, then
@@ -217,7 +231,7 @@ export function groupState(group) {
   let allBucketed = true
   for (const f of group) {
     const entry = state.triage.get(tabKey(f))
-    const bucket = entry?.triage ?? (isIgnored(f) ? 'ignored' : undefined)
+    const bucket = tabTriage(f, entry)
     const color = entry?.color
     if (color === undefined && bucket === undefined) continue
     annotatedCount++
@@ -243,6 +257,14 @@ export function groupState(group) {
   const commonTriage = !hasConflict && firstTriage !== null ? firstTriage : null
   return {
     hasConflict, commonColor, anyTriage, allTriaged, commonTriage,
+    // True when EVERY tab is ignored, not just the annotated ones —
+    // the one bucket `syncGroupTriage` never levels, so "the rollup says
+    // ignored" and "each tab is ignored in its own report" are different
+    // facts and the tab glyph has to key off the stricter one (see
+    // tabTemplate). Safe as a count comparison: with no conflict, every
+    // annotated tab shares the 'ignored' bucket, so a full annotated
+    // count means a fully ignored group.
+    allIgnored: commonTriage === 'ignored' && annotatedCount === group.length,
     // Convenience flags so downstream code that asks "is this group in
     // the trash bucket" needn't branch on commonTriage.
     isInProgress: commonTriage === 'inprogress',
@@ -255,6 +277,105 @@ export function groupState(group) {
 
 export function isGroupDeleted(group) { return groupState(group).isDeleted }
 export function groupTriage(group) { return groupState(group).commonTriage }
+
+// What a triage-menu click does: the tabs it applies to, and whether
+// it sets the state or clears it. BOTH are decisions about the group,
+// not about individual tabs — deciding per tab inside the apply loop
+// turned a re-click into a per-tab flip (a group holding "In progress"
+// on one of four tabs answered a second click with the other three,
+// then flipped back) instead of the plain on/off a state menu owes the
+// user.
+//
+// Scope: a conflicted group narrows to the active tab, so resolving a
+// disagreement doesn't overwrite siblings the user hasn't looked at.
+// Everything else applies to every tab.
+//
+// `clearing` is true when the scope ALREADY shows `action` — a
+// re-click switches it off — and always for 'restore', which only
+// clears. A group can show a state while holding it on a subset of its
+// tabs (see syncGroupTriage), which is exactly why the question is
+// asked of the rollup rather than of each tab.
+export function triageActionPlan(group, action) {
+  const st = groupState(group)
+  return {
+    targets: triageScope(group, st),
+    clearing: action === 'restore' || scopedTriage(group, st) === action,
+  }
+}
+
+// The tabs a group-level triage write lands on. A conflicted group
+// narrows to the active tab, so resolving a disagreement doesn't
+// overwrite siblings the user hasn't looked at; everything else applies
+// to every tab. Shared with the kanban drop path so a menu click and a
+// column drop can't disagree about which tabs they touch.
+export function triageScope(group, st = groupState(group)) {
+  return st.hasConflict ? [activeTabFor(group)] : group
+}
+
+// The state that scope currently shows — what the menu marks active,
+// and what a re-click therefore switches off. One definition for both:
+// if the marked item and the cleared item ever came apart, clicking the
+// highlighted state would set it again instead of clearing it.
+//
+// `st` / `active` are accepted precomputed: the render path already
+// resolved both for the row, and the conflicted branch would otherwise
+// re-sort the group's tabs to find the active one.
+export function scopedTriage(group, st = groupState(group), active = null) {
+  if (!st.hasConflict) return st.commonTriage ?? null
+  return tabTriage(active ?? activeTabFor(group)) ?? null
+}
+
+// Level a group's triage: write the bucket its tabs agree on onto the
+// tabs that carry none. A group can hold its state on a subset of its
+// members — triaged from a surface that scoped to the active tab, or
+// before the group-wide apply existed — and the rollup then speaks for
+// the whole group off that one tab. Nothing on the card betrays it, but
+// the STORED state stays ambiguous: exports, sync peers and the
+// per-tab glyphs all see a group half in a bucket. Call it when a
+// finding's details are opened, so looking at an issue settles it.
+//
+// Only a group whose tabs agree gets levelled. A real disagreement is
+// the user's to resolve — the tab glyphs are there to show it — and
+// the per-report ignore flag is left alone either way: it's a decision
+// about one finding in one report (see isIgnored), not a verdict on
+// the group, and it lives in its own store.
+//
+// Returns true when it actually wrote something. It does NOT persist:
+// callers own that, and they defer it (`queueMicrotask(saveTriage)`)
+// so a whole-map serialize can't land between an open and its paint —
+// the rule the kanban drop path already follows.
+//
+// `commonTriage` is null for any conflicted group, so agreement is
+// already the condition for getting past the first guard — including
+// a COLOR disagreement, which the rollup folds into the same value. A
+// group whose buckets agree but whose colors differ therefore keeps
+// its partial state; its tabs keep showing their own (see
+// tabTemplate), which is the signal that something is unresolved.
+export function syncGroupTriage(group) {
+  if (!Array.isArray(group) || group.length < 2) return false
+  const st = groupState(group)
+  const bucket = st.commonTriage
+  if (!bucket || bucket === 'ignored') return false
+  let changed = false
+  for (const f of group) {
+    const key = tabKey(f)
+    const entry = state.triage.get(key)
+    // Anything still off the bucket here carries no bucket at all — an
+    // annotated tab holding a different one would have conflicted above.
+    if (tabTriage(f, entry) === bucket) continue
+    // A tab holding an ignore for ANOTHER report reads as unannotated
+    // here (isIgnored is per-report) but is not a blank slate: triage
+    // and ignoredReports are mutually exclusive on an entry, and the
+    // load path resolves a violation by dropping the ignore
+    // (client/triage.js — a bucket-bearing entry never re-imports it).
+    // Levelling such a tab would silently destroy an ignore the user
+    // set somewhere else, so leave it alone; the group stays partial,
+    // which is the truth about it.
+    if (entry?.ignoredReports?.length) continue
+    if (patchEntry(state.triage, key, { triage: bucket })) changed = true
+  }
+  return changed
+}
 
 // Flatten every loaded report's groups into the workspace list,
 // applying `state.workspaceMerges` so groups bound by a cross-report
