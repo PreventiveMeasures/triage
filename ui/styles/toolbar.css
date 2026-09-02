@@ -410,6 +410,61 @@ slide-triage-tabs {
   overflow: hidden;
 }
 .toolbar triage-selector { margin-left: auto; }
+
+/* The App / code lens (revalidation-switch.js). Pinned right with its
+   own `margin-left: auto` rather than riding the triage selector's —
+   that one is dropped in kanban mode and hides itself when no bucket
+   has anything in it, and the lens must not drift back into the row
+   when it goes.
+
+   A SWITCH, because it doesn't narrow the list the way the filters to
+   its left do: it changes what the list is ABOUT. Same shape as the
+   Graph tab's "All files" (.g2-topbar-toggle + .g2-switch in
+   graph2.css) and the bundle search's "Context" pill
+   (.bundle-search-context-toggle in report.css) — a third copy rather
+   than a shared class because each of the three is tuned to the bar it
+   sits in, and the graph's lives behind a shadow boundary anyway. This
+   one takes the 30px height every other control on this row carries.
+
+   The track is `--border` so the off state stays visible in both
+   themes: `--surface-active` is a pale blue in the light ones and
+   would all but vanish against the toolbar's own surface. */
+.toolbar revalidation-switch { margin-left: auto; }
+.revalidation-toggle {
+  display: inline-flex; align-items: center; gap: 8px;
+  height: 30px; box-sizing: border-box;
+  padding: 0 .6rem;
+  background: transparent;
+  border: 1px solid var(--border); border-radius: 4px;
+  color: var(--muted);
+  font: inherit; font-size: .78rem; font-weight: 500; line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+
+  &:hover { color: var(--text); }
+  &.on { color: var(--text); }
+  &.on .revalidation-switch { background: color-mix(in oklch, var(--accent) 22%, transparent); }
+  &.on .revalidation-switch::after { transform: translateX(12px); background: var(--accent); }
+  &:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+}
+.revalidation-switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 26px; height: 14px;
+  background: var(--border);
+  border-radius: 8px;
+  transition: background .15s;
+
+  &::after {
+    content: '';
+    position: absolute;
+    top: 2px; left: 2px;
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: var(--muted);
+    transition: transform .15s, background .15s;
+  }
+}
 /* No buckets to show → the component renders nothing and tags itself
    `is-empty`; drop the pill chrome so an empty bordered box doesn't linger. */
 triage-selector.is-empty { display: none; }

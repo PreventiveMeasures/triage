@@ -98,6 +98,7 @@ export interface State {
   filterRepo: string
   filterRevalidate: string
   filterPartial: string
+  showRevalidation: boolean
   filterConfMin: number
   filterConfMax: number
   filterInclude: string
@@ -513,6 +514,14 @@ export const state: State = store<State>({
   // other outcome, and cleared in render.js when the loaded set has no
   // partial rows to sort.
   filterPartial: '',
+  // The revalidation LAYER — the toolbar's "App" switch. On (the
+  // default), the findings are about the running app: what it can
+  // reach, re-rated by the second pass. Off, they are about the code
+  // as written, with the pass's own rows, stamps, verdicts and filter
+  // taken away — see format.js configureRevalidation, which is handed
+  // this once per render. Offered only where a report carries the
+  // field at all; a set without one is already the code view.
+  showRevalidation: true,
   // Confidence range — both bounds always set (the new
   // `<range-slider>` has no "unset" concept). 0 / 10 means "no
   // filter": findings with `f.confidence === undefined` pass when

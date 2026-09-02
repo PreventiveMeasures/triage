@@ -133,6 +133,37 @@ function showsAtConfidence(g, min) {
   })
 }
 
+// The confidence floor a freshly-loaded set should OPEN on, tuned so
+// the initial view fits ~25 groups. Step up 6 → 7 → 8 until the
+// visible count is within budget; cap at 8 (the old static default).
+// Nothing carrying a confidence at all means no floor — without that
+// guard countAtMin(6) = 0 ≤ 25 lands it at 6, which then excludes
+// every finding; 0 lets the filter no-op instead, and the toolbar
+// hides the control anyway (see toolbarHtml in render.js).
+//
+// After picking the base, walk DOWN while each lower step surfaces no
+// new groups — i.e. there's a "gap" in the confidence distribution
+// below the chosen floor. Lowering for free puts the slider at the
+// natural break: e.g. picked 8, nothing at 7 or 6 but some at 5 →
+// settle at 6 (the lowest step revealing nothing new). Down to 0.
+//
+// Pure in its argument, and paired with defaultRevalidateFilter below:
+// together they are "what does this set open on", asked by ingest.js
+// on a first load and again by the App switch (events.js), which
+// reshapes the set and so has to ask again rather than keep an answer
+// that was about a different one.
+export function defaultConfidenceFloor(groups) {
+  if (!groups.some((g) => g.some((f) => f.confidence !== undefined))) return 0
+  const countAtMin = (min) => groups.reduce((n, g) =>
+    n + (g.some((f) => f.confidence !== undefined && f.confidence >= min) ? 1 : 0), 0)
+  let base
+  if (countAtMin(6) <= 25) base = 6
+  else if (countAtMin(7) <= 25) base = 7
+  else base = 8
+  while (base > 0 && countAtMin(base - 1) === countAtMin(base)) base--
+  return base
+}
+
 // The revalidation outcome a freshly-loaded set should OPEN on, given
 // the confidence floor ingest.js just auto-tuned: `'confirmed'` for a
 // revalidation report, `''` (no outcome) for everything else.

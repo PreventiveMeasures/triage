@@ -1,8 +1,8 @@
 import { SEVERITY_MODE_KEY, VIEW_MODE_KEY, isEncryptionEnabled, patchEntry, readBundle, saveRepoUrlFor, saveTriage, setReportIgnored, state, subscribeToBundleFindingIndex } from '#client/index.js'
 import { downloadBlob, report } from './dom.js'
-import { commonPrefix, handoffBlock } from './format.js'
-import { activeTabFor, findGroupById, findingRepo, findingReport, groupState, syncGroupTriage, tabKey, triageActionPlan, triageScope } from './group.js'
-import { resetFilters } from './filters.js'
+import { commonPrefix, configureRevalidation, handoffBlock } from './format.js'
+import { activeTabFor, findGroupById, findingRepo, findingReport, getMergedGroups, groupState, syncGroupTriage, tabKey, triageActionPlan, triageScope } from './group.js'
+import { defaultConfidenceFloor, defaultRevalidateFilter, resetFilters } from './filters.js'
 import { refreshGraph2Sidebar, refreshGraph2TopPkgs, render } from './render.js'
 import { refreshBundleGraphSidebar, refreshBundleGraphTopPkgs, revealBundleCodeCurrent } from './render-bundle.js'
 import { grantAdvisoriesProxyConsent, retryBundleAdvisories } from './render-bundle-advisories.js'
@@ -1870,6 +1870,34 @@ report.addEventListener('revalidate-change', (e) => {
 // every other filter's.
 report.addEventListener('partial-change', (e) => {
   state.filterPartial = e.detail.value
+  render()
+})
+// `<revalidation-switch>` — the "App" toggle. Taking the layer off
+// changes which rows exist at all (group.js drops the pass's own),
+// which filters the toolbar offers, and what every card draws, so this
+// is a full render like the severity lens rather than a repaint.
+//
+// The confidence block is re-derived rather than carried over: the
+// switch changes which findings exist and what they are about, so it
+// leaves the filter where a reload of the new set would put it — the
+// same two questions ingest.js asks on a first load, asked again
+// against the set the switch has just reshaped. Carrying the answers
+// over was wrong in every part: an outcome nothing can reach once the
+// layer is off, the CLEARED outcome once it is back on (so a report
+// that OPENS on Confirmed returned to plain Confidence), and a floor
+// tuned for a group count the switch has just changed.
+//
+// configureRevalidation before any of it: getMergedGroups and
+// defaultRevalidateFilter both read `revalidate` through format.js's
+// gate, and it is still set to the mode the previous render drew.
+report.addEventListener('revalidation-change', (e) => {
+  state.showRevalidation = e.detail.on
+  configureRevalidation(state.showRevalidation)
+  const groups = getMergedGroups()
+  state.filterConfMin = defaultConfidenceFloor(groups)
+  state.filterConfMax = 10
+  state.filterRevalidate = defaultRevalidateFilter(groups, state.filterConfMin)
+  state.filterPartial = ''
   render()
 })
 // `<bundle-code-search>` dispatches this when a Files / Code /

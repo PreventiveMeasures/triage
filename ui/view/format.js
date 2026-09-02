@@ -113,13 +113,65 @@ export function correctedVariants(f) {
 export const REVALIDATE_KINDS = ['revalidation', 'refuted', 'unreachable', 'confirmed', 'partial', 'unknown']
 const REVALIDATE_SET = new Set(REVALIDATE_KINDS)
 
-// The row's revalidation outcome, case-folded, or '' when it carries
-// none — which includes an unrecognised value, so a typo in a report
-// can't reach a display or the filter dropdown.
-export function revalidateKind(f) {
+// ── The revalidation LAYER ───────────────────────────────────────────
+// All of the above is a lens, and the toolbar's "App" switch takes it
+// off. With the pass applied, the findings are about the running APP:
+// what it can actually reach, re-rated by a second look. Without it
+// they are about the CODE as written — every issue the analyzer found,
+// including the ones the app happens not to expose today. Those are
+// still real, and a reader auditing the source wants them back, so the
+// whole layer comes off with one switch rather than a filter per
+// consequence of it.
+//
+// Off, `revalidateKind` answers '' for every row, which is what takes
+// the layer off everywhere at once: no stamp on the card, no promotion
+// of the pass's row in a group, no verdict voiding a confidence, no
+// outcome for the toolbar dropdown to offer (so the block falls back
+// to the plain Confidence range), and nothing for the run-meta line to
+// name. The two callers that must see the field WHATEVER the switch
+// says — the pass that hides the pass's own rows, and the scan that
+// decides whether to offer the switch at all — read `rawKind` through
+// the two exports below it.
+//
+// The flag is module state, set once per render by render.js from
+// `state.showRevalidation` (see configureDepsDir below for the same
+// pattern and the reason: this module stays free of any `#client/...`
+// import so it can ride the lazy graph bundle). It defaults to ON, so
+// a consumer reaching a helper before the first render — the headless
+// API, a deep link — sees the app view, which is the default anyway.
+let revalidationOn = true
+
+export function configureRevalidation(on) { revalidationOn = on !== false }
+
+// Whether the layer is applied right now. For the display sites that
+// read a `revalidate*` field directly rather than going through
+// `revalidateKind` — the verdict and the pass's recommendation.
+export function revalidationShown() { return revalidationOn }
+
+function rawKind(f) {
   const v = typeof f?.revalidate === 'string' ? f.revalidate.trim().toLowerCase() : ''
   return REVALIDATE_SET.has(v) ? v : ''
 }
+
+// The row's revalidation outcome, case-folded, or '' when it carries
+// none — which includes an unrecognised value, so a typo in a report
+// can't reach a display or the filter dropdown, and every row once the
+// layer is off.
+export function revalidateKind(f) {
+  return revalidationOn ? rawKind(f) : ''
+}
+
+// Does this row carry a revalidation stamp AT ALL — the raw field,
+// read past the switch. Gates the switch itself (render.js): a set
+// with nothing to reveal doesn't need the control, and one that has
+// something must keep offering it after the layer is off, or there
+// would be no way back.
+export function hasRevalidateField(f) { return rawKind(f) !== '' }
+
+// Is this row the pass itself — again raw, because taking the layer
+// off means dropping exactly these rows (group.js), which can't be
+// done through a reader that has already stopped seeing them.
+export function isRevalidationRow(f) { return rawKind(f) === 'revalidation' }
 
 // The verdict this row was stamped with, or null when it carries none
 // — which includes the revalidation row itself, since `revalidation`
@@ -411,7 +463,10 @@ export function findingDisplayName(f) {
 // the lazy graph bundle (see the `fileUrl` note below), so filters.js
 // matches the comment and fix fields itself; see matchesFilters there.
 export function findingText(f) {
-  return [f.file, f.title, f.description, f.impact, f.reproduction, evidenceMarkdown(f), f.recommendation, f.confidenceReason, revalidateStamp(f), f.revalidateVerdict, f.revalidateRecommendation, f.discoveredIn, f.repo?.github].filter(Boolean).join('\n').toLowerCase()
+  // The pass's own words come out of the haystack with the layer: a
+  // search shouldn't match text the card isn't showing.
+  const reval = revalidationOn ? [revalidateStamp(f), f.revalidateVerdict, f.revalidateRecommendation] : []
+  return [f.file, f.title, f.description, f.impact, f.reproduction, evidenceMarkdown(f), f.recommendation, f.confidenceReason, ...reval, f.discoveredIn, f.repo?.github].filter(Boolean).join('\n').toLowerCase()
 }
 
 export function prettyModel(model) {
@@ -1113,6 +1168,9 @@ export function handoffBlock(f, repo) {
   const evidence = evidenceRows(f, { spaced: true })
   if (evidence) blocks.push(`# Evidence\n\n${evidence}`)
   for (const [heading, field] of HANDOFF_SECTIONS) {
+    // The pass's sections travel with the layer, like everything else
+    // it draws: a card showing the code view copies the code view.
+    if (!revalidationOn && field.startsWith('revalidate')) continue
     const value = stripExportMarker(f?.[field], f)?.trim()
     if (value) blocks.push(`# ${heading}\n\n${value}`)
   }
