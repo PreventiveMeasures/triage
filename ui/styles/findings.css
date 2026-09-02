@@ -543,7 +543,14 @@
 
   position: fixed;
   inset: 0;
-  z-index: 200;
+  /* Above the floating chrome buttons, which sit at z-index 1000 in
+     the same (root) stacking context — `<theme-toggle>` via its own
+     shadow `:host`, print / download via theme.css. At the previous
+     200 they painted through the dim and, once the rail docked into
+     their corner, right on top of its header. The app's `<dialog>`s
+     (comment, fix link) are further up still, so a dialog opened from
+     inside the modal keeps covering it. */
+  z-index: 1100;
   display: grid; place-items: center;
   padding: 1rem;
   /* Click-pass-through: cards stay interactive while the modal is
@@ -552,6 +559,15 @@
      in the report click handler. */
   pointer-events: none;
 }
+
+/* Chrome the dialog covers rather than competes with. The theme
+   toggle is the only one of the three floating buttons still on
+   screen in kanban view (print and download hide themselves there),
+   and the corner it occupies is the rail's — so it goes away for as
+   long as the dialog is up, at every width. Ordering alone wasn't
+   enough: a live control sitting on the dim, over a dialog it has
+   nothing to do with, reads as part of it. */
+body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
 
 /* Dim layer — a separate sibling of the modal that animates
    independently. Keeping the dim on its own element with its own
