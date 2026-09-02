@@ -1,4 +1,4 @@
-import { getPackagesIndex, isReportIgnored, state } from '#client/index.js'
+import { getPackagesIndex, isReportIgnored, patchEntry, saveTriage, state } from '#client/index.js'
 import { SEVERITY_ORDER, displayedSeverity, isRevalidation } from './format.js'
 // NOTE: filters.js imports from this module too (primaryTab / tabKey).
 // The cycle is deliberate and benign: both sides only call across
@@ -28,6 +28,15 @@ export function findingReport(f) {
 }
 export function isIgnored(f) {
   return isReportIgnored(state.triage, tabKey(f), findingReport(f))
+}
+
+// One tab's triage "bucket": its triage value if set, else 'ignored'
+// when the tab sits in its report's ignore set, else undefined (live).
+// Ignore behaves like a fourth bucket for rollup / conflict detection
+// but mutates differently (per-report key, its own store), so every
+// reader goes through this one definition rather than re-deriving it.
+export function tabTriage(f) {
+  return state.triage.get(tabKey(f))?.triage ?? (isIgnored(f) ? 'ignored' : undefined)
 }
 
 // Tab sort order within a group: the revalidation row first, then
@@ -217,7 +226,7 @@ export function groupState(group) {
   let allBucketed = true
   for (const f of group) {
     const entry = state.triage.get(tabKey(f))
-    const bucket = entry?.triage ?? (isIgnored(f) ? 'ignored' : undefined)
+    const bucket = tabTriage(f)
     const color = entry?.color
     if (color === undefined && bucket === undefined) continue
     annotatedCount++
@@ -243,6 +252,12 @@ export function groupState(group) {
   const commonTriage = !hasConflict && firstTriage !== null ? firstTriage : null
   return {
     hasConflict, commonColor, anyTriage, allTriaged, commonTriage,
+    // Bucket disagreement alone, without the color axis `hasConflict`
+    // folds in. The per-tab state glyphs (`◐` / `✓` / `⊘` / the
+    // struck-through label) exist to show WHICH tab disagrees, so they
+    // render on this flag only — on a group whose tabs agree they'd
+    // repeat the card's own state once per tab (see tabTemplate).
+    triageConflict: bucketsConflict,
     // Convenience flags so downstream code that asks "is this group in
     // the trash bucket" needn't branch on commonTriage.
     isInProgress: commonTriage === 'inprogress',
@@ -255,6 +270,64 @@ export function groupState(group) {
 
 export function isGroupDeleted(group) { return groupState(group).isDeleted }
 export function groupTriage(group) { return groupState(group).commonTriage }
+
+// What a triage-menu click does: the tabs it applies to, and whether
+// it sets the state or clears it. BOTH are decisions about the group,
+// not about individual tabs — deciding per tab inside the apply loop
+// turned a re-click into a per-tab flip (a group holding "In progress"
+// on one of four tabs answered a second click with the other three,
+// then flipped back) instead of the plain on/off a state menu owes the
+// user.
+//
+// Scope: a conflicted group narrows to the active tab, so resolving a
+// disagreement doesn't overwrite siblings the user hasn't looked at.
+// Everything else applies to every tab.
+//
+// `clearing` is true when the scope ALREADY shows `action` — a
+// re-click switches it off — and always for 'restore', which only
+// clears. A group can show a state while holding it on a subset of its
+// tabs (see syncGroupTriage), which is exactly why the question is
+// asked of the rollup rather than of each tab.
+export function triageActionPlan(group, action) {
+  const st = groupState(group)
+  const targets = st.hasConflict ? [activeTabFor(group)] : group
+  const current = st.hasConflict ? tabTriage(targets[0]) : st.commonTriage
+  return { targets, clearing: action === 'restore' || current === action }
+}
+
+// Level a group's triage: write the bucket its tabs agree on onto the
+// tabs that carry none. A group can hold its state on a subset of its
+// members — triaged from a surface that scoped to the active tab, or
+// before the group-wide apply existed — and the rollup then speaks for
+// the whole group off that one tab. Nothing on the card betrays it, but
+// the STORED state stays ambiguous: exports, sync peers and the
+// per-tab glyphs all see a group half in a bucket. Call it when a
+// finding's details are opened, so looking at an issue settles it.
+//
+// Only a group whose tabs agree gets levelled. A real disagreement is
+// the user's to resolve — the tab glyphs are there to show it — and
+// the per-report ignore flag is left alone either way: it's a decision
+// about one finding in one report (see isIgnored), not a verdict on
+// the group, and it lives in its own store.
+//
+// Persists and returns true when it changed something, so a caller
+// that would otherwise skip a re-render knows to do one.
+export function syncGroupTriage(group) {
+  if (!Array.isArray(group) || group.length < 2) return false
+  const st = groupState(group)
+  const bucket = st.commonTriage
+  if (!bucket || bucket === 'ignored' || st.triageConflict) return false
+  let changed = false
+  for (const f of group) {
+    // Anything still off the bucket here carries no bucket at all — an
+    // annotated tab holding a different one would have conflicted above.
+    if (tabTriage(f) === bucket) continue
+    patchEntry(state.triage, tabKey(f), { triage: bucket })
+    changed = true
+  }
+  if (changed) saveTriage()
+  return changed
+}
 
 // Flatten every loaded report's groups into the workspace list,
 // applying `state.workspaceMerges` so groups bound by a cross-report

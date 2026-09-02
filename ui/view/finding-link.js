@@ -14,7 +14,7 @@
 // are for.
 import { buildFindingUrl, isLinkableFindingId, knownLinkHint, state } from '#client/index.js'
 import { applyFilters, resetFilters } from './filters.js'
-import { getMergedGroups, groupKey, groupState, tabKey } from './group.js'
+import { getMergedGroups, groupKey, groupState, syncGroupTriage, tabKey } from './group.js'
 import { cleanupGraph2 } from './graph/state.js'
 
 // Shareable URL for one finding, or null when the finding can't carry a
@@ -119,6 +119,10 @@ export function unhideFinding(group, id) {
   }
   const gid = groupKey(group)
   if (group.length > 1) state.activeTabByGroup.set(gid, id)
+  // A link opens this finding as surely as a click does, in every mode
+  // — including grouped / list, which have no selection to set below —
+  // so level the group's triage here too (see syncGroupTriage).
+  syncGroupTriage(group)
   // Per-mode selection — each mode's own "this one" state. Table opens
   // its details aside on the row, focus centres the card, and kanban
   // opens the detail modal: a board card is a title and a badge, which

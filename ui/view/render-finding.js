@@ -3,7 +3,7 @@ import { classMap } from 'lit/directives/class-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { bundlesForFileHash, isLinkableFindingId, isPlaceholderNpmPackage, state } from '#client/index.js'
 import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, hasSeverityCorrection, isHttpUrl, listSegments, locationLabel, markdownLinkToken, parseCommentRefs, revalidateStamp, splitDescription, stripExportMarker } from './format.js'
-import { activeTabFor, findingRepo, findingRepoFallback, groupKey, groupState, isIgnored, sortTabs, tabKey } from './group.js'
+import { activeTabFor, findingRepo, findingRepoFallback, groupKey, groupState, isIgnored, sortTabs, tabKey, tabTriage } from './group.js'
 import { highlightedCode } from './code-highlight.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 
@@ -679,15 +679,13 @@ function positionTriagePopover(e) {
 // resolves them once rather than once per nested helper.
 function triageMenuTemplate(group, title, context, groupSt, activeTab) {
   const gid = tabKey(group[0])
-  const activeKey = tabKey(activeTab)
   // Active tab's "current" bucket — triage state, else 'ignored'
   // when the per-report ignore key is set, else null. For
   // non-conflict groups, the rollup's commonTriage already folds
-  // both axes, so we read it directly.
-  const current = groupSt.hasConflict
-    ? (state.triage.get(activeKey)?.triage
-       ?? (isIgnored(activeTab) ? 'ignored' : null))
-    : groupSt.commonTriage
+  // both axes, so we read it directly. Same expression
+  // `triageActionPlan` decides set-vs-clear from, so the item marked
+  // active here is exactly the one a click switches off.
+  const current = (groupSt.hasConflict ? tabTriage(activeTab) : groupSt.commonTriage) ?? null
   const STATE_LABELS = { inprogress: 'In progress', fixed: 'Fixed', invalid: 'Invalid', deleted: 'Deleted', ignored: 'Ignored' }
   const ACTION_LABELS = { inprogress: 'In progress', fixed: 'Fixed', invalid: 'Invalid', deleted: 'Delete', ignored: 'Ignore' }
   const inTriageView = Boolean(state.shownTriage)
@@ -765,10 +763,17 @@ function tabMarksTemplate(entry) {
 }
 
 // One tab button. Carries severity badge + (optional) confidence +
-// annotation marks (comment / fix / flag, when present), plus per-tab
-// color/deleted classes so multi-tab triage state is visible from the
-// group header.
-function tabTemplate(f, isActive) {
+// annotation marks (comment / fix / flag, when present), plus the
+// per-tab color class, and — only when the group's tabs disagree about
+// their triage state — the per-tab state class behind that state's
+// glyph (`◐` / `✓` / `⊘` / `👁` / a struck-through label).
+//
+// `showState` is the group's `triageConflict`. The glyphs answer
+// "which tab is the odd one out"; on a group whose tabs agree they
+// answer nothing — the card's own chrome already says the group is in
+// progress / fixed / deleted — and repeating it once per tab reads as
+// a per-tab annotation the user never made.
+function tabTemplate(f, isActive, showState) {
   const key = tabKey(f)
   const entry = state.triage.get(key)
   const color = entry?.color
@@ -777,12 +782,12 @@ function tabTemplate(f, isActive) {
   const classes = ['tab']
   if (isActive) classes.push('active')
   if (color) classes.push(`tab-mark-${color}`)
-  if (triage) classes.push(`tab-${triage}`)
+  if (showState && triage) classes.push(`tab-${triage}`)
   // `tab-ignored` is per-tab (each tab has its own report) and
   // mutually exclusive with the triage classes via the action
   // handler. Falls through to a muted opacity hint via finding-row
   // / finding-card CSS.
-  else if (ignored) classes.push('tab-ignored')
+  else if (showState && ignored) classes.push('tab-ignored')
   return html`<button type="button" class=${classes.join(' ')} data-tid=${key}><span class="tab-label">${severityBadge(f, { variant: 'tab' })} ${f.confidence === undefined ? nothing : html`<span class="tab-conf">${f.confidence}/10</span>`}${tabMarksTemplate(entry)}</span></button>`
 }
 
@@ -1022,7 +1027,7 @@ export function findingCardInnerTemplate(g, opts = {}) {
     <div class="marks">
       <div class="marks-left">
         ${liftCommit ? nothing : commitRef}
-        ${sortedTabs.length > 1 ? html`<div class="tabs">${sortedTabs.map((f) => tabTemplate(f, tabKey(f) === activeKey))}</div>` : nothing}
+        ${sortedTabs.length > 1 ? html`<div class="tabs">${sortedTabs.map((f) => tabTemplate(f, tabKey(f) === activeKey, groupSt.triageConflict))}</div>` : nothing}
       </div>
       ${actionButtonsTemplate(g, sortedTabs, groupSt, active, context)}
     </div>
@@ -1087,7 +1092,7 @@ export function tableRowInnerTemplate(g) {
           ${actionButtonsTemplate(g, sortedTabs, groupSt, active)}
         </div>
       </div>
-      ${sortedTabs.length > 1 ? html`<div class="tabs-row"><div class="tabs">${sortedTabs.map((tabF) => tabTemplate(tabF, tabKey(tabF) === activeKey))}</div></div>` : nothing}
+      ${sortedTabs.length > 1 ? html`<div class="tabs-row"><div class="tabs">${sortedTabs.map((tabF) => tabTemplate(tabF, tabKey(tabF) === activeKey, groupSt.triageConflict))}</div></div>` : nothing}
     </div>
   `
 }
