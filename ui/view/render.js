@@ -971,11 +971,11 @@ function focusCodeLinesTemplate(code) {
 // finding's detail view reads consistently with its card.
 //
 // `column` is the bucket the open card belongs to ({ label, items },
-// items in board order) and backs the same-column rail alongside the
+// items in board order) and backs the same-column rail beside the
 // modal — the neighbours the ←/→ keys already step through, made
-// visible and clickable. findings.css mounts the rail from 1400px up
-// and reserves its width on BOTH sides of the modal, so the modal
-// stays centered and the rail never overlaps it.
+// visible and clickable. findings.css docks the rail to the screen's
+// right edge from 1400px up and holds its width out of the backdrop,
+// so the modal sits centered in what's left rather than under it.
 function kanbanDetailTemplate(focusGroup, column) {
   if (!focusGroup) return nothing
   const groupSt = groupState(focusGroup)
