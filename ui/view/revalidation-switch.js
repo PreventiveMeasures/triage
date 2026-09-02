@@ -42,16 +42,24 @@ class RevalidationSwitch extends StateElement {
 
   render() {
     const on = state.showRevalidation !== false
+    // A SWITCH, not a chip: this doesn't narrow the list the way the
+    // filters beside it do, it changes what the list is about — and a
+    // switch is the control that says a thing is either on or off,
+    // rather than one more pill that happens to be lit. Same shape as
+    // the Graph tab's "All files" and the bundle search's "Context"
+    // (toolbar.css has the rules and the note on why each place keeps
+    // its own copy).
+    //
     // `aria-pressed` carries the state, and the label says what is
     // being pressed — no `title`, which would only repeat the word
     // under the cursor and never reaches a keyboard or a touch.
     return html`<button
       type="button"
-      class=${classMap({ 'revalidation-chip': true, on })}
+      class=${classMap({ 'revalidation-toggle': true, on })}
       aria-pressed=${String(on)}
       aria-label="App view — hide the issues the revalidation pass ruled out"
       @click=${this._toggle}
-    >App</button>`
+    ><span>App</span><span class="revalidation-switch"></span></button>`
   }
 
   _toggle = () => {

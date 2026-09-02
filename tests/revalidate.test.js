@@ -605,6 +605,35 @@ describe('the revalidation layer switch', () => {
     }
   })
 
+  // Flipping the switch re-derives the outcome filter instead of
+  // carrying one over, because a carried-over selection is wrong both
+  // ways: off, nothing can reach it; back on, the cleared one leaves a
+  // report that OPENS on Confirmed sitting on plain Confidence. This
+  // is the expression events.js runs on the toggle.
+  it('comes back to the outcome a reload would show', () => {
+    const reports = state.reports
+    const merges = state.workspaceMerges
+    try {
+      state.workspaceMerges = []
+      state.reports = [{ groups: [[
+        makeFinding('A', { confidence: 9, revalidate: 'revalidation' }),
+        makeFinding('B', { confidence: 9, revalidate: 'confirmed' }),
+      ]] }]
+      const derive = () => {
+        configureRevalidation(state.showRevalidation)
+        return defaultRevalidateFilter(getMergedGroups(), state.filterConfMin)
+      }
+      assert.equal(derive(), 'confirmed')
+      state.showRevalidation = false
+      assert.equal(derive(), '', 'nothing to reach with the layer off')
+      state.showRevalidation = true
+      assert.equal(derive(), 'confirmed', 'and back to where a reload would put it')
+    } finally {
+      state.reports = reports
+      state.workspaceMerges = merges
+    }
+  })
+
   it('keeps the layer on by default', () => {
     assert.equal(revalidationShown(), true)
     assert.equal(revalidateKind({ revalidate: 'confirmed' }), 'confirmed')

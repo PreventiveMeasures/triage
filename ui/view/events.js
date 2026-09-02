@@ -1,8 +1,8 @@
 import { SEVERITY_MODE_KEY, VIEW_MODE_KEY, isEncryptionEnabled, patchEntry, readBundle, saveRepoUrlFor, saveTriage, setReportIgnored, state, subscribeToBundleFindingIndex } from '#client/index.js'
 import { downloadBlob, report } from './dom.js'
-import { commonPrefix, handoffBlock } from './format.js'
-import { activeTabFor, findGroupById, findingRepo, findingReport, groupState, syncGroupTriage, tabKey, triageActionPlan, triageScope } from './group.js'
-import { resetFilters } from './filters.js'
+import { commonPrefix, configureRevalidation, handoffBlock } from './format.js'
+import { activeTabFor, findGroupById, findingRepo, findingReport, getMergedGroups, groupState, syncGroupTriage, tabKey, triageActionPlan, triageScope } from './group.js'
+import { defaultRevalidateFilter, resetFilters } from './filters.js'
 import { refreshGraph2Sidebar, refreshGraph2TopPkgs, render } from './render.js'
 import { refreshBundleGraphSidebar, refreshBundleGraphTopPkgs, revealBundleCodeCurrent } from './render-bundle.js'
 import { grantAdvisoriesProxyConsent, retryBundleAdvisories } from './render-bundle-advisories.js'
@@ -1876,8 +1876,28 @@ report.addEventListener('partial-change', (e) => {
 // changes which rows exist at all (group.js drops the pass's own),
 // which filters the toolbar offers, and what every card draws, so this
 // is a full render like the severity lens rather than a repaint.
+//
+// The outcome filter is re-derived rather than carried over, because
+// carrying it over is meaningless in both directions: switching OFF
+// leaves a selection nothing can reach (render.js would clear it
+// anyway), and switching back ON leaves the cleared one — so a report
+// that OPENS on Confirmed came back on plain Confidence, which is not
+// where a reload would have put it. So ask the same question ingest
+// asks on a first load (filters.js defaultRevalidateFilter), against
+// the set the switch has just reshaped. The confidence RANGE is left
+// alone: it is the user's, and the switch is about the layer, not
+// about how sure the analyzer was — the re-derivation reads whatever
+// floor is set, so the answer is what a reload WITH THAT RANGE would
+// give.
+//
+// configureRevalidation before either call: both read `revalidate`
+// through format.js's gate, and it is still set to the mode the
+// previous render was drawn in.
 report.addEventListener('revalidation-change', (e) => {
   state.showRevalidation = e.detail.on
+  configureRevalidation(state.showRevalidation)
+  state.filterRevalidate = defaultRevalidateFilter(getMergedGroups(), state.filterConfMin)
+  state.filterPartial = ''
   render()
 })
 // `<bundle-code-search>` dispatches this when a Files / Code /
