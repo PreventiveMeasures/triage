@@ -42,7 +42,8 @@ if (!globalThis[slotKey]) {
 
 const { state } = await import('../client/state.ts')
 const {
-  activeTabFor, groupState, primaryTab, sortTabs, syncGroupTriage, tabTriage, triageActionPlan,
+  activeTabFor, groupState, primaryTab, scopedTriage, sortTabs, syncGroupTriage, tabTriage,
+  triageActionPlan,
 } = await import('../ui/view/group.js')
 
 const REPORT = 'report-a.json'
@@ -204,28 +205,62 @@ describe('single-tab fast paths', () => {
   })
 })
 
-// `triageConflict` is the bucket axis of `hasConflict` on its own —
-// the flag the per-tab state glyphs render on, so a group whose tabs
-// merely differ in COLOR doesn't sprout `◐` / `✓` / `⊘` on every tab.
-describe('groupState triageConflict', () => {
-  it('is false while the tabs agree, whatever colors they carry', () => {
+// The tab strip shows a tab's own state only when the group can't
+// speak for it. `commonTriage` is that test — null exactly when the
+// card has nothing to display (buckets disagree, or a color conflict
+// suppressed the rollup) — and `allIgnored` is the stricter one the
+// per-report ignore glyph needs, since levelling never touches ignore.
+describe('groupState — what the tab glyphs key off', () => {
+  it('speaks for the group while the tabs agree, even partially', () => {
     reset()
-    assert.equal(groupState([tab({ triage: 'inprogress' }), tab(null)]).triageConflict, false)
-    assert.equal(groupState([tab({ triage: 'fixed' }), tab({ triage: 'fixed' })]).triageConflict, false)
-    reset()
-    const colorsDiffer = [tab({ color: 'green', triage: 'fixed' }), tab({ color: 'red', triage: 'fixed' })]
-    const st = groupState(colorsDiffer)
-    assert.equal(st.hasConflict, true, 'colors still conflict')
-    assert.equal(st.triageConflict, false, 'but the buckets agree')
+    assert.equal(groupState([tab({ triage: 'inprogress' }), tab(null)]).commonTriage, 'inprogress')
+    assert.equal(groupState([tab({ triage: 'fixed' }), tab({ triage: 'fixed' })]).commonTriage, 'fixed')
   })
 
-  it('is true when the buckets disagree', () => {
+  it('speaks for nothing when a color conflict suppresses the rollup', () => {
+    // The card files this group with the untriaged ones and stamps no
+    // state class, so the tabs are the only place its Fixed can show.
     reset()
-    assert.equal(groupState([tab({ triage: 'inprogress' }), tab({ triage: 'fixed' })]).triageConflict, true)
-    // A colored-but-untriaged tab holds its own bucket slot.
-    assert.equal(groupState([tab({ triage: 'fixed' }), tab({ color: 'red' })]).triageConflict, true)
-    // Ignore is a bucket like any other.
-    assert.equal(groupState([tab({ triage: 'fixed' }), tab({ ignored: true })]).triageConflict, true)
+    const st = groupState([tab({ color: 'green', triage: 'fixed' }), tab({ color: 'red', triage: 'fixed' })])
+    assert.equal(st.hasConflict, true)
+    assert.equal(st.commonTriage, null, 'nothing for the card to display')
+  })
+
+  it('marks allIgnored only when every tab is ignored', () => {
+    reset()
+    assert.equal(groupState([tab({ ignored: true }), tab({ ignored: true })]).allIgnored, true)
+    reset()
+    // Rolls up to 'ignored' off one tab while its sibling is live in
+    // its own report — the case the 👁 has to keep pointing at.
+    const partial = groupState([tab({ ignored: true }), tab(null)])
+    assert.equal(partial.commonTriage, 'ignored')
+    assert.equal(partial.allIgnored, false)
+    reset()
+    assert.equal(groupState([tab({ triage: 'fixed' }), tab({ triage: 'fixed' })]).allIgnored, false)
+  })
+})
+
+describe('scopedTriage', () => {
+  it('is the rollup for an agreeing group, the active tab for a conflicted one', () => {
+    reset()
+    assert.equal(scopedTriage([tab({ triage: 'fixed' }), tab(null)]), 'fixed')
+    reset()
+    const a = tab({ triage: 'inprogress' }, { severity: 'high', confidence: 9 })
+    const b = tab({ triage: 'fixed' }, { severity: 'low', confidence: 1 })
+    assert.equal(scopedTriage([a, b]), 'inprogress', 'active tab wins under conflict')
+    state.activeTabByGroup.set(a.id, b.id)
+    assert.equal(scopedTriage([a, b]), 'fixed')
+  })
+
+  it('normalises "no state" to null from either branch', () => {
+    reset()
+    assert.equal(scopedTriage([tab(null), tab(null)]), null)
+    reset()
+    // Conflicted on color, active tab untriaged — the branch that
+    // reads through tabTriage, which answers undefined.
+    const a = tab({ color: 'red' }, { severity: 'high', confidence: 9 })
+    const b = tab({ color: 'green' }, { severity: 'low', confidence: 1 })
+    assert.equal(scopedTriage([a, b]), null)
   })
 })
 
@@ -295,7 +330,7 @@ describe('syncGroupTriage', () => {
     reset()
     const group = [tab(null), tab(null), tab({ triage: 'inprogress' }), tab(null)]
     assert.equal(syncGroupTriage(group), true)
-    assert.deepEqual(group.map(tabTriage), ['inprogress', 'inprogress', 'inprogress', 'inprogress'])
+    assert.deepEqual(group.map((f) => tabTriage(f)), ['inprogress', 'inprogress', 'inprogress', 'inprogress'])
     assert.equal(groupState(group).commonTriage, 'inprogress', 'rollup unchanged — only the storage levelled')
   })
 
@@ -326,7 +361,7 @@ describe('syncGroupTriage', () => {
     reset()
     const group = [tab({ triage: 'inprogress' }), tab({ triage: 'fixed' }), tab(null)]
     assert.equal(syncGroupTriage(group), false)
-    assert.deepEqual(group.map(tabTriage), ['inprogress', 'fixed', undefined])
+    assert.deepEqual(group.map((f) => tabTriage(f)), ['inprogress', 'fixed', undefined])
   })
 
   it('never propagates the per-report ignore flag', () => {
@@ -336,7 +371,40 @@ describe('syncGroupTriage', () => {
     const group = [tab({ ignored: true }), tab(null)]
     assert.equal(groupState(group).commonTriage, 'ignored')
     assert.equal(syncGroupTriage(group), false)
-    assert.deepEqual(group.map(tabTriage), ['ignored', undefined])
+    assert.deepEqual(group.map((f) => tabTriage(f)), ['ignored', undefined])
+  })
+
+  it('leaves a tab holding an ignore for another report alone', () => {
+    // Its entry reads as unannotated here (isIgnored is per-report),
+    // but triage and ignoredReports are mutually exclusive on an entry
+    // and the load path resolves a violation by dropping the ignore —
+    // so levelling this tab would destroy an ignore set elsewhere.
+    reset()
+    const elsewhere = tab(null)
+    state.triage.set(elsewhere.id, { ignoredReports: ['other-report.json'] })
+    const group = [tab({ triage: 'fixed' }), elsewhere]
+    assert.equal(syncGroupTriage(group), false, 'nothing written')
+    assert.equal(state.triage.get(elsewhere.id).triage, undefined)
+    assert.deepEqual(state.triage.get(elsewhere.id).ignoredReports, ['other-report.json'])
+  })
+
+  it('levels the tabs it can even when a sibling holds a foreign ignore', () => {
+    reset()
+    const elsewhere = tab(null)
+    state.triage.set(elsewhere.id, { ignoredReports: ['other-report.json'] })
+    const group = [tab({ triage: 'fixed' }), tab(null), elsewhere]
+    assert.equal(syncGroupTriage(group), true)
+    assert.deepEqual(group.map((f) => state.triage.get(f.id)?.triage), ['fixed', 'fixed', undefined])
+  })
+
+  it('does not persist — the caller owns that', () => {
+    // saveTriage serializes the whole map; callers defer it past the
+    // render so opening a finding can't stall on it.
+    reset()
+    const group = [tab({ triage: 'fixed' }), tab(null)]
+    assert.equal(syncGroupTriage(group), true)
+    assert.equal(localStorage.getItem('deepview.triage'), null, 'no storage write')
+    assert.equal(localStorage.getItem('deepview.triage.pending'), null)
   })
 
   it('does nothing for an untriaged or single-tab group', () => {

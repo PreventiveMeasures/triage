@@ -3,7 +3,7 @@ import { classMap } from 'lit/directives/class-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { bundlesForFileHash, isLinkableFindingId, isPlaceholderNpmPackage, state } from '#client/index.js'
 import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, hasSeverityCorrection, isHttpUrl, listSegments, locationLabel, markdownLinkToken, parseCommentRefs, revalidateStamp, splitDescription, stripExportMarker } from './format.js'
-import { activeTabFor, findingRepo, findingRepoFallback, groupKey, groupState, isIgnored, sortTabs, tabKey, tabTriage } from './group.js'
+import { activeTabFor, findingRepo, findingRepoFallback, groupKey, groupState, isIgnored, scopedTriage, sortTabs, tabKey } from './group.js'
 import { highlightedCode } from './code-highlight.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 
@@ -679,13 +679,12 @@ function positionTriagePopover(e) {
 // resolves them once rather than once per nested helper.
 function triageMenuTemplate(group, title, context, groupSt, activeTab) {
   const gid = tabKey(group[0])
-  // Active tab's "current" bucket — triage state, else 'ignored'
-  // when the per-report ignore key is set, else null. For
-  // non-conflict groups, the rollup's commonTriage already folds
-  // both axes, so we read it directly. Same expression
-  // `triageActionPlan` decides set-vs-clear from, so the item marked
-  // active here is exactly the one a click switches off.
-  const current = (groupSt.hasConflict ? tabTriage(activeTab) : groupSt.commonTriage) ?? null
+  // What the scope currently shows — the active tab's bucket on a
+  // conflicted group, the rollup's otherwise. `scopedTriage` is the
+  // one definition `triageActionPlan` also decides set-vs-clear from,
+  // so the item marked active here is exactly the one a click
+  // switches off.
+  const current = scopedTriage(group, groupSt, activeTab)
   const STATE_LABELS = { inprogress: 'In progress', fixed: 'Fixed', invalid: 'Invalid', deleted: 'Deleted', ignored: 'Ignored' }
   const ACTION_LABELS = { inprogress: 'In progress', fixed: 'Fixed', invalid: 'Invalid', deleted: 'Delete', ignored: 'Ignore' }
   const inTriageView = Boolean(state.shownTriage)
@@ -764,30 +763,39 @@ function tabMarksTemplate(entry) {
 
 // One tab button. Carries severity badge + (optional) confidence +
 // annotation marks (comment / fix / flag, when present), plus the
-// per-tab color class, and — only when the group's tabs disagree about
-// their triage state — the per-tab state class behind that state's
-// glyph (`◐` / `✓` / `⊘` / `👁` / a struck-through label).
+// per-tab color class and — when it still says something the group
+// doesn't — the per-tab state class behind that state's glyph (`◐` /
+// `✓` / `⊘` / `👁` / a struck-through label).
 //
-// `showState` is the group's `triageConflict`. The glyphs answer
-// "which tab is the odd one out"; on a group whose tabs agree they
-// answer nothing — the card's own chrome already says the group is in
-// progress / fixed / deleted — and repeating it once per tab reads as
-// a per-tab annotation the user never made.
-function tabTemplate(f, isActive, showState) {
+// A tab's state is worth showing exactly when the GROUP can't show it.
+// `commonTriage` is the group's own state, and it is null precisely
+// when the card has nothing to display: the tabs' buckets disagree, or
+// a color conflict has suppressed the rollup. With a common state the
+// card already says "in progress" / "fixed" / "deleted", so repeating
+// it once per tab reads as a per-tab annotation the user never made.
+//
+// Ignore is the exception, and `allIgnored` (not `commonTriage`) gates
+// it: the rollup calls a group ignored off one annotated tab, but
+// `syncGroupTriage` deliberately never levels a per-report ignore, so
+// the tab that actually carries it stays worth pointing at until every
+// tab does.
+function tabTemplate(f, isActive, groupSt) {
   const key = tabKey(f)
   const entry = state.triage.get(key)
   const color = entry?.color
   const triage = entry?.triage
-  const ignored = isIgnored(f)
   const classes = ['tab']
   if (isActive) classes.push('active')
   if (color) classes.push(`tab-mark-${color}`)
-  if (showState && triage) classes.push(`tab-${triage}`)
-  // `tab-ignored` is per-tab (each tab has its own report) and
-  // mutually exclusive with the triage classes via the action
-  // handler. Falls through to a muted opacity hint via finding-row
-  // / finding-card CSS.
-  else if (showState && ignored) classes.push('tab-ignored')
+  if (triage) {
+    if (groupSt.commonTriage === null) classes.push(`tab-${triage}`)
+  } else if (!groupSt.allIgnored && isIgnored(f)) {
+    // Per-tab by nature — each tab carries its own report — and
+    // mutually exclusive with the triage classes via the action
+    // handler. Falls through to a muted opacity hint via finding-row
+    // / finding-card CSS.
+    classes.push('tab-ignored')
+  }
   return html`<button type="button" class=${classes.join(' ')} data-tid=${key}><span class="tab-label">${severityBadge(f, { variant: 'tab' })} ${f.confidence === undefined ? nothing : html`<span class="tab-conf">${f.confidence}/10</span>`}${tabMarksTemplate(entry)}</span></button>`
 }
 
@@ -1027,7 +1035,7 @@ export function findingCardInnerTemplate(g, opts = {}) {
     <div class="marks">
       <div class="marks-left">
         ${liftCommit ? nothing : commitRef}
-        ${sortedTabs.length > 1 ? html`<div class="tabs">${sortedTabs.map((f) => tabTemplate(f, tabKey(f) === activeKey, groupSt.triageConflict))}</div>` : nothing}
+        ${sortedTabs.length > 1 ? html`<div class="tabs">${sortedTabs.map((f) => tabTemplate(f, tabKey(f) === activeKey, groupSt))}</div>` : nothing}
       </div>
       ${actionButtonsTemplate(g, sortedTabs, groupSt, active, context)}
     </div>
@@ -1092,7 +1100,7 @@ export function tableRowInnerTemplate(g) {
           ${actionButtonsTemplate(g, sortedTabs, groupSt, active)}
         </div>
       </div>
-      ${sortedTabs.length > 1 ? html`<div class="tabs-row"><div class="tabs">${sortedTabs.map((tabF) => tabTemplate(tabF, tabKey(tabF) === activeKey, groupSt.triageConflict))}</div></div>` : nothing}
+      ${sortedTabs.length > 1 ? html`<div class="tabs-row"><div class="tabs">${sortedTabs.map((tabF) => tabTemplate(tabF, tabKey(tabF) === activeKey, groupSt))}</div></div>` : nothing}
     </div>
   `
 }

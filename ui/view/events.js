@@ -1,7 +1,7 @@
 import { SEVERITY_MODE_KEY, VIEW_MODE_KEY, isEncryptionEnabled, patchEntry, readBundle, saveRepoUrlFor, saveTriage, setReportIgnored, state, subscribeToBundleFindingIndex } from '#client/index.js'
 import { downloadBlob, report } from './dom.js'
 import { commonPrefix, handoffBlock } from './format.js'
-import { activeTabFor, findGroupById, findingRepo, findingReport, groupState, syncGroupTriage, tabKey, triageActionPlan } from './group.js'
+import { activeTabFor, findGroupById, findingRepo, findingReport, groupState, syncGroupTriage, tabKey, triageActionPlan, triageScope } from './group.js'
 import { resetFilters } from './filters.js'
 import { refreshGraph2Sidebar, refreshGraph2TopPkgs, render } from './render.js'
 import { refreshBundleGraphSidebar, refreshBundleGraphTopPkgs, revealBundleCodeCurrent } from './render-bundle.js'
@@ -1131,14 +1131,20 @@ if (bundleSourceOverlaySlot) {
 }
 
 // Opening a finding's details is where a partially-triaged group gets
-// levelled — see syncGroupTriage in group.js. Every surface that opens
-// one routes through here, so the healing doesn't depend on which view
-// the user came from. A no-op for a group that already agrees, for a
+// levelled — see syncGroupTriage in group.js. The detail surfaces
+// (table aside, kanban modal, focus card) route through here; grouped
+// and list mode render every card at once and have no open event, so
+// nothing levels there. A no-op for a group that already agrees, for a
 // single-tab group, and for a gid that no longer resolves; the render
 // each caller already runs picks up whatever changed.
+//
+// Persist AFTER that render, like the kanban drop below: saveTriage's
+// synchronous head serializes the whole triage map, and these callers
+// sit on click and arrow-key paths where that would stall the frame
+// the user is waiting for.
 function syncOpenedGroupTriage(gid) {
   const group = gid ? findGroupById(gid) : null
-  if (group) syncGroupTriage(group)
+  if (group && syncGroupTriage(group)) queueMicrotask(saveTriage)
 }
 
 // row-select fires from inside `<finding-table>`'s shadow DOM with
@@ -1188,11 +1194,10 @@ function applyTriage(targets, target) {
 }
 
 // Kanban drop: the column the card landed in names the state outright,
-// so there's nothing to toggle. Conflicted groups scope to the active
-// tab, same as the menu.
+// so there's nothing to toggle — only the scope question, which
+// `triageScope` answers for the menu too.
 function setGroupTriage(group, target) {
-  const groupSt = groupState(group)
-  applyTriage(groupSt.hasConflict ? [activeTabFor(group)] : group, target)
+  applyTriage(triageScope(group), target)
 }
 
 function clearKanbanDragChrome() {
@@ -1331,8 +1336,6 @@ function updateKanbanClipVars(stampedCard) {
 function setKanbanPopoverGid(next) {
   const prev = state.kanbanPopoverGid
   if (prev === next) return
-  // Before any render below, so the modal paints the settled state.
-  syncOpenedGroupTriage(next)
   const opening = prev === null && next !== null
   const closing = prev !== null && next === null
 
@@ -1341,6 +1344,7 @@ function setKanbanPopoverGid(next) {
   // allowed during an in-flight transition because they don't
   // start a new one — only a render().
   if (!document.startViewTransition || (!opening && !closing)) {
+    syncOpenedGroupTriage(next)
     state.kanbanPopoverGid = next
     render()
     return
@@ -1351,6 +1355,10 @@ function setKanbanPopoverGid(next) {
   // this the View Transitions API's `skipTransition()` race left
   // the page in a state where no further transition would render.
   if (kanbanTransitioning) return
+  // Past the lock: this click is being acted on, so the group it
+  // opens can be levelled. Above the lock it would mutate and persist
+  // on a click the guard is about to swallow — no modal, no render.
+  syncOpenedGroupTriage(next)
   kanbanTransitioning = true
 
   // Direction class on <html> so the CSS can hide the card-side

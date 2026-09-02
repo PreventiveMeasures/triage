@@ -29,9 +29,10 @@
 //
 // The state rules (which bucket, which filters, which member of a dedup
 // group) live in `finding-link.js`; this module is navigation + paint.
-import { findReportWithFinding, listWorkspaces, reportForHint, state, workspaceForHint, workspacesHoldingReport } from '#client/index.js'
+import { findReportWithFinding, listWorkspaces, reportForHint, saveTriage, state, workspaceForHint, workspacesHoldingReport } from '#client/index.js'
 import { report } from './dom.js'
 import { findLoadedFinding, unhideFinding } from './finding-link.js'
+import { syncGroupTriage } from './group.js'
 import { switchToFile, switchToWorkspace } from './ingest.js'
 import { render } from './render.js'
 import { tableRowGid } from './render-finding.js'
@@ -179,6 +180,12 @@ export async function revealFinding(ref) {
   if (!hit && await navigateByScan(ref.id)) hit = findLoadedFinding(ref.id)
   if (!hit) return { ok: false, reason: NOT_FOUND }
   const gid = unhideFinding(hit.group, ref.id)
+  // A link opens this finding as surely as a click does, so its group
+  // gets the same levelling the detail surfaces do (see
+  // syncGroupTriage). It lives here rather than in `unhideFinding`,
+  // which is a pure state mutation by contract; persistence waits for
+  // the paint, as everywhere else that levels.
+  if (syncGroupTriage(hit.group)) queueMicrotask(saveTriage)
   render()
   const el = await findRenderedFinding(gid)
   if (!el) {

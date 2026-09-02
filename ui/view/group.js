@@ -1,4 +1,4 @@
-import { getPackagesIndex, isReportIgnored, patchEntry, saveTriage, state } from '#client/index.js'
+import { getPackagesIndex, isReportIgnored, patchEntry, state } from '#client/index.js'
 import { SEVERITY_ORDER, displayedSeverity, isRevalidation } from './format.js'
 // NOTE: filters.js imports from this module too (primaryTab / tabKey).
 // The cycle is deliberate and benign: both sides only call across
@@ -35,8 +35,13 @@ export function isIgnored(f) {
 // Ignore behaves like a fourth bucket for rollup / conflict detection
 // but mutates differently (per-report key, its own store), so every
 // reader goes through this one definition rather than re-deriving it.
-export function tabTriage(f) {
-  return state.triage.get(tabKey(f))?.triage ?? (isIgnored(f) ? 'ignored' : undefined)
+//
+// `entry` is the tab's triage entry when the caller has already read it
+// — groupState reads it for the color axis anyway, and this is the
+// hottest helper in the findings render path, so it must not cost a
+// second observable read per tab.
+export function tabTriage(f, entry = state.triage.get(tabKey(f))) {
+  return entry?.triage ?? (isIgnored(f) ? 'ignored' : undefined)
 }
 
 // Tab sort order within a group: the revalidation row first, then
@@ -226,7 +231,7 @@ export function groupState(group) {
   let allBucketed = true
   for (const f of group) {
     const entry = state.triage.get(tabKey(f))
-    const bucket = tabTriage(f)
+    const bucket = tabTriage(f, entry)
     const color = entry?.color
     if (color === undefined && bucket === undefined) continue
     annotatedCount++
@@ -252,12 +257,14 @@ export function groupState(group) {
   const commonTriage = !hasConflict && firstTriage !== null ? firstTriage : null
   return {
     hasConflict, commonColor, anyTriage, allTriaged, commonTriage,
-    // Bucket disagreement alone, without the color axis `hasConflict`
-    // folds in. The per-tab state glyphs (`◐` / `✓` / `⊘` / the
-    // struck-through label) exist to show WHICH tab disagrees, so they
-    // render on this flag only — on a group whose tabs agree they'd
-    // repeat the card's own state once per tab (see tabTemplate).
-    triageConflict: bucketsConflict,
+    // True when EVERY tab is ignored, not just the annotated ones —
+    // the one bucket `syncGroupTriage` never levels, so "the rollup says
+    // ignored" and "each tab is ignored in its own report" are different
+    // facts and the tab glyph has to key off the stricter one (see
+    // tabTemplate). Safe as a count comparison: with no conflict, every
+    // annotated tab shares the 'ignored' bucket, so a full annotated
+    // count means a fully ignored group.
+    allIgnored: commonTriage === 'ignored' && annotatedCount === group.length,
     // Convenience flags so downstream code that asks "is this group in
     // the trash bucket" needn't branch on commonTriage.
     isInProgress: commonTriage === 'inprogress',
@@ -290,9 +297,32 @@ export function groupTriage(group) { return groupState(group).commonTriage }
 // asked of the rollup rather than of each tab.
 export function triageActionPlan(group, action) {
   const st = groupState(group)
-  const targets = st.hasConflict ? [activeTabFor(group)] : group
-  const current = st.hasConflict ? tabTriage(targets[0]) : st.commonTriage
-  return { targets, clearing: action === 'restore' || current === action }
+  return {
+    targets: triageScope(group, st),
+    clearing: action === 'restore' || scopedTriage(group, st) === action,
+  }
+}
+
+// The tabs a group-level triage write lands on. A conflicted group
+// narrows to the active tab, so resolving a disagreement doesn't
+// overwrite siblings the user hasn't looked at; everything else applies
+// to every tab. Shared with the kanban drop path so a menu click and a
+// column drop can't disagree about which tabs they touch.
+export function triageScope(group, st = groupState(group)) {
+  return st.hasConflict ? [activeTabFor(group)] : group
+}
+
+// The state that scope currently shows — what the menu marks active,
+// and what a re-click therefore switches off. One definition for both:
+// if the marked item and the cleared item ever came apart, clicking the
+// highlighted state would set it again instead of clearing it.
+//
+// `st` / `active` are accepted precomputed: the render path already
+// resolved both for the row, and the conflicted branch would otherwise
+// re-sort the group's tabs to find the active one.
+export function scopedTriage(group, st = groupState(group), active = null) {
+  if (!st.hasConflict) return st.commonTriage ?? null
+  return tabTriage(active ?? activeTabFor(group)) ?? null
 }
 
 // Level a group's triage: write the bucket its tabs agree on onto the
@@ -310,22 +340,40 @@ export function triageActionPlan(group, action) {
 // about one finding in one report (see isIgnored), not a verdict on
 // the group, and it lives in its own store.
 //
-// Persists and returns true when it changed something, so a caller
-// that would otherwise skip a re-render knows to do one.
+// Returns true when it actually wrote something. It does NOT persist:
+// callers own that, and they defer it (`queueMicrotask(saveTriage)`)
+// so a whole-map serialize can't land between an open and its paint —
+// the rule the kanban drop path already follows.
+//
+// `commonTriage` is null for any conflicted group, so agreement is
+// already the condition for getting past the first guard — including
+// a COLOR disagreement, which the rollup folds into the same value. A
+// group whose buckets agree but whose colors differ therefore keeps
+// its partial state; its tabs keep showing their own (see
+// tabTemplate), which is the signal that something is unresolved.
 export function syncGroupTriage(group) {
   if (!Array.isArray(group) || group.length < 2) return false
   const st = groupState(group)
   const bucket = st.commonTriage
-  if (!bucket || bucket === 'ignored' || st.triageConflict) return false
+  if (!bucket || bucket === 'ignored') return false
   let changed = false
   for (const f of group) {
+    const key = tabKey(f)
+    const entry = state.triage.get(key)
     // Anything still off the bucket here carries no bucket at all — an
     // annotated tab holding a different one would have conflicted above.
-    if (tabTriage(f) === bucket) continue
-    patchEntry(state.triage, tabKey(f), { triage: bucket })
-    changed = true
+    if (tabTriage(f, entry) === bucket) continue
+    // A tab holding an ignore for ANOTHER report reads as unannotated
+    // here (isIgnored is per-report) but is not a blank slate: triage
+    // and ignoredReports are mutually exclusive on an entry, and the
+    // load path resolves a violation by dropping the ignore
+    // (client/triage.js — a bucket-bearing entry never re-imports it).
+    // Levelling such a tab would silently destroy an ignore the user
+    // set somewhere else, so leave it alone; the group stays partial,
+    // which is the truth about it.
+    if (entry?.ignoredReports?.length) continue
+    if (patchEntry(state.triage, key, { triage: bucket })) changed = true
   }
-  if (changed) saveTriage()
   return changed
 }
 
