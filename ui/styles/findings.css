@@ -534,6 +534,13 @@
    view transition — see the
    `::view-transition-{new|old}(kanban-detail-modal)` rules below. */
 .kanban-detail-backdrop {
+  /* Width of the docked same-column rail (`.kanban-detail-side`).
+     The wide-viewport rule at the end of this block holds the same
+     width out of the backdrop's own box, so the modal centres in
+     what's left instead of running under the rail. Matches the focus
+     view's queue, whose cards these are. */
+  --kanban-side-w: 240px;
+
   position: fixed;
   inset: 0;
   z-index: 200;
@@ -565,11 +572,13 @@
 
 .kanban-detail-modal {
   position: relative;
-  /* Wider than the previous 560px cap — finding descriptions
+  /* Wider than the original 560px cap — finding descriptions
      can include long lines of code spans that clipped on the
      right edge at the smaller cap. Caps at viewport too so
-     narrow displays still get a sensible inset. */
-  width: min(900px, calc(100vw - 2rem));
+     narrow displays still get a sensible inset; once the rail is
+     mounted the cap is re-measured against the space it leaves
+     instead (see the media query below). */
+  width: min(1100px, calc(100vw - 2rem));
   max-height: calc(100vh - 2rem);
   background: var(--bg, var(--surface));
   border: 1px solid var(--border); border-radius: 8px;
@@ -617,6 +626,113 @@
 
   &::-webkit-scrollbar { width: 5px; }
   &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+}
+
+/* ── Same-column rail ───────────────────────────────────────────────
+   A queue of every finding sharing the open card's column, docked
+   full-height to the right edge of the screen: the kanban answer to
+   the focus view's "Up next" sidebar, down to reusing its cards
+   (`.focus-side-card`) and its prev / next controls (`.focus-nav`).
+   Working through one bucket then needs no round trip to the board —
+   the neighbours are on screen and one click swaps the dialog to any
+   of them.
+
+   Mounted only above the breakpoint at the end of this block, the
+   first width that can give up a 240px strip and still leave the
+   modal its full cap.
+
+   Fixed rather than a grid item: the backdrop pads itself 1rem on
+   every side, which is exactly what a panel meant to sit ON the
+   screen's edges can't have. It stays above the dim without a
+   z-index — both are positioned, and the rail comes later in the
+   backdrop's markup. */
+.kanban-detail-side {
+  position: fixed;
+  inset: 0 0 0 auto;
+  width: var(--kanban-side-w);
+  display: none;
+  flex-direction: column;
+  background: var(--bg, var(--surface));
+  /* Only the left edge is on screen. A border or a rounded corner on
+     the other three would draw a hairline along the viewport's own
+     and read as a panel someone forgot to finish. */
+  border-left: 1px solid var(--border);
+  box-shadow: -4px 0 14px rgb(0 0 0 / .25);
+  overflow: hidden;
+  /* Same deal as the modal: the backdrop passes clicks through, the
+     panels themselves take them. */
+  pointer-events: auto;
+  view-transition-name: kanban-detail-side;
+}
+
+.kanban-detail-side-header {
+  flex-shrink: 0;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: .5rem;
+  padding: .35rem .55rem;
+  border-bottom: 1px solid var(--border);
+  font-size: .72rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .06em;
+  color: var(--muted);
+
+  /* Label soaks up the free space so the position counter and the
+     prev / next pair stay pinned to the right edge, and a long
+     bucket name ellipsises instead of shoving them out. */
+  & .label {
+    flex: 1 1 auto; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  & .count {
+    font-weight: 500; font-size: .7rem;
+    color: var(--muted);
+    padding: 0 .35rem; border-radius: 999px;
+    background: rgb(from var(--text) r g b / .08);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+.kanban-detail-side-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: .3rem;
+  display: flex; flex-direction: column; gap: .25rem;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+
+  &::-webkit-scrollbar { width: 5px; }
+  &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+}
+
+/* The rail's cards ARE the focus queue's cards — badge + clamped
+   title + meta, no drag affordance, accent tint on the active one.
+   The one difference is the cursor: in the rail a card is a click
+   target that swaps the dialog's finding, so it points. Qualified by
+   the container so it outranks `.kanban-card.focus-side-card` no
+   matter which of the two blocks lands later in this file. */
+.kanban-detail-side .kanban-card.focus-side-card {
+  cursor: pointer;
+
+  &:active { cursor: pointer; }
+}
+
+/* Wide viewports: mount the rail and hold its width out of the
+   backdrop's own box, so the centred modal lands beside the rail
+   rather than under it. The 1rem added on top of the rail's width is
+   the inset the backdrop's other three sides already carry, which
+   makes the modal's two gutters measure the same thing — screen edge
+   to modal on the left, modal to rail on the right. Its cap is then
+   `100%` of what that leaves rather than of the viewport. */
+@media (width >= 1400px) {
+  .kanban-detail-backdrop {
+    padding-right: calc(var(--kanban-side-w) + 1rem);
+  }
+
+  .kanban-detail-modal { width: min(1100px, 100%); }
+
+  .kanban-detail-side { display: flex; }
 }
 
 /* Shared-element fly transition (open: card → modal, close:
@@ -730,12 +846,24 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
   animation: kanban-fade-out .14s ease-in forwards;
 }
 
+/* The rail rides the dim's fade track. It has no card to fly out of,
+   and a scale / clip of its own would compete with the modal's
+   animation right next to it. */
+::view-transition-new(kanban-detail-side) {
+  animation: kanban-fade-in .16s ease-out forwards;
+}
+::view-transition-old(kanban-detail-side) {
+  animation: kanban-fade-out .14s ease-in forwards;
+}
+
 @media (prefers-reduced-motion: reduce) {
   ::view-transition-group(kanban-detail-modal),
   ::view-transition-new(kanban-detail-modal),
   ::view-transition-old(kanban-detail-modal),
   ::view-transition-new(kanban-detail-dim),
-  ::view-transition-old(kanban-detail-dim) { animation-duration: .01s; }
+  ::view-transition-old(kanban-detail-dim),
+  ::view-transition-new(kanban-detail-side),
+  ::view-transition-old(kanban-detail-side) { animation-duration: .01s; }
 }
 
 /* ── Focus view ─────────────────────────────────────────────────────

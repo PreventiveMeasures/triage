@@ -147,6 +147,9 @@
      maps table → list, so a report printed from focus mode stays in
      focus and yields the single focused card. */
   .focus-sidebar { display: none !important; }
+  /* Same call for the kanban detail dialog's same-column rail: a
+     queue you click through, with nothing to say on paper. */
+  .kanban-detail-side { display: none !important; }
   .focus-view,
   .focus-main,
   .focus-main.with-code { display: block !important; }
