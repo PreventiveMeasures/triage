@@ -1,7 +1,7 @@
 import { SEVERITY_MODE_KEY, VIEW_MODE_KEY, isEncryptionEnabled, patchEntry, readBundle, saveRepoUrlFor, saveTriage, setReportIgnored, state, subscribeToBundleFindingIndex } from '#client/index.js'
 import { downloadBlob, report } from './dom.js'
 import { commonPrefix, configureRevalidation, handoffBlock } from './format.js'
-import { activeTabFor, canApplyFixToGroup, findGroupById, findingRepo, findingReport, fixApplies, getMergedGroups, groupState, syncGroupTriage, tabKey, triageActionPlan, triageScope } from './group.js'
+import { activeTabFor, canApplyFixToGroup, findGroupById, findingRepo, findingReport, fixApplies, getMergedGroups, groupState, groupWithPassRows, syncGroupTriage, tabKey, triageActionPlan, triageScope } from './group.js'
 import { defaultConfidenceFloor, defaultRevalidateFilter, resetFilters } from './filters.js'
 import { refreshGraph2Sidebar, refreshGraph2TopPkgs, render } from './render.js'
 import { refreshBundleGraphSidebar, refreshBundleGraphTopPkgs, revealBundleCodeCurrent } from './render-bundle.js'
@@ -1014,6 +1014,15 @@ report.addEventListener('click', (e) => {
   // dialog's group action widens one edit to every tab, offered only
   // where the group agrees (see canApplyFixToGroup). Dialog resolves
   // to null on cancel / Esc / unchanged save.
+  //
+  // "Whole group" means the group as the DATA has it — with the App
+  // lens off, that includes the revalidation rows it drops from the
+  // rendered one (`groupWithPassRows`). The pass's row is the same
+  // issue re-rated, so the PR that fixes the base finding fixes it
+  // too: it counts against the offer when it holds a different link,
+  // and it takes the write when the offer stands. The active tab and
+  // the tab pin stay on the RENDERED group — those are about what's on
+  // screen.
   const fixBtn = pathClosest(e, '.mark-fix')
   if (fixBtn) {
     const findingEl = pathClosest(e, '[data-gid]')
@@ -1021,11 +1030,12 @@ report.addEventListener('click', (e) => {
     const group = gid ? findGroupById(gid) : null
     if (!group) return
     const activeTab = activeTabFor(group)
+    const whole = groupWithPassRows(group)
     const current = state.triage.get(tabKey(activeTab))?.fix ?? ''
     openFixLinkDialog({
       initial: current,
       finding: activeTab,
-      canApplyToGroup: canApplyFixToGroup(group, current),
+      canApplyToGroup: canApplyFixToGroup(whole, current),
     }).then((next) => {
       if (next === null) return null
       // The offer was granted before the dialog opened; `fixApplies`
@@ -1033,7 +1043,7 @@ report.addEventListener('click', (e) => {
       // tab landed on a sibling meanwhile isn't overwritten by a
       // permission that has since expired.
       const targets = next.scope === 'group'
-        ? group.filter((f) => f === activeTab || fixApplies(f, current))
+        ? whole.filter((f) => f === activeTab || fixApplies(f, current))
         : [activeTab]
       let changed = false
       for (const f of targets) {

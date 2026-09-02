@@ -44,8 +44,8 @@ if (!globalThis[slotKey]) {
 
 const { state } = await import('../client/state.ts')
 const {
-  activeTabFor, canApplyFixToGroup, fixApplies, groupState, primaryTab, scopedTriage, sortTabs,
-  syncGroupTriage, tabTriage, triageActionPlan,
+  activeTabFor, canApplyFixToGroup, fixApplies, getMergedGroups, groupState, groupWithPassRows,
+  primaryTab, scopedTriage, sortTabs, syncGroupTriage, tabTriage, triageActionPlan,
 } = await import('../ui/view/group.js')
 
 const REPORT = 'report-a.json'
@@ -81,6 +81,11 @@ function reset() {
   state.activeTabByGroup.clear()
   state.filterAnalyzer = ''
   state.filterModel = ''
+  state.reports = []
+  state.workspaceMerges = []
+  // The App lens defaults on, i.e. the pass's own rows are part of
+  // every group (see withoutPassRows).
+  state.showRevalidation = true
 }
 
 // Each case: name, tab annotations (null = unannotated), expected
@@ -478,5 +483,81 @@ describe('canApplyFixToGroup', () => {
     assert.equal(fixApplies(bare, PR), true)
     assert.equal(fixApplies(landed, PR), false, 'a link that arrived meanwhile is not ours to move')
     assert.equal(fixApplies(tab({ fix: `${PR} ` }), PR), true, 'trimmed on both sides here too')
+  })
+})
+
+// The App switch (`state.showRevalidation`) takes the revalidation
+// layer off, and `getMergedGroups` drops the rows that ARE the pass
+// from every group the UI renders. They are still the same issue,
+// re-rated — the PR that fixes the base finding fixes them too — so a
+// whole-group annotation has to keep seeing them.
+describe('groupWithPassRows', () => {
+  const PR = 'https://github.com/o/r/pull/1'
+
+  // Seed a group as a loaded report, which is where getMergedGroups
+  // reads from; the returned array is the group as the data has it.
+  function loadGroup(...members) {
+    state.reports = [{ fileName: 'r.json', groups: [members] }]
+    return members
+  }
+
+  it('is the group itself while the lens is on', () => {
+    reset()
+    const group = loadGroup(tab(null), tab(null, { revalidate: 'revalidation' }))
+    assert.equal(groupWithPassRows(group), group)
+    assert.equal(getMergedGroups()[0].length, 2, 'and the pass row is rendered')
+  })
+
+  it('adds back the pass rows the lens dropped', () => {
+    reset()
+    const base = tab(null)
+    const pass = tab(null, { revalidate: 'revalidation' })
+    loadGroup(base, pass)
+    state.showRevalidation = false
+    const rendered = getMergedGroups()[0]
+    assert.deepEqual(rendered.map((f) => f.id), [base.id], 'the pass row is off screen')
+    assert.deepEqual(groupWithPassRows(rendered).map((f) => f.id), [base.id, pass.id])
+  })
+
+  it('withholds the offer when a hidden pass row holds a different link', () => {
+    reset()
+    const base = tab({ fix: PR })
+    const pass = tab({ fix: 'https://github.com/o/r/pull/2' }, { revalidate: 'revalidation' })
+    loadGroup(base, pass)
+    state.showRevalidation = false
+    const rendered = getMergedGroups()[0]
+    // The rendered group is down to one tab, so it could never have
+    // offered anything; the group as the data has it is what must
+    // withhold, and it does — the pass row points somewhere else.
+    assert.equal(canApplyFixToGroup(groupWithPassRows(rendered), PR), false)
+  })
+
+  it('offers — and reaches — a hidden pass row that agrees', () => {
+    reset()
+    const base = tab({ fix: PR })
+    const pass = tab(null, { revalidate: 'revalidation' })
+    loadGroup(base, pass)
+    state.showRevalidation = false
+    const whole = groupWithPassRows(getMergedGroups()[0])
+    assert.equal(canApplyFixToGroup(whole, PR), true)
+    assert.deepEqual(whole.filter((f) => fixApplies(f, PR)).map((f) => f.id), [base.id, pass.id],
+      'the write reaches the row the lens hides')
+  })
+
+  it('leaves a group alone when nothing was dropped from it', () => {
+    reset()
+    loadGroup(tab(null), tab(null))
+    state.showRevalidation = false
+    const rendered = getMergedGroups()[0]
+    assert.equal(groupWithPassRows(rendered), rendered, 'same array, no rebuild')
+  })
+
+  it('falls back to the given group when it is not a loaded one', () => {
+    // Defensive: a caller holding a group the reports no longer carry
+    // (a stale gid, a synthetic list) gets its argument back.
+    reset()
+    state.showRevalidation = false
+    const orphan = [tab(null), tab(null)]
+    assert.equal(groupWithPassRows(orphan), orphan)
   })
 })
