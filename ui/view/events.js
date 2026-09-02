@@ -1333,6 +1333,20 @@ function updateKanbanClipVars(stampedCard) {
   )
 }
 
+// Bring the open finding's twin in the dialog's same-column rail into
+// view. The rail mounts scrolled to the top, so opening (or stepping
+// to) a card deep in a long column would otherwise leave it showing a
+// slice of the queue that doesn't contain the finding on screen.
+// `block: 'nearest'` is a no-op when the card is already visible and
+// `behavior: 'instant'` keeps an arrow-key run from lagging behind the
+// modal — same pair of arguments (and reasons) as the focus queue's
+// scroll in setFocusGid. Silently does nothing when the rail isn't
+// mounted (narrow viewport, or a bucket-less triage state).
+function scrollKanbanRailActive() {
+  const card = report.querySelector('.kanban-detail-side [data-kanban-select].active')
+  if (card) card.scrollIntoView({ block: 'nearest', behavior: 'instant' })
+}
+
 function setKanbanPopoverGid(next) {
   const prev = state.kanbanPopoverGid
   if (prev === next) return
@@ -1347,6 +1361,7 @@ function setKanbanPopoverGid(next) {
     syncOpenedGroupTriage(next)
     state.kanbanPopoverGid = next
     render()
+    scrollKanbanRailActive()
     return
   }
 
@@ -1409,6 +1424,11 @@ function setKanbanPopoverGid(next) {
     state.kanbanPopoverGid = next
     const t = document.startViewTransition(() => {
       render()
+      // Inside the callback, so the rail is already scrolled to the
+      // open card when the NEW snapshot is captured — scrolling it
+      // afterwards would animate from a slice of the queue the user
+      // never asked for.
+      scrollKanbanRailActive()
       // Clear inline name inside the callback so the NEW snapshot
       // has exactly one element holding `kanban-detail-modal` —
       // the modal (via CSS). Two elements with the same name
@@ -1518,6 +1538,30 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
+  // Prev / next in the dialog rail's header — the same column walk
+  // the ← / → keys do, for the mouse.
+  const railNav = e.target.closest?.('[data-kanban-nav]')
+  if (railNav) {
+    navigateKanban(railNav.dataset.kanbanNav === 'next' ? 1 : -1)
+    return
+  }
+  // Card in the dialog's same-column rail — swap the dialog to that
+  // finding. The rail's cards aren't `[data-kanban-source]` (they
+  // don't drag), so they need their own branch, and it has to sit
+  // ahead of the light-dismiss fallthrough at the bottom or clicking
+  // one would read as "clicked outside the modal" and close it.
+  const railCard = e.target.closest?.('[data-kanban-select]')
+  if (railCard) {
+    // Same text-selection guard as the board card below.
+    if (window.getSelection?.()?.toString()) return
+    const gid = railCard.dataset.gid
+    // Re-clicking the open finding is a no-op (setKanbanPopoverGid
+    // bails on an unchanged gid) rather than a toggle-closed: in the
+    // rail the active card marks position, it isn't the thing the
+    // dialog came out of.
+    if (gid) setKanbanPopoverGid(gid)
+    return
+  }
   // Fix-link / comment shortcut on the compact card — the anchor
   // navigates on its own and the .mark-fix / .mark-comment buttons
   // open their dialogs via the delegates earlier in this file; none
@@ -1538,9 +1582,12 @@ report.addEventListener('click', (e) => {
     setKanbanPopoverGid(state.kanbanPopoverGid === gid ? null : gid)
     return
   }
-  // Click inside the modal panel — no-op (action buttons inside
-  // run via their own delegates higher up in this file).
-  if (e.target.closest?.('.kanban-detail-modal')) return
+  // Click inside the modal panel, or on the rail's chrome (header,
+  // padding, empty space below the cards) — no-op. Action buttons
+  // inside either panel run via their own delegates higher up in
+  // this file; what matters here is that neither counts as a click
+  // outside the dialog.
+  if (e.target.closest?.('.kanban-detail-modal, .kanban-detail-side')) return
   // Click anywhere else while the modal is open → close. With the
   // backdrop set to pointer-events: none, these clicks bubble up
   // from whatever non-modal, non-card DOM was under the cursor

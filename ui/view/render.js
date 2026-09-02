@@ -796,17 +796,30 @@ const COLLAPSE_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" fill=
   <path d="M6 2v4H2M10 2v4h4M10 14v-4h4M6 14v-4H2"/>
 </svg>`
 
+// Chevrons for the prev / next controls. Two headers carry the pair —
+// the focus view's queue and the kanban detail dialog's same-column
+// rail — and both walk their list with the same ←/→ keys, so they
+// share the glyphs as well as the `.focus-nav` chrome.
+const PREV_ICON = html`<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <path d="M10 3 5 8l5 5"/>
+</svg>`
+const NEXT_ICON = html`<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <path d="M6 3 11 8l-5 5"/>
+</svg>`
+
 // Compact kanban card — tiny colored letter-chip + multi-line
 // title + file:line. The full card (tabs, action buttons, the
 // description body) lives behind a click that opens a centered
 // modal (see kanbanDetailTemplate). The whole card is draggable
 // in the kanban variant; `data-kanban-source` lets the drop-zone
 // predicate in events.js tell us apart from any other element with
-// `data-gid`. The same compact template is reused as the focus
-// view's right-hand "up next" list — the `focus` variant drops
-// drag + adds the `[data-focus-select]` hook the focus click
-// handler picks up, plus an `.active` class on the currently-
-// focused card.
+// `data-gid`. The same compact template is reused by both side
+// queues — the focus view's right-hand "up next" list and the
+// detail dialog's same-column rail. Both drop drag and add an
+// `.active` class on the current card; they differ only in the
+// click hook they hang out for the events.js delegates
+// (`[data-focus-select]` swaps the focused finding,
+// `[data-kanban-select]` swaps the one the dialog shows).
 const SEVERITY_LETTERS = {
   critical:      'C',
   high:          'H',
@@ -822,6 +835,7 @@ function kanbanCardTemplate(g, opts = {}) {
   const activeTab = activeTabFor(g)
   const title = findingTitle(activeTab) || '(untitled finding)'
   const isKanban = variant === 'kanban'
+  const isRail = variant === 'kanban-side'
   const classes = {
     'kanban-card': true,
     'has-conflict': groupSt.hasConflict,
@@ -892,6 +906,20 @@ function kanbanCardTemplate(g, opts = {}) {
       aria-label=${`Open details for ${title}`}
     >${inner}</div>`
   }
+  // Dialog-rail variant — same card as the focus queue (the shared
+  // `.focus-side-card` class carries the look), with the click hook
+  // that swaps the open dialog to this finding instead.
+  if (isRail) {
+    return html`<div
+      class=${classMap(classes)}
+      data-gid=${groupKey(g)}
+      data-kanban-select
+      role="button"
+      tabindex="0"
+      aria-current=${active ? 'true' : 'false'}
+      aria-label=${`Show details for ${title}`}
+    >${inner}</div>`
+  }
   // Focus variant — the click handler in events.js looks for
   // `.focus-side-card[data-focus-select]` and swaps the centered
   // finding-card to the clicked gid.
@@ -941,11 +969,25 @@ function focusCodeLinesTemplate(code) {
 // animation is symmetric. The modal carries the source group's
 // mark color (or its conflict outline) on its host so a colored
 // finding's detail view reads consistently with its card.
-function kanbanDetailTemplate(focusGroup) {
+//
+// `column` is the bucket the open card belongs to ({ label, items },
+// items in board order) and backs the same-column rail alongside the
+// modal — the neighbours the ←/→ keys already step through, made
+// visible and clickable. findings.css mounts the rail from 1400px up
+// and reserves its width on BOTH sides of the modal, so the modal
+// stays centered and the rail never overlaps it.
+function kanbanDetailTemplate(focusGroup, column) {
   if (!focusGroup) return nothing
   const groupSt = groupState(focusGroup)
   const modalClasses = { 'kanban-detail-modal': true, 'has-conflict': groupSt.hasConflict }
   if (!groupSt.hasConflict && groupSt.commonColor) modalClasses[`mark-${groupSt.commonColor}`] = true
+  const gid = groupKey(focusGroup)
+  const items = column?.items ?? []
+  // Position of the open finding within its column. -1 can't happen
+  // for a group that came out of the same bucket map, but the counter
+  // and the nav buttons read off it, so treat a miss as "somewhere in
+  // there": show the plain total and leave both arrows live.
+  const idx = items.findIndex((g) => groupKey(g) === gid)
   // The dim sibling is a separate layer (its own view-transition-
   // name) so its opacity fade doesn't drag the modal's clip-path
   // animation with it. The modal animates by clip alone (no opacity
@@ -964,6 +1006,39 @@ function kanbanDetailTemplate(focusGroup) {
         ${findingCardPlaceholder(focusGroup, false, 'kanban-detail')}
       </div>
     </div>
+    ${items.length === 0 ? nothing : html`<aside class="kanban-detail-side" aria-label=${`${column.label} findings`}>
+      <!-- Header mirrors the focus queue's: bucket name, position
+           counter, and the prev / next pair (reusing its .focus-nav
+           chrome), which walk the same column the arrow keys do. -->
+      <div class="kanban-detail-side-header">
+        <span class="label">${column.label}</span>
+        <div class="focus-nav">
+          <button
+            type="button"
+            class="focus-nav-btn"
+            data-kanban-nav="prev"
+            ?disabled=${idx === 0}
+            title="Previous finding (←)"
+            aria-label="Previous finding"
+          >${PREV_ICON}</button>
+          <span class="count">${idx < 0 ? items.length : `${idx + 1} / ${items.length}`}</span>
+          <button
+            type="button"
+            class="focus-nav-btn"
+            data-kanban-nav="next"
+            ?disabled=${idx === items.length - 1}
+            title="Next finding (→)"
+            aria-label="Next finding"
+          >${NEXT_ICON}</button>
+        </div>
+      </div>
+      <div class="kanban-detail-side-body">
+        ${repeat(items, (g) => groupKey(g), (g) => kanbanCardTemplate(g, {
+          variant: 'kanban-side',
+          active: groupKey(g) === gid,
+        }))}
+      </div>
+    </aside>`}
   </div>`
 }
 
@@ -1091,9 +1166,7 @@ function findingsBodyTemplate(filtered) {
               ?disabled=${atStart}
               title="Previous finding (←)"
               aria-label="Previous finding"
-            ><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M10 3 5 8l5 5"/>
-            </svg></button>
+            >${PREV_ICON}</button>
             <span class="count">${focusedIdx + 1} / ${filtered.length}</span>
             <button
               type="button"
@@ -1102,9 +1175,7 @@ function findingsBodyTemplate(filtered) {
               ?disabled=${atEnd}
               title="Next finding (→)"
               aria-label="Next finding"
-            ><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M6 3 11 8l-5 5"/>
-            </svg></button>
+            >${NEXT_ICON}</button>
           </div>
         </div>
         <div class="focus-sidebar-body">
@@ -1174,6 +1245,14 @@ function findingsBodyTemplate(filtered) {
     const focusGroup = state.kanbanPopoverGid
       ? filtered.find((g) => groupKey(g) === state.kanbanPopoverGid)
       : null
+    // The open card's own bucket, handed to the dialog for its
+    // same-column rail. Resolved through the column list (not straight
+    // off `commonTriage`) for the same reason the bucketing loop above
+    // guards on `buckets.get`: a triage state no column claims has no
+    // rail to show, and degrades to the bare modal.
+    const focusColumn = focusGroup
+      ? columns.find((c) => c.key === (groupState(focusGroup).commonTriage ?? 'untriaged'))
+      : null
     return html`<div class="kanban-board" style=${styleMap(boardStyle)}>
       ${repeat(shownColumns, (c) => c.key, (c) => {
         const items = buckets.get(c.key)
@@ -1204,7 +1283,10 @@ function findingsBodyTemplate(filtered) {
         </div>`
       })}
     </div>
-    ${kanbanDetailTemplate(focusGroup)}`
+    ${kanbanDetailTemplate(focusGroup, focusColumn && {
+      label: focusColumn.label,
+      items: buckets.get(focusColumn.key),
+    })}`
   }
   if (state.viewMode === 'grouped') {
     // Group groups by file. All tabs in a dedup group share the same
