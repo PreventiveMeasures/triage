@@ -5,7 +5,7 @@ import { openImportConflictDialog } from './dialogs/import-conflict-dialog.js'
 import { dropZone, report } from './dom.js'
 import { toGroup } from './group.js'
 import { effectiveSeverity } from './format.js'
-import { defaultRevalidateFilter, resetFilters } from './filters.js'
+import { defaultConfidenceFloor, defaultRevalidateFilter, resetFilters } from './filters.js'
 import { render } from './render.js'
 import { renderSidebar } from './sidebar.js'
 import { cleanupGraph2, graph2 } from './graph/state.js'
@@ -1190,38 +1190,13 @@ export async function ingestReport(name, content, gen = null) {
     }
     if (isFirst) {
       resetFilters()
-      // Auto-tune the confidence floor so the initial view fits ~25
-      // groups. Step up 6 → 7 → 8 until the visible count is within
-      // budget; cap at 8 (the old static default). Skip entirely when
-      // no finding carries a confidence — without the guard,
-      // countAtMin(6) = 0 ≤ 25 lands the floor at 6, which then
-      // excludes every finding (all undefined). Clear the floor instead
-      // so the filter no-ops; the toolbar hides the control too (see
-      // toolbarHtml in render.js).
-      //
-      // After picking the base, walk DOWN while each lower step
-      // surfaces no new groups — i.e. there's a "gap" in the confidence
-      // distribution below the chosen floor. Lowering for free puts the
-      // slider at the natural break: e.g. picked 8, nothing at 7 or 6
-      // but some at 5 → settle at 6 (lowest step revealing nothing
-      // new). Applies down to 0 (= no floor).
-      const hasAnyConfidence = groups.some((g) => g.some((f) => f.confidence !== undefined))
-      if (hasAnyConfidence) {
-        const countAtMin = (min) => groups.reduce((n, g) =>
-          n + (g.some((f) => f.confidence !== undefined && f.confidence >= min) ? 1 : 0), 0)
-        let base
-        if (countAtMin(6) <= 25) base = 6
-        else if (countAtMin(7) <= 25) base = 7
-        else base = 8
-        while (base > 0 && countAtMin(base - 1) === countAtMin(base)) base--
-        state.filterConfMin = base
-      } else {
-        state.filterConfMin = 0
-      }
-      // The other half of the first-load default: a REVALIDATION
-      // report — one where every group the floor above leaves on
-      // screen carries a row the second pass stamped — opens on
-      // Confirmed instead of the range. See defaultRevalidateFilter.
+      // What this set opens on: an auto-tuned confidence floor, and
+      // then — for a REVALIDATION report, one where every group that
+      // floor leaves on screen carries a row the second pass stamped —
+      // Confirmed instead of the range. Both live in filters.js, so
+      // the App switch can ask the same two questions again when it
+      // reshapes the set (events.js).
+      state.filterConfMin = defaultConfidenceFloor(groups)
       state.filterRevalidate = defaultRevalidateFilter(groups, state.filterConfMin)
     }
     render()

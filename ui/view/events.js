@@ -2,7 +2,7 @@ import { SEVERITY_MODE_KEY, VIEW_MODE_KEY, isEncryptionEnabled, patchEntry, read
 import { downloadBlob, report } from './dom.js'
 import { commonPrefix, configureRevalidation, handoffBlock } from './format.js'
 import { activeTabFor, findGroupById, findingRepo, findingReport, getMergedGroups, groupState, syncGroupTriage, tabKey, triageActionPlan, triageScope } from './group.js'
-import { defaultRevalidateFilter, resetFilters } from './filters.js'
+import { defaultConfidenceFloor, defaultRevalidateFilter, resetFilters } from './filters.js'
 import { refreshGraph2Sidebar, refreshGraph2TopPkgs, render } from './render.js'
 import { refreshBundleGraphSidebar, refreshBundleGraphTopPkgs, revealBundleCodeCurrent } from './render-bundle.js'
 import { grantAdvisoriesProxyConsent, retryBundleAdvisories } from './render-bundle-advisories.js'
@@ -1877,26 +1877,26 @@ report.addEventListener('partial-change', (e) => {
 // which filters the toolbar offers, and what every card draws, so this
 // is a full render like the severity lens rather than a repaint.
 //
-// The outcome filter is re-derived rather than carried over, because
-// carrying it over is meaningless in both directions: switching OFF
-// leaves a selection nothing can reach (render.js would clear it
-// anyway), and switching back ON leaves the cleared one — so a report
-// that OPENS on Confirmed came back on plain Confidence, which is not
-// where a reload would have put it. So ask the same question ingest
-// asks on a first load (filters.js defaultRevalidateFilter), against
-// the set the switch has just reshaped. The confidence RANGE is left
-// alone: it is the user's, and the switch is about the layer, not
-// about how sure the analyzer was — the re-derivation reads whatever
-// floor is set, so the answer is what a reload WITH THAT RANGE would
-// give.
+// The confidence block is re-derived rather than carried over: the
+// switch changes which findings exist and what they are about, so it
+// leaves the filter where a reload of the new set would put it — the
+// same two questions ingest.js asks on a first load, asked again
+// against the set the switch has just reshaped. Carrying the answers
+// over was wrong in every part: an outcome nothing can reach once the
+// layer is off, the CLEARED outcome once it is back on (so a report
+// that OPENS on Confirmed returned to plain Confidence), and a floor
+// tuned for a group count the switch has just changed.
 //
-// configureRevalidation before either call: both read `revalidate`
-// through format.js's gate, and it is still set to the mode the
-// previous render was drawn in.
+// configureRevalidation before any of it: getMergedGroups and
+// defaultRevalidateFilter both read `revalidate` through format.js's
+// gate, and it is still set to the mode the previous render drew.
 report.addEventListener('revalidation-change', (e) => {
   state.showRevalidation = e.detail.on
   configureRevalidation(state.showRevalidation)
-  state.filterRevalidate = defaultRevalidateFilter(getMergedGroups(), state.filterConfMin)
+  const groups = getMergedGroups()
+  state.filterConfMin = defaultConfidenceFloor(groups)
+  state.filterConfMax = 10
+  state.filterRevalidate = defaultRevalidateFilter(groups, state.filterConfMin)
   state.filterPartial = ''
   render()
 })

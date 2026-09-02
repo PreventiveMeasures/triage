@@ -33,7 +33,7 @@ if (!globalThis[slotKey]) {
 }
 
 const { state } = await import('../client/state.ts')
-const { applyFilters, defaultRevalidateFilter, matchesFilters } = await import('../ui/view/filters.js')
+const { applyFilters, defaultConfidenceFloor, defaultRevalidateFilter, matchesFilters } = await import('../ui/view/filters.js')
 const { getMergedGroups, sortTabs } = await import('../ui/view/group.js')
 const {
   PARTIAL_MODES, REVALIDATE_FILTERS, REVALIDATE_KINDS, activeRevalidateKinds,
@@ -619,15 +619,27 @@ describe('the revalidation layer switch', () => {
         makeFinding('A', { confidence: 9, revalidate: 'revalidation' }),
         makeFinding('B', { confidence: 9, revalidate: 'confirmed' }),
       ]] }]
+      // The expression events.js runs on a flip — the same two
+      // questions ingest.js asks on a first load.
       const derive = () => {
         configureRevalidation(state.showRevalidation)
-        return defaultRevalidateFilter(getMergedGroups(), state.filterConfMin)
+        const groups = getMergedGroups()
+        state.filterConfMin = defaultConfidenceFloor(groups)
+        state.filterConfMax = 10
+        return defaultRevalidateFilter(groups, state.filterConfMin)
       }
       assert.equal(derive(), 'confirmed')
       state.showRevalidation = false
       assert.equal(derive(), '', 'nothing to reach with the layer off')
+      // A range the user moved is not carried across the flip: the
+      // switch changes which findings exist, so the floor it was
+      // tuned against is gone with them.
+      state.filterConfMin = 0
+      state.filterConfMax = 4
       state.showRevalidation = true
       assert.equal(derive(), 'confirmed', 'and back to where a reload would put it')
+      assert.equal(state.filterConfMin, defaultConfidenceFloor(getMergedGroups()))
+      assert.equal(state.filterConfMax, 10)
     } finally {
       state.reports = reports
       state.workspaceMerges = merges
