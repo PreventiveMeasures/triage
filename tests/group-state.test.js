@@ -16,9 +16,11 @@
 //   - empty-annotation groups: no conflict, no color, no bucket
 //
 // Plus the write side the rollup drives: `triageActionPlan` (what a
-// triage-menu click applies, and whether it sets or clears) and
+// triage-menu click applies, and whether it sets or clears),
 // `syncGroupTriage` (levelling a group whose tabs agree but only some
-// carry the bucket).
+// carry the bucket), and `canApplyFixToGroup` / `fixApplies` (whether
+// a fix link edited on one tab may be offered to — and written to —
+// the rest).
 
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
@@ -42,7 +44,7 @@ if (!globalThis[slotKey]) {
 
 const { state } = await import('../client/state.ts')
 const {
-  activeTabFor, canApplyFixToGroup, groupState, primaryTab, scopedTriage, sortTabs,
+  activeTabFor, canApplyFixToGroup, fixApplies, groupState, primaryTab, scopedTriage, sortTabs,
   syncGroupTriage, tabTriage, triageActionPlan,
 } = await import('../ui/view/group.js')
 
@@ -50,8 +52,8 @@ const REPORT = 'report-a.json'
 
 let nextId = 0
 // One finding (= one tab). `ann` carries the triage-entry fields to
-// install in state.triage for it: { color?, triage?, ignored? } —
-// `ignored: true` writes the per-report ignoredReports list keyed to
+// install in state.triage for it: { color?, triage?, fix?, ignored? }
+// — `ignored: true` writes the per-report ignoredReports list keyed to
 // this finding's `_reportName`.
 function tab(ann = null, extra = {}) {
   const f = {
@@ -425,23 +427,30 @@ describe('canApplyFixToGroup', () => {
   it('offers the group when the siblings carry nothing yet', () => {
     reset()
     assert.equal(canApplyFixToGroup([tab(null), tab(null)], ''), true)
-    reset()
-    assert.equal(canApplyFixToGroup([tab({ fix: PR }), tab(null), tab(null)], PR), true)
   })
 
   it('offers it when every tab already carries the link being edited', () => {
     reset()
     assert.equal(canApplyFixToGroup([tab({ fix: PR }), tab({ fix: PR })], PR), true)
+    reset()
+    assert.equal(canApplyFixToGroup([tab({ fix: PR }), tab(null), tab(null)], PR), true,
+      'a mix of carriers and bare siblings still agrees')
   })
 
   it('withholds it when a sibling holds a different link', () => {
     reset()
     const other = 'https://github.com/o/r/pull/2'
     assert.equal(canApplyFixToGroup([tab({ fix: PR }), tab({ fix: other })], PR), false)
-    // Same shape from the other side: editing the bare tab of a group
-    // whose sibling already points somewhere else.
+  })
+
+  it('reads through surrounding whitespace on either side', () => {
+    // The dialog writes trimmed values, but sync peers and imports
+    // store whatever they were handed — a stray space must not read as
+    // a different link and withhold the offer from an agreeing group.
     reset()
-    assert.equal(canApplyFixToGroup([tab(null), tab({ fix: other })], ''), false)
+    assert.equal(canApplyFixToGroup([tab({ fix: `${PR} ` }), tab({ fix: PR })], PR), true)
+    reset()
+    assert.equal(canApplyFixToGroup([tab({ fix: PR }), tab(null)], `  ${PR}  `), true)
   })
 
   it('never offers it for a single-tab group', () => {
@@ -457,5 +466,17 @@ describe('canApplyFixToGroup', () => {
     reset()
     const group = [tab({ fix: PR, triage: 'fixed', color: 'green' }), tab({ color: 'red' })]
     assert.equal(canApplyFixToGroup(group, PR), true)
+  })
+
+  it('re-asks per tab, for the write that happens after the dialog', () => {
+    // The offer is granted before the dialog opens; a sync peer or
+    // another browser tab can land a link on a sibling while it is up,
+    // and that sibling must then be left alone.
+    reset()
+    const bare = tab(null)
+    const landed = tab({ fix: 'https://github.com/o/r/pull/9' })
+    assert.equal(fixApplies(bare, PR), true)
+    assert.equal(fixApplies(landed, PR), false, 'a link that arrived meanwhile is not ours to move')
+    assert.equal(fixApplies(tab({ fix: `${PR} ` }), PR), true, 'trimmed on both sides here too')
   })
 })

@@ -284,12 +284,23 @@ export function groupState(group) {
 // said they differ, so the offer would be to overwrite that.
 //
 // `current` is the pre-edit value; pass '' when the tab carries none.
+// Both sides are trimmed: the dialog writes trimmed values but
+// `normalizeEntry` stores whatever a sync peer or an import hands it,
+// so a stray space would otherwise read as a different link and
+// withhold the offer from a group that agrees.
 export function canApplyFixToGroup(group, current) {
   if (!Array.isArray(group) || group.length < 2) return false
-  return group.every((f) => {
-    const fix = state.triage.get(tabKey(f))?.fix ?? ''
-    return fix === '' || fix === current
-  })
+  const want = (current ?? '').trim()
+  return group.every((f) => fixApplies(f, want))
+}
+
+// One tab's half of that test, so the write can re-ask it per tab at
+// the moment it writes — the offer is granted before the dialog opens,
+// and a sync peer or another browser tab can land a link on a sibling
+// while it sits there.
+export function fixApplies(f, current) {
+  const fix = (state.triage.get(tabKey(f))?.fix ?? '').trim()
+  return fix === '' || fix === (current ?? '').trim()
 }
 
 export function isGroupDeleted(group) { return groupState(group).isDeleted }

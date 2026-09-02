@@ -1,7 +1,7 @@
 import { SEVERITY_MODE_KEY, VIEW_MODE_KEY, isEncryptionEnabled, patchEntry, readBundle, saveRepoUrlFor, saveTriage, setReportIgnored, state, subscribeToBundleFindingIndex } from '#client/index.js'
 import { downloadBlob, report } from './dom.js'
 import { commonPrefix, configureRevalidation, handoffBlock } from './format.js'
-import { activeTabFor, canApplyFixToGroup, findGroupById, findingRepo, findingReport, getMergedGroups, groupState, syncGroupTriage, tabKey, triageActionPlan, triageScope } from './group.js'
+import { activeTabFor, canApplyFixToGroup, findGroupById, findingRepo, findingReport, fixApplies, getMergedGroups, groupState, syncGroupTriage, tabKey, triageActionPlan, triageScope } from './group.js'
 import { defaultConfidenceFloor, defaultRevalidateFilter, resetFilters } from './filters.js'
 import { refreshGraph2Sidebar, refreshGraph2TopPkgs, render } from './render.js'
 import { refreshBundleGraphSidebar, refreshBundleGraphTopPkgs, revealBundleCodeCurrent } from './render-bundle.js'
@@ -1007,34 +1007,48 @@ report.addEventListener('click', (e) => {
     } catch {}
     return
   }
-  // Fix-link button — mirrors the comment flow but stores into
-  // state.fixes. Typically a PR URL (also accepts plain text). Empty
-  // input clears the entry. Per-active-tab by default, so a multi-tab
-  // group can hold distinct fix references per member; the dialog's
-  // group action widens one edit to every tab when they'd all agree
-  // anyway. Dialog resolves to null on cancel / Esc / unchanged save.
+  // Fix-link button — mirrors the comment flow but stores into the
+  // finding's triage entry. Typically a PR URL (also accepts plain
+  // text). Empty input clears the entry. Per-active-tab by default, so
+  // a multi-tab group can hold distinct fix references per member; the
+  // dialog's group action widens one edit to every tab, offered only
+  // where the group agrees (see canApplyFixToGroup). Dialog resolves
+  // to null on cancel / Esc / unchanged save.
   const fixBtn = pathClosest(e, '.mark-fix')
   if (fixBtn) {
     const findingEl = pathClosest(e, '[data-gid]')
-    const gid = findingEl.dataset.gid
-    const group = findGroupById(gid)
+    const gid = findingEl?.dataset.gid
+    const group = gid ? findGroupById(gid) : null
     if (!group) return
     const activeTab = activeTabFor(group)
-    const activeKey = tabKey(activeTab)
-    const current = state.triage.get(activeKey)?.fix ?? ''
-    // The dialog's "Apply to whole group" action, offered only when
-    // every sibling is either bare or already on this link — see
-    // canApplyFixToGroup. Tested against the PRE-EDIT value, so the
-    // offer reflects the group as the user found it.
-    const canApplyToGroup = canApplyFixToGroup(group, current)
-    openFixLinkDialog({ initial: current, finding: activeTab, canApplyToGroup }).then((next) => {
+    const current = state.triage.get(tabKey(activeTab))?.fix ?? ''
+    openFixLinkDialog({
+      initial: current,
+      finding: activeTab,
+      canApplyToGroup: canApplyFixToGroup(group, current),
+    }).then((next) => {
       if (next === null) return null
-      const targets = next.scope === 'group' ? group : [activeTab]
+      // The offer was granted before the dialog opened; `fixApplies`
+      // re-asks per tab now, so a link a sync peer or another browser
+      // tab landed on a sibling meanwhile isn't overwritten by a
+      // permission that has since expired.
+      const targets = next.scope === 'group'
+        ? group.filter((f) => f === activeTab || fixApplies(f, current))
+        : [activeTab]
+      let changed = false
       for (const f of targets) {
-        patchEntry(state.triage, tabKey(f), { fix: next.value || undefined })
+        if (patchEntry(state.triage, tabKey(f), { fix: next.value || undefined })) changed = true
       }
-      saveTriage()
+      if (!changed) return null
+      // A fix link is one of the marks `activeTabFor` picks the default
+      // tab by, so writing it to every sibling would otherwise hand the
+      // default to the group's first tab and swap the card out from
+      // under the user. Pin what they were reading.
+      if (targets.length > 1) state.activeTabByGroup.set(gid, tabKey(activeTab))
       renderPreservingTableScroll()
+      // Paint first, persist after — saveTriage's synchronous head
+      // serializes the whole triage map (see the kanban drop below).
+      queueMicrotask(saveTriage)
       return null
     }).catch(() => {})
     return

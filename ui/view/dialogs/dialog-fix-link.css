@@ -62,13 +62,3 @@ input {
   margin: .45rem 0 0;
   color: var(--muted); font-size: .74rem;
 }
-
-/* "Apply to whole group" — sits between the destructive Clear and the
-   Cancel / Save pair, muted and borderless so it reads as an aside to
-   the save rather than a third button competing with it. */
-.nwd-actions button.quiet {
-  border-color: transparent;
-  color: var(--muted);
-
-  &:hover:not(:disabled) { border-color: transparent; color: var(--accent); }
-}

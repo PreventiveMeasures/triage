@@ -56,17 +56,22 @@ class FixLinkDialog extends AppDialog {
 
   _onInput = (e) => { this._value = e.target.value }
 
+  get _trimmed() { return (this._value ?? '').trim() }
+
   _onSave = () => {
-    const trimmed = (this._value ?? '').trim()
     const before = (this.initial ?? '').trim()
-    if (trimmed === before) { this._finish(null); return }
-    this._finish({ value: trimmed, scope: 'finding' })
+    if (this._trimmed === before) { this._finish(null); return }
+    this._finish({ value: this._trimmed, scope: 'finding' })
   }
 
   // Group scope resolves even when the value is unchanged: the siblings
-  // are the point, and they may not carry it yet.
+  // are the point, and they may not carry it yet. Disabled on an empty
+  // field — this button says "set this link", and letting it commit an
+  // empty value would make it a group-wide delete with none of Clear's
+  // warning colour. Removing a link stays per-finding.
   _onApplyToGroup = () => {
-    this._finish({ value: (this._value ?? '').trim(), scope: 'group' })
+    if (!this._trimmed) return
+    this._finish({ value: this._trimmed, scope: 'group' })
   }
 
   _onClear = () => this._finish({ value: '', scope: 'finding' })
@@ -87,7 +92,7 @@ class FixLinkDialog extends AppDialog {
     const f = this.finding ?? {}
     const loc = f.file ? (f.line ? `${f.file}:${f.line}` : f.file) : ''
     const hasInitial = (this.initial ?? '').length > 0
-    const trimmed = (this._value ?? '').trim()
+    const trimmed = this._trimmed
     const openable = isHttpUrl(trimmed)
     return html`<dialog @close=${this._onClose}>
       <header>
@@ -122,9 +127,9 @@ class FixLinkDialog extends AppDialog {
           : nothing}
         <span class="nwd-spacer"></span>
         ${this.canApplyToGroup
-          ? html`<button type="button" class="quiet" title="Set this link on every finding in the group" @click=${this._onApplyToGroup}>Apply to whole group</button>`
+          ? html`<button type="button" class="quiet" ?disabled=${!trimmed} @click=${this._onApplyToGroup}>Apply to whole group</button>
+        <span class="nwd-spacer"></span>`
           : nothing}
-        <span class="nwd-spacer"></span>
         <button type="button" @click=${this._onCancel}>Cancel</button>
         <button type="button" class="primary" @click=${this._onSave}>Save</button>
       </footer>
