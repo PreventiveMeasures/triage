@@ -15,7 +15,7 @@ import { parseCodexCsvToScans } from '../../common/parse-codex.js'
 import { parseDeepsecFindings } from '../../common/parse-deepsec.js'
 import { parsePioliumFindings } from '../../common/parse-piolium.js'
 import { deriveFindingId } from '../../common/finding-id.js'
-import { inheritReportMeta } from '../../common/report-meta.js'
+import { inheritReportMeta, reportRepoGithub } from '../../common/report-meta.js'
 import { importWorkspaceFromGzip } from './workspace-import.js'
 import { maybePromptFirstImport } from './first-import-prompt.js'
 import { openPasskeyUnlockDialog } from './dialogs/passkey-unlock-dialog.js'
@@ -1043,7 +1043,16 @@ export async function ingestReport(name, content, gen = null) {
     // fileUrl / lineLink resolves the right fallback in workspace mode
     // (where state.repoUrl can't represent N reports at once). Empty
     // string for headless / print ingests with no OPFS-backed URL.
-    const repoFallback = loadRepoUrlFor(name)
+    //
+    // A report-level `repo.github` declaration outranks that typed URL
+    // — it's the analyzer naming what the run covered, and the header
+    // shows it INSTEAD of the editable chip (see repoChipTemplate), so
+    // links have to resolve against the repo the chip names. Stamped in
+    // slug form: `repoBaseUrl` expands it for links, and it buckets
+    // with analyzer-stamped `repo.github` values in the Repositories
+    // view rather than splitting the same repo across two keys.
+    const declaredRepo = reportRepoGithub(data)
+    const repoFallback = declaredRepo ?? loadRepoUrlFor(name)
     const groups = []
     let dupeCount = 0
     for (const entry of rawEntries) {
@@ -1157,6 +1166,10 @@ export async function ingestReport(name, content, gen = null) {
       source: data.source ?? null,
       fileName: name,
       groups,
+      // Report-level repo declaration, normalised to an `owner/name`
+      // slug (null when the dump names none). The header prefers it
+      // over the repo its findings agree on — see headerTemplate.
+      repo: declaredRepo,
       // Per-file imports / exports / hashes from the analyzer dump
       // (stamped at JSON-export time). The renderer surfaces this as a
       // separate "Tree" tab when more than one file is present.

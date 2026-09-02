@@ -170,6 +170,10 @@ const SOURCE_TITLES = {
 // lives in the `<repo-chip>` Lit component (see view/repo-chip.js);
 // this function picks which props to set based on the load state:
 //
+//   * `declaredRepo` — the report-level `repo.github` (see
+//     headerTemplate). Read-only chip in EVERY mode, ahead of
+//     everything else: the report named its own repository, so
+//     there's nothing left to infer and nothing to type.
 //   * Workspace merge (`state.currentWorkspace`) — only the
 //     read-only chip when every finding shares a `repo.github`;
 //     the per-report URL is stamped on findings as
@@ -182,7 +186,11 @@ const SOURCE_TITLES = {
 // `repoInputUseful` is the existing flag computed in the main render
 // path — true when at least one non-module finding lacks per-finding
 // repo info, so user-typed `state.repoUrl` is needed to build links.
-function repoChipTemplate(repoInputUseful, knownRepo) {
+// It can't outrank `declaredRepo`: a declared repo already fills that
+// gap at ingest (it seeds each finding's `_repoFallback`), so the
+// input would have nothing left to buy.
+function repoChipTemplate(repoInputUseful, knownRepo, declaredRepo) {
+  if (declaredRepo) return html`<repo-chip url=${declaredRepo}></repo-chip>`
   if (state.currentWorkspace) {
     if (knownRepo) return html`<repo-chip url=${knownRepo}></repo-chip>`
     return nothing
@@ -282,7 +290,18 @@ function headerTemplate(mergedGroups, fileNames, repoInputUseful, knownRepo, tre
     }
   }
 
-  const repoTpl = repoChipTemplate(repoInputUseful, knownRepo)
+  // Report-declared repo — `"repo": { "github": "owner/name" }` at the
+  // top of a native dump, lifted onto the report record at ingest.
+  // Outranks the findings-derived `knownRepo`: a report naming its own
+  // repository beats one inferred from what its findings happened to
+  // carry. Requires every loaded report to declare the SAME slug —
+  // under a workspace merge, one report's declaration says nothing
+  // about the others' findings, and a mixed load falls through to the
+  // findings agreement (which is null for genuinely mixed repos)
+  // rather than labelling the whole header with one of several.
+  const declaredRepos = new Set(state.reports.map((r) => r.repo ?? null))
+  const declaredRepo = declaredRepos.size === 1 ? [...declaredRepos][0] : null
+  const repoTpl = repoChipTemplate(repoInputUseful, knownRepo, declaredRepo)
   const sep = html`<span class="sep" aria-hidden="true"></span>`
 
   // Files toggle — sits right after the repo chip in the title row so

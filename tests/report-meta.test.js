@@ -11,11 +11,17 @@
 //   * null counts as unspecified (JSON has no `undefined`);
 //   * source-marked reports (deepsec / codex-security /
 //     claude-security) inherit nothing.
+//
+// Plus `reportRepoGithub`, the report-level `repo.github` declaration
+// — deliberately NOT part of that inheritance (a dependency finding's
+// own `repo.github` names its upstream, not the scanned project), and
+// normalised to an `owner/name` slug so links, the header chip and the
+// Repositories view all key off one form.
 
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { META_FIELDS, inheritReportMeta } from '../common/report-meta.js'
+import { META_FIELDS, inheritReportMeta, reportRepoGithub } from '../common/report-meta.js'
 
 // The header shape the analyzer emits at the top of a native dump.
 const header = () => ({
@@ -83,5 +89,59 @@ describe('inheritReportMeta', () => {
     const f = finding()
     inheritReportMeta(f, { ...header(), source: 'claude-security' })
     for (const k of META_FIELDS) assert.equal(f[k], undefined, `${k} not inherited`)
+  })
+})
+
+describe('reportRepoGithub', () => {
+  const repo = (github) => reportRepoGithub({ repo: { github } })
+
+  it('takes the canonical `owner/name` slug as-is', () => {
+    assert.equal(repo('lodash/lodash'), 'lodash/lodash')
+    assert.equal(repo('  spaced/slug  '), 'spaced/slug', 'surrounding whitespace trimmed')
+    assert.equal(repo('owner/name.git'), 'owner/name', '.git suffix dropped')
+  })
+
+  it('normalises a github URL down to the slug', () => {
+    // The form links and the chip need — `fileUrl` interpolates the
+    // value straight into `github.com/<value>/blob/HEAD/...`, so a
+    // full URL left intact would build a broken link.
+    for (const url of [
+      'https://github.com/owner/name',
+      'http://github.com/owner/name.git',
+      'github.com/owner/name/',
+      'https://www.github.com/owner/name/tree/main',
+      'https://github.com/owner/name?tab=readme',
+    ]) {
+      assert.equal(repo(url), 'owner/name', url)
+    }
+  })
+
+  it('rejects anything that is not a github repo', () => {
+    assert.equal(repo('https://gitlab.com/owner/name'), null, 'other forge')
+    assert.equal(repo('owner'), null, 'no repo half')
+    assert.equal(repo('a/b/c'), null, 'not a slug')
+    assert.equal(repo('owner/na me'), null, 'space inside the slug')
+    assert.equal(repo(''), null)
+    assert.equal(repo('   '), null)
+  })
+
+  it('returns null when the report declares nothing usable', () => {
+    assert.equal(reportRepoGithub({}), null)
+    assert.equal(reportRepoGithub({ repo: {} }), null)
+    assert.equal(reportRepoGithub({ repo: null }), null)
+    assert.equal(reportRepoGithub({ repo: { github: null } }), null)
+    assert.equal(reportRepoGithub({ repo: { github: 42 } }), null, 'non-string ignored')
+    assert.equal(reportRepoGithub(null), null)
+  })
+
+  it('is independent of the run-meta inheritance', () => {
+    // A source-marked report inherits no run meta, but a repo it
+    // declares still counts — the opt-out is about `type` colliding
+    // with a category label, which says nothing about the repository.
+    assert.equal(reportRepoGithub({ source: 'deepsec', repo: { github: 'owner/name' } }), 'owner/name')
+    // And the declaration never lands on the findings themselves.
+    const f = finding()
+    inheritReportMeta(f, { ...header(), repo: { github: 'owner/name' } })
+    assert.equal(f.repo, undefined, 'per-finding repo left alone')
   })
 })
