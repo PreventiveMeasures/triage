@@ -275,6 +275,23 @@ export function groupState(group) {
   }
 }
 
+// Whether a fix link edited on one tab can be offered to the whole
+// group. Two conditions: the group has siblings to apply it to, and
+// every tab either carries no link or carries the very link being
+// edited (its value BEFORE this edit). Anywhere else the siblings hold
+// references of their own, and a fix link names one specific PR or
+// commit — a group whose members already differ is one where someone
+// said they differ, so the offer would be to overwrite that.
+//
+// `current` is the pre-edit value; pass '' when the tab carries none.
+export function canApplyFixToGroup(group, current) {
+  if (!Array.isArray(group) || group.length < 2) return false
+  return group.every((f) => {
+    const fix = state.triage.get(tabKey(f))?.fix ?? ''
+    return fix === '' || fix === current
+  })
+}
+
 export function isGroupDeleted(group) { return groupState(group).isDeleted }
 export function groupTriage(group) { return groupState(group).commonTriage }
 

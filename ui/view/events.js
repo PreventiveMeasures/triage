@@ -1,7 +1,7 @@
 import { SEVERITY_MODE_KEY, VIEW_MODE_KEY, isEncryptionEnabled, patchEntry, readBundle, saveRepoUrlFor, saveTriage, setReportIgnored, state, subscribeToBundleFindingIndex } from '#client/index.js'
 import { downloadBlob, report } from './dom.js'
 import { commonPrefix, configureRevalidation, handoffBlock } from './format.js'
-import { activeTabFor, findGroupById, findingRepo, findingReport, getMergedGroups, groupState, syncGroupTriage, tabKey, triageActionPlan, triageScope } from './group.js'
+import { activeTabFor, canApplyFixToGroup, findGroupById, findingRepo, findingReport, getMergedGroups, groupState, syncGroupTriage, tabKey, triageActionPlan, triageScope } from './group.js'
 import { defaultConfidenceFloor, defaultRevalidateFilter, resetFilters } from './filters.js'
 import { refreshGraph2Sidebar, refreshGraph2TopPkgs, render } from './render.js'
 import { refreshBundleGraphSidebar, refreshBundleGraphTopPkgs, revealBundleCodeCurrent } from './render-bundle.js'
@@ -1009,9 +1009,10 @@ report.addEventListener('click', (e) => {
   }
   // Fix-link button — mirrors the comment flow but stores into
   // state.fixes. Typically a PR URL (also accepts plain text). Empty
-  // input clears the entry. Per-active-tab so a multi-tab group holds
-  // distinct fix references per member. Dialog resolves to null on
-  // cancel / Esc / unchanged save.
+  // input clears the entry. Per-active-tab by default, so a multi-tab
+  // group can hold distinct fix references per member; the dialog's
+  // group action widens one edit to every tab when they'd all agree
+  // anyway. Dialog resolves to null on cancel / Esc / unchanged save.
   const fixBtn = pathClosest(e, '.mark-fix')
   if (fixBtn) {
     const findingEl = pathClosest(e, '[data-gid]')
@@ -1021,9 +1022,17 @@ report.addEventListener('click', (e) => {
     const activeTab = activeTabFor(group)
     const activeKey = tabKey(activeTab)
     const current = state.triage.get(activeKey)?.fix ?? ''
-    openFixLinkDialog({ initial: current, finding: activeTab }).then((next) => {
+    // The dialog's "Apply to whole group" action, offered only when
+    // every sibling is either bare or already on this link — see
+    // canApplyFixToGroup. Tested against the PRE-EDIT value, so the
+    // offer reflects the group as the user found it.
+    const canApplyToGroup = canApplyFixToGroup(group, current)
+    openFixLinkDialog({ initial: current, finding: activeTab, canApplyToGroup }).then((next) => {
       if (next === null) return null
-      patchEntry(state.triage, activeKey, { fix: next || undefined })
+      const targets = next.scope === 'group' ? group : [activeTab]
+      for (const f of targets) {
+        patchEntry(state.triage, tabKey(f), { fix: next.value || undefined })
+      }
       saveTriage()
       renderPreservingTableScroll()
       return null

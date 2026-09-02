@@ -42,8 +42,8 @@ if (!globalThis[slotKey]) {
 
 const { state } = await import('../client/state.ts')
 const {
-  activeTabFor, groupState, primaryTab, scopedTriage, sortTabs, syncGroupTriage, tabTriage,
-  triageActionPlan,
+  activeTabFor, canApplyFixToGroup, groupState, primaryTab, scopedTriage, sortTabs,
+  syncGroupTriage, tabTriage, triageActionPlan,
 } = await import('../ui/view/group.js')
 
 const REPORT = 'report-a.json'
@@ -67,6 +67,7 @@ function tab(ann = null, extra = {}) {
     const entry = {}
     if (ann.color) entry.color = ann.color
     if (ann.triage) entry.triage = ann.triage
+    if (ann.fix) entry.fix = ann.fix
     if (ann.ignored) entry.ignoredReports = [REPORT]
     state.triage.set(f.id, entry)
   }
@@ -412,5 +413,49 @@ describe('syncGroupTriage', () => {
     assert.equal(syncGroupTriage([tab(null), tab(null)]), false)
     assert.equal(syncGroupTriage([tab({ triage: 'fixed' })]), false, 'nothing to agree with')
     assert.equal(syncGroupTriage(null), false)
+  })
+})
+
+// The fix-link dialog offers "Apply to whole group" on this test. A
+// fix link names one specific PR or commit, so the offer is only safe
+// where no sibling holds a different one.
+describe('canApplyFixToGroup', () => {
+  const PR = 'https://github.com/o/r/pull/1'
+
+  it('offers the group when the siblings carry nothing yet', () => {
+    reset()
+    assert.equal(canApplyFixToGroup([tab(null), tab(null)], ''), true)
+    reset()
+    assert.equal(canApplyFixToGroup([tab({ fix: PR }), tab(null), tab(null)], PR), true)
+  })
+
+  it('offers it when every tab already carries the link being edited', () => {
+    reset()
+    assert.equal(canApplyFixToGroup([tab({ fix: PR }), tab({ fix: PR })], PR), true)
+  })
+
+  it('withholds it when a sibling holds a different link', () => {
+    reset()
+    const other = 'https://github.com/o/r/pull/2'
+    assert.equal(canApplyFixToGroup([tab({ fix: PR }), tab({ fix: other })], PR), false)
+    // Same shape from the other side: editing the bare tab of a group
+    // whose sibling already points somewhere else.
+    reset()
+    assert.equal(canApplyFixToGroup([tab(null), tab({ fix: other })], ''), false)
+  })
+
+  it('never offers it for a single-tab group', () => {
+    reset()
+    assert.equal(canApplyFixToGroup([tab(null)], ''), false)
+    assert.equal(canApplyFixToGroup([], ''), false)
+    assert.equal(canApplyFixToGroup(null, ''), false)
+  })
+
+  it('ignores the other annotations on a tab', () => {
+    // Colors, triage and comments say nothing about where the fix
+    // lives — only a differing fix link withholds the offer.
+    reset()
+    const group = [tab({ fix: PR, triage: 'fixed', color: 'green' }), tab({ color: 'red' })]
+    assert.equal(canApplyFixToGroup(group, PR), true)
   })
 })
