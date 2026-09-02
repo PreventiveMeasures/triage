@@ -57,6 +57,7 @@ function findingToMarkdown(f) {
   const ignored = isIgnored(f)
   const color = entry?.color
   const comment = entry?.comment ?? ''
+  const fix = entry?.fix ?? ''
   // Title + body via the same split the card draws: a report that
   // names the finding in a `title` field gets that name emitted as the
   // body's first line, which is exactly where a markdown import would
@@ -135,8 +136,12 @@ function findingToMarkdown(f) {
     lines.push(`**Severity correction:** ${f.correctedSeverityReason.trim()}`)
     lines.push('')
   }
-  if (f.fix) {
-    lines.push(`**Fix:** ${stripExportMarker(f.fix, f).trim()}`)
+  // The fix link is a TRIAGE annotation (the wrench dialog writes it
+  // into the finding's triage entry, alongside the comment read above)
+  // — findings themselves carry no `fix` field, so reading one off `f`
+  // exported nothing, ever.
+  if (fix) {
+    lines.push(`**Fix:** ${fix.trim()}`)
     lines.push('')
   }
   if (comment) {

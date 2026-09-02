@@ -16,9 +16,11 @@
 //   - empty-annotation groups: no conflict, no color, no bucket
 //
 // Plus the write side the rollup drives: `triageActionPlan` (what a
-// triage-menu click applies, and whether it sets or clears) and
+// triage-menu click applies, and whether it sets or clears),
 // `syncGroupTriage` (levelling a group whose tabs agree but only some
-// carry the bucket).
+// carry the bucket), and `canApplyFixToGroup` / `fixApplies` (whether
+// a fix link edited on one tab may be offered to — and written to —
+// the rest).
 
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
@@ -42,16 +44,16 @@ if (!globalThis[slotKey]) {
 
 const { state } = await import('../client/state.ts')
 const {
-  activeTabFor, groupState, primaryTab, scopedTriage, sortTabs, syncGroupTriage, tabTriage,
-  triageActionPlan,
+  activeTabFor, canApplyFixToGroup, fixApplies, groupState, primaryTab, scopedTriage, sortTabs,
+  syncGroupTriage, tabTriage, triageActionPlan,
 } = await import('../ui/view/group.js')
 
 const REPORT = 'report-a.json'
 
 let nextId = 0
 // One finding (= one tab). `ann` carries the triage-entry fields to
-// install in state.triage for it: { color?, triage?, ignored? } —
-// `ignored: true` writes the per-report ignoredReports list keyed to
+// install in state.triage for it: { color?, triage?, fix?, ignored? }
+// — `ignored: true` writes the per-report ignoredReports list keyed to
 // this finding's `_reportName`.
 function tab(ann = null, extra = {}) {
   const f = {
@@ -67,6 +69,7 @@ function tab(ann = null, extra = {}) {
     const entry = {}
     if (ann.color) entry.color = ann.color
     if (ann.triage) entry.triage = ann.triage
+    if (ann.fix) entry.fix = ann.fix
     if (ann.ignored) entry.ignoredReports = [REPORT]
     state.triage.set(f.id, entry)
   }
@@ -412,5 +415,68 @@ describe('syncGroupTriage', () => {
     assert.equal(syncGroupTriage([tab(null), tab(null)]), false)
     assert.equal(syncGroupTriage([tab({ triage: 'fixed' })]), false, 'nothing to agree with')
     assert.equal(syncGroupTriage(null), false)
+  })
+})
+
+// The fix-link dialog offers "Apply to whole group" on this test. A
+// fix link names one specific PR or commit, so the offer is only safe
+// where no sibling holds a different one.
+describe('canApplyFixToGroup', () => {
+  const PR = 'https://github.com/o/r/pull/1'
+
+  it('offers the group when the siblings carry nothing yet', () => {
+    reset()
+    assert.equal(canApplyFixToGroup([tab(null), tab(null)], ''), true)
+  })
+
+  it('offers it when every tab already carries the link being edited', () => {
+    reset()
+    assert.equal(canApplyFixToGroup([tab({ fix: PR }), tab({ fix: PR })], PR), true)
+    reset()
+    assert.equal(canApplyFixToGroup([tab({ fix: PR }), tab(null), tab(null)], PR), true,
+      'a mix of carriers and bare siblings still agrees')
+  })
+
+  it('withholds it when a sibling holds a different link', () => {
+    reset()
+    const other = 'https://github.com/o/r/pull/2'
+    assert.equal(canApplyFixToGroup([tab({ fix: PR }), tab({ fix: other })], PR), false)
+  })
+
+  it('reads through surrounding whitespace on either side', () => {
+    // The dialog writes trimmed values, but sync peers and imports
+    // store whatever they were handed — a stray space must not read as
+    // a different link and withhold the offer from an agreeing group.
+    reset()
+    assert.equal(canApplyFixToGroup([tab({ fix: `${PR} ` }), tab({ fix: PR })], PR), true)
+    reset()
+    assert.equal(canApplyFixToGroup([tab({ fix: PR }), tab(null)], `  ${PR}  `), true)
+  })
+
+  it('never offers it for a single-tab group', () => {
+    reset()
+    assert.equal(canApplyFixToGroup([tab(null)], ''), false)
+    assert.equal(canApplyFixToGroup([], ''), false)
+    assert.equal(canApplyFixToGroup(null, ''), false)
+  })
+
+  it('ignores the other annotations on a tab', () => {
+    // Colors, triage and comments say nothing about where the fix
+    // lives — only a differing fix link withholds the offer.
+    reset()
+    const group = [tab({ fix: PR, triage: 'fixed', color: 'green' }), tab({ color: 'red' })]
+    assert.equal(canApplyFixToGroup(group, PR), true)
+  })
+
+  it('re-asks per tab, for the write that happens after the dialog', () => {
+    // The offer is granted before the dialog opens; a sync peer or
+    // another browser tab can land a link on a sibling while it is up,
+    // and that sibling must then be left alone.
+    reset()
+    const bare = tab(null)
+    const landed = tab({ fix: 'https://github.com/o/r/pull/9' })
+    assert.equal(fixApplies(bare, PR), true)
+    assert.equal(fixApplies(landed, PR), false, 'a link that arrived meanwhile is not ours to move')
+    assert.equal(fixApplies(tab({ fix: `${PR} ` }), PR), true, 'trimmed on both sides here too')
   })
 })

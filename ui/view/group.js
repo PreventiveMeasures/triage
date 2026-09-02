@@ -275,6 +275,34 @@ export function groupState(group) {
   }
 }
 
+// Whether a fix link edited on one tab can be offered to the whole
+// group. Two conditions: the group has siblings to apply it to, and
+// every tab either carries no link or carries the very link being
+// edited (its value BEFORE this edit). Anywhere else the siblings hold
+// references of their own, and a fix link names one specific PR or
+// commit — a group whose members already differ is one where someone
+// said they differ, so the offer would be to overwrite that.
+//
+// `current` is the pre-edit value; pass '' when the tab carries none.
+// Both sides are trimmed: the dialog writes trimmed values but
+// `normalizeEntry` stores whatever a sync peer or an import hands it,
+// so a stray space would otherwise read as a different link and
+// withhold the offer from a group that agrees.
+export function canApplyFixToGroup(group, current) {
+  if (!Array.isArray(group) || group.length < 2) return false
+  const want = (current ?? '').trim()
+  return group.every((f) => fixApplies(f, want))
+}
+
+// One tab's half of that test, so the write can re-ask it per tab at
+// the moment it writes — the offer is granted before the dialog opens,
+// and a sync peer or another browser tab can land a link on a sibling
+// while it sits there.
+export function fixApplies(f, current) {
+  const fix = (state.triage.get(tabKey(f))?.fix ?? '').trim()
+  return fix === '' || fix === (current ?? '').trim()
+}
+
 export function isGroupDeleted(group) { return groupState(group).isDeleted }
 export function groupTriage(group) { return groupState(group).commonTriage }
 

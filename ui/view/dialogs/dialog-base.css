@@ -68,6 +68,16 @@ header h3 {
     background: var(--accent); color: var(--surface); border-color: var(--accent);
     &:hover:not(:disabled) { color: var(--surface); filter: brightness(1.08); }
   }
+  /* Tertiary aside (fix-link's "Apply to whole group") — muted and
+     borderless so it reads as a note beside the confirm pair rather
+     than a third button competing with it. The hover rule re-asserts
+     the missing border: the base `:hover` above is more specific than
+     `&.quiet` and would otherwise paint an accent one. */
+  &.quiet {
+    border-color: transparent;
+    color: var(--muted);
+    &:hover:not(:disabled) { border-color: transparent; }
+  }
   /* Destructive action (Clear, Leave, Delete). */
   &.danger {
     color: var(--critical, #f87171); border-color: var(--border);
