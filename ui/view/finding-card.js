@@ -28,6 +28,7 @@
 import { unsafeCSS } from 'lit'
 import { StateElement, html } from '@rray/frontend/state-element'
 import { findingCardClasses, findingCardGid, findingCardInnerTemplate } from './render-finding.js'
+import { revealCitedLines } from './reveal-cited.js'
 import cardCSS from './finding-card.css'
 
 const MANAGED_HOST_CLASSES = [
@@ -73,6 +74,27 @@ class FindingCard extends StateElement {
     // padding/border via the shadow boundary's outer-wins cascade
     // rule. See finding-card.css.
     return html`<div class="card">${findingCardInnerTemplate(this.group, { context: this.context })}</div>`
+  }
+
+  // A source preview that opened on a range taller than its ten-line
+  // cap has to be SCROLLED to the citation, or it opens on the context
+  // above and the reader has to go looking for the lines they asked
+  // for. Same rule as the focus panel (reveal-cited.js): centre the
+  // block, clamped to a line of lead-in.
+  //
+  // Here rather than in the template because it is a measurement, and
+  // it has to run after the paint that produced the lines. `updated`
+  // fires on every pass, so each preview is positioned ONCE and marked
+  // — the content arrives asynchronously (bundle, then highlight) and
+  // each settle re-renders, which would otherwise yank a preview the
+  // reader had scrolled by hand back to where it started. Closing and
+  // reopening builds a fresh element, so it is positioned again.
+  updated() {
+    for (const preview of this.renderRoot.querySelectorAll('.code-preview:not([data-revealed])')) {
+      preview.dataset.revealed = '1'
+      const cited = preview.querySelectorAll('.code-preview-lineno.cited')
+      if (cited.length > 0) revealCitedLines(preview, cited)
+    }
   }
 
   connectedCallback() {

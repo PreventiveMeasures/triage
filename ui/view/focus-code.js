@@ -19,6 +19,7 @@ import { lineRange } from './format.js'
 import { langForPath, highlight as prismHighlight } from './prism-highlight.js'
 import { render } from './render.js'
 import { report } from './dom.js'
+import { revealCitedLines } from './reveal-cited.js'
 
 // integrity → { sources: Map<file, content> | null, loading: bool, error: string | null }
 const sourcesCache = new Map()
@@ -82,38 +83,13 @@ async function loadSources(integrity) {
 }
 
 // Bring the cited lines into view in the focus panel's code body.
-//
-// The whole BLOCK, centred — a finding citing `20-30` is pointing at
-// the span, so the span is what should be in the middle of the panel,
-// not its opening line with the rest trailing off below.
-//
-// Except when the block is as tall as the panel or taller, where
-// centring it would put its start above the top edge and open the
-// reader somewhere in the middle of their own citation. There the
-// scroll stops one line short of the block instead: the first cited
-// line is what they are looking for, and a line of lead-in above it
-// says the block starts here rather than continues here. `Math.min`
-// is the whole rule — centring wins while it is the gentler of the
-// two, and the clamp takes over exactly when it stops being.
-//
-// No `scrollIntoView`: it can only align ONE element, which is how
-// this used to end up centred on the first line of a span. Writing
-// `scrollTop` puts the block where it belongs in one go, and
-// `behavior: 'instant'` keeps an arrow-key run-through from queueing
-// a smooth animation per step.
+// `.focus-code-body` is the box that scrolls; the rule for where the
+// block lands in it is shared with the card's previews (see
+// reveal-cited.js).
 export function revealFocusCodeLines() {
   const rows = report.querySelectorAll('.focus-code-line-active')
   if (rows.length === 0) return
-  const body = rows[0].closest('.focus-code-body')
-  if (!body) return
-  const bodyTop = body.getBoundingClientRect().top
-  const first = rows[0].getBoundingClientRect()
-  const last = rows.item(rows.length - 1).getBoundingClientRect()
-  // Offsets within the scrolled content, not the viewport.
-  const top = first.top - bodyTop + body.scrollTop
-  const bottom = last.bottom - bodyTop + body.scrollTop
-  const centred = top + (bottom - top) / 2 - body.clientHeight / 2
-  body.scrollTo({ top: Math.max(0, Math.min(centred, top - first.height)), behavior: 'instant' })
+  revealCitedLines(rows[0].closest('.focus-code-body'), rows)
 }
 
 // The bundle attached to a finding, as `{ integrity, file }`, or null.
