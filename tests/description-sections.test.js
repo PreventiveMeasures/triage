@@ -33,7 +33,7 @@ if (!globalThis[slotKey]) {
   }
 }
 
-const { codeBlockSegments, descriptionSections, evidenceMarkdown, evidenceNote, findingTitle, flowText, handoffBlock, listSegments, snippetWindow, splitDescription, titledDescription } = await import('../ui/view/format.js')
+const { codeBlockSegments, descriptionSections, evidenceMarkdown, evidenceNote, findingTitle, flowText, handoffBlock, lineRange, lineRangeLabel, listSegments, snippetWindow, splitDescription, titledDescription } = await import('../ui/view/format.js')
 
 describe('descriptionSections — empty input', () => {
   it('returns nothing for empty / missing bodies', () => {
@@ -833,5 +833,74 @@ describe('snippetWindow', () => {
     for (const bad of ['', undefined, null, 42]) {
       assert.deepEqual(snippetWindow(bad, 3), { text: '', startLine: 1, lines: [] })
     }
+  })
+})
+
+// A finding's `line` is not always one line: reports cite spans, and
+// md-structure.js's parseCodeRef keeps them whole (`60-90` stays
+// `60-90`) so the location displays print what was written. Everything
+// that DRAWS the code reads them through here, because a span shown
+// with only its opening line marked hides what was being pointed at.
+describe('lineRange', () => {
+  it('reads a single line, however it arrives', () => {
+    assert.deepEqual(lineRange(42), { start: 42, end: 42 })
+    assert.deepEqual(lineRange('42'), { start: 42, end: 42 })
+    assert.deepEqual(lineRange('  42 '), { start: 42, end: 42 })
+  })
+
+  it('reads a span', () => {
+    assert.deepEqual(lineRange('20-30'), { start: 20, end: 30 })
+    assert.deepEqual(lineRange('20 - 30'), { start: 20, end: 30 })
+  })
+
+  // A report being sloppy about a real span, not a report meaning
+  // nothing.
+  it('sorts reversed ends rather than refusing them', () => {
+    assert.deepEqual(lineRange('30-20'), { start: 20, end: 30 })
+  })
+
+  it('answers null for anything that is not a line', () => {
+    for (const bad of ['', '?', 'abc', '0', '-5', '20-', '-20', '1-2-3', null, undefined, NaN, 0, -3, {}]) {
+      assert.equal(lineRange(bad), null, String(bad))
+    }
+  })
+
+  it('prints a range the way a location does', () => {
+    assert.equal(lineRangeLabel(lineRange('42')), '42')
+    assert.equal(lineRangeLabel(lineRange('20-30')), '20-30')
+    // Normalised from the parse, so a sloppy field reads as it meant.
+    assert.equal(lineRangeLabel(lineRange('30 - 20')), '20-30')
+    assert.equal(lineRangeLabel(null), '')
+  })
+})
+
+describe('snippetWindow — ranges', () => {
+  const file = Array.from({ length: 40 }, (_, i) => `line ${i + 1}`).join('\n')
+
+  it('keeps the WHOLE range, with context either side', () => {
+    const { lines, startLine } = snippetWindow(file, lineRange('20-30'))
+    assert.equal(startLine, 16)
+    assert.equal(lines.at(-1), 'line 34')
+    // Every cited line is in the window — the radius is context around
+    // the citation, not a budget the citation has to fit inside.
+    assert.equal(lines.length, 19)
+  })
+
+  it('takes a range as a bare number, or as the string a report wrote', () => {
+    const fromString = snippetWindow(file, lineRange('20'))
+    assert.deepEqual(snippetWindow(file, 20), fromString)
+    assert.deepEqual(snippetWindow(file, { start: 20, end: 20 }), fromString)
+  })
+
+  it('clamps a range that runs past the end of the file', () => {
+    const { lines, startLine } = snippetWindow(file, lineRange('38-99'))
+    assert.equal(startLine, 34)
+    assert.equal(lines.at(-1), 'line 40')
+  })
+
+  it('clamps a range that starts before the file does', () => {
+    const { lines, startLine } = snippetWindow(file, lineRange('1-3'))
+    assert.equal(startLine, 1)
+    assert.equal(lines.at(-1), 'line 7')
   })
 })

@@ -15,6 +15,7 @@ import { bundlesForFileHash, state } from '#client/index.js'
 import { activeTabFor } from './group.js'
 import { buildBundleDetails } from './bundle-load.js'
 import { bundleSourcesAsMap } from './bundle-sources.js'
+import { lineRange } from './format.js'
 import { langForPath, highlight as prismHighlight } from './prism-highlight.js'
 import { render } from './render.js'
 import { report } from './dom.js'
@@ -134,9 +135,14 @@ export function bundleSource(integrity, file) {
   }
 }
 
-// The focus view's inline code panel: the active tab's own file, whole,
-// with the finding's line marked. Same three answers as bundleSource
-// above, plus the file / integrity / line the panel's header needs.
+// The focus view's inline code panel: the active tab's own file,
+// whole, with the finding's lines marked. Same three answers as
+// bundleSource above, plus the file / integrity / range the panel's
+// header and gutter need.
+//
+// A RANGE, not a line: a report citing `20-30` means the span, and
+// marking only line 20 hides what it was pointing at (format.js
+// lineRange).
 export function getFocusCode(focusedGroup) {
   if (!focusedGroup) return null
   const active = activeTabFor(focusedGroup)
@@ -144,11 +150,10 @@ export function getFocusCode(focusedGroup) {
   if (!match) return null
   const source = bundleSource(match.integrity, match.file)
   if (!source || source.loading) return source
-  const lineNum = parseInt(active.line, 10)
   return {
     ...source,
     file: match.file,
     integrity: match.integrity,
-    line: Number.isFinite(lineNum) ? lineNum : null,
+    range: lineRange(active.line),
   }
 }

@@ -3,7 +3,7 @@ import { classMap } from 'lit/directives/class-map.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { bundleFilePath, bundlesForFileHash, isLinkableFindingId, isPlaceholderNpmPackage, state } from '#client/index.js'
-import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, hasSeverityCorrection, isHttpUrl, listSegments, locationLabel, markdownLinkToken, parseCommentRefs, revalidateStamp, revalidationShown, snippetWindow, splitDescription, stripExportMarker } from './format.js'
+import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, hasSeverityCorrection, isHttpUrl, lineRange, listSegments, locationLabel, markdownLinkToken, parseCommentRefs, revalidateStamp, revalidationShown, snippetWindow, splitDescription, stripExportMarker } from './format.js'
 import { activeTabFor, findingRepo, findingRepoFallback, groupKey, groupState, isIgnored, scopedTriage, sortTabs, tabKey } from './group.js'
 import { highlightedCode } from './code-highlight.js'
 import { attachedBundle, bundleSource } from './focus-code.js'
@@ -398,12 +398,12 @@ function evidenceTemplate(f) {
   const bundle = attachedBundle(f)
   return html`<details class="evidence">
     <summary class="section-label">Evidence<span class="evidence-count">(${rows.length})</span></summary>
-    <ol class="evidence-list">${rows.map((row) => {
+    <ol class="evidence-list">${rows.map((row, i) => {
       const label = locationLabel(row)
       const url = evidenceUrl(row, f, repoFallback)
       const note = evidenceNote(row)
-      const lineNum = parseInt(row?.line, 10)
-      const preview = codePreview(f, bundle, row?.file, Number.isFinite(lineNum) ? lineNum : null)
+      // Indexed, so two rows citing the same place stay two eyes too.
+      const preview = codePreview(f, `ev${i}`, bundle, row?.file, row?.line)
       return html`<li>
         ${url
           ? html`<a class="evidence-ref" href=${url} target="_blank" rel="noopener" title=${url}>${label}</a>`
@@ -501,10 +501,16 @@ const EYE_ICON = html`<svg viewBox="0 0 16 16" width="10" height="10" aria-hidde
 // the bundle doesn't carry simply gets no eye.
 //
 // Open state lives in `state.codePreviews` keyed by this, so it
-// survives the re-render each toggle triggers and two previews can be
-// open at once.
-function codePreviewKey(f, path, line) {
-  return `${tabKey(f)}\u0000${path}\u0000${line ?? ''}`
+// survives the re-render each toggle triggers and several previews can
+// be open at once.
+//
+// Keyed by the SITE as well as the place, because the same place is
+// routinely cited twice on one card — an evidence row pointing at the
+// finding's own `file:line` is the normal shape of a report, not an
+// edge case. Keyed on the location alone, those two eyes are one
+// control with two faces: clicking either opens both.
+function codePreviewKey(f, site, path, range) {
+  return `${tabKey(f)}\u0000${site}\u0000${path}\u0000${range ? `${range.start}-${range.end}` : ''}`
 }
 
 // The lines themselves, once the bundle has loaded. Numbered from
@@ -517,7 +523,7 @@ function codePreviewKey(f, path, line) {
 // the language tag, keys by content, and re-renders once prism
 // settles. Highlighting the WINDOW rather than slicing the whole
 // file's HTML — tags span lines, so there is no safe cut.
-function codeSnippetTemplate(content, line, path) {
+function codeSnippetTemplate(content, range, path) {
   // Two ticks, because two caches settle behind this: focus-code.js
   // bumps `focusCodeTick` when the BUNDLE lands (read by the caller,
   // which needs it before there is any content), and code-highlight.js
@@ -525,7 +531,7 @@ function codeSnippetTemplate(content, line, path) {
   // card's autorun or the snippet paints as plain text and stays that
   // way until something else re-renders it.
   void state.codeBlockTick
-  const { text, lines, startLine } = snippetWindow(content, line)
+  const { text, lines, startLine } = snippetWindow(content, range)
   if (lines.length === 0) return nothing
   const dot = path.lastIndexOf('.')
   const coloured = highlightedCode(text, dot < 0 ? '' : path.slice(dot + 1))
@@ -533,7 +539,10 @@ function codeSnippetTemplate(content, line, path) {
   return html`<div class="code-preview" style=${styleMap({ '--lineno-width': `${String(lastNo).length}ch` })}>
     <aside class="code-preview-gutter" aria-hidden="true">${lines.map((_, i) => {
       const ln = startLine + i
-      return html`<div class=${classMap({ 'code-preview-lineno': true, cited: ln === line })}>${ln}</div>`
+      // Every line of the range, not just the one it opens on — a span
+      // shown with only its first line marked hides what was cited.
+      const cited = Boolean(range) && ln >= range.start && ln <= range.end
+      return html`<div class=${classMap({ 'code-preview-lineno': true, cited })}>${ln}</div>`
     })}</aside>
     <pre class="code-preview-source"><code>${coloured ? unsafeHTML(coloured) : text}</code></pre>
   </div>`
@@ -548,12 +557,16 @@ function codeSnippetTemplate(content, line, path) {
 // `null` when there is no bundle, or none of it answers to this path —
 // the link then stands alone, exactly as it did before. `bundle` is
 // the finding's attached bundle; `path` is where the link points, in
-// the report's own terms.
-function codePreview(f, bundle, path, line) {
+// the report's own terms; `site` says WHICH link on the card this is,
+// so two pointing at the same place stay two controls.
+function codePreview(f, site, bundle, path, line) {
   if (!bundle || !path) return null
   const file = bundleFilePath(bundle.integrity, path)
   if (!file) return null
-  const key = codePreviewKey(f, path, line)
+  // `line` arrives as the report wrote it, which may be a span
+  // (`20-30`); the preview shows all of it (format.js lineRange).
+  const range = lineRange(line)
+  const key = codePreviewKey(f, site, path, range)
   const open = state.codePreviews.has(key)
   const eye = html`<button
     type="button"
@@ -570,7 +583,7 @@ function codePreview(f, bundle, path, line) {
   const source = bundleSource(bundle.integrity, file)
   const body = !source || source.loading
     ? html`<div class="code-preview code-preview-pending">${source ? 'Loading source…' : 'Source unavailable'}</div>`
-    : codeSnippetTemplate(source.content, line, file)
+    : codeSnippetTemplate(source.content, range, file)
   return { eye, body }
 }
 
@@ -995,7 +1008,7 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
   // carries it. Resolved once here and passed to the evidence rows
   // too — one lookup per card, not one per link.
   const bundle = attachedBundle(f)
-  const linePreview = codePreview(f, bundle, f.file, Number.isFinite(lineNum) ? lineNum : null)
+  const linePreview = codePreview(f, 'loc', bundle, f.file, f.line)
   // The eye rides INSIDE `.line-num`, not beside it: `.line-row` is a
   // `space-between` flex line, so a second item there would be spread
   // to the middle of the row rather than left against the location it

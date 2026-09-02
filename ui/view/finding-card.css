@@ -237,7 +237,18 @@
   border: 1px solid var(--border);
   border-radius: 4px;
   background: rgb(from var(--text) r g b / .05);
-  overflow-x: auto;
+  /* Ten lines, then scroll. A preview is a look at the code, not a
+     second copy of the file — a report citing `20-120` would otherwise
+     unroll a hundred lines into the middle of the prose and push
+     everything after it off the screen. `lh` is the element's own line
+     box, so the cap is ten LINES however the theme sizes them, plus
+     the `.35rem` the gutter and the source each pad top and bottom.
+     The container scrolls on both axes, so a long line and a tall
+     snippet are reachable without the gutter drifting out of step
+     with the code it numbers — vertically it travels with it, and
+     horizontally the gutter is pinned (below). */
+  max-height: calc(10lh + .7rem);
+  overflow: auto;
   display: flex;
   white-space: normal;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -256,6 +267,15 @@
   color: var(--muted);
   text-align: right;
   user-select: none;
+  /* Pinned against a horizontal scroll: a long line would otherwise
+     drag the numbers off to the left, taking away the one thing that
+     tells the reader which line they are looking at — at exactly the
+     moment they are looking sideways for it. Opaque, or the code
+     slides visibly underneath. */
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--bg);
 
   & .code-preview-lineno {
     width: var(--lineno-width, 3ch);

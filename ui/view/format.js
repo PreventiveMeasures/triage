@@ -922,29 +922,95 @@ export function listSegments(text) {
   return out
 }
 
+// ── Line ranges ──────────────────────────────────────────────────────
+// A finding's `line` is not always one line. Reports cite spans —
+// `src/a.js:20-30` for a whole function, a block, a chain of calls —
+// and md-structure.js's parseCodeRef keeps them whole rather than
+// picking a start (`60-90` stays `60-90`, so `locationLabel` prints
+// what the report wrote). Everything that has to POINT somewhere has
+// been `parseInt`-ing that down to the first number ever since, which
+// is right for a link anchor and wrong for anything that draws the
+// code: a span shown with only its opening line marked hides the very
+// thing the report was pointing at.
+//
+// So: one reader, `{ start, end }` with `end === start` for a single
+// line, null for a finding that names none. Reversed ends are sorted
+// rather than refused — `30-20` is a report being sloppy about a real
+// span, not a report meaning nothing.
+const LINE_RANGE_RE = /^(\d+)(?:\s*-\s*(\d+))?$/u
+
+export function lineRange(line) {
+  if (typeof line === 'number') {
+    return Number.isFinite(line) && line >= 1 ? { start: Math.floor(line), end: Math.floor(line) } : null
+  }
+  const m = LINE_RANGE_RE.exec(String(line ?? '').trim())
+  if (!m) return null
+  const a = parseInt(m[1], 10)
+  const b = m[2] === undefined ? a : parseInt(m[2], 10)
+  if (!Number.isFinite(a) || a < 1 || !Number.isFinite(b) || b < 1) return null
+  return { start: Math.min(a, b), end: Math.max(a, b) }
+}
+
+// How a range prints beside a filename — `42`, or `20-30`. Normalised
+// from the parse rather than echoing the field, so a sloppy `30 - 20`
+// reads the same as the span it meant.
+export function lineRangeLabel(range) {
+  if (!range) return ''
+  return range.start === range.end ? String(range.start) : `${range.start}-${range.end}`
+}
+
 // ── Source snippet ───────────────────────────────────────────────────
-// A window of `radius` lines either side of `line`, for the preview
-// that opens beside a finding's code links (render-finding.js
-// codePreviewTemplate; focus-code.js fetches the file itself).
+// The lines to show around a cited place, for the preview that opens
+// beside a finding's code links (render-finding.js codeSnippetTemplate;
+// focus-code.js fetches the file itself). `at` is a `lineRange` — or a
+// bare number, which is one.
+//
+// The WHOLE range is always in the window, with `radius` lines of
+// context either side of it: `radius` is how much you want to see
+// around the citation, not a budget the citation has to fit inside, so
+// a `20-120` span comes back whole (the preview caps its height and
+// scrolls — see finding-card.css — rather than the window deciding for
+// the reader which half of their span matters).
 //
 // Comes back with the number the window STARTS at, because a snippet
-// without its line numbers is a snippet the reader can't place against
-// the `file:42` they clicked it from. Both ends clamp to the file, so
-// a finding on line 2 doesn't open on a gutter counting from -2, and
-// one on the last line still gets its leading context. A file shorter
-// than the window is returned whole.
+// without its line numbers is one the reader can't place against the
+// `file:42` they clicked it from. Both ends clamp to the file, so a
+// finding on line 2 doesn't open on a gutter counting from -2, and one
+// on the last line still gets its leading context. A file shorter than
+// the window is returned whole.
 //
-// No line to centre on — an import with no line number, a report that
+// Nothing to centre on — an import with no line number, a report that
 // only named the file — opens at the top instead, which is the most
 // useful thing to show of a file nothing points into.
-export function snippetWindow(content, line, radius = 4) {
+// `at` as a range, whether it arrived as one, as a number, or as the
+// `20-30` string a report wrote.
+function asRange(at) {
+  if (at && typeof at === 'object') {
+    const from = lineRange(at.start)
+    if (!from) return null
+    const to = lineRange(at.end) ?? from
+    return { start: from.start, end: Math.max(from.start, to.end) }
+  }
+  return lineRange(at)
+}
+
+export function snippetWindow(content, at, radius = 4) {
   // `''.split('\n')` is `['']`, not `[]` — an empty file would come
   // back as one blank line and draw a preview with nothing in it.
   const lines = typeof content === 'string' && content !== '' ? content.split('\n') : []
   if (lines.length === 0) return { text: '', startLine: 1, lines: [] }
-  const centre = Number.isFinite(line) && line >= 1 ? Math.min(line, lines.length) : null
-  const start = centre === null ? 1 : Math.max(1, centre - radius)
-  const end = centre === null ? Math.min(lines.length, radius * 2 + 1) : Math.min(lines.length, centre + radius)
+  const range = asRange(at)
+  // A range past the end of the file is a report pointing at a file
+  // that has moved on; clamp onto the last line rather than window
+  // over nothing.
+  const cited = range && {
+    start: Math.min(range.start, lines.length),
+    end: Math.min(range.end, lines.length),
+  }
+  const start = cited ? Math.max(1, cited.start - radius) : 1
+  const end = cited
+    ? Math.min(lines.length, cited.end + radius)
+    : Math.min(lines.length, radius * 2 + 1)
   const window = lines.slice(start - 1, end)
   return { text: window.join('\n'), startLine: start, lines: window }
 }
