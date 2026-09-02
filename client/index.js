@@ -19,6 +19,7 @@ export {
 export { compareVersionsDesc, isPlaceholderNpmPackage } from './bundle-finding-versions.js'
 
 export {
+  bundleFilePath,
   bundlesForFileHash,
   dropBundleFromHashIndex,
   hasBundleFileHashes,

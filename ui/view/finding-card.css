@@ -200,6 +200,87 @@
     -webkit-print-color-adjust: exact; print-color-adjust: exact;
   }
 }
+/* Source preview — the eye beside a code link, and the few lines it
+   opens (render-finding.js codePreview). The button is a MARK ON A
+   LINE OF TEXT, not a control docked beside one: no border, no fill,
+   baseline-aligned with the `file:line` it follows, and muted until
+   the row is hovered or it is open. The link is still the link; this
+   only says the source is here if you want it. */
+.code-preview-btn {
+  display: inline-flex; align-items: center;
+  padding: 0 .15rem;
+  border: 0; background: transparent;
+  color: var(--muted);
+  opacity: .55;
+  cursor: pointer;
+  vertical-align: -1px;
+
+  &:hover { opacity: 1; color: var(--accent); }
+  &.open { opacity: 1; color: var(--accent); }
+  &:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; border-radius: 2px; }
+}
+.line-row:hover .code-preview-btn,
+.evidence-list li:hover .code-preview-btn { opacity: 1; }
+
+/* The snippet. Numbered gutter beside the code, both scrolling as one
+   so a long line takes its line numbers with it — the `<pre>` is the
+   scroll container and the gutter rides inside it, rather than the two
+   being separate columns that drift apart.
+
+   `--lineno-width` is set per snippet from the widest number in it
+   (codeSnippetTemplate), so the code starts at the same column on
+   every line without the gutter being sized for a file it isn't
+   showing. Same `--code-*` palette as the description's fenced blocks,
+   so a preview and a quoted snippet colour identically. */
+.code-preview {
+  margin: .3rem 0 .1rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: rgb(from var(--text) r g b / .05);
+  overflow-x: auto;
+  display: flex;
+  white-space: normal;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .8em; line-height: 1.5;
+}
+.code-preview-pending {
+  display: block;
+  padding: .35rem .5rem;
+  color: var(--muted);
+  font-style: italic;
+}
+.code-preview-gutter {
+  flex: none;
+  padding: .35rem .45rem .35rem .5rem;
+  border-right: 1px solid var(--border);
+  color: var(--muted);
+  text-align: right;
+  user-select: none;
+
+  & .code-preview-lineno {
+    width: var(--lineno-width, 3ch);
+    opacity: .7;
+  }
+  /* The line the link named — the whole point of opening this. */
+  & .cited { opacity: 1; color: var(--accent); font-weight: 600; }
+}
+.code-preview-source {
+  margin: 0;
+  padding: .35rem .6rem;
+  white-space: pre;
+  color: var(--text);
+  /* `font: inherit` and not just the family: a `<pre>` carries the UA's
+     `font-family: monospace; font-size: 1em`, and that pair trips the
+     monospace default-size adjustment — the code comes out a notch
+     smaller than the gutter beside it, its line boxes shorter, and the
+     two columns drift a row apart by the bottom of the snippet. Which
+     puts the accent on the wrong line, on the one element whose whole
+     job is to point at the right one. */
+  font: inherit;
+
+  & code { font: inherit; }
+}
+
 /* Header of a section that COLLAPSES — Evidence, Reproduction, and
    the two recommendations (render-finding.js evidenceTemplate /
    sectionTemplate make those a `<details>`), so the header is a
@@ -446,15 +527,19 @@ span.evidence-ref { color: var(--muted); }
     color: var(--text);
   }
   & code { font: inherit; }
+}
 
-  /* Prism token theme — the shadow-root copy of the rules
-     styles/report.css carries for the source viewers, since no
-     light-DOM rule reaches in here. The palette itself is NOT copied:
-     it comes from theme.css's `--code-*` properties, which inherit
-     across the boundary, so the card and the source viewer colour a
-     snippet identically and the light themes retune both at once.
-     Prism stamps `<span class="token X Y">`; X (the kind) is all we
-     key off. */
+/* Prism token theme — the shadow-root copy of the rules
+   styles/report.css carries for the source viewers, since no light-DOM
+   rule reaches in here. Shared by both places this root paints
+   highlighted code: the fenced blocks a description carries
+   (`.code-block`) and the source previews beside its links
+   (`.code-preview`). The palette itself is NOT copied: it comes from
+   theme.css's `--code-*` properties, which inherit across the
+   boundary, so the card and the source viewer colour a snippet
+   identically and the light themes retune both at once. Prism stamps
+   `<span class="token X Y">`; X (the kind) is all we key off. */
+:is(.code-block, .code-preview) {
   & .token.comment,
   & .token.prolog,
   & .token.cdata { color: var(--code-comment); font-style: italic; }
@@ -1165,6 +1250,10 @@ span.evidence-ref { color: var(--muted); }
     cursor: auto;
     &::after { display: none; }
   }
+  /* The eye is an offer to open something, and paper can't take it.
+     An open preview still prints — it is content by then, and the
+     reader chose it. */
+  .code-preview-btn { display: none; }
 
   /* Inline `` `code` `` spans read as a chip on screen (1px border +
      tinted bg); on paper that chrome crowds dense prose and reads as

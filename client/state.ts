@@ -110,6 +110,7 @@ export interface State {
   filterRevalidate: string
   filterPartial: string
   showRevalidation: boolean
+  codePreviews: Set<string>
   filterConfMin: number
   filterConfMax: number
   filterInclude: string
@@ -561,6 +562,13 @@ export const state: State = store<State>({
   // this once per render. Offered only where a report carries the
   // field at all; a set without one is already the code view.
   showRevalidation: true,
+  // Which source previews are open — the eye beside a finding's code
+  // links, keyed `<tabKey>\0<path>\0<line>` (render-finding.js
+  // codePreviewKey). A Set rather than one open at a time: the
+  // previews are context for the prose around them, and a reader
+  // comparing an evidence row against the finding's own line wants
+  // both. Not persisted; a reload opens on the prose.
+  codePreviews: new Set<string>(),
   // Confidence range — both bounds always set (the new
   // `<range-slider>` has no "unset" concept). 0 / 10 means "no
   // filter": findings with `f.confidence === undefined` pass when

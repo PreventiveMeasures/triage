@@ -33,7 +33,7 @@ if (!globalThis[slotKey]) {
   }
 }
 
-const { codeBlockSegments, descriptionSections, evidenceMarkdown, evidenceNote, findingTitle, flowText, handoffBlock, listSegments, splitDescription, titledDescription } = await import('../ui/view/format.js')
+const { codeBlockSegments, descriptionSections, evidenceMarkdown, evidenceNote, findingTitle, flowText, handoffBlock, listSegments, snippetWindow, splitDescription, titledDescription } = await import('../ui/view/format.js')
 
 describe('descriptionSections — empty input', () => {
   it('returns nothing for empty / missing bodies', () => {
@@ -769,5 +769,69 @@ describe('handoffBlock', () => {
   it('leaves the inline evidence block tight', () => {
     const f = { evidence: [{ file: 'a.js', line: 1, text: 'n' }, { file: 'b.js', line: 2 }] }
     assert.equal(evidenceMarkdown(f), '**Evidence:**\n1. a.js:1\n   n\n2. b.js:2')
+  })
+})
+
+// The window a source preview opens on — a few lines either side of
+// the one a link named (render-finding.js draws them, focus-code.js
+// fetches the file). It comes back with the number it STARTS at,
+// because a snippet the reader can't line up against the `file:42`
+// they opened it from is a snippet they have to take on trust.
+describe('snippetWindow', () => {
+  const file = Array.from({ length: 20 }, (_, i) => `line ${i + 1}`).join('\n')
+
+  it('centres on the line, and says where it starts', () => {
+    const { lines, startLine } = snippetWindow(file, 10)
+    assert.equal(startLine, 6)
+    assert.deepEqual(lines, ['line 6', 'line 7', 'line 8', 'line 9', 'line 10', 'line 11', 'line 12', 'line 13', 'line 14'])
+  })
+
+  it('clamps at the top without counting below line 1', () => {
+    const { lines, startLine } = snippetWindow(file, 2)
+    assert.equal(startLine, 1)
+    assert.equal(lines[0], 'line 1')
+    assert.equal(lines.at(-1), 'line 6')
+  })
+
+  it('keeps the leading context at the bottom of the file', () => {
+    const { lines, startLine } = snippetWindow(file, 20)
+    assert.equal(startLine, 16)
+    assert.equal(lines.at(-1), 'line 20')
+  })
+
+  // A line past the end is a report pointing at a file that has moved
+  // on; show the end of the file rather than an empty window.
+  it('clamps a line past the end onto the last one', () => {
+    const { lines, startLine } = snippetWindow(file, 999)
+    assert.equal(startLine, 16)
+    assert.equal(lines.at(-1), 'line 20')
+  })
+
+  // No line to centre on — an import with no line number, or a report
+  // that only named the file.
+  it('opens at the top when nothing points into the file', () => {
+    for (const line of [null, undefined, NaN, 0, -3]) {
+      const { lines, startLine } = snippetWindow(file, line)
+      assert.equal(startLine, 1, String(line))
+      assert.equal(lines.length, 9, String(line))
+      assert.equal(lines[0], 'line 1', String(line))
+    }
+  })
+
+  it('returns a short file whole', () => {
+    const short = 'a\nb'
+    assert.deepEqual(snippetWindow(short, 1), { text: 'a\nb', startLine: 1, lines: ['a', 'b'] })
+  })
+
+  it('takes a radius', () => {
+    const { lines, startLine } = snippetWindow(file, 10, 1)
+    assert.equal(startLine, 9)
+    assert.deepEqual(lines, ['line 9', 'line 10', 'line 11'])
+  })
+
+  it('answers empty for nothing to window', () => {
+    for (const bad of ['', undefined, null, 42]) {
+      assert.deepEqual(snippetWindow(bad, 3), { text: '', startLine: 1, lines: [] })
+    }
   })
 })

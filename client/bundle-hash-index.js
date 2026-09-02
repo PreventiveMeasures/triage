@@ -83,6 +83,30 @@ export function dropBundleFromHashIndex(integrity) {
   notify()
 }
 
+// Does this bundle carry this path, and under what key? Answers
+// SYNCHRONOUSLY, off the file→hash map recorded above, so a caller
+// deciding whether to offer a source preview doesn't have to parse
+// and decompress a bundle to find out (see focus-code.js).
+//
+// Exact match first. Failing that, a path the report wrote relative
+// to a different root than the bundle's is accepted on a segment
+// boundary — but only when exactly one file ends that way. An
+// ambiguous suffix answers null rather than guessing which of two
+// `index.js` the report meant.
+export function bundleFilePath(integrity, path) {
+  const files = bundleHashesByIntegrity.get(integrity)
+  if (!files || typeof path !== 'string' || path === '') return null
+  if (files.has(path)) return path
+  const suffix = path.startsWith('/') ? path : `/${path}`
+  let hit = null
+  for (const file of files.keys()) {
+    if (!file.endsWith(suffix)) continue
+    if (hit !== null) return null
+    hit = file
+  }
+  return hit
+}
+
 // Lookup — returns the (integrity, file) pairs that contain a
 // source with the given hash. Empty array when nothing matches.
 // Caller filters further (e.g. a finding-card constrains to

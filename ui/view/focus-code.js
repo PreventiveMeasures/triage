@@ -83,51 +83,72 @@ async function loadSources(integrity) {
   })
 }
 
-// Resolve a finding to its bundle source. Returns:
-//   { content, file, integrity, line, highlighted, loading: false }
-//      — ready: render the code panel.
-//   { loading: true } — first load is in flight; render a
-//      placeholder, the load will trigger render() on settle.
-//   null — finding has no bundle code reference, or the bundle
-//      doesn't contain this file.
+// The bundle attached to a finding, as `{ integrity, file }`, or null.
+// "Attached" means the analyzer ran against a bundle (`_bundleHashes`,
+// stamped at ingest) that carries a source with this finding's
+// `fileHash` — so the match is by CONTENT, not by path, and the `file`
+// it comes back with is that bundle's own key for it.
 //
-// Reading triggers loadSources / kickHighlight as side-effects,
-// which is safe inside render(): both deduplicate, and their
-// follow-up render() is a microtask so it doesn't recurse this frame.
-export function getFocusCode(focusedGroup) {
-  if (!focusedGroup) return null
-  const active = activeTabFor(focusedGroup)
-  if (!active.fileHash || !Array.isArray(active._bundleHashes) || active._bundleHashes.length === 0) {
-    return null
-  }
-  const allowed = new Set(active._bundleHashes)
-  const match = bundlesForFileHash(active.fileHash).find(({ integrity }) => allowed.has(integrity))
-  if (!match) return null
-  const cached = sourcesCache.get(match.integrity)
+// The one definition of the question "do we have this finding's code",
+// asked by the focus view's inline panel, the card's `Code` shortcut,
+// and the source previews beside its links.
+export function attachedBundle(f) {
+  if (!f?.fileHash || !Array.isArray(f._bundleHashes) || f._bundleHashes.length === 0) return null
+  const allowed = new Set(f._bundleHashes)
+  return bundlesForFileHash(f.fileHash).find(({ integrity }) => allowed.has(integrity)) ?? null
+}
+
+// One file out of a bundle. Returns:
+//   { content, highlighted, loading: false } — ready to render.
+//      `highlighted` is the prism HTML, `null` for a language the
+//      bundle carries no grammar for, `undefined` until it settles.
+//   { loading: true } — first load in flight; the load triggers
+//      render() on settle, so a caller renders a placeholder and
+//      picks the content up on the next pass.
+//   null — the bundle isn't one we can load, or has no such file.
+//
+// Reading triggers loadSources / kickHighlight as side-effects, which
+// is safe inside render(): both deduplicate, and their follow-up
+// render() is a microtask so it doesn't recurse this frame.
+export function bundleSource(integrity, file) {
+  const cached = sourcesCache.get(integrity)
   if (!cached) {
     // First sight of this integrity — kick the load and report
     // pending. The cache flips to loading:true synchronously inside
     // loadSources so a sibling call on the same pass doesn't double-fire.
-    void loadSources(match.integrity)
+    void loadSources(integrity)
     return { loading: true }
   }
   if (cached.loading) return { loading: true }
   if (!cached.sources) return null
-  const content = cached.sources.get(match.file)
+  const content = cached.sources.get(file)
   if (typeof content !== 'string') return null
-  // Kick Prism highlight if we haven't yet — render() runs again
-  // when the highlighted HTML lands and the second pass picks it
-  // up via highlightCache below.
-  kickHighlight(match.integrity, match.file, content)
-  const key = `${match.integrity}\0${match.file}`
-  const highlighted = highlightCache.has(key) ? highlightCache.get(key) : undefined
-  const lineNum = parseInt(active.line, 10)
+  // Kick Prism highlight if we haven't yet — render() runs again when
+  // the highlighted HTML lands and the second pass picks it up.
+  kickHighlight(integrity, file, content)
+  const key = `${integrity}\0${file}`
   return {
     content,
+    highlighted: highlightCache.has(key) ? highlightCache.get(key) : undefined,
+    loading: false,
+  }
+}
+
+// The focus view's inline code panel: the active tab's own file, whole,
+// with the finding's line marked. Same three answers as bundleSource
+// above, plus the file / integrity / line the panel's header needs.
+export function getFocusCode(focusedGroup) {
+  if (!focusedGroup) return null
+  const active = activeTabFor(focusedGroup)
+  const match = attachedBundle(active)
+  if (!match) return null
+  const source = bundleSource(match.integrity, match.file)
+  if (!source || source.loading) return source
+  const lineNum = parseInt(active.line, 10)
+  return {
+    ...source,
     file: match.file,
     integrity: match.integrity,
     line: Number.isFinite(lineNum) ? lineNum : null,
-    highlighted,
-    loading: false,
   }
 }

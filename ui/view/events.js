@@ -185,6 +185,21 @@ function findingHandoffText(e) {
 // selectors come first so they short-circuit before a generic match
 // (e.g. tree-graph buttons before generic tab clicks).
 report.addEventListener('click', (e) => {
+  // The eye beside a finding's code links — toggles the inline source
+  // preview open or shut (render-finding.js codePreview). Lives in
+  // `<finding-card>`'s shadow root, hence composedPath. The Set is
+  // replaced rather than mutated so an observer-util autorun reading
+  // it sees the change; render() then repaints, and the loader's own
+  // settle render fills the snippet in when the bundle lands.
+  const codePreview = pathClosest(e, '[data-code-preview]')
+  if (codePreview) {
+    const key = codePreview.dataset.codePreview
+    const next = new Set(state.codePreviews)
+    if (!next.delete(key)) next.add(key)
+    state.codePreviews = next
+    render()
+    return
+  }
   // Finding card's `[Code]` shortcut — pops the bundle source viewer
   // modal as an overlay on the current view (findings, packages, etc.)
   // without navigating away, via the global overlay slot

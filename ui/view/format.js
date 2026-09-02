@@ -922,6 +922,33 @@ export function listSegments(text) {
   return out
 }
 
+// ── Source snippet ───────────────────────────────────────────────────
+// A window of `radius` lines either side of `line`, for the preview
+// that opens beside a finding's code links (render-finding.js
+// codePreviewTemplate; focus-code.js fetches the file itself).
+//
+// Comes back with the number the window STARTS at, because a snippet
+// without its line numbers is a snippet the reader can't place against
+// the `file:42` they clicked it from. Both ends clamp to the file, so
+// a finding on line 2 doesn't open on a gutter counting from -2, and
+// one on the last line still gets its leading context. A file shorter
+// than the window is returned whole.
+//
+// No line to centre on — an import with no line number, a report that
+// only named the file — opens at the top instead, which is the most
+// useful thing to show of a file nothing points into.
+export function snippetWindow(content, line, radius = 4) {
+  // `''.split('\n')` is `['']`, not `[]` — an empty file would come
+  // back as one blank line and draw a preview with nothing in it.
+  const lines = typeof content === 'string' && content !== '' ? content.split('\n') : []
+  if (lines.length === 0) return { text: '', startLine: 1, lines: [] }
+  const centre = Number.isFinite(line) && line >= 1 ? Math.min(line, lines.length) : null
+  const start = centre === null ? 1 : Math.max(1, centre - radius)
+  const end = centre === null ? Math.min(lines.length, radius * 2 + 1) : Math.min(lines.length, centre + radius)
+  const window = lines.slice(start - 1, end)
+  return { text: window.join('\n'), startLine: start, lines: window }
+}
+
 // ── Finding title ────────────────────────────────────────────────────
 // What the finding is CALLED. A report may name it outright in a
 // `title` field; the formats that have no such field put it in the

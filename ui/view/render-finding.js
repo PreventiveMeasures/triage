@@ -1,10 +1,12 @@
 import { html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
+import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { bundlesForFileHash, isLinkableFindingId, isPlaceholderNpmPackage, state } from '#client/index.js'
-import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, hasSeverityCorrection, isHttpUrl, listSegments, locationLabel, markdownLinkToken, parseCommentRefs, revalidateStamp, revalidationShown, splitDescription, stripExportMarker } from './format.js'
+import { bundleFilePath, bundlesForFileHash, isLinkableFindingId, isPlaceholderNpmPackage, state } from '#client/index.js'
+import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, hasSeverityCorrection, isHttpUrl, listSegments, locationLabel, markdownLinkToken, parseCommentRefs, revalidateStamp, revalidationShown, snippetWindow, splitDescription, stripExportMarker } from './format.js'
 import { activeTabFor, findingRepo, findingRepoFallback, groupKey, groupState, isIgnored, scopedTriage, sortTabs, tabKey } from './group.js'
 import { highlightedCode } from './code-highlight.js'
+import { attachedBundle, bundleSource } from './focus-code.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 
 // All `<finding-row>` / `<finding-card>` shadow-DOM markup is built
@@ -391,17 +393,24 @@ function evidenceTemplate(f) {
   const rows = Array.isArray(f.evidence) ? f.evidence : []
   if (rows.length === 0) return nothing
   const repoFallback = findingRepoFallback(f)
+  // Every row cites a place in the code, so every row that the
+  // attached bundle can answer for gets an eye beside its link.
+  const bundle = attachedBundle(f)
   return html`<details class="evidence">
     <summary class="section-label">Evidence<span class="evidence-count">(${rows.length})</span></summary>
     <ol class="evidence-list">${rows.map((row) => {
       const label = locationLabel(row)
       const url = evidenceUrl(row, f, repoFallback)
       const note = evidenceNote(row)
+      const lineNum = parseInt(row?.line, 10)
+      const preview = codePreview(f, bundle, row?.file, Number.isFinite(lineNum) ? lineNum : null)
       return html`<li>
         ${url
           ? html`<a class="evidence-ref" href=${url} target="_blank" rel="noopener" title=${url}>${label}</a>`
           : html`<span class="evidence-ref">${label}</span>`}
+        ${preview?.eye ?? nothing}
         ${note ? html`<div class="evidence-note">${renderHighlighted(flowText(note))}</div>` : nothing}
+        ${preview?.body ?? nothing}
       </li>`
     })}</ol>
   </details>`
@@ -466,6 +475,104 @@ const LINK_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidd
     <path d="M5.6 8h4.8"/>
   </g>
 </svg>`
+
+// Eye for the source-preview toggle beside a code link. Smaller than
+// the action-strip icons above: it sits INSIDE a line of text rather
+// than in a row of buttons, so it has to read as a mark on that line
+// and not as a control docked next to it.
+const EYE_ICON = html`<svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true">
+  <g fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M1.6 8s2.4-4 6.4-4 6.4 4 6.4 4-2.4 4-6.4 4-6.4-4-6.4-4Z"/>
+    <circle cx="8" cy="8" r="1.7"/>
+  </g>
+</svg>`
+
+// ── Source preview ───────────────────────────────────────────────────
+// A finding's links to code point OUT — to GitHub, or to the bundle
+// viewer. When a bundle is attached we already hold the source, so the
+// eye beside each link opens the few lines around it in place: enough
+// to see whether a citation says what the prose claims, without losing
+// the prose to a tab switch.
+//
+// Offered per LINK, not per finding, so an evidence row citing another
+// file gets its own — resolved against the same bundle by path
+// (bundleFilePath, which answers synchronously off the hash index, so
+// deciding whether to draw an eye never costs a bundle parse). A path
+// the bundle doesn't carry simply gets no eye.
+//
+// Open state lives in `state.codePreviews` keyed by this, so it
+// survives the re-render each toggle triggers and two previews can be
+// open at once.
+function codePreviewKey(f, path, line) {
+  return `${tabKey(f)}\u0000${path}\u0000${line ?? ''}`
+}
+
+// The lines themselves, once the bundle has loaded. Numbered from
+// wherever the window starts (format.js snippetWindow), with the cited
+// line marked — a snippet the reader can't place against the `file:42`
+// they opened it from is a snippet they have to trust.
+//
+// Highlighting goes through code-highlight.js, the same cache the
+// description's fenced blocks use: it takes the file's extension as
+// the language tag, keys by content, and re-renders once prism
+// settles. Highlighting the WINDOW rather than slicing the whole
+// file's HTML — tags span lines, so there is no safe cut.
+function codeSnippetTemplate(content, line, path) {
+  // Two ticks, because two caches settle behind this: focus-code.js
+  // bumps `focusCodeTick` when the BUNDLE lands (read by the caller,
+  // which needs it before there is any content), and code-highlight.js
+  // bumps `codeBlockTick` when PRISM does. Both have to reach this
+  // card's autorun or the snippet paints as plain text and stays that
+  // way until something else re-renders it.
+  void state.codeBlockTick
+  const { text, lines, startLine } = snippetWindow(content, line)
+  if (lines.length === 0) return nothing
+  const dot = path.lastIndexOf('.')
+  const coloured = highlightedCode(text, dot < 0 ? '' : path.slice(dot + 1))
+  const lastNo = startLine + lines.length - 1
+  return html`<div class="code-preview" style=${styleMap({ '--lineno-width': `${String(lastNo).length}ch` })}>
+    <aside class="code-preview-gutter" aria-hidden="true">${lines.map((_, i) => {
+      const ln = startLine + i
+      return html`<div class=${classMap({ 'code-preview-lineno': true, cited: ln === line })}>${ln}</div>`
+    })}</aside>
+    <pre class="code-preview-source"><code>${coloured ? unsafeHTML(coloured) : text}</code></pre>
+  </div>`
+}
+
+// The eye and the snippet it opens, as two templates rather than one:
+// the finding's own link lives in a flex `.line-row`, where the
+// snippet has to land BELOW the row rather than beside its parts,
+// while an evidence row can carry both inside its `<li>`. Callers
+// place each where it belongs.
+//
+// `null` when there is no bundle, or none of it answers to this path —
+// the link then stands alone, exactly as it did before. `bundle` is
+// the finding's attached bundle; `path` is where the link points, in
+// the report's own terms.
+function codePreview(f, bundle, path, line) {
+  if (!bundle || !path) return null
+  const file = bundleFilePath(bundle.integrity, path)
+  if (!file) return null
+  const key = codePreviewKey(f, path, line)
+  const open = state.codePreviews.has(key)
+  const eye = html`<button
+    type="button"
+    class=${classMap({ 'code-preview-btn': true, open })}
+    data-code-preview=${key}
+    aria-expanded=${String(open)}
+    aria-label=${open ? `Hide the source at ${path}` : `Show the source at ${path}`}
+  >${EYE_ICON}</button>`
+  if (!open) return { eye, body: nothing }
+  // The tick subscribes this card's autorun to the loader's settle
+  // events, so the snippet lands on the same frame the source does
+  // (focus-code.js bumps it from the load and the highlight both).
+  void state.focusCodeTick
+  const source = bundleSource(bundle.integrity, file)
+  const body = !source || source.loading
+    ? html`<div class="code-preview code-preview-pending">${source ? 'Loading source…' : 'Source unavailable'}</div>`
+    : codeSnippetTemplate(source.content, line, file)
+  return { eye, body }
+}
 
 // Claude mark for the `[hand off to Claude Code]` shortcut button.
 // Same size + stroke weight as the other action icons.
@@ -884,9 +991,18 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
     ? html`<a href=${url} target="_blank" rel="noopener">${locText}</a>`
     : locText
   const exportLabel = findingDisplayName(f)
-  const lineRowMain = exportLabel
-    ? html`<span class="line-num">${locLink}, ${exportLabel}</span>`
-    : html`<span class="line-num">${locLink}</span>`
+  // The finding's own location, previewable in place when a bundle
+  // carries it. Resolved once here and passed to the evidence rows
+  // too — one lookup per card, not one per link.
+  const bundle = attachedBundle(f)
+  const linePreview = codePreview(f, bundle, f.file, Number.isFinite(lineNum) ? lineNum : null)
+  // The eye rides INSIDE `.line-num`, not beside it: `.line-row` is a
+  // `space-between` flex line, so a second item there would be spread
+  // to the middle of the row rather than left against the location it
+  // belongs to — and the run-meta on the far end would shift with it.
+  const lineRowMain = html`<span class="line-num">${
+    exportLabel ? html`${locLink}, ${exportLabel}` : locLink
+  }${linePreview?.eye ?? nothing}</span>`
   const meta = formatRunMeta(f)
   // The file the analyzer was reading when it found this. A note worth
   // making when it isn't the finding's own location — a bug in `a.js`
@@ -972,6 +1088,7 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
         ${discoveredIn ? html`<span class="line-num discovered-in">(found analyzing ${discoveredIn})</span>` : nothing}
         ${meta ? html`<span class="run-meta">${meta}</span>` : nothing}
       </div>
+      ${linePreview?.body ?? nothing}
       ${descTitle ? html`<div class="desc-title">${renderInline(descTitle)}</div>` : nothing}
       ${lead.map((s) => html`<div class="desc">${renderHighlighted(flowText(s.body))}</div>`)}
       ${evidenceTemplate(f)}
