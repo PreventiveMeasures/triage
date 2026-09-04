@@ -11,6 +11,7 @@ import { openDownloadBundleDialog } from './dialogs/download-bundle-dialog.js'
 import { openExportConfirmDialog } from './dialogs/export-confirm-dialog.js'
 import { openFixLinkDialog } from './dialogs/fix-link-dialog.js'
 import { findingLinkFor } from './finding-link.js'
+import { FOCUS_SPLIT_STEP, nudgeFocusSplit, resetFocusSplit, startFocusSplitDrag } from './focus-splitter.js'
 import { downloadReportsAsMarkdown } from './markdown-export.js'
 import { bundleToCycloneDx, bundleToSpdx, sbomBaseName } from './sbom.js'
 
@@ -1716,6 +1717,24 @@ report.addEventListener('click', (e) => {
   if (gid) setFocusGid(gid)
 })
 
+// Focus-view pane divider. Grabbing it starts a pointer-captured
+// drag that resizes the finding-card / Code split (see
+// view/focus-splitter.js); double-clicking restores the 1:1 default,
+// which is the quick way back after dragging a pane down to its
+// minimum. Both are no-ops anywhere else in the report, since the
+// divider only renders inside the focus view's Code layout.
+report.addEventListener('pointerdown', (e) => {
+  // Secondary buttons open context menus / paste on X11 — only the
+  // primary button drags.
+  if (e.button !== 0) return
+  const handle = e.target.closest?.('[data-focus-splitter]')
+  if (handle) startFocusSplitDrag(handle, e)
+})
+report.addEventListener('dblclick', (e) => {
+  const handle = e.target.closest?.('[data-focus-splitter]')
+  if (handle) resetFocusSplit(handle)
+})
+
 // Arrow-key navigation between findings. Bound to document so the key
 // fires from anywhere, guarded to act only on an arrow-navigable
 // surface, when the user isn't typing in a text field (Search, Repo,
@@ -1771,6 +1790,15 @@ document.addEventListener('keydown', (e) => {
   else if (e.key === 'ArrowLeft') direction = -1
   else return
   e.preventDefault()
+  // The focus view's pane divider is arrow-driven in its own right
+  // (the ARIA separator pattern), so while it holds keyboard focus
+  // the same keys move the split instead of walking the queue —
+  // otherwise the only way to resize would be with a pointer.
+  const splitter = e.target?.closest?.('[data-focus-splitter]')
+  if (splitter) {
+    nudgeFocusSplit(splitter, direction * FOCUS_SPLIT_STEP)
+    return
+  }
   if (inFocus) navigateFocus(direction)
   else navigateKanban(direction)
 })

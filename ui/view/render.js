@@ -4,7 +4,7 @@ import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS } from './file-display.js'
-import { listBundles, listWorkspaces, state } from '#client/index.js'
+import { FOCUS_SPLIT_MAX, FOCUS_SPLIT_MIN, listBundles, listWorkspaces, state } from '#client/index.js'
 import { isBundleInRemote, isInRemote, remoteCount, triageSync } from './client-sync.js'
 import { dropZone, report } from './dom.js'
 import { SEVERITIES, configureDepsDir, configureRevalidation, displayedSeverity, fileLink, findingDisplayName, findingTitle, formatRunMeta, hasRevalidateField, hasSeverityCorrection, isHttpUrl, isModule, lineLink, reachableRevalidateFilters, revalidateKind } from './format.js'
@@ -595,7 +595,7 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
   // replaces the table / list / grouped / focus / kanban body with
   // the graph2 canvas — see the findings-graph slot in render()
   // below.
-  const viewModes = showGraphMode ? 'table,list,grouped,focus,kanban,graph' : 'table,list,grouped,focus,kanban'
+  const viewModes = showGraphMode ? 'kanban,focus,table,list,grouped,graph' : 'kanban,focus,table,list,grouped'
 
   return html`<div class="toolbar">
     <div class="toolbar-row">
@@ -608,8 +608,8 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
            of line saying something weaker.)
 
            View mode leads the row — <view-mode-buttons> renders the
-           table / list / grouped icon group, immediately followed by
-           the Sort dropdown. -->
+           kanban / focus / table / list / grouped icon group,
+           immediately followed by the Sort dropdown. -->
       <view-mode-buttons modes=${viewModes}></view-mode-buttons>
       <!-- Sort dropdown — findings-sort owns the native select +
            the conditional option list. Flags arrive as boolean
@@ -1136,16 +1136,41 @@ function findingsBodyTemplate(filtered) {
     void state.focusCodeTick
     const code = getFocusCode(focused)
     const mainClass = code ? 'focus-main with-code' : 'focus-main'
+    // The card | code split as the divider's percentage along the
+    // pane (see `.focus-main.with-code` in findings.css). Bound on
+    // every render so a committed drag survives one, and so the two
+    // panes come back at the user's width after a navigation; the
+    // drag itself writes the same property directly on this element
+    // rather than re-rendering per pointermove.
+    const splitStyle = styleMap({ '--focus-split': String(state.focusSplit) })
     const atStart = focusedIdx === 0
     const atEnd = focusedIdx === filtered.length - 1
     return html`<div class="focus-view">
-      <div class=${mainClass}>
+      <div class=${mainClass} style=${splitStyle}>
         <div class="focus-pane focus-pane-card">
           <div class="focus-card-wrapper">
             ${findingCardPlaceholder(focused, false, 'focus')}
           </div>
         </div>
-        ${code ? html`<div class="focus-pane focus-pane-code">
+        <!-- Divider between the two panes: drag to resize, double-
+             click to restore the 1:1 default, ← / → while focused to
+             nudge (events.js routes all three to view/focus-splitter.js).
+             Rendered as an ARIA separator with the split percentage as
+             its value; the narrow-viewport rule that stacks the panes
+             hides it, since there's nothing horizontal left to drag. -->
+        ${code ? html`<div
+          class="focus-splitter"
+          data-focus-splitter
+          role="separator"
+          tabindex="0"
+          aria-orientation="vertical"
+          aria-label="Resize the finding and code panes"
+          aria-valuemin=${FOCUS_SPLIT_MIN}
+          aria-valuemax=${FOCUS_SPLIT_MAX}
+          aria-valuenow=${Math.round(state.focusSplit)}
+          title="Drag to resize · double-click to reset"
+        ></div>
+        <div class="focus-pane focus-pane-code">
           ${code.loading
             ? html`<div class="focus-code-empty">Loading source…</div>`
             : html`<header class="focus-code-bar" title=${code.file}>
@@ -1911,8 +1936,8 @@ function renderImpl() {
   // valid view-mode while a tree-bearing report is loaded; if the
   // user previously picked it and the underlying data went away
   // (workspace switch, report unload), fall back to the default
-  // table layout so a stale selection can't render an empty body.
-  if (!treeAvailable && state.viewMode === 'graph') state.viewMode = 'table'
+  // kanban board so a stale selection can't render an empty body.
+  if (!treeAvailable && state.viewMode === 'graph') state.viewMode = 'kanban'
 
   // `headerTemplate` returns a Lit template — slot reuse below
   // ensures the part-cache survives across renders so Lit can
@@ -1974,9 +1999,9 @@ function renderImpl() {
   if (state.viewMode === 'graph' && treeData) {
     g2DataForBody = buildGraph2Data()
     // Tree disappeared between the treeAvailable gate and buildGraph2Data
-    // (workspace switch race); fall back to the default table view so
+    // (workspace switch race); fall back to the default kanban view so
     // we don't render an empty graph slot.
-    if (!g2DataForBody) state.viewMode = 'table'
+    if (!g2DataForBody) state.viewMode = 'kanban'
   }
   const renderGraphInBody = !!g2DataForBody
 
@@ -2126,7 +2151,7 @@ function renderImpl() {
     const graphSlot = document.querySelector('#findings-graph-slot')
     if (graphSlot) {
       const viewModeRow = html`<view-mode-buttons
-        modes="table,list,grouped,focus,kanban,graph"
+        modes="kanban,focus,table,list,grouped,graph"
       ></view-mode-buttons>`
       // Triage bucket counts across every loaded report's groups —
       // the findings-tab graph's topbar uses this for its triage
