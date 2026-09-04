@@ -917,6 +917,14 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
   // rail would be redundant. The list / grouped / table-details
   // views keep it as their primary path into the bundle viewer.
   if (context !== 'focus' && f.fileHash && Array.isArray(f._bundleHashes) && f._bundleHashes.length > 0) {
+    // The lookup below reads a plain module Map, which this card's
+    // autorun can't see change. `bundleHashTick` is the state read
+    // that subscribes it to the index filling in (or a bundle being
+    // deleted out of it) — without it a card rendered before the
+    // hashes landed keeps its "no bundle, no button" answer until
+    // something else happens to re-render it. Same shape as the
+    // `codeBlockTick` read in codeBlockTemplate.
+    void state.bundleHashTick
     const allowed = new Set(f._bundleHashes)
     const match = bundlesForFileHash(f.fileHash).find(({ integrity }) => allowed.has(integrity))
     if (match) {

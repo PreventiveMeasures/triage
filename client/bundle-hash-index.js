@@ -12,9 +12,34 @@
 // the bundle in the UI or from a report-driven prefetch). The
 // inverse `bundleHashesByIntegrity` lets us prune cleanly when
 // a bundle is deleted.
+//
+// Both of those paths are asynchronous and land AFTER the report
+// that needs them has already rendered — the prefetch is
+// fire-and-forget at ingest, and on a reload the index starts
+// empty while the stored report paints immediately. Subscribers
+// (see `subscribeToBundleHashIndex`) are how a view that asked
+// too early gets told to ask again; without one, the focus view's
+// Code panel and the finding-card's "Code →" button stay missing
+// until some unrelated interaction happens to re-render.
 
 const bundleFilesByHash = new Map()
 const bundleHashesByIntegrity = new Map()
+const listeners = new Set()
+
+// Fires whenever the hash → bundle mapping gains or loses an
+// integrity. Same shape as `subscribeToBundleFindingIndex`:
+// returns an unsubscribe function, and a throwing listener can't
+// take down the caller mid-record.
+export function subscribeToBundleHashIndex(callback) {
+  listeners.add(callback)
+  return () => listeners.delete(callback)
+}
+
+function notify() {
+  for (const cb of listeners) {
+    try { cb() } catch {}
+  }
+}
 
 // Record a bundle's per-file hash map. Idempotent — re-recording
 // the same data overwrites in place. Returns true when this
@@ -32,6 +57,10 @@ export function recordBundleFileHashes(integrity, fileHashes) {
     }
     m.set(integrity, file)
   }
+  // Only a first sighting can change a lookup's answer: a re-record
+  // is the same bundle's bytes hashing to the same map, so notifying
+  // on it would just re-render for nothing.
+  if (fresh) notify()
   return fresh
 }
 
@@ -49,6 +78,9 @@ export function dropBundleFromHashIndex(integrity) {
     m.delete(integrity)
     if (m.size === 0) bundleFilesByHash.delete(hash)
   }
+  // The removal direction matters as much as the arrival one: a view
+  // still offering the deleted bundle's code has to drop the offer.
+  notify()
 }
 
 // Lookup — returns the (integrity, file) pairs that contain a

@@ -23,6 +23,7 @@ export {
   dropBundleFromHashIndex,
   hasBundleFileHashes,
   recordBundleFileHashes,
+  subscribeToBundleHashIndex,
 } from './bundle-hash-index.js'
 
 export {
