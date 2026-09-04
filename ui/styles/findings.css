@@ -857,6 +857,40 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
   &:active { cursor: pointer; }
 }
 
+/* WCO PWA mode (the hidden-title-bar window): the fullscreen dialog
+   and the docked rail both run to the screen's edges, and up there the
+   edges belong to the OS window controls — top-left on macOS, top-right
+   on Windows / Linux. Push each side's content clear of the strip the
+   platform actually paints into, and only that side: an inset on the
+   side with no controls would be a band of nothing.
+
+   The clamp is that condition, written as arithmetic because `env()`
+   inside a media query has patchy support while `env()` inside a
+   property value doesn't (the same reason report.css ramps its header
+   padding this way). Read it as "the titlebar's height if this side's
+   control strip has any width at all, otherwise zero": multiplying the
+   strip's width by 1000 sends any non-zero value past the height, so
+   the clamp lands on one end or the other, and the 0px floor keeps a
+   sub-pixel negative — 100vw and the titlebar area disagreeing by a
+   rounding error — from invalidating the whole declaration. */
+/* stylelint-disable media-feature-name-value-no-unknown, length-zero-no-unit */
+@media (display-mode: window-controls-overlay) {
+  /* Fullscreen starts the body at the very top-left, which is where
+     macOS puts its traffic lights. */
+  .kanban-detail-modal.fullscreen .kanban-detail-body {
+    padding-top: calc(.4rem + clamp(0px, env(titlebar-area-x, 0px) * 1000, env(titlebar-area-height, 0px)));
+  }
+
+  /* The rail is docked to the right edge whether or not the dialog is
+     fullscreen, so its header meets the Windows / Linux controls in
+     both — hence no `.fullscreen` here. `--wco-right-toolbar`
+     (theme.css) is the shared measure of that strip. */
+  .kanban-detail-side {
+    padding-top: clamp(0px, var(--wco-right-toolbar) * 1000, env(titlebar-area-height, 0px));
+  }
+}
+/* stylelint-enable media-feature-name-value-no-unknown, length-zero-no-unit */
+
 /* Wide viewports: mount the rail and hold its width out of the
    backdrop's own box, so the centred modal lands beside the rail
    rather than under it. The 1rem added on top of the rail's width is
