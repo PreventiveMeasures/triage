@@ -203,9 +203,21 @@
 /* Source preview — the `</>` beside a code link, and the few lines it
    opens (render-finding.js codePreview). The button is a MARK ON A
    LINE OF TEXT, not a control docked beside one: no border, no fill,
-   baseline-aligned with the `file:line` it follows, and muted until
-   the row is hovered or it is open. The link is still the link; this
-   only says the source is here if you want it. */
+   baseline-aligned with the `file:line` it follows. The link is still
+   the link; this only says the source is here if you want it.
+
+   Solid text colour, not muted and not faded. A 12px glyph is already
+   quiet next to a line of type — dimming it on top of that leaves
+   something the reader has to go looking for, which is the opposite of
+   a mark.
+
+   ONE state change, not two. It used to fade up on row hover and then
+   go accent on its own — but the first of those fired from anywhere on
+   a row that runs the width of the card, so both marks lit while the
+   pointer was two hundred pixels away from either, and lit again over
+   a whole evidence note. Two highlights that mean different things and
+   answer to different boxes is a puzzle, not a hint. The mark that
+   changes is the mark you are on. */
 .code-preview-btn {
   display: inline-flex; align-items: center;
   /* Set off from the location it follows — pushed up against the last
@@ -214,17 +226,16 @@
   margin-left: .35rem;
   padding: 0 .15rem;
   border: 0; background: transparent;
-  color: var(--muted);
-  opacity: .55;
+  color: var(--text);
   vertical-align: -2px;
 
-  &.open { opacity: 1; color: var(--accent); }
+  &.open { color: var(--accent); }
 }
 
-/* GitHub mark, beside the `</>`. Same weight and quiet as it — these
-   are two marks on a line of text, not a button bar — so the pair
-   reads as one affordance with two halves rather than a widget parked
-   after the location.
+/* GitHub mark, beside the `</>`. Same weight and same states as it —
+   these are two marks on a line of text, not a button bar — so the
+   pair reads as one affordance with two halves rather than a widget
+   parked after the location.
 
    The wrapper is what the tooltip is positioned against (below); the
    layout that used to sit on the link moves onto it, so the mark's
@@ -239,8 +250,7 @@
 .gh-ref-btn {
   display: inline-flex; align-items: center;
   padding: 0 .15rem;
-  color: var(--muted);
-  opacity: .55;
+  color: var(--text);
 }
 
 /* A 12px glyph on a 19px line leaves three pixels of dead row above it
@@ -258,7 +268,7 @@
   position: relative;
 
   &::before { content: ''; position: absolute; inset: -.25rem -2px; }
-  &:hover { opacity: 1; color: var(--accent); }
+  &:hover { color: var(--accent); }
   &:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; border-radius: 2px; }
 }
 
@@ -331,8 +341,6 @@
   filter: drop-shadow(0 2px 6px rgb(0 0 0 / .35));
 }
 .gh-ref-btn:is(:hover, :focus-visible) + .gh-ref-tip { visibility: visible; }
-.line-row:hover :is(.code-preview-btn, .gh-ref-btn),
-.evidence-list li:hover :is(.code-preview-btn, .gh-ref-btn) { opacity: 1; }
 
 /* The snippet. Numbered gutter beside the code, both scrolling as one
    so a long line takes its line numbers with it — the `<pre>` is the
