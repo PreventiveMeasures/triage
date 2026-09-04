@@ -25,7 +25,7 @@ if (!globalThis[slotKey]) {
   }
 }
 
-const { evidenceMarkdown, locationLabel, evidenceUrl, fileUrl, findingUrl, isPkgRef, markdownLinkToken } = await import('../ui/view/format.js')
+const { evidenceMarkdown, evidenceUrl, fileUrl, findingUrl, githubRefLabel, isPkgRef, locationLabel, markdownLinkToken } = await import('../ui/view/format.js')
 
 describe('isPkgRef', () => {
   it('matches bare and scoped package references', () => {
@@ -211,5 +211,61 @@ describe('evidence rows', () => {
     assert.equal(evidenceMarkdown({ file: 'a.ts' }), '')
     assert.equal(evidenceMarkdown({ file: 'a.ts', evidence: [] }), '')
     assert.equal(evidenceMarkdown(null), '')
+  })
+})
+
+// A GitHub blob URL as the reference it stands for. The location text
+// on a card is the same `src/proxy.ts:42` whichever repo it came from,
+// and a card can carry rows from several — so the mark beside it says
+// where it goes, and this is what the mark's tooltip reads.
+describe('githubRefLabel', () => {
+  it('strips the origin, the blob ref, and spells the anchor as lines', () => {
+    assert.equal(
+      githubRefLabel('https://github.com/acme/app/blob/HEAD/src/proxy.ts#L42'),
+      'acme/app/src/proxy.ts:42',
+    )
+    assert.equal(
+      githubRefLabel('https://github.com/acme/app/blob/HEAD/src/proxy.ts#L20-L30'),
+      'acme/app/src/proxy.ts:20-30',
+    )
+    // GitHub also writes a range without the second `L`.
+    assert.equal(
+      githubRefLabel('https://github.com/acme/app/blob/HEAD/a.ts#L20-30'),
+      'acme/app/a.ts:20-30',
+    )
+  })
+
+  // A report's own link is usually pinned to the commit it was
+  // produced from. The sha goes with the rest of the chrome: forty
+  // characters in the middle of a path tell the reader nothing they
+  // are looking for, and the link still carries it.
+  it('drops a pinned ref the same as HEAD', () => {
+    assert.equal(
+      githubRefLabel('https://github.com/acme/app/blob/9f2c1ab/src/a/b.ts#L7'),
+      'acme/app/src/a/b.ts:7',
+    )
+    assert.equal(
+      githubRefLabel('https://github.com/acme/app/blob/release%2Fv2/src/a.ts'),
+      'acme/app/src/a.ts',
+    )
+  })
+
+  it('takes tree and blame URLs, and www', () => {
+    assert.equal(githubRefLabel('https://github.com/a/b/tree/HEAD/src'), 'a/b/src')
+    assert.equal(githubRefLabel('https://github.com/a/b/blame/HEAD/src/x.ts#L3'), 'a/b/src/x.ts:3')
+    assert.equal(githubRefLabel('https://www.github.com/a/b/blob/HEAD/x.ts'), 'a/b/x.ts')
+  })
+
+  // Empty means "no mark" — the location link stands as it always did.
+  it('answers empty for anything that is not a GitHub blob URL', () => {
+    for (const bad of [
+      'https://gitlab.com/acme/app/blob/HEAD/x.ts',
+      'https://github.com/acme/app',
+      'https://github.com/acme/app/issues/12',
+      'https://github.com/acme/app/blob/HEAD/',
+      'piolium:abc', 'not a url', '', undefined, null, 42, {},
+    ]) {
+      assert.equal(githubRefLabel(bad), '', String(bad))
+    }
   })
 })

@@ -612,6 +612,34 @@ export function findingUrl(f, repoFallback) {
   return Number.isFinite(lineNum) ? `${url}#L${lineNum}` : url
 }
 
+// A GitHub blob URL as the reference it stands for —
+// `owner/repo/path/to/file.ts:20-30`. What the link is FOR, with the
+// chrome that makes it addressable taken off: the origin, the
+// `blob/<ref>/` segment, and the `#L20-L30` anchor spelled as the
+// `:20-30` every other location on the card wears.
+//
+// The ref goes with the rest of the chrome, `HEAD` or a pinned commit
+// alike — a forty-character sha in the middle of a path tells the
+// reader nothing they are looking for, and the link itself still
+// carries it. `tree` and `blame` URLs read the same way.
+//
+// Empty for anything that isn't a GitHub blob-shaped URL: a report's
+// own link to some other host, a `piolium:` placeholder. Callers show
+// the mark only when this has something to say.
+const GH_BLOB_RE = /^https?:\/\/(?:www\.)?github\.com\/([^/\s]+\/[^/\s]+)\/(?:blob|tree|blame)\/[^/\s]+\/(\S+)$/u
+const GH_LINE_ANCHOR_RE = /#L(\d+)(?:-L?(\d+))?$/u
+
+export function githubRefLabel(url) {
+  const m = typeof url === 'string' ? GH_BLOB_RE.exec(url) : null
+  if (!m) return ''
+  let path = m[2]
+  const anchor = GH_LINE_ANCHOR_RE.exec(path)
+  if (!anchor) return `${m[1]}/${path}`
+  path = path.slice(0, anchor.index)
+  const lines = anchor[2] ? `${anchor[1]}-${anchor[2]}` : anchor[1]
+  return `${m[1]}/${path}:${lines}`
+}
+
 // Reports hard-wrap their markdown, so a paragraph arrives carrying the
 // line breaks the author's editor happened to put in. Markdown reads
 // those as SOFT breaks — they reflow — and honouring them literally

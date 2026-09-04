@@ -3,7 +3,7 @@ import { classMap } from 'lit/directives/class-map.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { bundleFilePath, bundlesForFileHash, isLinkableFindingId, isPlaceholderNpmPackage, state } from '#client/index.js'
-import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, hasSeverityCorrection, isHttpUrl, lineRange, listSegments, locationLabel, markdownLinkToken, parseCommentRefs, revalidateStamp, revalidationShown, snippetWindow, splitDescription, stripExportMarker } from './format.js'
+import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, githubRefLabel, hasSeverityCorrection, isHttpUrl, lineRange, listSegments, locationLabel, markdownLinkToken, parseCommentRefs, revalidateStamp, revalidationShown, snippetWindow, splitDescription, stripExportMarker } from './format.js'
 import { activeTabFor, findingRepo, findingRepoFallback, groupKey, groupState, isIgnored, scopedTriage, sortTabs, tabKey } from './group.js'
 import { highlightedCode } from './code-highlight.js'
 import { attachedBundle, bundleSource } from './focus-code.js'
@@ -404,12 +404,15 @@ function evidenceTemplate(f) {
       const note = evidenceNote(row)
       // Indexed, so two rows citing the same place stay two eyes too.
       const preview = codePreview(f, `ev${i}`, bundle, row?.file, row?.line)
+      const ghRef = githubRef(url)
       return html`<li>
         ${url
-          ? html`<a class="evidence-ref" href=${url} target="_blank" rel="noopener" title=${url}>${label}</a>`
+          ? html`<a class="evidence-ref" href=${url} target="_blank" rel="noopener">${label}</a>`
           : html`<span class="evidence-ref">${label}</span>`}
         ${preview?.eye ?? nothing}
+        ${ghRef?.mark ?? nothing}
         ${preview?.tip ?? nothing}
+        ${ghRef?.tip ?? nothing}
         ${note ? html`<div class="evidence-note">${renderHighlighted(flowText(note))}</div>` : nothing}
         ${preview?.body ?? nothing}
       </li>`
@@ -486,6 +489,37 @@ const EYE_ICON = html`<svg viewBox="0 0 16 16" width="12" height="12" aria-hidde
     <circle cx="8" cy="8" r="1.7"/>
   </g>
 </svg>`
+
+// GitHub mark, beside the eye. The location text is already a link;
+// this says WHERE it goes, which the text can't — `src/proxy.ts:42`
+// is the same string whichever repo it is in, and a card can carry
+// rows from several. The tooltip spells the target out.
+const GITHUB_ICON = html`<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+  <path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/>
+</svg>`
+
+// The mark and its tooltip, as two templates for the same reason the
+// preview's are (see codePreview): the mark goes beside the link, and
+// the tooltip is positioned against the ROW, because the location
+// lives in a span and a tooltip is flow content.
+//
+// `null` when the URL isn't a GitHub blob — a report linking to some
+// other host, or to nothing at all. No mark, no tooltip, and the
+// location link stands as it always did.
+function githubRef(url) {
+  const label = githubRefLabel(url)
+  if (!label) return null
+  return {
+    mark: html`<a
+      class="gh-ref-btn"
+      href=${url}
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label=${`Open ${label} on GitHub`}
+    >${GITHUB_ICON}</a>`,
+    tip: html`<span class="gh-ref-tip" role="tooltip">${label}</span>`,
+  }
+}
 
 // ── Source preview ───────────────────────────────────────────────────
 // A finding's links to code point OUT — to GitHub, or to the bundle
@@ -1031,9 +1065,10 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
   // `space-between` flex line, so a second item there would be spread
   // to the middle of the row rather than left against the location it
   // belongs to — and the run-meta on the far end would shift with it.
+  const ghRef = githubRef(url)
   const lineRowMain = html`<span class="line-num">${
     exportLabel ? html`${locLink}, ${exportLabel}` : locLink
-  }${linePreview?.eye ?? nothing}</span>`
+  }${linePreview?.eye ?? nothing}${ghRef?.mark ?? nothing}</span>`
   // The tooltip is absolutely positioned against `.line-row`, so it
   // sits beside `.line-num` rather than inside it — a snippet is flow
   // content and that span is not a box to put one in.
@@ -1119,6 +1154,7 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
       <div class="line-row">
         ${lineRowMain}
         ${linePreview?.tip ?? nothing}
+        ${ghRef?.tip ?? nothing}
         ${npmChip}
         ${discoveredIn ? html`<span class="line-num discovered-in">(found analyzing ${discoveredIn})</span>` : nothing}
         ${meta ? html`<span class="run-meta">${meta}</span>` : nothing}

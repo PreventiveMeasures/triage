@@ -223,6 +223,22 @@
   &:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; border-radius: 2px; }
 }
 
+/* GitHub mark, beside the eye. Same weight and quiet as it — these are
+   two marks on a line of text, not a button bar — so the pair reads as
+   one affordance with two halves rather than a widget parked after
+   the location. */
+.gh-ref-btn {
+  display: inline-flex; align-items: center;
+  margin-left: .25rem;
+  padding: 0 .15rem;
+  color: var(--muted);
+  opacity: .55;
+  vertical-align: -2px;
+
+  &:hover { opacity: 1; color: var(--accent); }
+  &:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; border-radius: 2px; }
+}
+
 /* The hover tooltip — the same snippet the eye opens, shown while the
    pointer is on it. A look that costs neither a click nor any of the
    prose's space, so the reader can check a citation in passing and
@@ -233,7 +249,8 @@
    and per evidence item, so `:has()` needs no way to tell them apart.
    Hidden with `visibility`, which keeps it out of the accessibility
    tree and unhittable while still letting it be measured. */
-.code-preview-tip {
+.code-preview-tip,
+.gh-ref-tip {
   position: absolute;
   z-index: 20;
   top: 100%; left: 0;
@@ -243,10 +260,24 @@
   /* The preview inside it is already bordered; this only lifts it off
      whatever it lands on. */
   filter: drop-shadow(0 2px 6px rgb(0 0 0 / .35));
-
-  & .code-preview { margin: 0; background: var(--bg); }
 }
-:is(.line-row, .evidence-list li):has(.code-preview-btn:is(:hover, :focus-visible)) > .code-preview-tip {
+.code-preview-tip .code-preview { margin: 0; background: var(--bg); }
+/* The reference reads as a path, so it is set as one. */
+.gh-ref-tip {
+  padding: .2rem .45rem;
+  border: 1px solid var(--border); border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .78em; line-height: 1.4;
+  white-space: nowrap;
+}
+/* One rule per mark, rather than one keyed on the row: a row carries
+   both an eye and a GitHub mark, and `:has()` on their shared parent
+   has no way to say which of the two tooltips the pointer is asking
+   for. Naming each trigger beside its own tooltip does. */
+:is(.line-row, .evidence-list li):has(.code-preview-btn:is(:hover, :focus-visible)) > .code-preview-tip,
+:is(.line-row, .evidence-list li):has(.gh-ref-btn:is(:hover, :focus-visible)) > .gh-ref-tip {
   visibility: visible;
 }
 .line-row:hover .code-preview-btn,
@@ -493,6 +524,11 @@ details[open] > summary.section-label::after { transform: translateY(-2px) rotat
 
   &:hover { text-decoration: underline; }
 }
+/* The location links and the marks beside them keep the ordinary text
+   cursor: the underline on hover already says they are links, and a
+   hand pointer over a line of `file:42` reads as if the text itself
+   were a control. */
+:is(.line-num a, .evidence-ref, .gh-ref-btn) { cursor: default; }
 /* No link to give this row — same type, muted, so the missing target
    reads as absent rather than broken. */
 span.evidence-ref { color: var(--muted); }
