@@ -423,8 +423,7 @@ function evidenceTemplate(f) {
 // the row has no file header above it (unlike the list / grouped
 // views) so file + line live together in one slot. Returns a
 // TemplateResult when we have a source URL, plain text otherwise.
-function rowLocationTemplate(f) {
-  const url = findingUrl(f, findingRepoFallback(f))
+function rowLocationTemplate(f, url) {
   const lineNum = parseInt(f.line, 10)
   const text = Number.isFinite(lineNum) ? `${f.file}:${f.line}` : f.file
   if (!url) return text
@@ -1330,6 +1329,7 @@ export function tableRowInnerTemplate(g) {
   const typeLabel = formatRunMeta(f)
   const exportLabel = findingDisplayName(f)
   const exportPart = exportLabel ? `, ${exportLabel}` : ''
+  const url = findingUrl(f, findingRepoFallback(f))
 
   return html`
     <div class="row-score">
@@ -1342,7 +1342,8 @@ export function tableRowInnerTemplate(g) {
         ${typeLabel ? html`<span class="row-type">${typeLabel}</span>` : nothing}
       </div>
       <div class="meta-row">
-        <span class="row-loc">${rowLocationTemplate(f)}${exportPart}</span>
+        <span class="row-loc">${rowLocationTemplate(f, url)}${exportPart}</span>
+        ${githubRef(url)}
         <div class="marks">
           ${actionButtonsTemplate(g, sortedTabs, groupSt, active)}
         </div>

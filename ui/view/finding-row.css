@@ -127,19 +127,91 @@
 .meta-row {
   grid-column: 2; grid-row: 2;
   min-width: 0;
+  /* Anchor for the reference tooltip — see `.gh-ref-tip`. */
+  position: relative;
   display: flex; align-items: center; gap: .55rem;
   & .row-loc {
     color: var(--muted); font-size: .72rem;
-    flex: 1; min-width: 0;
+    /* Shrinks (so a long path ellipsises) but does NOT grow: growing
+       to fill the row would push the GitHub mark that follows it all
+       the way over to the action buttons, a hand's width from the path
+       it belongs to. `.marks` claims the far end for itself instead. */
+    flex: 0 1 auto; min-width: 0;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    & a { color: inherit; }
+    /* No underline, the UA's included — theme.css's `a` rules stop at
+       the shadow boundary, and a rule of underlined paths reads as a
+       list of links rather than a list of locations. The GitHub mark
+       beside it says where it goes; hover colour says it is live. */
+    & a { color: inherit; text-decoration: none; cursor: default; }
     & a:hover { color: var(--accent); }
   }
   & .marks {
     display: flex; gap: .35rem; align-items: center; flex-shrink: 0;
+    margin-left: auto;
     user-select: none;
   }
 }
+
+/* GitHub mark + its tooltip, the same pair the finding card carries
+   (view/finding-card.css has the other copy and the reasoning; the
+   two shadow roots can't share a sheet). No `</>` beside it here: the
+   source preview it opens is a block of code, and a table row is one
+   line high — the row's own detail panel is where that belongs.
+
+   A SIBLING of `.row-loc`, not a child, because that span ellipsises a
+   long path and clips what overflows it — a tooltip parked inside
+   would be cut off at the same edge. Out here it hangs off the row,
+   and lands just after whatever the path shortened to. */
+/* Not positioned, unlike the card's copy: the tooltip anchors to the
+   row, not to the mark. See `.gh-ref-tip`. */
+.gh-ref {
+  display: inline-flex; align-items: center;
+  flex-shrink: 0;
+}
+.gh-ref-btn {
+  display: inline-flex; align-items: center;
+  position: relative;
+  padding: 0 .15rem;
+  color: var(--muted);
+  cursor: default;
+
+  /* The glyph is 12px on a row of .72rem type: a hit zone the size of
+     the mark is a target the reader can miss without seeing why. */
+  &::before { content: ''; position: absolute; inset: -.25rem -2px; }
+  &:hover { color: var(--accent); }
+  &:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; border-radius: 2px; }
+}
+.gh-ref-tip {
+  position: absolute;
+  z-index: 20;
+  /* Over the row's own location, left-aligned — not off the right of
+     the mark the way the card does it. The mark here follows a path
+     that can run most of the width of the table, so "beside the mark"
+     is often "off the end of the window", and the reference would be
+     unreadable exactly when it is most wanted: when the path was too
+     long to fit and got ellipsised. Anchored to the row it lands where
+     the reader is already looking, and cannot leave the table.
+     Wide, so it stays on ONE line — capped narrow it grows tall
+     instead, and a tall tooltip is cut by the paint of whatever
+     surrounds the row. `display: none` until it is read is what makes
+     that width affordable: a laid-out hidden box would widen the table
+     for everyone whether or not it ever showed. */
+  left: 0; top: 50%;
+  translate: 0 -50%;
+  padding: .2rem .45rem;
+  display: none;
+  width: max-content; max-width: min(85ch, 100%);
+  overflow-wrap: anywhere;
+  border: 1px solid var(--border); border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* `rem`: sized in `em` it would shrink to the row's dense type and
+     read at a different size from the same tooltip on a card. */
+  font-size: .72rem; line-height: 1.4;
+  filter: drop-shadow(0 2px 6px rgb(0 0 0 / .35));
+}
+.gh-ref-btn:is(:hover, :focus-visible) + .gh-ref-tip { display: block; }
 
 .tabs-row {
   grid-column: 2; grid-row: 3;
