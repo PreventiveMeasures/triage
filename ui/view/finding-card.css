@@ -772,6 +772,16 @@ span.evidence-ref:not([role]) { color: var(--muted); }
 .marks {
   display: flex; gap: .35rem; justify-content: flex-end;
   margin-top: .4rem; align-items: center;
+  /* A surface that gives the card a fixed-height pane can pin this row
+     to the bottom of it, so the buttons that act on the finding stay
+     reachable while a long description scrolls under them. It sets both
+     properties (the kanban dialog's fullscreen mode, in
+     styles/findings.css); everywhere else they are unset, which leaves
+     the row static, `bottom` inert and the background transparent. */
+  position: var(--finding-marks-position, static);
+  bottom: 0;
+  background: var(--finding-marks-bg, transparent);
+  padding-bottom: var(--finding-marks-pad-bottom, 0);
   /* Indent by the badge column's width so .marks-left's leading items
      (commit ref, multi-tab strip) align under the description /
      recommendation in column 2 of the .tab-body grid.
@@ -782,6 +792,19 @@ span.evidence-ref:not([role]) { color: var(--muted); }
 
 .finding-left {
   align-self: start; text-align: center; min-width: 4rem;
+  /* Normally nothing. The kanban dialog's fullscreen mode sets it (see
+     the WCO block in styles/findings.css) when the OS paints its window
+     controls over this corner — this rail is what they land on, and it
+     is the only thing that has to move out from under them. */
+  padding-top: var(--finding-left-inset, 0);
+  /* And, in a surface that scrolls the card inside a fixed pane, the
+     rail holds its place while the description moves — the severity and
+     confidence are what the reader is judging the prose against, so
+     they should still be on screen at the bottom of a long one. It
+     needs no ground to cover: nothing scrolls under it, the description
+     is a column over. Unset elsewhere, so `top` is inert. */
+  position: var(--finding-left-position, static);
+  top: 0;
 
   & .value-label:last-child { margin-bottom: 0; }
 }

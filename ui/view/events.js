@@ -1453,6 +1453,39 @@ function scrollKanbanRailActive() {
   if (card) card.scrollIntoView({ block: 'nearest', behavior: 'instant' })
 }
 
+// The dialog's finding, and the Code panel's history alongside it.
+// Fullscreen mounts the focus view's panel (render.js
+// focusMainTemplate), and a trail of followed references belongs to
+// the finding that was on screen when the reader followed them — the
+// same rule setFocusGid applies when the focus queue moves. Every path
+// that changes what the dialog shows comes through here, the close
+// included, so the next open starts on its own file rather than
+// wherever the last reader wandered off to.
+function showKanbanFinding(next) {
+  state.kanbanPopoverGid = next
+  state.focusCodeStack = []
+  state.focusCodeAt = 0
+}
+
+// What a dialog that just changed finding owes the surfaces around it,
+// once the render has landed: the rail scrolls its now-open card into
+// view, and the code panel — mounted in fullscreen — moves to the
+// lines this finding cites. Both are no-ops when their surface isn't
+// on screen.
+//
+// The panel needs asking. Lit reuses `.focus-code-body` across the
+// render, so its scrollTop survives the swap and the new file arrives
+// still scrolled to wherever the last finding was read — which for a
+// finding cited at line 400 of the same bundle is nowhere near it. The
+// focus view has always asked (setFocusGid); the dialog only ever got
+// it by accident, on the cache-miss path where loadSources reveals
+// after its own late render, and never when the source was already
+// loaded.
+function afterKanbanFindingShown() {
+  scrollKanbanRailActive()
+  revealFocusCodeLines()
+}
+
 function setKanbanPopoverGid(next) {
   const prev = state.kanbanPopoverGid
   if (prev === next) return
@@ -1465,9 +1498,9 @@ function setKanbanPopoverGid(next) {
   // start a new one — only a render().
   if (!document.startViewTransition || (!opening && !closing)) {
     syncOpenedGroupTriage(next)
-    state.kanbanPopoverGid = next
+    showKanbanFinding(next)
     render()
-    scrollKanbanRailActive()
+    afterKanbanFindingShown()
     return
   }
 
@@ -1527,14 +1560,14 @@ function setKanbanPopoverGid(next) {
     } else {
       updateKanbanClipVars()
     }
-    state.kanbanPopoverGid = next
+    showKanbanFinding(next)
     const t = document.startViewTransition(() => {
       render()
       // Inside the callback, so the rail is already scrolled to the
       // open card when the NEW snapshot is captured — scrolling it
       // afterwards would animate from a slice of the queue the user
       // never asked for.
-      scrollKanbanRailActive()
+      afterKanbanFindingShown()
       // Clear inline name inside the callback so the NEW snapshot
       // has exactly one element holding `kanban-detail-modal` —
       // the modal (via CSS). Two elements with the same name
@@ -1555,7 +1588,7 @@ function setKanbanPopoverGid(next) {
   // so the NEW snapshot holds the name and the browser morphs the
   // OLD modal back into the card.
   updateKanbanClipVars()
-  state.kanbanPopoverGid = next
+  showKanbanFinding(next)
   let closeCard = null
   const t = document.startViewTransition(() => {
     render()
@@ -1635,6 +1668,10 @@ report.addEventListener('click', (e) => {
       localStorage.setItem(KANBAN_DETAIL_FULLSCREEN_KEY, String(state.kanbanDetailFullscreen))
     } catch {}
     render()
+    // Going fullscreen mounts the code panel for the first time, at the
+    // top of the file. Put it on the lines the finding cites, same as a
+    // navigation would.
+    revealFocusCodeLines()
     return
   }
   // Fullscreen toggle in a column header — give that column the whole
@@ -1714,6 +1751,18 @@ report.addEventListener('click', (e) => {
   // from whatever non-modal, non-card DOM was under the cursor
   // (a column header, empty column body, the kanban board gutter).
   if (state.kanbanPopoverGid) setKanbanPopoverGid(null)
+})
+
+// Column picker in the dialog rail's header — land on the chosen
+// bucket's first finding, which is what pulls the rail across to it.
+// The gid rides on the option rather than being looked up here: the
+// buckets are render.js's, and the DOM already carries the one answer
+// this needs.
+report.addEventListener('change', (e) => {
+  const select = e.target.closest?.('[data-kanban-column]')
+  if (!select) return
+  const gid = select.selectedOptions[0]?.dataset.gid
+  if (gid) setKanbanPopoverGid(gid)
 })
 
 // Esc dismisses the popover, then (a second press) the fullscreen

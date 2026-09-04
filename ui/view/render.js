@@ -967,6 +967,108 @@ function focusCodeLinesTemplate(code) {
   </div>`
 }
 
+// The focus workbench: a finding-card in one pane and, when the
+// analyzer's bundle carries the file it points at, that source in
+// another, with the draggable divider between them.
+//
+// Shared by the focus view and the kanban detail dialog's fullscreen
+// mode. A dialog given the whole screen has exactly the room this
+// layout needs, and the card's `Code` shortcut — which opens the
+// bundle overlay ON TOP of everything — is the affordance you want
+// INSTEAD of a panel, never as well as one. Passing `'focus'` as the
+// card's context is what says so: it reads as "a code panel is beside
+// me", which is why it both drops that shortcut and sends the evidence
+// rows into the panel rather than out to GitHub.
+// `corner` is anything the caller wants floating over the card pane's
+// top-right — the kanban dialog's expand / close pair. It goes in as a
+// grid item of `.focus-main` (findings.css parks it on the card's cell)
+// rather than inside the pane, so it neither scrolls with the card nor
+// needs to know where the divider currently sits.
+function focusMainTemplate(group, corner = nothing) {
+  // Lazy bundle-source fetch for the inline Code panel. Returns
+  // `null` when this finding has no bundle code reference,
+  // `{ loading: true }` while the first load is in flight (the
+  // load triggers render() on settle), or the resolved
+  // `{ content, file, line, highlighted }` once ready.
+  // The `focusCodeTick` read subscribes any observer-util-tracked
+  // ancestor to the cache's settle events so the DOM picks up
+  // the new content on the same frame.
+  void state.focusCodeTick
+  const code = getFocusCode(group)
+  // Where the panel has been for this finding. Empty until the reader
+  // follows a reference somewhere the panel wasn't already showing —
+  // which is why the back / forward pair below isn't drawn on
+  // arrival, and isn't drawn by a click on the row the panel is
+  // already on either: there is nothing behind the current entry.
+  const codeHistory = focusCodeHistory(group)
+  const mainClass = code ? 'focus-main with-code' : 'focus-main'
+  // The card | code split as the divider's percentage along the
+  // pane (see `.focus-main.with-code` in findings.css). Bound on
+  // every render so a committed drag survives one, and so the two
+  // panes come back at the user's width after a navigation; the
+  // drag itself writes the same property directly on this element
+  // rather than re-rendering per pointermove.
+  const splitStyle = styleMap({ '--focus-split': String(state.focusSplit) })
+  return html`<div class=${mainClass} style=${splitStyle}>
+      <div class="focus-pane focus-pane-card">
+        <div class="focus-card-wrapper">
+          ${findingCardPlaceholder(group, false, 'focus')}
+        </div>
+      </div>
+      ${corner}
+      <!-- Divider between the two panes: drag to resize, double-
+           click to restore the 1:1 default, ← / → while focused to
+           nudge (events.js routes all three to view/focus-splitter.js).
+           Rendered as an ARIA separator with the split percentage as
+           its value; the narrow-viewport rule that stacks the panes
+           hides it, since there's nothing horizontal left to drag. -->
+      ${code ? html`<div
+        class="focus-splitter"
+        data-focus-splitter
+        role="separator"
+        tabindex="0"
+        aria-orientation="vertical"
+        aria-label="Resize the finding and code panes"
+        aria-valuemin=${FOCUS_SPLIT_MIN}
+        aria-valuemax=${FOCUS_SPLIT_MAX}
+        aria-valuenow=${Math.round(state.focusSplit)}
+        title="Drag to resize · double-click to reset"
+      ></div>
+      <div class="focus-pane focus-pane-code">
+        ${code.loading
+          ? html`<div class="focus-code-empty">Loading source…</div>`
+          : html`<header class="focus-code-bar" title=${code.file}>
+              <span class="focus-code-file">${code.file}</span>
+              ${code.range ? html`<span class="focus-code-line">:${lineRangeLabel(code.range)}</span>` : nothing}
+              <!-- Back / forward through the files the panel has
+                   shown. Both appear together or not at all, and the
+                   one with nowhere to go is DISABLED rather than
+                   removed: a control that vanishes at the end of the
+                   history takes the other one's position with it, so
+                   the button under the cursor moves out from under
+                   it exactly when it is being clicked repeatedly. -->
+              ${(codeHistory?.stack.length ?? 0) > 1 ? html`<div class="focus-code-nav">
+                <button
+                  type="button"
+                  class="focus-code-nav-btn"
+                  data-code-history="back"
+                  ?disabled=${codeHistory.at === 0}
+                  aria-label="Back to the previously shown file"
+                >${PREV_ICON}</button>
+                <button
+                  type="button"
+                  class="focus-code-nav-btn"
+                  data-code-history="forward"
+                  ?disabled=${codeHistory.at === codeHistory.stack.length - 1}
+                  aria-label="Forward to the next shown file"
+                >${NEXT_ICON}</button>
+              </div>` : nothing}
+            </header>
+            <div class="focus-code-body">${focusCodeLinesTemplate(code)}</div>`}
+      </div>` : nothing}
+  </div>`
+}
+
 // Detail modal — opens on kanban-card click, wrapped in
 // `document.startViewTransition` so the open / close animations
 // run as a single view transition (the scale + opacity keyframes
@@ -984,7 +1086,11 @@ function focusCodeLinesTemplate(code) {
 // visible and clickable. findings.css docks the rail to the screen's
 // right edge from 1400px up and holds its width out of the backdrop,
 // so the modal sits centered in what's left rather than under it.
-function kanbanDetailTemplate(focusGroup, column) {
+//
+// `columns` is every bucket ({ key, label, count, firstGid }) for the
+// rail's header picker — the way across to a bucket the open finding
+// isn't in.
+function kanbanDetailTemplate(focusGroup, column, columns = []) {
   if (!focusGroup) return nothing
   const groupSt = groupState(focusGroup)
   // Fullscreen drops the modal's width cap and stretches it over the
@@ -1007,30 +1113,45 @@ function kanbanDetailTemplate(focusGroup, column) {
   // animation with it. The modal animates by clip alone (no opacity
   // shift), keeping its background + border at full alpha throughout
   // the morph between the source card and the centered modal box.
+  // Expand + close travel between two homes: the modal's own corner at
+  // the readable width, and the card pane's corner in fullscreen, where
+  // the modal's corner belongs to the code panel and these buttons
+  // belong to the finding.
+  // Expand + close as one corner cluster, with two homes: the modal's
+  // own corner at the readable width, and the card pane's corner in
+  // fullscreen — where the modal's corner belongs to the code panel and
+  // these buttons belong to the finding beside it. Expand borrows the
+  // column header's bracket glyphs so the board's two "give this thing
+  // the space" affordances read as the same control. Neither carries a
+  // title attribute: the native tooltip is not the one this app uses,
+  // and aria-label already names both for the readers that need naming.
+  const actions = html`<div class="kanban-detail-actions">
+    <button
+      type="button"
+      class="kanban-detail-expand"
+      data-kanban-detail-fullscreen
+      aria-pressed=${full ? 'true' : 'false'}
+      aria-label=${full ? 'Back to the readable width' : 'Fill the available space'}
+    >${full ? COLLAPSE_ICON : EXPAND_ICON}</button>
+    <button
+      type="button"
+      class="kanban-detail-close"
+      aria-label="Close details"
+    >×</button>
+  </div>`
   return html`<div class="kanban-detail-backdrop">
     <div class="kanban-detail-dim"></div>
     <div class=${classMap(modalClasses)} role="dialog" aria-modal="true">
-      <!-- Expand + close as one corner cluster. Expand borrows the
-           column header's bracket glyphs so the board's two "give this
-           thing the space" affordances read as the same control. -->
-      <div class="kanban-detail-actions">
-        <button
-          type="button"
-          class="kanban-detail-expand"
-          data-kanban-detail-fullscreen
-          aria-pressed=${full ? 'true' : 'false'}
-          title=${full ? 'Back to the readable width' : 'Fill the available space'}
-          aria-label=${full ? 'Back to the readable width' : 'Fill the available space'}
-        >${full ? COLLAPSE_ICON : EXPAND_ICON}</button>
-        <button
-          type="button"
-          class="kanban-detail-close"
-          title="Close details"
-          aria-label="Close details"
-        >×</button>
-      </div>
+      ${full ? nothing : actions}
+      <!-- Fullscreen swaps the single scrolling column for the focus
+           view's workbench: the card in one pane, the bundle's source
+           in the other. At the readable width there is no room for a
+           second pane, so the card keeps its Code shortcut into the
+           bundle overlay instead. -->
       <div class="kanban-detail-body">
-        ${findingCardPlaceholder(focusGroup, false, 'kanban-detail')}
+        ${full
+          ? focusMainTemplate(focusGroup, actions)
+          : findingCardPlaceholder(focusGroup, false, 'kanban-detail')}
       </div>
     </div>
     ${items.length === 0 ? nothing : html`<aside class="kanban-detail-side" aria-label=${`${column.label} findings`}>
@@ -1038,14 +1159,41 @@ function kanbanDetailTemplate(focusGroup, column) {
            counter, and the prev / next pair (reusing its .focus-nav
            chrome), which walk the same column the arrow keys do. -->
       <div class="kanban-detail-side-header">
-        <span class="label">${column.label}</span>
+        <!-- The bucket's name is a picker. The rail always lists the
+             open finding's own column, so choosing another column means
+             opening its first finding — the dialog moves, and the rail
+             comes with it. An empty bucket has nothing to open, so it
+             is offered (its count is the answer to "is there anything
+             in Fixed yet?") but not selectable.
+
+             The selected flag is set as a PROPERTY, not an
+             attribute: once a reader has used the select, its
+             selectedness stops following the attribute, so a re-render
+             driven by anything else — triaging the open finding out of
+             this bucket, say — would leave the closed select naming a
+             column it is no longer showing. -->
+        <span class="kanban-detail-side-pick">
+          <select class="kanban-detail-side-select" data-kanban-column aria-label="Column to show">
+            ${columns.map((c) => {
+              // Computed out here rather than inline: a nested template
+              // literal inside html`…` would close it early.
+              const current = c.key === column.key
+              const label = current ? c.label : `${c.label} (${c.count})`
+              return html`<option
+                value=${c.key}
+                data-gid=${c.firstGid}
+                .selected=${current}
+                ?disabled=${c.count === 0}
+              >${label}</option>`
+            })}
+          </select>
+        </span>
         <div class="focus-nav">
           <button
             type="button"
             class="focus-nav-btn"
             data-kanban-nav="prev"
             ?disabled=${idx === 0}
-            title="Previous finding (←)"
             aria-label="Previous finding"
           >${PREV_ICON}</button>
           <span class="count">${idx < 0 ? items.length : `${idx + 1} / ${items.length}`}</span>
@@ -1054,7 +1202,6 @@ function kanbanDetailTemplate(focusGroup, column) {
             class="focus-nav-btn"
             data-kanban-nav="next"
             ?disabled=${idx === items.length - 1}
-            title="Next finding (→)"
             aria-label="Next finding"
           >${NEXT_ICON}</button>
         </div>
@@ -1147,90 +1294,10 @@ function findingsBodyTemplate(filtered) {
     }
     prevFocusedIdx = focusedIdx
     const focused = filtered[focusedIdx]
-    // Lazy bundle-source fetch for the inline Code panel. Returns
-    // `null` when this finding has no bundle code reference,
-    // `{ loading: true }` while the first load is in flight (the
-    // load triggers render() on settle), or the resolved
-    // `{ content, file, line, highlighted }` once ready.
-    // The `focusCodeTick` read subscribes any observer-util-tracked
-    // ancestor to the cache's settle events so the DOM picks up
-    // the new content on the same frame.
-    void state.focusCodeTick
-    const code = getFocusCode(focused)
-    // Where the panel has been for this finding. Empty until the reader
-    // follows a reference somewhere the panel wasn't already showing —
-    // which is why the back / forward pair below isn't drawn on
-    // arrival, and isn't drawn by a click on the row the panel is
-    // already on either: there is nothing behind the current entry.
-    const codeHistory = focusCodeHistory(focused)
-    const mainClass = code ? 'focus-main with-code' : 'focus-main'
-    // The card | code split as the divider's percentage along the
-    // pane (see `.focus-main.with-code` in findings.css). Bound on
-    // every render so a committed drag survives one, and so the two
-    // panes come back at the user's width after a navigation; the
-    // drag itself writes the same property directly on this element
-    // rather than re-rendering per pointermove.
-    const splitStyle = styleMap({ '--focus-split': String(state.focusSplit) })
     const atStart = focusedIdx === 0
     const atEnd = focusedIdx === filtered.length - 1
     return html`<div class="focus-view">
-      <div class=${mainClass} style=${splitStyle}>
-        <div class="focus-pane focus-pane-card">
-          <div class="focus-card-wrapper">
-            ${findingCardPlaceholder(focused, false, 'focus')}
-          </div>
-        </div>
-        <!-- Divider between the two panes: drag to resize, double-
-             click to restore the 1:1 default, ← / → while focused to
-             nudge (events.js routes all three to view/focus-splitter.js).
-             Rendered as an ARIA separator with the split percentage as
-             its value; the narrow-viewport rule that stacks the panes
-             hides it, since there's nothing horizontal left to drag. -->
-        ${code ? html`<div
-          class="focus-splitter"
-          data-focus-splitter
-          role="separator"
-          tabindex="0"
-          aria-orientation="vertical"
-          aria-label="Resize the finding and code panes"
-          aria-valuemin=${FOCUS_SPLIT_MIN}
-          aria-valuemax=${FOCUS_SPLIT_MAX}
-          aria-valuenow=${Math.round(state.focusSplit)}
-          title="Drag to resize · double-click to reset"
-        ></div>
-        <div class="focus-pane focus-pane-code">
-          ${code.loading
-            ? html`<div class="focus-code-empty">Loading source…</div>`
-            : html`<header class="focus-code-bar" title=${code.file}>
-                <span class="focus-code-file">${code.file}</span>
-                ${code.range ? html`<span class="focus-code-line">:${lineRangeLabel(code.range)}</span>` : nothing}
-                <!-- Back / forward through the files the panel has
-                     shown. Both appear together or not at all, and the
-                     one with nowhere to go is DISABLED rather than
-                     removed: a control that vanishes at the end of the
-                     history takes the other one's position with it, so
-                     the button under the cursor moves out from under
-                     it exactly when it is being clicked repeatedly. -->
-                ${(codeHistory?.stack.length ?? 0) > 1 ? html`<div class="focus-code-nav">
-                  <button
-                    type="button"
-                    class="focus-code-nav-btn"
-                    data-code-history="back"
-                    ?disabled=${codeHistory.at === 0}
-                    aria-label="Back to the previously shown file"
-                  >${PREV_ICON}</button>
-                  <button
-                    type="button"
-                    class="focus-code-nav-btn"
-                    data-code-history="forward"
-                    ?disabled=${codeHistory.at === codeHistory.stack.length - 1}
-                    aria-label="Forward to the next shown file"
-                  >${NEXT_ICON}</button>
-                </div>` : nothing}
-              </header>
-              <div class="focus-code-body">${focusCodeLinesTemplate(code)}</div>`}
-        </div>` : nothing}
-      </div>
+      ${focusMainTemplate(focused)}
       <aside class="focus-sidebar" aria-label="Up next">
         <!-- Sidebar header carries both the queue's label and the
              prev / counter / next controls (consolidated here so the
@@ -1364,10 +1431,27 @@ function findingsBodyTemplate(filtered) {
         </div>`
       })}
     </div>
-    ${kanbanDetailTemplate(focusGroup, focusColumn && {
-      label: focusColumn.label,
-      items: buckets.get(focusColumn.key),
-    })}`
+    ${kanbanDetailTemplate(
+      focusGroup,
+      focusColumn && {
+        key: focusColumn.key,
+        label: focusColumn.label,
+        items: buckets.get(focusColumn.key),
+      },
+      // Same board order as the columns themselves, so the picker reads
+      // left-to-right the way the board does. `firstGid` is where each
+      // one opens: its top card, which is where a reader starting on a
+      // bucket starts.
+      columns.map((c) => {
+        const items = buckets.get(c.key)
+        return {
+          key: c.key,
+          label: c.label,
+          count: items.length,
+          firstGid: items.length > 0 ? groupKey(items[0]) : '',
+        }
+      }),
+    )}`
   }
   if (state.viewMode === 'grouped') {
     // Group groups by file. All tabs in a dedup group share the same

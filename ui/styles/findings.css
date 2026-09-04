@@ -549,6 +549,13 @@
      what's left instead of running under the rail. Matches the focus
      view's queue, whose cards these are. */
   --kanban-side-w: 240px;
+  /* Height shared by the dialog's two chrome rows — the rail's header
+     and, in fullscreen, the code panel's file bar — so their bottom
+     rules line up across the screen instead of missing each other by
+     the 7px their contents happen to differ by. The measure is the
+     taller of the two: the rail's nav buttons (1.4rem) plus the .35rem
+     padding above and below them and the 1px rule under. */
+  --kanban-head-h: calc(1.4rem + .7rem + 1px);
 
   position: fixed;
   inset: 0;
@@ -679,6 +686,24 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
   border: 0;
   border-radius: 0;
   box-shadow: none;
+
+  /* Pin the card's action row to the bottom of its pane (finding-card
+     .marks spends these): at this size a description runs for screens,
+     and the buttons that act on it shouldn't be screens away. The row
+     needs a ground of its own to scroll content under, which is this
+     dialog's — including the tint, when the finding carries a colour. */
+  --finding-left-position: sticky;
+  --finding-marks-position: sticky;
+  --finding-marks-bg: var(--bg, var(--surface));
+  /* The row pins flush to the pane's bottom edge (the pane gives up its
+     bottom inset below, so no strip is left for text to scroll through
+     under the row) and keeps the buttons off that edge itself. */
+  --finding-marks-pad-bottom: .4rem;
+
+  &.mark-red   { --finding-marks-bg: var(--mark-red-bg); }
+  &.mark-blue  { --finding-marks-bg: var(--mark-blue-bg); }
+  &.mark-green { --finding-marks-bg: var(--mark-green-bg); }
+  &.mark-gray  { --finding-marks-bg: var(--mark-gray-bg); }
 }
 
 /* The inset belongs to the backdrop, not the modal, so shedding it is
@@ -689,6 +714,142 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
    rail's strip back. */
 .kanban-detail-backdrop:has(> .kanban-detail-modal.fullscreen) {
   padding: 0;
+}
+
+/* Fullscreen mounts the focus view's workbench in the dialog body (see
+   focusMainTemplate in render.js), and the two want opposite things of
+   this box: the single-column body IS the scroller, while the
+   workbench's panes each own their scroll and only need a bounded box
+   to lay out in. So in fullscreen the body stops scrolling and becomes
+   that box — flex so `.focus-main` can fill it, `min-height: 0` so it
+   may shrink below the panes' content instead of pushing the modal
+   past the viewport. */
+.kanban-detail-modal.fullscreen .kanban-detail-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+  /* The inset moves off this box and onto the finding column alone
+     (below): the code panel wants to run to the rail and to the top of
+     the screen — flush is what lines its file bar up with the rail's
+     header — while the finding, and the buttons in its corner, want the
+     air back. */
+  padding: 0;
+
+  /* The gap goes with the frames below — that .75rem was the air
+     between two glass cards, and there are none here. */
+  & .focus-main {
+    flex: 1 1 auto;
+    gap: 0;
+  }
+
+  /* The corner buttons belong to the finding, not to the source
+     beside it, so they ride the card pane's cell rather than floating
+     over the modal's top-right (which in this layout is the code
+     pane). Overlapping the cell as a grid item rather than sitting
+     inside the pane keeps them off the pane's scroller, so they stay
+     put while the card scrolls — and they follow the divider on a
+     drag for free, since the cell is what the divider resizes. With
+     no code panel there is one column and this is still its corner. */
+  & .kanban-detail-actions {
+    position: static;
+    grid-area: 1 / 1;
+    place-self: start end;
+    /* Hard into the corner, and staying there: the column's inset
+       below moves the card's run-meta line (`security · opus 5 · max ·
+       list`) down and in, away from these, which is the clearance.
+       Taking the inset here too would put them back on top of it. The
+       1px is optical, not structural — it drops the glyphs onto the
+       same line the file bar's text sits on across the divider. */
+    margin: 1px 0 0;
+  }
+
+  /* Pinning the cluster to the card's cell takes that cell out of
+     auto-placement, and the three panes then walk one column along —
+     the card into the divider's track, the source into an implicit
+     second row. So the workbench's own items get their columns
+     spelled out here too: card, divider, source, in the order
+     `.focus-main.with-code` lays its tracks out. Without the code
+     panel there is one track and the first line is all that applies. */
+  /* The finding column keeps the inset the body gave up — but not on
+     the right, where the divider already separates it from the source,
+     and not shared with the code panel, whose file bar has to start
+     level with the rail's header. */
+  & .focus-pane-card {
+    grid-column: 1;
+    /* No bottom inset: the sticky action row is what sits against that
+       edge, and a strip below it would just be somewhere for the
+       scrolling text to show through. The row carries the equivalent
+       padding of its own. */
+    padding: .4rem 0 0 .4rem;
+  }
+  /* Half the focus view's grab band. There it separates two glass
+     cards and wants presence; here it is a hairline between two flush
+     panes, and the band's other job — being the finding column's right
+     margin — is served by half as much. The track's width is a
+     variable the column math reads too, so the split percentage keeps
+     landing on the line. */
+  & .focus-main.with-code { --focus-splitter-width: .375rem; }
+
+  & .focus-splitter {
+    grid-column: 2;
+    /* The hairline sits at the END of the divider's track, not its
+       centre: centred, it left half the track — 6px — standing between
+       itself and the gutter, and the source panel is meant to start AT
+       the line. The other half stays where it is, as the width the
+       pointer still has to grab, and reads as the finding column's
+       right margin. */
+    justify-content: flex-end;
+
+    &::before {
+      width: 1px;
+      height: 100%;
+      border-radius: 0;
+    }
+  }
+  & .focus-pane-code { grid-column: 3; }
+
+  /* The file bar is the code panel's header, and the rail's header is
+     right beside it across the screen — so it takes the same height.
+     Centred rather than baseline-aligned, because in a box now taller
+     than its text the baseline would park that text at the top while
+     the rail's sits in the middle. */
+  & .focus-code-bar {
+    min-height: var(--kanban-head-h);
+    align-items: center;
+  }
+
+  /* The focus view frames each pane as a glass card, which is right
+     on the page and wrong here: the dialog IS the panel, so a rounded
+     card inside it — at the screen's own edge — is chrome drawn around
+     chrome. The panes lose their frames and run to the dialog's edges,
+     the way the rail runs to the screen's. */
+  & .focus-card-wrapper,
+  & .focus-pane-code {
+    background: none;
+    backdrop-filter: none;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  /* `overflow: hidden` on the wrapper would make IT the sticky row's
+     scrollport, and this box is exactly as tall as its content — so the
+     row would pin to the end of the card rather than to the bottom of
+     the pane. What that clipping was for is the rounded corner this
+     mode doesn't draw. */
+  & .focus-card-wrapper { overflow: visible; }
+
+  /* Which leaves the divider as the only seam between them, so it
+     draws one: a hairline down the full height, in place of the short
+     centred grip that only had to say "grab here" between two cards
+     that were already separated. It still takes the accent on hover
+     and through a drag. */
+
+  /* And the card fills its pane. The 1100px cap reads as a measure
+     when the frame around it makes the empty margin deliberate;
+     without one it just looks like the text stopped early. */
+  & .focus-main.with-code .focus-card-wrapper { max-width: none; }
 }
 
 .kanban-detail-body {
@@ -743,18 +904,59 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
   flex-shrink: 0;
   display: flex; align-items: center; justify-content: space-between;
   gap: .5rem;
+  min-height: var(--kanban-head-h);
   padding: .35rem .55rem;
   border-bottom: 1px solid var(--border);
   font-size: .72rem; font-weight: 600;
   text-transform: uppercase; letter-spacing: .06em;
   color: var(--muted);
 
-  /* Label soaks up the free space so the position counter and the
-     prev / next pair stay pinned to the right edge, and a long
+  /* The picker soaks up the free space so the position counter and
+     the prev / next pair stay pinned to the right edge, and a long
      bucket name ellipsises instead of shoving them out. */
-  & .label {
+  & .kanban-detail-side-pick {
     flex: 1 1 auto; min-width: 0;
+    position: relative;
+    display: block;
+  }
+
+  /* Chevron, same two-borders-rotated glyph the toolbar's selects
+     carry — drawn on the wrapper because pseudo-elements don't apply
+     to a <select>, and clicks fall through it to the control. */
+  & .kanban-detail-side-pick::after {
+    content: '';
+    position: absolute;
+    right: .1rem; top: 50%;
+    width: .3rem; height: .3rem;
+    border-right: 1.5px solid var(--muted);
+    border-bottom: 1.5px solid var(--muted);
+    transform: translateY(-70%) rotate(45deg);
+    pointer-events: none;
+  }
+
+  /* The control wears the header text's own type — it replaced a
+     label, and should still read as one until it's used. */
+  & .kanban-detail-side-select {
+    width: 100%;
+    appearance: none;
+    padding: 0 .8rem 0 0;
+    background: transparent;
+    border: 0;
+    font: inherit;
+    text-transform: inherit; letter-spacing: inherit;
+    color: inherit;
+    cursor: pointer;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+
+    /* No focus ring. Chromium matches `:focus-visible` on a <select>
+       the moment it's CLICKED — the popup it opens is keyboard-
+       operable, so the UA calls that keyboard interaction — which puts
+       an accent ring around a control the reader just pointed at. The
+       toolbar's selects settled this the same way (`:focus` with
+       `outline: none` and a quieter cue); borderless, this one
+       brightens its label, which is also what hover does. */
+    &:hover, &:focus { color: var(--text); }
+    &:focus { outline: none; }
   }
 
   & .count {
@@ -763,7 +965,14 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
     padding: 0 .35rem; border-radius: 999px;
     background: rgb(from var(--text) r g b / .08);
     font-variant-numeric: tabular-nums;
+    /* `3 / 9` is one token: let it wrap and the rail's 240px turns the
+       counter into two stacked lines and the header into two rows. */
+    white-space: nowrap;
   }
+
+  /* The counter and the arrows keep their size; the picker beside them
+     is what ellipsises when a bucket's name is long. */
+  & .focus-nav { flex: none; }
 }
 
 .kanban-detail-side-body {
@@ -791,6 +1000,50 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
 
   &:active { cursor: pointer; }
 }
+
+/* WCO PWA mode (the hidden-title-bar window): the fullscreen dialog
+   and the docked rail both run to the screen's edges, and up there the
+   edges belong to the OS window controls — top-left on macOS, top-right
+   on Windows / Linux. Push each side's content clear of the strip the
+   platform actually paints into, and only that side: an inset on the
+   side with no controls would be a band of nothing.
+
+   The clamp is that condition, written as arithmetic because `env()`
+   inside a media query has patchy support while `env()` inside a
+   property value doesn't (the same reason report.css ramps its header
+   padding this way). Read it as "the titlebar's height if this side's
+   control strip has any width at all, otherwise zero": multiplying the
+   strip's width by 1000 sends any non-zero value past the height, so
+   the clamp lands on one end or the other, and the 0px floor keeps a
+   sub-pixel negative — 100vw and the titlebar area disagreeing by a
+   rounding error — from invalidating the whole declaration. */
+/* stylelint-disable media-feature-name-value-no-unknown, length-zero-no-unit */
+@media (display-mode: window-controls-overlay) {
+  /* Fullscreen starts the card at the very top-left, which is where
+     macOS puts its traffic lights — and what they land on is the
+     card's badge rail, `.finding-left`, about their own width. Only
+     that rail moves: pushing the whole body down would leave a band of
+     nothing across the full width to clear something occupying 80px of
+     one corner.
+
+     The rail lives in the finding-card's shadow root, so the inset
+     travels as a custom property (they inherit through the boundary,
+     which the theme's own tokens already rely on) and finding-card.css
+     spends it. Set on the pane rather than the card so the card stays
+     a card wherever else it is mounted. */
+  .kanban-detail-modal.fullscreen .focus-pane-card {
+    --finding-left-inset: clamp(0px, env(titlebar-area-x, 0px) * 1000, env(titlebar-area-height, 0px));
+  }
+
+  /* The rail is docked to the right edge whether or not the dialog is
+     fullscreen, so its header meets the Windows / Linux controls in
+     both — hence no `.fullscreen` here. `--wco-right-toolbar`
+     (theme.css) is the shared measure of that strip. */
+  .kanban-detail-side {
+    padding-top: clamp(0px, var(--wco-right-toolbar) * 1000, env(titlebar-area-height, 0px));
+  }
+}
+/* stylelint-enable media-feature-name-value-no-unknown, length-zero-no-unit */
 
 /* Wide viewports: mount the rail and hold its width out of the
    backdrop's own box, so the centred modal lands beside the rail
