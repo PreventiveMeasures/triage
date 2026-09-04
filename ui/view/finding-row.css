@@ -199,6 +199,12 @@
   left: 0; top: 50%;
   translate: 0 -50%;
   padding: .2rem .45rem;
+  /* Never takes the pointer. It is drawn OVER the line, mark included,
+     so without this the moment it appears it is under the cursor, the
+     mark loses `:hover`, the tooltip goes away, the mark has `:hover`
+     again — a flicker loop with the reference never legible. Nothing
+     here is clickable anyway; the mark under it is the link. */
+  pointer-events: none;
   display: none;
   width: max-content; max-width: min(85ch, 100%);
   overflow-wrap: anywhere;

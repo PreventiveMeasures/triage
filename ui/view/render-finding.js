@@ -406,11 +406,9 @@ function evidenceTemplate(f) {
       const preview = codePreview(f, `ev${i}`, bundle, row?.file, row?.line)
       const ghRef = githubRef(url)
       return html`<li>
-        ${url
+        <span class="evidence-head">${url
           ? html`<a class="evidence-ref" href=${url} target="_blank" rel="noopener">${label}</a>`
-          : html`<span class="evidence-ref">${label}</span>`}
-        ${preview?.mark ?? nothing}
-        ${ghRef}
+          : html`<span class="evidence-ref">${label}</span>`}${preview?.mark ?? nothing}${ghRef}</span>
         ${preview?.tip ?? nothing}
         ${note ? html`<div class="evidence-note">${renderHighlighted(flowText(note))}</div>` : nothing}
         ${preview?.body ?? nothing}
