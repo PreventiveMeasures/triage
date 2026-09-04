@@ -979,7 +979,12 @@ function focusCodeLinesTemplate(code) {
 // card's context is what says so: it reads as "a code panel is beside
 // me", which is why it both drops that shortcut and sends the evidence
 // rows into the panel rather than out to GitHub.
-function focusMainTemplate(group) {
+// `corner` is anything the caller wants floating over the card pane's
+// top-right — the kanban dialog's expand / close pair. It goes in as a
+// grid item of `.focus-main` (findings.css parks it on the card's cell)
+// rather than inside the pane, so it neither scrolls with the card nor
+// needs to know where the divider currently sits.
+function focusMainTemplate(group, corner = nothing) {
   // Lazy bundle-source fetch for the inline Code panel. Returns
   // `null` when this finding has no bundle code reference,
   // `{ loading: true }` while the first load is in flight (the
@@ -1010,6 +1015,7 @@ function focusMainTemplate(group) {
           ${findingCardPlaceholder(group, false, 'focus')}
         </div>
       </div>
+      ${corner}
       <!-- Divider between the two panes: drag to resize, double-
            click to restore the 1:1 default, ← / → while focused to
            nudge (events.js routes all three to view/focus-splitter.js).
@@ -1107,29 +1113,36 @@ function kanbanDetailTemplate(focusGroup, column, columns = []) {
   // animation with it. The modal animates by clip alone (no opacity
   // shift), keeping its background + border at full alpha throughout
   // the morph between the source card and the centered modal box.
+  // Expand + close travel between two homes: the modal's own corner at
+  // the readable width, and the card pane's corner in fullscreen, where
+  // the modal's corner belongs to the code panel and these buttons
+  // belong to the finding.
+  // Expand + close as one corner cluster, with two homes: the modal's
+  // own corner at the readable width, and the card pane's corner in
+  // fullscreen — where the modal's corner belongs to the code panel and
+  // these buttons belong to the finding beside it. Expand borrows the
+  // column header's bracket glyphs so the board's two "give this thing
+  // the space" affordances read as the same control. Neither carries a
+  // title attribute: the native tooltip is not the one this app uses,
+  // and aria-label already names both for the readers that need naming.
+  const actions = html`<div class="kanban-detail-actions">
+    <button
+      type="button"
+      class="kanban-detail-expand"
+      data-kanban-detail-fullscreen
+      aria-pressed=${full ? 'true' : 'false'}
+      aria-label=${full ? 'Back to the readable width' : 'Fill the available space'}
+    >${full ? COLLAPSE_ICON : EXPAND_ICON}</button>
+    <button
+      type="button"
+      class="kanban-detail-close"
+      aria-label="Close details"
+    >×</button>
+  </div>`
   return html`<div class="kanban-detail-backdrop">
     <div class="kanban-detail-dim"></div>
     <div class=${classMap(modalClasses)} role="dialog" aria-modal="true">
-      <!-- Expand + close as one corner cluster. Expand borrows the
-           column header's bracket glyphs so the board's two "give this
-           thing the space" affordances read as the same control.
-           Neither carries a title attribute: the native tooltip is
-           not the one this app uses, and aria-label already names
-           both buttons for the readers that need naming. -->
-      <div class="kanban-detail-actions">
-        <button
-          type="button"
-          class="kanban-detail-expand"
-          data-kanban-detail-fullscreen
-          aria-pressed=${full ? 'true' : 'false'}
-          aria-label=${full ? 'Back to the readable width' : 'Fill the available space'}
-        >${full ? COLLAPSE_ICON : EXPAND_ICON}</button>
-        <button
-          type="button"
-          class="kanban-detail-close"
-          aria-label="Close details"
-        >×</button>
-      </div>
+      ${full ? nothing : actions}
       <!-- Fullscreen swaps the single scrolling column for the focus
            view's workbench: the card in one pane, the bundle's source
            in the other. At the readable width there is no room for a
@@ -1137,7 +1150,7 @@ function kanbanDetailTemplate(focusGroup, column, columns = []) {
            bundle overlay instead. -->
       <div class="kanban-detail-body">
         ${full
-          ? focusMainTemplate(focusGroup)
+          ? focusMainTemplate(focusGroup, actions)
           : findingCardPlaceholder(focusGroup, false, 'kanban-detail')}
       </div>
     </div>
@@ -1161,12 +1174,18 @@ function kanbanDetailTemplate(focusGroup, column, columns = []) {
              column it is no longer showing. -->
         <span class="kanban-detail-side-pick">
           <select class="kanban-detail-side-select" data-kanban-column aria-label="Column to show">
-            ${columns.map((c) => html`<option
-              value=${c.key}
-              data-gid=${c.firstGid}
-              .selected=${c.key === column.key}
-              ?disabled=${c.count === 0}
-            >${c.label} (${c.count})</option>`)}
+            ${columns.map((c) => {
+              // Computed out here rather than inline: a nested template
+              // literal inside html`…` would close it early.
+              const current = c.key === column.key
+              const label = current ? c.label : `${c.label} (${c.count})`
+              return html`<option
+                value=${c.key}
+                data-gid=${c.firstGid}
+                .selected=${current}
+                ?disabled=${c.count === 0}
+              >${label}</option>`
+            })}
           </select>
         </span>
         <div class="focus-nav">

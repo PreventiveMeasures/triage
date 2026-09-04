@@ -706,14 +706,68 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
   overflow: hidden;
   padding: .4rem;
 
-  & .focus-main { flex: 1 1 auto; }
+  /* The gap goes with the frames below — that .75rem was the air
+     between two glass cards, and there are none here. */
+  & .focus-main {
+    flex: 1 1 auto;
+    gap: 0;
+  }
 
-  /* The dialog's corner buttons float over whatever reaches that
-     corner, and in this layout that's the code pane's file bar. Hold
-     their footprint out of it so a long path ellipsises before the
-     buttons rather than under them: two 22px buttons, the .1rem
-     between them and the .25rem the cluster sits in from the edge. */
-  & .focus-code-bar { padding-right: calc(44px + 1rem); }
+  /* The corner buttons belong to the finding, not to the source
+     beside it, so they ride the card pane's cell rather than floating
+     over the modal's top-right (which in this layout is the code
+     pane). Overlapping the cell as a grid item rather than sitting
+     inside the pane keeps them off the pane's scroller, so they stay
+     put while the card scrolls — and they follow the divider on a
+     drag for free, since the cell is what the divider resizes. With
+     no code panel there is one column and this is still its corner. */
+  & .kanban-detail-actions {
+    position: static;
+    grid-area: 1 / 1;
+    place-self: start end;
+    margin: .25rem;
+  }
+
+  /* Pinning the cluster to the card's cell takes that cell out of
+     auto-placement, and the three panes then walk one column along —
+     the card into the divider's track, the source into an implicit
+     second row. So the workbench's own items get their columns
+     spelled out here too: card, divider, source, in the order
+     `.focus-main.with-code` lays its tracks out. Without the code
+     panel there is one track and the first line is all that applies. */
+  & .focus-pane-card { grid-column: 1; }
+  & .focus-splitter { grid-column: 2; }
+  & .focus-pane-code { grid-column: 3; }
+
+  /* The focus view frames each pane as a glass card, which is right
+     on the page and wrong here: the dialog IS the panel, so a rounded
+     card inside it — at the screen's own edge — is chrome drawn around
+     chrome. The panes lose their frames and run to the dialog's edges,
+     the way the rail runs to the screen's. */
+  & .focus-card-wrapper,
+  & .focus-pane-code {
+    background: none;
+    backdrop-filter: none;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  /* Which leaves the divider as the only seam between them, so it
+     draws one: a hairline down the full height, in place of the short
+     centred grip that only had to say "grab here" between two cards
+     that were already separated. It still takes the accent on hover
+     and through a drag. */
+  & .focus-splitter::before {
+    width: 1px;
+    height: 100%;
+    border-radius: 0;
+  }
+
+  /* And the card fills its pane. The 1100px cap reads as a measure
+     when the frame around it makes the empty margin deliberate;
+     without one it just looks like the text stopped early. */
+  & .focus-main.with-code .focus-card-wrapper { max-width: none; }
 }
 
 .kanban-detail-body {
@@ -811,8 +865,15 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
     cursor: pointer;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 
-    &:hover { color: var(--text); }
-    &:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    /* No focus ring. Chromium matches `:focus-visible` on a <select>
+       the moment it's CLICKED — the popup it opens is keyboard-
+       operable, so the UA calls that keyboard interaction — which puts
+       an accent ring around a control the reader just pointed at. The
+       toolbar's selects settled this the same way (`:focus` with
+       `outline: none` and a quieter cue); borderless, this one
+       brightens its label, which is also what hover does. */
+    &:hover, &:focus { color: var(--text); }
+    &:focus { outline: none; }
   }
 
   & .count {
