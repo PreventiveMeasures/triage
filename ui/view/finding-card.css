@@ -250,6 +250,14 @@
   max-height: calc(10lh + .7rem);
   overflow: auto;
   display: flex;
+  /* Not `stretch` (the default): once the cap above made the height
+     DEFINITE, stretching sized both columns to the visible box rather
+     than to the snippet, so their content overflowed them from the
+     inside and the gutter's background painted ten lines' worth and
+     stopped — leaving the rest of the numbers sitting on bare card.
+     `flex-start` sizes each to its own content, which is the height of
+     the whole snippet, so the two fill the scrolled area together. */
+  align-items: flex-start;
   white-space: normal;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .8em; line-height: 1.5;
