@@ -1153,12 +1153,12 @@ function kanbanDetailTemplate(focusGroup, column, columns = []) {
              is offered (its count is the answer to "is there anything
              in Fixed yet?") but not selectable.
 
-             `.selected` is bound as a PROPERTY, not the attribute: once
-             a reader has used the select, its selectedness stops
-             following the attribute, so a re-render driven by anything
-             else — triaging the open finding out of this bucket, say —
-             would leave the closed select naming a column it is no
-             longer showing. -->
+             The selected flag is set as a PROPERTY, not an
+             attribute: once a reader has used the select, its
+             selectedness stops following the attribute, so a re-render
+             driven by anything else — triaging the open finding out of
+             this bucket, say — would leave the closed select naming a
+             column it is no longer showing. -->
         <span class="kanban-detail-side-pick">
           <select class="kanban-detail-side-select" data-kanban-column aria-label="Column to show">
             ${columns.map((c) => html`<option
