@@ -15,6 +15,7 @@ import { bundlesForFileHash, state } from '#client/index.js'
 import { activeTabFor } from './group.js'
 import { buildBundleDetails } from './bundle-load.js'
 import { bundleSourcesAsMap } from './bundle-sources.js'
+import { historyFor } from './focus-code-history.js'
 import { lineRange } from './format.js'
 import { langForPath, highlight as prismHighlight } from './prism-highlight.js'
 import { render } from './render.js'
@@ -155,25 +156,57 @@ export function bundleSource(integrity, file, { kick = true } = {}) {
   }
 }
 
-// The focus view's inline code panel: the active tab's own file,
-// whole, with the finding's lines marked. Same three answers as
-// bundleSource above, plus the file / integrity / range the panel's
-// header and gutter need.
+// Where the panel starts for a finding: the active tab's own file,
+// with the finding's lines marked.
 //
 // A RANGE, not a line: a report citing `20-30` means the span, and
 // marking only line 20 hides what it was pointing at (format.js
 // lineRange).
-export function getFocusCode(focusedGroup) {
+function focusCodeBase(focusedGroup) {
   if (!focusedGroup) return null
   const active = activeTabFor(focusedGroup)
   const match = attachedBundle(active)
   if (!match) return null
-  const source = bundleSource(match.integrity, match.file)
+  return { integrity: match.integrity, file: match.file, range: lineRange(active.line) }
+}
+
+// The panel's history for the finding on screen, as state — the rules
+// themselves are in focus-code-history.js, which knows nothing about
+// state or the DOM and is where they are tested.
+//
+// Read-only, deliberately: this runs inside render(), where writing
+// state would either be lost to observer-util's tracking or loop
+// through it. Anything that MOVES the panel writes the state instead
+// (events.js pushFocusCode / stepFocusCode).
+export function focusCodeHistory(focusedGroup) {
+  const base = focusCodeBase(focusedGroup)
+  if (!base) return null
+  return { base, ...historyFor(state.focusCodeStack, state.focusCodeAt, base) }
+}
+
+// Where the panel is right now, for a finding — the same answer
+// `getFocusCode` draws, without the source behind it.
+//
+// For the evidence list, which marks the row the panel is on. It takes
+// the active FINDING rather than the group because that is what the
+// card has in hand, and the active tab is what the base is computed
+// from either way.
+export function focusCodePosition(f) {
+  const match = attachedBundle(f)
+  if (!match) return null
+  const base = { integrity: match.integrity, file: match.file, range: lineRange(f?.line) }
+  return historyFor(state.focusCodeStack, state.focusCodeAt, base).pos
+}
+
+// The focus view's inline code panel: whatever file the history says
+// it is on, whole, with that position's lines marked. Same three
+// answers as bundleSource above, plus the file / integrity / range the
+// panel's header and gutter need.
+export function getFocusCode(focusedGroup) {
+  const history = focusCodeHistory(focusedGroup)
+  if (!history) return null
+  const { pos } = history
+  const source = bundleSource(pos.integrity, pos.file)
   if (!source || source.loading) return source
-  return {
-    ...source,
-    file: match.file,
-    integrity: match.integrity,
-    range: lineRange(active.line),
-  }
+  return { ...source, file: pos.file, integrity: pos.integrity, range: pos.range }
 }

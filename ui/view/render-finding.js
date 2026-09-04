@@ -6,7 +6,8 @@ import { bundleFilePath, bundlesForFileHash, isLinkableFindingId, isPlaceholderN
 import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, githubRefLabel, hasSeverityCorrection, isHttpUrl, lineRange, listSegments, locationLabel, markdownLinkToken, parseCommentRefs, revalidateStamp, revalidationShown, snippetWindow, splitDescription, stripExportMarker } from './format.js'
 import { activeTabFor, findingRepo, findingRepoFallback, groupKey, groupState, isIgnored, scopedTriage, sortTabs, tabKey } from './group.js'
 import { highlightedCode } from './code-highlight.js'
-import { attachedBundle, bundleSource } from './focus-code.js'
+import { attachedBundle, bundleSource, focusCodePosition } from './focus-code.js'
+import { samePos } from './focus-code-history.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 
 // All `<finding-row>` / `<finding-card>` shadow-DOM markup is built
@@ -389,13 +390,63 @@ function sectionTemplate(label, body, cls = 'section', { collapsible = false } =
 // so keyboard and screen readers get it for free and the open state
 // belongs to the element rather than to any state we have to carry.
 // Paper has no disclosure, so print forces it open (finding-card.css).
-function evidenceTemplate(f) {
+// A row's reference, as a link into the CODE PANEL. Only the focus
+// view has a panel to load, and only a bundle can answer for the path
+// — everywhere else, and with no bundle attached, the reference is the
+// GitHub link it has always been.
+//
+// Presence follows the bundle's contents, exactly like the `</>` mark
+// beside it (bundleFilePath): a row the bundle carries is a link, a
+// row it doesn't is plain text. Which is the honest answer, and a
+// better one for the TEXT than the reconstruction it replaces — the
+// panel opens the file we are holding, so there is nothing to get
+// wrong about which revision of which repository it came from.
+//
+// The GitHub mark stays either way. What moves here is where the
+// reference itself takes you; going out to the repository is a
+// different errand, and the mark beside the row is how you still run
+// it.
+function evidencePanelRef(bundle, row, label) {
+  const file = bundle && row?.file ? bundleFilePath(bundle.integrity, row.file) : null
+  if (!file) return html`<span class="evidence-ref">${label}</span>`
+  // A span carrying `role="link"`, not a `<button>`: a button is
+  // inline-BLOCK and cannot be talked out of it — Chromium coerces
+  // `display: inline` straight back — so a path long enough to wrap
+  // made the button's box the whole line and pushed the `</>` beside
+  // it onto the next one. A span wraps as text does, and the marks
+  // stay on the last line of it where they belong.
+  //
+  // `role="link"` because that is what it does: it takes you to a
+  // place in the code, the same as the `<a>` the other views render,
+  // only the destination is the panel next to it rather than a URL.
+  // `tabindex` and the Enter handler in events.js are what a real
+  // anchor would have given for free.
+  return html`<span
+    class="evidence-ref"
+    role="link"
+    tabindex="0"
+    data-code-nav-integrity=${bundle.integrity}
+    data-code-nav-file=${file}
+    data-code-nav-line=${row?.line ?? ''}
+  >${label}</span>`
+}
+
+function evidenceTemplate(f, context) {
   const rows = Array.isArray(f.evidence) ? f.evidence : []
   if (rows.length === 0) return nothing
   const repoFallback = findingRepoFallback(f)
   // Every row cites a place in the code, so every row that the
   // attached bundle can answer for gets a `</>` beside its link.
   const bundle = attachedBundle(f)
+  // …and in the focus view, where a code panel is on screen to load
+  // into, that same bundle decides where the REFERENCE goes. Only the
+  // reference: the GitHub mark after it is unaffected, and is what
+  // keeps the way out to the repository open.
+  const toPanel = context === 'focus' && bundle !== null
+  // Which row the panel is showing, so the list can say so. Only
+  // meaningful with a panel open: everywhere else the rows point out
+  // of the app and none of them is "current".
+  const shown = toPanel ? focusCodePosition(f) : null
   return html`<details class="evidence">
     <summary class="section-label">Evidence<span class="evidence-count">(${rows.length})</span></summary>
     <ol class="evidence-list">${rows.map((row, i) => {
@@ -405,10 +456,17 @@ function evidenceTemplate(f) {
       // Indexed, so two rows citing the same place stay two marks too.
       const preview = codePreview(f, `ev${i}`, bundle, row?.file, row?.line)
       const ghRef = githubRef(url)
-      return html`<li>
-        ${url
-          ? html`<a class="evidence-ref" href=${url} target="_blank" rel="noopener">${label}</a>`
-          : html`<span class="evidence-ref">${label}</span>`}
+      const current = toPanel && samePos(shown, {
+        integrity: bundle.integrity,
+        file: bundleFilePath(bundle.integrity, row?.file),
+        range: lineRange(row?.line),
+      })
+      return html`<li class=${classMap({ current })}>
+        ${toPanel
+          ? evidencePanelRef(bundle, row, label)
+          : url
+            ? html`<a class="evidence-ref" href=${url} target="_blank" rel="noopener">${label}</a>`
+            : html`<span class="evidence-ref">${label}</span>`}
         ${preview?.mark ?? nothing}
         ${ghRef}
         ${preview?.tip ?? nothing}
@@ -1209,7 +1267,7 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
       ${linePreview?.body ?? nothing}
       ${descTitle ? html`<div class="desc-title">${renderInline(descTitle)}</div>` : nothing}
       ${lead.map((s) => html`<div class="desc">${renderHighlighted(flowText(s.body))}</div>`)}
-      ${evidenceTemplate(f)}
+      ${evidenceTemplate(f, context)}
       ${labelled.map((s) => (s.label === null
         ? html`<div class="desc">${renderHighlighted(flowText(s.body))}</div>`
         : sectionTemplate(s.label, s.body)))}

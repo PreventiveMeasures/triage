@@ -1,9 +1,10 @@
 import { KANBAN_DETAIL_FULLSCREEN_KEY, SEVERITY_MODE_KEY, VIEW_MODE_KEY, isEncryptionEnabled, patchEntry, readBundle, saveRepoUrlFor, saveTriage, setReportIgnored, state, subscribeToBundleFindingIndex, subscribeToBundleHashIndex } from '#client/index.js'
 import { downloadBlob, report } from './dom.js'
-import { commonPrefix, configureRevalidation, handoffBlock } from './format.js'
+import { commonPrefix, configureRevalidation, handoffBlock, lineRange } from './format.js'
 import { activeTabFor, canApplyFixToGroup, findGroupById, findingRepo, findingReport, fixApplies, getMergedGroups, groupState, groupWithPassRows, syncGroupTriage, tabKey, triageActionPlan, triageScope } from './group.js'
 import { defaultConfidenceFloor, defaultRevalidateFilter, resetFilters } from './filters.js'
-import { revealFocusCodeLines } from './focus-code.js'
+import { focusCodeHistory, revealFocusCodeLines } from './focus-code.js'
+import { pushed, stepped } from './focus-code-history.js'
 import { refreshGraph2Sidebar, refreshGraph2TopPkgs, render } from './render.js'
 import { refreshBundleGraphSidebar, refreshBundleGraphTopPkgs, revealBundleCodeCurrent } from './render-bundle.js'
 import { grantAdvisoriesProxyConsent, retryBundleAdvisories } from './render-bundle-advisories.js'
@@ -186,6 +187,24 @@ function findingHandoffText(e) {
 // selectors come first so they short-circuit before a generic match
 // (e.g. tree-graph buttons before generic tab clicks).
 report.addEventListener('click', (e) => {
+  // An evidence reference in the focus view — loads that file into the
+  // code panel beside the card (render-finding.js evidencePanelRef).
+  // In `<finding-card>`'s shadow root, hence composedPath.
+  const codeNav = pathClosest(e, '[data-code-nav-file]')
+  if (codeNav) {
+    pushFocusCode(focusedGroupOf(e), {
+      integrity: codeNav.dataset.codeNavIntegrity,
+      file: codeNav.dataset.codeNavFile,
+      range: lineRange(codeNav.dataset.codeNavLine),
+    })
+    return
+  }
+  // Back / forward through the panel's history (render.js).
+  const codeHistory = pathClosest(e, '[data-code-history]')
+  if (codeHistory) {
+    stepFocusCode(codeHistory.dataset.codeHistory === 'forward' ? 1 : -1)
+    return
+  }
   // The `</>` beside a finding's code links — toggles the inline source
   // preview open or shut (render-finding.js codePreview). Lives in
   // `<finding-card>`'s shadow root, hence composedPath. The Set is
@@ -1723,10 +1742,81 @@ document.addEventListener('keydown', (e) => {
 // to that gid. The handler also scrolls the now-active card into
 // view inside the sidebar so chaining clicks keeps the queue
 // oriented around the cursor.
+// The dedup group whose card a click landed in, read off the card
+// itself (`<finding-card>` stamps `data-gid` on its host).
+//
+// NOT `state.focusGid`: the focus view only writes that on an explicit
+// pick — a sidebar click, an arrow key — and otherwise falls back to
+// the previous render's index (see the selection rules in render.js).
+// So arriving in the focus view and clicking straight into the card
+// asks about a gid that is still null, which is exactly the path a
+// reader takes and exactly the one that quietly did nothing.
+function focusedGroupOf(e) {
+  const card = pathClosest(e, '[data-gid]')
+  const gid = card?.dataset?.gid
+  return gid ? findGroupById(gid) : null
+}
+
+// Move the focus view's Code panel to `pos`, from a link the reader
+// followed in `group`'s card. The stack rules live in
+// focus-code-history.js; what this adds is where the finding's own
+// file comes from — the group — and the repaint.
+function pushFocusCode(group, pos) {
+  if (!pos.integrity || !pos.file) return
+  const history = focusCodeHistory(group)
+  if (!history) return
+  const next = pushed(history, pos)
+  // `null` means the panel is already showing exactly this. The reader
+  // clicked a reference to what is on screen, so what they are asking
+  // for is to be put back on those lines — not a history entry, and
+  // not a repaint of a panel that hasn't changed.
+  if (next) {
+    state.focusCodeStack = next.stack
+    state.focusCodeAt = next.at
+    render()
+  }
+  revealFocusCodeLines()
+}
+
+// The panel references are `role="link"` spans rather than anchors or
+// buttons, for the layout reason in render-finding.js — which means
+// the keyboard activation a real control would have had is ours to
+// supply. Enter is what a link takes; Space too, since a reader who
+// has tabbed onto something clickable will try both.
+report.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' && e.key !== ' ') return
+  const codeNav = pathClosest(e, '[data-code-nav-file]')
+  if (!codeNav) return
+  // Space scrolls the pane otherwise, which is the opposite of putting
+  // the reader on the lines they just asked for.
+  e.preventDefault()
+  pushFocusCode(focusedGroupOf(e), {
+    integrity: codeNav.dataset.codeNavIntegrity,
+    file: codeNav.dataset.codeNavFile,
+    range: lineRange(codeNav.dataset.codeNavLine),
+  })
+})
+
+// Back (-1) / forward (+1) through the panel's history. A no-op at the
+// ends — the buttons are disabled there, so this only catches a stale
+// render.
+function stepFocusCode(direction) {
+  const next = stepped(state.focusCodeStack, state.focusCodeAt, direction)
+  if (next === state.focusCodeAt) return
+  state.focusCodeAt = next
+  render()
+  revealFocusCodeLines()
+}
+
 function setFocusGid(gid) {
   if (!gid || state.focusGid === gid) return
   syncOpenedGroupTriage(gid)
   state.focusGid = gid
+  // The panel starts again from the new finding's own file: a trail of
+  // files you walked while reading a DIFFERENT finding is not history
+  // you can act on from here.
+  state.focusCodeStack = []
+  state.focusCodeAt = 0
   render()
   // Post-render: bring the new active card into view in the
   // sidebar. `block: 'nearest'` minimises movement (a no-op when
