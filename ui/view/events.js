@@ -3,6 +3,7 @@ import { downloadBlob, report } from './dom.js'
 import { commonPrefix, configureRevalidation, handoffBlock } from './format.js'
 import { activeTabFor, canApplyFixToGroup, findGroupById, findingRepo, findingReport, fixApplies, getMergedGroups, groupState, groupWithPassRows, syncGroupTriage, tabKey, triageActionPlan, triageScope } from './group.js'
 import { defaultConfidenceFloor, defaultRevalidateFilter, resetFilters } from './filters.js'
+import { revealFocusCodeLines } from './focus-code.js'
 import { refreshGraph2Sidebar, refreshGraph2TopPkgs, render } from './render.js'
 import { refreshBundleGraphSidebar, refreshBundleGraphTopPkgs, revealBundleCodeCurrent } from './render-bundle.js'
 import { grantAdvisoriesProxyConsent, retryBundleAdvisories } from './render-bundle-advisories.js'
@@ -185,6 +186,21 @@ function findingHandoffText(e) {
 // selectors come first so they short-circuit before a generic match
 // (e.g. tree-graph buttons before generic tab clicks).
 report.addEventListener('click', (e) => {
+  // The `</>` beside a finding's code links — toggles the inline source
+  // preview open or shut (render-finding.js codePreview). Lives in
+  // `<finding-card>`'s shadow root, hence composedPath. The Set is
+  // replaced rather than mutated so an observer-util autorun reading
+  // it sees the change; render() then repaints, and the loader's own
+  // settle render fills the snippet in when the bundle lands.
+  const codePreview = pathClosest(e, '[data-code-preview]')
+  if (codePreview) {
+    const key = codePreview.dataset.codePreview
+    const next = new Set(state.codePreviews)
+    if (!next.delete(key)) next.add(key)
+    state.codePreviews = next
+    render()
+    return
+  }
   // Finding card's `[Code]` shortcut — pops the bundle source viewer
   // modal as an overlay on the current view (findings, packages, etc.)
   // without navigating away, via the global overlay slot
@@ -1705,13 +1721,13 @@ function setFocusGid(gid) {
   // ancestor, so only it scrolls — the page stays put.
   const card = report.querySelector('.focus-side-card.active')
   if (card) card.scrollIntoView({ block: 'nearest', behavior: 'instant' })
-  // Same nearest-scroll trick for the inline Code panel: align the
-  // gutter row carrying the finding's line so the user sees the
-  // relevant source on entry. Falls through silently when the
-  // panel isn't mounted (no bundle code for this finding) or the
-  // line isn't a number.
-  const codeLine = report.querySelector('.focus-code-line-active')
-  if (codeLine) codeLine.scrollIntoView({ block: 'center', behavior: 'instant' })
+  // And the inline Code panel: put the gutter rows carrying the
+  // finding's lines where the user can see them on entry — the whole
+  // cited block, not just where it starts (focus-code.js
+  // revealFocusCodeLines). Falls through silently when the panel
+  // isn't mounted, which is the case for a finding with no bundle
+  // code behind it.
+  revealFocusCodeLines()
 }
 
 // Move the focus by `direction` (+1 = next, -1 = previous), walked

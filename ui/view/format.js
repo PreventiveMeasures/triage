@@ -333,6 +333,42 @@ export function isModule(file) {
   return moduleRe.test(file)
 }
 
+// "Is this path inside SOMEBODY ELSE'S source?" — the same question
+// `isModule` asks, but of every marker rather than only the one this
+// report happens to use. `isModule` exists to classify a project's own
+// tree and so commits to a single deps dir; a caller deciding whether
+// a path can be resolved against a repo at all wants the opposite bias,
+// because the cost of missing a marker is a link into a repository that
+// does not contain the file.
+//
+// `node_modules` (npm/pnpm/yarn, and Solidity under Hardhat) and
+// `vendor` (Composer, Go modules, `cargo vendor`, bundler) always
+// count. `dependencies` counts only when it IS the configured deps dir
+// — it is too ordinary a folder name to treat as a marker on a project
+// that doesn't use it that way.
+export function hasDependencyMarker(file) {
+  const s = typeof file === 'string' ? file : ''
+  return NODE_MODULES_RE.test(s) || VENDOR_RE.test(s) || moduleRe.test(s)
+}
+
+// The installed package a path belongs to: everything up to and
+// including the `node_modules/(@owner/)?name` that contains it. Null
+// when the path names no package.
+//
+// Greedy, so it takes the LAST `node_modules` — under a nested or pnpm
+// layout (`node_modules/.pnpm/lodash@4/node_modules/lodash/…`) the
+// innermost one is the package the file is actually in.
+//
+// The whole prefix is the identity, not just the package name: two
+// paths naming `lodash` under different installs are two copies, and
+// pretending otherwise is how a link ends up pointing at a version of
+// the file that isn't the one cited.
+const NODE_PKG_ROOT_RE = /^(.*(?:^|\/)node_modules\/(?:@[^/]+\/[^/]+|[^/]+))(?:\/|$)/u
+
+export function nodePackageRoot(file) {
+  return NODE_PKG_ROOT_RE.exec(typeof file === 'string' ? file : '')?.[1] ?? null
+}
+
 // File size formatter — bytes with thousand-separators and a `B`
 // suffix (`12,345 B`). Used by the file table/list and the graph's
 // selection card / tooltip when treeData entries carry a `size`.
@@ -610,6 +646,34 @@ export function findingUrl(f, repoFallback) {
   if (!url) return null
   const lineNum = parseInt(f.line, 10)
   return Number.isFinite(lineNum) ? `${url}#L${lineNum}` : url
+}
+
+// A GitHub blob URL as the reference it stands for —
+// `owner/repo/path/to/file.ts:20-30`. What the link is FOR, with the
+// chrome that makes it addressable taken off: the origin, the
+// `blob/<ref>/` segment, and the `#L20-L30` anchor spelled as the
+// `:20-30` every other location on the card wears.
+//
+// The ref goes with the rest of the chrome, `HEAD` or a pinned commit
+// alike — a forty-character sha in the middle of a path tells the
+// reader nothing they are looking for, and the link itself still
+// carries it. `tree` and `blame` URLs read the same way.
+//
+// Empty for anything that isn't a GitHub blob-shaped URL: a report's
+// own link to some other host, a `piolium:` placeholder. Callers show
+// the mark only when this has something to say.
+const GH_BLOB_RE = /^https?:\/\/(?:www\.)?github\.com\/([^/\s]+\/[^/\s]+)\/(?:blob|tree|blame)\/[^/\s]+\/(\S+)$/u
+const GH_LINE_ANCHOR_RE = /#L(\d+)(?:-L?(\d+))?$/u
+
+export function githubRefLabel(url) {
+  const m = typeof url === 'string' ? GH_BLOB_RE.exec(url) : null
+  if (!m) return ''
+  let path = m[2]
+  const anchor = GH_LINE_ANCHOR_RE.exec(path)
+  if (!anchor) return `${m[1]}/${path}`
+  path = path.slice(0, anchor.index)
+  const lines = anchor[2] ? `${anchor[1]}-${anchor[2]}` : anchor[1]
+  return `${m[1]}/${path}:${lines}`
 }
 
 // Reports hard-wrap their markdown, so a paragraph arrives carrying the
@@ -922,6 +986,99 @@ export function listSegments(text) {
   return out
 }
 
+// ── Line ranges ──────────────────────────────────────────────────────
+// A finding's `line` is not always one line. Reports cite spans —
+// `src/a.js:20-30` for a whole function, a block, a chain of calls —
+// and md-structure.js's parseCodeRef keeps them whole rather than
+// picking a start (`60-90` stays `60-90`, so `locationLabel` prints
+// what the report wrote). Everything that has to POINT somewhere has
+// been `parseInt`-ing that down to the first number ever since, which
+// is right for a link anchor and wrong for anything that draws the
+// code: a span shown with only its opening line marked hides the very
+// thing the report was pointing at.
+//
+// So: one reader, `{ start, end }` with `end === start` for a single
+// line, null for a finding that names none. Reversed ends are sorted
+// rather than refused — `30-20` is a report being sloppy about a real
+// span, not a report meaning nothing.
+const LINE_RANGE_RE = /^(\d+)(?:\s*-\s*(\d+))?$/u
+
+export function lineRange(line) {
+  if (typeof line === 'number') {
+    return Number.isFinite(line) && line >= 1 ? { start: Math.floor(line), end: Math.floor(line) } : null
+  }
+  const m = LINE_RANGE_RE.exec(String(line ?? '').trim())
+  if (!m) return null
+  const a = parseInt(m[1], 10)
+  const b = m[2] === undefined ? a : parseInt(m[2], 10)
+  if (!Number.isFinite(a) || a < 1 || !Number.isFinite(b) || b < 1) return null
+  return { start: Math.min(a, b), end: Math.max(a, b) }
+}
+
+// How a range prints beside a filename — `42`, or `20-30`. Normalised
+// from the parse rather than echoing the field, so a sloppy `30 - 20`
+// reads the same as the span it meant.
+export function lineRangeLabel(range) {
+  if (!range) return ''
+  return range.start === range.end ? String(range.start) : `${range.start}-${range.end}`
+}
+
+// ── Source snippet ───────────────────────────────────────────────────
+// The lines to show around a cited place, for the preview that opens
+// beside a finding's code links (render-finding.js codeSnippetTemplate;
+// focus-code.js fetches the file itself). `at` is a `lineRange` — or a
+// bare number, which is one.
+//
+// The WHOLE range is always in the window, with `radius` lines of
+// context either side of it: `radius` is how much you want to see
+// around the citation, not a budget the citation has to fit inside, so
+// a `20-120` span comes back whole (the preview caps its height and
+// scrolls — see finding-card.css — rather than the window deciding for
+// the reader which half of their span matters).
+//
+// Comes back with the number the window STARTS at, because a snippet
+// without its line numbers is one the reader can't place against the
+// `file:42` they clicked it from. Both ends clamp to the file, so a
+// finding on line 2 doesn't open on a gutter counting from -2, and one
+// on the last line still gets its leading context. A file shorter than
+// the window is returned whole.
+//
+// Nothing to centre on — an import with no line number, a report that
+// only named the file — opens at the top instead, which is the most
+// useful thing to show of a file nothing points into.
+// `at` as a range, whether it arrived as one, as a number, or as the
+// `20-30` string a report wrote.
+function asRange(at) {
+  if (at && typeof at === 'object') {
+    const from = lineRange(at.start)
+    if (!from) return null
+    const to = lineRange(at.end) ?? from
+    return { start: from.start, end: Math.max(from.start, to.end) }
+  }
+  return lineRange(at)
+}
+
+export function snippetWindow(content, at, radius = 4) {
+  // `''.split('\n')` is `['']`, not `[]` — an empty file would come
+  // back as one blank line and draw a preview with nothing in it.
+  const lines = typeof content === 'string' && content !== '' ? content.split('\n') : []
+  if (lines.length === 0) return { text: '', startLine: 1, lines: [] }
+  const range = asRange(at)
+  // A range past the end of the file is a report pointing at a file
+  // that has moved on; clamp onto the last line rather than window
+  // over nothing.
+  const cited = range && {
+    start: Math.min(range.start, lines.length),
+    end: Math.min(range.end, lines.length),
+  }
+  const start = cited ? Math.max(1, cited.start - radius) : 1
+  const end = cited
+    ? Math.min(lines.length, cited.end + radius)
+    : Math.min(lines.length, radius * 2 + 1)
+  const window = lines.slice(start - 1, end)
+  return { text: window.join('\n'), startLine: start, lines: window }
+}
+
 // ── Finding title ────────────────────────────────────────────────────
 // What the finding is CALLED. A report may name it outright in a
 // `title` field; the formats that have no such field put it in the
@@ -1008,12 +1165,62 @@ export function titledDescription(f) {
   return body ? `${own}\n\n${body}` : own
 }
 
-// Source URL for one `## Evidence` row. The row's own link when the
-// report gave one; otherwise the same `HEAD` reconstruction findingUrl
-// falls back to, from the row's file / line under the finding's repo —
-// so a row citing a path with no link is still reachable.
-export function evidenceUrl(row, f, repoFallback) {
-  return findingUrl({ file: row?.file, line: row?.line, location: row?.url, repo: f?.repo }, repoFallback)
+// Source URL for one `## Evidence` row.
+//
+// Reconstructing one is a guess, and it used to be a bad one: every row
+// was resolved against the FINDING's repo, so a row citing some other
+// package's file got a link into a repository that has never contained
+// it — a confident 404, or worse, a real file at that path in an
+// unrelated project. Evidence rows wander: a finding in the app cites a
+// sink in a dependency, a finding in a dependency cites its caller in
+// the app.
+//
+// So the default is NO link, and a repo has to earn the row:
+//
+//   0. the row's own URL, if the report wrote one — not a guess at all
+//   1. the first row, restating the finding's own location
+//   2. a row in the same installed package as the finding
+//   3. a row in own source — the finding's repo when the finding is own
+//      source too, the report's repo when it isn't
+//
+// and anything else — a path in somebody else's source that isn't the
+// finding's own dependency — resolves to nothing, because knowing a
+// file belongs to SOME dependency doesn't say which one's repo to ask.
+export function evidenceUrl(row, f, repoFallback, index) {
+  // The report's own link for the row, when it wrote one. An exact ref,
+  // usually pinned to the revision the report was produced from — it
+  // beats anything reconstructed here and isn't ours to second-guess.
+  if (isHttpUrl(row?.url)) return row.url
+  const file = row?.file
+  if (typeof file !== 'string' || file === '') return null
+  const main = f?.file ?? ''
+  const repo = f?.repo?.github
+  const inFindingRepo = () => (repo ? findingUrl({ file, line: row?.line, repo: { github: repo } }, null) : null)
+
+  // 1. The row that restates the finding's own location. Wherever the
+  //    finding is, this row is in the same place, so the finding's repo
+  //    answers for it — including when that location carries a marker
+  //    the rules below would otherwise refuse.
+  if (index === 0 && file === main) return inFindingRepo()
+
+  // 2. The same installed package as the finding's location. The
+  //    finding's repo is that package's upstream (that is what
+  //    `repo.github` means on a dependency finding), so it answers for
+  //    every file in it.
+  const pkg = nodePackageRoot(file)
+  if (pkg !== null && pkg === nodePackageRoot(main)) return inFindingRepo()
+
+  // 3. Anything else in somebody else's source is unresolvable: we know
+  //    the file is a dependency's and we do not know WHICH dependency's
+  //    repo to ask.
+  if (hasDependencyMarker(file)) return null
+
+  // Own source, then. The finding's repo answers for it when the
+  // finding is own-source too; when the finding sits in a dependency,
+  // its repo is that dependency's upstream and would be the wrong
+  // answer for a file in the project — so the report's repo takes it.
+  if (repo && !hasDependencyMarker(main)) return inFindingRepo()
+  return findingUrl({ file, line: row?.line }, repoFallback)
 }
 
 // `file:line` — the shape every location display uses, with the line

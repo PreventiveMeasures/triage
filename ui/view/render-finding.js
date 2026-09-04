@@ -1,10 +1,12 @@
 import { html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
+import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { bundlesForFileHash, isLinkableFindingId, isPlaceholderNpmPackage, state } from '#client/index.js'
-import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, hasSeverityCorrection, isHttpUrl, listSegments, locationLabel, markdownLinkToken, parseCommentRefs, revalidateStamp, revalidationShown, splitDescription, stripExportMarker } from './format.js'
+import { bundleFilePath, bundlesForFileHash, isLinkableFindingId, isPlaceholderNpmPackage, state } from '#client/index.js'
+import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, githubRefLabel, hasSeverityCorrection, isHttpUrl, lineRange, listSegments, locationLabel, markdownLinkToken, parseCommentRefs, revalidateStamp, revalidationShown, snippetWindow, splitDescription, stripExportMarker } from './format.js'
 import { activeTabFor, findingRepo, findingRepoFallback, groupKey, groupState, isIgnored, scopedTriage, sortTabs, tabKey } from './group.js'
 import { highlightedCode } from './code-highlight.js'
+import { attachedBundle, bundleSource } from './focus-code.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 
 // All `<finding-row>` / `<finding-card>` shadow-DOM markup is built
@@ -391,17 +393,27 @@ function evidenceTemplate(f) {
   const rows = Array.isArray(f.evidence) ? f.evidence : []
   if (rows.length === 0) return nothing
   const repoFallback = findingRepoFallback(f)
+  // Every row cites a place in the code, so every row that the
+  // attached bundle can answer for gets a `</>` beside its link.
+  const bundle = attachedBundle(f)
   return html`<details class="evidence">
     <summary class="section-label">Evidence<span class="evidence-count">(${rows.length})</span></summary>
-    <ol class="evidence-list">${rows.map((row) => {
+    <ol class="evidence-list">${rows.map((row, i) => {
       const label = locationLabel(row)
-      const url = evidenceUrl(row, f, repoFallback)
+      const url = evidenceUrl(row, f, repoFallback, i)
       const note = evidenceNote(row)
+      // Indexed, so two rows citing the same place stay two marks too.
+      const preview = codePreview(f, `ev${i}`, bundle, row?.file, row?.line)
+      const ghRef = githubRef(url)
       return html`<li>
         ${url
-          ? html`<a class="evidence-ref" href=${url} target="_blank" rel="noopener" title=${url}>${label}</a>`
+          ? html`<a class="evidence-ref" href=${url} target="_blank" rel="noopener">${label}</a>`
           : html`<span class="evidence-ref">${label}</span>`}
+        ${preview?.mark ?? nothing}
+        ${ghRef}
+        ${preview?.tip ?? nothing}
         ${note ? html`<div class="evidence-note">${renderHighlighted(flowText(note))}</div>` : nothing}
+        ${preview?.body ?? nothing}
       </li>`
     })}</ol>
   </details>`
@@ -411,8 +423,7 @@ function evidenceTemplate(f) {
 // the row has no file header above it (unlike the list / grouped
 // views) so file + line live together in one slot. Returns a
 // TemplateResult when we have a source URL, plain text otherwise.
-function rowLocationTemplate(f) {
-  const url = findingUrl(f, findingRepoFallback(f))
+function rowLocationTemplate(f, url) {
   const lineNum = parseInt(f.line, 10)
   const text = Number.isFinite(lineNum) ? `${f.file}:${f.line}` : f.file
   if (!url) return text
@@ -466,6 +477,215 @@ const LINK_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidd
     <path d="M5.6 8h4.8"/>
   </g>
 </svg>`
+
+// `</>` for the source-preview toggle beside a code link. It sits
+// INSIDE a line of text rather than in a row of buttons, so it reads
+// as a mark on that line and not as a control docked next to it — and
+// it says what it opens, which is the source, in the notation a reader
+// of code already knows.
+const CODE_ICON = html`<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+  <g fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4.4 4.6 1.3 8l3.1 3.4"/>
+    <path d="m11.6 4.6 3.1 3.4-3.1 3.4"/>
+    <path d="M9.8 2.6 6.2 13.4"/>
+  </g>
+</svg>`
+
+// GitHub mark, beside the `</>`. The location text is already a link;
+// this says WHERE it goes, which the text can't — `src/proxy.ts:42`
+// is the same string whichever repo it is in, and a card can carry
+// rows from several. The tooltip spells the target out.
+const GITHUB_ICON = html`<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+  <path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/>
+</svg>`
+
+// One template, mark and tooltip together in a wrapper — unlike the
+// source preview, whose snippet is flow content and has to be hung off
+// the row. This tooltip is a short line of text, so it belongs BESIDE
+// the mark, and beside is a thing only the mark's own box can say: an
+// absolute offset measured from the row would have to know how wide
+// the location text happened to be.
+//
+// `nothing` when the URL isn't a GitHub blob — a report linking to
+// some other host, or to nothing at all. No mark, no tooltip, and the
+// location link stands as it always did.
+function githubRef(url) {
+  const label = githubRefLabel(url)
+  if (!label) return nothing
+  return html`<span class="gh-ref"><a
+    class="gh-ref-btn"
+    href=${url}
+    target="_blank"
+    rel="noopener noreferrer"
+    aria-label=${`Open ${label} on GitHub`}
+  >${GITHUB_ICON}</a><span class="gh-ref-tip" role="tooltip">${label}</span></span>`
+}
+
+// ── Source preview ───────────────────────────────────────────────────
+// A finding's links to code point OUT — to GitHub, or to the bundle
+// viewer. When a bundle is attached we already hold the source, so the
+// `</>` beside each link opens the few lines around it in place:
+// enough to see whether a citation says what the prose claims, without
+// losing the prose to a tab switch.
+//
+// Offered per LINK, not per finding, so an evidence row citing another
+// file gets its own — resolved against the same bundle by path
+// (bundleFilePath, which answers synchronously off the hash index, so
+// deciding whether to draw a mark never costs a bundle parse). A path
+// the bundle doesn't carry simply gets no mark.
+//
+// Open state lives in `state.codePreviews` keyed by this, so it
+// survives the re-render each toggle triggers and several previews can
+// be open at once.
+//
+// Keyed by the SITE as well as the place, because the same place is
+// routinely cited twice on one card — an evidence row pointing at the
+// finding's own `file:line` is the normal shape of a report, not an
+// edge case. Keyed on the location alone, those two marks are one
+// control with two faces: clicking either opens both.
+function codePreviewKey(f, site, path, range) {
+  return `${tabKey(f)}\u0000${site}\u0000${path}\u0000${range ? `${range.start}-${range.end}` : ''}`
+}
+
+// Which mark the pointer is on, and the card that drew it.
+//
+// The hover snippet used to be rendered for EVERY mark whose file
+// happened to be loaded — the template can't know where the pointer
+// is, so it built one and let CSS reveal the right one. On a card
+// that is fine. On a list of two thousand it is thousands of
+// highlighted ten-line snippets in the DOM, all but one of them
+// hidden, and the cost lands the moment the first file loads rather
+// than when the list is built, so it reads as the list going bad on
+// its own.
+//
+// Deliberately NOT in `state`: a tracked read would put every card on
+// the page in the pointer's dependency set, and moving between two
+// marks would re-render all of them. A module variable plus a direct
+// `requestUpdate` on the one or two cards involved is the whole
+// mechanism.
+let hoveredPreview = { key: null, host: null }
+
+function hoverPreview(key, target) {
+  if (hoveredPreview.key === key) return
+  const previous = hoveredPreview.host
+  // `findingCardInnerTemplate` only ever renders inside
+  // `<finding-card>`'s shadow root, so the root's host is the card.
+  const host = key === null ? null : target?.getRootNode?.()?.host ?? null
+  hoveredPreview = { key, host }
+  previous?.requestUpdate?.()
+  if (host !== previous) host?.requestUpdate?.()
+}
+
+// The lines themselves, once the bundle has loaded. Numbered from
+// wherever the window starts (format.js snippetWindow), with the cited
+// line marked — a snippet the reader can't place against the `file:42`
+// they opened it from is a snippet they have to trust.
+//
+// Highlighting goes through code-highlight.js, the same cache the
+// description's fenced blocks use: it takes the file's extension as
+// the language tag, keys by content, and re-renders once prism
+// settles. Highlighting the WINDOW rather than slicing the whole
+// file's HTML — tags span lines, so there is no safe cut.
+function codeSnippetTemplate(content, range, path) {
+  // Two ticks, because two caches settle behind this: focus-code.js
+  // bumps `focusCodeTick` when the BUNDLE lands (read by the caller,
+  // which needs it before there is any content), and code-highlight.js
+  // bumps `codeBlockTick` when PRISM does. Both have to reach this
+  // card's autorun or the snippet paints as plain text and stays that
+  // way until something else re-renders it.
+  void state.codeBlockTick
+  const { text, lines, startLine } = snippetWindow(content, range)
+  if (lines.length === 0) return nothing
+  const dot = path.lastIndexOf('.')
+  const coloured = highlightedCode(text, dot < 0 ? '' : path.slice(dot + 1))
+  const lastNo = startLine + lines.length - 1
+  return html`<div class="code-preview" style=${styleMap({ '--lineno-width': `${String(lastNo).length}ch` })}>
+    <aside class="code-preview-gutter" aria-hidden="true">${lines.map((_, i) => {
+      const ln = startLine + i
+      // Every line of the range, not just the one it opens on — a span
+      // shown with only its first line marked hides what was cited.
+      const cited = Boolean(range) && ln >= range.start && ln <= range.end
+      return html`<div class=${classMap({ 'code-preview-lineno': true, cited })}>${ln}</div>`
+    })}</aside>
+    <pre class="code-preview-source"><code>${coloured ? unsafeHTML(coloured) : text}</code></pre>
+  </div>`
+}
+
+// The mark and the snippet it opens, as two templates rather than one:
+// the finding's own link lives in a flex `.line-row`, where the
+// snippet has to land BELOW the row rather than beside its parts,
+// while an evidence row can carry both inside its `<li>`. Callers
+// place each where it belongs.
+//
+// `null` when there is no bundle, or none of it answers to this path —
+// the link then stands alone, exactly as it did before. `bundle` is
+// the finding's attached bundle; `path` is where the link points, in
+// the report's own terms; `site` says WHICH link on the card this is,
+// so two pointing at the same place stay two controls.
+function codePreview(f, site, bundle, path, line) {
+  // BEFORE the guards, because the guards are what this read is for:
+  // both the caller's `attachedBundle` and the lookup below answer off
+  // a plain module Map, which this card's autorun cannot see fill in.
+  // On a reload the index starts empty and the stored report paints
+  // straight away, so the first pass asks too early, gets nothing, and
+  // draws no marks — and a read placed after `return null` would never
+  // subscribe the card to hearing otherwise. Same tick and the same
+  // reason as the `Code →` branch below.
+  void state.bundleHashTick
+  if (!bundle || !path) return null
+  const file = bundleFilePath(bundle.integrity, path)
+  if (!file) return null
+  // `line` arrives as the report wrote it, which may be a span
+  // (`20-30`); the preview shows all of it (format.js lineRange).
+  const range = lineRange(line)
+  const key = codePreviewKey(f, site, path, range)
+  const open = state.codePreviews.has(key)
+  // Unconditional, not just while a preview is open: the tick is what
+  // subscribes this card's autorun to the loader's settle events, and
+  // a HOVER can start a load too (below). Without the read, the card
+  // that kicked one would never re-render to show what arrived.
+  void state.focusCodeTick
+  const mark = html`<button
+    type="button"
+    class=${classMap({ 'code-preview-btn': true, open })}
+    data-code-preview=${key}
+    aria-expanded=${String(open)}
+    aria-label=${open ? `Hide the source at ${path}` : `Show the source at ${path}`}
+    @mouseenter=${(e) => { hoverPreview(key, e.currentTarget); bundleSource(bundle.integrity, file) }}
+    @mouseleave=${(e) => { if (hoveredPreview.key === key) hoverPreview(null, e.currentTarget) }}
+    @focus=${(e) => { hoverPreview(key, e.currentTarget); bundleSource(bundle.integrity, file) }}
+    @blur=${(e) => { if (hoveredPreview.key === key) hoverPreview(null, e.currentTarget) }}
+  >${CODE_ICON}</button>`
+  if (open) {
+    const source = bundleSource(bundle.integrity, file)
+    const body = !source || source.loading
+      ? html`<div class="code-preview code-preview-pending">${source ? 'Loading source…' : 'Source unavailable'}</div>`
+      : codeSnippetTemplate(source.content, range, file)
+    // No tooltip while the preview is open — it would say the same
+    // thing twice, over the copy the reader asked to keep.
+    return { mark, tip: nothing, body }
+  }
+  // The hover tooltip: the same snippet, shown while the pointer is on
+  // the mark, for a look that doesn't cost a click and doesn't push the
+  // prose around.
+  //
+  // Built for THIS mark only while it is the one being pointed at
+  // (hoverPreview above) — one snippet in the document rather than one
+  // per mark on the page. The handlers on the button re-render this
+  // card when the pointer arrives and again when it leaves, so the
+  // snippet is in the DOM within a frame of the pointer landing.
+  //
+  // Read from what is ALREADY loaded — `kick: false` — so arriving on
+  // a mark shows what we have and asks for the rest; the POINTER does
+  // the kicking (`mouseenter` above) and the settle comes back through
+  // the tick.
+  if (hoveredPreview.key !== key) return { mark, tip: nothing, body: nothing }
+  const peek = bundleSource(bundle.integrity, file, { kick: false })
+  const tip = peek && !peek.loading
+    ? html`<div class="code-preview-tip" role="tooltip">${codeSnippetTemplate(peek.content, range, file)}</div>`
+    : nothing
+  return { mark, tip, body: nothing }
+}
 
 // Claude mark for the `[hand off to Claude Code]` shortcut button.
 // Same size + stroke weight as the other action icons.
@@ -884,9 +1104,22 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
     ? html`<a href=${url} target="_blank" rel="noopener">${locText}</a>`
     : locText
   const exportLabel = findingDisplayName(f)
-  const lineRowMain = exportLabel
-    ? html`<span class="line-num">${locLink}, ${exportLabel}</span>`
-    : html`<span class="line-num">${locLink}</span>`
+  // The finding's own location, previewable in place when a bundle
+  // carries it. Resolved once here and passed to the evidence rows
+  // too — one lookup per card, not one per link.
+  const bundle = attachedBundle(f)
+  const linePreview = codePreview(f, 'loc', bundle, f.file, f.line)
+  // The marks ride INSIDE `.line-num`, not beside it: `.line-row` is a
+  // `space-between` flex line, so a second item there would be spread
+  // to the middle of the row rather than left against the location it
+  // belongs to — and the run-meta on the far end would shift with it.
+  const ghRef = githubRef(url)
+  const lineRowMain = html`<span class="line-num">${
+    exportLabel ? html`${locLink}, ${exportLabel}` : locLink
+  }${linePreview?.mark ?? nothing}${ghRef}</span>`
+  // The tooltip is absolutely positioned against `.line-row`, so it
+  // sits beside `.line-num` rather than inside it — a snippet is flow
+  // content and that span is not a box to put one in.
   const meta = formatRunMeta(f)
   // The file the analyzer was reading when it found this. A note worth
   // making when it isn't the finding's own location — a bug in `a.js`
@@ -968,10 +1201,12 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
     <div>
       <div class="line-row">
         ${lineRowMain}
+        ${linePreview?.tip ?? nothing}
         ${npmChip}
         ${discoveredIn ? html`<span class="line-num discovered-in">(found analyzing ${discoveredIn})</span>` : nothing}
         ${meta ? html`<span class="run-meta">${meta}</span>` : nothing}
       </div>
+      ${linePreview?.body ?? nothing}
       ${descTitle ? html`<div class="desc-title">${renderInline(descTitle)}</div>` : nothing}
       ${lead.map((s) => html`<div class="desc">${renderHighlighted(flowText(s.body))}</div>`)}
       ${evidenceTemplate(f)}
@@ -1094,6 +1329,7 @@ export function tableRowInnerTemplate(g) {
   const typeLabel = formatRunMeta(f)
   const exportLabel = findingDisplayName(f)
   const exportPart = exportLabel ? `, ${exportLabel}` : ''
+  const url = findingUrl(f, findingRepoFallback(f))
 
   return html`
     <div class="row-score">
@@ -1106,7 +1342,8 @@ export function tableRowInnerTemplate(g) {
         ${typeLabel ? html`<span class="row-type">${typeLabel}</span>` : nothing}
       </div>
       <div class="meta-row">
-        <span class="row-loc">${rowLocationTemplate(f)}${exportPart}</span>
+        <span class="row-loc">${rowLocationTemplate(f, url)}${exportPart}</span>
+        ${githubRef(url)}
         <div class="marks">
           ${actionButtonsTemplate(g, sortedTabs, groupSt, active)}
         </div>

@@ -200,6 +200,270 @@
     -webkit-print-color-adjust: exact; print-color-adjust: exact;
   }
 }
+/* Source preview — the `</>` beside a code link, and the few lines it
+   opens (render-finding.js codePreview). The button is a MARK ON A
+   LINE OF TEXT, not a control docked beside one: no border, no fill,
+   baseline-aligned with the `file:line` it follows. The link is still
+   the link; this only says the source is here if you want it.
+
+   `--muted` at full strength — the metadata tone of the `file:line` it
+   follows, which is where it belongs, and NOT that tone faded further.
+   A 12px glyph is already quiet next to a line of type; dimming it on
+   top of that leaves something the reader has to go looking for, which
+   is the opposite of a mark.
+
+   ONE state change, not two. It used to fade up on row hover and then
+   go accent on its own — but the first of those fired from anywhere on
+   a row that runs the width of the card, so both marks lit while the
+   pointer was two hundred pixels away from either, and lit again over
+   a whole evidence note. Two highlights that mean different things and
+   answer to different boxes is a puzzle, not a hint. The mark that
+   changes is the mark you are on. */
+.code-preview-btn {
+  display: inline-flex; align-items: center;
+  /* Set off from the location it follows — pushed up against the last
+     digit it read as part of the text rather than as something to
+     reach for. */
+  margin-left: .35rem;
+  padding: 0 .15rem;
+  border: 0; background: transparent;
+  color: var(--muted);
+  vertical-align: -2px;
+
+  &.open { color: var(--accent); }
+}
+
+/* GitHub mark, beside the `</>`. Same weight and same states as it —
+   these are two marks on a line of text, not a button bar — so the
+   pair reads as one affordance with two halves rather than a widget
+   parked after the location.
+
+   The wrapper carries the layout that used to sit on the link, so the
+   mark's own box is exactly the glyph — and it is what the tooltip
+   hangs off (see `.gh-ref-tip`). */
+.gh-ref {
+  position: relative;
+  display: inline-flex; align-items: center;
+  margin-left: .25rem;
+  vertical-align: -2px;
+}
+.gh-ref-btn {
+  display: inline-flex; align-items: center;
+  padding: 0 .15rem;
+  color: var(--muted);
+}
+
+/* A 12px glyph on a 19px line leaves three pixels of dead row above it
+   and four below — so the pointer is on the mark or not on it for
+   reasons the reader can't see, and the tooltip flickers as they cross
+   it. Worse, the row's hover already lights the mark up, promising a
+   target the size of the line.
+   So: the target IS the line. A pseudo-element rather than padding,
+   because padding on an atomic inline grows the line box and would
+   push the row apart; this changes hit-testing and nothing else. The
+   two marks split the gap between them exactly — 2px each — so
+   there is no seam to fall into and no overlap to make the wrong
+   tooltip appear. */
+:is(.code-preview-btn, .gh-ref-btn) {
+  position: relative;
+
+  &::before { content: ''; position: absolute; inset: -.25rem -2px; }
+  &:hover { color: var(--accent); }
+  &:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; border-radius: 2px; }
+}
+
+/* The hover tooltip — the same snippet the `</>` opens, shown while
+   the pointer is on it. A look that costs neither a click nor any of
+   the prose's space, so the reader can check a citation in passing and
+   click only the ones worth keeping open.
+
+   Positioned against the row rather than the button, because
+   `.line-num` is a span and a snippet is flow content. One `</>` per
+   row and per evidence item, so `:has()` needs no way to tell them
+   apart. Hidden with `visibility`, which keeps it out of the
+   accessibility tree and unhittable while still letting it be
+   measured.
+
+   `margin-top` is the pinned preview's own top margin, not a smaller
+   gap that looked right on its own: hover then click and the snippet
+   has to STAY where it was, or the two lines the reader was reading
+   jump a couple of pixels under the pointer. */
+.code-preview-tip {
+  position: absolute;
+  z-index: 20;
+  top: 100%; left: 0;
+  margin-top: .3rem;
+  width: max-content; max-width: min(100%, 46rem);
+  visibility: hidden;
+  filter: drop-shadow(0 2px 6px rgb(0 0 0 / .35));
+  /* The pane's surface is glass, which is right on a card and wrong
+     floating over prose — so the tip lays the page under it, and the
+     preview composites onto exactly what it composites onto when
+     clicked. */
+  background: var(--bg);
+  border-radius: 4px;
+
+  & .code-preview { margin: 0; }
+}
+:is(.line-row, .evidence-list li):has(.code-preview-btn:is(:hover, :focus-visible)) > .code-preview-tip {
+  visibility: visible;
+}
+
+/* UNDER the mark, right edge aligned to it — the reference grows to
+   the left, into the width the line already spans:
+
+       ………………………………………………………[gh]
+       ……………owner/repo/path:12
+
+   Two earlier placements are why. Beside the mark ran off the end of
+   the line, since the mark is usually the last thing on it. Over the
+   line, in place of the path, was worse in both directions: a
+   reference is the path plus `owner/repo/`, so it is LONGER than what
+   it replaces and ran out from under the mark — and a path that wraps
+   makes the line two or three deep, which no single vertical offset
+   can be centred on.
+   Hung below and right-aligned, neither can happen: down is always
+   free, and left is the direction with room in it. */
+.gh-ref-tip {
+  position: absolute;
+  z-index: 20;
+  top: 100%; right: 0;
+  margin-top: .2rem;
+  padding: .2rem .45rem;
+  /* Never takes the pointer. It can land under the cursor — over the
+     mark when the line wraps, over whatever is below otherwise — and
+     then the mark loses `:hover`, the tooltip goes away, the mark has
+     `:hover` again: a flicker loop with the reference never legible.
+     Nothing here is clickable anyway; the mark above it is the link. */
+  pointer-events: none;
+  /* `display: none` at rest rather than `visibility: hidden`: a
+     hidden-but-laid-out box still counts as scrollable overflow, and
+     one anchored to the right of a mark near the end of a line would
+     have widened the column for everyone whether or not anyone ever
+     hovered it. Laid out only while it is being read, it costs the
+     layout nothing the rest of the time. */
+  display: none;
+  width: max-content; max-width: 50ch;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--border); border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* `rem`, for the reason the snippet is: in `em` the same reference
+     came out at one size beside the location line and another inside
+     the evidence list, which are different parents. */
+  font-size: .72rem; line-height: 1.4;
+  filter: drop-shadow(0 2px 6px rgb(0 0 0 / .35));
+}
+.gh-ref-btn:is(:hover, :focus-visible) + .gh-ref-tip { display: block; }
+
+/* The snippet. Numbered gutter beside the code, both scrolling as one
+   so a long line takes its line numbers with it — the `<pre>` is the
+   scroll container and the gutter rides inside it, rather than the two
+   being separate columns that drift apart.
+
+   `--lineno-width` is set per snippet from the widest number in it
+   (codeSnippetTemplate), so the code starts at the same column on
+   every line without the gutter being sized for a file it isn't
+   showing. Same `--code-*` palette as the description's fenced blocks,
+   so a preview and a quoted snippet colour identically. */
+.code-preview {
+  margin: .3rem 0 .1rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  /* The focus view's code pane, in miniature: its glass surface, with
+     the gutter's own faint tint over it (below). Source is a thing
+     being quoted from somewhere else, and the pane already says so
+     better than either a wash of the text colour over the card or a
+     flat well cut out of it. */
+  background: var(--surface);
+  backdrop-filter: var(--glass-blur);
+  /* Ten lines, then scroll. A preview is a look at the code, not a
+     second copy of the file — a report citing `20-120` would otherwise
+     unroll a hundred lines into the middle of the prose and push
+     everything after it off the screen. `lh` is the element's own line
+     box, so the cap is ten LINES however the theme sizes them, plus
+     the `.35rem` the gutter and the source each pad top and bottom.
+     The container scrolls on both axes, so a long line and a tall
+     snippet are reachable without the gutter drifting out of step
+     with the code it numbers — vertically it travels with it, and
+     horizontally the gutter is pinned (below). */
+  max-height: calc(10lh + .7rem);
+  overflow: auto;
+  display: flex;
+  /* Not `stretch` (the default): once the cap above made the height
+     DEFINITE, stretching sized both columns to the visible box rather
+     than to the snippet, so their content overflowed them from the
+     inside and the gutter's background painted ten lines' worth and
+     stopped — leaving the rest of the numbers sitting on bare card.
+     `flex-start` sizes each to its own content, which is the height of
+     the whole snippet, so the two fill the scrolled area together. */
+  align-items: flex-start;
+  white-space: normal;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* `rem`, not `em`. Sized against its parent, the same snippet came
+     out at one size beside the location line and a smaller one inside
+     the evidence list — and the hover tooltip, which hangs off the
+     row, disagreed with the panel the click opens, which hangs off the
+     column. A line of source is a line of source: it reads the same
+     wherever the card shows it, and the numbers beside it line up the
+     same way. */
+  font-size: .75rem; line-height: 1.5;
+}
+.code-preview-pending {
+  display: block;
+  padding: .35rem .5rem;
+  color: var(--muted);
+  font-style: italic;
+}
+.code-preview-gutter {
+  flex: none;
+  padding: .35rem .45rem .35rem .5rem;
+  border-right: 1px solid var(--border);
+  color: var(--muted);
+  text-align: right;
+  user-select: none;
+  /* Pinned against a horizontal scroll: a long line would otherwise
+     drag the numbers off to the left, taking away the one thing that
+     tells the reader which line they are looking at — at exactly the
+     moment they are looking sideways for it.
+     Which is the one place the stack has to be spelled out rather than
+     layered: pinned means code passes UNDER it, so it has to be
+     opaque, and the pane's surface is not. The layers are the pane's
+     own — the gutter tint over the glass over the page — just painted
+     rather than composited. */
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background-color: var(--bg);
+  background-image:
+    linear-gradient(rgb(from var(--text) r g b / .03), rgb(from var(--text) r g b / .03)),
+    linear-gradient(var(--surface), var(--surface));
+
+  & .code-preview-lineno {
+    width: var(--lineno-width, 3ch);
+    opacity: .7;
+  }
+  /* The line the link named — the whole point of opening this. */
+  & .cited { opacity: 1; color: var(--accent); font-weight: 600; }
+}
+.code-preview-source {
+  margin: 0;
+  padding: .35rem .6rem;
+  white-space: pre;
+  color: var(--text);
+  /* `font: inherit` and not just the family: a `<pre>` carries the UA's
+     `font-family: monospace; font-size: 1em`, and that pair trips the
+     monospace default-size adjustment — the code comes out a notch
+     smaller than the gutter beside it, its line boxes shorter, and the
+     two columns drift a row apart by the bottom of the snippet. Which
+     puts the accent on the wrong line, on the one element whose whole
+     job is to point at the right one. */
+  font: inherit;
+
+  & code { font: inherit; }
+}
+
 /* Header of a section that COLLAPSES — Evidence, Reproduction, and
    the two recommendations (render-finding.js evidenceTemplate /
    sectionTemplate make those a `<details>`), so the header is a
@@ -337,6 +601,9 @@ details[open] > summary.section-label::after { transform: translateY(-2px) rotat
   margin: .25rem 0 0; padding-left: 1.6rem;
   display: flex; flex-direction: column; gap: .15rem;
 
+  /* Anchor for the source-preview tooltip, as `.line-row` above. */
+  & > li { position: relative; }
+
   & li::marker { color: var(--muted); font-size: .9em; }
   /* Rows that are just a `file:line` reference read as one list and
      are set tight. A row carrying a NOTE needs the air back: its note
@@ -344,13 +611,20 @@ details[open] > summary.section-label::after { transform: translateY(-2px) rotat
      into the next reference. */
   & li:has(.evidence-note):not(:last-child) { margin-bottom: .3rem; }
 }
+/* The reference line of a row. No underline, hover included — a list
+   of these reads as a column of locations, and underlining them on the
+   way past turns each one into a link being offered. The GitHub mark
+   after it is what says where it goes. */
 .evidence-ref {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .92em; overflow-wrap: anywhere;
   color: var(--accent); text-decoration: none;
-
-  &:hover { text-decoration: underline; }
 }
+/* The location links and the marks beside them keep the ordinary text
+   cursor: the colour change on hover already says they are live, and a
+   hand pointer over a line of `file:42` reads as if the text itself
+   were a control. */
+:is(.line-num a, .evidence-ref, .gh-ref-btn) { cursor: default; }
 /* No link to give this row — same type, muted, so the missing target
    reads as absent rather than broken. */
 span.evidence-ref { color: var(--muted); }
@@ -446,15 +720,19 @@ span.evidence-ref { color: var(--muted); }
     color: var(--text);
   }
   & code { font: inherit; }
+}
 
-  /* Prism token theme — the shadow-root copy of the rules
-     styles/report.css carries for the source viewers, since no
-     light-DOM rule reaches in here. The palette itself is NOT copied:
-     it comes from theme.css's `--code-*` properties, which inherit
-     across the boundary, so the card and the source viewer colour a
-     snippet identically and the light themes retune both at once.
-     Prism stamps `<span class="token X Y">`; X (the kind) is all we
-     key off. */
+/* Prism token theme — the shadow-root copy of the rules
+   styles/report.css carries for the source viewers, since no light-DOM
+   rule reaches in here. Shared by both places this root paints
+   highlighted code: the fenced blocks a description carries
+   (`.code-block`) and the source previews beside its links
+   (`.code-preview`). The palette itself is NOT copied: it comes from
+   theme.css's `--code-*` properties, which inherit across the
+   boundary, so the card and the source viewer colour a snippet
+   identically and the light themes retune both at once. Prism stamps
+   `<span class="token X Y">`; X (the kind) is all we key off. */
+:is(.code-block, .code-preview) {
   & .token.comment,
   & .token.prolog,
   & .token.cdata { color: var(--code-comment); font-style: italic; }
@@ -491,6 +769,8 @@ span.evidence-ref { color: var(--muted); }
 .line-row {
   display: flex; justify-content: space-between;
   align-items: baseline; gap: .5rem; flex-wrap: wrap;
+  /* Anchor for the source-preview tooltip (`.code-preview-tip`). */
+  position: relative;
 }
 .run-meta { color: var(--muted); font-size: .65rem; }
 
@@ -1026,7 +1306,12 @@ span.evidence-ref { color: var(--muted); }
 }
 
 .line-num { color: var(--muted); font-size: .8rem; }
-.line-num a { color: inherit; }
+/* No underline, including the UA's own — theme.css's `a` rules stop at
+   the shadow boundary, so this link was the one on the card that came
+   out underlined. It reads as a location, which is what it is, and the
+   GitHub mark that now follows it says it goes somewhere. Colour on
+   hover carries the rest. */
+.line-num a { color: inherit; text-decoration: none; }
 .line-num a:hover { color: var(--accent); }
 
 /* npm chip in the focus view's line-row — small accent-tinted pill
@@ -1165,6 +1450,11 @@ span.evidence-ref { color: var(--muted); }
     cursor: auto;
     &::after { display: none; }
   }
+  /* Both marks are offers to open something, and paper can't take
+     either — the GitHub one says what it says through a tooltip, which
+     leaves a decorative octocat behind on a printout. An open preview
+     still prints: it is content by then, and the reader chose it. */
+  .code-preview-btn, .gh-ref { display: none; }
 
   /* Inline `` `code` `` spans read as a chip on screen (1px border +
      tinted bg); on paper that chrome crowds dense prose and reads as

@@ -28,6 +28,7 @@
 import { unsafeCSS } from 'lit'
 import { StateElement, html } from '@rray/frontend/state-element'
 import { findingCardClasses, findingCardGid, findingCardInnerTemplate } from './render-finding.js'
+import { revealCitedLines } from './reveal-cited.js'
 import cardCSS from './finding-card.css'
 
 const MANAGED_HOST_CLASSES = [
@@ -73,6 +74,37 @@ class FindingCard extends StateElement {
     // padding/border via the shadow boundary's outer-wins cascade
     // rule. See finding-card.css.
     return html`<div class="card">${findingCardInnerTemplate(this.group, { context: this.context })}</div>`
+  }
+
+  // A source preview that opened on a range taller than its ten-line
+  // cap has to be SCROLLED to the citation, or it opens on the context
+  // above and the reader has to go looking for the lines they asked
+  // for. Same rule as the focus panel (reveal-cited.js): centre the
+  // block, clamped to a line of lead-in.
+  //
+  // Here rather than in the template because it is a measurement, and
+  // it has to run after the paint that produced the lines.
+  //
+  // Re-applied on EVERY pass, not once, because a preview's content
+  // arrives in stages — the placeholder, then the source, then the
+  // highlight — and any of those can land the scroll somewhere else:
+  // a pass that positions an element which is about to be replaced
+  // has positioned nothing, and swapping a scrolled box's contents can
+  // clamp the offset it had. Positioning once was betting on which
+  // pass would be the last one.
+  //
+  // What keeps that from fighting the reader is remembering the offset
+  // we set: if the box is still sitting where we put it, it is ours to
+  // move, and if it isn't, they scrolled it and we leave it alone.
+  updated() {
+    for (const preview of this.renderRoot.querySelectorAll('.code-preview')) {
+      const ours = preview.dataset.revealedTo
+      if (ours !== undefined && Math.round(preview.scrollTop) !== Number(ours)) continue
+      const cited = preview.querySelectorAll('.code-preview-lineno.cited')
+      if (cited.length === 0) continue
+      revealCitedLines(preview, cited)
+      preview.dataset.revealedTo = String(Math.round(preview.scrollTop))
+    }
   }
 
   connectedCallback() {

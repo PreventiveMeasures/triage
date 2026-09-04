@@ -10,7 +10,7 @@
 // in a description are safe to turn into anchors.
 
 import assert from 'node:assert/strict'
-import { describe, it } from 'node:test'
+import { afterEach, describe, it } from 'node:test'
 
 // format.js → frontend-global.js throws at module load when the
 // `@rray/frontend` slot isn't installed. Tests don't run the boot path
@@ -25,7 +25,7 @@ if (!globalThis[slotKey]) {
   }
 }
 
-const { evidenceMarkdown, locationLabel, evidenceUrl, fileUrl, findingUrl, isPkgRef, markdownLinkToken } = await import('../ui/view/format.js')
+const { configureDepsDir, evidenceMarkdown, evidenceUrl, fileUrl, findingUrl, githubRefLabel, isPkgRef, locationLabel, markdownLinkToken } = await import('../ui/view/format.js')
 
 describe('isPkgRef', () => {
   it('matches bare and scoped package references', () => {
@@ -191,6 +191,90 @@ describe('evidence rows', () => {
     assert.equal(evidenceUrl(f.evidence[1], { file: 'a.ts' }, ''), null)
   })
 
+  // Reconstructing a row's link is a guess, and resolving every row
+  // against the finding's repo was a bad one — evidence wanders, and a
+  // row citing another package's file got a link into a repository that
+  // has never held it. What is pinned here is which rows earn a repo.
+  describe('which repo a reconstructed row resolves against', () => {
+    const REPORT = 'https://github.com/acme/monorepo'
+    const row = (file, line) => ({ file, line })
+    // The deps dir is picked per report (configureDepsDir), and the
+    // Composer case below is only itself with `vendor` active — that is
+    // what makes `vendor/<org>/<pkg>/` the prefix to strip. Restored
+    // after each, since it is module-wide.
+    const asProject = (file) => configureDepsDir([{ groups: [[{ file }]] }])
+    afterEach(() => { asProject('node_modules/a/b.js') })
+
+    it('takes the finding repo for the first row, restating the location', () => {
+      asProject('vendor/acme/lib/Client.php')
+      const dep = { file: 'vendor/acme/lib/Client.php', repo: { github: 'acme/lib' } }
+      assert.equal(
+        evidenceUrl(row('vendor/acme/lib/Client.php', '12'), dep, REPORT, 0),
+        'https://github.com/acme/lib/blob/HEAD/lib/Client.php#L12',
+      )
+      // …only the first, and only when it IS the finding's location.
+      assert.equal(evidenceUrl(row('vendor/acme/lib/Client.php', '12'), dep, REPORT, 1), null)
+      assert.equal(evidenceUrl(row('vendor/acme/lib/Other.php', '12'), dep, REPORT, 0), null)
+    })
+
+    it('takes the finding repo for a row in the same installed package', () => {
+      const dep = { file: 'node_modules/lodash/index.js', repo: { github: 'lodash/lodash' } }
+      assert.equal(
+        evidenceUrl(row('node_modules/lodash/lib/merge.js', '40'), dep, REPORT, 3),
+        'https://github.com/lodash/lodash/blob/HEAD/lib/merge.js#L40',
+      )
+      // The whole prefix is the identity — a different install of the
+      // same name is a different copy of the file.
+      assert.equal(evidenceUrl(row('app/node_modules/lodash/lib/merge.js', '40'), dep, REPORT, 3), null)
+    })
+
+    it('reads the innermost package under a nested or pnpm layout', () => {
+      const dep = {
+        file: 'node_modules/.pnpm/lodash@4.17.21/node_modules/lodash/index.js',
+        repo: { github: 'lodash/lodash' },
+      }
+      assert.equal(
+        evidenceUrl(row('node_modules/.pnpm/lodash@4.17.21/node_modules/lodash/merge.js', '7'), dep, REPORT, 2),
+        'https://github.com/lodash/lodash/blob/HEAD/merge.js#L7',
+      )
+    })
+
+    // The point of the whole exercise: a finding in the app citing a
+    // sink somewhere in its dependencies. We know the file belongs to
+    // SOME package; we do not know that package's repo.
+    it('gives no link for a row in another dependency', () => {
+      const own = { file: 'src/proxy.ts', repo: { github: 'acme/app' } }
+      assert.equal(evidenceUrl(row('node_modules/axios/lib/http.js', '90'), own, REPORT, 1), null)
+      assert.equal(evidenceUrl(row('vendor/guzzle/src/Client.php', '90'), own, REPORT, 1), null)
+    })
+
+    it('takes the finding repo for own source when the finding is own source', () => {
+      const own = { file: 'src/proxy.ts', repo: { github: 'acme/app' } }
+      assert.equal(
+        evidenceUrl(row('src/router.ts', '8'), own, REPORT, 1),
+        'https://github.com/acme/app/blob/HEAD/src/router.ts#L8',
+      )
+    })
+
+    // The finding's repo is the DEPENDENCY's upstream here, so it is the
+    // wrong answer for a file in the project — that one belongs to the
+    // report's repo.
+    it('takes the report repo for own source when the finding is in a dependency', () => {
+      const dep = { file: 'node_modules/lodash/index.js', repo: { github: 'lodash/lodash' } }
+      assert.equal(
+        evidenceUrl(row('src/proxy.ts', '8'), dep, REPORT, 1),
+        'https://github.com/acme/monorepo/blob/HEAD/src/proxy.ts#L8',
+      )
+      assert.equal(evidenceUrl(row('src/proxy.ts', '8'), dep, '', 1), null)
+    })
+
+    it('still takes the row URL the report gave, over any of it', () => {
+      const own = { file: 'src/proxy.ts', repo: { github: 'acme/app' } }
+      const pinned = { file: 'node_modules/axios/lib/http.js', url: 'https://github.com/axios/axios/blob/v1.6.0/lib/http.js#L90' }
+      assert.equal(evidenceUrl(pinned, own, REPORT, 1), pinned.url)
+    })
+  })
+
   it('rebuilds the list as markdown, notes indented under their row', () => {
     assert.equal(evidenceMarkdown(f), [
       '**Evidence:**',
@@ -211,5 +295,61 @@ describe('evidence rows', () => {
     assert.equal(evidenceMarkdown({ file: 'a.ts' }), '')
     assert.equal(evidenceMarkdown({ file: 'a.ts', evidence: [] }), '')
     assert.equal(evidenceMarkdown(null), '')
+  })
+})
+
+// A GitHub blob URL as the reference it stands for. The location text
+// on a card is the same `src/proxy.ts:42` whichever repo it came from,
+// and a card can carry rows from several — so the mark beside it says
+// where it goes, and this is what the mark's tooltip reads.
+describe('githubRefLabel', () => {
+  it('strips the origin, the blob ref, and spells the anchor as lines', () => {
+    assert.equal(
+      githubRefLabel('https://github.com/acme/app/blob/HEAD/src/proxy.ts#L42'),
+      'acme/app/src/proxy.ts:42',
+    )
+    assert.equal(
+      githubRefLabel('https://github.com/acme/app/blob/HEAD/src/proxy.ts#L20-L30'),
+      'acme/app/src/proxy.ts:20-30',
+    )
+    // GitHub also writes a range without the second `L`.
+    assert.equal(
+      githubRefLabel('https://github.com/acme/app/blob/HEAD/a.ts#L20-30'),
+      'acme/app/a.ts:20-30',
+    )
+  })
+
+  // A report's own link is usually pinned to the commit it was
+  // produced from. The sha goes with the rest of the chrome: forty
+  // characters in the middle of a path tell the reader nothing they
+  // are looking for, and the link still carries it.
+  it('drops a pinned ref the same as HEAD', () => {
+    assert.equal(
+      githubRefLabel('https://github.com/acme/app/blob/9f2c1ab/src/a/b.ts#L7'),
+      'acme/app/src/a/b.ts:7',
+    )
+    assert.equal(
+      githubRefLabel('https://github.com/acme/app/blob/release%2Fv2/src/a.ts'),
+      'acme/app/src/a.ts',
+    )
+  })
+
+  it('takes tree and blame URLs, and www', () => {
+    assert.equal(githubRefLabel('https://github.com/a/b/tree/HEAD/src'), 'a/b/src')
+    assert.equal(githubRefLabel('https://github.com/a/b/blame/HEAD/src/x.ts#L3'), 'a/b/src/x.ts:3')
+    assert.equal(githubRefLabel('https://www.github.com/a/b/blob/HEAD/x.ts'), 'a/b/x.ts')
+  })
+
+  // Empty means "no mark" — the location link stands as it always did.
+  it('answers empty for anything that is not a GitHub blob URL', () => {
+    for (const bad of [
+      'https://gitlab.com/acme/app/blob/HEAD/x.ts',
+      'https://github.com/acme/app',
+      'https://github.com/acme/app/issues/12',
+      'https://github.com/acme/app/blob/HEAD/',
+      'piolium:abc', 'not a url', '', undefined, null, 42, {},
+    ]) {
+      assert.equal(githubRefLabel(bad), '', String(bad))
+    }
   })
 })

@@ -1,6 +1,15 @@
 .file-group {
   margin-bottom: 1rem;
   &.hidden { display: none; }
+  /* A source-preview tooltip is drawn inside a card's shadow root,
+     which sits inside `.file-body` — and `.file-body` has a
+     backdrop-filter, so it is a stacking context the tooltip cannot
+     paint its way out of however high its z-index goes. A tooltip that
+     overhangs its group therefore went UNDER the next group's header,
+     for no better reason than that the next group comes later in the
+     document. Lifting the group the pointer is in puts it back in
+     front; only one group can be hovered, so nothing else moves. */
+  &:hover { position: relative; z-index: 1; }
 }
 
 /* file-header + file-body form one visual card (shared borders +

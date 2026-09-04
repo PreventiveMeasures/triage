@@ -7,7 +7,7 @@ import { FILE_ICONS } from './file-display.js'
 import { FOCUS_SPLIT_MAX, FOCUS_SPLIT_MIN, listBundles, listWorkspaces, state } from '#client/index.js'
 import { isBundleInRemote, isInRemote, remoteCount, triageSync } from './client-sync.js'
 import { dropZone, report } from './dom.js'
-import { SEVERITIES, configureDepsDir, configureRevalidation, displayedSeverity, fileLink, findingDisplayName, findingTitle, formatRunMeta, hasRevalidateField, hasSeverityCorrection, isHttpUrl, isModule, lineLink, reachableRevalidateFilters, revalidateKind } from './format.js'
+import { SEVERITIES, configureDepsDir, configureRevalidation, displayedSeverity, fileLink, findingDisplayName, findingTitle, formatRunMeta, hasRevalidateField, hasSeverityCorrection, isHttpUrl, isModule, lineLink, lineRangeLabel, reachableRevalidateFilters, revalidateKind } from './format.js'
 import { activeTabFor, findingRepoFallback, getMergedGroups, groupKey, groupState, primaryTab, tabKey } from './group.js'
 import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, applySorting, modelOfFinding, repoOfFinding } from './filters.js'
 import { ANALYZER_LABELS } from './analyzer-select.js'
@@ -947,14 +947,17 @@ function kanbanCardTemplate(g, opts = {}) {
 // gets `.focus-code-line-active` so the row stands out; the panel's
 // post-render scroll handler (see events.js) brings it into view.
 function focusCodeLinesTemplate(code) {
-  const { content, line, highlighted } = code
+  const { content, range, highlighted } = code
   const lineCount = content.split('\n').length
   const digits = String(lineCount).length
   return html`<div class="focus-code-lines" style=${styleMap({ '--lineno-width': `${digits}ch` })}>
     <aside class="focus-code-gutter" aria-hidden="true">
       ${Array.from({ length: lineCount }, (_, i) => {
         const ln = i + 1
-        const classes = { 'focus-code-lineno': true, 'focus-code-line-active': ln === line }
+        // Every line of the cited range. The scroll-into-view below
+        // takes the FIRST of them, so a span opens at its top.
+        const active = Boolean(range) && ln >= range.start && ln <= range.end
+        const classes = { 'focus-code-lineno': true, 'focus-code-line-active': active }
         return html`<div class=${classMap(classes)} data-focus-code-line=${ln}>${ln}</div>`
       })}
     </aside>
@@ -1175,7 +1178,7 @@ function findingsBodyTemplate(filtered) {
             ? html`<div class="focus-code-empty">Loading source…</div>`
             : html`<header class="focus-code-bar" title=${code.file}>
                 <span class="focus-code-file">${code.file}</span>
-                ${code.line ? html`<span class="focus-code-line">:${code.line}</span>` : nothing}
+                ${code.range ? html`<span class="focus-code-line">:${lineRangeLabel(code.range)}</span>` : nothing}
               </header>
               <div class="focus-code-body">${focusCodeLinesTemplate(code)}</div>`}
         </div>` : nothing}
