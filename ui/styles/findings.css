@@ -761,6 +761,14 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
     grid-column: 1;
     padding: .4rem 0 .4rem .4rem;
   }
+  /* Half the focus view's grab band. There it separates two glass
+     cards and wants presence; here it is a hairline between two flush
+     panes, and the band's other job — being the finding column's right
+     margin — is served by half as much. The track's width is a
+     variable the column math reads too, so the split percentage keeps
+     landing on the line. */
+  & .focus-main.with-code { --focus-splitter-width: .375rem; }
+
   & .focus-splitter {
     grid-column: 2;
     /* The hairline sits at the END of the divider's track, not its
