@@ -686,6 +686,24 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
   border: 0;
   border-radius: 0;
   box-shadow: none;
+
+  /* Pin the card's action row to the bottom of its pane (finding-card
+     .marks spends these): at this size a description runs for screens,
+     and the buttons that act on it shouldn't be screens away. The row
+     needs a ground of its own to scroll content under, which is this
+     dialog's — including the tint, when the finding carries a colour. */
+  --finding-left-position: sticky;
+  --finding-marks-position: sticky;
+  --finding-marks-bg: var(--bg, var(--surface));
+  /* The row pins flush to the pane's bottom edge (the pane gives up its
+     bottom inset below, so no strip is left for text to scroll through
+     under the row) and keeps the buttons off that edge itself. */
+  --finding-marks-pad-bottom: .4rem;
+
+  &.mark-red   { --finding-marks-bg: var(--mark-red-bg); }
+  &.mark-blue  { --finding-marks-bg: var(--mark-blue-bg); }
+  &.mark-green { --finding-marks-bg: var(--mark-green-bg); }
+  &.mark-gray  { --finding-marks-bg: var(--mark-gray-bg); }
 }
 
 /* The inset belongs to the backdrop, not the modal, so shedding it is
@@ -759,7 +777,11 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
      level with the rail's header. */
   & .focus-pane-card {
     grid-column: 1;
-    padding: .4rem 0 .4rem .4rem;
+    /* No bottom inset: the sticky action row is what sits against that
+       edge, and a strip below it would just be somewhere for the
+       scrolling text to show through. The row carries the equivalent
+       padding of its own. */
+    padding: .4rem 0 0 .4rem;
   }
   /* Half the focus view's grab band. There it separates two glass
      cards and wants presence; here it is a hairline between two flush
@@ -810,6 +832,13 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
     border-radius: 0;
     box-shadow: none;
   }
+
+  /* `overflow: hidden` on the wrapper would make IT the sticky row's
+     scrollport, and this box is exactly as tall as its content — so the
+     row would pin to the end of the card rather than to the bottom of
+     the pane. What that clipping was for is the rounded corner this
+     mode doesn't draw. */
+  & .focus-card-wrapper { overflow: visible; }
 
   /* Which leaves the divider as the only seam between them, so it
      draws one: a hairline down the full height, in place of the short
