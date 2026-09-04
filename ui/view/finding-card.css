@@ -618,7 +618,7 @@ details[open] > summary.section-label::after { transform: translateY(-2px) rotat
   & > li.current::before {
     content: '';
     position: absolute;
-    left: -1.45rem; top: .5em;
+    left: -1.45rem; top: calc(.5em + 1px);
     width: .35rem; height: .35rem;
     border-radius: 50%;
     background: var(--accent);
