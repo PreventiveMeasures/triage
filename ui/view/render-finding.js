@@ -390,17 +390,22 @@ function sectionTemplate(label, body, cls = 'section', { collapsible = false } =
 // so keyboard and screen readers get it for free and the open state
 // belongs to the element rather than to any state we have to carry.
 // Paper has no disclosure, so print forces it open (finding-card.css).
-// A row's reference, as a link into the CODE PANEL rather than out to
-// GitHub. Only the focus view has a panel to load, and only a bundle
-// can answer for the path — everywhere else, and with no bundle
-// attached, the rows keep the GitHub links they have always had.
+// A row's reference, as a link into the CODE PANEL. Only the focus
+// view has a panel to load, and only a bundle can answer for the path
+// — everywhere else, and with no bundle attached, the reference is the
+// GitHub link it has always been.
 //
 // Presence follows the bundle's contents, exactly like the `</>` mark
 // beside it (bundleFilePath): a row the bundle carries is a link, a
 // row it doesn't is plain text. Which is the honest answer, and a
-// better one than the reconstruction it replaces — the panel opens the
-// file we are holding, so there is nothing to get wrong about which
-// revision of which repository it came from.
+// better one for the TEXT than the reconstruction it replaces — the
+// panel opens the file we are holding, so there is nothing to get
+// wrong about which revision of which repository it came from.
+//
+// The GitHub mark stays either way. What moves here is where the
+// reference itself takes you; going out to the repository is a
+// different errand, and the mark beside the row is how you still run
+// it.
 function evidencePanelRef(bundle, row, label) {
   const file = bundle && row?.file ? bundleFilePath(bundle.integrity, row.file) : null
   if (!file) return html`<span class="evidence-ref">${label}</span>`
@@ -434,7 +439,9 @@ function evidenceTemplate(f, context) {
   // attached bundle can answer for gets a `</>` beside its link.
   const bundle = attachedBundle(f)
   // …and in the focus view, where a code panel is on screen to load
-  // into, that same bundle decides the LINK too.
+  // into, that same bundle decides where the REFERENCE goes. Only the
+  // reference: the GitHub mark after it is unaffected, and is what
+  // keeps the way out to the repository open.
   const toPanel = context === 'focus' && bundle !== null
   // Which row the panel is showing, so the list can say so. Only
   // meaningful with a panel open: everywhere else the rows point out
@@ -444,11 +451,11 @@ function evidenceTemplate(f, context) {
     <summary class="section-label">Evidence<span class="evidence-count">(${rows.length})</span></summary>
     <ol class="evidence-list">${rows.map((row, i) => {
       const label = locationLabel(row)
-      const url = toPanel ? null : evidenceUrl(row, f, repoFallback, i)
+      const url = evidenceUrl(row, f, repoFallback, i)
       const note = evidenceNote(row)
       // Indexed, so two rows citing the same place stay two marks too.
       const preview = codePreview(f, `ev${i}`, bundle, row?.file, row?.line)
-      const ghRef = toPanel ? nothing : githubRef(url)
+      const ghRef = githubRef(url)
       const current = toPanel && samePos(shown, {
         integrity: bundle.integrity,
         file: bundleFilePath(bundle.integrity, row?.file),
