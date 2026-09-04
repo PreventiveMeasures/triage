@@ -257,11 +257,17 @@
   margin-top: .2rem;
   width: max-content; max-width: min(100%, 46rem);
   visibility: hidden;
-  /* The preview inside it is already bordered; this only lifts it off
-     whatever it lands on. */
   filter: drop-shadow(0 2px 6px rgb(0 0 0 / .35));
 }
-.code-preview-tip .code-preview { margin: 0; background: var(--bg); }
+/* The pane's surface is glass, which is right on a card and wrong
+   floating over prose — so the tip lays the page under it, and the
+   preview composites onto exactly what it composites onto when
+   clicked. */
+.code-preview-tip {
+  background: var(--bg);
+  border-radius: 4px;
+}
+.code-preview-tip .code-preview { margin: 0; }
 /* The reference reads as a path, so it is set as one. */
 .gh-ref-tip {
   padding: .2rem .45rem;
@@ -297,7 +303,13 @@
   margin: .3rem 0 .1rem;
   border: 1px solid var(--border);
   border-radius: 4px;
-  background: rgb(from var(--text) r g b / .05);
+  /* The focus view's code pane, in miniature: its glass surface, with
+     the gutter's own faint tint over it (below). Source is a thing
+     being quoted from somewhere else, and the pane already says so
+     better than either a wash of the text colour over the card or a
+     flat well cut out of it. */
+  background: var(--surface);
+  backdrop-filter: var(--glass-blur);
   /* Ten lines, then scroll. A preview is a look at the code, not a
      second copy of the file — a report citing `20-120` would otherwise
      unroll a hundred lines into the middle of the prose and push
@@ -321,7 +333,14 @@
   align-items: flex-start;
   white-space: normal;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: .8em; line-height: 1.5;
+  /* `rem`, not `em`. Sized against its parent, the same snippet came
+     out at one size beside the location line and a smaller one inside
+     the evidence list — and the hover tooltip, which hangs off the
+     row, disagreed with the panel the click opens, which hangs off the
+     column. A line of source is a line of source: it reads the same
+     wherever the card shows it, and the numbers beside it line up the
+     same way. */
+  font-size: .75rem; line-height: 1.5;
 }
 .code-preview-pending {
   display: block;
@@ -339,12 +358,19 @@
   /* Pinned against a horizontal scroll: a long line would otherwise
      drag the numbers off to the left, taking away the one thing that
      tells the reader which line they are looking at — at exactly the
-     moment they are looking sideways for it. Opaque, or the code
-     slides visibly underneath. */
+     moment they are looking sideways for it.
+     Which is the one place the stack has to be spelled out rather than
+     layered: pinned means code passes UNDER it, so it has to be
+     opaque, and the pane's surface is not. The layers are the pane's
+     own — the gutter tint over the glass over the page — just painted
+     rather than composited. */
   position: sticky;
   left: 0;
   z-index: 1;
-  background: var(--bg);
+  background-color: var(--bg);
+  background-image:
+    linear-gradient(rgb(from var(--text) r g b / .03), rgb(from var(--text) r g b / .03)),
+    linear-gradient(var(--surface), var(--surface));
 
   & .code-preview-lineno {
     width: var(--lineno-width, 3ch);
