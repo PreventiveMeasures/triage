@@ -239,10 +239,10 @@
    parked after the location.
 
    The wrapper carries the layout that used to sit on the link, so the
-   mark's own box is exactly the glyph. Deliberately NOT positioned:
-   the tooltip anchors to the line, not to the mark (see
-   `.gh-ref-tip`). */
+   mark's own box is exactly the glyph — and it is what the tooltip
+   hangs off (see `.gh-ref-tip`). */
 .gh-ref {
+  position: relative;
   display: inline-flex; align-items: center;
   margin-left: .25rem;
   vertical-align: -2px;
@@ -309,41 +309,41 @@
   visibility: visible;
 }
 
-/* The reference tooltip goes IN PLACE OF the path, over the line it
-   labels, left edge on the left edge of the location. Beside the mark
-   is where it started, and the mark is usually the last thing on its
-   line — so "beside" was "off the end of it", and the reference ran
-   out of the card exactly when it was longest. Over the line there is
-   always room, because the line is where the path already was: the
-   tooltip is the same location said in full, shown where the reader is
-   already looking. Same treatment as the table index (see
-   view/finding-row.css). */
+/* UNDER the mark, right edge aligned to it — the reference grows to
+   the left, into the width the line already spans:
+
+       ………………………………………………………[gh]
+       ……………owner/repo/path:12
+
+   Two earlier placements are why. Beside the mark ran off the end of
+   the line, since the mark is usually the last thing on it. Over the
+   line, in place of the path, was worse in both directions: a
+   reference is the path plus `owner/repo/`, so it is LONGER than what
+   it replaces and ran out from under the mark — and a path that wraps
+   makes the line two or three deep, which no single vertical offset
+   can be centred on.
+   Hung below and right-aligned, neither can happen: down is always
+   free, and left is the direction with room in it. */
 .gh-ref-tip {
   position: absolute;
   z-index: 20;
-  left: 0; top: 50%;
-  translate: 0 -50%;
+  top: 100%; right: 0;
+  margin-top: .2rem;
   padding: .2rem .45rem;
-  /* Never takes the pointer. It is drawn OVER the line, mark included,
-     so without this the moment it appears it is under the cursor, the
-     mark loses `:hover`, the tooltip goes away, the mark has `:hover`
-     again — a flicker loop with the reference never legible. Nothing
-     here is clickable anyway; the mark under it is the link. */
+  /* Never takes the pointer. It can land under the cursor — over the
+     mark when the line wraps, over whatever is below otherwise — and
+     then the mark loses `:hover`, the tooltip goes away, the mark has
+     `:hover` again: a flicker loop with the reference never legible.
+     Nothing here is clickable anyway; the mark above it is the link. */
   pointer-events: none;
-  /* Wide enough for a reference to stay on ONE line. Capped narrow it
-     grew tall instead, and a tall tooltip runs past the bottom of the
-     card it hangs off, where the paint of whatever surrounds the card
-     cuts it off — so the height is the thing to avoid, and width is
-     what buys it.
-     `display: none` at rest rather than `visibility: hidden` is what
-     makes the width affordable: a hidden-but-laid-out box still counts
-     as scrollable overflow, so a wide one would have widened the
-     column for everyone whether or not anyone hovered the mark. Laid
-     out only while it is being read, it costs the layout nothing the
-     rest of the time — and the cap is then only there to stop a
-     pathological path from crossing the whole window. */
+  /* `display: none` at rest rather than `visibility: hidden`: a
+     hidden-but-laid-out box still counts as scrollable overflow, and
+     one anchored to the right of a mark near the end of a line would
+     have widened the column for everyone whether or not anyone ever
+     hovered it. Laid out only while it is being read, it costs the
+     layout nothing the rest of the time. */
   display: none;
-  width: max-content; max-width: 85ch;
+  width: max-content; max-width: 50ch;
   overflow-wrap: anywhere;
   border: 1px solid var(--border); border-radius: 4px;
   background: var(--bg);
@@ -620,11 +620,6 @@ details[open] > summary.section-label::after { transform: translateY(-2px) rotat
   font-size: .92em; overflow-wrap: anywhere;
   color: var(--accent); text-decoration: none;
 }
-/* The reference and the marks that belong to it, as one line — the box
-   the GitHub tooltip is positioned against. The row's `<li>` won't do:
-   it is as tall as the note and the open preview under it, and the
-   tooltip belongs on the line it labels. */
-.evidence-head { position: relative; }
 /* The location links and the marks beside them keep the ordinary text
    cursor: the colour change on hover already says they are live, and a
    hand pointer over a line of `file:42` reads as if the text itself
@@ -1310,10 +1305,7 @@ span.evidence-ref { color: var(--muted); }
   &:hover { color: var(--green); border-color: var(--green); }
 }
 
-/* Positioned so the GitHub tooltip can sit over the location this
-   span holds — see `.gh-ref-tip`. One line tall, so `top: 50%` centres
-   on it exactly. */
-.line-num { position: relative; color: var(--muted); font-size: .8rem; }
+.line-num { color: var(--muted); font-size: .8rem; }
 /* No underline, including the UA's own — theme.css's `a` rules stop at
    the shadow boundary, so this link was the one on the card that came
    out underlined. It reads as a location, which is what it is, and the

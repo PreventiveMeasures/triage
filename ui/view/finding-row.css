@@ -127,8 +127,6 @@
 .meta-row {
   grid-column: 2; grid-row: 2;
   min-width: 0;
-  /* Anchor for the reference tooltip — see `.gh-ref-tip`. */
-  position: relative;
   display: flex; align-items: center; gap: .55rem;
   & .row-loc {
     color: var(--muted); font-size: .72rem;
@@ -162,9 +160,8 @@
    long path and clips what overflows it — a tooltip parked inside
    would be cut off at the same edge. Out here it hangs off the row,
    and lands just after whatever the path shortened to. */
-/* Not positioned, unlike the card's copy: the tooltip anchors to the
-   row, not to the mark. See `.gh-ref-tip`. */
 .gh-ref {
+  position: relative;
   display: inline-flex; align-items: center;
   flex-shrink: 0;
 }
@@ -184,20 +181,15 @@
 .gh-ref-tip {
   position: absolute;
   z-index: 20;
-  /* Over the row's own location, left-aligned — not off the right of
-     the mark the way the card does it. The mark here follows a path
-     that can run most of the width of the table, so "beside the mark"
-     is often "off the end of the window", and the reference would be
-     unreadable exactly when it is most wanted: when the path was too
-     long to fit and got ellipsised. Anchored to the row it lands where
-     the reader is already looking, and cannot leave the table.
-     Wide, so it stays on ONE line — capped narrow it grows tall
-     instead, and a tall tooltip is cut by the paint of whatever
-     surrounds the row. `display: none` until it is read is what makes
-     that width affordable: a laid-out hidden box would widen the table
-     for everyone whether or not it ever showed. */
-  left: 0; top: 50%;
-  translate: 0 -50%;
+  /* Under the mark, right edge aligned to it, growing leftward into
+     the width the row already spans — view/finding-card.css carries
+     the full reasoning. It matters more here: the mark follows a path
+     that can run most of the width of the table, so anything drawn
+     rightward from it starts off the end of the window.
+     `display: none` until it is read keeps a laid-out hidden box from
+     widening the table for everyone whether or not it ever shows. */
+  top: 100%; right: 0;
+  margin-top: .2rem;
   padding: .2rem .45rem;
   /* Never takes the pointer. It is drawn OVER the line, mark included,
      so without this the moment it appears it is under the cursor, the
@@ -206,7 +198,7 @@
      here is clickable anyway; the mark under it is the link. */
   pointer-events: none;
   display: none;
-  width: max-content; max-width: min(85ch, 100%);
+  width: max-content; max-width: 50ch;
   overflow-wrap: anywhere;
   border: 1px solid var(--border); border-radius: 4px;
   background: var(--bg);
