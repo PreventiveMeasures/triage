@@ -630,16 +630,65 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
   &.mark-gray  { background: var(--mark-gray-bg);  border-color: var(--mark-gray-tab-border); }
 }
 
-.kanban-detail-close {
+/* Expand + close, pinned to the modal's top-right corner as one
+   cluster. They share a shell so the pair reads as a single piece of
+   chrome; the row is what carries the corner position, so adding a
+   third control later needs no offset arithmetic. */
+.kanban-detail-actions {
   position: absolute; top: .25rem; right: .25rem; z-index: 1;
-  width: 22px; height: 22px;
-  display: grid; place-items: center;
-  background: transparent; border: 0; border-radius: 4px;
-  color: var(--muted);
-  font: 500 16px/1 ui-monospace, monospace;
-  cursor: pointer;
+  display: flex; align-items: center; gap: .1rem;
 
-  &:hover { color: var(--accent); background: var(--surface-active); }
+  & button {
+    width: 22px; height: 22px;
+    display: grid; place-items: center;
+    background: transparent; border: 0; border-radius: 4px;
+    color: var(--muted);
+    font: 500 16px/1 ui-monospace, monospace;
+    cursor: pointer;
+
+    &:hover { color: var(--accent); background: var(--surface-active); }
+    &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  }
+
+  /* The bracket glyphs are drawn on a 16-unit viewBox at the card
+     scale; hold them to the same 12px the column header's toggle uses
+     so the two expand controls match. */
+  & .kanban-detail-expand svg { width: 12px; height: 12px; }
+}
+
+/* Fullscreen — the modal gives up its width cap, its frame and the
+   backdrop's inset, and runs to the edges of everything it's allowed:
+   the viewport, less the rail's strip on the right (the wide-viewport
+   rule below keeps exactly that much padding, and no more, so the two
+   panels meet flush and the rail's own left border draws the seam).
+   `width: auto` is load-bearing — `place-self: stretch` fills the grid
+   area only while the item's own size is auto, and the base rule sets
+   an explicit width. `max-height` has to go for the same reason: at
+   `calc(100vh - 2rem)` it would hold a 2rem strip of dim at the bottom
+   of a dialog that no longer has an inset to match it.
+
+   The border and shadow go with the inset. Both exist to lift a panel
+   off the page behind it; against the viewport's own edges there's
+   nothing to lift away from, and the shadow's only remaining job would
+   be to smudge the rail's border. A colour-marked finding keeps its
+   tinted background, which is what carries the mark here. */
+.kanban-detail-modal.fullscreen {
+  place-self: stretch;
+  width: auto;
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* The inset belongs to the backdrop, not the modal, so shedding it is
+   a rule on the backdrop — matched through the modal's own state
+   rather than a second class on the parent, since fullscreen is a fact
+   about the dialog. Below the rail's breakpoint this is the whole
+   viewport; the wide-viewport rule at the end of this block puts the
+   rail's strip back. */
+.kanban-detail-backdrop:has(> .kanban-detail-modal.fullscreen) {
+  padding: 0;
 }
 
 .kanban-detail-body {
@@ -753,6 +802,13 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
 @media (width >= 1400px) {
   .kanban-detail-backdrop {
     padding-right: calc(var(--kanban-side-w) + 1rem);
+  }
+
+  /* Fullscreen reserves the rail's width and nothing else — the 1rem
+     that separates the two in the normal layout is the gutter the
+     dialog just gave up. */
+  .kanban-detail-backdrop:has(> .kanban-detail-modal.fullscreen) {
+    padding-right: var(--kanban-side-w);
   }
 
   .kanban-detail-modal { width: min(1100px, 100%); }

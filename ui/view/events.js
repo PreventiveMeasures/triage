@@ -1,4 +1,4 @@
-import { SEVERITY_MODE_KEY, VIEW_MODE_KEY, isEncryptionEnabled, patchEntry, readBundle, saveRepoUrlFor, saveTriage, setReportIgnored, state, subscribeToBundleFindingIndex, subscribeToBundleHashIndex } from '#client/index.js'
+import { KANBAN_DETAIL_FULLSCREEN_KEY, SEVERITY_MODE_KEY, VIEW_MODE_KEY, isEncryptionEnabled, patchEntry, readBundle, saveRepoUrlFor, saveTriage, setReportIgnored, state, subscribeToBundleFindingIndex, subscribeToBundleHashIndex } from '#client/index.js'
 import { downloadBlob, report } from './dom.js'
 import { commonPrefix, configureRevalidation, handoffBlock } from './format.js'
 import { activeTabFor, canApplyFixToGroup, findGroupById, findingRepo, findingReport, fixApplies, getMergedGroups, groupState, groupWithPassRows, syncGroupTriage, tabKey, triageActionPlan, triageScope } from './group.js'
@@ -1601,6 +1601,21 @@ report.addEventListener('click', (e) => {
   // sequence).
   if (e.target.closest?.('.kanban-detail-close')) {
     setKanbanPopoverGid(null)
+    return
+  }
+  // Fullscreen toggle beside it — hand the dialog the whole backdrop,
+  // or put it back at its width cap. A plain render, deliberately not a
+  // view transition: the modal's `::view-transition-old/new` keyframes
+  // animate a clip-path whose floor is the SOURCE CARD's size (set for
+  // the open / close morph), which on a resize would collapse the
+  // dialog to card-sized and grow it back. Persisted so the next
+  // dialog — this session or the next visit — opens the same way.
+  if (e.target.closest?.('[data-kanban-detail-fullscreen]')) {
+    state.kanbanDetailFullscreen = !state.kanbanDetailFullscreen
+    try {
+      localStorage.setItem(KANBAN_DETAIL_FULLSCREEN_KEY, String(state.kanbanDetailFullscreen))
+    } catch {}
+    render()
     return
   }
   // Fullscreen toggle in a column header — give that column the whole
