@@ -630,16 +630,43 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
   &.mark-gray  { background: var(--mark-gray-bg);  border-color: var(--mark-gray-tab-border); }
 }
 
-.kanban-detail-close {
+/* Expand + close, pinned to the modal's top-right corner as one
+   cluster. They share a shell so the pair reads as a single piece of
+   chrome; the row is what carries the corner position, so adding a
+   third control later needs no offset arithmetic. */
+.kanban-detail-actions {
   position: absolute; top: .25rem; right: .25rem; z-index: 1;
-  width: 22px; height: 22px;
-  display: grid; place-items: center;
-  background: transparent; border: 0; border-radius: 4px;
-  color: var(--muted);
-  font: 500 16px/1 ui-monospace, monospace;
-  cursor: pointer;
+  display: flex; align-items: center; gap: .1rem;
 
-  &:hover { color: var(--accent); background: var(--surface-active); }
+  & button {
+    width: 22px; height: 22px;
+    display: grid; place-items: center;
+    background: transparent; border: 0; border-radius: 4px;
+    color: var(--muted);
+    font: 500 16px/1 ui-monospace, monospace;
+    cursor: pointer;
+
+    &:hover { color: var(--accent); background: var(--surface-active); }
+    &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  }
+
+  /* The bracket glyphs are drawn on a 16-unit viewBox at the card
+     scale; hold them to the same 12px the column header's toggle uses
+     so the two expand controls match. */
+  & .kanban-detail-expand svg { width: 12px; height: 12px; }
+}
+
+/* Fullscreen — the modal gives up its width cap and stretches over the
+   backdrop's whole content box. That box already has the rail's width
+   held out of it on the right (see the wide-viewport rule above) and
+   the 1rem inset on the other three sides, so "all the space" stops
+   exactly at the rail rather than running under it. `width: auto` is
+   load-bearing: `place-self: stretch` fills the grid area only while
+   the item's own size is auto, and the base rule sets an explicit
+   width. */
+.kanban-detail-modal.fullscreen {
+  place-self: stretch;
+  width: auto;
 }
 
 .kanban-detail-body {

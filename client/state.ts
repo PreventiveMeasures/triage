@@ -6,6 +6,7 @@ export const VIEW_MODE_KEY = 'deepview.viewMode'
 export const SEVERITY_MODE_KEY = 'deepview.severityMode'
 export const REPO_URLS_KEY = 'deepview.repoUrls'
 export const FOCUS_SPLIT_KEY = 'deepview.focusSplit'
+export const KANBAN_DETAIL_FULLSCREEN_KEY = 'deepview.kanbanDetailFullscreen'
 const VALID_VIEW_MODES = new Set(['grouped', 'list', 'table', 'kanban', 'focus'])
 const VALID_SEVERITY_MODES = new Set(['corrected', 'original'])
 
@@ -136,6 +137,7 @@ export interface State {
   filesSearch: string
   filesSelectedFile: string | null
   kanbanPopoverGid: string | null
+  kanbanDetailFullscreen: boolean
   kanbanExpandedColumn: KanbanColumnKey | null
   focusGid: string | null
   focusCodeTick: number
@@ -183,6 +185,17 @@ function readSavedSeverityMode(): SeverityMode | null {
   try {
     const v = localStorage.getItem(SEVERITY_MODE_KEY)
     return v !== null && VALID_SEVERITY_MODES.has(v) ? (v as SeverityMode) : null
+  } catch { return null }
+}
+
+// Same validate-on-read pattern as the view / severity modes. Stored
+// as the string 'true' / 'false'; anything else (missing, corrupted,
+// a value from a build that wrote something richer) returns null and
+// the default kicks in — `Boolean(raw)` would read 'false' as true.
+function readSavedKanbanDetailFullscreen(): boolean | null {
+  try {
+    const v = localStorage.getItem(KANBAN_DETAIL_FULLSCREEN_KEY)
+    return v === 'true' ? true : v === 'false' ? false : null
   } catch { return null }
 }
 
@@ -666,6 +679,14 @@ export const state: State = store<State>({
   // popover is a transient inspection affordance. Re-clicking the
   // same card (or clicking the backdrop / pressing Esc) clears it.
   kanbanPopoverGid: null,
+  // Kanban view: whether the detail dialog fills the space it's given
+  // (everything but the 1rem inset and the same-column rail's reserved
+  // strip) instead of sitting at its readable width cap. Toggled by the
+  // expand button beside the dialog's close button. Unlike the two
+  // session-only fields around it this one IS persisted: it's a reading
+  // preference, not a position — someone who wants the big dialog wants
+  // it for every finding they open, and on the next visit too.
+  kanbanDetailFullscreen: readSavedKanbanDetailFullscreen() ?? false,
   // Kanban view: key of the column currently shown fullscreen (null =
   // the regular all-columns board). Set by the expand button in the
   // column header; the board then renders that column alone, across

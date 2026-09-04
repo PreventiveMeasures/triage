@@ -987,7 +987,13 @@ function focusCodeLinesTemplate(code) {
 function kanbanDetailTemplate(focusGroup, column) {
   if (!focusGroup) return nothing
   const groupSt = groupState(focusGroup)
-  const modalClasses = { 'kanban-detail-modal': true, 'has-conflict': groupSt.hasConflict }
+  // Fullscreen drops the modal's width cap and stretches it over the
+  // whole backdrop — which already holds the rail's strip out of its
+  // box, so "everything available" means everything but the rail. The
+  // flag is persisted (see state.ts), so the dialog opens the way it
+  // was last left.
+  const full = state.kanbanDetailFullscreen
+  const modalClasses = { 'kanban-detail-modal': true, fullscreen: full, 'has-conflict': groupSt.hasConflict }
   if (!groupSt.hasConflict && groupSt.commonColor) modalClasses[`mark-${groupSt.commonColor}`] = true
   const gid = groupKey(focusGroup)
   const items = column?.items ?? []
@@ -1004,12 +1010,25 @@ function kanbanDetailTemplate(focusGroup, column) {
   return html`<div class="kanban-detail-backdrop">
     <div class="kanban-detail-dim"></div>
     <div class=${classMap(modalClasses)} role="dialog" aria-modal="true">
-      <button
-        type="button"
-        class="kanban-detail-close"
-        title="Close details"
-        aria-label="Close details"
-      >×</button>
+      <!-- Expand + close as one corner cluster. Expand borrows the
+           column header's bracket glyphs so the board's two "give this
+           thing the space" affordances read as the same control. -->
+      <div class="kanban-detail-actions">
+        <button
+          type="button"
+          class="kanban-detail-expand"
+          data-kanban-detail-fullscreen
+          aria-pressed=${full ? 'true' : 'false'}
+          title=${full ? 'Back to the readable width' : 'Fill the available space'}
+          aria-label=${full ? 'Back to the readable width' : 'Fill the available space'}
+        >${full ? COLLAPSE_ICON : EXPAND_ICON}</button>
+        <button
+          type="button"
+          class="kanban-detail-close"
+          title="Close details"
+          aria-label="Close details"
+        >×</button>
+      </div>
       <div class="kanban-detail-body">
         ${findingCardPlaceholder(focusGroup, false, 'kanban-detail')}
       </div>
