@@ -595,6 +595,15 @@ function codeSnippetTemplate(content, range, path) {
 // the report's own terms; `site` says WHICH link on the card this is,
 // so two pointing at the same place stay two controls.
 function codePreview(f, site, bundle, path, line) {
+  // BEFORE the guards, because the guards are what this read is for:
+  // both the caller's `attachedBundle` and the lookup below answer off
+  // a plain module Map, which this card's autorun cannot see fill in.
+  // On a reload the index starts empty and the stored report paints
+  // straight away, so the first pass asks too early, gets nothing, and
+  // draws no marks — and a read placed after `return null` would never
+  // subscribe the card to hearing otherwise. Same tick and the same
+  // reason as the `Code →` branch below.
+  void state.bundleHashTick
   if (!bundle || !path) return null
   const file = bundleFilePath(bundle.integrity, path)
   if (!file) return null
