@@ -83,17 +83,27 @@ class FindingCard extends StateElement {
   // block, clamped to a line of lead-in.
   //
   // Here rather than in the template because it is a measurement, and
-  // it has to run after the paint that produced the lines. `updated`
-  // fires on every pass, so each preview is positioned ONCE and marked
-  // — the content arrives asynchronously (bundle, then highlight) and
-  // each settle re-renders, which would otherwise yank a preview the
-  // reader had scrolled by hand back to where it started. Closing and
-  // reopening builds a fresh element, so it is positioned again.
+  // it has to run after the paint that produced the lines.
+  //
+  // Re-applied on EVERY pass, not once, because a preview's content
+  // arrives in stages — the placeholder, then the source, then the
+  // highlight — and any of those can land the scroll somewhere else:
+  // a pass that positions an element which is about to be replaced
+  // has positioned nothing, and swapping a scrolled box's contents can
+  // clamp the offset it had. Positioning once was betting on which
+  // pass would be the last one.
+  //
+  // What keeps that from fighting the reader is remembering the offset
+  // we set: if the box is still sitting where we put it, it is ours to
+  // move, and if it isn't, they scrolled it and we leave it alone.
   updated() {
-    for (const preview of this.renderRoot.querySelectorAll('.code-preview:not([data-revealed])')) {
-      preview.dataset.revealed = '1'
+    for (const preview of this.renderRoot.querySelectorAll('.code-preview')) {
+      const ours = preview.dataset.revealedTo
+      if (ours !== undefined && Math.round(preview.scrollTop) !== Number(ours)) continue
       const cited = preview.querySelectorAll('.code-preview-lineno.cited')
-      if (cited.length > 0) revealCitedLines(preview, cited)
+      if (cited.length === 0) continue
+      revealCitedLines(preview, cited)
+      preview.dataset.revealedTo = String(Math.round(preview.scrollTop))
     }
   }
 
