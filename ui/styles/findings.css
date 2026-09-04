@@ -725,7 +725,18 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
     position: static;
     grid-area: 1 / 1;
     place-self: start end;
-    margin: .25rem;
+    /* Hard into the corner: the card's own top-right is its run-meta
+       line (`security · opus 5 · max · list`), and every pixel these
+       give back is a pixel of it that stays readable. */
+    margin: 0;
+    /* They still sit over the tail of that line, so they idle at half
+       strength — present enough to find, faint enough to read through
+       — and come up to full the moment they are pointed at or tabbed
+       to, which is the only time covering that text costs anything. */
+    opacity: .5;
+    transition: opacity .12s;
+
+    &:hover, &:focus-within { opacity: 1; }
   }
 
   /* Pinning the cluster to the card's cell takes that cell out of
