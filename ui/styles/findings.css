@@ -740,8 +740,10 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
     /* Hard into the corner, and staying there: the column's inset
        below moves the card's run-meta line (`security · opus 5 · max ·
        list`) down and in, away from these, which is the clearance.
-       Taking the inset here too would put them back on top of it. */
-    margin: 0;
+       Taking the inset here too would put them back on top of it. The
+       1px is optical, not structural — it drops the glyphs onto the
+       same line the file bar's text sits on across the divider. */
+    margin: 1px 0 0;
   }
 
   /* Pinning the cluster to the card's cell takes that cell out of
