@@ -50,6 +50,13 @@
 // takes it out of reach, the block keeps its shape, and the dropdown
 // on the end still works. The range reads 0—10 in that state because
 // render.js resets the bounds whenever it blocks the range.
+//
+// Being disabled changes nothing about the two modes above. An outcome
+// still replaces the range — a dimmed slider is no more the answer to
+// "what is this block filtering by" than a live one is — so the
+// blocked range shows only while the dropdown is on its no-outcome
+// entry, which is also the state where it is the one thing the block
+// has to say.
 import { nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { StateElement, html } from '@rray/frontend/state-element'
@@ -76,14 +83,19 @@ class ConfFilter extends StateElement {
     const high = state.filterConfMax
     const outcomes = this.revalidateOptions ?? []
     const disabled = this.rangeDisabled
-    // An already-disabled range has nothing left to replace, so the
-    // outcome stays in its arrow slot there rather than spanning a
-    // block whose other half is greyed out anyway. No dropdown at all
-    // and there is nothing to replace it WITH: a stale global outcome
-    // (render.js clears one the loaded set can't reach, so this is
-    // belt-and-braces) must not blank a range that is the whole
-    // control.
-    const replaced = !disabled && outcomes.length > 0 && Boolean(state.filterRevalidate)
+    // A DISABLED range is replaced like any other: an outcome is what
+    // the block is filtering by, and it reads the same whether the
+    // range it stood in for was usable or greyed out. Leaving the
+    // dimmed range up instead would give the outcome nowhere to paint
+    // — its slot is barely wider than the chevron — and drop the
+    // partial chip, positioned to clear a select that spans the
+    // block, back on top of the slider.
+    //
+    // No dropdown at all and there is nothing to replace it WITH: a
+    // stale global outcome (render.js clears one the loaded set can't
+    // reach, so this is belt-and-braces) must not blank a range that
+    // is the whole control.
+    const replaced = outcomes.length > 0 && Boolean(state.filterRevalidate)
     const title = disabled
       ? 'No confidence range: some findings on screen carry no confidence score'
       : nothing
