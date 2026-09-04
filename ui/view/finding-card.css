@@ -326,22 +326,32 @@
   translate: 0 -50%;
   margin-left: .3rem;
   padding: .2rem .45rem;
-  /* One line for the paths that fit in one, wrapping for the ones that
-     don't. Not `nowrap`: a hidden box still counts as scrollable
-     overflow, so a monorepo's worth of path sitting off the right edge
-     would put a horizontal scrollbar under the whole column whether
-     anyone hovered the mark or not. */
-  width: max-content; max-width: 34ch;
+  /* Wide enough for a reference to stay on ONE line. Capped narrow it
+     grew tall instead, and a tall tooltip runs past the bottom of the
+     card it hangs off, where the paint of whatever surrounds the card
+     cuts it off — so the height is the thing to avoid, and width is
+     what buys it.
+     `display: none` at rest rather than `visibility: hidden` is what
+     makes the width affordable: a hidden-but-laid-out box still counts
+     as scrollable overflow, so a wide one would have widened the
+     column for everyone whether or not anyone hovered the mark. Laid
+     out only while it is being read, it costs the layout nothing the
+     rest of the time — and the cap is then only there to stop a
+     pathological path from crossing the whole window. */
+  display: none;
+  width: max-content; max-width: 85ch;
   overflow-wrap: anywhere;
   border: 1px solid var(--border); border-radius: 4px;
   background: var(--bg);
   color: var(--text);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: .78em; line-height: 1.4;
-  visibility: hidden;
+  /* `rem`, for the reason the snippet is: in `em` the same reference
+     came out at one size beside the location line and another inside
+     the evidence list, which are different parents. */
+  font-size: .72rem; line-height: 1.4;
   filter: drop-shadow(0 2px 6px rgb(0 0 0 / .35));
 }
-.gh-ref-btn:is(:hover, :focus-visible) + .gh-ref-tip { visibility: visible; }
+.gh-ref-btn:is(:hover, :focus-visible) + .gh-ref-tip { display: block; }
 
 /* The snippet. Numbered gutter beside the code, both scrolling as one
    so a long line takes its line numbers with it — the `<pre>` is the
