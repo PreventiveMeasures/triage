@@ -711,10 +711,11 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
   min-height: 0;
   display: flex;
   overflow: hidden;
-  /* No inset. The card carries its own padding and the code panel its
-     own bar and gutter, so the only thing this was buying was a strip
-     of dead space between the source and the rail on one side, and
-     between the card and the screen on the other. */
+  /* The inset moves off this box and onto the finding column alone
+     (below): the code panel wants to run to the rail and to the top of
+     the screen — flush is what lines its file bar up with the rail's
+     header — while the finding, and the buttons in its corner, want the
+     air back. */
   padding: 0;
 
   /* The gap goes with the frames below — that .75rem was the air
@@ -736,9 +737,10 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
     position: static;
     grid-area: 1 / 1;
     place-self: start end;
-    /* Hard into the corner: the card's own top-right is its run-meta
-       line (`security · opus 5 · max · list`), and every pixel these
-       give back is a pixel of it that stays readable. */
+    /* Hard into the corner, and staying there: the column's inset
+       below moves the card's run-meta line (`security · opus 5 · max ·
+       list`) down and in, away from these, which is the clearance.
+       Taking the inset here too would put them back on top of it. */
     margin: 0;
   }
 
@@ -749,7 +751,14 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
      spelled out here too: card, divider, source, in the order
      `.focus-main.with-code` lays its tracks out. Without the code
      panel there is one track and the first line is all that applies. */
-  & .focus-pane-card { grid-column: 1; }
+  /* The finding column keeps the inset the body gave up — but not on
+     the right, where the divider already separates it from the source,
+     and not shared with the code panel, whose file bar has to start
+     level with the rail's header. */
+  & .focus-pane-card {
+    grid-column: 1;
+    padding: .4rem 0 .4rem .4rem;
+  }
   & .focus-splitter { grid-column: 2; }
   & .focus-pane-code { grid-column: 3; }
 
