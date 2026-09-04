@@ -27,6 +27,7 @@
 // don't drive a side-details panel.
 import { unsafeCSS } from 'lit'
 import { StateElement, html } from '@rray/frontend/state-element'
+import { installShadowTooltipListener } from './tooltip.js'
 import { findingCardClasses, findingCardGid, findingCardInnerTemplate } from './render-finding.js'
 import { revealCitedLines } from './reveal-cited.js'
 import cardCSS from './finding-card.css'
@@ -109,6 +110,11 @@ class FindingCard extends StateElement {
 
   connectedCallback() {
     super.connectedCallback()
+    // The GitHub marks inside carry `data-tooltip`; the shared tooltip
+    // (view/tooltip.js) draws it. Its document-level listener can't see
+    // in here — `closest` stops at the boundary — so this root gets its
+    // own. Idempotent, and reconnects are how this component is used.
+    installShadowTooltipListener(this.renderRoot)
     // Force a render after every (re)connect so StateElement's wrapped
     // render() runs and re-registers a fresh autorun. Lit's keyed
     // repeat keeps cards connected across steady-state list renders,

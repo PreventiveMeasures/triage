@@ -109,6 +109,34 @@ export function scheduleTooltip(el, { gate, placement } = {}) {
   showTimer = setTimeout(() => { showTooltip(el, { placement }) }, SHOW_DELAY_MS)
 }
 
+// The same wiring, scoped to one shadow root. `closest` stops at the
+// boundary and the document-level handler sees the host rather than
+// the element inside it, so a component that wants the shared tooltip
+// has to listen for itself — this is that listener, so each one
+// doesn't write it again.
+//
+// Idempotent per root: components re-render and reconnect, and the
+// call sites are lifecycle hooks that run more than once.
+const shadowInstalled = new WeakSet()
+export function installShadowTooltipListener(root, options) {
+  if (!root || shadowInstalled.has(root)) return
+  shadowInstalled.add(root)
+  root.addEventListener('mouseover', (e) => {
+    const el = e.target.closest?.('[data-tooltip]')
+    if (!el) { hideTooltip(); return }
+    if (el === currentTarget) return
+    scheduleTooltip(el, options)
+  })
+  root.addEventListener('mouseout', (e) => {
+    // Moving WITHIN the element that owns the tooltip (button → its
+    // svg) is not leaving it; mouseout bubbles from every child.
+    const from = e.target.closest?.('[data-tooltip]')
+    const to = e.relatedTarget?.closest?.('[data-tooltip]') ?? null
+    if (from && from === to) return
+    hideTooltip()
+  })
+}
+
 // Document-level handler — wires once at boot, covers every
 // light-DOM `[data-tooltip]` element. Shadow-DOM consumers attach
 // their own listeners (`closest` can't cross shadow boundaries).

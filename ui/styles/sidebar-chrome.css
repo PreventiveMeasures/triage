@@ -15,7 +15,15 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--text);
   pointer-events: none;
-  white-space: pre;
+  /* `pre-wrap`, not `pre`: the newlines a consumer puts in its text
+     still break (the bundle rows' `name\nintegrity`), and a single
+     line too long for the screen now wraps instead of running off the
+     right edge — the clamp in tooltip.js keeps the LEFT edge on
+     screen, so an unwrapped overlong line lost its tail. Paths have no
+     spaces to break at, hence `overflow-wrap`. */
+  max-width: min(46rem, calc(100vw - 2rem));
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   z-index: 200;
   box-shadow: var(--shadow-glass);
   opacity: 0;
