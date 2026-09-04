@@ -238,19 +238,16 @@
    pair reads as one affordance with two halves rather than a widget
    parked after the location.
 
-   The wrapper carries the layout that used to sit on the link, so the
-   mark's own box is exactly the glyph — and it is what the tooltip
-   hangs off (see `.gh-ref-tip`). */
-.gh-ref {
-  position: relative;
-  display: inline-flex; align-items: center;
-  margin-left: .25rem;
-  vertical-align: -2px;
-}
+   The reference it stands for is drawn by the shared tooltip
+   (view/tooltip.js), off `data-tooltip` — so there is no tooltip
+   element here to be positioned against anything, and no wrapper to
+   position it against. */
 .gh-ref-btn {
   display: inline-flex; align-items: center;
+  margin-left: .25rem;
   padding: 0 .15rem;
   color: var(--muted);
+  vertical-align: -2px;
 }
 
 /* A 12px glyph on a 19px line leaves three pixels of dead row above it
@@ -308,54 +305,6 @@
 :is(.line-row, .evidence-list li):has(.code-preview-btn:is(:hover, :focus-visible)) > .code-preview-tip {
   visibility: visible;
 }
-
-/* UNDER the mark, right edge aligned to it — the reference grows to
-   the left, into the width the line already spans:
-
-       ………………………………………………………[gh]
-       ……………owner/repo/path:12
-
-   Two earlier placements are why. Beside the mark ran off the end of
-   the line, since the mark is usually the last thing on it. Over the
-   line, in place of the path, was worse in both directions: a
-   reference is the path plus `owner/repo/`, so it is LONGER than what
-   it replaces and ran out from under the mark — and a path that wraps
-   makes the line two or three deep, which no single vertical offset
-   can be centred on.
-   Hung below and right-aligned, neither can happen: down is always
-   free, and left is the direction with room in it. */
-.gh-ref-tip {
-  position: absolute;
-  z-index: 20;
-  top: 100%; right: 0;
-  margin-top: .2rem;
-  padding: .2rem .45rem;
-  /* Never takes the pointer. It can land under the cursor — over the
-     mark when the line wraps, over whatever is below otherwise — and
-     then the mark loses `:hover`, the tooltip goes away, the mark has
-     `:hover` again: a flicker loop with the reference never legible.
-     Nothing here is clickable anyway; the mark above it is the link. */
-  pointer-events: none;
-  /* `display: none` at rest rather than `visibility: hidden`: a
-     hidden-but-laid-out box still counts as scrollable overflow, and
-     one anchored to the right of a mark near the end of a line would
-     have widened the column for everyone whether or not anyone ever
-     hovered it. Laid out only while it is being read, it costs the
-     layout nothing the rest of the time. */
-  display: none;
-  width: max-content; max-width: 50ch;
-  overflow-wrap: anywhere;
-  border: 1px solid var(--border); border-radius: 4px;
-  background: var(--bg);
-  color: var(--text);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  /* `rem`, for the reason the snippet is: in `em` the same reference
-     came out at one size beside the location line and another inside
-     the evidence list, which are different parents. */
-  font-size: .72rem; line-height: 1.4;
-  filter: drop-shadow(0 2px 6px rgb(0 0 0 / .35));
-}
-.gh-ref-btn:is(:hover, :focus-visible) + .gh-ref-tip { display: block; }
 
 /* The snippet. Numbered gutter beside the code, both scrolling as one
    so a long line takes its line numbers with it — the `<pre>` is the
@@ -1484,7 +1433,7 @@ span.evidence-ref:not([role]) { color: var(--muted); }
      either — the GitHub one says what it says through a tooltip, which
      leaves a decorative octocat behind on a printout. An open preview
      still prints: it is content by then, and the reader chose it. */
-  .code-preview-btn, .gh-ref { display: none; }
+  .code-preview-btn, .gh-ref-btn { display: none; }
 
   /* Inline `` `code` `` spans read as a chip on screen (1px border +
      tinted bg); on paper that chrome crowds dense prose and reads as

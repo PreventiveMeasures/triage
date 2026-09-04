@@ -150,24 +150,20 @@
   }
 }
 
-/* GitHub mark + its tooltip, the same pair the finding card carries
-   (view/finding-card.css has the other copy and the reasoning; the
-   two shadow roots can't share a sheet). No `</>` beside it here: the
-   source preview it opens is a block of code, and a table row is one
-   line high — the row's own detail panel is where that belongs.
+/* GitHub mark, the same one the finding card carries
+   (view/finding-card.css has the other copy; the two shadow roots
+   can't share a sheet). No `</>` beside it here: the source preview it
+   opens is a block of code, and a table row is one line high — the
+   row's detail panel is where that belongs.
 
-   A SIBLING of `.row-loc`, not a child, because that span ellipsises a
-   long path and clips what overflows it — a tooltip parked inside
-   would be cut off at the same edge. Out here it hangs off the row,
-   and lands just after whatever the path shortened to. */
-.gh-ref {
-  position: relative;
-  display: inline-flex; align-items: center;
-  flex-shrink: 0;
-}
+   The reference it stands for is drawn by the shared tooltip
+   (view/tooltip.js), off `data-tooltip`, which is a fixed element on
+   `<body>`: nothing here has to survive `.row-loc` ellipsising the
+   path beside it, or reach past the table it sits in. */
 .gh-ref-btn {
   display: inline-flex; align-items: center;
   position: relative;
+  flex-shrink: 0;
   padding: 0 .15rem;
   color: var(--muted);
   cursor: default;
@@ -178,38 +174,6 @@
   &:hover { color: var(--accent); }
   &:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; border-radius: 2px; }
 }
-.gh-ref-tip {
-  position: absolute;
-  z-index: 20;
-  /* Under the mark, right edge aligned to it, growing leftward into
-     the width the row already spans — view/finding-card.css carries
-     the full reasoning. It matters more here: the mark follows a path
-     that can run most of the width of the table, so anything drawn
-     rightward from it starts off the end of the window.
-     `display: none` until it is read keeps a laid-out hidden box from
-     widening the table for everyone whether or not it ever shows. */
-  top: 100%; right: 0;
-  margin-top: .2rem;
-  padding: .2rem .45rem;
-  /* Never takes the pointer. It is drawn OVER the line, mark included,
-     so without this the moment it appears it is under the cursor, the
-     mark loses `:hover`, the tooltip goes away, the mark has `:hover`
-     again — a flicker loop with the reference never legible. Nothing
-     here is clickable anyway; the mark under it is the link. */
-  pointer-events: none;
-  display: none;
-  width: max-content; max-width: 50ch;
-  overflow-wrap: anywhere;
-  border: 1px solid var(--border); border-radius: 4px;
-  background: var(--bg);
-  color: var(--text);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  /* `rem`: sized in `em` it would shrink to the row's dense type and
-     read at a different size from the same tooltip on a card. */
-  font-size: .72rem; line-height: 1.4;
-  filter: drop-shadow(0 2px 6px rgb(0 0 0 / .35));
-}
-.gh-ref-btn:is(:hover, :focus-visible) + .gh-ref-tip { display: block; }
 
 .tabs-row {
   grid-column: 2; grid-row: 3;
