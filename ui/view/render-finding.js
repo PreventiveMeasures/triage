@@ -409,6 +409,7 @@ function evidenceTemplate(f) {
           ? html`<a class="evidence-ref" href=${url} target="_blank" rel="noopener" title=${url}>${label}</a>`
           : html`<span class="evidence-ref">${label}</span>`}
         ${preview?.eye ?? nothing}
+        ${preview?.tip ?? nothing}
         ${note ? html`<div class="evidence-note">${renderHighlighted(flowText(note))}</div>` : nothing}
         ${preview?.body ?? nothing}
       </li>`
@@ -476,11 +477,10 @@ const LINK_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidd
   </g>
 </svg>`
 
-// Eye for the source-preview toggle beside a code link. Smaller than
-// the action-strip icons above: it sits INSIDE a line of text rather
-// than in a row of buttons, so it has to read as a mark on that line
-// and not as a control docked next to it.
-const EYE_ICON = html`<svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true">
+// Eye for the source-preview toggle beside a code link. It sits INSIDE
+// a line of text rather than in a row of buttons, so it reads as a
+// mark on that line and not as a control docked next to it.
+const EYE_ICON = html`<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
   <g fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
     <path d="M1.6 8s2.4-4 6.4-4 6.4 4 6.4 4-2.4 4-6.4 4-6.4-4-6.4-4Z"/>
     <circle cx="8" cy="8" r="1.7"/>
@@ -568,23 +568,41 @@ function codePreview(f, site, bundle, path, line) {
   const range = lineRange(line)
   const key = codePreviewKey(f, site, path, range)
   const open = state.codePreviews.has(key)
+  // Unconditional, not just while a preview is open: the tick is what
+  // subscribes this card's autorun to the loader's settle events, and
+  // a HOVER can start a load too (below). Without the read, the card
+  // that kicked one would never re-render to show what arrived.
+  void state.focusCodeTick
   const eye = html`<button
     type="button"
     class=${classMap({ 'code-preview-btn': true, open })}
     data-code-preview=${key}
     aria-expanded=${String(open)}
     aria-label=${open ? `Hide the source at ${path}` : `Show the source at ${path}`}
+    @mouseenter=${() => { bundleSource(bundle.integrity, file) }}
   >${EYE_ICON}</button>`
-  if (!open) return { eye, body: nothing }
-  // The tick subscribes this card's autorun to the loader's settle
-  // events, so the snippet lands on the same frame the source does
-  // (focus-code.js bumps it from the load and the highlight both).
-  void state.focusCodeTick
-  const source = bundleSource(bundle.integrity, file)
-  const body = !source || source.loading
-    ? html`<div class="code-preview code-preview-pending">${source ? 'Loading source…' : 'Source unavailable'}</div>`
-    : codeSnippetTemplate(source.content, range, file)
-  return { eye, body }
+  if (open) {
+    const source = bundleSource(bundle.integrity, file)
+    const body = !source || source.loading
+      ? html`<div class="code-preview code-preview-pending">${source ? 'Loading source…' : 'Source unavailable'}</div>`
+      : codeSnippetTemplate(source.content, range, file)
+    // No tooltip while the preview is open — it would say the same
+    // thing twice, over the copy the reader asked to keep.
+    return { eye, tip: nothing, body }
+  }
+  // The hover tooltip: the same snippet, shown while the pointer is on
+  // the eye, for a look that doesn't cost a click and doesn't push the
+  // prose around. Rendered from what is ALREADY loaded — `kick: false`
+  // — because it exists for every eye on the card, and kicking there
+  // would pull a bundle off disk the moment a card with one drew. The
+  // POINTER does the kicking (`mouseenter` above); the settle
+  // re-renders through the tick, and the tooltip is in the DOM by the
+  // time the pointer has finished arriving.
+  const peek = bundleSource(bundle.integrity, file, { kick: false })
+  const tip = peek && !peek.loading
+    ? html`<div class="code-preview-tip" role="tooltip">${codeSnippetTemplate(peek.content, range, file)}</div>`
+    : nothing
+  return { eye, tip, body: nothing }
 }
 
 // Claude mark for the `[hand off to Claude Code]` shortcut button.
@@ -1016,6 +1034,9 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
   const lineRowMain = html`<span class="line-num">${
     exportLabel ? html`${locLink}, ${exportLabel}` : locLink
   }${linePreview?.eye ?? nothing}</span>`
+  // The tooltip is absolutely positioned against `.line-row`, so it
+  // sits beside `.line-num` rather than inside it — a snippet is flow
+  // content and that span is not a box to put one in.
   const meta = formatRunMeta(f)
   // The file the analyzer was reading when it found this. A note worth
   // making when it isn't the finding's own location — a bug in `a.js`
@@ -1097,6 +1118,7 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
     <div>
       <div class="line-row">
         ${lineRowMain}
+        ${linePreview?.tip ?? nothing}
         ${npmChip}
         ${discoveredIn ? html`<span class="line-num discovered-in">(found analyzing ${discoveredIn})</span>` : nothing}
         ${meta ? html`<span class="run-meta">${meta}</span>` : nothing}

@@ -208,16 +208,46 @@
    only says the source is here if you want it. */
 .code-preview-btn {
   display: inline-flex; align-items: center;
+  /* Set off from the location it follows — pushed up against the last
+     digit it read as part of the text rather than as something to
+     reach for. */
+  margin-left: .35rem;
   padding: 0 .15rem;
   border: 0; background: transparent;
   color: var(--muted);
   opacity: .55;
-  cursor: pointer;
-  vertical-align: -1px;
+  vertical-align: -2px;
 
   &:hover { opacity: 1; color: var(--accent); }
   &.open { opacity: 1; color: var(--accent); }
   &:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; border-radius: 2px; }
+}
+
+/* The hover tooltip — the same snippet the eye opens, shown while the
+   pointer is on it. A look that costs neither a click nor any of the
+   prose's space, so the reader can check a citation in passing and
+   click only the ones worth keeping open.
+
+   Positioned against the row rather than the button, because
+   `.line-num` is a span and a snippet is flow content. One eye per row
+   and per evidence item, so `:has()` needs no way to tell them apart.
+   Hidden with `visibility`, which keeps it out of the accessibility
+   tree and unhittable while still letting it be measured. */
+.code-preview-tip {
+  position: absolute;
+  z-index: 20;
+  top: 100%; left: 0;
+  margin-top: .2rem;
+  width: max-content; max-width: min(100%, 46rem);
+  visibility: hidden;
+  /* The preview inside it is already bordered; this only lifts it off
+     whatever it lands on. */
+  filter: drop-shadow(0 2px 6px rgb(0 0 0 / .35));
+
+  & .code-preview { margin: 0; background: var(--bg); }
+}
+:is(.line-row, .evidence-list li):has(.code-preview-btn:is(:hover, :focus-visible)) > .code-preview-tip {
+  visibility: visible;
 }
 .line-row:hover .code-preview-btn,
 .evidence-list li:hover .code-preview-btn { opacity: 1; }
@@ -446,6 +476,9 @@ details[open] > summary.section-label::after { transform: translateY(-2px) rotat
   margin: .25rem 0 0; padding-left: 1.6rem;
   display: flex; flex-direction: column; gap: .15rem;
 
+  /* Anchor for the source-preview tooltip, as `.line-row` above. */
+  & > li { position: relative; }
+
   & li::marker { color: var(--muted); font-size: .9em; }
   /* Rows that are just a `file:line` reference read as one list and
      are set tight. A row carrying a NOTE needs the air back: its note
@@ -604,6 +637,8 @@ span.evidence-ref { color: var(--muted); }
 .line-row {
   display: flex; justify-content: space-between;
   align-items: baseline; gap: .5rem; flex-wrap: wrap;
+  /* Anchor for the source-preview tooltip (`.code-preview-tip`). */
+  position: relative;
 }
 .run-meta { color: var(--muted); font-size: .65rem; }
 

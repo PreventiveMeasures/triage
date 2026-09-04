@@ -119,15 +119,23 @@ export function attachedBundle(f) {
 // Reading triggers loadSources / kickHighlight as side-effects, which
 // is safe inside render(): both deduplicate, and their follow-up
 // render() is a microtask so it doesn't recurse this frame.
-export function bundleSource(integrity, file) {
+//
+// `kick: false` asks what we ALREADY have, and answers null rather
+// than starting a load. For a caller that renders one file per eye on
+// a card and would otherwise pull a bundle off disk for every one of
+// them before the reader has asked for any — see render-finding.js,
+// where the hover tooltip peeks and the pointer does the kicking.
+export function bundleSource(integrity, file, { kick = true } = {}) {
   const cached = sourcesCache.get(integrity)
   if (!cached) {
+    if (!kick) return null
     // First sight of this integrity — kick the load and report
     // pending. The cache flips to loading:true synchronously inside
     // loadSources so a sibling call on the same pass doesn't double-fire.
     void loadSources(integrity)
     return { loading: true }
   }
+  if (cached.loading && !kick) return null
   if (cached.loading) return { loading: true }
   if (!cached.sources) return null
   const content = cached.sources.get(file)
