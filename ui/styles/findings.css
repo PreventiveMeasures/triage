@@ -936,10 +936,20 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
    rounding error — from invalidating the whole declaration. */
 /* stylelint-disable media-feature-name-value-no-unknown, length-zero-no-unit */
 @media (display-mode: window-controls-overlay) {
-  /* Fullscreen starts the body at the very top-left, which is where
-     macOS puts its traffic lights. */
-  .kanban-detail-modal.fullscreen .kanban-detail-body {
-    padding-top: calc(.4rem + clamp(0px, env(titlebar-area-x, 0px) * 1000, env(titlebar-area-height, 0px)));
+  /* Fullscreen starts the card at the very top-left, which is where
+     macOS puts its traffic lights — and what they land on is the
+     card's badge rail, `.finding-left`, about their own width. Only
+     that rail moves: pushing the whole body down would leave a band of
+     nothing across the full width to clear something occupying 80px of
+     one corner.
+
+     The rail lives in the finding-card's shadow root, so the inset
+     travels as a custom property (they inherit through the boundary,
+     which the theme's own tokens already rely on) and finding-card.css
+     spends it. Set on the pane rather than the card so the card stays
+     a card wherever else it is mounted. */
+  .kanban-detail-modal.fullscreen .focus-pane-card {
+    --finding-left-inset: clamp(0px, env(titlebar-area-x, 0px) * 1000, env(titlebar-area-height, 0px));
   }
 
   /* The rail is docked to the right edge whether or not the dialog is

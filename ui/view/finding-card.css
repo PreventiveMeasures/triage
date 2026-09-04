@@ -782,6 +782,11 @@ span.evidence-ref:not([role]) { color: var(--muted); }
 
 .finding-left {
   align-self: start; text-align: center; min-width: 4rem;
+  /* Normally nothing. The kanban dialog's fullscreen mode sets it (see
+     the WCO block in styles/findings.css) when the OS paints its window
+     controls over this corner — this rail is what they land on, and it
+     is the only thing that has to move out from under them. */
+  padding-top: var(--finding-left-inset, 0);
 
   & .value-label:last-child { margin-bottom: 0; }
 }
