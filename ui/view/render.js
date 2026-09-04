@@ -1080,7 +1080,11 @@ function focusMainTemplate(group) {
 // visible and clickable. findings.css docks the rail to the screen's
 // right edge from 1400px up and holds its width out of the backdrop,
 // so the modal sits centered in what's left rather than under it.
-function kanbanDetailTemplate(focusGroup, column) {
+//
+// `columns` is every bucket ({ key, label, count, firstGid }) for the
+// rail's header picker — the way across to a bucket the open finding
+// isn't in.
+function kanbanDetailTemplate(focusGroup, column, columns = []) {
   if (!focusGroup) return nothing
   const groupSt = groupState(focusGroup)
   // Fullscreen drops the modal's width cap and stretches it over the
@@ -1142,7 +1146,29 @@ function kanbanDetailTemplate(focusGroup, column) {
            counter, and the prev / next pair (reusing its .focus-nav
            chrome), which walk the same column the arrow keys do. -->
       <div class="kanban-detail-side-header">
-        <span class="label">${column.label}</span>
+        <!-- The bucket's name is a picker. The rail always lists the
+             open finding's own column, so choosing another column means
+             opening its first finding — the dialog moves, and the rail
+             comes with it. An empty bucket has nothing to open, so it
+             is offered (its count is the answer to "is there anything
+             in Fixed yet?") but not selectable.
+
+             `.selected` is bound as a PROPERTY, not the attribute: once
+             a reader has used the select, its selectedness stops
+             following the attribute, so a re-render driven by anything
+             else — triaging the open finding out of this bucket, say —
+             would leave the closed select naming a column it is no
+             longer showing. -->
+        <span class="kanban-detail-side-pick">
+          <select class="kanban-detail-side-select" data-kanban-column aria-label="Column to show">
+            ${columns.map((c) => html`<option
+              value=${c.key}
+              data-gid=${c.firstGid}
+              .selected=${c.key === column.key}
+              ?disabled=${c.count === 0}
+            >${c.label} (${c.count})</option>`)}
+          </select>
+        </span>
         <div class="focus-nav">
           <button
             type="button"
@@ -1386,10 +1412,27 @@ function findingsBodyTemplate(filtered) {
         </div>`
       })}
     </div>
-    ${kanbanDetailTemplate(focusGroup, focusColumn && {
-      label: focusColumn.label,
-      items: buckets.get(focusColumn.key),
-    })}`
+    ${kanbanDetailTemplate(
+      focusGroup,
+      focusColumn && {
+        key: focusColumn.key,
+        label: focusColumn.label,
+        items: buckets.get(focusColumn.key),
+      },
+      // Same board order as the columns themselves, so the picker reads
+      // left-to-right the way the board does. `firstGid` is where each
+      // one opens: its top card, which is where a reader starting on a
+      // bucket starts.
+      columns.map((c) => {
+        const items = buckets.get(c.key)
+        return {
+          key: c.key,
+          label: c.label,
+          count: items.length,
+          firstGid: items.length > 0 ? groupKey(items[0]) : '',
+        }
+      }),
+    )}`
   }
   if (state.viewMode === 'grouped') {
     // Group groups by file. All tabs in a dedup group share the same

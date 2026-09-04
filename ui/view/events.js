@@ -1730,6 +1730,18 @@ report.addEventListener('click', (e) => {
   if (state.kanbanPopoverGid) setKanbanPopoverGid(null)
 })
 
+// Column picker in the dialog rail's header — land on the chosen
+// bucket's first finding, which is what pulls the rail across to it.
+// The gid rides on the option rather than being looked up here: the
+// buckets are render.js's, and the DOM already carries the one answer
+// this needs.
+report.addEventListener('change', (e) => {
+  const select = e.target.closest?.('[data-kanban-column]')
+  if (!select) return
+  const gid = select.selectedOptions[0]?.dataset.gid
+  if (gid) setKanbanPopoverGid(gid)
+})
+
 // Esc dismisses the popover, then (a second press) the fullscreen
 // column. Bound to document so it fires regardless of focus location
 // — the modal isn't a `<dialog>` (we manage focus + light dismiss

@@ -774,12 +774,45 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
   text-transform: uppercase; letter-spacing: .06em;
   color: var(--muted);
 
-  /* Label soaks up the free space so the position counter and the
-     prev / next pair stay pinned to the right edge, and a long
+  /* The picker soaks up the free space so the position counter and
+     the prev / next pair stay pinned to the right edge, and a long
      bucket name ellipsises instead of shoving them out. */
-  & .label {
+  & .kanban-detail-side-pick {
     flex: 1 1 auto; min-width: 0;
+    position: relative;
+    display: block;
+  }
+
+  /* Chevron, same two-borders-rotated glyph the toolbar's selects
+     carry — drawn on the wrapper because pseudo-elements don't apply
+     to a <select>, and clicks fall through it to the control. */
+  & .kanban-detail-side-pick::after {
+    content: '';
+    position: absolute;
+    right: .1rem; top: 50%;
+    width: .3rem; height: .3rem;
+    border-right: 1.5px solid var(--muted);
+    border-bottom: 1.5px solid var(--muted);
+    transform: translateY(-70%) rotate(45deg);
+    pointer-events: none;
+  }
+
+  /* The control wears the header text's own type — it replaced a
+     label, and should still read as one until it's used. */
+  & .kanban-detail-side-select {
+    width: 100%;
+    appearance: none;
+    padding: 0 .8rem 0 0;
+    background: transparent;
+    border: 0;
+    font: inherit;
+    text-transform: inherit; letter-spacing: inherit;
+    color: inherit;
+    cursor: pointer;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+
+    &:hover { color: var(--text); }
+    &:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   }
 
   & .count {
@@ -788,7 +821,14 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
     padding: 0 .35rem; border-radius: 999px;
     background: rgb(from var(--text) r g b / .08);
     font-variant-numeric: tabular-nums;
+    /* `3 / 9` is one token: let it wrap and the rail's 240px turns the
+       counter into two stacked lines and the header into two rows. */
+    white-space: nowrap;
   }
+
+  /* The counter and the arrows keep their size; the picker beside them
+     is what ellipsises when a bucket's name is long. */
+  & .focus-nav { flex: none; }
 }
 
 .kanban-detail-side-body {
