@@ -333,6 +333,42 @@ export function isModule(file) {
   return moduleRe.test(file)
 }
 
+// "Is this path inside SOMEBODY ELSE'S source?" — the same question
+// `isModule` asks, but of every marker rather than only the one this
+// report happens to use. `isModule` exists to classify a project's own
+// tree and so commits to a single deps dir; a caller deciding whether
+// a path can be resolved against a repo at all wants the opposite bias,
+// because the cost of missing a marker is a link into a repository that
+// does not contain the file.
+//
+// `node_modules` (npm/pnpm/yarn, and Solidity under Hardhat) and
+// `vendor` (Composer, Go modules, `cargo vendor`, bundler) always
+// count. `dependencies` counts only when it IS the configured deps dir
+// — it is too ordinary a folder name to treat as a marker on a project
+// that doesn't use it that way.
+export function hasDependencyMarker(file) {
+  const s = typeof file === 'string' ? file : ''
+  return NODE_MODULES_RE.test(s) || VENDOR_RE.test(s) || moduleRe.test(s)
+}
+
+// The installed package a path belongs to: everything up to and
+// including the `node_modules/(@owner/)?name` that contains it. Null
+// when the path names no package.
+//
+// Greedy, so it takes the LAST `node_modules` — under a nested or pnpm
+// layout (`node_modules/.pnpm/lodash@4/node_modules/lodash/…`) the
+// innermost one is the package the file is actually in.
+//
+// The whole prefix is the identity, not just the package name: two
+// paths naming `lodash` under different installs are two copies, and
+// pretending otherwise is how a link ends up pointing at a version of
+// the file that isn't the one cited.
+const NODE_PKG_ROOT_RE = /^(.*(?:^|\/)node_modules\/(?:@[^/]+\/[^/]+|[^/]+))(?:\/|$)/u
+
+export function nodePackageRoot(file) {
+  return NODE_PKG_ROOT_RE.exec(typeof file === 'string' ? file : '')?.[1] ?? null
+}
+
 // File size formatter — bytes with thousand-separators and a `B`
 // suffix (`12,345 B`). Used by the file table/list and the graph's
 // selection card / tooltip when treeData entries carry a `size`.
@@ -1129,12 +1165,62 @@ export function titledDescription(f) {
   return body ? `${own}\n\n${body}` : own
 }
 
-// Source URL for one `## Evidence` row. The row's own link when the
-// report gave one; otherwise the same `HEAD` reconstruction findingUrl
-// falls back to, from the row's file / line under the finding's repo —
-// so a row citing a path with no link is still reachable.
-export function evidenceUrl(row, f, repoFallback) {
-  return findingUrl({ file: row?.file, line: row?.line, location: row?.url, repo: f?.repo }, repoFallback)
+// Source URL for one `## Evidence` row.
+//
+// Reconstructing one is a guess, and it used to be a bad one: every row
+// was resolved against the FINDING's repo, so a row citing some other
+// package's file got a link into a repository that has never contained
+// it — a confident 404, or worse, a real file at that path in an
+// unrelated project. Evidence rows wander: a finding in the app cites a
+// sink in a dependency, a finding in a dependency cites its caller in
+// the app.
+//
+// So the default is NO link, and a repo has to earn the row:
+//
+//   0. the row's own URL, if the report wrote one — not a guess at all
+//   1. the first row, restating the finding's own location
+//   2. a row in the same installed package as the finding
+//   3. a row in own source — the finding's repo when the finding is own
+//      source too, the report's repo when it isn't
+//
+// and anything else — a path in somebody else's source that isn't the
+// finding's own dependency — resolves to nothing, because knowing a
+// file belongs to SOME dependency doesn't say which one's repo to ask.
+export function evidenceUrl(row, f, repoFallback, index) {
+  // The report's own link for the row, when it wrote one. An exact ref,
+  // usually pinned to the revision the report was produced from — it
+  // beats anything reconstructed here and isn't ours to second-guess.
+  if (isHttpUrl(row?.url)) return row.url
+  const file = row?.file
+  if (typeof file !== 'string' || file === '') return null
+  const main = f?.file ?? ''
+  const repo = f?.repo?.github
+  const inFindingRepo = () => (repo ? findingUrl({ file, line: row?.line, repo: { github: repo } }, null) : null)
+
+  // 1. The row that restates the finding's own location. Wherever the
+  //    finding is, this row is in the same place, so the finding's repo
+  //    answers for it — including when that location carries a marker
+  //    the rules below would otherwise refuse.
+  if (index === 0 && file === main) return inFindingRepo()
+
+  // 2. The same installed package as the finding's location. The
+  //    finding's repo is that package's upstream (that is what
+  //    `repo.github` means on a dependency finding), so it answers for
+  //    every file in it.
+  const pkg = nodePackageRoot(file)
+  if (pkg !== null && pkg === nodePackageRoot(main)) return inFindingRepo()
+
+  // 3. Anything else in somebody else's source is unresolvable: we know
+  //    the file is a dependency's and we do not know WHICH dependency's
+  //    repo to ask.
+  if (hasDependencyMarker(file)) return null
+
+  // Own source, then. The finding's repo answers for it when the
+  // finding is own-source too; when the finding sits in a dependency,
+  // its repo is that dependency's upstream and would be the wrong
+  // answer for a file in the project — so the report's repo takes it.
+  if (repo && !hasDependencyMarker(main)) return inFindingRepo()
+  return findingUrl({ file, line: row?.line }, repoFallback)
 }
 
 // `file:line` — the shape every location display uses, with the line

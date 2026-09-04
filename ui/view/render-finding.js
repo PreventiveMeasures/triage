@@ -400,7 +400,7 @@ function evidenceTemplate(f) {
     <summary class="section-label">Evidence<span class="evidence-count">(${rows.length})</span></summary>
     <ol class="evidence-list">${rows.map((row, i) => {
       const label = locationLabel(row)
-      const url = evidenceUrl(row, f, repoFallback)
+      const url = evidenceUrl(row, f, repoFallback, i)
       const note = evidenceNote(row)
       // Indexed, so two rows citing the same place stay two marks too.
       const preview = codePreview(f, `ev${i}`, bundle, row?.file, row?.line)
