@@ -389,26 +389,57 @@ function sectionTemplate(label, body, cls = 'section', { collapsible = false } =
 // so keyboard and screen readers get it for free and the open state
 // belongs to the element rather than to any state we have to carry.
 // Paper has no disclosure, so print forces it open (finding-card.css).
-function evidenceTemplate(f) {
+// A row's reference, as a link into the CODE PANEL rather than out to
+// GitHub. Only the focus view has a panel to load, and only a bundle
+// can answer for the path — everywhere else, and with no bundle
+// attached, the rows keep the GitHub links they have always had.
+//
+// Presence follows the bundle's contents, exactly like the `</>` mark
+// beside it (bundleFilePath): a row the bundle carries is a link, a
+// row it doesn't is plain text. Which is the honest answer, and a
+// better one than the reconstruction it replaces — the panel opens the
+// file we are holding, so there is nothing to get wrong about which
+// revision of which repository it came from.
+function evidencePanelRef(bundle, row, label) {
+  const file = bundle && row?.file ? bundleFilePath(bundle.integrity, row.file) : null
+  if (!file) return html`<span class="evidence-ref">${label}</span>`
+  // A button, not an anchor: this goes nowhere, it moves the panel
+  // beside it. events.js reads the three attributes and pushes the
+  // position onto the panel's history.
+  return html`<button
+    type="button"
+    class="evidence-ref"
+    data-code-nav-integrity=${bundle.integrity}
+    data-code-nav-file=${file}
+    data-code-nav-line=${row?.line ?? ''}
+  >${label}</button>`
+}
+
+function evidenceTemplate(f, context) {
   const rows = Array.isArray(f.evidence) ? f.evidence : []
   if (rows.length === 0) return nothing
   const repoFallback = findingRepoFallback(f)
   // Every row cites a place in the code, so every row that the
   // attached bundle can answer for gets a `</>` beside its link.
   const bundle = attachedBundle(f)
+  // …and in the focus view, where a code panel is on screen to load
+  // into, that same bundle decides the LINK too.
+  const toPanel = context === 'focus' && bundle !== null
   return html`<details class="evidence">
     <summary class="section-label">Evidence<span class="evidence-count">(${rows.length})</span></summary>
     <ol class="evidence-list">${rows.map((row, i) => {
       const label = locationLabel(row)
-      const url = evidenceUrl(row, f, repoFallback, i)
+      const url = toPanel ? null : evidenceUrl(row, f, repoFallback, i)
       const note = evidenceNote(row)
       // Indexed, so two rows citing the same place stay two marks too.
       const preview = codePreview(f, `ev${i}`, bundle, row?.file, row?.line)
-      const ghRef = githubRef(url)
+      const ghRef = toPanel ? nothing : githubRef(url)
       return html`<li>
-        ${url
-          ? html`<a class="evidence-ref" href=${url} target="_blank" rel="noopener">${label}</a>`
-          : html`<span class="evidence-ref">${label}</span>`}
+        ${toPanel
+          ? evidencePanelRef(bundle, row, label)
+          : url
+            ? html`<a class="evidence-ref" href=${url} target="_blank" rel="noopener">${label}</a>`
+            : html`<span class="evidence-ref">${label}</span>`}
         ${preview?.mark ?? nothing}
         ${ghRef}
         ${preview?.tip ?? nothing}
@@ -1209,7 +1240,7 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
       ${linePreview?.body ?? nothing}
       ${descTitle ? html`<div class="desc-title">${renderInline(descTitle)}</div>` : nothing}
       ${lead.map((s) => html`<div class="desc">${renderHighlighted(flowText(s.body))}</div>`)}
-      ${evidenceTemplate(f)}
+      ${evidenceTemplate(f, context)}
       ${labelled.map((s) => (s.label === null
         ? html`<div class="desc">${renderHighlighted(flowText(s.body))}</div>`
         : sectionTemplate(s.label, s.body)))}

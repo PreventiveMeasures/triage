@@ -1,9 +1,10 @@
 import { SEVERITY_MODE_KEY, VIEW_MODE_KEY, isEncryptionEnabled, patchEntry, readBundle, saveRepoUrlFor, saveTriage, setReportIgnored, state, subscribeToBundleFindingIndex, subscribeToBundleHashIndex } from '#client/index.js'
 import { downloadBlob, report } from './dom.js'
-import { commonPrefix, configureRevalidation, handoffBlock } from './format.js'
+import { commonPrefix, configureRevalidation, handoffBlock, lineRange } from './format.js'
 import { activeTabFor, canApplyFixToGroup, findGroupById, findingRepo, findingReport, fixApplies, getMergedGroups, groupState, groupWithPassRows, syncGroupTriage, tabKey, triageActionPlan, triageScope } from './group.js'
 import { defaultConfidenceFloor, defaultRevalidateFilter, resetFilters } from './filters.js'
-import { revealFocusCodeLines } from './focus-code.js'
+import { focusCodeHistory, revealFocusCodeLines } from './focus-code.js'
+import { pushed, stepped } from './focus-code-history.js'
 import { refreshGraph2Sidebar, refreshGraph2TopPkgs, render } from './render.js'
 import { refreshBundleGraphSidebar, refreshBundleGraphTopPkgs, revealBundleCodeCurrent } from './render-bundle.js'
 import { grantAdvisoriesProxyConsent, retryBundleAdvisories } from './render-bundle-advisories.js'
@@ -192,6 +193,24 @@ report.addEventListener('click', (e) => {
   // replaced rather than mutated so an observer-util autorun reading
   // it sees the change; render() then repaints, and the loader's own
   // settle render fills the snippet in when the bundle lands.
+  // An evidence reference in the focus view — loads that file into the
+  // code panel beside the card (render-finding.js evidencePanelRef).
+  // Also in the card's shadow root, hence composedPath.
+  const codeNav = pathClosest(e, '[data-code-nav-file]')
+  if (codeNav) {
+    pushFocusCode({
+      integrity: codeNav.dataset.codeNavIntegrity,
+      file: codeNav.dataset.codeNavFile,
+      range: lineRange(codeNav.dataset.codeNavLine),
+    })
+    return
+  }
+  // Back / forward through the panel's history (render.js).
+  const codeHistory = pathClosest(e, '[data-code-history]')
+  if (codeHistory) {
+    stepFocusCode(codeHistory.dataset.codeHistory === 'forward' ? 1 : -1)
+    return
+  }
   const codePreview = pathClosest(e, '[data-code-preview]')
   if (codePreview) {
     const key = codePreview.dataset.codePreview
@@ -1708,10 +1727,41 @@ document.addEventListener('keydown', (e) => {
 // to that gid. The handler also scrolls the now-active card into
 // view inside the sidebar so chaining clicks keeps the queue
 // oriented around the cursor.
+// Move the focus view's Code panel to `pos`, from a link the reader
+// followed. The stack rules live in focus-code-history.js; what this
+// adds is where the finding's own file comes from — the group, not the
+// DOM — and the repaint.
+function pushFocusCode(pos) {
+  if (!pos.integrity || !pos.file) return
+  const history = focusCodeHistory(state.focusGid ? findGroupById(state.focusGid) : null)
+  if (!history) return
+  const next = pushed(history.stack, history.at, history.base, pos)
+  state.focusCodeStack = next.stack
+  state.focusCodeAt = next.at
+  render()
+  revealFocusCodeLines()
+}
+
+// Back (-1) / forward (+1) through the panel's history. A no-op at the
+// ends — the buttons are disabled there, so this only catches a stale
+// render.
+function stepFocusCode(direction) {
+  const next = stepped(state.focusCodeStack, state.focusCodeAt, direction)
+  if (next === state.focusCodeAt) return
+  state.focusCodeAt = next
+  render()
+  revealFocusCodeLines()
+}
+
 function setFocusGid(gid) {
   if (!gid || state.focusGid === gid) return
   syncOpenedGroupTriage(gid)
   state.focusGid = gid
+  // The panel starts again from the new finding's own file: a trail of
+  // files you walked while reading a DIFFERENT finding is not history
+  // you can act on from here.
+  state.focusCodeStack = []
+  state.focusCodeAt = 0
   render()
   // Post-render: bring the new active card into view in the
   // sidebar. `block: 'nearest'` minimises movement (a no-op when

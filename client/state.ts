@@ -20,6 +20,15 @@ export const FOCUS_SPLIT_MIN = 20
 export const FOCUS_SPLIT_MAX = 80
 
 export type ViewMode = 'table' | 'list' | 'grouped' | 'kanban' | 'focus'
+
+// One place the focus view's Code panel has shown: a file out of a
+// bundle, and the lines the link that opened it pointed at. `range` is
+// null for a link that named no line.
+export type FocusCodePos = {
+  integrity: string
+  file: string
+  range: { start: number, end: number } | null
+}
 // Global display lens for finding severities. 'corrected' (default) shows
 // each finding's application-specific `correctedSeverity` when present;
 // 'original' shows the analyzer's intrinsic `severity`. A pure display /
@@ -139,6 +148,8 @@ export interface State {
   kanbanExpandedColumn: KanbanColumnKey | null
   focusGid: string | null
   focusCodeTick: number
+  focusCodeStack: FocusCodePos[]
+  focusCodeAt: number
   focusSplit: number
   codeBlockTick: number
   bundleHashTick: number
@@ -693,6 +704,21 @@ export const state: State = store<State>({
   // next manual render (the user reproduced this as "code loads
   // but doesn't appear until I navigate").
   focusCodeTick: 0,
+  // Where the focus view's Code panel has been, and where in that it
+  // is now. Entry 0 is the focused finding's OWN file — the panel's
+  // starting point — so an empty stack means the reader hasn't
+  // navigated and there is no history to offer; the first evidence
+  // link clicked seeds both entries at once.
+  //
+  // Cleared when the focus moves to another finding (events.js
+  // setFocusGid): the panel starts again from that finding's file, and
+  // a history of where you were while reading a different finding is
+  // not history you can act on. focus-code.js also ignores a stack
+  // whose entry 0 no longer matches the finding on screen, which
+  // covers the tab switches that change the panel's file without
+  // going through setFocusGid.
+  focusCodeStack: [],
+  focusCodeAt: 0,
   // Focus view: how the main pane splits between the finding-card and
   // the inline Code panel, as the divider's percentage along the pane
   // (50 = the 1:1 default). Only meaningful while the Code panel is

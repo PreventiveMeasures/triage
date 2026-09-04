@@ -30,7 +30,7 @@ import {
   renderBundlesList,
   setCurrentBundleGraphPrep,
 } from './render-bundle.js'
-import { getFocusCode } from './focus-code.js'
+import { focusCodeHistory, getFocusCode } from './focus-code.js'
 import { openSyncUploadDialog } from './dialogs/sync-upload-dialog.js'
 import { openObjstoreRecoveryDialog } from './dialogs/objstore-recovery-dialog.js'
 
@@ -1138,6 +1138,11 @@ function findingsBodyTemplate(filtered) {
     // the new content on the same frame.
     void state.focusCodeTick
     const code = getFocusCode(focused)
+    // Where the panel has been for this finding. Empty until the
+    // reader follows an evidence link out of it, which is why the
+    // back / forward pair below isn't drawn on arrival: there is
+    // nothing behind the file you started on.
+    const codeHistory = focusCodeHistory(focused)
     const mainClass = code ? 'focus-main with-code' : 'focus-main'
     // The card | code split as the divider's percentage along the
     // pane (see `.focus-main.with-code` in findings.css). Bound on
@@ -1179,6 +1184,29 @@ function findingsBodyTemplate(filtered) {
             : html`<header class="focus-code-bar" title=${code.file}>
                 <span class="focus-code-file">${code.file}</span>
                 ${code.range ? html`<span class="focus-code-line">:${lineRangeLabel(code.range)}</span>` : nothing}
+                <!-- Back / forward through the files the panel has
+                     shown. Both appear together or not at all, and the
+                     one with nowhere to go is DISABLED rather than
+                     removed: a control that vanishes at the end of the
+                     history takes the other one's position with it, so
+                     the button under the cursor moves out from under
+                     it exactly when it is being clicked repeatedly. -->
+                ${(codeHistory?.stack.length ?? 0) > 0 ? html`<div class="focus-code-nav">
+                  <button
+                    type="button"
+                    class="focus-code-nav-btn"
+                    data-code-history="back"
+                    ?disabled=${codeHistory.at === 0}
+                    aria-label="Back to the previously shown file"
+                  >${PREV_ICON}</button>
+                  <button
+                    type="button"
+                    class="focus-code-nav-btn"
+                    data-code-history="forward"
+                    ?disabled=${codeHistory.at === codeHistory.stack.length - 1}
+                    aria-label="Forward to the next shown file"
+                  >${NEXT_ICON}</button>
+                </div>` : nothing}
               </header>
               <div class="focus-code-body">${focusCodeLinesTemplate(code)}</div>`}
         </div>` : nothing}
