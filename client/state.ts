@@ -562,7 +562,7 @@ export const state: State = store<State>({
   // this once per render. Offered only where a report carries the
   // field at all; a set without one is already the code view.
   showRevalidation: true,
-  // Which source previews are open — the eye beside a finding's code
+  // Which source previews are open — the `</>` beside a finding's code
   // links, keyed `<tabKey>\0<path>\0<line>` (render-finding.js
   // codePreviewKey). A Set rather than one open at a time: the
   // previews are context for the prose around them, and a reader

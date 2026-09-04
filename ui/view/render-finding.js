@@ -394,7 +394,7 @@ function evidenceTemplate(f) {
   if (rows.length === 0) return nothing
   const repoFallback = findingRepoFallback(f)
   // Every row cites a place in the code, so every row that the
-  // attached bundle can answer for gets an eye beside its link.
+  // attached bundle can answer for gets a `</>` beside its link.
   const bundle = attachedBundle(f)
   return html`<details class="evidence">
     <summary class="section-label">Evidence<span class="evidence-count">(${rows.length})</span></summary>
@@ -402,17 +402,16 @@ function evidenceTemplate(f) {
       const label = locationLabel(row)
       const url = evidenceUrl(row, f, repoFallback)
       const note = evidenceNote(row)
-      // Indexed, so two rows citing the same place stay two eyes too.
+      // Indexed, so two rows citing the same place stay two marks too.
       const preview = codePreview(f, `ev${i}`, bundle, row?.file, row?.line)
       const ghRef = githubRef(url)
       return html`<li>
         ${url
           ? html`<a class="evidence-ref" href=${url} target="_blank" rel="noopener">${label}</a>`
           : html`<span class="evidence-ref">${label}</span>`}
-        ${preview?.eye ?? nothing}
-        ${ghRef?.mark ?? nothing}
+        ${preview?.mark ?? nothing}
+        ${ghRef}
         ${preview?.tip ?? nothing}
-        ${ghRef?.tip ?? nothing}
         ${note ? html`<div class="evidence-note">${renderHighlighted(flowText(note))}</div>` : nothing}
         ${preview?.body ?? nothing}
       </li>`
@@ -480,17 +479,20 @@ const LINK_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidd
   </g>
 </svg>`
 
-// Eye for the source-preview toggle beside a code link. It sits INSIDE
-// a line of text rather than in a row of buttons, so it reads as a
-// mark on that line and not as a control docked next to it.
-const EYE_ICON = html`<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+// `</>` for the source-preview toggle beside a code link. It sits
+// INSIDE a line of text rather than in a row of buttons, so it reads
+// as a mark on that line and not as a control docked next to it — and
+// it says what it opens, which is the source, in the notation a reader
+// of code already knows.
+const CODE_ICON = html`<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
   <g fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M1.6 8s2.4-4 6.4-4 6.4 4 6.4 4-2.4 4-6.4 4-6.4-4-6.4-4Z"/>
-    <circle cx="8" cy="8" r="1.7"/>
+    <path d="M5.6 4.4 2 8l3.6 3.6"/>
+    <path d="m10.4 4.4 3.6 3.6-3.6 3.6"/>
+    <path d="M9.3 3.2 6.7 12.8"/>
   </g>
 </svg>`
 
-// GitHub mark, beside the eye. The location text is already a link;
+// GitHub mark, beside the `</>`. The location text is already a link;
 // this says WHERE it goes, which the text can't — `src/proxy.ts:42`
 // is the same string whichever repo it is in, and a card can carry
 // rows from several. The tooltip spells the target out.
@@ -498,41 +500,40 @@ const GITHUB_ICON = html`<svg viewBox="0 0 16 16" width="12" height="12" aria-hi
   <path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/>
 </svg>`
 
-// The mark and its tooltip, as two templates for the same reason the
-// preview's are (see codePreview): the mark goes beside the link, and
-// the tooltip is positioned against the ROW, because the location
-// lives in a span and a tooltip is flow content.
+// One template, mark and tooltip together in a wrapper — unlike the
+// source preview, whose snippet is flow content and has to be hung off
+// the row. This tooltip is a short line of text, so it belongs BESIDE
+// the mark, and beside is a thing only the mark's own box can say: an
+// absolute offset measured from the row would have to know how wide
+// the location text happened to be.
 //
-// `null` when the URL isn't a GitHub blob — a report linking to some
-// other host, or to nothing at all. No mark, no tooltip, and the
+// `nothing` when the URL isn't a GitHub blob — a report linking to
+// some other host, or to nothing at all. No mark, no tooltip, and the
 // location link stands as it always did.
 function githubRef(url) {
   const label = githubRefLabel(url)
-  if (!label) return null
-  return {
-    mark: html`<a
-      class="gh-ref-btn"
-      href=${url}
-      target="_blank"
-      rel="noopener noreferrer"
-      aria-label=${`Open ${label} on GitHub`}
-    >${GITHUB_ICON}</a>`,
-    tip: html`<span class="gh-ref-tip" role="tooltip">${label}</span>`,
-  }
+  if (!label) return nothing
+  return html`<span class="gh-ref"><a
+    class="gh-ref-btn"
+    href=${url}
+    target="_blank"
+    rel="noopener noreferrer"
+    aria-label=${`Open ${label} on GitHub`}
+  >${GITHUB_ICON}</a><span class="gh-ref-tip" role="tooltip">${label}</span></span>`
 }
 
 // ── Source preview ───────────────────────────────────────────────────
 // A finding's links to code point OUT — to GitHub, or to the bundle
 // viewer. When a bundle is attached we already hold the source, so the
-// eye beside each link opens the few lines around it in place: enough
-// to see whether a citation says what the prose claims, without losing
-// the prose to a tab switch.
+// `</>` beside each link opens the few lines around it in place:
+// enough to see whether a citation says what the prose claims, without
+// losing the prose to a tab switch.
 //
 // Offered per LINK, not per finding, so an evidence row citing another
 // file gets its own — resolved against the same bundle by path
 // (bundleFilePath, which answers synchronously off the hash index, so
-// deciding whether to draw an eye never costs a bundle parse). A path
-// the bundle doesn't carry simply gets no eye.
+// deciding whether to draw a mark never costs a bundle parse). A path
+// the bundle doesn't carry simply gets no mark.
 //
 // Open state lives in `state.codePreviews` keyed by this, so it
 // survives the re-render each toggle triggers and several previews can
@@ -541,7 +542,7 @@ function githubRef(url) {
 // Keyed by the SITE as well as the place, because the same place is
 // routinely cited twice on one card — an evidence row pointing at the
 // finding's own `file:line` is the normal shape of a report, not an
-// edge case. Keyed on the location alone, those two eyes are one
+// edge case. Keyed on the location alone, those two marks are one
 // control with two faces: clicking either opens both.
 function codePreviewKey(f, site, path, range) {
   return `${tabKey(f)}\u0000${site}\u0000${path}\u0000${range ? `${range.start}-${range.end}` : ''}`
@@ -582,7 +583,7 @@ function codeSnippetTemplate(content, range, path) {
   </div>`
 }
 
-// The eye and the snippet it opens, as two templates rather than one:
+// The mark and the snippet it opens, as two templates rather than one:
 // the finding's own link lives in a flex `.line-row`, where the
 // snippet has to land BELOW the row rather than beside its parts,
 // while an evidence row can carry both inside its `<li>`. Callers
@@ -607,14 +608,14 @@ function codePreview(f, site, bundle, path, line) {
   // a HOVER can start a load too (below). Without the read, the card
   // that kicked one would never re-render to show what arrived.
   void state.focusCodeTick
-  const eye = html`<button
+  const mark = html`<button
     type="button"
     class=${classMap({ 'code-preview-btn': true, open })}
     data-code-preview=${key}
     aria-expanded=${String(open)}
     aria-label=${open ? `Hide the source at ${path}` : `Show the source at ${path}`}
     @mouseenter=${() => { bundleSource(bundle.integrity, file) }}
-  >${EYE_ICON}</button>`
+  >${CODE_ICON}</button>`
   if (open) {
     const source = bundleSource(bundle.integrity, file)
     const body = !source || source.loading
@@ -622,12 +623,12 @@ function codePreview(f, site, bundle, path, line) {
       : codeSnippetTemplate(source.content, range, file)
     // No tooltip while the preview is open — it would say the same
     // thing twice, over the copy the reader asked to keep.
-    return { eye, tip: nothing, body }
+    return { mark, tip: nothing, body }
   }
   // The hover tooltip: the same snippet, shown while the pointer is on
-  // the eye, for a look that doesn't cost a click and doesn't push the
+  // the mark, for a look that doesn't cost a click and doesn't push the
   // prose around. Rendered from what is ALREADY loaded — `kick: false`
-  // — because it exists for every eye on the card, and kicking there
+  // — because it exists for every mark on the card, and kicking there
   // would pull a bundle off disk the moment a card with one drew. The
   // POINTER does the kicking (`mouseenter` above); the settle
   // re-renders through the tick, and the tooltip is in the DOM by the
@@ -636,7 +637,7 @@ function codePreview(f, site, bundle, path, line) {
   const tip = peek && !peek.loading
     ? html`<div class="code-preview-tip" role="tooltip">${codeSnippetTemplate(peek.content, range, file)}</div>`
     : nothing
-  return { eye, tip, body: nothing }
+  return { mark, tip, body: nothing }
 }
 
 // Claude mark for the `[hand off to Claude Code]` shortcut button.
@@ -1061,14 +1062,14 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
   // too — one lookup per card, not one per link.
   const bundle = attachedBundle(f)
   const linePreview = codePreview(f, 'loc', bundle, f.file, f.line)
-  // The eye rides INSIDE `.line-num`, not beside it: `.line-row` is a
+  // The marks ride INSIDE `.line-num`, not beside it: `.line-row` is a
   // `space-between` flex line, so a second item there would be spread
   // to the middle of the row rather than left against the location it
   // belongs to — and the run-meta on the far end would shift with it.
   const ghRef = githubRef(url)
   const lineRowMain = html`<span class="line-num">${
     exportLabel ? html`${locLink}, ${exportLabel}` : locLink
-  }${linePreview?.eye ?? nothing}${ghRef?.mark ?? nothing}</span>`
+  }${linePreview?.mark ?? nothing}${ghRef}</span>`
   // The tooltip is absolutely positioned against `.line-row`, so it
   // sits beside `.line-num` rather than inside it — a snippet is flow
   // content and that span is not a box to put one in.
@@ -1154,7 +1155,6 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
       <div class="line-row">
         ${lineRowMain}
         ${linePreview?.tip ?? nothing}
-        ${ghRef?.tip ?? nothing}
         ${npmChip}
         ${discoveredIn ? html`<span class="line-num discovered-in">(found analyzing ${discoveredIn})</span>` : nothing}
         ${meta ? html`<span class="run-meta">${meta}</span>` : nothing}

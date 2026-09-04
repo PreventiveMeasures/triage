@@ -200,7 +200,7 @@
     -webkit-print-color-adjust: exact; print-color-adjust: exact;
   }
 }
-/* Source preview — the eye beside a code link, and the few lines it
+/* Source preview — the `</>` beside a code link, and the few lines it
    opens (render-finding.js codePreview). The button is a MARK ON A
    LINE OF TEXT, not a control docked beside one: no border, no fill,
    baseline-aligned with the `file:line` it follows, and muted until
@@ -218,76 +218,121 @@
   opacity: .55;
   vertical-align: -2px;
 
-  &:hover { opacity: 1; color: var(--accent); }
   &.open { opacity: 1; color: var(--accent); }
-  &:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; border-radius: 2px; }
 }
 
-/* GitHub mark, beside the eye. Same weight and quiet as it — these are
-   two marks on a line of text, not a button bar — so the pair reads as
-   one affordance with two halves rather than a widget parked after
-   the location. */
-.gh-ref-btn {
+/* GitHub mark, beside the `</>`. Same weight and quiet as it — these
+   are two marks on a line of text, not a button bar — so the pair
+   reads as one affordance with two halves rather than a widget parked
+   after the location.
+
+   The wrapper is what the tooltip is positioned against (below); the
+   layout that used to sit on the link moves onto it, so the mark's
+   own box is exactly the glyph and `left: 100%` means "just past the
+   mark". */
+.gh-ref {
+  position: relative;
   display: inline-flex; align-items: center;
   margin-left: .25rem;
+  vertical-align: -2px;
+}
+.gh-ref-btn {
+  display: inline-flex; align-items: center;
   padding: 0 .15rem;
   color: var(--muted);
   opacity: .55;
-  vertical-align: -2px;
+}
 
+/* A 12px glyph on a 19px line leaves three pixels of dead row above it
+   and four below — so the pointer is on the mark or not on it for
+   reasons the reader can't see, and the tooltip flickers as they cross
+   it. Worse, the row's hover already lights the mark up, promising a
+   target the size of the line.
+   So: the target IS the line. A pseudo-element rather than padding,
+   because padding on an atomic inline grows the line box and would
+   push the row apart; this changes hit-testing and nothing else. The
+   two marks split the gap between them exactly — 2px each — so
+   there is no seam to fall into and no overlap to make the wrong
+   tooltip appear. */
+:is(.code-preview-btn, .gh-ref-btn) {
+  position: relative;
+
+  &::before { content: ''; position: absolute; inset: -.25rem -2px; }
   &:hover { opacity: 1; color: var(--accent); }
   &:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; border-radius: 2px; }
 }
 
-/* The hover tooltip — the same snippet the eye opens, shown while the
-   pointer is on it. A look that costs neither a click nor any of the
-   prose's space, so the reader can check a citation in passing and
+/* The hover tooltip — the same snippet the `</>` opens, shown while
+   the pointer is on it. A look that costs neither a click nor any of
+   the prose's space, so the reader can check a citation in passing and
    click only the ones worth keeping open.
 
    Positioned against the row rather than the button, because
-   `.line-num` is a span and a snippet is flow content. One eye per row
-   and per evidence item, so `:has()` needs no way to tell them apart.
-   Hidden with `visibility`, which keeps it out of the accessibility
-   tree and unhittable while still letting it be measured. */
-.code-preview-tip,
-.gh-ref-tip {
+   `.line-num` is a span and a snippet is flow content. One `</>` per
+   row and per evidence item, so `:has()` needs no way to tell them
+   apart. Hidden with `visibility`, which keeps it out of the
+   accessibility tree and unhittable while still letting it be
+   measured.
+
+   `margin-top` is the pinned preview's own top margin, not a smaller
+   gap that looked right on its own: hover then click and the snippet
+   has to STAY where it was, or the two lines the reader was reading
+   jump a couple of pixels under the pointer. */
+.code-preview-tip {
   position: absolute;
   z-index: 20;
   top: 100%; left: 0;
-  margin-top: .2rem;
+  margin-top: .3rem;
   width: max-content; max-width: min(100%, 46rem);
   visibility: hidden;
   filter: drop-shadow(0 2px 6px rgb(0 0 0 / .35));
-}
-/* The pane's surface is glass, which is right on a card and wrong
-   floating over prose — so the tip lays the page under it, and the
-   preview composites onto exactly what it composites onto when
-   clicked. */
-.code-preview-tip {
+  /* The pane's surface is glass, which is right on a card and wrong
+     floating over prose — so the tip lays the page under it, and the
+     preview composites onto exactly what it composites onto when
+     clicked. */
   background: var(--bg);
   border-radius: 4px;
+
+  & .code-preview { margin: 0; }
 }
-.code-preview-tip .code-preview { margin: 0; }
-/* The reference reads as a path, so it is set as one. */
+:is(.line-row, .evidence-list li):has(.code-preview-btn:is(:hover, :focus-visible)) > .code-preview-tip {
+  visibility: visible;
+}
+
+/* The reference tooltip goes BESIDE its mark, not below it. It is one
+   short line — a path — and a line of text hung under the row would
+   read as a caption on the finding rather than as a label on the mark
+   the pointer is touching. Beside is also the only place it can't be
+   mistaken for the snippet, which is what drops below.
+   Positioned against `.gh-ref` (the mark's own wrapper) rather than
+   the row: `left: 100%` then means "past the mark", where an offset
+   measured from the row would have to know the width of whatever
+   location text preceded it. */
 .gh-ref-tip {
+  position: absolute;
+  z-index: 20;
+  left: 100%; top: 50%;
+  translate: 0 -50%;
+  margin-left: .3rem;
   padding: .2rem .45rem;
+  /* One line for the paths that fit in one, wrapping for the ones that
+     don't. Not `nowrap`: a hidden box still counts as scrollable
+     overflow, so a monorepo's worth of path sitting off the right edge
+     would put a horizontal scrollbar under the whole column whether
+     anyone hovered the mark or not. */
+  width: max-content; max-width: 34ch;
+  overflow-wrap: anywhere;
   border: 1px solid var(--border); border-radius: 4px;
   background: var(--bg);
   color: var(--text);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .78em; line-height: 1.4;
-  white-space: nowrap;
+  visibility: hidden;
+  filter: drop-shadow(0 2px 6px rgb(0 0 0 / .35));
 }
-/* One rule per mark, rather than one keyed on the row: a row carries
-   both an eye and a GitHub mark, and `:has()` on their shared parent
-   has no way to say which of the two tooltips the pointer is asking
-   for. Naming each trigger beside its own tooltip does. */
-:is(.line-row, .evidence-list li):has(.code-preview-btn:is(:hover, :focus-visible)) > .code-preview-tip,
-:is(.line-row, .evidence-list li):has(.gh-ref-btn:is(:hover, :focus-visible)) > .gh-ref-tip {
-  visibility: visible;
-}
-.line-row:hover .code-preview-btn,
-.evidence-list li:hover .code-preview-btn { opacity: 1; }
+.gh-ref-btn:is(:hover, :focus-visible) + .gh-ref-tip { visibility: visible; }
+.line-row:hover :is(.code-preview-btn, .gh-ref-btn),
+.evidence-list li:hover :is(.code-preview-btn, .gh-ref-btn) { opacity: 1; }
 
 /* The snippet. Numbered gutter beside the code, both scrolling as one
    so a long line takes its line numbers with it — the `<pre>` is the
@@ -1375,10 +1420,11 @@ span.evidence-ref { color: var(--muted); }
     cursor: auto;
     &::after { display: none; }
   }
-  /* The eye is an offer to open something, and paper can't take it.
-     An open preview still prints — it is content by then, and the
-     reader chose it. */
-  .code-preview-btn { display: none; }
+  /* Both marks are offers to open something, and paper can't take
+     either — the GitHub one says what it says through a tooltip, which
+     leaves a decorative octocat behind on a printout. An open preview
+     still prints: it is content by then, and the reader chose it. */
+  .code-preview-btn, .gh-ref { display: none; }
 
   /* Inline `` `code` `` spans read as a chip on screen (1px border +
      tinted bg); on paper that chrome crowds dense prose and reads as

@@ -186,7 +186,7 @@ function findingHandoffText(e) {
 // selectors come first so they short-circuit before a generic match
 // (e.g. tree-graph buttons before generic tab clicks).
 report.addEventListener('click', (e) => {
-  // The eye beside a finding's code links — toggles the inline source
+  // The `</>` beside a finding's code links — toggles the inline source
   // preview open or shut (render-finding.js codePreview). Lives in
   // `<finding-card>`'s shadow root, hence composedPath. The Set is
   // replaced rather than mutated so an observer-util autorun reading

@@ -7,8 +7,8 @@
 // parsing and decompressing a bundle to find out. What is pinned here
 // is that it is CONSERVATIVE: an exact hit, a suffix hit only when
 // exactly one file could be meant, and null everywhere else — the
-// alternative is an eye that opens onto the wrong file's code, which
-// is worse than no eye at all.
+// alternative is a mark that opens onto the wrong file's code, which
+// is worse than no mark at all.
 
 import assert from 'node:assert/strict'
 import { beforeEach, describe, it } from 'node:test'

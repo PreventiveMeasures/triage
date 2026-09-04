@@ -121,7 +121,7 @@ export function attachedBundle(f) {
 // render() is a microtask so it doesn't recurse this frame.
 //
 // `kick: false` asks what we ALREADY have, and answers null rather
-// than starting a load. For a caller that renders one file per eye on
+// than starting a load. For a caller that renders one file per mark on
 // a card and would otherwise pull a bundle off disk for every one of
 // them before the reader has asked for any — see render-finding.js,
 // where the hover tooltip peeks and the pointer does the kicking.
