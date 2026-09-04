@@ -1453,6 +1453,20 @@ function scrollKanbanRailActive() {
   if (card) card.scrollIntoView({ block: 'nearest', behavior: 'instant' })
 }
 
+// The dialog's finding, and the Code panel's history alongside it.
+// Fullscreen mounts the focus view's panel (render.js
+// focusMainTemplate), and a trail of followed references belongs to
+// the finding that was on screen when the reader followed them — the
+// same rule setFocusGid applies when the focus queue moves. Every path
+// that changes what the dialog shows comes through here, the close
+// included, so the next open starts on its own file rather than
+// wherever the last reader wandered off to.
+function showKanbanFinding(next) {
+  state.kanbanPopoverGid = next
+  state.focusCodeStack = []
+  state.focusCodeAt = 0
+}
+
 function setKanbanPopoverGid(next) {
   const prev = state.kanbanPopoverGid
   if (prev === next) return
@@ -1465,7 +1479,7 @@ function setKanbanPopoverGid(next) {
   // start a new one — only a render().
   if (!document.startViewTransition || (!opening && !closing)) {
     syncOpenedGroupTriage(next)
-    state.kanbanPopoverGid = next
+    showKanbanFinding(next)
     render()
     scrollKanbanRailActive()
     return
@@ -1527,7 +1541,7 @@ function setKanbanPopoverGid(next) {
     } else {
       updateKanbanClipVars()
     }
-    state.kanbanPopoverGid = next
+    showKanbanFinding(next)
     const t = document.startViewTransition(() => {
       render()
       // Inside the callback, so the rail is already scrolled to the
@@ -1555,7 +1569,7 @@ function setKanbanPopoverGid(next) {
   // so the NEW snapshot holds the name and the browser morphs the
   // OLD modal back into the card.
   updateKanbanClipVars()
-  state.kanbanPopoverGid = next
+  showKanbanFinding(next)
   let closeCard = null
   const t = document.startViewTransition(() => {
     render()

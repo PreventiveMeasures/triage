@@ -691,6 +691,31 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
   padding: 0;
 }
 
+/* Fullscreen mounts the focus view's workbench in the dialog body (see
+   focusMainTemplate in render.js), and the two want opposite things of
+   this box: the single-column body IS the scroller, while the
+   workbench's panes each own their scroll and only need a bounded box
+   to lay out in. So in fullscreen the body stops scrolling and becomes
+   that box — flex so `.focus-main` can fill it, `min-height: 0` so it
+   may shrink below the panes' content instead of pushing the modal
+   past the viewport. */
+.kanban-detail-modal.fullscreen .kanban-detail-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+  padding: .4rem;
+
+  & .focus-main { flex: 1 1 auto; }
+
+  /* The dialog's corner buttons float over whatever reaches that
+     corner, and in this layout that's the code pane's file bar. Hold
+     their footprint out of it so a long path ellipsises before the
+     buttons rather than under them: two 22px buttons, the .1rem
+     between them and the .25rem the cluster sits in from the edge. */
+  & .focus-code-bar { padding-right: calc(44px + 1rem); }
+}
+
 .kanban-detail-body {
   overflow-y: auto;
   overscroll-behavior: contain;
