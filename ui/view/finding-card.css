@@ -206,10 +206,11 @@
    baseline-aligned with the `file:line` it follows. The link is still
    the link; this only says the source is here if you want it.
 
-   Solid text colour, not muted and not faded. A 12px glyph is already
-   quiet next to a line of type — dimming it on top of that leaves
-   something the reader has to go looking for, which is the opposite of
-   a mark.
+   `--muted` at full strength — the metadata tone of the `file:line` it
+   follows, which is where it belongs, and NOT that tone faded further.
+   A 12px glyph is already quiet next to a line of type; dimming it on
+   top of that leaves something the reader has to go looking for, which
+   is the opposite of a mark.
 
    ONE state change, not two. It used to fade up on row hover and then
    go accent on its own — but the first of those fired from anywhere on
@@ -226,7 +227,7 @@
   margin-left: .35rem;
   padding: 0 .15rem;
   border: 0; background: transparent;
-  color: var(--text);
+  color: var(--muted);
   vertical-align: -2px;
 
   &.open { color: var(--accent); }
@@ -250,7 +251,7 @@
 .gh-ref-btn {
   display: inline-flex; align-items: center;
   padding: 0 .15rem;
-  color: var(--text);
+  color: var(--muted);
 }
 
 /* A 12px glyph on a 19px line leaves three pixels of dead row above it
@@ -604,7 +605,7 @@ details[open] > summary.section-label::after { transform: translateY(-2px) rotat
   &:hover { text-decoration: underline; }
 }
 /* The location links and the marks beside them keep the ordinary text
-   cursor: the underline on hover already says they are links, and a
+   cursor: the colour change on hover already says they are live, and a
    hand pointer over a line of `file:42` reads as if the text itself
    were a control. */
 :is(.line-num a, .evidence-ref, .gh-ref-btn) { cursor: default; }
@@ -1289,7 +1290,12 @@ span.evidence-ref { color: var(--muted); }
 }
 
 .line-num { color: var(--muted); font-size: .8rem; }
-.line-num a { color: inherit; }
+/* No underline, including the UA's own — theme.css's `a` rules stop at
+   the shadow boundary, so this link was the one on the card that came
+   out underlined. It reads as a location, which is what it is, and the
+   GitHub mark that now follows it says it goes somewhere. Colour on
+   hover carries the rest. */
+.line-num a { color: inherit; text-decoration: none; }
 .line-num a:hover { color: var(--accent); }
 
 /* npm chip in the focus view's line-row — small accent-tinted pill

@@ -486,9 +486,9 @@ const LINK_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidd
 // of code already knows.
 const CODE_ICON = html`<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
   <g fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M5.6 4.4 2 8l3.6 3.6"/>
-    <path d="m10.4 4.4 3.6 3.6-3.6 3.6"/>
-    <path d="M9.3 3.2 6.7 12.8"/>
+    <path d="M4.4 4.6 1.3 8l3.1 3.4"/>
+    <path d="m11.6 4.6 3.1 3.4-3.1 3.4"/>
+    <path d="M9.8 2.6 6.2 13.4"/>
   </g>
 </svg>`
 
