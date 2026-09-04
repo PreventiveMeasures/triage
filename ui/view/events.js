@@ -187,18 +187,12 @@ function findingHandoffText(e) {
 // selectors come first so they short-circuit before a generic match
 // (e.g. tree-graph buttons before generic tab clicks).
 report.addEventListener('click', (e) => {
-  // The `</>` beside a finding's code links — toggles the inline source
-  // preview open or shut (render-finding.js codePreview). Lives in
-  // `<finding-card>`'s shadow root, hence composedPath. The Set is
-  // replaced rather than mutated so an observer-util autorun reading
-  // it sees the change; render() then repaints, and the loader's own
-  // settle render fills the snippet in when the bundle lands.
   // An evidence reference in the focus view — loads that file into the
   // code panel beside the card (render-finding.js evidencePanelRef).
-  // Also in the card's shadow root, hence composedPath.
+  // In `<finding-card>`'s shadow root, hence composedPath.
   const codeNav = pathClosest(e, '[data-code-nav-file]')
   if (codeNav) {
-    pushFocusCode({
+    pushFocusCode(focusedGroupOf(e), {
       integrity: codeNav.dataset.codeNavIntegrity,
       file: codeNav.dataset.codeNavFile,
       range: lineRange(codeNav.dataset.codeNavLine),
@@ -211,6 +205,12 @@ report.addEventListener('click', (e) => {
     stepFocusCode(codeHistory.dataset.codeHistory === 'forward' ? 1 : -1)
     return
   }
+  // The `</>` beside a finding's code links — toggles the inline source
+  // preview open or shut (render-finding.js codePreview). Lives in
+  // `<finding-card>`'s shadow root, hence composedPath. The Set is
+  // replaced rather than mutated so an observer-util autorun reading
+  // it sees the change; render() then repaints, and the loader's own
+  // settle render fills the snippet in when the bundle lands.
   const codePreview = pathClosest(e, '[data-code-preview]')
   if (codePreview) {
     const key = codePreview.dataset.codePreview
@@ -1727,13 +1727,28 @@ document.addEventListener('keydown', (e) => {
 // to that gid. The handler also scrolls the now-active card into
 // view inside the sidebar so chaining clicks keeps the queue
 // oriented around the cursor.
+// The dedup group whose card a click landed in, read off the card
+// itself (`<finding-card>` stamps `data-gid` on its host).
+//
+// NOT `state.focusGid`: the focus view only writes that on an explicit
+// pick — a sidebar click, an arrow key — and otherwise falls back to
+// the previous render's index (see the selection rules in render.js).
+// So arriving in the focus view and clicking straight into the card
+// asks about a gid that is still null, which is exactly the path a
+// reader takes and exactly the one that quietly did nothing.
+function focusedGroupOf(e) {
+  const card = pathClosest(e, '[data-gid]')
+  const gid = card?.dataset?.gid
+  return gid ? findGroupById(gid) : null
+}
+
 // Move the focus view's Code panel to `pos`, from a link the reader
-// followed. The stack rules live in focus-code-history.js; what this
-// adds is where the finding's own file comes from — the group, not the
-// DOM — and the repaint.
-function pushFocusCode(pos) {
+// followed in `group`'s card. The stack rules live in
+// focus-code-history.js; what this adds is where the finding's own
+// file comes from — the group — and the repaint.
+function pushFocusCode(group, pos) {
   if (!pos.integrity || !pos.file) return
-  const history = focusCodeHistory(state.focusGid ? findGroupById(state.focusGid) : null)
+  const history = focusCodeHistory(group)
   if (!history) return
   const next = pushed(history.stack, history.at, history.base, pos)
   state.focusCodeStack = next.stack
