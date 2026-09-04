@@ -444,9 +444,16 @@ function withoutPassRows(groups) {
 }
 
 export function getMergedGroups() {
+  return withoutPassRows(mergedGroups())
+}
+
+// The same merge walk without the lens filter — the group as the DATA
+// has it. Only `getMergedGroups` (which applies the filter) and
+// `groupWithPassRows` (which wants what it dropped) call this.
+function mergedGroups() {
   const allGroups = state.reports.flatMap((r) => r.groups)
   const merges = state.workspaceMerges
-  if (!merges || merges.length === 0) return withoutPassRows(allGroups)
+  if (!merges || merges.length === 0) return allGroups
   const parent = allGroups.map((_, i) => i)
   const find = (i) => {
     let r = i
@@ -510,7 +517,24 @@ export function getMergedGroups() {
     }
     merged.push(ordered)
   }
-  return withoutPassRows(merged)
+  return merged
+}
+
+// A rendered group plus the revalidation rows the App lens dropped
+// from it (see withoutPassRows) — the group as the data has it, which
+// is what a whole-group WRITE is about. The pass's row is the same
+// issue re-rated, so the PR that fixes the base finding fixes that row
+// too, and an annotation applied to the group belongs on it whether or
+// not the lens is currently drawing it.
+//
+// Identity is by member, not by gid: dropping a pass row can change
+// which finding sits at `g[0]`, so the two lists don't always agree on
+// a group's key. With the lens on, nothing was dropped and the group
+// is already whole.
+export function groupWithPassRows(group) {
+  if (state.showRevalidation || !Array.isArray(group) || group.length === 0) return group
+  const keys = new Set(group.map(tabKey))
+  return mergedGroups().find((g) => g.some((f) => keys.has(tabKey(f)))) ?? group
 }
 
 export function findGroupById(gid) {
