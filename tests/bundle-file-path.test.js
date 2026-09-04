@@ -65,6 +65,18 @@ describe('bundleFilePath', () => {
     }
   })
 
+  // The suffix search reads a per-bundle index derived from the file
+  // map, so re-recording has to invalidate it — otherwise a bundle
+  // re-read with different contents keeps answering for the old ones.
+  it('answers for the files it was last recorded with', () => {
+    record(['packages/api/src/server.ts'])
+    assert.equal(bundleFilePath(INTEGRITY, 'src/server.ts'), 'packages/api/src/server.ts')
+    record(['packages/web/src/server.ts'])
+    assert.equal(bundleFilePath(INTEGRITY, 'src/server.ts'), 'packages/web/src/server.ts')
+    record(['packages/api/src/server.ts', 'packages/web/src/server.ts'])
+    assert.equal(bundleFilePath(INTEGRITY, 'src/server.ts'), null)
+  })
+
   it('forgets a bundle that has been dropped', () => {
     record(['src/a.ts'])
     assert.equal(bundleFilePath(INTEGRITY, 'src/a.ts'), 'src/a.ts')

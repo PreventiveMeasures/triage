@@ -24,6 +24,9 @@
 
 const bundleFilesByHash = new Map()
 const bundleHashesByIntegrity = new Map()
+// integrity → (last path segment → the files ending in it). Built on
+// demand by `bundleFilePath`, see there.
+const bundleFilesByBasename = new Map()
 const listeners = new Set()
 
 // Fires whenever the hash → bundle mapping gains or loses an
@@ -48,6 +51,9 @@ export function recordBundleFileHashes(integrity, fileHashes) {
   if (!integrity || !fileHashes) return false
   const fresh = !bundleHashesByIntegrity.has(integrity)
   bundleHashesByIntegrity.set(integrity, fileHashes)
+  // A re-record replaces the map this mirrors, so the derived index
+  // has to go with it rather than answer for the previous contents.
+  bundleFilesByBasename.delete(integrity)
   for (const [file, hash] of fileHashes) {
     if (!hash) continue
     let m = bundleFilesByHash.get(hash)
@@ -71,6 +77,7 @@ export function recordBundleFileHashes(integrity, fileHashes) {
 export function dropBundleFromHashIndex(integrity) {
   const fileHashes = bundleHashesByIntegrity.get(integrity)
   bundleHashesByIntegrity.delete(integrity)
+  bundleFilesByBasename.delete(integrity)
   if (!fileHashes) return
   for (const hash of fileHashes.values()) {
     const m = bundleFilesByHash.get(hash)
@@ -97,14 +104,50 @@ export function bundleFilePath(integrity, path) {
   const files = bundleHashesByIntegrity.get(integrity)
   if (!files || typeof path !== 'string' || path === '') return null
   if (files.has(path)) return path
+  // Only files with the SAME last segment can end with `/…/<that
+  // segment>`, so the basename narrows the search to a handful before
+  // any string is compared — see `basenamesFor` for why that matters.
+  const candidates = basenamesFor(integrity, files).get(basename(path))
+  if (!candidates) return null
   const suffix = path.startsWith('/') ? path : `/${path}`
   let hit = null
-  for (const file of files.keys()) {
+  for (const file of candidates) {
     if (!file.endsWith(suffix)) continue
     if (hit !== null) return null
     hit = file
   }
   return hit
+}
+
+function basename(path) {
+  const slash = path.lastIndexOf('/')
+  return slash < 0 ? path : path.slice(slash + 1)
+}
+
+// The suffix search used to walk every file in the bundle, and a card
+// asks once per code link — so a list of 2000 findings against a
+// 3000-file bundle spent a quarter of a second in `endsWith` on every
+// render, whether or not anything about the bundles had changed. The
+// misses were the worst of it: a path the bundle doesn't carry only
+// finds that out after reading all of them.
+//
+// Grouping the files by last segment costs one pass per bundle and
+// turns each lookup into a Map hit plus a compare against the one or
+// two files that could possibly match. Built lazily, because a bundle
+// that is recorded and never asked about should cost nothing, and
+// dropped wherever the file map it mirrors is replaced or removed.
+function basenamesFor(integrity, files) {
+  let index = bundleFilesByBasename.get(integrity)
+  if (index) return index
+  index = new Map()
+  for (const file of files.keys()) {
+    const base = basename(file)
+    const seen = index.get(base)
+    if (seen) seen.push(file)
+    else index.set(base, [file])
+  }
+  bundleFilesByBasename.set(integrity, index)
+  return index
 }
 
 // Lookup — returns the (integrity, file) pairs that contain a

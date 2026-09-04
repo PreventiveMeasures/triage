@@ -102,9 +102,13 @@ export function revealFocusCodeLines() {
 // asked by the focus view's inline panel, the card's `Code` shortcut,
 // and the source previews beside its links.
 export function attachedBundle(f) {
-  if (!f?.fileHash || !Array.isArray(f._bundleHashes) || f._bundleHashes.length === 0) return null
-  const allowed = new Set(f._bundleHashes)
-  return bundlesForFileHash(f.fileHash).find(({ integrity }) => allowed.has(integrity)) ?? null
+  const allowed = f?._bundleHashes
+  if (!f?.fileHash || !Array.isArray(allowed) || allowed.length === 0) return null
+  // `includes` over a Set: a finding names the one or two bundles the
+  // analyzer saw, and this runs twice per card on every render of a
+  // list that can be thousands long — building a Set to ask about two
+  // strings costs more than the scan it saves.
+  return bundlesForFileHash(f.fileHash).find(({ integrity }) => allowed.includes(integrity)) ?? null
 }
 
 // One file out of a bundle. Returns:

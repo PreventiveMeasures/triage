@@ -548,6 +548,35 @@ function codePreviewKey(f, site, path, range) {
   return `${tabKey(f)}\u0000${site}\u0000${path}\u0000${range ? `${range.start}-${range.end}` : ''}`
 }
 
+// Which mark the pointer is on, and the card that drew it.
+//
+// The hover snippet used to be rendered for EVERY mark whose file
+// happened to be loaded — the template can't know where the pointer
+// is, so it built one and let CSS reveal the right one. On a card
+// that is fine. On a list of two thousand it is thousands of
+// highlighted ten-line snippets in the DOM, all but one of them
+// hidden, and the cost lands the moment the first file loads rather
+// than when the list is built, so it reads as the list going bad on
+// its own.
+//
+// Deliberately NOT in `state`: a tracked read would put every card on
+// the page in the pointer's dependency set, and moving between two
+// marks would re-render all of them. A module variable plus a direct
+// `requestUpdate` on the one or two cards involved is the whole
+// mechanism.
+let hoveredPreview = { key: null, host: null }
+
+function hoverPreview(key, target) {
+  if (hoveredPreview.key === key) return
+  const previous = hoveredPreview.host
+  // `findingCardInnerTemplate` only ever renders inside
+  // `<finding-card>`'s shadow root, so the root's host is the card.
+  const host = key === null ? null : target?.getRootNode?.()?.host ?? null
+  hoveredPreview = { key, host }
+  previous?.requestUpdate?.()
+  if (host !== previous) host?.requestUpdate?.()
+}
+
 // The lines themselves, once the bundle has loaded. Numbered from
 // wherever the window starts (format.js snippetWindow), with the cited
 // line marked — a snippet the reader can't place against the `file:42`
@@ -623,7 +652,10 @@ function codePreview(f, site, bundle, path, line) {
     data-code-preview=${key}
     aria-expanded=${String(open)}
     aria-label=${open ? `Hide the source at ${path}` : `Show the source at ${path}`}
-    @mouseenter=${() => { bundleSource(bundle.integrity, file) }}
+    @mouseenter=${(e) => { hoverPreview(key, e.currentTarget); bundleSource(bundle.integrity, file) }}
+    @mouseleave=${(e) => { if (hoveredPreview.key === key) hoverPreview(null, e.currentTarget) }}
+    @focus=${(e) => { hoverPreview(key, e.currentTarget); bundleSource(bundle.integrity, file) }}
+    @blur=${(e) => { if (hoveredPreview.key === key) hoverPreview(null, e.currentTarget) }}
   >${CODE_ICON}</button>`
   if (open) {
     const source = bundleSource(bundle.integrity, file)
@@ -636,12 +668,19 @@ function codePreview(f, site, bundle, path, line) {
   }
   // The hover tooltip: the same snippet, shown while the pointer is on
   // the mark, for a look that doesn't cost a click and doesn't push the
-  // prose around. Rendered from what is ALREADY loaded — `kick: false`
-  // — because it exists for every mark on the card, and kicking there
-  // would pull a bundle off disk the moment a card with one drew. The
-  // POINTER does the kicking (`mouseenter` above); the settle
-  // re-renders through the tick, and the tooltip is in the DOM by the
-  // time the pointer has finished arriving.
+  // prose around.
+  //
+  // Built for THIS mark only while it is the one being pointed at
+  // (hoverPreview above) — one snippet in the document rather than one
+  // per mark on the page. The handlers on the button re-render this
+  // card when the pointer arrives and again when it leaves, so the
+  // snippet is in the DOM within a frame of the pointer landing.
+  //
+  // Read from what is ALREADY loaded — `kick: false` — so arriving on
+  // a mark shows what we have and asks for the rest; the POINTER does
+  // the kicking (`mouseenter` above) and the settle comes back through
+  // the tick.
+  if (hoveredPreview.key !== key) return { mark, tip: nothing, body: nothing }
   const peek = bundleSource(bundle.integrity, file, { kick: false })
   const tip = peek && !peek.loading
     ? html`<div class="code-preview-tip" role="tooltip">${codeSnippetTemplate(peek.content, range, file)}</div>`
