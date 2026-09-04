@@ -140,6 +140,7 @@ export interface State {
   focusCodeTick: number
   focusSplit: number
   codeBlockTick: number
+  bundleHashTick: number
   // ── server protocol (detected from the `server-info` connect frame) ──
   // Which sync protocol the configured server speaks; drives mode-aware UI
   // (managed mode hides workspace export and swaps the offline toggle for
@@ -698,6 +699,19 @@ export const state: State = store<State>({
   // `<finding-card>` autorun) repaints the block coloured instead of
   // sitting on the plain-text first pass until something else renders.
   codeBlockTick: 0,
+  // And once more for the cross-bundle file-hash index
+  // (client/bundle-hash-index.js), which fills asynchronously: at
+  // ingest via a fire-and-forget prefetch, and from an empty start on
+  // every reload. The finding-card's "Code →" button asks that index
+  // whether this finding's source is in a bundle, and a plain module
+  // Map is invisible to the card's autorun — so the answer it got
+  // before the hashes landed ("no bundle") would stand until some
+  // unrelated state change re-rendered the card. events.js bumps this
+  // when the index changes; render-finding.js reads it next to the
+  // lookup. The parent-rendered surfaces (focus view's Code panel,
+  // Files tab) don't need it — the same subscriber re-renders them
+  // directly.
+  bundleHashTick: 0,
   // Sync protocol of the configured server (e2e vs managed), seeded from the
   // localStorage cache so mode-aware UI is correct on first paint; the live
   // `server-info` connect frame confirms / updates it.

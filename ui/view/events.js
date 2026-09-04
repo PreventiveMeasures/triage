@@ -1,4 +1,4 @@
-import { SEVERITY_MODE_KEY, VIEW_MODE_KEY, isEncryptionEnabled, patchEntry, readBundle, saveRepoUrlFor, saveTriage, setReportIgnored, state, subscribeToBundleFindingIndex } from '#client/index.js'
+import { SEVERITY_MODE_KEY, VIEW_MODE_KEY, isEncryptionEnabled, patchEntry, readBundle, saveRepoUrlFor, saveTriage, setReportIgnored, state, subscribeToBundleFindingIndex, subscribeToBundleHashIndex } from '#client/index.js'
 import { downloadBlob, report } from './dom.js'
 import { commonPrefix, configureRevalidation, handoffBlock } from './format.js'
 import { activeTabFor, canApplyFixToGroup, findGroupById, findingRepo, findingReport, fixApplies, getMergedGroups, groupState, groupWithPassRows, syncGroupTriage, tabKey, triageActionPlan, triageScope } from './group.js'
@@ -27,6 +27,43 @@ subscribeToBundleFindingIndex(() => {
     // too; refresh it (main view stays put).
     renderSidebar().catch(() => {})
   }
+})
+
+// A bundle's per-file hashes landed (or a deleted bundle's were
+// dropped). Everything that joins a finding to bundle source goes
+// through that index — the focus view's inline Code panel, the
+// finding-card's "Code →" button, the Files tab's per-file link —
+// and all three read it synchronously during a render that has
+// usually already happened by the time the hashes arrive: the
+// prefetch at ingest is fire-and-forget, and on a reload the index
+// starts empty while the stored report paints straight away. So a
+// first paint asks too early, gets an empty answer, and renders no
+// panel; before this subscription the panel only appeared once some
+// unrelated interaction (clicking through the queue) forced another
+// render.
+//
+// Coalesced into a microtask because a report referencing several
+// bundles finishes their hash computes in a burst, and one render
+// picks up all of them.
+let hashIndexRenderQueued = false
+subscribeToBundleHashIndex(() => {
+  // The bundle views don't read this index (they hold their open
+  // bundle's own `details.fileHashes`), so only the two tabs that
+  // join by hash need the repaint.
+  if (state.currentView !== 'findings' && state.currentView !== 'files') return
+  if (hashIndexRenderQueued) return
+  hashIndexRenderQueued = true
+  queueMicrotask(() => {
+    hashIndexRenderQueued = false
+    if (state.currentView !== 'findings' && state.currentView !== 'files') return
+    // A parent render() alone doesn't reach the "Code →" button:
+    // `<finding-card>` paints from its own observer-util autorun, and
+    // an unchanged property binding gives it no reason to re-run. The
+    // tick is a real state mutation, so the cards that consulted the
+    // index re-render with it (see render-finding.js).
+    state.bundleHashTick++
+    render()
+  })
 })
 
 // Findings-tab and bundles-tab graph views share renderGraph2Layout
