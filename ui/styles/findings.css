@@ -759,7 +759,22 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
     grid-column: 1;
     padding: .4rem 0 .4rem .4rem;
   }
-  & .focus-splitter { grid-column: 2; }
+  & .focus-splitter {
+    grid-column: 2;
+    /* The hairline sits at the END of the divider's track, not its
+       centre: centred, it left half the track — 6px — standing between
+       itself and the gutter, and the source panel is meant to start AT
+       the line. The other half stays where it is, as the width the
+       pointer still has to grab, and reads as the finding column's
+       right margin. */
+    justify-content: flex-end;
+
+    &::before {
+      width: 1px;
+      height: 100%;
+      border-radius: 0;
+    }
+  }
   & .focus-pane-code { grid-column: 3; }
 
   /* The file bar is the code panel's header, and the rail's header is
@@ -791,11 +806,6 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
      centred grip that only had to say "grab here" between two cards
      that were already separated. It still takes the accent on hover
      and through a drag. */
-  & .focus-splitter::before {
-    width: 1px;
-    height: 100%;
-    border-radius: 0;
-  }
 
   /* And the card fills its pane. The 1100px cap reads as a measure
      when the frame around it makes the empty margin deliberate;
