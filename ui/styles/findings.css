@@ -549,6 +549,13 @@
      what's left instead of running under the rail. Matches the focus
      view's queue, whose cards these are. */
   --kanban-side-w: 240px;
+  /* Height shared by the dialog's two chrome rows — the rail's header
+     and, in fullscreen, the code panel's file bar — so their bottom
+     rules line up across the screen instead of missing each other by
+     the 7px their contents happen to differ by. The measure is the
+     taller of the two: the rail's nav buttons (1.4rem) plus the .35rem
+     padding above and below them and the 1px rule under. */
+  --kanban-head-h: calc(1.4rem + .7rem + 1px);
 
   position: fixed;
   inset: 0;
@@ -704,7 +711,11 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
   min-height: 0;
   display: flex;
   overflow: hidden;
-  padding: .4rem;
+  /* No inset. The card carries its own padding and the code panel its
+     own bar and gutter, so the only thing this was buying was a strip
+     of dead space between the source and the rail on one side, and
+     between the card and the screen on the other. */
+  padding: 0;
 
   /* The gap goes with the frames below — that .75rem was the air
      between two glass cards, and there are none here. */
@@ -729,14 +740,6 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
        line (`security · opus 5 · max · list`), and every pixel these
        give back is a pixel of it that stays readable. */
     margin: 0;
-    /* They still sit over the tail of that line, so they idle at half
-       strength — present enough to find, faint enough to read through
-       — and come up to full the moment they are pointed at or tabbed
-       to, which is the only time covering that text costs anything. */
-    opacity: .5;
-    transition: opacity .12s;
-
-    &:hover, &:focus-within { opacity: 1; }
   }
 
   /* Pinning the cluster to the card's cell takes that cell out of
@@ -749,6 +752,16 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
   & .focus-pane-card { grid-column: 1; }
   & .focus-splitter { grid-column: 2; }
   & .focus-pane-code { grid-column: 3; }
+
+  /* The file bar is the code panel's header, and the rail's header is
+     right beside it across the screen — so it takes the same height.
+     Centred rather than baseline-aligned, because in a box now taller
+     than its text the baseline would park that text at the top while
+     the rail's sits in the middle. */
+  & .focus-code-bar {
+    min-height: var(--kanban-head-h);
+    align-items: center;
+  }
 
   /* The focus view frames each pane as a glass card, which is right
      on the page and wrong here: the dialog IS the panel, so a rounded
@@ -833,6 +846,7 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
   flex-shrink: 0;
   display: flex; align-items: center; justify-content: space-between;
   gap: .5rem;
+  min-height: var(--kanban-head-h);
   padding: .35rem .55rem;
   border-bottom: 1px solid var(--border);
   font-size: .72rem; font-weight: 600;
