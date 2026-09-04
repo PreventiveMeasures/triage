@@ -474,7 +474,10 @@
    down when open, sitting last in the label's flex line (after
    Evidence's count). */
 summary.section-label {
-  cursor: pointer;
+  /* No hand pointer: the chevron already says this opens, and a row of
+     section headings that turn into buttons under the cursor reads as
+     a toolbar rather than as the document it is. */
+  cursor: default;
   list-style: none;
 
   &::-webkit-details-marker { display: none; }
