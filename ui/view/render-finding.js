@@ -6,7 +6,8 @@ import { bundleFilePath, bundlesForFileHash, isLinkableFindingId, isPlaceholderN
 import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, githubRefLabel, hasSeverityCorrection, isHttpUrl, lineRange, listSegments, locationLabel, markdownLinkToken, parseCommentRefs, revalidateStamp, revalidationShown, snippetWindow, splitDescription, stripExportMarker } from './format.js'
 import { activeTabFor, findingRepo, findingRepoFallback, groupKey, groupState, isIgnored, scopedTriage, sortTabs, tabKey } from './group.js'
 import { highlightedCode } from './code-highlight.js'
-import { attachedBundle, bundleSource } from './focus-code.js'
+import { attachedBundle, bundleSource, focusCodePosition } from './focus-code.js'
+import { samePos } from './focus-code-history.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 
 // All `<finding-row>` / `<finding-card>` shadow-DOM markup is built
@@ -403,16 +404,26 @@ function sectionTemplate(label, body, cls = 'section', { collapsible = false } =
 function evidencePanelRef(bundle, row, label) {
   const file = bundle && row?.file ? bundleFilePath(bundle.integrity, row.file) : null
   if (!file) return html`<span class="evidence-ref">${label}</span>`
-  // A button, not an anchor: this goes nowhere, it moves the panel
-  // beside it. events.js reads the three attributes and pushes the
-  // position onto the panel's history.
-  return html`<button
-    type="button"
+  // A span carrying `role="link"`, not a `<button>`: a button is
+  // inline-BLOCK and cannot be talked out of it — Chromium coerces
+  // `display: inline` straight back — so a path long enough to wrap
+  // made the button's box the whole line and pushed the `</>` beside
+  // it onto the next one. A span wraps as text does, and the marks
+  // stay on the last line of it where they belong.
+  //
+  // `role="link"` because that is what it does: it takes you to a
+  // place in the code, the same as the `<a>` the other views render,
+  // only the destination is the panel next to it rather than a URL.
+  // `tabindex` and the Enter handler in events.js are what a real
+  // anchor would have given for free.
+  return html`<span
     class="evidence-ref"
+    role="link"
+    tabindex="0"
     data-code-nav-integrity=${bundle.integrity}
     data-code-nav-file=${file}
     data-code-nav-line=${row?.line ?? ''}
-  >${label}</button>`
+  >${label}</span>`
 }
 
 function evidenceTemplate(f, context) {
@@ -425,6 +436,10 @@ function evidenceTemplate(f, context) {
   // …and in the focus view, where a code panel is on screen to load
   // into, that same bundle decides the LINK too.
   const toPanel = context === 'focus' && bundle !== null
+  // Which row the panel is showing, so the list can say so. Only
+  // meaningful with a panel open: everywhere else the rows point out
+  // of the app and none of them is "current".
+  const shown = toPanel ? focusCodePosition(f) : null
   return html`<details class="evidence">
     <summary class="section-label">Evidence<span class="evidence-count">(${rows.length})</span></summary>
     <ol class="evidence-list">${rows.map((row, i) => {
@@ -434,7 +449,12 @@ function evidenceTemplate(f, context) {
       // Indexed, so two rows citing the same place stay two marks too.
       const preview = codePreview(f, `ev${i}`, bundle, row?.file, row?.line)
       const ghRef = toPanel ? nothing : githubRef(url)
-      return html`<li>
+      const current = toPanel && samePos(shown, {
+        integrity: bundle.integrity,
+        file: bundleFilePath(bundle.integrity, row?.file),
+        range: lineRange(row?.line),
+      })
+      return html`<li class=${classMap({ current })}>
         ${toPanel
           ? evidencePanelRef(bundle, row, label)
           : url

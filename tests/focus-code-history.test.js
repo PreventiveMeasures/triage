@@ -59,17 +59,20 @@ describe('historyFor', () => {
 })
 
 describe('pushed', () => {
+  const from = (stack, atIdx) => ({ stack, at: atIdx, base: BASE })
+
   // The panel was already showing the finding's own file, so the first
-  // link followed has to record BOTH — or Back from it goes nowhere.
+  // reference followed has to record BOTH — or Back from it goes
+  // nowhere.
   it('seeds the base and the target on the first follow', () => {
-    const next = pushed([], 0, BASE, at('src/router.ts', 8))
+    const next = pushed(from([], 0), at('src/router.ts', 8))
     assert.deepEqual(next.stack, [BASE, at('src/router.ts', 8)])
     assert.equal(next.at, 1)
   })
 
   it('appends when the reader is at the end', () => {
     const stack = [BASE, at('src/router.ts', 8)]
-    const next = pushed(stack, 1, BASE, at('src/env.ts', 2))
+    const next = pushed(from(stack, 1), at('src/env.ts', 2))
     assert.deepEqual(next.stack, [...stack, at('src/env.ts', 2)])
     assert.equal(next.at, 2)
   })
@@ -78,7 +81,7 @@ describe('pushed', () => {
   //   → [first … history … old current … (pressed)]
   it('drops everything ahead of the reader', () => {
     const stack = [BASE, at('a.ts', 1), at('b.ts', 2), at('c.ts', 3), at('d.ts', 4)]
-    const next = pushed(stack, 2, BASE, at('new.ts', 9))
+    const next = pushed(from(stack, 2), at('new.ts', 9))
     assert.deepEqual(next.stack, [BASE, at('a.ts', 1), at('b.ts', 2), at('new.ts', 9)])
     assert.equal(next.at, 3)
     assert.equal(next.stack.at(-1).file, 'new.ts', 'the pressed link is where the reader now is')
@@ -86,32 +89,32 @@ describe('pushed', () => {
 
   it('going back and forward again leaves the branch alone', () => {
     const stack = [BASE, at('a.ts', 1), at('b.ts', 2)]
-    // Only a push truncates; stepping does not.
+    // Only a follow truncates; stepping does not.
     assert.equal(stepped(stack, 2, -1), 1)
     assert.equal(stepped(stack, 1, 1), 2)
     assert.deepEqual(stack, [BASE, at('a.ts', 1), at('b.ts', 2)])
   })
 
-  // Two rows citing the same place is the normal shape of a report,
-  // not an edge case — a duplicate entry would light up a Back button
-  // that appears to do nothing.
-  it('does not stack a link to where the panel already is', () => {
-    const stack = [BASE, at('a.ts', 1)]
-    const next = pushed(stack, 1, BASE, at('a.ts', 1))
-    assert.deepEqual(next.stack, stack)
-    assert.equal(next.at, 1)
+  // The row that restates the finding's own location is the normal
+  // shape of a report, and following it out of a panel that is already
+  // on it goes nowhere. Recording it would put a back / forward pair
+  // on screen with nothing behind either of them; the caller re-centres
+  // the lines instead.
+  it('records nothing for the place the panel is already on', () => {
+    assert.equal(pushed(from([], 0), BASE), null, 'the finding own lines, before any history')
+    assert.equal(pushed(from([BASE, at('a.ts', 1)], 1), at('a.ts', 1)), null, 'and mid-history')
   })
 
   it('counts a different line in the same file as somewhere else', () => {
     const stack = [BASE, at('a.ts', 1)]
-    const next = pushed(stack, 1, BASE, at('a.ts', 40))
+    const next = pushed(from(stack, 1), at('a.ts', 40))
     assert.equal(next.stack.length, 3)
     assert.equal(next.at, 2)
   })
 
-  it('re-following the file the finding is on lands back at the base', () => {
+  it('follows a reference back to the file the finding is on', () => {
     const stack = [BASE, at('a.ts', 1)]
-    const next = pushed(stack, 1, BASE, BASE)
+    const next = pushed(from(stack, 1), BASE)
     assert.deepEqual(next.stack, [BASE, at('a.ts', 1), BASE])
     assert.equal(next.at, 2, 'and Back still returns to a.ts')
   })

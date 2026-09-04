@@ -14,7 +14,11 @@
 // followed yet. That is also what the panel's back / forward pair is
 // gated on: nothing followed, nothing to offer.
 
-function samePos(a, b) {
+// Same file, same lines marked in it — the same thing to look at, so
+// following a reference to it is not going anywhere. Exported because
+// the evidence list asks the same question of every row, to mark the
+// one the panel is currently on.
+export function samePos(a, b) {
   return Boolean(a) && Boolean(b)
     && a.integrity === b.integrity
     && a.file === b.file
@@ -34,6 +38,7 @@ const NONE = []
 // repair it from a render, which cannot write, this simply doesn't use
 // it: the panel falls back to the base and the next thing that MOVES
 // the panel rewrites the stack from scratch.
+//
 export function historyFor(stack, at, base) {
   if (!base) return null
   if (!Array.isArray(stack) || stack.length === 0 || !samePos(stack[0], base)) {
@@ -43,27 +48,31 @@ export function historyFor(stack, at, base) {
   return { stack, at: clamped, pos: stack[clamped] }
 }
 
-// Follow a link to `pos`.
+// Follow a reference to `pos`, given the history `historyFor` returned.
 //
-// Everything after the current entry goes. The reader was somewhere,
-// went back, and has now gone somewhere else — the branch they left is
-// no longer reachable, which is what a back/forward history is and
-// what the buttons have to keep telling the truth about:
+// `null` when the panel is ALREADY showing exactly that — the same
+// file with the same lines marked, which is what the first evidence
+// row of most reports is, restating the finding's own location.
+// Nothing has moved, so nothing is recorded; the caller re-centres the
+// lines instead. Recording it would be worse than useless: it would
+// seed a history out of a panel that never went anywhere, and put a
+// back / forward pair on screen with nothing behind either of them.
+//
+// Otherwise everything after the current entry goes. The reader was
+// somewhere, went back, and has now gone somewhere else — the branch
+// they left is no longer reachable, which is what a back/forward
+// history is and what the buttons have to keep telling the truth
+// about:
 //
 //   [base … here … dropped]  →  [base … here … pos]
 //
-// The first push seeds TWO entries, because the panel was already
+// The first follow seeds the base, because the panel was already
 // showing the finding's own file: without it there would be nothing to
-// go Back to from the first link ever followed.
-//
-// Following a link to where the panel already is changes nothing but
-// the index — stacking a duplicate would light up a Back button that
-// appears to do nothing.
-export function pushed(stack, at, base, pos) {
-  const kept = Array.isArray(stack) && stack.length > 0
-    ? stack.slice(0, Math.min(Math.max(at, 0), stack.length - 1) + 1)
-    : [base]
-  if (samePos(kept.at(-1), pos)) return { stack: kept, at: kept.length - 1 }
+// go Back to from the first reference ever followed.
+export function pushed({ stack, at, base }, pos) {
+  const current = stack.length > 0 ? stack[at] : base
+  if (samePos(current, pos)) return null
+  const kept = stack.length > 0 ? stack.slice(0, at + 1) : [base]
   return { stack: [...kept, pos], at: kept.length }
 }
 

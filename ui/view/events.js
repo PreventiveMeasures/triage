@@ -1750,12 +1750,37 @@ function pushFocusCode(group, pos) {
   if (!pos.integrity || !pos.file) return
   const history = focusCodeHistory(group)
   if (!history) return
-  const next = pushed(history.stack, history.at, history.base, pos)
-  state.focusCodeStack = next.stack
-  state.focusCodeAt = next.at
-  render()
+  const next = pushed(history, pos)
+  // `null` means the panel is already showing exactly this. The reader
+  // clicked a reference to what is on screen, so what they are asking
+  // for is to be put back on those lines — not a history entry, and
+  // not a repaint of a panel that hasn't changed.
+  if (next) {
+    state.focusCodeStack = next.stack
+    state.focusCodeAt = next.at
+    render()
+  }
   revealFocusCodeLines()
 }
+
+// The panel references are `role="link"` spans rather than anchors or
+// buttons, for the layout reason in render-finding.js — which means
+// the keyboard activation a real control would have had is ours to
+// supply. Enter is what a link takes; Space too, since a reader who
+// has tabbed onto something clickable will try both.
+report.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' && e.key !== ' ') return
+  const codeNav = pathClosest(e, '[data-code-nav-file]')
+  if (!codeNav) return
+  // Space scrolls the pane otherwise, which is the opposite of putting
+  // the reader on the lines they just asked for.
+  e.preventDefault()
+  pushFocusCode(focusedGroupOf(e), {
+    integrity: codeNav.dataset.codeNavIntegrity,
+    file: codeNav.dataset.codeNavFile,
+    range: lineRange(codeNav.dataset.codeNavLine),
+  })
+})
 
 // Back (-1) / forward (+1) through the panel's history. A no-op at the
 // ends — the buttons are disabled there, so this only catches a stale

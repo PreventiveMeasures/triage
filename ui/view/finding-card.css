@@ -608,6 +608,22 @@ details[open] > summary.section-label::after { transform: translateY(-2px) rotat
   & > li { position: relative; }
 
   & li::marker { color: var(--muted); font-size: .9em; }
+  /* The row the Code panel is currently showing. A dot outside the
+     ordinal, in the list's own left padding: the numbering stays a
+     numbering (a marker that changed shape or colour would read as a
+     different KIND of row), and the mark sits where the eye scans for
+     "which one of these am I on". Only ever drawn with the panel
+     open — see render-finding.js, where nothing is "current" in a view
+     that has no panel to be current in. */
+  & > li.current::before {
+    content: '';
+    position: absolute;
+    left: -1.45rem; top: .5em;
+    width: .35rem; height: .35rem;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+  & > li.current::marker { color: var(--accent); }
   /* Rows that are just a `file:line` reference read as one list and
      are set tight. A row carrying a NOTE needs the air back: its note
      wraps, and at the tight gap the last wrapped line runs straight
@@ -617,18 +633,17 @@ details[open] > summary.section-label::after { transform: translateY(-2px) rotat
 /* The reference line of a row. Not underlined at rest — a column of
    these reads as locations, not as a list of links being offered —
    but underlined under the pointer, where it IS one.
-   `button` because the focus view's rows go to the code panel beside
-   the card rather than out to GitHub (render-finding.js
-   evidencePanelRef), and a button that moves a panel is what it is.
-   It has to be un-styled back into text to sit in the line. */
+   Two elements wear this: an `<a>` out to GitHub, and in the focus
+   view a `role="link"` span into the code panel beside the card
+   (render-finding.js evidencePanelRef). Both are plain inline text, so
+   a path too long for the line wraps and the marks after it stay on
+   its last line. */
 .evidence-ref {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .92em; overflow-wrap: anywhere;
   color: var(--accent); text-decoration: none;
-  padding: 0; border: 0; background: none;
-  text-align: left;
 
-  &:is(a, button):hover { text-decoration: underline; }
+  &:is(a, [role='link']):hover { text-decoration: underline; }
   &:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; border-radius: 2px; }
 }
 /* The location links and the marks beside them keep the ordinary text
@@ -639,8 +654,10 @@ details[open] > summary.section-label::after { transform: translateY(-2px) rotat
 /* No link to give this row — same type, muted, so the missing target
    reads as absent rather than broken. In the focus view that is the
    bundle saying it doesn't carry the file; everywhere else it is the
-   row citing something no repository here can resolve. */
-span.evidence-ref { color: var(--muted); }
+   row citing something no repository here can resolve. `:not([role])`
+   keeps the panel reference out of it: that one is a span too, but it
+   goes somewhere. */
+span.evidence-ref:not([role]) { color: var(--muted); }
 /* format.js's flowText has already rejoined the note's soft line breaks
    (the report wrapped them at its own width, not the card's), so what
    `pre-wrap` preserves here is only a break that carried meaning — a

@@ -184,6 +184,20 @@ export function focusCodeHistory(focusedGroup) {
   return { base, ...historyFor(state.focusCodeStack, state.focusCodeAt, base) }
 }
 
+// Where the panel is right now, for a finding — the same answer
+// `getFocusCode` draws, without the source behind it.
+//
+// For the evidence list, which marks the row the panel is on. It takes
+// the active FINDING rather than the group because that is what the
+// card has in hand, and the active tab is what the base is computed
+// from either way.
+export function focusCodePosition(f) {
+  const match = attachedBundle(f)
+  if (!match) return null
+  const base = { integrity: match.integrity, file: match.file, range: lineRange(f?.line) }
+  return historyFor(state.focusCodeStack, state.focusCodeAt, base).pos
+}
+
 // The focus view's inline code panel: whatever file the history says
 // it is on, whole, with that position's lines marked. Same three
 // answers as bundleSource above, plus the file / integrity / range the

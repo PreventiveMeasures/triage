@@ -1138,10 +1138,11 @@ function findingsBodyTemplate(filtered) {
     // the new content on the same frame.
     void state.focusCodeTick
     const code = getFocusCode(focused)
-    // Where the panel has been for this finding. Empty until the
-    // reader follows an evidence link out of it, which is why the
-    // back / forward pair below isn't drawn on arrival: there is
-    // nothing behind the file you started on.
+    // Where the panel has been for this finding. Empty until the reader
+    // follows a reference somewhere the panel wasn't already showing —
+    // which is why the back / forward pair below isn't drawn on
+    // arrival, and isn't drawn by a click on the row the panel is
+    // already on either: there is nothing behind the current entry.
     const codeHistory = focusCodeHistory(focused)
     const mainClass = code ? 'focus-main with-code' : 'focus-main'
     // The card | code split as the divider's percentage along the
@@ -1191,7 +1192,7 @@ function findingsBodyTemplate(filtered) {
                      history takes the other one's position with it, so
                      the button under the cursor moves out from under
                      it exactly when it is being clicked repeatedly. -->
-                ${(codeHistory?.stack.length ?? 0) > 0 ? html`<div class="focus-code-nav">
+                ${(codeHistory?.stack.length ?? 0) > 1 ? html`<div class="focus-code-nav">
                   <button
                     type="button"
                     class="focus-code-nav-btn"
