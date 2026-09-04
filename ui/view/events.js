@@ -1467,6 +1467,25 @@ function showKanbanFinding(next) {
   state.focusCodeAt = 0
 }
 
+// What a dialog that just changed finding owes the surfaces around it,
+// once the render has landed: the rail scrolls its now-open card into
+// view, and the code panel — mounted in fullscreen — moves to the
+// lines this finding cites. Both are no-ops when their surface isn't
+// on screen.
+//
+// The panel needs asking. Lit reuses `.focus-code-body` across the
+// render, so its scrollTop survives the swap and the new file arrives
+// still scrolled to wherever the last finding was read — which for a
+// finding cited at line 400 of the same bundle is nowhere near it. The
+// focus view has always asked (setFocusGid); the dialog only ever got
+// it by accident, on the cache-miss path where loadSources reveals
+// after its own late render, and never when the source was already
+// loaded.
+function afterKanbanFindingShown() {
+  scrollKanbanRailActive()
+  revealFocusCodeLines()
+}
+
 function setKanbanPopoverGid(next) {
   const prev = state.kanbanPopoverGid
   if (prev === next) return
@@ -1481,7 +1500,7 @@ function setKanbanPopoverGid(next) {
     syncOpenedGroupTriage(next)
     showKanbanFinding(next)
     render()
-    scrollKanbanRailActive()
+    afterKanbanFindingShown()
     return
   }
 
@@ -1548,7 +1567,7 @@ function setKanbanPopoverGid(next) {
       // open card when the NEW snapshot is captured — scrolling it
       // afterwards would animate from a slice of the queue the user
       // never asked for.
-      scrollKanbanRailActive()
+      afterKanbanFindingShown()
       // Clear inline name inside the callback so the NEW snapshot
       // has exactly one element holding `kanban-detail-modal` —
       // the modal (via CSS). Two elements with the same name
@@ -1649,6 +1668,10 @@ report.addEventListener('click', (e) => {
       localStorage.setItem(KANBAN_DETAIL_FULLSCREEN_KEY, String(state.kanbanDetailFullscreen))
     } catch {}
     render()
+    // Going fullscreen mounts the code panel for the first time, at the
+    // top of the file. Put it on the lines the finding cites, same as a
+    // navigation would.
+    revealFocusCodeLines()
     return
   }
   // Fullscreen toggle in a column header — give that column the whole
