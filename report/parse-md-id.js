@@ -1,55 +1,53 @@
 // FROZEN. The id fingerprint of a Claude Security (markdown) finding.
 //
-// `report/finding-id.js` derives a finding's uuid from its severity,
-// its DESCRIPTION and its location, and that uuid is the key every
-// piece of stored triage hangs off — markers, buckets, comments, fixes.
-// The description, though, is presentation: it gained bold section
-// labels, then lost its Evidence list to structured rows, and each of
-// those edits silently re-keyed every finding a user had already
-// triaged.
+// A finding's uuid (finding-id.js) is the key every piece of stored
+// triage hangs off — markers, buckets, comments, fixes — so it has to
+// be a function of the source document alone, and it has to stay that
+// function. `parse-md.js` is not that: what it produces is
+// presentation, and it changes whenever the card does.
 //
-// So the fingerprint no longer rides on what `parse-md.js` renders
-// today. The functions below are a verbatim snapshot of that parser as
-// it stood BEFORE the `## Evidence` work (v1.0.0-alpha.10, when it
-// still lived at `common/parse-md.js`) and they exist for one purpose: to reproduce, byte for byte,
-// the description / location / severity that findings were keyed by
-// then. Two parses of the same block is the price of stable ids.
+// So the fingerprint comes from a second parse of the same block, the
+// one in this file. It reads a fixed subset of the format — the title,
+// `## Details`, `## Location`, `## Impact`, `## Reproduction steps` and
+// the severity — into severity, description and location of a fixed
+// shape. That is what the uuid hashes: parse-md.js stamps it on the
+// finding as `_idBasis`, and deriveFindingId uses it in place of the
+// finding's own fields.
 //
 // DO NOT change the behaviour of anything in this file — not to fix a
 // bug in it, not to share code with parse-md.js, not to make it read
-// better, not to feed it something the newer format carries. Every byte
-// it emits is baked into uuids that already exist in users' browsers.
+// better, not to widen the subset it reads. Every byte it emits is
+// baked into uuids in users' browsers; the golden values in
+// tests/finding-id-md.test.js are what it must keep producing.
 //
-// That holds for the `## Evidence` shape too, which this snapshot
-// predates and therefore cannot see: such a report has no
-// `## Location`, so its findings fingerprint by file 'unknown' / line
-// '?' over a description with no evidence in it — exactly what v1.0.0-
-// alpha.10 derived for the same document. Two findings in one report
+// `## Evidence` is outside the subset. A finding whose only cited site
+// is an evidence row therefore keys by file 'unknown' / line '?' over
+// a description with no evidence in it, and two findings in one report
 // whose title / details / impact / reproduction and severity are all
-// identical do collide into one id under that rule. That is the old
-// behaviour, deliberately kept: an id that leaves data out of the hash
-// is recoverable, an id that moves is not.
+// identical share an id. That is the rule, not an oversight: an id
+// that leaves data out of the hash is recoverable, an id that moves is
+// not.
 
 const VALID_SEVERITIES = new Set(['critical', 'high', 'medium', 'low', 'high_bug', 'bug', 'informational'])
 
 // The fingerprint object `deriveFindingId` hashes for one finding
-// block, in the key order the legacy code produced (JSON.stringify is
-// order-sensitive, so the order IS part of the id). Nothing but this
-// snapshot feeds it: the discriminator is the legacy location when the
-// source carried one, and the legacy file / line otherwise — the same
-// two branches `deriveFindingId` itself chose between back then.
+// block, in a fixed key order (JSON.stringify is order-sensitive, so
+// the order IS part of the id). The discriminator is the location when
+// the source carries a `## Location`, and file / line otherwise — the
+// same two branches deriveFindingId takes for a finding that carries
+// no basis.
 export function frozenIdBasis(block) {
-  const legacy = legacyBasis(block)
-  if (!legacy) return null
-  const { severity, description, location, file, line } = legacy
+  const basis = frozenParse(block)
+  if (!basis) return null
+  const { severity, description, location, file, line } = basis
   return location
     ? { severity, description, location }
     : { severity, description, file, line }
 }
 
-// The legacy parse of one `# Title` block — severity, description and
-// location exactly as the pre-Evidence parser computed them.
-function legacyBasis(block) {
+// This file's parse of one `# Title` block: severity, description and
+// location, from the fixed subset of the format described above.
+function frozenParse(block) {
   const newlineIdx = block.indexOf('\n')
   const title = (newlineIdx === -1 ? block : block.slice(0, newlineIdx)).trim()
   if (!title) return null
@@ -72,7 +70,7 @@ function legacyBasis(block) {
   }
 }
 
-// ── Verbatim snapshot below this line ────────────────────────────────
+// ── The frozen readers ───────────────────────────────────────────────
 
 function splitBody(body) {
   const dashRe = /^---\s*$/mu

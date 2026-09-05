@@ -35,9 +35,9 @@
 //   **Branch:** <branch>
 //   **Date created:** <YYYY-MM-DD>
 //
-// Older reports carry a single-line `## Location` ([<name>](<url>))
-// where newer ones list every cited site under `## Evidence`; both are
-// read, and `## Location` wins when a report somehow carries both.
+// A report cites its site either as a single-line `## Location`
+// ([<name>](<url>)) or as an `## Evidence` list; both are read, and
+// `## Location` wins when a report carries both.
 //
 // Every `## …` section is optional (any missing one is just dropped
 // from the description); only the title and the metadata block carry
@@ -100,10 +100,10 @@ function parseBlock(block) {
   const meta = parseMeta(metaText)
   const evidence = evidenceRows(sections.evidence || '')
   // The finding's own location: `## Location` when the report carries
-  // one (older format), otherwise the FIRST `## Evidence` row — the
-  // primary site, by the convention the newer format follows. Every row
-  // (this one included) also lands on `finding.evidence` below, which
-  // is what the card renders as a list.
+  // one, otherwise the FIRST `## Evidence` row — the primary site, by
+  // the format's convention. Every row (this one included) also lands
+  // on `finding.evidence` below, which is what the card renders as a
+  // list.
   const { file, line, locationLink } = parseLocation(
     sections.location || evidence[0]?.ref || '',
   )
@@ -135,14 +135,12 @@ function parseBlock(block) {
   // ingest.js would fall back to data.type for every finding and the
   // run-meta line would show the same category for the whole report.
   if (meta.category) finding.type = meta.category.toLowerCase()
-  // The id fingerprint is pinned to the pre-Evidence parse of this same
-  // block (parse-md-id.js) rather than to the fields above: the
-  // description is presentation and has already been reshaped twice,
-  // and every reshape silently re-keys the triage users have stored
-  // against these findings. Nothing this parser resolves is passed in —
-  // an `## Evidence` report keys exactly as alpha.10 keyed it, evidence
-  // excluded. finding-id.js prefers this when deriving the uuid; see
-  // that module's header before touching any of it.
+  // The id fingerprint is parse-md-id.js's own parse of this same
+  // block, not the fields above: those are presentation and free to
+  // change, the fingerprint is not. Nothing this parser resolves is
+  // passed in — `## Evidence` is outside the fingerprint's subset of
+  // the format. finding-id.js prefers `_idBasis` when deriving the
+  // uuid; read that module's header before touching either side.
   const idBasis = frozenIdBasis(block)
   if (idBasis) finding._idBasis = idBasis
 

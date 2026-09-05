@@ -79,7 +79,7 @@ export function removeCount(name) {
 // Count entries in raw report content and identify the source format —
 // the report library's `analyzeReport` under this module's own name,
 // which is what the sidebar, the drop path and the sync download dialog
-// already import from `#client/index.js`.
+// import from `#client/index.js`.
 //
 // Each `findings[]` entry may be a single Finding or a Finding[] (a
 // pre-deduped group from an upstream pass) — the sidebar count reflects
