@@ -11,10 +11,11 @@ import { grantAdvisoriesProxyConsent, retryBundleAdvisories } from './render-bun
 import { openCommentDialog } from './dialogs/comment-dialog.js'
 import { openDownloadBundleDialog } from './dialogs/download-bundle-dialog.js'
 import { openExportConfirmDialog } from './dialogs/export-confirm-dialog.js'
+import { openExportViewDialog } from './dialogs/export-view-dialog.js'
 import { openFixLinkDialog } from './dialogs/fix-link-dialog.js'
 import { findingLinkFor } from './finding-link.js'
 import { FOCUS_SPLIT_STEP, nudgeFocusSplit, resetFocusSplit, startFocusSplitDrag } from './focus-splitter.js'
-import { downloadReportsAsMarkdown } from './markdown-export.js'
+import { downloadReportsAsMarkdown, reportsToMarkdown } from './markdown-export.js'
 import { bundleToCycloneDx, bundleToSpdx, sbomBaseName } from './sbom.js'
 
 // When another OPFS report finishes parsing, re-render if the user is
@@ -2148,7 +2149,16 @@ document.addEventListener('print-requested', async () => {
 // filtered selection (and counts) before the file is written.
 document.addEventListener('download-requested', async () => {
   if (state.reports.length === 0) return
-  const { confirmed } = await openExportConfirmDialog('download')
+  const { confirmed, view } = await openExportConfirmDialog('download')
+  // View replaces the confirmation with the file itself — same
+  // selection, serialized the same way the download would, shown
+  // read-only. It ends the flow: closing the preview leaves the report
+  // unwritten, and the button is one click away for a reader who has
+  // seen what they wanted to see.
+  if (view) {
+    await openExportViewDialog(reportsToMarkdown(state.reports))
+    return
+  }
   if (!confirmed) return
   downloadReportsAsMarkdown(state.reports)
 })

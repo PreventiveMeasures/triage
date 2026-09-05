@@ -1,0 +1,47 @@
+/* `<export-view-dialog>` layer on top of dialog-base.css — the
+   read-only look at the Markdown the Download button would write.
+
+   Wider and taller than the base dialog: this one exists to be read,
+   and Markdown wrapped into a 480px column stops looking like the file
+   it is going to produce. */
+dialog {
+  max-width: 900px; width: min(94vw, 900px);
+}
+
+/* No intro paragraph here — the heading names the thing and the thing
+   is right there — so the title takes the gap the intro would have. */
+header h3 { margin-bottom: .7rem; }
+
+/* The document itself. `pre` keeps the file's own line breaks, and the
+   box scrolls in both directions rather than reflowing: a wrapped line
+   would misrepresent what lands on disk. Capped against the viewport so
+   the footer stays reachable on a long report. */
+.evd-code {
+  margin: 0;
+  max-height: min(60vh, 32rem);
+  overflow: auto;
+  padding: .6rem .75rem;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg, var(--surface));
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .78rem; line-height: 1.55;
+  white-space: pre;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+
+  &::-webkit-scrollbar { width: 6px; height: 6px; }
+  &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  & code { font: inherit; background: none; }
+}
+
+/* Byte / line count, riding the footer row opposite the Close button —
+   the same "what am I committing to" role the confirm dialog's count
+   headline plays, in footnote weight. Below the rule rather than under
+   the box: it describes the file, not the excerpt on screen, and the
+   footer is where this dialog's other statement about the file lives. */
+.evd-meta {
+  color: var(--muted); font-size: .74rem;
+  font-variant-numeric: tabular-nums;
+}

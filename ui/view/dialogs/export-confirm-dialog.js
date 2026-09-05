@@ -8,8 +8,10 @@
 // Sibling of `<delete-report-dialog>` etc.: extends `AppDialog` for
 // the shared shadow-DOM <dialog> chrome (focus-trap + Esc-to-cancel).
 // Public `openExportConfirmDialog(mode)` snapshots the current
-// selection and resolves with `{ confirmed }`; Cancel / Esc / native
-// close all resolve to `{ confirmed: false }`.
+// selection and resolves with `{ confirmed, view }`; Cancel / Esc /
+// native close all resolve to both false. Download also offers View,
+// which resolves `{ view: true }` and leaves it to the caller to show
+// the Markdown — this dialog's job is the selection, not the file.
 //
 // Native Ctrl+P / browser-menu printing bypasses this dialog — those
 // can't be intercepted with an async confirm — so it only guards the
@@ -57,14 +59,18 @@ class ExportConfirmDialog extends AppDialog {
     this.renderRoot.querySelector(sel)?.focus()
   }
 
-  _finish(confirmed) {
+  // One of 'cancel' | 'view' | 'confirm'. Spelled out rather than a
+  // boolean because there are now three ways out and two of them are
+  // not a cancel.
+  _finish(action) {
     if (this._settled) return
-    super._finish({ confirmed: Boolean(confirmed) })
+    super._finish({ confirmed: action === 'confirm', view: action === 'view' })
   }
 
-  _onClose = () => this._finish(false)
-  _onCancel = () => this._finish(false)
-  _onConfirm = () => this._finish(true)
+  _onClose = () => this._finish('cancel')
+  _onCancel = () => this._finish('cancel')
+  _onView = () => this._finish('view')
+  _onConfirm = () => this._finish('confirm')
 
   _countSection() {
     if (this.total === 0) {
@@ -129,6 +135,11 @@ class ExportConfirmDialog extends AppDialog {
       <footer class="nwd-actions">
         <span class="nwd-spacer"></span>
         <button type="button" data-role="cancel" @click=${this._onCancel}>Cancel</button>
+        <!-- Download only: View shows the Markdown this selection would
+             write. Print has no such artefact to show — the page IS the
+             preview. Disabled alongside the primary on an empty
+             selection, where there would be nothing to look at. -->
+        ${isPrint ? nothing : html`<button type="button" data-role="view" ?disabled=${this.included === 0} @click=${this._onView}>View</button>`}
         <button type="button" class="primary" ?disabled=${this.included === 0} @click=${this._onConfirm}>${isPrint ? 'Print' : 'Download'}</button>
       </footer>
     </dialog>`
@@ -162,9 +173,12 @@ export function openExportConfirmDialog(mode) {
       bucketLabel: summary.bucketLabel,
       focusedOnly: summary.focusedOnly,
     })
-    const settle = (confirmed) => { el.remove(); resolve({ confirmed }) }
-    el.addEventListener('resolve', (e) => settle(Boolean(e.detail?.confirmed)))
-    el.addEventListener('modal-conflict', () => settle(false))
+    const settle = (detail) => { el.remove(); resolve(detail) }
+    el.addEventListener('resolve', (e) => settle({
+      confirmed: Boolean(e.detail?.confirmed),
+      view: Boolean(e.detail?.view),
+    }))
+    el.addEventListener('modal-conflict', () => settle({ confirmed: false, view: false }))
     document.body.append(el)
   })
 }

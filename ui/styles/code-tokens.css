@@ -1,0 +1,45 @@
+/* Prism token palette — the colours every surface that paints
+   highlighted code shares.
+
+   Kept scope-free so each consumer can adopt it where its own markup
+   lives: `<finding-card>` pulls it into its shadow root beside the
+   card styles, and the export preview dialog into its own. `.token`
+   classes only ever come from Prism's own output, so an unscoped rule
+   can't reach anything else.
+
+   The palette itself is NOT here: the `--code-*` properties come from
+   theme.css and inherit across every shadow boundary, so one snippet
+   colours identically wherever it is drawn and the light themes retune
+   all of them at once. Prism stamps `<span class="token X Y">`; X (the
+   kind) is all we key off. */
+.token.comment,
+.token.prolog,
+.token.cdata { color: var(--code-comment); font-style: italic; }
+.token.punctuation { color: var(--muted); }
+.token.string,
+.token.attr-value,
+.token.char,
+.token.regex { color: var(--code-string); }
+.token.number,
+.token.boolean,
+.token.constant,
+.token.symbol { color: var(--code-number); }
+.token.keyword,
+.token.builtin,
+.token.important,
+.token.atrule { color: var(--code-keyword); }
+.token.function,
+.token.class-name,
+.token.tag { color: var(--code-function); }
+.token.operator,
+.token.entity,
+.token.url,
+.token.attr-name,
+.token.selector { color: var(--code-operator); }
+.token.variable,
+.token.property,
+.token.parameter { color: var(--code-variable); }
+.token.deleted { color: var(--code-deleted); }
+.token.inserted { color: var(--code-inserted); }
+.token.italic { font-style: italic; }
+.token.bold { font-weight: bold; }
