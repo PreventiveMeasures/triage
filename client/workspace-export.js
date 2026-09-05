@@ -2,7 +2,7 @@ import { loadRepoUrlFor, state } from './state.ts'
 import { normalizeEntry } from './triage-entry.ts'
 import { listBundles, readBundle, readFile } from './storage.js'
 import { setReportWorkspace } from './workspaces.js'
-import { backfillFindingIds, flattenFindings, parseReport } from '../common/report-findings.js'
+import { backfillFindingIds, flattenFindings, parseReport } from '../report/index.js'
 import { gzipText } from '../common/gzip.js'
 import { encryptBundle } from './workspace-bundle-crypto.js'
 

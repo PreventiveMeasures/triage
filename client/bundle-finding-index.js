@@ -26,8 +26,8 @@
 import { addFindingToBucket, dropKeyFromBucket, indexFindingByVersion, isPlaceholderNpmPackage, newBucket, packageVersionOf, pruneVersionSlot, recomputeBucketReports } from './bundle-finding-versions.js'
 import { listFiles, onFileMutated, readFile } from './storage.js'
 import { loadRepoUrlFor, onRepoUrlChanged } from './state.ts'
-import { flattenFindings, parseReport } from '../common/report-findings.js'
-import { inheritReportMeta, reportRepoGithub } from '../common/report-meta.js'
+import { flattenFindings, parseReport } from '../report/index.js'
+import { inheritReportMeta, reportRepoGithub } from '../report/index.js'
 
 const byHash = new Map()
 const byPackage = new Map()
@@ -219,7 +219,7 @@ function extractFindings(data) {
   //
   // Run-level meta (type / model / think / effort / exportsMode) is
   // inherited from the report header, field by field, under the same
-  // rule the report view follows — see common/report-meta.js (which
+  // rule the report view follows — see report/meta.js (which
   // also holds the source-marked opt-out). The bundle viewer's source
   // panel reads these through prettyModel + the meta chain; without
   // the inheritance the chain stays empty for every finding that

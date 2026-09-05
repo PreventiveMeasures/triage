@@ -1,4 +1,4 @@
-// `common/report-meta.js` — the header → finding run-meta projection
+// `report/meta.js` — the header → finding run-meta projection
 // shared by the report view (ui/view/ingest.js) and the OPFS-wide
 // finding index (client/bundle-finding-index.js). Pins the rule both
 // sides depend on:
@@ -21,7 +21,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { META_FIELDS, inheritReportMeta, reportRepoGithub } from '../common/report-meta.js'
+import { META_FIELDS, inheritReportMeta, reportRepoGithub } from '../meta.js'
 
 // The header shape the analyzer emits at the top of a native dump.
 const header = () => ({

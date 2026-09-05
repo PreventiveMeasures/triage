@@ -1,23 +1,22 @@
 // Finding ids for Claude Security (markdown) imports — the uuid every
 // piece of stored triage hangs off (markers, buckets, comments, fixes).
 //
-// `common/parse-md-id.js` freezes that fingerprint against a snapshot of
-// the parser as it stood before the `## Evidence` work, so reshaping the
-// RENDERED description can never re-key what a user has already triaged.
-// The uuids below are the ones the pre-Evidence parser produced for
-// these exact documents: they are golden values, not something to
-// regenerate when a test fails. A failure here means the ids in users'
-// browsers no longer match the ones the app derives.
+// `report/parse-md-id.js` derives that fingerprint from its own frozen
+// parse of the block, so the RENDERED description is free to change
+// without re-keying what a user has triaged. The uuids below are golden
+// values (captured from v1.0.0-alpha.10), not something to regenerate
+// when a test fails: a failure here means the ids in users' browsers no
+// longer match the ones the app derives.
 
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { deriveFindingId } from '../common/finding-id.js'
-import { parseMarkdownFindings } from '../common/parse-md.js'
+import { deriveFindingId } from '../finding-id.js'
+import { parseMarkdownFindings } from '../parse-md.js'
 
-// The legacy shape: a `## Location` section, bold inside the prose, and
-// a second finding carrying no location at all (which the legacy code
-// fingerprinted by file / line — 'unknown' / '?').
+// The `## Location` shape: bold inside the prose, and a second finding
+// carrying no location at all (fingerprinted by file / line —
+// 'unknown' / '?').
 const LEGACY_REPORT = [
   '# Unsafe deserialization',
   '',
@@ -58,8 +57,8 @@ const LEGACY_IDS = [
 
 const idsOf = (md) => Promise.all(parseMarkdownFindings(md).findings.map((f) => deriveFindingId(f)))
 
-describe('markdown finding ids — frozen against the legacy parse', () => {
-  it('derives the ids the pre-Evidence parser derived', async () => {
+describe('markdown finding ids — the frozen fingerprint', () => {
+  it('derives the golden ids', async () => {
     assert.deepEqual(await idsOf(LEGACY_REPORT), LEGACY_IDS)
   })
 
@@ -78,7 +77,7 @@ describe('markdown finding ids — frozen against the legacy parse', () => {
     })
   })
 
-  it('fingerprints the LEGACY description, not the rendered one', () => {
+  it('fingerprints its own description, not the rendered one', () => {
     const f = parseMarkdownFindings(LEGACY_REPORT).findings[0]
     // What the card renders today: bold section labels, the report's own
     // emphasis kept. What the id is keyed by: neither.
@@ -107,10 +106,9 @@ describe('markdown finding ids — frozen against the legacy parse', () => {
   })
 })
 
-// `## Evidence` reports carry no `## Location`, and this snapshot
-// predates that section entirely — so their findings key off a
-// description with no evidence in it, by file 'unknown' / line '?',
-// which is exactly what v1.0.0-alpha.10 derived for the same document.
+// `## Evidence` is outside the fingerprint's subset of the format, so a
+// finding whose only cited site is an evidence row keys off a
+// description with no evidence in it, by file 'unknown' / line '?'.
 // Evidence data staying out of the hash is the deliberate trade: an id
 // that leaves something out is recoverable, an id that moves is not.
 describe('markdown finding ids — the `## Evidence` shape', () => {
@@ -133,11 +131,10 @@ describe('markdown finding ids — the `## Evidence` shape', () => {
 
   const LINKED = evidenceReport('[src/a.ts:10](https://example.com/a.ts#L10)', 'The merge loop.')
 
-  // Golden: what alpha.10's parser + deriveFindingId produced for this
-  // document, back when it could see none of its Evidence section.
+  // Golden value, captured from v1.0.0-alpha.10.
   const ALPHA_10_ID = '889344d7-2fa6-4482-8506-c540556a1e10'
 
-  it('derives the id alpha.10 derived, evidence excluded', async () => {
+  it('derives the golden id, evidence excluded', async () => {
     assert.deepEqual(await idsOf(LINKED), [ALPHA_10_ID])
   })
 
@@ -169,10 +166,10 @@ describe('markdown finding ids — the `## Evidence` shape', () => {
 })
 
 // The breadth pin: one document per shape the parser meets, each with
-// the uuid v1.0.0-alpha.10 derived for it. Regenerating a value here
-// because a test went red is the one thing this file exists to stop —
-// a changed uuid means every marker, bucket, comment and fix a user
-// stored against that finding has been orphaned.
+// its golden uuid (captured from v1.0.0-alpha.10). Regenerating a value
+// here because a test went red is the one thing this file exists to
+// stop — a changed uuid means every marker, bucket, comment and fix a
+// user stored against that finding has been orphaned.
 const ALPHA_10_GOLDEN = [
   ["location, linked", "# T\n\n## Details\nD **bold**.\n\n## Location\n[src/a.ts:42](https://e.com/a.ts#L42)\n\n## Impact\nI.\n\n---\n**Severity:** high",
     ["1727e7c7-d672-4074-838f-46cc4c1b98c4"]],
@@ -202,9 +199,9 @@ const ALPHA_10_GOLDEN = [
     ["bba7a8a4-e0e2-474d-9a2f-b60562385868"]],
 ]
 
-describe('markdown finding ids — the alpha.10 golden table', () => {
+describe('markdown finding ids — the golden table', () => {
   for (const [shape, doc, ids] of ALPHA_10_GOLDEN) {
-    it(`keys ${shape} exactly as alpha.10`, async () => {
+    it(`keys ${shape} to its golden id`, async () => {
       assert.deepEqual(await idsOf(doc), ids)
     })
   }

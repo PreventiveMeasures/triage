@@ -1,4 +1,4 @@
-// Piolium markdown findings parser — `common/parse-piolium.js`. Pure
+// Piolium markdown findings parser — `report/parse-piolium.js`. Pure
 // function; covers the format guard, the pentest-template layout
 // (`## Technical Findings Detail` → `### [ID] Title`), the mode
 // pipelines' `## Findings by Severity` layout (severity groups holding
@@ -11,7 +11,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { parsePioliumFindings } from '../common/parse-piolium.js'
+import { parsePioliumFindings } from '../parse-piolium.js'
 
 // Minimal but realistic report: the H1 + prose sections piolium's
 // assembler always writes, an index table, and one detail block.

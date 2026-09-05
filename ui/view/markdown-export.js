@@ -101,7 +101,7 @@ function findingToMarkdown(f) {
     lines.push('')
   }
   // Claude Security's `## Evidence` list lives in structured rows after
-  // parse (see common/parse-md.js), so it's rebuilt here rather than
+  // parse (see report/parse-md.js), so it's rebuilt here rather than
   // riding along inside the description.
   const evidence = evidenceMarkdown(f)
   if (evidence) {

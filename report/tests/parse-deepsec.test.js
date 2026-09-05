@@ -1,4 +1,4 @@
-// Vercel DeepSec markdown findings parser — `common/parse-deepsec.js`.
+// Vercel DeepSec markdown findings parser — `report/parse-deepsec.js`.
 // Pure function; covers severity tier mapping, confidence text →
 // numeric mapping, recommendation extraction, and the `## SEVERITY (n)`
 // + `### Title` two-level structure.
@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { parseDeepsecFindings } from '../common/parse-deepsec.js'
+import { parseDeepsecFindings } from '../parse-deepsec.js'
 
 const HEADER = [
   '# Vulnerability Scan Report',

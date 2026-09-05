@@ -157,7 +157,7 @@ describe('markdownLinkToken', () => {
   })
 })
 
-// `## Evidence` rows (common/parse-md.js) — the card renders them as a
+// `## Evidence` rows (report/parse-md.js) — the card renders them as a
 // list, and every text surface (markdown export, GitHub issue body,
 // clipboard / Claude handoff, search haystack) rebuilds the markdown
 // from `evidenceMarkdown`, so its shape is what those all emit.

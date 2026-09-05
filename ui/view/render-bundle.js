@@ -25,7 +25,7 @@ import { bundleHasSbomComponents } from './sbom.js'
 import { buildSearchMatcher, runBundleSearch } from './bundle-search-scan.js'
 import { bundlePkgOf, ownSourceSplittable } from './bundle-pkg-of.js'
 import { tabKey } from './group.js'
-import { computeFileHash } from '../../common/finding-id.js'
+import { computeFileHash } from '../../report/finding-id.js'
 import { langForPath, highlight as prismHighlight } from './prism-highlight.js'
 import { computeTransitiveCounts } from './file-counts.js'
 import { pkgColor } from './graph/utils.js'
@@ -107,7 +107,7 @@ function buildBundleTree(details) {
 }
 
 // SHA-512 of each bundle source, in the canonical `sha512-${base64}`
-// SRI form that `computeFileHash` (common/finding-id.js) produces —
+// SRI form that `computeFileHash` (report/finding-id.js) produces —
 // the same hashing the analyzer stamps on findings, so the strings
 // compare equal. Async because crypto.subtle.digest is. Returns
 // Map<file, integrity>.

@@ -68,7 +68,8 @@
   "overrides": [
     {
       "files": [
-        "tests/**"
+        "tests/**",
+        "report/tests/**"
       ],
       "rules": {
         "max-lines-per-function": "off",

@@ -13,9 +13,7 @@
 // bucket yet" — the lazy fetch runs in the background and re-renders
 // when each entry lands.
 import { readFile } from './storage.js'
-import { parseMarkdownFindings } from '../common/parse-md.js'
-import { parseDeepsecFindings } from '../common/parse-deepsec.js'
-import { parsePioliumFindings } from '../common/parse-piolium.js'
+import { analyzeReport } from '../report/index.js'
 import { getItem as getSecureItem, setItem as setSecureItem } from './secure-storage.js'
 
 const COUNTS_KEY = 'deepview.fileCounts'
@@ -78,29 +76,19 @@ export function removeCount(name) {
   persist()
 }
 
-// Count entries in raw report content and identify the source format.
+// Count entries in raw report content and identify the source format —
+// the report library's `analyzeReport` under this module's own name,
+// which is what the sidebar, the drop path and the sync download dialog
+// import from `#client/index.js`.
+//
 // Each `findings[]` entry may be a single Finding or a Finding[] (a
-// pre-deduped group from an upstream pass) — the sidebar count
-// reflects entries (matching what the user sees as rows in the table
-// view), not flattened member findings. The markdown / deepsec
-// parsers each return the standard `{ findings: [...] }` shape, so
-// the same indexing applies after they run. `source` mirrors the
-// parser's `data.source` ('deepsec' / 'piolium' / 'claude-security')
-// and is `undefined` for analyzer-native JSON dumps.
+// pre-deduped group from an upstream pass) — the sidebar count reflects
+// entries (matching what the user sees as rows in the table view), not
+// flattened member findings. `source` mirrors the parser's
+// `data.source` ('deepsec' / 'piolium' / 'claude-security') and is
+// `undefined` for analyzer-native JSON dumps.
 export function analyzeContent(content) {
-  try {
-    const data = JSON.parse(content)
-    if (data && Array.isArray(data.findings)) {
-      return { count: data.findings.length, source: data.source, recognized: true }
-    }
-  } catch {}
-  const ds = parseDeepsecFindings(content)
-  if (ds) return { count: ds.findings.length, source: ds.source, recognized: true }
-  const pl = parsePioliumFindings(content)
-  if (pl) return { count: pl.findings.length, source: pl.source, recognized: true }
-  const md = parseMarkdownFindings(content)
-  if (md) return { count: md.findings.length, source: md.source, recognized: true }
-  return { count: 0, recognized: false }
+  return analyzeReport(content)
 }
 
 // Walk a list of names and populate the cache for any not yet known.

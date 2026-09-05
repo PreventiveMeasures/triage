@@ -56,7 +56,7 @@ const {
 } = await import('../client/finding-locate.js')
 
 const { saveFile } = await import('../client/storage.js')
-const { deriveFindingId } = await import('../common/finding-id.js')
+const { deriveFindingId } = await import('../report/finding-id.js')
 
 const { state } = await import('../client/state.ts')
 const {

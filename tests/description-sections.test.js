@@ -7,7 +7,7 @@
 // card can draw each as a `<pre>` instead of printing its fences; and
 // `listSegments` lifts the markdown lists out so it can draw those as
 // `<ol>` / `<ul>`. All of them read fences the way
-// common/md-structure.js does, so a snippet is never reflowed, split
+// report/md-structure.js does, so a snippet is never reflowed, split
 // across sections, cut into list items, or chipped up by the inline
 // `` `code` `` / `"quote"` pass.
 //
