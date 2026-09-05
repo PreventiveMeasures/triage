@@ -20,16 +20,15 @@ import { state } from './state.ts'
 import { bucketOf, isReportIgnored, patchEntry, setReportIgnored } from './triage-entry.ts'
 import { SESSION_ID_RE, saveTriage } from './triage.js'
 import { listFiles, readFile } from './storage.js'
-import { backfillFindingIds, flattenFindings, parseReport } from '../report/index.js'
+import { loadFindings } from '../report/index.js'
 
 // Walk every OPFS-stored report in `names`, parse it, and return
-// the union of finding ids reachable from those reports. Uses the
-// shared report-findings helpers: `parseReport` (native JSON, with a
-// DeepSec / markdown fallback), `flattenFindings` (dedup-group entries
-// → member findings), and `backfillFindingIds` (findings without an
-// exporter-stamped `id` get one derived from the same fingerprint the
-// analyzer would compute, so triage stamped during a previous session
-// keeps matching).
+// the union of finding ids reachable from those reports. Reads through
+// the report library (`loadFindings`: native JSON with the markdown
+// fallbacks, dedup-group entries flattened, and findings without an
+// exporter-stamped `id` given one derived from the same fingerprint
+// the analyzer would compute, so triage stamped during a previous
+// session keeps matching).
 //
 // A `readFile` failure is propagated rather than swallowed —
 // `pruneOrphanTriage` keys its destructive decision on this set,
@@ -63,17 +62,13 @@ async function collectReachableIds(names) {
       throw new Error(`Failed to read ${name}: ${err.message}`, { cause: err })
     }
     if (content == null) continue
-    const data = parseReport(content)
-    // `Array.isArray` rather than a truthy check: parseReport does no
-    // shape validation, so a malformed report whose `findings` is a
-    // truthy non-array (number, plain object, ...) would make
-    // `flattenFindings`'s `for…of` throw, aborting collectReachableIds
-    // and with it both analyzeTriageImpact (delete-report dialog) and
-    // pruneOrphanTriage (GC) — one bad file on disk blocks deletion.
-    if (!Array.isArray(data?.findings)) continue
-    const findings = flattenFindings(data.findings)
-    await backfillFindingIds(findings)
-    for (const f of findings) if (f.id) ids.add(f.id)
+    // A report the library can't read (malformed list, not a report)
+    // is skipped, not fatal: this set keys pruneOrphanTriage's
+    // destructive decision and the delete-report dialog, and one bad
+    // file on disk must not block either.
+    const report = await loadFindings(content)
+    if (!report) continue
+    for (const f of report.findings) if (f.id) ids.add(f.id)
   }
   return ids
 }

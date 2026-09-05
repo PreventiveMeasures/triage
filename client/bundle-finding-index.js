@@ -26,8 +26,7 @@
 import { addFindingToBucket, dropKeyFromBucket, indexFindingByVersion, isPlaceholderNpmPackage, newBucket, packageVersionOf, pruneVersionSlot, recomputeBucketReports } from './bundle-finding-versions.js'
 import { listFiles, onFileMutated, readFile } from './storage.js'
 import { loadRepoUrlFor, onRepoUrlChanged } from './state.ts'
-import { flattenFindings, parseReport } from '../report/index.js'
-import { inheritReportMeta, reportRepoGithub } from '../report/index.js'
+import { inheritReportMeta, loadFindings, reportRepoGithub } from '../report/index.js'
 
 const byHash = new Map()
 const byPackage = new Map()
@@ -204,40 +203,6 @@ export function reportsForFindingByRepo(repo, finding) {
   if (!bucket) return []
   const set = bucket._keyReports.get(findingDedupeKey(finding))
   return set ? [...set] : []
-}
-
-function extractFindings(data) {
-  // DeepView-native dumps carry findings under `groups` (array of
-  // Finding[]) or a flat `findings` array. Either shape works.
-  // Other formats (deepsec / claude-security / codex) get parsed
-  // at ingest time, not from raw OPFS — they fail JSON.parse here
-  // and the caller silently skips them.
-  //
-  // We return EVERY finding (including those without `fileHash`)
-  // so the cross-report Packages view picks them up. The hash-
-  // keyed bucket below filters on fileHash separately.
-  //
-  // Run-level meta (type / model / think / effort / exportsMode) is
-  // inherited from the report header, field by field, under the same
-  // rule the report view follows — see report/meta.js (which
-  // also holds the source-marked opt-out). The bundle viewer's source
-  // panel reads these through prettyModel + the meta chain; without
-  // the inheritance the chain stays empty for every finding that
-  // doesn't carry per-finding meta inline (most do not).
-  //
-  // In-place mutation is safe: bucket dedupe + the index pass don't
-  // rely on the absence of meta fields, and callers haven't held onto
-  // the finding before this point.
-  const list = Array.isArray(data?.findings)
-    ? data.findings
-    : Array.isArray(data?.groups) ? data.groups : null
-  if (!list) return []
-  const out = []
-  for (const f of flattenFindings(list)) {
-    inheritReportMeta(f, data)
-    out.push(f)
-  }
-  return out
 }
 
 // Dedupe key — preferred form is the analyzer's stable `id`; falls
@@ -453,17 +418,28 @@ async function indexOne(name) {
   indexed.add(name)
   try {
     const content = await readFile(name)
-    // Same parser chain ingest.js walks: JSON first (the
-    // analyzer's native dump format), DeepSec markdown next
-    // (most specific guard — `## SEVERITY (n)`), then Claude
-    // Security / generic markdown. Without this fallback, every
-    // markdown-format report (Claude / DeepSec) would silently
-    // skip the index because `JSON.parse` throws on them, so
-    // they'd never surface in Packages or Repositories.
-    const data = parseReport(content)
-    if (!data) return false
-    const findings = extractFindings(data)
+    // The same read ingest.js does — every format, `groups` or
+    // `findings`, ids derived where the report stamped none — so a
+    // markdown-format report surfaces in Packages / Repositories, and
+    // a finding here carries the id the viewer's copy of it carries.
+    // EVERY finding is indexed, `fileHash` or not: the hash-keyed
+    // bucket filters on fileHash separately, and the Packages view
+    // wants the rest.
+    const report = await loadFindings(content)
+    if (!report) return false
+    const { data, findings } = report
     if (findings.length === 0) return false
+    // Run-level meta (type / model / think / effort / exportsMode) is
+    // inherited from the report header, field by field, under the same
+    // rule the report view follows — see report/meta.js (which also
+    // holds the source-marked opt-out). The bundle viewer's source
+    // panel reads these through prettyModel + the meta chain; without
+    // the inheritance the chain stays empty for every finding that
+    // doesn't carry per-finding meta inline (most do not). In-place
+    // mutation is safe: bucket dedupe + the index pass don't rely on
+    // the absence of meta fields, and nothing has held the finding
+    // before this point.
+    for (const f of findings) inheritReportMeta(f, data)
     // Per-report repo — the LAST fallback when neither
     // `f.repo.github` nor `f._repoFallback` is present (the
     // latter never is on freshly-parsed OPFS findings — that

@@ -2,7 +2,7 @@ import { loadRepoUrlFor, state } from './state.ts'
 import { normalizeEntry } from './triage-entry.ts'
 import { listBundles, readBundle, readFile } from './storage.js'
 import { setReportWorkspace } from './workspaces.js'
-import { backfillFindingIds, flattenFindings, parseReport } from '../report/index.js'
+import { loadFindings } from '../report/index.js'
 import { gzipText } from '../common/gzip.js'
 import { encryptBundle } from './workspace-bundle-crypto.js'
 
@@ -21,16 +21,13 @@ import { encryptBundle } from './workspace-bundle-crypto.js'
 
 const EXPORT_VERSION = 1
 
+// A report the library can't read (malformed, or not a report at all)
+// contributes nothing, so one bad file doesn't strand the rest of the
+// export. Audit round-13 W-Export-2.
 async function reportFindingIds(content) {
   const ids = new Set()
-  const data = parseReport(content)
-  // `findings` must be an array — a malformed report (object,
-  // string, number) would otherwise abort the whole export. Skip so
-  // one bad report doesn't strand the rest. Audit round-13 W-Export-2.
-  if (!Array.isArray(data?.findings)) return ids
-  const all = flattenFindings(data.findings)
-  await backfillFindingIds(all)
-  for (const f of all) if (f.id) ids.add(f.id)
+  const report = await loadFindings(content)
+  for (const f of report?.findings ?? []) if (f.id) ids.add(f.id)
   return ids
 }
 

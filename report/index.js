@@ -11,23 +11,23 @@
 //
 //   import { loadFindings } from '../report/index.js'
 //   const report = await loadFindings(text)
-//   // → { format, source, type, findings: [ … with ids ] } | null
+//   // → { format, data, findings: [ … with ids ] } | null
 //
-// Four entry points, in rising order of how much they do:
+// Three entry points, in rising order of how much they do:
 //
 //   detectFormat  — name the format, parse nothing further
-//   analyzeReport — how many entries, and from which producer
-//   readReport    — the parsed report object + why it failed, if it did
+//   readReport    — the parsed report, or the reason it isn't one
 //   loadFindings  — parsed, flattened, and every finding carrying an id
 //
-// `parseReport` is `readReport` with the diagnosis dropped, kept as the
-// short form the app's callers use.
+// `analyzeReport` is `readReport` for a file list — entry count and
+// producer — and `backfillFindingIds` is the id step on its own, for a
+// caller that has to interleave something with it.
 //
 // Codex is the one format the content doesn't name: its export is a
 // CSV, and a CSV is a container — one row per finding across several
 // scans — rather than a report. `detectFormat` recognises it by the
-// FILENAME (`.csv`) when given one; the readers above are single-report
-// and don't take it. A codex export goes through `parseCodexCsvToScans`,
+// FILENAME (`.csv`) when given one; the readers are single-report and
+// don't take it. A codex export goes through `parseCodexCsvToScans`,
 // which splits it into one JSON-shaped report per scan, and each of
 // those reads through the readers like any other JSON report.
 //
@@ -49,9 +49,10 @@ import { parsePioliumFindings } from './parse-piolium.js'
 import { computeFileHash, deriveFindingId, findingId } from './finding-id.js'
 import { META_FIELDS, inheritReportMeta, reportRepoGithub } from './meta.js'
 
-// The whole surface, re-exported so a consumer needs one import even
-// when it wants a specific parser or the id helpers.
-export { parseCodexCsvToScans, parseDeepsecFindings, parseMarkdownFindings, parsePioliumFindings }
+// The rest of the surface, so a consumer needs one import: the codex
+// splitter, the id helpers the analyzer shares with the viewer, and the
+// run-meta projection a caller applies to the findings it loads.
+export { parseCodexCsvToScans }
 export { computeFileHash, deriveFindingId, findingId }
 export { META_FIELDS, inheritReportMeta, reportRepoGithub }
 
@@ -72,34 +73,15 @@ const MARKDOWN_FORMATS = [
   ['claude-security', parseMarkdownFindings],
 ]
 
-// Parse `content` in whichever format it turns out to be, and say which
-// one that was. JSON first — the analyzer's native dump is the common
-// case and the only format with a cheap, total test — then the markdown
-// chain when `JSON.parse` throws.
-//
-// Returns `{ data, format, jsonError }`. `data` is null when nothing
-// recognised the text, and `jsonError` is the `JSON.parse` failure that
-// sent us down the markdown chain: a caller reporting "this file isn't
-// a report" wants it, since the usual cause is a truncated or malformed
-// JSON dump rather than an unknown format.
-export function readReport(content) {
-  let jsonError = null
-  try {
-    return { data: JSON.parse(content), format: 'json', jsonError }
-  } catch (err) {
-    jsonError = err
-  }
-  for (const [format, parse] of MARKDOWN_FORMATS) {
-    const data = parse(content)
-    if (data) return { data, format, jsonError }
-  }
-  return { data: null, format: null, jsonError }
-}
-
-// The parsed report object, or null when unrecognised. Callers read the
-// field they need (`findings`, `groups`, `source`, `type`).
-export function parseReport(content) {
-  return readReport(content).data
+// A report's entries: `findings`, or `groups` for a pre-deduplicated
+// dump. Each entry is one finding or a Finding[] group. Null when the
+// document carries neither as an array — which is how a JSON file that
+// isn't a report at all (or a report with a malformed list) is told
+// apart from an empty one.
+function entriesOf(data) {
+  if (Array.isArray(data?.findings)) return data.findings
+  if (Array.isArray(data?.groups)) return data.groups
+  return null
 }
 
 // Which producer wrote `content` — 'json' / 'deepsec' / 'piolium' /
@@ -117,69 +99,84 @@ export function detectFormat(content, filename) {
   return readReport(content).format
 }
 
-// How many entries `content` holds and who produced it, without
-// flattening anything or deriving a single id — what a file list wants
-// for a badge next to a name.
+// Parse `content` in whichever format it turns out to be. JSON first —
+// the analyzer's native dump is the common case and the only format
+// with a cheap, total test — then the markdown chain when `JSON.parse`
+// throws. A JSON document counts as a report only when it carries a
+// `findings` (or `groups`) array: anything else that parses is some
+// other JSON file, not an empty report.
 //
-// `count` is ENTRIES, not findings: an entry in `findings[]` is either
-// one finding or a pre-deduplicated group of them, and the count that
-// matches what a user sees as rows is the entry count. A valid JSON
-// document with no `findings[]` array counts as unrecognised rather
-// than as an empty report — it is far more likely to be some other
-// JSON file than a report with nothing in it — and, being valid JSON,
-// it never reaches the markdown chain either.
-export function analyzeReport(content) {
+// Returns `{ data, format, reason }`: the parsed report and its
+// format, or `data: null` with `reason` saying why in one sentence —
+// which a caller reporting "this file isn't a report" can show as is.
+// The usual cause is a truncated or malformed JSON dump rather than an
+// unknown format, so the JSON error rides along in that sentence.
+export function readReport(content) {
+  let jsonError
   try {
     const data = JSON.parse(content)
-    if (data && Array.isArray(data.findings)) {
-      return { count: data.findings.length, source: data.source, recognized: true }
-    }
-    return { count: 0, recognized: false }
-  } catch {}
-  for (const [, parse] of MARKDOWN_FORMATS) {
-    const data = parse(content)
-    if (data) return { count: data.findings.length, source: data.source, recognized: true }
+    if (entriesOf(data)) return { data, format: 'json', reason: null }
+    return { data: null, format: null, reason: 'JSON, but not a report: no findings array' }
+  } catch (err) {
+    jsonError = err
   }
-  return { count: 0, recognized: false }
+  for (const [format, parse] of MARKDOWN_FORMATS) {
+    const data = parse(content)
+    if (data) return { data, format, reason: null }
+  }
+  return {
+    data: null,
+    format: null,
+    reason: `Not JSON, and not a recognized markdown format. (JSON error: ${jsonError.message})`,
+  }
 }
 
-// A report's `findings` (or `groups`) entry is either a single Finding
-// or a pre-grouped Finding[]; flatten to the member findings, dropping
-// falsy entries.
-export function flattenFindings(list) {
+// How many entries `content` holds and who produced it, without
+// flattening anything or deriving a single id — what a file list wants
+// for a badge next to a name. `count` is ENTRIES, not findings: an
+// entry is either one finding or a pre-deduplicated group of them, and
+// the entry count is what a user sees as rows.
+export function analyzeReport(content) {
+  const { data } = readReport(content)
+  if (!data) return { count: 0, recognized: false }
+  return { count: entriesOf(data).length, source: data.source, recognized: true }
+}
+
+// Entries → member findings. A group contributes its members; falsy
+// and non-object entries (a malformed list's stray strings and nulls)
+// are dropped rather than handed on as findings.
+function flattenFindings(entries) {
   const out = []
-  for (const entry of list ?? []) {
-    const members = Array.isArray(entry) ? entry : [entry]
-    for (const f of members) if (f) out.push(f)
+  for (const entry of entries) {
+    for (const f of Array.isArray(entry) ? entry : [entry]) {
+      if (f && typeof f === 'object') out.push(f)
+    }
   }
   return out
 }
 
 // Fill in `f.id` for any finding that lacks one, deriving it from the
-// (severity, description, file, line, fileHash) fingerprint. Mutates in
-// place. Findings whose id can't be derived (a host without
-// crypto.subtle) are left untouched. Batched via Promise.all —
-// sequential awaits would serialise hundreds of crypto.subtle.digest
-// calls for no reason.
+// same fingerprint the analyzer stamps. Mutates in place. Findings
+// whose id can't be derived (a host without crypto.subtle) are left
+// untouched. Batched via Promise.all — sequential awaits would
+// serialise hundreds of crypto.subtle.digest calls for no reason.
 export async function backfillFindingIds(findings) {
-  const idLess = findings.filter((f) => f && !f.id)
+  const idLess = findings.filter((f) => !f.id)
   if (idLess.length === 0) return
   const derived = await Promise.all(idLess.map(deriveFindingId))
   idLess.forEach((f, i) => { if (derived[i]) f.id = derived[i] })
 }
 
 // Recognise, flatten, and give every finding an id — the whole read
-// path in one call, for a consumer that just wants the findings out of
-// a file. Returns null when nothing recognises the text.
-//
-// The findings are the parser's own objects (not copies), so a caller
-// that means to keep them can, and one that means to project run meta
-// onto them has `inheritReportMeta` to hand. `report` is the parsed
-// document itself, for the fields this shape doesn't lift out.
+// path in one call. Returns `{ format, data, findings }`, or null when
+// nothing recognises the text. The findings are the parser's own
+// objects (not copies), so a caller that means to keep them can, and
+// one projecting run meta onto them has `inheritReportMeta` and `data`
+// to hand.
 export async function loadFindings(content) {
   const { data, format } = readReport(content)
   if (!data) return null
-  const findings = flattenFindings(data.findings ?? data.groups)
+  const findings = flattenFindings(entriesOf(data))
   await backfillFindingIds(findings)
-  return { format, source: data.source, type: data.type, findings, report: data }
+  return { format, data, findings }
 }
