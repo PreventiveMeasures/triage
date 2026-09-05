@@ -43,6 +43,8 @@ function reset() {
   state.filterComment = ''
   state.filterFix = ''
   state.filterFlagged = ''
+  state.filterRevalidate = ''
+  state.filterPartial = ''
   state.triage = new Map()
   state.shownTriage = null
   state.workspaceMerges = []
@@ -343,5 +345,87 @@ describe('exportSelectionSummary — counting under a relaxed selection', () => 
     exportSelectionSummary('print', { ...cloneFilterFields(), filterSeverities: new Set() })
     // …then the next unrelaxed pass must be back to the real filters.
     assert.equal(applyFilters(state.reports[0].groups).length, 1)
+  })
+})
+
+// The revalidation outcome and the confidence range share a toolbar
+// block: picking an outcome REPLACES the range (conf-filter renders it
+// inert, matchesFilters skips it). The dialog used to describe the
+// range anyway and never describe the outcome, so a report set narrowed
+// by an outcome listed one filter that did nothing — its × moved no
+// counts — and hid the one that did everything.
+describe('activeFilterDescriptions — the revalidation outcome', () => {
+  beforeEach(reset)
+
+  it('describes the outcome, and folds the partial switch into Confirmed', () => {
+    state.filterRevalidate = 'confirmed'
+    assert.deepEqual(described(), [{ label: 'Revalidation', value: 'Confirmed' }])
+    state.filterPartial = 'exclude'
+    assert.deepEqual(described(), [{ label: 'Revalidation', value: 'Confirmed (full only)' }])
+    state.filterPartial = 'only'
+    assert.deepEqual(described(), [{ label: 'Revalidation', value: 'Confirmed (partial only)' }])
+    // The switch means nothing outside Confirmed — the one option whose
+    // kinds take the partial rows in — so the others read as their label.
+    state.filterRevalidate = 'refuted'
+    assert.deepEqual(described(), [{ label: 'Revalidation', value: 'Refuted' }])
+  })
+
+  it('says nothing for a value that names no option', () => {
+    // matchesFilters reads an unrecognised value as no filter rather
+    // than hiding every finding behind it, so neither does this.
+    state.filterRevalidate = 'not-an-outcome'
+    assert.deepEqual(described().filter((r) => r.label === 'Revalidation'), [])
+  })
+
+  it('drops the confidence row while an outcome replaces the range', () => {
+    state.filterConfMin = 3
+    state.filterConfMax = 8
+    assert.deepEqual(described(), [{ label: 'Confidence', value: '3–8' }])
+
+    state.filterRevalidate = 'confirmed'
+    assert.deepEqual(described(), [{ label: 'Revalidation', value: 'Confirmed' }])
+
+    // …and hands it back when the outcome goes, since the bounds are
+    // still set and now bite again.
+    const [outcome] = activeFilterDescriptions()
+    const relaxed = { ...cloneFilterFields(), ...outcome.clear }
+    assert.deepEqual(activeFilterDescriptions(relaxed).map((r) => r.label), ['Confidence'])
+  })
+})
+
+describe('exportSelectionSummary — every listed filter is one that narrows', () => {
+  beforeEach(reset)
+
+  // The reported bug: a dialog listing a filter whose × changed no
+  // counts. The invariant that rules it out is this one — a described
+  // filter is a filter that is doing something, so dropping it always
+  // moves the number.
+  it('moves the count for each row in turn, on a revalidated set', () => {
+    state.reports = [{
+      fileName: 'r.json',
+      groups: Array.from({ length: 60 }, (_, i) => [makeFinding(`f${i}`, {
+        confidence: i % 11,
+        revalidate: i % 5 === 0 ? 'confirmed' : 'refuted',
+      })]),
+    }]
+    state.filterRevalidate = 'confirmed'
+    state.filterConfMin = 3
+    state.filterConfMax = 8
+
+    let summary = exportSelectionSummary('download')
+    assert.equal(summary.filters.length, 1, 'the range is dormant, so only the outcome is listed')
+    const seen = []
+    while (summary.filters.length > 0) {
+      const row = summary.filters[0]
+      const next = exportSelectionSummary('download', { ...summary.fields, ...row.clear })
+      assert.notEqual(next.included, summary.included, `dropping ${row.key} moved nothing`)
+      seen.push(row.key)
+      summary = next
+    }
+    // Dropping the outcome wakes the range, which is then listed and
+    // droppable in its turn — and with both gone, everything exports.
+    assert.deepEqual(seen, ['revalidate', 'confidence'])
+    assert.equal(summary.included, summary.total)
+    assert.equal(summary.excluded, 0)
   })
 })
