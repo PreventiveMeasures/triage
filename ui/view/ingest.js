@@ -10,12 +10,7 @@ import { render } from './render.js'
 import { renderSidebar } from './sidebar.js'
 import { cleanupGraph2, graph2 } from './graph/state.js'
 import { openBundle, prefetchBundleHashes } from './bundle-load.js'
-import { parseMarkdownFindings } from '../../common/parse-md.js'
-import { parseCodexCsvToScans } from '../../common/parse-codex.js'
-import { parseDeepsecFindings } from '../../common/parse-deepsec.js'
-import { parsePioliumFindings } from '../../common/parse-piolium.js'
-import { deriveFindingId } from '../../common/finding-id.js'
-import { inheritReportMeta, reportRepoGithub } from '../../common/report-meta.js'
+import { deriveFindingId, inheritReportMeta, parseCodexCsvToScans, readReport, reportRepoGithub } from '../../report/index.js'
 import { importWorkspaceFromGzip } from './workspace-import.js'
 import { maybePromptFirstImport } from './first-import-prompt.js'
 import { openPasskeyUnlockDialog } from './dialogs/passkey-unlock-dialog.js'
@@ -947,22 +942,13 @@ export async function ingestReport(name, content, gen = null) {
     // already shows stored marks/deletions for matching findings.
     await triageLoadPromise
     if (stale()) return
-    // Primary input is JSON (the analyzer's native dump). On failure,
-    // walk the markdown parser chain: DeepSec first (most specific
-    // guard — `## SEVERITY (n)`), then Piolium (`# Security Audit
-    // Report` / `## Technical Findings Detail`), then Claude Security
-    // (any `# Title` doc, so it must stay last). Each returns the
-    // standard { type, findings, … } shape, or null when the input
-    // doesn't match its format.
-    let data
-    try {
-      data = JSON.parse(content)
-    } catch (jsonErr) {
-      data = parseDeepsecFindings(content)
-        ?? parsePioliumFindings(content)
-        ?? parseMarkdownFindings(content)
-      if (!data) throw new Error(`Not JSON, and not a recognized markdown format. (JSON error: ${jsonErr.message})`, { cause: jsonErr })
-    }
+    // Format dispatch lives in the report library (report/index.js):
+    // the analyzer's own JSON first, then the markdown chain. The JSON
+    // error rides along for the failure message, since a file that
+    // reaches none of the parsers is usually a malformed dump rather
+    // than an unknown format.
+    const { data, jsonError } = readReport(content)
+    if (!data) throw new Error(`Not JSON, and not a recognized markdown format. (JSON error: ${jsonError.message})`, { cause: jsonError })
     // First report in the current view (state.reports cleared on
     // switchToFile / deleteCurrent, accumulating in the headless print
     // flow). Gates both the filter reset and the auto-tune below.

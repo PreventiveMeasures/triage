@@ -1,4 +1,4 @@
-import { fenceRanges, inFence, unescapeMd } from '../../common/md-structure.js'
+import { fenceRanges, inFence, unescapeMd } from '../../report/md-structure.js'
 import { html, nothing } from './frontend-global.js'
 // Direct relative import, NOT `#client/index.js`: this module rides in
 // the lazy `ui/graph.js` bundle, and the aggregator would drag `state`
@@ -31,7 +31,7 @@ export const SEVERITIES = ['critical', 'high', 'medium', 'low', 'high_bug', 'bug
 // free-text `correctedSeverityReason`) emitted in the report data — a
 // per-report re-rating of the analyzer's intrinsic `severity`. Unlike
 // `severity` (which is hashed into the finding id, so it's identical for
-// every occurrence of an id — see common/finding-id.js), the corrected
+// every occurrence of an id — see report/finding-id.js), the corrected
 // value is PER-REPORT: the same finding id can carry a different corrected
 // severity in different reports. When the same id is deduped across
 // reports at ingest, each occurrence's effective severity is preserved on
@@ -722,7 +722,7 @@ function flowRun(run, keepLead, keepTail) {
 // and trigger) splits into paragraphs, and the halves that hold no
 // fence line read as ordinary hard-wrapped prose and get folded into
 // one line. So the fenced ranges come out first (the same reading the
-// parsers use — common/md-structure.js) and only the prose between
+// parsers use — report/md-structure.js) and only the prose between
 // them is reflowed, which also means prose sharing a paragraph with a
 // snippet now flows instead of being pinned by it.
 export function flowText(text) {
@@ -818,7 +818,7 @@ export function descriptionSections(body) {
 //
 // Text with no fence in it comes back as a single-element array
 // holding it unchanged, so the caller can take a plain-text fast path.
-// Pairing is `fenceRanges`' (common/md-structure.js), the same reading
+// Pairing is `fenceRanges`' (report/md-structure.js), the same reading
 // the parsers use — so what a parser treated as code is what the card
 // draws as code, an unclosed fence running to end of input included.
 const FENCE_LINE_RE = /^( *)(`{3,}|~{3,})(.*)$/u
@@ -1539,7 +1539,7 @@ function githubRefToken(candidate) {
 
 // Short id shown in a self-link's label. Findings carry a uuid in the
 // overwhelming majority of cases (the analyzer's, or the one
-// `common/finding-id.js` derives), and abbreviating it to its first
+// `report/finding-id.js` derives), and abbreviating it to its first
 // group mirrors how the commit label abbreviates a sha. The codex
 // importer's finding-URL ids have no meaningful prefix to show, so they
 // fall back to the bare word.

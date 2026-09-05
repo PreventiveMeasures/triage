@@ -20,7 +20,7 @@ import { state } from './state.ts'
 import { bucketOf, isReportIgnored, patchEntry, setReportIgnored } from './triage-entry.ts'
 import { SESSION_ID_RE, saveTriage } from './triage.js'
 import { listFiles, readFile } from './storage.js'
-import { backfillFindingIds, flattenFindings, parseReport } from '../common/report-findings.js'
+import { backfillFindingIds, flattenFindings, parseReport } from '../report/index.js'
 
 // Walk every OPFS-stored report in `names`, parse it, and return
 // the union of finding ids reachable from those reports. Uses the

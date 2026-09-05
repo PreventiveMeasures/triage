@@ -1,4 +1,4 @@
-// Codex Security CSV parser — `common/parse-codex.js`. Pure function;
+// Codex Security CSV parser — `report/parse-codex.js`. Pure function;
 // covers the RFC-4180-ish CSV reader (quotes, embedded commas /
 // newlines, `""` escaped quotes), per-scan grouping, the
 // single-repository-per-scan assertion, and the row → finding mapping.
@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { parseCodexCsvToScans } from '../common/parse-codex.js'
+import { parseCodexCsvToScans } from '../report/parse-codex.js'
 
 const HEADER = [
   'finding_url', 'repository', 'repository_url', 'title', 'description',

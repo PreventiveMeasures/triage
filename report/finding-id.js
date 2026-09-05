@@ -7,7 +7,7 @@
 // Two reports produced from the same source yield the same id for the
 // same finding; edits to description or source invalidate it.
 
-import { encodeUtf8 } from './utf8.js'
+import { encodeUtf8 } from '../common/utf8.js'
 
 function toHex(bytes) {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
@@ -62,7 +62,7 @@ export function findingId(severity, description, fileHash) {
 //
 // Discriminator selection (in order):
 //   - _idBasis  — a FROZEN fingerprint the parser stamped (markdown
-//                 imports; see common/parse-md-id.js). Used verbatim:
+//                 imports; see report/parse-md-id.js). Used verbatim:
 //                 it exists precisely so later changes to the rendered
 //                 description can't re-key stored triage.
 //   - fileHash  — preferred when present (matches `findingId` above)

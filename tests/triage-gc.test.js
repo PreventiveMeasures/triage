@@ -436,7 +436,7 @@ describe('pruneOrphanTriage: round-1 review #2 (snapshot guards concurrent mutat
 // crypto.subtle. Import it the same way `triage-gc.js` does so
 // the test computes the SAME id the GC will see when it walks
 // an id-less finding.
-const { deriveFindingId } = await import('../common/finding-id.js')
+const { deriveFindingId } = await import('../report/finding-id.js')
 
 describe('round-2 review: deriveFindingId path (id-less findings)', () => {
   beforeEach(clearAll)
@@ -505,7 +505,7 @@ describe('round-2 review: format fallback (DeepSec markdown)', () => {
     // parses this report — `collectReachableIds` runs
     // `deriveFindingId` on the parser's id-less output, same as
     // `ingestReport` would have.
-    const { parseDeepsecFindings } = await import('../common/parse-deepsec.js')
+    const { parseDeepsecFindings } = await import('../report/parse-deepsec.js')
     const parsed = parseDeepsecFindings(md)
     assert.ok(parsed && parsed.findings.length === 1, 'parser produced one finding')
     const derivedId = await deriveFindingId(parsed.findings[0])

@@ -1,6 +1,6 @@
 // FROZEN. The id fingerprint of a Claude Security (markdown) finding.
 //
-// `common/finding-id.js` derives a finding's uuid from its severity,
+// `report/finding-id.js` derives a finding's uuid from its severity,
 // its DESCRIPTION and its location, and that uuid is the key every
 // piece of stored triage hangs off — markers, buckets, comments, fixes.
 // The description, though, is presentation: it gained bold section
@@ -10,8 +10,8 @@
 //
 // So the fingerprint no longer rides on what `parse-md.js` renders
 // today. The functions below are a verbatim snapshot of that parser as
-// it stood BEFORE the `## Evidence` work (`common/parse-md.js` at
-// 4fb70d1) and they exist for one purpose: to reproduce, byte for byte,
+// it stood BEFORE the `## Evidence` work (v1.0.0-alpha.10, when it
+// still lived at `common/parse-md.js`) and they exist for one purpose: to reproduce, byte for byte,
 // the description / location / severity that findings were keyed by
 // then. Two parses of the same block is the price of stable ids.
 //

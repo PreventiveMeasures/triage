@@ -13,7 +13,7 @@
 import { computeLinkHint } from './finding-link.js'
 import { listFiles, readFile } from './storage.js'
 import { listWorkspaces } from './workspaces.js'
-import { backfillFindingIds, flattenFindings, parseReport } from '../common/report-findings.js'
+import { backfillFindingIds, flattenFindings, parseReport } from '../report/index.js'
 
 // The workspace named by the `v=` workspace half, or null. Hashing
 // every local workspace id is a handful of digests over a list that's

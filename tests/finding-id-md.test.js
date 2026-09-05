@@ -1,7 +1,7 @@
 // Finding ids for Claude Security (markdown) imports — the uuid every
 // piece of stored triage hangs off (markers, buckets, comments, fixes).
 //
-// `common/parse-md-id.js` freezes that fingerprint against a snapshot of
+// `report/parse-md-id.js` freezes that fingerprint against a snapshot of
 // the parser as it stood before the `## Evidence` work, so reshaping the
 // RENDERED description can never re-key what a user has already triaged.
 // The uuids below are the ones the pre-Evidence parser produced for
@@ -12,8 +12,8 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { deriveFindingId } from '../common/finding-id.js'
-import { parseMarkdownFindings } from '../common/parse-md.js'
+import { deriveFindingId } from '../report/finding-id.js'
+import { parseMarkdownFindings } from '../report/parse-md.js'
 
 // The legacy shape: a `## Location` section, bold inside the prose, and
 // a second finding carrying no location at all (which the legacy code

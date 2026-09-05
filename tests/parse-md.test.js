@@ -1,4 +1,4 @@
-// Markdown findings parser — `common/parse-md.js`. Pure function; the
+// Markdown findings parser — `report/parse-md.js`. Pure function; the
 // only globals it touches are RegExp / String prototype methods, so
 // every branch is testable directly.
 //
@@ -31,7 +31,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { parseMarkdownFindings } from '../common/parse-md.js'
+import { parseMarkdownFindings } from '../report/parse-md.js'
 
 describe('parseMarkdownFindings — format guards', () => {
   it('returns null for empty input', () => {

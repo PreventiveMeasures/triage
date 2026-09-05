@@ -44,7 +44,7 @@ import { encodeUtf8 } from '../common/utf8.js'
 // finding after a reload — including in the SENDER's own tab. Those are
 // refused up front rather than silently mis-resolving. Everything else
 // the app treats as persistent — the analyzer's uuids, the deterministic
-// uuids `common/finding-id.js` derives, and the codex importer's
+// uuids `report/finding-id.js` derives, and the codex importer's
 // finding-URL ids — is linkable, which is why this is a
 // "not session-local" test rather than a uuid-shape test.
 const SESSION_ID_RE = /^\d+$/u
