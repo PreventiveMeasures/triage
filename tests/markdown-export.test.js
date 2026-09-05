@@ -34,6 +34,7 @@ globalThis.document ??= { querySelector: () => null, createTreeWalker: () => ({}
 
 const { state } = await import('../client/state.ts')
 const { reportsToMarkdown } = await import('../ui/view/markdown-export.js')
+const { clearFilterOverride, cloneFilterFields, setFilterOverride } = await import('../ui/view/filters.js')
 
 const PR = 'https://github.com/owner/repo/pull/42'
 
@@ -78,5 +79,48 @@ describe('reportsToMarkdown — triage annotations', () => {
     const md = reportsToMarkdown(report(f))
     assert.doesNotMatch(md, /\*\*Fix:\*\*/u)
     assert.match(md, /\*\*Comment:\*\* not fixed yet/u, 'the sibling annotation still lands')
+  })
+})
+
+// The export confirm dialog lets a filter be dropped from the file
+// without touching the toolbar. Mechanically that is a filter override
+// installed around this serializer, so what the dialog counted and what
+// gets written stay the same set.
+describe('reportsToMarkdown — under a dropped filter', () => {
+  beforeEach(() => {
+    state.reports = []
+    state.triage = new Map()
+    state.shownTriage = null
+    state.filterSeverities = new Set()
+    state.workspaceMerges = []
+  })
+
+  it('writes the findings a relaxed selection lets through, then filters normally again', () => {
+    const reports = [{
+      fileName: 'r.json',
+      groups: [[finding({ id: 'f1', severity: 'critical', file: 'src/a.js' })],
+        [finding({ id: 'f2', severity: 'low', file: 'src/b.js' })]],
+    }]
+    state.reports = reports
+    state.filterSeverities = new Set(['critical'])
+
+    // As the toolbar has it: the low finding is filtered out.
+    assert.match(reportsToMarkdown(reports), /src\/a\.js/u)
+    assert.doesNotMatch(reportsToMarkdown(reports), /src\/b\.js/u)
+
+    // With the severity filter dropped from THIS export, both land.
+    setFilterOverride({ ...cloneFilterFields(), filterSeverities: new Set() })
+    let md
+    try {
+      md = reportsToMarkdown(reports)
+    } finally {
+      clearFilterOverride()
+    }
+    assert.match(md, /src\/a\.js/u)
+    assert.match(md, /src\/b\.js/u)
+
+    // The toolbar never moved, and the next export is narrow again.
+    assert.deepEqual([...state.filterSeverities], ['critical'])
+    assert.doesNotMatch(reportsToMarkdown(reports), /src\/b\.js/u)
   })
 })

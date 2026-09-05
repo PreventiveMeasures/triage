@@ -34,9 +34,32 @@
   color: var(--muted); font-weight: 600;
   white-space: nowrap;
 }
+/* Value + its drop button on one row. The button takes `margin-left:
+   auto` rather than a grid column of its own: every `dd` shares the
+   same column width, so pushing each one to its own right edge lines
+   them all up anyway — and a `<dl>` may not hold a bare `<button>` as
+   a child, which a third column would have required. */
 .ecd-filters dd {
+  display: flex; align-items: baseline; gap: .5rem;
   color: var(--text);
   overflow-wrap: anywhere;
+}
+.ecd-filter-value { min-width: 0; }
+
+/* Drops one filter from the export. Muted at rest — it is an escape
+   hatch beside a statement of fact, not an action the dialog is asking
+   for — and reddens on approach, since what it does is take a
+   constraint off the file. Sized off the row's own text so it stays a
+   footnote next to the value rather than a control competing with it. */
+.ecd-filter-drop {
+  margin-left: auto; flex: none;
+  padding: 0 .2rem;
+  border: 0; border-radius: 4px;
+  background: none; color: var(--muted);
+  font: inherit; font-size: 1rem; line-height: 1;
+
+  &:hover { color: var(--critical, #f87171); }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 }
 
 /* "Active filters" / "No filters" caption above the list. */
