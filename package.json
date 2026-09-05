@@ -92,6 +92,7 @@
     "report/parse-piolium-rows.js",
     "report/parse-piolium-tokens.js",
     "report/parse-piolium.js",
+    "report/utf8.js",
     "common/save-error-reason.ts",
     "common/server-info.ts",
     "common/utf8.d.ts",

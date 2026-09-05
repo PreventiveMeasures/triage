@@ -7,7 +7,7 @@
 // Two reports produced from the same source yield the same id for the
 // same finding; edits to description or source invalidate it.
 
-import { encodeUtf8 } from '../common/utf8.js'
+import { encodeUtf8 } from './utf8.js'
 
 function toHex(bytes) {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
