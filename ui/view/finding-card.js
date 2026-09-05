@@ -31,6 +31,7 @@ import { installShadowTooltipListener } from './tooltip.js'
 import { findingCardClasses, findingCardGid, findingCardInnerTemplate } from './render-finding.js'
 import { revealCitedLines } from './reveal-cited.js'
 import cardCSS from './finding-card.css'
+import codeTokensCSS from '../styles/code-tokens.css'
 
 const MANAGED_HOST_CLASSES = [
   'finding',
@@ -52,7 +53,11 @@ class FindingCard extends StateElement {
     context: { type: String, reflect: true },
   }
 
-  static styles = unsafeCSS(cardCSS)
+  // Two sheets: the card's own, and the Prism token palette it shares
+  // with the export preview dialog (styles/code-tokens.css) — the card
+  // paints highlighted code in two places, the fenced blocks in a
+  // description and the source previews beside its links.
+  static styles = [unsafeCSS(cardCSS), unsafeCSS(codeTokensCSS)]
 
   constructor() {
     super()

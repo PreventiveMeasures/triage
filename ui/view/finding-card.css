@@ -714,49 +714,9 @@ span.evidence-ref:not([role]) { color: var(--muted); }
   & code { font: inherit; }
 }
 
-/* Prism token theme — the shadow-root copy of the rules
-   styles/report.css carries for the source viewers, since no light-DOM
-   rule reaches in here. Shared by both places this root paints
-   highlighted code: the fenced blocks a description carries
-   (`.code-block`) and the source previews beside its links
-   (`.code-preview`). The palette itself is NOT copied: it comes from
-   theme.css's `--code-*` properties, which inherit across the
-   boundary, so the card and the source viewer colour a snippet
-   identically and the light themes retune both at once. Prism stamps
-   `<span class="token X Y">`; X (the kind) is all we key off. */
-:is(.code-block, .code-preview) {
-  & .token.comment,
-  & .token.prolog,
-  & .token.cdata { color: var(--code-comment); font-style: italic; }
-  & .token.punctuation { color: var(--muted); }
-  & .token.string,
-  & .token.attr-value,
-  & .token.char,
-  & .token.regex { color: var(--code-string); }
-  & .token.number,
-  & .token.boolean,
-  & .token.constant,
-  & .token.symbol { color: var(--code-number); }
-  & .token.keyword,
-  & .token.builtin,
-  & .token.important,
-  & .token.atrule { color: var(--code-keyword); }
-  & .token.function,
-  & .token.class-name,
-  & .token.tag { color: var(--code-function); }
-  & .token.operator,
-  & .token.entity,
-  & .token.url,
-  & .token.attr-name,
-  & .token.selector { color: var(--code-operator); }
-  & .token.variable,
-  & .token.property,
-  & .token.parameter { color: var(--code-variable); }
-  & .token.deleted { color: var(--code-deleted); }
-  & .token.inserted { color: var(--code-inserted); }
-  & .token.italic { font-style: italic; }
-  & .token.bold { font-weight: bold; }
-}
+/* Prism token theme lives in styles/code-tokens.css now, adopted into
+   this shadow root by finding-card.js — the export preview dialog
+   adopts the same file, so the two colour a snippet identically. */
 
 .line-row {
   display: flex; justify-content: space-between;
