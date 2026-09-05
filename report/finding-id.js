@@ -13,22 +13,19 @@ function toHex(bytes) {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
 }
 
-function toBase64(bytes) {
-  let s = ''
-  for (let i = 0; i < bytes.length; i++) s += String.fromCodePoint(bytes[i])
-  return btoa(s)
-}
-
 // Canonical file-content hash used throughout the JSON output format.
 // sha512 because the per-finding id (below) takes sha256 of a string
 // that already includes this hash — so collisions here would propagate
 // directly into id collisions. Base64 (padded) matches the shape JSON
 // consumers already parse; `sha512-` prefix is the SRI-style algorithm
 // tag so downstream tools can tell hash algorithms apart at a glance.
+// `btoa` over the digest as a binary string rather than
+// `Uint8Array#toBase64`: the library runs in plain Node too, where that
+// method is still behind a flag.
 export async function computeFileHash(source) {
   const bytes = typeof source === 'string' ? encodeUtf8(source) : source
-  const digest = await crypto.subtle.digest('SHA-512', bytes)
-  return `sha512-${toBase64(new Uint8Array(digest))}`
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-512', bytes))
+  return `sha512-${btoa(String.fromCodePoint(...digest))}`
 }
 
 // Hash a fingerprint object into a v4-shaped UUID. Not a real random
@@ -75,19 +72,21 @@ export function findingId(severity, description, fileHash) {
 //                 unrelated findings into one id).
 export async function deriveFindingId(f) {
   if (typeof crypto?.subtle?.digest !== 'function') return null
-  let fingerprint
-  if (f._idBasis) {
-    fingerprint = f._idBasis
-  } else if (f.fileHash) {
-    fingerprint = { severity: f.severity, description: f.description, fileHash: f.fileHash }
-  } else if (f.location) {
-    fingerprint = { severity: f.severity, description: f.description, location: f.location }
-  } else {
-    fingerprint = { severity: f.severity, description: f.description, file: f.file, line: f.line }
-  }
+  const fingerprint = fingerprintOf(f)
   try {
     return await fingerprintToId(fingerprint)
   } catch {
     return null
   }
+}
+
+// The discriminator choice above, as the object that gets hashed. Key
+// order is part of the id (JSON.stringify keeps insertion order), so
+// every shape lists severity and description first.
+function fingerprintOf(f) {
+  if (f._idBasis) return f._idBasis
+  const { severity, description } = f
+  if (f.fileHash) return { severity, description, fileHash: f.fileHash }
+  if (f.location) return { severity, description, location: f.location }
+  return { severity, description, file: f.file, line: f.line }
 }

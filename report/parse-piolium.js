@@ -86,6 +86,7 @@ import {
   severityFromId, severityGroupOf,
 } from './parse-piolium-tokens.js'
 
+const H2_RE = /^## +(.*)$/gmu
 const H3_RE = /^### +(.*)$/gmu
 const H4_RE = /^#### +(.*)$/gmu
 
@@ -139,7 +140,7 @@ export function parsePioliumFindings(content) {
 
   const sections = parseSections(text)
   const index = parseIndexTable(sections['summary of findings'] || '')
-  const meta = preambleMeta(splitLeading(text, /^## +(.*)$/gmu).head)
+  const meta = preambleMeta(splitLeading(text, H2_RE).head)
 
   const findings = []
   const seen = new Set()
@@ -147,30 +148,30 @@ export function parsePioliumFindings(content) {
   // real reports also write each variant as its own full entry, and the
   // entry wins — a row is emitted only when no entry claimed its id.
   const pending = []
-  const push = (id, finding) => {
+  const push = ({ id, finding }) => {
     findings.push(finding)
     if (id) seen.add(id)
   }
-  const emit = (list) => { for (const e of list) push(e.id, e.finding) }
+  const emit = (entries) => { for (const entry of entries) push(entry) }
 
   for (const [header, body] of Object.entries(sections)) {
-    // `## Critical Findings` — a severity group promoted to the section
-    // level.
-    const sectionSev = severityGroupOf(header)
-    if (sectionSev) { emit(parseSeverityGroup(body, sectionSev, index, pending)); continue }
-    if (isDetailHeader(header)) { emit(parseDetailSection(body, index, pending)); continue }
-    // Content-based fallback for every other spelling a run invents
-    // ('## HIGH — 3 findings', '## 🔴 HIGH', '## Confirmed Findings'):
-    // id-shaped block headings mark a findings section, and a leading
-    // severity word on the header still supplies the tier.
-    if (!isExcludedHeader(header) && hasIdBlocks(body)) {
-      emit(parseDetailSection(body, index, pending, headerSeverity(header)))
+    // A findings section is a severity group promoted to the section
+    // level (`## Critical Findings`), a findings-labelled header, or —
+    // the content-based fallback for every other spelling a run invents
+    // ('## HIGH — 3 findings', '## 🔴 HIGH', '## Confirmed Findings') —
+    // a non-excluded section whose block headings carry id-shaped
+    // tokens, where a leading severity word on the header still
+    // supplies the tier.
+    const groupSev = severityGroupOf(header)
+    if (groupSev || isDetailHeader(header)) {
+      emit(parseFindingsBody(body, groupSev, index, pending))
+    } else if (!isExcludedHeader(header) && hasIdBlocks(body)) {
+      emit(parseFindingsBody(body, headerSeverity(header), index, pending))
     }
   }
 
-  for (const v of pending) {
-    if (v.id && seen.has(v.id)) continue
-    push(v.id, v.finding)
+  for (const entry of pending) {
+    if (!entry.id || !seen.has(entry.id)) push(entry)
   }
 
   // Anything the index lists but no block described: emit it from the
@@ -179,8 +180,7 @@ export function parsePioliumFindings(content) {
   // the table) still triages every finding instead of silently losing
   // the difference.
   for (const row of index.values()) {
-    if (seen.has(row.id)) continue
-    push(row.id, fromIndexRow(row))
+    if (!seen.has(row.id)) push({ id: row.id, finding: fromIndexRow(row) })
   }
 
   if (findings.length === 0) return null
@@ -210,29 +210,25 @@ export function parsePioliumFindings(content) {
   return { type: 'security', source: 'piolium', findings }
 }
 
-// One findings-labelled `## ` section: `### ` blocks are findings,
-// severity groups, or a `### Variants` block; a section with no `### `
-// level at all is treated as one big group (its findings sit directly
-// at `#### `, in a table, or in a list).
-function parseDetailSection(body, index, pending, sev = '') {
-  const blocks = splitByHeading(body, H3_RE)
-  return blocks.length === 0
-    ? parseSeverityGroup(body, sev, index, pending)
-    : parseDetailBlocks(blocks, index, pending, sev)
-}
-
 // The `### ` blocks of a findings section or of a section-level
-// severity group (`## HIGH`), whose tier arrives as `sev`.
+// severity group (`## HIGH`), whose tier arrives as `sev`: each is a
+// finding, a severity group of its own, or a `### Variants` block
+// parented to the finding block before it.
 function parseDetailBlocks(blocks, index, pending, sev) {
   const out = []
   let lastId = ''
-  for (const { heading, body: blockBody } of blocks) {
+  for (const { heading, body } of blocks) {
     const groupSev = severityGroupOf(heading)
-    if (groupSev) { out.push(...parseSeverityGroup(blockBody, groupSev, index, pending)); lastId = ''; continue }
-    if (isVariantsHeading(heading)) { out.push(...parseVariantsBlock(blockBody, index, lastId, pending, sev)); continue }
-    const results = parseFindingBlock(heading, blockBody, index, pending, sev)
-    out.push(...results)
-    lastId = results[0]?.id || lastId
+    if (groupSev) {
+      out.push(...parseFindingsBody(body, groupSev, index, pending))
+      lastId = ''
+    } else if (isVariantsHeading(heading)) {
+      out.push(...parseVariantsBlock(body, index, lastId, pending, sev))
+    } else {
+      const entries = parseFindingBlock(heading, body, index, pending, sev)
+      out.push(...entries)
+      lastId = entries[0]?.id || lastId
+    }
   }
   return out
 }
@@ -242,27 +238,18 @@ function parseDetailBlocks(blocks, index, pending, sev) {
 // `pending`, and any other `#### ` sub-heading is a full entry of its
 // own (Layout C writes each variant as one, cross-linked via
 // `**Variant of**`).
-function parseFindingBlock(heading, body, index, pending, sev = '') {
+function parseFindingBlock(heading, body, index, pending, sev) {
   const { head, subs } = splitLeading(body, H4_RE)
-  const out = []
   const parent = parseBlock(heading, head, index, sev)
   // A `### ` heading with NO id and NO index row of its own, holding
   // id-shaped `#### ` entries, is a CATEGORY grouping (`### Category
   // name` over `#### p10-015 — Title` blocks) — its entries are the
   // findings, and emitting the heading itself produced one emptyish
   // title-only result per category.
-  const isCategory = Boolean(parent) && !parent.id
+  const isCategory = parent !== null && !parent.id
     && subs.some((s) => !isVariantsHeading(s.heading) && headingHasId(s.heading))
-  if (parent && !isCategory) out.push({ id: parent.id, finding: parent.finding })
-  const parentId = isCategory ? '' : (parent?.id || '')
-  for (const sub of subs) {
-    if (isVariantsHeading(sub.heading)) {
-      pending.push(...variantFindings(sub.body, index, parentId, sev))
-      continue
-    }
-    const entry = parseBlock(sub.heading, sub.body, index, sev)
-    if (entry) out.push({ id: entry.id, finding: entry.finding })
-  }
+  const out = parent && !isCategory ? [parent] : []
+  out.push(...parseEntries(subs, index, pending, sev, parent?.id || ''))
   return out
 }
 
@@ -270,46 +257,49 @@ function parseFindingBlock(heading, body, index, pending, sev = '') {
 // sub-blocks are the variants' full entries. `parentId` is the finding
 // block preceding this one — the structural parent for rows that don't
 // name their own.
-function parseVariantsBlock(body, index, parentId, pending, sev = '') {
+function parseVariantsBlock(body, index, parentId, pending, sev) {
   const { head, subs } = splitLeading(body, H4_RE)
   pending.push(...variantFindings(head, index, parentId, sev))
+  return parseEntries(subs, index, pending, sev, '')
+}
+
+// The `#### ` entries of a finding block, a `### Variants` block or a
+// severity group. Each is a finding of its own, except a `#### Variants`
+// table, whose rows defer to `pending` under their structural parent:
+// `parentId`, the enclosing finding block — or, when the entries are
+// siblings at the group level (`parentId` null), the entry before the
+// table.
+function parseEntries(subs, index, pending, sev, parentId) {
   const out = []
-  for (const sub of subs) {
-    if (isVariantsHeading(sub.heading)) { pending.push(...variantFindings(sub.body, index, '', sev)); continue }
-    const entry = parseBlock(sub.heading, sub.body, index, sev)
-    if (entry) out.push({ id: entry.id, finding: entry.finding })
+  let lastId = ''
+  for (const { heading, body } of subs) {
+    if (isVariantsHeading(heading)) {
+      pending.push(...variantFindings(body, index, parentId ?? lastId, sev))
+      continue
+    }
+    const entry = parseBlock(heading, body, index, sev)
+    if (!entry) continue
+    out.push(entry)
+    lastId = entry.id || lastId
   }
   return out
 }
 
-// One severity group — a `### Critical` block (or a `## HIGH` /
-// `## Critical Findings` section) whose content is that tier's
-// findings, in whichever rendering the assembler chose. A group with
-// `### ` blocks (a section-level group holding full finding blocks,
-// variants tables and all) routes through the same handling as a
-// findings section — `### ` MUST win over `#### ` there, or one
-// `#### Variants` inside any block would swallow every `### ` sibling
-// as its body. Otherwise the findings are `#### ` sub-blocks, an
-// id/title table, or a link/bullet list. Also used with sev '' for a
-// findings section that has no `### ` level at all. A group of prose
-// only ("None identified.") yields nothing.
-function parseSeverityGroup(body, sev, index, pending) {
+// The body of a findings section or severity group — a `### Critical`
+// block, a `## HIGH` / `## Critical Findings` section, or a
+// findings-labelled section (sev '') — holding that tier's findings in
+// whichever rendering the assembler chose. A body with `### ` blocks (a
+// section holding full finding blocks, variants tables and all) routes
+// through parseDetailBlocks — `### ` MUST win over `#### ` there, or
+// one `#### Variants` inside any block would swallow every `### `
+// sibling as its body. Otherwise the findings are `#### ` sub-blocks,
+// an id/title table, or a link/bullet list. A body of prose only
+// ("None identified.") yields nothing.
+function parseFindingsBody(body, sev, index, pending) {
   const h3 = splitByHeading(body, H3_RE)
   if (h3.length > 0) return parseDetailBlocks(h3, index, pending, sev)
 
-  const out = []
-  let lastId = ''
-  for (const { heading, body: subBody } of splitByHeading(body, H4_RE)) {
-    if (isVariantsHeading(heading)) {
-      pending.push(...variantFindings(subBody, index, lastId, sev))
-      continue
-    }
-    const parsed = parseBlock(heading, subBody, index, sev)
-    if (parsed) {
-      out.push({ id: parsed.id, finding: parsed.finding })
-      lastId = parsed.id || lastId
-    }
-  }
+  const out = parseEntries(splitByHeading(body, H4_RE), index, pending, sev, null)
   if (out.length > 0) return out
 
   // An id/title table here is the INDEX in another position — the real
@@ -344,9 +334,8 @@ function parseBlock(heading, body, index, groupSeverity = '') {
   // status). Without the adoption the index-fallback loop would emit
   // the same finding a second time under its row.
   if (!id && title) {
-    for (const r of index.values()) {
-      if (r.title.toLowerCase() === title.toLowerCase()) { id = r.id; row = r; break }
-    }
+    row = [...index.values()].find((r) => r.title.toLowerCase() === title.toLowerCase())
+    id = row?.id ?? ''
   }
 
   const { fields, labels, prose } = parseLabelledFields(body)
@@ -361,28 +350,29 @@ function parseBlock(heading, body, index, groupSeverity = '') {
     || severityFromId(id)
     || 'medium'
 
-  const { file, line, locationLink } = parseCodeRef(codeRefOf(fields))
-  let lineOut = line
-  if (lineOut === '?' && (fields.line || fields.lines)) {
-    const n = /\d+/u.exec(fields.line || fields.lines)
-    if (n) lineOut = n[0]
-  }
+  const ref = parseCodeRef(codeRefOf(fields))
+  // A `**Line:**` / `**Lines:**` bullet supplies the line when the
+  // reference itself carries none.
+  const lineBullet = /\d+/u.exec(fields.line || fields.lines || '')?.[0]
+  const line = ref.line === '?' && lineBullet ? lineBullet : ref.line
 
-  // `- **Variant of** [p10-011](#p10-011) · …` — colon-less, so it
-  // lands in prose rather than the fields; read the parent from it and
-  // keep it (plus `<a id>` anchor chrome) out of the description.
+  // `- **Variant of** [p10-011](#p10-011) · …` names the parent, with
+  // or without the colon that would make it a labelled field; it is
+  // read off the raw body either way and kept — along with `<a id>`
+  // anchor chrome — out of the description (a field by being
+  // non-narrative, a prose line by being dropped here).
   const variantOf = /\*\*Variant of:?\*\*\s*\[?([^\]\s)]+)/iu.exec(body)
   const proseClean = prose.split('\n')
     .filter((l) => !/^\s*<a\s[^>]*>\s*<\/a>\s*$/iu.test(l) && !/\*\*Variant of:?\*\*/iu.test(l))
     .join('\n').trim()
 
   const finding = {
-    file: file || 'unknown',
-    line: lineOut,
+    file: ref.file || 'unknown',
+    line,
     severity,
     description: buildDescription(title || id, fields, labels, proseClean),
   }
-  if (locationLink) finding.location = locationLink
+  if (ref.locationLink) finding.location = ref.locationLink
   // Last-resort fingerprint discriminator for an unlocated finding —
   // see fromIndexRow for why.
   else if (finding.file === 'unknown' && id) finding.location = `piolium:${id}`
@@ -395,8 +385,7 @@ function parseBlock(heading, body, index, groupSeverity = '') {
   const reportPath = fields['detailed report'] || (link.endsWith('report.md') ? link : '')
   if (reportPath) finding.reportPath = reportPath
   if (row?.status) finding.status = row.status
-  const variantOfField = fields['variant of'] ? idCell(fields['variant of'].split(/\s+/u)[0]) : ''
-  const parent = row?.parent || variantOfField || (variantOf ? idCell(variantOf[1]) : '')
+  const parent = row?.parent || (variantOf ? idCell(variantOf[1]) : '')
   if (parent) finding.parent = parent
 
   return { id, finding }
@@ -410,7 +399,7 @@ function parseBlock(heading, body, index, groupSeverity = '') {
 // Object.prototype member can't alias an inherited key.
 function parseSections(text) {
   const sections = Object.create(null)
-  for (const { heading, body } of splitByHeading(text, /^## +(.*)$/gmu)) {
+  for (const { heading, body } of splitByHeading(text, H2_RE)) {
     const header = heading.trim().toLowerCase()
     if (!header) continue
     sections[header] = header in sections ? `${sections[header]}\n${body}` : body

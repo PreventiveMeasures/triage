@@ -1,10 +1,11 @@
 // Shared structural-markdown helpers for the report parsers: fence-
 // aware heading splitting, table reading, and labelled-field
 // extraction. Extracted from parse-piolium.js, which needs all of them;
-// parse-md.js and parse-deepsec.js predate this module and keep their
-// own (subtly different) readers — fold those in only with their
-// behavior pinned by tests first, since finding ids are derived from
-// parser output and a drift in parsing silently re-keys stored triage.
+// parse-md.js and parse-deepsec.js predate this module and, beyond the
+// heading-line split, keep their own (subtly different) section and
+// label readers — fold those in only with their behavior pinned by
+// tests first, since finding ids are derived from parser output and a
+// drift in parsing silently re-keys stored triage.
 
 // Byte ranges of fenced code blocks (``` / ~~~), fences included. The
 // closing fence must use the opening marker, so a `~~~` line inside a
@@ -90,8 +91,16 @@ export function splitByHeading(text, re) {
   const marks = [...text.matchAll(re)].filter((m) => !inFence(ranges, m.index))
   return marks.map((m, i) => ({
     heading: m[1],
-    body: text.slice(m.index + m[0].length + 1, i + 1 < marks.length ? marks[i + 1].index : text.length),
+    body: text.slice(m.index + m[0].length + 1, marks[i + 1]?.index),
   }))
+}
+
+// A block split off its `# ` / `### ` marker: the heading line, trimmed,
+// and the body under it.
+export function splitHeadingLine(block) {
+  const nl = block.indexOf('\n')
+  if (nl === -1) return { title: block.trim(), body: '' }
+  return { title: block.slice(0, nl).trim(), body: block.slice(nl + 1) }
 }
 
 // Rows of a markdown table, as arrays of trimmed cells. Skips the
@@ -164,15 +173,16 @@ export function parseLabelledFields(body) {
     keyLabel = ''
     buf = []
   }
+  // A content line belongs to the open label's value, or to the prose.
+  const keep = (line) => { (key ? buf : proseLines).push(line) }
   for (const line of body.split('\n')) {
+    // A fence delimiter toggles, and every line up to the closing one
+    // (delimiters included) is content, whatever it looks like.
     const fm = /^ {0,3}(```|~~~)/u.exec(line)
-    if (fm && (!fence || fm[1] === fence)) {
-      fence = fence ? '' : fm[1]
-      ;(key ? buf : proseLines).push(line)
-      continue
-    }
-    if (fence) {
-      ;(key ? buf : proseLines).push(line)
+    const delimiter = fm !== null && (!fence || fm[1] === fence)
+    if (delimiter) fence = fence ? '' : fm[1]
+    if (delimiter || fence) {
+      keep(line)
       continue
     }
     if (!line.trim()) {
@@ -198,8 +208,7 @@ export function parseLabelledFields(body) {
     }
     // Structural line — ends the current value without starting one.
     if (/^\s*(?:#{1,6} |\||[-=*_]{3,}\s*$)/u.test(line)) { flush(); continue }
-    if (key) buf.push(line)
-    else proseLines.push(line)
+    keep(line)
   }
   flush()
   return { fields, labels, prose: proseLines.join('\n').trim() }

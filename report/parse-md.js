@@ -45,7 +45,7 @@
 // unrecognized).
 
 import { frozenIdBasis } from './parse-md-id.js'
-import { unescapeMd } from './md-structure.js'
+import { splitHeadingLine, unescapeMd } from './md-structure.js'
 
 const VALID_SEVERITIES = new Set(['critical', 'high', 'medium', 'low', 'high_bug', 'bug', 'informational'])
 
@@ -90,10 +90,8 @@ export function parseMarkdownFindings(content) {
 
 function parseBlock(block) {
   // First line is the title; the rest is the body (sections + meta).
-  const newlineIdx = block.indexOf('\n')
-  const title = (newlineIdx === -1 ? block : block.slice(0, newlineIdx)).trim()
+  const { title, body } = splitHeadingLine(block)
   if (!title) return null
-  const body = newlineIdx === -1 ? '' : block.slice(newlineIdx + 1)
 
   const { sectionsText, metaText } = splitBody(body)
   const sections = parseSections(sectionsText)
@@ -114,12 +112,11 @@ function parseBlock(block) {
   const severity = VALID_SEVERITIES.has(sevRaw) ? sevRaw : 'medium'
 
   const description = buildDescription(title, sections, evidence.length > 0)
-  const recommendation = sections['recommended fix'] || undefined
 
   const finding = { file: file || 'unknown', line, severity, description }
   if (locationLink) finding.location = locationLink
   if (evidence.length > 0) finding.evidence = evidence.map(evidenceEntry)
-  if (recommendation) finding.recommendation = recommendation
+  if (sections['recommended fix']) finding.recommendation = sections['recommended fix']
   if (meta.repository) finding.repo = { github: meta.repository }
   // Preserve auxiliary metadata as plain string fields. The renderer
   // doesn't surface these specifically, but keeping them on the
@@ -161,17 +158,15 @@ function splitBody(body) {
   return { sectionsText, metaText }
 }
 
-// Split sectionsText into named sections by `## Header`. parts[0] is
-// whatever preceded the first ## (usually a blank line).
+// Split sectionsText into named sections by `## Header`. The first
+// split element — whatever preceded the first ## (usually a blank
+// line) — is dropped.
 function parseSections(sectionsText) {
   const sections = {}
-  const parts = sectionsText.split(/^## /mu)
-  for (let i = 1; i < parts.length; i++) {
-    const part = parts[i]
-    const nl = part.indexOf('\n')
-    const header = (nl === -1 ? part : part.slice(0, nl)).trim().toLowerCase()
-    const content = (nl === -1 ? '' : part.slice(nl + 1)).trim()
-    if (header) sections[header] = content
+  for (const part of sectionsText.split(/^## /mu).slice(1)) {
+    const { title, body } = splitHeadingLine(part)
+    const header = title.toLowerCase()
+    if (header) sections[header] = body.trim()
   }
   return sections
 }

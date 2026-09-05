@@ -46,19 +46,17 @@
 // both sides agree on what a finding IS — and `node --test` in this
 // directory runs its suite with nothing else installed.
 
-import { parseCodexCsvToScans } from './parse-codex.js'
 import { parseDeepsecFindings } from './parse-deepsec.js'
 import { parseMarkdownFindings } from './parse-md.js'
 import { parsePioliumFindings } from './parse-piolium.js'
-import { computeFileHash, deriveFindingId, findingId } from './finding-id.js'
-import { META_FIELDS, inheritReportMeta, reportRepoGithub } from './meta.js'
+import { deriveFindingId } from './finding-id.js'
 
 // The rest of the surface, so a consumer needs one import: the codex
 // splitter, the id helpers the analyzer shares with the viewer, and the
 // run-meta projection a caller applies to the findings it loads.
-export { parseCodexCsvToScans }
-export { computeFileHash, deriveFindingId, findingId }
-export { META_FIELDS, inheritReportMeta, reportRepoGithub }
+export { parseCodexCsvToScans } from './parse-codex.js'
+export { computeFileHash, deriveFindingId, findingId } from './finding-id.js'
+export { META_FIELDS, inheritReportMeta, reportRepoGithub } from './meta.js'
 
 // The markdown chain, in dispatch order: tightest guard first. DeepSec
 // keys off `## SEVERITY (n)` and Piolium off its `# Security Audit
@@ -150,13 +148,7 @@ export function analyzeReport(content) {
 // and non-object entries (a malformed list's stray strings and nulls)
 // are dropped rather than handed on as findings.
 function flattenFindings(entries) {
-  const out = []
-  for (const entry of entries) {
-    for (const f of Array.isArray(entry) ? entry : [entry]) {
-      if (f && typeof f === 'object') out.push(f)
-    }
-  }
-  return out
+  return entries.flat().filter((f) => f && typeof f === 'object')
 }
 
 // Fill in `f.id` for any finding that lacks one, deriving it from the
