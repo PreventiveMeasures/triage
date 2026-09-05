@@ -10,7 +10,7 @@ import { render } from './render.js'
 import { renderSidebar } from './sidebar.js'
 import { cleanupGraph2, graph2 } from './graph/state.js'
 import { openBundle, prefetchBundleHashes } from './bundle-load.js'
-import { deriveFindingId, inheritReportMeta, parseCodexCsvToScans, readReport, reportRepoGithub } from '../../report/index.js'
+import { deriveFindingId, detectFormat, inheritReportMeta, parseCodexCsvToScans, readReport, reportRepoGithub } from '../../report/index.js'
 import { importWorkspaceFromGzip } from './workspace-import.js'
 import { maybePromptFirstImport } from './first-import-prompt.js'
 import { openPasskeyUnlockDialog } from './dialogs/passkey-unlock-dialog.js'
@@ -286,7 +286,9 @@ export async function addFiles(files) {
         continue
       }
       const content = await file.text()
-      if (lower.endsWith('.csv')) {
+      // Codex is named by the file, not its content (see report/index.js);
+      // `lower` has the download-duplicate suffix stripped already.
+      if (detectFormat(content, lower) === 'codex') {
         const scans = parseCodexCsvToScans(content)
         for (const { displayName, data } of scans) {
           // '/' → '__': OPFS filenames can't contain '/'; file-display.js

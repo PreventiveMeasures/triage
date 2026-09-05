@@ -116,6 +116,23 @@ describe('parseReport / detectFormat — the short forms', () => {
     assert.equal(detectFormat(CLAUDE_SECURITY), 'claude-security')
     assert.equal(detectFormat('nope'), null)
   })
+
+  // Codex is the format the content doesn't name — its export is a
+  // CSV — so the filename decides it, and only it.
+  it('detectFormat takes a .csv filename as codex, whatever the content', () => {
+    const csv = 'finding_url,repository,title\nx,y,z\n'
+    assert.equal(detectFormat(csv, 'export.csv'), 'codex')
+    assert.equal(detectFormat(csv, 'EXPORT.CSV'), 'codex')
+    assert.equal(detectFormat(csv, 'scans/acme (1).csv'), 'codex')
+    // No filename: a CSV's content names nothing.
+    assert.equal(detectFormat(csv), null)
+  })
+
+  it('detectFormat lets the content name every other format', () => {
+    assert.equal(detectFormat(JSON_REPORT, 'findings.md'), 'json')
+    assert.equal(detectFormat(CLAUDE_SECURITY, 'report.txt'), 'claude-security')
+    assert.equal(detectFormat('nope', 'report.md'), null)
+  })
 })
 
 describe('analyzeReport — entries and producer, nothing else', () => {

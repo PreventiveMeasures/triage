@@ -23,6 +23,14 @@
 // `parseReport` is `readReport` with the diagnosis dropped, kept as the
 // short form the app's callers use.
 //
+// Codex is the one format the content doesn't name: its export is a
+// CSV, and a CSV is a container — one row per finding across several
+// scans — rather than a report. `detectFormat` recognises it by the
+// FILENAME (`.csv`) when given one; the readers above are single-report
+// and don't take it. A codex export goes through `parseCodexCsvToScans`,
+// which splits it into one JSON-shaped report per scan, and each of
+// those reads through the readers like any other JSON report.
+//
 // The pieces stay importable on their own — `report/parse-md.js`,
 // `report/md-structure.js`, `report/finding-id.js` — for tests, and for
 // a caller that wants one helper without pulling the chain in behind it
@@ -95,8 +103,17 @@ export function parseReport(content) {
 }
 
 // Which producer wrote `content` — 'json' / 'deepsec' / 'piolium' /
-// 'claude-security', or null when nothing recognises it.
-export function detectFormat(content) {
+// 'claude-security' / 'codex', or null when nothing recognises it.
+//
+// `filename` is optional and decides only codex: a `.csv` is a codex
+// export, and the content is not consulted for it (nothing in a CSV's
+// text says whose it is, and no other format arrives as one). Every
+// other format is named from the content alone, so a `.md` holding a
+// JSON dump is 'json'. Case-insensitive on the extension; strip any
+// download-duplicate suffix (`report (1).csv`) before calling if the
+// name can carry one after the extension.
+export function detectFormat(content, filename) {
+  if (typeof filename === 'string' && /\.csv$/iu.test(filename)) return 'codex'
   return readReport(content).format
 }
 
