@@ -4,7 +4,7 @@ import { upsertWorkspace } from './workspaces.js'
 import { saveTriage } from './triage.js'
 import { analyzeContent, getKind, setCount } from './counts.js'
 import { firstDescriptionLine } from './finding-lookup.js'
-import { backfillFindingIds, flattenFindings, parseReport } from '../report/index.js'
+import { loadFindings } from '../report/index.js'
 import { gunzipToText } from '../common/gzip.js'
 import { bucketOf, patchEntry, setReportIgnored } from './triage-entry.ts'
 import { decryptBundle, isEncryptedBundle } from './workspace-bundle-crypto.js'
@@ -226,11 +226,9 @@ export async function buildImportedFindingLookup(reportEntries) {
   const lookup = new Map()
   for (const r of reportEntries ?? []) {
     if (typeof r?.content !== 'string') continue
-    const data = parseReport(r.content)
-    if (!data?.findings) continue
-    const all = flattenFindings(data.findings)
-    await backfillFindingIds(all)
-    for (const f of all) {
+    const report = await loadFindings(r.content)
+    if (!report) continue
+    for (const f of report.findings) {
       if (!f.id || lookup.has(f.id)) continue
       lookup.set(f.id, {
         severity: f.severity,

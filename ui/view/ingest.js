@@ -10,7 +10,7 @@ import { render } from './render.js'
 import { renderSidebar } from './sidebar.js'
 import { cleanupGraph2, graph2 } from './graph/state.js'
 import { openBundle, prefetchBundleHashes } from './bundle-load.js'
-import { deriveFindingId, detectFormat, inheritReportMeta, parseCodexCsvToScans, readReport, reportRepoGithub } from '../../report/index.js'
+import { backfillFindingIds, detectFormat, inheritReportMeta, parseCodexCsvToScans, readReport, reportRepoGithub } from '../../report/index.js'
 import { importWorkspaceFromGzip } from './workspace-import.js'
 import { maybePromptFirstImport } from './first-import-prompt.js'
 import { openPasskeyUnlockDialog } from './dialogs/passkey-unlock-dialog.js'
@@ -944,13 +944,11 @@ export async function ingestReport(name, content, gen = null) {
     // already shows stored marks/deletions for matching findings.
     await triageLoadPromise
     if (stale()) return
-    // Format dispatch lives in the report library (report/index.js):
-    // the analyzer's own JSON first, then the markdown chain. The JSON
-    // error rides along for the failure message, since a file that
-    // reaches none of the parsers is usually a malformed dump rather
+    // Format dispatch lives in the report library (report/index.js),
+    // which also words the failure — usually a malformed dump rather
     // than an unknown format.
-    const { data, jsonError } = readReport(content)
-    if (!data) throw new Error(`Not JSON, and not a recognized markdown format. (JSON error: ${jsonError.message})`, { cause: jsonError })
+    const { data, reason } = readReport(content)
+    if (!data) throw new Error(reason)
     // First report in the current view (state.reports cleared on
     // switchToFile / deleteCurrent, accumulating in the headless print
     // flow). Gates both the filter reset and the auto-tune below.
@@ -1017,16 +1015,10 @@ export async function ingestReport(name, content, gen = null) {
     // dedupe by content like exporter-id'd ones, and so triage
     // (markers / deletions) persists across reloads of the same source.
     // Mutates the finding objects in place; `toGroup` returns them by
-    // reference, so the ids are visible to the loop below. Batched via
-    // Promise.all since crypto.subtle.digest is async — sequential
-    // awaits would serialize hundreds of hashes for nothing.
+    // reference, so the ids are visible to the loop below.
     const rawEntries = data.findings || []
-    const idLess = rawEntries.flatMap(toGroup).filter((f) => !f.id)
-    if (idLess.length > 0) {
-      const computed = await Promise.all(idLess.map(deriveFindingId))
-      if (stale()) return
-      idLess.forEach((f, i) => { if (computed[i]) f.id = computed[i] })
-    }
+    await backfillFindingIds(rawEntries.flatMap(toGroup))
+    if (stale()) return
     // Per-report repo URL stamped on each finding so format.js's
     // fileUrl / lineLink resolves the right fallback in workspace mode
     // (where state.repoUrl can't represent N reports at once). Empty

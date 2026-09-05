@@ -1,21 +1,13 @@
 // `report/index.js` — the report library's public surface. The parsers
 // under `report/` each have their own suite; this one pins the door in
-// front of them: which format wins for a given document, what each
-// entry point hands back, and that the whole read path (recognise →
-// flatten → id) works in one call.
+// front of them: which format wins for a given document, what counts
+// as a report at all, what each entry point hands back, and that the
+// whole read path (recognise → flatten → id) works in one call.
 
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import {
-  analyzeReport,
-  backfillFindingIds,
-  detectFormat,
-  flattenFindings,
-  loadFindings,
-  parseReport,
-  readReport,
-} from '../index.js'
+import { analyzeReport, backfillFindingIds, detectFormat, loadFindings, readReport } from '../index.js'
 
 const JSON_REPORT = JSON.stringify({
   type: 'security',
@@ -69,11 +61,17 @@ const PIOLIUM = [
 ].join('\n')
 
 describe('readReport — dispatch', () => {
-  it('takes JSON first, with no error to report', () => {
-    const { data, format, jsonError } = readReport(JSON_REPORT)
+  it('takes JSON first, with no reason to give', () => {
+    const { data, format, reason } = readReport(JSON_REPORT)
     assert.equal(format, 'json')
-    assert.equal(jsonError, null)
+    assert.equal(reason, null)
     assert.equal(data.findings.length, 2)
+  })
+
+  it('takes a pre-deduplicated dump off `groups`', () => {
+    const { data, format } = readReport(JSON.stringify({ groups: [[{ description: 'a' }]] }))
+    assert.equal(format, 'json')
+    assert.equal(data.groups.length, 1)
   })
 
   it('recognises each markdown producer by name', () => {
@@ -89,29 +87,36 @@ describe('readReport — dispatch', () => {
     }
   })
 
-  it('hands back the JSON error when nothing recognises the text', () => {
-    const { data, format, jsonError } = readReport('not a report at all')
+  it('says why when nothing recognises the text', () => {
+    const { data, format, reason } = readReport('not a report at all')
     assert.equal(data, null)
     assert.equal(format, null)
-    assert.ok(jsonError instanceof Error)
+    assert.match(reason, /not a recognized markdown format/u)
   })
 
-  it('reports the JSON error for a malformed dump, not an unknown format', () => {
+  it('quotes the JSON error for a malformed dump', () => {
     // The common failure: a truncated analyzer dump. It is not markdown
-    // either, so the caller's message leans on the parse error.
-    const { data, jsonError } = readReport('{"findings": [{"file": "a.js"')
+    // either, so the reason leans on the parse error.
+    const { data, reason } = readReport('{"findings": [{"file": "a.js"')
     assert.equal(data, null)
-    assert.match(jsonError.message, /JSON/iu)
+    assert.match(reason, /JSON error: /u)
+  })
+
+  // A JSON file is a report only when it carries a findings (or groups)
+  // array; anything else that parses is some other JSON file, not an
+  // empty report — and the reason says which of the two it hit.
+  it('does not take valid JSON without a findings array as a report', () => {
+    for (const text of ['{"hello": "world"}', '[]', '{"findings": "nope"}', '{"findings": {"a": 1}}']) {
+      const { data, format, reason } = readReport(text)
+      assert.equal(data, null, text)
+      assert.equal(format, null, text)
+      assert.match(reason, /not a report/u)
+    }
   })
 })
 
-describe('parseReport / detectFormat — the short forms', () => {
-  it('parseReport is readReport without the diagnosis', () => {
-    assert.deepEqual(parseReport(JSON_REPORT), JSON.parse(JSON_REPORT))
-    assert.equal(parseReport('nope'), null)
-  })
-
-  it('detectFormat names the producer', () => {
+describe('detectFormat', () => {
+  it('names the producer', () => {
     assert.equal(detectFormat(JSON_REPORT), 'json')
     assert.equal(detectFormat(CLAUDE_SECURITY), 'claude-security')
     assert.equal(detectFormat('nope'), null)
@@ -119,7 +124,7 @@ describe('parseReport / detectFormat — the short forms', () => {
 
   // Codex is the format the content doesn't name — its export is a
   // CSV — so the filename decides it, and only it.
-  it('detectFormat takes a .csv filename as codex, whatever the content', () => {
+  it('takes a .csv filename as codex, whatever the content', () => {
     const csv = 'finding_url,repository,title\nx,y,z\n'
     assert.equal(detectFormat(csv, 'export.csv'), 'codex')
     assert.equal(detectFormat(csv, 'EXPORT.CSV'), 'codex')
@@ -128,7 +133,7 @@ describe('parseReport / detectFormat — the short forms', () => {
     assert.equal(detectFormat(csv), null)
   })
 
-  it('detectFormat lets the content name every other format', () => {
+  it('lets the content name every other format', () => {
     assert.equal(detectFormat(JSON_REPORT, 'findings.md'), 'json')
     assert.equal(detectFormat(CLAUDE_SECURITY, 'report.txt'), 'claude-security')
     assert.equal(detectFormat('nope', 'report.md'), null)
@@ -156,23 +161,12 @@ describe('analyzeReport — entries and producer, nothing else', () => {
     assert.deepEqual(analyzeReport('[]'), { count: 0, recognized: false })
   })
 
+  it('counts a pre-deduplicated dump by its groups', () => {
+    assert.equal(analyzeReport(JSON.stringify({ groups: [[{ description: 'a' }], { description: 'b' }] })).count, 2)
+  })
+
   it('reports nothing recognisable as unrecognised', () => {
     assert.deepEqual(analyzeReport('plain prose'), { count: 0, recognized: false })
-  })
-})
-
-describe('flattenFindings', () => {
-  it('flattens grouped entries and drops the falsy ones', () => {
-    const a = { description: 'a' }
-    const b = { description: 'b' }
-    const c = { description: 'c' }
-    assert.deepEqual(flattenFindings([a, [b, c]]), [a, b, c])
-    assert.deepEqual(flattenFindings([a, null, [null, b]]), [a, b])
-  })
-
-  it('takes an absent list as an empty one', () => {
-    assert.deepEqual(flattenFindings(undefined), [])
-    assert.deepEqual(flattenFindings([]), [])
   })
 })
 
@@ -201,16 +195,23 @@ describe('loadFindings — the whole read path', () => {
   it('recognises, flattens and ids in one call', async () => {
     const report = await loadFindings(JSON_REPORT)
     assert.equal(report.format, 'json')
-    assert.equal(report.type, 'security')
+    assert.equal(report.data.type, 'security')
     assert.equal(report.findings.length, 2)
     for (const f of report.findings) assert.match(f.id, /^[0-9a-f-]{36}$/u)
   })
 
-  it('carries the markdown producer through as the source', async () => {
+  it('carries the markdown producer through as the format and the source', async () => {
     const report = await loadFindings(CLAUDE_SECURITY)
     assert.equal(report.format, 'claude-security')
-    assert.equal(report.source, 'claude-security')
+    assert.equal(report.data.source, 'claude-security')
     assert.equal(report.findings[0].file, 'src/load.ts')
+  })
+
+  it('flattens grouped entries and drops what is not a finding', async () => {
+    const report = await loadFindings(JSON.stringify({
+      findings: [{ description: 'a' }, [{ description: 'b' }, { description: 'c' }], null, 'stray', [null]],
+    }))
+    assert.deepEqual(report.findings.map((f) => f.description), ['a', 'b', 'c'])
   })
 
   it('reads a pre-grouped dump off `groups`', async () => {
@@ -220,12 +221,13 @@ describe('loadFindings — the whole read path', () => {
     assert.equal(report.findings.length, 1)
   })
 
-  it('keeps the parsed document for the fields it does not lift out', async () => {
+  it('hands the findings back as the parser\'s own objects', async () => {
     const report = await loadFindings(JSON_REPORT)
-    assert.equal(report.report.findings.length, 2)
+    assert.equal(report.findings[0], report.data.findings[0])
   })
 
-  it('returns null for something no parser recognises', async () => {
+  it('returns null for anything that is not a report', async () => {
     assert.equal(await loadFindings('plain prose'), null)
+    assert.equal(await loadFindings('{"hello": "world"}'), null)
   })
 })

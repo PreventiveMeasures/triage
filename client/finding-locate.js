@@ -13,7 +13,7 @@
 import { computeLinkHint } from './finding-link.js'
 import { listFiles, readFile } from './storage.js'
 import { listWorkspaces } from './workspaces.js'
-import { backfillFindingIds, flattenFindings, parseReport } from '../report/index.js'
+import { loadFindings } from '../report/index.js'
 
 // The workspace named by the `v=` workspace half, or null. Hashing
 // every local workspace id is a handful of digests over a list that's
@@ -42,15 +42,10 @@ export async function reportForHint(hint) {
   return idx === -1 ? null : names[idx]
 }
 
-// Does this stored report carry `id`? Parses with the same helpers the
-// triage GC walk uses (`parseReport` → `flattenFindings` →
-// `backfillFindingIds`), so a report in any format the app ingests
-// answers correctly, including markdown / DeepSec / Piolium reports
-// whose ids are derived rather than stamped.
-//
-// Ordered so the cheap question comes first: reports whose findings
-// carry exporter-stamped ids answer on a plain scan, and the crypto
-// derivation only runs for the id-less remainder.
+// Does this stored report carry `id`? Reads through the report library
+// like the triage GC walk does, so a report in any format the app
+// ingests answers correctly, including markdown / DeepSec / Piolium
+// reports whose ids are derived rather than stamped.
 async function reportHasFinding(name, id) {
   let content
   try {
@@ -64,17 +59,8 @@ async function reportHasFinding(name, id) {
     return false
   }
   if (content == null) return false
-  const data = parseReport(content)
-  // `Array.isArray`, not a truthy check: `parseReport` does no shape
-  // validation, so a malformed `findings` (number, plain object) would
-  // make `flattenFindings`'s `for…of` throw.
-  if (!Array.isArray(data?.findings)) return false
-  const findings = flattenFindings(data.findings)
-  if (findings.some((f) => f.id === id)) return true
-  const idLess = findings.filter((f) => !f.id)
-  if (idLess.length === 0) return false
-  await backfillFindingIds(idLess)
-  return idLess.some((f) => f.id === id)
+  const report = await loadFindings(content)
+  return report?.findings.some((f) => f.id === id) ?? false
 }
 
 // Find any locally-stored report holding `id`, or null. `skip` names
