@@ -1,7 +1,7 @@
 {
   "name": "@preventive/report",
   "version": "0.1.0",
-  "description": "Parsers for security-scan reports — DeepView JSON, DeepSec / Piolium / Claude Security markdown, Codex CSV — behind one API",
+  "description": "Parsers for security-scan reports",
   "license": "MIT",
   "author": {
     "name": "Nikita Skovoroda",
