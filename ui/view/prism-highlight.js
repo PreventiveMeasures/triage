@@ -98,3 +98,52 @@ export async function highlight(code, lang) {
     return null
   }
 }
+
+// Split highlighted markup into one HTML string per source line.
+//
+// A grammar's tokens don't respect line boundaries — a fenced block in
+// markdown is a single token with newlines inside it — so a per-line
+// gutter can't just chop the string at each `\n`: a cut mid-token
+// leaves one line with an unclosed `<span>` and the next with a stray
+// closer, and the browser's parser then re-nests everything after it.
+// This closes every tag that is open at a newline and reopens the same
+// stack on the next line, so each line stands alone.
+//
+// String surgery rather than a DOM walk because the input is Prism's
+// own output and nothing else: spans only, no self-closing tags, no
+// comments, and every `<`, `>` and `&` in the source text already
+// escaped — so the only `<` that begins a tag is one Prism wrote.
+// Returns the same number of entries `code.split('\n')` would, which
+// is what lets the caller pair them with line numbers (and fall back to
+// plain text if they ever disagree).
+export function splitHighlightedLines(html) {
+  const lines = []
+  const open = []
+  let current = ''
+  let at = 0
+  while (at < html.length) {
+    const lt = html.indexOf('<', at)
+    const text = lt === -1 ? html.slice(at) : html.slice(at, lt)
+    const parts = text.split('\n')
+    current += parts[0]
+    for (let p = 1; p < parts.length; p++) {
+      // Close the stack innermost-first to end the line, then reopen it
+      // outermost-first to start the next one.
+      for (let d = open.length - 1; d >= 0; d--) current += open[d].close
+      lines.push(current)
+      current = open.map((o) => o.open).join('') + parts[p]
+    }
+    if (lt === -1) break
+    const gt = html.indexOf('>', lt)
+    // An unterminated tag can only mean the input isn't what this
+    // expects; keep the remainder verbatim rather than dropping it.
+    if (gt === -1) { current += html.slice(lt); break }
+    const tag = html.slice(lt, gt + 1)
+    if (tag.startsWith('</')) open.pop()
+    else open.push({ open: tag, close: `</${/^<([a-zA-Z][^\s/>]*)/u.exec(tag)?.[1] ?? 'span'}>` })
+    current += tag
+    at = gt + 1
+  }
+  lines.push(current)
+  return lines
+}

@@ -11,7 +11,7 @@
 // already sees.
 import { state } from '#client/index.js'
 import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, clearFilterOverride, cloneFilterFields, setFilterOverride } from './filters.js'
-import { SEVERITIES } from './format.js'
+import { REVALIDATE_FILTERS, SEVERITIES, revalidateFilterKinds } from './format.js'
 import { getMergedGroups, groupState } from './group.js'
 
 const SEVERITY_LABELS = {
@@ -22,6 +22,19 @@ const COLOR_LABELS = { red: 'Red', blue: 'Blue', green: 'Green', gray: 'Gray', n
 const TRIAGE_LABELS = {
   inprogress: 'In progress', fixed: 'Fixed', invalid: 'Invalid',
   deleted: 'Deleted', ignored: 'Ignored',
+}
+
+// The revalidation outcome in words, with the partial switch folded in
+// where it applies. That switch lives INSIDE Confirmed (it is the one
+// option whose kinds take the partial rows), so the other outcomes
+// describe as their bare label — `activeRevalidateKinds` reads it the
+// same way.
+function revalidateValue(value, partial) {
+  const label = REVALIDATE_FILTERS.find((o) => o.value === value)?.label ?? value
+  if (!revalidateFilterKinds(value)?.includes('partial')) return label
+  if (partial === 'exclude') return `${label} (full only)`
+  if (partial === 'only') return `${label} (partial only)`
+  return label
 }
 
 // Severities listed in canonical high→low order (SEVERITIES) rather
@@ -72,10 +85,30 @@ export function activeFilterDescriptions(fields = state) {
   if (fields.filterRepo) {
     out.push({ key: 'repo', label: 'Repository', value: fields.filterRepo === NO_REPO_SENTINEL ? '(no repo)' : fields.filterRepo, clear: { filterRepo: '' } })
   }
+  // Revalidation outcome — the toolbar's Confirmed / Unreachable /
+  // Refuted dropdown. Gated on the value resolving to a set of kinds,
+  // because matchesFilters treats one that names no option as no filter
+  // rather than hiding everything behind it.
+  if (revalidateFilterKinds(fields.filterRevalidate)) {
+    out.push({
+      key: 'revalidate',
+      label: 'Revalidation',
+      value: revalidateValue(fields.filterRevalidate, fields.filterPartial),
+      clear: { filterRevalidate: '', filterPartial: '' },
+    })
+  }
   // Confidence: 0..10 is the no-filter default; either bound moving in
   // narrows the range. One row for the pair, so dropping it hands both
   // bounds back at once.
-  if (fields.filterConfMin > 0 || fields.filterConfMax < 10) {
+  //
+  // Not described at all while an outcome is selected: the two share a
+  // toolbar block and the outcome REPLACES the range there (conf-filter
+  // renders it inert, matchesFilters skips it entirely), so the bounds
+  // narrow nothing however they were left. Listing them anyway offered a
+  // filter whose × moved no counts — and left the filter that was doing
+  // the narrowing unlisted and unremovable. Dropping the outcome brings
+  // the range back into force, and this row back with it.
+  if (!fields.filterRevalidate && (fields.filterConfMin > 0 || fields.filterConfMax < 10)) {
     let value
     if (fields.filterConfMin > 0 && fields.filterConfMax < 10) value = `${fields.filterConfMin}–${fields.filterConfMax}`
     else if (fields.filterConfMin > 0) value = `≥ ${fields.filterConfMin}`

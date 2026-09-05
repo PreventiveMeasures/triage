@@ -12,7 +12,7 @@ import { describe, it } from 'node:test'
 
 // No stubs needed: prism-highlight.js is a leaf (it imports nothing,
 // and reaches prismjs only through a runtime-string dynamic import).
-const { langForTag, langForPath } = await import('../ui/view/prism-highlight.js')
+const { langForTag, langForPath, splitHighlightedLines } = await import('../ui/view/prism-highlight.js')
 
 describe('langForTag — recognized tags', () => {
   it('maps the TypeScript tags', () => {
@@ -124,6 +124,91 @@ describe('langForTag — allowlist matches the prism bundle', () => {
     for (const tag of tags) assert.ok(langForTag(tag), `${tag} should be allowlisted`)
     for (const ext of ['ts', 'tsx', 'js', 'jsx', 'json', 'css', 'html', 'yml', 'sh', 'md', 'sol', 'php', 'rs']) {
       assert.ok(langForPath(`a/b.${ext}`), `.${ext} should resolve for the source viewers`)
+    }
+  })
+})
+
+// `splitHighlightedLines` — one HTML string per source line, for the
+// export preview's line-number gutter. The interesting case is a token
+// that spans lines (a fenced block in markdown is one), where a naive
+// chop would leave an unclosed span on one line and a stray closer on
+// the next.
+describe('splitHighlightedLines', () => {
+  // Everything the browser will ever hand this comes from Prism, whose
+  // markup is spans and escaped text. Reconstructing the source from a
+  // line means stripping the tags and unescaping — which is also how a
+  // line ends up wrong if the split lost or duplicated a character.
+  const textOf = (html) => html
+    .replaceAll(/<[^>]*>/gu, '')
+    .replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&amp;', '&')
+
+  it('returns one entry per line, as a plain split would', () => {
+    assert.deepEqual(splitHighlightedLines('a\nb\nc'), ['a', 'b', 'c'])
+    assert.deepEqual(splitHighlightedLines('one line'), ['one line'])
+    // A trailing newline ends the last line and opens an empty one, so
+    // the count still matches `split('\n')` — the caller decides
+    // whether to number that one.
+    assert.deepEqual(splitHighlightedLines('trailing\n'), ['trailing', ''])
+  })
+
+  it('closes and reopens a token that crosses a newline', () => {
+    const out = splitHighlightedLines('<span class="token bold">a\nb</span>')
+    assert.deepEqual(out, [
+      '<span class="token bold">a</span>',
+      '<span class="token bold">b</span>',
+    ])
+  })
+
+  it('reopens the whole stack, outermost first', () => {
+    const out = splitHighlightedLines('<span class="a"><span class="b">x\ny</span>z</span>')
+    assert.deepEqual(out, [
+      '<span class="a"><span class="b">x</span></span>',
+      '<span class="a"><span class="b">y</span>z</span>',
+    ])
+  })
+
+  it('leaves escaped angle brackets in the text alone', () => {
+    // `&lt;` is text Prism escaped, not a tag — splitting must not read
+    // it as one, or the stack goes out of step for the rest of the file.
+    const out = splitHighlightedLines('&lt;div&gt; is text\n<span class="token tag">&lt;b&gt;</span>')
+    assert.equal(out.length, 2)
+    assert.equal(textOf(out[0]), '<div> is text')
+    assert.equal(textOf(out[1]), '<b>')
+  })
+
+  it('round-trips a document through Prism itself', async () => {
+    // The real thing: prism's markdown grammar over a document with a
+    // fenced block (one token, several lines) inside it.
+    const { default: Prism } = await import('prismjs/prism.js')
+    await import('prismjs/components/prism-markup.js')
+    await import('prismjs/components/prism-clike.js')
+    await import('prismjs/components/prism-javascript.js')
+    await import('prismjs/components/prism-markdown.js')
+    const source = [
+      '# report.json',
+      '',
+      '**Findings:** 2',
+      '',
+      '## High (1)',
+      '',
+      'Compared with `===`, which short-circuits.',
+      '',
+      '```js',
+      'if (token === expected) {',
+      '  grant(user)',
+      '}',
+      '```',
+      '',
+      '**Recommendation:** use a constant-time compare.',
+    ].join('\n')
+    const lines = splitHighlightedLines(Prism.highlight(source, Prism.languages.markdown, 'markdown'))
+    assert.equal(lines.length, source.split('\n').length)
+    assert.deepEqual(lines.map(textOf), source.split('\n'))
+    // Every line balanced on its own — the point of the exercise.
+    for (const line of lines) {
+      const opens = (line.match(/<span\b/gu) ?? []).length
+      const closes = (line.match(/<\/span>/gu) ?? []).length
+      assert.equal(opens, closes, line)
     }
   })
 })
