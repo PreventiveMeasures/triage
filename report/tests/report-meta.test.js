@@ -21,7 +21,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { META_FIELDS, inheritReportMeta, reportRepoGithub } from '../report/meta.js'
+import { META_FIELDS, inheritReportMeta, reportRepoGithub } from '../meta.js'
 
 // The header shape the analyzer emits at the top of a native dump.
 const header = () => ({

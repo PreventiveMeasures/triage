@@ -15,7 +15,7 @@ import {
   loadFindings,
   parseReport,
   readReport,
-} from '../report/index.js'
+} from '../index.js'
 
 const JSON_REPORT = JSON.stringify({
   type: 'security',

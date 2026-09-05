@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { parseDeepsecFindings } from '../report/parse-deepsec.js'
+import { parseDeepsecFindings } from '../parse-deepsec.js'
 
 const HEADER = [
   '# Vulnerability Scan Report',

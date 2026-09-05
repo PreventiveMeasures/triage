@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { parseCodexCsvToScans } from '../report/parse-codex.js'
+import { parseCodexCsvToScans } from '../parse-codex.js'
 
 const HEADER = [
   'finding_url', 'repository', 'repository_url', 'title', 'description',

@@ -12,8 +12,8 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { deriveFindingId } from '../report/finding-id.js'
-import { parseMarkdownFindings } from '../report/parse-md.js'
+import { deriveFindingId } from '../finding-id.js'
+import { parseMarkdownFindings } from '../parse-md.js'
 
 // The legacy shape: a `## Location` section, bold inside the prose, and
 // a second finding carrying no location at all (which the legacy code

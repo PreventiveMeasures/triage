@@ -31,7 +31,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { parseMarkdownFindings } from '../report/parse-md.js'
+import { parseMarkdownFindings } from '../parse-md.js'
 
 describe('parseMarkdownFindings — format guards', () => {
   it('returns null for empty input', () => {

@@ -11,7 +11,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { parsePioliumFindings } from '../report/parse-piolium.js'
+import { parsePioliumFindings } from '../parse-piolium.js'
 
 // Minimal but realistic report: the H1 + prose sections piolium's
 // assembler always writes, an index table, and one detail block.
