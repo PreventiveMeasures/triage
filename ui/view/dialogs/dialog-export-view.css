@@ -8,6 +8,10 @@ dialog {
   max-width: 900px; width: min(94vw, 900px);
 }
 
+/* No intro paragraph here — the heading names the thing and the thing
+   is right there — so the title takes the gap the intro would have. */
+header h3 { margin-bottom: .7rem; }
+
 /* The document itself. `pre` keeps the file's own line breaks, and the
    box scrolls in both directions rather than reflowing: a wrapped line
    would misrepresent what lands on disk. Capped against the viewport so
@@ -32,10 +36,12 @@ dialog {
   & code { font: inherit; background: none; }
 }
 
-/* Byte / line count under the box — the same "what am I committing to"
-   role the confirm dialog's count headline plays, in footnote weight. */
+/* Byte / line count, riding the footer row opposite the Close button —
+   the same "what am I committing to" role the confirm dialog's count
+   headline plays, in footnote weight. Below the rule rather than under
+   the box: it describes the file, not the excerpt on screen, and the
+   footer is where this dialog's other statement about the file lives. */
 .evd-meta {
-  margin: .5rem 0 0;
   color: var(--muted); font-size: .74rem;
   font-variant-numeric: tabular-nums;
 }

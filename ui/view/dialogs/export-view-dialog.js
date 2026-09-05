@@ -61,16 +61,15 @@ class ExportViewDialog extends AppDialog {
     const kb = (new TextEncoder().encode(this.markdown).length / 1024).toFixed(1)
     return html`<dialog @close=${this._onClose}>
       <header>
-        <h3>Report preview</h3>
+        <h3>Report markdown</h3>
       </header>
-      <p class="nwd-intro">The Markdown the download would write, exactly as it would be saved.</p>
       <pre class="evd-code" tabindex="0"><code>${this.highlighted === null
         ? this.markdown
         : unsafeHTML(this.highlighted)}</code></pre>
-      <p class="evd-meta">${lines} ${lines === 1 ? 'line' : 'lines'} · ${kb} KB</p>
       <footer class="nwd-actions">
+        <span class="evd-meta">${lines} ${lines === 1 ? 'line' : 'lines'} · ${kb} KB</span>
         <span class="nwd-spacer"></span>
-        <button type="button" data-role="cancel" @click=${this._onClose}>Close</button>
+        <button type="button" class="primary" data-role="cancel" @click=${this._onClose}>Close</button>
       </footer>
     </dialog>`
   }
