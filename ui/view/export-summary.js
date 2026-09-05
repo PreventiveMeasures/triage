@@ -1,9 +1,10 @@
 // Summary of what a print / markdown export will contain, given the
-// active filters — feeds `<export-confirm-dialog>`. Both export paths
+// active filters — feeds `<export-confirm-dialog>`, and the header of
+// the markdown document itself (markdown-export.js), so the dialog and
+// the file describe the selection in the same words. Both export paths
 // emit only the findings visible under the current triage bucket
-// (live / trash) and toolbar filters (see markdown-export.js's
-// visibleGroups and the print pipeline in events.js), so this restates
-// that selection in words + counts before the user commits.
+// (live / trash) and toolbar filters, so this restates that selection
+// in words + counts before the user commits.
 //
 // Counts are over GROUPS (a dedup group = one finding with ≥1 case),
 // the same unit as the toolbar's "X of Y" counter, computed over the
@@ -11,24 +12,28 @@
 // already sees.
 import { state } from '#client/index.js'
 import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters } from './filters.js'
-import { SEVERITIES } from './format.js'
+import { REVALIDATE_FILTERS, SEVERITIES } from './format.js'
 import { getMergedGroups, groupState } from './group.js'
-
-const SEVERITY_LABELS = {
-  critical: 'Critical', high: 'High', medium: 'Medium', low: 'Low',
-  high_bug: 'High bug', bug: 'Bug', informational: 'Informational',
-}
-const COLOR_LABELS = { red: 'Red', blue: 'Blue', green: 'Green', gray: 'Gray', none: 'Unmarked' }
-const TRIAGE_LABELS = {
-  inprogress: 'In progress', fixed: 'Fixed', invalid: 'Invalid',
-  deleted: 'Deleted', ignored: 'Ignored',
-}
+import { COLOR_LABELS, SEVERITY_LABELS, TRIAGE_LABELS } from '../../formats/index.js'
 
 // Severities listed in canonical high→low order (SEVERITIES) rather
 // than Set-insertion order, so the description reads consistently
 // regardless of the order chips were ticked.
 function listSeverities(set) {
   return SEVERITIES.filter((s) => set.has(s)).map((s) => SEVERITY_LABELS[s] ?? s).join(', ')
+}
+
+// The outcome dropdown's own word for its selection, with the partial
+// chip's state folded in where it applies — only under Confirmed, the
+// one option that took the partial rows in (format.js
+// activeRevalidateKinds).
+function revalidateFilterLabel(value, partial) {
+  const option = REVALIDATE_FILTERS.find((o) => o.value === value)
+  const label = option?.label ?? value
+  if (!option?.kinds.includes('partial')) return label
+  if (partial === 'exclude') return `${label} (full confirmations only)`
+  if (partial === 'only') return `${label} (partial confirmations only)`
+  return label
 }
 
 // Build a `{ label, value }` list describing every active filter, in
@@ -58,9 +63,15 @@ export function activeFilterDescriptions() {
   if (state.filterRepo) {
     out.push({ label: 'Repository', value: state.filterRepo === NO_REPO_SENTINEL ? '(no repo)' : state.filterRepo })
   }
-  // Confidence: 0..10 is the no-filter default; either bound moving in
-  // narrows the range.
-  if (state.filterConfMin > 0 || state.filterConfMax < 10) {
+  // Confidence and the revalidation outcome share one toolbar block,
+  // and the outcome REPLACES the range — filters.js skips the
+  // confidence branch entirely while one is selected — so the range
+  // is described only when it is the one doing the filtering, and the
+  // outcome otherwise. 0..10 is the range's no-filter default; either
+  // bound moving in narrows it.
+  if (state.filterRevalidate) {
+    out.push({ label: 'Revalidation', value: revalidateFilterLabel(state.filterRevalidate, state.filterPartial) })
+  } else if (state.filterConfMin > 0 || state.filterConfMax < 10) {
     let value
     if (state.filterConfMin > 0 && state.filterConfMax < 10) value = `${state.filterConfMin}–${state.filterConfMax}`
     else if (state.filterConfMin > 0) value = `≥ ${state.filterConfMin}`
@@ -79,24 +90,16 @@ export function activeFilterDescriptions() {
   return out
 }
 
-// Groups in the current triage bucket, on the basis the chosen export
-// actually serializes:
-//   * 'print' renders the MERGED on-screen DOM (render.js's `allGroups`
-//     = getMergedGroups narrowed to the bucket), so cross-report
-//     workspace merges collapse into single super-groups;
-//   * 'download' (markdown) iterates each report's OWN groups with no
-//     merging (see markdown-export.js's visibleGroups).
-// Counting on the matching basis keeps the dialog's number equal to
-// what that path emits — when a workspace merge is active the two
-// bases (and their per-group triage rollups) can otherwise diverge.
-// `commonTriage === state.shownTriage` is the bucket split (null =
-// live); kanban isn't reachable here (print/download buttons hide in
-// kanban mode).
-function currentBucketGroups(mode) {
-  const groups = mode === 'download'
-    ? state.reports.flatMap((r) => r.groups ?? [])
-    : getMergedGroups()
-  return groups.filter((g) => groupState(g).commonTriage === state.shownTriage)
+// The groups an export draws from: the current triage bucket over the
+// MERGED on-screen set (render.js's `allGroups` = getMergedGroups
+// narrowed to the bucket), so a workspace's cross-report duplicates
+// count — and export — as one finding with several cases, exactly as
+// the views show them. Shared by the dialog's counts and the markdown
+// adapter's selection, so the two can't disagree. `commonTriage ===
+// state.shownTriage` is the bucket split (null = live); kanban isn't
+// reachable here (print/download buttons hide in kanban mode).
+export function exportBucketGroups() {
+  return getMergedGroups().filter((g) => groupState(g).commonTriage === state.shownTriage)
 }
 
 // `{ included, total, excluded, filters, bucketLabel }` for the
@@ -105,7 +108,7 @@ function currentBucketGroups(mode) {
 // only when viewing a trash bucket, to flag that the export is scoped
 // to e.g. Deleted rather than the live findings.
 export function exportSelectionSummary(mode) {
-  const bucket = currentBucketGroups(mode)
+  const bucket = exportBucketGroups()
   const total = bucket.length
   const included = applyFilters(bucket).length
   return {

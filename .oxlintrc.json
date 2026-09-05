@@ -69,7 +69,8 @@
     {
       "files": [
         "tests/**",
-        "report/tests/**"
+        "report/tests/**",
+        "formats/tests/**"
       ],
       "rules": {
         "max-lines-per-function": "off",

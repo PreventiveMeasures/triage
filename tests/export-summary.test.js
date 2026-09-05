@@ -27,7 +27,7 @@ if (!globalThis[slotKey]) {
 
 const { state } = await import('../client/state.ts')
 const { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL } = await import('../ui/view/filters.js')
-const { exportSelectionSummary, activeFilterDescriptions } = await import('../ui/view/export-summary.js')
+const { activeFilterDescriptions, exportBucketGroups, exportSelectionSummary } = await import('../ui/view/export-summary.js')
 
 function reset() {
   state.filterSeverities = new Set()
@@ -43,6 +43,8 @@ function reset() {
   state.filterComment = ''
   state.filterFix = ''
   state.filterFlagged = ''
+  state.filterRevalidate = ''
+  state.filterPartial = ''
   state.triage = new Map()
   state.shownTriage = null
   state.workspaceMerges = []
@@ -116,14 +118,15 @@ describe('exportSelectionSummary — counts', () => {
   })
 })
 
-describe('exportSelectionSummary — print vs download basis', () => {
+describe('exportSelectionSummary — one basis for print and download', () => {
   beforeEach(reset)
 
-  it('counts merged super-groups for print but per-report groups for download', () => {
+  it('counts merged super-groups for both', () => {
     // Finding A in report 1, B in report 2, unioned by a cross-report
-    // workspace merge — so the merged on-screen set (print) collapses
-    // them into one super-group while the markdown download iterates
-    // each report's own groups.
+    // workspace merge — the merged on-screen set collapses them into
+    // one super-group, and both exports serialize that set (the
+    // markdown writes it as one finding with two cases), so both
+    // count it once.
     const a = makeFinding('A')
     const b = makeFinding('B')
     state.reports = [
@@ -132,13 +135,12 @@ describe('exportSelectionSummary — print vs download basis', () => {
     ]
     state.workspaceMerges = [new Set(['A', 'B'])]
 
-    const print = exportSelectionSummary('print')
-    assert.equal(print.total, 1)
-    assert.equal(print.included, 1)
-
-    const download = exportSelectionSummary('download')
-    assert.equal(download.total, 2)
-    assert.equal(download.included, 2)
+    for (const mode of ['print', 'download']) {
+      const s = exportSelectionSummary(mode)
+      assert.equal(s.total, 1, mode)
+      assert.equal(s.included, 1, mode)
+    }
+    assert.equal(exportBucketGroups().length, 1)
   })
 })
 
@@ -191,6 +193,32 @@ describe('activeFilterDescriptions', () => {
     state.filterConfMin = 3
     state.filterConfMax = 8
     assert.deepEqual(activeFilterDescriptions(), [{ label: 'Confidence', value: '3–8' }])
+  })
+
+  // The outcome dropdown replaces the confidence range in the toolbar
+  // block, and filters.js skips the range while an outcome is selected
+  // — so the description names the outcome instead of a range that is
+  // not filtering anything.
+  it('describes the revalidation outcome, in place of the confidence range', () => {
+    state.filterConfMin = 5
+    state.filterRevalidate = 'refuted'
+    assert.deepEqual(activeFilterDescriptions(), [{ label: 'Revalidation', value: 'Refuted' }])
+    state.filterRevalidate = 'unreachable'
+    assert.deepEqual(activeFilterDescriptions(), [{ label: 'Revalidation', value: 'Unreachable' }])
+    state.filterRevalidate = ''
+    assert.deepEqual(activeFilterDescriptions(), [{ label: 'Confidence', value: '≥ 5' }], 'the range is back once the outcome is cleared')
+  })
+
+  it('folds the partial chip into the Confirmed outcome', () => {
+    state.filterRevalidate = 'confirmed'
+    assert.deepEqual(activeFilterDescriptions(), [{ label: 'Revalidation', value: 'Confirmed' }])
+    state.filterPartial = 'exclude'
+    assert.deepEqual(activeFilterDescriptions(), [{ label: 'Revalidation', value: 'Confirmed (full confirmations only)' }])
+    state.filterPartial = 'only'
+    assert.deepEqual(activeFilterDescriptions(), [{ label: 'Revalidation', value: 'Confirmed (partial confirmations only)' }])
+    // The chip is inert under any other outcome.
+    state.filterRevalidate = 'refuted'
+    assert.deepEqual(activeFilterDescriptions(), [{ label: 'Revalidation', value: 'Refuted' }])
   })
 
   it('distinguishes a search query from a negated one', () => {
