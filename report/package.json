@@ -23,7 +23,7 @@
   "type": "module",
   "sideEffects": false,
   "engines": {
-    "node": ">=20"
+    "node": ">=24.14.0"
   },
   "main": "./index.js",
   "exports": {
