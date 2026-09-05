@@ -2201,11 +2201,11 @@ document.addEventListener('download-requested', async () => {
   // unwritten, and the button is one click away for a reader who has
   // seen what they wanted to see.
   if (view) {
-    await openExportViewDialog(withExportFilters(fields, () => reportsToMarkdown(state.reports)))
+    await openExportViewDialog(withExportFilters(fields, () => reportsToMarkdown()))
     return
   }
   if (!confirmed) return
-  withExportFilters(fields, () => downloadReportsAsMarkdown(state.reports))
+  withExportFilters(fields, () => downloadReportsAsMarkdown())
 })
 
 // `<analyzer-select>` dispatches this when a row in its analyzer /

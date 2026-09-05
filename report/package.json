@@ -33,6 +33,7 @@
   },
   "files": [
     "finding-id.js",
+    "finding.js",
     "index.js",
     "md-structure.js",
     "meta.js",

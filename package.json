@@ -30,6 +30,7 @@
   },
   "exports": {
     "./reap": "./api/reap.ts",
+    "./formats": "./formats/index.js",
     "./report": "./report/index.js",
     "./server": "./server-e2e/index.ts",
     "./strip-types-loader": "./strip-types-loader.js",
@@ -81,7 +82,13 @@
     "server-e2e/ws-server.ts",
     "server-e2e/config.example.json",
     "server-common/origin.ts",
+    "formats/index.js",
+    "formats/labels.js",
+    "formats/markdown-finding.js",
+    "formats/markdown.js",
+    "formats/md-text.js",
     "report/finding-id.js",
+    "report/finding.js",
     "report/index.js",
     "report/md-structure.js",
     "report/meta.js",
@@ -115,7 +122,7 @@
   ],
   "scripts": {
     "lint": "node --run lint:js && node --run lint:css && node --run lint:ts",
-    "lint:js": "oxlint -c .oxlintrc.json --ignore-pattern=ui/logs.js ./tests/ ./common/ ./report/ ./server-common/ ./server-e2e/ ./server-managed/ ./client/ ./ui/ ./api/",
+    "lint:js": "oxlint -c .oxlintrc.json --ignore-pattern=ui/logs.js ./tests/ ./common/ ./formats/ ./report/ ./server-common/ ./server-e2e/ ./server-managed/ ./client/ ./ui/ ./api/",
     "lint:css": "stylelint 'ui/**/*.css'",
     "lint:ts": "tsc --noEmit",
     "prepack": "node --run build",
@@ -123,7 +130,7 @@
     "serve": "node build.js serve",
     "server": "node server-e2e/index.ts",
     "server-managed": "node server-managed/index.ts",
-    "test": "node --js-base-64 --experimental-test-module-mocks --test-timeout=120000 --test ./tests/*.test.js ./report/tests/*.test.js"
+    "test": "node --js-base-64 --experimental-test-module-mocks --test-timeout=120000 --test ./tests/*.test.js ./report/tests/*.test.js ./formats/tests/*.test.js"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.5",
