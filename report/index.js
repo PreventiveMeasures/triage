@@ -35,12 +35,16 @@
 // `report/md-structure.js`, `report/finding-id.js` — for tests, and for
 // a caller that wants one helper without pulling the chain in behind it
 // (ui/view/format.js does exactly that: it rides a lazily-loaded bundle
-// and takes only the markdown structure helpers).
+// and takes only the markdown structure helpers). Through the package
+// name the same files are `@preventive/report/parse-md.js` and so on.
 //
-// Nothing under this directory touches the DOM, app state or storage:
-// text in, data out. That is what makes it reusable outside the viewer
-// — the analyzer stamps its ids with the same `findingId` the viewer
-// derives them with, so both sides agree on what a finding IS.
+// This directory is its own package (see package.json beside this
+// file) and imports nothing outside itself: no DOM, no app state, no
+// storage, nothing from the rest of the repo. Text in, data out. That
+// is what makes it reusable outside the viewer — the analyzer stamps
+// its ids with the same `findingId` the viewer derives them with, so
+// both sides agree on what a finding IS — and `node --test` in this
+// directory runs its suite with nothing else installed.
 
 import { parseCodexCsvToScans } from './parse-codex.js'
 import { parseDeepsecFindings } from './parse-deepsec.js'

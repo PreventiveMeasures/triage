@@ -1,0 +1,51 @@
+{
+  "name": "@preventive/report",
+  "version": "0.0.0",
+  "description": "Parsers for security-scan reports",
+  "license": "MIT",
+  "author": {
+    "name": "Nikita Skovoroda",
+    "email": "chalkerx@gmail.com",
+    "url": "https://github.com/ChALkeR"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PreventiveMeasures/triage.git",
+    "directory": "report"
+  },
+  "bugs": {
+    "url": "https://github.com/PreventiveMeasures/triage/issues"
+  },
+  "homepage": "https://github.com/PreventiveMeasures/triage/tree/main/report",
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=24.14.0"
+  },
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./*.js": "./*.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "finding-id.js",
+    "index.js",
+    "md-structure.js",
+    "meta.js",
+    "parse-codex.js",
+    "parse-deepsec.js",
+    "parse-md-id.js",
+    "parse-md.js",
+    "parse-piolium-rows.js",
+    "parse-piolium-tokens.js",
+    "parse-piolium.js",
+    "utf8.js"
+  ],
+  "scripts": {
+    "test": "node --test tests/*.test.js"
+  }
+}
