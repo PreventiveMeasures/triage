@@ -27,8 +27,21 @@
 
 .card {
   padding: .5rem .75rem;
+  /* Zero where the action row is pinned to the bottom of a pane: the
+     card's own bottom padding would sit UNDER that row, holding it off
+     the edge on a short finding while the sticky case sat flush on it.
+     The row carries its own bottom padding there instead. */
+  padding-bottom: var(--finding-card-pad-bottom, .5rem);
   border-bottom: 1px solid var(--border);
   font-size: .875rem;
+  /* A surface that wants the action row against the bottom of a fixed
+     pane — rather than wherever the prose happens to end — turns this
+     into a column that fills its host, and the row's `margin-top: auto`
+     does the rest. The kanban dialog's fullscreen mode sets it; unset,
+     this stays a block and the other two declarations are inert. */
+  display: var(--finding-card-display, block);
+  flex-direction: column;
+  flex: 1;
 }
 :host(:last-child) .card { border-bottom: none; }
 /* No `.is-critical` card tint — the severity badge already carries the
@@ -1220,7 +1233,11 @@ span.evidence-ref:not([role]) { color: var(--muted); }
    description. */
 :host([context='focus']) .marks {
   gap: .5rem;
-  margin-top: .65rem;
+  /* `auto` in the fullscreen dialog, which pushes the row to the bottom
+     of a card shorter than its pane. Where the prose does fill the pane
+     that resolves to 0 and the row's own border and padding carry the
+     separation. */
+  margin-top: var(--finding-marks-margin-top, .65rem);
   padding-left: 0;
   padding-top: .55rem;
   border-top: 1px solid var(--border);

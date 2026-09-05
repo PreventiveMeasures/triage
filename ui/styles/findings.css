@@ -694,6 +694,12 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
      dialog's — including the tint, when the finding carries a colour. */
   --finding-left-position: sticky;
   --finding-marks-position: sticky;
+  /* The row sits against the bottom of the pane whether or not there is
+     anything to scroll: `auto` takes up the slack of a short finding,
+     and sticky (above) holds the same edge once there is none. */
+  --finding-card-display: flex;
+  --finding-marks-margin-top: auto;
+  --finding-card-pad-bottom: 0;
   --finding-marks-bg: var(--bg, var(--surface));
   /* The row pins flush to the pane's bottom edge (the pane gives up its
      bottom inset below, so no strip is left for text to scroll through
@@ -765,18 +771,20 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
   }
 
   /* Pinning the cluster to the card's cell takes that cell out of
-     auto-placement, and the three panes then walk one column along —
-     the card into the divider's track, the source into an implicit
-     second row. So the workbench's own items get their columns
-     spelled out here too: card, divider, source, in the order
-     `.focus-main.with-code` lays its tracks out. Without the code
-     panel there is one track and the first line is all that applies. */
+     auto-placement, and every other item then walks: the panes get
+     shoved a column along, and — since the cluster holds row 1 of
+     column 1 — into an implicit SECOND ROW, where they size to their
+     content instead of filling the pane. So the workbench's own items
+     get their cells spelled out here too, row and column both: card,
+     divider, source, in the order `.focus-main.with-code` lays its
+     tracks out. Without the code panel there is one track and the
+     first line is all that applies. */
   /* The finding column keeps the inset the body gave up — but not on
      the right, where the divider already separates it from the source,
      and not shared with the code panel, whose file bar has to start
      level with the rail's header. */
   & .focus-pane-card {
-    grid-column: 1;
+    grid-area: 1 / 1;
     /* No bottom inset: the sticky action row is what sits against that
        edge, and a strip below it would just be somewhere for the
        scrolling text to show through. The row carries the equivalent
@@ -792,7 +800,7 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
   & .focus-main.with-code { --focus-splitter-width: .375rem; }
 
   & .focus-splitter {
-    grid-column: 2;
+    grid-area: 1 / 2;
     /* The hairline sits at the END of the divider's track, not its
        centre: centred, it left half the track — 6px — standing between
        itself and the gutter, and the source panel is meant to start AT
@@ -807,7 +815,7 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
       border-radius: 0;
     }
   }
-  & .focus-pane-code { grid-column: 3; }
+  & .focus-pane-code { grid-area: 1 / 3; }
 
   /* The file bar is the code panel's header, and the rail's header is
      right beside it across the screen — so it takes the same height.
@@ -837,8 +845,27 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
      scrollport, and this box is exactly as tall as its content — so the
      row would pin to the end of the card rather than to the bottom of
      the pane. What that clipping was for is the rounded corner this
-     mode doesn't draw. */
-  & .focus-card-wrapper { overflow: visible; }
+     mode doesn't draw.
+
+     `min-height: 100%` is the other half of the bottom-anchoring: the
+     card has to be at least as tall as the pane before there is any
+     slack for the row's `margin-top: auto` to take up. Flex the whole
+     way down — wrapper, host, card — because a percentage height can't
+     be inherited through an auto-height box, and this way each one just
+     fills the one above it. */
+  & .focus-card-wrapper {
+    overflow: visible;
+    min-height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+
+  & .focus-card-wrapper > finding-card {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
 
   /* Which leaves the divider as the only seam between them, so it
      draws one: a hairline down the full height, in place of the short
