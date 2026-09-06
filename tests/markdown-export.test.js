@@ -216,6 +216,24 @@ describe('reportsToMarkdown — links and names', () => {
     assert.match(md, /- \*\*Location:\*\* \[`node_modules\/left-pad\/index\.js:7`\]\(https:\/\/github\.com\/left-pad\/left-pad\/blob\/HEAD\/index\.js#L7\)\n- \*\*Severity:\*\* High\n- \*\*Repository:\*\* \[left-pad\/left-pad\]/u)
   })
 
+  it('takes a declared repository only when every loaded report declares it', () => {
+    const declare = (repoA, repoB) => {
+      state.reports = [
+        { fileName: 'r1.json', source: null, repo: repoA, groups: [[finding({ id: 'A', _reportName: 'r1.json' })]] },
+        { fileName: 'r2.json', source: null, repo: repoB, groups: [[finding({ id: 'B', _reportName: 'r2.json' })]] },
+      ]
+    }
+    declare('o/r', 'o/r')
+    assert.equal(line(reportsToMarkdown(), 'Repository'), '[o/r](https://github.com/o/r)')
+    // One report declares, the other doesn't: the declaration can't
+    // speak for the document (the page header's rule), and with the
+    // findings naming no repo of their own there is none to state.
+    declare('o/r', null)
+    assert.equal(line(reportsToMarkdown(), 'Repository'), null)
+    declare('o/r', 'o/other')
+    assert.equal(line(reportsToMarkdown(), 'Repository'), null)
+  })
+
   it('names a single report by its file, without the extension it arrived in', () => {
     load(finding())
     state.reports[0].fileName = 'security-foo.json'

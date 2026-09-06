@@ -62,11 +62,16 @@ const HOOKS = {
 // what every loaded report declares (its own `repo.github`), else the
 // one repo every own-source finding agrees on, else the URL typed into
 // the header chip — the same precedence the page header's repo chip
-// follows. A mixed load gets none; each finding then names its own on
-// its meta line.
+// follows. A declaration speaks for the document only when EVERY
+// loaded report makes the same one: a report declaring none disagrees
+// as much as one naming another slug (one report's declaration says
+// nothing about the others' findings), and a mixed load falls through
+// to what the findings agree on — which is nothing for genuinely mixed
+// repos, each finding then naming its own on its meta line.
 function documentRepo(reports, groups) {
-  const declared = new Set(reports.map((r) => r.repo).filter(Boolean))
-  if (declared.size > 0) return declared.size === 1 ? [...declared][0] : null
+  const declared = new Set(reports.map((r) => r.repo ?? null))
+  const agreed = declared.size === 1 ? [...declared][0] : null
+  if (agreed) return agreed
   const own = new Set()
   for (const g of groups) {
     for (const f of g) if (f.repo?.github && !isModule(f.file)) own.add(f.repo.github)
