@@ -62,7 +62,7 @@ describe('parseMarkdownFindings — single finding', () => {
   it('extracts title, severity, default file/line', () => {
     const md = '# Title here\n\n---\n**Severity:** critical\n'
     const parsed = parseMarkdownFindings(md)
-    assert.equal(parsed.type, 'analysis')
+    assert.equal(parsed.type, 'security')
     assert.equal(parsed.source, 'claude-security')
     assert.equal(parsed.findings.length, 1)
     const f = parsed.findings[0]
@@ -430,28 +430,32 @@ describe('parseMarkdownFindings — metadata', () => {
     assert.equal(f.branch, 'main')
     assert.equal(f.dateCreated, '2026-01-15')
     assert.equal(f.status, 'Open')
-    assert.equal(f.type, 'vulnerability')
+    assert.equal(f.category, 'vulnerability')
   })
 
-  it('lowercases the per-finding category to match the JSON shape', () => {
-    const md = '# T\n\n---\n**Severity:** medium\n**Category:** Security\n'
+  it('keeps the category as the report wrote it, under its own name — not as the analyzer type', () => {
+    // Claude Security is one analyzer; what it filed a finding under is
+    // the finding's category. The `source` marker names the analyzer,
+    // so no per-finding `type` is stamped (it would read as one run per
+    // category in the header and the export).
+    const md = '# T\n\n---\n**Severity:** medium\n**Category:** Insufficient Verification of Data Authenticity\n'
     const f = parseMarkdownFindings(md).findings[0]
-    assert.equal(f.type, 'security')
+    assert.equal(f.category, 'Insufficient Verification of Data Authenticity')
+    assert.equal(f.type, undefined)
   })
 
-  it('drops report-level type fallback to "analysis" when no finding has a category', () => {
-    const md = '# T\n\n---\n**Severity:** medium\n'
-    const parsed = parseMarkdownFindings(md)
-    assert.equal(parsed.type, 'analysis')
+  it('leaves the category off a finding without one', () => {
+    const f = parseMarkdownFindings('# T\n\n---\n**Severity:** medium\n').findings[0]
+    assert.ok(!('category' in f))
   })
 
-  it('uses the first finding-level category as the report-level type', () => {
+  it('reports the security category at the report level, whatever the findings are filed under', () => {
     const md = [
       '# T1\n\n---\n**Severity:** medium\n**Category:** Quality',
       '# T2\n\n---\n**Severity:** medium\n**Category:** Security',
     ].join('\n\n')
-    const parsed = parseMarkdownFindings(md)
-    assert.equal(parsed.type, 'quality')
+    assert.equal(parseMarkdownFindings(md).type, 'security')
+    assert.equal(parseMarkdownFindings('# T\n\n---\n**Severity:** medium\n').type, 'security')
   })
 })
 

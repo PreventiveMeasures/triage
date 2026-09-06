@@ -370,9 +370,14 @@ export function findingText(f) {
 
 // The per-finding run-meta line (report/finding.js runMetaLine) under
 // the revalidation layer's state: the pass's row names itself only
-// while the layer is on.
+// while the layer is on. Led by the finding's category where a report
+// filed it under one (Claude Security's `**Category:**`,
+// report/parse-md.js) — the meta line is where a row says what kind
+// of thing it is, and for a product that is one analyzer with no run
+// meta, the category is all there is to say.
 export function formatRunMeta(f) {
-  return runMetaLine(f, revalidationOn)
+  const category = typeof f?.category === 'string' ? f.category.trim() : ''
+  return [category, runMetaLine(f, revalidationOn)].filter(Boolean).join(' · ')
 }
 
 // Walk a list of strings and shrink the candidate prefix until every

@@ -90,6 +90,8 @@
     "report/meta.js",
     "report/parse-codex.js",
     "report/parse-deepsec.js",
+    "report/parse-deepview-fields.js",
+    "report/parse-deepview-md.js",
     "report/parse-md-id.js",
     "report/parse-md.js",
     "report/parse-piolium-rows.js",

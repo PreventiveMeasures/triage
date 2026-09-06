@@ -143,8 +143,8 @@ function mergeExportsRows(combos, fields) {
 //
 // `fields` defaults to all four slots; pass a narrower list (e.g.
 // without `type`) to suppress a slot — used for source-marked
-// reports where the per-finding `type` is a category, not an
-// analyzer name, and the title already conveys the product.
+// reports, which are one analyzer each and stamp no per-finding
+// `type`, where the title already conveys the product.
 //
 // When `model` / `effort` end up as their own chips (i.e. common across
 // every combo, so they aren't folded into the varying-tuple chip), they

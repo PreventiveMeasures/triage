@@ -237,7 +237,7 @@ describe('reportsToMarkdown — links and names', () => {
   it('names a single report by its file, without the extension it arrived in', () => {
     load(finding())
     state.reports[0].fileName = 'security-foo.json'
-    assert.match(reportsToMarkdown(), /^# security-foo\n\n- \*\*Report:\*\* `security-foo\.json`\n/u)
+    assert.match(reportsToMarkdown(), /^<!-- [^\n]* -->\n\n# security-foo\n\n- \*\*Report:\*\* `security-foo\.json`\n/u)
     assert.equal(targetFilename(), 'security-foo.md')
     state.reports[0].fileName = 'report.md'
     assert.equal(targetFilename(), 'report.md', 'not report.md.md')
@@ -250,10 +250,10 @@ describe('reportsToMarkdown — links and names', () => {
       { fileName: 'security-a.json', source: null, repo: null, groups: [[finding({ id: 'A' })]] },
       { fileName: 'security-b.json', source: null, repo: null, groups: [[finding({ id: 'B' })]] },
     ]
-    assert.match(reportsToMarkdown(), /^# security\n/u)
+    assert.match(reportsToMarkdown(), /^<!-- [^\n]* -->\n\n# security\n/u)
     assert.equal(targetFilename(), 'security-.md')
     state.reports[1].fileName = 'other.json'
-    assert.match(reportsToMarkdown(), /^# 2 reports\n/u)
+    assert.match(reportsToMarkdown(), /^<!-- [^\n]* -->\n\n# 2 reports\n/u)
     assert.equal(targetFilename(), 'deepview-report.md')
   })
 
@@ -263,7 +263,7 @@ describe('reportsToMarkdown — links and names', () => {
     load(finding())
     state.currentWorkspace = ws.id
     const md = reportsToMarkdown()
-    assert.match(md, new RegExp(`^# ${ws.name.replaceAll(/[/.]/gu, '\\$&')}\n`, 'u'))
+    assert.match(md, new RegExp(`^<!-- [^\\n]* -->\n\n# ${ws.name.replaceAll(/[/.]/gu, '\\$&')}\n`, 'u'))
     assert.equal(line(md, 'Workspace'), ws.name)
     assert.equal(targetFilename(), `${ws.name.replaceAll('/', '-')}.md`)
   })

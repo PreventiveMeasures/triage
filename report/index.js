@@ -4,10 +4,12 @@
 // A "report" is whatever an analyzer wrote: the JSON dump this
 // project's own analyzer emits, or one of the shapes other tools
 // produce — DeepSec and Piolium markdown, Claude Security markdown,
-// Codex CSV. The parsers beside this file each recognise exactly one of
-// those and know nothing about each other; this module is the dispatch
-// over them, so "which formats do we read, and in what order" is
-// answered in one place instead of once per call site.
+// Codex CSV — or the markdown document this library itself writes
+// (write-md.js), read back by parse-deepview-md.js. The parsers beside
+// this file each recognise exactly one of those and know nothing about
+// each other; this module is the dispatch over them, so "which formats
+// do we read, and in what order" is answered in one place instead of
+// once per call site.
 //
 //   import { loadFindings, writeMarkdown } from '../report/index.js'
 //   const report = await loadFindings(text)
@@ -31,7 +33,9 @@
 // for the document, write-md-finding.js for one finding, labels.js for
 // the words). Both directions read a finding through finding.js, so
 // what a parser produced and what the writer prints agree on what a
-// finding IS.
+// finding IS — and the document is itself a report the readers above
+// take (parse-deepview-md.js), so what was written can be loaded
+// again, with the ids and fields it left with.
 //
 // Codex is the one format the content doesn't name: its export is a
 // CSV, and a CSV is a container — one row per finding across several
@@ -58,6 +62,7 @@
 // else installed.
 
 import { parseDeepsecFindings } from './parse-deepsec.js'
+import { parseDeepviewMarkdown } from './parse-deepview-md.js'
 import { parseMarkdownFindings } from './parse-md.js'
 import { parsePioliumFindings } from './parse-piolium.js'
 import { deriveFindingId } from './finding-id.js'
@@ -74,18 +79,24 @@ export { META_FIELDS, inheritReportMeta, reportRepoGithub } from './meta.js'
 export { writeMarkdown } from './write-md.js'
 export { COLOR_LABELS, SEVERITY_LABELS, SOURCE_LABELS, TRIAGE_LABELS, severityLabel } from './labels.js'
 
-// The markdown chain, in dispatch order: tightest guard first. DeepSec
-// keys off `## SEVERITY (n)` and Piolium off its `# Security Audit
-// Report` / `## Technical Findings Detail` headings, while parse-md
-// accepts any `# Title` document — so it has to stay last or it would
-// swallow the other two. Each returns the standard `{ type, findings,
-// … }` shape, or null when the text isn't its format.
+// The markdown chain, in dispatch order: tightest guard first. This
+// library's own document opens on a marker line no other format has;
+// DeepSec keys off `## SEVERITY (n)` and Piolium off its `# Security
+// Audit Report` / `## Technical Findings Detail` headings, while
+// parse-md accepts any `# Title` document — so it has to stay last or
+// it would swallow the others. Each returns the standard `{ type,
+// findings, … }` shape, or null when the text isn't its format.
 //
-// `format` is this library's name for the producer. It matches the
-// `source` marker the markdown parsers stamp on what they return, which
-// is what the viewer reads for its header label; 'json' has no marker
-// (the analyzer's own dump carries `type` instead).
+// `format` is this library's name for the document's producer. For the
+// three foreign markdown formats it matches the `source` marker the
+// parser stamps on what it returns, which is what the viewer reads for
+// its header label. 'deepview-md' is the exception that proves the
+// rule: the document is this library's, but its findings came from
+// whichever producer the document names, and THAT is the `source` it
+// carries back (none for the analyzer's own runs). 'json' has no
+// marker (the analyzer's own dump carries `type` instead).
 const MARKDOWN_FORMATS = [
+  ['deepview-md', parseDeepviewMarkdown],
   ['deepsec', parseDeepsecFindings],
   ['piolium', parsePioliumFindings],
   ['claude-security', parseMarkdownFindings],
@@ -102,8 +113,9 @@ function entriesOf(data) {
   return null
 }
 
-// Which producer wrote `content` — 'json' / 'deepsec' / 'piolium' /
-// 'claude-security' / 'codex', or null when nothing recognises it.
+// Which producer wrote `content` — 'json' / 'deepview-md' / 'deepsec' /
+// 'piolium' / 'claude-security' / 'codex', or null when nothing
+// recognises it.
 //
 // `filename` is optional and decides only codex: a `.csv` is a codex
 // export, and the content is not consulted for it (nothing in a CSV's

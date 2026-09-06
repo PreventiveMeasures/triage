@@ -75,10 +75,7 @@
 // must not end a section nor a fenced `### run this` fabricate a
 // finding (see md-structure.js).
 
-import {
-  fenceRanges, inFence, parseCodeRef, parseLabelledFields,
-  splitByHeading, tableObjects,
-} from './md-structure.js'
+import { parseCodeRef, parseLabelledFields, splitByHeading, splitLeading, tableObjects } from './md-structure.js'
 import { fromIndexRow, indexRowOf, listFindings, variantFindings } from './parse-piolium-rows.js'
 import {
   CODE_REF_FIELDS, codeRefOf, headerSeverity, idCell, idFromToken,
@@ -405,15 +402,6 @@ function parseSections(text) {
     sections[header] = header in sections ? `${sections[header]}\n${body}` : body
   }
   return sections
-}
-
-// Like splitByHeading, but keeps the content BEFORE the first heading
-// (the enclosing block's own body) as `head`.
-function splitLeading(body, re) {
-  const ranges = fenceRanges(body)
-  const first = [...body.matchAll(re)].find((m) => !inFence(ranges, m.index))
-  if (!first) return { head: body, subs: [] }
-  return { head: body.slice(0, first.index), subs: splitByHeading(body, re) }
 }
 
 // `## Summary of Findings` → id → row. Used both to fill gaps in a

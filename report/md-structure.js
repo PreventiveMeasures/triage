@@ -95,6 +95,15 @@ export function splitByHeading(text, re) {
   }))
 }
 
+// Like splitByHeading, but keeps the content BEFORE the first heading
+// (the enclosing block's own body) as `head`.
+export function splitLeading(body, re) {
+  const ranges = fenceRanges(body)
+  const first = [...body.matchAll(re)].find((m) => !inFence(ranges, m.index))
+  if (!first) return { head: body, subs: [] }
+  return { head: body.slice(0, first.index), subs: splitByHeading(body, re) }
+}
+
 // A block split off its `# ` / `### ` marker: the heading line, trimmed,
 // and the body under it.
 export function splitHeadingLine(block) {

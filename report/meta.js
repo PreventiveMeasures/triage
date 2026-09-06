@@ -21,10 +21,11 @@ export const META_FIELDS = ['type', 'model', 'think', 'effort', 'exportsMode']
 // JSON, which has no `undefined`, so an exporter writing `"type": null`
 // to mean "not set" is indistinguishable from one omitting the key.
 //
-// Source-marked reports (deepsec / codex-security / claude-security) opt
-// out wholesale — their report-level `type` is a whole-file category
-// label, not a per-finding analyzer descriptor, and they carry no
-// analyzer run meta to hand down.
+// Source-marked reports (deepsec / codex-security / claude-security /
+// piolium) opt out wholesale — each is one analyzer, the product the
+// marker names; their report-level `type` is the product's category
+// ('security'), not a run descriptor, and they carry no analyzer run
+// meta to hand down.
 //
 // Mutates `finding` in place. Callers pass either a fresh copy (ingest's
 // `filled`) or a finding the index hasn't handed to anything yet.

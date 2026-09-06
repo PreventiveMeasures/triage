@@ -15,14 +15,14 @@
 // or by several runs — is one heading with a case under it per member,
 // so the reader meets the finding once and its reports as its cases.
 
-import { correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceNote, findingDisplayName, findingTitle, hasSeverityCorrection, locationLabel, revalidateKindOf, runMetaLine, splitDescription, stripExportMarker } from './finding.js'
-import { COLOR_LABELS, TRIAGE_LABELS, severityLabel } from './labels.js'
+import { correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceNote, findingDisplayName, findingTitle, firstLine, hasSeverityCorrection, locationLabel, revalidateKindOf, runMetaLine, splitDescription, stripExportMarker } from './finding.js'
+import { COLOR_LABELS, SOURCE_LABELS, TRIAGE_LABELS, severityLabel } from './labels.js'
 import { autolink, code, heading, indentUnder, isHttpUrl, joinBlocks, link, plural, prose } from './md-text.js'
 
 // A heading has to fit on a line. A JSON finding whose whole
 // description is one paragraph is NAMED by that paragraph — the row
 // cell shows it in full, a heading can't — so past this it is cut, and
-// the body then carries the whole line (see descriptionBlocks).
+// the body then carries the whole name (see descriptionBlocks).
 const HEADING_MAX = 120
 
 export function findingHeading(f) {
@@ -36,6 +36,19 @@ export function repoRef(repo) {
   const s = String(repo ?? '').trim()
   if (isHttpUrl(s)) return autolink(s)
   return /^[\w.-]+\/[\w.-]+$/u.test(s) ? link(s, `https://github.com/${s}`) : s
+}
+
+// What produced the finding, as the document names it. A finding out
+// of a source-marked report — Claude Security, Codex Security, DeepSec,
+// Piolium — was produced by that product, which is one analyzer with
+// no runs to tell apart, so its name is the whole answer; a finding
+// out of the analyzer's own dump names its run: the mode, the model,
+// the effort, the import mode (finding.js runMetaLine). What a report
+// filed a finding UNDER — Claude Security's `**Category:**` — is not
+// its analyzer and gets its own line (metaList).
+export function analyzerText(f, source, revalidation) {
+  if (source) return SOURCE_LABELS[source] ?? String(source)
+  return runMetaLine(f, revalidation)
 }
 
 // The narrative fields beyond the description, as `[heading, field,
@@ -53,19 +66,32 @@ const NARRATIVE = [
 ]
 
 // The plain facts a report may attach, `[label, field]`, printed as
-// written. Strings and numbers only — a report's own structures (an
-// object) have no line to print on.
+// written — under the name the report that attached them used, so a
+// reader of the original recognises each: Claude Security's `Status`
+// / `Branch` / `Date created`, Codex's `detected_at` / `committed_at`
+// columns, Piolium's `PoC status` / `Variant of` / `Detailed report`
+// and its preamble's `Commit audited`, DeepSec's `Slug`. Strings and
+// numbers only — a report's own structures (an object) have no line
+// to print on.
 const PLAIN_FIELDS = [
-  ['Status', 'status'], ['Branch', 'branch'], ['Created', 'dateCreated'],
-  ['Detected', 'detectedAt'], ['Committed', 'committedAt'],
-  ['PoC', 'pocStatus'], ['Variant of', 'parent'], ['Rule', 'slug'],
+  ['Status', 'status'], ['Branch', 'branch'], ['Date created', 'dateCreated'],
+  ['Detected at', 'detectedAt'], ['Committed at', 'committedAt'],
+  ['PoC status', 'pocStatus'], ['Variant of', 'parent'], ['Slug', 'slug'],
   ['Priority', 'priority'],
 ]
 // …and the ones that are paths or hashes, set in code.
-const CODE_FIELDS = [['Detailed report', 'reportPath'], ['Audited commit', 'auditedCommit']]
+const CODE_FIELDS = [['Detailed report', 'reportPath'], ['Commit audited', 'auditedCommit']]
 
+// A fact is one line of the list. A value that arrived with line
+// breaks (a Piolium bullet wrapped onto a continuation line) is
+// reflowed onto one, or the break would end the list. Prose — a
+// section's text — keeps its lines (proseValue).
 function plainValue(v) {
   if (typeof v === 'number') return Number.isFinite(v) ? String(v) : ''
+  return typeof v === 'string' ? v.replaceAll(/\s*\n\s*/gu, ' ').trim() : ''
+}
+
+function proseValue(v) {
   return typeof v === 'string' ? v.trim() : ''
 }
 
@@ -120,15 +146,18 @@ function commitText(f, ctx) {
 
 // The labelled list under a finding's heading — every fact that isn't
 // prose, in the order the card's rail and line row read them, then the
-// provenance the report attached. A line is written only when its fact
-// is there.
+// provenance the report attached, and the finding's id last: the one
+// fact that means nothing to a reader and everything to the reader of
+// the file (parse-deepview-md.js), which keys stored triage off it. A
+// line is written only when its fact is there.
 function metaList(f, ctx, annotation) {
   const rows = []
   const add = (label, value) => { if (value) rows.push(`- **${label}:** ${value}`) }
   add('Location', locationText(f, ctx))
   add('Severity', severityText(f, ctx))
   if (f.confidence !== undefined && f.confidence !== null) add('Confidence', `${f.confidence}/10`)
-  if (ctx.showRunMeta) add('Analyzer', runMetaLine(f, ctx.revalidation))
+  if (ctx.showAnalyzer) add('Analyzer', ctx.analyzerOf(f))
+  add('Category', plainValue(f.category))
   const kind = ctx.revalidation ? revalidateKindOf(f) : ''
   if (kind) add('Revalidation', kind === 'revalidation' ? 'the revalidation pass itself' : kind)
   add('Triage', triageText(annotation))
@@ -144,6 +173,7 @@ function metaList(f, ctx, annotation) {
   if (pkg) add('Package', code(plainValue(npm.version) ? `${pkg}@${plainValue(npm.version)}` : pkg))
   for (const [label, field] of PLAIN_FIELDS) add(label, plainValue(f[field]))
   for (const [label, field] of CODE_FIELDS) add(label, code(plainValue(f[field])))
+  add('ID', code(plainValue(f.id)))
   return rows.join('\n')
 }
 
@@ -183,11 +213,15 @@ function descriptionBlocks(f, ctx, depth) {
   // and a `\r\n\r\n` a JSON report wrote is not one to it.
   const body = split.body.replaceAll(/\r\n?/gu, '\n')
   // A one-line description IS the heading; printing it again under the
-  // heading is a stutter. A cut heading keeps it — the body is then the
-  // only place the whole line appears.
+  // heading is a stutter. A heading that could not carry the whole name
+  // (HEADING_MAX) has the body open on it instead — then the only place
+  // the whole name appears, and where the reader of the file
+  // (parse-deepview-md.js) finds it again.
   const title = findingTitle(f)
-  const stutter = !split.title && body.trim() === title && findingHeading(f) === title
-  const sections = descriptionSections(stutter ? '' : body)
+  const cut = title !== '' && findingHeading(f) !== title
+  const stutter = !cut && !split.title && body.trim() === title
+  const carried = cut && firstLine(body) !== title ? `${title}\n\n${body}` : body
+  const sections = descriptionSections(stutter ? '' : carried)
   const firstLabel = sections.findIndex((s) => s.label !== null)
   const lead = firstLabel === -1 ? sections : sections.slice(0, firstLabel)
   const rest = firstLabel === -1 ? [] : sections.slice(firstLabel)
@@ -210,10 +244,10 @@ function caseBlocks(f, ctx, depth) {
     const value = typeof raw === 'string' ? stripExportMarker(raw, f) : ''
     if (value.trim()) blocks.push(section(depth, label, value))
   }
-  if (hasSeverityCorrection(f) && plainValue(f.correctedSeverityReason)) {
+  if (hasSeverityCorrection(f) && proseValue(f.correctedSeverityReason)) {
     blocks.push(section(depth, 'Severity correction', f.correctedSeverityReason))
   }
-  const comment = plainValue(annotation?.comment)
+  const comment = proseValue(annotation?.comment)
   if (comment) blocks.push(section(depth, 'Comment', comment))
   return blocks
 }

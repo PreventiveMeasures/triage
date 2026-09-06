@@ -13,6 +13,7 @@ import { describe, it } from 'node:test'
 
 import { writeMarkdown } from '../index.js'
 import { anchorSlug, cell, code, formatTimestamp, indentUnder, link, prose } from '../md-text.js'
+import { DOCUMENT_MARKER } from '../write-md.js'
 import { parseCodexCsvToScans } from '../parse-codex.js'
 import { parseDeepsecFindings } from '../parse-deepsec.js'
 import { parseMarkdownFindings } from '../parse-md.js'
@@ -49,6 +50,8 @@ describe('writeMarkdown — the whole document', () => {
       [finding({ id: 'f2', file: 'src/b.js', line: '?', severity: 'low', description: 'Verbose error' })],
     ], { generatedAt: '2026-09-05T14:02:00Z' }))
     assert.equal(md, [
+      '<!-- DeepView findings export, format 1 -->',
+      '',
       '# r',
       '',
       '- **Report:** `r.json`',
@@ -77,6 +80,7 @@ describe('writeMarkdown — the whole document', () => {
       '- **Location:** `src/a.js:7`',
       '- **Severity:** High',
       '- **Confidence:** 8/10',
+      '- **ID:** `f1`',
       '',
       'The token is compared with `==`.',
       '',
@@ -94,12 +98,13 @@ describe('writeMarkdown — the whole document', () => {
       '',
       '- **Location:** `src/b.js`',
       '- **Severity:** Low',
+      '- **ID:** `f2`',
       '',
     ].join('\n'))
   })
 
   it('takes an empty document, and what is not a finding', () => {
-    assert.match(writeMarkdown(), /^# Findings\n\n## Summary\n\nNo findings are included\.\n$/u)
+    assert.match(writeMarkdown(), /^<!-- DeepView findings export, format 1 -->\n\n# Findings\n\n## Summary\n\nNo findings are included\.\n$/u)
     const md = writeMarkdown({ groups: [null, [], ['stray', null], finding()] })
     assert.equal(headings(md).filter((h) => h.startsWith('### ')).length, 1, 'a bare finding is a one-case group; junk is dropped')
   })
@@ -121,6 +126,30 @@ describe('writeMarkdown — the header', () => {
   it('links a repository given as a URL as itself', () => {
     const md = writeMarkdown(doc([[finding()]], { repo: 'https://gitlab.example/acme/app' }))
     assert.equal(line(md, 'Repository'), '<https://gitlab.example/acme/app>')
+  })
+
+  it('names the product as the analyzer of its findings, once', () => {
+    // A report from Claude Security is one analyzer — the product —
+    // however its findings are filed; the Source line says so, and an
+    // analyzer line would only say it again. What each finding was
+    // filed under is its category, on a line of its own.
+    const md = writeMarkdown(doc([
+      [finding({ category: 'insufficient verification of data authenticity' })],
+      [finding({ id: 'f2', category: 'Security' })],
+    ], { reports: [{ name: 'a.md', source: 'claude-security' }] }))
+    assert.equal(line(md, 'Source'), 'Claude Security')
+    assert.equal(line(md, 'Analyzer'), null)
+    assert.equal(line(md, 'Analyzers'), null)
+    assert.deepEqual([...md.matchAll(/^- \*\*Category:\*\* (.*)$/gmu)].map((m) => m[1]), ['insufficient verification of data authenticity', 'Security'])
+  })
+
+  it('lists the product beside the analyzer\'s runs in a mixed document, and names each finding\'s', () => {
+    const md = writeMarkdown(doc([[finding()], [finding({ id: 'f2', type: 'security', model: 'opus-5' })]], {
+      reports: [{ name: 'a.md', source: 'deepsec' }, { name: 'b.json', source: null }],
+    }), { report: (f) => (f.id === 'f1' ? 'a.md' : 'b.json') })
+    assert.equal(line(md, 'Source'), 'DeepSec')
+    assert.equal(line(md, 'Analyzers'), 'DeepSec; security · opus 5')
+    assert.deepEqual([...md.matchAll(/^- \*\*Analyzer:\*\* (.*)$/gmu)].map((m) => m[1]), ['DeepSec', 'security · opus 5'])
   })
 
   it('lists the analyzer runs the included findings came from', () => {
@@ -219,6 +248,20 @@ describe('writeMarkdown — summary and index', () => {
 })
 
 describe('writeMarkdown — a finding\'s facts', () => {
+  it('marks the document, and stamps each finding\'s id last', () => {
+    const md = writeMarkdown(doc([[finding({ status: 'Open', description: 'Title\n\nBody.' })]]))
+    assert.ok(md.startsWith(`${DOCUMENT_MARKER}\n\n# r\n`))
+    assert.match(md, /- \*\*Status:\*\* Open\n- \*\*ID:\*\* `f1`\n\nBody\./u)
+    assert.equal(line(writeMarkdown(doc([[finding({ id: undefined })]])), 'ID'), null)
+  })
+
+  it('keeps a fact on one line, and a section\'s prose on its lines', () => {
+    const md = writeMarkdown(doc([[finding({ pocStatus: 'executed (blocked by\n  the WAF)', branch: ' main\n' })]]), { annotation: () => ({ comment: 'One.\n\nTwo.' }) })
+    assert.equal(line(md, 'PoC status'), 'executed (blocked by the WAF)')
+    assert.equal(line(md, 'Branch'), 'main')
+    assert.ok(md.endsWith('#### Comment\n\nOne.\n\nTwo.\n'), md)
+  })
+
   it('links the location through the hook, and names the export', () => {
     const md = writeMarkdown(doc([[finding({ exportName: 'Foo', methodName: 'bar' })]]), { location: () => 'https://x.test/a.js#L7' })
     assert.equal(line(md, 'Location'), '[`src/a.js:7`](https://x.test/a.js#L7) · `Foo.bar`')
@@ -332,9 +375,9 @@ describe('writeMarkdown — a finding\'s facts', () => {
     })]]))
     for (const [label, value] of [
       ['Found while analyzing', '`src/routes.js`'], ['Package', '`acme-db@2.1.0`'],
-      ['Status', 'Open'], ['Branch', 'main'], ['Created', '2026-08-30'], ['Detected', '2026-01-15'], ['Committed', '2025-12-01'],
-      ['PoC', 'executed'], ['Variant of', 'C1'], ['Rule', 'rule-slug'], ['Priority', '7'],
-      ['Detailed report', '`piolium/findings/C1/report.md`'], ['Audited commit', '`deadbeef`'],
+      ['Status', 'Open'], ['Branch', 'main'], ['Date created', '2026-08-30'], ['Detected at', '2026-01-15'], ['Committed at', '2025-12-01'],
+      ['PoC status', 'executed'], ['Variant of', 'C1'], ['Slug', 'rule-slug'], ['Priority', '7'],
+      ['Detailed report', '`piolium/findings/C1/report.md`'], ['Commit audited', '`deadbeef`'],
     ]) assert.equal(line(md, label), value, label)
   })
 
@@ -350,7 +393,7 @@ describe('writeMarkdown — a finding\'s narrative', () => {
   it('lifts the first line into the heading and writes the rest as the body', () => {
     const md = writeMarkdown(doc([[finding({ description: 'Shell injection\n\nThe worker pool forwards arguments to a shell.' })]]))
     assert.ok(md.includes('### 1. Shell injection\n'))
-    assert.ok(md.includes('- **Severity:** High\n\nThe worker pool forwards arguments to a shell.\n'), md)
+    assert.ok(md.includes('- **Severity:** High\n- **ID:** `f1`\n\nThe worker pool forwards arguments to a shell.\n'), md)
   })
 
   it('does not repeat a one-line description under the heading it became', () => {
@@ -364,17 +407,21 @@ describe('writeMarkdown — a finding\'s narrative', () => {
     const md = writeMarkdown(doc([[finding({ description: long })]]))
     assert.match(md, /^### 1\. A very .*…$/mu)
     assert.ok(md.includes(`\n\n${long}\n`), 'the body carries the whole line')
+    const withBody = writeMarkdown(doc([[finding({ description: `${long}\n\nThe body.` })]]))
+    assert.ok(withBody.includes(`\n\n${long}\n\nThe body.\n`), 'and opens on the whole name when there is a body under it')
+    const titled = writeMarkdown(doc([[finding({ title: long, description: 'The body.' })]]))
+    assert.ok(titled.includes(`\n\n${long}\n\nThe body.\n`), 'a title field too')
   })
 
   it('keeps a description that opens on a fence whole', () => {
     const description = '```ts\nconst a = 1\n```\n\nProse under it.'
     const md = writeMarkdown(doc([[finding({ description })]]))
-    assert.ok(md.includes(`- **Severity:** High\n\n${description}\n`), md)
+    assert.ok(md.includes(`- **Severity:** High\n- **ID:** \`f1\`\n\n${description}\n`), md)
   })
 
   it('does not repeat a title the description opens with', () => {
     const md = writeMarkdown(doc([[finding({ title: 'A title', description: 'A title\n\nThe body.' })]]))
-    assert.ok(md.includes('### 1. A title\n\n- **Location:** `src/a.js:7`\n- **Severity:** High\n\nThe body.\n'), md)
+    assert.ok(md.includes('### 1. A title\n\n- **Location:** `src/a.js:7`\n- **Severity:** High\n- **ID:** `f1`\n\nThe body.\n'), md)
   })
 
   it('gives the labelled sections a report wrote their own headings, after the evidence', () => {
@@ -436,7 +483,7 @@ describe('writeMarkdown — a finding\'s narrative', () => {
       [finding({ id: 'f2', description: 'Next.' })],
     ]))
     assert.doesNotMatch(md, /\r/u)
-    assert.ok(md.includes('### 1. Lead.\n\n- **Location:** `src/a.js:7`\n- **Severity:** High\n\nBody line.\n\n#### Impact\n\nBoom.\n\n```js\nrun()\n```\n\n### 2. Next.'), md)
+    assert.ok(md.includes('### 1. Lead.\n\n- **Location:** `src/a.js:7`\n- **Severity:** High\n- **ID:** `f1`\n\nBody line.\n\n#### Impact\n\nBoom.\n\n```js\nrun()\n```\n\n### 2. Next.'), md)
     assert.ok(md.includes('### 2. Next.'), 'the finding after the open fence is still a finding')
   })
 })
@@ -453,7 +500,7 @@ describe('writeMarkdown — a group of cases', () => {
       '#### Case 2 of 2 — `src/a.js:9`', '##### Impact',
     ])
     assert.ok(md.includes('### 1. Prototype pollution\n\n2 cases of this finding — reported in `a.json`, `b.json`.\n\n#### Case 1 of 2'), md)
-    assert.ok(md.includes('#### Case 1 of 2 — `src/a.js:7`\n\n- **Location:** `src/a.js:7`\n- **Severity:** High\n- **Report:** `a.json`\n\nFirst run.\n\n##### Impact\n\ni1\n'), md)
+    assert.ok(md.includes('#### Case 1 of 2 — `src/a.js:7`\n\n- **Location:** `src/a.js:7`\n- **Severity:** High\n- **Report:** `a.json`\n- **ID:** `f1`\n\nFirst run.\n\n##### Impact\n\ni1\n'), md)
   })
 
   it('notes a case named differently from its group', () => {
@@ -494,14 +541,17 @@ describe('writeMarkdown — every format the library reads', () => {
       '**Repository:** acme/app',
       '**Branch:** main',
       '**Date created:** 2026-08-30',
-    ].join('\n')).findings[0]]]))
+    ].join('\n')).findings[0]]], { reports: [{ name: 'a.md', source: 'claude-security' }] }))
     assert.ok(md.includes('### 1. Unsafe deserialization in the config loader'))
+    assert.equal(line(md, 'Source'), 'Claude Security')
+    assert.equal(line(md, 'Analyzer'), null, 'the product is the analyzer, and the Source line has it')
     assert.equal(line(md, 'Location'), '[`src/config/load.ts:42`](https://github.com/acme/app/blob/abc/src/config/load.ts#L42)')
     assert.equal(line(md, 'Severity'), 'Critical')
+    assert.equal(line(md, 'Category'), 'Security')
     assert.equal(line(md, 'Repository'), '[acme/app](https://github.com/acme/app)')
     assert.equal(line(md, 'Status'), 'Open')
     assert.equal(line(md, 'Branch'), 'main')
-    assert.equal(line(md, 'Created'), '2026-08-30')
+    assert.equal(line(md, 'Date created'), '2026-08-30')
     assert.ok(md.includes('The loader trusts input.\n\n#### Evidence\n\n1. [`src/config/load.ts:42`](https://github.com/acme/app/blob/abc/src/config/load.ts#L42)\n\n   The tainted string reaches `yaml.load` here.\n\n#### Impact\n\nRemote code execution.\n\n#### Reproduction\n\n1. Write a YAML file.\n2. Run the app.\n\n#### Recommendation\n\nUse `safeLoad`.\n'), md)
   })
 
@@ -516,7 +566,7 @@ describe('writeMarkdown — every format the library reads', () => {
     assert.ok(md.includes('### 1. Unsafe regex'))
     assert.equal(line(md, 'Location'), '`src/x.js:26`')
     assert.equal(line(md, 'Confidence'), '8/10')
-    assert.equal(line(md, 'Rule'), 'unsafe-regex')
+    assert.equal(line(md, 'Slug'), 'unsafe-regex')
     assert.ok(md.includes('A catastrophic backtracking pattern.\n\n#### Recommendation\n\nAnchor the pattern.\n'), md)
   })
 
@@ -539,9 +589,9 @@ describe('writeMarkdown — every format the library reads', () => {
     assert.ok(md.includes('### 1. Command injection in the build hook'))
     assert.equal(line(md, 'Location'), '`src/build/hook.js:142`')
     assert.equal(line(md, 'Severity'), 'Critical')
-    assert.equal(line(md, 'PoC'), 'executed')
+    assert.equal(line(md, 'PoC status'), 'executed')
     assert.equal(line(md, 'Detailed report'), '`piolium/findings/C1-command-injection/report.md`')
-    assert.equal(line(md, 'Audited commit'), '`deadbeef`')
+    assert.equal(line(md, 'Commit audited'), '`deadbeef`')
     assert.equal(line(md, 'Repository'), '[acme/app](https://github.com/acme/app)')
     assert.ok(md.includes('The build hook shells out with an unsanitized branch name.\n\n#### Impact\n\nAny user who can open a PR gains code execution on CI.\n\n#### Root Cause\n\nString interpolation into `exec`.\n'), md)
   })
@@ -553,7 +603,8 @@ describe('writeMarkdown — every format the library reads', () => {
     const md = writeMarkdown(doc([[scan.data.findings[0]]], { reports: [{ name: `${scan.displayName}.codex`, source: scan.data.source }] }),
       { commit: (f) => `https://github.com/${f.repo.github}/commit/${f.commitHash}` })
     assert.equal(line(md, 'Source'), 'Codex Security')
-    assert.ok(md.includes('### 1. A title\n\n- **Location:** `src/main.js`\n- **Severity:** High\n- **Repository:** [alice/widget](https://github.com/alice/widget)\n- **Introduced in:** [`abc1234`](https://github.com/alice/widget/commit/abc1234deadbeef)\n- **Detected:** 2026-01-15\n- **Committed:** 2025-12-01\n\nA description\n'), md)
+    assert.equal(line(md, 'Analyzer'), null)
+    assert.ok(md.includes('### 1. A title\n\n- **Location:** `src/main.js`\n- **Severity:** High\n- **Repository:** [alice/widget](https://github.com/alice/widget)\n- **Introduced in:** [`abc1234`](https://github.com/alice/widget/commit/abc1234deadbeef)\n- **Detected at:** 2026-01-15\n- **Committed at:** 2025-12-01\n- **ID:** `https://example.com/finding/1`\n\nA description\n'), md)
   })
 })
 

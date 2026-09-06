@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { analyzeReport, backfillFindingIds, detectFormat, loadFindings, readReport } from '../index.js'
+import { analyzeReport, backfillFindingIds, detectFormat, loadFindings, readReport, writeMarkdown } from '../index.js'
 
 const JSON_REPORT = JSON.stringify({
   type: 'security',
@@ -87,6 +87,27 @@ describe('readReport — dispatch', () => {
     }
   })
 
+  // The document the library writes is a format of its own, marked
+  // on its first line — ahead of the chain, since it is h1-led
+  // markdown like a Claude Security report — but the findings in it
+  // came from whichever producer it names, and that is the `source`
+  // they carry back.
+  it('takes its own document back, as the producer it names', () => {
+    const { data, format } = readReport(CLAUDE_SECURITY)
+    const md = writeMarkdown({ title: 't', reports: [{ name: 'a.md', source: data.source }], groups: data.findings.map((f) => [f]) })
+    assert.ok(md.startsWith('<!-- DeepView findings export'))
+    const back = readReport(md)
+    assert.equal(back.format, 'deepview-md')
+    assert.equal(back.data.source, format)
+    assert.equal(back.data.findings.length, 1)
+    assert.equal(back.data.findings[0].file, 'src/load.ts')
+    assert.equal(back.data.findings[0].location, 'https://github.com/o/r/blob/abc/src/load.ts#L42')
+    // Without the marker the same text is nobody's — the `# t` title
+    // line is what parse-md keys on, and it comes after.
+    const unmarked = md.replace(/^<!--[^\n]*-->\n\n/u, '')
+    assert.equal(readReport(unmarked).format, 'claude-security', 'h1-led markdown falls through to parse-md')
+  })
+
   it('says why when nothing recognises the text', () => {
     const { data, format, reason } = readReport('not a report at all')
     assert.equal(data, null)
@@ -119,6 +140,7 @@ describe('detectFormat', () => {
   it('names the producer', () => {
     assert.equal(detectFormat(JSON_REPORT), 'json')
     assert.equal(detectFormat(CLAUDE_SECURITY), 'claude-security')
+    assert.equal(detectFormat(writeMarkdown({ groups: [[{ severity: 'low', description: 'x' }]] })), 'deepview-md')
     assert.equal(detectFormat('nope'), null)
   })
 
