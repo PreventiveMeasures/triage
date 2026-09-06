@@ -764,29 +764,32 @@ let prevFocusedIdx = 0
 // view renders with non-empty items.
 let persistentFindingTable = null
 
-// gid → {group, inGroup} for each <finding-card> placeholder emitted
-// during HTML build. After innerHTML lands, render() walks every
-// `<finding-card>` and assigns `.group` (and reads in-group from the
-// attribute set in HTML). Cleared at the top of each render.
-const pendingFindingCards = new Map()
-
-function findingCardPlaceholder(g, inGroup = false, context = null) {
-  const gid = findingCardGid(g)
-  pendingFindingCards.set(gid, { group: g, inGroup })
-  // `context` (`'focus'` or `'kanban-detail'`) reflects as a `context=`
-  // attribute on the host so `<finding-card>`'s shadow CSS can
-  // target the focus-view variant — inlined triage menu, expanded
-  // action chrome — via `:host([context="focus"])`. The default
-  // (no attribute) keeps every existing call site rendering
-  // unchanged.
-  if (inGroup) {
-    return context
-      ? html`<finding-card data-gid=${gid} in-group context=${context}></finding-card>`
-      : html`<finding-card data-gid=${gid} in-group></finding-card>`
-  }
-  return context
-    ? html`<finding-card data-gid=${gid} context=${context}></finding-card>`
-    : html`<finding-card data-gid=${gid}></finding-card>`
+// One `<finding-card>` host for a dedup group. The group rides in as
+// a property binding: Lit sets it before the element connects, and an
+// unchanged group on a later render is a no-op, so the keyed `repeat`s
+// below leave a card whose group didn't change entirely alone.
+// `data-gid` stays as an attribute for the selectors that find a card
+// by group (finding-link-nav.js).
+//
+// `context` (`'focus'` or `'kanban-detail'`) reflects as a `context=`
+// attribute on the host so `<finding-card>`'s shadow CSS can target
+// the focus-view variant — inlined triage menu, expanded action
+// chrome — via `:host([context="focus"])`; `nothing` leaves the
+// attribute off, as every existing call site expects.
+//
+// `lazy` is the list surfaces' flag: build the card's body only once
+// it is within a viewport of being seen (see finding-card.js and
+// view/lazy-render.js). The single-card surfaces — the table's
+// details aside, the focus view, the kanban dialog — leave it off and
+// paint at once.
+function findingCardPlaceholder(g, inGroup = false, context = null, lazy = false) {
+  return html`<finding-card
+    data-gid=${findingCardGid(g)}
+    .group=${g}
+    ?in-group=${inGroup}
+    context=${context ?? nothing}
+    ?lazy=${lazy}
+  ></finding-card>`
 }
 
 // Corner brackets pointing outwards / inwards for the kanban column
@@ -1484,7 +1487,7 @@ function findingsBodyTemplate(filtered) {
           <span>${fileLink(probe, findingRepoFallback(probe))}</span>
           <span class="count">${items.length}</span>
         </div>
-        <div class="file-body">${repeat(items, (g) => findingCardGid(g), (g) => findingCardPlaceholder(g))}</div>
+        <div class="file-body">${repeat(items, (g) => findingCardGid(g), (g) => findingCardPlaceholder(g, false, null, true))}</div>
       </div>`
     })}`
   }
@@ -1517,7 +1520,7 @@ function findingsBodyTemplate(filtered) {
         ${displayName ? html`<span class="meta">${displayName}</span>` : nothing}
         ${meta ? html`<span class="run-meta">${meta}</span>` : nothing}
       </div>
-      ${findingCardPlaceholder(g, true)}
+      ${findingCardPlaceholder(g, true, null, true)}
     </div>`
   })}`
 }
@@ -2156,7 +2159,6 @@ function renderImpl() {
   // graph-mode render can't reattach a stale item list from the
   // last table render.
   pendingTableItems = null
-  pendingFindingCards.clear()
 
   if (!renderGraphInBody) {
     toolbarTpl = toolbarTemplate(filtered.length, allGroups.length, triageCounts, counts, colorCounts, {
@@ -2333,18 +2335,6 @@ function renderImpl() {
       if (persistentFindingTable.parentNode !== slot) {
         slot.append(persistentFindingTable)
       }
-    }
-  }
-  // Pair each <finding-card> with its dedup group via the gid stamped
-  // on the placeholder. The component itself can't know which group
-  // it represents from HTML attributes alone (group is a structured
-  // object, not a string), so render.js wires it up by gid lookup
-  // here. `in-group` is already set as an attribute, so the
-  // component's reflective `inGroup` boolean comes from the HTML.
-  if (pendingFindingCards.size > 0) {
-    for (const card of report.querySelectorAll('finding-card')) {
-      const entry = pendingFindingCards.get(card.dataset.gid)
-      if (entry) card.group = entry.group
     }
   }
   report.classList.add('active')

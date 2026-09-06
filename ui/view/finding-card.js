@@ -14,6 +14,12 @@
 // flat-group wrapper paints a header above the card with the same
 // info. Used only by the flat list mode.
 //
+// `lazy` (the two list surfaces set it) defers the card's body until
+// the card is within a viewport of being seen — see the notes over
+// `render` and view/lazy-render.js. The single-card surfaces (the
+// table's details aside, the focus view, the kanban dialog) leave it
+// off and paint at once, as they always did.
+//
 // Reactivity: extends StateElement, which wraps render() in an
 // observer-util reaction. State reads inside the helpers
 // (state.triage, state.activeTabByGroup, state.showDeleted) get
@@ -28,6 +34,7 @@
 import { unsafeCSS } from 'lit'
 import { StateElement, html } from '@rray/frontend/state-element'
 import { installShadowTooltipListener } from './tooltip.js'
+import { unwatchNearViewport, watchNearViewport } from './lazy-render.js'
 import { findingCardClasses, findingCardGid, findingCardInnerTemplate } from './render-finding.js'
 import { revealCitedLines } from './reveal-cited.js'
 import cardCSS from './finding-card.css'
@@ -51,6 +58,10 @@ class FindingCard extends StateElement {
     // `findingCardInnerTemplate`. Reflected so the same value reaches
     // the shadow CSS via `:host([context='focus'])`.
     context: { type: String, reflect: true },
+    // Render the body only once the card is near the viewport. Set by
+    // the list / grouped templates (render.js findingCardPlaceholder);
+    // absent on the single-card surfaces.
+    lazy: { type: Boolean },
   }
 
   // Two sheets: the card's own, and the Prism token palette it shares
@@ -59,11 +70,23 @@ class FindingCard extends StateElement {
   // description and the source previews beside its links.
   static styles = [unsafeCSS(cardCSS), unsafeCSS(codeTokensCSS)]
 
+  // Whether the body is (to be) rendered. Always true for an eager
+  // card; for a lazy one it flips when the observer reports the card
+  // within range, and back when a reconnect lands it out of range
+  // (see `_onNear`). Not a reactive property: the flip requests the
+  // update itself, and reflecting it would add an attribute for
+  // nothing to read.
+  _near = false
+  // The element the observer watches on this card's behalf, kept from
+  // watch to unwatch — a detached card can no longer find its wrapper.
+  _watched = null
+
   constructor() {
     super()
     this.group = null
     this.inGroup = false
     this.context = null
+    this.lazy = false
   }
 
   render() {
@@ -73,6 +96,18 @@ class FindingCard extends StateElement {
     // state.deletedIds via findingCardInnerHTML) join StateElement's
     // tracked set and re-render on mutation.
     this.dataset.gid = findingCardGid(this.group)
+    if (this.lazy && !this._near) {
+      // Out of range: an empty shell in the card's own chrome, so the
+      // list keeps its rhythm and `.flat-group .finding` still matches
+      // the host. Nothing in here reads state, so the autorun this
+      // runs in subscribes to nothing — a change elsewhere in the
+      // list costs an unrendered card nothing. The `.card-pending`
+      // min-height (finding-card.css) holds a card's worth of space
+      // for the frame between the shell painting and the body
+      // landing.
+      this.classList.add('finding')
+      return html`<div class="card card-pending" aria-busy="true"></div>`
+    }
     const next = new Set(findingCardClasses(this.group))
     for (const c of MANAGED_HOST_CLASSES) this.classList.toggle(c, next.has(c))
     // Visual chrome lives on the inner `.card`, not the host, so
@@ -120,6 +155,18 @@ class FindingCard extends StateElement {
     // in here — `closest` stops at the boundary — so this root gets its
     // own. Idempotent, and reconnects are how this component is used.
     installShadowTooltipListener(this.renderRoot)
+    if (this.lazy) {
+      // Ask where the card is. In the flat list the observer watches
+      // the `.flat-group` wrapper: it carries the `content-visibility`
+      // (findings.css), so it is the element with a box while the
+      // group is skipped, and it is what scrolls the card into view.
+      // Every connect asks afresh — Lit's keyed `repeat` moves a card
+      // by detaching and re-inserting it, and a re-sort can carry a
+      // rendered card a thousand rows from the viewport.
+      this._watched = this.closest('.flat-group') ?? this
+      watchNearViewport(this._watched, (near) => this._onNear(near))
+      return
+    }
     // Force a render after every (re)connect so StateElement's wrapped
     // render() runs and re-registers a fresh autorun. Lit's keyed
     // repeat keeps cards connected across steady-state list renders,
@@ -128,6 +175,45 @@ class FindingCard extends StateElement {
     // reconnects where Lit wouldn't re-render on its own when `group`
     // didn't change.
     if (this.hasUpdated) this.requestUpdate()
+  }
+
+  disconnectedCallback() {
+    if (this._watched) {
+      unwatchNearViewport(this._watched)
+      this._watched = null
+    }
+    super.disconnectedCallback()
+  }
+
+  // The observer's answer. In range: render the body — which, on a
+  // reconnect of a card that already had one, is also what
+  // re-registers the autorun the disconnect disposed — and stop
+  // watching, since a rendered card stays rendered while it stays
+  // connected (a reader's open disclosures survive a scroll away and
+  // back). Out of range on a reconnect: drop the body back to the
+  // shell, so the cost of a sort or a filter is bounded by the
+  // viewport however far the reader had scrolled before it.
+  _onNear(near) {
+    if (near) {
+      if (this._watched) {
+        unwatchNearViewport(this._watched)
+        this._watched = null
+      }
+      this._near = true
+      this.requestUpdate()
+    } else if (this._near) {
+      this._near = false
+      this.requestUpdate()
+    }
+  }
+
+  // Render the body now whether or not the card is in range — for the
+  // print pipeline, which puts every card on paper, and the deep-link
+  // reveal, which scrolls to a card and wants it at its real height
+  // when it gets there. Resolves once the body is in the DOM.
+  ensureRendered() {
+    if (this.lazy && !this._near) this._onNear(true)
+    return this.updateComplete
   }
 }
 

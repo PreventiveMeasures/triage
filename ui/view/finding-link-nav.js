@@ -52,6 +52,16 @@ const NOT_FOUND = "Couldn't find that finding in any of your reports. "
 
 let flashTimer = null
 
+// How many frames an element has to hold still before a scroll counts
+// as finished, and how long to wait for that at most (a smooth scroll
+// across a long list runs well under two seconds).
+const SETTLE_FRAMES = 3
+const SETTLE_MAX_FRAMES = 150
+// Rounds of correction after the first scroll. Two is the usual
+// outcome; the cap is for a target the scroller can't centre (the
+// last card in a list), which would otherwise be asked forever.
+const SCROLL_ROUNDS = 5
+
 // Clear the previous highlight before painting a new one — two links
 // followed in quick succession should leave exactly one thing lit.
 function flash(el) {
@@ -64,6 +74,54 @@ function flash(el) {
     el.classList.remove(FLASH_CLASS)
     flashTimer = null
   }, FLASH_MS)
+}
+
+// Resolves once `el` has stopped moving on screen — the same position
+// for a few frames running — or after the cap.
+function settled(el) {
+  return new Promise((resolve) => {
+    let last = null
+    let still = 0
+    let frames = 0
+    const tick = () => {
+      const top = Math.round(el.getBoundingClientRect().top)
+      still = top === last ? still + 1 : 0
+      last = top
+      if (still >= SETTLE_FRAMES || ++frames >= SETTLE_MAX_FRAMES) resolve()
+      else requestAnimationFrame(tick)
+    }
+    requestAnimationFrame(tick)
+  })
+}
+
+// Whether `el` is where a `block: 'center'` scroll leaves it: wholly on
+// screen, or — for one taller than the screen — around its middle.
+function inView(el) {
+  const r = el.getBoundingClientRect()
+  if (r.height === 0) return false
+  const mid = window.innerHeight / 2
+  return (r.top >= 0 && r.bottom <= window.innerHeight) || (r.top <= mid && r.bottom >= mid)
+}
+
+// Scroll `el` to the middle of the view, and make sure it stays there.
+//
+// The lists estimate the height of everything not yet built — the
+// `contain-intrinsic-size` of a skipped group (findings.css,
+// finding-table.css) and the shell of a card still out of range
+// (view/lazy-render.js) — so the position a scroll aims at is a guess,
+// and a smooth scroll that builds a thousand cards on its way there
+// arrives somewhere the target has since moved away from: thousands
+// of pixels short, on a long list. Once the animation has stopped
+// moving the element, the heights around it are real, and an instant
+// correction lands on it. One round usually does; the loop is for a
+// correction that itself builds the last few neighbours.
+async function scrollToSettled(el) {
+  el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  for (let round = 0; round < SCROLL_ROUNDS; round++) {
+    await settled(el)
+    if (!el.isConnected || inView(el)) return
+    el.scrollIntoView({ block: 'center', behavior: 'instant' })
+  }
 }
 
 // Find the element standing in for `gid` in the just-painted view.
@@ -199,7 +257,13 @@ export async function revealFinding(ref) {
     // an alert here would fire on an ordinary case.
     return { ok: true }
   }
-  el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  // A card or row past the first screen is an empty shell until it
+  // comes within range (view/lazy-render.js): build it first, so the
+  // scroll lands on its real height and the ring has a body to sit on.
+  if (typeof el.ensureRendered === 'function') await el.ensureRendered()
+  await scrollToSettled(el)
+  // Flash after the scroll, not before it: the ring lasts a moment and
+  // a long scroll would spend most of that moment on the way.
   flash(el)
   return { ok: true }
 }

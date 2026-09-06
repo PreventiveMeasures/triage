@@ -130,21 +130,25 @@ function renderPreservingTableScroll() {
   if (state.viewMode === 'table') renderPreservingScrollOf('.findings-table-list')
   else render()
 }
-// Coalesce Search-tab re-renders to one per animation frame. The
-// full-bundle scan (renderBundleSearchResults) runs inside render(),
-// so rendering synchronously on every keystroke would tie typing
-// latency to the scan cost; deferring to the next frame keeps the
-// input responsive and collapses bursts (held key / paste / IME) into
-// a single scan. The query state is written synchronously, so a frame
-// already pending just picks up the newest value when it fires.
-// (The scan itself also refines forward-typed queries from the
-// previous keystroke's result — see bundle-search-scan.js — so the
-// per-frame cost usually drops to re-checking prior hit lines.)
-let _bundleSearchRaf = 0
-function renderBundleSearchDebounced() {
-  if (_bundleSearchRaf) return
-  _bundleSearchRaf = requestAnimationFrame(() => {
-    _bundleSearchRaf = 0
+// Coalesce a search field's re-renders to one per animation frame.
+// Two fields earn it. The bundle Search tab's full-bundle scan
+// (renderBundleSearchResults) runs inside render(), so rendering
+// synchronously on every keystroke would tie typing latency to the
+// scan cost. The findings search re-filters and re-sorts the whole
+// loaded set and rebuilds the rows it shows — cheap per keystroke on
+// a small report, a frame or more on a large one. Deferring to the
+// next frame keeps the input responsive and collapses bursts (held
+// key / paste / IME) into a single render. The query state is written
+// synchronously, so a frame already pending just picks up the newest
+// value when it fires. (The bundle scan also refines forward-typed
+// queries from the previous keystroke's result — see
+// bundle-search-scan.js — so its per-frame cost usually drops to
+// re-checking prior hit lines.)
+let _searchRaf = 0
+function renderSearchNextFrame() {
+  if (_searchRaf) return
+  _searchRaf = requestAnimationFrame(() => {
+    _searchRaf = 0
     render()
   })
 }
@@ -2099,6 +2103,13 @@ function prepareForPrint() {
     rerender = true
   }
   if (rerender) render()
+  // Every card goes on paper, so every card needs its body: the list
+  // surfaces build them only near the viewport (finding-card.js), and
+  // a print of a long report would otherwise be shells past the first
+  // screen. The bodies land in the same microtask checkpoint the
+  // cards' first render does, so the Ctrl+P path is no worse off than
+  // it was; the button path below awaits them outright.
+  for (const card of report.querySelectorAll('finding-card')) card.ensureRendered()
   const fileNames = state.reports.map((r) => r.fileName)
   let target = ''
   if (fileNames.length === 1) target = fileNames[0]
@@ -2152,12 +2163,13 @@ document.addEventListener('print-requested', async () => {
   printFilterFields = fields
   prepareForPrint()
   try {
-    // `updateComplete` resolves after the element's render() has
-    // applied its template; doing this on every card is overkill
-    // in steady-state but cheap enough relative to dialog-modal
-    // time.
+    // `ensureRendered` builds a card's body if the list surfaces
+    // hadn't yet (prepareForPrint asked already; this is the wait),
+    // and resolves after the element's render() has applied its
+    // template. Doing this on every card is overkill in steady-state
+    // but cheap enough relative to dialog-modal time.
     await Promise.all(
-      [...report.querySelectorAll('finding-card')].map((c) => c.updateComplete),
+      [...report.querySelectorAll('finding-card')].map((c) => c.ensureRendered()),
     )
     window.print()
   } catch (e) {
@@ -2383,6 +2395,11 @@ report.addEventListener('search-input', (e) => {
     // query starts matching (the toggle is hidden while empty, so a
     // persisted mode would resurface unseen).
     if (!value) state.filterIncludeNegate = false
+    // Per-frame, like the bundle search below: the `<toolbar-search>`
+    // input keeps its own value through its autorun, so the field
+    // stays responsive while the list catches up.
+    renderSearchNextFrame()
+    return
   } else if (kind === 'files') {
     state.filesSearch = value
   } else if (kind === 'packages') {
@@ -2397,7 +2414,7 @@ report.addEventListener('search-input', (e) => {
     // below. The `<bundle-search>` component still updates its own
     // input via its autorun, so the field stays responsive.
     state.bundleSearchQuery = value
-    renderBundleSearchDebounced()
+    renderSearchNextFrame()
     return
   } else {
     return

@@ -80,6 +80,10 @@
    so large reports render in viewport-proportional time. The
    estimate stands in for a typical card until its first paint, after
    which the `auto` keyword pins the real size for stable scrolling.
+   The cards' DOM is built on the same terms — a card out of range is
+   an empty shell until it comes within a viewport of being seen (see
+   finding-card.js and view/lazy-render.js), so building the list
+   costs what the viewport shows, not what the report holds.
    Scoped to the list containers so the table-details aside and the
    focus / kanban detail cards (single, always on screen) keep plain
    rendering. Gated off print so paginated output never interacts

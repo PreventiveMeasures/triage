@@ -22,6 +22,9 @@
    placeholder estimate (~one two-line row) sizes not-yet-rendered
    rows for scrollbar geometry; the `auto` keyword pins each row's
    real size after its first paint so scroll positions stay stable.
+   The rows' DOM is built on the same terms — a row out of range is an
+   empty shell until it comes within a viewport of being seen (see
+   finding-row.js and view/lazy-render.js).
    Open triage popovers are unaffected — the popover API lifts them
    to the top layer, outside the row's paint containment. Gated off
    print: the spec treats auto-hidden content as renderable for
