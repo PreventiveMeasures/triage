@@ -22,6 +22,7 @@
 //   - override `focusInitial()` / `_onClose` when the defaults
 //     (focus first field, Esc → resolve null) don't fit.
 import { LitElement, unsafeCSS } from 'lit'
+import { makeStackedModalError } from '../dom.js'
 import dialogBaseCSS from './dialog-base.css'
 
 export class AppDialog extends LitElement {
@@ -90,6 +91,30 @@ export function openAppDialog(tagName, props = {}) {
     el.addEventListener('resolve', (e) => {
       el.remove()
       resolve(e.detail)
+    })
+    document.body.append(el)
+  })
+}
+
+// Variant of `openAppDialog` for the dialogs that hold a secret the
+// wrapper set (workspace private key, share-link ciphertext, a
+// file-bytes closure) and must REJECT when another modal is already
+// open so the caller can surface a contextual error: `modal-conflict`
+// runs `wipeOnConflict(el)` (the dialog never opened, so its own
+// `_finish` wipe didn't run), detaches the element, and rejects with
+// the shared stacked-modal error.
+export function openAppDialogOrReject(tagName, props, wipeOnConflict) {
+  return new Promise((resolve, reject) => {
+    const el = document.createElement(tagName)
+    Object.assign(el, props)
+    el.addEventListener('resolve', (e) => {
+      el.remove()
+      resolve(e.detail)
+    })
+    el.addEventListener('modal-conflict', (e) => {
+      wipeOnConflict(el)
+      el.remove()
+      reject(makeStackedModalError(e.detail?.cause))
     })
     document.body.append(el)
   })

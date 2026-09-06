@@ -76,3 +76,10 @@ export function ownSourceSplittable(paths, packageDirOf = null) {
   }
   return false
 }
+
+// Display label for a package bucket: `__own__` is the sentinel for
+// own-source (non-dependency) files, spelled out as "own source" in
+// package lists and tooltips.
+export function pkgLabel(pkg) {
+  return pkg === '__own__' ? 'own source' : pkg
+}

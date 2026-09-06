@@ -71,12 +71,10 @@ import { state } from '#client/index.js'
 // those rows are in and on screen, which is a fact worth showing, not
 // the absence of a setting — so each gets its own class and its own
 // colour (toolbar.css) rather than one of them reading as "off".
-const PARTIAL_LABELS = { '': '+ Partial', exclude: '\u2212 Partial', only: 'only Partial' }
-const PARTIAL_CLASSES = { '': 'included', exclude: 'excluded', only: 'only' }
-const PARTIAL_TITLES = {
-  '': 'Confirmed, partial and revalidation rows — click for full confirmations only',
-  exclude: 'Full confirmations only — click to show the partial ones only',
-  only: 'Partial confirmations only — click to show all of them again',
+const PARTIAL_FACES = {
+  '':      { cls: 'included', label: '+ Partial',            title: 'Confirmed, partial and revalidation rows — click for full confirmations only' },
+  exclude: { cls: 'excluded', label: '\u2212 Partial',       title: 'Full confirmations only — click to show the partial ones only' },
+  only:    { cls: 'only',     label: 'only Partial',         title: 'Partial confirmations only — click to show all of them again' },
 }
 
 class RevalidateFilter extends StateElement {
@@ -120,17 +118,19 @@ class RevalidateFilter extends StateElement {
       <option value="">Confidence</option>
       ${this.options.map((o) => html`<option value=${o.value} ?selected=${state.filterRevalidate === o.value}>${o.label}</option>`)}
     </select>
-    ${this.hasPartial && state.filterRevalidate === 'confirmed'
-      ? html`<button
-          type="button"
-          class=${classMap({
-            'partial-cycle': true,
-            [PARTIAL_CLASSES[state.filterPartial] ?? PARTIAL_CLASSES['']]: true,
-          })}
-          title=${PARTIAL_TITLES[state.filterPartial] ?? PARTIAL_TITLES['']}
-          @click=${this._onPartial}
-        >${PARTIAL_LABELS[state.filterPartial] ?? PARTIAL_LABELS['']}</button>`
-      : nothing}`
+    ${this.hasPartial && state.filterRevalidate === 'confirmed' ? this._partialChip() : nothing}`
+  }
+
+  // Reads `state.filterPartial` only when the chip is up, so the
+  // autorun doesn't track the mode while Confirmed isn't selected.
+  _partialChip() {
+    const face = PARTIAL_FACES[state.filterPartial] ?? PARTIAL_FACES['']
+    return html`<button
+      type="button"
+      class=${classMap({ 'partial-cycle': true, [face.cls]: true })}
+      title=${face.title}
+      @click=${this._onPartial}
+    >${face.label}</button>`
   }
 
   _onPartial = () => {

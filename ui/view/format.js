@@ -395,6 +395,20 @@ export function commonPrefix(strings) {
   return prefix
 }
 
+// Strip protocol + host to the bare `user/repo` slug — the canonical
+// form per-finding `repo.github` carries (e.g. `lodash/lodash`), so a
+// finding-sourced value and a user-typed URL render identically, and
+// a typed fallback URL and an analyzer slug surface as the same key
+// in the Repositories view. Falls back to the raw input when the URL
+// isn't a github.com one. Shared by `<repo-chip>` (chip face + copy
+// text), `<repo-filter>` (option labels) and `render-repositories.js`
+// (row label / search / sort key).
+export function prettyRepoLabel(s) {
+  if (!s) return ''
+  const m = s.match(/github\.com\/([^/?#]+\/[^/?#]+?)(?:\.git)?(?:[/?#]|$)/iu)
+  return m ? m[1] : s
+}
+
 // Normalize a user-typed repo identifier into a base URL with no
 // trailing slash. Accepts three input shapes so the user doesn't
 // have to remember which one we want:
@@ -1038,7 +1052,7 @@ export function handoffBlock(f, repo) {
   // it in and every editor takes back.
   const location = locationLabel(f)
   if (location) meta.push(`Location: ${location}`)
-  if (f?.confidence !== undefined && f?.confidence !== null) meta.push(`Confidence: ${f.confidence}/10`)
+  if (f?.confidence != null) meta.push(`Confidence: ${f.confidence}/10`)
   const revalidate = revalidateKind(f)
   if (revalidate) meta.push(`Revalidation: ${revalidate}`)
 

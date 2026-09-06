@@ -1,17 +1,43 @@
 // Shared async open-bundle pipeline, consolidated so error handling
-// etc. live in one place. Three callers need the same readBundle →
+// etc. live in one place. Every caller needs the same readBundle →
 // branch by extension → JSON.parse / brotliDecompress → set
 // bundleDetails + render → kick the SHA-512 file-hash index → kick
 // the findings index flow: the sidebar bundle row click
 // (`.file-item[data-bundle-integrity]` in sidebar.js), the
 // finding-card "Code →" shortcut (`data-finding-code-bundle` in
-// events.js), and the bundle-only drop branch in `ingest.js`.
+// events.js), the `<bundle-compare>` swap button (`bundle-swap` in
+// events.js), the bundle-only drop branch in `ingest.js`, and the
+// boot-time `LAST_FILE_KEY` bundle restore in `view.js`.
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { ensureBundleFindingsIndexed, hasBundleFileHashes, readBundle, recordBundleFileHashes, state } from '#client/index.js'
 import { decodeUtf8 } from '../../common/utf8.js'
 import { brotliDecompress } from './brotli-decompress.js'
+import { graph2 } from './graph/state.js'
 import { render } from './render.js'
 import { computeBundleFileHashes } from './render-bundle.js'
+
+// Reset every per-bundle UI slot and make `integrity` the selected
+// bundle on the bundles view. Shared by the sidebar bundle-row click,
+// the bundle-only drop branch (ingest.js), the `bundle-swap` listener
+// (events.js) and the boot restore (view.js) — each then persists /
+// repaints / calls `openBundle` on its own. `tab` is the detail tab
+// the bundle opens on ('overview' unless the caller restores one).
+export function selectBundle(integrity, tab = 'overview') {
+  state.currentView = 'bundles'
+  state.selectedBundle = integrity
+  state.bundleDetails = null
+  state.bundleSourceFile = null
+  state.bundleSourceFindingIdx = null
+  state.bundleCodeSearchQuery = ''
+  state.bundleCodeSearchMode = 'files'
+  state.bundleSearchQuery = ''
+  state.bundleSearchRegex = false
+  state.bundleSearchCase = false
+  state.bundleSearchContext = true
+  state.bundleDetailsTab = tab
+  graph2.showAll = true
+  state.shownTriage = null
+}
 
 // Read OPFS bytes, classify by entry name (`.map` → sourcemap, else
 // → stasis), and parse into the `details` object the render path
@@ -25,8 +51,9 @@ import { computeBundleFileHashes } from './render-bundle.js'
 // v1 uniformly; .sources / .imports / .modules are Map-shaped).
 //
 // Exported so non-state-mutating callers (focus view's inline code
-// panel, prefetchBundleHashes below) can parse without touching
-// `state.bundleDetails`.
+// panel in focus-code.js, the Compare slide's other-bundle parse in
+// bundle-compare.js, and prefetchBundleHashes below) can parse
+// without touching `state.bundleDetails`.
 export async function buildBundleDetails(integrity, entry) {
   try {
     const bytes = await readBundle(integrity)

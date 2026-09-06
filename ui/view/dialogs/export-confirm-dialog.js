@@ -216,7 +216,7 @@ customElements.define('export-confirm-dialog', ExportConfirmDialog)
 
 // Public entry point. Snapshots the current export selection (counts +
 // active filters, on the basis matching `mode`) and opens the dialog.
-// Resolves with `{ confirmed }`.
+// Resolves with `{ confirmed, view, fields }` (see the file header).
 //
 // Custom open helper rather than the shared `openAppDialog`: the Print
 // / Download buttons stay clickable while another modal is up (the

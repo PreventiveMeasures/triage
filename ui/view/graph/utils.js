@@ -98,11 +98,11 @@ function isLightTheme() {
 // stay around but they're tiny and the package-name set is bounded.
 const _pkgColorCache = new Map()
 export function pkgColor(pkg) {
-  const palette = isLightTheme() ? PKG_PALETTE_LIGHT : PKG_PALETTE_DARK
-  const themeKey = palette === PKG_PALETTE_LIGHT ? 'l' : 'd'
-  const cacheKey = `${themeKey}:${pkg ?? '__own__'}`
-  if (_pkgColorCache.has(cacheKey)) return _pkgColorCache.get(cacheKey)
+  const light = isLightTheme()
+  const palette = light ? PKG_PALETTE_LIGHT : PKG_PALETTE_DARK
   const key = pkg ?? '__own__'
+  const cacheKey = `${light ? 'l' : 'd'}:${key}`
+  if (_pkgColorCache.has(cacheKey)) return _pkgColorCache.get(cacheKey)
   let h = 0
   for (const c of key) h = (h * 37 + c.codePointAt(0)) | 0
   // Spread indices: interleave halves so sequential packages get distant hues

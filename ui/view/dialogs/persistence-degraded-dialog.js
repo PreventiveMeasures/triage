@@ -14,10 +14,9 @@ import { html } from 'lit'
 import { AppDialog } from './app-dialog.js'
 
 class PersistenceDegradedDialog extends AppDialog {
-  // Focus the acknowledge button so Enter/Esc both just dismiss.
-  focusInitial() {
-    this.renderRoot.querySelector('button.primary')?.focus()
-  }
+  // No input field; the base `focusInitial()` default falls through
+  // to `button.primary` (the acknowledge button), so Enter/Esc both
+  // just dismiss.
 
   _onConfirm = () => this._finish(true)
 

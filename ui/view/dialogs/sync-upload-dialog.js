@@ -17,7 +17,7 @@ import { readFileBytes } from '#client/index.js'
 import { putBundleToRemote, putFile } from '../client-sync.js'
 import { AppDialog, openAppDialog } from './app-dialog.js'
 import listCSS from './dialog-list.css'
-import { itemDisplayLabel } from './shared.js'
+import { itemDisplayLabel, transferErrorsList, transferItemsList, transferSummary } from './shared.js'
 
 class SyncUploadDialog extends AppDialog {
   static styles = [...AppDialog.styles, unsafeCSS(listCSS)]
@@ -83,27 +83,12 @@ class SyncUploadDialog extends AppDialog {
     if (failed.length === 0) this._finish({ uploaded, failed })
   }
 
-  _errorsSection() {
-    if (this._errors.length === 0) return nothing
-    return html`<ul class="lwd-list" role="alert">
-      ${this._errors.map((e) => html`<li><strong>${e.label}</strong> — ${e.reason}</li>`)}
-    </ul>`
-  }
-
   render() {
-    const count = this.items.length
-    const singular = count === 1
-    const reportCount = this.items.filter((i) => i.kind === 'report').length
-    const bundleCount = count - reportCount
-    let kindLabel = 'items'
-    if (bundleCount === 0) kindLabel = singular ? 'report' : 'reports'
-    else if (reportCount === 0) kindLabel = singular ? 'bundle' : 'bundles'
+    const { count, singular, kindLabel } = transferSummary(this.items)
     const intro = singular
       ? html`Upload <strong>"${itemDisplayLabel(this.items[0])}"</strong> to the workspace's remote inventory?`
       : html`Upload <strong>${count}</strong> local ${kindLabel} to the workspace's remote inventory?`
-    const list = singular ? nothing : html`<ul class="lwd-list">
-      ${this.items.map((i) => html`<li>${itemDisplayLabel(i)}${i.kind === 'bundle' ? html` <span class="lwd-kind-tag">bundle</span>` : nothing}</li>`)}
-    </ul>`
+    const list = singular ? nothing : transferItemsList(this.items)
     const uploadLabel = this._uploading
       ? (singular ? 'Uploading…' : `Uploading ${count} ${kindLabel}…`)
       : (singular ? 'Upload' : `Upload ${count}`)
@@ -115,7 +100,7 @@ class SyncUploadDialog extends AppDialog {
         End-to-end encrypted with the workspace key — only workspace
         members can decrypt the uploaded content.
       </p>
-      ${this._errorsSection()}
+      ${transferErrorsList(this._errors)}
       <footer class="nwd-actions">
         <span class="nwd-spacer"></span>
         <button type="button" data-role="cancel" @click=${this._onCancel} ?disabled=${this._uploading}>

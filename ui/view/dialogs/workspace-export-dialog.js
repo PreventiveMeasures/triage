@@ -5,8 +5,8 @@
 // the same shared shadow-DOM chrome the share-link dialogs use.
 import { html, nothing, unsafeCSS } from 'lit'
 import { buildWorkspaceExportBundle } from '#client/index.js'
-import { downloadBlob, makeStackedModalError } from '../dom.js'
-import { AppDialog } from './app-dialog.js'
+import { downloadBlob } from '../dom.js'
+import { AppDialog, openAppDialogOrReject } from './app-dialog.js'
 import shareCSS from './dialog-share.css'
 
 class WorkspaceExportDialog extends AppDialog {
@@ -222,21 +222,7 @@ customElements.define('workspace-export-dialog', WorkspaceExportDialog)
 // cancel. Rejects when another modal is already open so the caller
 // can surface a contextual error.
 export function openWorkspaceExportDialog({ workspace } = {}) {
-  return new Promise((resolve, reject) => {
-    const el = document.createElement('workspace-export-dialog')
-    el.workspace = workspace ?? null
-    el.addEventListener('resolve', (e) => {
-      el.remove()
-      resolve(e.detail)
-    })
-    el.addEventListener('modal-conflict', (e) => {
-      // Wipe the wrapper-set `workspace` (carrying `.privateKey`)
-      // before detaching — the dialog never opened, so its own
-      // `_finish` wipe didn't run.
-      el.workspace = null
-      el.remove()
-      reject(makeStackedModalError(e.detail?.cause))
-    })
-    document.body.append(el)
-  })
+  // Wipe the wrapper-set `workspace` (carrying `.privateKey`) on
+  // modal-conflict before detaching.
+  return openAppDialogOrReject('workspace-export-dialog', { workspace: workspace ?? null }, (el) => { el.workspace = null })
 }

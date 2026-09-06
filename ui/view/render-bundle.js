@@ -7,9 +7,10 @@
 //
 // `render()` in `render.js` keeps the `currentView === 'bundles'`
 // dispatch (slot reuse + canvas attach), importing `renderBundlesList`,
-// `buildBundleGraphData`, `setCurrentBundleGraph`,
-// `countBundleTriageBuckets`, `refreshBundleGraphSidebar`, and
-// `refreshBundleGraphTopPkgs` from this module.
+// `buildBundleGraphData`, `setCurrentBundleGraphPrep`,
+// `countBundleTriageBuckets`, `refreshBundleGraphSidebar`,
+// `refreshBundleGraphTopPkgs`, and `renderBundleSourceModal` from
+// this module.
 import { html, nothing } from 'lit'
 import { choose } from 'lit/directives/choose.js'
 import { classMap } from 'lit/directives/class-map.js'
@@ -120,17 +121,6 @@ export async function computeBundleFileHashes(details) {
   return result
 }
 
-// Match every indexed finding against the bundle's per-file hashes.
-// Returns Map<file, Finding[]>. Pulls from the OPFS-wide
-// `bundle-finding-index` (client/bundle-finding-index.js) rather than
-// `state.reports` so a bundle is matched against EVERY report the
-// user has ever dropped, not just the one open now. The index is
-// populated in the background by `ensureBundleFindingsIndexed`; this
-// lookup is synchronous, reading whatever is currently cached.
-//
-// Multiple findings can share a fileHash (one source may emit
-// several), and one hash may map to multiple bundle files (rare —
-// duplicate sources).
 // Per-bucket counts of bundle-matched findings — drives the graph
 // topbar's triage selector visibility / counts. Walks the same
 // hash → finding index bundleFindingsByFile uses, bucketing each
@@ -150,6 +140,17 @@ export function countBundleTriageBuckets(details) {
   return counts
 }
 
+// Match every indexed finding against the bundle's per-file hashes.
+// Returns Map<file, Finding[]>. Pulls from the OPFS-wide
+// `bundle-finding-index` (client/bundle-finding-index.js) rather than
+// `state.reports` so a bundle is matched against EVERY report the
+// user has ever dropped, not just the one open now. The index is
+// populated in the background by `ensureBundleFindingsIndexed`; this
+// lookup is synchronous, reading whatever is currently cached.
+//
+// Multiple findings can share a fileHash (one source may emit
+// several), and one hash may map to multiple bundle files (rare —
+// duplicate sources).
 // Bundle-side per-finding filter. Two modes:
 //
 //   'graph'  — bundle graph view. Follows state.shownTriage (null =
@@ -179,9 +180,7 @@ function bundleFindingsByFile(fileHashes, mode = 'graph') {
       return t === state.shownTriage
     })
     if (filtered.length === 0) continue
-    if (!result.has(file)) result.set(file, [])
-    const arr = result.get(file)
-    for (const f of filtered) arr.push(f)
+    result.set(file, filtered)
   }
   return result
 }
@@ -396,10 +395,9 @@ function renderBundleSizeDistribution(items) {
 // Sources panel for the bundles details view — shared between the
 // sourcemap and stasis branches of `renderBundleDetails`. Wraps
 // the metadata block + per-package size visualization + flat file
-// list, splitting the viz and the list across Packages / Files
-// tabs when the bundle has more than 5 packages (a flat layout is
-// readable up to that count; beyond it the two views compete for
-// vertical space).
+// list (+ the matching-reports list when any report contributes),
+// laid out as side-by-side Packages / Files / Reports columns
+// under the summary (see the Overview body comment below).
 //
 // `sources` and `sizes` are parallel arrays — same indices, same
 // length. Sizes may be null when content wasn't shipped in the
@@ -561,11 +559,6 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes, packageDirs, exp
   </div>`
 }
 
-// Full-width "slide" view for the Graph and Issues tabs. The
-// bundles list and the regular details panel both step aside; a
-// header bar across the top carries the back button + bundle name
-// + integrity, plus a Graph / Issues sub-tab switcher. Body
-// renders the active sub-tab's content edge to edge.
 // Source viewer overlay — opens on top of any bundles view (regular
 // or slide) when state.bundleSourceFile is set. Reads the open
 // bundle's source map / stasis content via bundleSourcesAsMap;
@@ -775,6 +768,32 @@ function bundleViewerFindings(details, path, content) {
   return { fileFindings, lineFindings }
 }
 
+// Title bar shared by the source-viewer modal and the Search tab's
+// docked sidebar — path + the shared bundle-source-close action.
+function renderBundleSourceBar(path) {
+  return html`<header class="bundle-source-bar">
+      <div class="bundle-source-title" title=${path}>${path}</div>
+      <button
+        type="button"
+        class="bundle-source-close"
+        data-action="bundle-source-close"
+        title="Close source viewer (Esc)"
+        aria-label="Close source viewer"
+      >×</button>
+    </header>`
+}
+
+// Code wrap + finding side panel — the viewer body every source
+// surface (modal, Code slide main pane, Search sidebar) renders.
+function renderBundleSourceCodeWrap(path, content, integrity, fileFindings, lineFindings, matchLines = null) {
+  return html`<div class="bundle-source-code-wrap">
+        ${typeof content === 'string'
+          ? renderBundleSourceLines(content, path, integrity, lineFindings, matchLines)
+          : html`<div class="bundle-source-empty">Source content not bundled.</div>`}
+      </div>
+      ${renderBundleSourceFindingPanel(fileFindings)}`
+}
+
 // Public so render.js can mount it into the global overlay slot
 // (`#bundle-source-overlay-slot` in index.html). The modal needs
 // to overlay any view — the finding-card's [Code] shortcut
@@ -791,30 +810,17 @@ export function renderBundleSourceModal() {
   if (state.bundleDetailsTab === 'code' || state.bundleDetailsTab === 'search') return nothing
   const sources = bundleSourcesAsMap(state.bundleDetails)
   const content = sources.get(path)
-  // Find this file's matched findings (live or trash, depending on
-  // showDeleted) and bucket by line so the gutter can stamp dots.
+  // Find this file's matched findings (bundle Issues filter: live +
+  // in-progress + fixed + ignored, minus invalid / deleted) and bucket
+  // by line so the gutter can stamp dots.
   // The map is also passed to the side panel: clicking a dot picks
   // the first finding on that line by default.
   const { fileFindings, lineFindings } = bundleViewerFindings(state.bundleDetails, path, content)
   return html`<div class="bundle-source-overlay">
     <div class=${classMap({ 'bundle-source-modal': true, 'with-panel': state.bundleSourceFindingIdx != null })}>
-      <header class="bundle-source-bar">
-        <div class="bundle-source-title" title=${path}>${path}</div>
-        <button
-          type="button"
-          class="bundle-source-close"
-          data-action="bundle-source-close"
-          title="Close source viewer (Esc)"
-          aria-label="Close source viewer"
-        >×</button>
-      </header>
+      ${renderBundleSourceBar(path)}
       <div class="bundle-source-body">
-        <div class="bundle-source-code-wrap">
-          ${typeof content === 'string'
-            ? renderBundleSourceLines(content, path, state.bundleDetails?.integrity, lineFindings)
-            : html`<div class="bundle-source-empty">Source content not bundled.</div>`}
-        </div>
-        ${renderBundleSourceFindingPanel(fileFindings)}
+        ${renderBundleSourceCodeWrap(path, content, state.bundleDetails?.integrity, fileFindings, lineFindings)}
       </div>
     </div>
   </div>`
@@ -865,11 +871,6 @@ function buildBundleSourceTree(paths) {
 const _bundleTreeUserOpen = new Map()
 let _bundleTreeMapBundle = null
 
-// Recursive directory + file rendering for the Code slide's tree
-// rail. Open the first level by default; deeper levels collapse
-// so the user can drill in. Selected file gets a `current` class
-// for the highlight strip; the click target is the data-bundle-
-// view-source delegate (same one the Files tab uses).
 // Aggregate issue count + worst severity across every file under a
 // dir node — the rollup chip a directory row shows so issue
 // hotspots stay visible while the subtree is collapsed. Walks the
@@ -894,6 +895,11 @@ function dirIssueStats(node, issueIndex) {
   return { count, worst }
 }
 
+// Recursive directory + file rendering for the Code slide's tree
+// rail. Open the first level by default; deeper levels collapse
+// so the user can drill in. Selected file gets a `current` class
+// for the highlight strip; the click target is the data-bundle-
+// view-source delegate (same one the Files tab uses).
 function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null, parentPath = '', expandAll = false) {
   const dirs = [...node.dirs.entries()].toSorted(([a], [b]) => a.localeCompare(b))
   const files = [...node.files.entries()].toSorted(([a], [b]) => a.localeCompare(b))
@@ -978,6 +984,34 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
   </ul>`
 }
 
+// Prefix-stripped display form of a bundle path — the shared root is
+// shown once above the rail / in the summary line, so rows don't
+// repeat it. Falls back to the full path when it doesn't start with
+// `prefix` (defensive — shouldn't happen since the prefix is derived
+// from the same set).
+function stripPathPrefix(p, prefix) {
+  return prefix && p.startsWith(prefix) ? p.slice(prefix.length) : p
+}
+
+// Build the Code rail's tree from prefix-STRIPPED paths (so the
+// visual hierarchy doesn't waste rows on a shared root prefix) while
+// keeping the ORIGINAL path as each leaf's value, so the tree-link
+// buttons can hand it to `data-bundle-view-source` directly and
+// `sources.get` resolves. `stripped` and `orig` are parallel arrays.
+function buildRemappedBundleSourceTree(stripped, orig) {
+  const strippedToOrig = new Map()
+  for (let i = 0; i < orig.length; i++) strippedToOrig.set(stripped[i], orig[i])
+  const tree = buildBundleSourceTree(stripped)
+  const remap = (n) => {
+    const remappedFiles = new Map()
+    for (const [name, p] of n.files) remappedFiles.set(name, strippedToOrig.get(p) ?? p)
+    n.files = remappedFiles
+    for (const d of n.dirs.values()) remap(d)
+  }
+  remap(tree)
+  return tree
+}
+
 // Files-mode result pane — the directory tree, optionally
 // filtered to paths matching `query` (case-insensitive
 // substring on the prefix-stripped path the user actually sees
@@ -997,7 +1031,7 @@ function renderBundleCodeFilesPanel(tree, currentPath, query, issueIndex, prefix
   const collect = (n) => {
     for (const [, child] of n.dirs) collect(child)
     for (const [, full] of n.files) {
-      const view = prefix && full.startsWith(prefix) ? full.slice(prefix.length) : full
+      const view = stripPathPrefix(full, prefix)
       if (view.toLowerCase().includes(q)) matches.push(full)
     }
   }
@@ -1011,19 +1045,8 @@ function renderBundleCodeFilesPanel(tree, currentPath, query, issueIndex, prefix
   // remapped back to original paths so the click delegate's
   // `data-bundle-view-source=${full}` resolves against
   // `sources` (which keys by the original path).
-  const stripped = prefix
-    ? matches.map((p) => (p.startsWith(prefix) ? p.slice(prefix.length) : p))
-    : matches
-  const strippedToOrig = new Map()
-  for (let i = 0; i < matches.length; i++) strippedToOrig.set(stripped[i], matches[i])
-  const filtered = buildBundleSourceTree(stripped)
-  const remap = (n) => {
-    const remappedFiles = new Map()
-    for (const [name, p] of n.files) remappedFiles.set(name, strippedToOrig.get(p) ?? p)
-    n.files = remappedFiles
-    for (const d of n.dirs.values()) remap(d)
-  }
-  remap(filtered)
+  const stripped = prefix ? matches.map((p) => stripPathPrefix(p, prefix)) : matches
+  const filtered = buildRemappedBundleSourceTree(stripped, matches)
   // expandAll: filtered tree only contains matches; every dir
   // exists because something inside it matched, so opening them
   // all means the user sees every hit at a glance instead of
@@ -1068,7 +1091,7 @@ function renderBundleCodeContentResults(sources, query, currentPath, prefix = ''
   return html`<div class="bundle-code-search-results">
     <div class="bundle-code-search-summary">${totalHits} ${totalHits === 1 ? 'hit' : 'hits'} in ${results.length} ${results.length === 1 ? 'file' : 'files'}</div>
     ${results.map(({ path: p, hits }) => {
-      const bare = prefix && p.startsWith(prefix) ? p.slice(prefix.length) : p
+      const bare = stripPathPrefix(p, prefix)
       return html`<div class=${classMap({ 'bundle-code-search-file': true, current: p === currentPath })}>
       <button
         type="button"
@@ -1145,10 +1168,8 @@ function renderBundleCodeIssuesResults(details, query, currentPath, prefix = '')
         const sev = finding.severity
         // Prefix is shown above the rail (bundle-code-rail-prefix);
         // strip it here so the row's path doesn't repeat the
-        // shared root. Falls back to the full path when the file
-        // doesn't actually start with prefix (defensive — shouldn't
-        // happen since prefix is derived from the same set).
-        const bare = prefix && file.startsWith(prefix) ? file.slice(prefix.length) : file
+        // shared root.
+        const bare = stripPathPrefix(file, prefix)
         const isCurrent = file === currentPath && state.bundleSourceFindingIdx === fileIdx
         return html`<li class=${classMap({ 'bundle-code-search-issue': true, current: isCurrent })}>
           <button
@@ -1228,7 +1249,6 @@ function pickDefaultBundleCodeFile(details, sources, issueIndex) {
 // pointer) a default file is auto-opened via
 // pickDefaultBundleCodeFile.
 function renderBundleCodeView(details) {
-  if (!details || (!details.json && !details.bundle)) return nothing
   const sources = bundleSourcesAsMap(details)
   if (sources.size === 0) {
     return html`<div class="bundle-code-empty">This bundle doesn't carry any source content.</div>`
@@ -1247,20 +1267,7 @@ function renderBundleCodeView(details) {
   // doesn't waste horizontal space on a shared root prefix.
   // Stripped → original mapping lets the click handlers (and
   // sources.get) recover the full key.
-  const strippedToOrig = new Map()
-  for (let i = 0; i < allPaths.length; i++) strippedToOrig.set(stripped[i], allPaths[i])
-  // Build a tree node whose file values are ORIGINAL paths so the
-  // tree-link buttons can hand them to data-bundle-view-source
-  // directly. We feed buildBundleSourceTree stripped-keyed paths
-  // and remap files at the leaves.
-  const tree = buildBundleSourceTree(stripped)
-  const remap = (n) => {
-    const remappedFiles = new Map()
-    for (const [name, p] of n.files) remappedFiles.set(name, strippedToOrig.get(p) ?? p)
-    n.files = remappedFiles
-    for (const d of n.dirs.values()) remap(d)
-  }
-  remap(tree)
+  const tree = buildRemappedBundleSourceTree(stripped, allPaths)
   // Per-file finding index for the tree's count chips, the default-
   // file pick, and the Issues-mode hidden-when-empty gate. Computed
   // once and reused — the tree walk reads it as
@@ -1399,12 +1406,7 @@ function renderBundleCodeMain(details, path, content, fileFindings, lineFindings
       </span>` : nothing}
     </header>
     <div class="bundle-code-main-body">
-      <div class="bundle-source-code-wrap">
-        ${typeof content === 'string'
-          ? renderBundleSourceLines(content, path, details.integrity, lineFindings)
-          : html`<div class="bundle-source-empty">Source content not bundled.</div>`}
-      </div>
-      ${renderBundleSourceFindingPanel(fileFindings)}
+      ${renderBundleSourceCodeWrap(path, content, details.integrity, fileFindings, lineFindings)}
     </div>`
 }
 
@@ -1541,7 +1543,7 @@ function renderSearchSnippet(path, lines, win, hitRanges, showGap) {
 // match; each snippet opens at its own anchor line.
 function renderSearchFile(fileResult, prefix, radius) {
   const { path, lines, hits } = fileResult
-  const bare = prefix && path.startsWith(prefix) ? path.slice(prefix.length) : path
+  const bare = stripPathPrefix(path, prefix)
   const windows = buildSearchWindows(hits, lines.length, radius)
   const hitRanges = new Map(hits.map((h) => [h.ln, h.ranges]))
   const firstHit = hits[0].ln
@@ -1651,23 +1653,9 @@ function renderBundleSearchSide(details, sources, matchLines) {
   const content = sources.get(path)
   const { fileFindings, lineFindings } = bundleViewerFindings(details, path, content)
   return html`<aside class="bundle-search-side">
-    <header class="bundle-source-bar">
-      <div class="bundle-source-title" title=${path}>${path}</div>
-      <button
-        type="button"
-        class="bundle-source-close"
-        data-action="bundle-source-close"
-        title="Close source viewer (Esc)"
-        aria-label="Close source viewer"
-      >×</button>
-    </header>
+    ${renderBundleSourceBar(path)}
     <div class="bundle-source-body">
-      <div class="bundle-source-code-wrap">
-        ${typeof content === 'string'
-          ? renderBundleSourceLines(content, path, details.integrity, lineFindings, matchLines)
-          : html`<div class="bundle-source-empty">Source content not bundled.</div>`}
-      </div>
-      ${renderBundleSourceFindingPanel(fileFindings)}
+      ${renderBundleSourceCodeWrap(path, content, details.integrity, fileFindings, lineFindings, matchLines)}
     </div>
   </aside>`
 }
@@ -1678,7 +1666,6 @@ function renderBundleSearchSide(details, sources, matchLines) {
 // bundleSearchRegex / bundleSearchCase) so it never fights the Code
 // tab's rail filter.
 function renderBundleSearchView(details) {
-  if (!details || (!details.json && !details.bundle)) return nothing
   const sources = bundleSourcesAsMap(details)
   if (sources.size === 0) {
     return html`<div class="bundle-search-view">
@@ -1933,12 +1920,6 @@ function bundleIssueReportsTemplate(finding, ctx = {}) {
   </div>`
 }
 
-// Issues tab — flat list of findings matched to the open bundle's
-// files via SHA-512 fileHash equality. Sorted by severity (most
-// severe first), tie-breaking by file path. Until the async hash
-// computation completes (events.js kicks it after parse), shows a
-// loading placeholder. No matches → "no issues" line so the user
-// knows there isn't a render glitch.
 // Human-readable line label for a finding. Accepts either a
 // single line ("10" or 10) or a range string ("10-15"); returns
 // "Line 10" / "Lines 10-15" / "" when the value isn't usable.
@@ -1970,8 +1951,13 @@ function renderBundleIssuesEmpty(primary, hint) {
   </div>`
 }
 
+// Issues tab — findings matched to the open bundle's files via
+// SHA-512 fileHash equality, grouped per file (see
+// renderIssuesGroupedByFile) with files sorted by worst severity
+// first. Until the async hash computation completes (bundle-load.js
+// kicks it after parse), shows a hashing placeholder; the no-match
+// tiers below explain why nothing is listed.
 function renderBundleIssuesList(details) {
-  if (!details || (!details.json && !details.bundle)) return nothing
   if (!details.fileHashes) {
     return renderBundleIssuesEmpty(
       'Computing file hashes…',
@@ -2109,6 +2095,7 @@ export function renderIssuesGroupedByFile(findingsByFile, { kind, bucketKey } = 
               // break the lookup. Only used by the bundle path.
               const findingIdx = findings.indexOf(finding)
               const sev = finding.severity
+              const lineLabel = formatFindingLine(finding.line)
               const triage = state.triage.get(tabKey(finding))?.triage
               // Show the badge for any persisted triage state. The
               // bundle Issues tab + the package slide's `live` view
@@ -2124,7 +2111,7 @@ export function renderIssuesGroupedByFile(findingsByFile, { kind, bucketKey } = 
                 : triage === 'inprogress' ? 'In progress' : null
               const inner = html`<div class="bundle-issues-finding-head">
                 <span class=${`bundle-issue-sev sev-${sev}`}>${sev.replaceAll('_', ' ')}</span>
-                ${(() => { const lbl = formatFindingLine(finding.line); return lbl ? html`<span class="bundle-issues-finding-line">${lbl}</span>` : nothing })()}
+                ${lineLabel ? html`<span class="bundle-issues-finding-line">${lineLabel}</span>` : nothing}
                 ${triageLabel ? html`<span class=${`bundle-issues-finding-triage triage-${triage}`}>${triageLabel}</span>` : nothing}
                 <span class="bundle-issues-finding-spacer"></span>
                 ${bundleIssueReportsTemplate(finding, { kind, bucketKey })}
@@ -2221,12 +2208,26 @@ function bundleExportsColumn(entry, details) {
   </div>`
 }
 
-// Right-panel content for the open bundle. Until events.js finishes
-// the readBundle + parse, `state.bundleDetails` is null (or stale
-// for a previous selection); show a Loading… placeholder. For .map
-// files we render parsed sourcemap fields (version, output, sources
-// list with per-source content sizes). Anything else (stasis
-// bundle, unparseable .map) gets the metadata-only fallback.
+// Shared `.bundles-overview` shell for the Overview branches that
+// have no parsed sources to show (loading / error / un-parsed) —
+// metadata row on top, optional placeholder line below.
+function renderBundleOverviewFallback(meta, exportsCol, placeholder = nothing) {
+  return html`<div class="bundles-overview">
+    <div class="bundles-overview-summary">
+      <div class="bundles-detail-meta-row">${meta}${exportsCol}</div>
+    </div>
+    ${placeholder}
+  </div>`
+}
+
+// Overview tab body for the open bundle. Until bundle-load.js finishes
+// the readBundle + parse, `state.bundleDetails` is null (or stale for
+// a previous selection); the metadata block renders on its own. Parsed
+// .map files render sourcemap fields (version, output, source root,
+// names) and parsed stasis bundles their version + resolution kinds,
+// both through `renderBundleSourcesPanel`; a parse error, or a stasis
+// bundle with no parsed `bundle`, gets the metadata row plus a
+// placeholder line.
 function renderBundleDetails(entry, details) {
   const meta = html`<dl class="bundles-detail-meta">
     <dt>Name</dt><dd>${entry.name}</dd>
@@ -2249,20 +2250,10 @@ function renderBundleDetails(entry, details) {
   // loading branch shows just the metadata (name + integrity are
   // already known); a "Loading…" placeholder flickered too briefly
   // to be useful and pushed the columns down on every open.
-  if (!details || details.integrity !== entry.integrity) {
-    return html`<div class="bundles-overview">
-      <div class="bundles-overview-summary">
-        <div class="bundles-detail-meta-row">${meta}${exportsCol}</div>
-      </div>
-    </div>`
-  }
+  if (!details || details.integrity !== entry.integrity) return renderBundleOverviewFallback(meta, exportsCol)
   if (details.error) {
-    return html`<div class="bundles-overview">
-      <div class="bundles-overview-summary">
-        <div class="bundles-detail-meta-row">${meta}${exportsCol}</div>
-      </div>
-      <div class="bundles-overview-placeholder is-error">Failed to parse: ${details.error}</div>
-    </div>`
+    return renderBundleOverviewFallback(meta, exportsCol,
+      html`<div class="bundles-overview-placeholder is-error">Failed to parse: ${details.error}</div>`)
   }
   if (details.kind === 'sourcemap' && details.json) {
     const json = details.json
@@ -2320,10 +2311,6 @@ function renderBundleDetails(entry, details) {
   // that failed silently (no error path filled in). Fall back to
   // the metadata block above plus a generic "not parsed" line,
   // wrapped in the same shell so layout is consistent.
-  return html`<div class="bundles-overview">
-    <div class="bundles-overview-summary">
-      <div class="bundles-detail-meta-row">${meta}${exportsCol}</div>
-    </div>
-    <div class="bundles-overview-placeholder">Bundle contents not parsed.</div>
-  </div>`
+  return renderBundleOverviewFallback(meta, exportsCol,
+    html`<div class="bundles-overview-placeholder">Bundle contents not parsed.</div>`)
 }

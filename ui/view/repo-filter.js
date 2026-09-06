@@ -33,12 +33,7 @@ import { live } from 'lit/directives/live.js'
 import { StateElement, html } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'
 import { NO_REPO_SENTINEL } from './filters.js'
-
-function prettyRepoLabel(s) {
-  if (!s) return ''
-  const m = s.match(/github\.com\/([^/?#]+\/[^/?#]+?)(?:\.git)?(?:[/?#]|$)/iu)
-  return m ? m[1] : s
-}
+import { prettyRepoLabel } from './format.js'
 
 class RepoFilter extends StateElement {
   static properties = {

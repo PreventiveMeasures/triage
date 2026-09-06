@@ -2,9 +2,9 @@
    classes like `is-critical` / `mark-red` / `selected` (set on the
    host by finding-row.js) drive the row-level backgrounds and outline.
    The grid layout and the score / body / tabs sub-cells live here; the
-   row-internal building blocks (`.badge`, `.tab`, `.mark-x`,
-   `.mark-restore`, `.line-num`) are inlined so the shadow root is
-   self-contained. The mark-dot color picker is its own component (see
+   row-internal building blocks (`.badge`, `.tab`, `.line-num`) are
+   inlined so the shadow root is self-contained. The mark-dot color
+   picker is its own component (see
    view/color-marker.js). CSS variables (--surface, --border, --text,
    etc.) inherit through the shadow boundary so theme switching works. */
 
@@ -366,13 +366,6 @@
 .mark-fix.has-fix .wrench { fill: var(--accent); fill-opacity: .15; }
 .mark-flag.flagged .flag-cloth { fill: var(--accent); fill-opacity: .15; }
 
-.mark-x {
-  background: transparent; border: 1px solid var(--border); color: var(--muted);
-  border-radius: 3px; padding: 0 .35rem; font-size: .85rem; line-height: 1.1;
-  margin-left: .25rem;
-  &:hover { color: var(--critical); border-color: var(--critical); }
-}
-
 /* Triage menu — chevron button with a popover anchor. The wrap is
    `position: relative` so the popover floats below the chevron without
    affecting row height. The popover stops pointer events on its surface
@@ -391,7 +384,6 @@
   font: inherit;
 }
 .mark-triage-menu:hover { color: var(--text); border-color: var(--accent); }
-.mark-triage-menu.open { border-color: var(--accent); color: var(--text); }
 /* Labelled variant — shown in any non-live triage view. Label reads
    as the current bucket; the chevron stays at the right edge so it
    still reads as a dropdown. Bucket-tinted border / text matches the
@@ -454,13 +446,6 @@
 .triage-menu-invalid:hover { color: var(--muted); }
 .triage-menu-deleted:hover { color: var(--critical); }
 
-.mark-restore {
-  background: transparent; border: 1px solid var(--border); color: var(--muted);
-  border-radius: 3px; padding: 0 .45rem; font-size: .75rem; line-height: 1.3;
-  margin-left: .25rem;
-  &:hover { color: var(--green); border-color: var(--green); }
-}
-
 .line-num { color: var(--muted); font-size: .75rem; }
 .line-num a { color: inherit; }
 .line-num a:hover { color: var(--accent); }
@@ -472,7 +457,7 @@
    swatches with `print-color-adjust: exact` so backgrounds aren't
    stripped by the browser's economy default. mark-* row tints are
    dropped (colored backgrounds add noise on paper with no triage
-   value), mark-x / mark-restore hide, and selection / deletion outlines
+   value), and selection / deletion outlines
    are neutralized so a paper dump reads as a uniform list. */
 @media print {
   :host(:hover) .row,
@@ -494,7 +479,6 @@
   .row { break-inside: avoid; }
 
   .marks { display: none !important; }
-  .mark-x, .mark-restore { display: none !important; }
 
   .badge {
     -webkit-print-color-adjust: exact;

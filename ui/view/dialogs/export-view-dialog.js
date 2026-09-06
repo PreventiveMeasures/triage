@@ -48,11 +48,9 @@ class ExportViewDialog extends AppDialog {
     this.highlighted = null
   }
 
-  // Nothing to type into, so focus the way out. Also what Enter should
-  // land on here: the dialog has no committing action.
-  focusInitial() {
-    this.renderRoot.querySelector('button[data-role="cancel"]')?.focus()
-  }
+  // Nothing to type into, so the base `focusInitial()` default falls
+  // through to `button.primary` — the Close button, the way out. Also
+  // what Enter should land on here: the dialog has no committing action.
 
   firstUpdated() {
     super.firstUpdated()

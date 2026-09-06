@@ -20,6 +20,7 @@ import { nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { StateElement, html } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'
+import { kindConfig } from './kind-config.js'
 
 const PACKAGES_ICON = html`<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
   <path d="M2 6h12v7a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V6Z"/>
@@ -55,12 +56,8 @@ class SidebarViewButton extends StateElement {
 
   render() {
     if (this.count === 0) return nothing
-    const config = KIND[this.kind]
-    if (!config) {
-      console.warn(`<sidebar-view-button>: unknown kind ${JSON.stringify(this.kind)}; ` +
-        `expected one of ${Object.keys(KIND).map((k) => JSON.stringify(k)).join(', ')}.`)
-      return nothing
-    }
+    const config = kindConfig('sidebar-view-button', KIND, this.kind)
+    if (!config) return nothing
     const active = state.currentView === config.view
     return html`<button
       type="button"

@@ -6,6 +6,7 @@
 // system `prefers-color-scheme` — dark-by-default is intentional
 // (see the comment in styles/theme.css).
 import { LitElement, html, unsafeCSS } from 'lit'
+import { ensureHostAria } from './host-aria.js'
 // Imported as a text string at build time (see build.js — the
 // lit-css-as-text plugin routes JS-side `.css` imports through the
 // text loader). unsafeCSS just wraps the literal in a CSSResult; the
@@ -123,10 +124,7 @@ class ThemeToggle extends LitElement {
   connectedCallback() {
     super.connectedCallback()
     // ARIA — host element acts as the button.
-    if (!this.hasAttribute('role')) this.setAttribute('role', 'button')
-    if (!this.hasAttribute('tabindex')) this.tabIndex = 0
-    if (!this.hasAttribute('aria-label')) this.setAttribute('aria-label', 'toggle theme')
-    if (!this.hasAttribute('title')) this.setAttribute('title', 'toggle light/dark theme')
+    ensureHostAria(this, { role: 'button', tabindex: '0', 'aria-label': 'toggle theme', title: 'toggle light/dark theme' })
     this.addEventListener('click', this._toggle)
     this.addEventListener('keydown', this._onKeydown)
     // External theme swaps (DeepView.setTheme, or another tab via

@@ -53,7 +53,7 @@ import { classMap } from 'lit/directives/class-map.js'
 import { bundlePackageDirs, bundleSourcesAsMap } from './bundle-sources.js'
 import { formatBytes, stripCommonPathPrefix } from './format.js'
 import { pkgColor } from './graph/utils.js'
-import { bundlePkgOf } from './bundle-pkg-of.js'
+import { bundlePkgOf, pkgLabel } from './bundle-pkg-of.js'
 
 // After single-child collapse, six nested levels is plenty to drill;
 // beyond it (or once a box is too small) a node aggregates so large
@@ -303,14 +303,11 @@ class BundleTreemap extends LitElement {
     this._mode = _sharedMode
     this._dirByPath = new Map()
     this._status = 'loading'
-    this._meta = { files: 0, total: 0, prefix: '' }
+    this._meta = { total: 0, prefix: '' }
     this._ro = null
     this._plot = null
     this._tooltip = null
     this._ttCell = null
-    this._onPointerMove = this._onPointerMove.bind(this)
-    this._onPointerLeave = this._onPointerLeave.bind(this)
-    this._onPlotClick = this._onPlotClick.bind(this)
   }
 
   willUpdate(changed) {
@@ -399,7 +396,7 @@ class BundleTreemap extends LitElement {
     // ref-keyed) is re-resolved at the end once the new tree stands.
     this._focus = []
     this._dirByPath = new Map()
-    this._meta = { files: 0, total: 0, prefix: '' }
+    this._meta = { total: 0, prefix: '' }
     if (!this.details) { this._status = 'loading'; return }
     const sources = bundleSourcesAsMap(this.details)
     if (!sources || sources.size === 0) { this._status = 'empty'; return }
@@ -414,7 +411,6 @@ class BundleTreemap extends LitElement {
     const enc = new TextEncoder()
     const root = { name: '', children: new Map(), value: 0, isFile: false }
     let total = 0
-    let files = 0
     for (let i = 0; i < origPaths.length; i++) {
       const content = sources.get(origPaths[i])
       const size = typeof content === 'string' ? enc.encode(content).byteLength : 0
@@ -450,7 +446,6 @@ class BundleTreemap extends LitElement {
       }
       leaf.value += size
       total += size
-      files++
     }
     if (total === 0) { this._status = 'empty'; return }
     for (const c of root.children.values()) collapseNode(c)
@@ -458,7 +453,7 @@ class BundleTreemap extends LitElement {
     finalize(root, '', null, dirByPath)
     this._root = root
     this._dirByPath = dirByPath
-    this._meta = { files, total, prefix }
+    this._meta = { total, prefix }
     this._status = 'ok'
     // Restore this bundle's remembered drill-in onto the fresh node
     // refs — the element is rebuilt on every tab switch, so without
@@ -601,7 +596,7 @@ class BundleTreemap extends LitElement {
     const pkg = c.node.pkg ?? bundlePkgOf(c.node.path)
     const color = pkgColor(pkg)
     const style = styleMap({ ...pos, background: color, color: readableTextOn(color) })
-    const ttPkg = pkg === '__own__' ? 'own source' : pkg
+    const ttPkg = pkgLabel(pkg)
     if (c.kind === 'agg') {
       return html`<div
         class="bundle-treemap-node bundle-treemap-leaf bundle-treemap-agg"
@@ -636,7 +631,7 @@ class BundleTreemap extends LitElement {
     const pctStr = pctLabel(node.value, total)
     const pkg = node.pkg ?? bundlePkgOf(node.path)
     const color = pkgColor(pkg)
-    const ttPkg = pkg === '__own__' ? 'own source' : pkg
+    const ttPkg = pkgLabel(pkg)
     if (node.isFile) {
       return svg`<path
         class="bundle-treemap-node bundle-treemap-arc"
@@ -732,12 +727,13 @@ class BundleTreemap extends LitElement {
         layout(p.node, p.x, p.y, p.w, p.h, 1, cells)
       }
     }
-    const { files, total, prefix } = this._meta
+    const { prefix } = this._meta
     // Sub-line tracks the focused subtree so the count + size reflect
     // what's actually on screen after a drill-in (the whole bundle at
-    // the root, where focus === _root and these match `_meta`).
-    const curFiles = this._status === 'ok' && focus ? focus.count : files
-    const curBytes = this._status === 'ok' && focus ? focus.value : total
+    // the root, where focus === _root). Before the tree is built there
+    // is no focus node and both read as zero.
+    const curFiles = focus ? focus.count : 0
+    const curBytes = focus ? focus.value : 0
     return html`<header class="bundle-treemap-head">
         ${this._renderCrumbs()}
         <span class="bundle-treemap-head-right">

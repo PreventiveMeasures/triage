@@ -30,6 +30,7 @@ import { classMap } from 'lit/directives/class-map.js'
 import { live } from 'lit/directives/live.js'
 import { StateElement, html } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'
+import { kindConfig } from './kind-config.js'
 
 const SEARCH_ICON = html`<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
   <circle cx="11" cy="11" r="7"/>
@@ -67,12 +68,8 @@ class ToolbarSearch extends StateElement {
   }
 
   render() {
-    const config = KIND[this.kind]
-    if (!config) {
-      console.warn(`<toolbar-search>: unknown kind ${JSON.stringify(this.kind)}; ` +
-        `expected one of ${Object.keys(KIND).map((k) => JSON.stringify(k)).join(', ')}.`)
-      return nothing
-    }
+    const config = kindConfig('toolbar-search', KIND, this.kind)
+    if (!config) return nothing
     const value = state[config.stateKey]
     return html`${SEARCH_ICON}
       <input

@@ -32,11 +32,10 @@
 import { findReportWithFinding, listWorkspaces, reportForHint, saveTriage, state, workspaceForHint, workspacesHoldingReport } from '#client/index.js'
 import { report } from './dom.js'
 import { findLoadedFinding, unhideFinding } from './finding-link.js'
-import { syncGroupTriage } from './group.js'
+import { groupKey, syncGroupTriage } from './group.js'
 import { switchToFile, switchToWorkspace } from './ingest.js'
 import { scrollRootOf } from './lazy-render.js'
 import { render } from './render.js'
-import { tableRowGid } from './render-finding.js'
 
 // How long the arrived-at finding keeps its highlight. Long enough to
 // catch the eye after the scroll settles, short enough that it doesn't
@@ -178,7 +177,7 @@ async function findRenderedFinding(gid) {
     if (table) {
       try { await table.updateComplete } catch {}
       for (const row of table.shadowRoot?.querySelectorAll('finding-row') ?? []) {
-        if (row.group && tableRowGid(row.group) === gid) return row
+        if (row.group && groupKey(row.group) === gid) return row
       }
     }
   }

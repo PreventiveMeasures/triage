@@ -4,7 +4,7 @@
    so the panels follow the matte-glass aesthetic the rest of the
    product uses and flip cleanly with the light theme. The canvas
    itself paints in JS using the theme-aware palette in
-   ./view/graph2/canvas.js (mirroring graph v1's GRAPH_THEMES).
+   ./canvas.js (mirroring graph v1's GRAPH_THEMES).
    The severity ring colors and per-package hues are intentionally
    theme-independent — they're vivid data colors meant to read as
    "this node has issues" / "this is package X" regardless of the
@@ -121,7 +121,6 @@
   font-family: inherit;
 
   &:hover { color: var(--accent); border-color: var(--accent); }
-  & svg { display: block; }
 }
 
 /* Path / package substring filter — uses the `.toolbar-search`
@@ -170,11 +169,9 @@
    matching nodes draw at full opacity, others fade to 0.1 in
    canvas.js. */
 
-/* Compact topbar toggle — same on/off pill semantics as the bigger
-   .g2-toggle-row in the left panel, sized down to fit the 44px
+/* Compact topbar toggle — on/off pill sized to fit the 44px
    topbar without wrapping. The .g2-switch child reuses the same
-   styling rules from below, so the visual stays consistent across
-   the two locations. */
+   styling rules from below, so the visual stays consistent. */
 .g2-topbar-toggle {
   display: inline-flex;
   align-items: center;
@@ -193,16 +190,6 @@
   &.on { color: var(--text); }
   &.on .g2-switch { background: color-mix(in srgb, var(--accent) 22%, transparent); }
   &.on .g2-switch::after { transform: translateX(12px); background: var(--accent); }
-}
-
-/* Trash button — same shape as the show-all toggle but with an
-   "active mode" treatment when on, since being in trash view is
-   a more disruptive context shift than "show all" and the user
-   needs to clearly see they're looking at deleted findings. */
-.g2-trash-btn.on {
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
-  border-color: var(--accent);
-  color: var(--accent);
 }
 
 /* ── Right panel ───────────────────────────────────────────── */
@@ -244,16 +231,6 @@
   gap: 6px;
 
   &:first-child { margin-top: 0; }
-}
-
-.g2-count {
-  color: var(--muted);
-  opacity: .6;
-  font-weight: 400;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
-  text-transform: none;
-  letter-spacing: 0;
-  font-size: 10px;
 }
 
 /* Panel-title with right-edge controls — used by the Top-packages
@@ -548,23 +525,11 @@
   word-break: break-all;
 }
 
-.g2-tt-badge {
-  display: inline-block;
-  font-size: 8px;
-  padding: 2px 4px;
-  background: color-mix(in srgb, var(--accent) 22%, transparent);
-  color: var(--accent);
-  border-radius: 3px;
-  text-transform: uppercase;
-  letter-spacing: .08em;
-  font-weight: 600;
-}
-
 /* Per-severity chip blocks for the selection card and tooltip.
-   The chip palette itself comes from styles/graph-files.css (the
+   The chip palette itself comes from styles/tree-count-chip.css (the
    .tree-count-chip / .tree-count-chips rules the Files tab
-   already uses); we only adjust spacing inside the v2 tooltip
-   below. */
+   already uses; inlined into this shadow root by graph-layout.js);
+   we only adjust spacing inside the v2 tooltip below. */
 .g2-tooltip .tree-count-chips { margin-top: 6px; }
 
 /* Light-theme override for medium chips in v2. Without this, the
@@ -640,7 +605,7 @@
 /* Source-byte size for the selected file. Sits above the chip
    sections, mirroring the muted-mono treatment of the full path
    above. Optional — only rendered when the analyzer dump carried
-   a `size` (see `formatBytes` and `n.size` in graph2/data.js). */
+   a `size` (see `formatBytes` and `n.size` in ./data.js). */
 .g2-sel-size {
   padding: 5px 13px 7px;
   border-bottom: 1px solid var(--graph-divider);

@@ -18,6 +18,7 @@ import { nothing } from 'lit'
 import { live } from 'lit/directives/live.js'
 import { StateElement, html } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'
+import { kindConfig } from './kind-config.js'
 
 const KIND = {
   packages:     { stateKey: 'packagesSearchQuery',     label: 'Filter packages' },
@@ -40,12 +41,8 @@ class EntitySearch extends StateElement {
   }
 
   render() {
-    const config = KIND[this.kind]
-    if (!config) {
-      console.warn(`<entity-search>: unknown kind ${JSON.stringify(this.kind)}; ` +
-        `expected one of ${Object.keys(KIND).map((k) => JSON.stringify(k)).join(', ')}.`)
-      return nothing
-    }
+    const config = kindConfig('entity-search', KIND, this.kind)
+    if (!config) return nothing
     return html`<input
       type="search"
       class="packages-search"

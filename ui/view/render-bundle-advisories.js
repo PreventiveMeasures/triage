@@ -45,21 +45,6 @@ export function grantAdvisoriesProxyConsent() {
   try { localStorage.setItem(CONSENT_KEY, '1') } catch {}
 }
 
-// Collect every (packageName → Set<version>) the stasis bundle names
-// in its `modules` map, restricted to upstream `node_modules/...`
-// dependencies with concrete versions — exactly the bulk query the
-// registry's advisories endpoint takes. This is the shared
-// `bundlePackageVersions` extractor (see bundle-sources.js): stasis v1
-// `scope: 'full'` bundles merge workspace sources into the same
-// `Bundle.modules` Map, so the own-source `@scope/foo @ 0.0.0` would
-// otherwise get sent to the registry as a real query (and resolve to
-// an unrelated public package, or to nothing); the helper filters those
-// out by directory key, and drops versionless (`null`) entries the
-// endpoint can't accept.
-function bundleAdvisoryQuery(details) {
-  return bundlePackageVersions(details)
-}
-
 // True when the parsed bundle has at least one stasis module that
 // carries both a name AND a concrete version string under a
 // `node_modules/...` path. Sourcemaps (no module metadata) and v0
@@ -141,7 +126,18 @@ export async function ensureBundleAdvisories(details, renderFn) {
   // hasConsent() returns false, and only after the user clicks
   // through does this function fire the request.
   if (!hasConsent()) return
-  const query = bundleAdvisoryQuery(details)
+  // Collect every (packageName → Set<version>) the stasis bundle names
+  // in its `modules` map, restricted to upstream `node_modules/...`
+  // dependencies with concrete versions — exactly the bulk query the
+  // registry's advisories endpoint takes. This is the shared
+  // `bundlePackageVersions` extractor (see bundle-sources.js): stasis v1
+  // `scope: 'full'` bundles merge workspace sources into the same
+  // `Bundle.modules` Map, so the own-source `@scope/foo @ 0.0.0` would
+  // otherwise get sent to the registry as a real query (and resolve to
+  // an unrelated public package, or to nothing); the helper filters those
+  // out by directory key, and drops versionless (`null`) entries the
+  // endpoint can't accept.
+  const query = bundlePackageVersions(details)
   if (query.size === 0) {
     cache.set(details.integrity, { state: 'ok', byPackage: new Map(), query })
     return
@@ -223,12 +219,6 @@ function severityLabel(s) {
   return s.charAt(0).toUpperCase() + s.slice(1)
 }
 
-// Render the Advisories tab body. Three branches:
-//   * Loading  — kicked the fetch, no data yet
-//   * Error    — the relay or upstream rejected
-//   * Data     — render one section per package with at least
-//                one advisory, sorted by severity desc then by
-//                package name
 // First-time consent UI for the Advisories tab: explains what gets
 // sent (package names + versions, via the same-origin relay) before
 // the first request. The preference persists — no per-bundle re-prompt
@@ -259,6 +249,14 @@ function renderConsentPrompt() {
   </div>`
 }
 
+// Render the Advisories tab body. Four branches:
+//   * Consent  — first visit; explains the outbound query (see
+//                renderConsentPrompt) before anything is fetched
+//   * Loading  — kicked the fetch, no data yet
+//   * Error    — the relay or upstream rejected
+//   * Data     — render one section per package with at least
+//                one advisory, sorted by severity desc then by
+//                package name (or a one-line summary when none)
 export function renderBundleAdvisoriesTab(details) {
   if (!details) return html`<div class="bundle-advisories-empty">Bundle not loaded yet.</div>`
   if (details.kind !== 'stasis' || !details.bundle) {
@@ -371,8 +369,8 @@ function cweTemplate(c) {
 function renderAdvisoryRow(a) {
   const sev = a.severity
   const title = a.title
-  const cvssScore = typeof a?.cvss?.score === 'number' ? a.cvss.score.toFixed(1) : ''
-  const cvssVector = typeof a?.cvss?.vectorString === 'string' && a.cvss.vectorString ? a.cvss.vectorString : ''
+  const cvssScore = typeof a.cvss?.score === 'number' ? a.cvss.score.toFixed(1) : ''
+  const cvssVector = typeof a.cvss?.vectorString === 'string' && a.cvss.vectorString ? a.cvss.vectorString : ''
   const vulnerable = typeof a.vulnerable_versions === 'string' ? a.vulnerable_versions : null
   const url = typeof a.url === 'string' && /^https?:\/\//iu.test(a.url) ? a.url : null
   const ghsa = ghsaIdFrom(url)
@@ -381,9 +379,9 @@ function renderAdvisoryRow(a) {
   // opens the GitHub advisory page; the title itself stays a plain
   // span so it isn't a duplicate pointer at the same upstream
   // advisory (the GHSA chip is the single canonical link).
-  const ghsaEl = ghsa && url
+  const ghsaEl = ghsa
     ? html`<a class="bundle-advisory-ghsa" href=${url} target="_blank" rel="noopener noreferrer">${ghsa}${EXTERNAL_LINK_SVG}</a>`
-    : (ghsa ? html`<span class="bundle-advisory-ghsa">${ghsa}</span>` : nothing)
+    : nothing
   return html`<li class="bundle-advisory-row">
     <div class="bundle-advisory-rail">
       <span class=${`bundle-advisory-severity sev-${sev}`}>${severityLabel(sev)}</span>

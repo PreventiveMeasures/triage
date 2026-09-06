@@ -82,11 +82,9 @@ function ensureOverlay() {
     btn.textContent = 'Waiting…'
     abortController = new AbortController()
     try {
-      const ok = await unlockEncryption({ signal: abortController.signal })
-      if (!ok) {
-        // User cancelled OS prompt — silent, overlay stays so they
-        // can retry.
-      }
+      // A `false` result means the user cancelled the OS prompt —
+      // silent, overlay stays so they can retry.
+      await unlockEncryption({ signal: abortController.signal })
     } catch (err) {
       const msg = friendlyUnlockError(err)
       errEl.textContent = msg

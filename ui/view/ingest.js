@@ -9,10 +9,10 @@ import { defaultConfidenceFloor, defaultRevalidateFilter, resetFilters } from '.
 import { render } from './render.js'
 import { renderSidebar } from './sidebar.js'
 import { cleanupGraph2, graph2 } from './graph/state.js'
-import { openBundle, prefetchBundleHashes } from './bundle-load.js'
+import { openBundle, prefetchBundleHashes, selectBundle } from './bundle-load.js'
 import { backfillFindingIds, detectFormat, inheritReportMeta, parseCodexCsvToScans, readReport, reportRepoGithub } from '../../report/index.js'
 import { importWorkspaceFromGzip } from './workspace-import.js'
-import { maybePromptFirstImport } from './first-import-prompt.js'
+import { maybePromptFirstUse } from './first-import-prompt.js'
 import { openPasskeyUnlockDialog } from './dialogs/passkey-unlock-dialog.js'
 import { openSyncDownloadDialog } from './dialogs/sync-download-dialog.js'
 
@@ -53,6 +53,42 @@ export function persistLastBundle(integrity, tab = 'overview') {
 // repeated-ingest accumulation still works.
 let loadGen = 0
 const isStaleLoad = (captured) => captured !== loadGen
+
+// Reset graph v2 so a new report / workspace doesn't open with the
+// previous file's selection / hidden / soloed pkg. Layout cache also
+// invalidates (new tree → re-layout). Shared by switchToFile,
+// switchToWorkspace and clearActiveView.
+function resetGraph2() {
+  graph2.selected = null
+  graph2.focusedPkg = null
+  graph2.layoutCache = null
+  graph2.solo = null
+  graph2.hidden.clear()
+  graph2.pathFilter = ''
+  cleanupGraph2()
+}
+
+// Close the triage-sync session AND its presence session for every
+// open workspace not in `keepIds`. Both planes go in lockstep — a
+// presence session must never outlive its sync subscription (it
+// rides `workspace-subscribe`), so presence ⊆ sync always holds.
+function closeSessionsExcept(keepIds) {
+  for (const info of triageSync.openSessions) {
+    if (info && !keepIds.has(info.workspaceId)) {
+      triageSync.closeSession(info.workspaceId)
+      closePresence(info.workspaceId)
+    }
+  }
+}
+
+// OPFS `NotFoundError` (from `getFileHandle`) or the storage.js
+// localStorage fallback's `File not found:` Error — the two shapes a
+// genuinely absent file surfaces as. Shared by the import-conflict
+// read and switchToFile's read so both classify "gone" identically.
+function isMissingFileError(err) {
+  return (err instanceof DOMException && err.name === 'NotFoundError')
+    || (typeof err?.message === 'string' && err.message.startsWith('File not found:'))
+}
 
 // Bundle classifier — sourcemap (.map) or stasis (`.stasis.code.br`
 // or the bare `stasis.code.br` filename for top-level drops).
@@ -134,9 +170,7 @@ async function importReportContent({ name, content, existingNames }) {
   let existing
   try { existing = await readFile(name) }
   catch (err) {
-    const missing = (err instanceof DOMException && err.name === 'NotFoundError')
-      || (typeof err?.message === 'string' && err.message.startsWith('File not found:'))
-    if (!missing) throw err
+    if (!isMissingFileError(err)) throw err
     await saveFile(name, content)
     existingNames.add(name)
     return { name, content }
@@ -218,7 +252,7 @@ async function uploadReportToWorkspaces(name, workspaces) {
   }
 }
 
-export async function addFiles(files) {
+async function addFiles(files) {
   // On a managed server the local (OPFS / "local storage") ingest path is
   // disabled: uploads belong server-side, via the admin "Manage reports" /
   // "Manage bundles" pages. So a drop / file-pick anywhere in the app chrome
@@ -231,7 +265,7 @@ export async function addFiles(files) {
   // very first write rather than landing plaintext then re-writing the
   // migration. Skipped silently when the vault is already enabled, the
   // browser lacks WebAuthn, or the user already chose.
-  await maybePromptFirstImport()
+  await maybePromptFirstUse()
   let last = null
   let lastBundleIntegrity = null
   // Track newly-saved bundle integrities so we can prefetch their
@@ -336,24 +370,12 @@ export async function addFiles(files) {
     await switchToFile(last.name, last.content)
   } else if (lastBundleIntegrity) {
     // Bundle-only drop: switch to the bundles view AND open the
-    // dropped bundle's details panel. Mirrors the events.js
-    // data-select-bundle flow — clear stale source-viewer state, reset
-    // search, then hand off to the shared open-bundle pipeline so the
-    // panel populates without a second click.
-    state.currentView = 'bundles'
-    state.selectedBundle = lastBundleIntegrity
-    state.bundleDetails = null
-    state.bundleDetailsTab = 'overview'
-    state.bundleSourceFile = null
-    state.bundleSourceFindingIdx = null
-    state.bundleCodeSearchQuery = ''
-    state.bundleCodeSearchMode = 'files'
-    state.bundleSearchQuery = ''
-    state.bundleSearchRegex = false
-    state.bundleSearchCase = false
-    state.bundleSearchContext = true
-    state.shownTriage = null
-    graph2.showAll = true
+    // dropped bundle's details panel. `selectBundle` clears stale
+    // source-viewer state and resets search (the same setup as the
+    // sidebar's bundle-row click), then hand off to the shared
+    // open-bundle pipeline so the panel populates without a second
+    // click.
+    selectBundle(lastBundleIntegrity)
     persistLastBundle(lastBundleIntegrity)
     render()
     await renderSidebar()
@@ -378,20 +400,15 @@ export async function switchToFile(name, content) {
       .filter((w) => Array.isArray(w.reports) && w.reports.includes(name))
       .map((w) => w.id),
   )
-  for (const info of triageSync.openSessions) {
-    if (info && !desiredWorkspaceIds.has(info.workspaceId)) {
-      // Close BOTH planes in lockstep. A presence session must never
-      // outlive its sync subscription: the objstore client rides
-      // triage-sync's `workspace-subscribe` (carrying the inventory
-      // snapshot and registering the socket for objstore-put/-deleted
-      // broadcasts), so a presence session kept past its sync session
-      // would, on the next reconnect, have no subscribe to seed its
-      // inventory or deliver broadcasts. Keeping presence ⊆ sync (at the
-      // cost of a cold cache on return visits) makes that impossible.
-      triageSync.closeSession(info.workspaceId)
-      closePresence(info.workspaceId)
-    }
-  }
+  // Close BOTH planes in lockstep. A presence session must never
+  // outlive its sync subscription: the objstore client rides
+  // triage-sync's `workspace-subscribe` (carrying the inventory
+  // snapshot and registering the socket for objstore-put/-deleted
+  // broadcasts), so a presence session kept past its sync session
+  // would, on the next reconnect, have no subscribe to seed its
+  // inventory or deliver broadcasts. Keeping presence ⊆ sync (at the
+  // cost of a cold cache on return visits) makes that impossible.
+  closeSessionsExcept(desiredWorkspaceIds)
   state.reports = []
   state.workspaceMerges = []
   state.currentFile = name
@@ -407,16 +424,7 @@ export async function switchToFile(name, content) {
   // previous file doesn't briefly drive the chip.
   state.repoUrl = loadRepoUrlFor(name)
   state.repoEditing = false
-  // Reset graph v2 so a new report doesn't open with the previous
-  // file's selection / hidden / soloed pkg. Layout cache also
-  // invalidates (new tree → re-layout).
-  graph2.selected = null
-  graph2.focusedPkg = null
-  graph2.layoutCache = null
-  graph2.solo = null
-  graph2.hidden.clear()
-  graph2.pathFilter = ''
-  cleanupGraph2()
+  resetGraph2()
   setSecureItem(LAST_FILE_KEY, name).catch(() => {})
   if (content === undefined) {
     try {
@@ -453,9 +461,7 @@ export async function switchToFile(name, content) {
       // restored bytes. Otherwise (no cloud copy, or the user
       // declined) just clear the selection like the vault-dismiss
       // branch above — the quarantine already dropped the sidebar row.
-      const missing = (err instanceof DOMException && err.name === 'NotFoundError')
-        || (typeof err?.message === 'string' && err.message.startsWith('File not found:'))
-      if (missing) {
+      if (isMissingFileError(err)) {
         // Same eligibility rule as the Replace-upload flow: only a
         // workspace whose remote ALREADY carries this report (live
         // session or persisted presence cache) — opening a session to
@@ -539,12 +545,7 @@ export async function switchToWorkspace(workspaceId) {
   // `refreshSession` brings its id-set up to date). Close each other's
   // presence session in lockstep — presence must never outlive its
   // sync subscription (rides `workspace-subscribe`), so presence ⊆ sync.
-  for (const info of triageSync.openSessions) {
-    if (info && info.workspaceId !== workspaceId) {
-      triageSync.closeSession(info.workspaceId)
-      closePresence(info.workspaceId)
-    }
-  }
+  closeSessionsExcept(new Set([workspaceId]))
   // Same drop-out as switchToFile — opening a workspace lands in
   // findings, not the bundles / packages list.
   if (state.currentView === 'bundles' || state.currentView === 'packages' || state.currentView === 'repositories') {
@@ -559,13 +560,7 @@ export async function switchToWorkspace(workspaceId) {
   state.currentWorkspace = workspaceId
   state.repoUrl = ''
   state.repoEditing = false
-  graph2.selected = null
-  graph2.focusedPkg = null
-  graph2.layoutCache = null
-  graph2.solo = null
-  graph2.hidden.clear()
-  graph2.pathFilter = ''
-  cleanupGraph2()
+  resetGraph2()
   setSecureItem(LAST_FILE_KEY, `ws:${workspaceId}`).catch(() => {})
   // Empty workspace — the readFile loop below is a no-op, so without
   // clearing the report pane the user sees whatever was last rendered
@@ -727,13 +722,7 @@ function clearActiveView() {
   state.repoEditing = false
   state.shownTriage = null
   state.currentView = 'findings'
-  graph2.selected = null
-  graph2.focusedPkg = null
-  graph2.layoutCache = null
-  graph2.solo = null
-  graph2.hidden.clear()
-  graph2.pathFilter = ''
-  cleanupGraph2()
+  resetGraph2()
   removeSecureItem(LAST_FILE_KEY)
   report.classList.remove('active')
   // Drop findings via Lit so cached parts on #report (slot-reuse holds
@@ -761,12 +750,7 @@ export async function goHome() {
   // (in switchToFile / switchToWorkspace); without closing them,
   // returning home would leave triage-sync echoing edits to a chain no
   // view consumes.
-  for (const info of triageSync.openSessions) {
-    if (info) {
-      triageSync.closeSession(info.workspaceId)
-      closePresence(info.workspaceId)
-    }
-  }
+  closeSessionsExcept(new Set())
   clearActiveView()
   await renderSidebar()
 }
@@ -873,9 +857,11 @@ export async function leaveWorkspace(workspaceId, mode = 'detach', { triage = 'k
   closePresence(workspaceId)
   if (mode === 'delete') {
     // Drop each report's OPFS bytes + localStorage sidekicks (counts,
-    // repo URL). A workspace's reports array owns the files exclusively
-    // (a report belongs to at most one workspace), so no other view is
-    // left dangling.
+    // repo URL). A report can sit in more than one workspace (additive
+    // membership), so a copy another workspace still lists loses its
+    // bytes too — that workspace's merged view skips the missing file
+    // (`readFile` → null in switchToWorkspace) until it is re-imported
+    // or re-downloaded from the workspace's remote.
     for (const name of reports) {
       try { await deleteFile(name) } catch {}
       removeCount(name)
@@ -929,7 +915,7 @@ export async function leaveWorkspace(workspaceId, mode = 'detach', { triage = 'k
 // push. The headless `window.__loadFile` path passes nothing, staying
 // unguarded so it keeps accumulating across calls (the print pipeline
 // relies on that).
-export async function ingestReport(name, content, gen = null) {
+async function ingestReport(name, content, gen = null) {
   const stale = () => gen !== null && isStaleLoad(gen)
   // Prime the deep-link hint for this report's name. Fire-and-forget:
   // the Link button reads the memo synchronously (it copies inside a

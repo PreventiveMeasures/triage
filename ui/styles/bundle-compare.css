@@ -305,13 +305,13 @@ button.bundle-compare-row-link:hover { background: var(--surface-active); }
 }
 .bundle-compare-ver-from,
 .bundle-compare-ver-arrow { color: var(--muted); }
-.bundle-compare-ver-to { font-weight: 600; color: var(--muted); }
-.bundle-compare-ver-to.up { color: var(--green); }
-.bundle-compare-ver-to.down { color: var(--critical); }
-.bundle-compare-ver-to.changed { color: var(--medium); }
+.bundle-compare-ver-to,
 .bundle-compare-ver-dir { font-weight: 600; color: var(--muted); }
+.bundle-compare-ver-to.up,
 .bundle-compare-ver-dir.up { color: var(--green); }
+.bundle-compare-ver-to.down,
 .bundle-compare-ver-dir.down { color: var(--critical); }
+.bundle-compare-ver-to.changed,
 .bundle-compare-ver-dir.changed { color: var(--medium); }
 /* Version label on an added / removed dependency row. */
 .bundle-compare-dep-ver {

@@ -13,7 +13,7 @@ import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFil
 import { ANALYZER_LABELS } from './analyzer-select.js'
 import { SOURCE_LABELS } from '../../report/index.js'
 import { COMBO_FIELDS, buildAnalyzerTags } from './analyzer-tags.js'
-import { COMMENT_ICON, FIX_ICON, FLAG_ICON, badgeLabel, findingCardGid } from './render-finding.js'
+import { COMMENT_ICON, FIX_ICON, FLAG_ICON, badgeLabel } from './render-finding.js'
 import { computeFindingCountsByFile, computeTransitiveCounts, fileHasFindings, mergeReportsTree } from './file-counts.js'
 import { renderTreeView } from './render-files.js'
 import { graph2 } from './graph/state.js'
@@ -52,7 +52,7 @@ import { openObjstoreRecoveryDialog } from './dialogs/objstore-recovery-dialog.j
 //     files whose subtree contains a (filtered-in) finding,
 //     reachable through imports. Off by default so the canvas
 //     focuses on issue-bearing code.
-export function buildGraph2Data() {
+function buildGraph2Data() {
   // Merge the per-report trees so a workspace canvas spans every
   // loaded report — the 1st report's tree alone omits files/edges
   // from the 2nd+ reports whose findings are still merged in below.
@@ -116,11 +116,8 @@ export function buildGraph2Data() {
   // `buildGraph(...)` call. Keeps `graph/data.js` out of the
   // main bundle.
   return {
-    prep: {
-      treeData, files, ownCounts: findingCounts, transitiveCounts,
-      severitySets, colorSets, fileFindings,
-    },
-    findingCounts,
+    treeData, files, ownCounts: findingCounts, transitiveCounts,
+    severitySets, colorSets, fileFindings,
   }
 }
 
@@ -139,17 +136,17 @@ export function buildGraph2Data() {
 export function refreshGraph2Sidebar() {
   const mod = loadedGraphMod()
   if (!mod) return
-  const data = buildGraph2Data()
-  if (!data) return
-  mod.refreshSidebar(data.prep, { isBundleContext: state.currentView === 'bundles' })
+  const prep = buildGraph2Data()
+  if (!prep) return
+  mod.refreshSidebar(prep, { isBundleContext: state.currentView === 'bundles' })
 }
 
 export function refreshGraph2TopPkgs() {
   const mod = loadedGraphMod()
   if (!mod) return
-  const data = buildGraph2Data()
-  if (!data) return
-  mod.refreshTopPkgs(data.prep)
+  const prep = buildGraph2Data()
+  if (!prep) return
+  mod.refreshTopPkgs(prep)
 }
 
 
@@ -435,8 +432,6 @@ function syncBadgeTemplate() {
   // each object, re-upload any whose bytes went missing, and offer to
   // download healthy objects not stored locally). The "local" chunk is
   // clickable whenever there's something to upload.
-  const cloudClickable = cloudCount > 0
-  const localClickable = localOnly.length > 0
   const wrapperTitle = [
     cloudCount > 0 ? `${cloudCount} in cloud` : null,
     localOnly.length > 0 ? `${localOnly.length} local-only` : null,
@@ -462,7 +457,7 @@ function syncBadgeTemplate() {
     ? html`<span class="sync-badge-divider" aria-hidden="true"></span>`
     : nothing
   return html`<div
-    class=${`report-sync-badge${cloudClickable || localClickable ? ' report-sync-badge-clickable' : ''}`}
+    class="report-sync-badge report-sync-badge-clickable"
     data-status="mixed"
     title=${wrapperTitle}
   >${cloudChunk}${divider}${localChunk}</div>`
@@ -785,7 +780,7 @@ let persistentFindingTable = null
 // paint at once.
 function findingCardPlaceholder(g, inGroup = false, context = null, lazy = false) {
   return html`<finding-card
-    data-gid=${findingCardGid(g)}
+    data-gid=${groupKey(g)}
     .group=${g}
     ?in-group=${inGroup}
     context=${context ?? nothing}
@@ -1117,10 +1112,6 @@ function kanbanDetailTemplate(focusGroup, column, columns = []) {
   // animation with it. The modal animates by clip alone (no opacity
   // shift), keeping its background + border at full alpha throughout
   // the morph between the source card and the centered modal box.
-  // Expand + close travel between two homes: the modal's own corner at
-  // the readable width, and the card pane's corner in fullscreen, where
-  // the modal's corner belongs to the code panel and these buttons
-  // belong to the finding.
   // Expand + close as one corner cluster, with two homes: the modal's
   // own corner at the readable width, and the card pane's corner in
   // fullscreen — where the modal's corner belongs to the code panel and
@@ -1294,7 +1285,6 @@ function findingsBodyTemplate(filtered) {
       // view via a triage action / filter tightening) → fall back to
       // the previous render's index, clamped (see Selection rules).
       focusedIdx = Math.min(prevFocusedIdx, filtered.length - 1)
-      if (focusedIdx < 0) focusedIdx = 0
     }
     prevFocusedIdx = focusedIdx
     const focused = filtered[focusedIdx]
@@ -1361,12 +1351,12 @@ function findingsBodyTemplate(filtered) {
     // `expandedKey` below), for working through a single bucket
     // when six narrow columns aren't the useful shape.
     const columns = [
-      { key: 'untriaged',  label: 'Untriaged',   target: 'untriaged' },
-      { key: 'inprogress', label: 'In progress', target: 'inprogress' },
-      { key: 'fixed',      label: 'Fixed',       target: 'fixed' },
-      { key: 'invalid',    label: 'Invalid',     target: 'invalid' },
-      { key: 'deleted',    label: 'Deleted',     target: 'deleted' },
-      { key: 'ignored',    label: 'Ignored',     target: 'ignored' },
+      { key: 'untriaged',  label: 'Untriaged' },
+      { key: 'inprogress', label: 'In progress' },
+      { key: 'fixed',      label: 'Fixed' },
+      { key: 'invalid',    label: 'Invalid' },
+      { key: 'deleted',    label: 'Deleted' },
+      { key: 'ignored',    label: 'Ignored' },
     ]
     const buckets = new Map(columns.map((c) => [c.key, []]))
     for (const g of filtered) {
@@ -1411,7 +1401,7 @@ function findingsBodyTemplate(filtered) {
         const isExpanded = c.key === expandedKey
         return html`<div
           class=${`kanban-column kanban-column-${c.key}${isExpanded ? ' expanded' : ''}`}
-          data-kanban-target=${c.target}
+          data-kanban-target=${c.key}
         >
           <div class="kanban-column-header">
             <span class="label">${c.label}</span>
@@ -1488,7 +1478,7 @@ function findingsBodyTemplate(filtered) {
           <span>${fileLink(probe, findingRepoFallback(probe))}</span>
           <span class="count">${items.length}</span>
         </div>
-        <div class="file-body">${repeat(items, (g) => findingCardGid(g), (g) => findingCardPlaceholder(g, false, null, true))}</div>
+        <div class="file-body">${repeat(items, (g) => groupKey(g), (g) => findingCardPlaceholder(g, false, null, true))}</div>
       </div>`
     })}`
   }
@@ -1508,7 +1498,7 @@ function findingsBodyTemplate(filtered) {
   // active tab automatically. The print sheet flips both rules
   // around when the group has duplicates (.multi-case) — see
   // styles/print.css and finding-card.css's @media print block.
-  return html`${repeat(items, (g) => findingCardGid(g), (g) => {
+  return html`${repeat(items, (g) => groupKey(g), (g) => {
     const p = activeTabFor(g)
     const lineLinkTpl = lineLink(p, findingRepoFallback(p))
     const meta = formatRunMeta(p)
@@ -1566,6 +1556,44 @@ export function render() {
   renderImpl()
 }
 
+// Reuse #report's single slot div across renders — `innerHTML =
+// '<div id=...>'` would wipe Lit's part-cache (it's keyed on the
+// container element) and force a full DOM rebuild on every render(),
+// trashing scroll state and triggering a flash of layout. A stale
+// slot only appears when we just arrived from another view; #report's
+// content is replaced only in that case.
+function ensureReportSlot(id) {
+  let slot = document.querySelector(`#${id}`)
+  if (!slot || !report.contains(slot) || report.firstElementChild !== slot) {
+    report.innerHTML = `<div id="${id}"></div>`
+    slot = document.querySelector(`#${id}`)
+  }
+  return slot
+}
+
+// Managed admin full-page views. The lazily-loaded admin bundle
+// (loaded by the sidebar's "Manage users" / "Manage repositories" /
+// "Manage reports" / "Manage bundles" / "Manage teams" entries)
+// defines each <managed-admin-*> element; the element fetches +
+// paints itself. The sidebar gates the entry points to admin|manage
+// roles (users is admin-only).
+const ADMIN_VIEWS = {
+  'admin-users':    { slot: 'admin-users-slot',    tag: 'managed-admin-users',   title: 'DeepView — users' },
+  'manage-repos':   { slot: 'manage-repos-slot',   tag: 'managed-admin-repos',   title: 'DeepView — repositories' },
+  'manage-reports': { slot: 'manage-reports-slot', tag: 'managed-admin-reports', title: 'DeepView — reports' },
+  'manage-bundles': { slot: 'manage-bundles-slot', tag: 'managed-admin-bundles', title: 'DeepView — bundles' },
+  'manage-teams':   { slot: 'manage-teams-slot',   tag: 'managed-admin-teams',   title: 'DeepView — teams' },
+}
+
+// Alphabetical with the null bucket pinned last — the shape both the
+// model and repo option lists in renderImpl sort with.
+const nullLastCmp = (a, b) => {
+  if (a == null && b == null) return 0
+  if (a == null) return 1
+  if (b == null) return -1
+  return a.localeCompare(b)
+}
+
 function renderImpl() {
   mountBundleSourceOverlay()
   // Recompute the active deps dir before any helper consults it
@@ -1597,20 +1625,10 @@ function renderImpl() {
       // to findings rather than render an empty list.
       state.currentView = 'findings'
     } else {
-      // Reuse the existing #bundles-slot when we're already on the
-      // bundles view — `innerHTML = '<div id=...>'` would wipe Lit's
-      // part-cache (it's keyed on the container element) and force
-      // a full DOM rebuild on every render(), trashing scroll state
-      // and triggering a flash of layout. The findings-side render
-      // path doesn't touch #bundles-slot, so a stale slot only
-      // appears when we just arrived from another view; we replace
-      // #report's content only in that case.
-      let slot = document.querySelector('#bundles-slot')
-      if (!slot || !report.contains(slot) || report.firstElementChild !== slot) {
-        report.innerHTML = '<div id="bundles-slot"></div>'
-        slot = document.querySelector('#bundles-slot')
-      }
+      const slot = ensureReportSlot('bundles-slot')
       if (slot) litRender(renderBundlesList(state.bundles), slot)
+      const details = state.bundleDetails
+      const bundleOpen = state.selectedBundle && details && (details.json || details.bundle)
       // Bundle graph tab — populate the slot emitted by
       // `renderBundleSlide`'s `choose(tab, ...)` ladder (in
       // render-bundle.js) with the same renderGraph2Layout the
@@ -1618,12 +1636,7 @@ function renderImpl() {
       // two refresh helpers fill the right-panel slots; attaching
       // the canvas wires hover / click / pan / zoom onto the new
       // DOM.
-      if (
-        state.selectedBundle &&
-        state.bundleDetailsTab === 'graph' &&
-        state.bundleDetails &&
-        (state.bundleDetails.json || state.bundleDetails.bundle)
-      ) {
+      if (bundleOpen && state.bundleDetailsTab === 'graph') {
         const graphSlot = document.querySelector('#bundle-graph-slot')
         if (graphSlot) {
           const prep = buildBundleGraphData(state.bundleDetails)
@@ -1666,12 +1679,7 @@ function renderImpl() {
       // The attach helper is idempotent for the same bundle
       // (matched by `integrity`), so flipping tabs in and out
       // preserves the running shell session.
-      if (
-        state.selectedBundle &&
-        state.bundleDetailsTab === 'terminal' &&
-        state.bundleDetails &&
-        (state.bundleDetails.json || state.bundleDetails.bundle)
-      ) {
+      if (bundleOpen && state.bundleDetailsTab === 'terminal') {
         const terminalSlot = document.querySelector('#bundle-terminal-slot')
         if (terminalSlot) attachTerminal(terminalSlot, state.bundleDetails)
       }
@@ -1686,11 +1694,7 @@ function renderImpl() {
   // depend on state.reports — works the moment any report has
   // landed in OPFS, even if it isn't the currently-loaded one.
   if (state.currentView === 'packages') {
-    let slot = document.querySelector('#packages-slot')
-    if (!slot || !report.contains(slot) || report.firstElementChild !== slot) {
-      report.innerHTML = '<div id="packages-slot"></div>'
-      slot = document.querySelector('#packages-slot')
-    }
+    const slot = ensureReportSlot('packages-slot')
     if (slot) litRender(renderPackagesView(), slot)
     report.classList.add('active')
     dropZone.classList.add('hidden')
@@ -1703,93 +1707,21 @@ function renderImpl() {
   // shared `.packages-view` chrome the render-repositories.js
   // module emits.
   if (state.currentView === 'repositories') {
-    let slot = document.querySelector('#repositories-slot')
-    if (!slot || !report.contains(slot) || report.firstElementChild !== slot) {
-      report.innerHTML = '<div id="repositories-slot"></div>'
-      slot = document.querySelector('#repositories-slot')
-    }
+    const slot = ensureReportSlot('repositories-slot')
     if (slot) litRender(renderRepositoriesView(), slot)
     report.classList.add('active')
     dropZone.classList.add('hidden')
     document.title = 'DeepView — repositories'
     return
   }
-  // Managed admin: the users list as a full page. The lazily-loaded admin
-  // bundle defines <managed-admin-users> (loaded by the sidebar's "Manage
-  // users"); the element fetches + paints itself.
-  if (state.currentView === 'admin-users') {
-    let slot = document.querySelector('#admin-users-slot')
-    if (!slot || !report.contains(slot) || report.firstElementChild !== slot) {
-      report.innerHTML = '<div id="admin-users-slot"></div>'
-      slot = document.querySelector('#admin-users-slot')
-    }
-    if (slot && !slot.firstElementChild) slot.append(document.createElement('managed-admin-users'))
+  // Managed admin full pages — see ADMIN_VIEWS.
+  const adminView = ADMIN_VIEWS[state.currentView]
+  if (adminView) {
+    const slot = ensureReportSlot(adminView.slot)
+    if (slot && !slot.firstElementChild) slot.append(document.createElement(adminView.tag))
     report.classList.add('active')
     dropZone.classList.add('hidden')
-    document.title = 'DeepView — users'
-    return
-  }
-  // Managed admin: connected GitHub repositories as a full page. The same
-  // lazily-loaded admin bundle defines <managed-admin-repos> (loaded by the
-  // sidebar's "Manage repositories"); the element fetches + paints itself. The
-  // sidebar gates the entry point to admin|manage roles.
-  if (state.currentView === 'manage-repos') {
-    let slot = document.querySelector('#manage-repos-slot')
-    if (!slot || !report.contains(slot) || report.firstElementChild !== slot) {
-      report.innerHTML = '<div id="manage-repos-slot"></div>'
-      slot = document.querySelector('#manage-repos-slot')
-    }
-    if (slot && !slot.firstElementChild) slot.append(document.createElement('managed-admin-repos'))
-    report.classList.add('active')
-    dropZone.classList.add('hidden')
-    document.title = 'DeepView — repositories'
-    return
-  }
-  // Managed admin: uploaded reports as a full page. The same lazily-loaded admin
-  // bundle defines <managed-admin-reports> (loaded by the sidebar's "Manage
-  // reports"); the element fetches + paints itself. The sidebar gates the entry
-  // point to admin|manage roles.
-  if (state.currentView === 'manage-reports') {
-    let slot = document.querySelector('#manage-reports-slot')
-    if (!slot || !report.contains(slot) || report.firstElementChild !== slot) {
-      report.innerHTML = '<div id="manage-reports-slot"></div>'
-      slot = document.querySelector('#manage-reports-slot')
-    }
-    if (slot && !slot.firstElementChild) slot.append(document.createElement('managed-admin-reports'))
-    report.classList.add('active')
-    dropZone.classList.add('hidden')
-    document.title = 'DeepView — reports'
-    return
-  }
-  // Managed admin: uploaded bundles as a full page. The same lazily-loaded admin
-  // bundle defines <managed-admin-bundles> (loaded by the sidebar's "Manage
-  // bundles"); the element fetches + paints itself. The sidebar gates the entry
-  // point to admin|manage roles.
-  if (state.currentView === 'manage-bundles') {
-    let slot = document.querySelector('#manage-bundles-slot')
-    if (!slot || !report.contains(slot) || report.firstElementChild !== slot) {
-      report.innerHTML = '<div id="manage-bundles-slot"></div>'
-      slot = document.querySelector('#manage-bundles-slot')
-    }
-    if (slot && !slot.firstElementChild) slot.append(document.createElement('managed-admin-bundles'))
-    report.classList.add('active')
-    dropZone.classList.add('hidden')
-    document.title = 'DeepView — bundles'
-    return
-  }
-  // Managed admin: teams as a full page. The same lazily-loaded admin bundle
-  // defines <managed-admin-teams> (loaded by the sidebar's "Manage teams"); the
-  // element fetches + paints itself. The sidebar gates the entry to admin|manage.
-  if (state.currentView === 'manage-teams') {
-    let slot = document.querySelector('#manage-teams-slot')
-    if (!slot || !report.contains(slot) || report.firstElementChild !== slot) {
-      report.innerHTML = '<div id="manage-teams-slot"></div>'
-      slot = document.querySelector('#manage-teams-slot')
-    }
-    if (slot && !slot.firstElementChild) slot.append(document.createElement('managed-admin-teams'))
-    report.classList.add('active')
-    dropZone.classList.add('hidden')
-    document.title = 'DeepView — teams'
+    document.title = adminView.title
     return
   }
   if (state.reports.length === 0) return
@@ -1955,18 +1887,18 @@ function renderImpl() {
     }
   }
   const knownOrder = Object.keys(ANALYZER_LABELS)
+  const rank = (a) => {
+    if (a == null) return Infinity
+    const i = knownOrder.indexOf(a)
+    return i === -1 ? knownOrder.length : i
+  }
   const analyzerOptions = [...analyzerSet].toSorted((a, b) => {
-    const ai = a == null ? Infinity : (knownOrder.indexOf(a) === -1 ? knownOrder.length : knownOrder.indexOf(a))
-    const bi = b == null ? Infinity : (knownOrder.indexOf(b) === -1 ? knownOrder.length : knownOrder.indexOf(b))
+    const ai = rank(a)
+    const bi = rank(b)
     if (ai !== bi) return ai - bi
     return String(a ?? '').localeCompare(String(b ?? ''))
   })
-  const modelOptions = [...modelSet].toSorted((a, b) => {
-    if (a == null && b == null) return 0
-    if (a == null) return 1
-    if (b == null) return -1
-    return a.localeCompare(b)
-  })
+  const modelOptions = [...modelSet].toSorted(nullLastCmp)
   // If the previously-selected analyzer / model is no longer present
   // (report unload / workspace switch), clear that dimension so a
   // stale selection can't silently empty the list. Matches the same
@@ -1999,12 +1931,7 @@ function renderImpl() {
   for (const g of mergedGroups) {
     for (const f of g) repoSet.add(repoOfFinding(f))
   }
-  const repoOptions = [...repoSet].toSorted((a, b) => {
-    if (a == null && b == null) return 0
-    if (a == null) return 1
-    if (b == null) return -1
-    return a.localeCompare(b)
-  })
+  const repoOptions = [...repoSet].toSorted(nullLastCmp)
   // Same stale-clear guard as analyzer above — a workspace switch
   // can drop the previously-selected repo from the option list.
   if (state.filterRepo) {
@@ -2310,7 +2237,7 @@ function renderImpl() {
       // helper runs its own `litRender` into the appropriate
       // shadow-DOM slot, so subsequent clicks diff against a
       // single Lit cache per slot.
-      attachGraphLayout(graphSlot, g2DataForBody.prep, options,
+      attachGraphLayout(graphSlot, g2DataForBody, options,
         refreshGraph2Sidebar, refreshGraph2TopPkgs)
     }
   }

@@ -15,7 +15,6 @@
 // `unregisterSW()` runs on every init to clean up any leftover
 // `/brotli-sw.js` from a prior SW-based fallback revision.
 
-let mode = null
 let initPromise = null
 let fallbackPromise = null
 
@@ -69,12 +68,8 @@ async function init() {
   // load picks. Cheap when there's nothing to unregister.
   await unregisterSW()
   const format = nativeAvailable()
-  if (format) {
-    mode = { kind: 'native', format }
-    return mode
-  }
-  mode = { kind: 'fallback' }
-  return mode
+  if (format) return { kind: 'native', format }
+  return { kind: 'fallback' }
 }
 
 function ensure() {

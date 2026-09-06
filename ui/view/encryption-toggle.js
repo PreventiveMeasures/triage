@@ -124,10 +124,6 @@ async function handleDisable() {
   }
 }
 
-async function handleEnable() {
-  await openPasskeySetupDialog()
-}
-
 // Called by the sidebar component from its `firstUpdated` with the
 // `#encryption-toggle` button it just rendered into shadow DOM. The
 // button used to be static light-DOM markup `document.querySelector`-ed
@@ -157,7 +153,7 @@ export function initEncryptionToggle(el) {
     handlingClick = true
     try {
       if (!isEncryptionEnabled()) {
-        await handleEnable()
+        await openPasskeySetupDialog()
         return
       }
       // Enabled. If this tab hasn't unlocked yet (user dismissed

@@ -26,7 +26,7 @@
 //     re-import.
 //
 // Modal: native <dialog> for focus-trap + Esc-to-cancel, light-DOM
-// render so `.origin-migration-dialog` rules in sidebar.css apply.
+// render so `.origin-migration-dialog` rules in styles/dialogs.css apply.
 
 import { LitElement, html } from 'lit'
 import { hasAnyBundles, listFiles, listWorkspaces } from '#client/index.js'
@@ -124,8 +124,8 @@ class OriginMigrationDialog extends LitElement {
     supportsSync: { attribute: false },
   }
 
-  // Light DOM — `.origin-migration-dialog` rules live in sidebar.css
-  // next to the other deepview dialogs. A shadow root would hide them.
+  // Light DOM — `.origin-migration-dialog` rules live in styles/dialogs.css
+  // next to the lock overlay's. A shadow root would hide them.
   createRenderRoot() { return this }
 
   constructor() {

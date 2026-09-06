@@ -2,7 +2,7 @@ import { classMap, html, repeat, styleMap } from '../frontend-global.js'
 import { SEVERITIES, formatBytes } from '../format.js'
 import { graph2 } from './state.js'
 import { pkgColor } from './utils.js'
-import { pkgRelative } from './data.js'
+import { pkgLabelOf, pkgRelative } from './data.js'
 // `<graph-layout>` is defined in `./graph-layout.js`, behind the
 // lazy entry `ui/graph.js` (loaded by `view/graph-attach.js` on
 // first show). Nothing here imports it: the per-section templates
@@ -272,7 +272,7 @@ export function renderStage(graph) {
   let issues = 0; for (const n of graph.nodes) issues += n.totalIssues
   const avgDeg = graph.nodes.length === 0 ? '0.0' : (graph.edges.length * 2 / graph.nodes.length).toFixed(1)
 
-  const focusedLabel = graph2.focusedPkg === '__own__' ? 'own source' : graph2.focusedPkg
+  const focusedLabel = pkgLabelOf(graph2.focusedPkg)
 
   return html`<main class="graph2-stage">
     <canvas id="g2-canvas"></canvas>
@@ -325,7 +325,7 @@ export function renderFocusOverlay(graph) {
   if (!pkg) return null
   if ((graph.pkgCount.get(pkg) ?? 0) <= 1) return null
   if (graph2.focusedPkg === pkg) return null
-  const label = pkg === '__own__' ? 'own source' : pkg
+  const label = pkgLabelOf(pkg)
   // Subgraph icon — three nodes connected by edges, evoking
   // "this is a smaller graph you can zoom into".
   return html`<button
@@ -409,7 +409,7 @@ export function renderSelectionCard(graph, ctx = {}) {
 
 function renderFileCard(graph, n, file, ctx) {
   const col = pkgColor(n.pkg)
-  const pkgLabel = n.pkg === '__own__' ? 'own source' : n.pkg
+  const pkgLabel = pkgLabelOf(n.pkg)
   const relPath = pkgRelative(file, n.pkg)
 
   // Directional import lists, kept separate so the section traces
@@ -482,7 +482,7 @@ function renderPackageCard(graph, pkg) {
     </div>`
   }
   const col = pkgColor(pkg)
-  const pkgLabel = pkg === '__own__' ? 'own source' : pkg
+  const pkgLabel = pkgLabelOf(pkg)
 
   // Aggregate per-severity own counts across the package's files.
   const ownAgg = {}
@@ -646,7 +646,7 @@ function renderDistribution(graph, activeTab) {
       const pct = tab === 'issues' ? (totalIssues > 0 ? (issueCnt / totalIssues * 100).toFixed(1) : '0.0')
                 : tab === 'size'   ? (totalSize   > 0 ? (sizeBytes / totalSize   * 100).toFixed(1) : '0.0')
                 : (fileCnt / totalFiles * 100).toFixed(1)
-      const label = pkg === '__own__' ? 'own source' : pkg
+      const label = pkgLabelOf(pkg)
       // data-g2-pkg routes each row to the events.js package-click
       // handler (shared with the palette swatches): same toggle-solo
       // semantics and right-panel refresh, no duplicated logic.

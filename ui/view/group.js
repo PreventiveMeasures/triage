@@ -160,7 +160,7 @@ export function findingRepoFallback(f) {
 export function findingRepo(f) {
   for (const bucket of getPackagesIndex().values()) {
     if (bucket.files.has(f.file)) {
-      return (bucket.repos && bucket.repos.size === 1) ? [...bucket.repos][0] : null
+      return bucket.repos?.size === 1 ? [...bucket.repos][0] : null
     }
   }
   return f.repo?.github || findingRepoFallback(f) || null
@@ -302,9 +302,6 @@ export function fixApplies(f, current) {
   const fix = (state.triage.get(tabKey(f))?.fix ?? '').trim()
   return fix === '' || fix === (current ?? '').trim()
 }
-
-export function isGroupDeleted(group) { return groupState(group).isDeleted }
-export function groupTriage(group) { return groupState(group).commonTriage }
 
 // What a triage-menu click does: the tabs it applies to, and whether
 // it sets the state or clears it. BOTH are decisions about the group,
