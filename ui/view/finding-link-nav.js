@@ -34,6 +34,7 @@ import { report } from './dom.js'
 import { findLoadedFinding, unhideFinding } from './finding-link.js'
 import { syncGroupTriage } from './group.js'
 import { switchToFile, switchToWorkspace } from './ingest.js'
+import { scrollRootOf } from './lazy-render.js'
 import { render } from './render.js'
 import { tableRowGid } from './render-finding.js'
 
@@ -94,13 +95,34 @@ function settled(el) {
   })
 }
 
-// Whether `el` is where a `block: 'center'` scroll leaves it: wholly on
-// screen, or — for one taller than the screen — around its middle.
+// The part of the screen `el` can be seen in: the box of the nearest
+// container that scrolls it (the lists scroll inside
+// `#findings-body-slot` / `.findings-table-list`, under the page header
+// and the toolbar), cut down to the window. Measured against the
+// window alone, an element sitting under the toolbar — on screen by
+// its coordinates, clipped by the scroller — would count as visible.
+function visibleBox(el) {
+  let top = 0
+  let bottom = window.innerHeight
+  const scroller = scrollRootOf(el)
+  if (scroller) {
+    const s = scroller.getBoundingClientRect()
+    top = Math.max(top, s.top)
+    bottom = Math.min(bottom, s.bottom)
+  }
+  return { top, bottom }
+}
+
+// Whether `el` is where a `block: 'center'` scroll leaves it: wholly
+// inside its visible box, or — for one taller than the box — around
+// its middle.
 function inView(el) {
   const r = el.getBoundingClientRect()
   if (r.height === 0) return false
-  const mid = window.innerHeight / 2
-  return (r.top >= 0 && r.bottom <= window.innerHeight) || (r.top <= mid && r.bottom >= mid)
+  const { top, bottom } = visibleBox(el)
+  if (bottom <= top) return false
+  const mid = (top + bottom) / 2
+  return (r.top >= top && r.bottom <= bottom) || (r.top <= mid && r.bottom >= mid)
 }
 
 // Scroll `el` to the middle of the view, and make sure it stays there.

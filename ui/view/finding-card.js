@@ -211,8 +211,17 @@ class FindingCard extends StateElement {
   // print pipeline, which puts every card on paper, and the deep-link
   // reveal, which scrolls to a card and wants it at its real height
   // when it gets there. Resolves once the body is in the DOM.
-  ensureRendered() {
+  //
+  // `sync` performs the update before returning instead of leaving it
+  // to Lit's microtask. A `beforeprint` handler cannot await one, and
+  // the browser may take its snapshot the moment the handler returns,
+  // so the native print path (Ctrl+P, the browser menu) asks for the
+  // body on the spot. `performUpdate` is Lit's own door for that: it
+  // processes the update just requested, and the queued one then finds
+  // nothing left to do.
+  ensureRendered({ sync = false } = {}) {
     if (this.lazy && !this._near) this._onNear(true)
+    if (sync && this.isConnected && this.isUpdatePending) this.performUpdate()
     return this.updateComplete
   }
 }

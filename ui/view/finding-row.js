@@ -150,9 +150,11 @@ class FindingRow extends StateElement {
 
   // Render now whether or not the row is in range — for the deep-link
   // reveal, which scrolls to the row and wants it at its real height.
-  // Resolves once the content is in the DOM.
-  ensureRendered() {
+  // Resolves once the content is in the DOM. `sync` performs the update
+  // before returning, as on `<finding-card>` (see there for why).
+  ensureRendered({ sync = false } = {}) {
     if (!this._near) this._onNear(true)
+    if (sync && this.isConnected && this.isUpdatePending) this.performUpdate()
     return this.updateComplete
   }
 
