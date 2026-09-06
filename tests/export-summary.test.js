@@ -27,7 +27,7 @@ if (!globalThis[slotKey]) {
 
 const { state } = await import('../client/state.ts')
 const { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, applyFilters, cloneFilterFields } = await import('../ui/view/filters.js')
-const { exportSelectionSummary, activeFilterDescriptions } = await import('../ui/view/export-summary.js')
+const { activeFilterDescriptions, exportBucketGroups, exportSelectionSummary } = await import('../ui/view/export-summary.js')
 
 function reset() {
   state.filterSeverities = new Set()
@@ -118,14 +118,15 @@ describe('exportSelectionSummary — counts', () => {
   })
 })
 
-describe('exportSelectionSummary — print vs download basis', () => {
+describe('exportSelectionSummary — one basis for print and download', () => {
   beforeEach(reset)
 
-  it('counts merged super-groups for print but per-report groups for download', () => {
+  it('counts merged super-groups for both', () => {
     // Finding A in report 1, B in report 2, unioned by a cross-report
-    // workspace merge — so the merged on-screen set (print) collapses
-    // them into one super-group while the markdown download iterates
-    // each report's own groups.
+    // workspace merge — the merged on-screen set collapses them into
+    // one super-group, and both exports serialize that set (the
+    // markdown writes it as one finding with two cases), so both
+    // count it once.
     const a = makeFinding('A')
     const b = makeFinding('B')
     state.reports = [
@@ -134,13 +135,12 @@ describe('exportSelectionSummary — print vs download basis', () => {
     ]
     state.workspaceMerges = [new Set(['A', 'B'])]
 
-    const print = exportSelectionSummary('print')
-    assert.equal(print.total, 1)
-    assert.equal(print.included, 1)
-
-    const download = exportSelectionSummary('download')
-    assert.equal(download.total, 2)
-    assert.equal(download.included, 2)
+    for (const mode of ['print', 'download']) {
+      const s = exportSelectionSummary(mode)
+      assert.equal(s.total, 1, mode)
+      assert.equal(s.included, 1, mode)
+    }
+    assert.equal(exportBucketGroups().length, 1)
   })
 })
 

@@ -1,7 +1,7 @@
 {
   "name": "@preventive/report",
   "version": "0.0.0",
-  "description": "Parsers for security-scan reports",
+  "description": "Parsers and a markdown writer for security-scan reports",
   "license": "MIT",
   "author": {
     "name": "Nikita Skovoroda",
@@ -33,8 +33,11 @@
   },
   "files": [
     "finding-id.js",
+    "finding.js",
     "index.js",
+    "labels.js",
     "md-structure.js",
+    "md-text.js",
     "meta.js",
     "parse-codex.js",
     "parse-deepsec.js",
@@ -43,7 +46,9 @@
     "parse-piolium-rows.js",
     "parse-piolium-tokens.js",
     "parse-piolium.js",
-    "utf8.js"
+    "utf8.js",
+    "write-md-finding.js",
+    "write-md.js"
   ],
   "scripts": {
     "test": "node --test tests/*.test.js"

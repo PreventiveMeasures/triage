@@ -5,8 +5,8 @@
 // print affordance; each owns its visibility via StateElement.
 //
 // Click dispatches a `download-requested` CustomEvent (bubbles +
-// composed); events.js listens on document and calls
-// downloadReportsAsMarkdown(state.reports).
+// composed); events.js listens on document, confirms the selection,
+// and calls downloadReportsAsMarkdown() (view/markdown-export.js).
 import { nothing } from 'lit'
 import { StateElement, html } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'

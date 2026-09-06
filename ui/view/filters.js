@@ -161,8 +161,10 @@ export function clearFilterOverride() { filterOverride = null }
 
 // `state` unless something is standing in for it. Read once per
 // predicate call rather than per field, so a filter pass can't see half
-// of one selection and half of another.
-function activeFilters() {
+// of one selection and half of another. Exported for the markdown
+// adapter, which describes in its file's header the selection the file
+// was written under — the one its own `applyFilters` pass read.
+export function activeFilters() {
   return filterOverride ?? state
 }
 
