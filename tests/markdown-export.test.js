@@ -35,6 +35,7 @@ globalThis.document ??= { querySelector: () => null, createTreeWalker: () => ({}
 
 const { state } = await import('../client/state.ts')
 const { createWorkspace } = await import('../client/workspaces.js')
+const { clearFilterOverride, cloneFilterFields, setFilterOverride } = await import('../ui/view/filters.js')
 const { reportsToMarkdown, targetFilename } = await import('../ui/view/markdown-export.js')
 
 const PR = 'https://github.com/owner/repo/pull/42'
@@ -247,5 +248,42 @@ describe('reportsToMarkdown — links and names', () => {
     assert.match(md, new RegExp(`^# ${ws.name.replaceAll(/[/.]/gu, '\\$&')}\n`, 'u'))
     assert.equal(line(md, 'Workspace'), ws.name)
     assert.equal(targetFilename(), `${ws.name.replaceAll('/', '-')}.md`)
+  })
+})
+
+// The export confirm dialog lets a filter be dropped from the file
+// without touching the toolbar. Mechanically that is a filter override
+// installed around this serializer (events.js withExportFilters), so
+// what the dialog counted and what gets written stay the same set — and
+// the header has to describe THAT selection, not the toolbar's.
+describe('reportsToMarkdown — under a dropped filter', () => {
+  beforeEach(reset)
+
+  it('writes what the relaxed selection lets through, and says so in the header', () => {
+    load(finding({ severity: 'critical', description: 'Critical one' }), finding({ id: 'f2', severity: 'low', description: 'Low one' }))
+    state.filterSeverities = new Set(['critical'])
+    state.filterInclude = 'one'
+
+    // As the toolbar has it: the low finding is filtered out.
+    const narrow = reportsToMarkdown()
+    assert.deepEqual(findingHeadings(narrow), ['1. Critical one'])
+    assert.equal(line(narrow, 'Filters'), 'Severity: Critical · Search: "one"')
+
+    // With the severity filter dropped from THIS export, both land, and
+    // the header lists only the filter still narrowing.
+    setFilterOverride({ ...cloneFilterFields(), filterSeverities: new Set() })
+    let md
+    try {
+      md = reportsToMarkdown()
+    } finally {
+      clearFilterOverride()
+    }
+    assert.deepEqual(findingHeadings(md), ['1. Critical one', '2. Low one'])
+    assert.equal(line(md, 'Filters'), 'Search: "one"')
+    assert.equal(line(md, 'Included'), 'all 2 findings')
+
+    // The toolbar never moved, and the next export is narrow again.
+    assert.deepEqual([...state.filterSeverities], ['critical'])
+    assert.deepEqual(findingHeadings(reportsToMarkdown()), ['1. Critical one'])
   })
 })

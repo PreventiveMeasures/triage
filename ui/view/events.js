@@ -2,7 +2,7 @@ import { KANBAN_DETAIL_FULLSCREEN_KEY, SEVERITY_MODE_KEY, VIEW_MODE_KEY, isEncry
 import { downloadBlob, report } from './dom.js'
 import { commonPrefix, configureRevalidation, handoffBlock, lineRange } from './format.js'
 import { activeTabFor, canApplyFixToGroup, findGroupById, findingRepo, findingReport, fixApplies, getMergedGroups, groupState, groupWithPassRows, syncGroupTriage, tabKey, triageActionPlan, triageScope } from './group.js'
-import { defaultConfidenceFloor, defaultRevalidateFilter, resetFilters } from './filters.js'
+import { clearFilterOverride, defaultConfidenceFloor, defaultRevalidateFilter, resetFilters, setFilterOverride } from './filters.js'
 import { focusCodeHistory, revealFocusCodeLines } from './focus-code.js'
 import { pushed, stepped } from './focus-code-history.js'
 import { refreshGraph2Sidebar, refreshGraph2TopPkgs, render } from './render.js'
@@ -2070,16 +2070,35 @@ report.addEventListener('mark-color', (e) => {
 // beforeprint doesn't clobber state the click handler captured.
 let printSavedMode = null
 let printSavedTitle = null
+// The relaxed filter selection the confirm dialog handed back, when the
+// user dropped a filter from this export. Print serializes the DOM, so
+// unlike the markdown path it can't scope the override to a synchronous
+// call: it has to hold from the re-render here through the browser's own
+// print dialog to `afterprint`. Null for a native Ctrl+P, which never
+// sees the confirm dialog — that path prints what is on screen, as it
+// always has.
+let printFilterFields = null
 
 function prepareForPrint() {
   if (printSavedMode !== null) return
-  if (state.reports.length === 0) return
+  if (state.reports.length === 0) {
+    // The only way out of this function without a matching restore, so
+    // it is also the only place a pending selection could go stale.
+    printFilterFields = null
+    return
+  }
   printSavedMode = state.viewMode
   printSavedTitle = document.title
+  let rerender = false
   if (state.viewMode === 'table') {
     state.viewMode = 'list'
-    render()
+    rerender = true
   }
+  if (printFilterFields) {
+    setFilterOverride(printFilterFields)
+    rerender = true
+  }
+  if (rerender) render()
   const fileNames = state.reports.map((r) => r.fileName)
   let target = ''
   if (fileNames.length === 1) target = fileNames[0]
@@ -2094,10 +2113,17 @@ function prepareForPrint() {
 
 function restoreAfterPrint() {
   if (printSavedMode === null) return
+  let rerender = false
   if (state.viewMode !== printSavedMode) {
     state.viewMode = printSavedMode
-    render()
+    rerender = true
   }
+  if (printFilterFields) {
+    clearFilterOverride()
+    printFilterFields = null
+    rerender = true
+  }
+  if (rerender) render()
   document.title = printSavedTitle
   printSavedMode = null
   printSavedTitle = null
@@ -2114,13 +2140,16 @@ document.addEventListener('print-requested', async () => {
   // user gesture, so the subsequent window.print() stays
   // user-activated (same microtask-drain reasoning as the
   // updateComplete await below). Cancel / Esc abort with no print.
-  const { confirmed } = await openExportConfirmDialog('print')
+  const { confirmed, fields } = await openExportConfirmDialog('print')
   if (!confirmed) return
   // Re-check the re-entrancy guard: the top-of-handler check ran before
   // the await, and `printSavedMode` isn't set until prepareForPrint
   // below — so a print started during the dialog (a stray beforeprint,
   // or a second print-requested) could otherwise race past it.
   if (printSavedMode !== null) return
+  // Set before prepareForPrint, which is what installs it and renders
+  // the relaxed set into the DOM print reads.
+  printFilterFields = fields
   prepareForPrint()
   try {
     // `updateComplete` resolves after the element's render() has
@@ -2141,6 +2170,22 @@ document.addEventListener('print-requested', async () => {
   }
 })
 
+// Run a markdown export under the selection the confirm dialog handed
+// back. `fields` is null unless the user dropped a filter there, in
+// which case it is a relaxed CLONE of the toolbar's — never the
+// toolbar's own state, which this path does not touch. Scoped to the
+// call because serializing is synchronous; print can't do the same (see
+// printFilterFields above).
+function withExportFilters(fields, fn) {
+  if (!fields) return fn()
+  setFilterOverride(fields)
+  try {
+    return fn()
+  } finally {
+    clearFilterOverride()
+  }
+}
+
 // Markdown download — pairs with the print button (same top-right
 // stack). Pure data export: no view-mode swap needed since we
 // serialize state.reports + per-finding triage / marker / comment
@@ -2149,18 +2194,18 @@ document.addEventListener('print-requested', async () => {
 // filtered selection (and counts) before the file is written.
 document.addEventListener('download-requested', async () => {
   if (state.reports.length === 0) return
-  const { confirmed, view } = await openExportConfirmDialog('download')
+  const { confirmed, view, fields } = await openExportConfirmDialog('download')
   // View replaces the confirmation with the file itself — same
   // selection, serialized the same way the download would, shown
   // read-only. It ends the flow: closing the preview leaves the report
   // unwritten, and the button is one click away for a reader who has
   // seen what they wanted to see.
   if (view) {
-    await openExportViewDialog(reportsToMarkdown())
+    await openExportViewDialog(withExportFilters(fields, () => reportsToMarkdown()))
     return
   }
   if (!confirmed) return
-  downloadReportsAsMarkdown()
+  withExportFilters(fields, () => downloadReportsAsMarkdown())
 })
 
 // `<analyzer-select>` dispatches this when a row in its analyzer /

@@ -26,7 +26,7 @@ if (!globalThis[slotKey]) {
 }
 
 const { state } = await import('../client/state.ts')
-const { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL } = await import('../ui/view/filters.js')
+const { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, applyFilters, cloneFilterFields } = await import('../ui/view/filters.js')
 const { activeFilterDescriptions, exportBucketGroups, exportSelectionSummary } = await import('../ui/view/export-summary.js')
 
 function reset() {
@@ -162,76 +162,58 @@ describe('exportSelectionSummary — focus mode print', () => {
   })
 })
 
+// The wording / ordering / gating assertions below care about what a
+// row SAYS. Each row also carries the `key` and `clear` patch the
+// confirm dialog drops it with; those are pinned in their own block
+// further down rather than repeated into every expectation here.
+function described(fields) {
+  return activeFilterDescriptions(fields).map(({ label, value }) => ({ label, value }))
+}
+
 describe('activeFilterDescriptions', () => {
   beforeEach(reset)
 
   it('is empty when no filter narrows the export', () => {
-    assert.deepEqual(activeFilterDescriptions(), [])
+    assert.deepEqual(described(), [])
     // Both source sides ticked is a no-op (same as none), so it must
     // not appear — mirrors matchesFilters' size === 1 gate.
     state.filterSources = new Set(['own', 'modules'])
-    assert.deepEqual(activeFilterDescriptions(), [])
+    assert.deepEqual(described(), [])
   })
 
   it('lists severities in canonical order regardless of insertion order', () => {
     state.filterSeverities = new Set(['low', 'critical'])
-    assert.deepEqual(activeFilterDescriptions(), [{ label: 'Severity', value: 'Critical, Low' }])
+    assert.deepEqual(described(), [{ label: 'Severity', value: 'Critical, Low' }])
   })
 
   it('describes a single-sided source filter', () => {
     state.filterSources = new Set(['modules'])
-    assert.deepEqual(activeFilterDescriptions(), [{ label: 'Source', value: 'Dependencies only' }])
+    assert.deepEqual(described(), [{ label: 'Source', value: 'Dependencies only' }])
   })
 
   it('formats the confidence range three ways', () => {
     state.filterConfMin = 5
-    assert.deepEqual(activeFilterDescriptions(), [{ label: 'Confidence', value: '≥ 5' }])
+    assert.deepEqual(described(), [{ label: 'Confidence', value: '≥ 5' }])
     reset()
     state.filterConfMax = 8
-    assert.deepEqual(activeFilterDescriptions(), [{ label: 'Confidence', value: '≤ 8' }])
+    assert.deepEqual(described(), [{ label: 'Confidence', value: '≤ 8' }])
     reset()
     state.filterConfMin = 3
     state.filterConfMax = 8
-    assert.deepEqual(activeFilterDescriptions(), [{ label: 'Confidence', value: '3–8' }])
-  })
-
-  // The outcome dropdown replaces the confidence range in the toolbar
-  // block, and filters.js skips the range while an outcome is selected
-  // — so the description names the outcome instead of a range that is
-  // not filtering anything.
-  it('describes the revalidation outcome, in place of the confidence range', () => {
-    state.filterConfMin = 5
-    state.filterRevalidate = 'refuted'
-    assert.deepEqual(activeFilterDescriptions(), [{ label: 'Revalidation', value: 'Refuted' }])
-    state.filterRevalidate = 'unreachable'
-    assert.deepEqual(activeFilterDescriptions(), [{ label: 'Revalidation', value: 'Unreachable' }])
-    state.filterRevalidate = ''
-    assert.deepEqual(activeFilterDescriptions(), [{ label: 'Confidence', value: '≥ 5' }], 'the range is back once the outcome is cleared')
-  })
-
-  it('folds the partial chip into the Confirmed outcome', () => {
-    state.filterRevalidate = 'confirmed'
-    assert.deepEqual(activeFilterDescriptions(), [{ label: 'Revalidation', value: 'Confirmed' }])
-    state.filterPartial = 'exclude'
-    assert.deepEqual(activeFilterDescriptions(), [{ label: 'Revalidation', value: 'Confirmed (full confirmations only)' }])
-    state.filterPartial = 'only'
-    assert.deepEqual(activeFilterDescriptions(), [{ label: 'Revalidation', value: 'Confirmed (partial confirmations only)' }])
-    // The chip is inert under any other outcome.
-    state.filterRevalidate = 'refuted'
-    assert.deepEqual(activeFilterDescriptions(), [{ label: 'Revalidation', value: 'Refuted' }])
+    assert.deepEqual(described(), [{ label: 'Confidence', value: '3–8' }])
   })
 
   it('distinguishes a search query from a negated one', () => {
     state.filterInclude = 'sql'
-    assert.deepEqual(activeFilterDescriptions(), [{ label: 'Search', value: '"sql"' }])
+    assert.deepEqual(described(), [{ label: 'Search', value: '"sql"' }])
     state.filterIncludeNegate = true
-    assert.deepEqual(activeFilterDescriptions(), [{ label: 'Excluding', value: '"sql"' }])
+    assert.deepEqual(described(), [{ label: 'Excluding', value: '"sql"' }])
   })
 
   it('maps the analyzer / repo sentinels to the no-value buckets', () => {
     state.filterAnalyzer = NULL_ANALYZER_SENTINEL
     state.filterRepo = NO_REPO_SENTINEL
-    assert.deepEqual(activeFilterDescriptions(), [
+    assert.deepEqual(described(), [
       { label: 'Analyzer', value: '(none)' },
       { label: 'Repository', value: '(no repo)' },
     ])
@@ -240,9 +222,210 @@ describe('activeFilterDescriptions', () => {
   it('renders annotation tri-state filters as with / without', () => {
     state.filterComment = 'with'
     state.filterFix = 'without'
-    assert.deepEqual(activeFilterDescriptions(), [
+    assert.deepEqual(described(), [
       { label: 'Annotation', value: 'With comment' },
       { label: 'Annotation', value: 'Without fix' },
     ])
+  })
+})
+
+// The confirm dialog's × drops a filter from the EXPORT and nothing
+// else: it works on a clone of the filter state, applies the row's own
+// `clear` patch to it, and recounts. These pin both halves — that the
+// patch removes exactly its row, and that `state` never moves.
+describe('activeFilterDescriptions — dropping a filter', () => {
+  beforeEach(reset)
+
+  it('every row carries a key and a clear patch that removes it', () => {
+    state.filterSeverities = new Set(['critical'])
+    state.filterColors = new Set(['red'])
+    state.filterSources = new Set(['own'])
+    state.filterAnalyzer = 'semgrep'
+    state.filterRepo = 'acme/app'
+    state.filterConfMin = 4
+    state.filterInclude = 'sql'
+    state.filterComment = 'with'
+
+    const rows = activeFilterDescriptions()
+    assert.equal(new Set(rows.map((r) => r.key)).size, rows.length, 'keys are unique')
+
+    // Dropping each row in turn leaves the others exactly as they were.
+    for (const row of rows) {
+      const relaxed = { ...cloneFilterFields(), ...row.clear }
+      const left = activeFilterDescriptions(relaxed)
+      assert.deepEqual(left.map((r) => r.key), rows.filter((r) => r !== row).map((r) => r.key), row.key)
+    }
+  })
+
+  it('a drop leaves the live toolbar selection untouched', () => {
+    state.filterSeverities = new Set(['critical', 'high'])
+    const [severity] = activeFilterDescriptions()
+    const relaxed = { ...cloneFilterFields(), ...severity.clear }
+
+    assert.deepEqual(activeFilterDescriptions(relaxed), [])
+    // The clone was relaxed; the real selection was not.
+    assert.deepEqual([...state.filterSeverities], ['critical', 'high'])
+    assert.equal(activeFilterDescriptions().length, 1)
+  })
+
+  it('the confidence row hands back both bounds, and search its negate flag', () => {
+    state.filterConfMin = 3
+    state.filterConfMax = 8
+    const [confidence] = activeFilterDescriptions()
+    assert.deepEqual(confidence.clear, { filterConfMin: 0, filterConfMax: 10 })
+
+    reset()
+    state.filterInclude = 'sql'
+    state.filterIncludeNegate = true
+    const [search] = activeFilterDescriptions()
+    // The flag filters nothing alone, but left set it would invert
+    // whatever query was assigned next.
+    assert.deepEqual(search.clear, { filterInclude: '', filterIncludeNegate: false })
+  })
+
+  it('gives the three annotation rows distinct keys under one label', () => {
+    state.filterComment = 'with'
+    state.filterFix = 'without'
+    state.filterFlagged = 'with'
+    const rows = activeFilterDescriptions()
+    assert.deepEqual(rows.map((r) => r.label), ['Annotation', 'Annotation', 'Annotation'])
+    assert.deepEqual(rows.map((r) => r.key), ['annotation:comment', 'annotation:fix', 'annotation:flag'])
+    // Dropping the middle one leaves the other two.
+    const relaxed = { ...cloneFilterFields(), ...rows[1].clear }
+    assert.deepEqual(activeFilterDescriptions(relaxed).map((r) => r.key), ['annotation:comment', 'annotation:flag'])
+  })
+})
+
+describe('exportSelectionSummary — counting under a relaxed selection', () => {
+  beforeEach(reset)
+
+  it('recounts against the clone without moving the real filters', () => {
+    loadFindings(
+      makeFinding('A', { severity: 'critical' }),
+      makeFinding('B', { severity: 'high' }),
+      makeFinding('C', { severity: 'low' }),
+    )
+    state.filterSeverities = new Set(['critical'])
+
+    const before = exportSelectionSummary('print')
+    assert.equal(before.included, 1)
+    assert.equal(before.excluded, 2)
+
+    const [severity] = before.filters
+    const after = exportSelectionSummary('print', { ...before.fields, ...severity.clear })
+    assert.equal(after.included, 3)
+    assert.equal(after.excluded, 0)
+    assert.deepEqual(after.filters, [])
+    // Same bucket either way — dropping a filter widens what is
+    // included, never what is in scope.
+    assert.equal(after.total, before.total)
+
+    // And the toolbar is where the user left it.
+    assert.deepEqual([...state.filterSeverities], ['critical'])
+    assert.equal(exportSelectionSummary('print').included, 1)
+  })
+
+  it('echoes the fields it counted under, defaulting to a clone of state', () => {
+    loadFindings(makeFinding('A'))
+    state.filterSeverities = new Set(['critical'])
+    const s = exportSelectionSummary('download')
+    assert.deepEqual([...s.fields.filterSeverities], ['critical'])
+    // A clone, not the live Set: mutating it must not reach `state`.
+    s.fields.filterSeverities.clear()
+    assert.deepEqual([...state.filterSeverities], ['critical'])
+  })
+
+  it('leaves the override off after counting, so the app filters normally', () => {
+    loadFindings(
+      makeFinding('A', { severity: 'critical' }),
+      makeFinding('B', { severity: 'low' }),
+    )
+    state.filterSeverities = new Set(['critical'])
+    // Count under a relaxed clone…
+    exportSelectionSummary('print', { ...cloneFilterFields(), filterSeverities: new Set() })
+    // …then the next unrelaxed pass must be back to the real filters.
+    assert.equal(applyFilters(state.reports[0].groups).length, 1)
+  })
+})
+
+// The revalidation outcome and the confidence range share a toolbar
+// block: picking an outcome REPLACES the range (conf-filter renders it
+// inert, matchesFilters skips it). The dialog used to describe the
+// range anyway and never describe the outcome, so a report set narrowed
+// by an outcome listed one filter that did nothing — its × moved no
+// counts — and hid the one that did everything.
+describe('activeFilterDescriptions — the revalidation outcome', () => {
+  beforeEach(reset)
+
+  it('describes the outcome, and folds the partial switch into Confirmed', () => {
+    state.filterRevalidate = 'confirmed'
+    assert.deepEqual(described(), [{ label: 'Revalidation', value: 'Confirmed' }])
+    state.filterPartial = 'exclude'
+    assert.deepEqual(described(), [{ label: 'Revalidation', value: 'Confirmed (full only)' }])
+    state.filterPartial = 'only'
+    assert.deepEqual(described(), [{ label: 'Revalidation', value: 'Confirmed (partial only)' }])
+    // The switch means nothing outside Confirmed — the one option whose
+    // kinds take the partial rows in — so the others read as their label.
+    state.filterRevalidate = 'refuted'
+    assert.deepEqual(described(), [{ label: 'Revalidation', value: 'Refuted' }])
+  })
+
+  it('says nothing for a value that names no option', () => {
+    // matchesFilters reads an unrecognised value as no filter rather
+    // than hiding every finding behind it, so neither does this.
+    state.filterRevalidate = 'not-an-outcome'
+    assert.deepEqual(described().filter((r) => r.label === 'Revalidation'), [])
+  })
+
+  it('drops the confidence row while an outcome replaces the range', () => {
+    state.filterConfMin = 3
+    state.filterConfMax = 8
+    assert.deepEqual(described(), [{ label: 'Confidence', value: '3–8' }])
+
+    state.filterRevalidate = 'confirmed'
+    assert.deepEqual(described(), [{ label: 'Revalidation', value: 'Confirmed' }])
+
+    // …and hands it back when the outcome goes, since the bounds are
+    // still set and now bite again.
+    const [outcome] = activeFilterDescriptions()
+    const relaxed = { ...cloneFilterFields(), ...outcome.clear }
+    assert.deepEqual(activeFilterDescriptions(relaxed).map((r) => r.label), ['Confidence'])
+  })
+})
+
+describe('exportSelectionSummary — every listed filter is one that narrows', () => {
+  beforeEach(reset)
+
+  // The reported bug: a dialog listing a filter whose × changed no
+  // counts. The invariant that rules it out is this one — a described
+  // filter is a filter that is doing something, so dropping it always
+  // moves the number.
+  it('moves the count for each row in turn, on a revalidated set', () => {
+    state.reports = [{
+      fileName: 'r.json',
+      groups: Array.from({ length: 60 }, (_, i) => [makeFinding(`f${i}`, {
+        confidence: i % 11,
+        revalidate: i % 5 === 0 ? 'confirmed' : 'refuted',
+      })]),
+    }]
+    state.filterRevalidate = 'confirmed'
+    state.filterConfMin = 3
+    state.filterConfMax = 8
+
+    let summary = exportSelectionSummary('download')
+    assert.equal(summary.filters.length, 1, 'the range is dormant, so only the outcome is listed')
+    const seen = []
+    while (summary.filters.length > 0) {
+      const row = summary.filters[0]
+      const next = exportSelectionSummary('download', { ...summary.fields, ...row.clear })
+      assert.notEqual(next.included, summary.included, `dropping ${row.key} moved nothing`)
+      seen.push(row.key)
+      summary = next
+    }
+    // Dropping the outcome wakes the range, which is then listed and
+    // droppable in its turn — and with both gone, everything exports.
+    assert.deepEqual(seen, ['revalidate', 'confidence'])
+    assert.equal(summary.included, summary.total)
+    assert.equal(summary.excluded, 0)
   })
 })

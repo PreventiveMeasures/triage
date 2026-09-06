@@ -1,39 +1,95 @@
 /* `<export-view-dialog>` layer on top of dialog-base.css — the
    read-only look at the Markdown the Download button would write.
 
-   Wider and taller than the base dialog: this one exists to be read,
-   and Markdown wrapped into a 480px column stops looking like the file
-   it is going to produce. */
+   The base's 480px measure is for a dialog that asks a question. This
+   one is a document viewer, and a report wrapped into a question's
+   column stops looking like the file it is going to produce — so it
+   takes the screen less a 2rem margin all round, the way a preview
+   window does. `100vw` overshoots the client width by the scrollbar
+   when the page behind has one, which the margin absorbs: the box
+   never overflows, it just sits a few pixels off centre. */
 dialog {
-  max-width: 900px; width: min(94vw, 900px);
+  max-width: none; max-height: none;
+  width: calc(100vw - 4rem); height: calc(100vh - 4rem);
+  margin: 2rem auto;
+}
+
+/* Column layout so the document takes every row the header and footer
+   don't. Keyed on `[open]`, never bare `dialog`: an author `display`
+   on the element itself beats the UA's `dialog:not([open])
+   { display: none }` and would paint a closed dialog onto the page. */
+dialog[open] {
+  display: flex; flex-direction: column;
 }
 
 /* No intro paragraph here — the heading names the thing and the thing
    is right there — so the title takes the gap the intro would have. */
 header h3 { margin-bottom: .7rem; }
 
-/* The document itself. `pre` keeps the file's own line breaks, and the
-   box scrolls in both directions rather than reflowing: a wrapped line
-   would misrepresent what lands on disk. Capped against the viewport so
-   the footer stays reachable on a long report. */
+/* The document itself, and the only part of the dialog that flexes:
+   the header and footer take what they need and this takes the rest,
+   however tall the window is. `min-height: 0` because a flex item's
+   floor is its content, which for a long report would push the footer
+   off the bottom instead of scrolling.
+
+   Scrolls vertically only — the lines wrap, so there is never anything
+   to reach sideways for. */
 .evd-code {
+  flex: 1 1 auto; min-height: 0;
   margin: 0;
-  max-height: min(60vh, 32rem);
   overflow: auto;
-  padding: .6rem .75rem;
+  padding: .5rem 0;
   border: 1px solid var(--border); border-radius: 6px;
   background: var(--bg, var(--surface));
   color: var(--text);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .78rem; line-height: 1.55;
-  white-space: pre;
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
 
   &::-webkit-scrollbar { width: 6px; height: 6px; }
   &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+}
 
-  & code { font: inherit; background: none; }
+/* A row per source line: its number, then the line. Two columns rather
+   than one gutter column beside one block of text, because these lines
+   WRAP — a paragraph taking four visual rows has to take the number
+   column's four rows with it, which a single-block layout cannot do.
+
+   The gutter follows the digit count of the last line, set per render
+   as `--evd-lineno-width`, so a 90-line report doesn't reserve room for
+   four figures.
+
+   A `div`, deliberately not a `pre`: a grid container generates
+   anonymous items from non-collapsible text between its children, so
+   `white-space: pre` on the container would turn the newlines in the
+   template into phantom cells. It lives on the line instead. */
+.evd-lines {
+  display: grid;
+  grid-template-columns: calc(var(--evd-lineno-width, 3ch) + 1.4rem) minmax(0, 1fr);
+  align-items: start;
+}
+.evd-lineno {
+  align-self: stretch;
+  padding: 0 .55rem 0 .4rem;
+  border-right: 1px solid var(--border);
+  background: rgb(from var(--text) r g b / .03);
+  color: var(--muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  /* Numbers are chrome, not content: keep them out of a selection so
+     copying the preview yields the file, not a numbered listing. */
+  user-select: none;
+}
+/* `pre-wrap` keeps the file's own spacing — indented list items, the
+   blank line between sections — while letting a long line fold instead
+   of running off the side. `anywhere` so an unbroken path or URL folds
+   too rather than forcing the column wider than the dialog. */
+.evd-line {
+  padding: 0 .75rem 0 .6rem;
+  font: inherit; background: none;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* Byte / line count, riding the footer row opposite the Close button —

@@ -11,22 +11,26 @@
 // matches what the reader sees, and what the confirmation dialog
 // counted: export-summary.js supplies both the bucket and the filter
 // descriptions, so the dialog and the document's header say the same
-// thing.
+// thing. When that dialog dropped a filter from the export, the relaxed
+// selection is installed as a filter override around this call
+// (events.js), and the header describes that selection — the one the
+// file was actually written under — rather than the toolbar's.
 
 import { listWorkspaces, state } from '#client/index.js'
 import { downloadBlob } from './dom.js'
-import { exportBucketGroups, exportSelectionSummary } from './export-summary.js'
-import { applyFilters, applySorting } from './filters.js'
+import { activeFilterDescriptions, exportBucketGroups, exportBucketLabel } from './export-summary.js'
+import { activeFilters, applyFilters, applySorting } from './filters.js'
 import { commitUrl, commonPrefix, evidenceUrl, findingUrl, hasRevalidateField, hasSeverityCorrection, isModule } from './format.js'
 import { findingRepoFallback, isIgnored, sortTabs, tabKey } from './group.js'
 import { writeMarkdown } from '../../report/index.js'
 
-// The on-screen groups in on-screen order, each group's cases in the
-// order the card's tab strip shows them (the revalidation row first,
-// then the annotated ones, then by severity and confidence — group.js
-// sortTabs), so the document's primary case is the card's.
-function visibleGroups() {
-  return applySorting(applyFilters(exportBucketGroups())).map((g) => sortTabs(g))
+// The bucket's groups the selection in force lets through, in on-screen
+// order, each group's cases in the order the card's tab strip shows
+// them (the revalidation row first, then the annotated ones, then by
+// severity and confidence — group.js sortTabs), so the document's
+// primary case is the card's.
+function visibleGroups(bucket) {
+  return applySorting(applyFilters(bucket)).map((g) => sortTabs(g))
 }
 
 // The answers only the viewer has. Links resolve the way the card's
@@ -95,8 +99,14 @@ function documentTitle(reports, workspace) {
 
 export function reportsToMarkdown() {
   const reports = state.reports
-  const groups = visibleGroups()
-  const summary = exportSelectionSummary('download')
+  // The selection in force — the confirm dialog's relaxed copy while an
+  // export runs under one, the toolbar's otherwise. The same one the
+  // `applyFilters` pass inside visibleGroups reads, so the header
+  // describes exactly the pass that picked the findings, and the counts
+  // are that pass's.
+  const fields = activeFilters()
+  const bucket = exportBucketGroups()
+  const groups = visibleGroups(bucket)
   const workspace = currentWorkspace()
   // The lens and the layer are named in the header only where they
   // change what the document says: a set with no severity correction
@@ -113,12 +123,12 @@ export function reportsToMarkdown() {
     repo: documentRepo(reports, groups),
     generatedAt: new Date(),
     view: {
-      bucket: summary.bucketLabel,
+      bucket: exportBucketLabel(),
       severityMode: hasCorrections ? state.severityMode : null,
       revalidation: hasRevalidation ? state.showRevalidation : null,
     },
-    filters: summary.filters,
-    counts: { included: summary.included, total: summary.total },
+    filters: activeFilterDescriptions(fields),
+    counts: { included: groups.length, total: bucket.length },
     groups,
   }, HOOKS)
 }

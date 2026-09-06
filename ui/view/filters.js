@@ -65,14 +65,15 @@ export function modelOfFinding(f) {
 // "SOME finding carries this exact analyzer+model combination" — not
 // one finding with the analyzer and a different one with the model.
 export function matchesRunFilters(f) {
-  if (state.filterAnalyzer) {
+  const F = activeFilters()
+  if (F.filterAnalyzer) {
     const a = f._analyzer ?? null
-    const want = state.filterAnalyzer === NULL_ANALYZER_SENTINEL ? null : state.filterAnalyzer
+    const want = F.filterAnalyzer === NULL_ANALYZER_SENTINEL ? null : F.filterAnalyzer
     if (a !== want) return false
   }
-  if (state.filterModel) {
+  if (F.filterModel) {
     const m = modelOfFinding(f)
-    const want = state.filterModel === NULL_MODEL_SENTINEL ? null : state.filterModel
+    const want = F.filterModel === NULL_MODEL_SENTINEL ? null : F.filterModel
     if (m !== want) return false
   }
   return true
@@ -118,6 +119,53 @@ export function resetFilters() {
   const hasPriority = state.reports.some((r) =>
     r.groups.some((g) => g.some((f) => f.priority !== undefined)))
   state.sortBy = hasPriority ? 'priority-desc' : 'severity'
+}
+
+// Every `filter*` field the predicates below read — the same set
+// `resetFilters` clears, which is what makes a clone of them a complete
+// stand-in for `state` as far as filtering is concerned.
+const FILTER_FIELDS = [
+  'filterSeverities', 'filterColors', 'filterSources',
+  'filterAnalyzer', 'filterModel', 'filterRepo',
+  'filterConfMin', 'filterConfMax',
+  'filterInclude', 'filterIncludeNegate',
+  'filterComment', 'filterFix', 'filterFlagged',
+  'filterRevalidate', 'filterPartial',
+]
+
+// A detached copy of the current filter selection. The Sets are copied
+// too, so a caller can relax one without reaching back into the
+// toolbar's. For the export confirm dialog, which lets a user drop a
+// filter from what it is about to write WITHOUT changing what the app
+// is showing.
+export function cloneFilterFields() {
+  const out = {}
+  for (const key of FILTER_FIELDS) {
+    const v = state[key]
+    out[key] = v instanceof Set ? new Set(v) : v
+  }
+  return out
+}
+
+// While set, the predicates read their `filter*` values from here
+// instead of `state` — everything else (triage entries, severityMode)
+// still comes from `state`, since only the selection is being stood in
+// for. Deliberately sticky rather than a callback wrapper: print has to
+// hold it across a render and the browser's own print dialog, which no
+// synchronous scope can span. Callers pair it with `clearFilterOverride`
+// in a `finally` / restore path.
+let filterOverride = null
+
+export function setFilterOverride(fields) { filterOverride = fields }
+export function clearFilterOverride() { filterOverride = null }
+
+// `state` unless something is standing in for it. Read once per
+// predicate call rather than per field, so a filter pass can't see half
+// of one selection and half of another. Exported for the markdown
+// adapter, which describes in its file's header the selection the file
+// was written under — the one its own `applyFilters` pass read.
+export function activeFilters() {
+  return filterOverride ?? state
 }
 
 // Does the confidence floor leave this group on screen? The rule
@@ -202,22 +250,23 @@ export function defaultRevalidateFilter(groups, confMin) {
 // can ask "does ANY tab in this group match?" — per the user spec,
 // one matching tab keeps the whole group visible.
 export function matchesFilters(f) {
-  const inc = state.filterInclude.toLowerCase()
+  const F = activeFilters()
+  const inc = F.filterInclude.toLowerCase()
   // Severity + color filters are multi-select Sets: empty = no
   // filter, non-empty = membership required. Unmarked tabs bucket
   // under the literal `'none'` so ticking only that chip isolates
   // unreviewed findings.
-  if (state.filterSeverities.size > 0 && !state.filterSeverities.has(displayedSeverity(f, state.severityMode))) return false
-  if (state.filterColors.size > 0) {
+  if (F.filterSeverities.size > 0 && !F.filterSeverities.has(displayedSeverity(f, state.severityMode))) return false
+  if (F.filterColors.size > 0) {
     const col = state.triage.get(tabKey(f))?.color ?? 'none'
-    if (!state.filterColors.has(col)) return false
+    if (!F.filterColors.has(col)) return false
   }
   // Source filter — empty OR full (both 'own' and 'modules' set) =
   // no filter; otherwise restrict to the picked side. Both-checked
   // goes inert because including everything is what "no filter"
   // already means.
-  if (state.filterSources.size === 1) {
-    const allowOwn = state.filterSources.has('own')
+  if (F.filterSources.size === 1) {
+    const allowOwn = F.filterSources.has('own')
     if (allowOwn && isModule(f.file)) return false
     if (!allowOwn && !isModule(f.file)) return false
   }
@@ -238,9 +287,9 @@ export function matchesFilters(f) {
   // selects findings whose repo can't be derived (no `repo.github`
   // and no `_repoFallback`). Group-visibility via applyFilters's
   // `g.some(...)`, same as the other per-finding predicates above.
-  if (state.filterRepo) {
+  if (F.filterRepo) {
     const r = repoOfFinding(f)
-    const want = state.filterRepo === NO_REPO_SENTINEL ? null : state.filterRepo
+    const want = F.filterRepo === NO_REPO_SENTINEL ? null : F.filterRepo
     if (r !== want) return false
   }
   // Revalidation outcome — single-select dropdown shown only when the
@@ -252,8 +301,8 @@ export function matchesFilters(f) {
   // Group-visibility via applyFilters's `g.some(...)`, same as every
   // predicate above: a dedup group shows in full when any of its rows
   // carries the selected outcome.
-  if (state.filterRevalidate) {
-    const kinds = activeRevalidateKinds(state.filterRevalidate, state.filterPartial)
+  if (F.filterRevalidate) {
+    const kinds = activeRevalidateKinds(F.filterRevalidate, F.filterPartial)
     if (kinds && !kinds.includes(revalidateKind(f))) return false
   }
   // Confidence range — SKIPPED entirely while a revalidation outcome is
@@ -283,17 +332,17 @@ export function matchesFilters(f) {
   //     `[{refuted 3}, {refuted 10}]` shows only at 0. Such a row
   //     flagged `critical` doesn't ride the 10 bucket either, for the
   //     same reason.
-  if (!state.filterRevalidate) {
+  if (!F.filterRevalidate) {
     const conf = voidsConfidence(f) ? 0 : f.confidence
     if (conf === undefined) {
       if (f.critical === true) {
-        if (state.filterConfMax < 10) return false
-      } else if (state.filterConfMin > 0) {
+        if (F.filterConfMax < 10) return false
+      } else if (F.filterConfMin > 0) {
         return false
       }
     } else {
-      if (conf < state.filterConfMin) return false
-      if (state.filterConfMax < 10 && conf > state.filterConfMax) return false
+      if (conf < F.filterConfMin) return false
+      if (F.filterConfMax < 10 && conf > F.filterConfMax) return false
     }
   }
   if (inc) {
@@ -312,7 +361,7 @@ export function matchesFilters(f) {
     // Negation toggle: when on, the query excludes — keep the findings
     // that DON'T match. Per-finding (a group stays visible if any tab
     // is a non-match, same group rule as every other filter below).
-    return state.filterIncludeNegate ? !hit : hit
+    return F.filterIncludeNegate ? !hit : hit
   }
   return true
 }
@@ -325,19 +374,20 @@ export function matchesFilters(f) {
 // just because ANOTHER tab lacks it, which is not complementary. Existence
 // is computed once over the whole group, then 'with'/'without' applied.
 function matchesAnnotationFilters(group) {
-  if (!state.filterComment && !state.filterFix && !state.filterFlagged) return true
+  const F = activeFilters()
+  if (!F.filterComment && !F.filterFix && !F.filterFlagged) return true
   const groupHas = (pred) => group.some((f) => pred(state.triage.get(tabKey(f))))
-  if (state.filterComment) {
+  if (F.filterComment) {
     const has = groupHas((e) => Boolean(e?.comment))
-    if (state.filterComment === 'with' ? !has : has) return false
+    if (F.filterComment === 'with' ? !has : has) return false
   }
-  if (state.filterFix) {
+  if (F.filterFix) {
     const has = groupHas((e) => Boolean(e?.fix))
-    if (state.filterFix === 'with' ? !has : has) return false
+    if (F.filterFix === 'with' ? !has : has) return false
   }
-  if (state.filterFlagged) {
+  if (F.filterFlagged) {
     const has = groupHas((e) => e?.flagged === true)
-    if (state.filterFlagged === 'with' ? !has : has) return false
+    if (F.filterFlagged === 'with' ? !has : has) return false
   }
   return true
 }

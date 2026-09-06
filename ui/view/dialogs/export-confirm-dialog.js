@@ -8,10 +8,19 @@
 // Sibling of `<delete-report-dialog>` etc.: extends `AppDialog` for
 // the shared shadow-DOM <dialog> chrome (focus-trap + Esc-to-cancel).
 // Public `openExportConfirmDialog(mode)` snapshots the current
-// selection and resolves with `{ confirmed, view }`; Cancel / Esc /
-// native close all resolve to both false. Download also offers View,
-// which resolves `{ view: true }` and leaves it to the caller to show
-// the Markdown — this dialog's job is the selection, not the file.
+// selection and resolves with `{ confirmed, view, fields }`; Cancel /
+// Esc / native close all resolve to both flags false. Download also
+// offers View, which resolves `{ view: true }` and leaves it to the
+// caller to show the Markdown — this dialog's job is the selection,
+// not the file.
+//
+// Each listed filter can be dropped from the export with its × — the
+// counts move as it goes, and `fields` comes back carrying the relaxed
+// selection for the caller to export under. What it never touches is
+// the toolbar: the dialog works on a CLONE of the filter state (see
+// filters.js cloneFilterFields), so dropping Severity here narrows
+// nothing on screen and the app is exactly as the user left it whether
+// they export or cancel.
 //
 // Native Ctrl+P / browser-menu printing bypasses this dialog — those
 // can't be intercepted with an async confirm — so it only guards the
@@ -31,8 +40,12 @@ class ExportConfirmDialog extends AppDialog {
     included: { type: Number },
     excluded: { type: Number },
     total: { type: Number },
-    // [{ label, value }] — active filters, already humanized.
+    // [{ key, label, value, clear }] — active filters, already
+    // humanized, each with the patch that drops it.
     filters: { attribute: false },
+    // The filter selection the counts above were computed under: a
+    // clone of the toolbar's, minus whatever has been dropped here.
+    fields: { attribute: false },
     // Non-null only when viewing a trash bucket (e.g. 'Deleted').
     bucketLabel: { type: String },
     // Print from the focus view-mode emits only the single focused
@@ -47,6 +60,11 @@ class ExportConfirmDialog extends AppDialog {
     this.excluded = 0
     this.total = 0
     this.filters = []
+    this.fields = null
+    // Set once a filter has been dropped, so an untouched dialog hands
+    // back no override at all rather than a clone of what is already
+    // in force. Not reactive — nothing renders from it.
+    this._relaxed = false
     this.bucketLabel = null
     this.focusedOnly = false
   }
@@ -62,15 +80,51 @@ class ExportConfirmDialog extends AppDialog {
   // One of 'cancel' | 'view' | 'confirm'. Spelled out rather than a
   // boolean because there are now three ways out and two of them are
   // not a cancel.
+  //
+  // `fields` rides along only once a filter has actually been dropped.
+  // Null means "export under the toolbar's own selection", which lets
+  // the caller skip installing an override that would change nothing —
+  // and for print, skip the re-render that would come with it.
   _finish(action) {
     if (this._settled) return
-    super._finish({ confirmed: action === 'confirm', view: action === 'view' })
+    super._finish({
+      confirmed: action === 'confirm',
+      view: action === 'view',
+      fields: this._relaxed ? this.fields : null,
+    })
   }
 
   _onClose = () => this._finish('cancel')
   _onCancel = () => this._finish('cancel')
   _onView = () => this._finish('view')
   _onConfirm = () => this._finish('confirm')
+
+  // Drop one filter from this export. Recounts against the relaxed
+  // clone — `included` climbs, `excluded` falls — and re-describes it,
+  // which is what removes the row: `activeFilterDescriptions` lists a
+  // filter iff it still narrows something, so a cleared field simply
+  // stops being described.
+  async _onDropFilter(key) {
+    const at = this.filters.findIndex((f) => f.key === key)
+    if (at === -1) return
+    const summary = exportSelectionSummary(this.mode, { ...this.fields, ...this.filters[at].clear })
+    this._relaxed = true
+    this.fields = summary.fields
+    this.filters = summary.filters
+    this.included = summary.included
+    this.excluded = summary.excluded
+    this.total = summary.total
+    // The button that was just pressed is gone. Hand focus to the row
+    // that took its place — or to the last one, when the bottom row
+    // went — so a keyboard user can drop several without tabbing back
+    // in each time, and doesn't get dumped at the top of the document.
+    await this.updateComplete
+    const buttons = [...this.renderRoot.querySelectorAll('button[data-drop]')]
+    const next = buttons[Math.min(at, buttons.length - 1)]
+      ?? this.renderRoot.querySelector('button.primary')
+      ?? this.renderRoot.querySelector('button[data-role="cancel"]')
+    next?.focus()
+  }
 
   _countSection() {
     if (this.total === 0) {
@@ -109,7 +163,19 @@ class ExportConfirmDialog extends AppDialog {
     return html`
       <p class="ecd-filters-label">Active filters</p>
       <dl class="ecd-filters">
-        ${this.filters.map((f) => html`<dt>${f.label}</dt><dd>${f.value}</dd>`)}
+        ${this.filters.map((f) => html`
+          <dt>${f.label}</dt>
+          <dd>
+            <span class="ecd-filter-value">${f.value}</span>
+            <button
+              type="button"
+              class="ecd-filter-drop"
+              data-drop=${f.key}
+              aria-label=${`Drop the ${f.label.toLowerCase()} filter (${f.value}) from this export`}
+              @click=${() => this._onDropFilter(f.key)}
+            >×</button>
+          </dd>
+        `)}
       </dl>
     `
   }
@@ -170,6 +236,7 @@ export function openExportConfirmDialog(mode) {
       excluded: summary.excluded,
       total: summary.total,
       filters: summary.filters,
+      fields: summary.fields,
       bucketLabel: summary.bucketLabel,
       focusedOnly: summary.focusedOnly,
     })
@@ -177,8 +244,9 @@ export function openExportConfirmDialog(mode) {
     el.addEventListener('resolve', (e) => settle({
       confirmed: Boolean(e.detail?.confirmed),
       view: Boolean(e.detail?.view),
+      fields: e.detail?.fields ?? null,
     }))
-    el.addEventListener('modal-conflict', () => settle({ confirmed: false, view: false }))
+    el.addEventListener('modal-conflict', () => settle({ confirmed: false, view: false, fields: null }))
     document.body.append(el)
   })
 }
