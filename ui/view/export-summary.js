@@ -1,9 +1,11 @@
 // Summary of what a print / markdown export will contain, given the
-// active filters — feeds `<export-confirm-dialog>`. Both export paths
-// emit only the findings visible under the current triage bucket
-// (live / trash) and toolbar filters (see markdown-export.js's
-// visibleGroups and the print pipeline in events.js), so this restates
-// that selection in words + counts before the user commits.
+// active filters — feeds `<export-confirm-dialog>`, and the header of
+// the markdown document itself (markdown-export.js reads the same
+// descriptions, so the dialog and the file describe the selection in
+// the same words). Both export paths emit only the findings visible
+// under the current triage bucket (live / trash) and toolbar filters,
+// so this restates that selection in words + counts before the user
+// commits.
 //
 // Counts are over GROUPS (a dedup group = one finding with ≥1 case),
 // the same unit as the toolbar's "X of Y" counter, computed over the
@@ -13,16 +15,9 @@ import { state } from '#client/index.js'
 import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, clearFilterOverride, cloneFilterFields, setFilterOverride } from './filters.js'
 import { REVALIDATE_FILTERS, SEVERITIES, revalidateFilterKinds } from './format.js'
 import { getMergedGroups, groupState } from './group.js'
-
-const SEVERITY_LABELS = {
-  critical: 'Critical', high: 'High', medium: 'Medium', low: 'Low',
-  high_bug: 'High bug', bug: 'Bug', informational: 'Informational',
-}
-const COLOR_LABELS = { red: 'Red', blue: 'Blue', green: 'Green', gray: 'Gray', none: 'Unmarked' }
-const TRIAGE_LABELS = {
-  inprogress: 'In progress', fixed: 'Fixed', invalid: 'Invalid',
-  deleted: 'Deleted', ignored: 'Ignored',
-}
+// The words the markdown writer spells the same enumerations with, so
+// a row here and a header line in the file can't disagree on one.
+import { COLOR_LABELS, SEVERITY_LABELS, TRIAGE_LABELS } from '../../report/index.js'
 
 // The revalidation outcome in words, with the partial switch folded in
 // where it applies. That switch lives INSIDE Confirmed (it is the one
@@ -135,24 +130,22 @@ export function activeFilterDescriptions(fields = state) {
   return out
 }
 
-// Groups in the current triage bucket, on the basis the chosen export
-// actually serializes:
-//   * 'print' renders the MERGED on-screen DOM (render.js's `allGroups`
-//     = getMergedGroups narrowed to the bucket), so cross-report
-//     workspace merges collapse into single super-groups;
-//   * 'download' (markdown) iterates each report's OWN groups with no
-//     merging (see markdown-export.js's visibleGroups).
-// Counting on the matching basis keeps the dialog's number equal to
-// what that path emits — when a workspace merge is active the two
-// bases (and their per-group triage rollups) can otherwise diverge.
-// `commonTriage === state.shownTriage` is the bucket split (null =
-// live); kanban isn't reachable here (print/download buttons hide in
-// kanban mode).
-function currentBucketGroups(mode) {
-  const groups = mode === 'download'
-    ? state.reports.flatMap((r) => r.groups ?? [])
-    : getMergedGroups()
-  return groups.filter((g) => groupState(g).commonTriage === state.shownTriage)
+// The groups an export draws from: the current triage bucket over the
+// MERGED on-screen set (render.js's `allGroups` = getMergedGroups
+// narrowed to the bucket), so a workspace's cross-report duplicates
+// count — and export — as one finding with several cases, exactly as
+// the views show them. Shared by the dialog's counts and the markdown
+// adapter's selection, so the two can't disagree. `commonTriage ===
+// state.shownTriage` is the bucket split (null = live); kanban isn't
+// reachable here (print/download buttons hide in kanban mode).
+export function exportBucketGroups() {
+  return getMergedGroups().filter((g) => groupState(g).commonTriage === state.shownTriage)
+}
+
+// The bucket's name when it is a trash bucket, for the dialog's note
+// and the document's header; null for the live findings.
+export function exportBucketLabel() {
+  return state.shownTriage ? (TRIAGE_LABELS[state.shownTriage] ?? state.shownTriage) : null
 }
 
 // `{ included, total, excluded, filters, fields, bucketLabel }` for the
@@ -168,7 +161,7 @@ function currentBucketGroups(mode) {
 // override for the length of the count and pulled straight back out, so
 // the toolbar's own filters never see it.
 export function exportSelectionSummary(mode, fields = cloneFilterFields()) {
-  const bucket = currentBucketGroups(mode)
+  const bucket = exportBucketGroups()
   const total = bucket.length
   setFilterOverride(fields)
   let included
@@ -183,7 +176,7 @@ export function exportSelectionSummary(mode, fields = cloneFilterFields()) {
     excluded: total - included,
     fields,
     filters: activeFilterDescriptions(fields),
-    bucketLabel: state.shownTriage ? (TRIAGE_LABELS[state.shownTriage] ?? state.shownTriage) : null,
+    bucketLabel: exportBucketLabel(),
     // Focus view-mode prints ONLY the single focused finding: the print
     // pipeline swaps table → list but leaves focus as-is, so the printed
     // DOM is the one focused finding-card (the "Up next" queue is hidden
