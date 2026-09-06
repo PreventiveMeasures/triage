@@ -3,6 +3,8 @@
 // parse-piolium.js, which owns the document structure; everything here
 // is a pure string classifier.
 
+import { stripBrackets } from './md-structure.js'
+
 // Piolium grades findings CRITICAL / HIGH / MEDIUM (a consistency check
 // in its report assembler rejects Low-severity leakage into
 // `findings/`), but drafts and deferred entries can carry LOW or INFO,
@@ -91,9 +93,30 @@ export function slugTitle(slug) {
 export function idCell(s) {
   const v = (s || '').trim()
   const link = /^\[([^\]]+)\]\([^)]*\)$/u.exec(v)
-  const inner = link ? link[1].trim() : v
-  const m = /^\[(.+)\]$/u.exec(inner)
-  return (m ? m[1].trim() : inner).toUpperCase()
+  return stripBrackets(link ? link[1] : v).toUpperCase()
+}
+
+// A heading or list item that leads with a markdown link —
+// `[C1-command-injection](…/report.md): Title` — read back as plain
+// text with the url apart: `{ text: 'C1-command-injection Title', link }`.
+// Null when the value doesn't lead with a link.
+export function leadingLink(value) {
+  const m = /^\[([^\]]+)\]\(([^)]+)\)\s*[:—–-]*\s*(.*)$/u.exec(value)
+  if (!m) return null
+  return { text: m[3] ? `${m[1].trim()} ${m[3].trim()}` : m[1].trim(), link: m[2].trim() }
+}
+
+// `text` split at its first whitespace when the leading token is an id
+// — `p10-011 — Title`, `C1: Title`, `H-002-jwt-audience` — as
+// `{ id, slug, rest }`: trailing punctuation shed from the token, the
+// separator from the rest. Null when the leading token isn't id-shaped.
+export function leadingId(text) {
+  const space = text.search(/\s/u)
+  const first = (space === -1 ? text : text.slice(0, space)).replace(/[:.,—–-]+$/u, '')
+  const tok = idFromToken(first)
+  if (!tok) return null
+  const rest = (space === -1 ? '' : text.slice(space + 1)).replace(/^[:—–-]+\s*/u, '').trim()
+  return { id: tok.id, slug: tok.slug, rest }
 }
 
 // A finding heading in any of its observed spellings:
@@ -105,13 +128,7 @@ export function idCell(s) {
 // Returns { id, title, link } — id '' when the heading carries none,
 // link '' unless the heading's leading token is a markdown link.
 export function parseHeading(headingText) {
-  let text = headingText
-  let link = ''
-  const linked = /^\[([^\]]+)\]\(([^)]+)\)\s*[:—–-]*\s*(.*)$/u.exec(text)
-  if (linked) {
-    link = linked[2].trim()
-    text = linked[3] ? `${linked[1].trim()} ${linked[3].trim()}` : linked[1].trim()
-  }
+  const { text, link } = leadingLink(headingText) ?? { text: headingText, link: '' }
   const bracket = /^\[([^\]]+)\] *(.*)$/u.exec(text)
   if (bracket) {
     const tok = idFromToken(bracket[1].trim())
@@ -121,13 +138,8 @@ export function parseHeading(headingText) {
     // recognized scheme (`[SEC-001]`).
     return { id: bracket[1].trim().toUpperCase(), title: bracket[2].trim(), link }
   }
-  const space = text.search(/\s/u)
-  const first = (space === -1 ? text : text.slice(0, space)).replace(/[:.,—–-]+$/u, '')
-  const tok = idFromToken(first)
-  if (tok) {
-    const rest = (space === -1 ? '' : text.slice(space + 1)).replace(/^[:—–-]+\s*/u, '').trim()
-    return { id: tok.id, title: rest || slugTitle(tok.slug) || tok.id, link }
-  }
+  const lead = leadingId(text)
+  if (lead) return { id: lead.id, title: lead.rest || slugTitle(lead.slug) || lead.id, link }
   return { id: '', title: text.trim(), link }
 }
 

@@ -6,7 +6,7 @@
 
 import { cellValue, parseCodeRef, stripBold, tableObjects } from './md-structure.js'
 import {
-  idCell, idFromToken, mapSeverity, severityFromId, slugTitle,
+  idCell, leadingId, leadingLink, mapSeverity, severityFromId, slugTitle,
 } from './parse-piolium-tokens.js'
 
 // Normalize a table-row object to the shared row shape used by the
@@ -67,27 +67,26 @@ export function listFindings(body, sev, index) {
     let text = m[1].trim()
     if (/^\*\*[^:*]+:\*\*/u.test(text)) continue
 
-    let link = ''
-    const linked = /^\[([^\]]+)\]\(([^)]+)\)\s*[:—–-]*\s*(.*)$/u.exec(text)
+    // The item leads with a link or a bold token; either way it reads
+    // as plain `<id or title> <summary>` text from here on.
+    const linked = leadingLink(text)
+    const link = linked?.link ?? ''
     if (linked) {
-      link = linked[2].trim()
-      text = linked[3] ? `${linked[1].trim()} ${linked[3].trim()}` : linked[1].trim()
+      text = linked.text
     } else {
       const bold = /^\*\*([^*]+)\*\*\s*[:—–-]*\s*(.*)$/u.exec(text)
       if (bold) text = bold[2] ? `${bold[1].trim()} ${bold[2].trim()}` : bold[1].trim()
     }
     if (/^(?:none\b|no |n\/a\b)/iu.test(text)) continue
 
-    const space = text.search(/\s/u)
-    const first = (space === -1 ? text : text.slice(0, space)).replace(/[:.,—–-]+$/u, '')
-    const tok = idFromToken(first)
-    let id = ''
+    // An id-led item takes its title from the slug and keeps the
+    // summary as its body; anything else is title only.
+    const lead = leadingId(text)
+    const id = lead?.id ?? ''
     let title = text
-    if (tok) {
-      id = tok.id
-      const rest = (space === -1 ? '' : text.slice(space + 1)).replace(/^[:—–-]+\s*/u, '').trim()
-      const slugT = slugTitle(tok.slug)
-      title = slugT && rest ? `${slugT}\n\n${rest}` : (rest || slugT || tok.id)
+    if (lead) {
+      const slugT = slugTitle(lead.slug)
+      title = slugT && lead.rest ? `${slugT}\n\n${lead.rest}` : (lead.rest || slugT || lead.id)
     }
 
     const row = index.get(id)

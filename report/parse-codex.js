@@ -11,9 +11,8 @@
 // of its `<prefix>:` head}`. Each scan must contain exactly one
 // repository — asserted, not silently merged.
 //
-// First-pass: only the first path in `relevant_paths` is used as
-// `f.file` (some findings list multiple `path1 | path2 | …`); a
-// follow-up commit will surface the rest.
+// Only the first path in `relevant_paths` becomes `f.file` (some
+// findings list several, as `path1 | path2 | …`); the rest are dropped.
 
 const REQUIRED_COLUMNS = [
   'finding_url', 'repository', 'title', 'description', 'severity',
@@ -57,50 +56,46 @@ function parseCsvRows(text) {
   return rows
 }
 
+// Rows as `{ <column>: value }` records keyed by the header row, so the
+// mapping below reads columns by name; a column the file lacks reads as
+// undefined, a cell a short row lacks as ''. Null-prototype so a column
+// named `constructor` can't alias an inherited key.
+function csvRecords(header, rows) {
+  return rows.map((cells) => {
+    const record = Object.create(null)
+    header.forEach((name, i) => { record[name] = cells[i] ?? '' })
+    return record
+  })
+}
+
 // Parse + split + convert. Returns one entry per scan:
 //   { displayName, data: { type, source, findings: [...] } }
 // where `data` is the same shape ingest.js consumes from JSON.
 export function parseCodexCsvToScans(text) {
   const rows = parseCsvRows(text)
   if (rows.length < 2) throw new Error('Codex CSV: empty or missing header row')
-  const header = rows[0]
-  const colIndex = (name) => header.indexOf(name)
+  const [header, ...body] = rows
   for (const required of REQUIRED_COLUMNS) {
-    if (colIndex(required) === -1) {
-      throw new Error(`Codex CSV: missing required column "${required}"`)
-    }
-  }
-  const cols = {
-    finding_url: colIndex('finding_url'),
-    repository: colIndex('repository'),
-    title: colIndex('title'),
-    description: colIndex('description'),
-    severity: colIndex('severity'),
-    detected_at: colIndex('detected_at'),
-    committed_at: colIndex('committed_at'),
-    configured_scan_id: colIndex('configured_scan_id'),
-    commit_hash: colIndex('commit_hash'),
-    relevant_paths: colIndex('relevant_paths'),
+    if (!header.includes(required)) throw new Error(`Codex CSV: missing required column "${required}"`)
   }
 
-  // Group rows by configured_scan_id.
+  // Group rows by configured_scan_id; a row without one (a blank line
+  // included) is skipped.
   const byScan = new Map()
-  for (let i = 1; i < rows.length; i++) {
-    const r = rows[i]
-    if (r.length === 1 && r[0] === '') continue
-    const scanId = r[cols.configured_scan_id]
+  for (const record of csvRecords(header, body)) {
+    const scanId = record.configured_scan_id
     if (!scanId) continue
     if (!byScan.has(scanId)) byScan.set(scanId, [])
-    byScan.get(scanId).push(r)
+    byScan.get(scanId).push(record)
   }
   if (byScan.size === 0) throw new Error('Codex CSV: no rows with a configured_scan_id')
 
   const scans = []
-  for (const [scanId, scanRows] of byScan) {
+  for (const [scanId, records] of byScan) {
     // Each scan must belong to a single repository — surface a real
     // error if upstream ever merges scans across repos rather than
     // silently lumping them under one display name.
-    const repos = new Set(scanRows.map((r) => r[cols.repository]).filter(Boolean))
+    const repos = new Set(records.map((r) => r.repository).filter(Boolean))
     if (repos.size > 1) {
       throw new Error(`Codex CSV: scan ${scanId} contains multiple repositories: ${[...repos].join(', ')}`)
     }
@@ -109,47 +104,38 @@ export function parseCodexCsvToScans(text) {
     // follows the first `:` in configured_scan_id (typical id shape is
     // something like `uuid:<github-id>` — strip the discriminator
     // prefix and keep the human-meaningful id).
-    const scanSuffix = scanId.replace(/^[^:]+:/u, '')
-    const displayName = `${repo}:${scanSuffix}`
-
-    const findings = scanRows.map((r) => rowToFinding(r, cols))
+    const displayName = `${repo}:${scanId.replace(/^[^:]+:/u, '')}`
     scans.push({
       displayName,
-      data: { type: 'security', source: 'codex-security', findings },
+      data: { type: 'security', source: 'codex-security', findings: records.map(rowToFinding) },
     })
   }
   return scans
 }
 
-function rowToFinding(r, cols) {
-  // First non-empty filename only, for now. The next commit will
-  // surface multiple `relevant_paths` entries on one finding (some
-  // rows list 2-N paths separated by ` | `).
-  const file = (r[cols.relevant_paths] || '')
-    .split(' | ').map((s) => s.trim()).find(Boolean) || 'unknown'
-
-  // Codex CSVs lack line numbers — '?' is the same placeholder
-  // markdown findings use when the source has no `#L<n>` anchor.
-  const line = '?'
+function rowToFinding(r) {
+  // First non-empty path only; the siblings of a `path1 | path2 | …`
+  // list are dropped.
+  const file = r.relevant_paths.split(' | ').map((s) => s.trim()).find(Boolean) || 'unknown'
 
   // Title + description joined with a blank line so the table view's
   // first-line title shows the headline and the expanded view shows
   // the full body.
-  const title = r[cols.title] || ''
-  const desc = r[cols.description] || ''
-  const description = title && desc ? `${title}\n\n${desc}` : (title || desc)
+  const description = [r.title, r.description].filter(Boolean).join('\n\n')
 
   const finding = {
     // finding_url is unique per upstream finding — use it directly so
     // triage (markers / deletions) keys off the stable URL and
     // persists across reloads. The triage saver was loosened to
     // accept any non-numeric id (URLs included), see triage.js.
-    id: r[cols.finding_url],
+    id: r.finding_url,
     file,
-    line,
-    severity: (r[cols.severity] || 'medium').toLowerCase(),
+    // Codex CSVs lack line numbers — '?' is the same placeholder
+    // markdown findings use when the source has no `#L<n>` anchor.
+    line: '?',
+    severity: (r.severity || 'medium').toLowerCase(),
     description,
-    repo: { github: r[cols.repository] },
+    repo: { github: r.repository },
     // No per-finding `type` here — the codex CSV doesn't carry a
     // category column, and stamping a synthetic 'security' on every
     // row used to make the run-meta line read "security" on every
@@ -159,8 +145,8 @@ function rowToFinding(r, cols) {
     // cleanest result. data.type at the report level still keeps a
     // sensible 'security' default for document.title.
   }
-  if (cols.commit_hash !== -1 && r[cols.commit_hash]) finding.commitHash = r[cols.commit_hash]
-  if (cols.detected_at !== -1 && r[cols.detected_at]) finding.detectedAt = r[cols.detected_at]
-  if (cols.committed_at !== -1 && r[cols.committed_at]) finding.committedAt = r[cols.committed_at]
+  if (r.commit_hash) finding.commitHash = r.commit_hash
+  if (r.detected_at) finding.detectedAt = r.detected_at
+  if (r.committed_at) finding.committedAt = r.committed_at
   return finding
 }
