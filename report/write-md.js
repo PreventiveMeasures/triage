@@ -11,7 +11,7 @@
 //   <severity counts>  <annotation counts>  <index of findings, linked>
 //
 //   ## Critical (2)
-//   ### 1. <finding>              ← markdown-finding.js from here down
+//   ### 1. <finding>              ← write-md-finding.js from here down
 //   - **Location:** …             the facts
 //   <description>  #### Evidence  #### Impact  …
 //
@@ -24,21 +24,21 @@
 //
 // `doc` is plain data the caller assembles — the viewer's adapter
 // (ui/view/markdown-export.js), or anything else holding findings out
-// of report/index.js — and `hooks` are the few answers only the caller
+// of index.js — and `hooks` are the few answers only the caller
 // has: where a location links to, what a reader wrote on a finding,
 // which report a case came from. Every hook is optional; the defaults
 // link what the report itself linked and annotate nothing.
 //
-//   findingsToMarkdown({
+//   writeMarkdown({
 //     title, workspace, reports: [{ name, source }], repo, generatedAt,
 //     view: { bucket, severityMode, revalidation },
 //     filters: [{ label, value }], counts: { included, total },
 //     groups: [ [finding, …], … ],       // display order, primary case first
 //   }, { annotation, location, evidence, commit, report })
 
-import { SEVERITIES, displayedSeverity, locationLabel, runMetaLine } from '../report/finding.js'
+import { SEVERITIES, displayedSeverity, locationLabel, runMetaLine } from './finding.js'
 import { SOURCE_LABELS, severityLabel } from './labels.js'
-import { findingHeading, groupSection, repoRef } from './markdown-finding.js'
+import { findingHeading, groupSection, repoRef } from './write-md-finding.js'
 import { anchorSlug, cell, code, escapeBrackets, formatTimestamp, heading, joinBlocks, link, plural, table } from './md-text.js'
 
 // What a caller can answer about a finding, and what is assumed when
@@ -225,7 +225,7 @@ function severitySections(entries, ctx) {
   return blocks
 }
 
-export function findingsToMarkdown(doc = {}, hooks = {}) {
+export function writeMarkdown(doc = {}, hooks = {}) {
   const h = withDefaults(hooks)
   const groups = (Array.isArray(doc.groups) ? doc.groups : [])
     .map((g) => (Array.isArray(g) ? g : [g]))

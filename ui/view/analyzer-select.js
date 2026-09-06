@@ -52,18 +52,16 @@ import { classMap } from 'lit/directives/class-map.js'
 import { StateElement, html } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'
 import { NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, modelOfFinding } from './filters.js'
+import { SOURCE_LABELS } from '../../report/index.js'
 
-// Friendly labels for analyzers reported with a `source: <key>` field.
-// Unknown keys render verbatim. Exported so render.js's analyzer
-// ordering can group known source-marked imports first (the column
-// reads better when DeepSec / Codex Security / Claude Security
-// cluster ahead of bare analyzer names).
-export const ANALYZER_LABELS = {
-  'claude-security': 'Claude Security',
-  'codex-security':  'Codex Security',
-  'deepsec':         'DeepSec',
-  'piolium':         'Piolium',
-}
+// Friendly labels for analyzers reported with a `source: <key>` field —
+// the report library's own names for the producers it reads, so the
+// dropdown, the page header and the markdown export all call a
+// producer the same thing. Unknown keys render verbatim. Exported so
+// render.js's analyzer ordering can group known source-marked imports
+// first (the column reads better when DeepSec / Codex Security /
+// Claude Security cluster ahead of bare analyzer names).
+export const ANALYZER_LABELS = SOURCE_LABELS
 
 function analyzerLabel(a) {
   if (a == null) return '(none)'

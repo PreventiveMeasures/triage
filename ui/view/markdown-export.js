@@ -1,8 +1,8 @@
 // The "Download report" button's adapter: reads the viewer — which
 // findings are on screen, what the reader wrote on them, where their
 // locations link, which report each came from — and hands the plain
-// facts to formats/, which writes the document. Nothing about markdown
-// lives here.
+// facts to the report library's writer (report/write-md.js). Nothing
+// about markdown lives here.
 //
 // The set is the on-screen one: the active triage bucket (live, or a
 // trash bucket) narrowed by the toolbar filters, over the MERGED groups
@@ -22,7 +22,7 @@ import { activeFilterDescriptions, exportBucketGroups, exportBucketLabel } from 
 import { activeFilters, applyFilters, applySorting } from './filters.js'
 import { commitUrl, commonPrefix, evidenceUrl, findingUrl, hasRevalidateField, hasSeverityCorrection, isModule } from './format.js'
 import { findingRepoFallback, isIgnored, sortTabs, tabKey } from './group.js'
-import { findingsToMarkdown } from '../../formats/index.js'
+import { writeMarkdown } from '../../report/index.js'
 
 // The bucket's groups the selection in force lets through, in on-screen
 // order, each group's cases in the order the card's tab strip shows
@@ -116,7 +116,7 @@ export function reportsToMarkdown() {
   const loaded = reports.flatMap((r) => r.groups ?? [])
   const hasCorrections = loaded.some((g) => g.some(hasSeverityCorrection))
   const hasRevalidation = loaded.some((g) => g.some(hasRevalidateField))
-  return findingsToMarkdown({
+  return writeMarkdown({
     title: documentTitle(reports, workspace),
     workspace: workspace?.name ?? null,
     reports: reports.map((r) => ({ name: r.fileName, source: r.source })),

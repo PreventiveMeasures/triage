@@ -1,5 +1,5 @@
 // `report/finding.js` — the finding readers shared by the viewer and
-// the writers under formats/. The text shapers (title / body split,
+// the markdown writer (write-md.js). The text shapers (title / body split,
 // description sections, evidence notes) are pinned through the
 // viewer's re-exports in tests/description-sections.test.js; this
 // suite covers the two readers that take the layer switch as an

@@ -1,4 +1,4 @@
-// `formats/markdown.js` — the findings document the Download button
+// `report/write-md.js` — the findings document the Download button
 // writes. Pure: findings in (the parsers' own objects), a document out.
 //
 // Pinned here: the header that says what the file is and — the part a
@@ -11,12 +11,12 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { findingsToMarkdown } from '../index.js'
+import { writeMarkdown } from '../index.js'
 import { anchorSlug, cell, code, formatTimestamp, indentUnder, link, prose } from '../md-text.js'
-import { parseCodexCsvToScans } from '../../report/parse-codex.js'
-import { parseDeepsecFindings } from '../../report/parse-deepsec.js'
-import { parseMarkdownFindings } from '../../report/parse-md.js'
-import { parsePioliumFindings } from '../../report/parse-piolium.js'
+import { parseCodexCsvToScans } from '../parse-codex.js'
+import { parseDeepsecFindings } from '../parse-deepsec.js'
+import { parseMarkdownFindings } from '../parse-md.js'
+import { parsePioliumFindings } from '../parse-piolium.js'
 
 const finding = (extra = {}) => ({
   id: 'f1', file: 'src/a.js', line: 7, severity: 'high',
@@ -42,9 +42,9 @@ const line = (md, label) => {
 }
 const headings = (md) => [...md.matchAll(/^(#{1,6}) (.+)$/gmu)].map((m) => `${m[1]} ${m[2]}`)
 
-describe('findingsToMarkdown — the whole document', () => {
+describe('writeMarkdown — the whole document', () => {
   it('writes the golden two-finding document', () => {
-    const md = findingsToMarkdown(doc([
+    const md = writeMarkdown(doc([
       [finding({ confidence: 8, title: 'Token comparison is not constant-time', description: 'The token is compared with `==`.', impact: 'Timing oracle.', recommendation: 'Use `timingSafeEqual`.' })],
       [finding({ id: 'f2', file: 'src/b.js', line: '?', severity: 'low', description: 'Verbose error' })],
     ], { generatedAt: '2026-09-05T14:02:00Z' }))
@@ -99,15 +99,15 @@ describe('findingsToMarkdown — the whole document', () => {
   })
 
   it('takes an empty document, and what is not a finding', () => {
-    assert.match(findingsToMarkdown(), /^# Findings\n\n## Summary\n\nNo findings are included\.\n$/u)
-    const md = findingsToMarkdown({ groups: [null, [], ['stray', null], finding()] })
+    assert.match(writeMarkdown(), /^# Findings\n\n## Summary\n\nNo findings are included\.\n$/u)
+    const md = writeMarkdown({ groups: [null, [], ['stray', null], finding()] })
     assert.equal(headings(md).filter((h) => h.startsWith('### ')).length, 1, 'a bare finding is a one-case group; junk is dropped')
   })
 })
 
-describe('findingsToMarkdown — the header', () => {
+describe('writeMarkdown — the header', () => {
   it('names the sources, reports, workspace and repository', () => {
-    const md = findingsToMarkdown(doc([[finding()]], {
+    const md = writeMarkdown(doc([[finding()]], {
       reports: [{ name: 'a.md', source: 'claude-security' }, { name: 'b.md', source: 'deepsec' }, { name: 'c.json', source: null }],
       workspace: 'Q3 audit',
       repo: 'acme/app',
@@ -119,14 +119,14 @@ describe('findingsToMarkdown — the header', () => {
   })
 
   it('links a repository given as a URL as itself', () => {
-    const md = findingsToMarkdown(doc([[finding()]], { repo: 'https://gitlab.example/acme/app' }))
+    const md = writeMarkdown(doc([[finding()]], { repo: 'https://gitlab.example/acme/app' }))
     assert.equal(line(md, 'Repository'), '<https://gitlab.example/acme/app>')
   })
 
   it('lists the analyzer runs the included findings came from', () => {
-    const one = findingsToMarkdown(doc([[finding({ type: 'security', model: 'anthropic/claude-opus-5', effort: 'max' })]]))
+    const one = writeMarkdown(doc([[finding({ type: 'security', model: 'anthropic/claude-opus-5', effort: 'max' })]]))
     assert.equal(line(one, 'Analyzer'), 'security · opus 5 · max')
-    const two = findingsToMarkdown(doc([
+    const two = writeMarkdown(doc([
       [finding({ type: 'security', model: 'claude-opus-5' })],
       [finding({ id: 'f2', type: 'correctness', model: 'gpt-5.5' })],
     ]))
@@ -134,7 +134,7 @@ describe('findingsToMarkdown — the header', () => {
   })
 
   it('says which view the selection was made in', () => {
-    const view = (v) => line(findingsToMarkdown(doc([[finding()]], { view: v })), 'View')
+    const view = (v) => line(writeMarkdown(doc([[finding()]], { view: v })), 'View')
     assert.equal(view({ bucket: null }), 'Live findings')
     assert.equal(view({ bucket: 'Deleted' }), 'Deleted findings')
     assert.equal(view({ bucket: null, severityMode: 'original' }), 'Live findings · original analyzer severities')
@@ -142,11 +142,11 @@ describe('findingsToMarkdown — the header', () => {
     assert.equal(view({ bucket: null, revalidation: false }), 'Live findings · code view — the revalidation pass is not applied')
     assert.equal(view({ bucket: null, revalidation: true }), 'Live findings · app view — the revalidation pass is applied')
     // A caller that says nothing about the view gets no line.
-    assert.equal(line(findingsToMarkdown({ groups: [[finding()]] }), 'View'), null)
+    assert.equal(line(writeMarkdown({ groups: [[finding()]] }), 'View'), null)
   })
 
   it('puts the applied filters and the counts in the header', () => {
-    const md = findingsToMarkdown(doc([[finding()]], {
+    const md = writeMarkdown(doc([[finding()]], {
       filters: [{ label: 'Severity', value: 'Critical, High' }, { label: 'Confidence', value: '≥ 5' }],
       counts: { included: 12, total: 40 },
     }))
@@ -155,24 +155,24 @@ describe('findingsToMarkdown — the header', () => {
   })
 
   it('says outright when nothing is filtered, and when nothing is left', () => {
-    assert.equal(line(findingsToMarkdown(doc([[finding()]], { counts: { included: 1, total: 1 } })), 'Filters'), 'none')
-    assert.equal(line(findingsToMarkdown(doc([[finding()]], { counts: { included: 1, total: 1 } })), 'Included'), 'all 1 finding')
-    assert.equal(line(findingsToMarkdown(doc([], { counts: { included: 0, total: 0 } })), 'Included'), 'no findings')
-    assert.equal(line(findingsToMarkdown(doc([], { counts: { included: 0, total: 3 } })), 'Included'), '0 of 3 findings (3 filtered out)')
+    assert.equal(line(writeMarkdown(doc([[finding()]], { counts: { included: 1, total: 1 } })), 'Filters'), 'none')
+    assert.equal(line(writeMarkdown(doc([[finding()]], { counts: { included: 1, total: 1 } })), 'Included'), 'all 1 finding')
+    assert.equal(line(writeMarkdown(doc([], { counts: { included: 0, total: 0 } })), 'Included'), 'no findings')
+    assert.equal(line(writeMarkdown(doc([], { counts: { included: 0, total: 3 } })), 'Included'), '0 of 3 findings (3 filtered out)')
     // Without a filter list there is nothing to describe, so no line
     // rather than a misleading "none".
-    assert.equal(line(findingsToMarkdown({ groups: [[finding()]] }), 'Filters'), null)
+    assert.equal(line(writeMarkdown({ groups: [[finding()]] }), 'Filters'), null)
   })
 
   it('stamps the export time in UTC', () => {
-    assert.equal(line(findingsToMarkdown(doc([], { generatedAt: new Date(Date.UTC(2026, 0, 2, 3, 4, 5)) })), 'Exported'), '2026-01-02 03:04 UTC')
-    assert.equal(line(findingsToMarkdown(doc([], { generatedAt: 'not a date' })), 'Exported'), null)
+    assert.equal(line(writeMarkdown(doc([], { generatedAt: new Date(Date.UTC(2026, 0, 2, 3, 4, 5)) })), 'Exported'), '2026-01-02 03:04 UTC')
+    assert.equal(line(writeMarkdown(doc([], { generatedAt: 'not a date' })), 'Exported'), null)
   })
 })
 
-describe('findingsToMarkdown — summary and index', () => {
+describe('writeMarkdown — summary and index', () => {
   it('orders the severity table down the ladder, unknown tiers last', () => {
-    const md = findingsToMarkdown(doc([
+    const md = writeMarkdown(doc([
       [finding({ severity: 'low' })],
       [finding({ id: 'f2', severity: 'critical' })],
       [finding({ id: 'f3', severity: 'weird' })],
@@ -185,71 +185,71 @@ describe('findingsToMarkdown — summary and index', () => {
   })
 
   it('buckets a finding with no severity as informational', () => {
-    const md = findingsToMarkdown(doc([[finding({ severity: undefined })]]))
+    const md = writeMarkdown(doc([[finding({ severity: undefined })]]))
     assert.ok(md.includes('## Informational (1)'))
   })
 
   it('links every index row to its section, with the anchor GitHub gives the heading', () => {
-    const md = findingsToMarkdown(doc([[finding({ title: 'SQL injection in `getUser()` [C1]' })]]))
+    const md = writeMarkdown(doc([[finding({ title: 'SQL injection in `getUser()` [C1]' })]]))
     assert.ok(md.includes('| 1 | High | [SQL injection in `getUser()` \\[C1\\]](#1-sql-injection-in-getuser-c1) | `src/a.js:7` |'), md)
     assert.ok(md.includes('### 1. SQL injection in `getUser()` [C1]'))
   })
 
   it('keeps a title with a pipe or a line break on one table row', () => {
-    const md = findingsToMarkdown(doc([[finding({ title: 'a | b\nc' })]]))
+    const md = writeMarkdown(doc([[finding({ title: 'a | b\nc' })]]))
     assert.ok(md.includes('[a \\| b c](#1-a--b-c)'), md)
   })
 
   it('shows the confidence column only when something has a confidence', () => {
-    assert.doesNotMatch(findingsToMarkdown(doc([[finding()]])), /\| Confidence \|/u)
-    assert.match(findingsToMarkdown(doc([[finding({ confidence: 0 })]])), /\| Confidence \|\n.*\n\| 1 \| High \| .* \| 0\/10 \|/u)
+    assert.doesNotMatch(writeMarkdown(doc([[finding()]])), /\| Confidence \|/u)
+    assert.match(writeMarkdown(doc([[finding({ confidence: 0 })]])), /\| Confidence \|\n.*\n\| 1 \| High \| .* \| 0\/10 \|/u)
   })
 
   it('counts the cases of a group in its index row', () => {
-    const md = findingsToMarkdown(doc([[finding(), finding({ id: 'f2', line: 9 })]]))
+    const md = writeMarkdown(doc([[finding(), finding({ id: 'f2', line: 9 })]]))
     assert.match(md, /\(#1-token-comparison-is-not-constant-time\) \(2 cases\) \| `src\/a\.js:7` \|/u)
   })
 
   it('tallies the annotations the reader made', () => {
     const marks = { f1: { flagged: true, color: 'red', comment: 'c', fix: 'x' }, f2: { color: 'blue' } }
-    const md = findingsToMarkdown(doc([[finding()], [finding({ id: 'f2' })], [finding({ id: 'f3' })]]), { annotation: (f) => marks[f.id] ?? null })
+    const md = writeMarkdown(doc([[finding()], [finding({ id: 'f2' })], [finding({ id: 'f3' })]]), { annotation: (f) => marks[f.id] ?? null })
     assert.ok(md.includes('\nAnnotations: 1 flagged, 2 colour-marked, 1 commented, 1 with a fix link.\n'), md)
-    assert.doesNotMatch(findingsToMarkdown(doc([[finding()]])), /Annotations:/u)
+    assert.doesNotMatch(writeMarkdown(doc([[finding()]])), /Annotations:/u)
   })
 })
 
-describe('findingsToMarkdown — a finding\'s facts', () => {
+describe('writeMarkdown — a finding\'s facts', () => {
   it('links the location through the hook, and names the export', () => {
-    const md = findingsToMarkdown(doc([[finding({ exportName: 'Foo', methodName: 'bar' })]]), { location: () => 'https://x.test/a.js#L7' })
+    const md = writeMarkdown(doc([[finding({ exportName: 'Foo', methodName: 'bar' })]]), { location: () => 'https://x.test/a.js#L7' })
     assert.equal(line(md, 'Location'), '[`src/a.js:7`](https://x.test/a.js#L7) · `Foo.bar`')
   })
 
   it('links a location the report itself linked when no hook answers', () => {
-    const md = findingsToMarkdown(doc([[finding({ location: 'https://x.test/a.js#L7' })]]))
+    const md = writeMarkdown(doc([[finding({ location: 'https://x.test/a.js#L7' })]]))
     assert.equal(line(md, 'Location'), '[`src/a.js:7`](https://x.test/a.js#L7)')
-    assert.equal(line(findingsToMarkdown(doc([[finding({ location: 'piolium:C1' })]])), 'Location'), '`src/a.js:7`')
-    assert.equal(line(findingsToMarkdown(doc([[finding({ line: '10-20' })]])), 'Location'), '`src/a.js:10-20`')
+    assert.equal(line(writeMarkdown(doc([[finding({ location: 'piolium:C1' })]])), 'Location'), '`src/a.js:7`')
+    assert.equal(line(writeMarkdown(doc([[finding({ line: '10-20' })]])), 'Location'), '`src/a.js:10-20`')
   })
 
   it('writes both severities of a corrected finding, whichever lens is on', () => {
     const f = finding({ severity: 'medium', correctedSeverity: 'high', correctedSeverityReason: 'Reachable unauthenticated.' })
-    const corrected = findingsToMarkdown(doc([[f]]))
+    const corrected = writeMarkdown(doc([[f]]))
     assert.equal(line(corrected, 'Severity'), 'High — corrected from Medium')
     assert.ok(corrected.includes('## High (1)'))
     assert.ok(corrected.includes('#### Severity correction\n\nReachable unauthenticated.'))
-    const original = findingsToMarkdown(doc([[f]], { view: { severityMode: 'original' } }))
+    const original = writeMarkdown(doc([[f]], { view: { severityMode: 'original' } }))
     assert.equal(line(original, 'Severity'), 'Medium — corrected to High')
     assert.ok(original.includes('## Medium (1)'))
   })
 
   it('ignores a correction that names no known tier', () => {
-    const md = findingsToMarkdown(doc([[finding({ correctedSeverity: 'severe', correctedSeverityReason: 'x' })]]))
+    const md = writeMarkdown(doc([[finding({ correctedSeverity: 'severe', correctedSeverityReason: 'x' })]]))
     assert.equal(line(md, 'Severity'), 'High')
     assert.doesNotMatch(md, /Severity correction/u)
   })
 
   it('notes a correction that varies across reports, and the analyzer\'s critical flag', () => {
-    const md = findingsToMarkdown(doc([[finding({
+    const md = writeMarkdown(doc([[finding({
       critical: true,
       correctedSeverity: 'critical',
       _correctedByReport: { 'a.json': { severity: 'critical' }, 'b.json': { severity: 'high' } },
@@ -258,58 +258,58 @@ describe('findingsToMarkdown — a finding\'s facts', () => {
   })
 
   it('names the analyzer run only where it varies', () => {
-    const same = findingsToMarkdown(doc([[finding({ type: 'security', model: 'opus-5' })], [finding({ id: 'f2', type: 'security', model: 'opus-5' })]]))
+    const same = writeMarkdown(doc([[finding({ type: 'security', model: 'opus-5' })], [finding({ id: 'f2', type: 'security', model: 'opus-5' })]]))
     assert.equal(line(same, 'Analyzer'), 'security · opus 5', 'the header names it once')
     assert.doesNotMatch(same, /^- \*\*Analyzer:\*\* .*\n- \*\*Analyzer:\*\*/mu)
     assert.equal(same.match(/^- \*\*Analyzer:\*\*/gmu).length, 1)
-    const varies = findingsToMarkdown(doc([[finding({ type: 'security', model: 'opus-5' })], [finding({ id: 'f2', type: 'correctness' })]]))
+    const varies = writeMarkdown(doc([[finding({ type: 'security', model: 'opus-5' })], [finding({ id: 'f2', type: 'correctness' })]]))
     assert.equal(line(varies, 'Analyzers'), 'security · opus 5; correctness', 'the header lists both runs')
     assert.deepEqual([...varies.matchAll(/^- \*\*Analyzer:\*\* (.*)$/gmu)].map((m) => m[1]), ['security · opus 5', 'correctness'], 'and each finding names its own')
   })
 
   it('stamps the revalidation outcome, and the pass\'s own row', () => {
-    const md = findingsToMarkdown(doc([[finding({ revalidate: 'Refuted ' })], [finding({ id: 'f2', revalidate: 'revalidation' })]]))
+    const md = writeMarkdown(doc([[finding({ revalidate: 'Refuted ' })], [finding({ id: 'f2', revalidate: 'revalidation' })]]))
     assert.match(md, /- \*\*Revalidation:\*\* refuted$/mu)
     assert.match(md, /- \*\*Revalidation:\*\* the revalidation pass itself$/mu)
-    assert.equal(line(findingsToMarkdown(doc([[finding({ revalidate: 'maybe' })]])), 'Revalidation'), null, 'an unrecognised value is no stamp')
+    assert.equal(line(writeMarkdown(doc([[finding({ revalidate: 'maybe' })]])), 'Revalidation'), null, 'an unrecognised value is no stamp')
   })
 
   it('takes the revalidation layer off with the view', () => {
     const f = finding({ type: 'security', revalidate: 'refuted', revalidateVerdict: 'Not reachable.', revalidateRecommendation: 'Drop it.' })
-    const on = findingsToMarkdown(doc([[f]]))
+    const on = writeMarkdown(doc([[f]]))
     assert.ok(on.includes('#### Revalidation verdict\n\nNot reachable.'))
     assert.ok(on.includes('#### Revalidation recommendation\n\nDrop it.'))
-    const off = findingsToMarkdown(doc([[f], [finding({ id: 'f2', type: 'security', revalidate: 'revalidation' })]], { view: { revalidation: false } }))
+    const off = writeMarkdown(doc([[f], [finding({ id: 'f2', type: 'security', revalidate: 'revalidation' })]], { view: { revalidation: false } }))
     assert.doesNotMatch(off, /Revalidation/u)
     assert.doesNotMatch(off, /Not reachable|Drop it|revalidate/u)
   })
 
   it('writes what the reader did with the finding', () => {
     const annotation = () => ({ triage: 'inprogress', color: 'red', flagged: true, fix: 'https://github.com/o/r/pull/42', comment: 'Confirmed on staging.\n\nSee the ticket.' })
-    const md = findingsToMarkdown(doc([[finding()]]), { annotation })
+    const md = writeMarkdown(doc([[finding()]]), { annotation })
     assert.equal(line(md, 'Triage'), 'In progress · Red mark · Flagged')
     assert.equal(line(md, 'Fix'), '<https://github.com/o/r/pull/42>')
     assert.ok(md.endsWith('#### Comment\n\nConfirmed on staging.\n\nSee the ticket.\n'), md)
   })
 
   it('takes a per-report ignore as the triage state, and a fix that is not a URL as text', () => {
-    const md = findingsToMarkdown(doc([[finding()]]), { annotation: () => ({ ignored: true, fix: 'internal ticket #42' }) })
+    const md = writeMarkdown(doc([[finding()]]), { annotation: () => ({ ignored: true, fix: 'internal ticket #42' }) })
     assert.equal(line(md, 'Triage'), 'Ignored')
     assert.equal(line(md, 'Fix'), 'internal ticket #42')
-    assert.equal(line(findingsToMarkdown(doc([[finding()]]), { annotation: () => ({ flagged: false }) }), 'Triage'), null)
+    assert.equal(line(writeMarkdown(doc([[finding()]]), { annotation: () => ({ flagged: false }) }), 'Triage'), null)
   })
 
   it('names each case\'s report only when the document spans several', () => {
-    const one = findingsToMarkdown(doc([[finding()]]), { report: () => 'r.json' })
+    const one = writeMarkdown(doc([[finding()]]), { report: () => 'r.json' })
     assert.equal(line(one, 'Report'), '`r.json`', 'the header line')
     assert.equal(one.match(/^- \*\*Report:\*\*/gmu).length, 1)
-    const two = findingsToMarkdown(doc([[finding()], [finding({ id: 'f2' })]], { reports: [{ name: 'a.json' }, { name: 'b.json' }] }), { report: (f) => (f.id === 'f1' ? 'a.json' : 'b.json') })
+    const two = writeMarkdown(doc([[finding()], [finding({ id: 'f2' })]], { reports: [{ name: 'a.json' }, { name: 'b.json' }] }), { report: (f) => (f.id === 'f1' ? 'a.json' : 'b.json') })
     assert.match(two, /- \*\*Report:\*\* `a.json`$/mu)
     assert.match(two, /- \*\*Report:\*\* `b.json`$/mu)
   })
 
   it('names a finding\'s own repository when it is not the document\'s', () => {
-    const md = findingsToMarkdown(doc([
+    const md = writeMarkdown(doc([
       [finding({ repo: { github: 'acme/app' } })],
       [finding({ id: 'f2', file: 'node_modules/left-pad/index.js', repo: { github: 'left-pad/left-pad' } })],
     ], { repo: 'acme/app' }))
@@ -319,12 +319,12 @@ describe('findingsToMarkdown — a finding\'s facts', () => {
 
   it('links the introducing commit through the hook, or prints the hash', () => {
     const f = finding({ commitHash: 'abc1234deadbeef' })
-    assert.equal(line(findingsToMarkdown(doc([[f]]), { commit: () => 'https://github.com/o/r/commit/abc1234deadbeef' }), 'Introduced in'), '[`abc1234`](https://github.com/o/r/commit/abc1234deadbeef)')
-    assert.equal(line(findingsToMarkdown(doc([[f]])), 'Introduced in'), '`abc1234deadbeef`')
+    assert.equal(line(writeMarkdown(doc([[f]]), { commit: () => 'https://github.com/o/r/commit/abc1234deadbeef' }), 'Introduced in'), '[`abc1234`](https://github.com/o/r/commit/abc1234deadbeef)')
+    assert.equal(line(writeMarkdown(doc([[f]])), 'Introduced in'), '`abc1234deadbeef`')
   })
 
   it('writes the provenance a report attached', () => {
-    const md = findingsToMarkdown(doc([[finding({
+    const md = writeMarkdown(doc([[finding({
       discoveredIn: 'src/routes.js', package: { npm: { name: 'acme-db', version: '2.1.0' } },
       status: 'Open', branch: 'main', dateCreated: '2026-08-30', detectedAt: '2026-01-15', committedAt: '2025-12-01',
       pocStatus: 'executed', parent: 'C1', slug: 'rule-slug', priority: 7,
@@ -339,46 +339,46 @@ describe('findingsToMarkdown — a finding\'s facts', () => {
   })
 
   it('leaves out what a finding does not carry, or carries as something else', () => {
-    const md = findingsToMarkdown(doc([[finding({ discoveredIn: 'src/a.js', package: { npm: {} }, status: { open: true }, priority: NaN })]]))
+    const md = writeMarkdown(doc([[finding({ discoveredIn: 'src/a.js', package: { npm: {} }, status: { open: true }, priority: NaN })]]))
     for (const label of ['Found while analyzing', 'Package', 'Status', 'Priority', 'Confidence', 'Triage', 'Fix', 'Revalidation']) {
       assert.equal(line(md, label), null, label)
     }
   })
 })
 
-describe('findingsToMarkdown — a finding\'s narrative', () => {
+describe('writeMarkdown — a finding\'s narrative', () => {
   it('lifts the first line into the heading and writes the rest as the body', () => {
-    const md = findingsToMarkdown(doc([[finding({ description: 'Shell injection\n\nThe worker pool forwards arguments to a shell.' })]]))
+    const md = writeMarkdown(doc([[finding({ description: 'Shell injection\n\nThe worker pool forwards arguments to a shell.' })]]))
     assert.ok(md.includes('### 1. Shell injection\n'))
     assert.ok(md.includes('- **Severity:** High\n\nThe worker pool forwards arguments to a shell.\n'), md)
   })
 
   it('does not repeat a one-line description under the heading it became', () => {
-    const md = findingsToMarkdown(doc([[finding({ description: 'One line only.' })]]))
+    const md = writeMarkdown(doc([[finding({ description: 'One line only.' })]]))
     assert.ok(md.includes('### 1. One line only.\n\n- **Location:**'))
     assert.equal(md.split('One line only.').length, 3, 'in the index and the heading, nowhere else')
   })
 
   it('keeps a description whose one line was too long for the heading', () => {
     const long = `A ${'very '.repeat(40)}long single-line description.`
-    const md = findingsToMarkdown(doc([[finding({ description: long })]]))
+    const md = writeMarkdown(doc([[finding({ description: long })]]))
     assert.match(md, /^### 1\. A very .*…$/mu)
     assert.ok(md.includes(`\n\n${long}\n`), 'the body carries the whole line')
   })
 
   it('keeps a description that opens on a fence whole', () => {
     const description = '```ts\nconst a = 1\n```\n\nProse under it.'
-    const md = findingsToMarkdown(doc([[finding({ description })]]))
+    const md = writeMarkdown(doc([[finding({ description })]]))
     assert.ok(md.includes(`- **Severity:** High\n\n${description}\n`), md)
   })
 
   it('does not repeat a title the description opens with', () => {
-    const md = findingsToMarkdown(doc([[finding({ title: 'A title', description: 'A title\n\nThe body.' })]]))
+    const md = writeMarkdown(doc([[finding({ title: 'A title', description: 'A title\n\nThe body.' })]]))
     assert.ok(md.includes('### 1. A title\n\n- **Location:** `src/a.js:7`\n- **Severity:** High\n\nThe body.\n'), md)
   })
 
   it('gives the labelled sections a report wrote their own headings, after the evidence', () => {
-    const md = findingsToMarkdown(doc([[finding({
+    const md = writeMarkdown(doc([[finding({
       title: 'A title',
       description: 'Lead.\n\nMore lead.\n\n**Impact:** Boom.\n\nA trailing note.\n\n**Root Cause:** Merge.',
       evidence: [{ file: 'src/a.js', line: 7 }],
@@ -393,7 +393,7 @@ describe('findingsToMarkdown — a finding\'s narrative', () => {
   })
 
   it('writes the evidence as a loose list, each note its own paragraph under its reference', () => {
-    const md = findingsToMarkdown(doc([[finding({ evidence: [
+    const md = writeMarkdown(doc([[finding({ evidence: [
       { file: 'src/a.js', line: '10-20', url: 'https://x.test/a.js#L10-L20', text: 'Tainted here.' },
       { file: 'src/b.js', line: '?', observation: 'Reads the file.\nTwo lines.' },
       { url: 'https://x.test/c.js' },
@@ -409,7 +409,7 @@ describe('findingsToMarkdown — a finding\'s narrative', () => {
   })
 
   it('writes every narrative field as a section, in the card\'s order', () => {
-    const md = findingsToMarkdown(doc([[finding({
+    const md = writeMarkdown(doc([[finding({
       impact: 'i', reproduction: 'r', recommendation: 'rec', confidenceReason: 'cr',
       revalidate: 'confirmed', revalidateVerdict: 'rv', revalidateRecommendation: 'rr',
       correctedSeverity: 'critical', correctedSeverityReason: 'sc',
@@ -421,7 +421,7 @@ describe('findingsToMarkdown — a finding\'s narrative', () => {
   })
 
   it('strips the export markers the isolate pipeline injects', () => {
-    const md = findingsToMarkdown(doc([[finding({
+    const md = writeMarkdown(doc([[finding({
       exportName: 'getUser', exportsMode: 'isolate',
       description: '[export: getUser] The id is interpolated.',
       impact: '[export: getUser] Every row.',
@@ -431,7 +431,7 @@ describe('findingsToMarkdown — a finding\'s narrative', () => {
   })
 
   it('closes a fence a report left open, and normalises line endings', () => {
-    const md = findingsToMarkdown(doc([
+    const md = writeMarkdown(doc([
       [finding({ description: 'Lead.\r\n\r\nBody line.\r\n\r\n**Impact:** Boom.\r\n\r\n```js\r\nrun()' })],
       [finding({ id: 'f2', description: 'Next.' })],
     ]))
@@ -441,9 +441,9 @@ describe('findingsToMarkdown — a finding\'s narrative', () => {
   })
 })
 
-describe('findingsToMarkdown — a group of cases', () => {
+describe('writeMarkdown — a group of cases', () => {
   it('writes one heading with a case under it per member', () => {
-    const md = findingsToMarkdown(doc([[
+    const md = writeMarkdown(doc([[
       finding({ description: 'Prototype pollution\n\nFirst run.', impact: 'i1' }),
       finding({ id: 'f2', line: 9, description: 'Prototype pollution\n\nSecond run.', impact: 'i2' }),
     ]]), { report: (f) => (f.id === 'f1' ? 'a.json' : 'b.json') })
@@ -457,7 +457,7 @@ describe('findingsToMarkdown — a group of cases', () => {
   })
 
   it('notes a case named differently from its group', () => {
-    const md = findingsToMarkdown(doc([[finding({ description: 'The name' }), finding({ id: 'f2', description: 'Another name' })]]))
+    const md = writeMarkdown(doc([[finding({ description: 'The name' }), finding({ id: 'f2', description: 'Another name' })]]))
     assert.ok(md.includes('2 cases of this finding.\n\n#### Case 1 of 2 — `src/a.js:7`\n\n- **Location:**'), md)
     assert.ok(md.includes('#### Case 2 of 2 — `src/a.js:7`\n\nAnother name\n\n- **Location:**'), md)
   })
@@ -465,9 +465,9 @@ describe('findingsToMarkdown — a group of cases', () => {
 
 // Every format the report library reads, written back out: the fields
 // each parser preserves land on the page.
-describe('findingsToMarkdown — every format the library reads', () => {
+describe('writeMarkdown — every format the library reads', () => {
   it('claude-security markdown', () => {
-    const md = findingsToMarkdown(doc([[parseMarkdownFindings([
+    const md = writeMarkdown(doc([[parseMarkdownFindings([
       '# Unsafe deserialization in the config loader',
       '',
       '## Details',
@@ -506,7 +506,7 @@ describe('findingsToMarkdown — every format the library reads', () => {
   })
 
   it('deepsec markdown', () => {
-    const md = findingsToMarkdown(doc([[parseDeepsecFindings([
+    const md = writeMarkdown(doc([[parseDeepsecFindings([
       '# Vulnerability Scan Report', '', '## HIGH (1)', '',
       '### Unsafe regex', '',
       '- **File:** `src/x.js`', '- **Lines:** 26, 28', '- **Slug:** unsafe-regex', '- **Confidence:** high', '',
@@ -521,7 +521,7 @@ describe('findingsToMarkdown — every format the library reads', () => {
   })
 
   it('piolium markdown', () => {
-    const md = findingsToMarkdown(doc([[parsePioliumFindings([
+    const md = writeMarkdown(doc([[parsePioliumFindings([
       '# Security Audit Report: example-project', '', '**Target:** acme/app', '**Commit audited:** deadbeef', '',
       '## Summary of Findings', '',
       '| ID | Title | Severity | PoC Status | Parent |', '|----|-------|----------|------------|--------|',
@@ -550,7 +550,7 @@ describe('findingsToMarkdown — every format the library reads', () => {
     const header = 'finding_url,repository,repository_url,title,description,severity,status,detected_at,committed_at,author_email,assignee_name,assignee_email,has_patch,configured_scan_id,commit_hash,relevant_paths,resolution_reason'
     const row = 'https://example.com/finding/1,alice/widget,https://github.com/alice/widget,A title,A description,high,open,2026-01-15,2025-12-01,,,,false,scan-uuid:scan-1,abc1234deadbeef,src/main.js,'
     const scan = parseCodexCsvToScans(`${header}\n${row}\n`)[0]
-    const md = findingsToMarkdown(doc([[scan.data.findings[0]]], { reports: [{ name: `${scan.displayName}.codex`, source: scan.data.source }] }),
+    const md = writeMarkdown(doc([[scan.data.findings[0]]], { reports: [{ name: `${scan.displayName}.codex`, source: scan.data.source }] }),
       { commit: (f) => `https://github.com/${f.repo.github}/commit/${f.commitHash}` })
     assert.equal(line(md, 'Source'), 'Codex Security')
     assert.ok(md.includes('### 1. A title\n\n- **Location:** `src/main.js`\n- **Severity:** High\n- **Repository:** [alice/widget](https://github.com/alice/widget)\n- **Introduced in:** [`abc1234`](https://github.com/alice/widget/commit/abc1234deadbeef)\n- **Detected:** 2026-01-15\n- **Committed:** 2025-12-01\n\nA description\n'), md)

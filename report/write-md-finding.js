@@ -1,8 +1,8 @@
 // One finding as markdown — its heading, the facts that aren't prose as
 // a labelled list, then the narrative in the order a reader needs it.
-// The document (markdown.js) hands in the heading text and the depth to
+// The document (write-md.js) hands in the heading text and the depth to
 // write at; everything about WHAT a finding carries is read here, off
-// the parser's own object, through report/finding.js.
+// the parser's own object, through finding.js.
 //
 // Nothing a finding carries is dropped for being unfamiliar to the
 // viewer. The fields the markdown importers preserve for exactly this
@@ -15,7 +15,7 @@
 // or by several runs — is one heading with a case under it per member,
 // so the reader meets the finding once and its reports as its cases.
 
-import { correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceNote, findingDisplayName, findingTitle, hasSeverityCorrection, locationLabel, revalidateKindOf, runMetaLine, splitDescription, stripExportMarker } from '../report/finding.js'
+import { correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceNote, findingDisplayName, findingTitle, hasSeverityCorrection, locationLabel, revalidateKindOf, runMetaLine, splitDescription, stripExportMarker } from './finding.js'
 import { COLOR_LABELS, TRIAGE_LABELS, severityLabel } from './labels.js'
 import { autolink, code, heading, indentUnder, isHttpUrl, joinBlocks, link, plural, prose } from './md-text.js'
 

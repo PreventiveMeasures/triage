@@ -17,7 +17,7 @@ import { REVALIDATE_FILTERS, SEVERITIES, revalidateFilterKinds } from './format.
 import { getMergedGroups, groupState } from './group.js'
 // The words the markdown writer spells the same enumerations with, so
 // a row here and a header line in the file can't disagree on one.
-import { COLOR_LABELS, SEVERITY_LABELS, TRIAGE_LABELS } from '../../formats/index.js'
+import { COLOR_LABELS, SEVERITY_LABELS, TRIAGE_LABELS } from '../../report/index.js'
 
 // The revalidation outcome in words, with the partial switch folded in
 // where it applies. That switch lives INSIDE Confirmed (it is the one
