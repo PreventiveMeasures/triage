@@ -130,21 +130,25 @@ function renderPreservingTableScroll() {
   if (state.viewMode === 'table') renderPreservingScrollOf('.findings-table-list')
   else render()
 }
-// Coalesce Search-tab re-renders to one per animation frame. The
-// full-bundle scan (renderBundleSearchResults) runs inside render(),
-// so rendering synchronously on every keystroke would tie typing
-// latency to the scan cost; deferring to the next frame keeps the
-// input responsive and collapses bursts (held key / paste / IME) into
-// a single scan. The query state is written synchronously, so a frame
-// already pending just picks up the newest value when it fires.
-// (The scan itself also refines forward-typed queries from the
-// previous keystroke's result — see bundle-search-scan.js — so the
-// per-frame cost usually drops to re-checking prior hit lines.)
-let _bundleSearchRaf = 0
-function renderBundleSearchDebounced() {
-  if (_bundleSearchRaf) return
-  _bundleSearchRaf = requestAnimationFrame(() => {
-    _bundleSearchRaf = 0
+// Coalesce a search field's re-renders to one per animation frame.
+// Two fields earn it. The bundle Search tab's full-bundle scan
+// (renderBundleSearchResults) runs inside render(), so rendering
+// synchronously on every keystroke would tie typing latency to the
+// scan cost. The findings search re-filters and re-sorts the whole
+// loaded set and rebuilds the rows it shows — cheap per keystroke on
+// a small report, a frame or more on a large one. Deferring to the
+// next frame keeps the input responsive and collapses bursts (held
+// key / paste / IME) into a single render. The query state is written
+// synchronously, so a frame already pending just picks up the newest
+// value when it fires. (The bundle scan also refines forward-typed
+// queries from the previous keystroke's result — see
+// bundle-search-scan.js — so its per-frame cost usually drops to
+// re-checking prior hit lines.)
+let _searchRaf = 0
+function renderSearchNextFrame() {
+  if (_searchRaf) return
+  _searchRaf = requestAnimationFrame(() => {
+    _searchRaf = 0
     render()
   })
 }
@@ -2051,19 +2055,19 @@ report.addEventListener('mark-color', (e) => {
 //
 // The swap/restore lifecycle is owned by a beforeprint/afterprint
 // pair so non-button entry points (Ctrl+P, browser menu, print
-// extensions) get the same layout. The pair alone isn't enough:
+// extensions) get the same layout. The pair alone wasn't enough:
 // `<finding-card>` is Lit, rendering in a microtask, so going
-// straight from beforeprint to the browser snapshot prints empty
+// straight from beforeprint to the browser snapshot printed empty
 // shells — only the file/location headers (synchronous via innerHTML)
-// show. The button handler fixes that by swapping eagerly and
-// awaiting every card's `updateComplete` BEFORE `window.print()`;
-// beforeprint then no-ops since `prepareForPrint` is idempotent on
-// the saved-state sentinel. The Ctrl+P / menu path can't insert that
-// await and is best-effort — mode swap + title land, but finding
-// bodies may print blank on the first shot (a second print after Lit
-// catches up renders fully). Microtasks drain through the await chain
-// in user-gesture context, so `window.print()` still pops a dialog
-// without the browser flagging it as automation.
+// showed. The button handler swaps eagerly and awaits every card's
+// render BEFORE `window.print()`; beforeprint then no-ops since
+// `prepareForPrint` is idempotent on the saved-state sentinel. The
+// Ctrl+P / menu path can't insert that await, so `prepareForPrint`
+// builds every card's body synchronously instead (`ensureRendered`
+// with `sync`), which is what makes both paths print complete.
+// Microtasks drain through the await chain in user-gesture context,
+// so `window.print()` still pops a dialog without the browser
+// flagging it as automation.
 //
 // A non-null `printSavedMode` also doubles as the re-entrancy guard,
 // so the click handler doesn't race itself across the await and
@@ -2099,6 +2103,18 @@ function prepareForPrint() {
     rerender = true
   }
   if (rerender) render()
+  // Every card goes on paper, so every card needs its body: the list
+  // surfaces build them only near the viewport (finding-card.js), and
+  // a print of a long report would otherwise be shells past the first
+  // screen. Built synchronously, because this also runs as the
+  // `beforeprint` handler of a native Ctrl+P, which can't await
+  // anything: the browser may snapshot the page the moment the handler
+  // returns, and a body left to Lit's microtask would print as the
+  // shell it was replacing. This covers the cards the mode swap above
+  // just created as well as the ones already on the page. (The button
+  // path below awaits the same cards anyway; after this the wait is
+  // already over.)
+  for (const card of report.querySelectorAll('finding-card')) card.ensureRendered({ sync: true })
   const fileNames = state.reports.map((r) => r.fileName)
   let target = ''
   if (fileNames.length === 1) target = fileNames[0]
@@ -2152,12 +2168,13 @@ document.addEventListener('print-requested', async () => {
   printFilterFields = fields
   prepareForPrint()
   try {
-    // `updateComplete` resolves after the element's render() has
-    // applied its template; doing this on every card is overkill
-    // in steady-state but cheap enough relative to dialog-modal
-    // time.
+    // `ensureRendered` builds a card's body if the list surfaces
+    // hadn't yet (prepareForPrint asked already; this is the wait),
+    // and resolves after the element's render() has applied its
+    // template. Doing this on every card is overkill in steady-state
+    // but cheap enough relative to dialog-modal time.
     await Promise.all(
-      [...report.querySelectorAll('finding-card')].map((c) => c.updateComplete),
+      [...report.querySelectorAll('finding-card')].map((c) => c.ensureRendered()),
     )
     window.print()
   } catch (e) {
@@ -2383,6 +2400,11 @@ report.addEventListener('search-input', (e) => {
     // query starts matching (the toggle is hidden while empty, so a
     // persisted mode would resurface unseen).
     if (!value) state.filterIncludeNegate = false
+    // Per-frame, like the bundle search below: the `<toolbar-search>`
+    // input keeps its own value through its autorun, so the field
+    // stays responsive while the list catches up.
+    renderSearchNextFrame()
+    return
   } else if (kind === 'files') {
     state.filesSearch = value
   } else if (kind === 'packages') {
@@ -2397,7 +2419,7 @@ report.addEventListener('search-input', (e) => {
     // below. The `<bundle-search>` component still updates its own
     // input via its autorun, so the field stays responsive.
     state.bundleSearchQuery = value
-    renderBundleSearchDebounced()
+    renderSearchNextFrame()
     return
   } else {
     return

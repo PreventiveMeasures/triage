@@ -44,6 +44,11 @@
   flex: 1;
 }
 :host(:last-child) .card { border-bottom: none; }
+/* The shell a lazily-built card shows before its body lands
+   (finding-card.js): a card's worth of height, so the frame between
+   the shell painting and the body arriving doesn't collapse the list
+   under the reader. */
+.card.card-pending { min-height: 8rem; }
 /* No `.is-critical` card tint — the severity badge already carries the
    color, and a card-wide red collides with `.mark-red`'s identical-hue
    tint. Mirrors the removal in finding-row.css. */

@@ -41,6 +41,10 @@
   transition: background .12s;
 }
 :host(:last-child) .row { border-bottom: none; }
+/* The shell a row shows before it is within range of the viewport
+   (finding-row.js): about a row's height, matching the
+   `contain-intrinsic-size` estimate in finding-table.css. */
+.row.row-pending { min-height: 3rem; }
 :host(:hover) .row { background: rgb(from var(--text) r g b / .04); }
 /* No `.is-critical` row tint — the severity badge already carries the
    color, and a row-wide red collides with `.mark-red`'s identical-hue
