@@ -1105,10 +1105,13 @@ export async function ingestReport(name, content, gen = null) {
         inheritReportMeta(filled, data)
         // Effective analyzer string for the toolbar's analyzer filter.
         // Source-marked reports (deepsec / codex-security /
-        // claude-security) use their tool name; native JSON dumps use
-        // the per-finding `type` (undefined → null, a stable sentinel
-        // for the "no analyzer" bucket).
-        filled._analyzer = data.source ?? (filled.type ?? null)
+        // claude-security / piolium) use their tool name; native JSON
+        // dumps use the per-finding `type` (undefined → null, a stable
+        // sentinel for the "no analyzer" bucket). A finding stamped with
+        // its own `source` — a re-imported markdown export that mixed a
+        // product's findings with the analyzer's own runs
+        // (report/parse-deepview-md.js) — is that product's.
+        filled._analyzer = filled.source ?? data.source ?? (filled.type ?? null)
         if (filled.id && !idToFinding.has(filled.id)) idToFinding.set(filled.id, filled)
         stamped.push(filled)
       }

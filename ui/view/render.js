@@ -252,15 +252,16 @@ function headerTemplate(mergedGroups, fileNames, repoInputUseful, knownRepo, tre
   const findingNoun = `finding${totalCount === 1 ? '' : 's'}`
   const countLabel = `${totalCount} ${findingNoun}`
 
-  // Source-marked reports (claude-security, codex-security, deepsec)
-  // carry per-finding `type` as a category, not an analyzer name, so
-  // it's omitted from the header tags here — the title already
-  // conveys the product (`Claude Security findings`, etc.). The
-  // analyzer-prefix label only makes sense for the DeepView native
-  // bucket and any mixed loads. Workspace mode also drops the
-  // `analyzer:` tag — a merged view of multiple reports tends to
-  // accumulate several combos and the prefix tag inflates the
-  // header into a visually crowded strip.
+  // Source-marked reports (claude-security, codex-security, deepsec,
+  // piolium) are one analyzer each — the product — and stamp no
+  // per-finding `type`, so the slot is omitted from the header tags:
+  // the title already conveys the product (`Claude Security
+  // findings`, etc.), and a bare `analyzer: null` under it would only
+  // say so again. The analyzer-prefix label only makes sense for the
+  // DeepView native bucket and any mixed loads. Workspace mode also
+  // drops the `analyzer:` tag — a merged view of multiple reports
+  // tends to accumulate several combos and the prefix tag inflates
+  // the header into a visually crowded strip.
   const dropAnalyzerType = singleSource || state.currentWorkspace
   const tagFields = dropAnalyzerType
     ? COMBO_FIELDS.filter((f) => f !== 'type')

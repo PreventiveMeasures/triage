@@ -1,7 +1,7 @@
 {
   "name": "@preventive/report",
   "version": "0.0.0",
-  "description": "Parsers and a markdown writer for security-scan reports",
+  "description": "Parsers for security-scan reports, and a markdown writer whose document reads back in",
   "license": "MIT",
   "author": {
     "name": "Nikita Skovoroda",
@@ -41,6 +41,8 @@
     "meta.js",
     "parse-codex.js",
     "parse-deepsec.js",
+    "parse-deepview-fields.js",
+    "parse-deepview-md.js",
     "parse-md-id.js",
     "parse-md.js",
     "parse-piolium-rows.js",

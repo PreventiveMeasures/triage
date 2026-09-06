@@ -1,7 +1,7 @@
 // Markdown findings parser — secondary input format (intentionally
 // undocumented; supported as a convenience but not advertised in the
 // README). Returns the same shape `ingest.js` expects from JSON:
-//   { type, findings: [{ file, line, severity, description, ... }] }
+//   { type, source, findings: [{ file, line, severity, description, ... }] }
 // or null when the input doesn't look like the markdown format, so
 // callers can fall back to a JSON parse failure message.
 //
@@ -69,15 +69,6 @@ export function parseMarkdownFindings(content) {
   }
   if (findings.length === 0) return null
 
-  // Top-level analyzer type — used as the fallback `data.type` in
-  // ingest for findings that don't carry their own `f.type`. With the
-  // per-finding category mapped to `f.type` below, this default only
-  // matters when a finding is missing its **Category:** line; pick
-  // the first such category that appears so the document title /
-  // header keep something meaningful in the common single-category
-  // case. 'analysis' matches the JSON path's default.
-  const type = findings.find((f) => f.type)?.type || 'analysis'
-
   // `source` lets the renderer recognize Claude-Security-format
   // reports without re-parsing them — used for the page header
   // title (`Claude Security results` instead of the JSON-style
@@ -85,7 +76,12 @@ export function parseMarkdownFindings(content) {
   // than file-extension sniffing so a renamed `.md` file doesn't
   // change behavior, and so a future MD producer with a different
   // identity could opt into its own label.
-  return { type, source: 'claude-security', findings }
+  //
+  // The report-level `type` is the product's category, 'security', as
+  // for every other source-marked producer: Claude Security is ONE
+  // analyzer, and the per-finding `**Category:**` is what kind of
+  // issue a finding is (see parseBlock), not which run found it.
+  return { type: 'security', source: 'claude-security', findings }
 }
 
 function parseBlock(block) {
@@ -125,13 +121,15 @@ function parseBlock(block) {
   if (meta.branch) finding.branch = meta.branch
   if (meta['date created']) finding.dateCreated = meta['date created']
   if (meta.status) finding.status = meta.status
-  // Per-finding category lands on `type` to match the JSON shape,
-  // where each finding can carry its own analyzer type. Lowercased so
-  // the header analyzer-breakdown groups consistently regardless of
-  // source casing ("Security" vs "security"). Without this mapping,
-  // ingest.js would fall back to data.type for every finding and the
-  // run-meta line would show the same category for the whole report.
-  if (meta.category) finding.type = meta.category.toLowerCase()
+  // The issue class the report filed the finding under ("insufficient
+  // verification of data authenticity"), kept as written under its own
+  // name. It is NOT the finding's `type`: that slot is the analyzer run
+  // a native dump names (`security` / `correctness`), and a report from
+  // Claude Security has exactly one analyzer — Claude Security — which
+  // the `source` marker above already says. The card's meta line shows
+  // the category (ui/view/format.js formatRunMeta) and the markdown
+  // export lists it as `Category`.
+  if (meta.category) finding.category = meta.category
   // The id fingerprint is parse-md-id.js's own parse of this same
   // block, not the fields above: those are presentation and free to
   // change, the fingerprint is not. Nothing this parser resolves is

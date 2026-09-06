@@ -84,8 +84,9 @@ describe('inheritReportMeta', () => {
   })
 
   it('inherits nothing for source-marked reports', () => {
-    // deepsec / codex-security / claude-security: the report-level
-    // `type` is a whole-file category label, not an analyzer descriptor.
+    // deepsec / codex-security / claude-security / piolium: one
+    // analyzer each, named by the marker; the report-level `type` is
+    // the product's category, not a run descriptor.
     const f = finding()
     inheritReportMeta(f, { ...header(), source: 'claude-security' })
     for (const k of META_FIELDS) assert.equal(f[k], undefined, `${k} not inherited`)
@@ -136,8 +137,8 @@ describe('reportRepoGithub', () => {
 
   it('is independent of the run-meta inheritance', () => {
     // A source-marked report inherits no run meta, but a repo it
-    // declares still counts — the opt-out is about `type` colliding
-    // with a category label, which says nothing about the repository.
+    // declares still counts — the opt-out is about run meta the
+    // product doesn't have, which says nothing about the repository.
     assert.equal(reportRepoGithub({ source: 'deepsec', repo: { github: 'owner/name' } }), 'owner/name')
     // And the declaration never lands on the findings themselves.
     const f = finding()

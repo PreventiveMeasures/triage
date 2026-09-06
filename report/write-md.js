@@ -3,9 +3,10 @@
 //
 // The shape, top to bottom:
 //
+//   <!-- DeepView findings export, format 1 -->
 //   # <title>
-//   - **Source:** … / **Report:** … / **Repository:** … / **Exported:** …
-//   - **View:** … / **Filters:** … / **Included:** N of M findings
+//   - **Source:** … / **Report:** … / **Repository:** … / **Analyzer:** …
+//   - **Exported:** … / **View:** … / **Filters:** … / **Included:** N of M findings
 //
 //   ## Summary
 //   <severity counts>  <annotation counts>  <index of findings, linked>
@@ -22,6 +23,14 @@
 // ride in the header, in the words the confirmation dialog used, and
 // the counts are the dialog's counts.
 //
+// The document is also a report this library READS (parse-deepview-md.js
+// is its parser): the first line marks it as one, every finding carries
+// its id, and what the facts and sections say is what comes back —
+// whichever format the findings first arrived in. So a value goes on
+// the page in a shape the reader can take back off it: a fact on one
+// line, a location in a code span, the analyzer as the product's name
+// or the run's meta line.
+//
 // `doc` is plain data the caller assembles — the viewer's adapter
 // (ui/view/markdown-export.js), or anything else holding findings out
 // of index.js — and `hooks` are the few answers only the caller
@@ -36,10 +45,17 @@
 //     groups: [ [finding, …], … ],       // display order, primary case first
 //   }, { annotation, location, evidence, commit, report })
 
-import { SEVERITIES, displayedSeverity, locationLabel, runMetaLine } from './finding.js'
+import { SEVERITIES, displayedSeverity, locationLabel } from './finding.js'
 import { SOURCE_LABELS, severityLabel } from './labels.js'
-import { findingHeading, groupSection, repoRef } from './write-md-finding.js'
+import { analyzerText, findingHeading, groupSection, repoRef } from './write-md-finding.js'
 import { anchorSlug, cell, code, escapeBrackets, formatTimestamp, heading, joinBlocks, link, plural, table } from './md-text.js'
+
+// The first line of every document this writes, and what its reader
+// (parse-deepview-md.js) keys on. An HTML comment: invisible rendered,
+// one line of raw markdown, and no other format begins with it. The
+// number is the document's format version — bump it when the reader
+// would misread a document laid out the new way.
+export const DOCUMENT_MARKER = '<!-- DeepView findings export, format 1 -->'
 
 // What a caller can answer about a finding, and what is assumed when
 // it doesn't: a report's own link for a location or an evidence row
@@ -60,21 +76,35 @@ function withDefaults(hooks) {
   return out
 }
 
+// Which producer a finding's report came from — its `source` marker
+// (report/index.js), null for the analyzer's own dump. The one report's
+// when the document has one; otherwise the report the `report` hook
+// names for the finding, looked up by name in `doc.reports`.
+function sourceReader(reports, hooks) {
+  if (reports.length === 1) return () => reports[0].source ?? null
+  const byName = new Map(reports.map((r) => [r.name, r.source ?? null]))
+  return (f) => byName.get(hooks.report(f)) ?? null
+}
+
 // The per-document decisions, made once: which lens severities show
 // under, whether the revalidation layer is applied, and whether the
-// per-finding run-meta and report lines say anything — they are written
+// per-finding analyzer and report lines say anything — they are written
 // only where they vary, so a single-run report isn't told forty times
 // which run it was.
 function buildContext(doc, hooks, cases) {
   const revalidation = doc.view?.revalidation !== false
-  const metas = new Set(cases.map((f) => runMetaLine(f, revalidation)))
-  const reports = new Set(cases.map((f) => hooks.report(f)).filter(Boolean))
+  const reports = (Array.isArray(doc.reports) ? doc.reports : []).filter((r) => r && typeof r === 'object')
+  const sourceOf = sourceReader(reports, hooks)
+  const analyzerOf = (f) => analyzerText(f, sourceOf(f), revalidation)
+  const analyzers = new Set(cases.map(analyzerOf))
+  const names = new Set(cases.map((f) => hooks.report(f)).filter(Boolean))
   return {
     hooks,
+    analyzerOf,
     severityMode: doc.view?.severityMode === 'original' ? 'original' : 'corrected',
     revalidation,
-    showRunMeta: metas.size > 1,
-    showReport: reports.size > 1 || (Array.isArray(doc.reports) && doc.reports.length > 1),
+    showAnalyzer: analyzers.size > 1,
+    showReport: names.size > 1 || reports.length > 1,
     repo: typeof doc.repo === 'string' && doc.repo ? doc.repo : null,
   }
 }
@@ -105,6 +135,12 @@ function includedText(counts) {
 // a reader can't otherwise know — under which view and filters. Each
 // line is written only when it has something to say; the filter line
 // says "none" outright, so its absence never has to be interpreted.
+//
+// `Source` names the products the loaded reports came from, `Analyzer`
+// what produced the included findings (analyzerText). For a report
+// from one product those are the same word, and the analyzer line is
+// left out rather than said twice; a document that also holds the
+// analyzer's own runs lists every analyzer, the product among them.
 function headerList(doc, ctx, cases) {
   const rows = []
   const add = (label, value) => { if (value) rows.push(`- **${label}:** ${value}`) }
@@ -115,8 +151,8 @@ function headerList(doc, ctx, cases) {
   add(names.length === 1 ? 'Report' : 'Reports', names.map((n) => code(n)).join(', '))
   add('Workspace', typeof doc.workspace === 'string' ? doc.workspace.trim() : '')
   if (ctx.repo) add('Repository', repoRef(ctx.repo))
-  const analyzers = [...new Set(cases.map((f) => runMetaLine(f, ctx.revalidation)).filter(Boolean))]
-  add(analyzers.length === 1 ? 'Analyzer' : 'Analyzers', analyzers.join('; '))
+  const analyzers = [...new Set(cases.map(ctx.analyzerOf).filter(Boolean))]
+  if (analyzers.some((a) => !sources.includes(a))) add(analyzers.length === 1 ? 'Analyzer' : 'Analyzers', analyzers.join('; '))
   if (doc.generatedAt) add('Exported', formatTimestamp(doc.generatedAt))
   add('View', viewText(doc.view))
   if (Array.isArray(doc.filters)) {
@@ -235,6 +271,7 @@ export function writeMarkdown(doc = {}, hooks = {}) {
   const ctx = buildContext(doc, h, cases)
   const entries = documentEntries(groups, ctx)
   const blocks = [
+    DOCUMENT_MARKER,
     heading(1, typeof doc.title === 'string' && doc.title.trim() ? doc.title.trim() : 'Findings'),
     headerList(doc, ctx, cases),
     ...summaryBlocks(entries, ctx),
