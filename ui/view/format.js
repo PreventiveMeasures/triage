@@ -6,13 +6,17 @@ import { html, nothing } from './frontend-global.js'
 // `client/finding-link.js` is a leaf — its only import is
 // `common/utf8.js` — so pulling it in costs the codec and nothing else.
 import { parseFindingUrl } from '../../client/finding-link.js'
-// What a finding IS — the readers shared with the writers under
-// formats/ — lives in the report library; re-exported here unchanged so
+// What a finding IS — the readers shared with the report library's
+// markdown writer — lives in that library; re-exported here unchanged so
 // the viewer's callers keep one import. `revalidateKindOf` and
 // `runMetaLine` take the layer switch as an argument; the gated forms
 // below (revalidateKind, formatRunMeta) apply this module's state.
 import { REVALIDATE_KINDS, SEVERITIES, SEVERITY_ORDER, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceNote, findingDisplayName, findingTitle, firstLine, hasSeverityCorrection, locationLabel, prettyModel, revalidateKindOf, runMetaLine, splitDescription, stripExportMarker, titledDescription } from '../../report/finding.js'
 export { REVALIDATE_KINDS, SEVERITIES, SEVERITY_ORDER, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceNote, findingDisplayName, findingTitle, firstLine, hasSeverityCorrection, locationLabel, prettyModel, splitDescription, stripExportMarker, titledDescription }
+// The one http(s)-URL gate every `<a>` in the viewer goes through is
+// the writer's too (report/md-text.js); one definition.
+import { isHttpUrl } from '../../report/md-text.js'
+export { isHttpUrl }
 
 // ── Revalidation ─────────────────────────────────────────────────────
 // A second pass over a finding. A report stamps `revalidate` with what
@@ -453,19 +457,6 @@ export function fileLink(f, repoFallback) {
 // is left alone — it isn't ours to interpret.
 function stripLineAnchor(url) {
   return url.replace(/#L\d+(?:-L?\d+)?$/u, '')
-}
-
-// Returns true only for parseable http:// / https:// URLs. User-
-// provided fix values can be plain text ("internal ticket #42",
-// "see Slack"), and other schemes (file://, javascript:, data:)
-// are either useless or a security footgun — gate the rendered
-// `<a>` on this check so non-URL text renders as plain text.
-export function isHttpUrl(s) {
-  if (typeof s !== 'string' || s.length === 0) return false
-  try {
-    const u = new URL(s)
-    return u.protocol === 'http:' || u.protocol === 'https:'
-  } catch { return false }
 }
 
 // Source URL for ONE finding's location — every finding-level file /

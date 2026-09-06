@@ -1,11 +1,12 @@
 // `ui/view/markdown-export.js` — the Download button's adapter over
-// formats/. The document itself is pinned in formats/tests; this suite
-// pins what the adapter feeds it: the on-screen selection (the triage
-// bucket, the filters, the merged groups, the sort), the header the
-// confirmation dialog's summary supplies, and the viewer's own answers
-// — annotations off the TRIAGE ENTRY (findings carry no `fix` or
-// `comment` field, ever), links resolved the way the card's are, and
-// the report each case came from.
+// the report library's writer. The document itself is pinned in
+// report/tests/write-md.test.js; this suite pins what the adapter
+// feeds it: the on-screen selection (the triage bucket, the filters,
+// the merged groups, the sort), the header the confirmation dialog's
+// summary supplies, and the viewer's own answers — annotations off the
+// TRIAGE ENTRY (findings carry no `fix` or `comment` field, ever),
+// links resolved the way the card's are, and the report each case came
+// from.
 
 import assert from 'node:assert/strict'
 import { beforeEach, describe, it } from 'node:test'

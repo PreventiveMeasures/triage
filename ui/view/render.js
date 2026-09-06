@@ -11,6 +11,7 @@ import { SEVERITIES, configureDepsDir, configureRevalidation, displayedSeverity,
 import { activeTabFor, findingRepoFallback, getMergedGroups, groupKey, groupState, primaryTab, tabKey } from './group.js'
 import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, applySorting, modelOfFinding, repoOfFinding } from './filters.js'
 import { ANALYZER_LABELS } from './analyzer-select.js'
+import { SOURCE_LABELS } from '../../report/index.js'
 import { COMBO_FIELDS, buildAnalyzerTags } from './analyzer-tags.js'
 import { COMMENT_ICON, FIX_ICON, FLAG_ICON, badgeLabel, findingCardGid } from './render-finding.js'
 import { computeFindingCountsByFile, computeTransitiveCounts, fileHasFindings, mergeReportsTree } from './file-counts.js'
@@ -152,17 +153,16 @@ export function refreshGraph2TopPkgs() {
 }
 
 
-// Source-specific header titles. Used when every loaded report shares
+// Source-specific header title. Used when every loaded report shares
 // the same `source` marker — those reports lack the analyzer
 // (model / effort / exportsMode) metadata that the analyzer-combo
-// breakdown builds from, so they get a fixed product name instead.
-// DeepSec is Vercel's tool (https://github.com/vercel-labs/deepsec);
-// Piolium is Vigolium's (https://github.com/vigolium/piolium).
-const SOURCE_TITLES = {
-  'claude-security': 'Claude Security findings',
-  'codex-security': 'Codex Security findings',
-  'deepsec': 'DeepSec findings',
-  'piolium': 'Piolium findings',
+// breakdown builds from, so they get a fixed product name instead:
+// the report library's own name for the producer (`Claude Security
+// findings`, `DeepSec findings`, …). DeepSec is Vercel's tool
+// (https://github.com/vercel-labs/deepsec); Piolium is Vigolium's
+// (https://github.com/vigolium/piolium).
+function sourceTitle(source) {
+  return `${SOURCE_LABELS[source] ?? source} findings`
 }
 
 // Build the repo-chip element for the page header. The actual visual
@@ -222,7 +222,7 @@ function headerTemplate(mergedGroups, fileNames, repoInputUseful, knownRepo, tre
     : null
   const titleText = ws
     ? `Workspace: ${ws.name}`
-    : (singleSource ? SOURCE_TITLES[singleSource] : 'Findings')
+    : (singleSource ? sourceTitle(singleSource) : 'Findings')
 
   // File chip: single-file reports get the filename verbatim with a
   // brand sticker for the source bucket (Claude / Codex / DeepSec /

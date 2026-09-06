@@ -1,5 +1,5 @@
 // The report library — one door to every report format this project
-// reads.
+// reads, and to the one it writes.
 //
 // A "report" is whatever an analyzer wrote: the JSON dump this
 // project's own analyzer emits, or one of the shapes other tools
@@ -9,11 +9,12 @@
 // over them, so "which formats do we read, and in what order" is
 // answered in one place instead of once per call site.
 //
-//   import { loadFindings } from '../report/index.js'
+//   import { loadFindings, writeMarkdown } from '../report/index.js'
 //   const report = await loadFindings(text)
 //   // → { format, data, findings: [ … with ids ] } | null
+//   const md = writeMarkdown({ title, groups: report.findings.map((f) => [f]) })
 //
-// Three entry points, in rising order of how much they do:
+// Three entry points for reading, in rising order of how much they do:
 //
 //   detectFormat  — name the format, parse nothing further
 //   readReport    — the parsed report, or the reason it isn't one
@@ -22,6 +23,15 @@
 // `analyzeReport` is `readReport` for a file list — entry count and
 // producer — and `backfillFindingIds` is the id step on its own, for a
 // caller that has to interleave something with it.
+//
+// And one for writing: `writeMarkdown` takes findings — the parsers'
+// own objects, grouped as the viewer groups them — with whatever the
+// caller knows about the selection and the reader's annotations, and
+// writes the markdown document the Download button saves (write-md.js
+// for the document, write-md-finding.js for one finding, labels.js for
+// the words). Both directions read a finding through finding.js, so
+// what a parser produced and what the writer prints agree on what a
+// finding IS.
 //
 // Codex is the one format the content doesn't name: its export is a
 // CSV, and a CSV is a container — one row per finding across several
@@ -38,9 +48,10 @@
 // and takes only the markdown structure helpers).
 //
 // Nothing under this directory touches the DOM, app state or storage:
-// text in, data out. That is what makes it reusable outside the viewer
-// — the analyzer stamps its ids with the same `findingId` the viewer
-// derives them with, so both sides agree on what a finding IS.
+// text in, data out, and data in, text out. That is what makes it
+// reusable outside the viewer — the analyzer stamps its ids with the
+// same `findingId` the viewer derives them with, so both sides agree
+// on what a finding IS.
 
 import { parseCodexCsvToScans } from './parse-codex.js'
 import { parseDeepsecFindings } from './parse-deepsec.js'
@@ -48,6 +59,8 @@ import { parseMarkdownFindings } from './parse-md.js'
 import { parsePioliumFindings } from './parse-piolium.js'
 import { computeFileHash, deriveFindingId, findingId } from './finding-id.js'
 import { META_FIELDS, inheritReportMeta, reportRepoGithub } from './meta.js'
+import { COLOR_LABELS, SEVERITY_LABELS, SOURCE_LABELS, TRIAGE_LABELS, severityLabel } from './labels.js'
+import { writeMarkdown } from './write-md.js'
 
 // The rest of the surface, so a consumer needs one import: the codex
 // splitter, the id helpers the analyzer shares with the viewer, and the
@@ -55,6 +68,11 @@ import { META_FIELDS, inheritReportMeta, reportRepoGithub } from './meta.js'
 export { parseCodexCsvToScans }
 export { computeFileHash, deriveFindingId, findingId }
 export { META_FIELDS, inheritReportMeta, reportRepoGithub }
+// The writing side: the document writer, and the label tables it
+// spells the app's enumerations with, for the viewer's surfaces that
+// describe the same things in prose.
+export { writeMarkdown }
+export { COLOR_LABELS, SEVERITY_LABELS, SOURCE_LABELS, TRIAGE_LABELS, severityLabel }
 
 // The markdown chain, in dispatch order: tightest guard first. DeepSec
 // keys off `## SEVERITY (n)` and Piolium off its `# Security Audit

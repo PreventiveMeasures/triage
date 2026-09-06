@@ -1,14 +1,17 @@
-// Markdown text helpers for the writers under formats/: the escaping a
+// Markdown text helpers for the writer (write-md.js): the escaping a
 // value needs for the position it lands in, GitHub-style heading
-// anchors, tables, and the formatters the document header uses. Pure
-// string work; nothing here knows what a finding is.
+// anchors, tables, and the formatters the document header uses. The
+// writing-side sibling of md-structure.js, which reads. Pure string
+// work; nothing here knows what a finding is.
 
-import { fenceRanges } from '../report/md-structure.js'
+import { fenceRanges } from './md-structure.js'
 
 // Returns true only for parseable http:// / https:// URLs. Values that
-// get linked here come from reports and from the user's own notes (a fix
-// reference can be "internal ticket #42"), and other schemes are either
-// useless or a footgun — so only these two become links.
+// get linked come from reports and from the user's own notes (a fix
+// reference can be "internal ticket #42", "see Slack"), and other
+// schemes (file://, javascript:, data:) are either useless or a
+// security footgun — so only these two become links, here and in the
+// viewer (ui/view/format.js re-exports this for its `<a>` gates).
 export function isHttpUrl(s) {
   if (typeof s !== 'string' || s.length === 0) return false
   try {

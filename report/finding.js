@@ -5,9 +5,9 @@
 // splits into a name, a body and the labelled sections the report wrote.
 //
 // Lifted out of ui/view/format.js so a writer can read a finding without
-// the viewer: the markdown export under formats/ takes the same objects
-// the parsers beside this file produce, and this module is where the two
-// agree on what those objects mean. Pure — no DOM, no app state — and
+// the viewer: the markdown writer beside this file (write-md.js) takes
+// the same objects the parsers produce, and this module is where the
+// two agree on what those objects mean. Pure — no DOM, no app state — and
 // free of anything above `report/`; format.js re-exports every name here
 // unchanged, so the viewer's callers never see the move.
 //

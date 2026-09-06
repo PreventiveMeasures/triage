@@ -14,7 +14,7 @@ import { state } from '#client/index.js'
 import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters } from './filters.js'
 import { REVALIDATE_FILTERS, SEVERITIES } from './format.js'
 import { getMergedGroups, groupState } from './group.js'
-import { COLOR_LABELS, SEVERITY_LABELS, TRIAGE_LABELS } from '../../formats/index.js'
+import { COLOR_LABELS, SEVERITY_LABELS, TRIAGE_LABELS } from '../../report/index.js'
 
 // Severities listed in canonical high→low order (SEVERITIES) rather
 // than Set-insertion order, so the description reads consistently
