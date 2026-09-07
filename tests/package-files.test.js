@@ -95,3 +95,69 @@ test('managed server is held back from the published package', () => {
     .map(([sub, target]) => `exports["${sub}"] → ${target}`)
   assert.deepEqual(exported, [], `exports point into the held-back managed tree:\n  ${exported.join('\n  ')}`)
 })
+
+// `report/` publishes TWICE, from two hand-maintained allowlists that have to
+// agree with each other and with what is on disk:
+//
+//   - `@preventive/report` — its own package.json, whose `files` is the
+//     tarball; a source missing from it is absent from the published library,
+//     and since every module there is reached by a relative import from
+//     `index.js`, the first thing a consumer does throws ERR_MODULE_NOT_FOUND.
+//   - `@preventive/triage` — the root `files`, behind the `./report` export.
+//
+// Neither list is generated, and the first guard above only scans `server-e2e/`,
+// so a new `report/*.js` is one forgotten line away from a library that cannot
+// be imported. The library also has to stay STANDALONE to be publishable at all:
+// it may import nothing outside its own directory, since nothing outside ships
+// in its tarball.
+test('report/ is publishable from both package.json files, and imports nothing outside itself', () => {
+  const root = fileURLToPath(new URL('..', import.meta.url))
+  const rootPkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+  const libPkg = JSON.parse(readFileSync(new URL('../report/package.json', import.meta.url), 'utf8'))
+  // Tests ship in neither tarball — they are the library's own suite, run from
+  // a checkout (`node --run test` in report/), not something a consumer imports.
+  const sources = execSync('git ls-files report', { cwd: root, encoding: 'utf8' })
+    .trim().split('\n').filter((f) => f.endsWith('.js') && !f.startsWith('report/tests/'))
+
+  const libAllow = new Set(libPkg.files.map((f) => `report/${f}`))
+  const missingFromLib = sources.filter((f) => !libAllow.has(f))
+  assert.deepEqual(
+    missingFromLib, [],
+    `report sources missing from report/package.json "files" — absent from the ` +
+    `published @preventive/report tarball:\n  ${missingFromLib.join('\n  ')}`,
+  )
+
+  const rootAllow = new Set(rootPkg.files)
+  const missingFromRoot = sources.filter((f) => !rootAllow.has(f))
+  assert.deepEqual(
+    missingFromRoot, [],
+    `report sources missing from the root package.json "files" — the ./report ` +
+    `export resolves to a missing file:\n  ${missingFromRoot.join('\n  ')}`,
+  )
+
+  // Inverse: a list naming a file that no longer exists. npm ignores the entry
+  // silently, so a rename would leave the module unpublished with both lists
+  // still looking full.
+  const onDisk = new Set(sources)
+  const phantom = [...libAllow, ...rootAllow.values()]
+    .filter((f) => f.startsWith('report/') && f.endsWith('.js') && !onDisk.has(f))
+  assert.deepEqual(phantom, [], `allowlisted report files that don't exist:\n  ${phantom.join('\n  ')}`)
+
+  // Standalone: every import in the library resolves inside the library. A
+  // `../common/…` would work in this checkout and break in the tarball.
+  const escaping = []
+  for (const f of sources) {
+    const text = readFileSync(new URL(`../${f}`, import.meta.url), 'utf8')
+      // Comments carry example import lines (index.js shows how to call in);
+      // only real statements matter.
+      .replaceAll(/^\s*(?:\/\/.*|\*.*)$/gmu, '')
+    for (const m of text.matchAll(/\bfrom\s+'([^']+)'/gu)) {
+      if (!m[1].startsWith('./')) escaping.push(`${f} → ${m[1]}`)
+    }
+  }
+  assert.deepEqual(
+    escaping, [],
+    `report/ must import nothing outside itself — these would be missing from ` +
+    `the tarball:\n  ${escaping.join('\n  ')}`,
+  )
+})
