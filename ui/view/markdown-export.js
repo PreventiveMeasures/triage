@@ -16,12 +16,12 @@
 // (events.js), and the header describes that selection — the one the
 // file was actually written under — rather than the toolbar's.
 
-import { listWorkspaces, state } from '#client/index.js'
+import { appTriageOf, listWorkspaces, state } from '#client/index.js'
 import { downloadBlob } from './dom.js'
 import { activeFilterDescriptions, exportBucketGroups, exportBucketLabel } from './export-summary.js'
 import { activeFilters, applyFilters, applySorting } from './filters.js'
 import { commitUrl, commonPrefix, evidenceUrl, findingUrl, hasRevalidateField, hasSeverityCorrection, isModule } from './format.js'
-import { findingRepoFallback, isIgnored, sortTabs, tabKey } from './group.js'
+import { findingApp, findingRepoFallback, isIgnored, sortTabs, tabFix, tabKey, tabTriage } from './group.js'
 import { writeMarkdown } from '../../report/index.js'
 
 // The bucket's groups the selection in force lets through, in on-screen
@@ -43,12 +43,22 @@ const HOOKS = {
     const entry = state.triage.get(tabKey(f))
     const ignored = isIgnored(f)
     if (!entry && !ignored) return null
+    // The bucket and the fix link as the CARD shows them — this app's
+    // answer where it gave one, the entry's otherwise (`tabTriage` /
+    // `tabFix`) — so the document and the board can't disagree about
+    // a finding. `app` names the app when the answer was that app's,
+    // which is what stops the written line from reading as a claim
+    // about the dependency itself; `upstream` carries the other
+    // track, which IS such a claim and says so.
+    const bucket = tabTriage(f, entry)
     return {
-      triage: entry?.triage,
+      triage: bucket === 'ignored' ? undefined : bucket,
+      app: appTriageOf(entry, findingApp(f)) === undefined ? undefined : findingApp(f),
       color: entry?.color,
       comment: entry?.comment,
-      fix: entry?.fix,
+      fix: tabFix(f, entry) || undefined,
       flagged: entry?.flagged === true,
+      upstream: entry?.upstream,
       ignored,
     }
   },

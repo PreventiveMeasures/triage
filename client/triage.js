@@ -326,6 +326,17 @@ function applyTriageEntries(entries, { replace = false } = {}) {
       if (!(pendingHas(id) && pendingEntries[id]?.flagged !== undefined) && (noBlob || v?.flagged === undefined)) {
         patchEntry(map, id, { flagged: undefined })
       }
+      // The per-app work track and the upstream record. Both are
+      // whole-value fields here — the blob is the sibling's complete
+      // view, so an `apps` map it no longer carries means every slot
+      // in it went, and one it does carry replaces ours below. Same
+      // pending-write protection as the fields above.
+      if (!(pendingHas(id) && pendingEntries[id]?.apps) && (noBlob || !v?.apps)) {
+        patchEntry(map, id, { apps: undefined })
+      }
+      if (!(pendingHas(id) && pendingEntries[id]?.upstream) && (noBlob || !v?.upstream)) {
+        patchEntry(map, id, { upstream: undefined })
+      }
     }
     // Per-report ignore. Drop a report from an id's `ignoredReports`
     // when the new blob no longer lists it. Session-only ids are left
@@ -364,6 +375,11 @@ function applyTriageEntries(entries, { replace = false } = {}) {
     // Tri-state flag — adopt both `true` and `false` (false is the
     // explicit "unflagged" tombstone, not "unset").
     if (v && typeof v.flagged === 'boolean') patch.flagged = v.flagged
+    // `normalizeEntry` (inside patchEntry) validates both shapes and
+    // rebuilds them, so a sibling running an older or hand-edited
+    // blob can't land a malformed slot in the live map.
+    if (v && v.apps) patch.apps = v.apps
+    if (v && v.upstream) patch.upstream = v.upstream
     if (Object.keys(patch).length > 0) patchEntry(map, id, patch)
     // Mutual exclusion with triage: triage and per-report ignore
     // can't coexist on a tab. Skip importing `ignoredReports` when

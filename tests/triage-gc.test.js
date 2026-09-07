@@ -29,7 +29,7 @@ await import('./_polyfills.js')
 const { state } = await import('../client/state.ts')
 const storage = await import('../client/storage.js')
 const { analyzeTriageImpact, pruneOrphanTriage } = await import('../client/triage-gc.js')
-const { patchEntry, setReportIgnored, isReportIgnored } = await import('../client/triage-entry.ts')
+const { appTriageOf, patchEntry, setAppTriage, setReportIgnored, isReportIgnored, setUpstream } = await import('../client/triage-entry.ts')
 
 const FINDING_A = '00000000-0000-4000-8000-00000000000a'
 const FINDING_B = '00000000-0000-4000-8000-00000000000b'
@@ -816,6 +816,41 @@ describe('triage-gc: malformed + legacy-shape robustness', () => {
     state.triage.set(FINDING_B, { deleted: true }) // orphan: in no report
     await pruneOrphanTriage()
     assert.equal(state.triage.has(FINDING_B), false, 'legacy deleted orphan should be pruned')
+  })
+
+  it('pruneOrphanTriage clears an entry carrying only an app slot or an upstream record', async () => {
+    // Neither field was in the orphan predicate before the app /
+    // upstream split; an entry holding nothing else would have sat in
+    // the blob with nothing able to collect it.
+    await saveReport('keep.json', [{ id: FINDING_A }])
+    setAppTriage(state.triage, FINDING_B, 'acme/web', 'fixed')
+    setUpstream(state.triage, FINDING_C, { state: 'reported' })
+    await pruneOrphanTriage()
+    assert.equal(state.triage.has(FINDING_B), false, 'app-slot-only orphan should be pruned')
+    assert.equal(state.triage.has(FINDING_C), false, 'upstream-only orphan should be pruned')
+  })
+
+  it('pruneOrphanTriage drops an app slot whose app has no report left, keeping the ones that do', async () => {
+    // `keep.json` declares no repo, so its app key IS its filename;
+    // the slot for the departed `gone.json` has no board left to
+    // answer for even though the finding survives in another app's
+    // report.
+    await saveReport('keep.json', [{ id: FINDING_A }])
+    setAppTriage(state.triage, FINDING_A, 'keep.json', 'fixed')
+    setAppTriage(state.triage, FINDING_A, 'gone.json', 'fixed')
+    await pruneOrphanTriage()
+    assert.equal(appTriageOf(state.triage.get(FINDING_A), 'keep.json'), 'fixed')
+    assert.equal(appTriageOf(state.triage.get(FINDING_A), 'gone.json'), undefined)
+  })
+
+  it('pruneOrphanTriage keeps an app slot keyed by the report\'s declared repo', async () => {
+    // Ingest keys the app by `repo.github` when the report declares
+    // one, so the GC has to derive the key the same way or it would
+    // wipe every fix on every report that names its repository.
+    await storage.saveFile('keep.json', JSON.stringify({ repo: { github: 'acme/web' }, findings: [{ id: FINDING_A }] }))
+    setAppTriage(state.triage, FINDING_A, 'acme/web', 'fixed')
+    await pruneOrphanTriage()
+    assert.equal(appTriageOf(state.triage.get(FINDING_A), 'acme/web'), 'fixed')
   })
 
   it('a report whose findings is a non-array does not crash the GC sweep', async () => {
