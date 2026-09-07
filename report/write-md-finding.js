@@ -267,7 +267,7 @@ export function groupSection(group, ctx, { headingText, depth }) {
     const loc = locationLabel(f)
     blocks.push(heading(depth + 1, `Case ${i + 1} of ${group.length}${loc ? ` — ${code(loc)}` : ''}`))
     const own = findingTitle(f)
-    if (own && own !== groupTitle) blocks.push(own)
+    if (own && own !== groupTitle) blocks.push(prose(own))
     blocks.push(...caseBlocks(f, ctx, depth + 2))
   })
   return joinBlocks(blocks)

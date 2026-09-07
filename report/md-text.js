@@ -4,7 +4,7 @@
 // writing-side sibling of md-structure.js, which reads. Pure string
 // work; nothing here knows what a finding is.
 
-import { fenceRanges } from './md-structure.js'
+import { fenceRanges, inFence } from './md-structure.js'
 
 // Returns true only for parseable http:// / https:// URLs. Values that
 // get linked come from reports and from the user's own notes (a fix
@@ -108,15 +108,33 @@ export function joinBlocks(blocks) {
 }
 
 // A run of a report's own markdown, as it lands in the document: line
-// endings normalised, edges trimmed, and a fence the report left open
-// closed. Every parser reads a dangling fence as running to the end of
-// the FINDING — a reader of the card sees the snippet, not a problem —
-// but in a document one open fence would swallow every finding after
-// it, so the fence is closed with the marker that opened it.
+// endings normalised, edges trimmed, a fence the report left open
+// closed, and a line that would read as a heading escaped.
+//
+// Every parser reads a dangling fence as running to the end of the
+// FINDING — a reader of the card sees the snippet, not a problem — but
+// in a document one open fence would swallow every finding after it,
+// so the fence is closed with the marker that opened it.
+//
+// And a `## Internal detail` line in an analyzer's own prose is the
+// text the card shows it as, not a section of the document; written
+// bare it would be read as one — by a renderer, and by the document's
+// own reader (parse-deepview-md.js), which splits on headings and
+// would end the finding there. So it goes on the page as
+// `\## Internal detail`, which renders as the text and which the
+// reader strips back (unescapeHeadings). A line already opening on a
+// backslash before its `#` gets one more, so that one strip is exact
+// whatever the prose held. Fenced code is left alone: nothing in it is
+// structure, and a `#` there is code.
 const FENCE_OPEN_RE = /^ *(`{3,}|~{3,})/u
+const HEADING_LINE_RE = /^( {0,3})(\\*#)/u
 
 export function prose(text) {
-  const s = String(text ?? '').replaceAll(/\r\n?/gu, '\n').trim()
+  const s = closeFence(String(text ?? '').replaceAll(/\r\n?/gu, '\n').trim())
+  return s ? escapeHeadings(s) : ''
+}
+
+function closeFence(s) {
   if (!s) return ''
   const last = fenceRanges(s).at(-1)
   if (!last || last[1] < s.length) return s
@@ -124,6 +142,27 @@ export function prose(text) {
   const marker = FENCE_OPEN_RE.exec(lines[0])?.[1] ?? '```'
   const closed = lines.length > 1 && FENCE_OPEN_RE.exec(lines.at(-1))?.[1]?.startsWith(marker.slice(0, 3))
   return closed ? s : `${s}\n${marker}`
+}
+
+// `fn` over every line of `s` outside a fence, in place.
+function mapProseLines(s, fn) {
+  const ranges = fenceRanges(s)
+  let pos = 0
+  return s.split('\n').map((line) => {
+    const start = pos
+    pos += line.length + 1
+    return inFence(ranges, start) ? line : fn(line)
+  }).join('\n')
+}
+
+function escapeHeadings(s) {
+  return mapProseLines(s, (line) => line.replace(HEADING_LINE_RE, '$1\\$2'))
+}
+
+// The inverse, for the reader: one backslash off a line that opens on
+// backslashes before a `#`.
+export function unescapeHeadings(s) {
+  return mapProseLines(String(s ?? ''), (line) => line.replace(/^( {0,3})\\(\\*#)/u, '$1$2'))
 }
 
 // Continuation lines of a list item, indented to the item's content
