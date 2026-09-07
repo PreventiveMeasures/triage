@@ -152,7 +152,7 @@ export {
 
 export { isEncryptedBundle } from './workspace-bundle-crypto.js'
 
-export { buildWorkspaceExportBundle } from './workspace-export.js'
+export { buildRawReportsExportGzip, buildWorkspaceExportBundle } from './workspace-export.js'
 
 export {
   applyWorkspaceImport,

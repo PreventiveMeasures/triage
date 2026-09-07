@@ -30,6 +30,8 @@ const {
   buildWorkspaceExportGzip,
   buildWorkspaceExportEncrypted,
   buildWorkspaceExportBundle,
+  buildRawReportsExportPayload,
+  buildRawReportsExportGzip,
 } = await import('../client/workspace-export.js')
 const { isEncryptedBundle } = await import('../client/workspace-bundle-crypto.js')
 const { listWorkspaces } = await import('../client/workspaces.js')
@@ -1093,6 +1095,86 @@ describe('encrypted bundle export → import round-trip', () => {
     assert.ok(enc.filename.endsWith('.deepview-workspace.enc'))
     const encBytes = new Uint8Array(await enc.blob.arrayBuffer())
     assert.equal(isEncryptedBundle(encBytes), true)
+  })
+})
+
+describe('buildRawReportsExportGzip', () => {
+  beforeEach(clearState)
+
+  it('ships the report documents and nothing else', async () => {
+    const { saveFile } = await import('../client/storage.js')
+    await saveFile('r.json', reportContent([FINDING_A]))
+
+    // Triage + repo URL + bundle pointers all exist locally — none of
+    // them may reach a raw export.
+    patchEntry(state.triage, FINDING_A, { color: 'red' })
+    patchEntry(state.triage, FINDING_A, { triage: 'fixed' })
+    patchEntry(state.triage, FINDING_A, { comment: 'looks good' })
+    const ws = makeWorkspace({ reports: ['r.json'], bundles: ['sha512-AAAA'] })
+
+    const payload = await buildRawReportsExportPayload(ws)
+    assert.deepEqual(Object.keys(payload), ['reports'],
+      'raw payload carries the reports key alone')
+    assert.deepEqual(payload.reports, [{ name: 'r.json', content: reportContent([FINDING_A]) }])
+
+    // Belt and braces: nothing anywhere in the serialized bytes leaks
+    // the workspace record, its private key, or the triage values.
+    const text = JSON.stringify(payload)
+    assert.ok(!text.includes(ws.privateKey), 'private key stays behind')
+    assert.ok(!text.includes('sha512-AAAA'), 'bundle pointers stay behind')
+    assert.ok(!text.includes('looks good'), 'triage comments stay behind')
+  })
+
+  it('gzips to a .deepview-reports.json.gz blob', async () => {
+    const { saveFile } = await import('../client/storage.js')
+    await saveFile('r.json', reportContent([FINDING_A]))
+    const ws = makeWorkspace({ name: 'My WS', reports: ['r.json'] })
+
+    const { blob, filename } = await buildRawReportsExportGzip(ws)
+    assert.equal(filename, 'My_WS.deepview-reports.json.gz')
+
+    const bytes = new Uint8Array(await blob.arrayBuffer())
+    assert.equal(isEncryptedBundle(bytes), false, 'raw export is never encrypted')
+    const { gunzipToText } = await import('../common/gzip.js')
+    const data = JSON.parse(await gunzipToText(bytes))
+    assert.deepEqual(data, { reports: [{ name: 'r.json', content: reportContent([FINDING_A]) }] })
+  })
+
+  it('is not importable as a workspace export', async () => {
+    // The payload has no `version` / `workspace`, so a re-drop of the
+    // file must be rejected outright rather than half-importing a
+    // workspace with an empty record. `.gz` files route to
+    // importWorkspaceFromGzip by filename (ui/view/ingest.js), so this
+    // is the path a re-dropped raw export actually takes.
+    const { saveFile } = await import('../client/storage.js')
+    await saveFile('r.json', reportContent([FINDING_A]))
+    const ws = makeWorkspace({ reports: ['r.json'] })
+
+    const { blob } = await buildRawReportsExportGzip(ws)
+    const bytes = new Uint8Array(await blob.arrayBuffer())
+    await assert.rejects(
+      () => parseWorkspaceBundleBytes(bytes),
+      /not a deepview workspace export/u,
+    )
+  })
+
+  it('skips reports whose file is gone and prunes the stale reference', async () => {
+    // Same skip-and-prune semantics as the workspace export — both
+    // paths share `readWorkspaceReports`.
+    const { saveFile } = await import('../client/storage.js')
+    await saveFile('present.json', reportContent([FINDING_A]))
+    const ws = makeWorkspace({ reports: ['present.json', 'missing.json'] })
+
+    const payload = await buildRawReportsExportPayload(ws)
+    assert.deepEqual(payload.reports.map((r) => r.name), ['present.json'])
+  })
+
+  it('exports an empty reports list for a workspace with no reports', async () => {
+    // The dialog gates the button on `reports.length`, but the builder
+    // itself stays total — an empty workspace yields `{ reports: [] }`
+    // rather than throwing.
+    const payload = await buildRawReportsExportPayload(makeWorkspace())
+    assert.deepEqual(payload, { reports: [] })
   })
 })
 
