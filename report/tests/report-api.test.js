@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { analyzeReport, backfillFindingIds, detectFormat, loadFindings, readReport, writeMarkdown } from '../index.js'
+import { analyzeReport, backfillFindingIds, detectFormat, loadFindings, readReport, reportEntries, writeMarkdown } from '../index.js'
 
 const JSON_REPORT = JSON.stringify({
   type: 'security',
@@ -251,5 +251,38 @@ describe('loadFindings — the whole read path', () => {
   it('returns null for anything that is not a report', async () => {
     assert.equal(await loadFindings('plain prose'), null)
     assert.equal(await loadFindings('{"hello": "world"}'), null)
+  })
+})
+
+// The entry list under whichever of the two names a report files it —
+// what a caller that has to KEEP the grouping reads, in place of
+// `data.findings`, which is empty for every report that arrives
+// deduplicated (the viewer's ingest is that caller).
+describe('reportEntries — the entries, either way a report names them', () => {
+  it('reads a report\'s entries off `findings` or `groups`', () => {
+    assert.deepEqual(reportEntries({ findings: [{ description: 'a' }] }), [{ description: 'a' }])
+    assert.deepEqual(reportEntries({ groups: [[{ description: 'a' }, { description: 'b' }]] }), [[{ description: 'a' }, { description: 'b' }]])
+    assert.deepEqual(reportEntries({ findings: [], groups: [[{ description: 'a' }]] }), [], '`findings` wins when a report carries both')
+  })
+
+  it('is null for anything that carries neither as an array', () => {
+    for (const data of [null, undefined, {}, { findings: 'nope' }, { groups: { a: 1 } }, 'text']) {
+      assert.equal(reportEntries(data), null, JSON.stringify(data) ?? String(data))
+    }
+  })
+
+  // The document the library writes files an entry of several cases
+  // under `groups`, the way a deduplicated dump does — which is what a
+  // caller reading `data.findings` alone loses.
+  it('finds the entries of a re-imported export that merged a finding\'s cases', () => {
+    const one = (id) => ({ id, file: 'src/a.js', line: '7', severity: 'high', description: 'Token comparison is not constant-time.' })
+    const md = writeMarkdown({
+      reports: [{ name: 'a.md', source: 'claude-security' }, { name: 'b.md', source: 'claude-security' }],
+      groups: [[one('g1'), one('g2')]],
+    }, { report: (f) => (f.id === 'g1' ? 'a.md' : 'b.md') })
+    const { data } = readReport(md)
+    assert.equal(data.findings, undefined, 'the entry is a group, so it is not on `findings`')
+    assert.deepEqual(reportEntries(data).map((entry) => entry.map((f) => f.id)), [['g1', 'g2']])
+    assert.equal(analyzeReport(md).count, 1, 'one entry, two cases')
   })
 })

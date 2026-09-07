@@ -33,25 +33,38 @@
 //   { type, source?, model?, effort?, exportsMode?, repo?, findings }
 //
 // or `groups` in place of `findings` when an entry has several cases
-// (a pre-deduplicated dump's shape, index.js entriesOf). The producer
-// and the run travel the way a native dump carries them: report-level
-// when every finding shares them — `source`, or the `type` / `model` /
-// `effort` / `exportsMode` ingest hands down to each finding (meta.js
-// inheritReportMeta) — and per finding when they vary. A document that
-// mixes products with the analyzer's own runs stamps `source` on each
-// finding of a product, which the viewer reads as that finding's
-// analyzer.
+// (a pre-deduplicated dump's shape, index.js reportEntries). The
+// producer and the run travel the way a native dump carries them:
+// report-level when every finding shares them — `source`, or the
+// `type` / `model` / `effort` / `exportsMode` ingest hands down to
+// each finding (meta.js inheritReportMeta) — and per finding when
+// they vary. A document that mixes products with the analyzer's own
+// runs stamps `source` on each finding of a product, which the viewer
+// reads as that finding's analyzer.
 //
 // Not read back: what the reader wrote on a finding (Triage, Fix, the
 // Comment section) — annotations live in the viewer's triage store,
 // keyed by the id, and follow the id — and the header's own account of
 // the export (the view, the filters, the counts): the findings on the
-// page ARE the selection. Returns null for any text without the marker
-// line, so the chain moves on; the guard reads the phrase and not what
-// follows it, so a later document that says more there is still
-// recognised as this library's, and read as well as this reader can.
-// Prose comes back with the writer's heading escape taken off
-// (md-text.js prose / unescapeHeadings).
+// page ARE the selection. Prose comes back with the writer's heading
+// escape taken off (md-text.js prose / unescapeHeadings).
+//
+// The marker line is the whole guard, and the only one: text without
+// it is not this document and returns null, so the chain moves on;
+// text with it is, and is read as the report it is — the guard reads
+// the phrase and not what follows it, so a later document that says
+// more there is still recognised as this library's, and read as well
+// as this reader can, and a document that holds NO finding is still
+// the report its header describes. An export is a SELECTION, and a
+// selection can be empty — the filters left nothing on screen, the
+// trash bucket is clear — which its header says outright ("Included:
+// no findings"); that is as much a report as the `{ "findings": [] }`
+// dump the readers have always taken. So an empty export of a Claude
+// Security report reads back as one, off the header alone —
+// `{ type: 'security', source: 'claude-security', findings: [] }` —
+// rather than as a file no format recognises, which is what the
+// viewer would otherwise refuse at the drop zone with a message
+// naming every format it does read.
 
 import { locationLabel } from './finding.js'
 import { splitByHeading, splitLeading } from './md-structure.js'
@@ -79,7 +92,6 @@ export function parseDeepviewMarkdown(content) {
     const tier = sectionTier(heading)
     for (const block of splitByHeading(body, H3_RE)) entries.push(readEntry(block, tier))
   }
-  if (entries.length === 0) return null
   return assemble(readHeader(head), entries)
 }
 
