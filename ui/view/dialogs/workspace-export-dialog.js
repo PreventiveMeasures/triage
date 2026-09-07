@@ -8,7 +8,9 @@
 //     button.
 //   Raw reports export — just the report documents, gzipped, always
 //     unencrypted. The panel warns about everything the file leaves
-//     behind before the download fires.
+//     behind before the download fires. Dropped back in, it imports as
+//     those reports — the documents, without the triage it never
+//     carried (client/raw-reports-import.js).
 //
 // Extends `AppDialog` for the same shared shadow-DOM chrome the share-link
 // dialogs use.
@@ -280,9 +282,6 @@ class WorkspaceExportDialog extends AppDialog {
     const reportCount = this._reportCount()
     const bundleCount = this._bundleCount()
     return html`
-      <p class="nwd-note">
-        This is not a workspace file and cannot be imported back as one.
-      </p>
       <div class="wsl-error wsl-warning">
         <p>This is the raw form of the reports.</p>
         <p>

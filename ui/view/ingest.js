@@ -285,6 +285,11 @@ async function addFiles(files) {
   // alongside a same-named workspace import would silently overwrite
   // the import's just-saved copy.
   const existingNames = new Set(await listFiles())
+  // Reports inside a raw reports export that no parser recognises.
+  // Collected rather than alerted per entry: a hand-edited export
+  // could hold many, and one dialog per name is not a report on the
+  // drop, it is a punishment for it.
+  const unreadable = []
   for (const file of files) {
     try {
       // Route plaintext gzip and encrypted bundles to workspace import
@@ -294,7 +299,30 @@ async function addFiles(files) {
       // a redownloaded `foo.deepview-workspace (1).enc` still routes here.
       const lower = stripDownloadDup(file.name.toLowerCase())
       if (lower.endsWith('.gz') || lower.endsWith('.deepview-workspace.enc')) {
-        await importWorkspaceFromGzip(file)
+        const imported = await importWorkspaceFromGzip(file)
+        // The raw reports export is not an import of its own — it is a
+        // drop of the reports that were in it. So they land here,
+        // through the same path a dragged-in report takes: recognised
+        // before anything is written, the rename / replace prompt on a
+        // name already taken, the count and source stamped for the
+        // sidebar, and the last one navigated to. `importReportContent`
+        // keeps `existingNames` current as it saves, so two entries of
+        // the same name inside one file see each other.
+        if (imported?.kind === 'reports') {
+          for (const r of imported.reports) {
+            if (typeof r?.name !== 'string' || !r.name || typeof r?.content !== 'string') continue
+            const result = analyzeContent(r.content)
+            // A report the viewer can't parse doesn't reach OPFS — the
+            // same gate a dragged-in file passes. One bad entry is not
+            // the file's fault, though, so the rest still land and the
+            // skipped names are named once at the end.
+            if (!result.recognized) { unreadable.push(r.name); continue }
+            const saved = await importReportContent({ name: r.name, content: r.content, existingNames })
+            if (!saved) continue
+            setCount(saved.name, result.count, result.source)
+            last = { name: saved.name, content: saved.content }
+          }
+        }
         // Refresh existing-names after the import's internal saveFiles
         // so a later same-named file in this drop hits the conflict
         // path instead of silently overwriting (see snapshot note above).
@@ -352,6 +380,10 @@ async function addFiles(files) {
     } catch (err) {
       alert(`Failed to load ${file.name}: ${err.message}`)
     }
+  }
+  if (unreadable.length > 0) {
+    const n = unreadable.length
+    alert(`Skipped ${n} report${n === 1 ? '' : 's'} no parser recognised: ${unreadable.join(', ')}`)
   }
   // renderSidebar refreshes state.bundles from OPFS so a just-imported
   // bundle is visible to the bundles view path below.
