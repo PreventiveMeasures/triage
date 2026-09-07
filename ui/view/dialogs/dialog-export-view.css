@@ -46,8 +46,10 @@ dialog::backdrop { backdrop-filter: none; }
    vertically centred against.
 
    The right padding is the corner close button's berth: it is pinned
-   to the dialog rather than laid out in this row, and without the
-   reservation the row would run Copy underneath it.
+   to the dialog rather than laid out in this row, so the row has to
+   reserve the space itself — the button's own 28px plus a wide gap,
+   so the two never read as a pair and a mis-aimed click at one is
+   nowhere near the other.
 
    None of this line is part of the file, and a select-all inside a
    modal takes every selectable thing in it — so the row steps out of
@@ -55,7 +57,7 @@ dialog::backdrop { backdrop-filter: none; }
 header {
   display: flex; align-items: center; gap: .45rem;
   margin-bottom: .6rem;
-  padding-right: 1.5rem;
+  padding-right: 3rem;
   user-select: none;
 }
 header h3 { margin: 0; }
@@ -195,16 +197,16 @@ header h3 { margin: 0; }
    .mark-copy` in finding-card.css): 1.75rem tall, .72rem text, the
    glyph and the word .35rem apart. A frame of its own because it
    stands alone, where the card's sits in a bordered action group.
-   It rides beside the count rather than at the row's right end: that
-   end is the close button's corner, and a second control tucked under
-   it reads as a crowded pair rather than two separate things.
+   `margin-left: auto` puts it at the end of the title row, so a longer
+   heading or a bigger count never crowds it; what holds it clear of
+   the close button in the corner above is the row's right padding.
 
    The two moments after a click borrow the card's pulse as well: green
    for a copy that landed, and — this button having no second glyph to
    swap in — the same treatment in `--critical` for one that didn't,
    with the advice in its hover text. */
 .evd-copy {
-  flex-shrink: 0;
+  margin-left: auto; flex-shrink: 0;
   height: 1.75rem; padding: 0 .55rem; gap: .35rem;
   display: inline-flex; align-items: center;
   background: transparent; color: var(--muted);
