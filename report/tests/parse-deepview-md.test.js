@@ -490,7 +490,11 @@ describe('parseDeepviewMarkdown — every format the library reads, out and back
     assert.deepEqual([back.source, back.type, back.repo], ['claude-security', 'security', { github: 'acme/app' }])
     assert.deepEqual([...byId(back).keys()], [...byId(data).keys()], 'the ids, derived from the source, survive')
     const [orig, again] = [data.findings[0], back.findings[0]]
-    assert.deepEqual(without(facts(again), 'impact', 'reproduction'), without(facts(orig), 'repo'), 'the repository every finding shared went to the report; the two sections became fields')
+    // `reproduction` is a field on both sides now, so it compares. Only
+    // `impact` still arrives as a description paragraph and leaves as a
+    // field — the writer sections a `**Impact:**` paragraph exactly as
+    // it sections the field, and narrativeSplit takes the last one back.
+    assert.deepEqual(without(facts(again), 'impact'), without(facts(orig), 'repo'), 'the repository every finding shared went to the report; the Impact paragraph became a field')
     assert.deepEqual(again.evidence, orig.evidence)
     assert.equal(again.description, 'Unsafe deserialization in the config loader\n\nThe loader trusts input.')
     assert.equal(again.impact, 'Remote code execution.')
