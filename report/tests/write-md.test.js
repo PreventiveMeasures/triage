@@ -1,4 +1,4 @@
-// `report/write-md.js` — the findings document the Download button
+// `report/src/write-md.js` — the findings document the Download button
 // writes. Pure: findings in (the parsers' own objects), a document out.
 //
 // Pinned here: the header that says what the file is and — the part a
@@ -12,12 +12,12 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
 import { writeMarkdown } from '../index.js'
-import { anchorSlug, cell, code, formatTimestamp, indentUnder, link, prose, unescapeHeadings } from '../md-text.js'
-import { DOCUMENT_MARKER } from '../write-md.js'
-import { parseCodexCsvToScans } from '../parse-codex.js'
-import { parseDeepsecFindings } from '../parse-deepsec.js'
-import { parseMarkdownFindings } from '../parse-md.js'
-import { parsePioliumFindings } from '../parse-piolium.js'
+import { anchorSlug, cell, code, formatTimestamp, indentUnder, link, prose, unescapeHeadings } from '../src/md-text.js'
+import { DOCUMENT_MARKER } from '../src/write-md.js'
+import { parseCodexCsvToScans } from '../index.js'
+import { parseDeepsecFindings } from '../src/parse-deepsec.js'
+import { parseMarkdownFindings } from '../src/parse-md.js'
+import { parsePioliumFindings } from '../src/parse-piolium.js'
 
 const finding = (extra = {}) => ({
   id: 'f1', file: 'src/a.js', line: 7, severity: 'high',

@@ -9,7 +9,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { decodeUtf8, encodeUtf8 } from '../common/utf8.js'
-import { encodeUtf8 as encodeUtf8Report } from '../report/utf8.js'
+import { encodeUtf8 as encodeUtf8Report } from '../report/src/utf8.js'
 
 describe('encodeUtf8', () => {
   it('round-trips ASCII', () => {
@@ -107,13 +107,13 @@ describe('decodeUtf8', () => {
   })
 })
 
-// `report/utf8.js` is the report library's own copy of the encoder: the
+// `report/src/utf8.js` is the report library's own copy of the encoder: the
 // library imports nothing from outside its directory, so it carries the
 // one function it needs rather than reaching into `common/`. The copy
 // is only safe while the two behave identically — a fix made to one and
 // not the other would move the finding ids the library derives, which
 // is the whole reason its hashing goes through a checked encoder.
-describe('report/utf8.js — the library\'s copy', () => {
+describe('report/src/utf8.js — the library\'s copy', () => {
   const CASES = ['', 'hello', 'é😀', '\u{FEFF}leading BOM', 'a\0b', '中文', '\u{10FFFF}']
 
   it('encodes byte for byte what common/utf8.js encodes', () => {

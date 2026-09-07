@@ -119,6 +119,19 @@ test('report/ is publishable from both package.json files, and imports nothing o
   const sources = execSync('git ls-files report', { cwd: root, encoding: 'utf8' })
     .trim().split('\n').filter((f) => f.endsWith('.js') && !f.startsWith('report/tests/'))
 
+  // One entry point, and only one: the package exports `.` and its own
+  // package.json, nothing else. Every module lives under `src/` and is
+  // reached through `index.js`, so what that file names IS the contract
+  // — a `./*.js` here would put every internal back on the surface,
+  // where a rename becomes a breaking change for consumers.
+  assert.deepEqual(
+    Object.keys(libPkg.exports).toSorted(), ['.', './package.json'],
+    'report/ must expose one entry point — index.js — and not its internals',
+  )
+  assert.equal(libPkg.exports['.'], './index.js')
+  const deep = sources.filter((f) => f !== 'report/index.js' && !f.startsWith('report/src/'))
+  assert.deepEqual(deep, [], `report modules outside src/ (only index.js sits at the root):\n  ${deep.join('\n  ')}`)
+
   const libAllow = new Set(libPkg.files.map((f) => `report/${f}`))
   const missingFromLib = sources.filter((f) => !libAllow.has(f))
   assert.deepEqual(
@@ -152,6 +165,8 @@ test('report/ is publishable from both package.json files, and imports nothing o
       // only real statements matter.
       .replaceAll(/^\s*(?:\/\/.*|\*.*)$/gmu, '')
     for (const m of text.matchAll(/\bfrom\s+'([^']+)'/gu)) {
+      // `./…` inside src/, and `./src/…` from index.js — anything
+      // climbing out of the package is what this is looking for.
       if (!m[1].startsWith('./')) escaping.push(`${f} → ${m[1]}`)
     }
   }
