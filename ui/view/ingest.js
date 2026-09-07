@@ -1322,8 +1322,16 @@ function openFilePicker() {
     filePickerInput.multiple = true
     filePickerInput.hidden = true
     filePickerInput.addEventListener('change', () => {
-      const files = filePickerInput.files
-      if (files && files.length > 0) addFiles(files)
+      // Snapshot BEFORE the reset. `input.files` is a live FileList —
+      // the same object on every read — and `.value = ''` empties it
+      // ("empty the list of selected files"). `addFiles` is async: it
+      // suspends on its first await and returns a pending promise, so
+      // the reset below runs before it ever reaches its loop. Handing
+      // it the live list left it iterating an emptied one, and every
+      // picked file was silently dropped. An array serves it just as
+      // well — it only iterates the argument and reads each File.
+      const files = [...filePickerInput.files]
+      if (files.length > 0) addFiles(files)
       filePickerInput.value = ''
     })
     document.body.append(filePickerInput)
