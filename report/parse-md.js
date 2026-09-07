@@ -112,6 +112,21 @@ function parseBlock(block) {
   const finding = { file: file || 'unknown', line, severity, description }
   if (locationLink) finding.location = locationLink
   if (evidence.length > 0) finding.evidence = evidence.map(evidenceEntry)
+  // `## Reproduction steps` and `## Recommended fix` are the finding's
+  // own narrative fields, not part of its description — the same two
+  // slots a native dump fills, so the card and the markdown writer
+  // treat a report that names them here and one that carries them as
+  // fields alike. Reproduction reached the card as a `**Reproduction:**`
+  // paragraph until now, which read as the same section but could not
+  // be collapsed: render-finding.js gives the FIELD a `<details>` (it
+  // is what a reader turns to after deciding a finding is worth
+  // acting on, and it is long) and a description paragraph a plain
+  // always-open block. So a Claude Security card collapsed its
+  // Recommendation and not its Reproduction, and the finding re-read
+  // from its own export collapsed both — the export writes the
+  // paragraph as a section, and parse-deepview-md.js narrativeSplit
+  // takes it back as the field.
+  if (sections['reproduction steps']) finding.reproduction = sections['reproduction steps']
   if (sections['recommended fix']) finding.recommendation = sections['recommended fix']
   if (meta.repository) finding.repo = { github: meta.repository }
   // Preserve auxiliary metadata as plain string fields. The renderer
@@ -291,6 +306,5 @@ function buildDescription(title, sections, hasEvidenceRows) {
   // it would lose it.
   if (sections.evidence && !hasEvidenceRows) bodyParts.push(`**Evidence:**\n${sections.evidence}`)
   if (sections.impact) bodyParts.push(`**Impact:** ${sections.impact}`)
-  if (sections['reproduction steps']) bodyParts.push(`**Reproduction:** ${sections['reproduction steps']}`)
   return bodyParts.join('\n\n')
 }
