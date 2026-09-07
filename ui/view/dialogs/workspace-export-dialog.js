@@ -281,11 +281,7 @@ class WorkspaceExportDialog extends AppDialog {
     const bundleCount = this._bundleCount()
     return html`
       <p class="nwd-note">
-        Downloads ${reportCount} report${reportCount === 1 ? '' : 's'} as a
-        single gzipped JSON file (<code>.deepview-reports.json.gz</code>)
-        holding just <code>{ reports: [{ name, content }] }</code> — the
-        report documents exactly as stored, and nothing else. It is not a
-        workspace file and cannot be imported back as one.
+        It is not a workspace file and cannot be imported back as one.
       </p>
       <p class="wsl-error wsl-warning">
         This is a raw form of the reports. It carries no triage data —
@@ -294,6 +290,7 @@ class WorkspaceExportDialog extends AppDialog {
           ? html` — and none of this workspace's ${bundleCount} attached
               bundle${bundleCount === 1 ? '' : 's'}`
           : nothing}.
+        <br>
         The file is written unencrypted: anyone who obtains it can read
         every report in it.
       </p>

@@ -33,14 +33,6 @@ dialog { max-width: 520px; width: min(94vw, 520px); }
   &:disabled { opacity: .5; }
 }
 
-/* Inline literals in dialog copy (a filename, a payload shape). The
-   base reset drops UA margins but not the UA monospace face; size it
-   down so it sits on the surrounding note's line. */
-code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: .95em;
-}
-
 .wsl-field {
   display: block; margin-top: .6rem;
   color: var(--text); font-size: .78rem;
