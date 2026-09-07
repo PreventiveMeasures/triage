@@ -18,12 +18,21 @@
 // changes. Rebuilding is a walk of a handful of Maps; the intricate
 // per-name pruning that index needs would buy nothing here.
 //
-// The walk skips reading anything the counts cache has already
-// classified as something else — after the first sidebar pass that is
-// every report on disk, so re-walking costs a `getKind` lookup per
-// name. A file the cache hasn't seen yet is read and offered to the
-// parser, which is what makes a pre-existing OPFS entry (or one from
-// before the counts version bumped) still surface as a links file.
+// The walk READS NOTHING. Every answer it needs is already in the
+// counts cache: `analyzeContent` recognises a links file, and every
+// path that puts one on disk stamps the result through `setCount`, so
+// `getKind` names it. A file the cache hasn't classified yet is left
+// alone and picked up by a later pass — `ensureCounts` fills the cache
+// for every stored file and repaints the sidebar as it goes, and each
+// of those repaints calls back in here.
+//
+// That patience is the whole performance story of this module. Reading
+// unclassified files itself meant that whenever the cache was cold —
+// a new device, a large import, a counts-version bump — this walk read
+// and JSON-parsed every report on disk, alongside the two passes
+// (`ensureCounts`, `bundle-finding-index`) already doing exactly that.
+// Three readers racing over the same megabytes, on the thread that has
+// to paint.
 
 import { LINKS_KIND, collectDuplicates, parseLinkedFindings } from './linked-findings.js'
 import { listFiles, onFileMutated, readFile } from './storage.js'
@@ -99,18 +108,20 @@ export function duplicatesOf(id) {
   return set ? [...set] : []
 }
 
-// Read one name and file it: the parse result for a links file, null
-// for anything else. A read failure leaves the name UNRECORDED so the
-// next walk retries it, rather than memoising a transient error (a
-// locked vault, a sibling tab's delete landing mid-read) as "not a
-// links file".
+// File one name: parse it when the counts cache says it is a links
+// file, record "not links" when the cache names anything else, and do
+// NOTHING when the cache hasn't looked yet — that name stays
+// unclassified so a later walk, after `ensureCounts` has reached it,
+// decides.
+//
+// A read failure also leaves the name unrecorded, so a transient error
+// (a locked vault, a sibling tab's delete landing mid-read) isn't
+// memoised as "not a links file".
 async function indexOne(name) {
   if (byFile.has(name)) return false
-  // The counts cache already knows what most files are: `undefined`
-  // means nothing has looked yet (read it), anything else that isn't
-  // our marker means some report format claimed it (don't).
   const kind = getKind(name)
-  if (kind !== undefined && kind !== LINKS_KIND) {
+  if (kind === undefined) return false
+  if (kind !== LINKS_KIND) {
     byFile.set(name, null)
     return false
   }

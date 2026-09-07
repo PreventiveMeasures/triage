@@ -15,6 +15,7 @@ import { openExportViewDialog } from './dialogs/export-view-dialog.js'
 import { openFixLinkDialog } from './dialogs/fix-link-dialog.js'
 import { openUpstreamDialog } from './dialogs/upstream-dialog.js'
 import { findingLinkFor } from './finding-link.js'
+import { revealFindingInReport } from './finding-link-nav.js'
 import { FOCUS_SPLIT_STEP, nudgeFocusSplit, resetFocusSplit, startFocusSplitDrag } from './focus-splitter.js'
 import { downloadReportsAsMarkdown, reportsToMarkdown } from './markdown-export.js'
 import { bundleToCycloneDx, bundleToSpdx, sbomBaseName } from './sbom.js'
@@ -480,11 +481,27 @@ report.addEventListener('click', (e) => {
   // Packages details — click a report row to navigate to it.
   // Mirrors the bundle Issues report-chip handler (switchToFile
   // loads it into findings + flips currentView away from packages).
+  // Links view report chip → that report's copy of THAT finding. Not
+  // the same action as the report chip below: those open a report,
+  // this one opens a finding in a named report, which is the whole
+  // reason the Links view lists the reports per finding rather than
+  // per file.
+  const linksReport = e.target.closest('[data-links-report][data-links-finding]')
+  if (linksReport) {
+    const { linksReport: name, linksFinding: id } = linksReport.dataset
+    if (name && id) {
+      void (async () => {
+        const result = await revealFindingInReport(id, name)
+        if (!result.ok) alert(result.reason)
+      })().catch((err) => console.warn('links: reveal in report failed:', err))
+    }
+    return
+  }
   // Report chip → open that report. Shared by every cross-report
   // surface that names a report the user can go read: the Packages and
-  // Repositories details panels, and the Links view's per-finding "in
-  // which reports" chips. One attribute, one behaviour — a second hook
-  // doing the same thing would only be a second place to fix.
+  // Repositories details panels. One attribute, one behaviour — a
+  // second hook doing the same thing would only be a second place to
+  // fix.
   const pkgReport = e.target.closest('[data-package-report]')
   if (pkgReport) {
     const name = pkgReport.dataset.packageReport

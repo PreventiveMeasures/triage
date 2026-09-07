@@ -325,11 +325,12 @@ function producerLabel(reportName) {
 // for the file, `duplicatesOf` for the union across every links file
 // the user holds).
 //
-// Last block on the card, under the recommendation and the reader's
-// own comment / fix, because it is the least about this finding: by
-// the time you've read what it is and what to do about it, "and it
-// also appears over here" is a footnote — but a footnote worth a
-// click, since the other copy may carry a different report's severity
+// Under everything the REPORT said — the recommendation, the
+// revalidation, the severity correction — and above the reader's own
+// comment and fix, which are the last word on the card because they
+// are the reader's. In between is where "and it also appears over
+// here" belongs: a footnote to the report's account, and worth a click,
+// since the other copy may carry a different report's severity
 // correction, its own comment, or simply be the one your colleague
 // triaged.
 //
@@ -346,9 +347,11 @@ function producerLabel(reportName) {
 // distinct producer, so a duplicate carried by three reports from the
 // same tool shows one, not three.
 //
-// The title spells the same thing out, since the sticker is a picture
-// and a picture reads to nobody who can't see it: the full id, then
-// each report by name with its producer in words.
+// The tooltip spells the same thing out, since the sticker is a
+// picture and a picture reads to nobody who can't see it: the full id,
+// then each report by name with its producer in words. `data-tooltip`,
+// not `title` — the app has its own popup (view/tooltip.js), and the
+// card installs the shadow-scoped listener for it.
 //
 // Two ticks, both for the reason the "Code" button reads
 // `bundleHashTick`: `duplicatesOf` and `reportsForFindingId` are
@@ -371,7 +374,7 @@ function duplicatesTemplate(f) {
       return html`<a
         class="duplicate-ref"
         href=${`#${encodeFindingRef({ id: other })}`}
-        title=${`Show ${other}${where}`}
+        data-tooltip=${`Show ${other}${where}`}
       >${distinctGroups(reports).map((g) => unsafeHTML(FILE_ICONS[g] ?? FILE_ICONS.default))}<span
         class="duplicate-ref-id"
       >${shortFindingId(other) ?? other}</span></a>`
@@ -1419,6 +1422,7 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
         ? sectionTemplate('Revalidation recommendation', stripExportMarker(f.revalidateRecommendation, f), 'recommendation', { collapsible: true })
         : nothing}
       ${hasSeverityCorrection(f) && f.correctedSeverityReason ? html`<div class="severity-reason"><span class="severity-reason-label">Severity correction:</span> ${renderHighlighted(f.correctedSeverityReason)}</div>` : nothing}
+      ${duplicatesTemplate(f)}
       ${comment ? html`<div class="comment-block"><span class="comment-label">Comment:</span> ${renderCommentText(comment)}</div>` : nothing}
       ${fix
         ? html`<div class="fix-block"><span class="fix-label">Fix:</span> ${isHttpUrl(fix)
@@ -1426,13 +1430,13 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
           : fix}</div>`
         : nothing}
       ${scopeBlockTemplate(f, entry)}
-      ${duplicatesTemplate(f)}
     </div>
   </div>`
 }
 
 // The two facts the board can't show, under the finding they belong
-// to:
+// to — last on the card, below even the reader's own comment and fix,
+// because they are the only part of it that is about somewhere else:
 //
 //   * what the OTHER apps did about this same code. It is the same
 //     entry — one dependency, one id, however many apps pull it in —
