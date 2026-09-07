@@ -6,6 +6,7 @@
 
 export {
   ensureBundleFindingsIndexed,
+  findingTitleForId,
   findingsForFileHash,
   getPackagesIndex,
   getRepositoriesIndex,

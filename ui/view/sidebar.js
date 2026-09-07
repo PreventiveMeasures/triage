@@ -627,7 +627,31 @@ export async function renderSidebar() {
   // for the whole batch. Fire-and-forget — the awaited path here
   // would block initial render for as long as the slowest file's
   // parse takes.
-  ensureCounts(names, () => { renderSidebar() })
+  ensureCounts(names, scheduleCountsRepaint)
+}
+
+// Repaint for a batch of landed counts, not for each one.
+//
+// A cold counts cache — a new device, a big import, a counts-version
+// bump — fills one file at a time, and this callback fired per file.
+// Each of those was a whole `renderSidebar`: a fresh OPFS directory
+// enumeration, a workspaces read, a full re-render of every row, and a
+// kick of both background index walks. On a library of any size that
+// is a self-inflicted storm on the one thread that also has to paint,
+// and it ran for as long as the refill took — which is exactly when
+// the app most needs to stay responsive.
+//
+// A frame is the right granularity: the badges still appear to stream
+// in (nobody can see more than one repaint per frame anyway), and the
+// work per landed count drops to appending to a Set.
+let countsRepaintQueued = false
+function scheduleCountsRepaint() {
+  if (countsRepaintQueued) return
+  countsRepaintQueued = true
+  requestAnimationFrame(() => {
+    countsRepaintQueued = false
+    renderSidebar().catch((err) => console.warn('counts repaint:', err))
+  })
 }
 
 // Re-render the sidebar whenever the passkey vault state flips so
