@@ -109,7 +109,6 @@ class TriageSelector extends StateElement {
         type="button"
         class=${classMap({ 'triage-state-btn': true, [`triage-state-${s}`]: true, active })}
         data-triage-show=${s}
-        data-tooltip=${active ? `Exit ${label.toLowerCase()} view` : `Show ${label.toLowerCase()} (${n})`}
         aria-pressed=${String(active)}
       >${label} (${n})</button>`
     })}`

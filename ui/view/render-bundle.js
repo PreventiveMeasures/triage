@@ -718,7 +718,6 @@ function renderBundleSourceFindingPanel(findings) {
         type="button"
         class="bundle-source-panel-close"
         data-action="bundle-source-panel-close"
-        data-tooltip="Close (Esc)"
         aria-label="Close finding details"
       >×</button>
     </header>
@@ -777,7 +776,6 @@ function renderBundleSourceBar(path) {
         type="button"
         class="bundle-source-close"
         data-action="bundle-source-close"
-        data-tooltip="Close source viewer (Esc)"
         aria-label="Close source viewer"
       >×</button>
     </header>`
@@ -1374,7 +1372,6 @@ function renderBundleCodeMain(details, path, content, fileFindings, lineFindings
         type="button"
         class="bundle-code-copy-path"
         data-copy-path=${path}
-        data-tooltip="Copy file path"
         aria-label="Copy file path"
       >${COPY_PATH_ICON}</button>
       <span class="bundle-code-main-spacer"></span>
@@ -1393,14 +1390,12 @@ function renderBundleCodeMain(details, path, content, fileFindings, lineFindings
           type="button"
           class="bundle-code-issue-step"
           data-bundle-code-issue-step="-1"
-          data-tooltip="Previous issue"
           aria-label="Previous issue"
         >‹</button>
         <button
           type="button"
           class="bundle-code-issue-step"
           data-bundle-code-issue-step="1"
-          data-tooltip="Next issue"
           aria-label="Next issue"
         >›</button>
       </span>` : nothing}

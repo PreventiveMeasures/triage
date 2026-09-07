@@ -131,7 +131,7 @@ export function renderTreeView(treeData, findingCounts) {
         ${selected ? html`<aside class="tree-table-details" id="tree-table-details">
           <header class="tree-table-details-bar">
             <span class="tree-table-details-label">Details</span>
-            <button type="button" class="tree-table-details-close" data-tree-deselect data-tooltip="Close details" aria-label="Close details">×</button>
+            <button type="button" class="tree-table-details-close" data-tree-deselect aria-label="Close details">×</button>
           </header>
           <div class="tree-table-details-body">
             ${renderFileDetails(treeData[selected], selected, importedBy.get(selected) ?? [], linkOrText)}

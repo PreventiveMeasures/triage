@@ -117,7 +117,7 @@ class FixLinkDialog extends AppDialog {
           @keydown=${this._onKeydown}
         >
         ${openable
-          ? html`<a class="open" href=${trimmed} target="_blank" rel="noopener noreferrer" data-tooltip="Open in a new tab">Open ↗</a>`
+          ? html`<a class="open" href=${trimmed} target="_blank" rel="noopener noreferrer">Open ↗</a>`
           : nothing}
       </div>
       <p class="hint">PR URL, issue link, commit, or any free-form reference. Enter to save, Esc to cancel.</p>

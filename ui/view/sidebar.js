@@ -188,7 +188,7 @@ function workspaceHeaderTemplate() {
   // surface is coming — so drop the "+" affordance there.
   const actions = state.serverMode === 'managed'
     ? nothing
-    : html`<span class="workspace-header-actions"><button type="button" class="workspace-add" data-action="new-workspace" data-tooltip="Create a new workspace" aria-label="Create a new workspace">${WORKSPACE_PLUS_ICON}</button></span>`
+    : html`<span class="workspace-header-actions"><button type="button" class="workspace-add" data-action="new-workspace" aria-label="Create a new workspace">${WORKSPACE_PLUS_ICON}</button></span>`
   return html`<li class="file-group-header workspace-header"><span class="group-label">Workspaces</span>${actions}</li>`
 }
 
@@ -950,10 +950,10 @@ async function onSidebarClick(e) {
 // boundary), so `mount()` attaches the shared scoped listener
 // (`installShadowTooltipListener`) to the shadow root with the
 // options below. Root-wide rather than `#file-list`-scoped because
-// the header's sidebar-toggle and the search row's
-// `<sidebar-view-button>`s carry tooltips too; the gate is a no-op
-// for any node without a `.file-label`, so file rows behave exactly
-// as they did when the listener hung off the list.
+// the search row's `<sidebar-view-button>`s carry tooltips too, and
+// they sit outside the list; the gate is a no-op for any node without
+// a `.file-label`, so file rows behave exactly as they did when the
+// listener hung off the list.
 //
 // Gate: when the tooltip text is just the label text (the common
 // case for short report filenames), suppress the tooltip when the
@@ -1720,7 +1720,7 @@ class AppSidebar extends LitElement {
           <span class="brand-tag">dev</span>
         </h2>
         <button id="encryption-toggle" type="button" hidden></button>
-        <button id="sidebar-toggle" type="button" data-tooltip="toggle sidebar" aria-label="toggle sidebar">
+        <button id="sidebar-toggle" type="button" aria-label="toggle sidebar">
           <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">
             <path d="M2 4h12v1.5H2zM2 7.25h12v1.5H2zM2 10.5h12V12H2z"/>
           </svg>

@@ -177,7 +177,7 @@ export function renderPackagesView() {
           ${selectedEntry ? html`<aside class="packages-details" id="packages-details">
             <header class="packages-details-bar">
               <span class="packages-details-label">Details</span>
-              <button type="button" class="packages-details-close" data-deselect-package data-tooltip="Close details" aria-label="Close details">×</button>
+              <button type="button" class="packages-details-close" data-deselect-package aria-label="Close details">×</button>
             </header>
             <div class="packages-details-body">
               ${renderPackageDetails(selectedEntry[0], selectedBucket, selectedVersionEntry ? selectedVersionEntry[0] : undefined)}
@@ -327,7 +327,6 @@ function renderPackageSlide(pkg, bucket, version) {
         type="button"
         class="bundles-slide-back"
         data-action="package-slide-back"
-        data-tooltip="Back to packages"
         aria-label="Back to packages"
       >← Back</button>
       <div class="bundles-slide-title">

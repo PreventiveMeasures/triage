@@ -403,7 +403,7 @@ function repoPickerTemplate(repos, selected, onChange) {
 // attached to (or none). `onPick` gets the repo id, or null to detach.
 function repoRowSelect(repos, current, onPick) {
   if (!Array.isArray(repos) || repos.length === 0) return nothing
-  return html`<select class="repo-attach" aria-label="Attach to a repository" data-tooltip="Attach to a repository"
+  return html`<select class="repo-attach" aria-label="Attach to a repository"
     @change=${(e) => onPick(e.target.value === '' ? null : Number(e.target.value))}>
     ${repoOptions(repos, current)}
   </select>`

@@ -161,7 +161,7 @@ export function renderTopBar(graph, options) {
         id="g2-path-filter"
         placeholder="filter path/package…"
         .value=${graph2.pathFilter}>
-      <button type="button" class="g2-path-filter-clear" id="g2-path-filter-clear" data-tooltip="Clear filter" aria-label="Clear filter">✕</button>
+      <button type="button" class="g2-path-filter-clear" id="g2-path-filter-clear" aria-label="Clear filter">✕</button>
     </div>
     ${extraTopRow ? null : allFilesBtn}
     ${extraTopRow ? null : splitOwnBtn}
@@ -172,7 +172,7 @@ export function renderTopBar(graph, options) {
          spans both grid rows, so the topbar covers only the stage
          column and this button's right edge lands at the stage /
          sidebar boundary. -->
-    <button type="button" class="g2-icon-btn" id="g2-fullscreen" aria-label="Toggle fullscreen" data-tooltip="Toggle fullscreen">⛶</button>
+    <button type="button" class="g2-icon-btn" id="g2-fullscreen" aria-label="Toggle fullscreen">⛶</button>
     </div>
   </div>`
 }
@@ -280,7 +280,7 @@ export function renderStage(graph) {
          mode. Stats live bottom-left where they don't compete with
          the focused subgraph; this corner is empty in normal mode. -->
     ${graph2.focusedPkg ? html`<div class="g2-stage-overlay">
-      <button type="button" class="g2-back-btn" id="g2-back-to-full" data-tooltip="Back to the full graph">← ${focusedLabel}</button>
+      <button type="button" class="g2-back-btn" id="g2-back-to-full">← ${focusedLabel}</button>
     </div>` : null}
     <!-- Top-right overlay slot — pairs with the top-left back button
          (both are in-canvas graph actions, not navigation jumps). The
@@ -297,10 +297,10 @@ export function renderStage(graph) {
       <span>avg degree <b>${avgDeg}</b></span>
     </div>
     <div class="g2-zoom-ctrl">
-      <button id="g2-zoom-in" aria-label="Zoom in" data-tooltip="Zoom in">+</button>
+      <button id="g2-zoom-in" aria-label="Zoom in">+</button>
       <div class="g2-zoom-pct" id="g2-zoom-pct">100%</div>
-      <button id="g2-zoom-out" aria-label="Zoom out" data-tooltip="Zoom out">−</button>
-      <button id="g2-zoom-fit" class="g2-zoom-fit-btn" aria-label="Fit to view" data-tooltip="Fit to view">fit</button>
+      <button id="g2-zoom-out" aria-label="Zoom out">−</button>
+      <button id="g2-zoom-fit" class="g2-zoom-fit-btn" aria-label="Fit to view">fit</button>
     </div>
     <div class="g2-tooltip" id="g2-tooltip"></div>
   </main>`

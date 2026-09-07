@@ -796,7 +796,6 @@ function flagButtonTemplate(key, isFocus = false) {
     type="button"
     class=${classMap({ 'mark-flag': true, flagged })}
     data-flag-toggle=${key}
-    data-tooltip=${title}
     aria-label=${title}
     aria-pressed=${String(flagged)}
   >${FLAG_ICON}${isFocus ? html`<span class="mark-btn-label">${flagged ? 'Flagged' : 'Flag'}</span>` : nothing}</button>`
@@ -1136,7 +1135,6 @@ function npmChipTemplate(npm) {
     href=${href}
     target="_blank"
     rel="noopener noreferrer"
-    data-tooltip=${`Open ${label} on npmjs.com`}
   >npm: ${label}</a></span>`
 }
 

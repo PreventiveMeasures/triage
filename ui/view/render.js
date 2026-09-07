@@ -314,7 +314,6 @@ function headerTemplate(mergedGroups, fileNames, repoInputUseful, knownRepo, tre
         type="button"
         class=${classMap({ 'files-toggle-btn': true, active: filesActive })}
         data-action="toggle-files"
-        data-tooltip=${filesActive ? 'exit files view' : 'show files'}
         aria-pressed=${String(filesActive)}
       >${`Files: ${treeFileCount}`}</button>`
     : nothing
@@ -1250,7 +1249,7 @@ function findingsBodyTemplate(filtered) {
       ${selectedGroup ? html`<aside class="findings-table-details" id="findings-table-details">
         <header class="findings-table-details-bar">
           <span class="findings-table-details-label">Details</span>
-          <button type="button" class="findings-table-details-close" data-table-deselect data-tooltip="Close details" aria-label="Close details">×</button>
+          <button type="button" class="findings-table-details-close" data-table-deselect aria-label="Close details">×</button>
         </header>
         <div class="findings-table-details-body">${findingCardPlaceholder(selectedGroup)}</div>
       </aside>` : nothing}
@@ -1307,7 +1306,6 @@ function findingsBodyTemplate(filtered) {
               class="focus-nav-btn"
               data-focus-nav="prev"
               ?disabled=${atStart}
-              data-tooltip="Previous finding (←)"
               aria-label="Previous finding"
             >${PREV_ICON}</button>
             <span class="count">${focusedIdx + 1} / ${filtered.length}</span>
@@ -1316,7 +1314,6 @@ function findingsBodyTemplate(filtered) {
               class="focus-nav-btn"
               data-focus-nav="next"
               ?disabled=${atEnd}
-              data-tooltip="Next finding (→)"
               aria-label="Next finding"
             >${NEXT_ICON}</button>
           </div>

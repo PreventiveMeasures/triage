@@ -38,7 +38,7 @@
 //
 // Sibling of `<export-confirm-dialog>`: extends `AppDialog` for the
 // shared shadow-DOM <dialog> chrome (focus-trap + Esc-to-cancel).
-import { html, unsafeCSS } from 'lit'
+import { html, nothing, unsafeCSS } from 'lit'
 import { AppDialog } from './app-dialog.js'
 import { highlight, splitHighlightedLines } from '../prism-highlight.js'
 import { unwatchNearViewport, watchNearViewport } from '../lazy-render.js'
@@ -128,11 +128,12 @@ class ExportViewDialog extends AppDialog {
   render() {
     const count = this._lines.length
     // The copy button carries its own result, in the label it already
-    // has: Copy, then how the click went for a moment after it. The
-    // hover text stays the fuller sentence — what gets copied, and
-    // what to do instead when the clipboard refuses.
+    // has: Copy, then how the click went for a moment after it. That
+    // leaves the hover text nothing to add in the ordinary case — only
+    // the refused clipboard needs a way out, so that is the only state
+    // that sets one (`nothing` drops the attribute entirely).
     const copyLabel = this._copied === 'done' ? 'Copied' : this._copied === 'failed' ? 'Copy failed' : 'Copy'
-    const copyHint = this._copied === 'failed' ? 'Select the text and copy it by hand' : 'Copy the whole file'
+    const copyHint = this._copied === 'failed' ? 'Select the text and copy it by hand' : nothing
     // The chunks are shells here: `updated` fills them. `--evd-chunk-
     // lines` sizes a chunk's stand-in while it is skipped; `--evd-
     // lineno-width` is the gutter every chunk's rows share (see
@@ -147,7 +148,6 @@ class ExportViewDialog extends AppDialog {
         type="button"
         class="evd-close"
         data-role="cancel"
-        data-tooltip="Close"
         aria-label="Close"
         @click=${this._onClose}
       >×</button>

@@ -57,7 +57,6 @@ class BundleSearch extends StateElement {
       ${query ? html`<button
         type="button"
         class="bundle-search-clear"
-        data-tooltip="Clear search"
         aria-label="Clear search"
         @click=${this._onClear}
       >×</button>` : nothing}
