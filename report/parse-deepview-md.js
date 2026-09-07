@@ -10,7 +10,7 @@
 //
 // The document (write-md.js for the whole shape):
 //
-//   <!-- DeepView findings export, format 1 -->     ← the guard
+//   <!-- DeepView findings export, format 2 -->     ← the guard
 //   # <title>
 //   - **Source:** Claude Security                     the header list
 //   - **Repository:** [o/r](…) / **Analyzer:** …
@@ -49,13 +49,18 @@
 // page ARE the selection. Returns null for any text without the marker
 // line, so the chain moves on; the guard reads the phrase and not the
 // format number, so a later format is still recognised as this
-// library's, and read as well as this reader can.
+// library's, and read as well as this reader can. The number decides
+// what the reader may take off the prose: from format 2 the writer
+// escapes a line of prose that would read as a heading (md-text.js
+// prose), and only there is the escape stripped — a format 1 document
+// wrote its prose bare, and a `\#` opening a line of it is the
+// analyzer's own.
 
 import { locationLabel } from './finding.js'
 import { splitByHeading, splitLeading } from './md-structure.js'
-import { applyFact, buildDescription, narrativeSplit, readAnalyzer, readEvidence, readRepository, splitFacts, splitSections, tierOf } from './parse-deepview-fields.js'
+import { applyFact, buildDescription, narrativeSplit, readAnalyzer, readEvidence, readProse, readRepository, splitFacts, splitSections, tierOf } from './parse-deepview-fields.js'
 
-const MARKER_RE = /^<!--\s*DeepView findings export\b/u
+const MARKER_RE = /^<!--\s*DeepView findings export\b([^>]*)-->/u
 const H2_RE = /^## +(.*)$/gmu
 const H3_RE = /^### +(.*)$/gmu
 const H4_RE = /^#### +(.*)$/gmu
@@ -69,13 +74,17 @@ const OWN_SECTIONS = new Set(['evidence', 'severity correction', 'comment'])
 
 export function parseDeepviewMarkdown(content) {
   const text = content.replaceAll(/\r\n?/gu, '\n').trim()
-  if (!MARKER_RE.test(text)) return null
+  const marker = MARKER_RE.exec(text)
+  if (!marker) return null
+  // The format number, 1 when the marker names none; whether the prose
+  // carries the writer's heading escape — format 2 on.
+  const escaped = (Number(/format\s*(\d+)/u.exec(marker[1])?.[1]) || 1) >= 2
   const { head, subs } = splitLeading(text, H2_RE)
   const entries = []
   for (const { heading, body } of subs) {
     if (heading.trim().toLowerCase() === 'summary') continue
     const tier = sectionTier(heading)
-    for (const block of splitByHeading(body, H3_RE)) entries.push(readEntry(block, tier))
+    for (const block of splitByHeading(body, H3_RE)) entries.push(readEntry(block, tier, escaped))
   }
   if (entries.length === 0) return null
   return assemble(readHeader(head), entries)
@@ -108,19 +117,19 @@ function readHeader(head) {
 
 // One `### N. <finding>` block: a finding, or one with a case per
 // `#### Case i of n` under it.
-function readEntry({ heading, body }, tier) {
+function readEntry({ heading, body }, tier, escaped) {
   const title = heading.trim().replace(/^\d+\.\s+/u, '')
   const cases = splitLeading(body, H4_RE).subs.filter((s) => CASE_RE.test(s.heading.trim()))
-  if (cases.length === 0) return [readCase(body, 4, title, tier)]
-  return cases.map((s) => readCase(s.body, 5, title, tier))
+  if (cases.length === 0) return [readCase(body, 4, title, tier, escaped)]
+  return cases.map((s) => readCase(s.body, 5, title, tier, escaped))
 }
 
 // One case's text into a finding: the facts, the description the lead
 // and the description's own sections add up to, the evidence, the
 // narrative fields. What the Analyzer fact said rides beside the
 // finding for `assemble` to settle at the report level.
-function readCase(body, depth, entryTitle, tier) {
-  const { title, facts, rest } = splitFacts(body)
+function readCase(body, depth, entryTitle, tier, escaped) {
+  const { title, facts, rest } = splitFacts(body, escaped)
   const { lead, sections } = splitSections(rest, depth)
   const f = { file: 'unknown', line: '?' }
   let analyzer = null
@@ -133,13 +142,15 @@ function readCase(body, depth, entryTitle, tier) {
   // at all, had no name; its description is what the lead says.
   const name = title || entryTitle
   const named = name !== 'Untitled finding' && name !== locationLabel(f)
-  const { paragraphs, fields } = narrativeSplit(sections.filter((s) => !OWN_SECTIONS.has(s.label.toLowerCase())))
-  f.description = buildDescription(named ? name : '', lead, paragraphs)
-  const evidence = sections.filter((s) => s.label.toLowerCase() === 'evidence').flatMap((s) => readEvidence(s.body))
+  const own = sections.filter((s) => !OWN_SECTIONS.has(s.label.toLowerCase()))
+    .map((s) => ({ label: s.label, body: readProse(s.body, escaped) }))
+  const { paragraphs, fields } = narrativeSplit(own)
+  f.description = buildDescription(named ? name : '', readProse(lead, escaped), paragraphs)
+  const evidence = sections.filter((s) => s.label.toLowerCase() === 'evidence').flatMap((s) => readEvidence(s.body, escaped))
   if (evidence.length > 0) f.evidence = evidence
   for (const [field, value] of fields) f[field] = value
   const reason = sections.find((s) => s.label.toLowerCase() === 'severity correction')
-  if (reason?.body) f.correctedSeverityReason = reason.body
+  if (reason?.body) f.correctedSeverityReason = readProse(reason.body, escaped)
   return { finding: f, analyzer }
 }
 

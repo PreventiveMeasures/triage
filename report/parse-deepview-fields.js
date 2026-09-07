@@ -247,10 +247,14 @@ const FACT_RE = /^- \*\*([^*\n]+?):\*\* ?(.*)$/u
 // (write-md-finding.js groupSection) — but only when a list follows;
 // a case with no facts at all keeps its opening paragraph as prose.
 // Prose comes back with the writer's heading escape taken off
-// (md-text.js prose / unescapeHeadings) — here, in splitSections and
-// in readEvidence — so `\## Internal detail` is the `## Internal
-// detail` the description held.
-export function splitFacts(body) {
+// (md-text.js prose / unescapeHeadings) — the title here, an evidence
+// note in readEvidence, the lead and the sections' bodies where the
+// document reader consumes them (readProse) — so `\## Internal
+// detail` is the `## Internal detail` the description held. `escaped`
+// is whether the document's writer escaped at all (format 2 on,
+// parse-deepview-md.js): a format 1 document's prose is taken as
+// written.
+export function splitFacts(body, escaped = true) {
   const lines = body.split('\n')
   let i = 0
   const skipBlank = () => { while (i < lines.length && !lines[i].trim()) i++ }
@@ -272,7 +276,13 @@ export function splitFacts(body) {
   skipBlank()
   facts = readFacts()
   if (facts.length === 0) return { title: '', facts, rest: body }
-  return { title: unescapeHeadings(para.join('\n').trim()), facts, rest: lines.slice(i).join('\n') }
+  return { title: readProse(para.join('\n').trim(), escaped), facts, rest: lines.slice(i).join('\n') }
+}
+
+// A run of prose as the description held it: the writer's heading
+// escape off, when the document's writer put one on.
+export function readProse(text, escaped = true) {
+  return escaped ? unescapeHeadings(text) : text
 }
 
 // A case's sections at `depth` (4 under a finding's heading, 5 under a
@@ -283,10 +293,10 @@ export function splitSections(text, depth) {
   const re = new RegExp(`^#{${depth}} +(.*)$`, 'gmu')
   const ranges = fenceRanges(text)
   const marks = [...text.matchAll(re)].filter((m) => !inFence(ranges, m.index))
-  const lead = unescapeHeadings(text.slice(0, marks[0]?.index ?? text.length).trim())
+  const lead = text.slice(0, marks[0]?.index ?? text.length).trim()
   const sections = marks.map((m, i) => ({
     label: m[1].trim(),
-    body: unescapeHeadings(text.slice(m.index + m[0].length, marks[i + 1]?.index).trim()),
+    body: text.slice(m.index + m[0].length, marks[i + 1]?.index).trim(),
   }))
   return { lead, sections }
 }
@@ -298,7 +308,7 @@ const ITEM_RE = /^(\d+)\. (.*)$/u
 // the item's text. Back into rows of `{ file, line, url, text }` — the
 // note under the name parse-md.js gives it, whatever a native dump
 // called it (finding.js evidenceNote reads both).
-export function readEvidence(text) {
+export function readEvidence(text, escaped = true) {
   const items = []
   const ranges = fenceRanges(text)
   let pos = 0
@@ -308,10 +318,10 @@ export function readEvidence(text) {
     if (m) items.push({ ref: m[2].trim(), indent: m[1].length + 2, note: [] })
     else if (items.length > 0) items.at(-1).note.push(line)
   }
-  return items.map(evidenceRow)
+  return items.map((item) => evidenceRow(item, escaped))
 }
 
-function evidenceRow({ ref, indent, note }) {
+function evidenceRow({ ref, indent, note }, escaped) {
   const row = {}
   const link = readLink(ref)
   const auto = autolinkUrl(ref)
@@ -319,7 +329,7 @@ function evidenceRow({ ref, indent, note }) {
   if (label !== null) Object.assign(row, fileLine(label))
   const url = link ? link.url : auto
   if (isHttpUrl(url)) row.url = url
-  const text = unescapeHeadings(note.map((l) => l.slice(Math.min(indent, /^ */u.exec(l)[0].length))).join('\n').trim())
+  const text = readProse(note.map((l) => l.slice(Math.min(indent, /^ */u.exec(l)[0].length))).join('\n').trim(), escaped)
   if (text) row.text = text
   return row
 }

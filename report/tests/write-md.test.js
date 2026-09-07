@@ -50,7 +50,7 @@ describe('writeMarkdown — the whole document', () => {
       [finding({ id: 'f2', file: 'src/b.js', line: '?', severity: 'low', description: 'Verbose error' })],
     ], { generatedAt: '2026-09-05T14:02:00Z' }))
     assert.equal(md, [
-      '<!-- DeepView findings export, format 1 -->',
+      '<!-- DeepView findings export, format 2 -->',
       '',
       '# r',
       '',
@@ -104,7 +104,7 @@ describe('writeMarkdown — the whole document', () => {
   })
 
   it('takes an empty document, and what is not a finding', () => {
-    assert.match(writeMarkdown(), /^<!-- DeepView findings export, format 1 -->\n\n# Findings\n\n## Summary\n\nNo findings are included\.\n$/u)
+    assert.match(writeMarkdown(), /^<!-- DeepView findings export, format 2 -->\n\n# Findings\n\n## Summary\n\nNo findings are included\.\n$/u)
     const md = writeMarkdown({ groups: [null, [], ['stray', null], finding()] })
     assert.equal(headings(md).filter((h) => h.startsWith('### ')).length, 1, 'a bare finding is a one-case group; junk is dropped')
   })

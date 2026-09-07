@@ -88,8 +88,20 @@ describe('parseDeepviewMarkdown — the guard', () => {
   })
 
   it('takes a later format number as its own', () => {
-    const md = exportOf({ findings: [finding()] }).replace('format 1', 'format 2')
+    const md = exportOf({ findings: [finding()] }).replace('format 2', 'format 3')
     assert.equal(parseDeepviewMarkdown(md)?.findings.length, 1)
+  })
+
+  it('takes a format 1 document\'s prose as written, escapes and all', () => {
+    // Format 1 wrote prose bare, so a backslash opening a line of it is
+    // the analyzer's own; from format 2 it is the writer's escape.
+    const md = exportOf({ findings: [finding({ description: 'Title\n\n\\# kept', impact: '\\## kept', evidence: [{ file: 'a.js', line: '1', text: '\\### kept' }] })] })
+    const legacy = md.replace('format 2', 'format 1').replaceAll('\\\\#', '\\#')
+    const f = parseDeepviewMarkdown(legacy).findings[0]
+    assert.deepEqual([f.description, f.impact, f.evidence[0].text], ['Title\n\n\\# kept', '\\## kept', '\\### kept'])
+    const current = parseDeepviewMarkdown(md).findings[0]
+    assert.deepEqual([current.description, current.impact, current.evidence[0].text], ['Title\n\n\\# kept', '\\## kept', '\\### kept'], 'and format 2 reads the same text back through its escape')
+    assert.equal(parseDeepviewMarkdown(md.replace(', format 2', '')).findings[0].description, 'Title\n\n\\\\# kept', 'no number reads as format 1: nothing is stripped')
   })
 
   it('is no report when it holds no finding', () => {
