@@ -281,19 +281,22 @@ class WorkspaceExportDialog extends AppDialog {
     const bundleCount = this._bundleCount()
     return html`
       <p class="nwd-note">
-        It is not a workspace file and cannot be imported back as one.
+        This is not a workspace file and cannot be imported back as one.
       </p>
-      <p class="wsl-error wsl-warning">
-        This is a raw form of the reports. It carries no triage data —
-        no markers, triage states, comments, fixes, or per-report
-        ignores${bundleCount > 0
-          ? html` — and none of this workspace's ${bundleCount} attached
-              bundle${bundleCount === 1 ? '' : 's'}`
-          : nothing}.
-        <br>
-        The file is written unencrypted: anyone who obtains it can read
-        every report in it.
-      </p>
+      <div class="wsl-error wsl-warning">
+        <p>This is the raw form of the reports.</p>
+        <p>
+          It carries no triage data — no markers, triage states,
+          comments, fixes, or per-report ignores${bundleCount > 0
+            ? html` — and none of this workspace's ${bundleCount} attached
+                bundle${bundleCount === 1 ? '' : 's'}`
+            : nothing}.
+        </p>
+        <p>
+          This file is written unencrypted: anyone who obtains it can
+          read every report in it.
+        </p>
+      </div>
       ${reportCount === 0
         ? html`<p class="wsl-error" role="alert">This workspace has no reports to export.</p>`
         : nothing}
@@ -306,9 +309,15 @@ class WorkspaceExportDialog extends AppDialog {
     return this._noPassword ? 'Export without password' : 'Export'
   }
 
+  // The two paths that write an unencrypted file wear the critical
+  // colour: the raw export (never encrypted) and the workspace export
+  // with the password opted out.
+  _primaryDanger() {
+    return this._tab === 'raw' || this._noPassword
+  }
+
   _body() {
     return html`
-      ${this._tabsTemplate()}
       <div
         role="tabpanel"
         id=${`wsl-panel-${this._tab}`}
@@ -320,7 +329,7 @@ class WorkspaceExportDialog extends AppDialog {
         <button type="button" @click=${this._onCancel}>Cancel</button>
         <button
           type="button"
-          class="primary"
+          class=${this._primaryDanger() ? 'primary danger' : 'primary'}
           ?disabled=${!this._canExport()}
           @click=${this._onExport}
         >${this._primaryLabel()}</button>
@@ -329,10 +338,10 @@ class WorkspaceExportDialog extends AppDialog {
   }
 
   render() {
+    // The tab strip IS the header — a title above it would only repeat
+    // the first tab's label.
     return html`<dialog @close=${this._onClose}>
-      <header>
-        <h3>Export workspace</h3>
-      </header>
+      <header>${this._tabsTemplate()}</header>
       ${this._body()}
     </dialog>`
   }
