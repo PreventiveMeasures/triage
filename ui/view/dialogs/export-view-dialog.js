@@ -133,7 +133,15 @@ class ExportViewDialog extends AppDialog {
   // than the template because the elements exist only after a render.
   // Each is registered once (`data-watched`), and unwatched the moment
   // it has been near: a chunk is coloured once and keeps its colour.
+  //
+  // Not when the host is already out of the document. `showModal()`
+  // failing in `firstUpdated` dispatches `modal-conflict`, whose
+  // listener removes the element on the spot — and Lit still runs this
+  // hook after it, on a tree that disconnectedCallback has already
+  // swept. Registering those chunks would hand the shared observer a
+  // detached copy of the whole report that nothing ever unwatches.
   updated() {
+    if (!this.isConnected) return
     for (const el of this.renderRoot.querySelectorAll('.evd-chunk:not([data-watched])')) {
       el.dataset.watched = ''
       const index = Number(el.dataset.chunk)
