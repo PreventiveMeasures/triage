@@ -98,10 +98,9 @@
   margin: 0; padding: 0;
 }
 
-/* One linked finding: id on the left, where it lives on the right.
-   The two halves are laid out as a row that wraps, so a finding
-   carried by six reports pushes its chips onto the next line instead
-   of squeezing the id. */
+/* One linked finding: id, what it is called, and where it lives. The
+   row wraps, so a finding carried by six reports pushes its chips onto
+   the next line instead of squeezing the id. */
 .links-finding {
   display: flex; align-items: center; flex-wrap: wrap;
   gap: .35rem .6rem;
@@ -109,6 +108,17 @@
   border-bottom: 1px solid var(--border);
   font-size: .74rem;
   &:last-child { border-bottom: none; }
+}
+
+/* The finding's own heading. Takes the slack in the row and gives it
+   back first: the id identifies the row and the chips are the
+   navigation, so when space runs out this is the part that elides —
+   with the whole line on the tooltip (`data-tooltip`, the app's own
+   popup; never `title`, which reads as browser chrome). */
+.links-finding-title {
+  flex: 1 1 12rem; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--text);
 }
 
 /* The id, as a link into the finding. Dotted underline for the same
@@ -126,12 +136,14 @@
 }
 
 .links-finding-missing {
+  flex: 1 1 auto;
   color: var(--muted);
   font-style: italic;
 }
 
 .links-finding-reports {
   display: flex; align-items: center; flex-wrap: wrap;
+  flex-shrink: 0;
   gap: .3rem;
   min-width: 0;
 }

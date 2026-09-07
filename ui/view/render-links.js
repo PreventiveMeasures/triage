@@ -30,12 +30,12 @@
 import { html, nothing } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { encodeFindingRef, ensureBundleFindingsIndexed, reportsForFindingId, state } from '#client/index.js'
+import { encodeFindingRef, ensureBundleFindingsIndexed, findingTitleForId, reportsForFindingId, state } from '#client/index.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 import { shortFindingId } from './format.js'
 
-// One linked finding, as a row: the id (a deep link into whichever
-// report holds it) and the reports it was found in.
+// One linked finding, as a row: its id, what it is called, and the
+// reports it was found in.
 //
 // The id is a `#finding=…` anchor exactly like the ones in a comment —
 // same fragment format, same in-page navigation, same `hashchange`
@@ -44,6 +44,18 @@ import { shortFindingId } from './format.js'
 // around it. `encodeFindingRef` is safe to call unguarded: the parser
 // only keeps ids `isLinkableFindingId` accepts, which is the same test
 // this throws on.
+//
+// The title comes from the OPFS-wide index (`findingTitleForId`), so
+// it is present for any finding the user actually holds and absent for
+// the rest — which is the same thing the report chips say, and the
+// reason it can be left out silently rather than standing in for
+// itself. It elides at whatever width the row leaves it; the whole
+// line is on the tooltip.
+//
+// Each report is a BUTTON to that report's copy, not merely to the
+// report: a linked finding is interesting because several analyzers
+// found it, and "read DeepSec's version of this" is the click the row
+// exists for (`revealFindingInReport`, via the delegate in events.js).
 //
 // A finding no report of the user's carries still renders as a link.
 // The index knows what is on disk RIGHT NOW; the link's own resolution
@@ -55,15 +67,18 @@ import { shortFindingId } from './format.js'
 function linkedFindingRow(id) {
   const reports = reportsForFindingId(id).toSorted((a, b) => displayName(a).localeCompare(displayName(b)))
   const label = shortFindingId(id) ?? id
+  const title = findingTitleForId(id)
   return html`<li class="links-finding">
-    <a class="links-finding-id mono" href=${`#${encodeFindingRef({ id })}`} title=${`Show ${id}`}>${label}</a>
+    <a class="links-finding-id mono" href=${`#${encodeFindingRef({ id })}`} data-tooltip=${`Show ${id}`}>${label}</a>
+    ${title ? html`<span class="links-finding-title" data-tooltip=${title}>${title}</span>` : nothing}
     ${reports.length === 0
       ? html`<span class="links-finding-missing">not in your reports</span>`
       : html`<span class="links-finding-reports">${reports.map((r) => html`<button
           type="button"
           class="links-finding-report"
-          title=${r}
-          data-package-report=${r}
+          data-tooltip=${`Show this finding in ${displayName(r)}`}
+          data-links-report=${r}
+          data-links-finding=${id}
         >${unsafeHTML(FILE_ICONS[groupOf(r)] ?? FILE_ICONS.default)}<span class="links-finding-report-label">${displayName(r)}</span></button>`)}</span>`}
   </li>`
 }
@@ -113,7 +128,7 @@ export function renderLinksView(badge = nothing) {
       <div class="page-title">
         <h1>Links${badge}</h1>
         <div class="meta-row">
-          <span class="links-file-name" title=${name}>${unsafeHTML(FILE_ICONS[groupOf(name)] ?? FILE_ICONS.default)}${displayName(name)}</span>
+          <span class="links-file-name" data-tooltip=${name}>${unsafeHTML(FILE_ICONS[groupOf(name)] ?? FILE_ICONS.default)}${displayName(name)}</span>
           <span>${count(groups.length, 'link', 'links')}</span>
           <span>${count(linkedIds.size, 'finding', 'findings')}</span>
           ${holders.size > 0 ? html`<span>found in ${count(holders.size, 'report', 'reports')}</span>` : nothing}

@@ -248,17 +248,12 @@ async function navigateByScan(id) {
   return true
 }
 
-// Follow a parsed link ref. Resolves to `{ ok: true }` once the finding
-// is on screen, or `{ ok: false, reason }` with a message the caller can
-// show — a link that goes nowhere has to say so, otherwise pasting one
-// into an already-open tab looks like the app ignored the paste.
-export async function revealFinding(ref) {
-  if (!ref?.id) return { ok: false, reason: 'This link is missing a finding id.' }
-  let hit = findLoadedFinding(ref.id)
-  if (!hit && await navigateToHint(ref)) hit = findLoadedFinding(ref.id)
-  if (!hit && await navigateByScan(ref.id)) hit = findLoadedFinding(ref.id)
-  if (!hit) return { ok: false, reason: NOT_FOUND }
-  const gid = unhideFinding(hit.group, ref.id)
+// Put a located finding on screen: un-hide it, paint, scroll to it,
+// ring it. Shared by both entry points below — everything up to this
+// point is about FINDING the thing, and everything from here is the
+// same regardless of how it was found.
+async function focusFound(hit, id) {
+  const gid = unhideFinding(hit.group, id)
   // A link opens this finding as surely as a click does, so its group
   // gets the same levelling the detail surfaces do (see
   // syncGroupTriage). It lives here rather than in `unhideFinding`,
@@ -287,4 +282,47 @@ export async function revealFinding(ref) {
   // a long scroll would spend most of that moment on the way.
   flash(el)
   return { ok: true }
+}
+
+// Follow a parsed link ref. Resolves to `{ ok: true }` once the finding
+// is on screen, or `{ ok: false, reason }` with a message the caller can
+// show — a link that goes nowhere has to say so, otherwise pasting one
+// into an already-open tab looks like the app ignored the paste.
+export async function revealFinding(ref) {
+  if (!ref?.id) return { ok: false, reason: 'This link is missing a finding id.' }
+  let hit = findLoadedFinding(ref.id)
+  if (!hit && await navigateToHint(ref)) hit = findLoadedFinding(ref.id)
+  if (!hit && await navigateByScan(ref.id)) hit = findLoadedFinding(ref.id)
+  if (!hit) return { ok: false, reason: NOT_FOUND }
+  return await focusFound(hit, ref.id)
+}
+
+// Reveal a finding in a NAMED report, rather than wherever the app
+// would find it first.
+//
+// The Links view is the caller, and the distinction is its whole
+// point: a linked finding is interesting because of the several
+// reports carrying it, and its row names each one. Clicking one of
+// those has to land on that report's copy — the one with that
+// analyzer's severity, that report's correction, and whatever the
+// colleague who read it wrote there. `revealFinding` above would stop
+// at whichever copy happened to be loaded, which is the right answer
+// for a pasted link (it says an id and nothing about where) and the
+// wrong one for a click that named a report out loud.
+//
+// The report is opened even when the finding is already on screen from
+// another one; that IS the request. `openReport` prefers the workspace
+// holding it, as everywhere else.
+export async function revealFindingInReport(id, reportName) {
+  if (!id || !reportName) return { ok: false, reason: 'Missing finding id or report name.' }
+  await openReport(reportName)
+  const hit = findLoadedFinding(id)
+  if (!hit) {
+    return {
+      ok: false,
+      reason: `Couldn't find that finding in "${reportName}". `
+        + 'It may have been re-imported since this links file was written.',
+    }
+  }
+  return await focusFound(hit, id)
 }
