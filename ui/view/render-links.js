@@ -116,12 +116,6 @@ export function renderLinksView() {
         </div>
       </div>
     </header>
-    <p class="links-lede">
-      Each link below says its findings are the same finding, reported more than
-      once. This file names them and nothing else — follow an id to read the
-      finding in the report that carries it. Linked findings also list their
-      duplicates at the bottom of their own card.
-    </p>
     ${located < linkedIds.size ? html`<p class="links-note">${
       count(linkedIds.size - located, 'linked finding is', 'linked findings are')
     } not in any report you hold. Import the reports they came from and this page fills in.</p>` : nothing}

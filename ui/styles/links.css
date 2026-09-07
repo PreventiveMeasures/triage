@@ -26,17 +26,6 @@
   & .file-icon { flex-shrink: 0; }
 }
 
-/* One paragraph saying what a link IS, because nothing else on the
-   page does and the format is new to most readers. Capped near a
-   comfortable measure rather than running the full 1200px. */
-.links-lede {
-  max-width: 60ch;
-  margin: 0 0 .75rem;
-  color: var(--muted);
-  font-size: .8rem;
-  line-height: 1.5;
-}
-
 /* Caveats about this particular file — findings it names that aren't
    here, entries that couldn't be linked at all. Warning-shaped (left
    rule, tinted) because each one means the page is showing less than
