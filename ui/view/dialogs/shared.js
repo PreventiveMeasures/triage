@@ -2,6 +2,7 @@
 // dependency-light (lit + plain functions) so it stays cheap to
 // import from every dialog.
 import { html, nothing } from 'lit'
+import { isLinksFile } from '../file-display.js'
 
 // Severity chip shown in the finding-context header of the comment,
 // fix-link, and triage-conflict dialogs. Palette is themed via
@@ -33,25 +34,49 @@ export function itemDisplayLabel(item) {
   return item.identifier
 }
 
+// Three kinds, not the transfer layer's two. `item.kind` is the WIRE
+// distinction — a report-shaped object versus a bundle — and a links
+// file travels as a report because that is how it is stored, fetched
+// and validated. What the reader is told it is, though, has to be
+// what it is: naming a links file a report in a prompt about what is
+// leaving this device is exactly the kind of quiet wrong these
+// dialogs can't afford.
+//
+// The answer comes from the local counts cache, so a name this device
+// has never analyzed — a remote-only object in the DOWNLOAD prompt —
+// reads as a report. That is the honest default for something whose
+// content we haven't seen: it is named for what it turns out to be
+// the moment it lands.
+function displayKind(item) {
+  if (item.kind === 'bundle') return 'bundle'
+  return isLinksFile(item.identifier) ? 'links file' : 'report'
+}
+
 // Count + pluralised kind noun for the sync-transfer prompts: a
-// homogeneous list reads as "reports" / "bundles", a mixed one as
-// "items"; `singular` drives the one-item wording.
+// homogeneous list reads as "reports" / "bundles" / "links files", a
+// mixed one as "items"; `singular` drives the one-item wording.
 export function transferSummary(items) {
   const count = items.length
   const singular = count === 1
-  const reportCount = items.filter((i) => i.kind === 'report').length
-  const bundleCount = count - reportCount
+  const kinds = new Set(items.map(displayKind))
   let kindLabel = 'items'
-  if (bundleCount === 0) kindLabel = singular ? 'report' : 'reports'
-  else if (reportCount === 0) kindLabel = singular ? 'bundle' : 'bundles'
+  if (kinds.size === 1) {
+    const only = [...kinds][0]
+    kindLabel = singular ? only : `${only}s`
+  }
   return { count, singular, kindLabel }
 }
 
-// Multi-item list for the sync-transfer prompts; bundles get the
-// inline kind chip so they read as distinct from reports.
+// Multi-item list for the sync-transfer prompts. Anything that isn't
+// a plain report gets the inline kind chip, so a mixed list says per
+// ROW what each thing is rather than leaving the reader to infer it
+// from a filename.
 export function transferItemsList(items) {
   return html`<ul class="lwd-list">
-      ${items.map((i) => html`<li>${itemDisplayLabel(i)}${i.kind === 'bundle' ? html` <span class="lwd-kind-tag">bundle</span>` : nothing}</li>`)}
+      ${items.map((i) => {
+        const kind = displayKind(i)
+        return html`<li>${itemDisplayLabel(i)}${kind === 'report' ? nothing : html` <span class="lwd-kind-tag">${kind}</span>`}</li>`
+      })}
     </ul>`
 }
 

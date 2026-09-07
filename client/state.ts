@@ -100,6 +100,7 @@ export interface State {
   currentWorkspace: string | null
   currentView: CurrentView
   currentLinks: OpenLinksFile | null
+  storedFiles: string[]
   bundles: unknown[]
   selectedBundle: string | null
   bundleDetails: unknown
@@ -433,6 +434,13 @@ export const state: State = store<State>({
   // branch can paint without an async round-trip. Empty array when
   // no bundles are stored.
   bundles: [],
+  // The report-directory listing, cached the same way and for the same
+  // reason: "is this file on this device" is a question the sync badge
+  // has to answer while painting, and `listFiles()` is async. Every
+  // renderSidebar() refreshes it, so it tracks drops, deletes and
+  // peer downloads. Names only — it says what exists, not what is in
+  // it (that is the counts cache).
+  storedFiles: [],
   // Bundles view selection (integrity of the open row, null = none),
   // and the parsed details cache for the open bundle. Selection
   // opens a right-side panel mirroring the findings-table details
