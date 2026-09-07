@@ -1081,11 +1081,23 @@ async function ingestReport(name, content, gen = null) {
         // ran against, stamped per-finding so the finding-card's
         // "Code →" lookup constrains its search to bundles this report
         // is about. Empty array when the report lacked the field.
+        // `_appKey`: which APP this occurrence belongs to, the key the
+        // per-app triage track is stored under (see `findingApp` in
+        // group.js and the `apps` field on TriageEntry). The report's
+        // own `repo.github` declaration when it makes one — so a
+        // re-run of the same project keeps the fixes recorded against
+        // its earlier reports — and the report's filename otherwise,
+        // which is as much identity as an undeclared report has.
+        // Deliberately NOT `repoFallback`: that folds in the repo URL
+        // the user typed into the header chip, and re-keying an app
+        // because someone edited a URL would strand every fix stored
+        // under the old key.
         const filled = {
           ...f,
           _id: state.nextFindingId++,
           _repoFallback: repoFallback,
           _reportName: name,
+          _appKey: declaredRepo ?? name,
           _bundleHashes: data.bundleHashes ?? [],
         }
         inheritReportMeta(filled, data)

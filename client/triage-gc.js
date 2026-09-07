@@ -17,10 +17,10 @@
 //     whose id isn't in the set. Persists via saveTriage when
 //     anything changed.
 import { state } from './state.ts'
-import { bucketOf, isReportIgnored, patchEntry, setReportIgnored } from './triage-entry.ts'
+import { bucketOf, isReportIgnored, patchEntry, setAppFix, setAppTriage, setReportIgnored } from './triage-entry.ts'
 import { SESSION_ID_RE, saveTriage } from './triage.js'
 import { listFiles, readFile } from './storage.js'
-import { loadFindings } from '../report/index.js'
+import { loadFindings, reportRepoGithub } from '../report/index.js'
 
 // Walk every OPFS-stored report in `names`, parse it, and return
 // the union of finding ids reachable from those reports. Reads through
@@ -51,8 +51,13 @@ function isReadFileNotFound(err) {
   return err?.name === 'NotFoundError'
     || (typeof err?.message === 'string' && err.message.startsWith('File not found:'))
 }
-async function collectReachableIds(names) {
+async function collectReachable(names) {
   const ids = new Set()
+  // The app keys those reports stand for — `_appKey` as ingest
+  // computes it (the report's declared repo, else its filename), so
+  // the per-app triage pass below can tell a slot whose app is still
+  // in OPFS from one whose last report is gone.
+  const apps = new Set()
   for (const name of names) {
     let content
     try {
@@ -68,9 +73,10 @@ async function collectReachableIds(names) {
     // file on disk must not block either.
     const report = await loadFindings(content)
     if (!report) continue
+    apps.add(reportRepoGithub(report.data) ?? name)
     for (const f of report.findings) if (f.id) ids.add(f.id)
   }
-  return ids
+  return { ids, apps }
 }
 
 // Snapshot the persisted ids carried by the in-memory state.
@@ -111,14 +117,14 @@ function collectPersistedTriageIds() {
 export async function analyzeTriageImpact(deletedReportNames) {
   const persisted = collectPersistedTriageIds()
   if (persisted.size === 0) return { orphanedCount: 0, sharedCount: 0 }
-  const deletedIds = await collectReachableIds(deletedReportNames)
+  const { ids: deletedIds } = await collectReachable(deletedReportNames)
   const persistedInDeleted = new Set()
   for (const id of persisted) if (deletedIds.has(id)) persistedInDeleted.add(id)
   if (persistedInDeleted.size === 0) return { orphanedCount: 0, sharedCount: 0 }
   const allFiles = await listFiles()
   const deletedSet = new Set(deletedReportNames)
   const keptFiles = allFiles.filter((n) => !deletedSet.has(n))
-  const keptIds = await collectReachableIds(keptFiles)
+  const { ids: keptIds } = await collectReachable(keptFiles)
   let orphanedCount = 0
   let sharedCount = 0
   for (const id of persistedInDeleted) {
@@ -175,14 +181,20 @@ export async function pruneOrphanTriage() {
   // touches what THIS pass saw.
   const snapIds = new Set(state.triage.keys())
   const snapIgnored = []
+  // `snapApps` pins the (id, appKey) slots of the per-app track the
+  // same way, so the app pass below only touches what THIS pass saw.
+  const snapApps = []
   for (const [id, entry] of state.triage) {
     if (entry.ignoredReports) {
       for (const report of entry.ignoredReports) snapIgnored.push({ id, report })
     }
+    if (entry.apps) {
+      for (const app of Object.keys(entry.apps)) snapApps.push({ id, app })
+    }
   }
   const names = await listFiles()
   const nameSet = new Set(names)
-  const reachable = await collectReachableIds(names)
+  const { ids: reachable, apps: reachableApps } = await collectReachable(names)
   let changed = false
   for (const id of snapIds) {
     if (SESSION_ID_RE.test(id)) continue
@@ -198,8 +210,15 @@ export async function pruneOrphanTriage() {
     // tombstone) is detected as prunable. The tombstone is kept while
     // the finding is reachable, but an orphaned id is gone for good, so
     // collecting it matches how color/comment/fix orphans are pruned.
-    if (!cur || !(cur.color || bucketOf(cur) || cur.comment || cur.fix || cur.flagged !== undefined)) continue
-    if (patchEntry(state.triage, id, { color: undefined, triage: undefined, comment: undefined, fix: undefined, flagged: undefined, deleted: undefined })) {
+    // `apps` / `upstream` join the list for the same reason `flagged`
+    // did: an entry carrying nothing but one of them is still an
+    // orphan once its finding is gone, and would otherwise sit in the
+    // blob forever with nothing able to collect it.
+    if (!cur || !(cur.color || bucketOf(cur) || cur.comment || cur.fix || cur.flagged !== undefined || cur.apps || cur.upstream)) continue
+    if (patchEntry(state.triage, id, {
+      color: undefined, triage: undefined, comment: undefined, fix: undefined,
+      flagged: undefined, apps: undefined, upstream: undefined, deleted: undefined,
+    })) {
       changed = true
     }
   }
@@ -208,6 +227,18 @@ export async function pruneOrphanTriage() {
     if (reachable.has(id) && nameSet.has(report)) continue
     if (!isReportIgnored(state.triage, id, report)) continue
     if (setReportIgnored(state.triage, id, report, false)) changed = true
+  }
+  // Per-app slots, on the same rule one step over: an app whose last
+  // report left OPFS has no board left to answer for, so its fix goes
+  // with it. The finding surviving in ANOTHER app's report doesn't
+  // keep this slot alive — that is the whole point of the slot being
+  // one app's and not the entry's.
+  for (const { id, app } of snapApps) {
+    if (SESSION_ID_RE.test(id)) continue
+    if (reachable.has(id) && reachableApps.has(app)) continue
+    if (!state.triage.get(id)?.apps?.[app]) continue
+    const cleared = setAppTriage(state.triage, id, app, undefined)
+    if (setAppFix(state.triage, id, app, undefined) || cleared) changed = true
   }
   if (!changed) return
   await saveTriage()

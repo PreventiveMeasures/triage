@@ -4,15 +4,22 @@
 // over them: diff, apply, equality, and the three-way conflict scan. No
 // module state, no `state.*`, no I/O — safe to unit-test in isolation.
 
+import { appsEqual, upstreamEqual } from '../triage-entry.ts'
+import type { UpstreamEntry } from '../state.ts'
 import type { TriageEntry } from './host.ts'
 
-export type ConflictProperty = 'color' | 'triage' | 'comment' | 'fix' | 'flagged'
+export type ConflictProperty = 'color' | 'triage' | 'comment' | 'fix' | 'flagged' | 'upstream'
 
 export type Conflict = {
   id: string
   property: ConflictProperty
   local: string
   imported: string
+  // The imported side of an `upstream` conflict as the record it
+  // actually is. `local` / `imported` are the sentences the dialog
+  // shows, and "fixed in 4.17.21 https://…" can't be parsed back into
+  // its three fields — so the applier reads this instead of trying.
+  importedUpstream?: UpstreamEntry
 }
 
 // `TriageEntry` (the per-finding-id triage value carried on the wire
@@ -47,6 +54,20 @@ function normFix(entry: TriageEntry | null | undefined): string {
 function normFlagged(entry: TriageEntry | null | undefined): string {
   return entry?.flagged === true ? 'flagged' : entry?.flagged === false ? 'not flagged' : ''
 }
+// The cause track, flattened to the sentence the conflict dialog shows
+// — it is one statement about the dependency ("fixed upstream in
+// 4.17.21"), and two peers who recorded different versions have
+// disagreed about that one statement, not about three fields.
+export function upstreamText(entry: TriageEntry | null | undefined): string {
+  const up = entry?.upstream
+  if (!up) return ''
+  return [up.state ?? '', up.since ? `in ${up.since}` : '', up.link ?? ''].filter(Boolean).join(' ')
+}
+// `apps` is deliberately NOT a conflict property. Each key is one
+// app's own answer, so two peers editing DIFFERENT apps aren't
+// disagreeing about anything — and two peers editing the same app's
+// slot resolve the way the entry does, last write wins, which is what
+// the per-report `ignoredReports` field has always done.
 
 // Per-property comparison between the user's pre-rebase overlay
 // (= unsynced state.* edits captured before the chain landed) and the
@@ -90,6 +111,7 @@ export function collectChainConflicts(
       { name: 'comment' as const, norm: normComment },
       { name: 'fix' as const, norm: normFix },
       { name: 'flagged' as const, norm: normFlagged },
+      { name: 'upstream' as const, norm: upstreamText },
     ]
     for (const { name, norm } of props) {
       const oldVal = norm(oldEntry)
@@ -98,7 +120,9 @@ export function collectChainConflicts(
       const localChanged = localVal !== oldVal
       const chainChanged = chainVal !== oldVal
       if (localChanged && chainChanged && localVal !== chainVal) {
-        conflicts.push({ id, property: name, local: localVal, imported: chainVal })
+        const conflict: Conflict = { id, property: name, local: localVal, imported: chainVal }
+        if (name === 'upstream' && chainEntry?.upstream) conflict.importedUpstream = chainEntry.upstream
+        conflicts.push(conflict)
       }
     }
   }
@@ -134,6 +158,11 @@ function entriesEqual(a: TriageEntry, b: TriageEntry): boolean {
     && (a.fix ?? '') === (b.fix ?? '')
     && a.flagged === b.flagged
     && ignoredReportsEqual(a.ignoredReports, b.ignoredReports)
+    // Shared with `client/triage-entry.ts` rather than mirrored: an
+    // equality here that disagreed with the one the live map uses
+    // would let a peer's edit read as "no change" and be dropped.
+    && appsEqual(a.apps, b.apps)
+    && upstreamEqual(a.upstream, b.upstream)
 }
 
 export function statesEqual(a: TriageStateMap, b: TriageStateMap): boolean {

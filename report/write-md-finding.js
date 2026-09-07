@@ -16,7 +16,7 @@
 // so the reader meets the finding once and its reports as its cases.
 
 import { correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceNote, findingDisplayName, findingTitle, firstLine, hasSeverityCorrection, locationLabel, revalidateKindOf, runMetaLine, splitDescription, stripExportMarker } from './finding.js'
-import { COLOR_LABELS, SOURCE_LABELS, TRIAGE_LABELS, severityLabel } from './labels.js'
+import { COLOR_LABELS, SOURCE_LABELS, TRIAGE_LABELS, UPSTREAM_LABELS, severityLabel } from './labels.js'
 import { autolink, code, heading, indentUnder, isHttpUrl, joinBlocks, link, plural, prose } from './md-text.js'
 
 // A heading has to fit on a line. A JSON finding whose whole
@@ -127,14 +127,35 @@ function locationText(f, ctx) {
 
 // What the reader did with the finding: its triage bucket (or the
 // per-report ignore), its colour mark, its flag — one line.
+//
+// A bucket recorded for one APP names it — `Fixed in acme/web` — so
+// the line can't be read as a claim about the dependency itself. The
+// document may cover several apps at once (a workspace export), and
+// the same finding can be fixed in one and open in another; an
+// unqualified "Fixed" would be the conflation this split exists to
+// undo, on paper.
 function triageText(a) {
   if (!a) return ''
   const parts = []
   const bucket = TRIAGE_LABELS[a.triage] ?? (a.ignored ? TRIAGE_LABELS.ignored : '')
-  if (bucket) parts.push(bucket)
+  if (bucket) parts.push(a.app ? `${bucket} in ${code(a.app)}` : bucket)
   if (a.color) parts.push(`${COLOR_LABELS[a.color] ?? a.color} mark`)
   if (a.flagged === true) parts.push('Flagged')
   return parts.join(' · ')
+}
+
+// The cause track: what the dependency's own maintainers did. Written
+// as its own row rather than folded into Triage — it is a fact about
+// the code, true wherever the code is shipped, and a reader deciding
+// whether to upgrade needs the version it names.
+function upstreamText(a) {
+  const up = a?.upstream
+  if (!up) return ''
+  const state = UPSTREAM_LABELS[up.state] ?? ''
+  const head = state && up.state === 'fixed' && up.since ? `${state} in ${code(up.since)}` : state
+  const href = up.link ? autolink(String(up.link).trim()) : ''
+  if (!head) return href
+  return href ? `${head} — ${href}` : head
 }
 
 function commitText(f, ctx) {
@@ -162,6 +183,7 @@ function metaList(f, ctx, annotation) {
   if (kind) add('Revalidation', kind === 'revalidation' ? 'the revalidation pass itself' : kind)
   add('Triage', triageText(annotation))
   if (annotation?.fix) add('Fix', autolink(String(annotation.fix).trim()))
+  add('Upstream', upstreamText(annotation))
   if (ctx.showReport) add('Report', code(ctx.hooks.report(f) ?? ''))
   const repo = plainValue(f.repo?.github)
   if (repo && repo !== ctx.repo) add('Repository', repoRef(repo))

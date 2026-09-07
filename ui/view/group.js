@@ -1,5 +1,6 @@
-import { getPackagesIndex, isReportIgnored, patchEntry, state } from '#client/index.js'
+import { appFixOf, appTriageOf, bucketForApp, getPackagesIndex, isReportIgnored, patchEntry, setAppFix, setAppTriage, state } from '#client/index.js'
 import { SEVERITY_ORDER, displayedSeverity, isRevalidation, isRevalidationRow } from './format.js'
+import { bundlePkgOf } from './bundle-pkg-of.js'
 // NOTE: filters.js imports from this module too (primaryTab / tabKey).
 // The cycle is deliberate and benign: both sides only call across
 // inside function bodies, never during module evaluation, so whichever
@@ -30,8 +31,72 @@ export function isIgnored(f) {
   return isReportIgnored(state.triage, tabKey(f), findingReport(f))
 }
 
-// One tab's triage "bucket": its triage value if set, else 'ignored'
-// when the tab sits in its report's ignore set, else undefined (live).
+// The APP this occurrence belongs to — the key the per-app triage
+// track hangs off (`TriageEntry.apps`). Stamped at ingest as
+// `_appKey` (the report's declared repo, else its filename); the
+// report name is the fallback for findings that predate the stamp or
+// arrive from a path that doesn't set it, and '' for the ones that
+// have no report at all, which is the same "no scope" answer
+// `findingReport` gives.
+export function findingApp(f) {
+  return f?._appKey ?? f?._reportName ?? ''
+}
+
+// Is this finding in a DEPENDENCY rather than in the app's own code?
+// The question decides which track a triage write lands on, so it is
+// asked of the path alone — the same `node_modules/` / `dependencies/`
+// bucketing the Packages view groups by, with `splitOwnDirs` off so
+// everything first-party (including a monorepo's `packages/<name>`)
+// collapses into the single own-source bucket.
+//
+// For own code the app IS the upstream: there is no second party who
+// could fix it, so there is nothing to scope and the entry's own
+// `triage` keeps saying everything there is to say.
+// Memoised per finding object: the answer is a function of the path
+// alone and can't change for a given finding, while the readers built
+// on it (`tabFix`, `tabHasMarks`) run per tab per render. A WeakMap so
+// the entry dies with the finding — a reload replaces every one of
+// them.
+const dependencyCache = new WeakMap()
+export function isDependencyFinding(f) {
+  if (!f || typeof f !== 'object') return false
+  const cached = dependencyCache.get(f)
+  if (cached !== undefined) return cached
+  const file = String(f.file ?? '')
+  const dep = file !== '' && bundlePkgOf(file, { splitOwnDirs: false }) !== '__own__'
+  dependencyCache.set(f, dep)
+  return dep
+}
+
+// The app key a triage write for this finding should be scoped to, or
+// null when the write belongs on the entry itself. Null for own-code
+// findings (nothing to scope) and for findings whose report gave us no
+// identity to key on (scoping to '' would put every anonymous report
+// in one shared bucket, which is the bug this exists to prevent).
+export function triageAppScope(f) {
+  if (!isDependencyFinding(f)) return null
+  const app = findingApp(f)
+  return app === '' ? null : app
+}
+
+// The package a dependency finding sits in, for the surfaces that
+// name it rather than the file (the upstream editor's header). The
+// analyzer's own stamp when it made one, else the path's bucket;
+// empty for own code, which has no package upstream of it.
+export function findingPackage(f) {
+  const npm = f?.package?.npm?.name
+  if (typeof npm === 'string' && npm) return npm
+  if (!isDependencyFinding(f)) return ''
+  return bundlePkgOf(String(f?.file ?? ''), { splitOwnDirs: false })
+}
+
+// One tab's triage "bucket" — what the board shows for THIS
+// occurrence: its own app's answer where it has given one, else the
+// entry's unscoped verdict, else 'ignored' when the tab sits in its
+// report's ignore set, else undefined (live). `bucketForApp` holds
+// the precedence between the two triage tracks (and why 'invalid' /
+// 'deleted' outrank both).
+//
 // Ignore behaves like a fourth bucket for rollup / conflict detection
 // but mutates differently (per-report key, its own store), so every
 // reader goes through this one definition rather than re-deriving it.
@@ -41,7 +106,52 @@ export function isIgnored(f) {
 // hottest helper in the findings render path, so it must not cost a
 // second observable read per tab.
 export function tabTriage(f, entry = state.triage.get(tabKey(f))) {
-  return entry?.triage ?? (isIgnored(f) ? 'ignored' : undefined)
+  return bucketForApp(entry, findingApp(f)) ?? (isIgnored(f) ? 'ignored' : undefined)
+}
+
+// Write one tab's triage bucket on the track `tabTriage` reads it
+// from — the one definition of the routing rule, so the two writers
+// (the action handler in events.js, and `syncGroupTriage` levelling a
+// group) can't answer the scope question differently.
+//
+// A work state ('inprogress' / 'fixed') on a dependency finding goes
+// to that app's slot: it is a statement about one app's work on code
+// every app shares. Everything else — the two cause-level verdicts,
+// and clearing — goes to the entry, where it always did.
+//
+// Either write drops the other track's leftovers for this tab, so a
+// tab never holds two answers: the scoped write clears the unscoped
+// verdict (which is how a value written before the split converts the
+// first time it is re-triaged — see `isUnscopedBucket`), and the
+// unscoped write clears this app's slot.
+//
+// `bucket` of `undefined` clears both. Returns whether anything
+// changed.
+export function setTabTriage(f, bucket) {
+  const key = tabKey(f)
+  const app = triageAppScope(f)
+  let changed = false
+  if (app !== null && (bucket === 'inprogress' || bucket === 'fixed')) {
+    if (patchEntry(state.triage, key, { triage: undefined })) changed = true
+    if (setAppTriage(state.triage, key, app, bucket)) changed = true
+    return changed
+  }
+  if (patchEntry(state.triage, key, { triage: bucket ?? undefined })) changed = true
+  if (app !== null && setAppTriage(state.triage, key, app, undefined)) changed = true
+  return changed
+}
+
+// Whether this tab's bucket comes from the entry's UNSCOPED `triage`
+// while the finding is one a scoped answer would have been written
+// for — i.e. a dependency finding carrying a verdict from before the
+// app / upstream split, or one a peer wrote without it. The card
+// labels those so a board that says "Fixed" on a dependency also says
+// whose fix it was; re-triaging the finding converts it (see
+// `applyTriage` in events.js).
+export function isUnscopedBucket(f, entry = state.triage.get(tabKey(f))) {
+  const cause = entry?.triage
+  if (cause !== 'inprogress' && cause !== 'fixed') return false
+  return triageAppScope(f) !== null && appTriageOf(entry, findingApp(f)) === undefined
 }
 
 // Tab sort order within a group: the revalidation row first, then
@@ -94,7 +204,10 @@ export function primaryTab(group) { return group.length === 1 ? group[0] : sortT
 // the toolbar annotation filters.
 export function tabHasMarks(f) {
   const entry = state.triage.get(tabKey(f))
-  return Boolean(entry?.comment) || Boolean(entry?.fix) || entry?.flagged === true
+  // `tabFix`, not `entry.fix`: the glyph the tab strip draws is for
+  // the link the card shows, which on a dependency finding is this
+  // app's own.
+  return Boolean(entry?.comment) || Boolean(tabFix(f, entry)) || entry?.flagged === true
 }
 
 export function activeTabFor(group) {
@@ -275,6 +388,31 @@ export function groupState(group) {
   }
 }
 
+// The fix link one tab carries: its own app's when the finding is in
+// a dependency, the entry's otherwise — with the entry's as the
+// fallback either way, so a link written before the split (or by a
+// peer that doesn't know about the app track) still shows.
+export function tabFix(f, entry = state.triage.get(tabKey(f))) {
+  const app = triageAppScope(f)
+  const scoped = app === null ? undefined : appFixOf(entry, app)
+  return scoped ?? entry?.fix ?? ''
+}
+
+// Write one tab's fix link on whichever track `tabFix` reads it from.
+// The scoped write also drops the entry's unscoped link, the same
+// conversion `applyTriage` performs on a triage bucket: it was one
+// app's PR wearing every app's name, and this is the app whose PR it
+// turned out to be.
+export function setTabFix(f, value) {
+  const key = tabKey(f)
+  const app = triageAppScope(f)
+  const next = value || undefined
+  if (app === null) return patchEntry(state.triage, key, { fix: next })
+  const cleared = patchEntry(state.triage, key, { fix: undefined })
+  const scoped = setAppFix(state.triage, key, app, next)
+  return scoped || cleared
+}
+
 // Whether a fix link edited on one tab can be offered to the whole
 // group. Two conditions: the group has siblings to apply it to, and
 // every tab either carries no link or carries the very link being
@@ -299,7 +437,7 @@ export function canApplyFixToGroup(group, current) {
 // and a sync peer or another browser tab can land a link on a sibling
 // while it sits there.
 export function fixApplies(f, current) {
-  const fix = (state.triage.get(tabKey(f))?.fix ?? '').trim()
+  const fix = tabFix(f).trim()
   return fix === '' || fix === (current ?? '').trim()
 }
 
@@ -397,7 +535,10 @@ export function syncGroupTriage(group) {
     // set somewhere else, so leave it alone; the group stays partial,
     // which is the truth about it.
     if (entry?.ignoredReports?.length) continue
-    if (patchEntry(state.triage, key, { triage: bucket })) changed = true
+    // Through `setTabTriage`, so levelling a dependency group writes
+    // each tab's own app slot rather than stamping the unscoped
+    // verdict back over the split.
+    if (setTabTriage(f, bucket)) changed = true
   }
   return changed
 }

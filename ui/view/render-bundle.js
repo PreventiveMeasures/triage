@@ -19,7 +19,7 @@ import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 import { BUNDLE_ICON_SVG } from './icons.js'
-import { findingsForFileHash, indexedHashFindingCount, reportsForFinding, reportsForFindingByPackage, reportsForFindingByRepo, state } from '#client/index.js'
+import { appsWith, findingsForFileHash, indexedHashFindingCount, reportsForFinding, reportsForFindingByPackage, reportsForFindingByRepo, state } from '#client/index.js'
 import { SEVERITIES, SEVERITY_ORDER, formatBytes, formatRunMeta, stripCommonPathPrefix, titledDescription } from './format.js'
 import { bundlePackageDirs, bundleSourcesAsMap } from './bundle-sources.js'
 import { bundleHasSbomComponents } from './sbom.js'
@@ -2096,7 +2096,8 @@ export function renderIssuesGroupedByFile(findingsByFile, { kind, bucketKey } = 
               const findingIdx = findings.indexOf(finding)
               const sev = finding.severity
               const lineLabel = formatFindingLine(finding.line)
-              const triage = state.triage.get(tabKey(finding))?.triage
+              const entry = state.triage.get(tabKey(finding))
+              const triage = entry?.triage
               // Show the badge for any persisted triage state. The
               // bundle Issues tab + the package slide's `live` view
               // both filter invalid + deleted out of `findingsByFile`
@@ -2109,10 +2110,23 @@ export function renderIssuesGroupedByFile(findingsByFile, { kind, bucketKey } = 
               const triageLabel = (triage === 'fixed' || triage === 'invalid' || triage === 'deleted')
                 ? triage.toUpperCase()
                 : triage === 'inprogress' ? 'In progress' : null
+              // These pages aggregate ACROSS apps — one package, every
+              // report that ships it — so there is no single app whose
+              // answer the badge could show, and the entry's unscoped
+              // verdict above is the only one that speaks for all of
+              // them. Per-app work still gets said, as a count rather
+              // than as a verdict: "fixed in 2 apps" is the honest
+              // reading of a finding two teams dealt with and a third
+              // hasn't.
+              const appsFixed = appsWith(entry, 'fixed')
+              const appsLabel = appsFixed.length > 0
+                ? `Fixed in ${appsFixed.length} app${appsFixed.length === 1 ? '' : 's'}`
+                : null
               const inner = html`<div class="bundle-issues-finding-head">
                 <span class=${`bundle-issue-sev sev-${sev}`}>${sev.replaceAll('_', ' ')}</span>
                 ${lineLabel ? html`<span class="bundle-issues-finding-line">${lineLabel}</span>` : nothing}
                 ${triageLabel ? html`<span class=${`bundle-issues-finding-triage triage-${triage}`}>${triageLabel}</span>` : nothing}
+                ${appsLabel ? html`<span class="bundle-issues-finding-apps" title=${`Fixed in: ${appsFixed.join(', ')}`}>${appsLabel}</span>` : nothing}
                 <span class="bundle-issues-finding-spacer"></span>
                 ${bundleIssueReportsTemplate(finding, { kind, bucketKey })}
               </div>

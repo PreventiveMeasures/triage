@@ -77,7 +77,7 @@ export { META_FIELDS, inheritReportMeta, reportRepoGithub } from './meta.js'
 // spells the app's enumerations with, for the viewer's surfaces that
 // describe the same things in prose.
 export { writeMarkdown } from './write-md.js'
-export { COLOR_LABELS, SEVERITY_LABELS, SOURCE_LABELS, TRIAGE_LABELS, severityLabel } from './labels.js'
+export { COLOR_LABELS, SEVERITY_LABELS, SOURCE_LABELS, TRIAGE_LABELS, UPSTREAM_LABELS, severityLabel } from './labels.js'
 
 // The markdown chain, in dispatch order: tightest guard first. This
 // library's own document opens on a marker line no other format has;

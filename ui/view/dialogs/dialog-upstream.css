@@ -1,0 +1,104 @@
+/* `<upstream-dialog>` layer — the cause track's editor, fronting the
+   .mark-upstream button on a dependency finding. Composed into the
+   shadow `static styles` on top of dialog-base.css and
+   dialog-severity.css, and deliberately sharing the fix-link dialog's
+   header / input / hint shapes: the two dialogs annotate the same
+   card from adjacent buttons, so they should not read as different
+   furniture. */
+
+dialog { max-width: 560px; width: min(94vw, 560px); }
+
+header h3 { margin: 0 0 .4rem; }
+
+.finding {
+  display: flex; align-items: center; gap: .5rem;
+  flex-wrap: wrap;
+  margin-bottom: .35rem;
+}
+.loc {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .76rem; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  min-width: 0; flex: 1;
+}
+.pkg {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .76rem; font-weight: 600; color: var(--accent);
+}
+.desc {
+  font-size: .78rem; color: var(--muted);
+  margin: 0 0 .7rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.field { margin-bottom: .6rem; }
+.field-label {
+  display: block;
+  font-size: .74rem; font-weight: 600; letter-spacing: .02em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: .3rem;
+}
+
+/* State picker — one pressed button at a time, the same segmented
+   shape the toolbar's bucket selector uses. */
+.states { display: flex; flex-wrap: wrap; gap: .35rem; }
+.state-btn {
+  padding: .35rem .7rem;
+  border: 1px solid var(--border); border-radius: 999px;
+  background: transparent; color: var(--text);
+  font: inherit; font-size: .8rem;
+  cursor: pointer;
+
+  &:hover { border-color: var(--accent); }
+  &[aria-pressed='true'] {
+    border-color: var(--accent);
+    background: rgb(from var(--accent) r g b / .14);
+    color: var(--accent);
+    font-weight: 600;
+  }
+}
+
+.input-row { display: flex; align-items: stretch; gap: .4rem; }
+input {
+  flex: 1; min-width: 0;
+  padding: .5rem .65rem;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg, var(--surface));
+  color: var(--text);
+  font: inherit; font-size: .88rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  &:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgb(from var(--accent) r g b / .18);
+  }
+  &::placeholder {
+    color: var(--muted);
+    font-family: inherit;
+  }
+}
+.open {
+  display: inline-flex; align-items: center;
+  padding: 0 .7rem;
+  border: 1px solid var(--accent); border-radius: 6px;
+  color: var(--accent);
+  text-decoration: none; font-size: .8rem; font-weight: 600;
+  white-space: nowrap;
+
+  &:hover { background: rgb(from var(--accent) r g b / .1); }
+}
+.hint {
+  margin: .45rem 0 0;
+  color: var(--muted); font-size: .74rem;
+}
+.scope-note {
+  margin: .5rem 0 0;
+  padding: .45rem .6rem;
+  border-left: 2px solid var(--accent);
+  background: rgb(from var(--accent) r g b / .07);
+  color: var(--muted); font-size: .74rem;
+}

@@ -2,9 +2,10 @@ import { html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { bundleFilePath, bundlesForFileHash, isLinkableFindingId, isPlaceholderNpmPackage, state } from '#client/index.js'
+import { bundleFilePath, bundlesForFileHash, isLinkableFindingId, isPlaceholderNpmPackage, otherApps, state, upstreamOf } from '#client/index.js'
+import { UPSTREAM_LABELS } from '../../report/index.js'
 import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, githubRefLabel, hasSeverityCorrection, isHttpUrl, lineRange, listSegments, locationLabel, markdownLinkToken, parseCommentRefs, revalidateStamp, revalidationShown, snippetWindow, splitDescription, stripExportMarker } from './format.js'
-import { activeTabFor, findingRepo, findingRepoFallback, groupState, isIgnored, scopedTriage, sortTabs, tabKey } from './group.js'
+import { activeTabFor, findingApp, findingRepo, findingRepoFallback, groupState, isIgnored, isUnscopedBucket, scopedTriage, sortTabs, tabFix, tabKey, triageAppScope } from './group.js'
 import { highlightedCode } from './code-highlight.js'
 import { attachedBundle, bundleSource, focusCodePosition } from './focus-code.js'
 import { samePos } from './focus-code-history.js'
@@ -802,6 +803,52 @@ function flagButtonTemplate(key, isFocus = false) {
   >${FLAG_ICON}${isFocus ? html`<span class="mark-btn-label">${flagged ? 'Flagged' : 'Flag'}</span>` : nothing}</button>`
 }
 
+// Package glyph with an arrow leaving it — the dependency's own
+// source, upstream of everything the app did about it. Marks the
+// `.mark-upstream` button and the cause-track line on the card.
+const UPSTREAM_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <path d="M8 9.5 2.5 6.8 8 4.1l5.5 2.7-5.5 2.7Z"/>
+  <path d="M2.5 6.8v3.4L8 12.9l5.5-2.7V6.8"/>
+  <path d="M8 3.4V.9m0 0L6.6 2.3M8 .9l1.4 1.4"/>
+</svg>`
+
+// How the cause track reads on the card: the shared word for the
+// state (report/labels.js — the same one the export writes under its
+// own `Upstream:` label, so the card and the document can't disagree
+// on it), plus the version for a fix. That version is what turns the
+// line into the sentence another app actually needs: the finding is
+// still there, and the remedy now has a number on it.
+//
+// Returns the value alone; the callers put `Upstream` in front of it,
+// as the label it is.
+function upstreamLabel(up) {
+  if (!up) return ''
+  const base = UPSTREAM_LABELS[up.state] ?? (up.link || up.since ? 'Recorded' : '')
+  if (!base) return ''
+  return up.state === 'fixed' && up.since ? `${base} in ${up.since}` : base
+}
+
+// The upstream button — offered only where there IS an upstream
+// distinct from the app (a dependency finding). On the app's own code
+// the entry's own fix link already says everything the cause track
+// could, and a second button promising otherwise would be a lie about
+// who can fix it.
+function upstreamButtonTemplate(f, isFocus) {
+  if (triageAppScope(f) === null) return nothing
+  const up = upstreamOf(state.triage.get(tabKey(f)))
+  const label = upstreamLabel(up)
+  const title = label ? `Edit upstream status: ${label}` : 'Record upstream status (reported / fixed / won’t fix)'
+  // The focus view's label names what the button edits, the way
+  // "Fix link" does — the state itself is in the button's colour and
+  // spelled out on the row under the finding (scopeBlockTemplate).
+  return html`<button
+    type="button"
+    class=${classMap({ 'mark-upstream': true, 'has-upstream': Boolean(label), [`upstream-${up?.state ?? 'none'}`]: true })}
+    title=${title}
+    aria-label=${title}
+  >${UPSTREAM_ICON}${isFocus ? html`<span class="mark-btn-label">Upstream</span>` : nothing}</button>`
+}
+
 // Issue title — the finding's title (the same one the table view
 // shows), capped so the pre-filled `?title=` stays a sane length;
 // falls back to the file path, then a generic label.
@@ -857,7 +904,11 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = 
   const activeEntry = state.triage.get(activeKey)
   const activeColor = activeEntry?.color ?? null
   const activeComment = activeEntry?.comment ?? ''
-  const activeFix = activeEntry?.fix ?? ''
+  // The link this tab carries — its own app's when the finding is in
+  // a dependency (the PR that removed it is this app's news, not the
+  // next app's), the entry's otherwise. `tabFix` is the same reader
+  // the write path and the group-apply offer go through.
+  const activeFix = tabFix(activeTab, activeEntry)
   const commentTitle = activeComment ? `Edit comment: ${activeComment}` : 'Add comment'
   const fixTitle = activeFix ? `Edit fix link: ${activeFix}` : 'Add fix link (PR URL, etc.)'
   const isFocus = context === 'focus'
@@ -871,6 +922,10 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = 
   const fixBtn = html`<button type="button" class=${classMap({ 'mark-fix': true, 'has-fix': activeFix })} title=${fixTitle} aria-label=${fixTitle}>${FIX_ICON}${isFocus ? html`<span class="mark-btn-label">${fixLabel}</span>` : nothing}</button>`
   // Attention flag — third chip in the comment/fix group.
   const flagBtn = flagButtonTemplate(activeKey, isFocus)
+  // Cause track — fourth chip, next to the fix link it is the other
+  // half of: this one says what the dependency's maintainers did,
+  // that one what this app did.
+  const upstreamBtn = upstreamButtonTemplate(activeTab, isFocus)
   // Copy button — writes a labeled `File / Line / Description /
   // Confidence` block for the active tab to the clipboard (handler
   // in events.js, active tab resolved via the same gid lookup).
@@ -914,7 +969,7 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = 
   const menuTitle = groupSt.hasConflict
     ? 'change triage state (colors mismatch — acts per-tab)'
     : (sortedTabs.length > 1 ? 'change triage state for the whole group' : 'change triage state')
-  return html`${reportChip}<span class="mark-action-group">${commentBtn}${fixBtn}${flagBtn}</span><span class="mark-action-group">${copyBtn}${linkBtn}${issueBtn}${claudeBtn}</span>${picker}${triageMenuTemplate(group, menuTitle, context, groupSt, activeTab)}`
+  return html`${reportChip}<span class="mark-action-group">${commentBtn}${fixBtn}${flagBtn}${upstreamBtn}</span><span class="mark-action-group">${copyBtn}${linkBtn}${issueBtn}${claudeBtn}</span>${picker}${triageMenuTemplate(group, menuTitle, context, groupSt, activeTab)}`
 }
 
 // Triage menu — chevron button toggling a popover with the Fixed /
@@ -1029,10 +1084,12 @@ function triageMenuTemplate(group, title, context, groupSt, activeTab) {
 // Lets triage annotations read off the collapsed tab strip without
 // activating each sibling. Inert <span>s (the tab is the button); always
 // in the filled/accent state since they only render when the annotation
-// is present. `nothing` when the tab is unannotated.
-function tabMarksTemplate(entry) {
+// is present. `nothing` when the tab is unannotated. Takes the finding
+// as well as its entry because the fix glyph asks `tabFix` — on a
+// dependency finding the link lives in this app's slot.
+function tabMarksTemplate(f, entry) {
   const hasComment = Boolean(entry?.comment)
-  const hasFix = Boolean(entry?.fix)
+  const hasFix = Boolean(tabFix(f, entry))
   const flagged = entry?.flagged === true
   if (!hasComment && !hasFix && !flagged) return nothing
   return html`<span class="tab-marks">${
@@ -1079,7 +1136,7 @@ function tabTemplate(f, isActive, groupSt) {
     // / finding-card CSS.
     classes.push('tab-ignored')
   }
-  return html`<button type="button" class=${classes.join(' ')} data-tid=${key}><span class="tab-label">${severityBadge(f, { variant: 'tab' })} ${f.confidence === undefined ? nothing : html`<span class="tab-conf">${f.confidence}/10</span>`}${tabMarksTemplate(entry)}</span></button>`
+  return html`<button type="button" class=${classes.join(' ')} data-tid=${key}><span class="tab-label">${severityBadge(f, { variant: 'tab' })} ${f.confidence === undefined ? nothing : html`<span class="tab-conf">${f.confidence}/10</span>`}${tabMarksTemplate(f, entry)}</span></button>`
 }
 
 // Confidence display for the finding-left badge column. The table
@@ -1149,7 +1206,7 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
   const key = tabKey(f)
   const entry = state.triage.get(key)
   const comment = entry?.comment ?? ''
-  const fix = entry?.fix ?? ''
+  const fix = tabFix(f, entry)
   // Location is rendered as `file:line` (linkified when we have a
   // repo URL). Standalone cards (the table view's detail panel) need
   // the file here because there's no surrounding header above; list /
@@ -1284,8 +1341,61 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
           ? html`<a href=${fix} target="_blank" rel="noopener noreferrer">${fix}</a>`
           : fix}</div>`
         : nothing}
+      ${scopeBlockTemplate(f, entry)}
     </div>
   </div>`
+}
+
+// The two facts the board can't show, under the finding they belong
+// to:
+//
+//   * what the OTHER apps did about this same code. It is the same
+//     entry — one dependency, one id, however many apps pull it in —
+//     and before the split their answer simply became this app's
+//     answer. Shown rather than applied: a finding another team
+//     already removed the dependency for is worth knowing about, and
+//     is still open here until someone here says otherwise.
+//   * what the upstream did, which is a fact about the code and so
+//     reads the same in every app. "Fixed upstream in 4.17.21" on a
+//     finding still open here is the most actionable line on the
+//     card — it turns "no known remedy" into "upgrade".
+//
+// An unscoped verdict (written before the split, or by a peer that
+// doesn't know about it) is labelled as such on a dependency finding:
+// the board says Fixed, and this says nobody recorded which app it
+// was fixed in. Re-triaging the finding converts it.
+function scopeBlockTemplate(f, entry) {
+  const app = triageAppScope(f)
+  if (app === null) return nothing
+  const others = otherApps(entry, findingApp(f)).filter(([, slot]) => slot.triage)
+  const up = upstreamOf(entry)
+  const upLabel = upstreamLabel(up)
+  if (others.length === 0 && !upLabel && !isUnscopedBucket(f, entry)) return nothing
+  const fixedElsewhere = others.filter(([, slot]) => slot.triage === 'fixed')
+  const workedElsewhere = others.filter(([, slot]) => slot.triage === 'inprogress')
+  return html`<div class="scope-block">
+    ${isUnscopedBucket(f, entry)
+      ? html`<span class="scope-chip scope-unscoped" title="Recorded before this finding's app and upstream were tracked separately, so it applies everywhere. Re-triage it here to scope it to this app.">Marked in every app</span>`
+      : nothing}
+    ${fixedElsewhere.length > 0
+      ? html`<span class="scope-chip scope-other-fixed" title=${`Fixed in: ${fixedElsewhere.map(([name]) => name).join(', ')}`}>Fixed in ${appCountLabel(fixedElsewhere)}</span>`
+      : nothing}
+    ${workedElsewhere.length > 0
+      ? html`<span class="scope-chip scope-other-progress" title=${`In progress in: ${workedElsewhere.map(([name]) => name).join(', ')}`}>In progress in ${appCountLabel(workedElsewhere)}</span>`
+      : nothing}
+    ${upLabel
+      ? html`<span class=${`scope-chip scope-upstream upstream-${up.state ?? 'none'}`}>${UPSTREAM_ICON}${up.link && isHttpUrl(up.link)
+        ? html`<a href=${up.link} target="_blank" rel="noopener noreferrer">${upLabel}</a>`
+        : upLabel}</span>`
+      : nothing}
+  </div>`
+}
+
+// "one other app" / "2 other apps" — the count carries more than the
+// names would at this size, and the names are one hover away in the
+// chip's title.
+function appCountLabel(apps) {
+  return apps.length === 1 ? 'one other app' : `${apps.length} other apps`
 }
 
 // State-derived host classes for a `<finding-card>`. The literal

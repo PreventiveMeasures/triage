@@ -1015,6 +1015,7 @@ span.evidence-ref:not([role]) { color: var(--muted); }
 .mark-comment,
 .mark-fix,
 .mark-flag,
+.mark-upstream,
 .mark-copy,
 .mark-link,
 .mark-issue,
@@ -1033,6 +1034,12 @@ span.evidence-ref:not([role]) { color: var(--muted); }
 .mark-comment.has-comment,
 .mark-fix.has-fix,
 .mark-flag.flagged { color: var(--accent); }
+/* The cause track's own colours: a recorded upstream fix is the one
+   annotation that is good news, and a won't-fix is the one that
+   closes a door. Reported sits on the neutral accent with the rest. */
+.mark-upstream.has-upstream { color: var(--accent); }
+.mark-upstream.upstream-fixed { color: var(--green, #4ade80); }
+.mark-upstream.upstream-wontfix { color: var(--muted); opacity: .85; }
 .mark-flag svg { display: block; }
 /* Pulse the copy / link / claude button briefly after a successful
    click — class set + cleared by events.js around the action (clipboard
@@ -1206,6 +1213,7 @@ span.evidence-ref:not([role]) { color: var(--muted); }
 :host([context='focus']) .mark-comment,
 :host([context='focus']) .mark-fix,
 :host([context='focus']) .mark-flag,
+:host([context='focus']) .mark-upstream,
 :host([context='focus']) .mark-copy,
 :host([context='focus']) .mark-link,
 :host([context='focus']) .mark-issue,
@@ -1272,6 +1280,42 @@ span.evidence-ref:not([role]) { color: var(--muted); }
 .fix-label {
   color: var(--muted); font-weight: 600;
   margin-right: .35rem;
+}
+
+/* Scope row under a dependency finding — what the OTHER apps did
+   about the same code, and what its upstream did. Chips rather than
+   quote blocks: these are one-line facts about elsewhere, and should
+   not compete with the comment / fix blocks that are about here. */
+.scope-block {
+  display: flex; flex-wrap: wrap; gap: .3rem;
+  margin-top: .5rem;
+}
+.scope-chip {
+  display: inline-flex; align-items: center; gap: .25rem;
+  padding: .15rem .45rem;
+  border: 1px solid var(--border); border-radius: 999px;
+  font-size: .74rem; color: var(--muted);
+  cursor: default;
+
+  & a { color: inherit; text-decoration: none; }
+  & a:hover { text-decoration: underline; }
+  & svg { flex-shrink: 0; }
+}
+.scope-other-fixed,
+.scope-other-progress { border-style: dashed; }
+.scope-upstream.upstream-fixed {
+  border-color: var(--green, #4ade80);
+  color: var(--green, #4ade80);
+  background: color-mix(in srgb, var(--green, #4ade80) 12%, transparent);
+}
+.scope-upstream.upstream-reported {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgb(from var(--accent) r g b / .1);
+}
+.scope-unscoped {
+  border-style: dotted;
+  border-color: var(--muted);
 }
 
 .line-num { color: var(--muted); font-size: .8rem; }

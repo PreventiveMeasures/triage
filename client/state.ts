@@ -57,6 +57,50 @@ export type AnnotationFilterState = '' | 'with' | 'without'
 // finding is per-report ignored. `deleted` is the legacy persisted/wire
 // form, migrated to `triage: 'deleted'` on load and never written back
 // in-memory.
+//
+// TWO TRACKS. A finding id is derived from the source's own bytes
+// (report/finding-id.js), so the SAME id is what every app shipping
+// that code reads — one dependency file, one entry, however many apps
+// pull it in. That makes a single "fixed" two different claims wearing
+// one word: "this app doesn't have the problem any more" (true here,
+// nowhere else) and "the code doesn't have the bug any more" (true
+// everywhere, and only the upstream can say it). Writing the first
+// into a shared entry is what marked a dependency fixed in apps nobody
+// had looked at.
+//
+//   * `apps` — the work track, one slot per app (see `findingApp` in
+//     ui/view/group.js). Removing the dependency, pinning it, guarding
+//     the call site: all answers about ONE app, so they are stored
+//     under that app's key and never read by another.
+//   * `upstream` — the cause track, global by id on purpose. Reporting
+//     a bug once and seeing it everywhere is the whole point, and an
+//     entry keyed by the vulnerable bytes is exactly where "superseded
+//     in 4.17.21" belongs: everyone still shipping them reads it.
+//
+// `triage` keeps its meaning for a finding in the app's OWN code —
+// there the app IS the upstream, so one verdict is the whole truth —
+// and grandfathers the unscoped values written before the split
+// (see `bucketOf` / `tabTriage`).
+export type AppTriage = 'inprogress' | 'fixed'
+
+// One app's answer about one finding. `fix` is that app's own
+// reference (the PR that removed the dependency), distinct from the
+// entry's cause-level `fix`.
+export type AppEntry = {
+  triage?: AppTriage
+  fix?: string
+}
+
+// What the upstream has done about the cause. `since` names the first
+// version carrying the fix, which is what turns another app's copy of
+// this finding from "no known remedy" into "upgrade to 4.17.21".
+export type UpstreamState = 'reported' | 'fixed' | 'wontfix'
+export type UpstreamEntry = {
+  state?: UpstreamState
+  link?: string
+  since?: string
+}
+
 export type TriageEntry = {
   color?: string
   triage?: TriageBucket
@@ -70,6 +114,8 @@ export type TriageEntry = {
   // opinion" and get silently undone.
   flagged?: boolean
   ignoredReports?: string[]
+  apps?: { [appKey: string]: AppEntry }
+  upstream?: UpstreamEntry
   deleted?: boolean
 }
 

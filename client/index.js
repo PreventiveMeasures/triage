@@ -144,10 +144,20 @@ export {
 } from './triage.js'
 
 export {
+  appFixOf,
+  appTriageOf,
+  appsWith,
+  bucketForApp,
   bucketOf,
+  clearAppEverywhere,
   isReportIgnored,
+  otherApps,
   patchEntry,
+  setAppFix,
+  setAppTriage,
   setReportIgnored,
+  setUpstream,
+  upstreamOf,
 } from './triage-entry.ts'
 
 export { isEncryptedBundle } from './workspace-bundle-crypto.js'

@@ -48,7 +48,7 @@ await import('./_polyfills.js')
 const { state } = await import('../client/state.ts')
 const { saveTriage, reloadTriageFromStorage, setTriageReloadNotifier } = await import('../client/triage.js')
 const { triageSync } = await import('../client/sync/triage-sync.ts')
-const { patchEntry, setReportIgnored, isReportIgnored } = await import('../client/triage-entry.ts')
+const { appTriageOf, patchEntry, setAppTriage, setReportIgnored, isReportIgnored, setUpstream } = await import('../client/triage-entry.ts')
 
 const FINDING_A = '00000000-0000-4000-8000-00000000000a'
 const FINDING_B = '00000000-0000-4000-8000-00000000000b'
@@ -138,6 +138,38 @@ describe('reloadTriageFromStorage (cross-tab triage)', () => {
     assert.equal(state.triage.get(FINDING_A)?.triage, 'fixed')
     assert.equal(state.triage.get(FINDING_A)?.comment, 'verified upstream')
     assert.equal(state.triage.get(FINDING_A)?.fix, 'https://example.test/pr/42')
+  })
+
+  it('round-trips the per-app track and the upstream record', async () => {
+    // The two tracks the app / upstream split added. Both persist and
+    // reload like every other field — a sibling tab's app-scoped fix
+    // has to show up here, or the board in this tab keeps saying
+    // untriaged for work that is done.
+    setAppTriage(state.triage, FINDING_A, 'acme/web', 'fixed')
+    setUpstream(state.triage, FINDING_A, { state: 'fixed', since: '4.17.21', link: 'https://example.test/pr/9' })
+    await saveTriage()
+    state.triage.clear()
+
+    await reloadTriageFromStorage()
+
+    assert.equal(appTriageOf(state.triage.get(FINDING_A), 'acme/web'), 'fixed')
+    assert.equal(appTriageOf(state.triage.get(FINDING_A), 'acme/admin'), undefined, 'no other app inherits it')
+    assert.deepEqual(state.triage.get(FINDING_A)?.upstream, {
+      state: 'fixed', link: 'https://example.test/pr/9', since: '4.17.21',
+    })
+  })
+
+  it('drops a per-app slot the sibling tab cleared', async () => {
+    setAppTriage(state.triage, FINDING_A, 'acme/web', 'fixed')
+    await saveTriage()
+    // Sibling retracts it; this tab still holds the old value.
+    setAppTriage(state.triage, FINDING_A, 'acme/web', undefined)
+    await saveTriage()
+    setAppTriage(state.triage, FINDING_A, 'acme/web', 'fixed')
+
+    await reloadTriageFromStorage()
+
+    assert.equal(appTriageOf(state.triage.get(FINDING_A), 'acme/web'), undefined)
   })
 
   it('round-trips the flagged tri-state, including the false tombstone', async () => {
