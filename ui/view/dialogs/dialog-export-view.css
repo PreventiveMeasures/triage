@@ -22,6 +22,14 @@ dialog[open] {
   display: flex; flex-direction: column;
 }
 
+/* No blur on the backdrop, unlike every other dialog. This one covers
+   the page but for its 2rem margin, so the blur only ever softens that
+   strip — and a backdrop filter costs a full-viewport pass on every
+   frame the document scrolls, which is exactly when this dialog is
+   producing frames. In a profile of a long scroll it was two fifths of
+   the compositor's work; the tint stays. */
+dialog::backdrop { backdrop-filter: none; }
+
 /* No intro paragraph here — the heading names the thing and the thing
    is right there — so the title takes the gap the intro would have. */
 header h3 { margin-bottom: .7rem; }
@@ -70,7 +78,7 @@ header h3 { margin-bottom: .7rem; }
 
    `div`s, deliberately not `pre`: a grid container generates anonymous
    items from non-collapsible text between its children, so `white-space:
-   pre` on the container would turn the newlines in the template into
+   pre` on the container would turn any text between the rows into
    phantom cells. It lives on the line instead. */
 .evd-chunk {
   display: grid;
@@ -78,6 +86,18 @@ header h3 { margin-bottom: .7rem; }
   align-items: start;
   content-visibility: auto;
   contain-intrinsic-size: auto calc(var(--evd-chunk-lines, 1) * 1.55em);
+}
+/* A chunk before it has rows (export-view-dialog.js builds them when
+   the chunk comes near): its text alone, one block, wrapped like the
+   lines will be and set in the column they will take, so the text
+   doesn't move when the rows arrive — only the numbers appear. This is
+   what find-in-page reads for the whole document, and what a jump far
+   down the document may show for a frame. */
+.evd-chunk.evd-pending {
+  display: block;
+  padding: 0 .75rem 0 calc(var(--evd-lineno-width, 3ch) + 2rem);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .evd-lineno {
   align-self: stretch;

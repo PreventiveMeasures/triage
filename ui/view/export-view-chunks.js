@@ -31,10 +31,14 @@ import { fenceRanges } from '../../report/md-structure.js'
 // Lines a chunk aims for, and the point past which any safe cut is
 // taken rather than waiting for a paragraph end. A chunk is what gets
 // laid out and coloured in one go when it comes into view, so smaller
-// is smoother; but a cut costs a little exactness at the seam, and a
-// few hundred lines of Markdown is a few milliseconds for Prism.
+// is smoother — but every chunk is one more box for the browser to
+// track on every scrolled frame, and halving the target costs more per
+// frame than it saves per chunk. The maximum is what cuts the report's
+// summary table, whose rows never offer a paragraph end: those rows
+// are long and wrap, so a table chunk is held to half the length a
+// run of prose may reach.
 export const CHUNK_TARGET = 160
-export const CHUNK_MAX = 640
+export const CHUNK_MAX = 320
 
 const HEADING_RE = /^ {0,3}#{1,6}(?: |$)/u
 const SETEXT_UNDERLINE_RE = /^ {0,3}(?:=+|-+) *$/u
