@@ -76,6 +76,9 @@ class ExportViewDialog extends AppDialog {
   static properties = {
     // The exact text the download would write.
     markdown: { attribute: false },
+    // What the Copy button says: '' (Copy), 'done' (Copied) or 'failed'
+    // (Copy failed), the last two for a moment after a click.
+    _copied: { state: true },
   }
 
   // Derived from `markdown` (see willUpdate): its lines, its size in
@@ -85,10 +88,12 @@ class ExportViewDialog extends AppDialog {
   _lines = []
   _kb = '0.0'
   _chunks = []
+  _copiedTimer = null
 
   constructor() {
     super()
     this.markdown = ''
+    this._copied = ''
   }
 
   // Nothing to type into, so focus the way out. Also what Enter should
@@ -131,6 +136,12 @@ class ExportViewDialog extends AppDialog {
       <footer class="nwd-actions">
         <span class="evd-meta">${count} ${count === 1 ? 'line' : 'lines'} · ${this._kb} KB</span>
         <span class="nwd-spacer"></span>
+        <button
+          type="button"
+          data-role="copy"
+          title=${this._copied === 'failed' ? 'Select the text and copy it by hand' : 'Copy the whole file'}
+          @click=${this._onCopy}
+        >${this._copied === 'done' ? 'Copied' : this._copied === 'failed' ? 'Copy failed' : 'Copy'}</button>
         <button type="button" class="primary" data-role="cancel" @click=${this._onClose}>Close</button>
       </footer>
     </dialog>`
@@ -154,7 +165,10 @@ class ExportViewDialog extends AppDialog {
       el.dataset.watched = ''
       const index = Number(el.dataset.chunk)
       const chunk = this._chunks[index]
-      el.textContent = this._lines.slice(chunk.start, chunk.end).join('\n')
+      // Every line terminated, as the rows' cells are (rowsHtml): a
+      // select-all takes chunks in this state too, and a block whose
+      // last line is blank would otherwise lose it to the block break.
+      el.textContent = `${this._lines.slice(chunk.start, chunk.end).join('\n')}\n`
       watchNearViewport(el, (near) => {
         if (!near) return
         unwatchNearViewport(el)
@@ -165,7 +179,31 @@ class ExportViewDialog extends AppDialog {
 
   disconnectedCallback() {
     for (const el of this.renderRoot.querySelectorAll('.evd-chunk[data-watched]')) unwatchNearViewport(el)
+    clearTimeout(this._copiedTimer)
     super.disconnectedCallback()
+  }
+
+  // The whole file to the clipboard — every byte the download would
+  // write, not the lines on screen, and without a select-all that
+  // would have the browser lay out every line first. The button says
+  // how it went for a moment. Failure (no clipboard permission, an
+  // insecure origin) is said too, and the text stays there to select
+  // and copy by hand. Close may fire while the write is pending, so
+  // nothing is set on a removed element.
+  _onCopy = async () => {
+    let state = 'done'
+    try {
+      await navigator.clipboard.writeText(this.markdown)
+    } catch {
+      state = 'failed'
+    }
+    if (!this.isConnected) return
+    this._copied = state
+    clearTimeout(this._copiedTimer)
+    this._copiedTimer = setTimeout(() => {
+      this._copied = ''
+      this._copiedTimer = null
+    }, 1500)
   }
 
   // One chunk's rows, in Prism's colour where it answers. Prism loads

@@ -3,7 +3,7 @@
 //
 // The shape, top to bottom:
 //
-//   <!-- DeepView findings export, format 2 -->
+//   <!-- DeepView findings export -->
 //   # <title>
 //   - **Source:** … / **Report:** … / **Repository:** … / **Analyzer:** …
 //   - **Exported:** … / **View:** … / **Filters:** … / **Included:** N of M findings
@@ -54,13 +54,10 @@ import { anchorSlug, cell, code, escapeBrackets, formatTimestamp, heading, joinB
 // The first line of every document this writes, and what its reader
 // (parse-deepview-md.js) keys on. An HTML comment: invisible rendered,
 // one line of raw markdown, and no other format begins with it. The
-// number is the document's format version — bump it whenever the
-// reader has to tell a document laid out the new way from one laid
-// out the old way. Format 1 wrote prose bare; format 2 escapes a line
-// of it that would read as a heading (md-text.js prose), and the reader
-// strips that escape from format 2 on, leaving a format 1 document's
-// prose exactly as its writer left it.
-export const DOCUMENT_MARKER = '<!-- DeepView findings export, format 2 -->'
+// reader matches the phrase and reads past whatever follows it, so a
+// later document that has to be told apart from this one can say so
+// after a comma.
+export const DOCUMENT_MARKER = '<!-- DeepView findings export -->'
 
 // What a caller can answer about a finding, and what is assumed when
 // it doesn't: a report's own link for a location or an evidence row
