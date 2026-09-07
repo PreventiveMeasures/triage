@@ -1274,18 +1274,29 @@ span.evidence-ref:not([role]) { color: var(--muted); }
   & a { color: var(--accent); text-decoration: none; }
   & a:hover { text-decoration: underline; }
 }
-/* "Duplicates:" — the last block on the card, listing the findings a
-   links file says are this one reported again (render-finding.js).
-   Deliberately quieter than its comment / fix siblings above: no
-   accent rule and no tint, because it isn't the reader's own note or
-   an action to take, it's a cross-reference. `flex-wrap` so a finding
-   linked to a dozen others wraps instead of stretching the card. */
+/* "Duplicates:" — the findings a links file says are this one reported
+   again (render-finding.js), sitting under everything the report said
+   and above the reader's own comment and fix.
+   It used to carry the rule alone, on no ground — which read as a
+   stray line beside the two tinted slabs under it rather than as one
+   of the card's blocks. It has a ground now, and stays quieter than
+   those two by HUE rather than by going without: theirs is keyed to
+   `--accent`, this one to `--muted`, because it isn't the reader's
+   note or an action to take, it's a cross-reference. Derived from the
+   token rather than written literally so it follows every theme (the
+   light / green / pink palettes each redefine `--muted`); .1 alpha is
+   a lift you can see the edges of without competing with the accent
+   blocks. The rule moves to `--muted` with it — a `--border` rule on
+   a tint that light is the one thing on the block you can't see.
+   `flex-wrap` so a finding linked to a dozen others wraps instead of
+   stretching the card. */
 .duplicates-block {
   display: flex; align-items: baseline; flex-wrap: wrap;
   gap: .1rem .4rem;
   margin-top: .5rem;
   padding: .35rem .55rem;
-  border-left: 3px solid var(--border);
+  border-left: 3px solid var(--muted);
+  background: rgb(from var(--muted) r g b / .1);
   border-radius: 0 4px 4px 0;
   font-size: .82rem; color: var(--text);
   /* No `margin-right` on this label, unlike its comment / fix

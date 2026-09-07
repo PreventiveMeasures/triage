@@ -66,28 +66,32 @@ export function findLoadedFinding(id) {
 // below are testable and the nav module stays a thin shell. Returns the
 // group's gid, which is what the nav module scrolls to.
 //
-// Two things can hide a finding that exists:
+// Three things can hide a finding that exists:
 //   1. Another top-level view (bundles / files / packages / …) is up.
 //   2. A toolbar filter excludes it. Only cleared when it actually
 //      excludes THIS group — a link shouldn't wipe a carefully built
 //      filter set it was already compatible with. `state.sortBy` is
 //      saved across the reset: `resetFilters` re-derives a default sort
 //      for a fresh ingest, which is not what arriving via a link means.
+//   3. The triage bucket. `commonTriage === state.shownTriage` in
+//      render.js is an EXCLUSIVE partition, so a finding in a bucket
+//      the reader isn't viewing isn't merely un-scrolled-to: it isn't
+//      rendered at all.
 //
-// A third could, and deliberately isn't touched: the triage bucket split
-// (`commonTriage === state.shownTriage` in render.js) is an EXCLUSIVE
-// partition, so adopting the target's bucket shows it at the price of
-// replacing everything else on screen — following "duplicate of <link>"
-// out of the live list dropped the reader into the Invalid bucket and
-// their working set vanished. A link should focus one finding, not
-// repartition the view around it. The app's own graph "Findings →" jump
-// sets filters and leaves the bucket alone for the same reason.
+// (3) used to be left alone, on the reasoning that a link should focus
+// one finding rather than repartition the view around it. That was
+// wrong, and quietly so. The per-mode selection below still names the
+// target's gid, and no view holds it — so in the focus mode the queue
+// falls through to the previous index and centres a DIFFERENT finding,
+// and a link "to" an in-progress finding delivers somebody else's. A
+// link that lands on the wrong finding is worse than one that changes
+// which bucket is on screen, and the reader can see the bucket
+// selector move; they cannot see that the card they were handed is not
+// the one the link named.
 //
-// The cost is that a link to a finding in a bucket the reader isn't
-// viewing lands on the right report but doesn't scroll to anything —
-// the toolbar's triage selector is one click away, and which bucket
-// they're working in is their call, not the link's. Kanban is exempt
-// from the whole question: it renders every bucket as a column.
+// Kanban is exempt, and for the honest reason rather than by
+// exception: it renders every bucket as a column, so its board already
+// holds the target and `shownTriage` isn't consulted for it at all.
 //
 // Selecting the linked member (rather than just its group) matters for
 // a multi-tab dedup group: without it the group opens on whichever
@@ -102,15 +106,27 @@ export function unhideFinding(group, id) {
     state.viewMode = 'table'
     cleanupGraph2()
   }
+  // Which bucket the group sits in — the kanban branch needs it to
+  // name a column, every other mode to name the partition. One call
+  // for both.
+  const bucket = groupState(group).commonTriage
   if (state.viewMode === 'kanban') {
     // A fullscreen column drops every OTHER column from the board, so a
     // link into one of them would land on a card that isn't rendered.
     // Collapse it only when the target sits elsewhere — a link into the
     // column the user already expanded shouldn't undo their layout.
-    const column = groupState(group).commonTriage ?? 'untriaged'
+    const column = bucket ?? 'untriaged'
     if (state.kanbanExpandedColumn !== null && state.kanbanExpandedColumn !== column) {
       state.kanbanExpandedColumn = null
     }
+  } else if (bucket !== state.shownTriage) {
+    // Every other mode shows one bucket at a time; show the one the
+    // link is in. The two fields range over the same values — one of
+    // the five bucket names the selector offers, or null for the live
+    // list — so this is a direct assignment, including back to null
+    // for a link into the live set. Guarded on inequality because an
+    // equal write still wakes every autorun reading the field.
+    state.shownTriage = bucket
   }
   if (applyFilters([group]).length === 0) {
     const sortBy = state.sortBy

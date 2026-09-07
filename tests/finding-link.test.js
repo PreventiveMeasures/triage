@@ -14,8 +14,8 @@
 //   * `ui/view/finding-link.js` — what a link does to `state`: which
 //     group it resolves to, when the toolbar filters are cleared (and
 //     when they're deliberately left alone), which member of a dedup
-//     group ends up selected, and what it pointedly does NOT touch —
-//     the triage bucket, whose split is exclusive.
+//     group ends up selected, and which triage bucket ends up on
+//     screen — the split is exclusive, so a link has to bring its own.
 //
 // The DOM half (`ui/view/finding-link-nav.js`) isn't covered here — it
 // needs a real document; the rules it depends on all live above.
@@ -467,23 +467,49 @@ describe('finding deep links — un-hiding the target', () => {
     assert.equal(state.currentView, 'findings')
   })
 
-  it('never repartitions the triage bucket view', () => {
-    // The bucket split is EXCLUSIVE, so adopting the target's bucket
-    // would show it at the price of replacing everything else on
-    // screen. Both directions are equally unwanted:
+  it('shows the bucket the target is in, in both directions', () => {
+    // The bucket split is EXCLUSIVE, so a finding in a bucket the
+    // reader isn't viewing isn't merely un-scrolled-to: it isn't
+    // rendered, and the focus mode then centres whatever WAS rendered.
+    // A link handing over the wrong finding is worse than one moving
+    // the bucket selector, so the target's bucket is adopted.
     //
-    // live view, link to a fixed finding — the working set must survive
-    // even though the target isn't in it.
+    // Live view, link to a fixed finding.
     const group = [makeFinding(UUID_A)]
     reset([group])
     state.triage.set(UUID_A, { triage: 'fixed' })
     unhideFinding(group, UUID_A)
-    assert.equal(state.shownTriage, null)
+    assert.equal(state.shownTriage, 'fixed')
 
-    // Browsing a bucket, link to an untriaged finding — flipping to
-    // live would empty the bucket the reader was working through.
+    // And back: browsing a bucket, link to an untriaged finding. Both
+    // fields are the same shape, so the live list is a plain `null`.
     reset([group])
     state.shownTriage = 'deleted'
+    unhideFinding(group, UUID_A)
+    assert.equal(state.shownTriage, null)
+  })
+
+  it('leaves the bucket alone when the target is already in it', () => {
+    // The common case, and the reason the assignment is guarded on
+    // inequality: an equal write would still wake every autorun that
+    // reads the field.
+    const group = [makeFinding(UUID_A)]
+    reset([group])
+    state.triage.set(UUID_A, { triage: 'inprogress' })
+    state.shownTriage = 'inprogress'
+    unhideFinding(group, UUID_A)
+    assert.equal(state.shownTriage, 'inprogress')
+  })
+
+  it('leaves the bucket alone in kanban, which renders them all', () => {
+    // Every bucket is a column there, so `shownTriage` doesn't decide
+    // what the board holds and repartitioning it would be pure damage
+    // to the view the reader returns to.
+    const group = [makeFinding(UUID_A)]
+    reset([group])
+    state.viewMode = 'kanban'
+    state.shownTriage = 'deleted'
+    state.triage.set(UUID_A, { triage: 'fixed' })
     unhideFinding(group, UUID_A)
     assert.equal(state.shownTriage, 'deleted')
   })
