@@ -4,9 +4,15 @@
 // this directory has no use for. The duplication is deliberate: nothing
 // under `report/` imports from outside it, so the library can be lifted
 // into another project (or published on its own) without dragging a
-// `common/` along for one function. `tests/utf8.test.js` pins the two
-// copies to the same behaviour, so a fix to either is caught if it
-// isn't made to both.
+// `common/` along for one function.
+//
+// The tests are duplicated with it, for the same reason and to the same
+// expectations: `tests/utf8.test.js` here and the app's
+// `tests/utf8.test.js` assert the same case list byte for byte, without
+// either importing the other's module. A fix made to one encoder and
+// not the other fails whichever suite it was not made in — which
+// matters most here, since these bytes are what every finding id is
+// hashed from.
 //
 // Centralised rather than reaching for `new TextEncoder().encode(...)`
 // at the call site, because the WHATWG encoder silently replaces lone

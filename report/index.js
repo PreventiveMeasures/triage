@@ -71,10 +71,11 @@
 // viewer — the analyzer stamps its ids with the same `findingId` the
 // viewer derives them with, so both sides agree on what a finding IS
 // — and `node --test` in this directory runs its suite with nothing
-// else installed. (Its own tests are the one thing that reaches into
-// `src/`, and only where they exercise an internal this file doesn't
-// export; a test of the public behaviour comes through the door like
-// any other caller.)
+// else installed — and nothing outside this directory reaches into it,
+// tests included: every test of this library lives in `report/tests/`.
+// Those come through the door like any other caller, except where they
+// exercise an internal this file doesn't export; those name `../src/`,
+// which is what they are testing.
 
 import { parseDeepsecFindings } from './src/parse-deepsec.js'
 import { parseDeepviewMarkdown } from './src/parse-deepview-md.js'
