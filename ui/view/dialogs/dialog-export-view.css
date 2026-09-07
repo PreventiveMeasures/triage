@@ -14,8 +14,8 @@ dialog {
   margin: 2rem auto;
 }
 
-/* Column layout so the document takes every row the header and footer
-   don't. Keyed on `[open]`, never bare `dialog`: an author `display`
+/* Column layout so the document takes every row the header doesn't.
+   Keyed on `[open]`, never bare `dialog`: an author `display`
    on the element itself beats the UA's `dialog:not([open])
    { display: none }` and would paint a closed dialog onto the page. */
 dialog[open] {
@@ -30,20 +30,28 @@ dialog[open] {
    the compositor's work; the tint stays. */
 dialog::backdrop { backdrop-filter: none; }
 
-/* No intro paragraph here — the heading names the thing and the thing
-   is right there — so the title takes the gap the intro would have. */
-header h3 { margin-bottom: .7rem; }
+/* One line carries everything that isn't the document: the title, the
+   file's measurements after a divider, and the two controls at the
+   corner. No intro paragraph here — the heading names the thing and
+   the thing is right there — so that line takes the gap the intro
+   would have had. The margin moves off the `h3` and onto the row,
+   which is what the buttons are now vertically centred against.
 
-/* Neither the title nor the footer is part of the file, and a
-   select-all inside a modal takes every selectable thing in it — so
-   both step out of the selection, and Ctrl+A is the document alone. */
-header, footer { user-select: none; }
+   None of this line is part of the file, and a select-all inside a
+   modal takes every selectable thing in it — so the row steps out of
+   the selection, and Ctrl+A is the document alone. */
+header {
+  display: flex; align-items: center; gap: .45rem;
+  margin-bottom: .7rem;
+  user-select: none;
+}
+header h3 { margin: 0; }
 
 /* The document itself, and the only part of the dialog that flexes:
-   the header and footer take what they need and this takes the rest,
-   however tall the window is. `min-height: 0` because a flex item's
-   floor is its content, which for a long report would push the footer
-   off the bottom instead of scrolling.
+   the header takes what it needs and this takes the rest, however tall
+   the window is. `min-height: 0` because a flex item's floor is its
+   content, which for a long report would grow the box past the bottom
+   of the dialog instead of scrolling.
 
    Scrolls vertically only — the lines wrap, so there is never anything
    to reach sideways for. */
@@ -139,12 +147,44 @@ header, footer { user-select: none; }
   overflow-wrap: anywhere;
 }
 
-/* Byte / line count, riding the footer row opposite the buttons —
+/* Byte / line count, riding the title's own line after a divider —
    the same "what am I committing to" role the confirm dialog's count
-   headline plays, in footnote weight. Below the rule rather than under
-   the box: it describes the file, not the excerpt on screen, and the
-   footer is where this dialog's other statement about the file lives. */
+   headline plays, in footnote weight. Beside the heading rather than
+   on a row of its own: it names the file the heading names, and a
+   dialog whose whole body is a document shouldn't spend a band of it
+   on two numbers. */
 .evd-meta {
   color: var(--muted); font-size: .74rem;
   font-variant-numeric: tabular-nums;
+}
+
+/* Copy + close, pinned to the header's right end — the dialog's
+   top-right corner, since the header spans its full width. Same
+   22px squares, same borderless-until-hover treatment as the kanban
+   detail modal's corner cluster (`.kanban-detail-actions` in
+   findings.css), so the two popups' chrome reads as one language.
+   `margin-left: auto` is what pushes the pair right, so a longer
+   title or a bigger count never crowds them out of the corner. */
+.evd-actions {
+  margin-left: auto;
+  display: flex; align-items: center; gap: .1rem;
+
+  & button {
+    width: 22px; height: 22px;
+    display: grid; place-items: center;
+    background: transparent; border: 0; border-radius: 4px;
+    color: var(--muted);
+    font: 500 16px/1 ui-monospace, monospace;
+    cursor: pointer;
+
+    &:hover { color: var(--accent); background: var(--surface-active); }
+    &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  }
+
+  /* The two moments after a click, in colour as well as in glyph, for
+     as long as the state lasts: a copy that landed, and one that
+     didn't — which keeps the clipboard (there is no other thing to
+     draw) and carries the reason in the button's own label. */
+  & .evd-done { color: var(--accent); }
+  & .evd-failed { color: var(--critical, #f87171); }
 }
