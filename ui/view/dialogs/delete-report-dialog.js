@@ -29,6 +29,12 @@ class DeleteReportDialog extends AppDialog {
 
   static properties = {
     reportName: { type: String },
+    // What the deleted thing IS, in the words the dialog uses for
+    // it. 'report' for every analyzer dump; 'links file' for a
+    // dropped links file, which lives in the same OPFS directory and
+    // is deleted through the same button but is not a report and
+    // carries no findings (client/linked-findings.js).
+    kindLabel: { type: String },
     orphanedTriage: { type: Number },
     sharedTriage: { type: Number },
     // `true` when the report exists in the workspace's remote
@@ -40,6 +46,7 @@ class DeleteReportDialog extends AppDialog {
   constructor() {
     super()
     this.reportName = ''
+    this.kindLabel = 'report'
     this.orphanedTriage = 0
     this.sharedTriage = 0
     this.inRemote = false
@@ -78,7 +85,7 @@ class DeleteReportDialog extends AppDialog {
     const orphan = this.orphanedTriage
     const shared = this.sharedTriage
     if (orphan === 0 && shared === 0) {
-      return html`<p class="lwd-note">No local triage is attached to this report.</p>`
+      return html`<p class="lwd-note">No local triage is attached to this ${this.kindLabel}.</p>`
     }
     if (orphan === 0) {
       return html`<p class="lwd-note">Local triage on this report is also attached to ${shared === 1 ? 'a report' : 'reports'} you're keeping. Nothing will be orphaned.</p>`
@@ -119,7 +126,7 @@ class DeleteReportDialog extends AppDialog {
   render() {
     return html`<dialog @close=${this._onClose}>
       <header>
-        <h3>Delete report</h3>
+        <h3>Delete ${this.kindLabel}</h3>
       </header>
       <p class="lwd-body">
         Delete <strong>"${this.reportName}"</strong>?
@@ -141,10 +148,12 @@ customElements.define('delete-report-dialog', DeleteReportDialog)
 // / Esc / native close all resolve to `{ confirmed: false, triage:
 // 'keep' }`. Pass `inRemote: true` when the workspace's objstore
 // session holds a copy of the report, to surface the remote-side
-// notice.
-export function openDeleteReportDialog({ name, triageImpact, inRemote } = {}) {
+// notice, and `kindLabel` when the thing being deleted isn't a report
+// (a links file), so the prompt names what it is.
+export function openDeleteReportDialog({ name, kindLabel, triageImpact, inRemote } = {}) {
   return openAppDialog('delete-report-dialog', {
     reportName: name ?? '',
+    kindLabel: kindLabel || 'report',
     orphanedTriage: triageImpact?.orphanedCount ?? 0,
     sharedTriage: triageImpact?.sharedCount ?? 0,
     inRemote: Boolean(inRemote),

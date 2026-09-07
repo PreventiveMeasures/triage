@@ -36,7 +36,21 @@ export type FocusCodePos = {
 // count / sort preference — never alters report data. See ui/view/format.js
 // (displayedSeverity) and <severity-mode-switch>.
 export type SeverityMode = 'corrected' | 'original'
-export type CurrentView = 'findings' | 'files' | 'bundles' | 'admin-users' | 'manage-repos' | 'manage-reports' | 'manage-bundles' | 'manage-teams'
+export type CurrentView = 'findings' | 'files' | 'bundles' | 'links' | 'admin-users' | 'manage-repos' | 'manage-reports' | 'manage-bundles' | 'manage-teams'
+
+// The links file the 'links' view is showing: its OPFS name and the
+// links it declares, one `string[]` of finding ids per link (see
+// client/linked-findings.js for the format, and `skipped` for the ids
+// in it that nothing here could ever follow). Null whenever that view
+// isn't up. Mutually exclusive with a loaded report in practice — a
+// links file carries no findings, so `state.reports` is empty while
+// this is set — but `currentFile` still names it, because it IS the
+// open file as far as the sidebar and the delete button are concerned.
+export type OpenLinksFile = {
+  name: string
+  groups: string[][]
+  skipped: number
+}
 export type TriageBucket = 'inprogress' | 'fixed' | 'invalid' | 'deleted'
 // One kanban board column. The four real triage buckets plus the two
 // pseudo-buckets the board also shows as columns: 'untriaged' (no
@@ -85,6 +99,7 @@ export interface State {
   currentFile: string | null
   currentWorkspace: string | null
   currentView: CurrentView
+  currentLinks: OpenLinksFile | null
   bundles: unknown[]
   selectedBundle: string | null
   bundleDetails: unknown
@@ -155,6 +170,7 @@ export interface State {
   focusSplit: number
   codeBlockTick: number
   bundleHashTick: number
+  linksTick: number
   // ── server protocol (detected from the `server-info` connect frame) ──
   // Which sync protocol the configured server speaks; drives mode-aware UI
   // (managed mode hides workspace export and swaps the offline toggle for
@@ -403,7 +419,14 @@ export const state: State = store<State>({
   // sidebar's BUNDLES header). Files is gated on a tree-bearing
   // report with >1 file; bundles is gated on at least one bundle in
   // OPFS; both auto-fall back to 'findings' if their gate fails.
+  // 'links' is the view of one links file (see `currentLinks`),
+  // reached by opening its sidebar row like any other file.
   currentView: 'findings',
+  // The open links file, or null. Set by `switchToFile` when the file
+  // it read turns out to declare links rather than carry findings;
+  // cleared by every other load path (and by `clearActiveView`), so it
+  // can't outlive the view that reads it.
+  currentLinks: null,
   // Bundles list cached for synchronous render. Populated on every
   // renderSidebar() (which lists OPFS) so render.js's `bundles`
   // branch can paint without an async round-trip. Empty array when
@@ -767,6 +790,16 @@ export const state: State = store<State>({
   // Files tab) don't need it — the same subscriber re-renders them
   // directly.
   bundleHashTick: 0,
+  // And once more for the links index (client/linked-findings-index.js),
+  // which fills from an empty start on every reload and grows whenever
+  // a links file is dropped or deleted. The finding card asks it
+  // whether this finding has been linked to any other, and a plain
+  // module Map is invisible to the card's autorun — so a card painted
+  // before the walk finished would keep its "nothing links this"
+  // answer. events.js bumps this when the index changes;
+  // render-finding.js reads it next to the lookup. Same shape, and the
+  // same reason, as `bundleHashTick` above.
+  linksTick: 0,
   // Sync protocol of the configured server (e2e vs managed), seeded from the
   // localStorage cache so mode-aware UI is correct on first paint; the live
   // `server-info` connect frame confirms / updates it.

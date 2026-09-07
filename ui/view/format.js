@@ -1239,6 +1239,17 @@ function githubRefToken(candidate) {
 // hex anyway.
 const FINDING_UUID_RE = /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/u
 
+// The abbreviation above, on its own: a finding id's first uuid group,
+// or null when the id isn't a uuid and has no meaningful prefix to
+// show. Exported because the Links view and the finding card's
+// "Duplicates:" row name findings by id too, and all three have to
+// abbreviate the same one the same way — a reader following a
+// duplicate link should recognise the id they clicked in the id the
+// card they land on carries.
+export function shortFindingId(id) {
+  return typeof id === 'string' && FINDING_UUID_RE.test(id) ? id.slice(0, 8) : null
+}
+
 // Validate one candidate URL string as a per-finding deep link into THIS
 // instance and, on success, return its `{ url, label, self }` token.
 // `parseFindingUrl` (client/finding-link.js) owns the strictness — same
@@ -1255,8 +1266,8 @@ const FINDING_UUID_RE = /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/u
 function selfRefToken(candidate) {
   const found = parseFindingUrl(candidate)
   if (!found) return null
-  const label = FINDING_UUID_RE.test(found.id) ? `finding ${found.id.slice(0, 8)}` : 'finding'
-  return { url: `#${found.fragment}`, label, self: true }
+  const short = shortFindingId(found.id)
+  return { url: `#${found.fragment}`, label: short ? `finding ${short}` : 'finding', self: true }
 }
 
 // Candidate-URL scanner: an `http(s)://` run of URL-legal characters.

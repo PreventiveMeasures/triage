@@ -13,6 +13,7 @@ export {
   reportsForFinding,
   reportsForFindingByPackage,
   reportsForFindingByRepo,
+  reportsForFindingId,
   subscribeToBundleFindingIndex,
 } from './bundle-finding-index.js'
 
@@ -39,6 +40,7 @@ export {
 export {
   buildFindingUrl,
   computeLinkHint,
+  encodeFindingRef,
   extractFindingRef,
   isLinkableFindingId,
   knownLinkHint,
@@ -52,6 +54,16 @@ export {
 } from './finding-locate.js'
 
 export { buildFindingLookupForLoadedReports } from './finding-lookup.js'
+
+export { LINKS_KIND, parseLinkedFindings } from './linked-findings.js'
+
+export {
+  duplicatesOf,
+  ensureLinkedFindingsIndexed,
+  hasLinkedFindings,
+  linkFiles,
+  subscribeToLinkedFindings,
+} from './linked-findings-index.js'
 
 export { migrateLegacyFilenames } from './migrate-legacy.js'
 

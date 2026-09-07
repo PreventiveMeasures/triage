@@ -1,5 +1,5 @@
 import { render as litRender, nothing } from 'lit'
-import { analyzeContent, computeLinkHint, deleteBundle, deleteFile, deleteWorkspace, dropBundleFromHashIndex, getSecureItem, listBundles, listFiles, listWorkspaces, loadRepoUrlFor, pruneOrphanTriage, readFile, readFileBytes, removeCount, removeSecureItem, saveBundle, saveFile, saveRepoUrlFor, setBundleWorkspace, setCount, setReportWorkspace, setSecureItem, state, triageLoadPromise } from '#client/index.js'
+import { analyzeContent, computeLinkHint, deleteBundle, deleteFile, deleteWorkspace, dropBundleFromHashIndex, getSecureItem, listBundles, listFiles, listWorkspaces, loadRepoUrlFor, parseLinkedFindings, pruneOrphanTriage, readFile, readFileBytes, removeCount, removeSecureItem, saveBundle, saveFile, saveRepoUrlFor, setBundleWorkspace, setCount, setReportWorkspace, setSecureItem, state, triageLoadPromise } from '#client/index.js'
 import { closeWorkspace as closePresence, deleteBundleFromRemote, deleteFromRemote as deletePresence, isInRemoteOrCached, openWorkspace as openPresence, putFile, triageSync } from './client-sync.js'
 import { openImportConflictDialog } from './dialogs/import-conflict-dialog.js'
 import { dropZone, report } from './dom.js'
@@ -79,6 +79,22 @@ function closeSessionsExcept(keepIds) {
       closePresence(info.workspaceId)
     }
   }
+}
+
+// Put the main pane back to the welcome surface without touching any
+// selection state — what a load that ended up with nothing to show
+// has to do, or the previous view stays up while the sidebar says the
+// user moved. `clearActiveView` below is the bigger hammer (it drops
+// the selection too) and paints through here.
+//
+// Findings go via Lit rather than `report.innerHTML = ''` so the
+// cached parts on `#report` (slot reuse holds them across renders)
+// get cleaned up with the DOM — a bare innerHTML wipe would leave the
+// next render() walking a stale part-cache.
+function showEmptyMainPane() {
+  report.classList.remove('active')
+  litRender(nothing, report)
+  dropZone.classList.remove('hidden')
 }
 
 // OPFS `NotFoundError` (from `getFileHandle`) or the storage.js
@@ -338,11 +354,18 @@ async function addFiles(files) {
       } else {
         // Validate before persisting — analyzeContent recognises
         // analyzer-native JSON, DeepSec, Piolium, and Claude / Codex /
-        // markdown imports. Anything else is rejected so we don't
-        // litter OPFS with files the report viewer can't parse.
+        // markdown imports, plus the links file (which is not a report:
+        // see client/linked-findings.js). Anything else is rejected so
+        // we don't litter OPFS with files nothing here can read.
+        //
+        // A links file needs no branch of its own on the way in: it is
+        // saved, conflict-resolved and counted through the same path a
+        // report takes, and it's `result.source` — cached by setCount,
+        // read back by `getKind` — that keeps the two apart afterwards,
+        // in the sidebar's bucket and in `switchToFile` below.
         const result = analyzeContent(content)
         if (!result.recognized) {
-          throw new Error('not a recognized DeepView, DeepSec, Piolium, Claude Security, or Codex report')
+          throw new Error('not a recognized DeepView, DeepSec, Piolium, Claude Security, or Codex report, and not a links file')
         }
         const imported = await importReportContent({ name: file.name, content, existingNames })
         if (!imported) continue
@@ -413,9 +436,14 @@ export async function switchToFile(name, content) {
   state.workspaceMerges = []
   state.currentFile = name
   state.currentWorkspace = null
+  state.currentLinks = null
   // Switching to a regular report drops out of the bundles / packages
-  // view — the user clicked a file row to see its findings.
-  if (state.currentView === 'bundles' || state.currentView === 'packages' || state.currentView === 'repositories') {
+  // / links view — the user clicked a file row to see its findings.
+  // (A links file lands back on 'links' below, once the read confirms
+  // that's what it is; going through 'findings' first means a report
+  // never inherits the previous file's view.)
+  if (state.currentView === 'bundles' || state.currentView === 'packages'
+      || state.currentView === 'repositories' || state.currentView === 'links') {
     state.currentView = 'findings'
   }
   // Per-report repo URL (see state.js / saveRepoUrlFor): the user's
@@ -507,7 +535,18 @@ export async function switchToFile(name, content) {
     }
     if (isStaleLoad(gen)) return
   }
-  await ingestReport(name, content, gen)
+  // A links file declares which findings are the same finding; it
+  // carries none of its own, so it never goes through `ingestReport`
+  // and `state.reports` stays empty. Its view (render-links.js) points
+  // at the findings in the reports that DO carry them.
+  const linked = parseLinkedFindings(content)
+  if (linked) {
+    state.currentLinks = { name, ...linked }
+    state.currentView = 'links'
+    render()
+  } else {
+    await ingestReport(name, content, gen)
+  }
   if (isStaleLoad(gen)) return
   // Open the session(s) AFTER ingest so buildWorkspaceIds sees the
   // freshly-loaded findings — otherwise it runs against the empty
@@ -547,8 +586,9 @@ export async function switchToWorkspace(workspaceId) {
   // sync subscription (rides `workspace-subscribe`), so presence ⊆ sync.
   closeSessionsExcept(new Set([workspaceId]))
   // Same drop-out as switchToFile — opening a workspace lands in
-  // findings, not the bundles / packages list.
-  if (state.currentView === 'bundles' || state.currentView === 'packages' || state.currentView === 'repositories') {
+  // findings, not the bundles / packages / links list.
+  if (state.currentView === 'bundles' || state.currentView === 'packages'
+      || state.currentView === 'repositories' || state.currentView === 'links') {
     state.currentView = 'findings'
   }
   // Same fire-and-forget prime as ingestReport, for the workspace half
@@ -558,6 +598,7 @@ export async function switchToWorkspace(workspaceId) {
   state.workspaceMerges = []
   state.currentFile = null
   state.currentWorkspace = workspaceId
+  state.currentLinks = null
   state.repoUrl = ''
   state.repoEditing = false
   resetGraph2()
@@ -570,11 +611,7 @@ export async function switchToWorkspace(workspaceId) {
   // reports, some bundles) get the same treatment — bundles render in
   // the sidebar; the workspace row itself is a no-op for the main pane
   // until reports land.
-  if (ws.reports.length === 0) {
-    report.classList.remove('active')
-    litRender(nothing, report)
-    dropZone.classList.remove('hidden')
-  }
+  if (ws.reports.length === 0) showEmptyMainPane()
   // Kick off every readFile concurrently up front, then ingest in
   // workspace order. The await inside the loop only blocks on each
   // report's bytes — slower reads continue in the background while
@@ -584,13 +621,25 @@ export async function switchToWorkspace(workspaceId) {
   // workspace.reports order. Per-read failures resolve to `null`
   // (caught at the promise) so one bad file doesn't reject the batch.
   const reads = ws.reports.map((name) => readFile(name).catch(() => null))
+  let ingested = 0
   for (let i = 0; i < ws.reports.length; i++) {
     const content = await reads[i]
     if (isStaleLoad(gen)) return
     if (content === null) continue
+    // A workspace holds whatever the user dragged into it, and a links
+    // file is a member like any other — but it carries no findings, so
+    // there is nothing to merge into the view and `ingestReport` would
+    // reject it as an unreadable report. Skip it here; its sidebar row
+    // under this workspace still opens it in its own view.
+    if (parseLinkedFindings(content)) continue
     await ingestReport(ws.reports[i], content, gen)
+    ingested++
     if (isStaleLoad(gen)) return
   }
+  // Nothing painted the main pane: every member was a links file, or
+  // unreadable. Same teardown as the empty workspace above — otherwise
+  // the previous view stays up while the sidebar says we moved.
+  if (ingested === 0 && ws.reports.length > 0) showEmptyMainPane()
   // Open the per-workspace sync session AFTER every report is ingested
   // — it needs a complete view of state.reports to build its
   // workspace-id set. No-op when sync is disabled (no server URL).
@@ -712,6 +761,7 @@ export async function deleteCurrent({ triage = 'keep', deleteFromRemoteWorkspace
 function clearActiveView() {
   state.currentFile = null
   state.currentWorkspace = null
+  state.currentLinks = null
   state.selectedBundle = null
   state.bundleDetails = null
   state.bundleSourceFile = null
@@ -724,13 +774,7 @@ function clearActiveView() {
   state.currentView = 'findings'
   resetGraph2()
   removeSecureItem(LAST_FILE_KEY)
-  report.classList.remove('active')
-  // Drop findings via Lit so cached parts on #report (slot-reuse holds
-  // them across renders) get cleaned up with the DOM. A bare
-  // `report.innerHTML = ''` would leave the next render() walking a
-  // stale part-cache.
-  litRender(nothing, report)
-  dropZone.classList.remove('hidden')
+  showEmptyMainPane()
   document.title = 'DeepView'
 }
 

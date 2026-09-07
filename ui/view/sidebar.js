@@ -1,7 +1,7 @@
 import { LitElement, html, render as litRender, nothing, unsafeCSS } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { CONFIG_PATH, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, getCount, getPackagesIndex, getRepositoriesIndex, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, parseServerInfo, readCachedServerInfo, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, state, writeCachedServerInfo } from '#client/index.js'
+import { CONFIG_PATH, LINKS_KIND, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, ensureLinkedFindingsIndexed, getCount, getPackagesIndex, getRepositoriesIndex, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, parseServerInfo, readCachedServerInfo, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, state, writeCachedServerInfo } from '#client/index.js'
 import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, setSyncForceDisabled, triageSync } from './client-sync.js'
 import { fetchReport as fetchManagedReport, login as managedLogin, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams } from './client-managed.js'
 import { loadAdminBundle } from './client-admin.js'
@@ -33,7 +33,7 @@ import { openDetachBundleDialog } from './dialogs/detach-bundle-dialog.js'
 import { openDetachReportDialog } from './dialogs/detach-report-dialog.js'
 import { openPersistenceDegradedDialog } from './dialogs/persistence-degraded-dialog.js'
 import { openProxyAuthDialog } from './dialogs/proxy-auth-dialog.js'
-import { FILE_ICONS, displayName, groupOf } from './file-display.js'
+import { FILE_ICONS, displayName, groupOf, isLinksFile } from './file-display.js'
 import { BUNDLE_ICON_SVG, WORKSPACE_ICON_SVG } from './icons.js'
 import { openBundle, selectBundle } from './bundle-load.js'
 import { installGlobalTooltipListener, installShadowTooltipListener } from './tooltip.js'
@@ -119,18 +119,24 @@ let isDraggingBundle = false
 // (deduplicate output, single-run output, etc.) without naming the
 // pipeline. Named buckets carry the upstream's product name —
 // DeepSec is Vercel's tool (https://github.com/vercel-labs/deepsec);
-// Piolium is Vigolium's (https://github.com/vigolium/piolium).
+// Piolium is Vigolium's (https://github.com/vigolium/piolium). "Links"
+// is the odd one out and deliberately so: it isn't a producer, it's a
+// different KIND of file — one that names findings in the reports
+// above it rather than carrying any (client/linked-findings.js).
 const GROUP_LABELS = {
   'default': 'Reports',
   'claude-security': 'Claude Security',
   'codex-security': 'Codex Security',
   'deepsec': 'DeepSec',
   'piolium': 'Piolium',
+  [LINKS_KIND]: 'Links',
 }
 
 // Render order for buckets — default (analyzer dumps) first, then
-// named sources in alphabetical-ish reading order.
-const GROUP_ORDER = ['default', 'claude-security', 'codex-security', 'deepsec', 'piolium']
+// named sources in alphabetical-ish reading order, and Links last:
+// it's about the reports above it, so it reads as their footnote
+// rather than as another one of them.
+const GROUP_ORDER = ['default', 'claude-security', 'codex-security', 'deepsec', 'piolium', LINKS_KIND]
 
 
 // Live module state — the search-box query, applied as a
@@ -147,7 +153,8 @@ function fileItemTemplate(n, opts = {}) {
   // as a stale state. The same suppression applies to the
   // workspace-row template below.
   const isCurrent = n === state.currentFile
-    && (state.currentView === 'findings' || state.currentView === 'files')
+    && (state.currentView === 'findings' || state.currentView === 'files'
+      || state.currentView === 'links')
   const cls = `file-item${isCurrent ? ' current' : ''}${opts.indented ? ' indented' : ''}`
   const label = displayName(n)
   const count = getCount(n)
@@ -405,6 +412,11 @@ export async function renderSidebar() {
   // in-flight promise; subsequent calls walk listFiles again to
   // pick up any newly-dropped reports.
   ensureBundleFindingsIndexed().catch(() => {})
+  // Same deal for the links index, and the same reason to kick it
+  // here rather than from a view: a finding's "Duplicates:" row is
+  // painted by the findings surfaces, which know nothing about links
+  // files, so the index has to be filling before the user opens one.
+  ensureLinkedFindingsIndexed().catch(() => {})
   const names = await listFiles()
   const workspaces = listWorkspaces()
   const bundleNames = await listBundles()
@@ -795,7 +807,13 @@ async function onSidebarClick(e) {
     // the click should drop them back into the findings view for
     // that report. Without the currentView check we'd noop and
     // strand the user on the bundles view.
-    if (name && (name !== state.currentFile || state.currentView !== 'findings')) {
+    //
+    // 'links' counts as "already showing this file" alongside
+    // 'findings': it IS the view of the clicked row when the row is a
+    // links file, so re-clicking it should no-op the way re-clicking
+    // an open report does, not re-read and repaint.
+    const showingFile = state.currentView === 'findings' || state.currentView === 'links'
+    if (name && (name !== state.currentFile || !showingFile)) {
       switchToFile(name)
     }
     return
@@ -875,18 +893,22 @@ async function onSidebarClick(e) {
       .filter((w) => isInRemoteOrCached(w.id, name))
       .map((w) => w.id)
     const inRemote = remoteWorkspaceIds.length > 0
-    const { confirmed, triage } = await openDeleteReportDialog({ name, triageImpact, inRemote })
+    // A links file is deleted through the same button and the same
+    // dialog, but it is not a report — name it for what it is so the
+    // prompt doesn't claim the user is about to lose findings.
+    const kindLabel = isLinksFile(name) ? 'links file' : 'report'
+    const { confirmed, triage } = await openDeleteReportDialog({ name, kindLabel, triageImpact, inRemote })
     if (!confirmed) return
     // The active file may have changed under us (cross-tab switch /
     // sibling-tab delete) while the dialog was open. Bail rather than
     // deleting whatever's current now — the user confirmed deletion of
     // the file shown in the dialog, not whatever just slid into place.
     if (state.currentFile !== name) {
-      alert(`Active report changed during confirmation; aborting delete of "${name}".`)
+      alert(`Active file changed during confirmation; aborting delete of "${name}".`)
       return
     }
     try { await deleteCurrent({ triage, deleteFromRemoteWorkspaceIds: remoteWorkspaceIds }) }
-    catch (err) { alert(`Failed to delete report: ${err.message}`) }
+    catch (err) { alert(`Failed to delete ${kindLabel}: ${err.message}`) }
     return
   }
   if (e.target.closest('#sync-status')) {

@@ -1,0 +1,170 @@
+/* Links view — one dropped links file, listed as written (see
+   ui/view/render-links.js). A page of pointers, not of content: the
+   rows are ids and report names, and everything here is sized and
+   coloured to read as reference material rather than as findings.
+
+   Shares the page chrome (`header.page-head`, `.page-title`,
+   `.meta-row`) with the Packages / Repositories pages, and the same
+   1200px cap, so switching between the cross-report views doesn't
+   shift the column. */
+.links-view {
+  max-width: 1200px;
+  width: 100%;
+  display: flex; flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+/* The file's own name, first thing in the meta row, wearing the row
+   icon its sidebar entry wears — the page says WHICH links file it is
+   before it says anything about the links. */
+.links-file-name {
+  display: inline-flex; align-items: center; gap: .35rem;
+  max-width: 22rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--text);
+  & .file-icon { flex-shrink: 0; }
+}
+
+/* One paragraph saying what a link IS, because nothing else on the
+   page does and the format is new to most readers. Capped near a
+   comfortable measure rather than running the full 1200px. */
+.links-lede {
+  max-width: 60ch;
+  margin: 0 0 .75rem;
+  color: var(--muted);
+  font-size: .8rem;
+  line-height: 1.5;
+}
+
+/* Caveats about this particular file — findings it names that aren't
+   here, entries that couldn't be linked at all. Warning-shaped (left
+   rule, tinted) because each one means the page is showing less than
+   the file says. */
+.links-note {
+  max-width: 60ch;
+  margin: 0 0 .5rem;
+  padding: .35rem .55rem;
+  border-left: 3px solid var(--muted);
+  background: rgb(from var(--muted) r g b / .08);
+  border-radius: 0 4px 4px 0;
+  color: var(--muted);
+  font-size: .76rem;
+}
+
+.links-empty {
+  color: var(--muted);
+  font-size: .82rem;
+}
+
+/* The links themselves. Scrolls inside the page — same treatment as
+   `.packages-list` — so the header stays put on a file with hundreds
+   of links. `list-style: none` on the <ol>: the "Link N" heading in
+   each card already numbers it, and a marker beside that would number
+   it twice. */
+.links-list {
+  list-style: none;
+  margin: 0; padding: 0;
+  display: flex; flex-direction: column; gap: .5rem;
+  /* Takes the height left over under the header and the notes, and
+     scrolls inside it: `min-height: 0` is what lets a flex item
+     shrink below its content and hand the overflow to this box
+     rather than to the page. */
+  flex: 1 1 auto; min-height: 0;
+  overflow-y: auto; overscroll-behavior: none; scrollbar-gutter: stable;
+  -webkit-app-region: no-drag; app-region: no-drag;
+}
+/* The cards don't stretch to fill a tall, near-empty list. */
+.links-list > .links-group { flex: 0 0 auto; }
+
+.links-group {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  box-shadow: var(--shadow-glass);
+  overflow: hidden;
+}
+
+.links-group-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: .5rem;
+  padding: .35rem .6rem;
+  border-bottom: 1px solid var(--border);
+}
+.links-group-index {
+  color: var(--muted);
+  font-size: .68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .12em;
+}
+.links-group-count {
+  color: var(--muted);
+  font-size: .72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.links-group-findings {
+  list-style: none;
+  margin: 0; padding: 0;
+}
+
+/* One linked finding: id on the left, where it lives on the right.
+   The two halves are laid out as a row that wraps, so a finding
+   carried by six reports pushes its chips onto the next line instead
+   of squeezing the id. */
+.links-finding {
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: .35rem .6rem;
+  padding: .3rem .6rem;
+  border-bottom: 1px solid var(--border);
+  font-size: .74rem;
+  &:last-child { border-bottom: none; }
+}
+
+/* The id, as a link into the finding. Dotted underline for the same
+   reason `a.comment-self-ref` carries one (finding-card.css): these
+   navigate in place rather than opening a tab, and the reader can see
+   which is which before clicking. */
+.links-finding-id {
+  flex-shrink: 0;
+  max-width: 32rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--accent);
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  &:hover { text-decoration: underline solid; }
+}
+
+.links-finding-missing {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.links-finding-reports {
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: .3rem;
+  min-width: 0;
+}
+
+/* Report chip — a button, because it opens that report (events.js
+   routes `data-package-report` to switchToFile). Bordered pill rather
+   than the full-width row the Packages details panel uses: several sit
+   side by side on one line here. */
+.links-finding-report {
+  display: inline-flex; align-items: center; gap: .3rem;
+  max-width: 16rem;
+  padding: .1rem .4rem;
+  background: transparent;
+  border: 1px solid var(--border); border-radius: 3px;
+  color: var(--muted);
+  font: inherit;
+  font-size: .7rem;
+  transition: border-color .12s, color .12s;
+  &:hover { border-color: var(--accent); color: var(--accent); }
+  & .file-icon { flex-shrink: 0; }
+}
+.links-finding-report-label {
+  min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}

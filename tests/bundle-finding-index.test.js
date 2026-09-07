@@ -8,6 +8,8 @@
 //   - hash-keyed lookup (findingsForFileHash)
 //   - package-keyed view (getPackagesIndex)
 //   - reportsForFinding (cross-report attribution by dedupe key)
+//   - reportsForFindingId (attribution from an id alone — what the
+//     Links view has to work from)
 //   - subscribeToBundleFindingIndex (notify on each report indexed)
 //   - dedupe key fallback (id vs content-based)
 //   - extractFindings shape variants (findings array, groups array,
@@ -42,6 +44,7 @@ const {
   reportsForFinding,
   reportsForFindingByPackage,
   reportsForFindingByRepo,
+  reportsForFindingId,
   subscribeToBundleFindingIndex,
 } = await import('../client/bundle-finding-index.js')
 const { compareVersionsDesc, isPlaceholderNpmPackage, packageVersionOf } = await import('../client/bundle-finding-versions.js')
@@ -147,6 +150,41 @@ describe('bundle-finding-index — reportsForFinding (cross-report attribution)'
 
   it('returns an empty array for an unknown hash', () => {
     assert.deepEqual(reportsForFinding('never-indexed', { id: 'whatever' }), [])
+  })
+})
+
+// Attribution by ID ALONE — what the Links view asks, because a links
+// file names findings and describes none of them: no hash, no path, no
+// package to look anything up under. So this index has to answer for
+// findings the three above can't file at all.
+describe('bundle-finding-index — reportsForFindingId (attribution from an id alone)', () => {
+  it('returns every report carrying the id, with nothing else to go on', async () => {
+    const id = `id-attr-${Date.now()}`
+    // Neither finding carries a fileHash or a path under a package —
+    // the shape a markdown-parsed report produces, and the shape the
+    // hash / package / repo indexes have nothing to file.
+    const r1 = await seedReport({ findings: [{ id, severity: 'high', description: 'd' }] })
+    const r2 = await seedReport({ findings: [{ id, severity: 'high', description: 'd' }] })
+    await ensureBundleFindingsIndexed()
+    assert.deepEqual(reportsForFindingId(id).toSorted(), [r1, r2].toSorted())
+  })
+
+  // "Not in any of your reports" is a real answer this view prints, so
+  // a deleted report must stop being named — and the id itself must
+  // stop being known once its last holder is gone.
+  it('drops a report on delete, and the id with its last holder', async () => {
+    const id = `id-attr-del-${Date.now()}`
+    const r1 = await seedReport({ findings: [{ id, severity: 'low', description: 'd' }] })
+    const r2 = await seedReport({ findings: [{ id, severity: 'low', description: 'd' }] })
+    await ensureBundleFindingsIndexed()
+    await deleteFile(r1)
+    assert.deepEqual(reportsForFindingId(id), [r2])
+    await deleteFile(r2)
+    assert.deepEqual(reportsForFindingId(id), [])
+  })
+
+  it('returns an empty array for an id nothing indexed', () => {
+    assert.deepEqual(reportsForFindingId('never-indexed-id'), [])
   })
 })
 

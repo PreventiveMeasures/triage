@@ -1268,6 +1268,36 @@ span.evidence-ref:not([role]) { color: var(--muted); }
   & a { color: var(--accent); text-decoration: none; }
   & a:hover { text-decoration: underline; }
 }
+/* "Duplicates:" — the last block on the card, listing the findings a
+   links file says are this one reported again (render-finding.js).
+   Deliberately quieter than its comment / fix siblings above: no
+   accent rule and no tint, because it isn't the reader's own note or
+   an action to take, it's a cross-reference. `flex-wrap` so a finding
+   linked to a dozen others wraps instead of stretching the card. */
+.duplicates-block {
+  display: flex; align-items: baseline; flex-wrap: wrap;
+  gap: .1rem .4rem;
+  margin-top: .5rem;
+  padding: .35rem .55rem;
+  border-left: 3px solid var(--border);
+  border-radius: 0 4px 4px 0;
+  font-size: .82rem; color: var(--text);
+  /* No `margin-right` on this label, unlike its comment / fix
+     siblings: the flex `gap` above already spaces it off the first
+     ref, and the two together read as a stutter. */
+  & .duplicates-label { color: var(--muted); font-weight: 600; }
+  /* Same standing dotted underline as `a.comment-self-ref` above, for
+     the same reason: these navigate in place rather than opening a
+     tab, and the difference should be visible before the click. */
+  & a.duplicate-ref {
+    color: var(--accent);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .78rem;
+    text-decoration: underline dotted; text-underline-offset: 2px;
+  }
+  & a.duplicate-ref:hover { text-decoration: underline solid; }
+}
+
 .comment-label,
 .fix-label {
   color: var(--muted); font-weight: 600;

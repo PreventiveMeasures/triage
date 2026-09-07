@@ -2,8 +2,8 @@ import { html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { bundleFilePath, bundlesForFileHash, isLinkableFindingId, isPlaceholderNpmPackage, state } from '#client/index.js'
-import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, githubRefLabel, hasSeverityCorrection, isHttpUrl, lineRange, listSegments, locationLabel, markdownLinkToken, parseCommentRefs, revalidateStamp, revalidationShown, snippetWindow, splitDescription, stripExportMarker } from './format.js'
+import { bundleFilePath, bundlesForFileHash, duplicatesOf, encodeFindingRef, isLinkableFindingId, isPlaceholderNpmPackage, reportsForFindingId, state } from '#client/index.js'
+import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, githubRefLabel, hasSeverityCorrection, isHttpUrl, lineRange, listSegments, locationLabel, markdownLinkToken, parseCommentRefs, revalidateStamp, revalidationShown, shortFindingId, snippetWindow, splitDescription, stripExportMarker } from './format.js'
 import { activeTabFor, findingRepo, findingRepoFallback, groupState, isIgnored, scopedTriage, sortTabs, tabKey } from './group.js'
 import { highlightedCode } from './code-highlight.js'
 import { attachedBundle, bundleSource, focusCodePosition } from './focus-code.js'
@@ -298,6 +298,48 @@ function renderCommentText(text) {
     }
     return html`<a href=${seg.url} target="_blank" rel="noopener noreferrer" title=${seg.url}>${seg.label}</a>`
   })
+}
+
+// "Duplicates:" — the findings a dropped links file says are THIS
+// finding, reported again somewhere else (client/linked-findings.js
+// for the file, `duplicatesOf` for the union across every links file
+// the user holds).
+//
+// Last block on the card, under the recommendation and the reader's
+// own comment / fix, because it is the least about this finding: by
+// the time you've read what it is and what to do about it, "and it
+// also appears over here" is a footnote — but a footnote worth a
+// click, since the other copy may carry a different report's severity
+// correction, its own comment, or simply be the one your colleague
+// triaged.
+//
+// Each duplicate is a `#finding=…` anchor, the same in-place link a
+// comment ref uses (see `renderCommentText` above) — so following one
+// opens the report holding it, un-hides it, and rings it. The title
+// carries the full id plus, when the OPFS index knows it, the reports
+// it lives in: worth a hover, not worth the width, since a duplicate
+// row is usually two or three short ids.
+//
+// Reads `state.linksTick` for the same reason the "Code" button reads
+// `bundleHashTick`: `duplicatesOf` is a plain module Map that this
+// card's autorun can't see fill, and the index fills in the
+// background on every load.
+function duplicatesTemplate(f) {
+  void state.linksTick
+  const id = tabKey(f)
+  const ids = isLinkableFindingId(id) ? duplicatesOf(id) : []
+  if (ids.length === 0) return nothing
+  return html`<div class="duplicates-block"><span class="duplicates-label">Duplicates:</span>${
+    ids.map((other) => {
+      const reports = reportsForFindingId(other)
+      const where = reports.length > 0 ? ` — in ${reports.map(displayName).join(', ')}` : ''
+      return html`<a
+        class="duplicate-ref"
+        href=${`#${encodeFindingRef({ id: other })}`}
+        title=${`Show ${other}${where}`}
+      >${shortFindingId(other) ?? other}</a>`
+    })
+  }</div>`
 }
 
 // The verdict stamp — `revalidate` itself (confirmed / refuted /
@@ -1284,6 +1326,7 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
           ? html`<a href=${fix} target="_blank" rel="noopener noreferrer">${fix}</a>`
           : fix}</div>`
         : nothing}
+      ${duplicatesTemplate(f)}
     </div>
   </div>`
 }
