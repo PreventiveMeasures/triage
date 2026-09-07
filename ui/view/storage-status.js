@@ -126,7 +126,7 @@ function logRequestOutcome(granted, viaGesture) {
   )
 }
 
-export async function refreshStorageStatus() {
+async function refreshStorageStatus() {
   if (!button) return
   // Both halves of the paint predicate refresh together so the
   // banner can't show a stale combination (e.g. warn after the last

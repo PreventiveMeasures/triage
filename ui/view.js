@@ -4,7 +4,7 @@
 // sidebar click delegate exists when `addFiles` calls `renderSidebar`.
 // MUST be first: publishes lit + StateElement on a Symbol-keyed global
 // ahead of every other transitive import. `./view/format.js` (pulled
-// in transitively via `./view/dom.js` etc.) reads the slot through
+// in transitively via `./view/sidebar.js` etc.) reads the slot through
 // `./view/frontend-global.js` and throws if it loads before the slot
 // is set. Lazy bundles (`ui/terminal.js`, `ui/graph.js`) don't import
 // this; they pick up the slot post-boot via the same
@@ -15,9 +15,8 @@ import { attachSharedWorkspace, extractFindingRef, extractShareEncoded, getSecur
 import { onAutoDownloaded, onBundleAutoDownloaded, onChange as onPresenceChange, setRedraw, triageSync } from './view/client-sync.js'
 import { renderSidebar } from './view/sidebar.js'
 import { BUNDLE_TABS, LAST_FILE_KEY, switchToFile, switchToWorkspace } from './view/ingest.js'
-import { openBundle } from './view/bundle-load.js'
+import { openBundle, selectBundle } from './view/bundle-load.js'
 import { revealFinding } from './view/finding-link-nav.js'
-import { graph2 } from './view/graph/state.js'
 import { installHydrationConflictResolver } from './view/hydration-conflict.js'
 import { installSyncAuthResolver } from './view/sync-auth.js'
 import { runLegacyOriginCheck } from './view/origin-check.js'
@@ -308,20 +307,7 @@ async function continueBoot() {
       const savedTab = spaceIdx >= 0 ? rest.slice(spaceIdx + 1) : ''
       const tab = BUNDLE_TABS.has(savedTab) ? savedTab : 'overview'
       if ((state.bundles ?? []).some((b) => b.integrity === integrity)) {
-        state.currentView = 'bundles'
-        state.selectedBundle = integrity
-        state.bundleDetails = null
-        state.bundleSourceFile = null
-        state.bundleSourceFindingIdx = null
-        state.bundleCodeSearchQuery = ''
-        state.bundleCodeSearchMode = 'files'
-        state.bundleSearchQuery = ''
-        state.bundleSearchRegex = false
-        state.bundleSearchCase = false
-        state.bundleSearchContext = true
-        state.bundleDetailsTab = tab
-        state.shownTriage = null
-        graph2.showAll = true
+        selectBundle(integrity, tab)
         render()
         openBundle(integrity)
       }

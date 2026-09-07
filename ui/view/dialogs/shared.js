@@ -32,3 +32,33 @@ export function itemDisplayLabel(item) {
   if (item.kind === 'bundle') return item.label ?? bundleShortLabel(item.identifier)
   return item.identifier
 }
+
+// Count + pluralised kind noun for the sync-transfer prompts: a
+// homogeneous list reads as "reports" / "bundles", a mixed one as
+// "items"; `singular` drives the one-item wording.
+export function transferSummary(items) {
+  const count = items.length
+  const singular = count === 1
+  const reportCount = items.filter((i) => i.kind === 'report').length
+  const bundleCount = count - reportCount
+  let kindLabel = 'items'
+  if (bundleCount === 0) kindLabel = singular ? 'report' : 'reports'
+  else if (reportCount === 0) kindLabel = singular ? 'bundle' : 'bundles'
+  return { count, singular, kindLabel }
+}
+
+// Multi-item list for the sync-transfer prompts; bundles get the
+// inline kind chip so they read as distinct from reports.
+export function transferItemsList(items) {
+  return html`<ul class="lwd-list">
+      ${items.map((i) => html`<li>${itemDisplayLabel(i)}${i.kind === 'bundle' ? html` <span class="lwd-kind-tag">bundle</span>` : nothing}</li>`)}
+    </ul>`
+}
+
+// Per-item failure list shown once a transfer finishes with errors.
+export function transferErrorsList(errors) {
+  if (errors.length === 0) return nothing
+  return html`<ul class="lwd-list" role="alert">
+      ${errors.map((e) => html`<li><strong>${e.label}</strong> — ${e.reason}</li>`)}
+    </ul>`
+}

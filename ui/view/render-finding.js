@@ -4,7 +4,7 @@ import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { bundleFilePath, bundlesForFileHash, isLinkableFindingId, isPlaceholderNpmPackage, state } from '#client/index.js'
 import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, githubRefLabel, hasSeverityCorrection, isHttpUrl, lineRange, listSegments, locationLabel, markdownLinkToken, parseCommentRefs, revalidateStamp, revalidationShown, snippetWindow, splitDescription, stripExportMarker } from './format.js'
-import { activeTabFor, findingRepo, findingRepoFallback, groupKey, groupState, isIgnored, scopedTriage, sortTabs, tabKey } from './group.js'
+import { activeTabFor, findingRepo, findingRepoFallback, groupState, isIgnored, scopedTriage, sortTabs, tabKey } from './group.js'
 import { highlightedCode } from './code-highlight.js'
 import { attachedBundle, bundleSource, focusCodePosition } from './focus-code.js'
 import { samePos } from './focus-code-history.js'
@@ -14,8 +14,9 @@ import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 // here as Lit `html` template results (no `unsafeHTML`). Lit
 // auto-escapes interpolated text + attribute values, so only
 // structural HTML lives in the templates — no manual `esc()`.
-// Light-DOM helpers in render.js (e.g. flat list location headers)
-// keep using the string-returning siblings in format.js.
+// render.js's light-DOM surfaces (e.g. the flat list location headers)
+// use the template-returning siblings in format.js (`fileLink` /
+// `lineLink`).
 
 // Display label for the .badge tier text. The class still gets the
 // canonical severity string ('informational' / 'high_bug') so CSS
@@ -46,7 +47,7 @@ export function badgeLabel(severity) {
 //   variant 'full'    — finding-left / focus (companion stacks below)
 //   variant 'compact' — table row (companion stacks below; tighter)
 //   variant 'tab'     — tab strip (primary + a small ▲/▼ marker only)
-export function severityBadge(f, { variant = 'full' } = {}) {
+function severityBadge(f, { variant = 'full' } = {}) {
   const mode = state.severityMode
   const shown = displayedSeverity(f, mode)
   const primary = html`<span class=${`badge ${shown}`}>${badgeLabel(shown)}</span>`
@@ -479,11 +480,11 @@ function evidenceTemplate(f, context) {
 
 // Combined `file:line` link for the table-view row's location cell —
 // the row has no file header above it (unlike the list / grouped
-// views) so file + line live together in one slot. Returns a
+// views) so file + line live together in one slot — and for the
+// card's `.line-row` location (tabBodyTemplate). Returns a
 // TemplateResult when we have a source URL, plain text otherwise.
 function rowLocationTemplate(f, url) {
-  const lineNum = parseInt(f.line, 10)
-  const text = Number.isFinite(lineNum) ? `${f.file}:${f.line}` : f.file
+  const text = locationLabel(f)
   if (!url) return text
   return html`<a href=${url} target="_blank" rel="noopener">${text}</a>`
 }
@@ -820,8 +821,7 @@ function issueTitle(f) {
 // so the file link and confidence bracket the description paragraph.
 function issueBody(f) {
   const href = findingUrl(f, findingRepoFallback(f))
-  const lineNum = parseInt(f.line, 10)
-  const loc = Number.isFinite(lineNum) ? `${f.file}:${f.line}` : f.file
+  const loc = locationLabel(f)
   const blocks = []
   if (f.file) blocks.push(`File: ${href ? `[${loc}](${href})` : loc}`)
   if (f.description) blocks.push(f.description)
@@ -936,8 +936,8 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = 
 // Right-aligns the menu's right edge to the button's, dropping
 // below by default; flips above when the viewport's bottom would
 // clip. Reads from the popover's getRootNode() so the lookup
-// works equally for shadow-DOM rows (`<finding-row>`) and the
-// light-DOM finding cards.
+// works inside whichever shadow root drew the menu (`<finding-row>`
+// or `<finding-card>`).
 function positionTriagePopover(e) {
   if (e.newState !== 'open') return
   const popover = e.currentTarget
@@ -990,19 +990,14 @@ function triageMenuTemplate(group, title, context, groupSt, activeTab) {
   // the active bucket without a "press" affordance would confuse.
   const ALL_ACTIONS = ['inprogress', 'fixed', 'invalid', 'deleted', 'ignored']
   const isFocus = context === 'focus'
-  let actions
-  if (isFocus) {
-    actions = ALL_ACTIONS.map((s) => ({ key: s, label: ACTION_LABELS[s] }))
-  } else if (inTriageView) {
-    actions = [
+  const actions = inTriageView && !isFocus
+    ? [
       { key: 'restore', label: 'Restore' },
       ...ALL_ACTIONS
         .filter((s) => s !== state.shownTriage)
         .map((s) => ({ key: s, label: ACTION_LABELS[s] })),
     ]
-  } else {
-    actions = ALL_ACTIONS.map((s) => ({ key: s, label: ACTION_LABELS[s] }))
-  }
+    : ALL_ACTIONS.map((s) => ({ key: s, label: ACTION_LABELS[s] }))
   const btnClasses = ['mark-triage-menu']
   if (inTriageView) btnClasses.push('with-label', `triage-state-${state.shownTriage}`)
   // Stable popover id derived from gid — escape so
@@ -1163,11 +1158,7 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
   // above the card. exportName (or `exportName.methodName` when the
   // finding carries both) joins with a comma when present.
   const url = findingUrl(f, findingRepoFallback(f))
-  const lineNum = parseInt(f.line, 10)
-  const locText = Number.isFinite(lineNum) ? `${f.file}:${f.line}` : f.file
-  const locLink = url
-    ? html`<a href=${url} target="_blank" rel="noopener">${locText}</a>`
-    : locText
+  const locLink = rowLocationTemplate(f, url)
   const exportLabel = findingDisplayName(f)
   // The finding's own location, previewable in place when a bundle
   // carries it. Resolved once here and passed to the evidence rows
@@ -1297,28 +1288,14 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
   </div>`
 }
 
-// Group identifier — exposed so the <finding-card> / <finding-row>
-// components can stamp it onto their host as `data-gid` (events.js's
-// pathClosest('[data-gid]') resolves a row from action-button clicks).
-export function findingCardGid(g) {
-  return groupKey(g)
-}
-
 // State-derived host classes for a `<finding-card>`. The literal
 // `finding` class is included so external selectors like
 // `.flat-group .finding` still match the host element. `multi-case`
 // is a print-only hook (drives the `Multiple reports of one finding`
 // banner via :host(.multi-case) .card::before in finding-card.css).
 export function findingCardClasses(g) {
-  const groupSt = groupState(g)
-  const sortedTabs = sortTabs(g)
-  const isCritical = g.some((f) => f.critical || displayedSeverity(f, state.severityMode) === 'critical')
-  const classes = ['finding']
-  if (isCritical) classes.push('is-critical')
-  if (groupSt.hasConflict) classes.push('has-conflict')
-  else if (groupSt.commonColor) classes.push(`mark-${groupSt.commonColor}`)
-  if (state.shownTriage) classes.push(`triage-${state.shownTriage}`)
-  if (sortedTabs.length > 1) classes.push('multi-case')
+  const classes = ['finding', ...tableRowClasses(g)]
+  if (sortTabs(g).length > 1) classes.push('multi-case')
   return classes
 }
 
@@ -1353,19 +1330,6 @@ export function findingCardInnerTemplate(g, opts = {}) {
   `
 }
 
-// Compact block per finding for the table view. Layout:
-//   ┌──────────┬──────────────────────────────────────┐
-//   │  badge   │  title (first line, ellipsis)  type  │
-//   │  conf?   │  file:line               actions     │
-//   │          │  tab strip (multi-tab only)          │
-//   └──────────┴──────────────────────────────────────┘
-// The left column is fixed-width so badges line up across rows; the
-// badge centers vertically against the title + meta rows (not the
-// optional tab strip below) — see finding-row.css.
-export function tableRowGid(g) {
-  return groupKey(g)
-}
-
 // State-derived class list for a row's host element. Omits the
 // `selected` class — that's owned by the host's `selected` property
 // since the parent <finding-table> tracks selection there.
@@ -1380,6 +1344,16 @@ export function tableRowClasses(g) {
   return classes
 }
 
+// Compact block per finding for the table view. Layout:
+//   ┌──────────┬──────────────────────────────────────┐
+//   │  badge   │  title (first line, ellipsis)  type  │
+//   │  conf?   │  file:line               actions     │
+//   │          │  tab strip (multi-tab only)          │
+//   └──────────┴──────────────────────────────────────┘
+// The left column is fixed-width so badges line up across rows; the
+// badge centers vertically against the title + meta rows (not the
+// optional tab strip below) — see finding-row.css.
+//
 // Inner template for a row — score column on the left, body column
 // (title / meta / optional tab strip) on the right. The <finding-row>
 // host element is the wrapper; layout/grid is in finding-row.css.

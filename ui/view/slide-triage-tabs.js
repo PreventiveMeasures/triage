@@ -20,6 +20,7 @@ import { nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { StateElement, html } from '@rray/frontend/state-element'
 import { ensureHostAria } from './host-aria.js'
+import { kindConfig } from './kind-config.js'
 import { state } from '#client/index.js'
 
 const BUCKETS = ['invalid', 'deleted']
@@ -53,12 +54,8 @@ class SlideTriageTabs extends StateElement {
   }
 
   render() {
-    const config = KIND[this.kind]
-    if (!config) {
-      console.warn(`<slide-triage-tabs>: unknown kind ${JSON.stringify(this.kind)}; ` +
-        `expected one of ${Object.keys(KIND).map((k) => JSON.stringify(k)).join(', ')}.`)
-      return nothing
-    }
+    const config = kindConfig('slide-triage-tabs', KIND, this.kind)
+    if (!config) return nothing
     const current = state[config.stateKey]
     const visible = BUCKETS.filter((b) => (this.counts[b] ?? 0) > 0 || current === b)
     if (visible.length === 0) return nothing

@@ -10,10 +10,11 @@
 //   - Explicit user actions that touch remote (`fetchFile`,
 //     `putFile`, `openWorkspace`, etc.) — these can't no-op
 //     usefully, so they trigger the load.
-//   - Auto-resume on boot: ui/view.js's `continueBoot` calls
-//     `loadSync()` directly if the persisted `userEnabled` flag
-//     in secure-storage is not '0' (i.e., the user had sync on
-//     in their last session).
+//   - Auto-resume: the sidebar's `renderSyncStatus` calls
+//     `loadSync()` once the sync status button is visible (usable
+//     URL + at least one workspace) and the persisted `userEnabled`
+//     flag is not '0' (i.e., the user had sync on in their last
+//     session). Boot itself never pre-loads the chunk.
 //
 // Boot-time wiring that the UI registers eagerly (`setRedraw`,
 // `setHydrationConflictResolver`, `triageSync.onStatusChange`,
@@ -70,7 +71,7 @@ function syncBlockedByMode() {
   catch { return false }
 }
 
-function loadSyncOnce() {
+export function loadSync() {
   if (loadPromise) return loadPromise
   // Managed server → never pull the e2e sync chunk (see syncBlockedByMode).
   if (syncBlockedByMode() && !realModule) return Promise.resolve(null)
@@ -99,8 +100,6 @@ function loadSyncOnce() {
   })()
   return loadPromise
 }
-
-export function loadSync() { return loadSyncOnce() }
 
 // Pending boot-wiring registrations. Each is a function that takes
 // the loaded module and applies the deferred call.
@@ -169,25 +168,16 @@ export function isInRemoteOrCached(workspaceId, fileName) {
   if (realModule && realModule.isInRemote(workspaceId, fileName)) return true
   const cache = readPresenceCache(workspaceId)
   if (!cache || typeof cache.names !== 'object') return false
-  for (const name of Object.values(cache.names)) {
-    if (name === fileName) return true
-  }
-  return false
+  return Object.values(cache.names).includes(fileName)
 }
 export function isBundleInRemoteOrCached(workspaceId, integrity) {
   if (realModule && realModule.isBundleInRemote(workspaceId, integrity)) return true
   const cache = readPresenceCache(workspaceId)
   if (!cache || typeof cache.bundles !== 'object') return false
-  for (const integ of Object.values(cache.bundles)) {
-    if (integ === integrity) return true
-  }
-  return false
+  return Object.values(cache.bundles).includes(integrity)
 }
 export function remoteCount(workspaceId) {
   return realModule ? realModule.remoteCount(workspaceId) : 0
-}
-export function remoteBundleName(workspaceId, integrity) {
-  return realModule ? realModule.remoteBundleName(workspaceId, integrity) : null
 }
 
 // Subscription wrappers — pure queue, no load trigger. The sync
@@ -243,7 +233,7 @@ export function setHydrationConflictResolver(fn) {
 async function callIfWanted(method, args) {
   if (syncBlockedByMode()) return undefined
   if (!userWantsSync() && !realModule) return undefined
-  return (await loadSyncOnce())[method](...args)
+  return (await loadSync())[method](...args)
 }
 
 export function fetchFile(...args) { return callIfWanted('fetchFile', args) }
@@ -254,8 +244,6 @@ export function deleteFromRemote(...args) { return callIfWanted('deleteFromRemot
 export function deleteBundleFromRemote(...args) { return callIfWanted('deleteBundleFromRemote', args) }
 export function openWorkspace(...args) { return callIfWanted('openWorkspace', args) }
 export function closeWorkspace(...args) { return callIfWanted('closeWorkspace', args) }
-export function discoverRemoteFileNames(...args) { return callIfWanted('discoverRemoteFileNames', args) }
-export function discoverRemoteBundleIntegrities(...args) { return callIfWanted('discoverRemoteBundleIntegrities', args) }
 export function recheckRemoteStorage(...args) { return callIfWanted('recheckRemoteStorage', args) }
 
 // `triageSync` proxy — mirrors the real object's shape. Methods that
@@ -293,7 +281,7 @@ export const triageSync = {
   setEnabled(value) {
     if (value === true) {
       if (syncBlockedByMode()) return Promise.resolve(null)
-      return loadSyncOnce().then((m) => {
+      return loadSync().then((m) => {
         m.triageSync.setEnabled(true)
         // Reopen the presence sessions the matching `setEnabled(false)`
         // tore down. Disabling closes every presence session (below) so

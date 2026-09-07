@@ -9,7 +9,7 @@
 // 'manage-teams' views. All entry points share one chunk load.
 let loadPromise = null
 
-function loadAdminOnce() {
+export function loadAdminBundle() {
   if (loadPromise) return loadPromise
   loadPromise = (async () => {
     const path = './client-admin.js'
@@ -22,9 +22,3 @@ function loadAdminOnce() {
   })()
   return loadPromise
 }
-
-export function loadAdminUsersBundle() { return loadAdminOnce() }
-export function loadAdminReposBundle() { return loadAdminOnce() }
-export function loadAdminReportsBundle() { return loadAdminOnce() }
-export function loadAdminBundlesBundle() { return loadAdminOnce() }
-export function loadAdminTeamsBundle() { return loadAdminOnce() }

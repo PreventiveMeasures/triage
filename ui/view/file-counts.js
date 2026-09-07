@@ -79,7 +79,7 @@ export function computeTransitiveCounts(tree, ownCounts) {
   const transitive = new Map()
   for (const file of Object.keys(tree)) {
     const visited = new Set()
-    const stack = [...((tree[file].imports ?? []).filter((i) => tree[i]))]
+    const stack = (tree[file].imports ?? []).filter((i) => tree[i])
     while (stack.length > 0) {
       const dep = stack.pop()
       if (visited.has(dep)) continue

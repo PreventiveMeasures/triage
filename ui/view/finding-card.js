@@ -4,7 +4,7 @@
 // flat list (inside `<div class="flat-group">`). The host element
 // IS the `.finding` card: classes derived from the dedup group
 // (`is-critical`, `mark-{red|blue|green|gray}`, `has-conflict`,
-// `deleted`, `multi-case`) plus the literal `finding` class are
+// `triage-{inprogress|fixed|invalid|deleted|ignored}`, `multi-case`) plus the literal `finding` class are
 // reflected onto `this.classList`, and `this.dataset.gid` carries
 // the group key (events.js's `pathClosest('[data-gid]')` finds the
 // targeted card from action-button clicks).
@@ -22,20 +22,21 @@
 //
 // Reactivity: extends StateElement, which wraps render() in an
 // observer-util reaction. State reads inside the helpers
-// (state.triage, state.activeTabByGroup, state.showDeleted) get
+// (state.triage, state.activeTabByGroup, state.shownTriage) get
 // auto-tracked, so a mutation that invalidates the card triggers a
 // targeted re-render. The classList stamping happens inside render()
-// so its `state.showDeleted` read joins the same tracked set.
+// so its `state.shownTriage` read joins the same tracked set.
 //
-// Click semantics: action buttons (`.tab`, `.mark-dot`, `.mark-x`,
-// `.mark-restore`) bubble out composed:true and reach events.js's
+// Click semantics: action buttons (`.tab`, `.mark-comment`, `.mark-fix`,
+// `.triage-menu-item`, the `<color-marker>` dots) bubble out composed:true and reach events.js's
 // `pathClosest`-based delegate. No row-select equivalent — cards
 // don't drive a side-details panel.
 import { unsafeCSS } from 'lit'
 import { StateElement, html } from '@rray/frontend/state-element'
 import { installShadowTooltipListener } from './tooltip.js'
 import { unwatchNearViewport, watchNearViewport } from './lazy-render.js'
-import { findingCardClasses, findingCardGid, findingCardInnerTemplate } from './render-finding.js'
+import { groupKey } from './group.js'
+import { findingCardClasses, findingCardInnerTemplate } from './render-finding.js'
 import { revealCitedLines } from './reveal-cited.js'
 import cardCSS from './finding-card.css'
 import codeTokensCSS from '../styles/code-tokens.css'
@@ -92,10 +93,10 @@ class FindingCard extends StateElement {
   render() {
     if (!this.group) return html``
     // Stamp host attributes/classes inside render() so the state reads
-    // (state.showDeleted via findingCardClasses, state.triage /
-    // state.deletedIds via findingCardInnerHTML) join StateElement's
-    // tracked set and re-render on mutation.
-    this.dataset.gid = findingCardGid(this.group)
+    // (state.shownTriage via findingCardClasses, state.triage /
+    // state.activeTabByGroup via findingCardInnerTemplate) join
+    // StateElement's tracked set and re-render on mutation.
+    this.dataset.gid = groupKey(this.group)
     if (this.lazy && !this._near) {
       // Out of range: an empty shell in the card's own chrome, so the
       // list keeps its rhythm and `.flat-group .finding` still matches

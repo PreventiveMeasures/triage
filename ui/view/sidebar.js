@@ -4,7 +4,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { CONFIG_PATH, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, getCount, getPackagesIndex, getRepositoriesIndex, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, parseServerInfo, readCachedServerInfo, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, state, writeCachedServerInfo } from '#client/index.js'
 import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, setSyncForceDisabled, triageSync } from './client-sync.js'
 import { fetchReport as fetchManagedReport, login as managedLogin, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams } from './client-managed.js'
-import { loadAdminBundlesBundle, loadAdminReportsBundle, loadAdminReposBundle, loadAdminTeamsBundle, loadAdminUsersBundle } from './client-admin.js'
+import { loadAdminBundle } from './client-admin.js'
 import sidebarCSS from './sidebar.css'
 import fileIconCSS from '../styles/file-icon.css'
 import { initEncryptionToggle, refreshEncryptionToggle } from './encryption-toggle.js'
@@ -12,8 +12,8 @@ import { initStorageStatus, scheduleStorageStatusRefresh } from './storage-statu
 import { render } from './render.js'
 
 // Set on mount (`<app-sidebar>` firstUpdated). `hostEl` is the
-// custom-element host (light DOM — `.classList` collapse/empty
-// toggles live here). `root` is its shadow root, the scope for all
+// custom-element host (light DOM — the `.classList` collapse
+// toggle lives here). `root` is its shadow root, the scope for all
 // event delegates + `querySelector` lookups; events fired inside it
 // reach delegates attached to it with `e.target` un-retargeted, so
 // the `e.target.closest(...)` matching below works unchanged.
@@ -35,9 +35,8 @@ import { openPersistenceDegradedDialog } from './dialogs/persistence-degraded-di
 import { openProxyAuthDialog } from './dialogs/proxy-auth-dialog.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 import { BUNDLE_ICON_SVG, WORKSPACE_ICON_SVG } from './icons.js'
-import { openBundle } from './bundle-load.js'
-import { graph2 } from './graph/state.js'
-import { hideTooltip, installGlobalTooltipListener, scheduleTooltip } from './tooltip.js'
+import { openBundle, selectBundle } from './bundle-load.js'
+import { installGlobalTooltipListener, installShadowTooltipListener } from './tooltip.js'
 
 // Boot-time install — the document-level handler for any
 // light-DOM `[data-tooltip]` element. Sidebar items live in the
@@ -387,9 +386,9 @@ function matchesSearch(name) {
 const byReportName = (a, b) => displayName(a).localeCompare(displayName(b))
 
 // Render the OPFS file list into the sidebar. Highlights the active
-// file. Disables Delete when nothing's open. Hides the whole sidebar
-// when there are no files AND nothing's currently loaded — keeps the
-// empty-state drop zone uncluttered. Section headers render for every
+// file / workspace / bundle row. (The Delete-current button's disabled
+// state is owned by `<sidebar-delete-current>`'s own autorun, and the
+// sidebar is always shown — see below.) Section headers render for every
 // non-empty bucket (including the default Reports group) so the
 // vocabulary stays consistent across mixed-format collections. Called
 // after every state transition that could change the file list, the
@@ -430,7 +429,6 @@ export async function renderSidebar() {
   // report or workspace exists). The drop zone still owns the welcome
   // copy in main; the sidebar just exposes the create-workspace
   // affordance alongside.
-  hostEl.classList.remove('empty')
 
   // Reports already claimed by a workspace render INSIDE that workspace
   // and are dropped from the default buckets. A workspace reference to a
@@ -641,12 +639,12 @@ async function onSidebarClick(e) {
     return
   }
   // Per-bundle row in the expanded Bundles section — selects that
-  // bundle and switches to the bundles view. Mirrors the
-  // data-select-bundle handler in events.js (per-row setup must
-  // clear the prior load's parsed details, search box, and detail-
-  // tab choice so the new bundle starts on the Packages tab); the
-  // sidebar listener runs the same path so the row is interchangeable
-  // with the main-pane list row.
+  // bundle and switches to the bundles view. `selectBundle` is the
+  // same full bundle switch the `bundle-swap` listener in events.js,
+  // the bundle-only drop branch in ingest.js, and the boot restore in
+  // view.js perform (per-row setup must clear the prior load's parsed
+  // details, search boxes, and detail-tab choice so the new bundle
+  // starts on the Overview tab).
   const bundleEl = e.target.closest('.file-item[data-bundle-integrity]')
   if (bundleEl) {
     // Missing-bundle rows (imported workspace claims an integrity the
@@ -659,20 +657,7 @@ async function onSidebarClick(e) {
     if (bundleEl.classList.contains('bundle-missing')) return
     const integrity = bundleEl.dataset.bundleIntegrity
     if (state.selectedBundle === integrity && state.currentView === 'bundles') return
-    state.currentView = 'bundles'
-    state.selectedBundle = integrity
-    state.bundleDetails = null
-    state.bundleSourceFile = null
-    state.bundleSourceFindingIdx = null
-    state.bundleCodeSearchQuery = ''
-    state.bundleCodeSearchMode = 'files'
-    state.bundleSearchQuery = ''
-    state.bundleSearchRegex = false
-    state.bundleSearchCase = false
-    state.bundleSearchContext = true
-    state.bundleDetailsTab = 'overview'
-    graph2.showAll = true
-    state.shownTriage = null
+    selectBundle(integrity)
     persistLastBundle(integrity)
     render()
     renderSidebar()
@@ -929,40 +914,15 @@ async function onSidebarClick(e) {
     }
     return
   }
-  if (e.target.closest('[data-action="admin-users"]')) {
-    // Admin: navigate to the users page (lazily loads the admin bundle that
-    // defines the <managed-admin-users> element render() paints).
-    root?.querySelector('#user-menu')?.hidePopover?.()
-    void navigateToAdminUsers()
-    return
-  }
-  if (e.target.closest('[data-action="manage-repos"]')) {
-    // Admin/manage: navigate to the connected-repositories page (same lazy admin
-    // bundle, which defines the <managed-admin-repos> element render() paints).
-    root?.querySelector('#user-menu')?.hidePopover?.()
-    void navigateToManageRepos()
-    return
-  }
-  if (e.target.closest('[data-action="manage-reports"]')) {
-    // Admin/manage: navigate to the uploaded-reports page (same lazy admin
-    // bundle, which defines the <managed-admin-reports> element render() paints).
-    root?.querySelector('#user-menu')?.hidePopover?.()
-    void navigateToManageReports()
-    return
-  }
-  if (e.target.closest('[data-action="manage-bundles"]')) {
-    // Admin/manage: navigate to the uploaded-bundles page (same lazy admin
-    // bundle, which defines the <managed-admin-bundles> element render() paints).
-    root?.querySelector('#user-menu')?.hidePopover?.()
-    void navigateToManageBundles()
-    return
-  }
-  if (e.target.closest('[data-action="manage-teams"]')) {
-    // Admin/manage: navigate to the teams page (same lazy admin bundle, which
-    // defines the <managed-admin-teams> element render() paints).
-    root?.querySelector('#user-menu')?.hidePopover?.()
-    void navigateToManageTeams()
-    return
+  // Admin/manage rows in the account menu — close the popover, then
+  // navigate (lazily loading the admin bundle that defines the page's
+  // element; see ADMIN_PAGES).
+  for (const view of Object.keys(ADMIN_PAGES)) {
+    if (e.target.closest(`[data-action="${view}"]`)) {
+      root?.querySelector('#user-menu')?.hidePopover?.()
+      void navigateToAdminPage(view)
+      return
+    }
   }
   if (e.target.closest('[data-action="managed-logout"]')) {
     // Logout row inside the account menu — clears the server session (with the
@@ -987,7 +947,9 @@ async function onSidebarClick(e) {
 // the app uses (via `view/tooltip.js`). The mouseover listener
 // lives inside the shadow root (events don't reach the document-
 // level global handler with their original target across the shadow
-// boundary), so we drive show / hide directly here.
+// boundary), so `mount()` attaches the shared scoped listener
+// (`installShadowTooltipListener`) to `#file-list` with the options
+// below.
 //
 // Gate: when the tooltip text is just the label text (the common
 // case for short report filenames), suppress the tooltip when the
@@ -995,36 +957,21 @@ async function onSidebarClick(e) {
 // When the tooltip carries MORE than the label (e.g. bundle rows
 // where the tooltip is `name\nintegrity`), show on hover regardless
 // of truncation so the integrity stays discoverable.
-function onFileListMouseover(e) {
-  const el = e.target.closest('[data-tooltip]')
-  if (!el) { hideTooltip(); return }
-  scheduleTooltip(el, {
-    // Sidebar rows sit on the left edge of the viewport, so anchor
-    // the tooltip to the row's right side (vertically centered).
-    // The default cursor-anchored placement is for in-column lists
-    // in the main pane.
-    placement: 'right',
-    gate: (node) => {
-      const label = node.querySelector('.file-label')
-      if (!label) return true
-      const tipText = node.dataset.tooltip ?? ''
-      // Tooltip differs from label → always show.
-      if (tipText !== label.textContent) return true
-      // Tooltip is the label text → only show when truncated.
-      return label.scrollWidth > label.clientWidth
-    },
-  })
-}
-
-function onFileListMouseout(e) {
-  // Don't hide when the cursor moves within the SAME `[data-tooltip]`
-  // element (e.g. button → its child span). Mouseout bubbles for
-  // every inner element, but we only care when the cursor actually
-  // leaves the row that owns the tooltip.
-  const fromRow = e.target.closest('[data-tooltip]')
-  const toRow = e.relatedTarget?.closest?.('[data-tooltip]') ?? null
-  if (fromRow && fromRow === toRow) return
-  hideTooltip()
+const SIDEBAR_TOOLTIP_OPTIONS = {
+  // Sidebar rows sit on the left edge of the viewport, so anchor
+  // the tooltip to the row's right side (vertically centered).
+  // The default cursor-anchored placement is for in-column lists
+  // in the main pane.
+  placement: 'right',
+  gate: (node) => {
+    const label = node.querySelector('.file-label')
+    if (!label) return true
+    const tipText = node.dataset.tooltip ?? ''
+    // Tooltip differs from label → always show.
+    if (tipText !== label.textContent) return true
+    // Tooltip is the label text → only show when truncated.
+    return label.scrollWidth > label.clientWidth
+  },
 }
 
 function onSearchInput(e) {
@@ -1641,56 +1588,27 @@ async function refreshManagedSession() {
   }
 }
 
-// Navigate to the admin users page: load the admin bundle (which defines the
-// <managed-admin-users> element), then switch the view + repaint.
-async function navigateToAdminUsers() {
-  try { await loadAdminUsersBundle() }
-  catch (err) { console.warn('admin: bundle load failed:', err); return }
-  state.currentView = 'admin-users'
-  render()
-  renderSidebar()
+// Admin / manage pages reachable from the account menu. Keys double
+// as the `data-action` value AND the `state.currentView` name (each
+// painted by render() as its `<managed-admin-*>` element); the value
+// is the console prefix on a failed bundle load. Users is admin-only;
+// the rest are reachable by admin and manage roles (the account menu
+// gates the entry points).
+const ADMIN_PAGES = {
+  'admin-users': 'admin: bundle load failed:',
+  'manage-repos': 'admin: repos bundle load failed:',
+  'manage-reports': 'admin: reports bundle load failed:',
+  'manage-bundles': 'admin: bundles bundle load failed:',
+  'manage-teams': 'admin: teams bundle load failed:',
 }
 
-// Navigate to the connected-repositories page: load the admin bundle (which
-// defines <managed-admin-repos>), then switch the view + repaint. Reachable by
-// admin and manage roles (the account menu gates the entry point).
-async function navigateToManageRepos() {
-  try { await loadAdminReposBundle() }
-  catch (err) { console.warn('admin: repos bundle load failed:', err); return }
-  state.currentView = 'manage-repos'
-  render()
-  renderSidebar()
-}
-
-// Navigate to the uploaded-reports page: load the admin bundle (which defines
-// <managed-admin-reports>), then switch the view + repaint. Reachable by admin
-// and manage roles (the account menu gates the entry point).
-async function navigateToManageReports() {
-  try { await loadAdminReportsBundle() }
-  catch (err) { console.warn('admin: reports bundle load failed:', err); return }
-  state.currentView = 'manage-reports'
-  render()
-  renderSidebar()
-}
-
-// Navigate to the uploaded-bundles page: load the admin bundle (which defines
-// <managed-admin-bundles>), then switch the view + repaint. Reachable by admin
-// and manage roles (the account menu gates the entry point).
-async function navigateToManageBundles() {
-  try { await loadAdminBundlesBundle() }
-  catch (err) { console.warn('admin: bundles bundle load failed:', err); return }
-  state.currentView = 'manage-bundles'
-  render()
-  renderSidebar()
-}
-
-// Navigate to the teams page: load the admin bundle (which defines
-// <managed-admin-teams>), then switch the view + repaint. Reachable by admin
-// and manage roles (the account menu gates the entry point).
-async function navigateToManageTeams() {
-  try { await loadAdminTeamsBundle() }
-  catch (err) { console.warn('admin: teams bundle load failed:', err); return }
-  state.currentView = 'manage-teams'
+// Navigate to one of the admin / manage pages: load the admin bundle
+// (which defines the element render() paints for `view`), then switch
+// the view + repaint.
+async function navigateToAdminPage(view) {
+  try { await loadAdminBundle() }
+  catch (err) { console.warn(ADMIN_PAGES[view], err); return }
+  state.currentView = view
   render()
   renderSidebar()
 }
@@ -1750,8 +1668,7 @@ function mount(host) {
   root.addEventListener('dragover', onSidebarDragover)
   root.addEventListener('dragleave', onSidebarDragleave)
   root.addEventListener('drop', onSidebarDrop)
-  fileList.addEventListener('mouseover', onFileListMouseover)
-  fileList.addEventListener('mouseout', onFileListMouseout)
+  installShadowTooltipListener(fileList, SIDEBAR_TOOLTIP_OPTIONS)
   root.querySelector('#sidebar-search-input')?.addEventListener('input', onSearchInput)
   positionUserMenuOnOpen()
   renderSyncStatus(triageSync.status)
@@ -1769,7 +1686,7 @@ function mount(host) {
 }
 
 // `<app-sidebar>` — the report / workspace / bundle picker. Shadow
-// DOM so its ~1500-line stylesheet (view/sidebar.css) is scoped to
+// DOM so its ~700-line stylesheet (view/sidebar.css) is scoped to
 // the component instead of riding the global cascade. The shell
 // (header / search / list / actions) is static, so `render()` runs
 // once and the dynamic `#file-list` is populated imperatively by

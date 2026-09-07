@@ -3,8 +3,7 @@
 // Owns the wrong-password retry loop: each typed password calls
 // `tryPassword`, and a throw keeps the dialog open.
 import { html, nothing, unsafeCSS } from 'lit'
-import { makeStackedModalError } from '../dom.js'
-import { AppDialog } from './app-dialog.js'
+import { AppDialog, openAppDialogOrReject } from './app-dialog.js'
 import shareCSS from './dialog-share.css'
 
 class WorkspaceUnlockBundleDialog extends AppDialog {
@@ -129,21 +128,7 @@ export function openWorkspaceUnlockBundleDialog({ tryPassword } = {}) {
   if (typeof tryPassword !== 'function') {
     throw new TypeError('openWorkspaceUnlockBundleDialog: tryPassword required')
   }
-  return new Promise((resolve, reject) => {
-    const el = document.createElement('workspace-unlock-bundle-dialog')
-    el._tryPassword = tryPassword
-    el.addEventListener('resolve', (e) => {
-      el.remove()
-      resolve(e.detail)
-    })
-    el.addEventListener('modal-conflict', (e) => {
-      // Wipe the wrapper-set `_tryPassword` closure (capturing file
-      // bytes) before detaching — the dialog never opened, so its
-      // own `_finish` wipe didn't run.
-      el._tryPassword = null
-      el.remove()
-      reject(makeStackedModalError(e.detail?.cause))
-    })
-    document.body.append(el)
-  })
+  // Wipe the wrapper-set `_tryPassword` closure (capturing file
+  // bytes) on modal-conflict before detaching.
+  return openAppDialogOrReject('workspace-unlock-bundle-dialog', { _tryPassword: tryPassword }, (el) => { el._tryPassword = null })
 }

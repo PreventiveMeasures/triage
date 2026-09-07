@@ -156,18 +156,22 @@ export function bundleSource(integrity, file, { kick = true } = {}) {
   }
 }
 
-// Where the panel starts for a finding: the active tab's own file,
-// with the finding's lines marked.
+// The finding's own file, with its lines marked — where the panel
+// starts, and what focusCodePosition measures the history against.
 //
 // A RANGE, not a line: a report citing `20-30` means the span, and
 // marking only line 20 hides what it was pointing at (format.js
 // lineRange).
+function basePosition(f) {
+  const match = attachedBundle(f)
+  if (!match) return null
+  return { integrity: match.integrity, file: match.file, range: lineRange(f.line) }
+}
+
+// Where the panel starts for a finding: the active tab's own file.
 function focusCodeBase(focusedGroup) {
   if (!focusedGroup) return null
-  const active = activeTabFor(focusedGroup)
-  const match = attachedBundle(active)
-  if (!match) return null
-  return { integrity: match.integrity, file: match.file, range: lineRange(active.line) }
+  return basePosition(activeTabFor(focusedGroup))
 }
 
 // The panel's history for the finding on screen, as state — the rules
@@ -192,9 +196,8 @@ export function focusCodeHistory(focusedGroup) {
 // card has in hand, and the active tab is what the base is computed
 // from either way.
 export function focusCodePosition(f) {
-  const match = attachedBundle(f)
-  if (!match) return null
-  const base = { integrity: match.integrity, file: match.file, range: lineRange(f?.line) }
+  const base = basePosition(f)
+  if (!base) return null
   return historyFor(state.focusCodeStack, state.focusCodeAt, base).pos
 }
 

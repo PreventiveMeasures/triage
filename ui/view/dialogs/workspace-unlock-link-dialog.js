@@ -16,8 +16,7 @@
 // Esc-to-cancel).
 import { html, nothing, unsafeCSS } from 'lit'
 import { decodeShareLink, listWorkspaces, sanitizeWorkspaceName } from '#client/index.js'
-import { makeStackedModalError } from '../dom.js'
-import { AppDialog } from './app-dialog.js'
+import { AppDialog, openAppDialogOrReject } from './app-dialog.js'
 import shareCSS from './dialog-share.css'
 
 class WorkspaceUnlockLinkDialog extends AppDialog {
@@ -283,20 +282,7 @@ customElements.define('workspace-unlock-link-dialog', WorkspaceUnlockLinkDialog)
 // the sender's), or null when the user cancels, closes, or hits
 // the "already attached" branch.
 export function openWorkspaceUnlockLinkDialog({ encoded } = {}) {
-  return new Promise((resolve, reject) => {
-    const el = document.createElement('workspace-unlock-link-dialog')
-    el.encoded = encoded ?? ''
-    el.addEventListener('resolve', (e) => {
-      el.remove()
-      resolve(e.detail)
-    })
-    el.addEventListener('modal-conflict', (e) => {
-      // Wipe the wrapper-set `encoded` ciphertext before detaching —
-      // the dialog never opened, so its own `_finish` wipe didn't run.
-      el.encoded = ''
-      el.remove()
-      reject(makeStackedModalError(e.detail?.cause))
-    })
-    document.body.append(el)
-  })
+  // Wipe the wrapper-set `encoded` ciphertext on modal-conflict
+  // before detaching.
+  return openAppDialogOrReject('workspace-unlock-link-dialog', { encoded: encoded ?? '' }, (el) => { el.encoded = '' })
 }

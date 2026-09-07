@@ -15,9 +15,10 @@ export const sidebar = document.querySelector('app-sidebar')
 // Trigger a browser download for the given Blob via a transient
 // hidden anchor. Lit-rendered (rather than raw createElement) so
 // href + download flow through the same auto-escape path the rest
-// of the UI uses. Shared by the workspace export and the global
-// triage backup — both produce a `.gz` blob + filename and want
-// the same one-shot click + cleanup dance.
+// of the UI uses. Shared by the workspace export, the global triage
+// backup, the markdown export and the bundle / SBOM downloads in
+// events.js — each produces a blob + filename and wants the same
+// one-shot click + cleanup dance.
 export function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob)
   const host = document.createElement('span')

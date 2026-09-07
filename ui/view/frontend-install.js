@@ -7,8 +7,8 @@
 // this module, so its dependency tree (lit + lit/directives +
 // @rray/frontend/state-element) finishes evaluating, this module's
 // body runs (installing the slot), and only then does view.js move
-// on to its next import (`./view/dom.js`, which transitively pulls
-// `./view/format.js`, the first consumer of the wrapper).
+// on to its later imports (`./view/sidebar.js`, which transitively
+// pulls `./view/format.js`, the first consumer of the wrapper).
 //
 // The lazy bundles (`ui/terminal.js`, `ui/graph.js`) don't import
 // this module. They load long after boot, by which time view.js

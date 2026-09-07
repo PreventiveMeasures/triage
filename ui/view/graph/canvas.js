@@ -2,7 +2,7 @@ import { html, render } from '../frontend-global.js'
 import { cleanupGraph2, graph2 } from './state.js'
 import { layoutFilesVogel, layoutSpiral } from './layout.js'
 import { renderSevChips } from './render.js'
-import { buildPackageGraph, pkgRelative } from './data.js'
+import { buildPackageGraph, pkgLabelOf, pkgRelative } from './data.js'
 import { pkgColor } from './utils.js'
 import { forceLayout } from './force-layout.js'
 import { formatBytes } from '../format.js'
@@ -13,7 +13,7 @@ import { formatBytes } from '../format.js'
 // distinguish them from the saturated vuln palette; informational
 // is a saturated blue. Theme-independent — they read as data colors
 // regardless of chrome lightness. Critical rings get a larger
-// radius + thicker stroke (see ringR / lw in draw) so they stand
+// radius + thicker stroke (see drawIssueRing) so they stand
 // out without a time-driven pulse. Tier set matches format.js
 // SEVERITIES so the topbar pill row shows every tier the findings
 // tab can produce.
@@ -99,6 +99,24 @@ function currentTheme() {
 // 0..1 → 2-digit hex alpha — appended to a 6-digit hex color so we
 // can compose `'#ffaa00' + alphaHex(0.3)` cheaply in inner draw
 // loops without ctx.globalAlpha bookkeeping.
+// Screen-space AABB overlap test shared by the label collision passes.
+const overlaps = (a, b) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1
+
+// Greedy label placement: highest `prio` first, drop any candidate
+// whose box overlaps one already placed. Sorts `candidates` in place.
+function placeLabels(candidates) {
+  candidates.sort((a, b) => b.prio - a.prio)
+  const placed = []
+  for (const c of candidates) {
+    let collide = false
+    for (const p of placed) {
+      if (overlaps(c, p)) { collide = true; break }
+    }
+    if (!collide) placed.push(c)
+  }
+  return placed
+}
+
 function alphaHex(a) {
   const v = Math.max(0, Math.min(255, Math.round(a * 255)))
   return v.toString(16).padStart(2, '0')
@@ -140,7 +158,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
   let dpr = window.devicePixelRatio || 1
   let H = 0
   let W = 0
-  let viewport = { tx: 0, ty: 0, k: 1 }
+  const viewport = { tx: 0, ty: 0, k: 1 }
   let hovered = null
   let layoutH = 0
   let layoutW = 0
@@ -182,9 +200,14 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     // force-layout.js) — singleton groups disable the centroid
     // pull, leaving spring + repulsion to shape the layout.
     const sol = forceLayout(pg.nodes.map((n) => n.pkg), pg.importsOf, w, h, { groupOf: (id) => id })
-    const idx = new Map(sol.map((s) => [s.file, s]))
-    for (const n of pg.nodes) {
-      const p = idx.get(n.pkg)
+    copyPositions(pg.nodes, new Map(sol.map((s) => [s.file, s])))
+  }
+
+  // Copy solved positions onto the live nodes, matched by `file`
+  // (which doubles as the package name on package aggregates).
+  function copyPositions(nodes, pos) {
+    for (const n of nodes) {
+      const p = pos.get(n.file)
       if (p) { n.x = p.x; n.y = p.y }
     }
   }
@@ -202,10 +225,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     if (cache && cache.files === graph.files && cache.w === layoutW && cache.h === layoutH
         && cache.focused === focused && (cache.pkgView ?? false) === pkgView) {
       // Reuse cached positions — copy back into the live nodes.
-      for (const n of nodes) {
-        const p = cache.pos.get(n.file)
-        if (p) { n.x = p.x; n.y = p.y }
-      }
+      copyPositions(nodes, cache.pos)
     } else {
       if (pkgView) {
         layoutPackages(getPkgGraph(), layoutW, layoutH)
@@ -221,11 +241,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
           layoutFilesVogel(graph, layoutW, layoutH)
         } else {
           const sol = forceLayout(graph.files, graph.importsOf, layoutW, layoutH)
-          const idx = new Map(sol.map((s) => [s.file, s]))
-          for (const n of graph.nodes) {
-            const p = idx.get(n.file)
-            if (p) { n.x = p.x; n.y = p.y }
-          }
+          copyPositions(graph.nodes, new Map(sol.map((s) => [s.file, s])))
         }
       } else {
         layoutSpiral(graph, layoutW, layoutH)
@@ -288,8 +304,46 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
   // to 0.1 instead of hiding them, so they still occupy space and
   // read as context (where the matching subgraph sits in the whole).
   function nodeVisible(n) {
-    if (graph2.hidden.has(n.pkg)) return false
-    return true
+    return !graph2.hidden.has(n.pkg)
+  }
+
+  // Severity ring around a node dot — larger radius + thicker stroke
+  // for critical/high so they stand out without a time-driven pulse.
+  function drawIssueRing(sx, sy, r, issue, dim) {
+    const ringR = r + (issue === 'critical' ? 4.2 : issue === 'high' ? 3.4 : 2.8)
+    const lw = issue === 'critical' ? 1.8 : issue === 'high' ? 1.5 : issue === 'medium' ? 1.3 : 1.1
+    ctx.strokeStyle = SEV_COLORS[issue]
+    ctx.globalAlpha = dim
+    ctx.lineWidth = lw
+    ctx.beginPath()
+    ctx.arc(sx, sy, ringR, 0, Math.PI * 2)
+    ctx.stroke()
+    ctx.globalAlpha = 1
+  }
+
+  // Trace (no fill) the arrowhead triangle at one end of the quadratic
+  // curve (sx,sy)→(qcx,qcy)→(ex,ey). Tangent comes from the Bezier
+  // derivative at t=0.9 (target end) / t=0.1 (source end, `atStart`)
+  // — just inside the endpoint so the arrow doesn't overshoot.
+  function traceArrowhead(sx, sy, qcx, qcy, ex, ey, atStart) {
+    const arrowLen = 7
+    const arrowW = arrowLen * 0.42
+    const t = atStart ? 0.1 : 0.9
+    const tx = 2 * (1 - t) * (qcx - sx) + 2 * t * (ex - qcx)
+    const ty = 2 * (1 - t) * (qcy - sy) + 2 * t * (ey - qcy)
+    const tl = Math.sqrt(tx * tx + ty * ty) || 1
+    const tux = tx / tl, tuy = ty / tl
+    ctx.beginPath()
+    if (atStart) {
+      ctx.moveTo(sx, sy)
+      ctx.lineTo(sx + tux * arrowLen - tuy * arrowW, sy + tuy * arrowLen + tux * arrowW)
+      ctx.lineTo(sx + tux * arrowLen + tuy * arrowW, sy + tuy * arrowLen - tux * arrowW)
+    } else {
+      ctx.moveTo(ex, ey)
+      ctx.lineTo(ex - tux * arrowLen + tuy * arrowW, ey - tuy * arrowLen - tux * arrowW)
+      ctx.lineTo(ex - tux * arrowLen - tuy * arrowW, ey - tuy * arrowLen + tux * arrowW)
+    }
+    ctx.closePath()
   }
 
   // Soft-dim predicate — true when a node should render at reduced
@@ -565,18 +619,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
         ctx.stroke()
       }
 
-      if (n.issue) {
-        const sevColor = SEV_COLORS[n.issue]
-        const ringR = r + (n.issue === 'critical' ? 4.2 : n.issue === 'high' ? 3.4 : 2.8)
-        const lw = n.issue === 'critical' ? 1.8 : n.issue === 'high' ? 1.5 : n.issue === 'medium' ? 1.3 : 1.1
-        ctx.strokeStyle = sevColor
-        ctx.globalAlpha = dim
-        ctx.lineWidth = lw
-        ctx.beginPath()
-        ctx.arc(sx, sy, ringR, 0, Math.PI * 2)
-        ctx.stroke()
-        ctx.globalAlpha = 1
-      }
+      if (n.issue) drawIssueRing(sx, sy, r, n.issue, dim)
     }
 
     // ── Labels (auto-on at high zoom or low on-screen count,
@@ -663,32 +706,19 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
             y0: ty - lineH / 2, y1: ty + lineH / 2,
           })
         }
-        candidates.sort((a, b) => b.prio - a.prio)
-        const placed = []
-        const overlaps = (a, b) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1
-        for (const c of candidates) {
-          let collide = false
-          // Reject if the label box would cover another node's
-          // circle (skip the candidate's own node — its label
-          // sits adjacent to its own dot by design).
-          for (const nb of nodeBoxes) {
-            if (nb.file === c.file) continue
-            if (overlaps(c, nb)) { collide = true; break }
-          }
-          if (!collide) {
-            for (const p of placed) {
-              if (overlaps(c, p)) { collide = true; break }
-            }
-          }
-          if (!collide) placed.push(c)
-        }
+        // Reject candidates whose label box would cover another
+        // node's circle (skip the candidate's own node — its label
+        // sits adjacent to its own dot by design), then place the
+        // rest greedily by priority.
+        const placed = placeLabels(candidates.filter((c) =>
+          !nodeBoxes.some((nb) => nb.file !== c.file && overlaps(c, nb))))
         for (const c of placed) ctx.fillText(c.n.label, c.tx, c.ty)
       }
     }
 
     // Selection ring on top so it never gets hidden by neighbors.
-    // White on dark canvas, accent-blue on light — same swap graph
-    // v1's GRAPH_THEMES.selectRing makes.
+    // White on dark canvas, accent-blue on light — the
+    // G2_THEMES.selectRing swap.
     if (sel && nodeVisible(sel)) {
       const [sx, sy] = worldToScreen(sel.x, sel.y)
       const r = nodeRadius(sel)
@@ -733,10 +763,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     // Nodes' display radius — bigger than spiral's tight dots
     // since the package view zooms into a small subgraph and
     // can afford to read at a coarser grain.
-    const nodeR = (n) => {
-      const base = (n.isHub ? 6 : 4) * graph2.nodeSize
-      return base
-    }
+    const nodeR = (n) => (n.isHub ? 6 : 4) * graph2.nodeSize
 
     // ── Edges with curves + arrowheads ────────────────────────
     for (const e of graph.edges) {
@@ -783,36 +810,13 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
       ctx.stroke()
 
       if (isDim) continue
-      // Arrowhead at the curve's endpoint. Tangent direction
-      // computed from the quadratic Bezier derivative at t=0.9
-      // (just before the end so the arrow doesn't overshoot).
-      const arrowLen = Math.max(5, 7)
-      const arrowW = arrowLen * 0.42
-      const t = 0.9
-      const tx = 2 * (1 - t) * (qcx - sx) + 2 * t * (ex - qcx)
-      const ty = 2 * (1 - t) * (qcy - sy) + 2 * t * (ey - qcy)
-      const tl = Math.sqrt(tx * tx + ty * ty) || 1
-      const tux = tx / tl, tuy = ty / tl
-      ctx.beginPath()
-      ctx.moveTo(ex, ey)
-      ctx.lineTo(ex - tux * arrowLen + tuy * arrowW, ey - tuy * arrowLen - tux * arrowW)
-      ctx.lineTo(ex - tux * arrowLen - tuy * arrowW, ey - tuy * arrowLen + tux * arrowW)
-      ctx.closePath()
+      traceArrowhead(sx, sy, qcx, qcy, ex, ey, false)
       ctx.fillStyle = baseColor + alphaHex(Math.min(1, edgeAlpha + 0.15))
       ctx.fill()
 
       if (bidi) {
         // Back-arrow at the start of the curve for bidi pairs.
-        const t0 = 0.1
-        const tx0 = 2 * (1 - t0) * (qcx - sx) + 2 * t0 * (ex - qcx)
-        const ty0 = 2 * (1 - t0) * (qcy - sy) + 2 * t0 * (ey - qcy)
-        const tl0 = Math.sqrt(tx0 * tx0 + ty0 * ty0) || 1
-        const tux0 = tx0 / tl0, tuy0 = ty0 / tl0
-        ctx.beginPath()
-        ctx.moveTo(sx, sy)
-        ctx.lineTo(sx + tux0 * arrowLen - tuy0 * arrowW, sy + tuy0 * arrowLen + tux0 * arrowW)
-        ctx.lineTo(sx + tux0 * arrowLen + tuy0 * arrowW, sy + tuy0 * arrowLen - tux0 * arrowW)
-        ctx.closePath()
+        traceArrowhead(sx, sy, qcx, qcy, ex, ey, true)
         ctx.fill()
       }
     }
@@ -852,16 +856,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
         ctx.stroke()
       }
 
-      if (n.issue) {
-        const sevColor = SEV_COLORS[n.issue]
-        const ringR = r + (n.issue === 'critical' ? 4.2 : n.issue === 'high' ? 3.4 : 2.8)
-        const lw = n.issue === 'critical' ? 1.8 : n.issue === 'high' ? 1.5 : n.issue === 'medium' ? 1.3 : 1.1
-        ctx.strokeStyle = sevColor
-        ctx.lineWidth = lw
-        ctx.beginPath()
-        ctx.arc(sx, sy, ringR, 0, Math.PI * 2)
-        ctx.stroke()
-      }
+      if (n.issue) drawIssueRing(sx, sy, r, n.issue, dim)
       ctx.globalAlpha = 1
     }
 
@@ -899,16 +894,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
         y0: ty, y1: ty + labelLineHeight,
       })
     }
-    labelCandidates.sort((a, b) => b.prio - a.prio)
-    const placed = []
-    const overlaps = (a, b) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1
-    for (const cand of labelCandidates) {
-      let collide = false
-      for (const p of placed) {
-        if (overlaps(cand, p)) { collide = true; break }
-      }
-      if (!collide) placed.push(cand)
-    }
+    const placed = placeLabels(labelCandidates)
     for (const cand of placed) {
       const { n, sx, ty, isSel, isHov } = cand
       const dim = (selected || hovered) && !connected.has(n.file) && !isSel ? 0.2 : 1
@@ -1033,36 +1019,14 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
       ctx.stroke()
 
       if (isDim) continue
-      // Arrowhead at the target end; tangent from the quadratic
-      // Bezier derivative just before the endpoint, same math as
-      // drawPackageView. Colored by the endpoint it lands on so it
-      // visually fuses with the target node.
-      const arrowLen = 7
-      const arrowW = arrowLen * 0.42
-      const t = 0.9
-      const tx = 2 * (1 - t) * (qcx - sx) + 2 * t * (ex - qcx)
-      const ty = 2 * (1 - t) * (qcy - sy) + 2 * t * (ey - qcy)
-      const tl = Math.sqrt(tx * tx + ty * ty) || 1
-      const tux = tx / tl, tuy = ty / tl
-      ctx.beginPath()
-      ctx.moveTo(ex, ey)
-      ctx.lineTo(ex - tux * arrowLen + tuy * arrowW, ey - tuy * arrowLen - tux * arrowW)
-      ctx.lineTo(ex - tux * arrowLen - tuy * arrowW, ey - tuy * arrowLen + tux * arrowW)
-      ctx.closePath()
+      // Arrowhead colored by the endpoint it lands on so it visually
+      // fuses with the target node.
+      traceArrowhead(sx, sy, qcx, qcy, ex, ey, false)
       ctx.fillStyle = pkgColor(b.pkg) + alphaHex(Math.min(1, edgeAlpha + 0.15))
       ctx.fill()
 
       if (bidi) {
-        const t0 = 0.1
-        const tx0 = 2 * (1 - t0) * (qcx - sx) + 2 * t0 * (ex - qcx)
-        const ty0 = 2 * (1 - t0) * (qcy - sy) + 2 * t0 * (ey - qcy)
-        const tl0 = Math.sqrt(tx0 * tx0 + ty0 * ty0) || 1
-        const tux0 = tx0 / tl0, tuy0 = ty0 / tl0
-        ctx.beginPath()
-        ctx.moveTo(sx, sy)
-        ctx.lineTo(sx + tux0 * arrowLen - tuy0 * arrowW, sy + tuy0 * arrowLen + tux0 * arrowW)
-        ctx.lineTo(sx + tux0 * arrowLen + tuy0 * arrowW, sy + tuy0 * arrowLen - tux0 * arrowW)
-        ctx.closePath()
+        traceArrowhead(sx, sy, qcx, qcy, ex, ey, true)
         ctx.fillStyle = pkgColor(a.pkg) + alphaHex(Math.min(1, edgeAlpha + 0.15))
         ctx.fill()
       }
@@ -1094,18 +1058,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
       ctx.arc(sx, sy, r, 0, Math.PI * 2)
       ctx.fill()
 
-      if (p.issue) {
-        const sevColor = SEV_COLORS[p.issue]
-        const ringR = r + (p.issue === 'critical' ? 4.2 : p.issue === 'high' ? 3.4 : 2.8)
-        const lw = p.issue === 'critical' ? 1.8 : p.issue === 'high' ? 1.5 : p.issue === 'medium' ? 1.3 : 1.1
-        ctx.strokeStyle = sevColor
-        ctx.globalAlpha = dim
-        ctx.lineWidth = lw
-        ctx.beginPath()
-        ctx.arc(sx, sy, ringR, 0, Math.PI * 2)
-        ctx.stroke()
-        ctx.globalAlpha = 1
-      }
+      if (p.issue) drawIssueRing(sx, sy, r, p.issue, dim)
     }
 
     // ── Labels (always candidates — package counts are small;
@@ -1133,16 +1086,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
         y0: ty, y1: ty + labelLineHeight,
       })
     }
-    labelCandidates.sort((a, b) => b.prio - a.prio)
-    const placed = []
-    const overlaps = (a, b) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1
-    for (const cand of labelCandidates) {
-      let collide = false
-      for (const pl of placed) {
-        if (overlaps(cand, pl)) { collide = true; break }
-      }
-      if (!collide) placed.push(cand)
-    }
+    const placed = placeLabels(labelCandidates)
     for (const cand of placed) {
       const { p, sx, ty, isSel, isHov } = cand
       // Labels never drop below 0.25 — a dimmed package's name
@@ -1199,7 +1143,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
   function showTooltip(n, cx, cy) {
     if (!tooltip) return
     const col = pkgColor(n.pkg)
-    const pkgLabel = n.pkg === '__own__' ? 'own source' : n.pkg
+    const pkgLabel = pkgLabelOf(n.pkg)
     const relPath = pkgRelative(n.file, n.pkg)
     // Three-line layout:
     //   1. file path relative to package root (monospace, primary

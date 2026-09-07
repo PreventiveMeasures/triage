@@ -33,7 +33,7 @@ import { styleMap } from 'lit/directives/style-map.js'
 import { state } from '#client/index.js'
 import { formatBytes, stripCommonPathPrefix } from './format.js'
 import { pkgColor } from './graph/utils.js'
-import { bundlePkgOf } from './bundle-pkg-of.js'
+import { bundlePkgOf, pkgLabel } from './bundle-pkg-of.js'
 import { bundlePackageDirs, bundlePackageVersions, bundleSourcesAsMap } from './bundle-sources.js'
 import { buildBundleDetails } from './bundle-load.js'
 import { computeBundleDiff, computeVersionUpdates } from './bundle-compare-diff.js'
@@ -55,24 +55,23 @@ const MAX_ROWS = 400
 // to `base`.
 let _pendingSwap = null
 
-// Signed byte count for a delta cell: `+1,234 B` / `−1,234 B` / `±0 B`.
-// Uses a real minus (−) to match the typographic style elsewhere in
-// the chrome and so it never reads as a hyphen in a path.
-function formatDelta(n) {
-  if (n === 0) return '±0 B'
-  const sign = n > 0 ? '+' : '−'
-  return `${sign}${Math.abs(n).toLocaleString()} B`
-}
-
-// Signed count for a summary metric delta: `+3` / `−2` / `±0`. Same
-// typographic minus as formatDelta; used by the Files and Deps metrics.
+// Signed count for a summary metric delta: `+3` / `−2` / `±0`. Uses a
+// real minus (−) to match the typographic style elsewhere in the
+// chrome and so it never reads as a hyphen in a path. Used by the
+// Files and Deps metrics, and by formatDelta below for byte counts.
 function formatCountDelta(n) {
   if (n === 0) return '±0'
   return `${n > 0 ? '+' : '−'}${Math.abs(n).toLocaleString()}`
 }
 
+// Signed byte count for a delta cell: `+1,234 B` / `−1,234 B` / `±0 B`.
+function formatDelta(n) {
+  return `${formatCountDelta(n)} B`
+}
+
 // CSS direction suffix for a signed number: 'up' (green) / 'down'
-// (red) / '' (neutral). Shared by the metric deltas and version rows.
+// (red) / '' (neutral). Shared by the summary metric deltas and the
+// per-row size deltas.
 function dirClass(n) {
   return n > 0 ? 'up' : n < 0 ? 'down' : ''
 }
@@ -84,12 +83,6 @@ function formatPct(delta, baseBytes) {
   const pct = (delta / baseBytes) * 100
   const sign = pct > 0 ? '+' : pct < 0 ? '−' : '±'
   return `${sign}${Math.abs(pct).toFixed(1)}%`
-}
-
-// `__own__` is the size-distribution / treemap sentinel for own-source
-// (non-dependency) files; spell it out in the package lists.
-function pkgLabel(pkg) {
-  return pkg === '__own__' ? 'own source' : pkg
 }
 
 // A dependency's version list, comma-joined — usually one entry, more
@@ -234,11 +227,12 @@ class BundleCompare extends LitElement {
       : html`<li><div class="bundle-compare-row" title=${path}>${inner}</div></li>`
   }
 
-  // One file group (added / removed / changed). `kind` drives the
-  // accent class; `clickable` flags whether rows open in the source
-  // viewer. Returns `nothing` for an empty group so the section only
-  // shows what actually moved.
-  _fileGroup(title, rows, kind, clickable, displayOf) {
+  // Card shell shared by every file / package / dependency group: the
+  // kind-tinted section, dot + title + exact count header, the row list
+  // capped at MAX_ROWS, and the "and N more" footer. Returns `nothing`
+  // for an empty group so a section only shows what actually moved.
+  // `keyOf` / `rowOf` are the `repeat` key + row template.
+  _group(title, rows, kind, keyOf, rowOf) {
     if (rows.length === 0) return nothing
     const shown = rows.slice(0, MAX_ROWS)
     const hidden = rows.length - shown.length
@@ -249,46 +243,39 @@ class BundleCompare extends LitElement {
         <span class="bundle-compare-group-count">${rows.length}</span>
       </header>
       <ul class="bundle-compare-rows">
-        ${repeat(shown, (r) => r.path, (r) => {
-          const sizeTpl = r.delta === undefined
-            ? html`<span class="bundle-compare-row-size">${formatBytes(r.bytes)}</span>`
-            : html`<span class="bundle-compare-row-size">${formatBytes(r.baseBytes)} → ${formatBytes(r.otherBytes)}</span>
-                <span class=${`bundle-compare-row-delta ${r.delta > 0 ? 'up' : r.delta < 0 ? 'down' : ''}`}>${formatDelta(r.delta)}</span>`
-          return this._fileRow(r.path, displayOf(r.path), clickable, sizeTpl)
-        })}
+        ${repeat(shown, keyOf, rowOf)}
       </ul>
       ${hidden > 0 ? html`<div class="bundle-compare-more">and ${hidden.toLocaleString()} more…</div>` : nothing}
     </section>`
+  }
+
+  // Size cells for a file / package row: one byte count for a row that
+  // exists on a single side, `base → other` plus the signed delta for a
+  // changed row.
+  _sizeCells(r) {
+    return r.delta === undefined
+      ? html`<span class="bundle-compare-row-size">${formatBytes(r.bytes)}</span>`
+      : html`<span class="bundle-compare-row-size">${formatBytes(r.baseBytes)} → ${formatBytes(r.otherBytes)}</span>
+          <span class=${`bundle-compare-row-delta ${dirClass(r.delta)}`}>${formatDelta(r.delta)}</span>`
+  }
+
+  // One file group (added / removed / changed). `kind` drives the
+  // accent class; `clickable` flags whether rows open in the source
+  // viewer.
+  _fileGroup(title, rows, kind, clickable, displayOf) {
+    return this._group(title, rows, kind, (r) => r.path,
+      (r) => this._fileRow(r.path, displayOf(r.path), clickable, this._sizeCells(r)))
   }
 
   // One package group. Same accent scheme as the file groups; rows
   // carry the package color dot for continuity with the size
   // distribution + treemap.
   _pkgGroup(title, rows, kind) {
-    if (rows.length === 0) return nothing
-    const shown = rows.slice(0, MAX_ROWS)
-    const hidden = rows.length - shown.length
-    return html`<section class=${`bundle-compare-group bundle-compare-${kind}`}>
-      <header class="bundle-compare-group-head">
-        <span class="bundle-compare-dot" aria-hidden="true"></span>
-        <span class="bundle-compare-group-title">${title}</span>
-        <span class="bundle-compare-group-count">${rows.length}</span>
-      </header>
-      <ul class="bundle-compare-rows">
-        ${repeat(shown, (r) => r.pkg, (r) => {
-          const sizeTpl = r.delta === undefined
-            ? html`<span class="bundle-compare-row-size">${formatBytes(r.bytes)}</span>`
-            : html`<span class="bundle-compare-row-size">${formatBytes(r.baseBytes)} → ${formatBytes(r.otherBytes)}</span>
-                <span class=${`bundle-compare-row-delta ${r.delta > 0 ? 'up' : r.delta < 0 ? 'down' : ''}`}>${formatDelta(r.delta)}</span>`
-          return html`<li><div class="bundle-compare-row" title=${pkgLabel(r.pkg)}>
-            <span class="bundle-compare-pkg-dot" style=${styleMap({ background: pkgColor(r.pkg) })}></span>
-            <span class="bundle-compare-row-path">${pkgLabel(r.pkg)}</span>
-            ${sizeTpl}
-          </div></li>`
-        })}
-      </ul>
-      ${hidden > 0 ? html`<div class="bundle-compare-more">and ${hidden.toLocaleString()} more…</div>` : nothing}
-    </section>`
+    return this._group(title, rows, kind, (r) => r.pkg, (r) => html`<li><div class="bundle-compare-row" title=${pkgLabel(r.pkg)}>
+      <span class="bundle-compare-pkg-dot" style=${styleMap({ background: pkgColor(r.pkg) })}></span>
+      <span class="bundle-compare-row-path">${pkgLabel(r.pkg)}</span>
+      ${this._sizeCells(r)}
+    </div></li>`)
   }
 
   // One "Version changes" row: package dot + name, then `old → new`
@@ -314,24 +301,11 @@ class BundleCompare extends LitElement {
   // version(s) it carried on the side it appears on. Same tinted card
   // and accent scheme as the file / package groups.
   _depGroup(title, rows, kind) {
-    if (rows.length === 0) return nothing
-    const shown = rows.slice(0, MAX_ROWS)
-    const hidden = rows.length - shown.length
-    return html`<section class=${`bundle-compare-group bundle-compare-${kind}`}>
-      <header class="bundle-compare-group-head">
-        <span class="bundle-compare-dot" aria-hidden="true"></span>
-        <span class="bundle-compare-group-title">${title}</span>
-        <span class="bundle-compare-group-count">${rows.length}</span>
-      </header>
-      <ul class="bundle-compare-rows">
-        ${repeat(shown, (r) => r.pkg, (r) => html`<li><div class="bundle-compare-row" title=${r.pkg}>
-          <span class="bundle-compare-pkg-dot" style=${styleMap({ background: pkgColor(r.pkg) })}></span>
-          <span class="bundle-compare-row-path">${r.pkg}</span>
-          <span class="bundle-compare-dep-ver">${versionList(r.versions)}</span>
-        </div></li>`)}
-      </ul>
-      ${hidden > 0 ? html`<div class="bundle-compare-more">and ${hidden.toLocaleString()} more…</div>` : nothing}
-    </section>`
+    return this._group(title, rows, kind, (r) => r.pkg, (r) => html`<li><div class="bundle-compare-row" title=${r.pkg}>
+      <span class="bundle-compare-pkg-dot" style=${styleMap({ background: pkgColor(r.pkg) })}></span>
+      <span class="bundle-compare-row-path">${r.pkg}</span>
+      <span class="bundle-compare-dep-ver">${versionList(r.versions)}</span>
+    </div></li>`)
   }
 
   // Dependency-update section: version bumps for deps on both sides
@@ -419,6 +393,7 @@ class BundleCompare extends LitElement {
     // sourcemap / v0 pairs rather than show a hollow `0 → 0`.
     const showDeps = vt.baseDeps > 0 || vt.otherDeps > 0
     const depDelta = vt.otherDeps - vt.baseDeps
+    const pct = formatPct(totals.byteDelta, totals.baseBytes)
     return html`<div class="bundle-compare-summary">
       <div class="bundle-compare-metric">
         <span class="bundle-compare-metric-label">Files</span>
@@ -428,7 +403,7 @@ class BundleCompare extends LitElement {
       <div class="bundle-compare-metric">
         <span class="bundle-compare-metric-label">Size</span>
         <span class="bundle-compare-metric-value">${formatBytes(totals.baseBytes)} → ${formatBytes(totals.otherBytes)}</span>
-        <span class=${`bundle-compare-metric-delta ${dirClass(totals.byteDelta)}`}>${formatDelta(totals.byteDelta)}${(() => { const p = formatPct(totals.byteDelta, totals.baseBytes); return p ? html`${' '}<span class="bundle-compare-pct">(${p})</span>` : nothing })()}</span>
+        <span class=${`bundle-compare-metric-delta ${dirClass(totals.byteDelta)}`}>${formatDelta(totals.byteDelta)}${pct ? html`${' '}<span class="bundle-compare-pct">(${pct})</span>` : nothing}</span>
       </div>
       ${showDeps ? html`<div class="bundle-compare-metric">
         <span class="bundle-compare-metric-label">Deps</span>

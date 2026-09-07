@@ -399,14 +399,14 @@ export function applyFilters(groups) {
   return groups.filter((g) => g.some(matchesFilters) && matchesAnnotationFilters(g))
 }
 
-// Numeric-field comparator factory — the `confidence-*` /
-// `priority-*` modes differ only in (a) which field they pull off
-// the primary tab, (b) whether higher comes first, and (c) the
-// missing-value substitute. That substitute pushes valueless
-// findings to the FAR end: -1 for desc (bottom), 11 for asc (above
-// the [0..10] band, so also bottom). File-path is the universal
-// tiebreaker.
-function numericSorter(field, dir, missing) {
+// Numeric-field comparator factory behind the `priority-*` modes
+// (the `confidence-*` modes get their own sorter below, for the
+// critical-flag rule): which field to pull off the primary tab and
+// whether higher comes first. Valueless findings go to the FAR end —
+// -1 for desc (bottom), 11 for asc (above the [0..10] band, so also
+// bottom). File-path is the universal tiebreaker.
+function numericSorter(field, dir) {
+  const missing = dir === 'desc' ? -1 : 11
   return (pa, pb) => {
     const va = pa[field] ?? missing
     const vb = pb[field] ?? missing
@@ -447,8 +447,8 @@ const SORTERS = {
     || parseInt(pa.line, 10) - parseInt(pb.line, 10),
   'confidence-desc': confDescCmp,
   'confidence-asc':  confidenceSorter('asc'),
-  'priority-desc':   numericSorter('priority',   'desc', -1),
-  'priority-asc':    numericSorter('priority',   'asc',  11),
+  'priority-desc':   numericSorter('priority',   'desc'),
+  'priority-asc':    numericSorter('priority',   'asc'),
 }
 
 // Group-level sort. Severity/confidence/priority modes compare on

@@ -37,17 +37,13 @@ function rankIn(order, value) {
 
 // Per-field sort rank — one entry per `COMBO_FIELDS` slot, so a new
 // slot there needs its ladder here. `type` is the one field whose
-// null bucket isn't last (`terminal` sits behind it), so it spells
-// its ladder out rather than leaning on `rankIn`'s null-last rule.
+// null bucket isn't last (`terminal` sits behind it), so it pins
+// `terminal` one past `rankIn`'s null-last slot before falling
+// through to the shared ladder.
 // `model` has no meaningful ladder: everything named ranks alike and
 // the comparator's alphabetical tiebreak orders it.
 const FIELD_RANK = {
-  type: (v) => {
-    if (v === 'terminal') return TYPE_ORDER.length + 2
-    if (v == null) return TYPE_ORDER.length + 1
-    const i = TYPE_ORDER.indexOf(v)
-    return i === -1 ? TYPE_ORDER.length : i
-  },
+  type: (v) => (v === 'terminal' ? TYPE_ORDER.length + 2 : rankIn(TYPE_ORDER, v)),
   model: (v) => (v == null ? 1 : 0),
   effort: (v) => rankIn(EFFORT_ORDER, v),
   exportsMode: (v) => rankIn(EXPORTS_ORDER, v),

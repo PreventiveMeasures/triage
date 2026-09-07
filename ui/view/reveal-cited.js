@@ -30,7 +30,7 @@ export function revealCitedLines(scroller, rows) {
   if (!scroller || !rows || rows.length === 0) return
   const boxTop = scroller.getBoundingClientRect().top
   const first = rows[0].getBoundingClientRect()
-  const last = rows.item ? rows.item(rows.length - 1).getBoundingClientRect() : first
+  const last = rows.item(rows.length - 1).getBoundingClientRect()
   // Offsets within the scrolled content, not the viewport.
   const top = first.top - boxTop + scroller.scrollTop
   const bottom = last.bottom - boxTop + scroller.scrollTop

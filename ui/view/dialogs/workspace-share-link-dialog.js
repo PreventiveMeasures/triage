@@ -6,8 +6,9 @@
 // in `workspace-unlock-link-dialog.js`.
 //
 // Sibling of `<new-workspace-dialog>` / `<leave-workspace-dialog>`:
-// native <dialog> for focus-trap + Esc-to-cancel, light-DOM render
-// so global stylesheet rules in sidebar.css apply.
+// extends `AppDialog` for the shared shadow-DOM <dialog> chrome
+// (focus-trap + Esc-to-cancel), with the `.wsl-*` share layer
+// (dialog-share.css) added on top.
 import { html, nothing, unsafeCSS } from 'lit'
 import { buildShareUrl, encodeShareLink } from '#client/index.js'
 import { makeStackedModalError } from '../dom.js'

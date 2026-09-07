@@ -152,7 +152,7 @@ function renderSearchNextFrame() {
     render()
   })
 }
-import { openBundle } from './bundle-load.js'
+import { openBundle, selectBundle } from './bundle-load.js'
 import { renderSidebar } from './sidebar.js'
 import { BUNDLE_TABS, persistLastBundle, switchToFile } from './ingest.js'
 import { treeAnchor } from './file-counts.js'
@@ -171,6 +171,76 @@ function pathClosest(e, selector) {
   return null
 }
 
+// After the render that mounts (or re-targets) the source viewer,
+// bring a line-row into view. Deferred a microtask so the just-
+// rendered row is in the DOM before the lookup.
+function scrollSourceLineIntoView(line, options) {
+  queueMicrotask(() => {
+    const row = document.querySelector(`.bundle-source-lineno-row[data-line="${line}"]`)
+    if (row) row.scrollIntoView(options)
+  })
+}
+
+// The 1s `.copied` pulse every copy-style button shows on success.
+function pulseCopied(el) {
+  el.classList.add('copied')
+  setTimeout(() => el.classList.remove('copied'), 1000)
+}
+
+// Clipboard write + pulse. Failure (no clipboard permission, no
+// secure context) silently no-ops — a convenience, not load-bearing.
+function copyWithPulse(el, text) {
+  try {
+    navigator.clipboard.writeText(text).then(() => {
+      pulseCopied(el)
+      return null
+    }).catch(() => {})
+  } catch {}
+}
+
+// Bundle source viewer chrome — close (backdrop click on
+// `.bundle-source-overlay` itself, NOT a descendant, or any
+// data-action="bundle-source-close" element such as the × button),
+// side-panel close, and the per-line gutter dots. Shared by the
+// #report delegate (the Code slide renders the viewer inline, and the
+// Search sidebar's × carries the close action) and the overlay-slot
+// listener below (the modal mounts outside #report). Returns true
+// when the click was one of these so the delegate can stop.
+function handleBundleSourceClick(e) {
+  if (e.target.classList?.contains('bundle-source-overlay')
+      || e.target.closest('[data-action="bundle-source-close"]')) {
+    if (state.bundleSourceFile) {
+      state.bundleSourceFile = null
+      state.bundleSourceFindingIdx = null
+      render()
+    }
+    return true
+  }
+  // Side panel close — clears the selected finding but leaves the
+  // modal open.
+  if (e.target.closest('[data-action="bundle-source-panel-close"]')) {
+    if (state.bundleSourceFindingIdx != null) {
+      state.bundleSourceFindingIdx = null
+      renderPreservingSourceScroll()
+    }
+    return true
+  }
+  // Gutter dot — selects a finding on this line and opens the side
+  // panel. The dot's dataset carries the index into the file's
+  // findings array (built in render); re-clicking the same dot
+  // dismisses.
+  const sourceFinding = e.target.closest('[data-bundle-source-finding]')
+  if (sourceFinding) {
+    const idx = parseInt(sourceFinding.dataset.bundleSourceFinding, 10)
+    if (Number.isFinite(idx)) {
+      state.bundleSourceFindingIdx = state.bundleSourceFindingIdx === idx ? null : idx
+      renderPreservingSourceScroll()
+    }
+    return true
+  }
+  return false
+}
+
 // Labeled `Repo / File / Line / Description / Confidence` block for
 // the active tab under the clicked button. Shared by the copy and
 // Claude buttons (and, built the same way from `findingRepo` +
@@ -179,9 +249,7 @@ function pathClosest(e, selector) {
 // header in the file picker), falling back to the per-finding /
 // per-report / global repo URL for OWN-source findings.
 function findingHandoffText(e) {
-  const findingEl = pathClosest(e, '[data-gid]')
-  const gid = findingEl?.dataset?.gid
-  const group = gid ? findGroupById(gid) : null
+  const group = focusedGroupOf(e)
   if (!group) return null
   const f = activeTabFor(group)
   return handoffBlock(f, findingRepo(f))
@@ -248,14 +316,11 @@ report.addEventListener('click', (e) => {
     // viewport (same shape Code-search hits use).
     const scrollToFindingLine = () => {
       if (!Number.isFinite(line)) return
-      queueMicrotask(() => {
-        const row = document.querySelector(`.bundle-source-lineno-row[data-line="${line}"]`)
-        // `instant`, not `smooth`: the modal pops over the current
-        // view, so a smooth scroll from its initial natural position
-        // would visibly drift the line into place. Instant lands the
-        // line at the top in the same frame the modal appears.
-        if (row) row.scrollIntoView({ block: 'start', behavior: 'instant' })
-      })
+      // `instant`, not `smooth`: the modal pops over the current
+      // view, so a smooth scroll from its initial natural position
+      // would visibly drift the line into place. Instant lands the
+      // line at the top in the same frame the modal appears.
+      scrollSourceLineIntoView(line, { block: 'start', behavior: 'instant' })
     }
     if (state.selectedBundle === integrity && state.bundleDetails?.integrity === integrity) {
       // Already parsed — render to mount the modal, then scroll.
@@ -295,7 +360,7 @@ report.addEventListener('click', (e) => {
     const pkg = pkgRowIssues.dataset.packageRowIssues
     const ver = pkgRowIssues.dataset.packageRowIssuesVersion
     state.selectedPackage = pkg
-    state.selectedPackageVersion = ver ? ver : null
+    state.selectedPackageVersion = ver || null
     state.packageDetailsTab = 'issues'
     state.packageSlideTriage = null
     // Transient flag — slide-back clears `selectedPackage` too so
@@ -570,44 +635,12 @@ report.addEventListener('click', (e) => {
   // The [×] clear button inside `<bundle-code-search>` dispatches the
   // same `search-input` CustomEvent as typed input with `value: ""`,
   // so the search-input listener below handles both flows uniformly.
-  // Bundle source viewer — open / close. Close fires when the click
-  // lands directly on the backdrop (NOT a descendant — clicks inside
-  // the modal body shouldn't dismiss) or on any element carrying
-  // data-action="bundle-source-close" (the × button). Open clicks
-  // land on [data-bundle-view-source].
+  // Bundle source viewer — close / side-panel close / gutter dots
+  // (see handleBundleSourceClick). Open clicks land on
+  // [data-bundle-view-source] further down.
   // Order: close BEFORE open so a stray view-source target inside
   // the modal doesn't reopen it.
-  if (e.target.classList?.contains('bundle-source-overlay')
-      || e.target.closest('[data-action="bundle-source-close"]')) {
-    if (state.bundleSourceFile) {
-      state.bundleSourceFile = null
-      state.bundleSourceFindingIdx = null
-      render()
-    }
-    return
-  }
-  // Source viewer side panel close — clears the selected finding
-  // but leaves the modal open.
-  if (e.target.closest('[data-action="bundle-source-panel-close"]')) {
-    if (state.bundleSourceFindingIdx != null) {
-      state.bundleSourceFindingIdx = null
-      renderPreservingSourceScroll()
-    }
-    return
-  }
-  // Source viewer gutter dot — selects a finding and opens the
-  // side panel. The dot's dataset carries the index into the
-  // file's findings array (built in render); the click toggles
-  // selection so a second click on the same dot dismisses.
-  const sourceFinding = e.target.closest('[data-bundle-source-finding]')
-  if (sourceFinding) {
-    const idx = parseInt(sourceFinding.dataset.bundleSourceFinding, 10)
-    if (Number.isFinite(idx)) {
-      state.bundleSourceFindingIdx = state.bundleSourceFindingIdx === idx ? null : idx
-      renderPreservingSourceScroll()
-    }
-    return
-  }
+  if (handleBundleSourceClick(e)) return
   // Code slide — issue stepper (‹ ›) in the main bar. Cycles
   // bundleSourceFindingIdx through the open file's findings in line
   // order (wrapping), opening the side panel on each, and scrolls
@@ -629,12 +662,7 @@ report.addEventListener('click', (e) => {
         : order[(pos + step + order.length) % order.length]
       state.bundleSourceFindingIdx = next.idx
       renderPreservingSourceScroll()
-      if (next.line > 0) {
-        queueMicrotask(() => {
-          const row = document.querySelector(`.bundle-source-lineno-row[data-line="${next.line}"]`)
-          if (row) row.scrollIntoView({ block: 'center', behavior: 'smooth' })
-        })
-      }
+      if (next.line > 0) scrollSourceLineIntoView(next.line, { block: 'center', behavior: 'smooth' })
     }
     return
   }
@@ -676,8 +704,6 @@ report.addEventListener('click', (e) => {
       render()
     }
     if (Number.isFinite(line)) {
-      // Defer to the next microtask so the just-rendered source
-      // viewer is in the DOM before we look up the line row.
       // `data-bundle-view-scroll-block` lets the click target pick
       // where the line should land in the viewport — code-search
       // hits use `'start'` (top of viewport, so the matching line
@@ -686,10 +712,7 @@ report.addEventListener('click', (e) => {
       // (the line IS the focus, so equal context above and below
       // reads better).
       const block = sourceOpen.dataset.bundleViewScrollBlock || 'center'
-      queueMicrotask(() => {
-        const row = document.querySelector(`.bundle-source-lineno-row[data-line="${line}"]`)
-        if (row) row.scrollIntoView({ block, behavior: 'smooth' })
-      })
+      scrollSourceLineIntoView(line, { block, behavior: 'smooth' })
     }
     return
   }
@@ -1005,13 +1028,7 @@ report.addEventListener('click', (e) => {
   if (copyBtn) {
     const text = findingHandoffText(e)
     if (text === null) return
-    try {
-      navigator.clipboard.writeText(text).then(() => {
-        copyBtn.classList.add('copied')
-        setTimeout(() => copyBtn.classList.remove('copied'), 1000)
-        return null
-      }).catch(() => {})
-    } catch {}
+    copyWithPulse(copyBtn, text)
     return
   }
   // Link button — copy a `#finding=<id>` URL that reopens the app on
@@ -1028,13 +1045,7 @@ report.addEventListener('click', (e) => {
     if (!group) return
     const url = findingLinkFor(activeTabFor(group))
     if (!url) return
-    try {
-      navigator.clipboard.writeText(url).then(() => {
-        linkBtn.classList.add('copied')
-        setTimeout(() => linkBtn.classList.remove('copied'), 1000)
-        return null
-      }).catch(() => {})
-    } catch {}
+    copyWithPulse(linkBtn, url)
     return
   }
   // Page-header file chip — click copies the report name(s) to the
@@ -1044,14 +1055,7 @@ report.addEventListener('click', (e) => {
   // page-head chrome.
   const copyReport = pathClosest(e, '[data-copy-report]')
   if (copyReport) {
-    const text = copyReport.dataset.copyReport
-    try {
-      navigator.clipboard.writeText(text).then(() => {
-        copyReport.classList.add('copied')
-        setTimeout(() => copyReport.classList.remove('copied'), 1000)
-        return null
-      }).catch(() => {})
-    } catch {}
+    copyWithPulse(copyReport, copyReport.dataset.copyReport)
     return
   }
   // Code slide — copy the open file's full (un-stripped) path. Same
@@ -1059,14 +1063,7 @@ report.addEventListener('click', (e) => {
   // no-op without clipboard access, brief color pulse on success.
   const copyPath = pathClosest(e, '[data-copy-path]')
   if (copyPath) {
-    const text = copyPath.dataset.copyPath
-    try {
-      navigator.clipboard.writeText(text).then(() => {
-        copyPath.classList.add('copied')
-        setTimeout(() => copyPath.classList.remove('copied'), 1000)
-        return null
-      }).catch(() => {})
-    } catch {}
+    copyWithPulse(copyPath, copyPath.dataset.copyPath)
     return
   }
   // Claude button — hand the same finding block to Claude Code via
@@ -1080,8 +1077,7 @@ report.addEventListener('click', (e) => {
     const url = `claude://code/new?q=${encodeURIComponent(`Confirm and fix:\n\n${text}`)}`
     try {
       window.location.href = url
-      claudeBtn.classList.add('copied')
-      setTimeout(() => claudeBtn.classList.remove('copied'), 1000)
+      pulseCopied(claudeBtn)
     } catch {}
     return
   }
@@ -1207,38 +1203,7 @@ report.addEventListener('click', (e) => {
 // backdrop click, side-panel close, and per-line gutter dots.
 const bundleSourceOverlaySlot = document.querySelector('#bundle-source-overlay-slot')
 if (bundleSourceOverlaySlot) {
-  bundleSourceOverlaySlot.addEventListener('click', (e) => {
-    // Backdrop click (`.bundle-source-overlay` itself, not a
-    // descendant) or × button → close.
-    if (e.target.classList?.contains('bundle-source-overlay')
-        || e.target.closest('[data-action="bundle-source-close"]')) {
-      if (state.bundleSourceFile) {
-        state.bundleSourceFile = null
-        state.bundleSourceFindingIdx = null
-        render()
-      }
-      return
-    }
-    // Side panel close — clears the selected finding but leaves
-    // the modal open.
-    if (e.target.closest('[data-action="bundle-source-panel-close"]')) {
-      if (state.bundleSourceFindingIdx != null) {
-        state.bundleSourceFindingIdx = null
-        renderPreservingSourceScroll()
-      }
-      return
-    }
-    // Gutter dot — selects a finding on this line and opens the
-    // side panel. Re-clicking the same dot dismisses.
-    const sourceFinding = e.target.closest('[data-bundle-source-finding]')
-    if (sourceFinding) {
-      const idx = parseInt(sourceFinding.dataset.bundleSourceFinding, 10)
-      if (Number.isFinite(idx)) {
-        state.bundleSourceFindingIdx = state.bundleSourceFindingIdx === idx ? null : idx
-        renderPreservingSourceScroll()
-      }
-    }
-  })
+  bundleSourceOverlaySlot.addEventListener('click', handleBundleSourceClick)
 }
 
 // Opening a finding's details is where a partially-triaged group gets
@@ -1304,13 +1269,6 @@ function applyTriage(targets, target) {
   }
 }
 
-// Kanban drop: the column the card landed in names the state outright,
-// so there's nothing to toggle — only the scope question, which
-// `triageScope` answers for the menu too.
-function setGroupTriage(group, target) {
-  applyTriage(triageScope(group), target)
-}
-
 function clearKanbanDragChrome() {
   for (const el of report.querySelectorAll('.kanban-card.dragging')) {
     el.classList.remove('dragging')
@@ -1335,9 +1293,7 @@ report.addEventListener('dragstart', (e) => {
   card.classList.add('dragging')
 })
 
-report.addEventListener('dragend', () => {
-  clearKanbanDragChrome()
-})
+report.addEventListener('dragend', clearKanbanDragChrome)
 
 report.addEventListener('dragover', (e) => {
   if (!e.dataTransfer?.types.includes(KANBAN_DATA_TYPE)) return
@@ -1380,7 +1336,10 @@ report.addEventListener('drop', (e) => {
   // groupState read is cheap relative to a full re-render.
   const currentTriage = groupState(group).commonTriage ?? 'untriaged'
   if (currentTriage === target) return
-  setGroupTriage(group, target)
+  // The column the card landed in names the state outright, so there's
+  // nothing to toggle — only the scope question, which `triageScope`
+  // answers for the menu too.
+  applyTriage(triageScope(group), target)
   // Paint first; persist after. saveTriage's synchronous portion
   // does a localStorage.setItem of the (potentially large)
   // pending-key JSON which can stall the next frame; doing it
@@ -1895,12 +1854,9 @@ function setFocusGid(gid) {
 // Both paths land here so the no-op guard (already at the end)
 // and the gid lookup behave identically.
 function navigateFocus(direction) {
-  const cards = report.querySelectorAll('.focus-side-card[data-focus-select]')
+  const cards = [...report.querySelectorAll('.focus-side-card[data-focus-select]')]
   if (cards.length === 0) return
-  let idx = -1
-  for (let i = 0; i < cards.length; i++) {
-    if (cards[i].classList.contains('active')) { idx = i; break }
-  }
+  const idx = cards.findIndex((c) => c.classList.contains('active'))
   // Clamp at the ends — wrapping would surprise the user mid-
   // triage (you don't expect Down to teleport you back to the top).
   const nextIdx = idx < 0
@@ -2319,20 +2275,7 @@ report.addEventListener('bundle-search-case-toggle', () => {
 report.addEventListener('bundle-swap', (e) => {
   const integrity = e.detail?.integrity
   if (!integrity || !(state.bundles ?? []).some((b) => b.integrity === integrity)) return
-  state.currentView = 'bundles'
-  state.selectedBundle = integrity
-  state.bundleDetails = null
-  state.bundleSourceFile = null
-  state.bundleSourceFindingIdx = null
-  state.bundleCodeSearchQuery = ''
-  state.bundleCodeSearchMode = 'files'
-  state.bundleSearchQuery = ''
-  state.bundleSearchRegex = false
-  state.bundleSearchCase = false
-  state.bundleSearchContext = true
-  state.bundleDetailsTab = 'compare'
-  graph2.showAll = true
-  state.shownTriage = null
+  selectBundle(integrity, 'compare')
   persistLastBundle(integrity, 'compare')
   render()
   renderSidebar()

@@ -42,16 +42,10 @@ let showTimer = null
 // geometry.
 let lastClientX = 0
 let lastClientY = 0
-let mouseTracked = false
-function ensureMouseTracking() {
-  if (mouseTracked) return
-  mouseTracked = true
-  document.addEventListener('mousemove', (e) => {
-    lastClientX = e.clientX
-    lastClientY = e.clientY
-  }, { passive: true })
-}
-ensureMouseTracking()
+document.addEventListener('mousemove', (e) => {
+  lastClientX = e.clientX
+  lastClientY = e.clientY
+}, { passive: true })
 
 const SHOW_DELAY_MS = 100
 // Vertical offset between the cursor and the top of the tooltip.

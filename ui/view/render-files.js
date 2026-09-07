@@ -117,7 +117,7 @@ export function renderTreeView(treeData, findingCounts) {
           ${files.map((file) => {
             const issues = totalIssues(file)
             const isSel = file === selected
-            const sizeLabel = formatBytes(treeData[file]?.size)
+            const sizeLabel = formatBytes(treeData[file].size)
             return html`<div
               class=${`tree-table-row${isSel ? ' selected' : ''}${issues === 0 ? ' clean' : ''}`}
               data-tree-select=${file}
@@ -148,7 +148,7 @@ export function renderTreeView(treeData, findingCounts) {
     ${files.map((file) => {
       const entry = treeData[file]
       const incoming = importedBy.get(file) ?? []
-      const sizeLabel = formatBytes(entry?.size)
+      const sizeLabel = formatBytes(entry.size)
       return html`<section class="tree-file" id=${treeAnchor(file)}>
         <div class="tree-file-header">
           <span class="name">${file}</span>
@@ -156,40 +156,17 @@ export function renderTreeView(treeData, findingCounts) {
           ${sizeLabel ? html`<span class="tree-file-size">${sizeLabel}</span>` : nothing}
           ${fileCodeButton(entry.fileHash)}
         </div>
-        ${(entry.fileHash || entry.treeHash) ? html`<div class="tree-hashes hashes">
-          ${entry.fileHash ? html`<div class="tree-hash">file: ${entry.fileHash}</div>` : nothing}
-          ${entry.treeHash ? html`<div class="tree-hash">tree: ${entry.treeHash}</div>` : nothing}
-        </div>` : nothing}
-        ${entry.imports?.length > 0 ? html`<div class="tree-section">
-          <span class="tree-section-label">imports</span>
-          <ul>${entry.imports.map((imp) => html`<li>${linkOrText(imp)}</li>`)}</ul>
-        </div>` : nothing}
-        ${incoming.length > 0 ? html`<div class="tree-section">
-          <span class="tree-section-label">imported by</span>
-          <ul>${incoming.map((f) => html`<li>${linkOrText(f)}</li>`)}</ul>
-        </div>` : nothing}
-        ${entry.exports?.length > 0 ? html`<div class="tree-section">
-          <span class="tree-section-label">exports</span>
-          <ul>${entry.exports.map((ex) => html`<li><span class="name">${ex}</span></li>`)}</ul>
-        </div>` : nothing}
+        ${fileSections(entry, incoming, linkOrText)}
       </section>`
     })}
   </div>`
 }
 
-// Right-side details panel for the table view's selected file.
-// Mirrors the per-file sections of list mode (hashes, imports,
-// imported by, exports) but without the tree-file wrapper since
-// the panel itself is the wrapper.
-function renderFileDetails(entry, file, incoming, linkOrText) {
-  const sizeLabel = formatBytes(entry?.size)
-  return html`
-    <div class="tree-detail-name">
-      <span class="name">${file}</span>
-      ${sizeLabel ? html`<span class="tree-detail-size">${sizeLabel}</span>` : nothing}
-      ${fileCodeButton(entry.fileHash)}
-    </div>
-    ${(entry.fileHash || entry.treeHash) ? html`<div class="tree-hashes hashes">
+// Per-file hash / imports / imported-by / exports sections — shared
+// by the list-mode card and the table-mode details panel so the two
+// can't drift.
+function fileSections(entry, incoming, linkOrText) {
+  return html`${(entry.fileHash || entry.treeHash) ? html`<div class="tree-hashes hashes">
       ${entry.fileHash ? html`<div class="tree-hash">file: ${entry.fileHash}</div>` : nothing}
       ${entry.treeHash ? html`<div class="tree-hash">tree: ${entry.treeHash}</div>` : nothing}
     </div>` : nothing}
@@ -204,6 +181,21 @@ function renderFileDetails(entry, file, incoming, linkOrText) {
     ${entry.exports?.length > 0 ? html`<div class="tree-section">
       <span class="tree-section-label">exports</span>
       <ul>${entry.exports.map((ex) => html`<li><span class="name">${ex}</span></li>`)}</ul>
-    </div>` : nothing}
+    </div>` : nothing}`
+}
+
+// Right-side details panel for the table view's selected file.
+// Mirrors the per-file sections of list mode (hashes, imports,
+// imported by, exports) but without the tree-file wrapper since
+// the panel itself is the wrapper.
+function renderFileDetails(entry, file, incoming, linkOrText) {
+  const sizeLabel = formatBytes(entry.size)
+  return html`
+    <div class="tree-detail-name">
+      <span class="name">${file}</span>
+      ${sizeLabel ? html`<span class="tree-detail-size">${sizeLabel}</span>` : nothing}
+      ${fileCodeButton(entry.fileHash)}
+    </div>
+    ${fileSections(entry, incoming, linkOrText)}
   `
 }

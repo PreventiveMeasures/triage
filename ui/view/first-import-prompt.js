@@ -60,6 +60,3 @@ export async function maybePromptFirstUse() {
   await openPasskeySetupDialog()
   if (isEncryptionEnabled()) markPrompted()
 }
-
-// Back-compat alias — existing call sites use the import name.
-export const maybePromptFirstImport = maybePromptFirstUse

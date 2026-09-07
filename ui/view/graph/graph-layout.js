@@ -16,9 +16,10 @@
 // into our shadow styles so those classes pick up the same styling
 // they get elsewhere on the page.
 //
-// Refresh helpers (refreshGraph2Sidebar / refreshGraph2TopPkgs /
-// refreshGraph2FocusOverlay in render.js, and the bundle siblings
-// in render-bundle.js) reach inside this component via
+// Refresh helpers (refreshGraph2Sidebar / refreshGraph2TopPkgs in
+// render.js, the bundle siblings in render-bundle.js, dispatching
+// into refreshSidebar / refreshTopPkgs in ui/graph.js) reach inside
+// this component via
 // `host.shadowRoot.querySelector(...)`. Same for
 // `attachGraph2Interaction(host, ...)` which wires the canvas
 // hover / pan / zoom on top of the rendered shadow DOM.

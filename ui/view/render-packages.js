@@ -11,7 +11,7 @@
 // every other entry point is internal.
 //
 // `renderIssuesGroupedByFile` (the per-file grouped finding list)
-// is shared with the bundle Issues tab; imported from `render.js`
+// is shared with the bundle Issues tab; imported from `render-bundle.js`
 // so the chrome stays consistent across the two cross-report
 // drill-ins (same `bundle-issues-*` class names, same row shape).
 import { html, nothing } from 'lit'

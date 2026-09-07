@@ -1,4 +1,4 @@
-import { packageOf, pkgColor } from './utils.js'
+import { packageOf } from './utils.js'
 import { totalFindings } from '../file-counts.js'
 import { SEVERITIES, depsDirName } from '../format.js'
 
@@ -9,6 +9,22 @@ import { SEVERITIES, depsDirName } from '../format.js'
 // high_bug, bug, informational) rather than collapsing bug/info
 // into the nearest vuln tier, so the canvas matches the topbar
 // pill row.
+// adjacency map: node id → edge indices. Used by selection rendering
+// (find neighbors) and hover-edge dimming on the canvas. Map
+// instead of plain object so file paths with dots don't trip up
+// property semantics.
+function buildAdj(edges) {
+  const adj = new Map()
+  for (let i = 0; i < edges.length; i++) {
+    const e = edges[i]
+    if (!adj.has(e.a)) adj.set(e.a, [])
+    if (!adj.has(e.b)) adj.set(e.b, [])
+    adj.get(e.a).push(i)
+    adj.get(e.b).push(i)
+  }
+  return adj
+}
+
 export function topIssueOf(counts) {
   if (!counts) return null
   for (const sev of SEVERITIES) {
@@ -20,9 +36,10 @@ export function topIssueOf(counts) {
 // Build the full v2 graph data structure from a treeData blob and
 // per-file own-counts map, filtered to files with a tree entry.
 // Returns: files (string[]), packages (string[] sorted by node
-// count desc), pkgIndex (pkg → index), nodes (one per file), edges
-// (intra/cross), adj (file → edge index list), ambassadors (file
-// paths flagged as hubs). Side-effect free; positions are written
+// count desc), pkgCount / byPkg (per-package file count + member nodes),
+// nodes (one per file, hubs flagged via isHub) + nodeByFile, edges
+// (intra/cross), adj (file → edge index list), importsOf / importedBy.
+// Side-effect free; positions are written
 // into nodes by the caller's layout pass.
 // `severitySets` / `colorSets` (both Map<file, Set<string>>): the
 // distinct severities and triage-marker colors that appear on each
@@ -63,8 +80,9 @@ export function buildGraph(treeData, files, ownCounts, transitiveCounts, severit
     }
   }
 
-  // Node objects: position seeded to 0,0 (layoutSpiral/Radial/Grid
-  // overwrite). own / subtree carry the FULL per-severity count
+  // Node objects: position seeded to 0,0 (the canvas layout pass —
+  // layoutSpiral / layoutFilesVogel / forceLayout — overwrites).
+  // own / subtree carry the FULL per-severity count
   // maps so the selection card and tooltip can render v1-style
   // chips ("4 MEDIUM" / "5 LOW") without re-deriving them; `issue`
   // and `totalIssues` are still derived for the canvas's severity
@@ -130,19 +148,7 @@ export function buildGraph(treeData, files, ownCounts, transitiveCounts, severit
     }
   }
   const edges = [...edgeMap.values()]
-
-  // adjacency map: file → edge indices. Used by selection rendering
-  // (find neighbors) and hover-edge dimming on the canvas. Map
-  // instead of plain object so file paths with dots don't trip up
-  // property semantics.
-  const adj = new Map()
-  for (let i = 0; i < edges.length; i++) {
-    const e = edges[i]
-    if (!adj.has(e.a)) adj.set(e.a, [])
-    if (!adj.has(e.b)) adj.set(e.b, [])
-    adj.get(e.a).push(i)
-    adj.get(e.b).push(i)
-  }
+  const adj = buildAdj(edges)
 
   // Packages sorted by file count descending. The palette grid and
   // distribution bar both walk this list so they read in matching
@@ -258,7 +264,7 @@ export function buildPackageGraph(graph) {
     return {
       file: pkg,
       pkg,
-      label: pkg === '__own__' ? 'own source' : pkg,
+      label: pkgLabelOf(pkg),
       fileCount: files.length,
       size: hasSize ? size : null,
       own,
@@ -298,15 +304,7 @@ export function buildPackageGraph(graph) {
     if (e.fromHi) { if (paIsLo) edge.fromHi = true; else edge.fromLo = true }
   }
   const edges = [...edgeMap.values()]
-
-  const adj = new Map()
-  for (let i = 0; i < edges.length; i++) {
-    const e = edges[i]
-    if (!adj.has(e.a)) adj.set(e.a, [])
-    if (!adj.has(e.b)) adj.set(e.b, [])
-    adj.get(e.a).push(i)
-    adj.get(e.b).push(i)
-  }
+  const adj = buildAdj(edges)
 
   const importsOf = new Map(nodes.map((n) => [n.pkg, []]))
   for (const e of edges) {
@@ -317,10 +315,10 @@ export function buildPackageGraph(graph) {
   return { nodes, byPkg, nodeByFile: byPkg, edges, adj, importsOf }
 }
 
-// Color helper — re-export so callers don't have to know about
-// graph/utils.js's two-arg form when they already have a node.
-export function nodeColor(n) {
-  return pkgColor(n.pkg)
+// Display name for a package key — the synthetic `__own__` bucket
+// reads as "own source"; every real package is shown by name.
+export function pkgLabelOf(pkg) {
+  return pkg === '__own__' ? 'own source' : pkg
 }
 
 // Strip a file path's package anchor so callers can show

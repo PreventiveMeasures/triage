@@ -1,19 +1,19 @@
 /* Sidebar — collapsible report picker rooted in OPFS, persists across
    reloads. Pinned to the viewport (height: 100%; body is 100vh +
-   overflow:hidden, main scrolls instead). Hidden entirely when OPFS has
-   no entries AND nothing is loaded, so the empty-state drop zone reads
-   as a clean welcome screen. Collapsed = thin strip with just the
-   toggle button so the user can always re-open it. Hidden in print. */
+   overflow:hidden, main scrolls instead). Always shown — the Workspaces "+"
+   affordance must be reachable before any report exists. Collapsed =
+   thin strip with just the toggle button so the user can always
+   re-open it. Hidden in print. */
 /* Box / margin / padding reset — mirrors `styles/theme.css:1`, which
    the document gets but the shadow tree doesn't inherit. Without it the
    in-shadow buttons / inputs / list fall back to UA defaults and
    mis-size. */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-/* `<app-sidebar>` host. The collapse / empty modifiers are classes on
-   the host, so they must read as `:host(.collapsed)` / `:host(.empty)`
-   — a nested `&.collapsed` compiles to `:host.collapsed`, which does
-   NOT match a class on the host. */
+/* `<app-sidebar>` host. The collapse modifier is a class on the
+   host, so it must read as `:host(.collapsed)` — a nested
+   `&.collapsed` compiles to `:host.collapsed`, which does NOT match a
+   class on the host. */
 :host {
   width: 260px; flex-shrink: 0; height: 100%;
   background: var(--surface); backdrop-filter: var(--glass-blur);
@@ -24,7 +24,6 @@
 }
 
 :host(.collapsed) { width: 32px; }
-:host(.empty) { display: none; }
 
 :host(.collapsed) .brand,
 :host(.collapsed) .sidebar-search,
@@ -276,10 +275,9 @@ sidebar-view-button { display: contents; }
   &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 }
 
-/* Section header (REPORTS, CLAUDE SECURITY, …). The `.group-count` on
-   the right mirrors the per-file count chip but transparent — same
-   shape, less weight. user-select: none so the label doesn't catch
-   drag-selection. The first header sits flush against the search box;
+/* Section header (REPORTS, CLAUDE SECURITY, …). user-select: none so
+   the label doesn't catch drag-selection. The first header sits flush
+   against the search box;
    later ones get more top padding via the adjacent-sibling rule below,
    spacing groups apart without inflating every header.
 
@@ -296,16 +294,11 @@ sidebar-view-button { display: contents; }
   user-select: none;
 
   &:first-child { padding-top: .25rem; }
-
-  & .group-count {
-    font-weight: 500; letter-spacing: .04em;
-    color: var(--muted); font-size: .7rem;
-  }
 }
 
 /* Workspaces header — same chrome as a regular bucket header, but the
-   right slot bundles the count chip with a "+" button. The button
-   reuses #sidebar-toggle's hover treatment for consistency. */
+   right slot carries a "+" button. The button reuses
+   #sidebar-toggle's hover treatment for consistency. */
 .file-group-header.workspace-header .workspace-header-actions {
   display: flex; align-items: center; gap: .35rem;
 }
@@ -320,15 +313,12 @@ sidebar-view-button { display: contents; }
   &:hover { color: var(--text); border-color: var(--accent); }
 }
 
-/* Workspace row layout: name (flex-fill) | hover-revealed export
-   button | count chip. Count chip is rightmost to mirror the
-   section-header and per-file rows; the export button sits to its left,
-   hidden until the row is hovered or keyboard-focused. */
+/* Workspace row layout: name (flex-fill) | hover-revealed share /
+   export / leave buttons, hidden until the row is hovered. */
 .file-item.workspace-item {
   display: flex; align-items: stretch; gap: .15rem;
 }
 .file-item.workspace-item button.file-name { flex: 1; min-width: 0; }
-.file-item.workspace-item .workspace-count { align-self: center; margin-right: .35rem; }
 
 .workspace-share,
 .workspace-export,
@@ -390,8 +380,6 @@ sidebar-view-button { display: contents; }
 .file-item {
   list-style: none;
   position: relative;
-
-  &.hidden { display: none; }
 }
 
 /* Active-row indicator — accent chip flush against the sidebar's left
@@ -444,13 +432,6 @@ sidebar-view-button { display: contents; }
   opacity: .65;
   font-size: .68rem; font-weight: 500;
   font-variant-numeric: tabular-nums;
-}
-/* Missing-bundle suffix inside the workspace count chip: muted further
-   so "5 +2" reads as "5 items, 2 elsewhere" rather than "7". */
-.workspace-count-missing {
-  margin-left: 2px;
-  opacity: .55;
-  font-style: italic;
 }
 
 .file-item.current button.file-name {

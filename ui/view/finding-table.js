@@ -7,7 +7,7 @@
 // layout; the click delegate lives in events.js.
 import { LitElement, html, unsafeCSS } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
-import { tableRowGid } from './render-finding.js'
+import { groupKey } from './group.js'
 import './finding-row.js'
 import tableCSS from './finding-table.css'
 
@@ -35,10 +35,10 @@ class FindingTable extends LitElement {
     // row whose neighbour shifted.
     return html`${repeat(
       this.items ?? [],
-      (g) => tableRowGid(g),
+      (g) => groupKey(g),
       (g) => html`<finding-row
         .group=${g}
-        ?selected=${tableRowGid(g) === this.selectedGid}
+        ?selected=${groupKey(g) === this.selectedGid}
       ></finding-row>`,
     )}`
   }

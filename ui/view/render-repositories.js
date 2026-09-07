@@ -28,24 +28,10 @@ import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { ensureBundleFindingsIndexed, getRepositoriesIndex, state } from '#client/index.js'
 import { tabKey } from './group.js'
-import { SEVERITIES, displayedSeverity } from './format.js'
+import { SEVERITIES, displayedSeverity, prettyRepoLabel } from './format.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 import { pkgColor } from './graph/utils.js'
 import { renderIssuesGroupedByFile } from './render-bundle.js'
-
-// Strip protocol + host so a github URL renders as the bare
-// `user/repo` slug — same shape the per-finding `repo.github`
-// canonicalises into for analyzer-stamped findings, so a typed
-// fallback URL and an analyzer slug surface as the same key.
-// Falls back to the raw input when the URL isn't a github.com
-// one. Mirrors `prettyRepoLabel` in `repo-chip.js`; not
-// imported because the chip's helper isn't exported and the
-// logic is one regex.
-function prettyRepoLabel(s) {
-  if (!s) return ''
-  const m = s.match(/github\.com\/([^/?#]+\/[^/?#]+?)(?:\.git)?(?:[/?#]|$)/iu)
-  return m ? m[1] : s
-}
 
 export function renderRepositoriesView() {
   // Pulls from the OPFS-wide finding index (populated by the

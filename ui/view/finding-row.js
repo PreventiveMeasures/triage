@@ -2,13 +2,13 @@
 // component nested inside `<finding-table>`'s shadow DOM. The host
 // element IS the row: classes derived from the dedup group
 // (`is-critical`, `mark-{red|blue|green|gray}`, `has-conflict`,
-// `deleted`) plus a `selected` class driven by the `selected`
+// `triage-{inprogress|fixed|invalid|deleted|ignored}`) plus a `selected` class driven by the `selected`
 // property are reflected onto `this.classList`, and `this.dataset.gid`
 // carries the group key (events.js's `pathClosest('[data-gid]')`
 // walks the composedPath up through this host to identify the
 // targeted row from action-button clicks). Inner DOM (badge, title
-// + meta + optional tab strip, action buttons) is built by
-// render-finding.js as an HTML string and injected via unsafeHTML.
+// + meta + optional tab strip, action buttons) is a Lit template
+// built by render-finding.js (`tableRowInnerTemplate`).
 //
 // The row's content is built only once the row is within a viewport
 // of being seen (view/lazy-render.js): the table holds a row per
@@ -19,25 +19,27 @@
 //
 // Reactivity: extends StateElement, which wraps render() in an
 // observer-util reaction. Reads of `state.triage`,
-// `state.activeTabByGroup`, `state.showDeleted` during render — via
+// `state.activeTabByGroup`, `state.shownTriage` during render — via
 // the helpers in render-finding.js + group.js — are auto-tracked, so
 // a mutation that invalidates the row re-renders just this element.
 // The classList stamping is intentionally inside render so its
-// `state.showDeleted` read joins the same tracked set; otherwise
-// toggling trash wouldn't update the host's `.deleted` class.
+// `state.shownTriage` read joins the same tracked set; otherwise
+// switching triage view wouldn't update the host's `.triage-*` class.
 //
 // Click semantics: a click anywhere on the row that didn't land on
 // an action button / link / label dispatches a composed-bubbling
 // `row-select` CustomEvent with the gid; events.js listens on
 // `report` and toggles `state.tableSelectedGid`. Native button
-// clicks (`.tab`, `.mark-dot`, `.mark-x`, `.mark-restore`) bubble
+// clicks (`.tab`, `.mark-comment`, `.mark-fix`, `.triage-menu-item`,
+// the `<color-marker>` dots) bubble
 // out composed:true and reach events.js's `pathClosest`-based
 // delegate without intervention from this component.
 import { unsafeCSS } from 'lit'
 import { StateElement, html } from '@rray/frontend/state-element'
 import { installShadowTooltipListener } from './tooltip.js'
 import { unwatchNearViewport, watchNearViewport } from './lazy-render.js'
-import { tableRowClasses, tableRowGid, tableRowInnerTemplate } from './render-finding.js'
+import { groupKey } from './group.js'
+import { tableRowClasses, tableRowInnerTemplate } from './render-finding.js'
 import rowCSS from './finding-row.css'
 
 // Every class this component might apply to the host. Listed
@@ -76,11 +78,12 @@ class FindingRow extends StateElement {
   render() {
     if (!this.group) return html``
     // Stamp host attributes/classes inside render() so the state reads
-    // (e.g. state.showDeleted via tableRowClasses, state.markers /
-    // state.deletedIds via tableRowInnerHTML) join StateElement's
-    // tracked set and re-render on mutation. willUpdate would skip the
-    // autorun entirely, since StateElement only wraps render.
-    this.dataset.gid = tableRowGid(this.group)
+    // (e.g. state.shownTriage via tableRowClasses, state.triage /
+    // state.activeTabByGroup via tableRowInnerTemplate) join
+    // StateElement's tracked set and re-render on mutation. willUpdate
+    // would skip the autorun entirely, since StateElement only wraps
+    // render.
+    this.dataset.gid = groupKey(this.group)
     if (!this._near) {
       // Out of range: the row's chrome with nothing in it, at about a
       // row's height (`.row-pending`, finding-row.css). The selection

@@ -93,8 +93,8 @@ function createImpl() {
     graphState: null,
     // Layout result cache, keyed off (mode, files, w, h).
     // Recomputed when the user switches layouts or the underlying
-    // file set changes (showAll on graph v1 invalidates v2's cache
-    // too via cleanupGraph2 in events.js).
+    // file set changes (the "All files" toggle in events.js nulls
+    // it and tears the canvas down via cleanupGraph2).
     layoutCache: null,
   }
 }

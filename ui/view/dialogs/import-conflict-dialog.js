@@ -78,7 +78,7 @@ class ImportConflictDialog extends AppDialog {
   _onConfirm = () => {
     if (this._choice === 'rename') {
       const trimmed = (this._newName ?? '').trim()
-      if (!this._isRenameValid(trimmed)) return
+      if (this._renameError(trimmed) !== null) return
       this._finish({ action: 'rename', newName: trimmed })
       return
     }
@@ -104,46 +104,29 @@ class ImportConflictDialog extends AppDialog {
     </span>`
   }
 
-  _renameValidationTpl(trimmed) {
-    if (!trimmed) {
-      return html`<p class="lwd-rename-error">Enter a new name.</p>`
-    }
-    if (trimmed === this.reportName) {
-      return html`<p class="lwd-rename-error">Pick a name different from the original.</p>`
-    }
+  // The rename rules, as the message to show when `trimmed` breaks one
+  // (null when it's acceptable). One source for both the inline error
+  // under the field and the Confirm button's disabled state, and for
+  // `_onConfirm`'s short-circuit of a stray Enter on an invalid candidate.
+  _renameError(trimmed) {
+    if (!trimmed) return 'Enter a new name.'
+    if (trimmed === this.reportName) return 'Pick a name different from the original.'
     // `saveFile` rejects NUL outright (the `\0` byte separates
     // `state.ignoredIds` keys and would split entries at the wrong
     // byte); slashes break OPFS keys. Surface these inline so the user
     // doesn't pick an invalid name, hit Confirm, and get the generic
     // `Failed to load: ...` alert from the addFiles fallback.
-    if (trimmed.includes('\0')) {
-      return html`<p class="lwd-rename-error">The new name cannot contain a NUL byte.</p>`
-    }
-    if (trimmed.includes('/') || trimmed.includes('\\')) {
-      return html`<p class="lwd-rename-error">The new name cannot contain "/" or "\\".</p>`
-    }
-    if (this.existingNames.has(trimmed)) {
-      return html`<p class="lwd-rename-error">A file named "${trimmed}" already exists — pick something else.</p>`
-    }
-    return nothing
-  }
-
-  // Match the validation rules above. Used by `render` to drive the
-  // Confirm button's disabled state and by `_onConfirm` to short-
-  // circuit a stray Enter on an invalid candidate.
-  _isRenameValid(trimmed) {
-    return trimmed.length > 0
-      && trimmed !== this.reportName
-      && !trimmed.includes('\0')
-      && !trimmed.includes('/')
-      && !trimmed.includes('\\')
-      && !this.existingNames.has(trimmed)
+    if (trimmed.includes('\0')) return 'The new name cannot contain a NUL byte.'
+    if (trimmed.includes('/') || trimmed.includes('\\')) return 'The new name cannot contain "/" or "\\".'
+    if (this.existingNames.has(trimmed)) return `A file named "${trimmed}" already exists — pick something else.`
+    return null
   }
 
   render() {
     const renameSelected = this._choice === 'rename'
     const trimmed = (this._newName ?? '').trim()
-    const confirmDisabled = renameSelected && !this._isRenameValid(trimmed)
+    const renameError = renameSelected ? this._renameError(trimmed) : null
+    const confirmDisabled = renameError !== null
     const confirmLabel = renameSelected ? 'Rename' : 'Replace'
     const confirmClass = renameSelected ? 'primary' : 'danger'
     // Renaming saves under a fresh filename, which has no workspace
@@ -196,7 +179,7 @@ class ImportConflictDialog extends AppDialog {
               @focus=${() => { this._choice = 'rename' }}
             >
             ${renameHint}
-            ${renameSelected ? this._renameValidationTpl(trimmed) : nothing}
+            ${renameError === null ? nothing : html`<p class="lwd-rename-error">${renameError}</p>`}
           </span>
         </label>
       </fieldset>

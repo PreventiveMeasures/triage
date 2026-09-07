@@ -1,6 +1,8 @@
-// Prism syntax highlighter — loaded ONLY when the bundle
-// source viewer opens a file whose extension we know how to
-// highlight. Built as a separate esbuild entry point so prismjs
+// Prism syntax highlighter — loaded lazily, and only when something
+// asks for a language it bundles: the bundle source viewer opening a
+// file whose extension we know, a finding card drawing a fenced code
+// block / source preview (view/code-highlight.js), or the export-view
+// dialog colouring its Markdown preview. Built as a separate esbuild entry point so prismjs
 // (~50KB minified for the core + the languages we care about)
 // doesn't land in the main view.js bundle. `view/prism-highlight.js`
 // `await import('./prism.js')`s this file lazily on first
@@ -45,8 +47,4 @@ export function highlight(code, lang) {
   const grammar = Prism.languages[lang]
   if (!grammar) return null
   return Prism.highlight(code, grammar, lang)
-}
-
-export function supports(lang) {
-  return Boolean(Prism.languages[lang])
 }

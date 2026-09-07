@@ -1,7 +1,7 @@
 // `<annotation-filter>` — a comment | fix | flag chip group in the
 // findings toolbar, right after the Sources / Dependencies switch. Each
-// chip toggles an INDEPENDENT, AND-combined filter (state.filterComment /
-// filterFix / filterFlagged): selecting more narrows the row set further
+// chip cycles an INDEPENDENT, AND-combined tri-state filter (state.filterComment /
+// filterFix / filterFlagged: '' → 'with' → 'without' → ''): selecting more narrows the row set further
 // (see matchesFilters in filters.js). Mirrors `<source-filter>`'s
 // multi-chip pill, using the same glyphs as the per-finding marks.
 //
@@ -12,8 +12,8 @@
 // group is dropped by the toolbar when none of the chips would show.
 //
 // Reactivity: extends StateElement, so the active highlights follow the
-// `state.filter*` booleans. Click dispatches `annotation-filter-toggle`
-// with the chip `key`; events.js flips the matching boolean and
+// `state.filter*` tri-states. Click dispatches `annotation-filter-toggle`
+// with the chip `key`; events.js cycles the matching tri-state and
 // re-renders. The host carries the bordered-pill chrome via the
 // `annotation-filter` selector in toolbar.css.
 import { nothing } from 'lit'
