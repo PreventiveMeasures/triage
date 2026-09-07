@@ -70,22 +70,14 @@ async function readBundleBlobs(integrities) {
   return blobs
 }
 
-// Build the export payload. Reads the workspace's reports from OPFS,
-// derives finding ids per report, filters in-memory triage by id-
-// membership, and bundles per-report repo URLs. Side effect: drops
-// stale workspace report references when their OPFS entry is gone
-// (defensive prune).
-//
-// `includeBundleBytes: true` also ships the bundle bytes alongside
-// the integrity pointers — useful for a recipient who doesn't have
-// the bundles locally. Bytes ride as `bundleBlobs:
-// [{ integrity, name, data }]`, `data` base64 of the raw uncompressed
-// bytes. The integrities still ride in `bundles` (back-compat), so a
-// receiver that ignores `bundleBlobs` sees the same orphan-pointer
-// shape as a pre-bytes export.
-export async function buildWorkspaceExportPayload(workspace, { includeBundleBytes = false } = {}) {
+// Read the workspace's report documents from OPFS into the wire
+// shape `[{ name, content }]`. Shared by the workspace export and the
+// raw-reports export so both get the same skip-and-prune semantics
+// (and so a change to either only has to be made once). Side effect:
+// drops stale workspace report references when their OPFS entry is
+// gone (defensive prune).
+async function readWorkspaceReports(workspace) {
   const reports = []
-  const claimedIds = new Set()
   for (const name of workspace.reports ?? []) {
     let content
     try {
@@ -111,7 +103,28 @@ export async function buildWorkspaceExportPayload(workspace, { includeBundleByte
       continue
     }
     reports.push({ name, content })
-    for (const id of await reportFindingIds(content)) claimedIds.add(id)
+  }
+  return reports
+}
+
+// Build the export payload. Reads the workspace's reports from OPFS,
+// derives finding ids per report, filters in-memory triage by id-
+// membership, and bundles per-report repo URLs. Side effect: drops
+// stale workspace report references when their OPFS entry is gone
+// (defensive prune, via `readWorkspaceReports`).
+//
+// `includeBundleBytes: true` also ships the bundle bytes alongside
+// the integrity pointers — useful for a recipient who doesn't have
+// the bundles locally. Bytes ride as `bundleBlobs:
+// [{ integrity, name, data }]`, `data` base64 of the raw uncompressed
+// bytes. The integrities still ride in `bundles` (back-compat), so a
+// receiver that ignores `bundleBlobs` sees the same orphan-pointer
+// shape as a pre-bytes export.
+export async function buildWorkspaceExportPayload(workspace, { includeBundleBytes = false } = {}) {
+  const reports = await readWorkspaceReports(workspace)
+  const claimedIds = new Set()
+  for (const r of reports) {
+    for (const id of await reportFindingIds(r.content)) claimedIds.add(id)
   }
 
   // Triage filter — keep only entries whose id appears in this
@@ -213,4 +226,29 @@ export async function buildWorkspaceExportBundle(workspace, { password, includeB
     return await buildWorkspaceExportEncrypted(workspace, password, { includeBundleBytes })
   }
   return await buildWorkspaceExportGzip(workspace, { includeBundleBytes })
+}
+
+// Raw reports export — the workspace's report DOCUMENTS and nothing
+// else: `{ reports: [{ name, content }] }`, gzipped. No workspace
+// record (id / name / private key), no triage, no repo URLs, no
+// bundle pointers or bytes, and no password option.
+//
+// Deliberately NOT a workspace export: the payload carries neither
+// `version` nor `workspace`, so `parseWorkspaceJson` rejects it and a
+// re-drop can never half-import a workspace from it. This is a
+// hand-off of the report content itself (re-analysis, archival,
+// feeding another tool); `buildWorkspaceExportBundle` above stays the
+// path for moving a workspace between devices.
+export async function buildRawReportsExportPayload(workspace) {
+  return { reports: await readWorkspaceReports(workspace) }
+}
+
+// Returns `{ blob, filename }` ready for the UI download wrapper.
+// Always plaintext gzip — there's no key material and no triage in
+// the payload to protect, and the export dialog's raw tab says
+// plainly that the file is unencrypted before the download fires.
+export async function buildRawReportsExportGzip(workspace) {
+  const payload = await buildRawReportsExportPayload(workspace)
+  const blob = new Blob([await gzipText(JSON.stringify(payload))])
+  return { blob, filename: `${safeFilename(workspace.name)}.deepview-reports.json.gz` }
 }

@@ -8,6 +8,37 @@
 /* Wider than the base 480px. */
 dialog { max-width: 520px; width: min(94vw, 520px); }
 
+/* Tab strip — the export dialog's "Export workspace" / "Raw reports
+   export" switcher. Mirrors the report view's `.bundles-tabs` chrome
+   (styles/report.css); duplicated here because shadow trees can't see
+   that light-DOM sheet. Selection is read off `aria-selected` rather
+   than a parallel `.active` class, so the template carries the state
+   once.
+
+   It sits in the dialog's `<header>` INSTEAD of an `<h3>` — the title
+   would only repeat the first tab — so it carries title weight, and
+   the first tab loses its left padding to sit flush with the body copy
+   below. */
+.wsl-tabs {
+  display: flex; gap: .1rem;
+  margin: 0;
+  border-bottom: 1px solid var(--border);
+}
+.wsl-tab {
+  background: transparent; border: none;
+  color: var(--muted);
+  padding: .1rem .6rem .4rem;
+  font: inherit; font-size: .85rem; font-weight: 600;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color .12s, border-color .12s;
+
+  &:first-child { padding-left: 0; }
+  &:hover:not(:disabled) { color: var(--text); }
+  &[aria-selected='true'] { color: var(--accent); border-bottom-color: var(--accent); }
+  &:disabled { opacity: .5; }
+}
+
 .wsl-field {
   display: block; margin-top: .6rem;
   color: var(--text); font-size: .78rem;
@@ -52,6 +83,12 @@ dialog { max-width: 520px; width: min(94vw, 520px); }
   padding: .55rem .65rem;
   border: 1px solid var(--critical, #f87171); border-radius: 6px;
   background: rgb(from var(--critical, #f87171) r g b / .08);
+
+  /* A warning that runs to several paragraphs (the export dialog's raw
+     tab) — the base reset zeroes the UA margin, so the gap between the
+     lines is set here. Single-paragraph warnings are a bare `<p>` with
+     the class on them and never match. */
+  & > p + p { margin-top: .45rem; }
 }
 .wsl-optout {
   display: flex; align-items: center; gap: .5rem;
@@ -60,4 +97,19 @@ dialog { max-width: 520px; width: min(94vw, 520px); }
 }
 .nwd-input:disabled {
   opacity: .5;
+}
+
+/* Filled-critical primary — the export dialog's two unencrypted
+   downloads (the raw reports tab, and the workspace export with the
+   password opted out). Base `.danger` is the outline treatment for a
+   secondary destructive action; these stay the dialog's main action,
+   so they keep `.primary`'s weight and only swap the fill. */
+.nwd-actions button.primary.danger {
+  background: var(--critical, #f87171); border-color: var(--critical, #f87171);
+  color: var(--surface);
+
+  &:hover:not(:disabled) {
+    border-color: var(--critical, #f87171); color: var(--surface);
+    filter: brightness(1.08);
+  }
 }
