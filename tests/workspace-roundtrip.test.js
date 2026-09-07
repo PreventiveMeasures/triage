@@ -33,9 +33,15 @@ const {
   buildRawReportsExportPayload,
   buildRawReportsExportGzip,
 } = await import('../client/workspace-export.js')
+const { classifyGzipExport, isRawReportsExport } = await import('../client/raw-reports-import.js')
 const { isEncryptedBundle } = await import('../client/workspace-bundle-crypto.js')
 const { listWorkspaces } = await import('../client/workspaces.js')
 const { patchEntry, setReportIgnored, isReportIgnored } = await import('../client/triage-entry.ts')
+
+async function saveFileFixture(name, content) {
+  const { saveFile } = await import('../client/storage.js')
+  await saveFile(name, content)
+}
 
 function clearState() {
   state.triage.clear()
@@ -1141,11 +1147,9 @@ describe('buildRawReportsExportGzip', () => {
   })
 
   it('is not importable as a workspace export', async () => {
-    // The payload has no `version` / `workspace`, so a re-drop of the
-    // file must be rejected outright rather than half-importing a
-    // workspace with an empty record. `.gz` files route to
-    // importWorkspaceFromGzip by filename (ui/view/ingest.js), so this
-    // is the path a re-dropped raw export actually takes.
+    // The payload has no `version` / `workspace`, so nothing can
+    // half-import a workspace with an empty record from it. It is
+    // re-importable as REPORTS (below) — but never through this door.
     const { saveFile } = await import('../client/storage.js')
     await saveFile('r.json', reportContent([FINDING_A]))
     const ws = makeWorkspace({ reports: ['r.json'] })
@@ -1156,6 +1160,35 @@ describe('buildRawReportsExportGzip', () => {
       () => parseWorkspaceBundleBytes(bytes),
       /not a deepview workspace export/u,
     )
+  })
+
+  // `.gz` drops all route through `classifyGzipExport`
+  // (ui/view/ingest.js → workspace-import.js), so this is the fork a
+  // re-dropped raw export actually reaches.
+  it('is recognised as a reports drop, with the documents it carried', async () => {
+    const { saveFile } = await import('../client/storage.js')
+    await saveFile('r.json', reportContent([FINDING_A]))
+    await saveFile('s.json', reportContent([FINDING_B]))
+    const ws = makeWorkspace({ reports: ['r.json', 's.json'] })
+
+    const { blob } = await buildRawReportsExportGzip(ws)
+    const found = await classifyGzipExport(new Uint8Array(await blob.arrayBuffer()))
+    assert.equal(found.kind, 'reports')
+    assert.deepEqual(found.reports.map((r) => r.name), ['r.json', 's.json'])
+    assert.equal(found.reports[0].content, reportContent([FINDING_A]))
+  })
+
+  // The workspace export must keep its own fork — the two files arrive
+  // through one door and neither may be read as the other.
+  it('a workspace export is not recognised as a reports drop', async () => {
+    const { saveFile } = await import('../client/storage.js')
+    await saveFile('r.json', reportContent([FINDING_A]))
+    const ws = makeWorkspace({ reports: ['r.json'] })
+
+    const { blob } = await buildWorkspaceExportGzip(ws)
+    const found = await classifyGzipExport(new Uint8Array(await blob.arrayBuffer()))
+    assert.equal(found.kind, 'workspace')
+    assert.equal(parseWorkspaceJson(found.text).workspace.id, ws.id, 'and the text it hands on still validates')
   })
 
   it('skips reports whose file is gone and prunes the stale reference', async () => {
@@ -1175,6 +1208,64 @@ describe('buildRawReportsExportGzip', () => {
     // rather than throwing.
     const payload = await buildRawReportsExportPayload(makeWorkspace())
     assert.deepEqual(payload, { reports: [] })
+  })
+})
+
+// The fork every dropped `.gz` goes through. Both export files arrive
+// by the same route, so what matters is that neither can be read as
+// the other — and that anything else falls to the workspace parser,
+// which already has words for every way a file can fail to be one.
+describe('classifyGzipExport — which export was dropped', () => {
+  beforeEach(clearState)
+
+  const gz = async (payload) => new Uint8Array(await (await import('../common/gzip.js')).gzipText(JSON.stringify(payload)))
+
+  it('takes a reports payload, and nothing that claims to be a workspace', () => {
+    assert.equal(isRawReportsExport({ reports: [] }), true, 'an empty export is still one')
+    assert.equal(isRawReportsExport({ reports: [{ name: 'r.json', content: '{}' }] }), true)
+    // The guard that keeps the two apart. A file carrying either
+    // workspace key belongs to validateExportShape — which rejects it
+    // properly when malformed — not to a reader that would drop the
+    // workspace record on the floor and import the reports anyway.
+    assert.equal(isRawReportsExport({ version: 1, reports: [] }), false)
+    assert.equal(isRawReportsExport({ workspace: { id: 'w' }, reports: [] }), false)
+    assert.equal(isRawReportsExport({ reports: 'nope' }), false)
+    assert.equal(isRawReportsExport({}), false)
+    assert.equal(isRawReportsExport(null), false)
+    assert.equal(isRawReportsExport([{ name: 'r.json' }]), false, 'an array is not the payload')
+  })
+
+  it('caps the entry count a crafted file can carry', () => {
+    const entry = { name: 'r.json', content: '{"findings":[]}' }
+    assert.equal(isRawReportsExport({ reports: Array.from({ length: 1024 }, () => entry) }), true)
+    assert.equal(isRawReportsExport({ reports: Array.from({ length: 1025 }, () => entry) }), false)
+  })
+
+  it('hands anything that is not a reports payload to the workspace parser', async () => {
+    // Text, not a verdict: the classifier decompresses once, and the
+    // workspace path validates and words its own failure from there.
+    const notEither = await classifyGzipExport(await gz({ hello: 'world' }))
+    assert.equal(notEither.kind, 'workspace')
+    assert.throws(() => parseWorkspaceJson(notEither.text), /not a deepview workspace export/u)
+
+    const notJson = await classifyGzipExport(new Uint8Array(await (await import('../common/gzip.js')).gzipText('not json at all')))
+    assert.equal(notJson.kind, 'workspace')
+    assert.throws(() => parseWorkspaceJson(notJson.text), /payload is not JSON/u)
+  })
+
+  it('sends an encrypted bundle to the unlock prompt without decompressing', async () => {
+    await saveFileFixture('r.json', reportContent([FINDING_A]))
+    const ws = makeWorkspace({ reports: ['r.json'] })
+    const { blob } = await buildWorkspaceExportEncrypted(ws, 'hunter2')
+    const found = await classifyGzipExport(new Uint8Array(await blob.arrayBuffer()))
+    assert.deepEqual(found, { kind: 'encrypted' })
+  })
+
+  it('raises the gzip failure in the words the bytes path has always used', async () => {
+    await assert.rejects(
+      () => classifyGzipExport(new Uint8Array([1, 2, 3, 4])),
+      /gzip decompression failed/u,
+    )
   })
 })
 

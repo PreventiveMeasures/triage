@@ -235,10 +235,17 @@ export async function buildWorkspaceExportBundle(workspace, { password, includeB
 //
 // Deliberately NOT a workspace export: the payload carries neither
 // `version` nor `workspace`, so `parseWorkspaceJson` rejects it and a
-// re-drop can never half-import a workspace from it. This is a
-// hand-off of the report content itself (re-analysis, archival,
-// feeding another tool); `buildWorkspaceExportBundle` above stays the
-// path for moving a workspace between devices.
+// re-drop can never half-import a workspace from it — no workspace
+// record, no triage, no key, nothing this file doesn't hold.
+//
+// It IS re-importable, as what it is: dropped back in, the reports in
+// it land exactly as dragging those files in would land them, one at a
+// time through the ordinary report path (client/raw-reports-import.js
+// recognises the shape, ui/view/ingest.js does the importing). So this
+// is a hand-off of the report content itself — re-analysis, archival,
+// feeding another tool, or moving the reports alone to another browser
+// — while `buildWorkspaceExportBundle` above stays the path for moving
+// a WORKSPACE between devices, triage and all.
 export async function buildRawReportsExportPayload(workspace) {
   return { reports: await readWorkspaceReports(workspace) }
 }

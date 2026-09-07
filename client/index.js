@@ -157,8 +157,11 @@ export { buildRawReportsExportGzip, buildWorkspaceExportBundle } from './workspa
 export {
   applyWorkspaceImport,
   parseWorkspaceBundleBytes,
+  parseWorkspaceJson,
   readBundleBytes,
 } from './workspace-import.js'
+
+export { classifyGzipExport, isRawReportsExport } from './raw-reports-import.js'
 
 export {
   buildShareUrl,

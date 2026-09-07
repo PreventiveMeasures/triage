@@ -47,7 +47,7 @@ const EXPORT_VERSION = 1
 // is gated separately so a single 100MB integrity string can't
 // smuggle in under the count cap.
 const MAX_BUNDLES_PER_EXPORT = 1024
-const MAX_REPORTS_PER_EXPORT = 1024
+export const MAX_REPORTS_PER_EXPORT = 1024
 const MAX_BUNDLE_INTEGRITY_LEN = 200
 // Per-blob raw-byte ceiling for `bundleBlobs.data`. Bytes are base64
 // on the wire (~4/3 expansion), so the encoded cap sits a bit above
