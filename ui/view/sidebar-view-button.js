@@ -62,7 +62,7 @@ class SidebarViewButton extends StateElement {
     return html`<button
       type="button"
       class=${classMap({ 'sidebar-view-btn': true, active })}
-      title=${config.title}
+      data-tooltip=${config.title}
       aria-label=${config.title}
     >${config.icon}<span class="view-btn-count">${this.count}</span></button>`
   }

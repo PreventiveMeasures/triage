@@ -6,6 +6,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS } from './file-display.js'
 import { FOCUS_SPLIT_MAX, FOCUS_SPLIT_MIN, listBundles, listWorkspaces, state } from '#client/index.js'
 import { isBundleInRemote, isInRemote, remoteCount, triageSync } from './client-sync.js'
+import { installShadowTooltipListener } from './tooltip.js'
 import { dropZone, report } from './dom.js'
 import { SEVERITIES, configureDepsDir, configureRevalidation, displayedSeverity, fileLink, findingDisplayName, findingTitle, formatRunMeta, hasRevalidateField, hasSeverityCorrection, isHttpUrl, isModule, lineLink, lineRangeLabel, reachableRevalidateFilters, revalidateKind } from './format.js'
 import { activeTabFor, findingRepoFallback, getMergedGroups, groupKey, groupState, primaryTab, tabKey } from './group.js'
@@ -314,7 +315,6 @@ function headerTemplate(mergedGroups, fileNames, repoInputUseful, knownRepo, tre
         type="button"
         class=${classMap({ 'files-toggle-btn': true, active: filesActive })}
         data-action="toggle-files"
-        title=${filesActive ? 'exit files view' : 'show files'}
         aria-pressed=${String(filesActive)}
       >${`Files: ${treeFileCount}`}</button>`
     : nothing
@@ -483,7 +483,7 @@ function badgeChipButton({ status, label, title, onClick }) {
     type="button"
     class="report-sync-badge report-sync-badge-clickable"
     data-status=${status}
-    title=${title}
+    data-tooltip=${title}
     aria-label=${`report sync status: ${label}`}
     @click=${onClick}
   >${icon}${labelTpl}</button>`
@@ -878,10 +878,10 @@ function kanbanCardTemplate(g, opts = {}) {
   let action = nothing
   if (isKanban && fix) {
     action = isHttpUrl(fix)
-      ? html`<a class="kanban-action kanban-fix-link" href=${fix} target="_blank" rel="noopener noreferrer" draggable="false" title=${`Open fix link: ${fix}`} aria-label=${`Open fix link: ${fix}`}>${FIX_ICON}</a>`
-      : html`<button type="button" class="kanban-action mark-fix" title=${`Edit fix link: ${fix}`} aria-label=${`Edit fix link: ${fix}`}>${FIX_ICON}</button>`
+      ? html`<a class="kanban-action kanban-fix-link" href=${fix} target="_blank" rel="noopener noreferrer" draggable="false" data-tooltip=${`Open fix link: ${fix}`} aria-label=${`Open fix link: ${fix}`}>${FIX_ICON}</a>`
+      : html`<button type="button" class="kanban-action mark-fix" data-tooltip=${`Edit fix link: ${fix}`} aria-label=${`Edit fix link: ${fix}`}>${FIX_ICON}</button>`
   } else if (isKanban && comment) {
-    action = html`<button type="button" class="kanban-action mark-comment" title=${`Edit comment: ${comment}`} aria-label=${`Edit comment: ${comment}`}>${COMMENT_ICON}</button>`
+    action = html`<button type="button" class="kanban-action mark-comment" data-tooltip=${`Edit comment: ${comment}`} aria-label=${`Edit comment: ${comment}`}>${COMMENT_ICON}</button>`
   }
   const inner = html`<div class="kanban-badge-col">
       <span
@@ -1032,7 +1032,7 @@ function focusMainTemplate(group, corner = nothing) {
         aria-valuemin=${FOCUS_SPLIT_MIN}
         aria-valuemax=${FOCUS_SPLIT_MAX}
         aria-valuenow=${Math.round(state.focusSplit)}
-        title="Drag to resize · double-click to reset"
+        data-tooltip="Drag to resize · double-click to reset"
       ></div>
       <div class="focus-pane focus-pane-code">
         ${code.loading
@@ -1250,7 +1250,7 @@ function findingsBodyTemplate(filtered) {
       ${selectedGroup ? html`<aside class="findings-table-details" id="findings-table-details">
         <header class="findings-table-details-bar">
           <span class="findings-table-details-label">Details</span>
-          <button type="button" class="findings-table-details-close" data-table-deselect title="Close details" aria-label="Close details">×</button>
+          <button type="button" class="findings-table-details-close" data-table-deselect aria-label="Close details">×</button>
         </header>
         <div class="findings-table-details-body">${findingCardPlaceholder(selectedGroup)}</div>
       </aside>` : nothing}
@@ -1307,7 +1307,6 @@ function findingsBodyTemplate(filtered) {
               class="focus-nav-btn"
               data-focus-nav="prev"
               ?disabled=${atStart}
-              title="Previous finding (←)"
               aria-label="Previous finding"
             >${PREV_ICON}</button>
             <span class="count">${focusedIdx + 1} / ${filtered.length}</span>
@@ -1316,7 +1315,6 @@ function findingsBodyTemplate(filtered) {
               class="focus-nav-btn"
               data-focus-nav="next"
               ?disabled=${atEnd}
-              title="Next finding (→)"
               aria-label="Next finding"
             >${NEXT_ICON}</button>
           </div>
@@ -1412,7 +1410,7 @@ function findingsBodyTemplate(filtered) {
               class="kanban-expand"
               data-kanban-expand=${c.key}
               aria-pressed=${isExpanded}
-              title=${isExpanded ? 'Show all columns' : `Show only ${c.label}`}
+              data-tooltip=${isExpanded ? 'Show all columns' : `Show only ${c.label}`}
               aria-label=${isExpanded ? 'Show all columns' : `Show only ${c.label}`}
             >${isExpanded ? COLLAPSE_ICON : EXPAND_ICON}</button>
           </div>
@@ -1741,7 +1739,22 @@ function renderImpl() {
   const adminView = ADMIN_VIEWS[state.currentView]
   if (adminView) {
     const slot = ensureReportSlot(adminView.slot)
-    if (slot && !slot.firstElementChild) slot.append(document.createElement(adminView.tag))
+    if (slot && !slot.firstElementChild) {
+      const el = document.createElement(adminView.tag)
+      slot.append(el)
+      // The admin bundle is its own esbuild entry (no code splitting),
+      // so it can't import view/tooltip.js without duplicating the
+      // module — and with it the single `#styled-tooltip` node. Its
+      // role pickers / repo checkboxes carry `data-tooltip` inside
+      // shadow roots the document-level handler can't see, so wire the
+      // listener from here instead, on this bundle's instance, once
+      // the element has upgraded and painted.
+      void (async () => {
+        await customElements.whenDefined(adminView.tag)
+        await el.updateComplete
+        installShadowTooltipListener(el.renderRoot)
+      })().catch(() => {})
+    }
     report.classList.add('active')
     dropZone.classList.add('hidden')
     document.title = adminView.title

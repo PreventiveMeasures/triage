@@ -112,11 +112,31 @@ export function scheduleTooltip(el, { gate, placement } = {}) {
 // Idempotent per root: components re-render and reconnect, and the
 // call sites are lifecycle hooks that run more than once.
 const shadowInstalled = new WeakSet()
+
+// The tooltip owner for an event, walking the composed path up to (and
+// not past) the listening root.
+//
+// Why not `closest` on `e.target`: these roots NEST — a `<color-marker>`
+// has its own root and sits inside `<finding-card>`, which has one too.
+// An event from a swatch reaches the card's listener retargeted to the
+// `<color-marker>` HOST, which carries no `data-tooltip`, so `closest`
+// found nothing and the ancestor listener hid the tooltip the swatch's
+// own listener had just scheduled — the inner tooltip never appeared.
+// The composed path still holds the swatch itself, so both listeners
+// resolve the same owner and agree.
+function tooltipOwner(e, root) {
+  for (const node of e.composedPath()) {
+    if (node === root) break
+    if (node.nodeType === 1 && Object.hasOwn(node.dataset, 'tooltip')) return node
+  }
+  return null
+}
+
 export function installShadowTooltipListener(root, options) {
   if (!root || shadowInstalled.has(root)) return
   shadowInstalled.add(root)
   root.addEventListener('mouseover', (e) => {
-    const el = e.target.closest?.('[data-tooltip]')
+    const el = tooltipOwner(e, root)
     if (!el) { hideTooltip(); return }
     if (el === currentTarget) return
     scheduleTooltip(el, options)
@@ -124,7 +144,7 @@ export function installShadowTooltipListener(root, options) {
   root.addEventListener('mouseout', (e) => {
     // Moving WITHIN the element that owns the tooltip (button → its
     // svg) is not leaving it; mouseout bubbles from every child.
-    const from = e.target.closest?.('[data-tooltip]')
+    const from = tooltipOwner(e, root)
     const to = e.relatedTarget?.closest?.('[data-tooltip]') ?? null
     if (from && from === to) return
     hideTooltip()

@@ -78,7 +78,7 @@ class AnnotationFilter extends StateElement {
       return html`<button
         type="button"
         class=${classMap({ 'annotation-chip': true, 'sel-with': sel === 'with', 'sel-without': sel === 'without' })}
-        title=${title}
+        data-tooltip=${title}
         aria-label=${title}
         aria-pressed=${String(sel !== '')}
         @click=${() => this._toggle(c.key)}

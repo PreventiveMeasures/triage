@@ -34,6 +34,7 @@ import graph2CSS from './graph2.css'
 import treeCountChipCSS from '../../styles/tree-count-chip.css'
 import toolbarCSS from '../../styles/toolbar.css'
 import { renderRightPanel, renderStage, renderTopBar } from './render.js'
+import { installShadowTooltipListener } from '../tooltip.js'
 
 class GraphLayout extends LitElement {
   static properties = {
@@ -47,6 +48,16 @@ class GraphLayout extends LitElement {
     super()
     this.graph = null
     this.options = {}
+  }
+
+  connectedCallback() {
+    super.connectedCallback()
+    // Topbar / zoom / selection controls in here carry `data-tooltip`;
+    // the document-level handler can't see past this shadow boundary,
+    // so the root gets its own listener. Idempotent, and it covers the
+    // nested light-DOM chip elements (`<triage-filter>` and friends)
+    // too — they live in this tree, so `closest` reaches this root.
+    installShadowTooltipListener(this.renderRoot)
   }
 
   render() {

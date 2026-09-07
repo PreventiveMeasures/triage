@@ -124,7 +124,7 @@ class ThemeToggle extends LitElement {
   connectedCallback() {
     super.connectedCallback()
     // ARIA — host element acts as the button.
-    ensureHostAria(this, { role: 'button', tabindex: '0', 'aria-label': 'toggle theme', title: 'toggle light/dark theme' })
+    ensureHostAria(this, { role: 'button', tabindex: '0', 'aria-label': 'toggle theme' })
     this.addEventListener('click', this._toggle)
     this.addEventListener('keydown', this._onKeydown)
     // External theme swaps (DeepView.setTheme, or another tab via

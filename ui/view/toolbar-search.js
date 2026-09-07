@@ -89,7 +89,7 @@ class ToolbarSearch extends StateElement {
     return html`<button
       type="button"
       class=${classMap({ 'search-negate-btn': true, active: negate })}
-      title=${negate ? 'Negation on — click to undo' : 'Negate: show non-matching findings'}
+      data-tooltip=${negate ? 'Negation on — click to undo' : 'Negate: show non-matching findings'}
       aria-label="Negate search"
       aria-pressed=${String(negate)}
       @click=${this._onToggleNegate}

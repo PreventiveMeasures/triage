@@ -41,7 +41,7 @@ class SeverityModeSwitch extends StateElement {
         type="button"
         class=${classMap({ 'severity-mode-chip': true, active })}
         aria-pressed=${String(active)}
-        title=${title}
+        data-tooltip=${title}
         @click=${() => this._select(value)}
       >${label}</button>`
     })}</span>`

@@ -100,7 +100,7 @@ export function renderTopBar(graph, options) {
     class=${classMap({ 'g2-topbar-toggle': true, on: graph2.splitOwnDirs })}
     data-g2-split-own
     aria-pressed=${String(graph2.splitOwnDirs)}
-    title="Split your own source into a group per top-level directory (off: one 'own source' group)"
+    data-tooltip="Split your own source into a group per top-level directory (off: one 'own source' group)"
   ><span>Split dirs</span><span class="g2-switch"></span></button>` : null
 
   // "Packages" — bundle Graph tab only (gated by the caller's
@@ -115,7 +115,7 @@ export function renderTopBar(graph, options) {
     class=${classMap({ 'g2-topbar-toggle': true, on: graph2.packagesView })}
     data-g2-packages-view
     aria-pressed=${String(graph2.packagesView)}
-    title="Show one node per package with aggregated import edges (off: one node per file)"
+    data-tooltip="Show one node per package with aggregated import edges (off: one node per file)"
   ><span>Packages</span><span class="g2-switch"></span></button>` : null
 
   // When the topbar carries an extra row (Findings-tab embed), the
@@ -161,7 +161,7 @@ export function renderTopBar(graph, options) {
         id="g2-path-filter"
         placeholder="filter path/package…"
         .value=${graph2.pathFilter}>
-      <button type="button" class="g2-path-filter-clear" id="g2-path-filter-clear" title="Clear filter" aria-label="Clear filter">✕</button>
+      <button type="button" class="g2-path-filter-clear" id="g2-path-filter-clear" aria-label="Clear filter">✕</button>
     </div>
     ${extraTopRow ? null : allFilesBtn}
     ${extraTopRow ? null : splitOwnBtn}
@@ -172,7 +172,7 @@ export function renderTopBar(graph, options) {
          spans both grid rows, so the topbar covers only the stage
          column and this button's right edge lands at the stage /
          sidebar boundary. -->
-    <button type="button" class="g2-icon-btn" id="g2-fullscreen" title="Toggle fullscreen">⛶</button>
+    <button type="button" class="g2-icon-btn" id="g2-fullscreen" aria-label="Toggle fullscreen">⛶</button>
     </div>
   </div>`
 }
@@ -238,7 +238,7 @@ function renderFileList(graph, label, files, referenceDir) {
       ${items.map(({ file: f, display }) => {
         const node = graph.nodeByFile.get(f)
         const c = node ? pkgColor(node.pkg) : '#666'
-        return html`<li><button type="button" class="g2-sel-file-link" data-g2-select=${f} title=${f}>
+        return html`<li><button type="button" class="g2-sel-file-link" data-g2-select=${f} data-tooltip=${f}>
           <span class="g2-sel-file-dot" style=${styleMap({ background: c })}></span>
           <span class="g2-sel-file-path">${display}</span>
         </button></li>`
@@ -280,7 +280,7 @@ export function renderStage(graph) {
          mode. Stats live bottom-left where they don't compete with
          the focused subgraph; this corner is empty in normal mode. -->
     ${graph2.focusedPkg ? html`<div class="g2-stage-overlay">
-      <button type="button" class="g2-back-btn" id="g2-back-to-full" title="Back to the full graph">← ${focusedLabel}</button>
+      <button type="button" class="g2-back-btn" id="g2-back-to-full">← ${focusedLabel}</button>
     </div>` : null}
     <!-- Top-right overlay slot — pairs with the top-left back button
          (both are in-canvas graph actions, not navigation jumps). The
@@ -297,10 +297,10 @@ export function renderStage(graph) {
       <span>avg degree <b>${avgDeg}</b></span>
     </div>
     <div class="g2-zoom-ctrl">
-      <button id="g2-zoom-in" title="Zoom in">+</button>
+      <button id="g2-zoom-in" aria-label="Zoom in">+</button>
       <div class="g2-zoom-pct" id="g2-zoom-pct">100%</div>
-      <button id="g2-zoom-out" title="Zoom out">−</button>
-      <button id="g2-zoom-fit" class="g2-zoom-fit-btn" title="Fit to view">fit</button>
+      <button id="g2-zoom-out" aria-label="Zoom out">−</button>
+      <button id="g2-zoom-fit" class="g2-zoom-fit-btn" aria-label="Fit to view">fit</button>
     </div>
     <div class="g2-tooltip" id="g2-tooltip"></div>
   </main>`
@@ -332,7 +332,8 @@ export function renderFocusOverlay(graph) {
     type="button"
     class="g2-focus-pkg-btn"
     data-g2-focus-pkg=${pkg}
-    title=${`Focus on ${label}'s graph`}
+    aria-label=${`Focus on ${label}'s graph`}
+    data-tooltip=${`Focus on ${label}'s graph`}
   ><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
       <path d="M8 4.6 L4 11 M8 4.6 L12 11 M5 11.4 L11 11.4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
       <circle cx="8" cy="3.6" r="2" fill="currentColor"/>
@@ -655,7 +656,7 @@ function renderDistribution(graph, activeTab) {
         type="button"
         class=${classMap({ 'g2-dist-item': true, on: isSelected })}
         data-g2-pkg=${pkg}
-        title=${label}
+        data-tooltip=${label}
       ><span class="g2-dist-dot" style=${styleMap({ background: c })}></span><span class="g2-dist-name">${label}</span><span class="g2-dist-count">${cnt}</span><span class="g2-dist-pct">${pct}%</span></button>`
     })}
   </div>`
