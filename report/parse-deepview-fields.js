@@ -250,11 +250,8 @@ const FACT_RE = /^- \*\*([^*\n]+?):\*\* ?(.*)$/u
 // (md-text.js prose / unescapeHeadings) — the title here, an evidence
 // note in readEvidence, the lead and the sections' bodies where the
 // document reader consumes them (readProse) — so `\## Internal
-// detail` is the `## Internal detail` the description held. `escaped`
-// is whether the document's writer escaped at all (format 2 on,
-// parse-deepview-md.js): a format 1 document's prose is taken as
-// written.
-export function splitFacts(body, escaped = true) {
+// detail` is the `## Internal detail` the description held.
+export function splitFacts(body) {
   const lines = body.split('\n')
   let i = 0
   const skipBlank = () => { while (i < lines.length && !lines[i].trim()) i++ }
@@ -276,13 +273,13 @@ export function splitFacts(body, escaped = true) {
   skipBlank()
   facts = readFacts()
   if (facts.length === 0) return { title: '', facts, rest: body }
-  return { title: readProse(para.join('\n').trim(), escaped), facts, rest: lines.slice(i).join('\n') }
+  return { title: readProse(para.join('\n').trim()), facts, rest: lines.slice(i).join('\n') }
 }
 
 // A run of prose as the description held it: the writer's heading
 // escape off, when the document's writer put one on.
-export function readProse(text, escaped = true) {
-  return escaped ? unescapeHeadings(text) : text
+export function readProse(text) {
+  return unescapeHeadings(text)
 }
 
 // A case's sections at `depth` (4 under a finding's heading, 5 under a
@@ -308,7 +305,7 @@ const ITEM_RE = /^(\d+)\. (.*)$/u
 // the item's text. Back into rows of `{ file, line, url, text }` — the
 // note under the name parse-md.js gives it, whatever a native dump
 // called it (finding.js evidenceNote reads both).
-export function readEvidence(text, escaped = true) {
+export function readEvidence(text) {
   const items = []
   const ranges = fenceRanges(text)
   let pos = 0
@@ -318,10 +315,10 @@ export function readEvidence(text, escaped = true) {
     if (m) items.push({ ref: m[2].trim(), indent: m[1].length + 2, note: [] })
     else if (items.length > 0) items.at(-1).note.push(line)
   }
-  return items.map((item) => evidenceRow(item, escaped))
+  return items.map((item) => evidenceRow(item))
 }
 
-function evidenceRow({ ref, indent, note }, escaped) {
+function evidenceRow({ ref, indent, note }) {
   const row = {}
   const link = readLink(ref)
   const auto = autolinkUrl(ref)
@@ -329,7 +326,7 @@ function evidenceRow({ ref, indent, note }, escaped) {
   if (label !== null) Object.assign(row, fileLine(label))
   const url = link ? link.url : auto
   if (isHttpUrl(url)) row.url = url
-  const text = readProse(note.map((l) => l.slice(Math.min(indent, /^ */u.exec(l)[0].length))).join('\n').trim(), escaped)
+  const text = readProse(note.map((l) => l.slice(Math.min(indent, /^ */u.exec(l)[0].length))).join('\n').trim())
   if (text) row.text = text
   return row
 }

@@ -34,6 +34,11 @@ dialog::backdrop { backdrop-filter: none; }
    is right there — so the title takes the gap the intro would have. */
 header h3 { margin-bottom: .7rem; }
 
+/* Neither the title nor the footer is part of the file, and a
+   select-all inside a modal takes every selectable thing in it — so
+   both step out of the selection, and Ctrl+A is the document alone. */
+header, footer { user-select: none; }
+
 /* The document itself, and the only part of the dialog that flexes:
    the header and footer take what they need and this takes the rest,
    however tall the window is. `min-height: 0` because a flex item's
@@ -46,7 +51,6 @@ header h3 { margin-bottom: .7rem; }
   flex: 1 1 auto; min-height: 0;
   margin: 0;
   overflow: auto;
-  padding: .5rem 0;
   border: 1px solid var(--border); border-radius: 6px;
   background: var(--bg, var(--surface));
   color: var(--text);
@@ -80,9 +84,25 @@ header h3 { margin-bottom: .7rem; }
    items from non-collapsible text between its children, so `white-space:
    pre` on the container would turn any text between the rows into
    phantom cells. It lives on the line instead. */
+.evd-lines {
+  --evd-gutter: calc(var(--evd-lineno-width, 3ch) + 1.4rem);
+  padding: .5rem 0;
+  /* The gutter — its tint, and the rule beside it — painted here for
+     the whole height of the document rather than by each number cell.
+     Cells exist only in the chunks that have rows and are painted only
+     in the chunks on screen, so a gutter drawn by them stopped short of
+     the padding above the first line and went missing behind every
+     skipped chunk. One width serves this and the grid columns. */
+  background-image: linear-gradient(
+    to right,
+    rgb(from var(--text) r g b / .03) 0 calc(var(--evd-gutter) - 1px),
+    var(--border) calc(var(--evd-gutter) - 1px) var(--evd-gutter),
+    transparent var(--evd-gutter)
+  );
+}
 .evd-chunk {
   display: grid;
-  grid-template-columns: calc(var(--evd-lineno-width, 3ch) + 1.4rem) minmax(0, 1fr);
+  grid-template-columns: var(--evd-gutter) minmax(0, 1fr);
   align-items: start;
   content-visibility: auto;
   contain-intrinsic-size: auto calc(var(--evd-chunk-lines, 1) * 1.55em);
@@ -95,15 +115,12 @@ header h3 { margin-bottom: .7rem; }
    down the document may show for a frame. */
 .evd-chunk.evd-pending {
   display: block;
-  padding: 0 .75rem 0 calc(var(--evd-lineno-width, 3ch) + 2rem);
+  padding: 0 .75rem 0 calc(var(--evd-gutter) + .6rem);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 .evd-lineno {
-  align-self: stretch;
   padding: 0 .55rem 0 .4rem;
-  border-right: 1px solid var(--border);
-  background: rgb(from var(--text) r g b / .03);
   color: var(--muted);
   text-align: right;
   font-variant-numeric: tabular-nums;
@@ -122,7 +139,7 @@ header h3 { margin-bottom: .7rem; }
   overflow-wrap: anywhere;
 }
 
-/* Byte / line count, riding the footer row opposite the Close button —
+/* Byte / line count, riding the footer row opposite the buttons —
    the same "what am I committing to" role the confirm dialog's count
    headline plays, in footnote weight. Below the rule rather than under
    the box: it describes the file, not the excerpt on screen, and the
