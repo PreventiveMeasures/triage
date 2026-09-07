@@ -29,7 +29,8 @@
 // whichever format the findings first arrived in. So a value goes on
 // the page in a shape the reader can take back off it: a fact on one
 // line, a location in a code span, the analyzer as the product's name
-// or the run's meta line.
+// or the run's meta line, a line of prose that would read as a heading
+// escaped (md-text.js prose).
 //
 // `doc` is plain data the caller assembles — the viewer's adapter
 // (ui/view/markdown-export.js), or anything else holding findings out
@@ -76,14 +77,19 @@ function withDefaults(hooks) {
   return out
 }
 
-// Which producer a finding's report came from — its `source` marker
-// (report/index.js), null for the analyzer's own dump. The one report's
-// when the document has one; otherwise the report the `report` hook
-// names for the finding, looked up by name in `doc.reports`.
+// Which producer a finding came from — a `source` marker
+// (report/index.js), null for the analyzer's own dump. The finding's
+// own, when it carries one: a product's finding out of a re-imported
+// document that mixed products with the analyzer's runs is stamped
+// with it (parse-deepview-md.js), and is that product's whatever
+// report it now sits in. Otherwise its report's — the one report's
+// when the document has one, else the report the `report` hook names
+// for the finding, looked up by name in `doc.reports`.
 function sourceReader(reports, hooks) {
-  if (reports.length === 1) return () => reports[0].source ?? null
+  const own = (f) => (typeof f?.source === 'string' && f.source ? f.source : null)
+  if (reports.length === 1) return (f) => own(f) ?? reports[0].source ?? null
   const byName = new Map(reports.map((r) => [r.name, r.source ?? null]))
-  return (f) => byName.get(hooks.report(f)) ?? null
+  return (f) => own(f) ?? byName.get(hooks.report(f)) ?? null
 }
 
 // The per-document decisions, made once: which lens severities show
@@ -139,8 +145,12 @@ function includedText(counts) {
 // `Source` names the products the loaded reports came from, `Analyzer`
 // what produced the included findings (analyzerText). For a report
 // from one product those are the same word, and the analyzer line is
-// left out rather than said twice; a document that also holds the
-// analyzer's own runs lists every analyzer, the product among them.
+// left out rather than said twice — but only when it would say exactly
+// what the Source line says, the same products and no fewer: a
+// workspace of two products filtered down to one names the one, and a
+// document that also holds the analyzer's own runs lists every
+// analyzer, the products among them. The reader takes the one analyzer
+// named here as every finding's.
 function headerList(doc, ctx, cases) {
   const rows = []
   const add = (label, value) => { if (value) rows.push(`- **${label}:** ${value}`) }
@@ -152,7 +162,8 @@ function headerList(doc, ctx, cases) {
   add('Workspace', typeof doc.workspace === 'string' ? doc.workspace.trim() : '')
   if (ctx.repo) add('Repository', repoRef(ctx.repo))
   const analyzers = [...new Set(cases.map(ctx.analyzerOf).filter(Boolean))]
-  if (analyzers.some((a) => !sources.includes(a))) add(analyzers.length === 1 ? 'Analyzer' : 'Analyzers', analyzers.join('; '))
+  const saidAlready = analyzers.length === sources.length && analyzers.every((a) => sources.includes(a))
+  if (analyzers.length > 0 && !saidAlready) add(analyzers.length === 1 ? 'Analyzer' : 'Analyzers', analyzers.join('; '))
   if (doc.generatedAt) add('Exported', formatTimestamp(doc.generatedAt))
   add('View', viewText(doc.view))
   if (Array.isArray(doc.filters)) {

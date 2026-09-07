@@ -12,7 +12,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
 import { writeMarkdown } from '../index.js'
-import { anchorSlug, cell, code, formatTimestamp, indentUnder, link, prose } from '../md-text.js'
+import { anchorSlug, cell, code, formatTimestamp, indentUnder, link, prose, unescapeHeadings } from '../md-text.js'
 import { DOCUMENT_MARKER } from '../write-md.js'
 import { parseCodexCsvToScans } from '../parse-codex.js'
 import { parseDeepsecFindings } from '../parse-deepsec.js'
@@ -141,6 +141,26 @@ describe('writeMarkdown — the header', () => {
     assert.equal(line(md, 'Analyzer'), null)
     assert.equal(line(md, 'Analyzers'), null)
     assert.deepEqual([...md.matchAll(/^- \*\*Category:\*\* (.*)$/gmu)].map((m) => m[1]), ['insufficient verification of data authenticity', 'Security'])
+  })
+
+  it('names the one product the included findings came from when the loaded reports came from more', () => {
+    // A workspace of two products, filtered down to one: the Source line
+    // still names both reports, so the analyzer line has to say which
+    // one the findings are from — or the reader could not tell.
+    const md = writeMarkdown(doc([[finding()]], {
+      reports: [{ name: 'a.md', source: 'claude-security' }, { name: 'b.md', source: 'deepsec' }],
+    }), { report: () => 'b.md' })
+    assert.equal(line(md, 'Source'), 'Claude Security, DeepSec')
+    assert.equal(line(md, 'Analyzer'), 'DeepSec')
+  })
+
+  it('takes the product a finding names for itself over its report\'s', () => {
+    // A re-imported mixed document stamps `source` on a product's
+    // findings (parse-deepview-md.js); the report they now sit in has
+    // none, and the document must not lose them a second time.
+    const md = writeMarkdown(doc([[finding({ source: 'claude-security' })], [finding({ id: 'f2', type: 'security' })]]))
+    assert.equal(line(md, 'Analyzers'), 'Claude Security; security')
+    assert.deepEqual([...md.matchAll(/^- \*\*Analyzer:\*\* (.*)$/gmu)].map((m) => m[1]), ['Claude Security', 'security'])
   })
 
   it('lists the product beside the analyzer\'s runs in a mixed document, and names each finding\'s', () => {
@@ -477,6 +497,16 @@ describe('writeMarkdown — a finding\'s narrative', () => {
     assert.ok(md.includes('#### Impact\n\nEvery row.'))
   })
 
+  it('escapes a line of prose that would read as a heading, outside fences', () => {
+    const md = writeMarkdown(doc([
+      [finding({ description: 'Title\n\n## Internal detail\n\nsecret text\n\n### Deeper\n\n```md\n## in a fence\n```\n\n\\# already escaped', impact: '#### not a section' })],
+      [finding({ id: 'f2', description: 'Next.' })],
+    ]))
+    assert.ok(md.includes('Title\n\n- **Location:**'), md)
+    assert.ok(md.includes('\n\n\\## Internal detail\n\nsecret text\n\n\\### Deeper\n\n```md\n## in a fence\n```\n\n\\\\# already escaped\n\n#### Impact\n\n\\#### not a section\n\n### 2. Next.'), md)
+    assert.deepEqual(headings(md).filter((h) => h.startsWith('### ')), ['### 1. Title', '### 2. Next.'])
+  })
+
   it('closes a fence a report left open, and normalises line endings', () => {
     const md = writeMarkdown(doc([
       [finding({ description: 'Lead.\r\n\r\nBody line.\r\n\r\n**Impact:** Boom.\r\n\r\n```js\r\nrun()' })],
@@ -638,6 +668,14 @@ describe('md-text helpers', () => {
     assert.equal(prose('```js\nrun()\n```'), '```js\nrun()\n```')
     assert.equal(prose('  plain  '), 'plain')
     assert.equal(prose(null), '')
+  })
+
+  it('escapes heading lines in prose, and takes the escape back off', () => {
+    assert.equal(prose('## a\n  ### b\n#c\n\\## d\ntext # e'), '\\## a\n  \\### b\n\\#c\n\\\\## d\ntext # e')
+    assert.equal(prose('```\n## a\n```'), '```\n## a\n```')
+    for (const text of ['## a\n\n\\## b\n\n\\\\# c', '```\n## a\n```\n#### b', 'plain']) {
+      assert.equal(unescapeHeadings(prose(text)), text)
+    }
   })
 
   it('indents continuation lines to the marker, blank lines empty', () => {

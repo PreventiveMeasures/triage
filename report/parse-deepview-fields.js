@@ -16,7 +16,7 @@
 import { REVALIDATE_KINDS, firstLine } from './finding.js'
 import { SEVERITY_LABELS, SOURCE_LABELS } from './labels.js'
 import { fenceRanges, inFence } from './md-structure.js'
-import { isHttpUrl } from './md-text.js'
+import { isHttpUrl, unescapeHeadings } from './md-text.js'
 
 // label (case-folded) → key, for the words the writer spells the app's
 // enumerations with (labels.js).
@@ -246,6 +246,10 @@ const FACT_RE = /^- \*\*([^*\n]+?):\*\* ?(.*)$/u
 // for a case of a group named differently from its group
 // (write-md-finding.js groupSection) — but only when a list follows;
 // a case with no facts at all keeps its opening paragraph as prose.
+// Prose comes back with the writer's heading escape taken off
+// (md-text.js prose / unescapeHeadings) — here, in splitSections and
+// in readEvidence — so `\## Internal detail` is the `## Internal
+// detail` the description held.
 export function splitFacts(body) {
   const lines = body.split('\n')
   let i = 0
@@ -268,7 +272,7 @@ export function splitFacts(body) {
   skipBlank()
   facts = readFacts()
   if (facts.length === 0) return { title: '', facts, rest: body }
-  return { title: para.join('\n').trim(), facts, rest: lines.slice(i).join('\n') }
+  return { title: unescapeHeadings(para.join('\n').trim()), facts, rest: lines.slice(i).join('\n') }
 }
 
 // A case's sections at `depth` (4 under a finding's heading, 5 under a
@@ -279,10 +283,10 @@ export function splitSections(text, depth) {
   const re = new RegExp(`^#{${depth}} +(.*)$`, 'gmu')
   const ranges = fenceRanges(text)
   const marks = [...text.matchAll(re)].filter((m) => !inFence(ranges, m.index))
-  const lead = text.slice(0, marks[0]?.index ?? text.length).trim()
+  const lead = unescapeHeadings(text.slice(0, marks[0]?.index ?? text.length).trim())
   const sections = marks.map((m, i) => ({
     label: m[1].trim(),
-    body: text.slice(m.index + m[0].length, marks[i + 1]?.index).trim(),
+    body: unescapeHeadings(text.slice(m.index + m[0].length, marks[i + 1]?.index).trim()),
   }))
   return { lead, sections }
 }
@@ -315,7 +319,7 @@ function evidenceRow({ ref, indent, note }) {
   if (label !== null) Object.assign(row, fileLine(label))
   const url = link ? link.url : auto
   if (isHttpUrl(url)) row.url = url
-  const text = note.map((l) => l.slice(Math.min(indent, /^ */u.exec(l)[0].length))).join('\n').trim()
+  const text = unescapeHeadings(note.map((l) => l.slice(Math.min(indent, /^ */u.exec(l)[0].length))).join('\n').trim())
   if (text) row.text = text
   return row
 }

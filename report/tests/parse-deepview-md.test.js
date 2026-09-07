@@ -149,6 +149,33 @@ describe('parseDeepviewMarkdown — the header, at the report level', () => {
     assert.equal(back.type, undefined, 'no one mode either')
   })
 
+  it('keeps a product\'s findings theirs through a second export of a mixed document', () => {
+    // The re-imported report has no source of its own; each product
+    // finding carries one, and the writer takes it (write-md.js
+    // sourceReader), so the next reader finds it again.
+    const hooks = { report: (f) => (f.id === 'c1' ? 'a.md' : 'b.json') }
+    const first = writeMarkdown({
+      reports: [{ name: 'a.md', source: 'claude-security' }, { name: 'b.json', source: null }],
+      groups: [[finding({ id: 'c1' })], [finding({ id: 'j1', type: 'security' })]],
+    }, hooks)
+    const back = parseDeepviewMarkdown(first)
+    const second = exportOf(back, 'again.md')
+    const again = parseDeepviewMarkdown(second)
+    assert.equal(byId(again).get('c1').source, 'claude-security')
+    assert.equal(byId(again).get('j1').type, 'security')
+    assert.equal(exportOf(again, 'again.md'), second, 'and it is stable from there')
+  })
+
+  it('names the one product a filtered document\'s findings came from, out of several loaded', () => {
+    const md = writeMarkdown({
+      reports: [{ name: 'a.md', source: 'claude-security' }, { name: 'b.md', source: 'deepsec' }],
+      groups: [[finding({ id: 'd1' })], [finding({ id: 'd2' })]],
+    }, { report: () => 'b.md' })
+    const back = parseDeepviewMarkdown(md)
+    assert.equal(back.source, 'deepsec')
+    assert.ok(back.findings.every((f) => !('source' in f)))
+  })
+
   it('keeps one product at the report level even when each finding was told its analyzer', () => {
     const md = writeMarkdown({
       reports: [{ name: 'a.md', source: 'deepsec' }, { name: 'b.md', source: 'deepsec' }],
@@ -259,6 +286,28 @@ describe('parseDeepviewMarkdown — the narrative', () => {
     const fenced = '```md\n#### not a section\n\n## nor a tier\n```\n\nProse under it.'
     assert.equal(description(fenced), fenced)
     assert.equal(description('Lead.\n\n```sh\n### 2. not a finding\n```'), 'Lead.\n\n```sh\n### 2. not a finding\n```')
+  })
+
+  it('keeps a heading line the prose held, at any depth, and the findings after it', () => {
+    // The writer escapes it (md-text.js prose); read back, it is the
+    // text it was, and neither a tier, a finding, a case nor a section.
+    const texts = [
+      'Title\n\n## Internal detail\n\nsecret text',
+      'Title\n\n### Internal detail\n\nnot a second finding',
+      'Title\n\n#### Case 1 of 2 — not a case\n\n##### Impact\n\nnot a field\n\n\\## kept as written',
+      '# A heading as the first line\n\nbody',
+    ]
+    for (const text of texts) {
+      const back = parseDeepviewMarkdown(exportOf({ findings: [finding({ description: text }), finding({ id: 'f2', description: 'After.' })] }))
+      assert.equal(back.findings.length, 2, text)
+      assert.equal(back.findings[0].description, text)
+      assert.equal(back.findings[1].description, 'After.')
+    }
+    const f = one({ findings: [finding({ impact: '## not a section\n\nreally', evidence: [{ file: 'a.js', line: '1', text: '### nor here' }] })] })
+    assert.equal(f.impact, '## not a section\n\nreally')
+    assert.equal(f.evidence[0].text, '### nor here')
+    const group = parseDeepviewMarkdown(exportOf({ groups: [[finding({ description: 'The name' }), finding({ id: 'f2', description: '## Another name' })]] }))
+    assert.equal(group.groups[0][1].description, '## Another name', 'a case\'s own title too')
   })
 
   it('takes the fields the writer sectioned, in the writer\'s order, off the end', () => {
