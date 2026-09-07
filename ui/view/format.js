@@ -1,4 +1,4 @@
-import { fenceRanges, inFence, unescapeMd } from '../../report/md-structure.js'
+import { REVALIDATE_KINDS, SEVERITIES, SEVERITY_ORDER, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceNote, fenceRanges, findingDisplayName, findingTitle, firstLine, hasSeverityCorrection, inFence, isHttpUrl, locationLabel, prettyModel, revalidateKindOf, runMetaLine, splitDescription, stripExportMarker, titledDescription, unescapeMd } from '../../report/index.js'
 import { html, nothing } from './frontend-global.js'
 // Direct relative import, NOT `#client/index.js`: this module rides in
 // the lazy `ui/graph.js` bundle, and the aggregator would drag `state`
@@ -11,11 +11,9 @@ import { parseFindingUrl } from '../../client/finding-link.js'
 // the viewer's callers keep one import. `revalidateKindOf` and
 // `runMetaLine` take the layer switch as an argument; the gated forms
 // below (revalidateKind, formatRunMeta) apply this module's state.
-import { REVALIDATE_KINDS, SEVERITIES, SEVERITY_ORDER, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceNote, findingDisplayName, findingTitle, firstLine, hasSeverityCorrection, locationLabel, prettyModel, revalidateKindOf, runMetaLine, splitDescription, stripExportMarker, titledDescription } from '../../report/finding.js'
 export { REVALIDATE_KINDS, SEVERITIES, SEVERITY_ORDER, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceNote, findingDisplayName, findingTitle, firstLine, hasSeverityCorrection, locationLabel, prettyModel, splitDescription, stripExportMarker, titledDescription }
 // The one http(s)-URL gate every `<a>` in the viewer goes through is
-// the writer's too (report/md-text.js); one definition.
-import { isHttpUrl } from '../../report/md-text.js'
+// the writer's too (report/src/md-text.js); one definition.
 export { isHttpUrl }
 
 // ── Revalidation ─────────────────────────────────────────────────────
@@ -57,7 +55,7 @@ export { isHttpUrl }
 // name. The two callers that must see the field WHATEVER the switch
 // says — the pass that hides the pass's own rows, and the scan that
 // decides whether to offer the switch at all — read the raw field
-// through the two exports below it (report/finding.js's
+// through the two exports below it (report/src/finding.js's
 // `revalidateKindOf`).
 //
 // The flag is module state, set once per render by render.js from
@@ -368,11 +366,11 @@ export function findingText(f) {
   return [f.file, f.title, f.description, f.impact, f.reproduction, evidenceMarkdown(f), f.recommendation, f.confidenceReason, ...reval, f.discoveredIn, f.repo?.github].filter(Boolean).join('\n').toLowerCase()
 }
 
-// The per-finding run-meta line (report/finding.js runMetaLine) under
+// The per-finding run-meta line (report/src/finding.js runMetaLine) under
 // the revalidation layer's state: the pass's row names itself only
 // while the layer is on. Led by the finding's category where a report
 // filed it under one (Claude Security's `**Category:**`,
-// report/parse-md.js) — the meta line is where a row says what kind
+// report/src/parse-md.js) — the meta line is where a row says what kind
 // of thing it is, and for a product that is one analyzer with no run
 // meta, the category is all there is to say.
 export function formatRunMeta(f) {
@@ -574,7 +572,7 @@ function flowRun(run, keepLead, keepTail) {
 // and trigger) splits into paragraphs, and the halves that hold no
 // fence line read as ordinary hard-wrapped prose and get folded into
 // one line. So the fenced ranges come out first (the same reading the
-// parsers use — report/md-structure.js) and only the prose between
+// parsers use — report/src/md-structure.js) and only the prose between
 // them is reflowed, which also means prose sharing a paragraph with a
 // snippet now flows instead of being pinned by it.
 export function flowText(text) {
@@ -619,7 +617,7 @@ export function flowText(text) {
 //
 // Text with no fence in it comes back as a single-element array
 // holding it unchanged, so the caller can take a plain-text fast path.
-// Pairing is `fenceRanges`' (report/md-structure.js), the same reading
+// Pairing is `fenceRanges`' (report/src/md-structure.js), the same reading
 // the parsers use — so what a parser treated as code is what the card
 // draws as code, an unclosed fence running to end of input included.
 const FENCE_LINE_RE = /^( *)(`{3,}|~{3,})(.*)$/u
@@ -1228,7 +1226,7 @@ function githubRefToken(candidate) {
 
 // Short id shown in a self-link's label. Findings carry a uuid in the
 // overwhelming majority of cases (the analyzer's, or the one
-// `report/finding-id.js` derives), and abbreviating it to its first
+// `report/src/finding-id.js` derives), and abbreviating it to its first
 // group mirrors how the commit label abbreviates a sha. The codex
 // importer's finding-URL ids have no meaningful prefix to show, so they
 // fall back to the bare word.
@@ -1238,6 +1236,17 @@ function githubRefToken(candidate) {
 // homoglyphs into the class, and every id this app mints is lower-case
 // hex anyway.
 const FINDING_UUID_RE = /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/u
+
+// The abbreviation above, on its own: a finding id's first uuid group,
+// or null when the id isn't a uuid and has no meaningful prefix to
+// show. Exported because the Links view and the finding card's
+// "Duplicates:" row name findings by id too, and all three have to
+// abbreviate the same one the same way — a reader following a
+// duplicate link should recognise the id they clicked in the id the
+// card they land on carries.
+export function shortFindingId(id) {
+  return typeof id === 'string' && FINDING_UUID_RE.test(id) ? id.slice(0, 8) : null
+}
 
 // Validate one candidate URL string as a per-finding deep link into THIS
 // instance and, on success, return its `{ url, label, self }` token.
@@ -1255,8 +1264,8 @@ const FINDING_UUID_RE = /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/u
 function selfRefToken(candidate) {
   const found = parseFindingUrl(candidate)
   if (!found) return null
-  const label = FINDING_UUID_RE.test(found.id) ? `finding ${found.id.slice(0, 8)}` : 'finding'
-  return { url: `#${found.fragment}`, label, self: true }
+  const short = shortFindingId(found.id)
+  return { url: `#${found.fragment}`, label: short ? `finding ${short}` : 'finding', self: true }
 }
 
 // Candidate-URL scanner: an `http(s)://` run of URL-legal characters.

@@ -43,8 +43,16 @@ const byPackage = new Map()
 // without any repo signal aren't indexed here — there's nothing
 // to bucket them under.
 const byRepo = new Map()
-// Reverse index: which (hash, key), (pkg, key), and (repo, key)
-// pairs did each report contribute? Lets `invalidateName` prune
+// Finding id → the reports carrying it. Unlike the three buckets
+// above this one is keyed by the finding's OWN id rather than by
+// something about its file, so it answers for every finding an id
+// could name — including the ones with no `fileHash` and no package
+// path, which the other indexes have nothing to file under. The
+// Links view asks it "where do the findings this file links actually
+// live", which is a question about ids and nothing else.
+const byId = new Map()
+// Reverse index: which (hash, key), (pkg, key), (repo, key) and id
+// entries did each report contribute? Lets `invalidateName` prune
 // precisely on a file delete / overwrite without re-scanning
 // every report. Audit round-8 H1.
 const contributionsByName = new Map()
@@ -205,6 +213,16 @@ export function reportsForFindingByRepo(repo, finding) {
   return set ? [...set] : []
 }
 
+// The OPFS reports carrying the finding with this id, by name. Takes
+// an ID, not a finding object, because its caller (the Links view)
+// holds nothing but ids — a links file names findings and describes
+// none of them. Empty when the id names nothing the user has, which
+// is exactly what that view has to be able to say out loud.
+export function reportsForFindingId(id) {
+  const set = byId.get(id)
+  return set ? [...set] : []
+}
+
 // Dedupe key — preferred form is the analyzer's stable `id`; falls
 // back to a (severity, description, file, line, fileHash) tuple
 // when the report doesn't carry ids (older / hand-rolled inputs).
@@ -218,10 +236,24 @@ function findingDedupeKey(f) {
 function rememberContribution(name, kind, ref) {
   let entry = contributionsByName.get(name)
   if (!entry) {
-    entry = { hash: [], pkg: [], repo: [] }
+    entry = { hash: [], pkg: [], repo: [], id: [] }
     contributionsByName.set(name, entry)
   }
   entry[kind].push(ref)
+}
+
+// Id-keyed bucket update. No dedupe key and no bucket shape: an id
+// IS the key, and the only thing worth remembering about it is which
+// reports carry it. Returns true when this report is new to the id,
+// so a second report holding the same finding still repaints the
+// views that name its origins.
+function indexFindingById(id, name) {
+  let reports = byId.get(id)
+  if (!reports) byId.set(id, reports = new Set())
+  if (reports.has(name)) return false
+  reports.add(name)
+  rememberContribution(name, 'id', id)
+  return true
 }
 
 // Hash-keyed bucket update. Returns true when the bucket gained
@@ -408,6 +440,16 @@ function invalidateName(name) {
     if (rBucket._keyReports.size === 0) byRepo.delete(repo)
     else recomputeBucketReports(rBucket)
   }
+  // Id index — flat, so the prune is too: drop this report from each
+  // id it contributed, and drop the id itself once no report carries
+  // it any more (an id nobody holds must read as "not in any of your
+  // reports", not as an empty set of holders).
+  for (const id of contrib.id) {
+    const reports = byId.get(id)
+    if (!reports) continue
+    if (reports.delete(name)) dirty = true
+    if (reports.size === 0) byId.delete(id)
+  }
   return dirty
 }
 
@@ -431,7 +473,7 @@ async function indexOne(name) {
     if (findings.length === 0) return false
     // Run-level meta (type / model / think / effort / exportsMode) is
     // inherited from the report header, field by field, under the same
-    // rule the report view follows — see report/meta.js (which also
+    // rule the report view follows — see report/src/meta.js (which also
     // holds the source-marked opt-out). The bundle viewer's source
     // panel reads these through prettyModel + the meta chain; without
     // the inheritance the chain stays empty for every finding that
@@ -458,6 +500,11 @@ async function indexOne(name) {
       if (f.fileHash && indexFindingByHash(f, key, name)) added = true
       if (f.file && indexFindingByPackage(f, key, name)) added = true
       if (f.file && indexFindingByRepo(f, key, name, reportFallback)) added = true
+      // No `f.file` gate: a finding is locatable by id whether or not
+      // the report said where it lives. `loadFindings` has already
+      // derived an id for anything that arrived without one, so this
+      // covers every format the app reads.
+      if (f.id && indexFindingById(f.id, name)) added = true
     }
     // Mid-flight `invalidateName` detection (audit round-12 M-B).
     // `onFileMutated` runs synchronously when `saveFile` /

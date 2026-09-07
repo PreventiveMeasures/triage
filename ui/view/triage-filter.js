@@ -105,7 +105,8 @@ class TriageFilter extends StateElement {
       return html`<button
         type="button"
         class=${active ? 'active' : ''}
-        title=${`${label} (${count})`}
+        aria-label=${`${label} (${count})`}
+        data-tooltip=${`${label} (${count})`}
         aria-pressed=${String(active)}
         @click=${() => this._toggle(color)}
       ><span class=${`td ${tdClass}`}></span><span class="count">${count}</span></button>`

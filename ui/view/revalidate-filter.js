@@ -128,7 +128,7 @@ class RevalidateFilter extends StateElement {
     return html`<button
       type="button"
       class=${classMap({ 'partial-cycle': true, [face.cls]: true })}
-      title=${face.title}
+      data-tooltip=${face.title}
       @click=${this._onPartial}
     >${face.label}</button>`
   }

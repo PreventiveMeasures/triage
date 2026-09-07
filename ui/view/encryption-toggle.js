@@ -58,15 +58,15 @@ function render() {
   button.classList.toggle('encrypted', enabled && unlocked)
   button.classList.toggle('locked-pending', enabled && !unlocked)
   if (enabled && unlocked) {
-    button.title = 'Encryption on — click to disable'
+    button.dataset.tooltip = 'Encryption on — click to disable'
     button.setAttribute('aria-label', 'Disable encryption')
     litRender(LOCKED_ICON, button)
   } else if (enabled) {
-    button.title = 'Encryption on, locked — click to unlock'
+    button.dataset.tooltip = 'Encryption on, locked — click to unlock'
     button.setAttribute('aria-label', 'Unlock encrypted data')
     litRender(LOCKED_ICON, button)
   } else {
-    button.title = 'Encryption off — click to enable'
+    button.dataset.tooltip = 'Encryption off — click to enable'
     button.setAttribute('aria-label', 'Enable encryption')
     litRender(UNLOCKED_ICON, button)
   }

@@ -32,7 +32,6 @@ class PrintButton extends StateElement {
     if (!visible) return nothing
     return html`<button
       type="button"
-      title="print this report"
       aria-label="print"
       @click=${this._onClick}
     >${PRINT_ICON}</button>`

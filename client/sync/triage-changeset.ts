@@ -5,7 +5,7 @@
 // module state, no `state.*`, no I/O — safe to unit-test in isolation.
 
 import { appsEqual, upstreamEqual } from '../triage-entry.ts'
-import type { UpstreamEntry } from '../state.ts'
+import type { UpstreamEntry } from '../triage-tracks.ts'
 import type { TriageEntry } from './host.ts'
 
 export type ConflictProperty = 'color' | 'triage' | 'comment' | 'fix' | 'flagged' | 'upstream'

@@ -14,6 +14,7 @@
 // when each entry lands.
 import { readFile } from './storage.js'
 import { analyzeReport } from '../report/index.js'
+import { LINKS_KIND, countLinkedIds, parseLinkedFindings } from './linked-findings.js'
 import { getItem as getSecureItem, setItem as setSecureItem } from './secure-storage.js'
 
 const COUNTS_KEY = 'deepview.fileCounts'
@@ -24,8 +25,13 @@ const COUNTS_KEY = 'deepview.fileCounts'
 // sticks forever — a piolium report imported before its parser existed
 // stayed bucketed under Claude Security while the report view titled it
 // Piolium. A version mismatch drops the whole blob; the sidebar's lazy
-// fill re-analyzes each file once. v2: piolium recognition.
-const COUNTS_VERSION = 2
+// fill re-analyzes each file once. v2: piolium recognition. v3: an
+// entry records the source it was ANALYZED as, `null` included, so a
+// report that names no producer stops reading as one never looked at.
+// v4: links files are recognized (see `analyzeContent`), so an entry
+// cached as an unrecognized report has to be re-analyzed to pick up
+// its `links` kind.
+const COUNTS_VERSION = 4
 
 // File-counts blob contains filenames, which we treat as sensitive
 // metadata (project names, sample identifiers). Reads go through
@@ -57,16 +63,26 @@ export function getCount(name) {
   return entryOf(name)?.count
 }
 
-// Returns the cached source marker for a file, e.g. `'deepsec'` or
-// `'claude-security'`. `undefined` means "not yet known" — the
-// sidebar falls back to extension-based bucketing in that case.
+// Returns the cached kind marker for a file, e.g. `'deepsec'`,
+// `'claude-security'` or `'links'`. Three answers, and the caller
+// (file-display.js groupOf) needs all three apart: the marker for a
+// report that names a producer — or for a links file, which is not a
+// report at all — `null` for a report that was analyzed and names no
+// producer (the analyzer's own dump), and `undefined` for a file
+// nothing has looked at yet, the only case where a guess from the
+// extension is better than nothing.
 export function getKind(name) {
   return entryOf(name)?.source
 }
 
+// `source` is whatever `analyzeContent` returned, `undefined` for a
+// native dump — stored as `null` so the entry says "analyzed, no
+// producer" rather than going silent about it. A legacy bare-number
+// entry (entryOf) still reads as `undefined`, which is what it is:
+// counted before the source was recorded at all.
 export function setCount(name, count, source) {
   const c = load()
-  c[name] = source ? { count, source } : { count }
+  c[name] = { count, source: source ?? null }
   persist()
 }
 
@@ -76,18 +92,34 @@ export function removeCount(name) {
   persist()
 }
 
-// Count entries in raw report content and identify the source format —
-// the report library's `analyzeReport` under this module's own name,
-// which is what the sidebar, the drop path and the sync download dialog
-// import from `#client/index.js`.
+// What is this file, and how many rows does it hold? The one answer
+// the sidebar, the drop path and the sync download dialog all import
+// from `#client/index.js`.
 //
-// Each `findings[]` entry may be a single Finding or a Finding[] (a
-// pre-deduped group from an upstream pass) — the sidebar count reflects
-// entries (matching what the user sees as rows in the table view), not
-// flattened member findings. `source` mirrors the parser's
-// `data.source` ('deepsec' / 'piolium' / 'claude-security') and is
-// `undefined` for analyzer-native JSON dumps.
+// Links files first, and they are cheap to rule out (a `JSON.parse`
+// plus a shape test that fails on the first entry of anything else —
+// no other format this app reads is a bare JSON array). A links file
+// is not a report, so it can't go through the report readers at all:
+// it reports its link count under the `links` kind, and the callers
+// that must not treat it as a report branch on that marker rather than
+// re-parsing.
+//
+// Otherwise the report library's `analyzeReport` under this module's
+// own name. Each `findings[]` entry may be a single Finding or a
+// Finding[] (a pre-deduped group from an upstream pass) — the sidebar
+// count reflects entries (matching what the user sees as rows in the
+// table view), not flattened member findings. `source` mirrors the
+// parser's `data.source` ('deepsec' / 'piolium' / 'claude-security')
+// and is `undefined` for analyzer-native JSON dumps.
 export function analyzeContent(content) {
+  const links = parseLinkedFindings(content)
+  if (links) {
+    // The count is LINKED FINDINGS, not links — the same number the
+    // Links view leads with, and the one that answers "how much of my
+    // triage does this file touch". A link count would read as a row
+    // count next to a report's, which it isn't.
+    return { count: countLinkedIds(links.groups), source: LINKS_KIND, recognized: true }
+  }
   return analyzeReport(content)
 }
 

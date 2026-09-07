@@ -53,9 +53,10 @@
        because the findings body slot owns its own overflow (see the
        `@media not print` block below). `.bundles-view` /
        `.packages-view` covers both the regular list view and the
-       slide variant (which carries both classes). */
+       slide variant (which carries both classes). `.links-view`
+       scrolls its list of links the same way. */
     &:has(
-      .bundles-view, .packages-view,
+      .bundles-view, .packages-view, .links-view,
       .findings-content
     ) { flex-shrink: 1; }
   }
@@ -338,10 +339,15 @@
    2 fr split (1200 list + 800 panel = 2000 max). */
 /* `display: contents` flattens the slot wrapper render() emits so
    the flex chain from #report reaches .bundles-view directly — same
-   pattern the graph view uses for #findings-graph-slot. */
+   pattern the graph view uses for #findings-graph-slot. Every
+   internally-scrolling page needs it: without the flattening the
+   plain slot div is the flex item, the view inside it is
+   content-sized, and its `flex: 1` list grows past the viewport
+   instead of scrolling. */
 #bundles-slot { display: contents; }
 #packages-slot { display: contents; }
 #repositories-slot { display: contents; }
+#links-slot { display: contents; }
 
 /* Bundle slide — full-width view for Graph / Issues: header bar
    (back button + bundle name + sub-tab switcher) on top, active

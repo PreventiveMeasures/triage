@@ -1,7 +1,7 @@
 import { LitElement, html, render as litRender, nothing, unsafeCSS } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { CONFIG_PATH, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, getCount, getPackagesIndex, getRepositoriesIndex, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, parseServerInfo, readCachedServerInfo, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, state, writeCachedServerInfo } from '#client/index.js'
+import { CONFIG_PATH, LINKS_KIND, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, ensureLinkedFindingsIndexed, getCount, getPackagesIndex, getRepositoriesIndex, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, parseServerInfo, readCachedServerInfo, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, state, writeCachedServerInfo } from '#client/index.js'
 import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, setSyncForceDisabled, triageSync } from './client-sync.js'
 import { fetchReport as fetchManagedReport, login as managedLogin, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams } from './client-managed.js'
 import { loadAdminBundle } from './client-admin.js'
@@ -33,7 +33,7 @@ import { openDetachBundleDialog } from './dialogs/detach-bundle-dialog.js'
 import { openDetachReportDialog } from './dialogs/detach-report-dialog.js'
 import { openPersistenceDegradedDialog } from './dialogs/persistence-degraded-dialog.js'
 import { openProxyAuthDialog } from './dialogs/proxy-auth-dialog.js'
-import { FILE_ICONS, displayName, groupOf } from './file-display.js'
+import { FILE_ICONS, displayName, groupOf, isLinksFile } from './file-display.js'
 import { BUNDLE_ICON_SVG, WORKSPACE_ICON_SVG } from './icons.js'
 import { openBundle, selectBundle } from './bundle-load.js'
 import { installGlobalTooltipListener, installShadowTooltipListener } from './tooltip.js'
@@ -119,18 +119,24 @@ let isDraggingBundle = false
 // (deduplicate output, single-run output, etc.) without naming the
 // pipeline. Named buckets carry the upstream's product name —
 // DeepSec is Vercel's tool (https://github.com/vercel-labs/deepsec);
-// Piolium is Vigolium's (https://github.com/vigolium/piolium).
+// Piolium is Vigolium's (https://github.com/vigolium/piolium). "Links"
+// is the odd one out and deliberately so: it isn't a producer, it's a
+// different KIND of file — one that names findings in the reports
+// above it rather than carrying any (client/linked-findings.js).
 const GROUP_LABELS = {
   'default': 'Reports',
   'claude-security': 'Claude Security',
   'codex-security': 'Codex Security',
   'deepsec': 'DeepSec',
   'piolium': 'Piolium',
+  [LINKS_KIND]: 'Links',
 }
 
 // Render order for buckets — default (analyzer dumps) first, then
-// named sources in alphabetical-ish reading order.
-const GROUP_ORDER = ['default', 'claude-security', 'codex-security', 'deepsec', 'piolium']
+// named sources in alphabetical-ish reading order, and Links last:
+// it's about the reports above it, so it reads as their footnote
+// rather than as another one of them.
+const GROUP_ORDER = ['default', 'claude-security', 'codex-security', 'deepsec', 'piolium', LINKS_KIND]
 
 
 // Live module state — the search-box query, applied as a
@@ -147,7 +153,8 @@ function fileItemTemplate(n, opts = {}) {
   // as a stale state. The same suppression applies to the
   // workspace-row template below.
   const isCurrent = n === state.currentFile
-    && (state.currentView === 'findings' || state.currentView === 'files')
+    && (state.currentView === 'findings' || state.currentView === 'files'
+      || state.currentView === 'links')
   const cls = `file-item${isCurrent ? ' current' : ''}${opts.indented ? ' indented' : ''}`
   const label = displayName(n)
   const count = getCount(n)
@@ -188,7 +195,7 @@ function workspaceHeaderTemplate() {
   // surface is coming — so drop the "+" affordance there.
   const actions = state.serverMode === 'managed'
     ? nothing
-    : html`<span class="workspace-header-actions"><button type="button" class="workspace-add" data-action="new-workspace" title="Create a new workspace" aria-label="Create a new workspace">${WORKSPACE_PLUS_ICON}</button></span>`
+    : html`<span class="workspace-header-actions"><button type="button" class="workspace-add" data-action="new-workspace" aria-label="Create a new workspace">${WORKSPACE_PLUS_ICON}</button></span>`
   return html`<li class="file-group-header workspace-header"><span class="group-label">Workspaces</span>${actions}</li>`
 }
 
@@ -370,7 +377,7 @@ function workspaceItemTemplate(w) {
   // their copy). No placeholder trash icon for the eventual
   // server-side "delete the chain too" (TBD): it would misread as
   // "Delete is the same action as Leave, just greyed out".
-  return html`<li class=${cls} data-workspace-id=${w.id}><button type="button" class="file-name">${WORKSPACE_ICON}<span class="file-label" .textContent=${w.name}></span></button><button type="button" class="workspace-share" data-action="share-workspace" title="Share by link" aria-label="Share workspace by link">${WORKSPACE_SHARE_ICON}</button><button type="button" class="workspace-export" data-action="export-workspace" title="Export workspace" aria-label="Export workspace">${WORKSPACE_EXPORT_ICON}</button><button type="button" class="workspace-leave" data-action="leave-workspace" title="Leave workspace" aria-label="Leave workspace">${WORKSPACE_LEAVE_ICON}</button></li>`
+  return html`<li class=${cls} data-workspace-id=${w.id}><button type="button" class="file-name">${WORKSPACE_ICON}<span class="file-label" .textContent=${w.name}></span></button><button type="button" class="workspace-share" data-action="share-workspace" data-tooltip="Share by link" aria-label="Share workspace by link">${WORKSPACE_SHARE_ICON}</button><button type="button" class="workspace-export" data-action="export-workspace" data-tooltip="Export workspace" aria-label="Export workspace">${WORKSPACE_EXPORT_ICON}</button><button type="button" class="workspace-leave" data-action="leave-workspace" data-tooltip="Leave workspace" aria-label="Leave workspace">${WORKSPACE_LEAVE_ICON}</button></li>`
 }
 
 function matchesSearch(name) {
@@ -405,6 +412,11 @@ export async function renderSidebar() {
   // in-flight promise; subsequent calls walk listFiles again to
   // pick up any newly-dropped reports.
   ensureBundleFindingsIndexed().catch(() => {})
+  // Same deal for the links index, and the same reason to kick it
+  // here rather than from a view: a finding's "Duplicates:" row is
+  // painted by the findings surfaces, which know nothing about links
+  // files, so the index has to be filling before the user opens one.
+  ensureLinkedFindingsIndexed().catch(() => {})
   const names = await listFiles()
   const workspaces = listWorkspaces()
   const bundleNames = await listBundles()
@@ -413,6 +425,10 @@ export async function renderSidebar() {
   // the OPFS scan. Updated on every sidebar render — drops, deletes,
   // and switchToFile all refresh through here.
   state.bundles = bundleNames
+  // Same for the report-directory listing: the sync badge asks which
+  // of a workspace's members are on this device (view/sync-scope.js)
+  // while painting, and can't await an OPFS scan to find out.
+  state.storedFiles = names
   // Keep the storage-status line's usage number roughly in step with
   // whatever mutation triggered this repaint (drops, deletes, bundle
   // ops, sync downloads). Debounced inside the module; no-op before
@@ -795,7 +811,13 @@ async function onSidebarClick(e) {
     // the click should drop them back into the findings view for
     // that report. Without the currentView check we'd noop and
     // strand the user on the bundles view.
-    if (name && (name !== state.currentFile || state.currentView !== 'findings')) {
+    //
+    // 'links' counts as "already showing this file" alongside
+    // 'findings': it IS the view of the clicked row when the row is a
+    // links file, so re-clicking it should no-op the way re-clicking
+    // an open report does, not re-read and repaint.
+    const showingFile = state.currentView === 'findings' || state.currentView === 'links'
+    if (name && (name !== state.currentFile || !showingFile)) {
       switchToFile(name)
     }
     return
@@ -875,18 +897,22 @@ async function onSidebarClick(e) {
       .filter((w) => isInRemoteOrCached(w.id, name))
       .map((w) => w.id)
     const inRemote = remoteWorkspaceIds.length > 0
-    const { confirmed, triage } = await openDeleteReportDialog({ name, triageImpact, inRemote })
+    // A links file is deleted through the same button and the same
+    // dialog, but it is not a report — name it for what it is so the
+    // prompt doesn't claim the user is about to lose findings.
+    const kindLabel = isLinksFile(name) ? 'links file' : 'report'
+    const { confirmed, triage } = await openDeleteReportDialog({ name, kindLabel, triageImpact, inRemote })
     if (!confirmed) return
     // The active file may have changed under us (cross-tab switch /
     // sibling-tab delete) while the dialog was open. Bail rather than
     // deleting whatever's current now — the user confirmed deletion of
     // the file shown in the dialog, not whatever just slid into place.
     if (state.currentFile !== name) {
-      alert(`Active report changed during confirmation; aborting delete of "${name}".`)
+      alert(`Active file changed during confirmation; aborting delete of "${name}".`)
       return
     }
     try { await deleteCurrent({ triage, deleteFromRemoteWorkspaceIds: remoteWorkspaceIds }) }
-    catch (err) { alert(`Failed to delete report: ${err.message}`) }
+    catch (err) { alert(`Failed to delete ${kindLabel}: ${err.message}`) }
     return
   }
   if (e.target.closest('#sync-status')) {
@@ -948,8 +974,12 @@ async function onSidebarClick(e) {
 // lives inside the shadow root (events don't reach the document-
 // level global handler with their original target across the shadow
 // boundary), so `mount()` attaches the shared scoped listener
-// (`installShadowTooltipListener`) to `#file-list` with the options
-// below.
+// (`installShadowTooltipListener`) to the shadow root with the
+// options below. Root-wide rather than `#file-list`-scoped because
+// the search row's `<sidebar-view-button>`s carry tooltips too, and
+// they sit outside the list; the gate is a no-op for any node without
+// a `.file-label`, so file rows behave exactly as they did when the
+// listener hung off the list.
 //
 // Gate: when the tooltip text is just the label text (the common
 // case for short report filenames), suppress the tooltip when the
@@ -1116,7 +1146,7 @@ function renderSyncStatus(status) {
     triageSync.setProtocolLocked(true)
     btn.hidden = false
     btn.dataset.status = 'paused'
-    btn.title = 'This server speaks a different sync protocol than this app is set up for. Switching isn’t supported yet.'
+    btn.dataset.tooltip = 'This server speaks a different sync protocol than this app is set up for. Switching isn’t supported yet.'
     const mismatchLabel = btn.querySelector('.sync-label')
     if (mismatchLabel) mismatchLabel.textContent = 'Sync paused'
     return
@@ -1200,11 +1230,16 @@ function renderSyncStatus(status) {
   // Keep the label to the status word — the action row is tight (it
   // wraps). The amber ring + this tooltip carry the degraded signal in
   // the badge; the one-shot dialog explains it in full.
-  btn.title = degraded
+  // Empty means "no tooltip" — delete the attribute rather than
+  // leaving an empty one, so the element stops matching
+  // `[data-tooltip]` and the hover never schedules a no-op show.
+  const syncTip = degraded
     ? 'Not saving to this browser right now (storage may be full, or another tab is on a newer version). Changes that haven’t synced could be lost on reload.'
     : proxyAuth
       ? 'Can’t reach the sync server — the connection is being redirected to a sign-in proxy (e.g. Cloudflare Access). Reload the page to sign in again.'
       : ''
+  if (syncTip) btn.dataset.tooltip = syncTip
+  else delete btn.dataset.tooltip
   const label = btn.querySelector('.sync-label')
   if (label) label.textContent = SYNC_LABELS[s] ?? ''
 }
@@ -1668,7 +1703,7 @@ function mount(host) {
   root.addEventListener('dragover', onSidebarDragover)
   root.addEventListener('dragleave', onSidebarDragleave)
   root.addEventListener('drop', onSidebarDrop)
-  installShadowTooltipListener(fileList, SIDEBAR_TOOLTIP_OPTIONS)
+  installShadowTooltipListener(root, SIDEBAR_TOOLTIP_OPTIONS)
   root.querySelector('#sidebar-search-input')?.addEventListener('input', onSearchInput)
   positionUserMenuOnOpen()
   renderSyncStatus(triageSync.status)
@@ -1711,7 +1746,7 @@ class AppSidebar extends LitElement {
           <span class="brand-tag">dev</span>
         </h2>
         <button id="encryption-toggle" type="button" hidden></button>
-        <button id="sidebar-toggle" type="button" title="toggle sidebar" aria-label="toggle sidebar">
+        <button id="sidebar-toggle" type="button" aria-label="toggle sidebar">
           <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">
             <path d="M2 4h12v1.5H2zM2 7.25h12v1.5H2zM2 10.5h12V12H2z"/>
           </svg>

@@ -23,8 +23,11 @@
 //   loadFindings  — parsed, flattened, and every finding carrying an id
 //
 // `analyzeReport` is `readReport` for a file list — entry count and
-// producer — and `backfillFindingIds` is the id step on its own, for a
-// caller that has to interleave something with it.
+// producer — `reportEntries` is a report's entry list whichever of the
+// two names it goes under (`findings` or `groups`), for a caller that
+// has to keep the grouping rather than flatten it, and
+// `backfillFindingIds` is the id step on its own, for a caller that
+// has to interleave something with it.
 //
 // And one for writing: `writeMarkdown` takes findings — the parsers'
 // own objects, grouped as the viewer groups them — with whatever the
@@ -45,12 +48,21 @@
 // which splits it into one JSON-shaped report per scan, and each of
 // those reads through the readers like any other JSON report.
 //
-// The pieces stay importable on their own — `report/parse-md.js`,
-// `report/md-structure.js`, `report/finding-id.js` — for tests, and for
-// a caller that wants one helper without pulling the chain in behind it
-// (ui/view/format.js does exactly that: it rides a lazily-loaded bundle
-// and takes only the markdown structure helpers). Through the package
-// name the same files are `@preventive/report/parse-md.js` and so on.
+// THIS FILE IS THE WHOLE SURFACE. The modules live in `src/` and the
+// package exports one path — `@preventive/report`, this file — so
+// everything a caller may hold is named here, in one list, and
+// everything else is free to move, split or be renamed without
+// breaking anyone. A consumer that wants `fenceRanges` or
+// `findingTitle` imports it from here beside `loadFindings`; there is
+// no second, deeper way in, inside this repo or out of it.
+//
+// That is a deliberate trade against the old shape, where every module
+// was its own entry point. What it costs is the ability to reach past
+// this list; what it buys is that the list IS the contract. Nothing is
+// pulled in that a caller doesn't use: every module here is
+// side-effect-free (`sideEffects: false` in package.json — the whole
+// file is declarations), so a bundler drops what a caller never names,
+// and `ui/view/format.js` still rides its lazily-loaded chunk.
 //
 // This directory is its own package (see package.json beside this
 // file) and imports nothing outside itself: no DOM, no app state, no
@@ -59,25 +71,51 @@
 // viewer — the analyzer stamps its ids with the same `findingId` the
 // viewer derives them with, so both sides agree on what a finding IS
 // — and `node --test` in this directory runs its suite with nothing
-// else installed.
+// else installed — and nothing outside this directory reaches into it,
+// tests included: every test of this library lives in `report/tests/`.
+// Those come through the door like any other caller, except where they
+// exercise an internal this file doesn't export; those name `../src/`,
+// which is what they are testing.
 
-import { parseDeepsecFindings } from './parse-deepsec.js'
-import { parseDeepviewMarkdown } from './parse-deepview-md.js'
-import { parseMarkdownFindings } from './parse-md.js'
-import { parsePioliumFindings } from './parse-piolium.js'
-import { deriveFindingId } from './finding-id.js'
+import { parseDeepsecFindings } from './src/parse-deepsec.js'
+import { parseDeepviewMarkdown } from './src/parse-deepview-md.js'
+import { parseMarkdownFindings } from './src/parse-md.js'
+import { parsePioliumFindings } from './src/parse-piolium.js'
+import { deriveFindingId } from './src/finding-id.js'
 
 // The rest of the surface, so a consumer needs one import: the codex
 // splitter, the id helpers the analyzer shares with the viewer, and the
 // run-meta projection a caller applies to the findings it loads.
-export { parseCodexCsvToScans } from './parse-codex.js'
-export { computeFileHash, deriveFindingId, findingId } from './finding-id.js'
-export { META_FIELDS, inheritReportMeta, reportRepoGithub } from './meta.js'
+export { parseCodexCsvToScans } from './src/parse-codex.js'
+export { computeFileHash, deriveFindingId, findingId } from './src/finding-id.js'
+export { META_FIELDS, inheritReportMeta, reportRepoGithub } from './src/meta.js'
 // The writing side: the document writer, and the label tables it
 // spells the app's enumerations with, for the viewer's surfaces that
 // describe the same things in prose.
-export { writeMarkdown } from './write-md.js'
-export { COLOR_LABELS, SEVERITY_LABELS, SOURCE_LABELS, TRIAGE_LABELS, UPSTREAM_LABELS, severityLabel } from './labels.js'
+export { writeMarkdown } from './src/write-md.js'
+export { COLOR_LABELS, SEVERITY_LABELS, SOURCE_LABELS, TRIAGE_LABELS, UPSTREAM_LABELS, severityLabel } from './src/labels.js'
+
+// Reading a finding: what a finding IS, asked of one. The card, the
+// row, the filters and the writer all ask the same questions of the
+// same object — which tier does this display under, what is its name,
+// where does it sit, what did the pass say about it — and they ask
+// them here, so a parser's output and every surface that renders it
+// can't drift on the answers.
+export {
+  REVALIDATE_KINDS, SEVERITIES, SEVERITY_ORDER, correctedVariants, descriptionSections,
+  displayedSeverity, effectiveSeverity, evidenceNote, findingDisplayName, findingTitle,
+  firstLine, hasSeverityCorrection, locationLabel, prettyModel, revalidateKindOf,
+  runMetaLine, splitDescription, stripExportMarker, titledDescription,
+} from './src/finding.js'
+
+// The structural-markdown helpers, for a caller rendering the prose a
+// parser handed back: where the fences are (so a `## ` inside a
+// snippet stays in the snippet), and the escapes markdown puts on a
+// name. The viewer's own markdown rendering (ui/view/format.js,
+// export-view-chunks.js) reads the document's shape with these rather
+// than keeping a second, subtly different set.
+export { fenceRanges, inFence, unescapeMd } from './src/md-structure.js'
+export { isHttpUrl } from './src/md-text.js'
 
 // The markdown chain, in dispatch order: tightest guard first. This
 // library's own document opens on a marker line no other format has;
@@ -107,7 +145,16 @@ const MARKDOWN_FORMATS = [
 // document carries neither as an array — which is how a JSON file that
 // isn't a report at all (or a report with a malformed list) is told
 // apart from an empty one.
-function entriesOf(data) {
+//
+// Exported because a report is two shapes and only one of them is
+// called `findings`: a caller reading `data.findings` alone sees an
+// empty report wherever the entries are groups — which is every
+// deduplicated dump, and every export of a view that merged a finding
+// reported twice (parse-deepview-md.js writes `groups` for exactly
+// those). `loadFindings` is the answer for a caller that wants the
+// member findings; this is the one for a caller that has to keep the
+// grouping, as the viewer's ingest does.
+export function reportEntries(data) {
   if (Array.isArray(data?.findings)) return data.findings
   if (Array.isArray(data?.groups)) return data.groups
   return null
@@ -145,7 +192,7 @@ export function readReport(content) {
   let jsonError
   try {
     const data = JSON.parse(content)
-    if (entriesOf(data)) return { data, format: 'json', reason: null }
+    if (reportEntries(data)) return { data, format: 'json', reason: null }
     return { data: null, format: null, reason: 'JSON, but not a report: no findings array' }
   } catch (err) {
     jsonError = err
@@ -169,7 +216,7 @@ export function readReport(content) {
 export function analyzeReport(content) {
   const { data } = readReport(content)
   if (!data) return { count: 0, recognized: false }
-  return { count: entriesOf(data).length, source: data.source, recognized: true }
+  return { count: reportEntries(data).length, source: data.source, recognized: true }
 }
 
 // Entries → member findings. A group contributes its members; falsy
@@ -200,7 +247,7 @@ export async function backfillFindingIds(findings) {
 export async function loadFindings(content) {
   const { data, format } = readReport(content)
   if (!data) return null
-  const findings = flattenFindings(entriesOf(data))
+  const findings = flattenFindings(reportEntries(data))
   await backfillFindingIds(findings)
   return { format, data, findings }
 }

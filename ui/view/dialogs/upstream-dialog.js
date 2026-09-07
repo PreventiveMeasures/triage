@@ -173,7 +173,7 @@ class UpstreamDialog extends AppDialog {
             @keydown=${this._onKeydown}
           >
           ${openable
-            ? html`<a class="open" href=${link} target="_blank" rel="noopener noreferrer" title="Open in a new tab">Open ↗</a>`
+            ? html`<a class="open" href=${link} target="_blank" rel="noopener noreferrer">Open ↗</a>`
             : nothing}
         </div>
       </div>

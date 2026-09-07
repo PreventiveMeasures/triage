@@ -6,6 +6,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS } from './file-display.js'
 import { FOCUS_SPLIT_MAX, FOCUS_SPLIT_MIN, listBundles, listWorkspaces, state } from '#client/index.js'
 import { isBundleInRemote, isInRemote, remoteCount, triageSync } from './client-sync.js'
+import { installShadowTooltipListener } from './tooltip.js'
 import { dropZone, report } from './dom.js'
 import { SEVERITIES, configureDepsDir, configureRevalidation, displayedSeverity, fileLink, findingDisplayName, findingTitle, formatRunMeta, hasRevalidateField, hasSeverityCorrection, isHttpUrl, isModule, lineLink, lineRangeLabel, reachableRevalidateFilters, revalidateKind } from './format.js'
 import { activeTabFor, findingRepoFallback, getMergedGroups, groupKey, groupState, primaryTab, tabKey } from './group.js'
@@ -22,6 +23,8 @@ import { attachTerminal } from './terminal-attach.js'
 import { packageOf } from './graph/utils.js'
 import { renderPackagesView } from './render-packages.js'
 import { renderRepositoriesView } from './render-repositories.js'
+import { renderLinksView } from './render-links.js'
+import { resolveWorkspaceContext } from './sync-scope.js'
 import {
   buildBundleGraphData,
   countBundleTriageBuckets,
@@ -313,7 +316,6 @@ function headerTemplate(mergedGroups, fileNames, repoInputUseful, knownRepo, tre
         type="button"
         class=${classMap({ 'files-toggle-btn': true, active: filesActive })}
         data-action="toggle-files"
-        title=${filesActive ? 'exit files view' : 'show files'}
         aria-pressed=${String(filesActive)}
       >${`Files: ${treeFileCount}`}</button>`
     : nothing
@@ -330,6 +332,13 @@ function headerTemplate(mergedGroups, fileNames, repoInputUseful, knownRepo, tre
   </header>`
 }
 
+// Views this badge is rendered into. A defence rather than a rule —
+// its two call sites (the findings page header, and the links view's
+// header, which takes it as a template) already decide where it goes;
+// this keeps a future third one from surfacing it somewhere the
+// workspace context means nothing.
+const SYNC_BADGE_VIEWS = new Set(['findings', 'files', 'links'])
+
 // Sync-status badge — renders into the title h1 alongside the
 // file-chip / repo-chip so it sits on the same baseline. Two
 // shapes:
@@ -341,8 +350,10 @@ function headerTemplate(mergedGroups, fileNames, repoInputUseful, knownRepo, tre
 //
 //   - Workspace view: two side-by-side chunks "N cloud / M local"
 //     inside an outer <div>. `N` is the workspace's full remote
-//     inventory size (synced + remote-only); `M` is the
-//     locally-loaded report count (synced + local-only).
+//     inventory size (synced + remote-only); `M` is its members
+//     that are on this device (synced + local-only — see
+//     view/sync-scope.js for why that is membership rather than the
+//     loaded reports).
 //     - Click "cloud" → download dialog scoped to remote-only
 //       reports (non-interactive if every remote file is local).
 //     - Click "local" → upload dialog scoped to local-only
@@ -357,7 +368,7 @@ function headerTemplate(mergedGroups, fileNames, repoInputUseful, knownRepo, tre
 // local and remote counts are zero.)
 function syncBadgeTemplate() {
   if (triageSync.status !== 'online') return nothing
-  if (state.currentView !== 'findings' && state.currentView !== 'files') return nothing
+  if (!SYNC_BADGE_VIEWS.has(state.currentView)) return nothing
   const wsContext = resolveWorkspaceContext()
   if (!wsContext) return nothing
   const { workspaceId, fileNames, mode } = wsContext
@@ -482,7 +493,7 @@ function badgeChipButton({ status, label, title, onClick }) {
     type="button"
     class="report-sync-badge report-sync-badge-clickable"
     data-status=${status}
-    title=${title}
+    data-tooltip=${title}
     aria-label=${`report sync status: ${label}`}
     @click=${onClick}
   >${icon}${labelTpl}</button>`
@@ -518,28 +529,6 @@ async function openUploadFromBadge({ workspaceId, items }) {
     }
   }
   await openSyncUploadDialog({ workspaceId, items })
-}
-
-// Resolve which workspace + which loaded report file-names the
-// sync-status badge applies to. `mode` differentiates a single-file
-// view (one report from a workspace) from a workspace-merged view
-// (every loaded report) so the badge template can pick between the
-// `local` / `cloud` shape and the "N cloud / M local" aggregate.
-// Returns `null` if the active view isn't a report-in-workspace.
-function resolveWorkspaceContext() {
-  if (state.currentWorkspace) {
-    return {
-      mode: 'workspace',
-      workspaceId: state.currentWorkspace,
-      fileNames: state.reports.map((r) => r.fileName).filter((n) => typeof n === 'string'),
-    }
-  }
-  if (state.currentFile) {
-    const ws = listWorkspaces().find((w) => Array.isArray(w.reports) && w.reports.includes(state.currentFile))
-    if (!ws) return null
-    return { mode: 'single', workspaceId: ws.id, fileNames: [state.currentFile] }
-  }
-  return null
 }
 
 // Stats — clickable filter chips: severity on the left, mark-color on
@@ -877,10 +866,10 @@ function kanbanCardTemplate(g, opts = {}) {
   let action = nothing
   if (isKanban && fix) {
     action = isHttpUrl(fix)
-      ? html`<a class="kanban-action kanban-fix-link" href=${fix} target="_blank" rel="noopener noreferrer" draggable="false" title=${`Open fix link: ${fix}`} aria-label=${`Open fix link: ${fix}`}>${FIX_ICON}</a>`
-      : html`<button type="button" class="kanban-action mark-fix" title=${`Edit fix link: ${fix}`} aria-label=${`Edit fix link: ${fix}`}>${FIX_ICON}</button>`
+      ? html`<a class="kanban-action kanban-fix-link" href=${fix} target="_blank" rel="noopener noreferrer" draggable="false" data-tooltip=${`Open fix link: ${fix}`} aria-label=${`Open fix link: ${fix}`}>${FIX_ICON}</a>`
+      : html`<button type="button" class="kanban-action mark-fix" data-tooltip=${`Edit fix link: ${fix}`} aria-label=${`Edit fix link: ${fix}`}>${FIX_ICON}</button>`
   } else if (isKanban && comment) {
-    action = html`<button type="button" class="kanban-action mark-comment" title=${`Edit comment: ${comment}`} aria-label=${`Edit comment: ${comment}`}>${COMMENT_ICON}</button>`
+    action = html`<button type="button" class="kanban-action mark-comment" data-tooltip=${`Edit comment: ${comment}`} aria-label=${`Edit comment: ${comment}`}>${COMMENT_ICON}</button>`
   }
   const inner = html`<div class="kanban-badge-col">
       <span
@@ -1031,7 +1020,7 @@ function focusMainTemplate(group, corner = nothing) {
         aria-valuemin=${FOCUS_SPLIT_MIN}
         aria-valuemax=${FOCUS_SPLIT_MAX}
         aria-valuenow=${Math.round(state.focusSplit)}
-        title="Drag to resize · double-click to reset"
+        data-tooltip="Drag to resize · double-click to reset"
       ></div>
       <div class="focus-pane focus-pane-code">
         ${code.loading
@@ -1249,7 +1238,7 @@ function findingsBodyTemplate(filtered) {
       ${selectedGroup ? html`<aside class="findings-table-details" id="findings-table-details">
         <header class="findings-table-details-bar">
           <span class="findings-table-details-label">Details</span>
-          <button type="button" class="findings-table-details-close" data-table-deselect title="Close details" aria-label="Close details">×</button>
+          <button type="button" class="findings-table-details-close" data-table-deselect aria-label="Close details">×</button>
         </header>
         <div class="findings-table-details-body">${findingCardPlaceholder(selectedGroup)}</div>
       </aside>` : nothing}
@@ -1306,7 +1295,6 @@ function findingsBodyTemplate(filtered) {
               class="focus-nav-btn"
               data-focus-nav="prev"
               ?disabled=${atStart}
-              title="Previous finding (←)"
               aria-label="Previous finding"
             >${PREV_ICON}</button>
             <span class="count">${focusedIdx + 1} / ${filtered.length}</span>
@@ -1315,7 +1303,6 @@ function findingsBodyTemplate(filtered) {
               class="focus-nav-btn"
               data-focus-nav="next"
               ?disabled=${atEnd}
-              title="Next finding (→)"
               aria-label="Next finding"
             >${NEXT_ICON}</button>
           </div>
@@ -1411,7 +1398,7 @@ function findingsBodyTemplate(filtered) {
               class="kanban-expand"
               data-kanban-expand=${c.key}
               aria-pressed=${isExpanded}
-              title=${isExpanded ? 'Show all columns' : `Show only ${c.label}`}
+              data-tooltip=${isExpanded ? 'Show all columns' : `Show only ${c.label}`}
               aria-label=${isExpanded ? 'Show all columns' : `Show only ${c.label}`}
             >${isExpanded ? COLLAPSE_ICON : EXPAND_ICON}</button>
           </div>
@@ -1714,11 +1701,53 @@ function renderImpl() {
     document.title = 'DeepView — repositories'
     return
   }
+  // Links view — one dropped links file, listing which findings it
+  // ties together and which reports hold them (render-links.js). Sits
+  // with the other paint-only branches because it reads no loaded
+  // report: a links file carries no findings, so `state.reports` is
+  // empty the whole time it's up and the gate below would drop it.
+  //
+  // `currentLinks` is set alongside the view by `switchToFile`, but a
+  // path that clears one without the other (or a future one that
+  // forgets to) would leave an empty page with no way out; fall back
+  // to findings rather than paint nothing, matching how the bundles
+  // branch handles losing its list.
+  if (state.currentView === 'links') {
+    if (state.currentLinks) {
+      const slot = ensureReportSlot('links-slot')
+      // The badge is built here, not there: it reads the workspace /
+      // remote state this module already holds, and a links file has
+      // the same claim on it as a report — it is a workspace member
+      // like any other, and its page is the one place that can say
+      // whether this device has shared it yet.
+      if (slot) litRender(renderLinksView(syncBadgeTemplate()), slot)
+      report.classList.add('active')
+      dropZone.classList.add('hidden')
+      document.title = `DeepView — ${state.currentLinks.name}`
+      return
+    }
+    state.currentView = 'findings'
+  }
   // Managed admin full pages — see ADMIN_VIEWS.
   const adminView = ADMIN_VIEWS[state.currentView]
   if (adminView) {
     const slot = ensureReportSlot(adminView.slot)
-    if (slot && !slot.firstElementChild) slot.append(document.createElement(adminView.tag))
+    if (slot && !slot.firstElementChild) {
+      const el = document.createElement(adminView.tag)
+      slot.append(el)
+      // The admin bundle is its own esbuild entry (no code splitting),
+      // so it can't import view/tooltip.js without duplicating the
+      // module — and with it the single `#styled-tooltip` node. Its
+      // role pickers / repo checkboxes carry `data-tooltip` inside
+      // shadow roots the document-level handler can't see, so wire the
+      // listener from here instead, on this bundle's instance, once
+      // the element has upgraded and painted.
+      void (async () => {
+        await customElements.whenDefined(adminView.tag)
+        await el.updateComplete
+        installShadowTooltipListener(el.renderRoot)
+      })().catch(() => {})
+    }
     report.classList.add('active')
     dropZone.classList.add('hidden')
     document.title = adminView.title

@@ -1,5 +1,5 @@
 import { render as litRender, nothing } from 'lit'
-import { analyzeContent, computeLinkHint, deleteBundle, deleteFile, deleteWorkspace, dropBundleFromHashIndex, getSecureItem, listBundles, listFiles, listWorkspaces, loadRepoUrlFor, pruneOrphanTriage, readFile, readFileBytes, removeCount, removeSecureItem, saveBundle, saveFile, saveRepoUrlFor, setBundleWorkspace, setCount, setReportWorkspace, setSecureItem, state, triageLoadPromise } from '#client/index.js'
+import { analyzeContent, computeLinkHint, deleteBundle, deleteFile, deleteWorkspace, dropBundleFromHashIndex, getSecureItem, listBundles, listFiles, listWorkspaces, loadRepoUrlFor, parseLinkedFindings, pruneOrphanTriage, readFile, readFileBytes, removeCount, removeSecureItem, saveBundle, saveFile, saveRepoUrlFor, setBundleWorkspace, setCount, setReportWorkspace, setSecureItem, state, triageLoadPromise } from '#client/index.js'
 import { closeWorkspace as closePresence, deleteBundleFromRemote, deleteFromRemote as deletePresence, isInRemoteOrCached, openWorkspace as openPresence, putFile, triageSync } from './client-sync.js'
 import { openImportConflictDialog } from './dialogs/import-conflict-dialog.js'
 import { dropZone, report } from './dom.js'
@@ -10,7 +10,7 @@ import { render } from './render.js'
 import { renderSidebar } from './sidebar.js'
 import { cleanupGraph2, graph2 } from './graph/state.js'
 import { openBundle, prefetchBundleHashes, selectBundle } from './bundle-load.js'
-import { backfillFindingIds, detectFormat, inheritReportMeta, parseCodexCsvToScans, readReport, reportRepoGithub } from '../../report/index.js'
+import { backfillFindingIds, detectFormat, inheritReportMeta, parseCodexCsvToScans, readReport, reportEntries, reportRepoGithub } from '../../report/index.js'
 import { importWorkspaceFromGzip } from './workspace-import.js'
 import { maybePromptFirstUse } from './first-import-prompt.js'
 import { openPasskeyUnlockDialog } from './dialogs/passkey-unlock-dialog.js'
@@ -79,6 +79,22 @@ function closeSessionsExcept(keepIds) {
       closePresence(info.workspaceId)
     }
   }
+}
+
+// Put the main pane back to the welcome surface without touching any
+// selection state — what a load that ended up with nothing to show
+// has to do, or the previous view stays up while the sidebar says the
+// user moved. `clearActiveView` below is the bigger hammer (it drops
+// the selection too) and paints through here.
+//
+// Findings go via Lit rather than `report.innerHTML = ''` so the
+// cached parts on `#report` (slot reuse holds them across renders)
+// get cleaned up with the DOM — a bare innerHTML wipe would leave the
+// next render() walking a stale part-cache.
+function showEmptyMainPane() {
+  report.classList.remove('active')
+  litRender(nothing, report)
+  dropZone.classList.remove('hidden')
 }
 
 // OPFS `NotFoundError` (from `getFileHandle`) or the storage.js
@@ -285,6 +301,11 @@ async function addFiles(files) {
   // alongside a same-named workspace import would silently overwrite
   // the import's just-saved copy.
   const existingNames = new Set(await listFiles())
+  // Reports inside a raw reports export that no parser recognises.
+  // Collected rather than alerted per entry: a hand-edited export
+  // could hold many, and one dialog per name is not a report on the
+  // drop, it is a punishment for it.
+  const unreadable = []
   for (const file of files) {
     try {
       // Route plaintext gzip and encrypted bundles to workspace import
@@ -294,7 +315,30 @@ async function addFiles(files) {
       // a redownloaded `foo.deepview-workspace (1).enc` still routes here.
       const lower = stripDownloadDup(file.name.toLowerCase())
       if (lower.endsWith('.gz') || lower.endsWith('.deepview-workspace.enc')) {
-        await importWorkspaceFromGzip(file)
+        const imported = await importWorkspaceFromGzip(file)
+        // The raw reports export is not an import of its own — it is a
+        // drop of the reports that were in it. So they land here,
+        // through the same path a dragged-in report takes: recognised
+        // before anything is written, the rename / replace prompt on a
+        // name already taken, the count and source stamped for the
+        // sidebar, and the last one navigated to. `importReportContent`
+        // keeps `existingNames` current as it saves, so two entries of
+        // the same name inside one file see each other.
+        if (imported?.kind === 'reports') {
+          for (const r of imported.reports) {
+            if (typeof r?.name !== 'string' || !r.name || typeof r?.content !== 'string') continue
+            const result = analyzeContent(r.content)
+            // A report the viewer can't parse doesn't reach OPFS — the
+            // same gate a dragged-in file passes. One bad entry is not
+            // the file's fault, though, so the rest still land and the
+            // skipped names are named once at the end.
+            if (!result.recognized) { unreadable.push(r.name); continue }
+            const saved = await importReportContent({ name: r.name, content: r.content, existingNames })
+            if (!saved) continue
+            setCount(saved.name, result.count, result.source)
+            last = { name: saved.name, content: saved.content }
+          }
+        }
         // Refresh existing-names after the import's internal saveFiles
         // so a later same-named file in this drop hits the conflict
         // path instead of silently overwriting (see snapshot note above).
@@ -338,11 +382,18 @@ async function addFiles(files) {
       } else {
         // Validate before persisting — analyzeContent recognises
         // analyzer-native JSON, DeepSec, Piolium, and Claude / Codex /
-        // markdown imports. Anything else is rejected so we don't
-        // litter OPFS with files the report viewer can't parse.
+        // markdown imports, plus the links file (which is not a report:
+        // see client/linked-findings.js). Anything else is rejected so
+        // we don't litter OPFS with files nothing here can read.
+        //
+        // A links file needs no branch of its own on the way in: it is
+        // saved, conflict-resolved and counted through the same path a
+        // report takes, and it's `result.source` — cached by setCount,
+        // read back by `getKind` — that keeps the two apart afterwards,
+        // in the sidebar's bucket and in `switchToFile` below.
         const result = analyzeContent(content)
         if (!result.recognized) {
-          throw new Error('not a recognized DeepView, DeepSec, Piolium, Claude Security, or Codex report')
+          throw new Error('not a recognized DeepView, DeepSec, Piolium, Claude Security, or Codex report, and not a links file')
         }
         const imported = await importReportContent({ name: file.name, content, existingNames })
         if (!imported) continue
@@ -352,6 +403,10 @@ async function addFiles(files) {
     } catch (err) {
       alert(`Failed to load ${file.name}: ${err.message}`)
     }
+  }
+  if (unreadable.length > 0) {
+    const n = unreadable.length
+    alert(`Skipped ${n} report${n === 1 ? '' : 's'} no parser recognised: ${unreadable.join(', ')}`)
   }
   // renderSidebar refreshes state.bundles from OPFS so a just-imported
   // bundle is visible to the bundles view path below.
@@ -413,9 +468,14 @@ export async function switchToFile(name, content) {
   state.workspaceMerges = []
   state.currentFile = name
   state.currentWorkspace = null
+  state.currentLinks = null
   // Switching to a regular report drops out of the bundles / packages
-  // view — the user clicked a file row to see its findings.
-  if (state.currentView === 'bundles' || state.currentView === 'packages' || state.currentView === 'repositories') {
+  // / links view — the user clicked a file row to see its findings.
+  // (A links file lands back on 'links' below, once the read confirms
+  // that's what it is; going through 'findings' first means a report
+  // never inherits the previous file's view.)
+  if (state.currentView === 'bundles' || state.currentView === 'packages'
+      || state.currentView === 'repositories' || state.currentView === 'links') {
     state.currentView = 'findings'
   }
   // Per-report repo URL (see state.js / saveRepoUrlFor): the user's
@@ -507,7 +567,18 @@ export async function switchToFile(name, content) {
     }
     if (isStaleLoad(gen)) return
   }
-  await ingestReport(name, content, gen)
+  // A links file declares which findings are the same finding; it
+  // carries none of its own, so it never goes through `ingestReport`
+  // and `state.reports` stays empty. Its view (render-links.js) points
+  // at the findings in the reports that DO carry them.
+  const linked = parseLinkedFindings(content)
+  if (linked) {
+    state.currentLinks = { name, ...linked }
+    state.currentView = 'links'
+    render()
+  } else {
+    await ingestReport(name, content, gen)
+  }
   if (isStaleLoad(gen)) return
   // Open the session(s) AFTER ingest so buildWorkspaceIds sees the
   // freshly-loaded findings — otherwise it runs against the empty
@@ -547,8 +618,9 @@ export async function switchToWorkspace(workspaceId) {
   // sync subscription (rides `workspace-subscribe`), so presence ⊆ sync.
   closeSessionsExcept(new Set([workspaceId]))
   // Same drop-out as switchToFile — opening a workspace lands in
-  // findings, not the bundles / packages list.
-  if (state.currentView === 'bundles' || state.currentView === 'packages' || state.currentView === 'repositories') {
+  // findings, not the bundles / packages / links list.
+  if (state.currentView === 'bundles' || state.currentView === 'packages'
+      || state.currentView === 'repositories' || state.currentView === 'links') {
     state.currentView = 'findings'
   }
   // Same fire-and-forget prime as ingestReport, for the workspace half
@@ -558,6 +630,7 @@ export async function switchToWorkspace(workspaceId) {
   state.workspaceMerges = []
   state.currentFile = null
   state.currentWorkspace = workspaceId
+  state.currentLinks = null
   state.repoUrl = ''
   state.repoEditing = false
   resetGraph2()
@@ -570,11 +643,7 @@ export async function switchToWorkspace(workspaceId) {
   // reports, some bundles) get the same treatment — bundles render in
   // the sidebar; the workspace row itself is a no-op for the main pane
   // until reports land.
-  if (ws.reports.length === 0) {
-    report.classList.remove('active')
-    litRender(nothing, report)
-    dropZone.classList.remove('hidden')
-  }
+  if (ws.reports.length === 0) showEmptyMainPane()
   // Kick off every readFile concurrently up front, then ingest in
   // workspace order. The await inside the loop only blocks on each
   // report's bytes — slower reads continue in the background while
@@ -584,13 +653,25 @@ export async function switchToWorkspace(workspaceId) {
   // workspace.reports order. Per-read failures resolve to `null`
   // (caught at the promise) so one bad file doesn't reject the batch.
   const reads = ws.reports.map((name) => readFile(name).catch(() => null))
+  let ingested = 0
   for (let i = 0; i < ws.reports.length; i++) {
     const content = await reads[i]
     if (isStaleLoad(gen)) return
     if (content === null) continue
+    // A workspace holds whatever the user dragged into it, and a links
+    // file is a member like any other — but it carries no findings, so
+    // there is nothing to merge into the view and `ingestReport` would
+    // reject it as an unreadable report. Skip it here; its sidebar row
+    // under this workspace still opens it in its own view.
+    if (parseLinkedFindings(content)) continue
     await ingestReport(ws.reports[i], content, gen)
+    ingested++
     if (isStaleLoad(gen)) return
   }
+  // Nothing painted the main pane: every member was a links file, or
+  // unreadable. Same teardown as the empty workspace above — otherwise
+  // the previous view stays up while the sidebar says we moved.
+  if (ingested === 0 && ws.reports.length > 0) showEmptyMainPane()
   // Open the per-workspace sync session AFTER every report is ingested
   // — it needs a complete view of state.reports to build its
   // workspace-id set. No-op when sync is disabled (no server URL).
@@ -712,6 +793,7 @@ export async function deleteCurrent({ triage = 'keep', deleteFromRemoteWorkspace
 function clearActiveView() {
   state.currentFile = null
   state.currentWorkspace = null
+  state.currentLinks = null
   state.selectedBundle = null
   state.bundleDetails = null
   state.bundleSourceFile = null
@@ -724,13 +806,7 @@ function clearActiveView() {
   state.currentView = 'findings'
   resetGraph2()
   removeSecureItem(LAST_FILE_KEY)
-  report.classList.remove('active')
-  // Drop findings via Lit so cached parts on #report (slot-reuse holds
-  // them across renders) get cleaned up with the DOM. A bare
-  // `report.innerHTML = ''` would leave the next render() walking a
-  // stale part-cache.
-  litRender(nothing, report)
-  dropZone.classList.remove('hidden')
+  showEmptyMainPane()
   document.title = 'DeepView'
 }
 
@@ -996,13 +1072,22 @@ async function ingestReport(name, content, gen = null) {
         reason: dup.correctedSeverityReason,
       }
     }
+    // The report's entries, under whichever of the two names it files
+    // them (report/index.js reportEntries): `findings`, or `groups`
+    // for a report that arrives already deduplicated — a native dump
+    // that merged its runs, and every markdown export of a view that
+    // showed a finding as one card with several cases. Read as
+    // `data.findings` alone, those come out EMPTY, so a workspace
+    // export re-imported here would render as a report with nothing
+    // in it.
+    //
     // Derive deterministic ids for findings lacking one — must run
     // BEFORE the dedup loop so MD-imported (and id-less JSON) findings
     // dedupe by content like exporter-id'd ones, and so triage
     // (markers / deletions) persists across reloads of the same source.
     // Mutates the finding objects in place; `toGroup` returns them by
     // reference, so the ids are visible to the loop below.
-    const rawEntries = data.findings || []
+    const rawEntries = reportEntries(data) ?? []
     await backfillFindingIds(rawEntries.flatMap(toGroup))
     if (stale()) return
     // Per-report repo URL stamped on each finding so format.js's
@@ -1108,7 +1193,7 @@ async function ingestReport(name, content, gen = null) {
         // sentinel for the "no analyzer" bucket). A finding stamped with
         // its own `source` — a re-imported markdown export that mixed a
         // product's findings with the analyzer's own runs
-        // (report/parse-deepview-md.js) — is that product's.
+        // (report/src/parse-deepview-md.js) — is that product's.
         filled._analyzer = filled.source ?? data.source ?? (filled.type ?? null)
         if (filled.id && !idToFinding.has(filled.id)) idToFinding.set(filled.id, filled)
         stamped.push(filled)
@@ -1249,8 +1334,16 @@ function openFilePicker() {
     filePickerInput.multiple = true
     filePickerInput.hidden = true
     filePickerInput.addEventListener('change', () => {
-      const files = filePickerInput.files
-      if (files && files.length > 0) addFiles(files)
+      // Snapshot BEFORE the reset. `input.files` is a live FileList —
+      // the same object on every read — and `.value = ''` empties it
+      // ("empty the list of selected files"). `addFiles` is async: it
+      // suspends on its first await and returns a pending promise, so
+      // the reset below runs before it ever reaches its loop. Handing
+      // it the live list left it iterating an emptied one, and every
+      // picked file was silently dropped. An array serves it just as
+      // well — it only iterates the argument and reads each File.
+      const files = [...filePickerInput.files]
+      if (files.length > 0) addFiles(files)
       filePickerInput.value = ''
     })
     document.body.append(filePickerInput)

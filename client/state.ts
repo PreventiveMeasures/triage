@@ -1,6 +1,7 @@
 import { store } from '@rray/frontend/state-management'
 import { getItem as getSecureItem, mutate as mutateSecureItem, onAfterHydrate, setItem as setSecureItem } from './secure-storage.js'
 import { type ManagedServerInfo, type ServerMode, readCachedServerInfo } from './sync/server-mode.ts'
+import type { AppEntry, UpstreamEntry } from './triage-tracks.ts'
 
 export const VIEW_MODE_KEY = 'deepview.viewMode'
 export const SEVERITY_MODE_KEY = 'deepview.severityMode'
@@ -36,7 +37,21 @@ export type FocusCodePos = {
 // count / sort preference — never alters report data. See ui/view/format.js
 // (displayedSeverity) and <severity-mode-switch>.
 export type SeverityMode = 'corrected' | 'original'
-export type CurrentView = 'findings' | 'files' | 'bundles' | 'admin-users' | 'manage-repos' | 'manage-reports' | 'manage-bundles' | 'manage-teams'
+export type CurrentView = 'findings' | 'files' | 'bundles' | 'links' | 'admin-users' | 'manage-repos' | 'manage-reports' | 'manage-bundles' | 'manage-teams'
+
+// The links file the 'links' view is showing: its OPFS name and the
+// links it declares, one `string[]` of finding ids per link (see
+// client/linked-findings.js for the format, and `skipped` for the ids
+// in it that nothing here could ever follow). Null whenever that view
+// isn't up. Mutually exclusive with a loaded report in practice — a
+// links file carries no findings, so `state.reports` is empty while
+// this is set — but `currentFile` still names it, because it IS the
+// open file as far as the sidebar and the delete button are concerned.
+export type OpenLinksFile = {
+  name: string
+  groups: string[][]
+  skipped: number
+}
 export type TriageBucket = 'inprogress' | 'fixed' | 'invalid' | 'deleted'
 // One kanban board column. The four real triage buckets plus the two
 // pseudo-buckets the board also shows as columns: 'untriaged' (no
@@ -55,51 +70,11 @@ export type AnnotationFilterState = '' | 'with' | 'without'
 // nothing remains, so iteration / persistence / GC only ever see
 // meaningful ids. `ignoredReports` lists the report names in which the
 // finding is per-report ignored. `deleted` is the legacy persisted/wire
-// form, migrated to `triage: 'deleted'` on load and never written back
-// in-memory.
+// form, migrated to `triage: 'deleted'` on load.
 //
-// TWO TRACKS. A finding id is derived from the source's own bytes
-// (report/finding-id.js), so the SAME id is what every app shipping
-// that code reads — one dependency file, one entry, however many apps
-// pull it in. That makes a single "fixed" two different claims wearing
-// one word: "this app doesn't have the problem any more" (true here,
-// nowhere else) and "the code doesn't have the bug any more" (true
-// everywhere, and only the upstream can say it). Writing the first
-// into a shared entry is what marked a dependency fixed in apps nobody
-// had looked at.
-//
-//   * `apps` — the work track, one slot per app (see `findingApp` in
-//     ui/view/group.js). Removing the dependency, pinning it, guarding
-//     the call site: all answers about ONE app, so they are stored
-//     under that app's key and never read by another.
-//   * `upstream` — the cause track, global by id on purpose. Reporting
-//     a bug once and seeing it everywhere is the whole point, and an
-//     entry keyed by the vulnerable bytes is exactly where "superseded
-//     in 4.17.21" belongs: everyone still shipping them reads it.
-//
-// `triage` keeps its meaning for a finding in the app's OWN code —
-// there the app IS the upstream, so one verdict is the whole truth —
-// and grandfathers the unscoped values written before the split
-// (see `bucketOf` / `tabTriage`).
-export type AppTriage = 'inprogress' | 'fixed'
-
-// One app's answer about one finding. `fix` is that app's own
-// reference (the PR that removed the dependency), distinct from the
-// entry's cause-level `fix`.
-export type AppEntry = {
-  triage?: AppTriage
-  fix?: string
-}
-
-// What the upstream has done about the cause. `since` names the first
-// version carrying the fix, which is what turns another app's copy of
-// this finding from "no known remedy" into "upgrade to 4.17.21".
-export type UpstreamState = 'reported' | 'fixed' | 'wontfix'
-export type UpstreamEntry = {
-  state?: UpstreamState
-  link?: string
-  since?: string
-}
+// `apps` and `upstream` are the two triage tracks — one answer per app
+// and one about the cause. See ./triage-tracks.ts for what each is
+// for, and why one entry needed two.
 
 export type TriageEntry = {
   color?: string
@@ -131,6 +106,8 @@ export interface State {
   currentFile: string | null
   currentWorkspace: string | null
   currentView: CurrentView
+  currentLinks: OpenLinksFile | null
+  storedFiles: string[]
   bundles: unknown[]
   selectedBundle: string | null
   bundleDetails: unknown
@@ -201,6 +178,8 @@ export interface State {
   focusSplit: number
   codeBlockTick: number
   bundleHashTick: number
+  linksTick: number
+  findingIndexTick: number
   // ── server protocol (detected from the `server-info` connect frame) ──
   // Which sync protocol the configured server speaks; drives mode-aware UI
   // (managed mode hides workspace export and swaps the offline toggle for
@@ -449,12 +428,26 @@ export const state: State = store<State>({
   // sidebar's BUNDLES header). Files is gated on a tree-bearing
   // report with >1 file; bundles is gated on at least one bundle in
   // OPFS; both auto-fall back to 'findings' if their gate fails.
+  // 'links' is the view of one links file (see `currentLinks`),
+  // reached by opening its sidebar row like any other file.
   currentView: 'findings',
+  // The open links file, or null. Set by `switchToFile` when the file
+  // it read turns out to declare links rather than carry findings;
+  // cleared by every other load path (and by `clearActiveView`), so it
+  // can't outlive the view that reads it.
+  currentLinks: null,
   // Bundles list cached for synchronous render. Populated on every
   // renderSidebar() (which lists OPFS) so render.js's `bundles`
   // branch can paint without an async round-trip. Empty array when
   // no bundles are stored.
   bundles: [],
+  // The report-directory listing, cached the same way and for the same
+  // reason: "is this file on this device" is a question the sync badge
+  // has to answer while painting, and `listFiles()` is async. Every
+  // renderSidebar() refreshes it, so it tracks drops, deletes and
+  // peer downloads. Names only — it says what exists, not what is in
+  // it (that is the counts cache).
+  storedFiles: [],
   // Bundles view selection (integrity of the open row, null = none),
   // and the parsed details cache for the open bundle. Selection
   // opens a right-side panel mirroring the findings-table details
@@ -813,6 +806,25 @@ export const state: State = store<State>({
   // Files tab) don't need it — the same subscriber re-renders them
   // directly.
   bundleHashTick: 0,
+  // And once more for the links index (client/linked-findings-index.js),
+  // which fills from an empty start on every reload and grows whenever
+  // a links file is dropped or deleted. The finding card asks it
+  // whether this finding has been linked to any other, and a plain
+  // module Map is invisible to the card's autorun — so a card painted
+  // before the walk finished would keep its "nothing links this"
+  // answer. events.js bumps this when the index changes;
+  // render-finding.js reads it next to the lookup. Same shape, and the
+  // same reason, as `bundleHashTick` above.
+  linksTick: 0,
+  // And for the OPFS-wide finding index (client/bundle-finding-index.js),
+  // which the same "Duplicates:" row asks where each duplicate lives —
+  // the producer sticker it wears and the report names in its tooltip.
+  // That index walks every report on disk, so it is still filling long
+  // after the cards have painted; without the tick a duplicate would
+  // keep the "nowhere I know of" look it was first drawn with.
+  // events.js bumps this only while a links file is loaded — nothing
+  // else on the findings surface reads that index per-card.
+  findingIndexTick: 0,
   // Sync protocol of the configured server (e2e vs managed), seeded from the
   // localStorage cache so mode-aware UI is correct on first paint; the live
   // `server-info` connect frame confirms / updates it.

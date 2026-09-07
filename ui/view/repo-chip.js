@@ -108,7 +108,6 @@ class RepoChip extends LitElement {
         <button
           type="button"
           class="edit-btn"
-          title="Edit repo URL"
           aria-label="Edit repo URL"
           @click=${this._onEdit}
         >${PENCIL_ICON}</button>

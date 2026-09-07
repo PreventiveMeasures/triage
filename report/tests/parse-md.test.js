@@ -1,4 +1,4 @@
-// Markdown findings parser — `report/parse-md.js`. Pure function; the
+// Markdown findings parser — `report/src/parse-md.js`. Pure function; the
 // only globals it touches are RegExp / String prototype methods, so
 // every branch is testable directly.
 //
@@ -31,7 +31,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { parseMarkdownFindings } from '../parse-md.js'
+import { parseMarkdownFindings } from '../src/parse-md.js'
 
 describe('parseMarkdownFindings — format guards', () => {
   it('returns null for empty input', () => {
@@ -96,7 +96,7 @@ describe('parseMarkdownFindings — single finding', () => {
 })
 
 describe('parseMarkdownFindings — sections', () => {
-  it('builds description from title + Details + Impact + Reproduction', () => {
+  it('builds description from title + Details + Impact, reproduction its own field', () => {
     const md = [
       '# Bad thing',
       '',
@@ -116,7 +116,22 @@ describe('parseMarkdownFindings — sections', () => {
     assert.match(f.description, /Bad thing/u)
     assert.match(f.description, /It happened\./u)
     assert.match(f.description, /\*\*Impact:\*\* Things broke\./u)
-    assert.match(f.description, /\*\*Reproduction:\*\* Step 1\./u)
+    // Reproduction is a FIELD, the slot a native dump fills and the
+    // one render-finding.js gives a `<details>` — not a paragraph in
+    // the description, which the card can only draw open.
+    assert.equal(f.reproduction, 'Step 1.')
+    assert.doesNotMatch(f.description, /Reproduction/u)
+  })
+
+  // The two narrative sections a Claude Security report names go to
+  // the two slots a native dump fills, so the card draws both the same
+  // way it draws a dump's — each its own collapsible section rather
+  // than one disclosure and one block wedged open (render-finding.js).
+  it('extracts reproduction from Reproduction steps section', () => {
+    const md = '# T\n\n## Details\nD.\n\n## Reproduction steps\n1. Do X.\n2. Watch Y.\n\n---\n**Severity:** medium\n'
+    const f = parseMarkdownFindings(md).findings[0]
+    assert.equal(f.reproduction, '1. Do X.\n2. Watch Y.')
+    assert.equal(f.description, 'T\n\nD.')
   })
 
   it('extracts recommendation from Recommended fix section', () => {

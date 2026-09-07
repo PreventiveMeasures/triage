@@ -177,7 +177,7 @@ export function renderPackagesView() {
           ${selectedEntry ? html`<aside class="packages-details" id="packages-details">
             <header class="packages-details-bar">
               <span class="packages-details-label">Details</span>
-              <button type="button" class="packages-details-close" data-deselect-package title="Close details" aria-label="Close details">×</button>
+              <button type="button" class="packages-details-close" data-deselect-package aria-label="Close details">×</button>
             </header>
             <div class="packages-details-body">
               ${renderPackageDetails(selectedEntry[0], selectedBucket, selectedVersionEntry ? selectedVersionEntry[0] : undefined)}
@@ -327,7 +327,6 @@ function renderPackageSlide(pkg, bucket, version) {
         type="button"
         class="bundles-slide-back"
         data-action="package-slide-back"
-        title="Back to packages"
         aria-label="Back to packages"
       >← Back</button>
       <div class="bundles-slide-title">
@@ -444,7 +443,7 @@ function renderExpandButton(pkg, expanded, otherCount) {
     data-package-expand=${pkg}
     aria-expanded=${String(expanded)}
     aria-label=${expanded ? `Hide older versions of ${pkg}` : `Show older versions of ${pkg}`}
-    title=${expanded ? 'Hide older versions' : `Show older versions (${otherCount})`}
+    data-tooltip=${expanded ? 'Hide older versions' : `Show older versions (${otherCount})`}
   >
     <span class="packages-row-expand-chevron" aria-hidden="true"></span>
     <span class="packages-row-expand-label">${label}</span>
@@ -583,7 +582,7 @@ function renderPackageOverview(pkg, bucket, version) {
     ${sortedReports.map((r) => {
       const iconHtml = FILE_ICONS[groupOf(r)] ?? FILE_ICONS.default
       return html`<li>
-        <button type="button" class="packages-detail-report" title=${r} data-package-report=${r}>
+        <button type="button" class="packages-detail-report" data-tooltip=${r} data-package-report=${r}>
           ${unsafeHTML(iconHtml)}<span class="packages-detail-report-label">${displayName(r)}</span>
         </button>
       </li>`

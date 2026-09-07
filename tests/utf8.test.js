@@ -9,7 +9,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { decodeUtf8, encodeUtf8 } from '../common/utf8.js'
-import { encodeUtf8 as encodeUtf8Report } from '../report/utf8.js'
 
 describe('encodeUtf8', () => {
   it('round-trips ASCII', () => {
@@ -31,6 +30,41 @@ describe('encodeUtf8', () => {
   it('throws on a lone surrogate', () => {
     // U+D83D without a trailing low-surrogate is malformed UTF-16.
     assert.throws(() => encodeUtf8('\uD83D'), /lone surrogates/u)
+  })
+
+  // `report/src/utf8.js` carries a copy of this encoder — the library
+  // imports nothing from outside its directory, so it holds the one
+  // function it needs rather than reaching into `common/`. The copy is
+  // only safe while the two behave identically: a fix made to one and
+  // not the other would move the finding ids the library derives, which
+  // is the whole reason its hashing goes through a checked encoder.
+  //
+  // The two are pinned to the same expectations rather than to each
+  // other — this list and its bytes are asserted again, of the library's
+  // copy, in `report/tests/utf8.test.js`. Neither suite imports the
+  // other's module, so the library's stays runnable on its own; a change
+  // to one encoder alone fails whichever suite it was not made in. Keep
+  // the two lists in step.
+  it('encodes the shared case list byte for byte', () => {
+    const expected = new Map([
+      ['', []],
+      ['hello', [0x68, 0x65, 0x6c, 0x6c, 0x6f]],
+      ['é😀', [0xc3, 0xa9, 0xf0, 0x9f, 0x98, 0x80]],
+      ['\u{FEFF}leading BOM', [0xef, 0xbb, 0xbf, 0x6c, 0x65, 0x61, 0x64, 0x69, 0x6e, 0x67, 0x20, 0x42, 0x4f, 0x4d]],
+      ['a\0b', [0x61, 0x00, 0x62]],
+      ['中文', [0xe4, 0xb8, 0xad, 0xe6, 0x96, 0x87]],
+      ['\u{10FFFF}', [0xf4, 0x8f, 0xbf, 0xbf]],
+    ])
+    for (const [input, bytes] of expected) {
+      assert.deepEqual(encodeUtf8(input), new Uint8Array(bytes), JSON.stringify(input))
+    }
+  })
+
+  it('rejects the shared reject list', () => {
+    for (const bad of [42, null, undefined, new Uint8Array([1]), {}]) {
+      assert.throws(() => encodeUtf8(bad), /encodeUtf8 expects a string/u, String(bad))
+    }
+    assert.throws(() => encodeUtf8('lone \uD800 surrogate'), /lone surrogates/u)
   })
 })
 
@@ -104,28 +138,5 @@ describe('decodeUtf8', () => {
     // it alone too — pinned here for completeness.
     const text = decodeUtf8(new Uint8Array([0x68, 0xef, 0xbb, 0xbf, 0x69]))
     assert.equal(text, 'h﻿i')
-  })
-})
-
-// `report/utf8.js` is the report library's own copy of the encoder: the
-// library imports nothing from outside its directory, so it carries the
-// one function it needs rather than reaching into `common/`. The copy
-// is only safe while the two behave identically — a fix made to one and
-// not the other would move the finding ids the library derives, which
-// is the whole reason its hashing goes through a checked encoder.
-describe('report/utf8.js — the library\'s copy', () => {
-  const CASES = ['', 'hello', 'é😀', '\u{FEFF}leading BOM', 'a\0b', '中文', '\u{10FFFF}']
-
-  it('encodes byte for byte what common/utf8.js encodes', () => {
-    for (const input of CASES) {
-      assert.deepEqual(encodeUtf8Report(input), encodeUtf8(input), JSON.stringify(input))
-    }
-  })
-
-  it('rejects what common/utf8.js rejects', () => {
-    for (const bad of [42, null, undefined, new Uint8Array([1]), {}]) {
-      assert.throws(() => encodeUtf8Report(bad), /encodeUtf8 expects a string/u, String(bad))
-    }
-    assert.throws(() => encodeUtf8Report('lone \uD800 surrogate'), /lone surrogates/u)
   })
 })

@@ -26,7 +26,7 @@
 //
 // Pure: lines in, `[start, end)` pairs out, covering every line exactly
 // once. Nothing here knows about the DOM.
-import { fenceRanges } from '../../report/md-structure.js'
+import { fenceRanges } from '../../report/index.js'
 
 // Lines a chunk aims for, and the point past which any safe cut is
 // taken rather than waiting for a paragraph end. A chunk is what gets

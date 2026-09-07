@@ -1,4 +1,6 @@
-import { getKind } from '#client/index.js'
+import { LINKS_KIND, getKind } from '#client/index.js'
+import { SOURCE_LABELS } from '../../report/index.js'
+import { LINKS_ICON_SVG } from './icons.js'
 
 // Shared file-row affordances — the brand-marked "sticker" icons,
 // the source-bucket detection, and the display-name transform that
@@ -27,23 +29,79 @@ export const FILE_ICONS = {
   'codex-security': `<svg class="file-icon brand-codex" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">${STICKER_BASE}<path class="fg" d="M11.04 8.364a1.72 1.72 0 0 0-.152-1.432 1.8 1.8 0 0 0-1.925-.846 1.8 1.8 0 0 0-.778-.498 1.8 1.8 0 0 0-.927-.05 1.8 1.8 0 0 0-.827.414 1.77 1.77 0 0 0-.507.767 1.8 1.8 0 0 0-.683.297 1.75 1.75 0 0 0-.499.549 1.75 1.75 0 0 0 .22 2.07 1.72 1.72 0 0 0 .151 1.432 1.8 1.8 0 0 0 1.926.846 1.77 1.77 0 0 0 1.333.587c.78 0 1.47-.496 1.707-1.227a1.8 1.8 0 0 0 .684-.298 1.75 1.75 0 0 0 .499-.548 1.75 1.75 0 0 0-.222-2.063m-2.667 3.678a1.33 1.33 0 0 1-.851-.304l.042-.024 1.413-.804a.23.23 0 0 0 .116-.199V8.747l.597.34q.01.005.011.015v1.629a1.323 1.323 0 0 1-1.328 1.31m-2.857-1.203a1.3 1.3 0 0 1-.158-.879l.042.025 1.414.805a.23.23 0 0 0 .23 0l1.729-.982v.68a.02.02 0 0 1-.01.018l-1.431.814a1.34 1.34 0 0 1-1.816-.48m-.372-3.037a1.32 1.32 0 0 1 .7-.574v1.656a.22.22 0 0 0 .114.197l1.72.979-.598.34a.02.02 0 0 1-.021 0L5.63 9.587a1.304 1.304 0 0 1-.487-1.791zm4.907 1.125L8.327 7.94l.596-.34a.02.02 0 0 1 .02 0l1.43.814a1.3 1.3 0 0 1 .512.528 1.3 1.3 0 0 1-.118 1.4 1.33 1.33 0 0 1-.595.436V9.122a.23.23 0 0 0-.12-.195m.594-.881-.042-.025-1.411-.812a.23.23 0 0 0-.232 0l-1.727.983v-.68a.02.02 0 0 1 .008-.018l1.429-.813a1.34 1.34 0 0 1 1.425.061 1.3 1.3 0 0 1 .55 1.298zM6.908 9.252l-.597-.34a.02.02 0 0 1-.012-.016V7.271c0-.249.073-.493.209-.703s.329-.378.557-.483a1.35 1.35 0 0 1 1.415.18l-.042.023-1.413.804a.23.23 0 0 0-.116.2zm.324-.69.77-.438.77.438v.875l-.768.437-.77-.437z"/></svg>`,
   'deepsec': `<svg class="file-icon brand-vercel" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">${STICKER_BASE}<path class="fg" d="m8 5.97 3.5 6.062h-7Z"/></svg>`,
   'piolium': `<svg class="file-icon brand-piolium" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">${STICKER_BASE}<path class="fg" d="M8 6.4 5.6 7.2v2.3c0 1.6 1 2.7 2.4 3.3 1.4-.6 2.4-1.7 2.4-3.3V7.2Z"/></svg>`,
+  // Not a sticker: a links file isn't a report and doesn't come from a
+  // producer, so it gets the chain glyph (view/icons.js) in the row's
+  // own color rather than a branded sheet. See the note there.
+  [LINKS_KIND]: LINKS_ICON_SVG,
+}
+
+// The named buckets, by the `source` marker a report carries
+// (report/src/labels.js SOURCE_LABELS names the same four). A report
+// naming none — the analyzer's own dump — belongs to `default`.
+const SOURCE_GROUPS = new Set(['claude-security', 'codex-security', 'deepsec', 'piolium'])
+
+// Who PRODUCED a report in this bucket — the word to put beside its
+// sticker when the sticker alone is the signal, as in the finding
+// card's "Duplicates:" row (a mark with no text beside it says
+// nothing to a reader who can't see it).
+//
+// The four named producers come straight from the report library so
+// its word and this one can't drift. `default` is the exception, and
+// it says DeepView rather than the sidebar's "Reports": that section
+// header groups analyzer-native dumps without naming the pipeline,
+// but here the question is literally "which analyzer", and DeepView
+// is what the drop zone's supported-formats list calls its own.
+export const PRODUCER_LABELS = {
+  ...SOURCE_LABELS,
+  'default': 'DeepView',
 }
 
 // Resolve the bucket key (default / claude-security / codex-security
-// / deepsec / piolium) for a given OPFS filename. Prefers the
-// content-detected `kind` cached on counts.js (DeepSec, Piolium and
-// Claude Security all ship as `.md`, so an extension check alone can't
-// tell them apart); falls back to extension when the cache hasn't
-// filled yet (pre-existing OPFS entries on first sidebar render).
+// / deepsec / piolium) for a given OPFS filename. The content's own
+// answer decides it, cached on counts.js: DeepSec, Piolium and Claude
+// Security all ship as `.md`, so an extension check alone can't tell
+// them apart.
+//
+// A file that HAS been analyzed is filed by that answer and nothing
+// else, `null` (no producer named) included — the `default` bucket,
+// where an analyzer dump belongs. Falling through to the extension
+// there is what put every re-imported export under Claude Security:
+// the app writes its own export as a `.md` whatever the findings came
+// from, so a native dump exported and dropped back in reads as
+// source-less (rightly — the header names its RUN, not a product) and
+// the `.md` guess overrode it. A codex report was mis-filed the same
+// way, by an if-chain that never named its marker: the export of one
+// is a `.md`, so it missed the `.codex` test under it.
+//
+// The extension is the answer only for a file nothing has looked at
+// yet — a pre-existing OPFS entry on the first sidebar render, before
+// the lazy fill reaches it — where a guess beats no bucket at all.
+// `links` is in the answer set but not in `SOURCE_GROUPS`: it names a
+// file that is not a report at all (see client/linked-findings.js), so
+// it is its own bucket rather than a producer's. Nothing guesses it
+// from an extension — a links file is a `.json` like any dump, and the
+// content is the only thing that says otherwise — so an un-analyzed
+// file falls through to the report guesses below and re-buckets itself
+// the moment the lazy count fill reaches it.
 export function groupOf(name) {
   const kind = getKind(name)
-  if (kind === 'deepsec') return 'deepsec'
-  if (kind === 'piolium') return 'piolium'
-  if (kind === 'claude-security') return 'claude-security'
+  if (kind === LINKS_KIND) return LINKS_KIND
+  if (kind !== undefined) return SOURCE_GROUPS.has(kind) ? kind : 'default'
   const lower = name.toLowerCase()
   if (lower.endsWith('.codex')) return 'codex-security'
   if (lower.endsWith('.md')) return 'claude-security'
   return 'default'
+}
+
+// Is this OPFS entry a links file rather than a report? The question
+// every surface that means "reports" has to ask now that the two share
+// a directory — the delete dialog's triage impact, the workspace
+// export's report list, the counts a report view leads with. Answered
+// from the same cached kind `groupOf` reads, so a file nothing has
+// analyzed yet reads as "not links" and corrects itself on the next
+// render, exactly as its bucket does.
+export function isLinksFile(name) {
+  return getKind(name) === LINKS_KIND
 }
 
 // Filename-to-label transform for the bucket-marker suffixes ingest

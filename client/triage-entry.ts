@@ -18,7 +18,8 @@
 // their last field are deleted, keeping the map free of empty shells
 // so iteration / persistence / GC only ever see meaningful ids.
 
-import type { AppEntry, AppTriage, TriageBucket, TriageEntry, UpstreamEntry, UpstreamState } from './state.ts'
+import type { TriageBucket, TriageEntry } from './state.ts'
+import type { AppEntry, AppTriage, UpstreamEntry, UpstreamState } from './triage-tracks.ts'
 
 export type TriageMap = Map<string, TriageEntry>
 
