@@ -161,10 +161,16 @@ describe('counts cache (setCount / getCount / removeCount / getKind)', () => {
     assert.equal(getKind('x.json'), 'deepsec')
   })
 
-  it('omits the source field when not provided', () => {
+  // A report that names no producer is the analyzer's own dump, and
+  // the entry has to SAY so: `null`, not silence. file-display.js
+  // groupOf reads the difference — an analyzed source-less report is
+  // the default Reports bucket, while `undefined` (nothing has looked
+  // at the file yet) is the one case that falls back to the extension.
+  it('records a source-less report as analyzed, not as unknown', () => {
     setCount('x.json', 3)
     assert.equal(getCount('x.json'), 3)
-    assert.equal(getKind('x.json'), undefined)
+    assert.equal(getKind('x.json'), null)
+    assert.notEqual(getKind('x.json'), getKind('never-stored'))
   })
 
   it('removeCount drops both count and source', () => {

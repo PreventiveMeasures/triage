@@ -24,8 +24,10 @@ const COUNTS_KEY = 'deepview.fileCounts'
 // sticks forever — a piolium report imported before its parser existed
 // stayed bucketed under Claude Security while the report view titled it
 // Piolium. A version mismatch drops the whole blob; the sidebar's lazy
-// fill re-analyzes each file once. v2: piolium recognition.
-const COUNTS_VERSION = 2
+// fill re-analyzes each file once. v2: piolium recognition. v3: an
+// entry records the source it was ANALYZED as, `null` included, so a
+// report that names no producer stops reading as one never looked at.
+const COUNTS_VERSION = 3
 
 // File-counts blob contains filenames, which we treat as sensitive
 // metadata (project names, sample identifiers). Reads go through
@@ -58,15 +60,24 @@ export function getCount(name) {
 }
 
 // Returns the cached source marker for a file, e.g. `'deepsec'` or
-// `'claude-security'`. `undefined` means "not yet known" — the
-// sidebar falls back to extension-based bucketing in that case.
+// `'claude-security'`. Three answers, and the caller (file-display.js
+// groupOf) needs all three apart: the marker for a report that names a
+// producer, `null` for one that was analyzed and names none — the
+// analyzer's own dump — and `undefined` for a file nothing has looked
+// at yet, the only case where a guess from the extension is better
+// than nothing.
 export function getKind(name) {
   return entryOf(name)?.source
 }
 
+// `source` is whatever `analyzeContent` returned, `undefined` for a
+// native dump — stored as `null` so the entry says "analyzed, no
+// producer" rather than going silent about it. A legacy bare-number
+// entry (entryOf) still reads as `undefined`, which is what it is:
+// counted before the source was recorded at all.
 export function setCount(name, count, source) {
   const c = load()
-  c[name] = source ? { count, source } : { count }
+  c[name] = { count, source: source ?? null }
   persist()
 }
 

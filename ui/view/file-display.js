@@ -29,17 +29,34 @@ export const FILE_ICONS = {
   'piolium': `<svg class="file-icon brand-piolium" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">${STICKER_BASE}<path class="fg" d="M8 6.4 5.6 7.2v2.3c0 1.6 1 2.7 2.4 3.3 1.4-.6 2.4-1.7 2.4-3.3V7.2Z"/></svg>`,
 }
 
+// The named buckets, by the `source` marker a report carries
+// (report/labels.js SOURCE_LABELS names the same four). A report
+// naming none — the analyzer's own dump — belongs to `default`.
+const SOURCE_GROUPS = new Set(['claude-security', 'codex-security', 'deepsec', 'piolium'])
+
 // Resolve the bucket key (default / claude-security / codex-security
-// / deepsec / piolium) for a given OPFS filename. Prefers the
-// content-detected `kind` cached on counts.js (DeepSec, Piolium and
-// Claude Security all ship as `.md`, so an extension check alone can't
-// tell them apart); falls back to extension when the cache hasn't
-// filled yet (pre-existing OPFS entries on first sidebar render).
+// / deepsec / piolium) for a given OPFS filename. The content's own
+// answer decides it, cached on counts.js: DeepSec, Piolium and Claude
+// Security all ship as `.md`, so an extension check alone can't tell
+// them apart.
+//
+// A file that HAS been analyzed is filed by that answer and nothing
+// else, `null` (no producer named) included — the `default` bucket,
+// where an analyzer dump belongs. Falling through to the extension
+// there is what put every re-imported export under Claude Security:
+// the app writes its own export as a `.md` whatever the findings came
+// from, so a native dump exported and dropped back in reads as
+// source-less (rightly — the header names its RUN, not a product) and
+// the `.md` guess overrode it. A codex report was mis-filed the same
+// way, by an if-chain that never named its marker: the export of one
+// is a `.md`, so it missed the `.codex` test under it.
+//
+// The extension is the answer only for a file nothing has looked at
+// yet — a pre-existing OPFS entry on the first sidebar render, before
+// the lazy fill reaches it — where a guess beats no bucket at all.
 export function groupOf(name) {
   const kind = getKind(name)
-  if (kind === 'deepsec') return 'deepsec'
-  if (kind === 'piolium') return 'piolium'
-  if (kind === 'claude-security') return 'claude-security'
+  if (kind !== undefined) return SOURCE_GROUPS.has(kind) ? kind : 'default'
   const lower = name.toLowerCase()
   if (lower.endsWith('.codex')) return 'codex-security'
   if (lower.endsWith('.md')) return 'claude-security'
