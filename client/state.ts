@@ -171,6 +171,7 @@ export interface State {
   codeBlockTick: number
   bundleHashTick: number
   linksTick: number
+  findingIndexTick: number
   // ── server protocol (detected from the `server-info` connect frame) ──
   // Which sync protocol the configured server speaks; drives mode-aware UI
   // (managed mode hides workspace export and swaps the offline toggle for
@@ -800,6 +801,15 @@ export const state: State = store<State>({
   // render-finding.js reads it next to the lookup. Same shape, and the
   // same reason, as `bundleHashTick` above.
   linksTick: 0,
+  // And for the OPFS-wide finding index (client/bundle-finding-index.js),
+  // which the same "Duplicates:" row asks where each duplicate lives —
+  // the producer sticker it wears and the report names in its tooltip.
+  // That index walks every report on disk, so it is still filling long
+  // after the cards have painted; without the tick a duplicate would
+  // keep the "nowhere I know of" look it was first drawn with.
+  // events.js bumps this only while a links file is loaded — nothing
+  // else on the findings surface reads that index per-card.
+  findingIndexTick: 0,
   // Sync protocol of the configured server (e2e vs managed), seeded from the
   // localStorage cache so mode-aware UI is correct on first paint; the live
   // `server-info` connect frame confirms / updates it.

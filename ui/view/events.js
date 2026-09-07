@@ -1,4 +1,4 @@
-import { KANBAN_DETAIL_FULLSCREEN_KEY, SEVERITY_MODE_KEY, VIEW_MODE_KEY, isEncryptionEnabled, patchEntry, readBundle, saveRepoUrlFor, saveTriage, setReportIgnored, state, subscribeToBundleFindingIndex, subscribeToBundleHashIndex, subscribeToLinkedFindings } from '#client/index.js'
+import { KANBAN_DETAIL_FULLSCREEN_KEY, SEVERITY_MODE_KEY, VIEW_MODE_KEY, hasLinkedFindings, isEncryptionEnabled, patchEntry, readBundle, saveRepoUrlFor, saveTriage, setReportIgnored, state, subscribeToBundleFindingIndex, subscribeToBundleHashIndex, subscribeToLinkedFindings } from '#client/index.js'
 import { downloadBlob, report } from './dom.js'
 import { commonPrefix, configureRevalidation, handoffBlock, lineRange } from './format.js'
 import { activeTabFor, canApplyFixToGroup, findGroupById, findingRepo, findingReport, fixApplies, getMergedGroups, groupState, groupWithPassRows, syncGroupTriage, tabKey, triageActionPlan, triageScope } from './group.js'
@@ -33,6 +33,14 @@ subscribeToBundleFindingIndex(() => {
     // Sidebar's PACKAGES / REPOSITORIES captions depend on the index
     // too; refresh it (main view stays put).
     renderSidebar().catch(() => {})
+    // A finding card's "Duplicates:" row asks this index where each
+    // duplicate lives — the producer sticker beside it and the report
+    // names in its tooltip. Cards paint from their own autorun, which
+    // can't see a module Map fill, so bump the tick they read.
+    // Gated on there being a links file at all: with none, no card
+    // shows that row and every other card would re-render for nothing,
+    // once per report the walk gets through.
+    if (hasLinkedFindings()) state.findingIndexTick++
   }
 })
 

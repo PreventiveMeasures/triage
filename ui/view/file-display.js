@@ -1,4 +1,5 @@
 import { LINKS_KIND, getKind } from '#client/index.js'
+import { SOURCE_LABELS } from '../../report/index.js'
 import { LINKS_ICON_SVG } from './icons.js'
 
 // Shared file-row affordances — the brand-marked "sticker" icons,
@@ -38,6 +39,22 @@ export const FILE_ICONS = {
 // (report/labels.js SOURCE_LABELS names the same four). A report
 // naming none — the analyzer's own dump — belongs to `default`.
 const SOURCE_GROUPS = new Set(['claude-security', 'codex-security', 'deepsec', 'piolium'])
+
+// Who PRODUCED a report in this bucket — the word to put beside its
+// sticker when the sticker alone is the signal, as in the finding
+// card's "Duplicates:" row (a mark with no text beside it says
+// nothing to a reader who can't see it).
+//
+// The four named producers come straight from the report library so
+// its word and this one can't drift. `default` is the exception, and
+// it says DeepView rather than the sidebar's "Reports": that section
+// header groups analyzer-native dumps without naming the pipeline,
+// but here the question is literally "which analyzer", and DeepView
+// is what the drop zone's supported-formats list calls its own.
+export const PRODUCER_LABELS = {
+  ...SOURCE_LABELS,
+  'default': 'DeepView',
+}
 
 // Resolve the bucket key (default / claude-security / codex-security
 // / deepsec / piolium) for a given OPFS filename. The content's own

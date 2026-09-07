@@ -8,7 +8,7 @@ import { activeTabFor, findingRepo, findingRepoFallback, groupState, isIgnored, 
 import { highlightedCode } from './code-highlight.js'
 import { attachedBundle, bundleSource, focusCodePosition } from './focus-code.js'
 import { samePos } from './focus-code-history.js'
-import { FILE_ICONS, displayName, groupOf } from './file-display.js'
+import { FILE_ICONS, PRODUCER_LABELS, displayName, groupOf } from './file-display.js'
 
 // All `<finding-row>` / `<finding-card>` shadow-DOM markup is built
 // here as Lit `html` template results (no `unsafeHTML`). Lit
@@ -300,6 +300,25 @@ function renderCommentText(text) {
   })
 }
 
+// The producer buckets behind a set of report names, first-seen order
+// and each one once — what decides how many stickers a duplicate
+// wears. Empty when the OPFS index hasn't placed the id yet, which is
+// how a duplicate with nowhere known to live ends up with no mark
+// rather than a guessed one.
+function distinctGroups(reports) {
+  const seen = new Set()
+  for (const r of reports) seen.add(groupOf(r))
+  return [...seen]
+}
+
+// That bucket in words, for the tooltip. Falls through to the bucket
+// key for anything PRODUCER_LABELS doesn't name — a report filed under
+// a marker added since, which should read as itself rather than blank.
+function producerLabel(reportName) {
+  const group = groupOf(reportName)
+  return PRODUCER_LABELS[group] ?? group
+}
+
 // "Duplicates:" — the findings a dropped links file says are THIS
 // finding, reported again somewhere else (client/linked-findings.js
 // for the file, `duplicatesOf` for the union across every links file
@@ -315,29 +334,46 @@ function renderCommentText(text) {
 //
 // Each duplicate is a `#finding=…` anchor, the same in-place link a
 // comment ref uses (see `renderCommentText` above) — so following one
-// opens the report holding it, un-hides it, and rings it. The title
-// carries the full id plus, when the OPFS index knows it, the reports
-// it lives in: worth a hover, not worth the width, since a duplicate
-// row is usually two or three short ids.
+// opens the report holding it, un-hides it, and rings it.
 //
-// Reads `state.linksTick` for the same reason the "Code" button reads
-// `bundleHashTick`: `duplicatesOf` is a plain module Map that this
-// card's autorun can't see fill, and the index fills in the
-// background on every load.
+// Ahead of the id sits the brand sticker of whoever produced the
+// report the duplicate lives in — the same mark its sidebar row and
+// its report chip wear, so "the DeepSec copy" is one glance rather
+// than a hover. That is usually the point of a duplicate: the finding
+// is the same, the analyzer isn't, and which one said it is what
+// decides whether the other copy is worth opening. One mark per
+// distinct producer, so a duplicate carried by three reports from the
+// same tool shows one, not three.
+//
+// The title spells the same thing out, since the sticker is a picture
+// and a picture reads to nobody who can't see it: the full id, then
+// each report by name with its producer in words.
+//
+// Two ticks, both for the reason the "Code" button reads
+// `bundleHashTick`: `duplicatesOf` and `reportsForFindingId` are
+// plain module Maps this card's autorun can't see fill, and both
+// indexes fill in the background on every load — the links index
+// decides whether this row exists at all, the finding index what its
+// marks and names say.
 function duplicatesTemplate(f) {
   void state.linksTick
+  void state.findingIndexTick
   const id = tabKey(f)
   const ids = isLinkableFindingId(id) ? duplicatesOf(id) : []
   if (ids.length === 0) return nothing
   return html`<div class="duplicates-block"><span class="duplicates-label">Duplicates:</span>${
     ids.map((other) => {
       const reports = reportsForFindingId(other)
-      const where = reports.length > 0 ? ` — in ${reports.map(displayName).join(', ')}` : ''
+      const where = reports.length === 0
+        ? ''
+        : ` — in ${reports.map((r) => `${displayName(r)} (${producerLabel(r)})`).join(', ')}`
       return html`<a
         class="duplicate-ref"
         href=${`#${encodeFindingRef({ id: other })}`}
         title=${`Show ${other}${where}`}
-      >${shortFindingId(other) ?? other}</a>`
+      >${distinctGroups(reports).map((g) => unsafeHTML(FILE_ICONS[g] ?? FILE_ICONS.default))}<span
+        class="duplicate-ref-id"
+      >${shortFindingId(other) ?? other}</span></a>`
     })
   }</div>`
 }
