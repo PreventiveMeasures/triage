@@ -10,7 +10,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { backfillFindingIds, inheritReportMeta, loadFindings, readReport, writeMarkdown } from '../index.js'
+import { analyzeReport, backfillFindingIds, inheritReportMeta, loadFindings, readReport, writeMarkdown } from '../index.js'
 import { findingTitle } from '../finding.js'
 import { parseCodexCsvToScans } from '../parse-codex.js'
 import { parseDeepsecFindings } from '../parse-deepsec.js'
@@ -101,9 +101,24 @@ describe('parseDeepviewMarkdown — the guard', () => {
     assert.deepEqual([f.description, f.impact, f.evidence[0].text], ['Title\n\n\\# kept', '\\## kept', '\\### kept'])
   })
 
-  it('is no report when it holds no finding', () => {
-    assert.equal(parseDeepviewMarkdown(writeMarkdown()), null)
-    assert.equal(readReport(writeMarkdown()).format, null, 'and nothing else claims it')
+  // An export is a selection, and a selection can be empty — the
+  // filters left nothing on screen, the trash bucket is clear. The
+  // document still says whose findings it would have held, and comes
+  // back as that report with no findings in it, the way a
+  // `{ "findings": [] }` dump does — not as a file the viewer refuses
+  // at the drop zone.
+  it('is still the report its header names when it holds no finding', () => {
+    const empty = writeMarkdown({ reports: [{ name: 'a.md', source: 'claude-security' }], counts: { included: 0, total: 4 } })
+    assert.ok(empty.includes('- **Included:** 0 of 4 findings (4 filtered out)'))
+    assert.deepEqual(parseDeepviewMarkdown(empty), { type: 'security', source: 'claude-security', findings: [] })
+    assert.equal(readReport(empty).format, 'deepview-md')
+    assert.deepEqual(analyzeReport(empty), { count: 0, source: 'claude-security', recognized: true })
+    // Nothing in the header to name a producer: an empty report, and
+    // nothing said about it.
+    assert.deepEqual(parseDeepviewMarkdown(writeMarkdown()), { findings: [] })
+    assert.deepEqual(analyzeReport(writeMarkdown()), { count: 0, source: undefined, recognized: true })
+    // The marker is still the whole guard.
+    assert.equal(parseDeepviewMarkdown(writeMarkdown().replace(`${DOCUMENT_MARKER}\n\n`, '')), null)
   })
 
   it('normalises line endings', () => {
@@ -541,6 +556,23 @@ describe('parseDeepviewMarkdown — every format the library reads, out and back
     assert.equal(second, first)
     assert.deepEqual(back.groups.map((g) => g.map((f) => f.id)), [['f1', 'f2'], ['f3']])
     assert.equal(back.groups[0][1].location, 'https://github.com/acme/app/blob/HEAD/src/a.js#L9')
+  })
+
+  // The same document with the selection narrowed to nothing. The
+  // header is all that is left of the report, and it is enough: the
+  // producer its `Source` line names comes back as the source, and a
+  // native dump's run off its `Analyzer` line.
+  it('an empty selection of any of them, off the header alone', () => {
+    const empty = (data, name) => parseDeepviewMarkdown(exportOf({ ...data, findings: [], groups: undefined }, name))
+    assert.deepEqual(empty(parseMarkdownFindings(CLAUDE_SECURITY), 'a.md'), { type: 'security', source: 'claude-security', findings: [] })
+    assert.deepEqual(empty(parseDeepsecFindings(DEEPSEC), 'd.md'), { type: 'security', source: 'deepsec', findings: [] })
+    assert.deepEqual(empty(parsePioliumFindings(PIOLIUM), 'p.md'), { type: 'security', source: 'piolium', findings: [] })
+    assert.deepEqual(empty(parseCodexCsvToScans(CODEX)[0].data, 'c.codex'), { type: 'security', source: 'codex-security', findings: [] })
+    // The repository these three named was their findings' own, and
+    // went with them; the one a native dump DECLARES is the report's
+    // and stays. Its run does not: with no finding to carry the meta
+    // line, nothing on the page says which run it was.
+    assert.deepEqual(empty(NATIVE(), 'r.json'), { repo: { github: 'acme/app' }, findings: [] })
   })
 
   it('reads back through the library\'s door with its ids, and derives them for a document written without', async () => {

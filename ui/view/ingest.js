@@ -10,7 +10,7 @@ import { render } from './render.js'
 import { renderSidebar } from './sidebar.js'
 import { cleanupGraph2, graph2 } from './graph/state.js'
 import { openBundle, prefetchBundleHashes, selectBundle } from './bundle-load.js'
-import { backfillFindingIds, detectFormat, inheritReportMeta, parseCodexCsvToScans, readReport, reportRepoGithub } from '../../report/index.js'
+import { backfillFindingIds, detectFormat, inheritReportMeta, parseCodexCsvToScans, readReport, reportEntries, reportRepoGithub } from '../../report/index.js'
 import { importWorkspaceFromGzip } from './workspace-import.js'
 import { maybePromptFirstUse } from './first-import-prompt.js'
 import { openPasskeyUnlockDialog } from './dialogs/passkey-unlock-dialog.js'
@@ -996,13 +996,22 @@ async function ingestReport(name, content, gen = null) {
         reason: dup.correctedSeverityReason,
       }
     }
+    // The report's entries, under whichever of the two names it files
+    // them (report/index.js reportEntries): `findings`, or `groups`
+    // for a report that arrives already deduplicated — a native dump
+    // that merged its runs, and every markdown export of a view that
+    // showed a finding as one card with several cases. Read as
+    // `data.findings` alone, those come out EMPTY, so a workspace
+    // export re-imported here would render as a report with nothing
+    // in it.
+    //
     // Derive deterministic ids for findings lacking one — must run
     // BEFORE the dedup loop so MD-imported (and id-less JSON) findings
     // dedupe by content like exporter-id'd ones, and so triage
     // (markers / deletions) persists across reloads of the same source.
     // Mutates the finding objects in place; `toGroup` returns them by
     // reference, so the ids are visible to the loop below.
-    const rawEntries = data.findings || []
+    const rawEntries = reportEntries(data) ?? []
     await backfillFindingIds(rawEntries.flatMap(toGroup))
     if (stale()) return
     // Per-report repo URL stamped on each finding so format.js's

@@ -23,8 +23,11 @@
 //   loadFindings  — parsed, flattened, and every finding carrying an id
 //
 // `analyzeReport` is `readReport` for a file list — entry count and
-// producer — and `backfillFindingIds` is the id step on its own, for a
-// caller that has to interleave something with it.
+// producer — `reportEntries` is a report's entry list whichever of the
+// two names it goes under (`findings` or `groups`), for a caller that
+// has to keep the grouping rather than flatten it, and
+// `backfillFindingIds` is the id step on its own, for a caller that
+// has to interleave something with it.
 //
 // And one for writing: `writeMarkdown` takes findings — the parsers'
 // own objects, grouped as the viewer groups them — with whatever the
@@ -107,7 +110,16 @@ const MARKDOWN_FORMATS = [
 // document carries neither as an array — which is how a JSON file that
 // isn't a report at all (or a report with a malformed list) is told
 // apart from an empty one.
-function entriesOf(data) {
+//
+// Exported because a report is two shapes and only one of them is
+// called `findings`: a caller reading `data.findings` alone sees an
+// empty report wherever the entries are groups — which is every
+// deduplicated dump, and every export of a view that merged a finding
+// reported twice (parse-deepview-md.js writes `groups` for exactly
+// those). `loadFindings` is the answer for a caller that wants the
+// member findings; this is the one for a caller that has to keep the
+// grouping, as the viewer's ingest does.
+export function reportEntries(data) {
   if (Array.isArray(data?.findings)) return data.findings
   if (Array.isArray(data?.groups)) return data.groups
   return null
@@ -145,7 +157,7 @@ export function readReport(content) {
   let jsonError
   try {
     const data = JSON.parse(content)
-    if (entriesOf(data)) return { data, format: 'json', reason: null }
+    if (reportEntries(data)) return { data, format: 'json', reason: null }
     return { data: null, format: null, reason: 'JSON, but not a report: no findings array' }
   } catch (err) {
     jsonError = err
@@ -169,7 +181,7 @@ export function readReport(content) {
 export function analyzeReport(content) {
   const { data } = readReport(content)
   if (!data) return { count: 0, recognized: false }
-  return { count: entriesOf(data).length, source: data.source, recognized: true }
+  return { count: reportEntries(data).length, source: data.source, recognized: true }
 }
 
 // Entries → member findings. A group contributes its members; falsy
@@ -200,7 +212,7 @@ export async function backfillFindingIds(findings) {
 export async function loadFindings(content) {
   const { data, format } = readReport(content)
   if (!data) return null
-  const findings = flattenFindings(entriesOf(data))
+  const findings = flattenFindings(reportEntries(data))
   await backfillFindingIds(findings)
   return { format, data, findings }
 }
