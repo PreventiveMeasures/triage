@@ -995,8 +995,14 @@ span.evidence-ref:not([role]) { color: var(--muted); }
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     min-width: 0;
   }
-  /* Brand-sticker colors — shared with the sidebar via file-display.js's
-     FILE_ICONS. Keep these in sync with sidebar.css's .file-icon block. */
+}
+
+/* Brand-sticker colors for every inline file icon this card renders —
+   the report chip above, and the producer marks on the duplicates row
+   below. Shadow DOM can't reach styles/file-icon.css, so the fills are
+   restated here; keep them in sync with that file (and with
+   sidebar.css's copy). */
+:is(.report-chip, .duplicates-block) {
   & .file-icon { flex-shrink: 0; }
   & .brand-deepview { & .bg { fill: #2563eb; } & .fg { fill: #fff; } }
   & .brand-claude   { & .bg { fill: #d97757; } & .fg { fill: #fff; } }
@@ -1268,6 +1274,45 @@ span.evidence-ref:not([role]) { color: var(--muted); }
   & a { color: var(--accent); text-decoration: none; }
   & a:hover { text-decoration: underline; }
 }
+/* "Duplicates:" — the last block on the card, listing the findings a
+   links file says are this one reported again (render-finding.js).
+   Deliberately quieter than its comment / fix siblings above: no
+   accent rule and no tint, because it isn't the reader's own note or
+   an action to take, it's a cross-reference. `flex-wrap` so a finding
+   linked to a dozen others wraps instead of stretching the card. */
+.duplicates-block {
+  display: flex; align-items: baseline; flex-wrap: wrap;
+  gap: .1rem .4rem;
+  margin-top: .5rem;
+  padding: .35rem .55rem;
+  border-left: 3px solid var(--border);
+  border-radius: 0 4px 4px 0;
+  font-size: .82rem; color: var(--text);
+  /* No `margin-right` on this label, unlike its comment / fix
+     siblings: the flex `gap` above already spaces it off the first
+     ref, and the two together read as a stutter. */
+  & .duplicates-label { color: var(--muted); font-weight: 600; }
+  /* Producer sticker + id, as one link. Inline-flex so the two sit on
+     a shared baseline-ish centre line and travel together when the row
+     wraps. */
+  & a.duplicate-ref {
+    display: inline-flex; align-items: center; gap: .25rem;
+    color: var(--accent);
+    text-decoration: none;
+  }
+  /* Same standing dotted underline as `a.comment-self-ref` above, for
+     the same reason: these navigate in place rather than opening a
+     tab, and the difference should be visible before the click. It
+     sits on the id alone — an underline running under a sticker reads
+     as a drawing mistake, not as a link. */
+  & a.duplicate-ref .duplicate-ref-id {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .78rem;
+    text-decoration: underline dotted; text-underline-offset: 2px;
+  }
+  & a.duplicate-ref:hover .duplicate-ref-id { text-decoration: underline solid; }
+}
+
 .comment-label,
 .fix-label {
   color: var(--muted); font-weight: 600;

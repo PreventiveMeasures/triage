@@ -2,13 +2,13 @@ import { html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { bundleFilePath, bundlesForFileHash, isLinkableFindingId, isPlaceholderNpmPackage, state } from '#client/index.js'
-import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, githubRefLabel, hasSeverityCorrection, isHttpUrl, lineRange, listSegments, locationLabel, markdownLinkToken, parseCommentRefs, revalidateStamp, revalidationShown, snippetWindow, splitDescription, stripExportMarker } from './format.js'
+import { bundleFilePath, bundlesForFileHash, duplicatesOf, encodeFindingRef, isLinkableFindingId, isPlaceholderNpmPackage, reportsForFindingId, state } from '#client/index.js'
+import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, githubRefLabel, hasSeverityCorrection, isHttpUrl, lineRange, listSegments, locationLabel, markdownLinkToken, parseCommentRefs, revalidateStamp, revalidationShown, shortFindingId, snippetWindow, splitDescription, stripExportMarker } from './format.js'
 import { activeTabFor, findingRepo, findingRepoFallback, groupState, isIgnored, scopedTriage, sortTabs, tabKey } from './group.js'
 import { highlightedCode } from './code-highlight.js'
 import { attachedBundle, bundleSource, focusCodePosition } from './focus-code.js'
 import { samePos } from './focus-code-history.js'
-import { FILE_ICONS, displayName, groupOf } from './file-display.js'
+import { FILE_ICONS, PRODUCER_LABELS, displayName, groupOf } from './file-display.js'
 
 // All `<finding-row>` / `<finding-card>` shadow-DOM markup is built
 // here as Lit `html` template results (no `unsafeHTML`). Lit
@@ -298,6 +298,84 @@ function renderCommentText(text) {
     }
     return html`<a href=${seg.url} target="_blank" rel="noopener noreferrer" title=${seg.url}>${seg.label}</a>`
   })
+}
+
+// The producer buckets behind a set of report names, first-seen order
+// and each one once — what decides how many stickers a duplicate
+// wears. Empty when the OPFS index hasn't placed the id yet, which is
+// how a duplicate with nowhere known to live ends up with no mark
+// rather than a guessed one.
+function distinctGroups(reports) {
+  const seen = new Set()
+  for (const r of reports) seen.add(groupOf(r))
+  return [...seen]
+}
+
+// That bucket in words, for the tooltip. Falls through to the bucket
+// key for anything PRODUCER_LABELS doesn't name — a report filed under
+// a marker added since, which should read as itself rather than blank.
+function producerLabel(reportName) {
+  const group = groupOf(reportName)
+  return PRODUCER_LABELS[group] ?? group
+}
+
+// "Duplicates:" — the findings a dropped links file says are THIS
+// finding, reported again somewhere else (client/linked-findings.js
+// for the file, `duplicatesOf` for the union across every links file
+// the user holds).
+//
+// Last block on the card, under the recommendation and the reader's
+// own comment / fix, because it is the least about this finding: by
+// the time you've read what it is and what to do about it, "and it
+// also appears over here" is a footnote — but a footnote worth a
+// click, since the other copy may carry a different report's severity
+// correction, its own comment, or simply be the one your colleague
+// triaged.
+//
+// Each duplicate is a `#finding=…` anchor, the same in-place link a
+// comment ref uses (see `renderCommentText` above) — so following one
+// opens the report holding it, un-hides it, and rings it.
+//
+// Ahead of the id sits the brand sticker of whoever produced the
+// report the duplicate lives in — the same mark its sidebar row and
+// its report chip wear, so "the DeepSec copy" is one glance rather
+// than a hover. That is usually the point of a duplicate: the finding
+// is the same, the analyzer isn't, and which one said it is what
+// decides whether the other copy is worth opening. One mark per
+// distinct producer, so a duplicate carried by three reports from the
+// same tool shows one, not three.
+//
+// The title spells the same thing out, since the sticker is a picture
+// and a picture reads to nobody who can't see it: the full id, then
+// each report by name with its producer in words.
+//
+// Two ticks, both for the reason the "Code" button reads
+// `bundleHashTick`: `duplicatesOf` and `reportsForFindingId` are
+// plain module Maps this card's autorun can't see fill, and both
+// indexes fill in the background on every load — the links index
+// decides whether this row exists at all, the finding index what its
+// marks and names say.
+function duplicatesTemplate(f) {
+  void state.linksTick
+  void state.findingIndexTick
+  const id = tabKey(f)
+  const ids = isLinkableFindingId(id) ? duplicatesOf(id) : []
+  if (ids.length === 0) return nothing
+  return html`<div class="duplicates-block"><span class="duplicates-label">Duplicates:</span>${
+    ids.map((other) => {
+      const reports = reportsForFindingId(other)
+      const where = reports.length === 0
+        ? ''
+        : ` — in ${reports.map((r) => `${displayName(r)} (${producerLabel(r)})`).join(', ')}`
+      return html`<a
+        class="duplicate-ref"
+        href=${`#${encodeFindingRef({ id: other })}`}
+        title=${`Show ${other}${where}`}
+      >${distinctGroups(reports).map((g) => unsafeHTML(FILE_ICONS[g] ?? FILE_ICONS.default))}<span
+        class="duplicate-ref-id"
+      >${shortFindingId(other) ?? other}</span></a>`
+    })
+  }</div>`
 }
 
 // The verdict stamp — `revalidate` itself (confirmed / refuted /
@@ -1284,6 +1362,7 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
           ? html`<a href=${fix} target="_blank" rel="noopener noreferrer">${fix}</a>`
           : fix}</div>`
         : nothing}
+      ${duplicatesTemplate(f)}
     </div>
   </div>`
 }

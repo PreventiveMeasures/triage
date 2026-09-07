@@ -22,6 +22,7 @@ import { attachTerminal } from './terminal-attach.js'
 import { packageOf } from './graph/utils.js'
 import { renderPackagesView } from './render-packages.js'
 import { renderRepositoriesView } from './render-repositories.js'
+import { renderLinksView } from './render-links.js'
 import {
   buildBundleGraphData,
   countBundleTriageBuckets,
@@ -1713,6 +1714,28 @@ function renderImpl() {
     dropZone.classList.add('hidden')
     document.title = 'DeepView — repositories'
     return
+  }
+  // Links view — one dropped links file, listing which findings it
+  // ties together and which reports hold them (render-links.js). Sits
+  // with the other paint-only branches because it reads no loaded
+  // report: a links file carries no findings, so `state.reports` is
+  // empty the whole time it's up and the gate below would drop it.
+  //
+  // `currentLinks` is set alongside the view by `switchToFile`, but a
+  // path that clears one without the other (or a future one that
+  // forgets to) would leave an empty page with no way out; fall back
+  // to findings rather than paint nothing, matching how the bundles
+  // branch handles losing its list.
+  if (state.currentView === 'links') {
+    if (state.currentLinks) {
+      const slot = ensureReportSlot('links-slot')
+      if (slot) litRender(renderLinksView(), slot)
+      report.classList.add('active')
+      dropZone.classList.add('hidden')
+      document.title = `DeepView — ${state.currentLinks.name}`
+      return
+    }
+    state.currentView = 'findings'
   }
   // Managed admin full pages — see ADMIN_VIEWS.
   const adminView = ADMIN_VIEWS[state.currentView]

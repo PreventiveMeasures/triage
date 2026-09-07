@@ -1,4 +1,4 @@
-import { KANBAN_DETAIL_FULLSCREEN_KEY, SEVERITY_MODE_KEY, VIEW_MODE_KEY, isEncryptionEnabled, patchEntry, readBundle, saveRepoUrlFor, saveTriage, setReportIgnored, state, subscribeToBundleFindingIndex, subscribeToBundleHashIndex } from '#client/index.js'
+import { KANBAN_DETAIL_FULLSCREEN_KEY, SEVERITY_MODE_KEY, VIEW_MODE_KEY, hasLinkedFindings, isEncryptionEnabled, patchEntry, readBundle, saveRepoUrlFor, saveTriage, setReportIgnored, state, subscribeToBundleFindingIndex, subscribeToBundleHashIndex, subscribeToLinkedFindings } from '#client/index.js'
 import { downloadBlob, report } from './dom.js'
 import { commonPrefix, configureRevalidation, handoffBlock, lineRange } from './format.js'
 import { activeTabFor, canApplyFixToGroup, findGroupById, findingRepo, findingReport, fixApplies, getMergedGroups, groupState, groupWithPassRows, syncGroupTriage, tabKey, triageActionPlan, triageScope } from './group.js'
@@ -25,10 +25,22 @@ subscribeToBundleFindingIndex(() => {
   if (state.currentView === 'bundles' && state.selectedBundle) render()
   else if (state.currentView === 'packages') render()
   else if (state.currentView === 'repositories') render()
+  // The Links view names, per linked finding, the reports carrying it
+  // — straight out of the same index, so its rows fill in as the walk
+  // reaches each report rather than after a reload.
+  else if (state.currentView === 'links') render()
   else if (state.currentView === 'findings' || state.currentView === 'files') {
     // Sidebar's PACKAGES / REPOSITORIES captions depend on the index
     // too; refresh it (main view stays put).
     renderSidebar().catch(() => {})
+    // A finding card's "Duplicates:" row asks this index where each
+    // duplicate lives — the producer sticker beside it and the report
+    // names in its tooltip. Cards paint from their own autorun, which
+    // can't see a module Map fill, so bump the tick they read.
+    // Gated on there being a links file at all: with none, no card
+    // shows that row and every other card would re-render for nothing,
+    // once per report the walk gets through.
+    if (hasLinkedFindings()) state.findingIndexTick++
   }
 })
 
@@ -67,6 +79,21 @@ subscribeToBundleHashIndex(() => {
     state.bundleHashTick++
     render()
   })
+})
+
+// A links file landed in (or left) the OPFS-wide links index. Every
+// finding card asks that index whether this finding has been linked to
+// any other — the "Duplicates:" row at the bottom — and a card paints
+// from its own autorun, which can't see a plain module Map change. So
+// bump the tick the cards read (see `linksTick` in state.ts) and
+// repaint.
+//
+// Not coalesced the way the hash-index subscriber below is: the index
+// notifies once per walk that added something, and per invalidation,
+// which is a handful of times a session rather than a burst.
+subscribeToLinkedFindings(() => {
+  state.linksTick++
+  render()
 })
 
 // Findings-tab and bundles-tab graph views share renderGraph2Layout
@@ -452,6 +479,11 @@ report.addEventListener('click', (e) => {
   // Packages details — click a report row to navigate to it.
   // Mirrors the bundle Issues report-chip handler (switchToFile
   // loads it into findings + flips currentView away from packages).
+  // Report chip → open that report. Shared by every cross-report
+  // surface that names a report the user can go read: the Packages and
+  // Repositories details panels, and the Links view's per-finding "in
+  // which reports" chips. One attribute, one behaviour — a second hook
+  // doing the same thing would only be a second place to fix.
   const pkgReport = e.target.closest('[data-package-report]')
   if (pkgReport) {
     const name = pkgReport.dataset.packageReport

@@ -10,7 +10,7 @@
 // boot is enough.
 
 import { FILE_ICONS } from './file-display.js'
-import { BUNDLE_ICON_SVG, WORKSPACE_ICON_SVG } from './icons.js'
+import { BUNDLE_ICON_SVG, LINKS_ICON_SVG, WORKSPACE_ICON_SVG } from './icons.js'
 
 // `data-icon` value → raw SVG string. Bundle keys
 // (`stasis` / `sourcemap`) both map to the generic bundle glyph
@@ -23,6 +23,7 @@ const ICONS = {
   'piolium': FILE_ICONS.piolium,
   'bundle': BUNDLE_ICON_SVG,
   'workspace': WORKSPACE_ICON_SVG,
+  'links': LINKS_ICON_SVG,
 }
 
 for (const el of document.querySelectorAll('.drop-supported-icon[data-icon]')) {

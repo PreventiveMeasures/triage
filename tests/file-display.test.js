@@ -26,7 +26,7 @@ function createLocalStorage() {
 globalThis.localStorage ??= createLocalStorage()
 
 const { setCount } = await import('../client/counts.js')
-const { displayName, groupOf } = await import('../ui/view/file-display.js')
+const { FILE_ICONS, PRODUCER_LABELS, displayName, groupOf } = await import('../ui/view/file-display.js')
 
 describe('groupOf — the bucket a file lands in', () => {
   beforeEach(() => { globalThis.localStorage.clear() })
@@ -74,6 +74,38 @@ describe('groupOf — the bucket a file lands in', () => {
     assert.equal(groupOf('unseen.codex'), 'codex-security')
     assert.equal(groupOf('unseen.json'), 'default')
     assert.equal(groupOf('UNSEEN.MD'), 'claude-security', 'case-insensitive')
+  })
+})
+
+// Every bucket `groupOf` can name has to have both a sticker and a
+// word: the sidebar row draws the first, and the finding card's
+// "Duplicates:" tooltip says the second (a mark with no text beside it
+// says nothing to a reader who can't see it). Adding a producer means
+// adding to three tables, and this is what notices when only two of
+// them got the edit.
+describe('every bucket has an icon and a producer name', () => {
+  beforeEach(() => { globalThis.localStorage.clear() })
+
+  it('names and draws each bucket a report can land in', () => {
+    const buckets = new Set()
+    for (const source of ['claude-security', 'codex-security', 'deepsec', 'piolium', undefined]) {
+      setCount(`r-${source}.md`, 1, source)
+      buckets.add(groupOf(`r-${source}.md`))
+    }
+    assert.ok(buckets.size > 1, 'sanity: the fixtures span several buckets')
+    for (const bucket of buckets) {
+      assert.ok(FILE_ICONS[bucket], `no icon for the ${bucket} bucket`)
+      assert.ok(PRODUCER_LABELS[bucket], `no producer name for the ${bucket} bucket`)
+    }
+  })
+
+  // The links bucket is the one exception on the naming side: a links
+  // file carries no findings, so it never produces one and never turns
+  // up as a duplicate's origin. It still needs its row icon.
+  it('draws the links bucket, which produces no findings to name', () => {
+    setCount('dupes.json', 3, 'links')
+    assert.equal(groupOf('dupes.json'), 'links')
+    assert.ok(FILE_ICONS.links)
   })
 })
 
