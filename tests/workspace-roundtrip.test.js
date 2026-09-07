@@ -36,7 +36,7 @@ const {
 const { classifyGzipExport, isRawReportsExport } = await import('../client/raw-reports-import.js')
 const { isEncryptedBundle } = await import('../client/workspace-bundle-crypto.js')
 const { listWorkspaces } = await import('../client/workspaces.js')
-const { patchEntry, setReportIgnored, isReportIgnored } = await import('../client/triage-entry.ts')
+const { appFixOf, appTriageOf, patchEntry, setAppTriage, setReportIgnored, isReportIgnored, setUpstream } = await import('../client/triage-entry.ts')
 
 async function saveFileFixture(name, content) {
   const { saveFile } = await import('../client/storage.js')
@@ -348,6 +348,50 @@ describe('applyWorkspaceImport: triage migration', () => {
     assert.equal(state.triage.get(FINDING_A)?.triage, 'fixed')
     assert.equal(state.triage.get(FINDING_B)?.triage, 'invalid')
     assert.equal(state.triage.get(FINDING_A)?.color, 'red')
+  })
+
+  it('adopts the per-app track and the upstream record from a bundle', async () => {
+    // Both ride the export (`normalizeEntry` keeps them), so a bundle
+    // that carries them must import them — otherwise moving a
+    // workspace between profiles drops every per-app answer and every
+    // upstream record it held. Per-app is an additive merge by key:
+    // an imported slot for one app is news beside a local slot for
+    // another, not a disagreement. (Codex review of #260, P1.)
+    setAppTriage(state.triage, FINDING_A, 'acme/admin', 'inprogress')
+    const data = parseWorkspaceJson(JSON.stringify({
+      version: 1,
+      workspace: { id: 'ws-tracks', name: 'Tracks', privateKey: 'k' },
+      reports: [{ name: 'r.json', content: reportContent([FINDING_A, FINDING_B]) }],
+      triage: {
+        [FINDING_A]: { apps: { 'acme/web': { triage: 'fixed', fix: 'https://pr/1' } } },
+        [FINDING_B]: { upstream: { state: 'fixed', since: '4.17.21', link: 'https://u' } },
+      },
+    }))
+    await applyWorkspaceImport(data)
+    assert.equal(appTriageOf(state.triage.get(FINDING_A), 'acme/web'), 'fixed')
+    assert.equal(appFixOf(state.triage.get(FINDING_A), 'acme/web'), 'https://pr/1')
+    assert.equal(appTriageOf(state.triage.get(FINDING_A), 'acme/admin'), 'inprogress', 'the local app survives')
+    assert.deepEqual(state.triage.get(FINDING_B)?.upstream, { state: 'fixed', link: 'https://u', since: '4.17.21' })
+  })
+
+  it('surfaces an upstream disagreement as a conflict, and applies the imported record on demand', async () => {
+    setUpstream(state.triage, FINDING_A, { state: 'reported' })
+    const seen = []
+    const conflictResolver = (conflicts) => {
+      seen.push(...conflicts)
+      return { [`${FINDING_A}:upstream`]: 'imported' }
+    }
+    const data = parseWorkspaceJson(JSON.stringify({
+      version: 1,
+      workspace: { id: 'ws-up', name: 'Up', privateKey: 'k' },
+      reports: [{ name: 'r.json', content: reportContent([FINDING_A]) }],
+      triage: { [FINDING_A]: { upstream: { state: 'fixed', since: '4.17.21' } } },
+    }))
+    await applyWorkspaceImport(data, { conflictResolver })
+    assert.deepEqual(seen.map((c) => c.property), ['upstream'])
+    // Written from the record the conflict carried, not the sentence
+    // the dialog showed — that can't be parsed back into three fields.
+    assert.deepEqual(state.triage.get(FINDING_A)?.upstream, { state: 'fixed', since: '4.17.21' })
   })
 
   it('migrates legacy {deleted: true} → triage: "deleted"', async () => {

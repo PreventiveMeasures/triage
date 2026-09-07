@@ -1097,6 +1097,25 @@ async function ingestReport(name, content, gen = null) {
         reason: dup.correctedSeverityReason,
       }
     }
+    // Record a deduped duplicate's APP on the survivor. The dropped
+    // occurrence belonged to THIS report — a second app's copy of the
+    // same dependency finding, which is precisely the case the per-app
+    // triage track exists for — and the survivor is now the only card
+    // the workspace shows for both. So it has to be able to answer for
+    // both: `setTabTriage` writes every app in `_appKeys`, and
+    // `tabTriage` shows a bucket only where they agree. Without this
+    // the load order would decide which app owned the card and the
+    // other one could never be recorded at all.
+    //
+    // Absent until a duplicate actually arrives, so the overwhelmingly
+    // common single-app finding carries nothing extra and `findingApp`
+    // keeps reading `_appKey`.
+    const recordAppKey = (survivor, appKey) => {
+      if (!survivor || !appKey) return
+      const list = survivor._appKeys ?? [survivor._appKey ?? survivor._reportName ?? '']
+      if (list.includes(appKey)) return
+      survivor._appKeys = [...list, appKey]
+    }
     // The report's entries, under whichever of the two names it files
     // them (report/index.js reportEntries): `findings`, or `groups`
     // for a report that arrives already deduplicated — a native dump
@@ -1186,6 +1205,13 @@ async function ingestReport(name, content, gen = null) {
         for (const m of seenMembers) {
           const survivor = idToFinding.get(m.id)
           recordCorrectedVariant(survivor, name, m)
+          // The app the dropped copy belonged to — the one `_`-prefixed
+          // field that has to cross. `mergeDuplicateFields` leaves
+          // those alone by design (they say where a copy came from,
+          // and the survivor keeps its own), but this card is now the
+          // only one EITHER app has, so it has to be able to answer
+          // for both: see `recordAppKey` and `scopedApps` in group.js.
+          recordAppKey(survivor, declaredRepo ?? name)
           // …and anything else this copy knew that the survivor
           // doesn't — the pass's verdict above all. A disagreement
           // about that verdict is reported rather than settled: the
@@ -1284,6 +1310,13 @@ async function ingestReport(name, content, gen = null) {
         for (const m of seenMembers) {
           const survivor = idToFinding.get(m.id)
           recordCorrectedVariant(survivor, name, m)
+          // The app the dropped copy belonged to — the one `_`-prefixed
+          // field that has to cross. `mergeDuplicateFields` leaves
+          // those alone by design (they say where a copy came from,
+          // and the survivor keeps its own), but this card is now the
+          // only one EITHER app has, so it has to be able to answer
+          // for both: see `recordAppKey` and `scopedApps` in group.js.
+          recordAppKey(survivor, declaredRepo ?? name)
           // …and anything else this copy knew that the survivor
           // doesn't — the pass's verdict above all. A disagreement
           // about that verdict is reported rather than settled: the

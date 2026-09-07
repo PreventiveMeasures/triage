@@ -4,8 +4,8 @@
 // over them: diff, apply, equality, and the three-way conflict scan. No
 // module state, no `state.*`, no I/O — safe to unit-test in isolation.
 
-import { appsEqual, upstreamEqual } from '../triage-entry.ts'
-import type { UpstreamEntry } from '../state.ts'
+import { appsEqual, upstreamEqual, upstreamText } from '../triage-entry.ts'
+import type { AppEntry, UpstreamEntry } from '../state.ts'
 import type { TriageEntry } from './host.ts'
 import { normalizeEntry } from '../triage-entry.ts'
 
@@ -26,6 +26,8 @@ export type Conflict = {
 // `TriageEntry` (the per-finding-id triage value carried on the wire
 // and in baseState) is defined in `../state.ts` — the same shape
 // `state.triage` stores live — and re-exported through `host.ts`.
+export { upstreamText }
+
 export type TriageStateMap = { [id: string]: TriageEntry | undefined }
 export type Changeset = { [id: string]: TriageEntry | null | undefined }
 
@@ -59,11 +61,7 @@ function normFlagged(entry: TriageEntry | null | undefined): string {
 // — it is one statement about the dependency ("fixed upstream in
 // 4.17.21"), and two peers who recorded different versions have
 // disagreed about that one statement, not about three fields.
-export function upstreamText(entry: TriageEntry | null | undefined): string {
-  const up = entry?.upstream
-  if (!up) return ''
-  return [up.state ?? '', up.since ? `in ${up.since}` : '', up.link ?? ''].filter(Boolean).join(' ')
-}
+
 // `apps` is deliberately NOT a conflict property. Each key is one
 // app's own answer, so two peers editing DIFFERENT apps aren't
 // disagreeing about anything — and two peers editing the same app's
