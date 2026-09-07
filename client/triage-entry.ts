@@ -269,17 +269,6 @@ export function appFixOf(entry: TriageEntry | undefined, app: string): string | 
   return app ? entry?.apps?.[app]?.fix : undefined
 }
 
-// The OTHER apps that have answered for this finding, as
-// `[appKey, slot]` pairs in key order — what the card shows so a
-// finding still open here reads "fixed in two other apps" instead of
-// silently inheriting their verdict. Excludes `app` itself (that one
-// is the card's own state, already on screen).
-export function otherApps(entry: TriageEntry | undefined, app: string): Array<[string, AppEntry]> {
-  const apps = entry?.apps
-  if (!apps) return []
-  return Object.entries(apps).filter(([key]) => key !== app)
-}
-
 // Every app whose slot carries `triage`, in key order. What the
 // cross-app pages ask (Packages / Repositories / the bundle's Issues
 // list): they aggregate over apps and so have no "own app" to leave
@@ -298,9 +287,31 @@ export function appsWith(entry: TriageEntry | undefined, triage: AppTriage): str
 // keeps showing until this app says something of its own, which is
 // what makes the migration a no-op for existing blobs.
 export function bucketForApp(entry: TriageEntry | undefined, app: string): TriageBucket | undefined {
+  return bucketForApps(entry, app ? [app] : [])
+}
+
+// The same question asked of a card that stands for SEVERAL apps —
+// what a workspace shows after deduplicating one dependency finding
+// across two apps' reports (see `recordAppKey` in ui/view/ingest.js).
+// It shows a bucket only where every app it speaks for agrees: one app
+// fixed and another still open is not a fixed card, and collapsing
+// that to "fixed" is the conflation this split exists to undo. The
+// disagreement surfaces instead as the card's own per-app line.
+//
+// No apps (the app's own code, or a report with no identity to key on)
+// falls through to the entry's unscoped verdict, which is what such a
+// finding has always been answered by.
+export function bucketForApps(entry: TriageEntry | undefined, apps: string[]): TriageBucket | undefined {
   const cause = bucketOf(entry)
   if (cause === 'invalid' || cause === 'deleted') return cause
-  return appTriageOf(entry, app) ?? cause
+  if (apps.length === 0) return cause
+  let common: TriageBucket | undefined
+  for (const [i, app] of apps.entries()) {
+    const bucket = appTriageOf(entry, app) ?? cause
+    if (i > 0 && bucket !== common) return undefined
+    common = bucket
+  }
+  return common
 }
 
 // Write one app's slot. `triage: undefined` clears the state but keeps
@@ -350,6 +361,17 @@ export function clearAppEverywhere(map: TriageMap, app: string): void {
 
 export function upstreamOf(entry: TriageEntry | undefined): UpstreamEntry | undefined {
   return entry?.upstream
+}
+
+// The cause track as one sentence — "fixed in 4.17.21 https://…".
+// Every path that has to compare two upstream records, or show one
+// where only a string fits (the sync conflict dialog, the workspace
+// import's conflict list), reads it through here so they agree on
+// what "the same upstream status" means.
+export function upstreamText(entry: TriageEntry | null | undefined): string {
+  const up = entry?.upstream
+  if (!up) return ''
+  return [up.state ?? '', up.since ? `in ${up.since}` : '', up.link ?? ''].filter(Boolean).join(' ')
 }
 
 // Replace (not merge) the upstream record: the editor hands over the

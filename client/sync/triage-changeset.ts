@@ -4,8 +4,8 @@
 // over them: diff, apply, equality, and the three-way conflict scan. No
 // module state, no `state.*`, no I/O — safe to unit-test in isolation.
 
-import { appsEqual, upstreamEqual } from '../triage-entry.ts'
-import type { UpstreamEntry } from '../triage-tracks.ts'
+import { appsEqual, upstreamEqual, upstreamText } from '../triage-entry.ts'
+import type { AppEntry, UpstreamEntry } from '../triage-tracks.ts'
 import type { TriageEntry } from './host.ts'
 
 export type ConflictProperty = 'color' | 'triage' | 'comment' | 'fix' | 'flagged' | 'upstream'
@@ -25,6 +25,8 @@ export type Conflict = {
 // `TriageEntry` (the per-finding-id triage value carried on the wire
 // and in baseState) is defined in `../state.ts` — the same shape
 // `state.triage` stores live — and re-exported through `host.ts`.
+export { upstreamText }
+
 export type TriageStateMap = { [id: string]: TriageEntry | undefined }
 export type Changeset = { [id: string]: TriageEntry | null | undefined }
 
@@ -58,11 +60,7 @@ function normFlagged(entry: TriageEntry | null | undefined): string {
 // — it is one statement about the dependency ("fixed upstream in
 // 4.17.21"), and two peers who recorded different versions have
 // disagreed about that one statement, not about three fields.
-export function upstreamText(entry: TriageEntry | null | undefined): string {
-  const up = entry?.upstream
-  if (!up) return ''
-  return [up.state ?? '', up.since ? `in ${up.since}` : '', up.link ?? ''].filter(Boolean).join(' ')
-}
+
 // `apps` is deliberately NOT a conflict property. Each key is one
 // app's own answer, so two peers editing DIFFERENT apps aren't
 // disagreeing about anything — and two peers editing the same app's
@@ -171,6 +169,70 @@ export function statesEqual(a: TriageStateMap, b: TriageStateMap): boolean {
     if (!entriesEqual(a[id] ?? {}, b[id] ?? {})) return false
   }
   return true
+}
+
+// Per-key three-way merge of the app track, for the rebase path.
+//
+// `applyChangeset` replaces a whole entry, which is right for the
+// fields one user holds an opinion about and wrong for `apps`: its
+// keys are separate apps' separate answers, so an overlay carrying
+// this client's edit to app B would otherwise delete a chain entry's
+// app A — work the peer did, that this client never had a view on,
+// silently gone and then propagated as a deletion on the retry.
+//
+// Three-way per key, against the base the overlay was computed from:
+// a key this client changed keeps its value (local-wins, as every
+// other property does here), and a key it didn't takes the chain's —
+// including one the chain added that this client never saw. A key
+// this client cleared stays cleared.
+//
+// Returns a new changeset; `overlay` and both states are untouched.
+export function mergeAppTracks(
+  overlay: Changeset,
+  oldBaseState: TriageStateMap,
+  newBaseState: TriageStateMap,
+): Changeset {
+  const out: Changeset = Object.create(null)
+  for (const [id, entry] of Object.entries(overlay)) {
+    const apps = mergedApps(entry, oldBaseState[id], newBaseState[id])
+    if (entry === null || entry === undefined) {
+      // The user's entry went empty. Anything the chain holds under a
+      // key they never had is the peer's news, not something their
+      // delete was about — so the id survives carrying just that.
+      out[id] = apps ? { apps } : entry
+      continue
+    }
+    out[id] = apps ? { ...entry, apps } : omitApps(entry)
+  }
+  return out
+}
+
+function omitApps(entry: TriageEntry): TriageEntry {
+  if (!entry.apps) return entry
+  const { apps: _dropped, ...rest } = entry
+  return rest
+}
+
+function slotsEqual(a: AppEntry | undefined, b: AppEntry | undefined): boolean {
+  return (a?.triage ?? '') === (b?.triage ?? '') && (a?.fix ?? '') === (b?.fix ?? '')
+}
+
+function mergedApps(
+  overlayEntry: TriageEntry | null | undefined,
+  oldEntry: TriageEntry | undefined,
+  chainEntry: TriageEntry | undefined,
+): { [appKey: string]: AppEntry } | undefined {
+  const mine = overlayEntry?.apps
+  const theirs = chainEntry?.apps
+  if (!mine && !theirs) return undefined
+  // Null-prototype for the reason `normalizeApps` uses one: the keys
+  // are app names off a peer's changeset.
+  const out: { [appKey: string]: AppEntry } = Object.create(null)
+  for (const app of new Set([...Object.keys(mine ?? {}), ...Object.keys(theirs ?? {})])) {
+    const slot = slotsEqual(mine?.[app], oldEntry?.apps?.[app]) ? theirs?.[app] : mine?.[app]
+    if (slot) out[app] = slot
+  }
+  return Object.keys(out).length > 0 ? out : undefined
 }
 
 // Walk a state through a changeset, producing a new state. `null` in

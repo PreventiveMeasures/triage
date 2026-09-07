@@ -21,7 +21,7 @@ import { downloadBlob } from './dom.js'
 import { activeFilterDescriptions, exportBucketGroups, exportBucketLabel } from './export-summary.js'
 import { activeFilters, applyFilters, applySorting } from './filters.js'
 import { commitUrl, commonPrefix, evidenceUrl, findingUrl, hasRevalidateField, hasSeverityCorrection, isModule } from './format.js'
-import { findingApp, findingRepoFallback, isIgnored, sortTabs, tabFix, tabKey, tabTriage } from './group.js'
+import { findingRepoFallback, isIgnored, scopedApps, sortTabs, tabFix, tabKey, tabTriage } from './group.js'
 import { writeMarkdown } from '../../report/index.js'
 
 // The bucket's groups the selection in force lets through, in on-screen
@@ -51,9 +51,16 @@ const HOOKS = {
     // about the dependency itself; `upstream` carries the other
     // track, which IS such a claim and says so.
     const bucket = tabTriage(f, entry)
+    // Name every app whose own slot carries the bucket the document is
+    // about to write — one for the ordinary case, several where a
+    // workspace deduplicated one dependency finding across apps and
+    // they all answered together. Absent when the bucket came off the
+    // entry's unscoped verdict, which names no app because none was
+    // recorded.
+    const apps = scopedApps(f).filter((app) => appTriageOf(entry, app) === bucket)
     return {
       triage: bucket === 'ignored' ? undefined : bucket,
-      app: appTriageOf(entry, findingApp(f)) === undefined ? undefined : findingApp(f),
+      app: apps.length > 0 ? apps.join(', ') : undefined,
       color: entry?.color,
       comment: entry?.comment,
       fix: tabFix(f, entry) || undefined,

@@ -2,10 +2,10 @@ import { html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { bundleFilePath, bundlesForFileHash, duplicatesOf, encodeFindingRef, isLinkableFindingId, isPlaceholderNpmPackage, otherApps, reportsForFindingId, state, upstreamOf } from '#client/index.js'
+import { bundleFilePath, bundlesForFileHash, duplicatesOf, encodeFindingRef, isLinkableFindingId, isPlaceholderNpmPackage, reportsForFindingId, state, upstreamOf } from '#client/index.js'
 import { UPSTREAM_LABELS } from '../../report/index.js'
 import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, githubRefLabel, hasSeverityCorrection, isHttpUrl, lineRange, listSegments, locationLabel, markdownLinkToken, parseCommentRefs, revalidateStamp, revalidationShown, shortFindingId, snippetWindow, splitDescription, stripExportMarker } from './format.js'
-import { activeTabFor, findingApp, findingRepo, findingRepoFallback, groupState, isIgnored, isUnscopedBucket, scopedTriage, sortTabs, tabFix, tabKey, triageAppScope } from './group.js'
+import { activeTabFor, findingRepo, findingRepoFallback, groupState, isIgnored, isUnscopedBucket, scopedTriage, sortTabs, tabFix, tabKey, tabTriage, triageAppScope } from './group.js'
 import { highlightedCode } from './code-highlight.js'
 import { attachedBundle, bundleSource, focusCodePosition } from './focus-code.js'
 import { samePos } from './focus-code-history.js'
@@ -1200,11 +1200,19 @@ function tabTemplate(f, isActive, groupSt) {
   const key = tabKey(f)
   const entry = state.triage.get(key)
   const color = entry?.color
-  const triage = entry?.triage
+  // `tabTriage`, not `entry.triage`: a dependency tab holds its state
+  // in its own app's slot, and reading the entry alone would drop the
+  // per-tab glyph from exactly the conflicted group it exists for —
+  // `groupState` would see the disagreement while the strip showed
+  // nothing about which tab carried what.
+  const triage = tabTriage(f, entry)
   const classes = ['tab']
   if (isActive) classes.push('active')
   if (color) classes.push(`tab-mark-${color}`)
-  if (triage) {
+  // 'ignored' falls through to the branch below, which is where it was
+  // always handled: `tabTriage` folds it in as a bucket, the classes
+  // keep it separate.
+  if (triage && triage !== 'ignored') {
     if (groupSt.commonTriage === null) classes.push(`tab-${triage}`)
   } else if (!groupSt.allIgnored && isIgnored(f)) {
     // Per-tab by nature — each tab carries its own report — and
@@ -1442,23 +1450,28 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
 // the board says Fixed, and this says nobody recorded which app it
 // was fixed in. Re-triaging the finding converts it.
 function scopeBlockTemplate(f, entry) {
-  const app = triageAppScope(f)
-  if (app === null) return nothing
-  const others = otherApps(entry, findingApp(f)).filter(([, slot]) => slot.triage)
+  if (triageAppScope(f) === null) return nothing
+  // Apps whose answer the card's own column isn't already showing.
+  // That covers both directions at once: an app somewhere else that
+  // dealt with this dependency, and — when this card stands for
+  // several apps and they disagree — the one among them that did,
+  // which is why the column reads untriaged (see `bucketForApps`).
+  const shown = tabTriage(f, entry)
+  const differing = Object.entries(entry?.apps ?? {}).filter(([, slot]) => slot.triage && slot.triage !== shown)
   const up = upstreamOf(entry)
   const upLabel = upstreamLabel(up)
-  if (others.length === 0 && !upLabel && !isUnscopedBucket(f, entry)) return nothing
-  const fixedElsewhere = others.filter(([, slot]) => slot.triage === 'fixed')
-  const workedElsewhere = others.filter(([, slot]) => slot.triage === 'inprogress')
+  if (differing.length === 0 && !upLabel && !isUnscopedBucket(f, entry)) return nothing
+  const fixedElsewhere = differing.filter(([, slot]) => slot.triage === 'fixed')
+  const workedElsewhere = differing.filter(([, slot]) => slot.triage === 'inprogress')
   return html`<div class="scope-block">
     ${isUnscopedBucket(f, entry)
       ? html`<span class="scope-chip scope-unscoped" title="Recorded before this finding's app and upstream were tracked separately, so it applies everywhere. Re-triage it here to scope it to this app.">Marked in every app</span>`
       : nothing}
     ${fixedElsewhere.length > 0
-      ? html`<span class="scope-chip scope-other-fixed" title=${`Fixed in: ${fixedElsewhere.map(([name]) => name).join(', ')}`}>Fixed in ${appCountLabel(fixedElsewhere)}</span>`
+      ? html`<span class="scope-chip scope-other-fixed" title=${`Fixed in: ${appNames(fixedElsewhere)}`}>Fixed in ${appCountLabel(fixedElsewhere)}</span>`
       : nothing}
     ${workedElsewhere.length > 0
-      ? html`<span class="scope-chip scope-other-progress" title=${`In progress in: ${workedElsewhere.map(([name]) => name).join(', ')}`}>In progress in ${appCountLabel(workedElsewhere)}</span>`
+      ? html`<span class="scope-chip scope-other-progress" title=${`In progress in: ${appNames(workedElsewhere)}`}>In progress in ${appCountLabel(workedElsewhere)}</span>`
       : nothing}
     ${upLabel
       ? html`<span class=${`scope-chip scope-upstream upstream-${up.state ?? 'none'}`}>${UPSTREAM_ICON}${up.link && isHttpUrl(up.link)
@@ -1468,11 +1481,13 @@ function scopeBlockTemplate(f, entry) {
   </div>`
 }
 
-// "one other app" / "2 other apps" — the count carries more than the
-// names would at this size, and the names are one hover away in the
-// chip's title.
+const appNames = (apps) => apps.map(([name]) => name).join(', ')
+
+// One app is worth naming — it is the useful half of the sentence,
+// and the name is what the reader would hover for anyway. Several are
+// a count, with the names in the chip's title.
 function appCountLabel(apps) {
-  return apps.length === 1 ? 'one other app' : `${apps.length} other apps`
+  return apps.length === 1 ? apps[0][0] : `${apps.length} apps`
 }
 
 // State-derived host classes for a `<finding-card>`. The literal

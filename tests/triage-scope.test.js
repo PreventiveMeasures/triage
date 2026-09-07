@@ -30,14 +30,15 @@ if (!globalThis[slotKey]) {
 }
 
 const {
-  appFixOf, appTriageOf, bucketForApp, clearAppEverywhere, entryIsEmpty,
-  normalizeEntry, otherApps, patchEntry, setAppFix, setAppTriage, setUpstream,
+  appFixOf, appTriageOf, appsWith, bucketForApp, bucketForApps, clearAppEverywhere,
+  entryIsEmpty, normalizeEntry, patchEntry, setAppFix, setAppTriage, setUpstream,
   upstreamOf,
 } = await import('../client/triage-entry.ts')
+const { mergeAppTracks } = await import('../client/sync/triage-changeset.ts')
 const { state } = await import('../client/state.ts')
 const {
-  findingApp, isDependencyFinding, isUnscopedBucket, setTabFix, setTabTriage,
-  syncGroupTriage, tabFix, tabTriage, triageAppScope,
+  findingApp, findingApps, isDependencyFinding, isUnscopedBucket, scopedApps,
+  setTabFix, setTabTriage, syncGroupTriage, tabFix, tabTriage, triageAppScope,
 } = await import('../ui/view/group.js')
 
 const APP_A = 'acme/web'
@@ -140,13 +141,14 @@ describe('the app track', () => {
     assert.equal(setUpstream(state.triage, 'f1', { state: 'reported' }), true)
     assert.equal(setUpstream(state.triage, 'f1', { state: 'reported' }), false)
   })
-  it('lists the other apps and not its own', () => {
+  it('lists the apps carrying one state, for the cross-app pages', () => {
     reset()
     setAppTriage(state.triage, 'f1', APP_A, 'fixed')
     setAppTriage(state.triage, 'f1', APP_B, 'inprogress')
     const entry = state.triage.get('f1')
-    assert.deepEqual(otherApps(entry, APP_A).map(([name]) => name), [APP_B])
-    assert.deepEqual(otherApps(entry, APP_B).map(([name]) => name), [APP_A])
+    assert.deepEqual(appsWith(entry, 'fixed'), [APP_A])
+    assert.deepEqual(appsWith(entry, 'inprogress'), [APP_B])
+    assert.deepEqual(appsWith(undefined, 'fixed'), [])
   })
   it('clearAppEverywhere drops one app across all ids', () => {
     reset()
@@ -348,5 +350,118 @@ describe('fix links follow the same scope', () => {
     setTabFix(dep, '')
     assert.equal(tabFix(dep), '')
     assert.equal(state.triage.has('f1'), false)
+  })
+})
+
+// A dependency finding both apps' reports carry is deduplicated to ONE
+// finding object in a workspace — the second occurrence is dropped
+// before it can be stamped — so the survivor records every app it
+// stands for and has to answer for all of them. Without that, load
+// order decided which app owned the card and the other could never be
+// recorded at all (Codex review of #260, P1).
+describe('a card standing for several apps', () => {
+  // What ingest's `recordAppKey` leaves on the survivor.
+  const shared = () => finding('shared-id', { app: APP_A })
+  const dedupedAcross = (...apps) => ({ ...shared(), _appKeys: apps })
+
+  it('lists every app, and the primary is still the first', () => {
+    assert.deepEqual(findingApps(dedupedAcross(APP_A, APP_B)), [APP_A, APP_B])
+    assert.deepEqual(scopedApps(dedupedAcross(APP_A, APP_B)), [APP_A, APP_B])
+    assert.equal(triageAppScope(dedupedAcross(APP_A, APP_B)), APP_A)
+    // The ordinary single-app finding is unchanged.
+    assert.deepEqual(findingApps(shared()), [APP_A])
+  })
+
+  it('answers for every app it stands for', () => {
+    reset()
+    const card = dedupedAcross(APP_A, APP_B)
+    setTabTriage(card, 'fixed')
+    assert.equal(appTriageOf(state.triage.get('shared-id'), APP_A), 'fixed')
+    assert.equal(appTriageOf(state.triage.get('shared-id'), APP_B), 'fixed')
+    assert.equal(tabTriage(card), 'fixed')
+  })
+
+  it('shows a bucket only where the apps agree', () => {
+    reset()
+    // App A dealt with it in an earlier session; B's report has since
+    // loaded and deduplicated onto the same card.
+    setAppTriage(state.triage, 'shared-id', APP_A, 'fixed')
+    const card = dedupedAcross(APP_A, APP_B)
+    assert.equal(tabTriage(card), undefined, 'one app fixed is not a fixed card')
+    // The disagreement is what the card's per-app line reports.
+    assert.deepEqual(appsWith(state.triage.get('shared-id'), 'fixed'), [APP_A])
+    setAppTriage(state.triage, 'shared-id', APP_B, 'fixed')
+    assert.equal(tabTriage(card), 'fixed')
+  })
+
+  it('clears every app it stands for', () => {
+    reset()
+    const card = dedupedAcross(APP_A, APP_B)
+    setTabTriage(card, 'fixed')
+    setTabTriage(card, undefined)
+    assert.equal(state.triage.has('shared-id'), false)
+  })
+
+  it('bucketForApps falls back to the unscoped verdict with no apps', () => {
+    assert.equal(bucketForApps({ triage: 'fixed' }, []), 'fixed')
+    assert.equal(bucketForApps({ triage: 'invalid', apps: { [APP_A]: { triage: 'fixed' } } }, [APP_A, APP_B]), 'invalid')
+    // An unscoped verdict answers for every app, so they still agree.
+    assert.equal(bucketForApps({ triage: 'fixed' }, [APP_A, APP_B]), 'fixed')
+    assert.equal(bucketForApp({ triage: 'fixed' }, APP_A), 'fixed')
+  })
+})
+
+// Concurrent edits to DIFFERENT app slots. The rebase applies the
+// local overlay over the chain's new base by replacing whole entries,
+// which would drop a peer's slot for another app — work this client
+// never had a view on, deleted and then propagated as a deletion on
+// the retry (Codex review of #260, P1).
+describe('mergeAppTracks', () => {
+  const ID = 'shared-id'
+  const entry = (apps) => ({ apps })
+
+  it('keeps a peer\'s slot for an app this client did not touch', () => {
+    const oldBase = {}
+    const newBase = { [ID]: entry({ [APP_A]: { triage: 'fixed' } }) }
+    const overlay = { [ID]: entry({ [APP_B]: { triage: 'inprogress' } }) }
+    const out = mergeAppTracks(overlay, oldBase, newBase)
+    assert.deepEqual(Object.keys(out[ID].apps).toSorted(), [APP_B, APP_A].toSorted())
+    assert.equal(out[ID].apps[APP_A].triage, 'fixed', "the peer's app survives")
+    assert.equal(out[ID].apps[APP_B].triage, 'inprogress', 'ours survives')
+  })
+
+  it('local wins where both edited the same app', () => {
+    const oldBase = { [ID]: entry({ [APP_A]: { triage: 'inprogress' } }) }
+    const newBase = { [ID]: entry({ [APP_A]: { triage: 'fixed' } }) }
+    const overlay = { [ID]: entry({ [APP_A]: { triage: 'inprogress', fix: 'https://mine' } }) }
+    const out = mergeAppTracks(overlay, oldBase, newBase)
+    assert.equal(out[ID].apps[APP_A].fix, 'https://mine')
+  })
+
+  it('a slot this client cleared stays cleared', () => {
+    const oldBase = { [ID]: entry({ [APP_A]: { triage: 'fixed' } }) }
+    const newBase = { [ID]: entry({ [APP_A]: { triage: 'fixed' } }) }
+    const overlay = { [ID]: { color: 'red' } }
+    const out = mergeAppTracks(overlay, oldBase, newBase)
+    assert.equal(out[ID].apps, undefined)
+    assert.equal(out[ID].color, 'red', 'the rest of the entry is untouched')
+  })
+
+  it('a delete keeps only what the peer added under a key we never had', () => {
+    const oldBase = { [ID]: entry({ [APP_A]: { triage: 'fixed' } }) }
+    const newBase = { [ID]: entry({ [APP_A]: { triage: 'fixed' }, [APP_B]: { triage: 'fixed' } }) }
+    const out = mergeAppTracks({ [ID]: null }, oldBase, newBase)
+    assert.deepEqual(Object.keys(out[ID].apps), [APP_B])
+  })
+
+  it('a delete with nothing of the peer\'s stays a delete', () => {
+    const oldBase = { [ID]: entry({ [APP_A]: { triage: 'fixed' } }) }
+    const newBase = { [ID]: entry({ [APP_A]: { triage: 'fixed' } }) }
+    assert.equal(mergeAppTracks({ [ID]: null }, oldBase, newBase)[ID], null)
+  })
+
+  it('leaves entries with no app track alone', () => {
+    const overlay = { [ID]: { color: 'red' } }
+    assert.deepEqual(mergeAppTracks(overlay, {}, {})[ID], { color: 'red' })
   })
 })

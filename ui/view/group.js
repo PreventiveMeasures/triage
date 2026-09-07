@@ -1,4 +1,4 @@
-import { appFixOf, appTriageOf, bucketForApp, getPackagesIndex, isReportIgnored, patchEntry, setAppFix, setAppTriage, state } from '#client/index.js'
+import { appFixOf, appTriageOf, bucketForApps, getPackagesIndex, isReportIgnored, patchEntry, setAppFix, setAppTriage, state } from '#client/index.js'
 import { SEVERITY_ORDER, displayedSeverity, isRevalidation, isRevalidationRow } from './format.js'
 import { bundlePkgOf } from './bundle-pkg-of.js'
 // NOTE: filters.js imports from this module too (primaryTab / tabKey).
@@ -68,15 +68,33 @@ export function isDependencyFinding(f) {
   return dep
 }
 
-// The app key a triage write for this finding should be scoped to, or
-// null when the write belongs on the entry itself. Null for own-code
-// findings (nothing to scope) and for findings whose report gave us no
-// identity to key on (scoping to '' would put every anonymous report
-// in one shared bucket, which is the bug this exists to prevent).
-export function triageAppScope(f) {
-  if (!isDependencyFinding(f)) return null
+// Every app this occurrence stands for. Usually just its own, but a
+// workspace that loaded two apps' reports keeps ONE finding object for
+// a dependency finding both carry — the dedup drops the duplicate —
+// and ingest records the dropped occurrence's app on the survivor
+// (`recordAppKey`). The card is then the only one either app has, so
+// it answers for both.
+export function findingApps(f) {
+  const list = f?._appKeys
+  if (Array.isArray(list) && list.length > 0) return list.filter(Boolean)
   const app = findingApp(f)
-  return app === '' ? null : app
+  return app ? [app] : []
+}
+
+// The app keys a scoped write should reach, empty when the write
+// belongs on the entry itself: own-code findings (nothing to scope)
+// and findings whose report gave us no identity to key on (scoping to
+// '' would put every anonymous report in one shared bucket, which is
+// the bug this exists to prevent).
+export function scopedApps(f) {
+  return isDependencyFinding(f) ? findingApps(f) : []
+}
+
+// The one app a scoped read keys off, or null when there is none —
+// the card's primary, which is also the answer to "is this finding
+// scoped at all".
+export function triageAppScope(f) {
+  return scopedApps(f)[0] ?? null
 }
 
 // The package a dependency finding sits in, for the surfaces that
@@ -106,7 +124,7 @@ export function findingPackage(f) {
 // hottest helper in the findings render path, so it must not cost a
 // second observable read per tab.
 export function tabTriage(f, entry = state.triage.get(tabKey(f))) {
-  return bucketForApp(entry, findingApp(f)) ?? (isIgnored(f) ? 'ignored' : undefined)
+  return bucketForApps(entry, scopedApps(f)) ?? (isIgnored(f) ? 'ignored' : undefined)
 }
 
 // Write one tab's triage bucket on the track `tabTriage` reads it
@@ -129,15 +147,19 @@ export function tabTriage(f, entry = state.triage.get(tabKey(f))) {
 // changed.
 export function setTabTriage(f, bucket) {
   const key = tabKey(f)
-  const app = triageAppScope(f)
+  // Every app the occurrence stands for, not just its primary: a
+  // deduplicated card is the only one those apps have, so an answer
+  // given on it is given for all of them — and `tabTriage` will only
+  // show it back once they all carry it.
+  const apps = scopedApps(f)
   let changed = false
-  if (app !== null && (bucket === 'inprogress' || bucket === 'fixed')) {
+  if (apps.length > 0 && (bucket === 'inprogress' || bucket === 'fixed')) {
     if (patchEntry(state.triage, key, { triage: undefined })) changed = true
-    if (setAppTriage(state.triage, key, app, bucket)) changed = true
+    for (const app of apps) if (setAppTriage(state.triage, key, app, bucket)) changed = true
     return changed
   }
   if (patchEntry(state.triage, key, { triage: bucket ?? undefined })) changed = true
-  if (app !== null && setAppTriage(state.triage, key, app, undefined)) changed = true
+  for (const app of apps) if (setAppTriage(state.triage, key, app, undefined)) changed = true
   return changed
 }
 
