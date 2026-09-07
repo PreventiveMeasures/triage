@@ -8,7 +8,7 @@ import { FOCUS_SPLIT_MAX, FOCUS_SPLIT_MIN, listBundles, listWorkspaces, state } 
 import { isBundleInRemote, isInRemote, remoteCount, triageSync } from './client-sync.js'
 import { installShadowTooltipListener } from './tooltip.js'
 import { dropZone, report } from './dom.js'
-import { SEVERITIES, configureDepsDir, configureRevalidation, displayedSeverity, fileLink, findingDisplayName, findingTitle, formatRunMeta, hasRevalidateField, hasSeverityCorrection, isHttpUrl, isModule, lineLink, lineRangeLabel, reachableRevalidateFilters, revalidateKind } from './format.js'
+import { SEVERITIES, canDropRevalidation, configureDepsDir, configureRevalidation, displayedSeverity, fileLink, findingDisplayName, findingTitle, formatRunMeta, hasSeverityCorrection, isHttpUrl, isModule, lineLink, lineRangeLabel, reachableRevalidateFilters, revalidateKind } from './format.js'
 import { activeTabFor, findingRepoFallback, getMergedGroups, groupKey, groupState, primaryTab, tabKey } from './group.js'
 import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, applySorting, modelOfFinding, repoOfFinding } from './filters.js'
 import { ANALYZER_LABELS } from './analyzer-select.js'
@@ -573,7 +573,7 @@ function triageFilterTemplate(colorCounts) {
 // so the host drops it in unconditionally.
 
 function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCounts, flags, analyzerSelect, repoOptions) {
-  const { showSource, showConfidence, showPriority, showGraphMode, showFileSort, kanbanMode, showRepo, hasComment, hasFix, hasFlagged, showSeverityMode, revalidateOptions, hasPartialKind, hasAnyRevalidate } = flags
+  const { showSource, showConfidence, showPriority, showGraphMode, showFileSort, kanbanMode, showRepo, hasComment, hasFix, hasFlagged, showSeverityMode, revalidateOptions, hasPartialKind, canDropLayer } = flags
   // The findings tab gains a "graph" view-mode option when a
   // tree-bearing report is loaded (showGraphMode). The focus and
   // kanban modes sit between grouped and graph. Switching to graph
@@ -629,9 +629,10 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
       ${kanbanMode ? nothing : html`<triage-selector .counts=${triageCounts}></triage-selector>`}
       <!-- App / code lens — the far right of the row, past the triage
            selector that claims the free space before it. Shown only
-           where a report carries a revalidation pass; see
+           where taking the layer off would hand a ruled-out finding
+           back (format.js canDropRevalidation); see
            revalidation-switch.js for what comes off with it. -->
-      ${hasAnyRevalidate ? html`<revalidation-switch></revalidation-switch>` : nothing}
+      ${canDropLayer ? html`<revalidation-switch></revalidation-switch>` : nothing}
     </div>
     <!-- Filter row: severity chips + mark-color triage pill + search
          field, all inline so they read as one composable filter strip.
@@ -1596,6 +1597,18 @@ function renderImpl() {
   // (see the note over configureRevalidation). group.js reads
   // `state.showRevalidation` directly for the row-dropping pass, since
   // getMergedGroups is reachable from outside a render.
+  //
+  // Whether the switch is offered at all decides the mode first: a set
+  // it isn't offered for is forced back ONTO the layer, the way the
+  // stale filter clears further down put an unreachable selection
+  // back. A report loaded while the switch was off would otherwise
+  // open with the pass's rows dropped and no control on screen to
+  // bring them back — and for a set with nothing the pass ruled out,
+  // dropping those rows is all "off" would ever do (format.js
+  // canDropRevalidation). Written only when it actually differs, since
+  // this runs on every render and `state` is observed.
+  const canDropLayer = canDropRevalidation(state.reports)
+  if (!canDropLayer && state.showRevalidation === false) state.showRevalidation = true
   configureRevalidation(state.showRevalidation)
   // Print-button body class is owned by an observer-util autorun (see
   // view/print-btn-visibility.js) — render() must not touch it.
@@ -1970,14 +1983,6 @@ function renderImpl() {
   // Same for a revalidation outcome the loaded set no longer reaches —
   // a report unloaded out from under the selection would otherwise
   // filter every finding away with no visible cause.
-  // Whether to offer the "App" switch at all. Read off the RAW field
-  // over the loaded reports rather than off `mergedGroups` and the
-  // gated reader: with the layer off, the pass's own rows are gone
-  // from those groups and every remaining row answers '' — so a scan
-  // through either would drop the control the moment it was used, and
-  // there would be no way back. A set that carries no `revalidate`
-  // anywhere is already the code view and gets no switch.
-  const hasAnyRevalidate = state.reports.some((r) => r.groups.some((g) => g.some(hasRevalidateField)))
   const revalidateOptions = reachableRevalidateFilters(revalidateKinds)
   if (state.filterRevalidate && !revalidateOptions.some((o) => o.value === state.filterRevalidate)) {
     state.filterRevalidate = ''
@@ -2135,7 +2140,7 @@ function renderImpl() {
       hasComment,
       revalidateOptions,
       hasPartialKind,
-      hasAnyRevalidate,
+      canDropLayer,
       hasFix,
       hasFlagged,
       // Corrected/Original lens switch — shown only when a correction

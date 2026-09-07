@@ -37,9 +37,9 @@ const { applyFilters, defaultConfidenceFloor, defaultRevalidateFilter, matchesFi
 const { getMergedGroups, sortTabs } = await import('../ui/view/group.js')
 const {
   PARTIAL_MODES, REVALIDATE_FILTERS, REVALIDATE_KINDS, activeRevalidateKinds,
-  configureRevalidation, formatRunMeta, hasRevalidateField, isRevalidation,
-  isRevalidationRow, reachableRevalidateFilters, revalidateKind, revalidateStamp,
-  revalidationShown, voidsConfidence,
+  canDropRevalidation, configureRevalidation, formatRunMeta, hasRevalidateField,
+  hasRevalidateStamp, isRevalidation, isRevalidationRow, reachableRevalidateFilters,
+  revalidateKind, revalidateStamp, revalidationShown, voidsConfidence,
 } = await import('../ui/view/format.js')
 
 // Neutralise every other filter so each assertion isolates the
@@ -522,6 +522,43 @@ describe('the revalidation layer switch', () => {
     // …and an unrecognised value is still no stamp, either way.
     configureRevalidation(false)
     assert.equal(hasRevalidateField({ revalidate: 'maybe' }), false)
+  })
+
+  // The switch is offered only where taking the layer off would hand
+  // a ruled-out finding back. A report whose every `revalidate` is
+  // `revalidation` — the pass's own rows, judging nothing — has none:
+  // "off" there would drop those rows and reveal nothing in their
+  // place, so the control isn't offered and the layer can't come off.
+  it('offers no way off a set the pass only ever rowed', () => {
+    for (const kind of ['refuted', 'unreachable', 'confirmed', 'partial', 'unknown']) {
+      assert.equal(hasRevalidateStamp({ revalidate: kind }), true, kind)
+    }
+    assert.equal(hasRevalidateStamp({ revalidate: 'revalidation' }), false)
+    assert.equal(hasRevalidateStamp({ revalidate: 'nonsense' }), false)
+    assert.equal(hasRevalidateStamp({}), false)
+    // …and past the switch, like the two readers above it: a gate
+    // that stopped seeing the stamps once the layer was off would
+    // take the way back with it.
+    configureRevalidation(false)
+    assert.equal(hasRevalidateStamp({ revalidate: 'refuted' }), true)
+    assert.equal(hasRevalidateStamp({ revalidate: 'revalidation' }), false)
+    configureRevalidation(true)
+
+    const report = (...findings) => [{ groups: findings.map((f) => [f]) }]
+    const pass = makeFinding('P', { revalidate: 'revalidation' })
+    // Nothing but the pass's own rows — no switch, whatever else the
+    // set carries.
+    assert.equal(canDropRevalidation(report(pass)), false)
+    assert.equal(canDropRevalidation(report(pass, makeFinding('A'))), false)
+    // One judged row anywhere in the loaded set is enough.
+    assert.equal(canDropRevalidation(report(pass, makeFinding('A', { revalidate: 'refuted' }))), true)
+    for (const kind of ['refuted', 'unreachable', 'confirmed', 'partial', 'unknown']) {
+      assert.equal(canDropRevalidation(report(makeFinding('A', { revalidate: kind }))), true, kind)
+    }
+    // A set the pass never touched is the code view already.
+    assert.equal(canDropRevalidation(report(makeFinding('A'))), false)
+    assert.equal(canDropRevalidation([]), false)
+    assert.equal(canDropRevalidation([{}]), false)
   })
 
   it('answers no stamp for every row while off', () => {
