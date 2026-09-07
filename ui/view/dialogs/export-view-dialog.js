@@ -46,17 +46,14 @@ import { chunkLines, escapeHtml, tableLead } from '../export-view-chunks.js'
 import codeTokensCSS from '../../styles/code-tokens.css'
 import exportViewCSS from './dialog-export-view.css'
 
-// The two corner controls' glyphs. The clipboard is the same
-// two-rect shape at the same stroke weight the finding card and the
-// Code slide use for their copy actions; the tick replaces it for a
-// moment after a successful write, so the button says how it went
-// without a word of text beside it.
+// The copy button's glyph — the same two-rect clipboard at the same
+// stroke weight the finding card and the Code slide use for their own
+// copy actions, so the icon means the same thing everywhere it
+// appears. It keeps its label beside it here (see render), which is
+// what says how the last click went.
 const COPY_ICON = html`<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
   <rect x="3" y="2.5" width="8" height="10" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
   <rect x="5.5" y="5" width="8" height="9" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
-</svg>`
-const COPIED_ICON = html`<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-  <path d="M3 8.4 6.3 11.7 13 5"/>
 </svg>`
 
 // One chunk's rows as HTML — the gutter number and the line, for each
@@ -90,8 +87,8 @@ class ExportViewDialog extends AppDialog {
     // The exact text the download would write.
     markdown: { attribute: false },
     // How the last copy went: '' (nothing yet), 'done' or 'failed',
-    // the last two for a moment after a click — the button's glyph and
-    // its label, having no text of their own, are the whole report.
+    // the last two for a moment after a click — the copy button's
+    // label and its tint say which.
     _copied: { state: true },
   }
 
@@ -130,39 +127,40 @@ class ExportViewDialog extends AppDialog {
 
   render() {
     const count = this._lines.length
-    // What the copy button says on hover and to a reader, doubling as
-    // how the last click went: an icon has no room to say "Copied" in
-    // words, so its label says it instead.
-    const copyLabel = this._copied === 'done'
-      ? 'Copied'
-      : this._copied === 'failed'
-        ? 'Copy failed — select the text and copy it by hand'
-        : 'Copy the whole file'
+    // The copy button carries its own result, in the label it already
+    // has: Copy, then how the click went for a moment after it. The
+    // hover text stays the fuller sentence — what gets copied, and
+    // what to do instead when the clipboard refuses.
+    const copyLabel = this._copied === 'done' ? 'Copied' : this._copied === 'failed' ? 'Copy failed' : 'Copy'
+    const copyHint = this._copied === 'failed' ? 'Select the text and copy it by hand' : 'Copy the whole file'
     // The chunks are shells here: `updated` fills them. `--evd-chunk-
     // lines` sizes a chunk's stand-in while it is skipped; `--evd-
     // lineno-width` is the gutter every chunk's rows share (see
     // dialog-export-view.css).
+    //
+    // Close comes FIRST in the source, before the header, because it
+    // is pinned to the dialog's corner rather than laid out in a row:
+    // that puts it where a reader tabbing in meets it first, matching
+    // where the eye finds it.
     return html`<dialog @close=${this._onClose}>
+      <button
+        type="button"
+        class="evd-close"
+        data-role="cancel"
+        title="Close"
+        aria-label="Close"
+        @click=${this._onClose}
+      >×</button>
       <header>
         <h3>Report markdown</h3>
         <span class="evd-meta">· ${count} ${count === 1 ? 'line' : 'lines'} · ${this._kb} KB</span>
-        <span class="evd-actions">
-          <button
-            type="button"
-            data-role="copy"
-            class=${this._copied === 'done' ? 'evd-done' : this._copied === 'failed' ? 'evd-failed' : ''}
-            title=${copyLabel}
-            aria-label=${copyLabel}
-            @click=${this._onCopy}
-          >${this._copied === 'done' ? COPIED_ICON : COPY_ICON}</button>
-          <button
-            type="button"
-            data-role="cancel"
-            title="Close"
-            aria-label="Close"
-            @click=${this._onClose}
-          >×</button>
-        </span>
+        <button
+          type="button"
+          class="evd-copy ${this._copied === 'done' ? 'evd-done' : this._copied === 'failed' ? 'evd-failed' : ''}"
+          data-role="copy"
+          title=${copyHint}
+          @click=${this._onCopy}
+        >${COPY_ICON}${copyLabel}</button>
       </header>
       <div class="evd-code" tabindex="0">
         <div class="evd-lines" style="--evd-lineno-width: ${String(count).length}ch">
@@ -215,7 +213,7 @@ class ExportViewDialog extends AppDialog {
   // The whole file to the clipboard — every byte the download would
   // write, not the lines on screen, and without a select-all that
   // would have the browser lay out every line first. The button says
-  // how it went for a moment, in its glyph and its label. Failure (no
+  // how it went for a moment, in its label and its tint. Failure (no
   // clipboard permission, an insecure origin) is said too, and the
   // text stays there to select and copy by hand. Close may fire while the write is pending, so
   // nothing is set on a removed element.

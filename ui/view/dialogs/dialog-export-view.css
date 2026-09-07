@@ -12,6 +12,14 @@ dialog {
   max-width: none; max-height: none;
   width: calc(100vw - 4rem); height: calc(100vh - 4rem);
   margin: 2rem auto;
+  /* Tighter than the base's 1.1rem/1.25rem question-dialog inset, and
+     even all round: at this size the frame is a window around a
+     document, and every pixel it keeps is a line of the file the
+     reader doesn't get. `position` is what the close button's corner
+     pin resolves against — the UA already positions a modal dialog,
+     but this says so rather than relying on it. */
+  position: relative;
+  padding: 12px;
 }
 
 /* Column layout so the document takes every row the header doesn't.
@@ -30,22 +38,48 @@ dialog[open] {
    the compositor's work; the tint stays. */
 dialog::backdrop { backdrop-filter: none; }
 
-/* One line carries everything that isn't the document: the title, the
-   file's measurements after a divider, and the two controls at the
-   corner. No intro paragraph here — the heading names the thing and
-   the thing is right there — so that line takes the gap the intro
-   would have had. The margin moves off the `h3` and onto the row,
-   which is what the buttons are now vertically centred against.
+/* One line for everything that names the file: the title, its
+   measurements after a divider, and Copy at the far end. No intro
+   paragraph here — the heading names the thing and the thing is right
+   there — so that line takes the gap the intro would have had. The
+   margin moves off the `h3` and onto the row, which is what Copy is
+   vertically centred against.
+
+   The right padding is the corner close button's berth: it is pinned
+   to the dialog rather than laid out in this row, so the row has to
+   reserve the space itself — the button's own 28px plus a wide gap,
+   so the two never read as a pair and a mis-aimed click at one is
+   nowhere near the other.
 
    None of this line is part of the file, and a select-all inside a
    modal takes every selectable thing in it — so the row steps out of
    the selection, and Ctrl+A is the document alone. */
 header {
   display: flex; align-items: center; gap: .45rem;
-  margin-bottom: .7rem;
+  margin-bottom: .6rem;
+  padding-right: 3rem;
   user-select: none;
 }
 header h3 { margin: 0; }
+
+/* Close, pinned to the dialog's top-right corner — the same 22px
+   square, borderless until hover, that the kanban detail modal puts in
+   its own corner (`.kanban-detail-actions` in findings.css), and in
+   the same place, so the two popups are closed the same way. Above
+   the header rather than inside it: the corner is where a reader looks
+   for the way out of a window, and it costs the title line nothing. */
+.evd-close {
+  position: absolute; top: 6px; right: 6px; z-index: 1;
+  width: 22px; height: 22px;
+  display: grid; place-items: center;
+  background: transparent; border: 0; border-radius: 4px;
+  color: var(--muted);
+  font: 500 16px/1 ui-monospace, monospace;
+  cursor: pointer;
+
+  &:hover { color: var(--accent); background: var(--surface-active); }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+}
 
 /* The document itself, and the only part of the dialog that flexes:
    the header takes what it needs and this takes the rest, however tall
@@ -158,33 +192,36 @@ header h3 { margin: 0; }
   font-variant-numeric: tabular-nums;
 }
 
-/* Copy + close, pinned to the header's right end — the dialog's
-   top-right corner, since the header spans its full width. Same
-   22px squares, same borderless-until-hover treatment as the kanban
-   detail modal's corner cluster (`.kanban-detail-actions` in
-   findings.css), so the two popups' chrome reads as one language.
-   `margin-left: auto` is what pushes the pair right, so a longer
-   title or a bigger count never crowds them out of the corner. */
-.evd-actions {
-  margin-left: auto;
-  display: flex; align-items: center; gap: .1rem;
+/* Copy — icon plus label, at the size and weight the finding card's
+   own copy button takes in focus context (`:host([context='focus'])
+   .mark-copy` in finding-card.css): 1.75rem tall, .72rem text, the
+   glyph and the word .35rem apart. A frame of its own because it
+   stands alone, where the card's sits in a bordered action group.
+   `margin-left: auto` puts it at the end of the title row, so a longer
+   heading or a bigger count never crowds it; what holds it clear of
+   the close button in the corner above is the row's right padding.
 
-  & button {
-    width: 22px; height: 22px;
-    display: grid; place-items: center;
-    background: transparent; border: 0; border-radius: 4px;
-    color: var(--muted);
-    font: 500 16px/1 ui-monospace, monospace;
-    cursor: pointer;
+   The two moments after a click borrow the card's pulse as well: green
+   for a copy that landed, and — this button having no second glyph to
+   swap in — the same treatment in `--critical` for one that didn't,
+   with the advice in its hover text. */
+.evd-copy {
+  margin-left: auto; flex-shrink: 0;
+  height: 1.75rem; padding: 0 .55rem; gap: .35rem;
+  display: inline-flex; align-items: center;
+  background: transparent; color: var(--muted);
+  border: 1px solid var(--border); border-radius: 3px;
+  font: inherit; font-size: .72rem; font-weight: 500; letter-spacing: .02em;
+  cursor: pointer;
 
-    &:hover { color: var(--accent); background: var(--surface-active); }
-    &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  &:hover { color: var(--accent); background: var(--surface-active); }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  &.evd-done {
+    color: var(--green, #4ade80);
+    background: color-mix(in srgb, var(--green, #4ade80) 14%, transparent);
   }
-
-  /* The two moments after a click, in colour as well as in glyph, for
-     as long as the state lasts: a copy that landed, and one that
-     didn't — which keeps the clipboard (there is no other thing to
-     draw) and carries the reason in the button's own label. */
-  & .evd-done { color: var(--accent); }
-  & .evd-failed { color: var(--critical, #f87171); }
+  &.evd-failed {
+    color: var(--critical, #f87171);
+    background: color-mix(in srgb, var(--critical, #f87171) 14%, transparent);
+  }
 }
