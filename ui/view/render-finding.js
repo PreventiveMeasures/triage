@@ -1469,13 +1469,13 @@ function scopeBlockTemplate(f, entry) {
   const workedElsewhere = differing.filter(([, slot]) => slot.triage === 'inprogress')
   return html`<div class="scope-block">
     ${isUnscopedBucket(f, entry)
-      ? html`<span class="scope-chip scope-unscoped" title="Recorded before this finding's app and upstream were tracked separately, so it applies everywhere. Re-triage it here to scope it to this app.">Marked in every app</span>`
+      ? html`<span class="scope-chip scope-unscoped" data-tooltip="Recorded before this finding's app and upstream were tracked separately. Re-triage it here to scope it to this app.">Marked in every app</span>`
       : nothing}
     ${fixedElsewhere.length > 0
-      ? html`<span class="scope-chip scope-other-fixed" title=${`Fixed in: ${appNames(fixedElsewhere)}`}>Fixed in ${appCountLabel(fixedElsewhere)}</span>`
+      ? html`<span class="scope-chip scope-other-fixed" data-tooltip=${appTooltip(fixedElsewhere)}>Fixed in ${appCountLabel(fixedElsewhere)}</span>`
       : nothing}
     ${workedElsewhere.length > 0
-      ? html`<span class="scope-chip scope-other-progress" title=${`In progress in: ${appNames(workedElsewhere)}`}>In progress in ${appCountLabel(workedElsewhere)}</span>`
+      ? html`<span class="scope-chip scope-other-progress" data-tooltip=${appTooltip(workedElsewhere)}>In progress in ${appCountLabel(workedElsewhere)}</span>`
       : nothing}
     ${upLabel
       ? html`<span class=${`scope-chip scope-upstream upstream-${up.state ?? 'none'}`}>${UPSTREAM_ICON}${up.link && isHttpUrl(up.link)
@@ -1485,11 +1485,16 @@ function scopeBlockTemplate(f, entry) {
   </div>`
 }
 
-const appNames = (apps) => apps.map(([name]) => name).join(', ')
+// The tooltip is the untruncated form of the label and nothing else
+// (the convention the duplicates row above follows): the names behind
+// a count. A chip already naming its one app has nothing left to say,
+// and gets no tooltip rather than an echo of itself.
+function appTooltip(apps) {
+  return apps.length === 1 ? nothing : apps.map(([name]) => name).join(', ')
+}
 
 // One app is worth naming — it is the useful half of the sentence,
-// and the name is what the reader would hover for anyway. Several are
-// a count, with the names in the chip's title.
+// and it fits. Several are a count, with the names one hover away.
 function appCountLabel(apps) {
   return apps.length === 1 ? apps[0][0] : `${apps.length} apps`
 }
