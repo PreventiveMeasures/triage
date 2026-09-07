@@ -28,10 +28,20 @@ const COUNTS_KEY = 'deepview.fileCounts'
 // fill re-analyzes each file once. v2: piolium recognition. v3: an
 // entry records the source it was ANALYZED as, `null` included, so a
 // report that names no producer stops reading as one never looked at.
-// v4: links files are recognized (see `analyzeContent`), so an entry
-// cached as an unrecognized report has to be re-analyzed to pick up
-// its `links` kind.
-const COUNTS_VERSION = 4
+//
+// Bumping is EXPENSIVE, and not in proportion to what it fixes: it
+// discards every entry on the device, and the refill re-reads and
+// re-parses every stored report while the user waits on a sidebar that
+// repaints as each one lands. Bump only when existing entries can
+// actually be wrong.
+//
+// Links-file recognition did NOT need one, and briefly took one (v4).
+// No v3 entry could name a links file: every path that writes to OPFS
+// gates on `analyzeContent`, which rejected the format outright before
+// it was recognized, so a links file could not be on disk to be
+// mis-cached. The bump therefore re-analyzed everybody's whole library
+// to correct nothing.
+const COUNTS_VERSION = 3
 
 // File-counts blob contains filenames, which we treat as sensitive
 // metadata (project names, sample identifiers). Reads go through
