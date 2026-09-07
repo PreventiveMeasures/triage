@@ -35,13 +35,27 @@ const COUNTS_KEY = 'deepview.fileCounts'
 // repaints as each one lands. Bump only when existing entries can
 // actually be wrong.
 //
-// Links-file recognition did NOT need one, and briefly took one (v4).
+// Links-file recognition did NOT need one, and took one anyway (v4).
 // No v3 entry could name a links file: every path that writes to OPFS
 // gates on `analyzeContent`, which rejected the format outright before
 // it was recognized, so a links file could not be on disk to be
-// mis-cached. The bump therefore re-analyzed everybody's whole library
-// to correct nothing.
-const COUNTS_VERSION = 3
+// mis-cached. The bump re-analyzed everybody's whole library to correct
+// nothing.
+//
+// Which is why the repair is NOT to lower the constant back to 3. That
+// marker shipped: anyone who has loaded the app since is carrying a
+// blob stamped 4, and a version they don't recognise reads to them as
+// "throw it away" — the same full re-analysis again, on exactly the
+// people who already paid for it once. Instead the version we WRITE
+// stays monotonic and both live markers are accepted, so no device
+// re-reads anything and a future bump that IS warranted still works by
+// leaving the old marker out of the accepted set.
+const COUNTS_VERSION = 4
+// Markers whose entries this build can still use. v3 → v4 changed
+// which files `analyzeContent` recognises, not the shape or meaning of
+// an entry, so a v3 blob is read as-is and re-stamped 4 on the next
+// write.
+const COMPATIBLE_VERSIONS = new Set([3, COUNTS_VERSION])
 
 // File-counts blob contains filenames, which we treat as sensitive
 // metadata (project names, sample identifiers). Reads go through
@@ -50,7 +64,11 @@ let cache = null
 function load() {
   if (cache) return cache
   try { cache = JSON.parse(getSecureItem(COUNTS_KEY) || '{}') } catch { cache = {} }
-  if (cache?.__v !== COUNTS_VERSION) cache = { __v: COUNTS_VERSION }
+  // An accepted marker is carried forward under the current one, so a
+  // blob converges on a single version without a pass over its entries;
+  // anything else is discarded and refilled.
+  if (COMPATIBLE_VERSIONS.has(cache?.__v)) cache.__v = COUNTS_VERSION
+  else cache = { __v: COUNTS_VERSION }
   return cache
 }
 function persist() {

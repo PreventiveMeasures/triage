@@ -43,19 +43,28 @@ const byPackage = new Map()
 // without any repo signal aren't indexed here — there's nothing
 // to bucket them under.
 const byRepo = new Map()
-// Finding id → `{ reports, title }`. Unlike the three buckets above
-// this one is keyed by the finding's OWN id rather than by something
-// about its file, so it answers for every finding an id could name —
-// including the ones with no `fileHash` and no package path, which the
-// other indexes have nothing to file under. The Links view asks it
-// where the findings a links file names actually live, and what they
-// are CALLED, which are questions about ids and nothing else.
+// Finding id → `{ reports }`, a Map of report name → the title that
+// report gives the finding. Unlike the three buckets above this one is
+// keyed by the finding's OWN id rather than by something about its
+// file, so it answers for every finding an id could name — including
+// the ones with no `fileHash` and no package path, which the other
+// indexes have nothing to file under. The Links view asks it where the
+// findings a links file names actually live, and what they are CALLED,
+// which are questions about ids and nothing else.
 //
 // The title is stored as a string rather than by holding the finding:
 // keeping a reference to every finding on disk would pin every
-// report's whole parse in memory for the sake of one heading. Same id
-// in two reports keeps the first title seen — the id is a fingerprint
-// over the finding's identity, so the two agree by construction.
+// report's whole parse in memory for the sake of one heading.
+//
+// It hangs off the REPORT rather than the id, even though one title
+// per id would be smaller, because a title has to be one some report
+// on this device actually wrote. An explicit `title` is not part of
+// what the id is derived from, so two reports carrying the same id can
+// word it differently — and pinning the first one seen would leave the
+// Links view printing a heading no report still holds once that report
+// is deleted or overwritten. Keyed this way the question can't arise:
+// a title is dropped by the same `reports.delete` that drops the
+// report it came from.
 const byId = new Map()
 // Reverse index: which (hash, key), (pkg, key), (repo, key) and id
 // entries did each report contribute? Lets `invalidateName` prune
@@ -226,7 +235,7 @@ export function reportsForFindingByRepo(repo, finding) {
 // is exactly what that view has to be able to say out loud.
 export function reportsForFindingId(id) {
   const entry = byId.get(id)
-  return entry ? [...entry.reports] : []
+  return entry ? [...entry.reports.keys()] : []
 }
 
 // What the finding with this id is called — its own `title`, or the
@@ -234,8 +243,17 @@ export function reportsForFindingId(id) {
 // (`findingTitle`, the same reading every other surface names a
 // finding by). Empty string when no report on this device carries it,
 // so a caller can print it unguarded.
+//
+// The first non-empty one across the reports holding it: they normally
+// agree, and where they don't, any of them is a heading some report
+// here really wrote, which is the property that matters.
 export function findingTitleForId(id) {
-  return byId.get(id)?.title ?? ''
+  const entry = byId.get(id)
+  if (!entry) return ''
+  for (const title of entry.reports.values()) {
+    if (title) return title
+  }
+  return ''
 }
 
 // Dedupe key — preferred form is the analyzer's stable `id`; falls
@@ -264,9 +282,9 @@ function rememberContribution(name, kind, ref) {
 // still repaints the views that name its origins.
 function indexFindingById(f, name) {
   let entry = byId.get(f.id)
-  if (!entry) byId.set(f.id, entry = { reports: new Set(), title: findingTitle(f) })
+  if (!entry) byId.set(f.id, entry = { reports: new Map() })
   if (entry.reports.has(name)) return false
-  entry.reports.add(name)
+  entry.reports.set(name, findingTitle(f))
   rememberContribution(name, 'id', f.id)
   return true
 }
@@ -458,7 +476,8 @@ function invalidateName(name) {
   // Id index — flat, so the prune is too: drop this report from each
   // id it contributed, and drop the id itself once no report carries
   // it any more (an id nobody holds must read as "not in any of your
-  // reports", not as an empty set of holders).
+  // reports", not as an empty set of holders). The report's title for
+  // the finding goes with it, since it is the map's value.
   for (const id of contrib.id) {
     const entry = byId.get(id)
     if (!entry) continue

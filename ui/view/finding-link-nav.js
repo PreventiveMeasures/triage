@@ -311,11 +311,22 @@ export async function revealFinding(ref) {
 // wrong one for a click that named a report out loud.
 //
 // The report is opened even when the finding is already on screen from
-// another one; that IS the request. `openReport` prefers the workspace
-// holding it, as everywhere else.
+// another one; that IS the request.
+//
+// And it is opened ON ITS OWN — `switchToFile`, not the `openReport`
+// the other paths use. That helper prefers the workspace holding the
+// report, which is right when the report is merely where a finding
+// lives: the merged view is how the reader would normally reach it.
+// Here it would defeat the whole point. Workspace ingest drops a
+// finding whose id a previously-loaded report already contributed (see
+// `seenIds` in ui/view/ingest.js), so in a merged view the only copy
+// of a linked id is the FIRST report's — and this entry point exists
+// precisely to open a named report's copy, which would then be the one
+// copy that isn't there. A single-file view of the named report is the
+// only place its own copy is guaranteed to be the one found.
 export async function revealFindingInReport(id, reportName) {
   if (!id || !reportName) return { ok: false, reason: 'Missing finding id or report name.' }
-  await openReport(reportName)
+  if (state.currentFile !== reportName || state.currentWorkspace) await switchToFile(reportName)
   const hit = findLoadedFinding(id)
   if (!hit) {
     return {

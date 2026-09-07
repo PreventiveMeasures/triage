@@ -223,6 +223,28 @@ describe('counts cache (setCount / getCount / removeCount / getKind)', () => {
     assert.equal(again.getCount('report.md'), 3)
     assert.equal(again.getKind('report.md'), 'piolium')
   })
+
+  // The other half of that rule, and the one that costs real time when
+  // it is got wrong: a marker this build still understands must NOT be
+  // discarded. Version 4 shipped for links-file recognition, which
+  // changed which files `analyzeContent` claims and nothing about what
+  // an entry means — so a v3 blob and a v4 blob are both usable, and
+  // rejecting either would re-read and re-parse that device's whole
+  // library to correct nothing.
+  it('keeps a blob stamped with any accepted version (fresh module instance)', async () => {
+    for (const version of [3, 4]) {
+      globalThis.localStorage.clear()
+      globalThis.localStorage.setItem(COUNTS_KEY, JSON.stringify({
+        __v: version,
+        'kept.md': { count: 7, source: 'deepsec' },
+      }))
+      const { hydrate: hydrateSecureStorage } = await import('../client/secure-storage.js')
+      await hydrateSecureStorage()
+      const fresh = await import(`../client/counts.js?vkeep${version}=${Date.now()}`)
+      assert.equal(fresh.getCount('kept.md'), 7, `v${version} entries survive`)
+      assert.equal(fresh.getKind('kept.md'), 'deepsec', `v${version} kind survives`)
+    }
+  })
 })
 
 describe('ensureCounts multi-caller (audit round-9 L1)', () => {

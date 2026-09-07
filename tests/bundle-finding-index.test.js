@@ -44,6 +44,7 @@ const {
   reportsForFinding,
   reportsForFindingByPackage,
   reportsForFindingByRepo,
+  findingTitleForId,
   reportsForFindingId,
   subscribeToBundleFindingIndex,
 } = await import('../client/bundle-finding-index.js')
@@ -185,6 +186,45 @@ describe('bundle-finding-index — reportsForFindingId (attribution from an id a
 
   it('returns an empty array for an id nothing indexed', () => {
     assert.deepEqual(reportsForFindingId('never-indexed-id'), [])
+  })
+})
+
+// The Links view prints each linked finding's heading, and takes it
+// from here. A heading has to be one some report ON THIS DEVICE
+// actually wrote — an explicit `title` is not part of what the id is
+// derived from, so two reports carrying the same id can word it
+// differently, and one pinned to the id would outlive the report that
+// supplied it.
+describe('bundle-finding-index — findingTitleForId', () => {
+  it('names the finding', async () => {
+    const id = `id-title-${Date.now()}`
+    await seedReport({ findings: [{ id, severity: 'high', title: 'Command injection', description: 'd' }] })
+    await ensureBundleFindingsIndexed()
+    assert.equal(findingTitleForId(id), 'Command injection')
+  })
+
+  it('falls back to the description first line, as every other surface does', async () => {
+    const id = `id-title-desc-${Date.now()}`
+    await seedReport({ findings: [{ id, severity: 'low', description: 'A leading line.\n\nAnd a body.' }] })
+    await ensureBundleFindingsIndexed()
+    assert.equal(findingTitleForId(id), 'A leading line.')
+  })
+
+  it('drops a report\'s wording with that report, and keeps a surviving one\'s', async () => {
+    const id = `id-title-del-${Date.now()}`
+    const r1 = await seedReport({ findings: [{ id, severity: 'high', title: 'First wording', description: 'd' }] })
+    await seedReport({ findings: [{ id, severity: 'high', title: 'Second wording', description: 'd' }] })
+    await ensureBundleFindingsIndexed()
+    assert.equal(findingTitleForId(id), 'First wording')
+    await deleteFile(r1)
+    assert.equal(
+      findingTitleForId(id), 'Second wording',
+      'the heading has to be one a report still here wrote',
+    )
+  })
+
+  it('is empty for an id no report carries', () => {
+    assert.equal(findingTitleForId('never-indexed-title-id'), '')
   })
 })
 
