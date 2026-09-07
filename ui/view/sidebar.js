@@ -188,7 +188,7 @@ function workspaceHeaderTemplate() {
   // surface is coming — so drop the "+" affordance there.
   const actions = state.serverMode === 'managed'
     ? nothing
-    : html`<span class="workspace-header-actions"><button type="button" class="workspace-add" data-action="new-workspace" title="Create a new workspace" aria-label="Create a new workspace">${WORKSPACE_PLUS_ICON}</button></span>`
+    : html`<span class="workspace-header-actions"><button type="button" class="workspace-add" data-action="new-workspace" data-tooltip="Create a new workspace" aria-label="Create a new workspace">${WORKSPACE_PLUS_ICON}</button></span>`
   return html`<li class="file-group-header workspace-header"><span class="group-label">Workspaces</span>${actions}</li>`
 }
 
@@ -370,7 +370,7 @@ function workspaceItemTemplate(w) {
   // their copy). No placeholder trash icon for the eventual
   // server-side "delete the chain too" (TBD): it would misread as
   // "Delete is the same action as Leave, just greyed out".
-  return html`<li class=${cls} data-workspace-id=${w.id}><button type="button" class="file-name">${WORKSPACE_ICON}<span class="file-label" .textContent=${w.name}></span></button><button type="button" class="workspace-share" data-action="share-workspace" title="Share by link" aria-label="Share workspace by link">${WORKSPACE_SHARE_ICON}</button><button type="button" class="workspace-export" data-action="export-workspace" title="Export workspace" aria-label="Export workspace">${WORKSPACE_EXPORT_ICON}</button><button type="button" class="workspace-leave" data-action="leave-workspace" title="Leave workspace" aria-label="Leave workspace">${WORKSPACE_LEAVE_ICON}</button></li>`
+  return html`<li class=${cls} data-workspace-id=${w.id}><button type="button" class="file-name">${WORKSPACE_ICON}<span class="file-label" .textContent=${w.name}></span></button><button type="button" class="workspace-share" data-action="share-workspace" data-tooltip="Share by link" aria-label="Share workspace by link">${WORKSPACE_SHARE_ICON}</button><button type="button" class="workspace-export" data-action="export-workspace" data-tooltip="Export workspace" aria-label="Export workspace">${WORKSPACE_EXPORT_ICON}</button><button type="button" class="workspace-leave" data-action="leave-workspace" data-tooltip="Leave workspace" aria-label="Leave workspace">${WORKSPACE_LEAVE_ICON}</button></li>`
 }
 
 function matchesSearch(name) {
@@ -948,8 +948,12 @@ async function onSidebarClick(e) {
 // lives inside the shadow root (events don't reach the document-
 // level global handler with their original target across the shadow
 // boundary), so `mount()` attaches the shared scoped listener
-// (`installShadowTooltipListener`) to `#file-list` with the options
-// below.
+// (`installShadowTooltipListener`) to the shadow root with the
+// options below. Root-wide rather than `#file-list`-scoped because
+// the header's sidebar-toggle and the search row's
+// `<sidebar-view-button>`s carry tooltips too; the gate is a no-op
+// for any node without a `.file-label`, so file rows behave exactly
+// as they did when the listener hung off the list.
 //
 // Gate: when the tooltip text is just the label text (the common
 // case for short report filenames), suppress the tooltip when the
@@ -1116,7 +1120,7 @@ function renderSyncStatus(status) {
     triageSync.setProtocolLocked(true)
     btn.hidden = false
     btn.dataset.status = 'paused'
-    btn.title = 'This server speaks a different sync protocol than this app is set up for. Switching isn’t supported yet.'
+    btn.dataset.tooltip = 'This server speaks a different sync protocol than this app is set up for. Switching isn’t supported yet.'
     const mismatchLabel = btn.querySelector('.sync-label')
     if (mismatchLabel) mismatchLabel.textContent = 'Sync paused'
     return
@@ -1200,11 +1204,16 @@ function renderSyncStatus(status) {
   // Keep the label to the status word — the action row is tight (it
   // wraps). The amber ring + this tooltip carry the degraded signal in
   // the badge; the one-shot dialog explains it in full.
-  btn.title = degraded
+  // Empty means "no tooltip" — delete the attribute rather than
+  // leaving an empty one, so the element stops matching
+  // `[data-tooltip]` and the hover never schedules a no-op show.
+  const syncTip = degraded
     ? 'Not saving to this browser right now (storage may be full, or another tab is on a newer version). Changes that haven’t synced could be lost on reload.'
     : proxyAuth
       ? 'Can’t reach the sync server — the connection is being redirected to a sign-in proxy (e.g. Cloudflare Access). Reload the page to sign in again.'
       : ''
+  if (syncTip) btn.dataset.tooltip = syncTip
+  else delete btn.dataset.tooltip
   const label = btn.querySelector('.sync-label')
   if (label) label.textContent = SYNC_LABELS[s] ?? ''
 }
@@ -1668,7 +1677,7 @@ function mount(host) {
   root.addEventListener('dragover', onSidebarDragover)
   root.addEventListener('dragleave', onSidebarDragleave)
   root.addEventListener('drop', onSidebarDrop)
-  installShadowTooltipListener(fileList, SIDEBAR_TOOLTIP_OPTIONS)
+  installShadowTooltipListener(root, SIDEBAR_TOOLTIP_OPTIONS)
   root.querySelector('#sidebar-search-input')?.addEventListener('input', onSearchInput)
   positionUserMenuOnOpen()
   renderSyncStatus(triageSync.status)
@@ -1711,7 +1720,7 @@ class AppSidebar extends LitElement {
           <span class="brand-tag">dev</span>
         </h2>
         <button id="encryption-toggle" type="button" hidden></button>
-        <button id="sidebar-toggle" type="button" title="toggle sidebar" aria-label="toggle sidebar">
+        <button id="sidebar-toggle" type="button" data-tooltip="toggle sidebar" aria-label="toggle sidebar">
           <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">
             <path d="M2 4h12v1.5H2zM2 7.25h12v1.5H2zM2 10.5h12V12H2z"/>
           </svg>

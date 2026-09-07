@@ -65,7 +65,7 @@ class SlideTriageTabs extends StateElement {
       return html`<button
         type="button"
         class=${classMap({ 'triage-state-btn': true, [`triage-state-${b}`]: true, active })}
-        title=${active ? `Exit ${b} view` : `Show ${b} (${n})`}
+        data-tooltip=${active ? `Exit ${b} view` : `Show ${b} (${n})`}
         aria-pressed=${String(active)}
         @click=${() => this._toggle(b)}
       >${b.charAt(0).toUpperCase() + b.slice(1)} (${n})</button>`

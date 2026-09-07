@@ -30,7 +30,6 @@ class DownloadButton extends StateElement {
     if (!visible) return nothing
     return html`<button
       type="button"
-      title="download this report"
       aria-label="download"
       @click=${this._onClick}
     >${DOWNLOAD_ICON}</button>`

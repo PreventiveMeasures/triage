@@ -20,7 +20,7 @@ function fileCodeButton(fileHash) {
     class="tree-code-btn"
     data-finding-code-bundle=${match.integrity}
     data-finding-code-file=${match.file}
-    title=${`Open ${match.file} in bundle source viewer`}
+    data-tooltip=${`Open ${match.file} in bundle source viewer`}
   >Code</button>`
 }
 
@@ -131,7 +131,7 @@ export function renderTreeView(treeData, findingCounts) {
         ${selected ? html`<aside class="tree-table-details" id="tree-table-details">
           <header class="tree-table-details-bar">
             <span class="tree-table-details-label">Details</span>
-            <button type="button" class="tree-table-details-close" data-tree-deselect title="Close details" aria-label="Close details">×</button>
+            <button type="button" class="tree-table-details-close" data-tree-deselect data-tooltip="Close details" aria-label="Close details">×</button>
           </header>
           <div class="tree-table-details-body">
             ${renderFileDetails(treeData[selected], selected, importedBy.get(selected) ?? [], linkOrText)}

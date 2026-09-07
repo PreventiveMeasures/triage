@@ -222,7 +222,7 @@ class BundleCompare extends LitElement {
           type="button"
           class="bundle-compare-row bundle-compare-row-link"
           data-bundle-view-source=${path}
-          title=${path}
+          data-tooltip=${path}
         >${inner}</button></li>`
       : html`<li><div class="bundle-compare-row" title=${path}>${inner}</div></li>`
   }

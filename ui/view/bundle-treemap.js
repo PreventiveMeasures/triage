@@ -562,7 +562,7 @@ class BundleTreemap extends LitElement {
           type="button"
           class="bundle-treemap-crumb"
           @click=${() => this._focusTo(i)}
-          title=${node.path}
+          data-tooltip=${node.path}
         >${node.name}</button>`)}
       </span>
       ${current ? html`<span class="bundle-treemap-crumb-sep" aria-hidden="true">›</span><span

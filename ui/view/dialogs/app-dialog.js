@@ -23,6 +23,7 @@
 //     (focus first field, Esc → resolve null) don't fit.
 import { LitElement, unsafeCSS } from 'lit'
 import { makeStackedModalError } from '../dom.js'
+import { installShadowTooltipListener } from '../tooltip.js'
 import dialogBaseCSS from './dialog-base.css'
 
 export class AppDialog extends LitElement {
@@ -31,6 +32,11 @@ export class AppDialog extends LitElement {
   static styles = [unsafeCSS(dialogBaseCSS)]
 
   firstUpdated() {
+    // Dialog chrome carries `data-tooltip` (the fix-link "Open in a
+    // new tab" link, the export dialog's copy button). Every dialog
+    // is its own shadow root, so each needs the listener; installing
+    // it on the base class covers the subclasses in one place.
+    installShadowTooltipListener(this.renderRoot)
     this.beforeOpen()
     const dialog = this.renderRoot.querySelector('dialog')
     if (!dialog) return

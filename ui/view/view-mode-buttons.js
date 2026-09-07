@@ -133,7 +133,6 @@ class ViewModeButtons extends StateElement {
     return html`${list.map((m) => html`<button
       type="button"
       class=${classMap({ 'view-mode-btn': true, active: current === m })}
-      title=${VIEW_TITLES[m]}
       aria-label=${VIEW_TITLES[m]}
       aria-pressed=${String(current === m)}
       @click=${() => this._select(m, current)}

@@ -57,7 +57,7 @@ class BundleSearch extends StateElement {
       ${query ? html`<button
         type="button"
         class="bundle-search-clear"
-        title="Clear search"
+        data-tooltip="Clear search"
         aria-label="Clear search"
         @click=${this._onClear}
       >×</button>` : nothing}
@@ -65,7 +65,7 @@ class BundleSearch extends StateElement {
         <button
           type="button"
           class=${classMap({ 'bundle-search-mod': true, active: caseSensitive })}
-          title=${caseSensitive ? 'Case-sensitive on — click to ignore case' : 'Match case'}
+          data-tooltip=${caseSensitive ? 'Case-sensitive on — click to ignore case' : 'Match case'}
           aria-label="Match case"
           aria-pressed=${String(caseSensitive)}
           @click=${this._onToggleCase}
@@ -73,7 +73,7 @@ class BundleSearch extends StateElement {
         <button
           type="button"
           class=${classMap({ 'bundle-search-mod': true, active: regex })}
-          title=${regex ? 'Regular expression on — click for plain text' : 'Match by regular expression'}
+          data-tooltip=${regex ? 'Regular expression on — click for plain text' : 'Match by regular expression'}
           aria-label="Match by regular expression"
           aria-pressed=${String(regex)}
           @click=${this._onToggleRegex}

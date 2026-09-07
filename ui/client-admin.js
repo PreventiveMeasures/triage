@@ -125,7 +125,8 @@ class ManagedAdminUsers extends LitElement {
         ${u.name ? html`<span class="name">${u.name}</span>` : nothing}
       </span>
       <select class="role" ?disabled=${isSelf}
-        title=${isSelf ? 'You can’t change your own role' : 'Change role'}
+        aria-label=${`Change ${u.login}’s role`}
+        data-tooltip=${isSelf ? 'You can’t change your own role' : 'Change role'}
         @change=${(e) => this._changeRole(u, e.target.value, e.target)}>
         ${ROLES.map((r) => html`<option value=${r} ?selected=${r === u.role}>${r}</option>`)}
       </select>
@@ -307,7 +308,8 @@ class ManagedAdminRepos extends LitElement {
     return html`<li>
       ${selectable
         ? html`<input type="checkbox" class="select" .checked=${r.selected === true}
-            title=${r.selected ? 'Selected — remove from the operate-on set' : 'Select this repository to operate on'}
+            aria-label=${`Select ${r.fullName} to operate on`}
+            data-tooltip=${r.selected ? 'Selected — remove from the operate-on set' : 'Select this repository to operate on'}
             @change=${(e) => this._toggle(r, e.target)}>`
         : nothing}
       ${REPO_ICON}
@@ -401,7 +403,7 @@ function repoPickerTemplate(repos, selected, onChange) {
 // attached to (or none). `onPick` gets the repo id, or null to detach.
 function repoRowSelect(repos, current, onPick) {
   if (!Array.isArray(repos) || repos.length === 0) return nothing
-  return html`<select class="repo-attach" title="Attach to a repository"
+  return html`<select class="repo-attach" aria-label="Attach to a repository" data-tooltip="Attach to a repository"
     @change=${(e) => onPick(e.target.value === '' ? null : Number(e.target.value))}>
     ${repoOptions(repos, current)}
   </select>`

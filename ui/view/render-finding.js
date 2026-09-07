@@ -140,7 +140,7 @@ function renderInline(text) {
     if (c0 === 0x5B /* [ */) {
       const link = markdownLinkToken(m[0])
       parts.push(link
-        ? html`<a href=${link.url} target="_blank" rel="noopener noreferrer" title=${link.url}>${link.label}</a>`
+        ? html`<a href=${link.url} target="_blank" rel="noopener noreferrer" data-tooltip=${link.url}>${link.label}</a>`
         : m[0])
     } else if (c0 === 0x2A /* * */) {
       parts.push(html`<strong>${m[0].slice(2, -2)}</strong>`)
@@ -294,9 +294,9 @@ function renderCommentText(text) {
   return parseCommentRefs(text).map((seg) => {
     if (typeof seg === 'string') return seg
     if (seg.self) {
-      return html`<a class="comment-self-ref" href=${seg.url} title="Show this finding">${seg.label}</a>`
+      return html`<a class="comment-self-ref" href=${seg.url} data-tooltip="Show this finding">${seg.label}</a>`
     }
-    return html`<a href=${seg.url} target="_blank" rel="noopener noreferrer" title=${seg.url}>${seg.label}</a>`
+    return html`<a href=${seg.url} target="_blank" rel="noopener noreferrer" data-tooltip=${seg.url}>${seg.label}</a>`
   })
 }
 
@@ -497,7 +497,7 @@ function commitLinkTemplate(githubRepo, hash) {
   const short = hash.slice(0, 7)
   const url = commitUrl(githubRepo, hash)
   if (!url) return html`<span title=${hash}>${short}</span>`
-  return html`<a href=${url} target="_blank" rel="noopener" title=${hash}>${short}</a>`
+  return html`<a href=${url} target="_blank" rel="noopener" data-tooltip=${hash}>${short}</a>`
 }
 
 // Speech-bubble glyph for the per-finding comment button. Outline
@@ -796,7 +796,7 @@ function flagButtonTemplate(key, isFocus = false) {
     type="button"
     class=${classMap({ 'mark-flag': true, flagged })}
     data-flag-toggle=${key}
-    title=${title}
+    data-tooltip=${title}
     aria-label=${title}
     aria-pressed=${String(flagged)}
   >${FLAG_ICON}${isFocus ? html`<span class="mark-btn-label">${flagged ? 'Flagged' : 'Flag'}</span>` : nothing}</button>`
@@ -867,14 +867,14 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = 
   // icons-only for compactness.
   const commentLabel = activeComment ? 'Edit comment' : 'Comment'
   const fixLabel = activeFix ? 'Edit fix link' : 'Fix link'
-  const commentBtn = html`<button type="button" class=${classMap({ 'mark-comment': true, 'has-comment': activeComment })} title=${commentTitle} aria-label=${commentTitle}>${COMMENT_ICON}${isFocus ? html`<span class="mark-btn-label">${commentLabel}</span>` : nothing}</button>`
-  const fixBtn = html`<button type="button" class=${classMap({ 'mark-fix': true, 'has-fix': activeFix })} title=${fixTitle} aria-label=${fixTitle}>${FIX_ICON}${isFocus ? html`<span class="mark-btn-label">${fixLabel}</span>` : nothing}</button>`
+  const commentBtn = html`<button type="button" class=${classMap({ 'mark-comment': true, 'has-comment': activeComment })} data-tooltip=${commentTitle} aria-label=${commentTitle}>${COMMENT_ICON}${isFocus ? html`<span class="mark-btn-label">${commentLabel}</span>` : nothing}</button>`
+  const fixBtn = html`<button type="button" class=${classMap({ 'mark-fix': true, 'has-fix': activeFix })} data-tooltip=${fixTitle} aria-label=${fixTitle}>${FIX_ICON}${isFocus ? html`<span class="mark-btn-label">${fixLabel}</span>` : nothing}</button>`
   // Attention flag — third chip in the comment/fix group.
   const flagBtn = flagButtonTemplate(activeKey, isFocus)
   // Copy button — writes a labeled `File / Line / Description /
   // Confidence` block for the active tab to the clipboard (handler
   // in events.js, active tab resolved via the same gid lookup).
-  const copyBtn = html`<button type="button" class="mark-copy" title="Copy file, line, description, confidence to clipboard" aria-label="Copy finding details to clipboard">${COPY_ICON}${isFocus ? html`<span class="mark-btn-label">Copy</span>` : nothing}</button>`
+  const copyBtn = html`<button type="button" class="mark-copy" data-tooltip="Copy file, line, description, confidence to clipboard" aria-label="Copy finding details to clipboard">${COPY_ICON}${isFocus ? html`<span class="mark-btn-label">Copy</span>` : nothing}</button>`
   // Link button — copies a `#finding=<id>` URL that reopens the app on
   // THIS finding (handler in events.js; resolution in
   // view/finding-link.js). Suppressed for a session-local numeric id:
@@ -883,7 +883,7 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = 
   // affordance than one that quietly rots. Sits next to Copy, the other
   // "take this with you" action.
   const linkBtn = isLinkableFindingId(activeKey)
-    ? html`<button type="button" class="mark-link" title="Copy a link to this finding" aria-label="Copy a link to this finding">${LINK_ICON}${isFocus ? html`<span class="mark-btn-label">Link</span>` : nothing}</button>`
+    ? html`<button type="button" class="mark-link" data-tooltip="Copy a link to this finding" aria-label="Copy a link to this finding">${LINK_ICON}${isFocus ? html`<span class="mark-btn-label">Link</span>` : nothing}</button>`
     : nothing
   // GitHub-issue link — a plain anchor (no JS handoff) to GitHub's
   // pre-filled new-issue form for the finding's repo, with the finding
@@ -896,12 +896,12 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = 
   const findingRepoId = findingRepo(activeTab)
   const issueHref = githubIssueUrl(findingRepoId, { title: issueTitle(activeTab), body: issueBody(activeTab) })
   const issueBtn = issueHref
-    ? html`<a class="mark-issue" href=${issueHref} target="_blank" rel="noopener" title="Create a pre-filled GitHub issue for this finding" aria-label="Create a GitHub issue for this finding">${ISSUE_ICON}${isFocus ? html`<span class="mark-btn-label">Issue</span>` : nothing}</a>`
+    ? html`<a class="mark-issue" href=${issueHref} target="_blank" rel="noopener" data-tooltip="Create a pre-filled GitHub issue for this finding" aria-label="Create a GitHub issue for this finding">${ISSUE_ICON}${isFocus ? html`<span class="mark-btn-label">Issue</span>` : nothing}</a>`
     : nothing
   // Claude button — hands off the same finding block the copy
   // button writes (prefixed with "Confirm and fix:") to Claude Code
   // via the `claude://code/new?q=…` URL scheme.
-  const claudeBtn = html`<button type="button" class="mark-claude" title="Open in Claude Code (claude://) with a confirm-and-fix prompt" aria-label="Open finding in Claude Code">${CLAUDE_ICON}${isFocus ? html`<span class="mark-btn-label">Claude</span>` : nothing}</button>`
+  const claudeBtn = html`<button type="button" class="mark-claude" data-tooltip="Open in Claude Code (claude://) with a confirm-and-fix prompt" aria-label="Open finding in Claude Code">${CLAUDE_ICON}${isFocus ? html`<span class="mark-btn-label">Claude</span>` : nothing}</button>`
   const picker = html`<color-marker .selected=${activeColor}></color-marker>`
   // Triage menu — chevron button that opens a small popover with
   // Fixed / Invalid / Delete actions. In any triage view (Fixed /
@@ -1005,7 +1005,7 @@ function triageMenuTemplate(group, title, context, groupSt, activeTab) {
   // valid CSS-selectable id.
   const popId = `triage-menu-${gid.replaceAll(/[^A-Za-z0-9_-]/gu, '_')}`
   return html`<div class="triage-menu-wrap">
-    <button type="button" class=${btnClasses.join(' ')} popovertarget=${popId} popovertargetaction="toggle" title=${title} aria-label=${title}>
+    <button type="button" class=${btnClasses.join(' ')} popovertarget=${popId} popovertargetaction="toggle" data-tooltip=${title} aria-label=${title}>
       ${buttonLabel ? html`<span class="mark-triage-label">${buttonLabel}</span>` : nothing}
       <svg viewBox="0 0 12 12" width="11" height="11" aria-hidden="true">
         <path d="M2 4l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -1136,7 +1136,7 @@ function npmChipTemplate(npm) {
     href=${href}
     target="_blank"
     rel="noopener noreferrer"
-    title=${`Open ${label} on npmjs.com`}
+    data-tooltip=${`Open ${label} on npmjs.com`}
   >npm: ${label}</a></span>`
 }
 
@@ -1223,7 +1223,7 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
         data-finding-code-bundle=${match.integrity}
         data-finding-code-file=${match.file}
         data-finding-code-line=${f.line ?? ''}
-        title=${`Open ${match.file} in bundle source viewer`}
+        data-tooltip=${`Open ${match.file} in bundle source viewer`}
       >Code</button>`
     }
   }

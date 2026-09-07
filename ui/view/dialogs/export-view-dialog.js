@@ -147,7 +147,7 @@ class ExportViewDialog extends AppDialog {
         type="button"
         class="evd-close"
         data-role="cancel"
-        title="Close"
+        data-tooltip="Close"
         aria-label="Close"
         @click=${this._onClose}
       >×</button>
@@ -158,7 +158,7 @@ class ExportViewDialog extends AppDialog {
           type="button"
           class="evd-copy ${this._copied === 'done' ? 'evd-done' : this._copied === 'failed' ? 'evd-failed' : ''}"
           data-role="copy"
-          title=${copyHint}
+          data-tooltip=${copyHint}
           @click=${this._onCopy}
         >${COPY_ICON}${copyLabel}</button>
       </header>

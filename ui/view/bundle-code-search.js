@@ -98,7 +98,7 @@ class BundleCodeSearch extends StateElement {
       ${query ? html`<button
         type="button"
         class="bundle-code-search-clear"
-        title="Clear search"
+        data-tooltip="Clear search"
         aria-label="Clear search"
         @click=${this._onClear}
       >×</button>` : nothing}
@@ -108,7 +108,7 @@ class BundleCodeSearch extends StateElement {
           class=${classMap({ 'bundle-code-search-mode': true, active: activeMode === m })}
           role="tab"
           aria-selected=${String(activeMode === m)}
-          title=${MODE_LABEL[m] ?? m}
+          data-tooltip=${MODE_LABEL[m] ?? m}
           aria-label=${MODE_LABEL[m] ?? m}
           @click=${() => this._selectMode(m)}
         >${MODE_ICONS[m] ?? nothing}</button>`)}

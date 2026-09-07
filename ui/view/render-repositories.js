@@ -100,7 +100,7 @@ export function renderRepositoriesView() {
           ${selectedEntry ? html`<aside class="packages-details" id="repositories-details">
             <header class="packages-details-bar">
               <span class="packages-details-label">Details</span>
-              <button type="button" class="packages-details-close" data-deselect-repository title="Close details" aria-label="Close details">×</button>
+              <button type="button" class="packages-details-close" data-deselect-repository data-tooltip="Close details" aria-label="Close details">×</button>
             </header>
             <div class="packages-details-body">
               ${renderRepositoryDetails(selectedEntry[0], selectedEntry[1])}
@@ -167,7 +167,7 @@ function renderRepositorySlide(repo, bucket) {
         type="button"
         class="bundles-slide-back"
         data-action="repository-slide-back"
-        title="Back to repositories"
+        data-tooltip="Back to repositories"
         aria-label="Back to repositories"
       >← Back</button>
       <div class="bundles-slide-title">
@@ -285,7 +285,7 @@ function renderRepositoryOverview(repo, bucket) {
     ${sortedReports.map((r) => {
       const iconHtml = FILE_ICONS[groupOf(r)] ?? FILE_ICONS.default
       return html`<li>
-        <button type="button" class="packages-detail-report" title=${r} data-package-report=${r}>
+        <button type="button" class="packages-detail-report" data-tooltip=${r} data-package-report=${r}>
           ${unsafeHTML(iconHtml)}<span class="packages-detail-report-label">${displayName(r)}</span>
         </button>
       </li>`

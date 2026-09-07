@@ -87,7 +87,7 @@ function paint() {
     ? ''
     : ` Using ${formatStorageSize(info.usage)} of ${formatStorageSize(info.quota)}.`
   button.querySelector('.storage-label').textContent = 'Storage at risk'
-  button.title = 'Reports, bundles and triage are in best-effort storage — the browser may delete them all under disk pressure or after long inactivity. '
+  button.dataset.tooltip = 'Reports, bundles and triage are in best-effort storage — the browser may delete them all under disk pressure or after long inactivity. '
     + (isItpGoverned()
       ? 'Click for how to protect them (on Safari and iOS browsers this needs the app installed to the Home Screen or Dock).'
       : 'Click to request persistent storage — if the browser declines, instructions for enabling it follow.')

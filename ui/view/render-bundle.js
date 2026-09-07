@@ -667,7 +667,7 @@ function renderBundleSourceLines(content, path, integrity, lineFindings, matchLi
                 type="button"
                 class=${classMap({ 'bundle-source-dot': true, [`sev-${sev}`]: true, active: isActive })}
                 data-bundle-source-finding=${entries[0].idx}
-                title=${`${entries.length} ${entries.length === 1 ? 'issue' : 'issues'} on line ${ln}`}
+                data-tooltip=${`${entries.length} ${entries.length === 1 ? 'issue' : 'issues'} on line ${ln}`}
                 aria-label=${`${entries.length} issues on line ${ln}`}
               ></button>`
             : html`<span class="bundle-source-dot-placeholder"></span>`}
@@ -718,7 +718,7 @@ function renderBundleSourceFindingPanel(findings) {
         type="button"
         class="bundle-source-panel-close"
         data-action="bundle-source-panel-close"
-        title="Close (Esc)"
+        data-tooltip="Close (Esc)"
         aria-label="Close finding details"
       >×</button>
     </header>
@@ -735,7 +735,7 @@ function renderBundleSourceFindingPanel(findings) {
           return html`<button
             type="button"
             class="report-chip bundle-source-panel-report"
-            title=${name}
+            data-tooltip=${name}
             data-bundle-issue-report=${name}
           >${unsafeHTML(iconHtml)}<span class="report-chip-label">${displayName(name)}</span></button>`
         })}
@@ -777,7 +777,7 @@ function renderBundleSourceBar(path) {
         type="button"
         class="bundle-source-close"
         data-action="bundle-source-close"
-        title="Close source viewer (Esc)"
+        data-tooltip="Close source viewer (Esc)"
         aria-label="Close source viewer"
       >×</button>
     </header>`
@@ -974,7 +974,7 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
           type="button"
           class=${classMap({ 'bundle-code-tree-link': true, current: full === currentPath })}
           data-bundle-view-source=${full}
-          title=${full}
+          data-tooltip=${full}
         >
           <span class="bundle-code-tree-name">${name}</span>
           ${count > 0 ? html`<span class=${`bundle-code-tree-count sev-${sev}`} title=${`${count} ${count === 1 ? 'issue' : 'issues'}`}>${count}</span>` : nothing}
@@ -1097,7 +1097,7 @@ function renderBundleCodeContentResults(sources, query, currentPath, prefix = ''
         type="button"
         class="bundle-code-search-file-name"
         data-bundle-view-source=${p}
-        title=${p}
+        data-tooltip=${p}
       >${bare}</button>
       <ul class="bundle-code-search-hits">
         ${hits.map((h) => html`<li class="bundle-code-search-hit">
@@ -1107,7 +1107,7 @@ function renderBundleCodeContentResults(sources, query, currentPath, prefix = ''
             data-bundle-view-source=${p}
             data-bundle-view-line=${h.ln}
             data-bundle-view-scroll-block="start"
-            title=${`${p}:${h.ln}`}
+            data-tooltip=${`${p}:${h.ln}`}
           >
             <span class="bundle-code-search-hit-ln">${h.ln}</span>
             <span class="bundle-code-search-hit-text mono">${h.text.slice(0, 200)}</span>
@@ -1178,7 +1178,7 @@ function renderBundleCodeIssuesResults(details, query, currentPath, prefix = '')
             data-bundle-view-source=${file}
             data-bundle-view-finding-idx=${fileIdx}
             data-bundle-view-line=${finding.line ?? ''}
-            title=${file}
+            data-tooltip=${file}
           >
             <div class="bundle-code-search-issue-row">
               <span class=${`bundle-code-search-issue-sev sev-${sev}`}>${sev.replaceAll('_', ' ')}</span>
@@ -1374,7 +1374,7 @@ function renderBundleCodeMain(details, path, content, fileFindings, lineFindings
         type="button"
         class="bundle-code-copy-path"
         data-copy-path=${path}
-        title="Copy file path"
+        data-tooltip="Copy file path"
         aria-label="Copy file path"
       >${COPY_PATH_ICON}</button>
       <span class="bundle-code-main-spacer"></span>
@@ -1393,14 +1393,14 @@ function renderBundleCodeMain(details, path, content, fileFindings, lineFindings
           type="button"
           class="bundle-code-issue-step"
           data-bundle-code-issue-step="-1"
-          title="Previous issue"
+          data-tooltip="Previous issue"
           aria-label="Previous issue"
         >‹</button>
         <button
           type="button"
           class="bundle-code-issue-step"
           data-bundle-code-issue-step="1"
-          title="Next issue"
+          data-tooltip="Next issue"
           aria-label="Next issue"
         >›</button>
       </span>` : nothing}
@@ -1534,7 +1534,7 @@ function renderSearchSnippet(path, lines, win, hitRanges, showGap) {
       data-bundle-view-source=${path}
       data-bundle-view-line=${anchor}
       data-bundle-view-scroll-block="center"
-      title=${`${path}:${anchor}`}
+      data-tooltip=${`${path}:${anchor}`}
     >${rows}</button>`
 }
 
@@ -1557,7 +1557,7 @@ function renderSearchFile(fileResult, prefix, radius) {
         data-bundle-view-source=${path}
         data-bundle-view-line=${firstHit}
         data-bundle-view-scroll-block="center"
-        title=${path}
+        data-tooltip=${path}
       >${bare}</button>
       <span class="bundle-search-file-count">${hits.length} ${hits.length === 1 ? 'match' : 'matches'}</span>
     </header>
@@ -1914,7 +1914,7 @@ function bundleIssueReportsTemplate(finding, ctx = {}) {
   return html`<div class="bundle-issue-reports">
     ${visible.map((name) => {
       const iconHtml = FILE_ICONS[groupOf(name)] ?? FILE_ICONS.default
-      return html`<button type="button" class="report-chip" title=${name} data-bundle-issue-report=${name}>${unsafeHTML(iconHtml)}<span class="report-chip-label">${displayName(name)}</span></button>`
+      return html`<button type="button" class="report-chip" data-tooltip=${name} data-bundle-issue-report=${name}>${unsafeHTML(iconHtml)}<span class="report-chip-label">${displayName(name)}</span></button>`
     })}
     ${extra > 0 ? html`<span class="bundle-issue-reports-more">, and ${extra} more…</span>` : nothing}
   </div>`
@@ -2080,9 +2080,9 @@ export function renderIssuesGroupedByFile(findingsByFile, { kind, bucketKey } = 
         return html`<li class="bundle-issues-file-group">
           <header class="bundle-issues-file-header">
             ${kind === 'bundle'
-              ? html`<button type="button" class="bundle-issues-file-name mono" data-bundle-view-source=${file} title=${file}>${bare}</button>`
+              ? html`<button type="button" class="bundle-issues-file-name mono" data-bundle-view-source=${file} data-tooltip=${file}>${bare}</button>`
               : repoFileUrl
-                ? html`<a class="bundle-issues-file-name bundle-issues-file-name-link mono" href=${repoFileUrl} target="_blank" rel="noopener" title=${file}>${bare}</a>`
+                ? html`<a class="bundle-issues-file-name bundle-issues-file-name-link mono" href=${repoFileUrl} target="_blank" rel="noopener" data-tooltip=${file}>${bare}</a>`
                 : html`<span class="bundle-issues-file-name bundle-issues-file-name-static mono" title=${file}>${bare}</span>`}
             <span class="bundle-issues-file-count">${findings.length} ${findings.length === 1 ? 'issue' : 'issues'}</span>
           </header>
@@ -2125,7 +2125,7 @@ export function renderIssuesGroupedByFile(findingsByFile, { kind, bucketKey } = 
                       data-bundle-view-source=${file}
                       data-bundle-view-finding-idx=${findingIdx}
                       data-bundle-view-line=${finding.line ?? ''}
-                      title=${file}
+                      data-tooltip=${file}
                     >${inner}</button>`
                   : html`<div class="bundle-issues-finding-link bundle-issues-finding-static" title=${file}>${inner}</div>`}
               </li>`
@@ -2201,8 +2201,8 @@ function bundleExportsColumn(entry, details) {
         ${DOWNLOAD_ICON}<span>Download bundle</span>
       </button>
       ${hasSbom ? html`<div class="bundles-export-pair">
-        <button type="button" class="bundles-download-btn" data-bundle-export-sbom="cyclonedx" title="Export a CycloneDX SBOM (.cdx.json)">CycloneDX</button>
-        <button type="button" class="bundles-download-btn" data-bundle-export-sbom="spdx" title="Export an SPDX SBOM (.spdx.json)">${SPDX_ICON}<span>SPDX</span></button>
+        <button type="button" class="bundles-download-btn" data-bundle-export-sbom="cyclonedx" data-tooltip="Export a CycloneDX SBOM (.cdx.json)">CycloneDX</button>
+        <button type="button" class="bundles-download-btn" data-bundle-export-sbom="spdx" data-tooltip="Export an SPDX SBOM (.spdx.json)">${SPDX_ICON}<span>SPDX</span></button>
       </div>` : nothing}
     </div>
   </div>`
