@@ -24,6 +24,7 @@ import { packageOf } from './graph/utils.js'
 import { renderPackagesView } from './render-packages.js'
 import { renderRepositoriesView } from './render-repositories.js'
 import { renderLinksView } from './render-links.js'
+import { resolveWorkspaceContext } from './sync-scope.js'
 import {
   buildBundleGraphData,
   countBundleTriageBuckets,
@@ -331,6 +332,13 @@ function headerTemplate(mergedGroups, fileNames, repoInputUseful, knownRepo, tre
   </header>`
 }
 
+// Views this badge is rendered into. A defence rather than a rule —
+// its two call sites (the findings page header, and the links view's
+// header, which takes it as a template) already decide where it goes;
+// this keeps a future third one from surfacing it somewhere the
+// workspace context means nothing.
+const SYNC_BADGE_VIEWS = new Set(['findings', 'files', 'links'])
+
 // Sync-status badge — renders into the title h1 alongside the
 // file-chip / repo-chip so it sits on the same baseline. Two
 // shapes:
@@ -342,8 +350,10 @@ function headerTemplate(mergedGroups, fileNames, repoInputUseful, knownRepo, tre
 //
 //   - Workspace view: two side-by-side chunks "N cloud / M local"
 //     inside an outer <div>. `N` is the workspace's full remote
-//     inventory size (synced + remote-only); `M` is the
-//     locally-loaded report count (synced + local-only).
+//     inventory size (synced + remote-only); `M` is its members
+//     that are on this device (synced + local-only — see
+//     view/sync-scope.js for why that is membership rather than the
+//     loaded reports).
 //     - Click "cloud" → download dialog scoped to remote-only
 //       reports (non-interactive if every remote file is local).
 //     - Click "local" → upload dialog scoped to local-only
@@ -358,7 +368,7 @@ function headerTemplate(mergedGroups, fileNames, repoInputUseful, knownRepo, tre
 // local and remote counts are zero.)
 function syncBadgeTemplate() {
   if (triageSync.status !== 'online') return nothing
-  if (state.currentView !== 'findings' && state.currentView !== 'files') return nothing
+  if (!SYNC_BADGE_VIEWS.has(state.currentView)) return nothing
   const wsContext = resolveWorkspaceContext()
   if (!wsContext) return nothing
   const { workspaceId, fileNames, mode } = wsContext
@@ -519,28 +529,6 @@ async function openUploadFromBadge({ workspaceId, items }) {
     }
   }
   await openSyncUploadDialog({ workspaceId, items })
-}
-
-// Resolve which workspace + which loaded report file-names the
-// sync-status badge applies to. `mode` differentiates a single-file
-// view (one report from a workspace) from a workspace-merged view
-// (every loaded report) so the badge template can pick between the
-// `local` / `cloud` shape and the "N cloud / M local" aggregate.
-// Returns `null` if the active view isn't a report-in-workspace.
-function resolveWorkspaceContext() {
-  if (state.currentWorkspace) {
-    return {
-      mode: 'workspace',
-      workspaceId: state.currentWorkspace,
-      fileNames: state.reports.map((r) => r.fileName).filter((n) => typeof n === 'string'),
-    }
-  }
-  if (state.currentFile) {
-    const ws = listWorkspaces().find((w) => Array.isArray(w.reports) && w.reports.includes(state.currentFile))
-    if (!ws) return null
-    return { mode: 'single', workspaceId: ws.id, fileNames: [state.currentFile] }
-  }
-  return null
 }
 
 // Stats — clickable filter chips: severity on the left, mark-color on
@@ -1727,7 +1715,12 @@ function renderImpl() {
   if (state.currentView === 'links') {
     if (state.currentLinks) {
       const slot = ensureReportSlot('links-slot')
-      if (slot) litRender(renderLinksView(), slot)
+      // The badge is built here, not there: it reads the workspace /
+      // remote state this module already holds, and a links file has
+      // the same claim on it as a report — it is a workspace member
+      // like any other, and its page is the one place that can say
+      // whether this device has shared it yet.
+      if (slot) litRender(renderLinksView(syncBadgeTemplate()), slot)
       report.classList.add('active')
       dropZone.classList.add('hidden')
       document.title = `DeepView — ${state.currentLinks.name}`

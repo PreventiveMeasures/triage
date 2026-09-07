@@ -425,6 +425,10 @@ export async function renderSidebar() {
   // the OPFS scan. Updated on every sidebar render — drops, deletes,
   // and switchToFile all refresh through here.
   state.bundles = bundleNames
+  // Same for the report-directory listing: the sync badge asks which
+  // of a workspace's members are on this device (view/sync-scope.js)
+  // while painting, and can't await an OPFS scan to find out.
+  state.storedFiles = names
   // Keep the storage-status line's usage number roughly in step with
   // whatever mutation triggered this repaint (drops, deletes, bundle
   // ops, sync downloads). Debounced inside the module; no-op before

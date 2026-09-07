@@ -13,10 +13,14 @@
 // selector here: those all operate on findings, and this page holds
 // none. What it holds is a file the user dropped, listed as written.
 //
-// `renderLinksView()` is the single export; `render.js` calls it for
-// `state.currentView === 'links'`, painting whatever `state.currentLinks`
-// holds (set by `switchToFile` when the file it read turned out to be
-// links).
+// `renderLinksView(badge)` is the single export; `render.js` calls it
+// for `state.currentView === 'links'`, painting whatever
+// `state.currentLinks` holds (set by `switchToFile` when the file it
+// read turned out to be links). `badge` is the sync-status chip,
+// built by the caller because it reads workspace / remote state this
+// module has no other business with — a links file in a workspace is
+// a member like any other, and this page is the one place that can
+// say whether this device has shared it yet.
 //
 // Two indexes feed it, both filled in the background and both re-read
 // on every paint (events.js re-renders this view when either lands):
@@ -83,7 +87,7 @@ function count(n, singular, plural) {
   return `${n} ${n === 1 ? singular : plural}`
 }
 
-export function renderLinksView() {
+export function renderLinksView(badge = nothing) {
   const open = state.currentLinks
   if (!open) return nothing
   // The reports this page attributes findings to come from the
@@ -107,7 +111,7 @@ export function renderLinksView() {
   return html`<div class="links-view">
     <header class="page-head">
       <div class="page-title">
-        <h1>Links</h1>
+        <h1>Links${badge}</h1>
         <div class="meta-row">
           <span class="links-file-name" title=${name}>${unsafeHTML(FILE_ICONS[groupOf(name)] ?? FILE_ICONS.default)}${displayName(name)}</span>
           <span>${count(groups.length, 'link', 'links')}</span>
