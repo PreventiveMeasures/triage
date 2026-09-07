@@ -45,6 +45,13 @@ import { shortFindingId } from './format.js'
 // only keeps ids `isLinkableFindingId` accepts, which is the same test
 // this throws on.
 //
+// Every tooltip in the row is the untruncated form of the text under
+// it and nothing else — the whole id behind its 8-char label, the
+// whole title, the whole report name behind a chip that clips at
+// 16rem. They used to lead with "Show …", which spent the line saying
+// what a link does; the one thing a clipped label can't tell you is
+// what it says.
+//
 // The title comes from the OPFS-wide index (`findingTitleForId`), so
 // it is present for any finding the user actually holds and absent for
 // the rest — which is the same thing the report chips say, and the
@@ -69,14 +76,14 @@ function linkedFindingRow(id) {
   const label = shortFindingId(id) ?? id
   const title = findingTitleForId(id)
   return html`<li class="links-finding">
-    <a class="links-finding-id mono" href=${`#${encodeFindingRef({ id })}`} data-tooltip=${`Show ${id}`}>${label}</a>
+    <a class="links-finding-id mono" href=${`#${encodeFindingRef({ id })}`} data-tooltip=${id}>${label}</a>
     ${title ? html`<span class="links-finding-title" data-tooltip=${title}>${title}</span>` : nothing}
     ${reports.length === 0
       ? html`<span class="links-finding-missing">not in your reports</span>`
       : html`<span class="links-finding-reports">${reports.map((r) => html`<button
           type="button"
           class="links-finding-report"
-          data-tooltip=${`Show this finding in ${displayName(r)}`}
+          data-tooltip=${displayName(r)}
           data-links-report=${r}
           data-links-finding=${id}
         >${unsafeHTML(FILE_ICONS[groupOf(r)] ?? FILE_ICONS.default)}<span class="links-finding-report-label">${displayName(r)}</span></button>`)}</span>`}

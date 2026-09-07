@@ -58,6 +58,12 @@ export type TriageBucket = 'inprogress' | 'fixed' | 'invalid' | 'deleted'
 // `triage` set) and 'ignored' (per-report ignore, which lives outside
 // `TriageEntry.triage`). See the `columns` list in ui/view/render.js.
 export type KanbanColumnKey = TriageBucket | 'untriaged' | 'ignored'
+// Which single bucket the non-kanban views are partitioned to, as
+// `shownTriage` and as a group's `commonTriage` rollup. Wider than
+// `TriageBucket` by 'ignored': that one lives outside
+// `TriageEntry.triage`, but the findings toolbar offers it as a
+// fifth button and the split honours it like any other.
+export type ShownTriage = TriageBucket | 'ignored'
 
 // Tri-state for the toolbar annotation filters (comment / fix / flag):
 // '' = off, 'with' = only findings carrying it, 'without' = only findings
@@ -161,7 +167,7 @@ export interface State {
   viewMode: ViewMode
   severityMode: SeverityMode
   triage: Map<string, TriageEntry>
-  shownTriage: TriageBucket | null
+  shownTriage: ShownTriage | null
   nextFindingId: number
   activeTabByGroup: Map<string, string>
   tableSelectedGid: string | null

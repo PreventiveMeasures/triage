@@ -263,14 +263,13 @@ async function focusFound(hit, id) {
   render()
   const el = await findRenderedFinding(gid)
   if (!el) {
-    // Nothing painted for this group. The expected reason is the triage
-    // bucket: `unhideFinding` deliberately leaves `state.shownTriage`
-    // alone (see its notes), so a link to a finding in a bucket the
-    // reader isn't viewing resolves and navigates but has nothing on
-    // screen to scroll to. Still a success — we're on the right report,
-    // with the right member selected, and the toolbar's triage selector
-    // is one click away. The missing scroll is the only casualty, and
-    // an alert here would fire on an ordinary case.
+    // Nothing painted for this group. `unhideFinding` clears whatever
+    // it can reach — the view, the filters, the triage bucket — so
+    // this is now the residue: a mode whose DOM doesn't carry the
+    // group, or a group that fell out between the mutation and the
+    // paint. Still a success, because the navigation happened and the
+    // right member is selected; only the scroll is missing, and an
+    // alert here would fire on something the reader can't act on.
     return { ok: true }
   }
   // A card or row past the first screen is an empty shell until it
