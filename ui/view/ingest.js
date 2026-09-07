@@ -1181,7 +1181,7 @@ async function ingestReport(name, content, gen = null) {
         // sentinel for the "no analyzer" bucket). A finding stamped with
         // its own `source` — a re-imported markdown export that mixed a
         // product's findings with the analyzer's own runs
-        // (report/parse-deepview-md.js) — is that product's.
+        // (report/src/parse-deepview-md.js) — is that product's.
         filled._analyzer = filled.source ?? data.source ?? (filled.type ?? null)
         if (filled.id && !idToFinding.has(filled.id)) idToFinding.set(filled.id, filled)
         stamped.push(filled)

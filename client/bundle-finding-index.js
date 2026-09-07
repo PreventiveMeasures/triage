@@ -473,7 +473,7 @@ async function indexOne(name) {
     if (findings.length === 0) return false
     // Run-level meta (type / model / think / effort / exportsMode) is
     // inherited from the report header, field by field, under the same
-    // rule the report view follows — see report/meta.js (which also
+    // rule the report view follows — see report/src/meta.js (which also
     // holds the source-marked opt-out). The bundle viewer's source
     // panel reads these through prettyModel + the meta chain; without
     // the inheritance the chain stays empty for every finding that

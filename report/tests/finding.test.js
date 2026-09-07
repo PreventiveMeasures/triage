@@ -1,4 +1,4 @@
-// `report/finding.js` — the finding readers shared by the viewer and
+// `report/src/finding.js` — the finding readers shared by the viewer and
 // the markdown writer (write-md.js). The text shapers (title / body split,
 // description sections, evidence notes) are pinned through the
 // viewer's re-exports in tests/description-sections.test.js; this
@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { REVALIDATE_KINDS, SEVERITIES, SEVERITY_ORDER, correctedVariants, displayedSeverity, effectiveSeverity, hasSeverityCorrection, prettyModel, revalidateKindOf, runMetaLine, splitDescription } from '../finding.js'
+import { REVALIDATE_KINDS, SEVERITIES, SEVERITY_ORDER, correctedVariants, displayedSeverity, effectiveSeverity, hasSeverityCorrection, prettyModel, revalidateKindOf, runMetaLine, splitDescription } from '../index.js'
 
 describe('revalidateKindOf', () => {
   it('reads the stamp as the data has it, case-folded and trimmed', () => {

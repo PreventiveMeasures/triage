@@ -1,7 +1,7 @@
 // The "Download report" button's adapter: reads the viewer — which
 // findings are on screen, what the reader wrote on them, where their
 // locations link, which report each came from — and hands the plain
-// facts to the report library's writer (report/write-md.js). Nothing
+// facts to the report library's writer (report/src/write-md.js). Nothing
 // about markdown lives here.
 //
 // The set is the on-screen one: the active triage bucket (live, or a

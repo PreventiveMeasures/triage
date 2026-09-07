@@ -36,7 +36,7 @@ export const FILE_ICONS = {
 }
 
 // The named buckets, by the `source` marker a report carries
-// (report/labels.js SOURCE_LABELS names the same four). A report
+// (report/src/labels.js SOURCE_LABELS names the same four). A report
 // naming none — the analyzer's own dump — belongs to `default`.
 const SOURCE_GROUPS = new Set(['claude-security', 'codex-security', 'deepsec', 'piolium'])
 

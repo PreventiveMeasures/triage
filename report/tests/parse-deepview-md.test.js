@@ -1,4 +1,4 @@
-// `report/parse-deepview-md.js` — the reader for the document
+// `report/src/parse-deepview-md.js` — the reader for the document
 // write-md.js writes. Pinned here: the guard (the marker line, and
 // nothing without it); each fact and section back into the field it
 // was written from; the producer and the run settled at the report
@@ -11,13 +11,13 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
 import { analyzeReport, backfillFindingIds, inheritReportMeta, loadFindings, readReport, writeMarkdown } from '../index.js'
-import { findingTitle } from '../finding.js'
-import { parseCodexCsvToScans } from '../parse-codex.js'
-import { parseDeepsecFindings } from '../parse-deepsec.js'
-import { parseDeepviewMarkdown } from '../parse-deepview-md.js'
-import { parseMarkdownFindings } from '../parse-md.js'
-import { parsePioliumFindings } from '../parse-piolium.js'
-import { DOCUMENT_MARKER } from '../write-md.js'
+import { findingTitle } from '../index.js'
+import { parseCodexCsvToScans } from '../index.js'
+import { parseDeepsecFindings } from '../src/parse-deepsec.js'
+import { parseDeepviewMarkdown } from '../src/parse-deepview-md.js'
+import { parseMarkdownFindings } from '../src/parse-md.js'
+import { parsePioliumFindings } from '../src/parse-piolium.js'
+import { DOCUMENT_MARKER } from '../src/write-md.js'
 
 const finding = (extra = {}) => ({
   id: 'f1', file: 'src/a.js', line: '7', severity: 'high',

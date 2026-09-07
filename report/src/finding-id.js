@@ -59,7 +59,7 @@ export function findingId(severity, description, fileHash) {
 //
 // Discriminator selection (in order):
 //   - _idBasis  — a FROZEN fingerprint the parser stamped (markdown
-//                 imports; see report/parse-md-id.js). Used verbatim:
+//                 imports; see report/src/parse-md-id.js). Used verbatim:
 //                 it exists precisely so later changes to the rendered
 //                 description can't re-key stored triage.
 //   - fileHash  — preferred when present (matches `findingId` above)
