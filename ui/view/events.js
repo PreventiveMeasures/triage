@@ -2,7 +2,7 @@ import { KANBAN_DETAIL_FULLSCREEN_KEY, SEVERITY_MODE_KEY, VIEW_MODE_KEY, hasLink
 import { downloadBlob, report } from './dom.js'
 import { commonPrefix, configureRevalidation, handoffBlock, lineRange } from './format.js'
 import { activeTabFor, canApplyFixToGroup, findGroupById, findingRepo, findingReport, fixApplies, getMergedGroups, groupState, groupWithPassRows, syncGroupTriage, tabKey, triageActionPlan, triageScope } from './group.js'
-import { clearFilterOverride, defaultConfidenceFloor, defaultRevalidateFilter, resetFilters, setFilterOverride } from './filters.js'
+import { applyOpeningFilters, clearFilterOverride, resetFilters, setFilterOverride } from './filters.js'
 import { focusCodeHistory, revealFocusCodeLines } from './focus-code.js'
 import { pushed, stepped } from './focus-code-history.js'
 import { refreshGraph2Sidebar, refreshGraph2TopPkgs, render } from './render.js'
@@ -2271,25 +2271,21 @@ report.addEventListener('partial-change', (e) => {
 //
 // The confidence block is re-derived rather than carried over: the
 // switch changes which findings exist and what they are about, so it
-// leaves the filter where a reload of the new set would put it — the
-// same two questions ingest.js asks on a first load, asked again
-// against the set the switch has just reshaped. Carrying the answers
-// over was wrong in every part: an outcome nothing can reach once the
-// layer is off, the CLEARED outcome once it is back on (so a report
-// that OPENS on Confirmed returned to plain Confidence), and a floor
-// tuned for a group count the switch has just changed.
+// leaves the filter where a reload of the new set would put it —
+// filters.js applyOpeningFilters, the same call a first load makes.
+// Carrying the answers over was wrong in every part: an outcome
+// nothing can reach once the layer is off, the CLEARED outcome once
+// it is back on (so a report that OPENS on Confirmed returned to
+// plain Confidence), and a floor tuned for a group count the switch
+// has just changed.
 //
-// configureRevalidation before any of it: getMergedGroups and
-// defaultRevalidateFilter both read `revalidate` through format.js's
-// gate, and it is still set to the mode the previous render drew.
+// configureRevalidation before any of it: getMergedGroups and the
+// outcome question both read `revalidate` through format.js's gate,
+// and it is still set to the mode the previous render drew.
 report.addEventListener('revalidation-change', (e) => {
   state.showRevalidation = e.detail.on
   configureRevalidation(state.showRevalidation)
-  const groups = getMergedGroups()
-  state.filterConfMin = defaultConfidenceFloor(groups)
-  state.filterConfMax = 10
-  state.filterRevalidate = defaultRevalidateFilter(groups, state.filterConfMin)
-  state.filterPartial = ''
+  applyOpeningFilters(getMergedGroups())
   render()
 })
 // `<bundle-code-search>` dispatches this when a Files / Code /

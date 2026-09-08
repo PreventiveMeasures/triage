@@ -292,6 +292,33 @@ export function defaultRevalidateFilter(groups, confMin) {
   return 'confirmed'
 }
 
+// Put the confidence block where a fresh load of `groups` would put
+// it — the two questions above asked together, with the fields each
+// answer replaces cleared alongside it. That block is one control
+// with two faces (conf-filter.js): an outcome, when the set has one
+// to lead with, and the range underneath it otherwise.
+//
+// One helper because three callers ask it of three different moments
+// and have to agree:
+//
+//   * the first report of a load (ingestReport);
+//   * the whole workspace, once every member is in
+//     (switchToWorkspace) — a workspace is ONE view over its reports,
+//     and asked report by report the answer is whichever member
+//     happened to load first;
+//   * the App switch, which reshapes the set and so has to ask again
+//     rather than keep an answer that was about a different one
+//     (events.js).
+//
+// Always the groups the view SHOWS — getMergedGroups, not a report's
+// own — since that is the set the answer will be applied to.
+export function applyOpeningFilters(groups) {
+  state.filterConfMin = defaultConfidenceFloor(groups)
+  state.filterConfMax = 10
+  state.filterRevalidate = defaultRevalidateFilter(groups, state.filterConfMin)
+  state.filterPartial = ''
+}
+
 // Per-tab filter predicate. Factored out so `applyFilters` (group-level)
 // can ask "does ANY tab in this group match?" — per the user spec,
 // one matching tab keeps the whole group visible.
