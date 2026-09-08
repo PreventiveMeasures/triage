@@ -1,5 +1,5 @@
 import { state } from '#client/index.js'
-import { SEVERITY_ORDER, activeRevalidateKinds, displayedSeverity, findingText, isModule, prettyModel, revalidateFilterKinds, revalidateKind, voidsConfidence } from './format.js'
+import { SEVERITY_ORDER, activeRevalidateKinds, displayedSeverity, findingText, isModule, prettyModel, revalidateKind, voidsConfidence } from './format.js'
 import { primaryTab, tabKey } from './group.js'
 
 // Stand-in for the "no analyzer" bucket in the analyzer dropdown.
@@ -244,25 +244,25 @@ export function filterRevalidateKind(f) {
   return revalidateKind(f) || (f._source ? 'revalidation' : '')
 }
 
-// Would the default confidence range put this row on screen? The
-// question the outcome default below is measured against, and NOT
-// quite `showsAtConfidence`: a row carrying an issue with no
-// confidence at all counts as shown, whatever the floor. The range
-// hides such an issue above 0 (matchesFilters), but it hides it for
-// want of an answer, not because it has one — so it is not a row the
-// floor can be said to have ruled out, and hiding it a second way is
-// not something to decide by default. Only a row where EVERY issue
-// carries a confidence and none of them clears the floor is one the
-// range really does leave off.
-function rangeWouldShow(g, confMin) {
-  return g.some((f) => f.confidence === undefined) || showsAtConfidence(g, confMin)
-}
-
-// Did the pass rule this row out — every issue in it refuted or
-// unreachable? Confirmed hides exactly these, and that is what it is
-// FOR: a row the pass knocked down is not a row the reader lost.
-function ruledOut(g) {
-  return g.every((f) => voidsConfidence(f))
+// The floor the default view will REALLY apply. The range is a
+// whole-set control: one finding on screen with no confidence and no
+// `critical: true` and render.js disables it and resets the bounds to
+// 0—10 (hasAnyConfidence there), so the auto-tuned floor never bites
+// and every row is on screen — an unscored finding is not hidden by a
+// filter that isn't running. Measuring the comparison below against a
+// floor the view is about to throw away would be measuring a screen
+// nobody sees.
+//
+// `critical: true` rides the 10 bucket in place of a score
+// (matchesFilters), so it doesn't block the range any more than a
+// number does.
+//
+// render.js asks this of the on-screen bucket and we ask it of the
+// whole set; at open time, before anything is triaged away, they are
+// the same groups.
+function effectiveFloor(groups, confMin) {
+  const scored = groups.every((g) => g.every((f) => f.confidence !== undefined || f.critical === true))
+  return scored ? confMin : 0
 }
 
 // The revalidation outcome a freshly-loaded set should OPEN on, given
@@ -274,25 +274,25 @@ function ruledOut(g) {
 // hand; the floor stays set underneath, and clearing the outcome
 // hands back the range that would otherwise have been the default.
 //
-// Confirmed leads unless it would COST the reader something: the
-// range stays in front only where Confirmed would leave an issue off
-// the screen that the range would have shown. Two kinds of loss don't
-// count, because neither is the reader losing sight of anything:
+// The question is what Confirmed would COST, asked of findings rather
+// than of rows: every finding visible as part of a visible row under
+// the default range has to be visible as part of some visible row
+// under Confirmed. If it is, Confirmed leads.
 //
-//   * a row the pass ruled out (`ruledOut`) — hiding those is the
-//     whole point of the view, and a revalidation report is mostly
-//     made of them;
-//   * a row whose issues are all on screen ANYWAY, inside some other
-//     row Confirmed does show. Two reports over the same code — an
-//     analysis and the revalidation of it — put the same issue in two
-//     rows, and the un-stamped copy dropping out of the list is not
-//     the issue going missing. Compared by tab key, so this is the
-//     same identity the rest of the app dedups and triages by.
+// Findings, not rows, because a row is not a thing that goes missing.
+// Two reports over the same code — an analysis and the revalidation
+// of it — put the same finding in two rows, and Confirmed dropping
+// the un-stamped copy loses nothing while the stamped row still shows
+// it. Nor is a whole row the unit of what a row costs: a row shows in
+// FULL when any of its findings answers the filter, so a row visible
+// under the range carries its unscored members onto the screen with
+// it, and those are findings Confirmed can lose.
 //
-// Everything else that the range would show and Confirmed would not
-// holds the range in front: an issue the pass never reached — no
-// stamp, and not an import riding `revalidation` — is not one to
-// filter away before the reader has seen it.
+// What Confirmed shows is the dropdown's own answer — the confirmed,
+// the PARTIAL and the pass's own rows (REVALIDATE_FILTERS), with the
+// partial chip where a fresh load leaves it — read through
+// filterRevalidateKind, so an import the pass never saw counts as
+// shown rather than as a loss.
 //
 // Two conditions beyond that:
 //   * something has to BE on screen, or an empty load opens on a
@@ -308,19 +308,19 @@ function ruledOut(g) {
 // Pure in its arguments — it reads no state — so ingest.js can call it
 // between writing the floor and the first render.
 export function defaultRevalidateFilter(groups, confMin) {
-  if (!groups.some((g) => rangeWouldShow(g, confMin))) return ''
-  const confirmed = new Set(revalidateFilterKinds('confirmed'))
-  if (!groups.some((g) => g.some((f) => confirmed.has(revalidateKind(f))))) return ''
-  // Every issue Confirmed would put on screen — whole rows, since a
-  // row shows in full when any of its issues answers the outcome.
+  const shown = groups.filter((g) => showsAtConfidence(g, effectiveFloor(groups, confMin)))
+  if (shown.length === 0) return ''
+  const kinds = new Set(activeRevalidateKinds('confirmed', ''))
+  if (!groups.some((g) => g.some((f) => kinds.has(revalidateKind(f))))) return ''
+  // Every finding Confirmed would put on screen — whole rows, since a
+  // row shows in full when any of its findings answers the outcome.
   const onScreen = new Set()
   for (const g of groups) {
-    if (!g.some((f) => confirmed.has(filterRevalidateKind(f)))) continue
+    if (!g.some((f) => kinds.has(filterRevalidateKind(f)))) continue
     for (const f of g) onScreen.add(tabKey(f))
   }
-  for (const g of groups) {
-    if (!rangeWouldShow(g, confMin) || ruledOut(g)) continue
-    if (!g.every((f) => onScreen.has(tabKey(f)))) return ''
+  for (const g of shown) {
+    for (const f of g) if (!onScreen.has(tabKey(f))) return ''
   }
   return 'confirmed'
 }
