@@ -33,13 +33,13 @@ if (!globalThis[slotKey]) {
 }
 
 const { state } = await import('../client/state.ts')
-const { applyFilters, defaultConfidenceFloor, defaultRevalidateFilter, matchesFilters } = await import('../ui/view/filters.js')
+const { applyFilters, defaultConfidenceFloor, defaultRevalidateFilter, filterRevalidateKind, matchesFilters } = await import('../ui/view/filters.js')
 const { getMergedGroups, sortTabs } = await import('../ui/view/group.js')
 const {
   PARTIAL_MODES, REVALIDATE_FILTERS, REVALIDATE_KINDS, activeRevalidateKinds,
-  configureRevalidation, formatRunMeta, hasRevalidateField, isRevalidation,
-  isRevalidationRow, reachableRevalidateFilters, revalidateKind, revalidateStamp,
-  revalidationShown, voidsConfidence,
+  canDropRevalidation, configureRevalidation, formatRunMeta, hasRevalidateField,
+  hasRevalidateStamp, isRevalidation, isRevalidationRow, reachableRevalidateFilters,
+  revalidateKind, revalidateStamp, revalidationShown, voidsConfidence,
 } = await import('../ui/view/format.js')
 
 // Neutralise every other filter so each assertion isolates the
@@ -498,6 +498,99 @@ describe('revalidate filter — the toolbar dropdown', () => {
   })
 })
 
+// A finding a product's import brought in — Claude Security, Codex
+// Security, DeepSec, Piolium — was never put in front of the
+// revalidation pass, so the pass never ruled it out. It rides
+// `revalidation`, the value that names the pass itself: permanently
+// standing, permanently Confirmed, and carrying no layer for the App
+// switch to take off. That is what keeps a workspace mixing a
+// revalidated report with imported ones from filtering the imports
+// away for lacking a stamp they could never have carried.
+describe('the findings the pass never saw', () => {
+  beforeEach(reset)
+
+  const imported = (id, extra = {}) => makeFinding(id, { _source: 'deepsec', ...extra })
+
+  it('rides the pass row, whatever produced it', () => {
+    // The analyzer's own findings answer with the pass's reading.
+    for (const kind of REVALIDATE_KINDS) {
+      assert.equal(filterRevalidateKind(makeFinding('A', { revalidate: kind })), kind, kind)
+    }
+    assert.equal(filterRevalidateKind(makeFinding('A')), '')
+    // Every producer marker reads the same way — and it is the
+    // FINDING's marker that counts, so a product's row out of a
+    // re-imported export that mixed it with the analyzer's own runs
+    // is that product's wherever it now sits.
+    for (const source of ['claude-security', 'codex-security', 'deepsec', 'piolium']) {
+      assert.equal(filterRevalidateKind(imported('A', { _source: source })), 'revalidation', source)
+    }
+    // The App switch is not theirs to flip: off, the analyzer's rows
+    // go to the code view and an import still stands.
+    configureRevalidation(false)
+    assert.equal(filterRevalidateKind(imported('A')), 'revalidation')
+    assert.equal(filterRevalidateKind(makeFinding('B', { revalidate: 'confirmed' })), '')
+  })
+
+  // Revalidating an imported report is a thing the pipeline can do,
+  // and a verdict it reached is the answer — the stand-in only fills
+  // the gap where the pass left none.
+  it('yields to a stamp the row does carry', () => {
+    assert.equal(filterRevalidateKind(imported('A', { revalidate: 'refuted' })), 'refuted')
+    assert.equal(filterRevalidateKind(imported('B', { revalidate: 'partial' })), 'partial')
+  })
+
+  it('shows under Confirmed, and under nothing else', () => {
+    state.filterRevalidate = 'confirmed'
+    assert.equal(matchesFilters(imported('A')), true)
+    for (const value of ['refuted', 'unreachable']) {
+      state.filterRevalidate = value
+      assert.equal(matchesFilters(imported('A')), false, value)
+    }
+    // A refuted import is filtered as refuted, like any other row.
+    state.filterRevalidate = 'refuted'
+    assert.equal(matchesFilters(imported('B', { revalidate: 'refuted' })), true)
+  })
+
+  // The partial chip narrows Confirmed to the rows the pass FULLY
+  // confirmed, and an import is not one of them — the same answer the
+  // pass's own row gives there.
+  it('drops out with the pass row when the partials are excluded', () => {
+    state.filterRevalidate = 'confirmed'
+    state.filterPartial = 'exclude'
+    assert.equal(matchesFilters(imported('A')), false)
+    state.filterPartial = 'only'
+    assert.equal(matchesFilters(imported('A')), false)
+  })
+
+  // What a workspace mixing the two OPENS on. An imported group is
+  // not an unstamped one holding the whole set on the range.
+  it('does not hold a mixed workspace off Confirmed', () => {
+    const groups = [
+      [makeFinding('A', { confidence: 9, revalidate: 'confirmed' })],
+      [imported('B', { confidence: 9 })],
+    ]
+    assert.equal(defaultRevalidateFilter(groups, 8), 'confirmed')
+    // …and the filter that opens really does keep the import on
+    // screen, which is the point of the two halves together.
+    state.filterRevalidate = 'confirmed'
+    assert.deepEqual(applyFilters(groups).map((g) => g[0].id), ['A', 'B'])
+  })
+
+  // A pass has to have confirmed something ITSELF before the imports
+  // ride along: a set with no revalidation in it gets no dropdown
+  // from the toolbar (render.js scans the real values), so opening it
+  // on an outcome would set a filter with no control to clear it.
+  it('cannot open a set the pass never touched on Confirmed', () => {
+    assert.equal(defaultRevalidateFilter([[imported('A', { confidence: 9 })]], 8), '')
+    // Same where the pass ran but only ever knocked things down.
+    const refuted = [
+      [makeFinding('A', { confidence: 9, revalidate: 'refuted' })],
+      [imported('B', { confidence: 9 })],
+    ]
+    assert.equal(defaultRevalidateFilter(refuted, 0), '')
+  })
+})
+
 // The toolbar's "App" switch takes the whole revalidation layer off.
 // With it on the findings are about the running app — what it reaches,
 // re-rated by the second pass. With it off they are about the code as
@@ -522,6 +615,43 @@ describe('the revalidation layer switch', () => {
     // …and an unrecognised value is still no stamp, either way.
     configureRevalidation(false)
     assert.equal(hasRevalidateField({ revalidate: 'maybe' }), false)
+  })
+
+  // The switch is offered only where taking the layer off would hand
+  // a ruled-out finding back. A report whose every `revalidate` is
+  // `revalidation` — the pass's own rows, judging nothing — has none:
+  // "off" there would drop those rows and reveal nothing in their
+  // place, so the control isn't offered and the layer can't come off.
+  it('offers no way off a set the pass only ever rowed', () => {
+    for (const kind of ['refuted', 'unreachable', 'confirmed', 'partial', 'unknown']) {
+      assert.equal(hasRevalidateStamp({ revalidate: kind }), true, kind)
+    }
+    assert.equal(hasRevalidateStamp({ revalidate: 'revalidation' }), false)
+    assert.equal(hasRevalidateStamp({ revalidate: 'nonsense' }), false)
+    assert.equal(hasRevalidateStamp({}), false)
+    // …and past the switch, like the two readers above it: a gate
+    // that stopped seeing the stamps once the layer was off would
+    // take the way back with it.
+    configureRevalidation(false)
+    assert.equal(hasRevalidateStamp({ revalidate: 'refuted' }), true)
+    assert.equal(hasRevalidateStamp({ revalidate: 'revalidation' }), false)
+    configureRevalidation(true)
+
+    const report = (...findings) => [{ groups: findings.map((f) => [f]) }]
+    const pass = makeFinding('P', { revalidate: 'revalidation' })
+    // Nothing but the pass's own rows — no switch, whatever else the
+    // set carries.
+    assert.equal(canDropRevalidation(report(pass)), false)
+    assert.equal(canDropRevalidation(report(pass, makeFinding('A'))), false)
+    // One judged row anywhere in the loaded set is enough.
+    assert.equal(canDropRevalidation(report(pass, makeFinding('A', { revalidate: 'refuted' }))), true)
+    for (const kind of ['refuted', 'unreachable', 'confirmed', 'partial', 'unknown']) {
+      assert.equal(canDropRevalidation(report(makeFinding('A', { revalidate: kind }))), true, kind)
+    }
+    // A set the pass never touched is the code view already.
+    assert.equal(canDropRevalidation(report(makeFinding('A'))), false)
+    assert.equal(canDropRevalidation([]), false)
+    assert.equal(canDropRevalidation([{}]), false)
   })
 
   it('answers no stamp for every row while off', () => {

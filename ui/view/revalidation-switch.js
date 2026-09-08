@@ -12,12 +12,16 @@
 // them back; one switch is a better answer than undoing each
 // consequence of the pass by hand.
 //
-// Offered only where a report carries the `revalidate` field at all —
-// a set without one is already the code view, so there is nothing to
-// switch. The parent gates that on the RAW field (format.js
-// hasRevalidateField), which is why the control survives being turned
-// off: gating it on the layer's own reader would make it vanish the
-// moment it was used, with no way back.
+// Offered only where taking the layer off would actually hand a
+// finding back — where the pass stamped something it JUDGED, not just
+// its own `revalidation` rows (format.js canDropRevalidation). A set
+// without a `revalidate` anywhere is already the code view; one whose
+// only stamps are the pass's own rows has nothing the pass ruled out
+// to give back, so "off" there would just take those rows away and
+// call the result the code, which is worse than not offering the
+// switch. The parent gates on the RAW field, which is why the control
+// survives being turned off: gating it on the layer's own reader
+// would make it vanish the moment it was used, with no way back.
 //
 // Reactivity: extends StateElement, so the pressed state follows
 // `state.showRevalidation` on its own. Light DOM, so the
