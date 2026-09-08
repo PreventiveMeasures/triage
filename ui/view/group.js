@@ -444,6 +444,24 @@ export function getMergedGroups() {
   return withoutPassRows(mergedGroups())
 }
 
+// The merged groups the view actually SHOWS — the triage bucket the
+// reader is parked in (`state.shownTriage`, null for the live list),
+// or every bucket at once in kanban, which lays them side by side.
+// render.js's `allGroups` is this same rule, folded into the pass that
+// also counts the buckets.
+//
+// The distinction matters wherever a question is about the SCREEN
+// rather than about the data. The confidence block a load opens on
+// (filters.js applyOpeningFilters) is one: it asks what the reader
+// will be looking at, and a row marked fixed months ago is no part of
+// that answer — it is not on screen for the range to show, nor for an
+// outcome to take away.
+export function getShownGroups() {
+  const groups = getMergedGroups()
+  if (state.viewMode === 'kanban') return groups
+  return groups.filter((g) => groupState(g).commonTriage === state.shownTriage)
+}
+
 // The same merge walk without the lens filter — the group as the DATA
 // has it. Only `getMergedGroups` (which applies the filter) and
 // `groupWithPassRows` (which wants what it dropped) call this.

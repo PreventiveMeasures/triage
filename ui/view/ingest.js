@@ -3,7 +3,7 @@ import { analyzeContent, computeLinkHint, deleteBundle, deleteFile, deleteWorksp
 import { closeWorkspace as closePresence, deleteBundleFromRemote, deleteFromRemote as deletePresence, isInRemoteOrCached, openWorkspace as openPresence, putFile, triageSync } from './client-sync.js'
 import { openImportConflictDialog } from './dialogs/import-conflict-dialog.js'
 import { dropZone, report } from './dom.js'
-import { getMergedGroups, toGroup } from './group.js'
+import { getShownGroups, toGroup } from './group.js'
 import { effectiveSeverity } from './format.js'
 import { applyOpeningFilters, resetFilters } from './filters.js'
 import { render } from './render.js'
@@ -684,7 +684,7 @@ export async function switchToWorkspace(workspaceId) {
   // selection being overwritten. Re-render: the last ingest painted
   // with the interim answer.
   if (ingested > 0) {
-    applyOpeningFilters(getMergedGroups())
+    applyOpeningFilters(getShownGroups())
     render()
   }
   // Open the per-workspace sync session AFTER every report is ingested
@@ -1270,11 +1270,13 @@ async function ingestReport(name, content, gen = null) {
       // What this set opens on: an auto-tuned confidence floor, and
       // then — for a REVALIDATION report, one where every group that
       // floor leaves on screen carries a row the second pass stamped —
-      // Confirmed instead of the range. Over the merged groups, which
-      // for one report differ from its own only where a partial dupe
-      // inside it merged two (getMergedGroups); a workspace asks again
-      // over all of its members once they are in (switchToWorkspace).
-      applyOpeningFilters(getMergedGroups())
+      // Confirmed instead of the range. Over the rows the view SHOWS
+      // (getShownGroups) — merged, so a partial dupe inside the report
+      // counts once, and in the reader's triage bucket, since a row
+      // filed away is not on screen for either face of the block. A
+      // workspace asks again over all of its members once they are in
+      // (switchToWorkspace).
+      applyOpeningFilters(getShownGroups())
     }
     render()
   } catch (err) {

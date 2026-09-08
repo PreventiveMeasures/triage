@@ -1,7 +1,7 @@
 import { KANBAN_DETAIL_FULLSCREEN_KEY, SEVERITY_MODE_KEY, VIEW_MODE_KEY, hasLinkedFindings, isEncryptionEnabled, patchEntry, readBundle, saveRepoUrlFor, saveTriage, setReportIgnored, state, subscribeToBundleFindingIndex, subscribeToBundleHashIndex, subscribeToLinkedFindings } from '#client/index.js'
 import { downloadBlob, report } from './dom.js'
 import { commonPrefix, configureRevalidation, handoffBlock, lineRange } from './format.js'
-import { activeTabFor, canApplyFixToGroup, findGroupById, findingRepo, findingReport, fixApplies, getMergedGroups, groupState, groupWithPassRows, syncGroupTriage, tabKey, triageActionPlan, triageScope } from './group.js'
+import { activeTabFor, canApplyFixToGroup, findGroupById, findingRepo, findingReport, fixApplies, getShownGroups, groupState, groupWithPassRows, syncGroupTriage, tabKey, triageActionPlan, triageScope } from './group.js'
 import { applyOpeningFilters, clearFilterOverride, resetFilters, setFilterOverride } from './filters.js'
 import { focusCodeHistory, revealFocusCodeLines } from './focus-code.js'
 import { pushed, stepped } from './focus-code-history.js'
@@ -2279,13 +2279,13 @@ report.addEventListener('partial-change', (e) => {
 // plain Confidence), and a floor tuned for a group count the switch
 // has just changed.
 //
-// configureRevalidation before any of it: getMergedGroups and the
+// configureRevalidation before any of it: getShownGroups and the
 // outcome question both read `revalidate` through format.js's gate,
 // and it is still set to the mode the previous render drew.
 report.addEventListener('revalidation-change', (e) => {
   state.showRevalidation = e.detail.on
   configureRevalidation(state.showRevalidation)
-  applyOpeningFilters(getMergedGroups())
+  applyOpeningFilters(getShownGroups())
   render()
 })
 // `<bundle-code-search>` dispatches this when a Files / Code /
