@@ -131,6 +131,15 @@ export function reportsToMarkdown() {
       bucket: exportBucketLabel(),
       severityMode: hasCorrections ? state.severityMode : null,
       revalidation: hasRevalidation ? state.showRevalidation : null,
+      // Which app view the groups above were built in: `visibleGroups`
+      // takes each group's cases through sortTabs, so the simplified
+      // one has already folded the rows the pass re-rated under its
+      // own — the document says so rather than leaving a reader to
+      // wonder where a case they remember went. Null with the layer
+      // off, where the fold is inert and the line reads "code view".
+      revalidationDetail: hasRevalidation && state.showRevalidation !== false
+        ? state.revalidationDetailed === true
+        : null,
     },
     filters: activeFilterDescriptions(fields),
     counts: { included: groups.length, total: bucket.length },

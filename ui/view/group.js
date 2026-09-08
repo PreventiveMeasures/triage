@@ -127,6 +127,42 @@ export function tabTriage(f, entry = state.triage.get(tabKey(f))) {
   return entry?.triage ?? (isIgnored(f) ? 'ignored' : undefined)
 }
 
+// The tabs of a group the App lens DRAWS. Detail off (the default),
+// a group the pass re-examined is the pass's row ALONE: the analyzer's
+// rows underneath it are what the pass went back and re-rated, and the
+// app view is about its answer rather than its workings. The icon
+// in the App switch (`state.revalidationDetailed`) brings them back.
+//
+// Only a group the pass actually spoke about loses anything — a
+// finding it never saw has no row above it to stand for it, so it
+// keeps every tab it has.
+//
+// Through the layer's own GATE (`isRevalidation`, not the raw
+// `isRevalidationRow` withoutPassRows reads): this hides rows only
+// while the app view is the one on screen, and off it answers false
+// for every row, which is the whole guard it needs. The two readers
+// pull in opposite directions on purpose — withoutPassRows has to see
+// the pass's rows precisely when the gate has stopped showing them,
+// to take them out; this one has nothing to do the moment they are
+// gone.
+//
+// PRESENTATION only, unlike the row-dropping the switch does. The rows
+// this leaves out stay IN the group — they still count, still filter,
+// still take the group's triage and the fix that lands on it — because
+// they are the same findings, spoken for by the row above them. The
+// two directions differ on purpose: "off" says those rows are not what
+// the reader is looking at, while this says the pass has already
+// answered for them.
+//
+// Returns the group array itself whenever nothing is hidden, so
+// sortTabs's identity note below still holds for every set without a
+// pass row in it.
+function drawnTabs(group) {
+  if (state.revalidationDetailed || group.length <= 1) return group
+  if (!group.some(isRevalidation)) return group
+  return group.filter(isRevalidation)
+}
+
 // Tab sort order within a group: the revalidation row first, then
 // colored tabs (drawing attention to already-triaged cases), then
 // higher severity, then higher confidence.
@@ -149,10 +185,12 @@ export function tabTriage(f, entry = state.triage.get(tabKey(f))) {
 // nothing to reorder, and this helper sits on the hottest render path
 // (per group per render, several times per row/card template), so the
 // copy + toSorted would be pure allocation churn. Callers treat the
-// result as read-only either way.
+// result as read-only either way — including the array drawnTabs
+// builds when the lens folds a group's rows under the pass's.
 export function sortTabs(group) {
-  if (group.length <= 1) return group
-  return [...group].toSorted((a, b) => {
+  const tabs = drawnTabs(group)
+  if (tabs.length <= 1) return tabs
+  return [...tabs].toSorted((a, b) => {
     const aRevalidation = isRevalidation(a) ? 1 : 0
     const bRevalidation = isRevalidation(b) ? 1 : 0
     if (aRevalidation !== bRevalidation) return bRevalidation - aRevalidation
@@ -186,9 +224,16 @@ export function activeTabFor(group) {
   // template). Skipping the state reads is reactivity-safe — the
   // result can't change, so an observer needn't subscribe to them.
   if (group.length === 1) return group[0]
+  // Every branch below picks from the tabs the lens DRAWS (sortTabs),
+  // the stored pick included: a group can be parked on a tab the App
+  // lens has since folded under the pass's row, and honouring that
+  // would open the card on a row whose tab isn't on the strip to say
+  // it is the one showing.
+  const sorted = sortTabs(group)
+  if (sorted.length === 1) return sorted[0]
   const stored = state.activeTabByGroup.get(groupKey(group))
   if (stored) {
-    const match = group.find((f) => tabKey(f) === stored)
+    const match = sorted.find((f) => tabKey(f) === stored)
     if (match) return match
   }
   // No explicit selection yet. Candidate pool: all tabs in display
@@ -207,7 +252,6 @@ export function activeTabFor(group) {
   // Within the pool: prefer the first tab carrying an annotation
   // marker so an annotated sibling opens first; else the pool's first
   // (= primaryTab(group) when unfiltered).
-  const sorted = sortTabs(group)
   let pool = sorted
   if (state.filterAnalyzer || state.filterModel) {
     const matching = sorted.filter(matchesRunFilters)

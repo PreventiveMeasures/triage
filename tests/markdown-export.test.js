@@ -79,6 +79,7 @@ function reset() {
   state.filterPartial = ''
   state.shownTriage = null
   state.showRevalidation = true
+  state.revalidationDetailed = false
   state.severityMode = 'corrected'
   state.sortBy = 'severity'
 }
@@ -167,13 +168,41 @@ describe('reportsToMarkdown — the lenses', () => {
   it('takes the revalidation layer off with the App switch', () => {
     load(finding({ revalidate: 'refuted', revalidateVerdict: 'Not reachable.' }))
     const on = reportsToMarkdown()
-    assert.equal(line(on, 'View'), 'Live findings · app view — the revalidation pass is applied')
+    assert.equal(line(on, 'View'), 'Live findings · app view — the revalidation pass is applied, standing in for the rows it re-rated')
     assert.equal(line(on, 'Revalidation'), 'refuted')
     assert.ok(on.includes('#### Revalidation verdict\n\nNot reachable.'))
     state.showRevalidation = false
     const off = reportsToMarkdown()
     assert.equal(line(off, 'View'), 'Live findings · code view — the revalidation pass is not applied')
     assert.doesNotMatch(off, /Revalidation|Not reachable/u)
+  })
+
+  // Which app view wrote the document, so a reader who remembers a
+  // case the simplified one folded away can see why it isn't here.
+  it('names the detailed app view when the reader asked for it', () => {
+    load(finding({ revalidate: 'refuted', revalidateVerdict: 'Not reachable.' }))
+    state.revalidationDetailed = true
+    assert.equal(line(reportsToMarkdown(), 'View'), 'Live findings · detailed app view — the revalidation pass is applied, with the rows it re-rated')
+    // The detail line is about the app view; off the layer it has
+    // nothing to qualify and the code view says so on its own.
+    state.showRevalidation = false
+    assert.equal(line(reportsToMarkdown(), 'View'), 'Live findings · code view — the revalidation pass is not applied')
+  })
+
+  // The document is the view: the simplified app view has folded the
+  // rows the pass re-rated under its own (group.js drawnTabs), and
+  // what it writes is what the card draws.
+  it('writes the pass\'s row alone for a group the app view folds', () => {
+    const pass = finding({ id: 'P', revalidate: 'revalidation', description: 'Reachable from the login form' })
+    const own = finding({ id: 'A', revalidate: 'confirmed', description: 'Token comparison is not constant-time' })
+    state.reports = [{ fileName: 'r.json', source: null, repo: null, groups: [[pass, own]] }]
+    const folded = reportsToMarkdown()
+    assert.ok(folded.includes('Reachable from the login form'), folded)
+    assert.ok(!folded.includes('Token comparison'), folded)
+    state.revalidationDetailed = true
+    const detailed = reportsToMarkdown()
+    assert.ok(detailed.includes('Reachable from the login form'), detailed)
+    assert.ok(detailed.includes('Token comparison'), detailed)
   })
 
   it('says nothing about a layer the set does not carry', () => {

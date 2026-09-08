@@ -12,7 +12,7 @@ import { SEVERITIES, canDropRevalidation, configureDepsDir, configureRevalidatio
 import { activeTabFor, findingRepoFallback, getMergedGroups, groupKey, groupState, primaryTab, tabKey } from './group.js'
 import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, applySorting, modelOfFinding, rangeApplies, repoOfFinding } from './filters.js'
 import { ANALYZER_LABELS } from './analyzer-select.js'
-import { SOURCE_LABELS } from '../../report/index.js'
+import { SOURCE_LABELS, revalidateKindOf } from '../../report/index.js'
 import { COMBO_FIELDS, buildAnalyzerTags } from './analyzer-tags.js'
 import { COMMENT_ICON, FIX_ICON, FLAG_ICON, badgeLabel } from './render-finding.js'
 import { computeFindingCountsByFile, computeTransitiveCounts, fileHasFindings, mergeReportsTree } from './file-counts.js'
@@ -573,7 +573,7 @@ function triageFilterTemplate(colorCounts) {
 // so the host drops it in unconditionally.
 
 function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCounts, flags, analyzerSelect, repoOptions) {
-  const { showSource, showConfidence, showPriority, showGraphMode, showFileSort, kanbanMode, showRepo, hasComment, hasFix, hasFlagged, showSeverityMode, revalidateOptions, hasPartialKind, canDropLayer } = flags
+  const { showSource, showConfidence, showPriority, showGraphMode, showFileSort, kanbanMode, showRepo, hasComment, hasFix, hasFlagged, showSeverityMode, revalidateOptions, showPartial, canDropLayer, canDetailLayer } = flags
   // The findings tab gains a "graph" view-mode option when a
   // tree-bearing report is loaded (showGraphMode). The focus and
   // kanban modes sit between grouped and graph. Switching to graph
@@ -623,16 +623,23 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
         ? html`<conf-filter
             ?range-disabled=${!showConfidence}
             .revalidateOptions=${revalidateOptions}
-            ?has-partial=${hasPartialKind}
+            ?has-partial=${showPartial}
           ></conf-filter>`
         : nothing}
       ${kanbanMode ? nothing : html`<triage-selector .counts=${triageCounts}></triage-selector>`}
       <!-- App / code lens — the far right of the row, past the triage
-           selector that claims the free space before it. Shown only
-           where taking the layer off would hand a ruled-out finding
-           back (format.js canDropRevalidation); see
-           revalidation-switch.js for what comes off with it. -->
-      ${canDropLayer ? html`<revalidation-switch></revalidation-switch>` : nothing}
+           selector that claims the free space before it. A switch of
+           up to three stops (code / app / detailed app), each offered
+           only where it would change something: can-drop where
+           taking the layer off would hand a ruled-out finding back
+           (format.js canDropRevalidation), can-detail where the app
+           view is folding rows or holding the partial line back. Both
+           are properties of the loaded SET, so the control doesn't
+           resize as the reader moves through it; either one alone is
+           reason enough to draw it. See revalidation-switch.js. -->
+      ${canDropLayer || canDetailLayer
+        ? html`<revalidation-switch ?can-drop=${canDropLayer} ?can-detail=${canDetailLayer}></revalidation-switch>`
+        : nothing}
     </div>
     <!-- Filter row: severity chips + mark-color triage pill + search
          field, all inline so they read as one composable filter strip.
@@ -1861,11 +1868,30 @@ function renderImpl() {
   // rows, rather than a list filtered to nothing under a count that
   // says otherwise.
   const revalidateKinds = new Set()
+  // What the switch's DETAIL stop would hand back, asked of the set
+  // rather than of the view it is currently drawing: rows the
+  // simplified app view folds under the pass's (a `revalidation` row
+  // sharing its group with the analyzer's own — group.js drawnTabs),
+  // and partial stamps for the chip inside Confirmed to sort.
+  //
+  // Read RAW, past the layer's gate, which is what keeps the stop from
+  // coming and going under the reader's hand: gated, both answers
+  // would go empty the moment the switch reached its code stop, and
+  // the control would resize itself mid-click.
+  let hasFoldedRows = false
+  let hasPartialRow = false
   for (const g of allGroups) {
+    let passRow = false
+    let ownRow = false
     for (const f of g) {
       const kind = revalidateKind(f)
       if (kind) revalidateKinds.add(kind)
+      const raw = revalidateKindOf(f)
+      if (raw === 'partial') hasPartialRow = true
+      if (raw === 'revalidation') passRow = true
+      else ownRow = true
     }
+    if (passRow && ownRow) hasFoldedRows = true
   }
   // Preserve first-seen order for the type label so "security, correctness"
   // reads in load order rather than alphabetical.
@@ -2050,11 +2076,21 @@ function renderImpl() {
   }
   // The partial switch rides inside the Confirmed option (see
   // revalidate-filter.js), so it's offered only where there are
-  // partial rows to sort — and a mode left set from a report that had
-  // them is cleared here, or it would keep narrowing Confirmed with no
-  // control on screen to say so.
-  const hasPartialKind = revalidateKinds.has('partial')
-  if (!hasPartialKind) state.filterPartial = ''
+  // partial rows to sort — and only in the DETAILED app view, since
+  // the stamps it sorts by ride the analyzer's own rows and the
+  // simplified one has folded those under the pass's (group.js
+  // drawnTabs), leaving nothing on screen to fall either side of the
+  // line it draws. A mode left set from a report that had them, or
+  // from the detailed view, is cleared here, or it would keep
+  // narrowing Confirmed with no control on screen to say so.
+  const showPartial = revalidateKinds.has('partial') && state.revalidationDetailed === true
+  if (!showPartial) state.filterPartial = ''
+  // The switch's third stop — the detailed app view — offered where it
+  // would change something: rows folded under a pass row, or the
+  // partial line to draw. A property of the SET, not of the stop the
+  // switch is standing at, so the control keeps its size and its stops
+  // while the reader moves through them.
+  const canDetailLayer = hasFoldedRows || hasPartialRow
   // If a previously-loaded report had node_modules and the user
   // narrowed the source filter, switching to a report without any
   // node_modules paths would leave the filter at 'own' or 'modules'
@@ -2200,8 +2236,9 @@ function renderImpl() {
       showRepo: !!state.currentWorkspace,
       hasComment,
       revalidateOptions,
-      hasPartialKind,
+      showPartial,
       canDropLayer,
+      canDetailLayer,
       hasFix,
       hasFlagged,
       // Corrected/Original lens switch — shown only when a correction
