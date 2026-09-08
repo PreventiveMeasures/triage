@@ -10,9 +10,9 @@ import { installShadowTooltipListener } from './tooltip.js'
 import { dropZone, report } from './dom.js'
 import { SEVERITIES, canDropRevalidation, configureDepsDir, configureRevalidation, displayedSeverity, fileLink, findingDisplayName, findingTitle, formatRunMeta, hasSeverityCorrection, isHttpUrl, isModule, lineLink, lineRangeLabel, reachableRevalidateFilters, revalidateKind } from './format.js'
 import { activeTabFor, findingRepoFallback, getMergedGroups, groupKey, groupState, primaryTab, tabKey } from './group.js'
-import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, applySorting, modelOfFinding, repoOfFinding } from './filters.js'
+import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, applySorting, modelOfFinding, rangeApplies, repoOfFinding } from './filters.js'
 import { ANALYZER_LABELS } from './analyzer-select.js'
-import { SOURCE_LABELS } from '../../report/index.js'
+import { SOURCE_LABELS, revalidateKindOf } from '../../report/index.js'
 import { COMBO_FIELDS, buildAnalyzerTags } from './analyzer-tags.js'
 import { COMMENT_ICON, FIX_ICON, FLAG_ICON, badgeLabel } from './render-finding.js'
 import { computeFindingCountsByFile, computeTransitiveCounts, fileHasFindings, mergeReportsTree } from './file-counts.js'
@@ -573,7 +573,7 @@ function triageFilterTemplate(colorCounts) {
 // so the host drops it in unconditionally.
 
 function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCounts, flags, analyzerSelect, repoOptions) {
-  const { showSource, showConfidence, showPriority, showGraphMode, showFileSort, kanbanMode, showRepo, hasComment, hasFix, hasFlagged, showSeverityMode, revalidateOptions, hasPartialKind, canDropLayer } = flags
+  const { showSource, showConfidence, showPriority, showGraphMode, showFileSort, kanbanMode, showRepo, hasComment, hasFix, hasFlagged, showSeverityMode, revalidateOptions, showPartial, canDropLayer, canDetailLayer } = flags
   // The findings tab gains a "graph" view-mode option when a
   // tree-bearing report is loaded (showGraphMode). The focus and
   // kanban modes sit between grouped and graph. Switching to graph
@@ -623,16 +623,23 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
         ? html`<conf-filter
             ?range-disabled=${!showConfidence}
             .revalidateOptions=${revalidateOptions}
-            ?has-partial=${hasPartialKind}
+            ?has-partial=${showPartial}
           ></conf-filter>`
         : nothing}
       ${kanbanMode ? nothing : html`<triage-selector .counts=${triageCounts}></triage-selector>`}
       <!-- App / code lens — the far right of the row, past the triage
-           selector that claims the free space before it. Shown only
-           where taking the layer off would hand a ruled-out finding
-           back (format.js canDropRevalidation); see
-           revalidation-switch.js for what comes off with it. -->
-      ${canDropLayer ? html`<revalidation-switch></revalidation-switch>` : nothing}
+           selector that claims the free space before it. A switch of
+           up to three stops (code / app / detailed app), each offered
+           only where it would change something: can-drop where
+           taking the layer off would hand a ruled-out finding back
+           (format.js canDropRevalidation), can-detail where the app
+           view is folding rows or holding the partial line back. Both
+           are properties of the loaded SET, so the control doesn't
+           resize as the reader moves through it; either one alone is
+           reason enough to draw it. See revalidation-switch.js. -->
+      ${canDropLayer || canDetailLayer
+        ? html`<revalidation-switch ?can-drop=${canDropLayer} ?can-detail=${canDetailLayer}></revalidation-switch>`
+        : nothing}
     </div>
     <!-- Filter row: severity chips + mark-color triage pill + search
          field, all inline so they read as one composable filter strip.
@@ -1582,6 +1589,12 @@ const nullLastCmp = (a, b) => {
   return a.localeCompare(b)
 }
 
+// The revalidation mode a CONFLICT took away, held until the set that
+// carried it is gone (see the conflict branch in renderImpl). Module
+// state rather than `state`: it is this module's bookkeeping between
+// renders, not anything a view persists or a component reads.
+let modeBeforeConflict = null
+
 function renderImpl() {
   mountBundleSourceOverlay()
   // Recompute the active deps dir before any helper consults it
@@ -1607,8 +1620,35 @@ function renderImpl() {
   // dropping those rows is all "off" would ever do (format.js
   // canDropRevalidation). Written only when it actually differs, since
   // this runs on every render and `state` is observed.
-  const canDropLayer = canDropRevalidation(state.reports)
-  if (!canDropLayer && state.showRevalidation === false) state.showRevalidation = true
+  //
+  // A set whose reports CONTRADICT each other about the pass goes the
+  // other way: the layer comes off and stays off. Two copies of one
+  // finding under two different `revalidate*` answers (ingest.js, via
+  // group.js mergeDuplicateFields) means the view cannot say what the
+  // pass concluded — dedup keeps whichever loaded first, so the app
+  // view would be one report's verdicts chosen by an accident of read
+  // order. Better to show the code as written and no switch, than a
+  // verdict that might be the other report's opposite.
+  const conflicted = state.revalidateConflict === true
+  const canDropLayer = !conflicted && canDropRevalidation(state.reports)
+  if (conflicted) {
+    // Remember the mode the conflict takes away, so leaving that set
+    // gives it back. Without it the next report opens in the code
+    // view — its outcome default computed with the layer off — for a
+    // disagreement in a set the reader has already left, and with no
+    // switch on screen while the conflict lasted there was no moment
+    // at which they chose it.
+    if (state.showRevalidation !== false) {
+      modeBeforeConflict = state.showRevalidation
+      state.showRevalidation = false
+    }
+  } else {
+    if (modeBeforeConflict !== null) {
+      state.showRevalidation = modeBeforeConflict
+      modeBeforeConflict = null
+    }
+    if (!canDropLayer && state.showRevalidation === false) state.showRevalidation = true
+  }
   configureRevalidation(state.showRevalidation)
   // Print-button body class is owned by an observer-util autorun (see
   // view/print-btn-visibility.js) — render() must not touch it.
@@ -1828,11 +1868,30 @@ function renderImpl() {
   // rows, rather than a list filtered to nothing under a count that
   // says otherwise.
   const revalidateKinds = new Set()
+  // What the switch's DETAIL stop would hand back, asked of the set
+  // rather than of the view it is currently drawing: rows the
+  // simplified app view folds under the pass's (a `revalidation` row
+  // sharing its group with the analyzer's own — group.js drawnTabs),
+  // and partial stamps for the chip inside Confirmed to sort.
+  //
+  // Read RAW, past the layer's gate, which is what keeps the stop from
+  // coming and going under the reader's hand: gated, both answers
+  // would go empty the moment the switch reached its code stop, and
+  // the control would resize itself mid-click.
+  let hasFoldedRows = false
+  let hasPartialRow = false
   for (const g of allGroups) {
+    let passRow = false
+    let ownRow = false
     for (const f of g) {
       const kind = revalidateKind(f)
       if (kind) revalidateKinds.add(kind)
+      const raw = revalidateKindOf(f)
+      if (raw === 'partial') hasPartialRow = true
+      if (raw === 'revalidation') passRow = true
+      else ownRow = true
     }
+    if (passRow && ownRow) hasFoldedRows = true
   }
   // Preserve first-seen order for the type label so "security, correctness"
   // reads in load order rather than alphabetical.
@@ -1872,19 +1931,35 @@ function renderImpl() {
    // a prior report can't keep findings hidden silently. Stats /
    // sorting / include-exclude always make sense, so no flags for
    // those.
-  // The slider is safe to show only when every finding on screen has
-  // a defined spot on the 0–10 scale: either a real `confidence`, or
-  // the `critical: true` flag (the boolean — NOT severity 'critical')
-  // that matchesFilters treats as confidence=10, so it clears any min
-  // floor and is never silently dropped. Anything else (no confidence
-  // and not critical) vanishes the moment the user lifts min off 0,
-  // so a single such finding blocks the slider for the whole set — a
-  // workspace merge of mixed analyzers (one analyzer-native report
-  // with confidence + one DeepSec / Claude Security import without)
-  // stays gated for exactly that reason. The test is per-finding, not
-  // per-report: `critical` varies finding-to-finding, so a lone
-  // critical finding must not vouch for unscored, non-critical
-  // neighbours that would still be dropped.
+  // The slider shows where the range is a live control over the rows
+  // on screen — filters.js rangeApplies, which the opening auto-tune
+  // reads too, so the control and the answer it opens on can't
+  // disagree about whether the floor is running.
+  //
+  // Every row needs a spot on the 0–10 scale (confidenceOnScale, the
+  // same reader the range matches against): a real `confidence`, the
+  // `critical: true` flag (the boolean — NOT severity 'critical'), or
+  // coming from another producer. The last two read as 10, so they
+  // clear any min floor and are never silently dropped. An analyzer
+  // finding with no confidence and not critical has no spot, and
+  // vanishes the moment the user lifts min off 0 — so a single one of
+  // those disables the slider for the whole set.
+  //
+  // An import used to be one of those too, and it took the range away
+  // from every workspace holding one: a Claude Security report beside
+  // an analyzer's own left the control disabled at 0—10, filtering
+  // nothing, with every low-confidence row still on screen. It
+  // carries no confidence because its producer emits none, not
+  // because anyone was unsure, so it vouches for itself at the top of
+  // the scale rather than gating everyone.
+  //
+  // Riding the scale is not the same as establishing it, which is the
+  // other half of rangeApplies: a set of nothing but imports is all
+  // 10s, and gets no range at all rather than a disabled one.
+  //
+  // The test is per-finding, not per-report: `critical` varies
+  // finding-to-finding, so a lone critical finding must not vouch for
+  // unscored, non-critical neighbours that would still be dropped.
   //
   // `allGroups` is already the on-screen set — the current
   // state.shownTriage bucket on every layout but kanban (which shows
@@ -1892,8 +1967,7 @@ function renderImpl() {
   // viewing Untriaged with every untriaged finding scored shows the
   // slider even when hidden buckets (fixed / ignored) hold unscored
   // ones.
-  const hasAnyConfidence = allGroups.length > 0
-    && allGroups.every((g) => g.every((f) => f.confidence !== undefined || f.critical === true))
+  const hasAnyConfidence = allGroups.length > 0 && rangeApplies(allGroups)
   const hasAnyPriority = mergedGroups.some((g) => g.some((f) => f.priority !== undefined))
   const hasAnyModulesPath = mergedGroups.some((g) => g.some((f) => isModule(f.file)))
   // File sort is only meaningful across multiple files — a single-file
@@ -2002,11 +2076,21 @@ function renderImpl() {
   }
   // The partial switch rides inside the Confirmed option (see
   // revalidate-filter.js), so it's offered only where there are
-  // partial rows to sort — and a mode left set from a report that had
-  // them is cleared here, or it would keep narrowing Confirmed with no
-  // control on screen to say so.
-  const hasPartialKind = revalidateKinds.has('partial')
-  if (!hasPartialKind) state.filterPartial = ''
+  // partial rows to sort — and only in the DETAILED app view, since
+  // the stamps it sorts by ride the analyzer's own rows and the
+  // simplified one has folded those under the pass's (group.js
+  // drawnTabs), leaving nothing on screen to fall either side of the
+  // line it draws. A mode left set from a report that had them, or
+  // from the detailed view, is cleared here, or it would keep
+  // narrowing Confirmed with no control on screen to say so.
+  const showPartial = revalidateKinds.has('partial') && state.revalidationDetailed === true
+  if (!showPartial) state.filterPartial = ''
+  // The switch's third stop — the detailed app view — offered where it
+  // would change something: rows folded under a pass row, or the
+  // partial line to draw. A property of the SET, not of the stop the
+  // switch is standing at, so the control keeps its size and its stops
+  // while the reader moves through them.
+  const canDetailLayer = hasFoldedRows || hasPartialRow
   // If a previously-loaded report had node_modules and the user
   // narrowed the source filter, switching to a report without any
   // node_modules paths would leave the filter at 'own' or 'modules'
@@ -2152,8 +2236,9 @@ function renderImpl() {
       showRepo: !!state.currentWorkspace,
       hasComment,
       revalidateOptions,
-      hasPartialKind,
+      showPartial,
       canDropLayer,
+      canDetailLayer,
       hasFix,
       hasFlagged,
       // Corrected/Original lens switch — shown only when a correction

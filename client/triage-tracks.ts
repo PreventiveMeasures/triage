@@ -1,6 +1,9 @@
-// The two triage tracks, as types. `TriageEntry` (state.ts) carries
-// both and `triage-entry.ts` holds every operation over them; they sit
-// here so neither of those has to own the other's definitions.
+import type { TriageBucket } from './state.ts'
+
+// A finding's triage annotations, and the two tracks they carry.
+// `triage-entry.ts` holds every operation over them; `state.ts` (which
+// re-exports `TriageEntry` for its long-standing importers) holds the
+// map they live in.
 //
 // WHY THERE ARE TWO. A finding's id is derived from the source's own
 // bytes (report/src/finding-id.js), so the SAME id is what every app
@@ -48,4 +51,29 @@ export type UpstreamEntry = {
   state?: UpstreamState
   link?: string
   since?: string
+}
+
+// One finding's triage annotations, keyed by `tabKey(f)` in
+// `state.triage`. Unset fields are absent (not empty): the helpers in
+// `triage-entry.ts` prune emptied fields and drop the id entirely when
+// nothing remains, so iteration / persistence / GC only ever see
+// meaningful ids. `ignoredReports` lists the report names in which the
+// finding is per-report ignored. `deleted` is the legacy persisted/wire
+// form, migrated to `triage: 'deleted'` on load.
+export type TriageEntry = {
+  color?: string
+  triage?: TriageBucket
+  comment?: string
+  fix?: string
+  // Tri-state attention flag. `undefined` = never set; `true` =
+  // flagged; `false` = explicitly UN-flagged — a tombstone that is
+  // deliberately NOT pruned. Keeping `false` distinct from absent is
+  // load-bearing for sync/conflict resolution: unflagging is a real
+  // change that must overwrite a peer's stale `true`, not read as "no
+  // opinion" and get silently undone.
+  flagged?: boolean
+  ignoredReports?: string[]
+  apps?: { [appKey: string]: AppEntry }
+  upstream?: UpstreamEntry
+  deleted?: boolean
 }

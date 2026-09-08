@@ -1,7 +1,6 @@
 import { store } from '@rray/frontend/state-management'
 import { getItem as getSecureItem, mutate as mutateSecureItem, onAfterHydrate, setItem as setSecureItem } from './secure-storage.js'
 import { type ManagedServerInfo, type ServerMode, readCachedServerInfo } from './sync/server-mode.ts'
-import type { AppEntry, UpstreamEntry } from './triage-tracks.ts'
 
 export const VIEW_MODE_KEY = 'deepview.viewMode'
 export const SEVERITY_MODE_KEY = 'deepview.severityMode'
@@ -71,34 +70,11 @@ export type ShownTriage = TriageBucket | 'ignored'
 export type AnnotationFilterState = '' | 'with' | 'without'
 
 // One finding's triage annotations, keyed by `tabKey(f)` in
-// `state.triage`. Unset fields are absent (not empty): the helpers in
-// `triage-entry.ts` prune emptied fields and drop the id entirely when
-// nothing remains, so iteration / persistence / GC only ever see
-// meaningful ids. `ignoredReports` lists the report names in which the
-// finding is per-report ignored. `deleted` is the legacy persisted/wire
-// form, migrated to `triage: 'deleted'` on load.
-//
-// `apps` and `upstream` are the two triage tracks — one answer per app
-// and one about the cause. See ./triage-tracks.ts for what each is
-// for, and why one entry needed two.
-
-export type TriageEntry = {
-  color?: string
-  triage?: TriageBucket
-  comment?: string
-  fix?: string
-  // Tri-state attention flag. `undefined` = never set; `true` =
-  // flagged; `false` = explicitly UN-flagged — a tombstone that is
-  // deliberately NOT pruned. Keeping `false` distinct from absent is
-  // load-bearing for sync/conflict resolution: unflagging is a real
-  // change that must overwrite a peer's stale `true`, not read as "no
-  // opinion" and get silently undone.
-  flagged?: boolean
-  ignoredReports?: string[]
-  apps?: { [appKey: string]: AppEntry }
-  upstream?: UpstreamEntry
-  deleted?: boolean
-}
+// `state.triage`. Defined in ./triage-tracks.ts, with the two triage
+// tracks it carries, and re-exported here because this is where every
+// consumer has always imported it from.
+import type { TriageEntry } from './triage-tracks.ts'
+export type { TriageEntry }
 
 // Deepview state schema. Fields with ad-hoc / nested shapes (parsed
 // bundle metadata, ingested findings) stay `unknown` for now — they
@@ -149,6 +125,8 @@ export interface State {
   filterRevalidate: string
   filterPartial: string
   showRevalidation: boolean
+  revalidationDetailed: boolean
+  revalidateConflict: boolean
   codePreviews: Set<string>
   filterConfMin: number
   filterConfMax: number
@@ -360,10 +338,7 @@ export function saveRepoUrlFor(name: string | null | undefined, url: string): vo
 //   * 'replace'         — install the imported map verbatim.
 //   * 'prefer-imported' — imported value wins on key collision.
 //   * 'prefer-current'  — current value wins (only fills gaps).
-export async function importRepoUrls(
-  imported: Record<string, string>,
-  mode: 'replace' | 'prefer-imported' | 'prefer-current',
-): Promise<void> {
+export async function importRepoUrls(imported: Record<string, string>, mode: 'replace' | 'prefer-imported' | 'prefer-current'): Promise<void> {
   await mutateSecureItem(REPO_URLS_KEY, (currentFromDisk) => {
     const current = parseRepoUrlMap(currentFromDisk)
     const merged =
@@ -634,6 +609,24 @@ export const state: State = store<State>({
   // own rows has no ruled-out finding to hand back — render.js forces
   // this back on for both, so it can't stay off with no switch to say so.
   showRevalidation: true,
+  // The DETAIL half of that switch — the icon sharing its pill. Off (the
+  // default), a group the pass re-examined shows the pass's row and
+  // nothing else: the analyzer's own rows underneath it are out of the
+  // tab strip (group.js sortTabs), and the `+ Partial` chip inside the
+  // Confirmed outcome goes with them (render.js), since the stamps it
+  // sorts by ride rows that are no longer on screen. On, both come
+  // back — the app view with its workings shown, which is what the
+  // switch alone used to mean. Offered only where it would change
+  // something: a pass row sharing its group, or partial rows to sort.
+  revalidationDetailed: false,
+  // Set at ingest when two copies of one finding disagree about what
+  // the revalidation pass concluded — the same id under two different
+  // `revalidate*` answers (group.js mergeDuplicateFields). Dedup keeps
+  // whichever loaded first, so with a disagreement in the set the view
+  // cannot say what the pass concluded: render.js takes the layer off
+  // and stops offering the switch rather than showing one copy's
+  // verdicts as if they were settled. Cleared with `state.reports`.
+  revalidateConflict: false,
   // Which source previews are open — the `</>` beside a finding's code
   // links, keyed `<tabKey>\0<path>\0<line>` (render-finding.js
   // codePreviewKey). A Set rather than one open at a time: the

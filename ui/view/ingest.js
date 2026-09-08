@@ -3,7 +3,7 @@ import { analyzeContent, computeLinkHint, deleteBundle, deleteFile, deleteWorksp
 import { closeWorkspace as closePresence, deleteBundleFromRemote, deleteFromRemote as deletePresence, isInRemoteOrCached, openWorkspace as openPresence, putFile, triageSync } from './client-sync.js'
 import { openImportConflictDialog } from './dialogs/import-conflict-dialog.js'
 import { dropZone, report } from './dom.js'
-import { getShownGroups, toGroup } from './group.js'
+import { getShownGroups, mergeDuplicateFields, toGroup } from './group.js'
 import { effectiveSeverity } from './format.js'
 import { applyOpeningFilters, resetFilters } from './filters.js'
 import { render } from './render.js'
@@ -466,6 +466,7 @@ export async function switchToFile(name, content) {
   closeSessionsExcept(desiredWorkspaceIds)
   state.reports = []
   state.workspaceMerges = []
+  state.revalidateConflict = false
   state.currentFile = name
   state.currentWorkspace = null
   state.currentLinks = null
@@ -628,6 +629,7 @@ export async function switchToWorkspace(workspaceId) {
   void computeLinkHint('workspace', workspaceId)
   state.reports = []
   state.workspaceMerges = []
+  state.revalidateConflict = false
   state.currentFile = null
   state.currentWorkspace = workspaceId
   state.currentLinks = null
@@ -815,6 +817,7 @@ function clearActiveView() {
   state.bundleSourceFindingIdx = null
   state.reports = []
   state.workspaceMerges = []
+  state.revalidateConflict = false
   state.repoUrl = ''
   state.repoEditing = false
   state.shownTriage = null
@@ -1044,12 +1047,14 @@ async function ingestReport(name, content, gen = null) {
     const seenIds = new Set()
     const idToGroupKey = new Map()
     // id → the SURVIVING finding object for that id (first occurrence
-    // wins, matching the dedup below). Lets the dedup branches stamp a
-    // dropped duplicate's per-report effective severity onto the survivor
-    // so an application-specific correction that DIFFERS across reports
-    // stays visible in the merged view — see recordCorrectedVariant and
-    // format.js correctedVariants. The dropped duplicate object itself is
-    // discarded as before; only its corrected severity is preserved.
+    // wins, matching the dedup below). Lets the dedup branches keep
+    // what the dropped copy knew: its per-report effective severity,
+    // so an application-specific correction that DIFFERS across
+    // reports stays visible in the merged view (recordCorrectedVariant
+    // + format.js correctedVariants), and every other field the
+    // survivor has no answer for — the revalidation pass's verdict
+    // above all (group.js mergeDuplicateFields). The dropped object
+    // itself is discarded as before.
     const idToFinding = new Map()
     for (let ri = 0; ri < state.reports.length; ri++) {
       const r = state.reports[ri]
@@ -1175,7 +1180,19 @@ async function ingestReport(name, content, gen = null) {
         for (const m of seenMembers) {
           const survivor = idToFinding.get(m.id)
           recordCorrectedVariant(survivor, name, m)
+          // The app the dropped copy belonged to — the one `_`-prefixed
+          // field that has to cross. `mergeDuplicateFields` leaves
+          // those alone by design (they say where a copy came from,
+          // and the survivor keeps its own), but this card is now the
+          // only one EITHER app has, so it has to be able to answer
+          // for both: see `recordAppKey` and `scopedApps` in group.js.
           recordAppKey(survivor, declaredRepo ?? name)
+          // …and anything else this copy knew that the survivor
+          // doesn't — the pass's verdict above all. A disagreement
+          // about that verdict is reported rather than settled: the
+          // layer comes off the whole set (group.js
+          // mergeDuplicateFields, render.js).
+          if (mergeDuplicateFields(survivor, m)) state.revalidateConflict = true
         }
         dupeCount += seenMembers.length; continue
       }
@@ -1264,7 +1281,19 @@ async function ingestReport(name, content, gen = null) {
         for (const m of seenMembers) {
           const survivor = idToFinding.get(m.id)
           recordCorrectedVariant(survivor, name, m)
+          // The app the dropped copy belonged to — the one `_`-prefixed
+          // field that has to cross. `mergeDuplicateFields` leaves
+          // those alone by design (they say where a copy came from,
+          // and the survivor keeps its own), but this card is now the
+          // only one EITHER app has, so it has to be able to answer
+          // for both: see `recordAppKey` and `scopedApps` in group.js.
           recordAppKey(survivor, declaredRepo ?? name)
+          // …and anything else this copy knew that the survivor
+          // doesn't — the pass's verdict above all. A disagreement
+          // about that verdict is reported rather than settled: the
+          // layer comes off the whole set (group.js
+          // mergeDuplicateFields, render.js).
+          if (mergeDuplicateFields(survivor, m)) state.revalidateConflict = true
         }
       }
       const newGroupKey = `${state.reports.length}:${groups.length}`

@@ -41,7 +41,7 @@
 //
 //   writeMarkdown({
 //     title, workspace, reports: [{ name, source }], repo, generatedAt,
-//     view: { bucket, severityMode, revalidation },
+//     view: { bucket, severityMode, revalidation, revalidationDetail },
 //     filters: [{ label, value }], counts: { included, total },
 //     groups: [ [finding, …], … ],       // display order, primary case first
 //   }, { annotation, location, evidence, commit, report })
@@ -125,7 +125,16 @@ function viewText(view) {
   if (view.severityMode === 'original') parts.push('original analyzer severities')
   else if (view.severityMode === 'corrected') parts.push('corrected severities')
   if (view.revalidation === false) parts.push('code view — the revalidation pass is not applied')
-  else if (view.revalidation === true) parts.push('app view — the revalidation pass is applied')
+  else if (view.revalidation === true) {
+    // Which app view: the pass's verdict standing in for the rows it
+    // re-rated (the default on screen — those rows are folded under
+    // it, here as there), or the detailed one that lists them. Said
+    // only where the caller answers, so a document written without
+    // the detail flag reads as it always did.
+    if (view.revalidationDetail === true) parts.push('detailed app view — the revalidation pass is applied, with the rows it re-rated')
+    else if (view.revalidationDetail === false) parts.push('app view — the revalidation pass is applied, standing in for the rows it re-rated')
+    else parts.push('app view — the revalidation pass is applied')
+  }
   return parts.join(' · ')
 }
 

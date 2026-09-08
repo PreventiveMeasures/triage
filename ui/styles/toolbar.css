@@ -430,22 +430,61 @@ slide-triage-tabs {
    themes: `--surface-active` is a pale blue in the light ones and
    would all but vanish against the toolbar's own surface. */
 .toolbar revalidation-switch { margin-left: auto; }
+/* ONE pill holding both halves — the switch and the detail icon flush
+   against it, divided the way `source-filter` and the severity lens
+   divide their chips. The border and the rounding live here rather
+   than on the buttons: two bordered boxes at the end of the row read
+   as two unrelated controls, and this is one decision in two parts.
+   Either half can be absent (each is offered on its own terms), and
+   the shell fits whatever is left. */
+revalidation-switch {
+  display: inline-flex; align-items: center;
+  height: 30px; box-sizing: border-box;
+  border: 1px solid var(--border); border-radius: 4px;
+  overflow: hidden;
+}
 .revalidation-toggle {
   display: inline-flex; align-items: center; gap: 8px;
-  height: 30px; box-sizing: border-box;
+  height: 100%; box-sizing: border-box;
   padding: 0 .6rem;
   background: transparent;
-  border: 1px solid var(--border); border-radius: 4px;
+  border: none;
   color: var(--muted);
   font: inherit; font-size: .78rem; font-weight: 500; line-height: 1;
   white-space: nowrap;
   cursor: pointer;
 
+  &:not(:last-child) { border-right: 1px solid var(--border); }
   &:hover { color: var(--text); }
   &.on { color: var(--text); }
   &.on .revalidation-switch { background: color-mix(in oklch, var(--accent) 22%, transparent); }
   &.on .revalidation-switch::after { transform: translateX(12px); background: var(--accent); }
-  &:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+  &:focus-visible { outline: 1px solid var(--accent); outline-offset: -2px; }
+}
+/* The detail icon — stacked plates, lit when the app view is showing
+   the rows the pass re-rated (revalidation-switch.js). An icon chip in
+   the `annotation-chip` mould rather than a second switch: what it
+   changes is how much of one view is drawn, not what the view is
+   about.
+
+   DISABLED, not dropped, while the layer is off — there is nothing to
+   unfold in the code view, but a control that vanishes under the click
+   that made it useless drags the width of the row after it. Faded and
+   inert, and it lights again when the layer comes back. */
+.revalidation-detail {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 100%; box-sizing: border-box;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background .12s, color .12s, opacity .12s;
+
+  &:hover:not(:disabled) { color: var(--text); background: rgb(from var(--text) r g b / .06); }
+  &.on { color: var(--accent); background: var(--surface-active); }
+  &:disabled { opacity: .4; cursor: default; }
+  &:focus-visible { outline: 1px solid var(--accent); outline-offset: -2px; }
 }
 .revalidation-switch {
   position: relative;

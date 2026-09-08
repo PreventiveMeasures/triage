@@ -2324,6 +2324,24 @@ report.addEventListener('revalidation-change', (e) => {
   applyOpeningFilters(getShownGroups())
   render()
 })
+// The detail icon in the same pill — the line INSIDE the app view:
+// whether a group the pass re-examined shows the rows it re-rated, or
+// the pass's row alone speaking for them (group.js drawnTabs), and
+// whether the `+ Partial` chip is offered with them.
+//
+// A full render for the same reason as the switch — every card's tab
+// strip is drawn from this, and the toolbar gains or loses the chip —
+// but NOT a re-derived confidence block. Detail changes what a group
+// SHOWS of itself, not which findings exist: every row still counts,
+// still filters, and still answers the outcome question it did a
+// moment ago, so a filter the reader is parked in stays where it is.
+// (The partial mode is the one exception, cleared by render.js when
+// the chip stops being offered — a control that isn't on screen must
+// not keep narrowing.)
+report.addEventListener('revalidation-detail-change', (e) => {
+  state.revalidationDetailed = e.detail.on === true
+  render()
+})
 // `<bundle-code-search>` dispatches this when a Files / Code /
 // Issues mode tab is clicked in the bundle code rail's search row.
 // Switching back to Files rebuilds the tree at its remembered

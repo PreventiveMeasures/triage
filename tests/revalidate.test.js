@@ -33,8 +33,8 @@ if (!globalThis[slotKey]) {
 }
 
 const { state } = await import('../client/state.ts')
-const { applyFilters, applyOpeningFilters, defaultConfidenceFloor, defaultRevalidateFilter, filterRevalidateKind, matchesFilters } = await import('../ui/view/filters.js')
-const { getMergedGroups, getShownGroups, sortTabs } = await import('../ui/view/group.js')
+const { applyFilters, applyOpeningFilters, confidenceOnScale, defaultConfidenceFloor, defaultRevalidateFilter, filterRevalidateKind, matchesFilters, rangeApplies } = await import('../ui/view/filters.js')
+const { activeTabFor, getMergedGroups, getShownGroups, mergeDuplicateFields, sortTabs } = await import('../ui/view/group.js')
 const {
   PARTIAL_MODES, REVALIDATE_FILTERS, REVALIDATE_KINDS, activeRevalidateKinds,
   canDropRevalidation, configureRevalidation, formatRunMeta, hasRevalidateField,
@@ -55,6 +55,9 @@ function reset() {
   state.filterPartial = ''
   state.showRevalidation = true
   configureRevalidation(true)
+  // The app view as a reader gets it: simplified, i.e. a group the
+  // pass re-examined shows its row alone (group.js drawnTabs).
+  state.revalidationDetailed = false
   state.filterConfMin = 0
   state.filterConfMax = 10
   state.filterInclude = ''
@@ -137,7 +140,12 @@ describe('formatRunMeta — the revalidation row names its run', () => {
 })
 
 describe('sortTabs — the revalidation row leads its group', () => {
-  beforeEach(reset)
+  // The DETAILED app view throughout: with the simplified one the
+  // question doesn't arise — the rows this orders the pass's row
+  // against aren't on the strip to be led (see the fold describe
+  // below). Ordering still has to be right for the reader who asks
+  // to see them.
+  beforeEach(() => { reset(); state.revalidationDetailed = true })
 
   it('puts it first over a higher severity and a higher confidence', () => {
     const crit = makeFinding('A', { severity: 'critical', confidence: 10 })
@@ -172,6 +180,78 @@ describe('sortTabs — the revalidation row leads its group', () => {
 // A group shows in full when any of its rows matches, so a refuted
 // row's confidence would otherwise carry the whole group over a floor
 // its surviving rows can't reach.
+// What the app view SHOWS of a group the pass re-examined. The rows
+// it went back over are folded under its verdict — the strip carries
+// the app-level finding and nothing else — and the icon beside the
+// App switch unfolds them again. Presentation only: every folded row
+// is still in the group, still counted and still filtered on.
+describe('the app view folds the rows the pass re-rated', () => {
+  beforeEach(reset)
+
+  const pass = (id) => makeFinding(id, { revalidate: 'revalidation' })
+
+  it('leaves the pass row alone on the strip, and hands the rest back on request', () => {
+    const group = [makeFinding('A', { confidence: 9 }), pass('P'), makeFinding('B', { revalidate: 'confirmed' })]
+    assert.deepEqual(sortTabs(group).map((f) => f.id), ['P'])
+    state.revalidationDetailed = true
+    assert.deepEqual(sortTabs(group).map((f) => f.id), ['P', 'A', 'B'])
+  })
+
+  it('keeps every tab of a group the pass never spoke about', () => {
+    const group = [makeFinding('A'), makeFinding('B', { revalidate: 'confirmed' })]
+    assert.deepEqual(sortTabs(group).map((f) => f.id), ['A', 'B'])
+  })
+
+  it('folds nothing once the layer is off', () => {
+    // Off, `withoutPassRows` has already taken the pass's rows out of
+    // the group — there is nothing left to fold under, and the rows
+    // the pass re-rated are the whole point of the code view.
+    const group = [makeFinding('A'), pass('P')]
+    state.reports = [{ groups: [group] }]
+    state.showRevalidation = false
+    configureRevalidation(false)
+    const [shown] = getMergedGroups()
+    assert.deepEqual(shown.map((f) => f.id), ['A'])
+    assert.deepEqual(sortTabs(shown).map((f) => f.id), ['A'])
+  })
+
+  it('opens the card on the pass row, whatever the group was parked on', () => {
+    const group = [makeFinding('A'), pass('P')]
+    state.activeTabByGroup.set('A', 'A')
+    assert.equal(activeTabFor(group).id, 'P')
+    // The reader asked for the rows: their pick is theirs again.
+    state.revalidationDetailed = true
+    assert.equal(activeTabFor(group).id, 'A')
+  })
+
+  it('lets no folded row take the card by carrying an annotation', () => {
+    // An annotated sibling opens first among the tabs on the STRIP —
+    // it must not pull the card onto a row the strip isn't drawing.
+    const group = [makeFinding('A'), pass('P')]
+    state.triage.set('A', { comment: 'look here' })
+    assert.equal(activeTabFor(group).id, 'P')
+    state.revalidationDetailed = true
+    assert.equal(activeTabFor(group).id, 'A')
+  })
+
+  it('folds a row out of sight without taking it out of the count', () => {
+    // The severity the group answers a filter with is a folded row's,
+    // and the group still shows for it: the fold is what the strip
+    // draws, not what the set contains.
+    const group = [pass('P'), makeFinding('A', { severity: 'critical' })]
+    state.filterSeverities = new Set(['critical'])
+    assert.equal(applyFilters([group]).length, 1)
+    assert.deepEqual(sortTabs(group).map((f) => f.id), ['P'])
+  })
+
+  it('orders several pass rows among themselves when a group carries more than one', () => {
+    const low = makeFinding('A', { severity: 'low', revalidate: 'revalidation' })
+    const high = makeFinding('B', { severity: 'critical', revalidate: 'revalidation' })
+    const plain = makeFinding('C', { severity: 'critical' })
+    assert.deepEqual(sortTabs([low, plain, high]).map((f) => f.id), ['B', 'A'])
+  })
+})
+
 describe('confidence filter — a knocked-down row reads as 0', () => {
   beforeEach(reset)
 
@@ -445,19 +525,14 @@ describe('revalidate filter — the toolbar dropdown', () => {
       assert.equal(defaultRevalidateFilter(refuted, 0), '')
       const unknown = [[makeFinding('A', { confidence: 9, revalidate: 'unknown' })]]
       assert.equal(defaultRevalidateFilter(unknown, 8), '')
-      // A refuted set with one surviving finding: whether the
-      // knocked-down row is a LOSS is the floor's answer, not a rule
-      // of its own. It reads as confidence 0 (voidsConfidence), so any
-      // floor above 0 leaves it off the range and Confirmed costs
-      // nothing by leaving it off too...
+      // A refuted set with one surviving finding opens on it at any
+      // floor: a knocked-down finding is not a loss (see below).
       const mixed = [
         [makeFinding('A', { confidence: 9, revalidate: 'refuted' })],
         [makeFinding('B', { confidence: 9, revalidate: 'confirmed' })],
       ]
       assert.equal(defaultRevalidateFilter(mixed, 8), 'confirmed')
-      // ...while at floor 0 the range hides nothing, so that row IS on
-      // screen and Confirmed would take it away.
-      assert.equal(defaultRevalidateFilter(mixed, 0), '')
+      assert.equal(defaultRevalidateFilter(mixed, 0), 'confirmed')
     })
 
     // Two reports over the same code — an analysis, and a
@@ -504,28 +579,40 @@ describe('revalidate filter — the toolbar dropdown', () => {
       assert.equal(defaultRevalidateFilter([reached, unscoredRider], 8), '')
     })
 
-    // The rows the pass knocked down are what Confirmed is FOR — but
-    // that isn't a rule of its own here. They read as confidence 0, so
-    // the floor takes them off the range and the comparison never sees
-    // them; only a floor of 0, which hides nothing, puts them back on
-    // screen for Confirmed to lose.
-    it('lets the floor decide whether a knocked-down row is a loss', () => {
+    // A finding the pass KNOCKED DOWN is never a cost. Refuted or
+    // unreachable, it isn't a finding any more, and leaving it off is
+    // what a reader picks Confirmed for — so it is exempt from the
+    // comparison whatever the floor is doing.
+    it('never counts a knocked-down finding as a loss', () => {
       const groups = [
         [stamped('A', { confidence: 9 })],
         [makeFinding('B', { confidence: 9, revalidate: 'refuted' })],
         [makeFinding('C', { confidence: 9, revalidate: 'unreachable' })],
       ]
       assert.equal(defaultRevalidateFilter(groups, 8), 'confirmed')
-      assert.equal(defaultRevalidateFilter(groups, 0), '')
-      // A knocked-down row sharing with an unjudged issue is on screen
-      // whatever the floor — the unjudged issue carries it — so
-      // Confirmed loses that issue either way.
+      assert.equal(defaultRevalidateFilter(groups, 0), 'confirmed')
+      // Exempt per FINDING, not per row: an unjudged finding sharing a
+      // row with a knocked-down one is still a loss, and the row is on
+      // screen for it.
       const shared = [
         [stamped('A', { confidence: 9 })],
         [makeFinding('B', { confidence: 9, revalidate: 'refuted' }), makeFinding('C', { confidence: 9 })],
       ]
       assert.equal(defaultRevalidateFilter(shared, 8), '')
       assert.equal(defaultRevalidateFilter(shared, 0), '')
+      // The other way round too — the knocked-down one carries the row
+      // onto the screen and the unjudged one is what's lost.
+      const carried = [
+        [stamped('A', { confidence: 9 })],
+        [makeFinding('B', { confidence: 9, revalidate: 'refuted' }), makeFinding('C', { confidence: 2 })],
+      ]
+      assert.equal(defaultRevalidateFilter(carried, 0), '')
+      // A row of nothing but knocked-down findings costs nothing.
+      const allDown = [
+        [stamped('A', { confidence: 9 })],
+        [makeFinding('B', { confidence: 9, revalidate: 'refuted' }), makeFinding('C', { confidence: 9, revalidate: 'unreachable' })],
+      ]
+      assert.equal(defaultRevalidateFilter(allDown, 0), 'confirmed')
     })
 
     // The range is a whole-set control: one unscored finding and
@@ -854,6 +941,223 @@ describe('an analysis and its revalidation, loaded together', () => {
   })
 })
 
+// Where a finding sits on the 0—10 confidence scale, and whether that
+// scale is a live control at all. An import carries no confidence
+// because its producer emits none, not because anyone was unsure — so
+// it rides the top of the scale instead of taking the scale away from
+// everyone else, which is what it used to do.
+describe('the confidence scale', () => {
+  beforeEach(reset)
+
+  const imported = (id, extra = {}) => makeFinding(id, { _source: 'claude-security', ...extra })
+
+  it('places a finding, or says it has no place', () => {
+    assert.equal(confidenceOnScale(makeFinding('A', { confidence: 3 })), 3)
+    assert.equal(confidenceOnScale(makeFinding('A', { confidence: 0 })), 0)
+    // `critical: true` — the boolean, not the severity tier.
+    assert.equal(confidenceOnScale(makeFinding('A', { critical: true })), 10)
+    assert.equal(confidenceOnScale(makeFinding('A', { severity: 'critical' })), undefined)
+    // An import rides the top of the scale.
+    assert.equal(confidenceOnScale(imported('A')), 10)
+    // …but its own score wins where it has one (DeepSec reads them).
+    assert.equal(confidenceOnScale(imported('A', { confidence: 4 })), 4)
+    // The analyzer's own unscored finding has no place at all.
+    assert.equal(confidenceOnScale(makeFinding('A')), undefined)
+  })
+
+  it('rides the range like a 10', () => {
+    const shown = (f, min, max) => { state.filterConfMin = min; state.filterConfMax = max; return matchesFilters(f) }
+    for (const f of [imported('A'), makeFinding('B', { critical: true })]) {
+      assert.equal(shown(f, 8, 10), true, `8—10 ${f.id}`)
+      assert.equal(shown(f, 2, 10), true, `2—10 ${f.id}`)
+      assert.equal(shown(f, 0, 5), false, `0—5 ${f.id}`)
+      assert.equal(shown(f, 7, 9), false, `7—9 ${f.id}`)
+    }
+    // The analyzer's own unscored finding shows only with the floor
+    // down at 0, as before.
+    const plain = makeFinding('C')
+    assert.equal(shown(plain, 0, 10), true)
+    assert.equal(shown(plain, 1, 10), false)
+  })
+
+  // The four cases the toolbar has to tell apart.
+  it('is a live control only where the analyzer put something on it', () => {
+    const scored = makeFinding('D', { confidence: 9 })
+    // 1. Nothing on the scale at all — imports only. No range: every
+    //    row is a 10, and a range over one value says nothing.
+    assert.equal(rangeApplies([[imported('C1')], [imported('C2')]]), false)
+    // 4. An import beside the analyzer's own scored findings does NOT
+    //    take the range away — this is the failure mode: it used to,
+    //    which left the range at 0—10 filtering nothing.
+    assert.equal(rangeApplies([[scored], [imported('C1')]]), true)
+    // 3. An analyzer finding with no confidence and no `critical`
+    //    still disables it, import or no import.
+    assert.equal(rangeApplies([[scored], [makeFinding('E')]]), false)
+    assert.equal(rangeApplies([[scored], [imported('C1')], [makeFinding('E')]]), false)
+    // …unless it is flagged critical, which stands in for a score.
+    assert.equal(rangeApplies([[scored], [makeFinding('E', { critical: true })]]), true)
+    // A set the analyzer only ever flagged critical still has a
+    // scale — that flag is the analyzer placing the finding on it.
+    assert.equal(rangeApplies([[makeFinding('E', { critical: true })]]), true)
+    assert.equal(rangeApplies([]), false)
+  })
+
+  // The reported failure, end to end through the opening question: a
+  // Claude Security import disabled the range, so the floor stopped
+  // running, so a confidence-2 row the pass never reached was on
+  // screen, so Confirmed was held off for hiding it.
+  it('does not let an import hold a workspace off Confirmed', () => {
+    const groups = [
+      [makeFinding('4', { confidence: 9, revalidate: 'revalidation' }), makeFinding('1', { confidence: 9 })],
+      [makeFinding('2', { confidence: 2 })],
+      [imported('C1')],
+    ]
+    const floor = defaultConfidenceFloor(groups)
+    assert.ok(floor > 2, `floor ${floor} has to leave the confidence-2 row off`)
+    assert.equal(defaultRevalidateFilter(groups, floor), 'confirmed')
+    // And with the outcome in front, the import is on screen with the
+    // revalidated row — the range is what would have hidden it.
+    state.filterConfMin = floor
+    state.filterRevalidate = 'confirmed'
+    assert.deepEqual(applyFilters(groups).map((g) => g[0].id).toSorted(), ['4', 'C1'])
+  })
+})
+
+// Dedup keeps the first copy of a finding it sees, which is a
+// load-order accident. A report that has been through the pass and
+// the analysis it re-examined hold the SAME finding under the same id
+// — a stamp is no part of the fingerprint — so whichever loaded first
+// decided whether the workspace had the pass's verdicts at all.
+describe('what a dropped duplicate leaves behind', () => {
+  beforeEach(reset)
+
+  it('carries the pass\'s answer onto the survivor', () => {
+    const survivor = makeFinding('A', { confidence: 9 })
+    mergeDuplicateFields(survivor, makeFinding('A', {
+      confidence: 9,
+      revalidate: 'confirmed',
+      revalidateVerdict: 'Still reachable.',
+      revalidateRecommendation: 'Fix it.',
+    }))
+    assert.equal(survivor.revalidate, 'confirmed')
+    assert.equal(survivor.revalidateVerdict, 'Still reachable.')
+    assert.equal(survivor.revalidateRecommendation, 'Fix it.')
+    // Which is what puts it under Confirmed, whichever report loaded
+    // first.
+    state.filterRevalidate = 'confirmed'
+    assert.equal(matchesFilters(survivor), true)
+  })
+
+  it('fills gaps only — the survivor keeps what it answered', () => {
+    const survivor = makeFinding('A', { confidence: 9, revalidate: 'refuted', priority: 3 })
+    mergeDuplicateFields(survivor, makeFinding('A', { confidence: 2, revalidate: 'confirmed', priority: 1 }))
+    assert.equal(survivor.revalidate, 'refuted')
+    assert.equal(survivor.confidence, 9)
+    assert.equal(survivor.priority, 3)
+    // `null` is no answer, on either side — a report is JSON, where a
+    // written-out null and an absent key say the same thing.
+    const nulled = makeFinding('B', { confidence: null, revalidate: null })
+    mergeDuplicateFields(nulled, makeFinding('B', { confidence: 7, revalidate: 'partial' }))
+    assert.equal(nulled.confidence, 7)
+    assert.equal(nulled.revalidate, 'partial')
+    const keeper = makeFinding('C', { confidence: 7 })
+    mergeDuplicateFields(keeper, makeFinding('C', { confidence: null }))
+    assert.equal(keeper.confidence, 7)
+  })
+
+  it('generalises past the stamp, and leaves two kinds of field alone', () => {
+    const survivor = makeFinding('A', { _reportName: 'mine.json', _source: null })
+    mergeDuplicateFields(survivor, makeFinding('A', {
+      commitHash: 'abc1234',
+      priority: 2,
+      // Where the OTHER copy came from — never the survivor's.
+      _reportName: 'theirs.md',
+      _source: 'claude-security',
+      _analyzer: 'claude-security',
+      // Has a mechanism of its own (ingest.js recordCorrectedVariant),
+      // which keeps both reports' values as variants.
+      correctedSeverity: 'low',
+      correctedSeverityReason: 'Not exploitable.',
+    }))
+    assert.equal(survivor.commitHash, 'abc1234')
+    assert.equal(survivor.priority, 2)
+    assert.equal(survivor._reportName, 'mine.json')
+    assert.equal(survivor._source, null)
+    assert.equal(survivor._analyzer, undefined)
+    assert.equal(survivor.correctedSeverity, undefined)
+    assert.equal(survivor.correctedSeverityReason, undefined)
+  })
+
+  // Compared as the app READS the stamp, not as the file wrote it.
+  it('reads the stamp before calling two copies different', () => {
+    const merge = (own, theirs) => {
+      const survivor = makeFinding('A', own)
+      return { conflicted: mergeDuplicateFields(survivor, makeFinding('A', theirs)), survivor }
+    }
+    // Same stamp, two spellings — the reader trims and case-folds.
+    const spelled = merge({ revalidate: 'confirmed' }, { revalidate: '  CONFIRMED ' })
+    assert.equal(spelled.conflicted, false)
+    assert.equal(spelled.survivor.revalidate, 'confirmed')
+    // A value the app can't read is no answer: it neither lands...
+    const unreadable = merge({ revalidate: 'confirmed' }, { revalidate: 'maybe' })
+    assert.equal(unreadable.conflicted, false)
+    assert.equal(unreadable.survivor.revalidate, 'confirmed')
+    // ...nor blocks the other copy's real stamp from landing.
+    const overwritten = merge({ revalidate: 'nonsense' }, { revalidate: 'refuted' })
+    assert.equal(overwritten.conflicted, false)
+    assert.equal(overwritten.survivor.revalidate, 'refuted')
+    // The prose either side of the stamp is compared past the
+    // whitespace two writers can differ on for the same words.
+    assert.equal(merge({ revalidateVerdict: 'Holds.' }, { revalidateVerdict: '  Holds.\n' }).conflicted, false)
+  })
+
+  // `source` is provenance like the `_`-prefixed fields, just public:
+  // ingest has already derived `_source` / `_analyzer` from it, so
+  // filling it would leave the row native to the toolbar and the other
+  // producer's to a markdown export.
+  it('leaves the public provenance field alone', () => {
+    const survivor = makeFinding('A', { confidence: 9 })
+    mergeDuplicateFields(survivor, makeFinding('A', { source: 'claude-security', commitHash: 'abc1234' }))
+    assert.equal(survivor.source, undefined)
+    assert.equal(survivor.commitHash, 'abc1234')
+  })
+
+  // A disagreement about the pass isn't settled by load order — it is
+  // reported, and ingest.js takes the layer off the whole set for it.
+  it('reports a disagreement about the pass rather than settling it', () => {
+    const conflict = (own, theirs) => {
+      const survivor = makeFinding('A', own)
+      return { conflicted: mergeDuplicateFields(survivor, makeFinding('A', theirs)), survivor }
+    }
+    // Two verdicts, two answers: a conflict, and the survivor keeps
+    // its own.
+    const stamp = conflict({ revalidate: 'confirmed' }, { revalidate: 'refuted' })
+    assert.equal(stamp.conflicted, true)
+    assert.equal(stamp.survivor.revalidate, 'confirmed')
+    // The pass's prose counts too — same field family.
+    assert.equal(conflict({ revalidateVerdict: 'Holds.' }, { revalidateVerdict: 'Does not.' }).conflicted, true)
+    assert.equal(conflict({ revalidateRecommendation: 'Fix.' }, { revalidateRecommendation: 'Drop.' }).conflicted, true)
+    // Agreement is not a conflict, and neither is a gap.
+    assert.equal(conflict({ revalidate: 'confirmed' }, { revalidate: 'confirmed' }).conflicted, false)
+    assert.equal(conflict({}, { revalidate: 'confirmed' }).conflicted, false)
+    assert.equal(conflict({ revalidate: 'confirmed' }, {}).conflicted, false)
+    // Nor is a disagreement about anything else — those are for
+    // another day, and the survivor keeps its own either way.
+    const other = conflict({ confidence: 9, priority: 1 }, { confidence: 2, priority: 5 })
+    assert.equal(other.conflicted, false)
+    assert.equal(other.survivor.confidence, 9)
+  })
+
+  it('is a no-op without two findings to merge', () => {
+    const f = makeFinding('A', { confidence: 9 })
+    mergeDuplicateFields(f, f)
+    assert.equal(f.confidence, 9)
+    mergeDuplicateFields(undefined, makeFinding('A', { revalidate: 'confirmed' }))
+    mergeDuplicateFields(f, undefined)
+    assert.equal(f.revalidate, undefined)
+  })
+})
+
 // The toolbar's "App" switch takes the whole revalidation layer off.
 // With it on the findings are about the running app — what it reaches,
 // re-rated by the second pass. With it off they are about the code as
@@ -939,6 +1243,9 @@ describe('the revalidation layer switch', () => {
   })
 
   it('stops the pass row leading its group', () => {
+    // Detailed, so both rows are on the strip and there is an order
+    // to speak of either side of the switch.
+    state.revalidationDetailed = true
     const crit = makeFinding('A', { severity: 'critical' })
     const pass = makeFinding('B', { severity: 'low', revalidate: 'revalidation' })
     assert.deepEqual(sortTabs([crit, pass]).map((f) => f.id), ['B', 'A'])

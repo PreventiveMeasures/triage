@@ -136,16 +136,26 @@ export function isRevalidation(f) {
   return revalidateKind(f) === 'revalidation'
 }
 
-// The verdicts that VOID a row's confidence for the range filter — the
-// one place a verdict changes more than a display (see filters.js).
-// Both say the finding isn't a finding: `refuted` that it doesn't
-// hold, `unreachable` that nothing can get to the code it's in. A
-// number attached to either is a claim the pass withdrew, so the
-// filter reads it as 0 rather than letting it speak for the group.
-const CONFIDENCE_VOIDING = new Set(['refuted', 'unreachable'])
+// The two verdicts that RULE A FINDING OUT: `refuted` says it doesn't
+// hold, `unreachable` that nothing can get to the code it's in. Both
+// say the finding isn't a finding, and the app asks that from two
+// angles.
+const RULED_OUT = new Set(['refuted', 'unreachable'])
 
+// Did the pass rule this one out? Asked where the question is what the
+// verdict MEANS — chiefly by the outcome the toolbar opens on, which
+// doesn't count a ruled-out finding as something Confirmed costs the
+// reader by leaving off screen (filters.js).
+export function isRuledOut(f) {
+  return RULED_OUT.has(revalidateKind(f))
+}
+
+// The same two, asked as what they do to a NUMBER — the one place a
+// verdict changes more than a display (see filters.js). A confidence
+// attached to either is a claim the pass withdrew, so the range reads
+// it as 0 rather than letting it speak for the group.
 export function voidsConfidence(f) {
-  return CONFIDENCE_VOIDING.has(revalidateKind(f))
+  return RULED_OUT.has(revalidateKind(f))
 }
 
 // What the toolbar dropdown offers, in the order it lists them —
