@@ -142,6 +142,7 @@ export interface State {
   filterRevalidate: string
   filterPartial: string
   showRevalidation: boolean
+  revalidationDetailed: boolean
   revalidateConflict: boolean
   codePreviews: Set<string>
   filterConfMin: number
@@ -354,10 +355,7 @@ export function saveRepoUrlFor(name: string | null | undefined, url: string): vo
 //   * 'replace'         — install the imported map verbatim.
 //   * 'prefer-imported' — imported value wins on key collision.
 //   * 'prefer-current'  — current value wins (only fills gaps).
-export async function importRepoUrls(
-  imported: Record<string, string>,
-  mode: 'replace' | 'prefer-imported' | 'prefer-current',
-): Promise<void> {
+export async function importRepoUrls(imported: Record<string, string>, mode: 'replace' | 'prefer-imported' | 'prefer-current'): Promise<void> {
   await mutateSecureItem(REPO_URLS_KEY, (currentFromDisk) => {
     const current = parseRepoUrlMap(currentFromDisk)
     const merged =
@@ -628,6 +626,16 @@ export const state: State = store<State>({
   // own rows has no ruled-out finding to hand back — render.js forces
   // this back on for both, so it can't stay off with no switch to say so.
   showRevalidation: true,
+  // The DETAIL half of that switch — the icon sharing its pill. Off (the
+  // default), a group the pass re-examined shows the pass's row and
+  // nothing else: the analyzer's own rows underneath it are out of the
+  // tab strip (group.js sortTabs), and the `+ Partial` chip inside the
+  // Confirmed outcome goes with them (render.js), since the stamps it
+  // sorts by ride rows that are no longer on screen. On, both come
+  // back — the app view with its workings shown, which is what the
+  // switch alone used to mean. Offered only where it would change
+  // something: a pass row sharing its group, or partial rows to sort.
+  revalidationDetailed: false,
   // Set at ingest when two copies of one finding disagree about what
   // the revalidation pass concluded — the same id under two different
   // `revalidate*` answers (group.js mergeDuplicateFields). Dedup keeps

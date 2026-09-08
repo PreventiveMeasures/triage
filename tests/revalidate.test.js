@@ -34,7 +34,7 @@ if (!globalThis[slotKey]) {
 
 const { state } = await import('../client/state.ts')
 const { applyFilters, applyOpeningFilters, confidenceOnScale, defaultConfidenceFloor, defaultRevalidateFilter, filterRevalidateKind, matchesFilters, rangeApplies } = await import('../ui/view/filters.js')
-const { getMergedGroups, getShownGroups, mergeDuplicateFields, sortTabs } = await import('../ui/view/group.js')
+const { activeTabFor, getMergedGroups, getShownGroups, mergeDuplicateFields, sortTabs } = await import('../ui/view/group.js')
 const {
   PARTIAL_MODES, REVALIDATE_FILTERS, REVALIDATE_KINDS, activeRevalidateKinds,
   canDropRevalidation, configureRevalidation, formatRunMeta, hasRevalidateField,
@@ -55,6 +55,9 @@ function reset() {
   state.filterPartial = ''
   state.showRevalidation = true
   configureRevalidation(true)
+  // The app view as a reader gets it: simplified, i.e. a group the
+  // pass re-examined shows its row alone (group.js drawnTabs).
+  state.revalidationDetailed = false
   state.filterConfMin = 0
   state.filterConfMax = 10
   state.filterInclude = ''
@@ -137,7 +140,12 @@ describe('formatRunMeta — the revalidation row names its run', () => {
 })
 
 describe('sortTabs — the revalidation row leads its group', () => {
-  beforeEach(reset)
+  // The DETAILED app view throughout: with the simplified one the
+  // question doesn't arise — the rows this orders the pass's row
+  // against aren't on the strip to be led (see the fold describe
+  // below). Ordering still has to be right for the reader who asks
+  // to see them.
+  beforeEach(() => { reset(); state.revalidationDetailed = true })
 
   it('puts it first over a higher severity and a higher confidence', () => {
     const crit = makeFinding('A', { severity: 'critical', confidence: 10 })
@@ -172,6 +180,78 @@ describe('sortTabs — the revalidation row leads its group', () => {
 // A group shows in full when any of its rows matches, so a refuted
 // row's confidence would otherwise carry the whole group over a floor
 // its surviving rows can't reach.
+// What the app view SHOWS of a group the pass re-examined. The rows
+// it went back over are folded under its verdict — the strip carries
+// the app-level finding and nothing else — and the icon beside the
+// App switch unfolds them again. Presentation only: every folded row
+// is still in the group, still counted and still filtered on.
+describe('the app view folds the rows the pass re-rated', () => {
+  beforeEach(reset)
+
+  const pass = (id) => makeFinding(id, { revalidate: 'revalidation' })
+
+  it('leaves the pass row alone on the strip, and hands the rest back on request', () => {
+    const group = [makeFinding('A', { confidence: 9 }), pass('P'), makeFinding('B', { revalidate: 'confirmed' })]
+    assert.deepEqual(sortTabs(group).map((f) => f.id), ['P'])
+    state.revalidationDetailed = true
+    assert.deepEqual(sortTabs(group).map((f) => f.id), ['P', 'A', 'B'])
+  })
+
+  it('keeps every tab of a group the pass never spoke about', () => {
+    const group = [makeFinding('A'), makeFinding('B', { revalidate: 'confirmed' })]
+    assert.deepEqual(sortTabs(group).map((f) => f.id), ['A', 'B'])
+  })
+
+  it('folds nothing once the layer is off', () => {
+    // Off, `withoutPassRows` has already taken the pass's rows out of
+    // the group — there is nothing left to fold under, and the rows
+    // the pass re-rated are the whole point of the code view.
+    const group = [makeFinding('A'), pass('P')]
+    state.reports = [{ groups: [group] }]
+    state.showRevalidation = false
+    configureRevalidation(false)
+    const [shown] = getMergedGroups()
+    assert.deepEqual(shown.map((f) => f.id), ['A'])
+    assert.deepEqual(sortTabs(shown).map((f) => f.id), ['A'])
+  })
+
+  it('opens the card on the pass row, whatever the group was parked on', () => {
+    const group = [makeFinding('A'), pass('P')]
+    state.activeTabByGroup.set('A', 'A')
+    assert.equal(activeTabFor(group).id, 'P')
+    // The reader asked for the rows: their pick is theirs again.
+    state.revalidationDetailed = true
+    assert.equal(activeTabFor(group).id, 'A')
+  })
+
+  it('lets no folded row take the card by carrying an annotation', () => {
+    // An annotated sibling opens first among the tabs on the STRIP —
+    // it must not pull the card onto a row the strip isn't drawing.
+    const group = [makeFinding('A'), pass('P')]
+    state.triage.set('A', { comment: 'look here' })
+    assert.equal(activeTabFor(group).id, 'P')
+    state.revalidationDetailed = true
+    assert.equal(activeTabFor(group).id, 'A')
+  })
+
+  it('folds a row out of sight without taking it out of the count', () => {
+    // The severity the group answers a filter with is a folded row's,
+    // and the group still shows for it: the fold is what the strip
+    // draws, not what the set contains.
+    const group = [pass('P'), makeFinding('A', { severity: 'critical' })]
+    state.filterSeverities = new Set(['critical'])
+    assert.equal(applyFilters([group]).length, 1)
+    assert.deepEqual(sortTabs(group).map((f) => f.id), ['P'])
+  })
+
+  it('orders several pass rows among themselves when a group carries more than one', () => {
+    const low = makeFinding('A', { severity: 'low', revalidate: 'revalidation' })
+    const high = makeFinding('B', { severity: 'critical', revalidate: 'revalidation' })
+    const plain = makeFinding('C', { severity: 'critical' })
+    assert.deepEqual(sortTabs([low, plain, high]).map((f) => f.id), ['B', 'A'])
+  })
+})
+
 describe('confidence filter — a knocked-down row reads as 0', () => {
   beforeEach(reset)
 
@@ -1163,6 +1243,9 @@ describe('the revalidation layer switch', () => {
   })
 
   it('stops the pass row leading its group', () => {
+    // Detailed, so both rows are on the strip and there is an order
+    // to speak of either side of the switch.
+    state.revalidationDetailed = true
     const crit = makeFinding('A', { severity: 'critical' })
     const pass = makeFinding('B', { severity: 'low', revalidate: 'revalidation' })
     assert.deepEqual(sortTabs([crit, pass]).map((f) => f.id), ['B', 'A'])

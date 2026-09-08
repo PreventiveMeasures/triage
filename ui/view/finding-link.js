@@ -14,7 +14,7 @@
 // are for.
 import { buildFindingUrl, isLinkableFindingId, knownLinkHint, state } from '#client/index.js'
 import { applyFilters, resetFilters } from './filters.js'
-import { getMergedGroups, groupKey, groupState, tabKey } from './group.js'
+import { getMergedGroups, groupKey, groupState, sortTabs, tabKey } from './group.js'
 import { cleanupGraph2 } from './graph/state.js'
 
 // Shareable URL for one finding, or null when the finding can't carry a
@@ -134,7 +134,16 @@ export function unhideFinding(group, id) {
     state.sortBy = sortBy
   }
   const gid = groupKey(group)
-  if (group.length > 1) state.activeTabByGroup.set(gid, id)
+  if (group.length > 1) {
+    // A fourth thing that can hide a finding that exists: the
+    // simplified app view folds the rows the pass re-rated under its
+    // own row (group.js drawnTabs), so a link to one of them would
+    // open its group on the pass's row — the wrong finding, which the
+    // note on (3) above calls worse than a changed view. Detail comes
+    // on for it, the way a filter that excluded the target is cleared.
+    if (!sortTabs(group).some((f) => tabKey(f) === id)) state.revalidationDetailed = true
+    state.activeTabByGroup.set(gid, id)
+  }
   // Per-mode selection — each mode's own "this one" state. Table opens
   // its details aside on the row, focus centres the card, and kanban
   // opens the detail modal: a board card is a title and a badge, which

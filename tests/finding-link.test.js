@@ -383,6 +383,8 @@ function reset(groups = []) {
   state.filterComment = ''
   state.filterFix = ''
   state.filterFlagged = ''
+  state.showRevalidation = true
+  state.revalidationDetailed = false
 }
 
 describe('finding deep links — building a link for a finding', () => {
@@ -541,6 +543,27 @@ describe('finding deep links — un-hiding the target', () => {
     // Without this the group opens on whichever sibling activeTabFor
     // prefers, and the recipient reads a different finding.
     assert.equal(state.activeTabByGroup.get(gid), UUID_B)
+  })
+
+  it('unfolds a target the app view was speaking for', () => {
+    // The simplified app view draws a re-examined group as the pass's
+    // row alone (group.js drawnTabs), so a link to one of the rows it
+    // re-rated would open the card on the pass's row — the wrong
+    // finding, which is what every other clause here exists to
+    // prevent. Detail comes on, like a filter that excluded the
+    // target being cleared.
+    const group = [makeFinding(UUID_A, { revalidate: 'revalidation' }), makeFinding(UUID_B)]
+    reset([group])
+    const gid = unhideFinding(group, UUID_B)
+    assert.equal(state.revalidationDetailed, true)
+    assert.equal(state.activeTabByGroup.get(gid), UUID_B)
+  })
+
+  it('leaves the app view folded for a target it was already showing', () => {
+    const group = [makeFinding(UUID_A, { revalidate: 'revalidation' }), makeFinding(UUID_B)]
+    reset([group])
+    unhideFinding(group, UUID_A)
+    assert.equal(state.revalidationDetailed, false)
   })
 
   it('does not pin an active tab on a single-finding group', () => {
