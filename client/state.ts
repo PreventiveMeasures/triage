@@ -628,8 +628,11 @@ export const state: State = store<State>({
   // reach, re-rated by the second pass. Off, they are about the code
   // as written, with the pass's own rows, stamps, verdicts and filter
   // taken away — see format.js configureRevalidation, which is handed
-  // this once per render. Offered only where a report carries the
-  // field at all; a set without one is already the code view.
+  // this once per render. Offered only where the pass judged something
+  // (format.js canDropRevalidation): a set with no `revalidate` at all
+  // is already the code view, and one carrying nothing but the pass's
+  // own rows has no ruled-out finding to hand back — render.js forces
+  // this back on for both, so it can't stay off with no switch to say so.
   showRevalidation: true,
   // Which source previews are open — the `</>` beside a finding's code
   // links, keyed `<tabKey>\0<path>\0<line>` (render-finding.js

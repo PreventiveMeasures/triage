@@ -33,13 +33,13 @@ if (!globalThis[slotKey]) {
 }
 
 const { state } = await import('../client/state.ts')
-const { applyFilters, defaultConfidenceFloor, defaultRevalidateFilter, matchesFilters } = await import('../ui/view/filters.js')
-const { getMergedGroups, sortTabs } = await import('../ui/view/group.js')
+const { applyFilters, applyOpeningFilters, defaultConfidenceFloor, defaultRevalidateFilter, filterRevalidateKind, matchesFilters } = await import('../ui/view/filters.js')
+const { getMergedGroups, getShownGroups, sortTabs } = await import('../ui/view/group.js')
 const {
   PARTIAL_MODES, REVALIDATE_FILTERS, REVALIDATE_KINDS, activeRevalidateKinds,
-  configureRevalidation, formatRunMeta, hasRevalidateField, isRevalidation,
-  isRevalidationRow, reachableRevalidateFilters, revalidateKind, revalidateStamp,
-  revalidationShown, voidsConfidence,
+  canDropRevalidation, configureRevalidation, formatRunMeta, hasRevalidateField,
+  hasRevalidateStamp, isRevalidation, isRevalidationRow, reachableRevalidateFilters,
+  revalidateKind, revalidateStamp, revalidationShown, voidsConfidence,
 } = await import('../ui/view/format.js')
 
 // Neutralise every other filter so each assertion isolates the
@@ -400,12 +400,14 @@ describe('revalidate filter — the toolbar dropdown', () => {
   })
 
   // What a freshly-loaded report OPENS on. ingest.js auto-tunes a
-  // confidence floor, then asks this whether the set is a revalidation
-  // report — every group that floor leaves on screen carrying a row
-  // the pass stamped — in which case the pass's own answer leads
-  // instead of a range about how sure the original analyzer was.
+  // confidence floor, then asks this which face of the block should
+  // lead. Confirmed does, unless it would COST the reader something —
+  // an issue the range would have shown and Confirmed would not.
+  // Neither a row the pass ruled out nor a row whose issues are all on
+  // screen inside another row is such a cost.
   describe('the outcome a first load opens on', () => {
     const stamped = (id, extra) => makeFinding(id, { revalidate: 'confirmed', ...extra })
+    const pass = (id, extra) => makeFinding(id, { revalidate: 'revalidation', ...extra })
 
     it('opens on Confirmed when the floor leaves only revalidated groups', () => {
       const groups = [[stamped('A', { confidence: 9 })], [stamped('B', { confidence: 8 })]]
@@ -443,12 +445,111 @@ describe('revalidate filter — the toolbar dropdown', () => {
       assert.equal(defaultRevalidateFilter(refuted, 0), '')
       const unknown = [[makeFinding('A', { confidence: 9, revalidate: 'unknown' })]]
       assert.equal(defaultRevalidateFilter(unknown, 8), '')
-      // A refuted set with one surviving finding does open on it.
+      // A refuted set with one surviving finding: whether the
+      // knocked-down row is a LOSS is the floor's answer, not a rule
+      // of its own. It reads as confidence 0 (voidsConfidence), so any
+      // floor above 0 leaves it off the range and Confirmed costs
+      // nothing by leaving it off too...
       const mixed = [
         [makeFinding('A', { confidence: 9, revalidate: 'refuted' })],
         [makeFinding('B', { confidence: 9, revalidate: 'confirmed' })],
       ]
-      assert.equal(defaultRevalidateFilter(mixed, 0), 'confirmed')
+      assert.equal(defaultRevalidateFilter(mixed, 8), 'confirmed')
+      // ...while at floor 0 the range hides nothing, so that row IS on
+      // screen and Confirmed would take it away.
+      assert.equal(defaultRevalidateFilter(mixed, 0), '')
+    })
+
+    // Two reports over the same code — an analysis, and a
+    // revalidation of it that carries the same findings plus the
+    // pass's own rows. Whether the copies collapse into one row or sit
+    // beside each other, Confirmed shows every ISSUE the range would:
+    // the un-stamped copy dropping out of the list is not the issue
+    // going missing, so it doesn't hold the range in front.
+    it('keeps Confirmed when a missed row holds no issue of its own', () => {
+      const a = [[makeFinding('1', { confidence: 9 }), makeFinding('2', { confidence: 9 })]]
+      const b = [[pass('4', { confidence: 9 }), makeFinding('1', { confidence: 9 }), makeFinding('2', { confidence: 9 })]]
+      // Collapsed into one row, as the dedup merge leaves them.
+      assert.equal(defaultRevalidateFilter(b, 0), 'confirmed')
+      // And side by side, as two rows over the same two issues.
+      assert.equal(defaultRevalidateFilter([...a, ...b], 0), 'confirmed')
+      // One issue the stamped row does NOT carry is a real loss.
+      const extra = [...b, [makeFinding('3', { confidence: 9 })]]
+      assert.equal(defaultRevalidateFilter(extra, 0), '')
+    })
+
+    // A row the pass never reached holds the range in front — those
+    // issues have no answer yet, and filtering them away before the
+    // reader has seen them is not a default to make.
+    it('falls back to the range for a row the pass never reached', () => {
+      const reached = [pass('4', { confidence: 9 }), stamped('1', { confidence: 9 })]
+      assert.equal(defaultRevalidateFilter([reached, [makeFinding('9', { confidence: 9 })]], 8), '')
+      // A row the range leaves off costs nothing to leave off — every
+      // issue in it scored, none of them clearing the floor.
+      assert.equal(defaultRevalidateFilter([reached, [makeFinding('9', { confidence: 2 })]], 8), 'confirmed')
+      // An UNSCORED issue is never one of those: it disables the range
+      // for the whole set (render.js hasAnyConfidence), so the floor
+      // that would have hidden it never runs and its row is on screen.
+      assert.equal(defaultRevalidateFilter([reached, [makeFinding('9')]], 8), '')
+      // `critical: true` stands in for a score, so it doesn't disable
+      // anything — and it clears any floor, so its row is on screen
+      // for Confirmed to lose.
+      assert.equal(defaultRevalidateFilter([reached, [makeFinding('9', { critical: true })]], 8), '')
+      // A row shows in FULL, so a visible one carries its unscored
+      // members onto the screen with it — and those are findings
+      // Confirmed can lose. This is the row-vs-finding distinction:
+      // the row is on screen for its scored issue, the unscored one is
+      // on screen with it, and Confirmed takes both away.
+      const unscoredRider = [makeFinding('9', { confidence: 9 }), makeFinding('10')]
+      assert.equal(defaultRevalidateFilter([reached, unscoredRider], 8), '')
+    })
+
+    // The rows the pass knocked down are what Confirmed is FOR — but
+    // that isn't a rule of its own here. They read as confidence 0, so
+    // the floor takes them off the range and the comparison never sees
+    // them; only a floor of 0, which hides nothing, puts them back on
+    // screen for Confirmed to lose.
+    it('lets the floor decide whether a knocked-down row is a loss', () => {
+      const groups = [
+        [stamped('A', { confidence: 9 })],
+        [makeFinding('B', { confidence: 9, revalidate: 'refuted' })],
+        [makeFinding('C', { confidence: 9, revalidate: 'unreachable' })],
+      ]
+      assert.equal(defaultRevalidateFilter(groups, 8), 'confirmed')
+      assert.equal(defaultRevalidateFilter(groups, 0), '')
+      // A knocked-down row sharing with an unjudged issue is on screen
+      // whatever the floor — the unjudged issue carries it — so
+      // Confirmed loses that issue either way.
+      const shared = [
+        [stamped('A', { confidence: 9 })],
+        [makeFinding('B', { confidence: 9, revalidate: 'refuted' }), makeFinding('C', { confidence: 9 })],
+      ]
+      assert.equal(defaultRevalidateFilter(shared, 8), '')
+      assert.equal(defaultRevalidateFilter(shared, 0), '')
+    })
+
+    // The range is a whole-set control: one unscored finding and
+    // render.js disables it and resets the bounds, so the auto-tuned
+    // floor never runs and every row is on screen. The comparison has
+    // to be made against THAT screen, not against a floor the view is
+    // about to throw away.
+    it('measures against the floor the view will really apply', () => {
+      const reached = [pass('4', { confidence: 9 }), stamped('1', { confidence: 9 })]
+      // Below the floor, so not a loss — while the floor still runs.
+      const low = [makeFinding('9', { confidence: 2 })]
+      assert.equal(defaultRevalidateFilter([reached, low], 8), 'confirmed')
+      // Add one unscored finding ANYWHERE and the floor stops running:
+      // the low row is on screen after all, and Confirmed loses it.
+      assert.equal(defaultRevalidateFilter([reached, low, [makeFinding('8')]], 8), '')
+      // The same set with that finding scored keeps the floor, and the
+      // answer with it.
+      assert.equal(defaultRevalidateFilter([reached, low, [makeFinding('8', { confidence: 9, revalidate: 'confirmed' })]], 8), 'confirmed')
+      // An unscored finding inside a row Confirmed SHOWS costs
+      // nothing on its own account — the floor stops running, but that
+      // row is on screen under both. (Only on its own account: the
+      // rows the floor WAS hiding come back with it, which is what the
+      // assertion above is about.)
+      assert.equal(defaultRevalidateFilter([[...reached, makeFinding('2')]], 8), 'confirmed')
     })
 
     it('stays off when the floor leaves nothing on screen', () => {
@@ -498,6 +599,261 @@ describe('revalidate filter — the toolbar dropdown', () => {
   })
 })
 
+// A finding a product's import brought in — Claude Security, Codex
+// Security, DeepSec, Piolium — was never put in front of the
+// revalidation pass, so the pass never ruled it out. It rides
+// `revalidation`, the value that names the pass itself: permanently
+// standing, permanently Confirmed, and carrying no layer for the App
+// switch to take off. That is what keeps a workspace mixing a
+// revalidated report with imported ones from filtering the imports
+// away for lacking a stamp they could never have carried.
+describe('the findings the pass never saw', () => {
+  beforeEach(reset)
+
+  const imported = (id, extra = {}) => makeFinding(id, { _source: 'deepsec', ...extra })
+
+  it('rides the pass row, whatever produced it', () => {
+    // The analyzer's own findings answer with the pass's reading.
+    for (const kind of REVALIDATE_KINDS) {
+      assert.equal(filterRevalidateKind(makeFinding('A', { revalidate: kind })), kind, kind)
+    }
+    assert.equal(filterRevalidateKind(makeFinding('A')), '')
+    // Every producer marker reads the same way — and it is the
+    // FINDING's marker that counts, so a product's row out of a
+    // re-imported export that mixed it with the analyzer's own runs
+    // is that product's wherever it now sits.
+    for (const source of ['claude-security', 'codex-security', 'deepsec', 'piolium']) {
+      assert.equal(filterRevalidateKind(imported('A', { _source: source })), 'revalidation', source)
+    }
+    // The App switch is not theirs to flip: off, the analyzer's rows
+    // go to the code view and an import still stands.
+    configureRevalidation(false)
+    assert.equal(filterRevalidateKind(imported('A')), 'revalidation')
+    assert.equal(filterRevalidateKind(makeFinding('B', { revalidate: 'confirmed' })), '')
+  })
+
+  // Revalidating an imported report is a thing the pipeline can do,
+  // and a verdict it reached is the answer — the stand-in only fills
+  // the gap where the pass left none.
+  it('yields to a stamp the row does carry', () => {
+    assert.equal(filterRevalidateKind(imported('A', { revalidate: 'refuted' })), 'refuted')
+    assert.equal(filterRevalidateKind(imported('B', { revalidate: 'partial' })), 'partial')
+  })
+
+  it('shows under Confirmed, and under nothing else', () => {
+    state.filterRevalidate = 'confirmed'
+    assert.equal(matchesFilters(imported('A')), true)
+    for (const value of ['refuted', 'unreachable']) {
+      state.filterRevalidate = value
+      assert.equal(matchesFilters(imported('A')), false, value)
+    }
+    // A refuted import is filtered as refuted, like any other row.
+    state.filterRevalidate = 'refuted'
+    assert.equal(matchesFilters(imported('B', { revalidate: 'refuted' })), true)
+  })
+
+  // The partial chip narrows Confirmed to the rows the pass FULLY
+  // confirmed, and an import is not one of them — the same answer the
+  // pass's own row gives there.
+  it('drops out with the pass row when the partials are excluded', () => {
+    state.filterRevalidate = 'confirmed'
+    state.filterPartial = 'exclude'
+    assert.equal(matchesFilters(imported('A')), false)
+    state.filterPartial = 'only'
+    assert.equal(matchesFilters(imported('A')), false)
+  })
+
+  // What a workspace mixing the two OPENS on. An imported group is
+  // not an unstamped one holding the whole set on the range.
+  it('does not hold a mixed workspace off Confirmed', () => {
+    const groups = [
+      [makeFinding('A', { confidence: 9, revalidate: 'confirmed' })],
+      [imported('B', { confidence: 9 })],
+    ]
+    assert.equal(defaultRevalidateFilter(groups, 8), 'confirmed')
+    // …and the filter that opens really does keep the import on
+    // screen, which is the point of the two halves together.
+    state.filterRevalidate = 'confirmed'
+    assert.deepEqual(applyFilters(groups).map((g) => g[0].id), ['A', 'B'])
+  })
+
+  // The bug this pins: a workspace is ONE view over its reports, and
+  // the question "what does this set open on" has to be asked of the
+  // set. Asked report by report — which is what a load did, on
+  // whichever member came first — a workspace holding a revalidated
+  // report and an imported one answered from the import alone and sat
+  // on the confidence range, with the revalidated report's own answer
+  // never asked for.
+  it('opens a mixed workspace on Confirmed whichever member loads first', () => {
+    const revalidated = [
+      [makeFinding('D1', { confidence: 9, revalidate: 'confirmed' }), makeFinding('D1r', { confidence: 9, revalidate: 'revalidation' })],
+    ]
+    // A Claude Security import carries no confidence of its own
+    // (report/src/parse-md.js reads none) and no stamp.
+    const claude = [[imported('C1', { _source: 'claude-security' })]]
+    // The interim answer, from the member that happened to load
+    // first: the import alone is not a revalidation report.
+    assert.equal(defaultRevalidateFilter(claude, defaultConfidenceFloor(claude)), '')
+
+    const reports = state.reports
+    const merges = state.workspaceMerges
+    try {
+      for (const order of [[claude, revalidated], [revalidated, claude]]) {
+        state.workspaceMerges = []
+        state.reports = order.map((groups) => ({ groups }))
+        applyOpeningFilters(getMergedGroups())
+        assert.equal(state.filterRevalidate, 'confirmed', JSON.stringify(order[0][0][0].id))
+        // And the outcome really does show the import, which the
+        // range it was sitting on could not: an unscored finding is
+        // below any floor above 0.
+        assert.deepEqual(
+          applyFilters(getMergedGroups()).map((g) => g[0].id).toSorted(),
+          ['C1', 'D1'],
+        )
+      }
+    } finally {
+      state.reports = reports
+      state.workspaceMerges = merges
+    }
+  })
+
+  // A pass has to have confirmed something ITSELF before the imports
+  // ride along: a set with no revalidation in it gets no dropdown
+  // from the toolbar (render.js scans the real values), so opening it
+  // on an outcome would set a filter with no control to clear it.
+  it('cannot open a set the pass never touched on Confirmed', () => {
+    assert.equal(defaultRevalidateFilter([[imported('A', { confidence: 9 })]], 8), '')
+    // Same where the pass ran but only ever knocked things down.
+    const refuted = [
+      [makeFinding('A', { confidence: 9, revalidate: 'refuted' })],
+      [imported('B', { confidence: 9 })],
+    ]
+    assert.equal(defaultRevalidateFilter(refuted, 0), '')
+  })
+})
+
+// An analysis and the revalidation of it, loaded together — the
+// workspace shape the outcome default is really about. The
+// revalidation report carries the analysis's findings again plus the
+// pass's own rows, so ingest dedups the copies and records a merge
+// tying each pass row back to the row it belongs with (ingest.js).
+// The view is that merged result, and it is what decides what the set
+// opens on (switchToWorkspace).
+//
+// Both report shapes and both load orders are pinned here. They were
+// checked end to end against a real build in a browser — toolbar on
+// Confirmed, every row on screen — and this is that check kept where
+// it can run.
+describe('an analysis and its revalidation, loaded together', () => {
+  beforeEach(reset)
+
+  const scored = (id, extra = {}) => makeFinding(id, { confidence: 9, ...extra })
+  const pass = (id) => scored(id, { revalidate: 'revalidation' })
+
+  // One load: `reports` as ingest leaves them — the second one keeps
+  // only the members the first didn't already carry — and `merges` as
+  // it records them. Then the question switchToWorkspace asks once
+  // every member is in.
+  const opensOn = (reports, merges) => {
+    const savedReports = state.reports
+    const savedMerges = state.workspaceMerges
+    try {
+      state.reports = reports.map((groups) => ({ groups }))
+      state.workspaceMerges = merges.map((ids) => new Set(ids))
+      const merged = getMergedGroups()
+      applyOpeningFilters(merged)
+      return { rows: merged.map((g) => g.map((f) => f.id)), outcome: state.filterRevalidate }
+    } finally {
+      state.reports = savedReports
+      state.workspaceMerges = savedMerges
+    }
+  }
+
+  // The revalidation carries a pass row per row: [[4,1,2,3],[7,5,6]]
+  // against an analysis of [[1,2,3],[5,6]].
+  it('opens on Confirmed with a pass row per row', () => {
+    // Analysis first: its findings are already loaded, so the
+    // revalidation contributes only its pass rows, each tied back by a
+    // merge.
+    assert.deepEqual(
+      opensOn(
+        [[[scored('1'), scored('2'), scored('3')], [scored('5'), scored('6')]], [[pass('4')], [pass('7')]]],
+        [['4', '1', '2', '3'], ['7', '5', '6']],
+      ),
+      { rows: [['4', '1', '2', '3'], ['7', '5', '6']], outcome: 'confirmed' },
+    )
+    // Revalidation first: the analysis is wholly a duplicate of what
+    // is loaded and contributes nothing, so there is nothing to merge.
+    assert.deepEqual(
+      opensOn([[[pass('4'), scored('1'), scored('2'), scored('3')], [pass('7'), scored('5'), scored('6')]], []], []),
+      { rows: [['4', '1', '2', '3'], ['7', '5', '6']], outcome: 'confirmed' },
+    )
+  })
+
+  // A row the reader has already filed away — fixed, invalid, ignored,
+  // deleted — is not on screen, so it is no part of what either face
+  // of the block would show. Asked over the whole loaded set instead,
+  // one old untriaged-looking row held every later load on the range,
+  // however thoroughly the pass had covered what was actually up.
+  it('ignores the rows the reader has triaged away', () => {
+    const savedReports = state.reports
+    const savedMerges = state.workspaceMerges
+    const savedMode = state.viewMode
+    const savedBucket = state.shownTriage
+    try {
+      state.workspaceMerges = []
+      state.viewMode = 'table'
+      state.shownTriage = null
+      state.reports = [{ groups: [
+        [pass('4'), scored('1'), scored('2')],
+        [scored('9')],
+      ] }]
+      // Both rows live: the unstamped one is on screen and Confirmed
+      // would take it away.
+      applyOpeningFilters(getShownGroups())
+      assert.equal(state.filterRevalidate, '')
+      // Filed away, it leaves the live list — and with it the reason
+      // to hold the range in front.
+      state.triage = new Map([['9', { triage: 'fixed' }]])
+      applyOpeningFilters(getShownGroups())
+      assert.equal(state.filterRevalidate, 'confirmed')
+      // Kanban lays every bucket out at once, so there it IS on screen
+      // and the answer goes back.
+      state.viewMode = 'kanban'
+      applyOpeningFilters(getShownGroups())
+      assert.equal(state.filterRevalidate, '')
+      // …as it does for a reader parked in the bucket it went to.
+      state.viewMode = 'table'
+      state.shownTriage = 'fixed'
+      applyOpeningFilters(getShownGroups())
+      assert.equal(state.filterRevalidate, '')
+    } finally {
+      state.reports = savedReports
+      state.workspaceMerges = savedMerges
+      state.viewMode = savedMode
+      state.shownTriage = savedBucket
+    }
+  })
+
+  // The revalidation puts the lot in ONE row —
+  // [[4,7,1,2,3,5,6]] — merging two of the analysis's rows. Every
+  // issue is still on screen under Confirmed, so Confirmed still
+  // leads.
+  it('opens on Confirmed when the revalidation merges two rows into one', () => {
+    assert.deepEqual(
+      opensOn(
+        [[[scored('1'), scored('2'), scored('3')], [scored('5'), scored('6')]], [[pass('4'), pass('7')]]],
+        [['4', '7', '1', '2', '3', '5', '6']],
+      ),
+      { rows: [['4', '7', '1', '2', '3', '5', '6']], outcome: 'confirmed' },
+    )
+    assert.deepEqual(
+      opensOn([[[pass('4'), pass('7'), scored('1'), scored('2'), scored('3'), scored('5'), scored('6')]], []], []),
+      { rows: [['4', '7', '1', '2', '3', '5', '6']], outcome: 'confirmed' },
+    )
+  })
+})
+
 // The toolbar's "App" switch takes the whole revalidation layer off.
 // With it on the findings are about the running app — what it reaches,
 // re-rated by the second pass. With it off they are about the code as
@@ -522,6 +878,43 @@ describe('the revalidation layer switch', () => {
     // …and an unrecognised value is still no stamp, either way.
     configureRevalidation(false)
     assert.equal(hasRevalidateField({ revalidate: 'maybe' }), false)
+  })
+
+  // The switch is offered only where taking the layer off would hand
+  // a ruled-out finding back. A report whose every `revalidate` is
+  // `revalidation` — the pass's own rows, judging nothing — has none:
+  // "off" there would drop those rows and reveal nothing in their
+  // place, so the control isn't offered and the layer can't come off.
+  it('offers no way off a set the pass only ever rowed', () => {
+    for (const kind of ['refuted', 'unreachable', 'confirmed', 'partial', 'unknown']) {
+      assert.equal(hasRevalidateStamp({ revalidate: kind }), true, kind)
+    }
+    assert.equal(hasRevalidateStamp({ revalidate: 'revalidation' }), false)
+    assert.equal(hasRevalidateStamp({ revalidate: 'nonsense' }), false)
+    assert.equal(hasRevalidateStamp({}), false)
+    // …and past the switch, like the two readers above it: a gate
+    // that stopped seeing the stamps once the layer was off would
+    // take the way back with it.
+    configureRevalidation(false)
+    assert.equal(hasRevalidateStamp({ revalidate: 'refuted' }), true)
+    assert.equal(hasRevalidateStamp({ revalidate: 'revalidation' }), false)
+    configureRevalidation(true)
+
+    const report = (...findings) => [{ groups: findings.map((f) => [f]) }]
+    const pass = makeFinding('P', { revalidate: 'revalidation' })
+    // Nothing but the pass's own rows — no switch, whatever else the
+    // set carries.
+    assert.equal(canDropRevalidation(report(pass)), false)
+    assert.equal(canDropRevalidation(report(pass, makeFinding('A'))), false)
+    // One judged row anywhere in the loaded set is enough.
+    assert.equal(canDropRevalidation(report(pass, makeFinding('A', { revalidate: 'refuted' }))), true)
+    for (const kind of ['refuted', 'unreachable', 'confirmed', 'partial', 'unknown']) {
+      assert.equal(canDropRevalidation(report(makeFinding('A', { revalidate: kind }))), true, kind)
+    }
+    // A set the pass never touched is the code view already.
+    assert.equal(canDropRevalidation(report(makeFinding('A'))), false)
+    assert.equal(canDropRevalidation([]), false)
+    assert.equal(canDropRevalidation([{}]), false)
   })
 
   it('answers no stamp for every row while off', () => {

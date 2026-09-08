@@ -3,9 +3,9 @@ import { analyzeContent, computeLinkHint, deleteBundle, deleteFile, deleteWorksp
 import { closeWorkspace as closePresence, deleteBundleFromRemote, deleteFromRemote as deletePresence, isInRemoteOrCached, openWorkspace as openPresence, putFile, triageSync } from './client-sync.js'
 import { openImportConflictDialog } from './dialogs/import-conflict-dialog.js'
 import { dropZone, report } from './dom.js'
-import { toGroup } from './group.js'
+import { getShownGroups, toGroup } from './group.js'
 import { effectiveSeverity } from './format.js'
-import { defaultConfidenceFloor, defaultRevalidateFilter, resetFilters } from './filters.js'
+import { applyOpeningFilters, resetFilters } from './filters.js'
 import { render } from './render.js'
 import { renderSidebar } from './sidebar.js'
 import { cleanupGraph2, graph2 } from './graph/state.js'
@@ -672,6 +672,21 @@ export async function switchToWorkspace(workspaceId) {
   // unreadable. Same teardown as the empty workspace above — otherwise
   // the previous view stays up while the sidebar says we moved.
   if (ingested === 0 && ws.reports.length > 0) showEmptyMainPane()
+  // What the WORKSPACE opens on. The loop above asked this of its
+  // FIRST member (ingestReport's isFirst branch), which is the answer
+  // for a single file and the wrong one for a set: a revalidated
+  // report sitting behind an imported one leaves the whole workspace
+  // on the confidence range, and a floor tuned to one member's
+  // findings gets applied to everyone's. A workspace is one view over
+  // its reports, so ask once more now that they are all in — nothing
+  // has touched the filters since that first member's resetFilters,
+  // so this is still what a fresh load would set, not a user's
+  // selection being overwritten. Re-render: the last ingest painted
+  // with the interim answer.
+  if (ingested > 0) {
+    applyOpeningFilters(getShownGroups())
+    render()
+  }
   // Open the per-workspace sync session AFTER every report is ingested
   // — it needs a complete view of state.reports to build its
   // workspace-id set. No-op when sync is disabled (no server URL).
@@ -1209,15 +1224,23 @@ async function ingestReport(name, content, gen = null) {
           _bundleHashes: data.bundleHashes ?? [],
         }
         inheritReportMeta(filled, data)
-        // Effective analyzer string for the toolbar's analyzer filter.
-        // Source-marked reports (deepsec / codex-security /
-        // claude-security / piolium) use their tool name; native JSON
-        // dumps use the per-finding `type` (undefined → null, a stable
-        // sentinel for the "no analyzer" bucket). A finding stamped with
-        // its own `source` — a re-imported markdown export that mixed a
-        // product's findings with the analyzer's own runs
-        // (report/src/parse-deepview-md.js) — is that product's.
-        filled._analyzer = filled.source ?? data.source ?? (filled.type ?? null)
+        // Which PRODUCER this finding came from — a `source` marker
+        // (deepsec / codex-security / claude-security / piolium), or
+        // null for the analyzer's own dump, which is DeepView's
+        // (file-display.js PRODUCER_LABELS names that bucket). Its own
+        // marker when it carries one — a re-imported markdown export
+        // that mixed a product's findings with the analyzer's own runs
+        // stamps them per finding (report/src/parse-deepview-md.js),
+        // and such a finding is that product's whatever report it now
+        // sits in — else its report's. The same answer the markdown
+        // writer's `sourceReader` gives (report/src/write-md.js), read
+        // off the finding so the filters don't have to find its report.
+        filled._source = filled.source ?? data.source ?? null
+        // Effective analyzer string for the toolbar's analyzer filter:
+        // the producer when there is one, else the per-finding `type`
+        // of a native dump (undefined → null, a stable sentinel for
+        // the "no analyzer" bucket).
+        filled._analyzer = filled._source ?? (filled.type ?? null)
         if (filled.id && !idToFinding.has(filled.id)) idToFinding.set(filled.id, filled)
         stamped.push(filled)
       }
@@ -1286,11 +1309,13 @@ async function ingestReport(name, content, gen = null) {
       // What this set opens on: an auto-tuned confidence floor, and
       // then — for a REVALIDATION report, one where every group that
       // floor leaves on screen carries a row the second pass stamped —
-      // Confirmed instead of the range. Both live in filters.js, so
-      // the App switch can ask the same two questions again when it
-      // reshapes the set (events.js).
-      state.filterConfMin = defaultConfidenceFloor(groups)
-      state.filterRevalidate = defaultRevalidateFilter(groups, state.filterConfMin)
+      // Confirmed instead of the range. Over the rows the view SHOWS
+      // (getShownGroups) — merged, so a partial dupe inside the report
+      // counts once, and in the reader's triage bucket, since a row
+      // filed away is not on screen for either face of the block. A
+      // workspace asks again over all of its members once they are in
+      // (switchToWorkspace).
+      applyOpeningFilters(getShownGroups())
     }
     render()
   } catch (err) {

@@ -52,11 +52,11 @@ export { isHttpUrl }
 // of the pass's row in a group, no verdict voiding a confidence, no
 // outcome for the toolbar dropdown to offer (so the block falls back
 // to the plain Confidence range), and nothing for the run-meta line to
-// name. The two callers that must see the field WHATEVER the switch
-// says — the pass that hides the pass's own rows, and the scan that
-// decides whether to offer the switch at all — read the raw field
-// through the two exports below it (report/src/finding.js's
-// `revalidateKindOf`).
+// name. The callers that must see the field WHATEVER the switch says
+// — the pass that hides the pass's own rows, the scan that decides
+// whether to offer the switch at all, and the export header that
+// names the layer — read the raw field through the exports below it
+// (report/src/finding.js's `revalidateKindOf`).
 //
 // The flag is module state, set once per render by render.js from
 // `state.showRevalidation` (see configureDepsDir below for the same
@@ -82,16 +82,47 @@ export function revalidateKind(f) {
 }
 
 // Does this row carry a revalidation stamp AT ALL — the raw field,
-// read past the switch. Gates the switch itself (render.js): a set
-// with nothing to reveal doesn't need the control, and one that has
-// something must keep offering it after the layer is off, or there
-// would be no way back.
+// read past the switch. Says whether the layer is worth NAMING: the
+// markdown export describes it in the header only for a set that
+// carries one (markdown-export.js), and a set that carries one must
+// keep being described after the layer is off. Whether the layer can
+// come OFF is the narrower question `canDropRevalidation` asks below.
 export function hasRevalidateField(f) { return revalidateKindOf(f) !== '' }
 
 // Is this row the pass itself — again raw, because taking the layer
 // off means dropping exactly these rows (group.js), which can't be
 // done through a reader that has already stopped seeing them.
 export function isRevalidationRow(f) { return revalidateKindOf(f) === 'revalidation' }
+
+// Does this row carry a judgement the pass made ABOUT a finding —
+// any stamp but `revalidation`, which names the pass's own row and
+// judges nothing. Raw for the same reason as the two above: it gates
+// the switch, and a gate that stopped seeing the stamps the moment
+// the layer came off would take the way back with it.
+export function hasRevalidateStamp(f) {
+  const kind = revalidateKindOf(f)
+  return kind !== '' && kind !== 'revalidation'
+}
+
+// May the layer come off for the loaded set — i.e. is the "App"
+// switch offered at all (render.js)?
+//
+// Only where the pass JUDGED something. Taking the layer off is a
+// trade: the pass's own rows go, and in exchange every finding it
+// ruled out comes back, which is the code view the switch exists for.
+// A set whose every `revalidate` is `revalidation` — the pass's rows
+// and nothing they stamped — has nothing to hand back, so the trade
+// is one-sided: the same findings, minus the pass's rows, with the
+// run-meta no longer saying where they came from. That is not the
+// code as written, it is the app view with information removed, so
+// the control isn't offered and the layer stays on.
+//
+// Scanned over the reports' OWN groups rather than the merged ones,
+// and through the raw reader, so the answer doesn't change with the
+// switch — see the note over the layer above.
+export function canDropRevalidation(reports) {
+  return reports.some((r) => (r.groups ?? []).some((g) => g.some(hasRevalidateStamp)))
+}
 
 // The verdict this row was stamped with, or null when it carries none
 // — which includes the revalidation row itself, since `revalidation`

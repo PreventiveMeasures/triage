@@ -1,5 +1,5 @@
 import { state } from '#client/index.js'
-import { SEVERITY_ORDER, activeRevalidateKinds, displayedSeverity, findingText, isModule, prettyModel, revalidateFilterKinds, revalidateKind, voidsConfidence } from './format.js'
+import { SEVERITY_ORDER, activeRevalidateKinds, displayedSeverity, findingText, isModule, prettyModel, revalidateKind, voidsConfidence } from './format.js'
 import { primaryTab, tabFix, tabKey } from './group.js'
 
 // Stand-in for the "no analyzer" bucket in the analyzer dropdown.
@@ -212,38 +212,144 @@ export function defaultConfidenceFloor(groups) {
   return base
 }
 
+// The outcome a row ANSWERS TO when the toolbar filters by one — the
+// pass's own reading for a finding the analyzer produced, and
+// `revalidation` (the value naming the pass itself) for one that came
+// from anywhere else.
+//
+// A product's import — Claude Security, Codex Security, DeepSec,
+// Piolium; anything carrying a `source` marker, which is everything
+// that isn't DeepView's own dump (file-display.js PRODUCER_LABELS) —
+// was never put in front of the revalidation pass, so the pass never
+// ruled it out. It stands, exactly as a row the pass re-examined and
+// left alone stands. That makes such a finding permanently part of
+// the app view and permanently Confirmed: the App switch has no layer
+// to take off it, and picking Confirmed in a workspace that mixes a
+// revalidated report with imported ones keeps the imports on screen
+// instead of filtering them away for lacking a stamp they could never
+// have carried.
+//
+// Only the two filter questions below read this. What a card DRAWS
+// still comes from format.js's own readers, so an imported finding
+// grows no stamp, no verdict, and no `revalidate` in its run-meta
+// line — and the toolbar's option list is still scanned off the real
+// values (render.js), so a set with no pass anywhere gets no dropdown
+// rather than a Confirmed option that matches every finding in it.
+//
+// A stamp the row DOES carry still wins: revalidating an imported
+// report is a thing the pipeline can do, and a product's finding the
+// pass refuted is refuted like any other. The stand-in only fills the
+// gap where there is no verdict to read.
+export function filterRevalidateKind(f) {
+  return revalidateKind(f) || (f._source ? 'revalidation' : '')
+}
+
+// The floor the default view will REALLY apply. The range is a
+// whole-set control: one finding on screen with no confidence and no
+// `critical: true` and render.js disables it and resets the bounds to
+// 0—10 (hasAnyConfidence there), so the auto-tuned floor never bites
+// and every row is on screen — an unscored finding is not hidden by a
+// filter that isn't running. Measuring the comparison below against a
+// floor the view is about to throw away would be measuring a screen
+// nobody sees.
+//
+// `critical: true` rides the 10 bucket in place of a score
+// (matchesFilters), so it doesn't block the range any more than a
+// number does.
+//
+// render.js asks this of the on-screen bucket and we ask it of the
+// whole set; at open time, before anything is triaged away, they are
+// the same groups.
+function effectiveFloor(groups, confMin) {
+  const scored = groups.every((g) => g.every((f) => f.confidence !== undefined || f.critical === true))
+  return scored ? confMin : 0
+}
+
 // The revalidation outcome a freshly-loaded set should OPEN on, given
 // the confidence floor ingest.js just auto-tuned: `'confirmed'` for a
 // revalidation report, `''` (no outcome) for everything else.
 //
-// A revalidation report is one where every group the floor leaves on
-// screen carries a row the second pass stamped. There the range is
-// answering the wrong question — it is about how sure the ORIGINAL
-// analyzer was, and the whole point of the pass is that something
-// looked again — so the pass's own answer leads instead, and "the
-// findings that survived" is what a reader opens such a report for.
-// The two share a toolbar block, so this is the switch the dropdown
-// would make by hand (conf-filter.js); the floor stays set underneath,
-// and clearing the outcome hands back the range that would otherwise
-// have been the default.
+// The two share a toolbar block and only one of them can lead
+// (conf-filter.js), so this is the switch the dropdown would make by
+// hand; the floor stays set underneath, and clearing the outcome
+// hands back the range that would otherwise have been the default.
 //
-// Two conditions beyond "all of them are stamped":
-//   * something has to BE on screen, or an empty load satisfies "all
-//     of them" vacuously and opens on a filter for no reason;
-//   * Confirmed has to be REACHABLE — a pass that only ever refuted
-//     would otherwise open on an empty screen. (render.js clears an
-//     unreachable outcome anyway, so this is the difference between
-//     not setting it and setting it to be undone.)
+// The question is what Confirmed would COST, asked of findings rather
+// than of rows: every finding visible as part of a visible row under
+// the default range has to be visible as part of some visible row
+// under Confirmed. If it is, Confirmed leads.
+//
+// Findings, not rows, because a row is not a thing that goes missing.
+// Two reports over the same code — an analysis and the revalidation
+// of it — put the same finding in two rows, and Confirmed dropping
+// the un-stamped copy loses nothing while the stamped row still shows
+// it. Nor is a whole row the unit of what a row costs: a row shows in
+// FULL when any of its findings answers the filter, so a row visible
+// under the range carries its unscored members onto the screen with
+// it, and those are findings Confirmed can lose.
+//
+// What Confirmed shows is the dropdown's own answer — the confirmed,
+// the PARTIAL and the pass's own rows (REVALIDATE_FILTERS), with the
+// partial chip where a fresh load leaves it — read through
+// filterRevalidateKind, so an import the pass never saw counts as
+// shown rather than as a loss.
+//
+// Two conditions beyond that:
+//   * something has to BE on screen, or an empty load opens on a
+//     filter for no reason;
+//   * Confirmed has to be REACHABLE, and by the pass's OWN answer —
+//     asked of the real values, not filterRevalidateKind's reading.
+//     An import riding Confirmed is a finding the pass never saw, and
+//     a set of nothing but imports carries no pass at all: the
+//     toolbar offers it no dropdown (render.js scans the real values
+//     too), so opening it on an outcome would set a filter with no
+//     control on screen to clear it.
 //
 // Pure in its arguments — it reads no state — so ingest.js can call it
 // between writing the floor and the first render.
 export function defaultRevalidateFilter(groups, confMin) {
-  const shown = groups.filter((g) => showsAtConfidence(g, confMin))
+  const shown = groups.filter((g) => showsAtConfidence(g, effectiveFloor(groups, confMin)))
   if (shown.length === 0) return ''
-  if (!shown.every((g) => g.some((f) => revalidateKind(f)))) return ''
-  const confirmed = new Set(revalidateFilterKinds('confirmed'))
-  if (!groups.some((g) => g.some((f) => confirmed.has(revalidateKind(f))))) return ''
+  const kinds = new Set(activeRevalidateKinds('confirmed', ''))
+  if (!groups.some((g) => g.some((f) => kinds.has(revalidateKind(f))))) return ''
+  // Every finding Confirmed would put on screen — whole rows, since a
+  // row shows in full when any of its findings answers the outcome.
+  const onScreen = new Set()
+  for (const g of groups) {
+    if (!g.some((f) => kinds.has(filterRevalidateKind(f)))) continue
+    for (const f of g) onScreen.add(tabKey(f))
+  }
+  for (const g of shown) {
+    for (const f of g) if (!onScreen.has(tabKey(f))) return ''
+  }
   return 'confirmed'
+}
+
+// Put the confidence block where a fresh load of `groups` would put
+// it — the two questions above asked together, with the fields each
+// answer replaces cleared alongside it. That block is one control
+// with two faces (conf-filter.js): an outcome, when the set has one
+// to lead with, and the range underneath it otherwise.
+//
+// One helper because three callers ask it of three different moments
+// and have to agree:
+//
+//   * the first report of a load (ingestReport);
+//   * the whole workspace, once every member is in
+//     (switchToWorkspace) — a workspace is ONE view over its reports,
+//     and asked report by report the answer is whichever member
+//     happened to load first;
+//   * the App switch, which reshapes the set and so has to ask again
+//     rather than keep an answer that was about a different one
+//     (events.js).
+//
+// Always the groups the view SHOWS — getMergedGroups, not a report's
+// own — since that is the set the answer will be applied to.
+export function applyOpeningFilters(groups) {
+  state.filterConfMin = defaultConfidenceFloor(groups)
+  state.filterConfMax = 10
+  state.filterRevalidate = defaultRevalidateFilter(groups, state.filterConfMin)
+  state.filterPartial = ''
 }
 
 // Per-tab filter predicate. Factored out so `applyFilters` (group-level)
@@ -297,13 +403,15 @@ export function matchesFilters(f) {
   // whole control otherwise, and offers only the reachable options).
   // Empty = no filter. One option can cover more than one value of the
   // field: CONFIRMED takes the revalidation row too, since that row IS
-  // the pass leaving the finding standing (see REVALIDATE_FILTERS).
-  // Group-visibility via applyFilters's `g.some(...)`, same as every
-  // predicate above: a dedup group shows in full when any of its rows
-  // carries the selected outcome.
+  // the pass leaving the finding standing (see REVALIDATE_FILTERS) —
+  // and with it every finding the pass never judged, which rides the
+  // same value (filterRevalidateKind). Group-visibility via
+  // applyFilters's `g.some(...)`, same as every predicate above: a
+  // dedup group shows in full when any of its rows carries the
+  // selected outcome.
   if (F.filterRevalidate) {
     const kinds = activeRevalidateKinds(F.filterRevalidate, F.filterPartial)
-    if (kinds && !kinds.includes(revalidateKind(f))) return false
+    if (kinds && !kinds.includes(filterRevalidateKind(f))) return false
   }
   // Confidence range — SKIPPED entirely while a revalidation outcome is
   // selected. The two share one toolbar block and the outcome replaces
