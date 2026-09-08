@@ -244,51 +244,84 @@ export function filterRevalidateKind(f) {
   return revalidateKind(f) || (f._source ? 'revalidation' : '')
 }
 
+// Would the default confidence range put this row on screen? The
+// question the outcome default below is measured against, and NOT
+// quite `showsAtConfidence`: a row carrying an issue with no
+// confidence at all counts as shown, whatever the floor. The range
+// hides such an issue above 0 (matchesFilters), but it hides it for
+// want of an answer, not because it has one — so it is not a row the
+// floor can be said to have ruled out, and hiding it a second way is
+// not something to decide by default. Only a row where EVERY issue
+// carries a confidence and none of them clears the floor is one the
+// range really does leave off.
+function rangeWouldShow(g, confMin) {
+  return g.some((f) => f.confidence === undefined) || showsAtConfidence(g, confMin)
+}
+
+// Did the pass rule this row out — every issue in it refuted or
+// unreachable? Confirmed hides exactly these, and that is what it is
+// FOR: a row the pass knocked down is not a row the reader lost.
+function ruledOut(g) {
+  return g.every((f) => voidsConfidence(f))
+}
+
 // The revalidation outcome a freshly-loaded set should OPEN on, given
 // the confidence floor ingest.js just auto-tuned: `'confirmed'` for a
 // revalidation report, `''` (no outcome) for everything else.
 //
-// A revalidation report is one where every group the floor leaves on
-// screen carries a row the second pass stamped — or, reading through
-// filterRevalidateKind above, a row it was never given to judge. An
-// imported group doesn't make a workspace less of a revalidation
-// report: counting it as unstamped would hold the whole workspace on
-// the range because one member came from another tool.
+// The two share a toolbar block and only one of them can lead
+// (conf-filter.js), so this is the switch the dropdown would make by
+// hand; the floor stays set underneath, and clearing the outcome
+// hands back the range that would otherwise have been the default.
 //
-// There the range is answering the wrong question — it is about how
-// sure the ORIGINAL analyzer was, and the whole point of the pass is
-// that something looked again — so the pass's own answer leads
-// instead, and "the findings that survived" is what a reader opens
-// such a report for.
-// The two share a toolbar block, so this is the switch the dropdown
-// would make by hand (conf-filter.js); the floor stays set underneath,
-// and clearing the outcome hands back the range that would otherwise
-// have been the default.
+// Confirmed leads unless it would COST the reader something: the
+// range stays in front only where Confirmed would leave an issue off
+// the screen that the range would have shown. Two kinds of loss don't
+// count, because neither is the reader losing sight of anything:
 //
-// Two conditions beyond "all of them are stamped":
-//   * something has to BE on screen, or an empty load satisfies "all
-//     of them" vacuously and opens on a filter for no reason;
-//   * Confirmed has to be REACHABLE — a pass that only ever refuted
-//     would otherwise open on an empty screen. (render.js clears an
-//     unreachable outcome anyway, so this is the difference between
-//     not setting it and setting it to be undone.)
+//   * a row the pass ruled out (`ruledOut`) — hiding those is the
+//     whole point of the view, and a revalidation report is mostly
+//     made of them;
+//   * a row whose issues are all on screen ANYWAY, inside some other
+//     row Confirmed does show. Two reports over the same code — an
+//     analysis and the revalidation of it — put the same issue in two
+//     rows, and the un-stamped copy dropping out of the list is not
+//     the issue going missing. Compared by tab key, so this is the
+//     same identity the rest of the app dedups and triages by.
 //
-// That second one is asked of the REAL values, not the filter's
-// reading: an import riding Confirmed is a finding the pass never saw,
-// and a set of nothing but imports carries no pass at all — the
-// toolbar offers it no dropdown (render.js scans the real values too),
-// so opening it on an outcome would be setting a filter with no
-// control on screen to clear it. A pass has to have confirmed
-// something itself before the imports come along for the ride.
+// Everything else that the range would show and Confirmed would not
+// holds the range in front: an issue the pass never reached — no
+// stamp, and not an import riding `revalidation` — is not one to
+// filter away before the reader has seen it.
+//
+// Two conditions beyond that:
+//   * something has to BE on screen, or an empty load opens on a
+//     filter for no reason;
+//   * Confirmed has to be REACHABLE, and by the pass's OWN answer —
+//     asked of the real values, not filterRevalidateKind's reading.
+//     An import riding Confirmed is a finding the pass never saw, and
+//     a set of nothing but imports carries no pass at all: the
+//     toolbar offers it no dropdown (render.js scans the real values
+//     too), so opening it on an outcome would set a filter with no
+//     control on screen to clear it.
 //
 // Pure in its arguments — it reads no state — so ingest.js can call it
 // between writing the floor and the first render.
 export function defaultRevalidateFilter(groups, confMin) {
-  const shown = groups.filter((g) => showsAtConfidence(g, confMin))
-  if (shown.length === 0) return ''
-  if (!shown.every((g) => g.some((f) => filterRevalidateKind(f)))) return ''
+  if (!groups.some((g) => rangeWouldShow(g, confMin))) return ''
   const confirmed = new Set(revalidateFilterKinds('confirmed'))
   if (!groups.some((g) => g.some((f) => confirmed.has(revalidateKind(f))))) return ''
+  // Every issue Confirmed would put on screen — whole rows, since a
+  // row shows in full when any of its issues answers the outcome.
+  const onScreen = new Set()
+  for (const g of groups) {
+    if (!g.some((f) => confirmed.has(filterRevalidateKind(f)))) continue
+    for (const f of g) onScreen.add(tabKey(f))
+  }
+  for (const g of groups) {
+    if (!rangeWouldShow(g, confMin) || ruledOut(g)) continue
+    if (!g.every((f) => onScreen.has(tabKey(f)))) return ''
+  }
   return 'confirmed'
 }
 

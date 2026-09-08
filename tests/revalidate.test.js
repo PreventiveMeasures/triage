@@ -400,12 +400,14 @@ describe('revalidate filter — the toolbar dropdown', () => {
   })
 
   // What a freshly-loaded report OPENS on. ingest.js auto-tunes a
-  // confidence floor, then asks this whether the set is a revalidation
-  // report — every group that floor leaves on screen carrying a row
-  // the pass stamped — in which case the pass's own answer leads
-  // instead of a range about how sure the original analyzer was.
+  // confidence floor, then asks this which face of the block should
+  // lead. Confirmed does, unless it would COST the reader something —
+  // an issue the range would have shown and Confirmed would not.
+  // Neither a row the pass ruled out nor a row whose issues are all on
+  // screen inside another row is such a cost.
   describe('the outcome a first load opens on', () => {
     const stamped = (id, extra) => makeFinding(id, { revalidate: 'confirmed', ...extra })
+    const pass = (id, extra) => makeFinding(id, { revalidate: 'revalidation', ...extra })
 
     it('opens on Confirmed when the floor leaves only revalidated groups', () => {
       const groups = [[stamped('A', { confidence: 9 })], [stamped('B', { confidence: 8 })]]
@@ -449,6 +451,58 @@ describe('revalidate filter — the toolbar dropdown', () => {
         [makeFinding('B', { confidence: 9, revalidate: 'confirmed' })],
       ]
       assert.equal(defaultRevalidateFilter(mixed, 0), 'confirmed')
+    })
+
+    // Two reports over the same code — an analysis, and a
+    // revalidation of it that carries the same findings plus the
+    // pass's own rows. Whether the copies collapse into one row or sit
+    // beside each other, Confirmed shows every ISSUE the range would:
+    // the un-stamped copy dropping out of the list is not the issue
+    // going missing, so it doesn't hold the range in front.
+    it('keeps Confirmed when a missed row holds no issue of its own', () => {
+      const a = [[makeFinding('1', { confidence: 9 }), makeFinding('2', { confidence: 9 })]]
+      const b = [[pass('4', { confidence: 9 }), makeFinding('1', { confidence: 9 }), makeFinding('2', { confidence: 9 })]]
+      // Collapsed into one row, as the dedup merge leaves them.
+      assert.equal(defaultRevalidateFilter(b, 0), 'confirmed')
+      // And side by side, as two rows over the same two issues.
+      assert.equal(defaultRevalidateFilter([...a, ...b], 0), 'confirmed')
+      // One issue the stamped row does NOT carry is a real loss.
+      const extra = [...b, [makeFinding('3', { confidence: 9 })]]
+      assert.equal(defaultRevalidateFilter(extra, 0), '')
+    })
+
+    // A row the pass never reached holds the range in front — those
+    // issues have no answer yet, and filtering them away before the
+    // reader has seen them is not a default to make.
+    it('falls back to the range for a row the pass never reached', () => {
+      const reached = [pass('4', { confidence: 9 }), stamped('1', { confidence: 9 })]
+      assert.equal(defaultRevalidateFilter([reached, [makeFinding('9', { confidence: 9 })]], 8), '')
+      // …including — and this is the case a floor alone gets wrong —
+      // one whose issue carries no confidence at all. The range hides
+      // it above 0 for want of an answer, not because it has one.
+      assert.equal(defaultRevalidateFilter([reached, [makeFinding('9')]], 8), '')
+      // A row where every issue IS scored and none of them clears the
+      // floor is one the range really does leave off, so Confirmed
+      // costs nothing by leaving it off too.
+      assert.equal(defaultRevalidateFilter([reached, [makeFinding('9', { confidence: 2 })]], 8), 'confirmed')
+    })
+
+    // The rows the pass knocked down are what Confirmed is FOR, and a
+    // revalidation report is mostly made of them.
+    it('does not count a row the pass ruled out as a loss', () => {
+      const groups = [
+        [stamped('A', { confidence: 9 })],
+        [makeFinding('B', { confidence: 9, revalidate: 'refuted' })],
+        [makeFinding('C', { confidence: 9, revalidate: 'unreachable' })],
+      ]
+      assert.equal(defaultRevalidateFilter(groups, 0), 'confirmed')
+      // A row is only ruled out when ALL of it is: an unjudged issue
+      // sharing the row is still a loss.
+      const shared = [
+        [stamped('A', { confidence: 9 })],
+        [makeFinding('B', { confidence: 9, revalidate: 'refuted' }), makeFinding('C', { confidence: 9 })],
+      ]
+      assert.equal(defaultRevalidateFilter(shared, 0), '')
     })
 
     it('stays off when the floor leaves nothing on screen', () => {
