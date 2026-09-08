@@ -10,7 +10,7 @@ import { installShadowTooltipListener } from './tooltip.js'
 import { dropZone, report } from './dom.js'
 import { SEVERITIES, canDropRevalidation, configureDepsDir, configureRevalidation, displayedSeverity, fileLink, findingDisplayName, findingTitle, formatRunMeta, hasSeverityCorrection, isHttpUrl, isModule, lineLink, lineRangeLabel, reachableRevalidateFilters, revalidateKind } from './format.js'
 import { activeTabFor, findingRepoFallback, getMergedGroups, groupKey, groupState, primaryTab, tabKey } from './group.js'
-import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, applySorting, modelOfFinding, repoOfFinding } from './filters.js'
+import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, applySorting, modelOfFinding, rangeApplies, repoOfFinding } from './filters.js'
 import { ANALYZER_LABELS } from './analyzer-select.js'
 import { SOURCE_LABELS } from '../../report/index.js'
 import { COMBO_FIELDS, buildAnalyzerTags } from './analyzer-tags.js'
@@ -1872,19 +1872,35 @@ function renderImpl() {
    // a prior report can't keep findings hidden silently. Stats /
    // sorting / include-exclude always make sense, so no flags for
    // those.
-  // The slider is safe to show only when every finding on screen has
-  // a defined spot on the 0–10 scale: either a real `confidence`, or
-  // the `critical: true` flag (the boolean — NOT severity 'critical')
-  // that matchesFilters treats as confidence=10, so it clears any min
-  // floor and is never silently dropped. Anything else (no confidence
-  // and not critical) vanishes the moment the user lifts min off 0,
-  // so a single such finding blocks the slider for the whole set — a
-  // workspace merge of mixed analyzers (one analyzer-native report
-  // with confidence + one DeepSec / Claude Security import without)
-  // stays gated for exactly that reason. The test is per-finding, not
-  // per-report: `critical` varies finding-to-finding, so a lone
-  // critical finding must not vouch for unscored, non-critical
-  // neighbours that would still be dropped.
+  // The slider shows where the range is a live control over the rows
+  // on screen — filters.js rangeApplies, which the opening auto-tune
+  // reads too, so the control and the answer it opens on can't
+  // disagree about whether the floor is running.
+  //
+  // Every row needs a spot on the 0–10 scale (confidenceOnScale, the
+  // same reader the range matches against): a real `confidence`, the
+  // `critical: true` flag (the boolean — NOT severity 'critical'), or
+  // coming from another producer. The last two read as 10, so they
+  // clear any min floor and are never silently dropped. An analyzer
+  // finding with no confidence and not critical has no spot, and
+  // vanishes the moment the user lifts min off 0 — so a single one of
+  // those disables the slider for the whole set.
+  //
+  // An import used to be one of those too, and it took the range away
+  // from every workspace holding one: a Claude Security report beside
+  // an analyzer's own left the control disabled at 0—10, filtering
+  // nothing, with every low-confidence row still on screen. It
+  // carries no confidence because its producer emits none, not
+  // because anyone was unsure, so it vouches for itself at the top of
+  // the scale rather than gating everyone.
+  //
+  // Riding the scale is not the same as establishing it, which is the
+  // other half of rangeApplies: a set of nothing but imports is all
+  // 10s, and gets no range at all rather than a disabled one.
+  //
+  // The test is per-finding, not per-report: `critical` varies
+  // finding-to-finding, so a lone critical finding must not vouch for
+  // unscored, non-critical neighbours that would still be dropped.
   //
   // `allGroups` is already the on-screen set — the current
   // state.shownTriage bucket on every layout but kanban (which shows
@@ -1892,8 +1908,7 @@ function renderImpl() {
   // viewing Untriaged with every untriaged finding scored shows the
   // slider even when hidden buckets (fixed / ignored) hold unscored
   // ones.
-  const hasAnyConfidence = allGroups.length > 0
-    && allGroups.every((g) => g.every((f) => f.confidence !== undefined || f.critical === true))
+  const hasAnyConfidence = allGroups.length > 0 && rangeApplies(allGroups)
   const hasAnyPriority = mergedGroups.some((g) => g.some((f) => f.priority !== undefined))
   const hasAnyModulesPath = mergedGroups.some((g) => g.some((f) => isModule(f.file)))
   // File sort is only meaningful across multiple files — a single-file

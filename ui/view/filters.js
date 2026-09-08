@@ -174,10 +174,63 @@ export function activeFilters() {
 // shows: a group is on screen when ANY of its rows clears the floor —
 // an unscored row only at floor 0 unless it is flagged `critical`, and
 // a row the pass knocked down reading as 0 whatever number it carries.
+// A finding's place on the 0—10 confidence scale, or undefined when it
+// has none. The one reader every confidence question goes through:
+// what the range matches, what the auto-tune counts, and whether the
+// control is offered at all (render.js hasAnyConfidence).
+//
+// Three ways to have a place:
+//
+//   * a `confidence` the analyzer scored it with;
+//   * `critical: true` — the boolean, NOT `severity: 'critical'` —
+//     which stands in for a top score;
+//   * coming from another producer at all. An import carries no
+//     confidence because its producer doesn't emit one (Claude
+//     Security's parser reads none), not because anyone was unsure —
+//     there is no doubt here for a floor to act on. Reading it as 10
+//     keeps it on screen under any floor and out only under a cap
+//     that excludes the top: `8—10` and `2—10` show it, `0—5` and
+//     `7—9` don't. It also stops one imported report from taking the
+//     range away from a workspace: an unscored finding DISABLES the
+//     control for everyone (render.js), which left the range filtering
+//     nothing and every low-confidence row on screen.
+//
+// A row the pass knocked down reads as 0 instead, where that matters
+// (voidsConfidence) — applied by the callers, since whether a finding
+// has a place at all is about the finding, not about the pass.
+export function confidenceOnScale(f) {
+  if (f.confidence !== undefined) return f.confidence
+  if (f.critical === true || f._source) return 10
+  return undefined
+}
+
+// Is the confidence range a live control over these rows — offered,
+// and actually filtering? Two conditions, which the toolbar reads as
+// one (render.js hasAnyConfidence):
+//
+//   * every row has a place on the scale, or the first lift off 0
+//     would silently drop the ones that don't. A single analyzer
+//     finding with no confidence and no `critical: true` disables the
+//     control for the whole set;
+//   * some finding of the ANALYZER's own puts itself on that scale —
+//     a real confidence, or the `critical: true` standing in for one.
+//     Imports ride the scale at 10 but don't establish it: a set of
+//     nothing but imports is all 10s by definition, and a range over
+//     one value says nothing. There the control isn't disabled, it
+//     isn't offered at all — the toolbar drops the whole block when
+//     the outcome dropdown beside it has nothing to offer either.
+//
+// Both halves are asked of the rows ON SCREEN by every caller, since
+// this is about a control in front of a reader.
+export function rangeApplies(groups) {
+  return groups.every((g) => g.every((f) => confidenceOnScale(f) !== undefined))
+    && groups.some((g) => g.some((f) => !f._source && confidenceOnScale(f) !== undefined))
+}
+
 function showsAtConfidence(g, min) {
   return g.some((f) => {
-    const conf = voidsConfidence(f) ? 0 : f.confidence
-    return conf === undefined ? (f.critical === true || min === 0) : conf >= min
+    const conf = voidsConfidence(f) ? 0 : confidenceOnScale(f)
+    return conf === undefined ? min === 0 : conf >= min
   })
 }
 
@@ -201,9 +254,9 @@ function showsAtConfidence(g, min) {
 // reshapes the set and so has to ask again rather than keep an answer
 // that was about a different one.
 export function defaultConfidenceFloor(groups) {
-  if (!groups.some((g) => g.some((f) => f.confidence !== undefined))) return 0
+  if (!groups.some((g) => g.some((f) => confidenceOnScale(f) !== undefined))) return 0
   const countAtMin = (min) => groups.reduce((n, g) =>
-    n + (g.some((f) => f.confidence !== undefined && f.confidence >= min) ? 1 : 0), 0)
+    n + (g.some((f) => (confidenceOnScale(f) ?? -1) >= min) ? 1 : 0), 0)
   let base
   if (countAtMin(6) <= 25) base = 6
   else if (countAtMin(7) <= 25) base = 7
@@ -261,8 +314,7 @@ export function filterRevalidateKind(f) {
 // whole set; at open time, before anything is triaged away, they are
 // the same groups.
 function effectiveFloor(groups, confMin) {
-  const scored = groups.every((g) => g.every((f) => f.confidence !== undefined || f.critical === true))
-  return scored ? confMin : 0
+  return rangeApplies(groups) ? confMin : 0
 }
 
 // The revalidation outcome a freshly-loaded set should OPEN on, given
@@ -422,14 +474,12 @@ export function matchesFilters(f) {
   //
   // Slider bounds 0..10 always have a value; the
   // special positions are 0 (lower) and 10 (upper):
-  //   * lower at 0 → undefined-confidence findings pass; above 0
-  //     means "must have a known confidence", EXCEPT findings flagged
-  //     `critical: true` (the boolean, distinct from
-  //     `severity: 'critical'`) which join the 10 bucket and pass
-  //     any floor.
+  //   * lower at 0 → findings with no place on the scale pass; above
+  //     0 means "must have a place on it" — which a `critical: true`
+  //     finding and an import both have, at 10 (confidenceOnScale).
   //   * upper at 10 → no upper cap; lets rare confidence > 10 entries
-  //     through. Below 10 caps strictly — including the
-  //     critical-flagged stand-ins, whose effective value is 10.
+  //     through. Below 10 caps strictly — including the stand-ins,
+  //     whose value is 10.
   //   * a row the pass KNOCKED DOWN — refuted, or unreachable — reads
   //     as 0 whatever number it carries (format.js voidsConfidence).
   //     Its confidence is not the group's to claim: a group shows in
@@ -441,13 +491,9 @@ export function matchesFilters(f) {
   //     flagged `critical` doesn't ride the 10 bucket either, for the
   //     same reason.
   if (!F.filterRevalidate) {
-    const conf = voidsConfidence(f) ? 0 : f.confidence
+    const conf = voidsConfidence(f) ? 0 : confidenceOnScale(f)
     if (conf === undefined) {
-      if (f.critical === true) {
-        if (F.filterConfMax < 10) return false
-      } else if (F.filterConfMin > 0) {
-        return false
-      }
+      if (F.filterConfMin > 0) return false
     } else {
       if (conf < F.filterConfMin) return false
       if (F.filterConfMax < 10 && conf > F.filterConfMax) return false
