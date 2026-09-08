@@ -1008,6 +1008,40 @@ describe('what a dropped duplicate leaves behind', () => {
     assert.equal(survivor.correctedSeverityReason, undefined)
   })
 
+  // Compared as the app READS the stamp, not as the file wrote it.
+  it('reads the stamp before calling two copies different', () => {
+    const merge = (own, theirs) => {
+      const survivor = makeFinding('A', own)
+      return { conflicted: mergeDuplicateFields(survivor, makeFinding('A', theirs)), survivor }
+    }
+    // Same stamp, two spellings — the reader trims and case-folds.
+    const spelled = merge({ revalidate: 'confirmed' }, { revalidate: '  CONFIRMED ' })
+    assert.equal(spelled.conflicted, false)
+    assert.equal(spelled.survivor.revalidate, 'confirmed')
+    // A value the app can't read is no answer: it neither lands...
+    const unreadable = merge({ revalidate: 'confirmed' }, { revalidate: 'maybe' })
+    assert.equal(unreadable.conflicted, false)
+    assert.equal(unreadable.survivor.revalidate, 'confirmed')
+    // ...nor blocks the other copy's real stamp from landing.
+    const overwritten = merge({ revalidate: 'nonsense' }, { revalidate: 'refuted' })
+    assert.equal(overwritten.conflicted, false)
+    assert.equal(overwritten.survivor.revalidate, 'refuted')
+    // The prose either side of the stamp is compared past the
+    // whitespace two writers can differ on for the same words.
+    assert.equal(merge({ revalidateVerdict: 'Holds.' }, { revalidateVerdict: '  Holds.\n' }).conflicted, false)
+  })
+
+  // `source` is provenance like the `_`-prefixed fields, just public:
+  // ingest has already derived `_source` / `_analyzer` from it, so
+  // filling it would leave the row native to the toolbar and the other
+  // producer's to a markdown export.
+  it('leaves the public provenance field alone', () => {
+    const survivor = makeFinding('A', { confidence: 9 })
+    mergeDuplicateFields(survivor, makeFinding('A', { source: 'claude-security', commitHash: 'abc1234' }))
+    assert.equal(survivor.source, undefined)
+    assert.equal(survivor.commitHash, 'abc1234')
+  })
+
   // A disagreement about the pass isn't settled by load order — it is
   // reported, and ingest.js takes the layer off the whole set for it.
   it('reports a disagreement about the pass rather than settling it', () => {

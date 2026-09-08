@@ -1582,6 +1582,12 @@ const nullLastCmp = (a, b) => {
   return a.localeCompare(b)
 }
 
+// The revalidation mode a CONFLICT took away, held until the set that
+// carried it is gone (see the conflict branch in renderImpl). Module
+// state rather than `state`: it is this module's bookkeeping between
+// renders, not anything a view persists or a component reads.
+let modeBeforeConflict = null
+
 function renderImpl() {
   mountBundleSourceOverlay()
   // Recompute the active deps dir before any helper consults it
@@ -1619,9 +1625,22 @@ function renderImpl() {
   const conflicted = state.revalidateConflict === true
   const canDropLayer = !conflicted && canDropRevalidation(state.reports)
   if (conflicted) {
-    if (state.showRevalidation !== false) state.showRevalidation = false
-  } else if (!canDropLayer && state.showRevalidation === false) {
-    state.showRevalidation = true
+    // Remember the mode the conflict takes away, so leaving that set
+    // gives it back. Without it the next report opens in the code
+    // view — its outcome default computed with the layer off — for a
+    // disagreement in a set the reader has already left, and with no
+    // switch on screen while the conflict lasted there was no moment
+    // at which they chose it.
+    if (state.showRevalidation !== false) {
+      modeBeforeConflict = state.showRevalidation
+      state.showRevalidation = false
+    }
+  } else {
+    if (modeBeforeConflict !== null) {
+      state.showRevalidation = modeBeforeConflict
+      modeBeforeConflict = null
+    }
+    if (!canDropLayer && state.showRevalidation === false) state.showRevalidation = true
   }
   configureRevalidation(state.showRevalidation)
   // Print-button body class is owned by an observer-util autorun (see

@@ -6,6 +6,7 @@ import { SEVERITY_ORDER, displayedSeverity, isRevalidation, isRevalidationRow } 
 // module evaluates first resolves the other's hoisted function
 // declarations by the time anything runs.
 import { matchesRunFilters } from './filters.js'
+import { revalidateKindOf } from '../../report/index.js'
 
 // ID helpers. Internally every `state.reports[].groups[i]` is a
 // Finding[] (single-finding entries are wrapped at ingest, so code
@@ -49,7 +50,16 @@ export function toGroup(entry) { return Array.isArray(entry) ? entry : [entry] }
 //     (ingest.js recordCorrectedVariant) that keeps BOTH reports'
 //     values as variants. Copying one over the other would settle by
 //     load order the very thing that machinery exists to show.
-const KEEPS_ITS_OWN = new Set(['correctedSeverity', 'correctedSeverityReason'])
+//   * `source`, which is provenance too — the public half of it,
+//     stamped per finding by a re-imported export that mixed a
+//     product's findings with the analyzer's own runs. It reads like
+//     any other field but names the copy's PRODUCER, and ingest has
+//     already derived `_source` / `_analyzer` from it by the time a
+//     duplicate is dropped: filling it here would leave the toolbar
+//     calling the row native while a later markdown export called it
+//     the other product's (report/src/write-md.js reads `f.source`
+//     first).
+const KEEPS_ITS_OWN = new Set(['correctedSeverity', 'correctedSeverityReason', 'source'])
 
 // Returns whether the two copies CONFLICTED about the revalidation
 // pass — both answering a `revalidate*` field, differently. Nothing is
@@ -65,9 +75,26 @@ export function mergeDuplicateFields(survivor, dup) {
   for (const [key, value] of Object.entries(dup)) {
     if (key.startsWith('_') || KEEPS_ITS_OWN.has(key)) continue
     if (value === undefined || value === null) continue
+    // The stamp is compared as the app READS it, not as the file
+    // wrote it: the reader trims and case-folds, and answers "no
+    // stamp" for anything it doesn't recognise (report/src/finding.js
+    // revalidateKindOf). So `confirmed` and ` Confirmed ` agree, and
+    // a value the app can't read is no answer at all — it neither
+    // blocks the other copy's real stamp from landing nor takes the
+    // layer off a whole workspace for a typo.
+    if (key === 'revalidate') {
+      const theirs = revalidateKindOf(dup)
+      if (!theirs) continue
+      const mine = revalidateKindOf(survivor)
+      if (!mine) survivor[key] = value
+      else if (mine !== theirs) conflicted = true
+      continue
+    }
     const own = survivor[key]
     if (own === undefined || own === null) { survivor[key] = value; continue }
-    if (own !== value && key.startsWith('revalidate')) conflicted = true
+    // The pass's prose either side of the stamp, compared past the
+    // whitespace two writers can differ on for the same words.
+    if (key.startsWith('revalidate') && String(own).trim() !== String(value).trim()) conflicted = true
   }
   return conflicted
 }
