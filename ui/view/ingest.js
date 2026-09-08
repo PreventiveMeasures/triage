@@ -1174,15 +1174,23 @@ async function ingestReport(name, content, gen = null) {
           _bundleHashes: data.bundleHashes ?? [],
         }
         inheritReportMeta(filled, data)
-        // Effective analyzer string for the toolbar's analyzer filter.
-        // Source-marked reports (deepsec / codex-security /
-        // claude-security / piolium) use their tool name; native JSON
-        // dumps use the per-finding `type` (undefined → null, a stable
-        // sentinel for the "no analyzer" bucket). A finding stamped with
-        // its own `source` — a re-imported markdown export that mixed a
-        // product's findings with the analyzer's own runs
-        // (report/src/parse-deepview-md.js) — is that product's.
-        filled._analyzer = filled.source ?? data.source ?? (filled.type ?? null)
+        // Which PRODUCER this finding came from — a `source` marker
+        // (deepsec / codex-security / claude-security / piolium), or
+        // null for the analyzer's own dump, which is DeepView's
+        // (file-display.js PRODUCER_LABELS names that bucket). Its own
+        // marker when it carries one — a re-imported markdown export
+        // that mixed a product's findings with the analyzer's own runs
+        // stamps them per finding (report/src/parse-deepview-md.js),
+        // and such a finding is that product's whatever report it now
+        // sits in — else its report's. The same answer the markdown
+        // writer's `sourceReader` gives (report/src/write-md.js), read
+        // off the finding so the filters don't have to find its report.
+        filled._source = filled.source ?? data.source ?? null
+        // Effective analyzer string for the toolbar's analyzer filter:
+        // the producer when there is one, else the per-finding `type`
+        // of a native dump (undefined → null, a stable sentinel for
+        // the "no analyzer" bucket).
+        filled._analyzer = filled._source ?? (filled.type ?? null)
         if (filled.id && !idToFinding.has(filled.id)) idToFinding.set(filled.id, filled)
         stamped.push(filled)
       }
