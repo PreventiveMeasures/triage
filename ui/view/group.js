@@ -6,6 +6,7 @@ import { SEVERITY_ORDER, displayedSeverity, isRevalidation, isRevalidationRow } 
 // module evaluates first resolves the other's hoisted function
 // declarations by the time anything runs.
 import { matchesRunFilters } from './filters.js'
+import { revalidateKindOf } from '../../report/index.js'
 
 // ID helpers. Internally every `state.reports[].groups[i]` is a
 // Finding[] (single-finding entries are wrapped at ingest, so code
@@ -15,6 +16,88 @@ import { matchesRunFilters } from './filters.js'
 export function tabKey(f) { return f.id ?? String(f._id) }
 export function groupKey(group) { return tabKey(group[0]) }
 export function toGroup(entry) { return Array.isArray(entry) ? entry : [entry] }
+
+// What a dropped duplicate leaves behind on its survivor. Dedup keeps
+// the FIRST copy of a finding it sees (ingest.js) — a load-order
+// accident — so anything the other copy knew and this one doesn't has
+// to move across, or it is gone from the view entirely.
+//
+// The revalidation pass's answer is the case that made this
+// necessary. A report that has been through the pass carries
+// `revalidate` and its reasoning; the analysis it re-examined carries
+// neither; and the two hold the SAME finding under the same id, since
+// a stamp is no part of the id's fingerprint. Whichever report
+// happened to be read first won, so a workspace holding both showed
+// the pass's verdicts or didn't, by load order alone — no stamps on
+// the cards, refuted rows still speaking for their group's
+// confidence, and an outcome dropdown with nothing to offer. Nothing
+// about that is specific to `revalidate`, so this takes any field one
+// copy carries and the other doesn't.
+//
+// GAPS ONLY. Where both copies answer, the survivor's answer stands:
+// two reports that disagree are a question of their own, and
+// first-wins is what the dedup already does with the rest of the
+// finding. `null` counts as no answer — a report is JSON, where a
+// written-out null and an absent key say the same thing.
+//
+// Two kinds of field stay out of it:
+//
+//   * `_`-prefixed ones, which say where a copy CAME FROM — its
+//     report, its producer, its repo fallback — rather than what it
+//     says about the code. The surviving row belongs to the surviving
+//     report and keeps its own;
+//   * the corrected severity, which has a mechanism of its own
+//     (ingest.js recordCorrectedVariant) that keeps BOTH reports'
+//     values as variants. Copying one over the other would settle by
+//     load order the very thing that machinery exists to show.
+//   * `source`, which is provenance too — the public half of it,
+//     stamped per finding by a re-imported export that mixed a
+//     product's findings with the analyzer's own runs. It reads like
+//     any other field but names the copy's PRODUCER, and ingest has
+//     already derived `_source` / `_analyzer` from it by the time a
+//     duplicate is dropped: filling it here would leave the toolbar
+//     calling the row native while a later markdown export called it
+//     the other product's (report/src/write-md.js reads `f.source`
+//     first).
+const KEEPS_ITS_OWN = new Set(['correctedSeverity', 'correctedSeverityReason', 'source'])
+
+// Returns whether the two copies CONFLICTED about the revalidation
+// pass — both answering a `revalidate*` field, differently. Nothing is
+// merged from a conflict (the survivor keeps its own, as everywhere
+// here), but this one is worth reporting rather than settling: two
+// reports disagreeing about what the pass concluded means the view
+// cannot say what it concluded, and ingest.js takes the whole layer
+// off for a set that carries one rather than showing whichever copy
+// happened to load first.
+export function mergeDuplicateFields(survivor, dup) {
+  if (!survivor || !dup || survivor === dup) return false
+  let conflicted = false
+  for (const [key, value] of Object.entries(dup)) {
+    if (key.startsWith('_') || KEEPS_ITS_OWN.has(key)) continue
+    if (value === undefined || value === null) continue
+    // The stamp is compared as the app READS it, not as the file
+    // wrote it: the reader trims and case-folds, and answers "no
+    // stamp" for anything it doesn't recognise (report/src/finding.js
+    // revalidateKindOf). So `confirmed` and ` Confirmed ` agree, and
+    // a value the app can't read is no answer at all — it neither
+    // blocks the other copy's real stamp from landing nor takes the
+    // layer off a whole workspace for a typo.
+    if (key === 'revalidate') {
+      const theirs = revalidateKindOf(dup)
+      if (!theirs) continue
+      const mine = revalidateKindOf(survivor)
+      if (!mine) survivor[key] = value
+      else if (mine !== theirs) conflicted = true
+      continue
+    }
+    const own = survivor[key]
+    if (own === undefined || own === null) { survivor[key] = value; continue }
+    // The pass's prose either side of the stamp, compared past the
+    // whitespace two writers can differ on for the same words.
+    if (key.startsWith('revalidate') && String(own).trim() !== String(value).trim()) conflicted = true
+  }
+  return conflicted
+}
 
 // Per-report ignore is keyed by the source report's filename so an
 // ignore in report A doesn't propagate to the same finding's

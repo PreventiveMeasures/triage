@@ -1582,6 +1582,12 @@ const nullLastCmp = (a, b) => {
   return a.localeCompare(b)
 }
 
+// The revalidation mode a CONFLICT took away, held until the set that
+// carried it is gone (see the conflict branch in renderImpl). Module
+// state rather than `state`: it is this module's bookkeeping between
+// renders, not anything a view persists or a component reads.
+let modeBeforeConflict = null
+
 function renderImpl() {
   mountBundleSourceOverlay()
   // Recompute the active deps dir before any helper consults it
@@ -1607,8 +1613,35 @@ function renderImpl() {
   // dropping those rows is all "off" would ever do (format.js
   // canDropRevalidation). Written only when it actually differs, since
   // this runs on every render and `state` is observed.
-  const canDropLayer = canDropRevalidation(state.reports)
-  if (!canDropLayer && state.showRevalidation === false) state.showRevalidation = true
+  //
+  // A set whose reports CONTRADICT each other about the pass goes the
+  // other way: the layer comes off and stays off. Two copies of one
+  // finding under two different `revalidate*` answers (ingest.js, via
+  // group.js mergeDuplicateFields) means the view cannot say what the
+  // pass concluded — dedup keeps whichever loaded first, so the app
+  // view would be one report's verdicts chosen by an accident of read
+  // order. Better to show the code as written and no switch, than a
+  // verdict that might be the other report's opposite.
+  const conflicted = state.revalidateConflict === true
+  const canDropLayer = !conflicted && canDropRevalidation(state.reports)
+  if (conflicted) {
+    // Remember the mode the conflict takes away, so leaving that set
+    // gives it back. Without it the next report opens in the code
+    // view — its outcome default computed with the layer off — for a
+    // disagreement in a set the reader has already left, and with no
+    // switch on screen while the conflict lasted there was no moment
+    // at which they chose it.
+    if (state.showRevalidation !== false) {
+      modeBeforeConflict = state.showRevalidation
+      state.showRevalidation = false
+    }
+  } else {
+    if (modeBeforeConflict !== null) {
+      state.showRevalidation = modeBeforeConflict
+      modeBeforeConflict = null
+    }
+    if (!canDropLayer && state.showRevalidation === false) state.showRevalidation = true
+  }
   configureRevalidation(state.showRevalidation)
   // Print-button body class is owned by an observer-util autorun (see
   // view/print-btn-visibility.js) — render() must not touch it.

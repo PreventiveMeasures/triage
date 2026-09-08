@@ -142,6 +142,7 @@ export interface State {
   filterRevalidate: string
   filterPartial: string
   showRevalidation: boolean
+  revalidateConflict: boolean
   codePreviews: Set<string>
   filterConfMin: number
   filterConfMax: number
@@ -627,6 +628,14 @@ export const state: State = store<State>({
   // own rows has no ruled-out finding to hand back — render.js forces
   // this back on for both, so it can't stay off with no switch to say so.
   showRevalidation: true,
+  // Set at ingest when two copies of one finding disagree about what
+  // the revalidation pass concluded — the same id under two different
+  // `revalidate*` answers (group.js mergeDuplicateFields). Dedup keeps
+  // whichever loaded first, so with a disagreement in the set the view
+  // cannot say what the pass concluded: render.js takes the layer off
+  // and stops offering the switch rather than showing one copy's
+  // verdicts as if they were settled. Cleared with `state.reports`.
+  revalidateConflict: false,
   // Which source previews are open — the `</>` beside a finding's code
   // links, keyed `<tabKey>\0<path>\0<line>` (render-finding.js
   // codePreviewKey). A Set rather than one open at a time: the

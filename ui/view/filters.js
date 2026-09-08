@@ -1,5 +1,5 @@
 import { state } from '#client/index.js'
-import { SEVERITY_ORDER, activeRevalidateKinds, displayedSeverity, findingText, isModule, prettyModel, revalidateKind, voidsConfidence } from './format.js'
+import { SEVERITY_ORDER, activeRevalidateKinds, displayedSeverity, findingText, isModule, isRuledOut, prettyModel, revalidateKind, voidsConfidence } from './format.js'
 import { primaryTab, tabKey } from './group.js'
 
 // Stand-in for the "no analyzer" bucket in the analyzer dropdown.
@@ -372,7 +372,17 @@ export function defaultRevalidateFilter(groups, confMin) {
     for (const f of g) onScreen.add(tabKey(f))
   }
   for (const g of shown) {
-    for (const f of g) if (!onScreen.has(tabKey(f))) return ''
+    for (const f of g) {
+      // A finding the pass RULED OUT is never a cost: refuted or
+      // unreachable, it isn't a finding any more, and leaving it off
+      // is what the reader picked Confirmed for. It has to be exempt
+      // per FINDING rather than per row — a row is on screen for
+      // whichever of its findings answers the filter, so a knocked-
+      // down one riding a row that Confirmed drops would otherwise
+      // hold the range in front on its own account.
+      if (isRuledOut(f)) continue
+      if (!onScreen.has(tabKey(f))) return ''
+    }
   }
   return 'confirmed'
 }
