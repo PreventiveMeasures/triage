@@ -33,7 +33,7 @@ if (!globalThis[slotKey]) {
 }
 
 const { state } = await import('../client/state.ts')
-const { applyFilters, applyOpeningFilters, defaultConfidenceFloor, defaultRevalidateFilter, filterRevalidateKind, matchesFilters } = await import('../ui/view/filters.js')
+const { applyFilters, applyOpeningFilters, confidenceOnScale, defaultConfidenceFloor, defaultRevalidateFilter, filterRevalidateKind, matchesFilters, rangeApplies } = await import('../ui/view/filters.js')
 const { getMergedGroups, getShownGroups, sortTabs } = await import('../ui/view/group.js')
 const {
   PARTIAL_MODES, REVALIDATE_FILTERS, REVALIDATE_KINDS, activeRevalidateKinds,
@@ -851,6 +851,88 @@ describe('an analysis and its revalidation, loaded together', () => {
       opensOn([[[pass('4'), pass('7'), scored('1'), scored('2'), scored('3'), scored('5'), scored('6')]], []], []),
       { rows: [['4', '7', '1', '2', '3', '5', '6']], outcome: 'confirmed' },
     )
+  })
+})
+
+// Where a finding sits on the 0—10 confidence scale, and whether that
+// scale is a live control at all. An import carries no confidence
+// because its producer emits none, not because anyone was unsure — so
+// it rides the top of the scale instead of taking the scale away from
+// everyone else, which is what it used to do.
+describe('the confidence scale', () => {
+  beforeEach(reset)
+
+  const imported = (id, extra = {}) => makeFinding(id, { _source: 'claude-security', ...extra })
+
+  it('places a finding, or says it has no place', () => {
+    assert.equal(confidenceOnScale(makeFinding('A', { confidence: 3 })), 3)
+    assert.equal(confidenceOnScale(makeFinding('A', { confidence: 0 })), 0)
+    // `critical: true` — the boolean, not the severity tier.
+    assert.equal(confidenceOnScale(makeFinding('A', { critical: true })), 10)
+    assert.equal(confidenceOnScale(makeFinding('A', { severity: 'critical' })), undefined)
+    // An import rides the top of the scale.
+    assert.equal(confidenceOnScale(imported('A')), 10)
+    // …but its own score wins where it has one (DeepSec reads them).
+    assert.equal(confidenceOnScale(imported('A', { confidence: 4 })), 4)
+    // The analyzer's own unscored finding has no place at all.
+    assert.equal(confidenceOnScale(makeFinding('A')), undefined)
+  })
+
+  it('rides the range like a 10', () => {
+    const shown = (f, min, max) => { state.filterConfMin = min; state.filterConfMax = max; return matchesFilters(f) }
+    for (const f of [imported('A'), makeFinding('B', { critical: true })]) {
+      assert.equal(shown(f, 8, 10), true, `8—10 ${f.id}`)
+      assert.equal(shown(f, 2, 10), true, `2—10 ${f.id}`)
+      assert.equal(shown(f, 0, 5), false, `0—5 ${f.id}`)
+      assert.equal(shown(f, 7, 9), false, `7—9 ${f.id}`)
+    }
+    // The analyzer's own unscored finding shows only with the floor
+    // down at 0, as before.
+    const plain = makeFinding('C')
+    assert.equal(shown(plain, 0, 10), true)
+    assert.equal(shown(plain, 1, 10), false)
+  })
+
+  // The four cases the toolbar has to tell apart.
+  it('is a live control only where the analyzer put something on it', () => {
+    const scored = makeFinding('D', { confidence: 9 })
+    // 1. Nothing on the scale at all — imports only. No range: every
+    //    row is a 10, and a range over one value says nothing.
+    assert.equal(rangeApplies([[imported('C1')], [imported('C2')]]), false)
+    // 4. An import beside the analyzer's own scored findings does NOT
+    //    take the range away — this is the failure mode: it used to,
+    //    which left the range at 0—10 filtering nothing.
+    assert.equal(rangeApplies([[scored], [imported('C1')]]), true)
+    // 3. An analyzer finding with no confidence and no `critical`
+    //    still disables it, import or no import.
+    assert.equal(rangeApplies([[scored], [makeFinding('E')]]), false)
+    assert.equal(rangeApplies([[scored], [imported('C1')], [makeFinding('E')]]), false)
+    // …unless it is flagged critical, which stands in for a score.
+    assert.equal(rangeApplies([[scored], [makeFinding('E', { critical: true })]]), true)
+    // A set the analyzer only ever flagged critical still has a
+    // scale — that flag is the analyzer placing the finding on it.
+    assert.equal(rangeApplies([[makeFinding('E', { critical: true })]]), true)
+    assert.equal(rangeApplies([]), false)
+  })
+
+  // The reported failure, end to end through the opening question: a
+  // Claude Security import disabled the range, so the floor stopped
+  // running, so a confidence-2 row the pass never reached was on
+  // screen, so Confirmed was held off for hiding it.
+  it('does not let an import hold a workspace off Confirmed', () => {
+    const groups = [
+      [makeFinding('4', { confidence: 9, revalidate: 'revalidation' }), makeFinding('1', { confidence: 9 })],
+      [makeFinding('2', { confidence: 2 })],
+      [imported('C1')],
+    ]
+    const floor = defaultConfidenceFloor(groups)
+    assert.ok(floor > 2, `floor ${floor} has to leave the confidence-2 row off`)
+    assert.equal(defaultRevalidateFilter(groups, floor), 'confirmed')
+    // And with the outcome in front, the import is on screen with the
+    // revalidated row — the range is what would have hidden it.
+    state.filterConfMin = floor
+    state.filterRevalidate = 'confirmed'
+    assert.deepEqual(applyFilters(groups).map((g) => g[0].id).toSorted(), ['4', 'C1'])
   })
 })
 
