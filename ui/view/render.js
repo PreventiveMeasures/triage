@@ -1607,8 +1607,22 @@ function renderImpl() {
   // dropping those rows is all "off" would ever do (format.js
   // canDropRevalidation). Written only when it actually differs, since
   // this runs on every render and `state` is observed.
-  const canDropLayer = canDropRevalidation(state.reports)
-  if (!canDropLayer && state.showRevalidation === false) state.showRevalidation = true
+  //
+  // A set whose reports CONTRADICT each other about the pass goes the
+  // other way: the layer comes off and stays off. Two copies of one
+  // finding under two different `revalidate*` answers (ingest.js, via
+  // group.js mergeDuplicateFields) means the view cannot say what the
+  // pass concluded — dedup keeps whichever loaded first, so the app
+  // view would be one report's verdicts chosen by an accident of read
+  // order. Better to show the code as written and no switch, than a
+  // verdict that might be the other report's opposite.
+  const conflicted = state.revalidateConflict === true
+  const canDropLayer = !conflicted && canDropRevalidation(state.reports)
+  if (conflicted) {
+    if (state.showRevalidation !== false) state.showRevalidation = false
+  } else if (!canDropLayer && state.showRevalidation === false) {
+    state.showRevalidation = true
+  }
   configureRevalidation(state.showRevalidation)
   // Print-button body class is owned by an observer-util autorun (see
   // view/print-btn-visibility.js) — render() must not touch it.

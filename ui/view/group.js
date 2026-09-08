@@ -16,6 +16,62 @@ export function tabKey(f) { return f.id ?? String(f._id) }
 export function groupKey(group) { return tabKey(group[0]) }
 export function toGroup(entry) { return Array.isArray(entry) ? entry : [entry] }
 
+// What a dropped duplicate leaves behind on its survivor. Dedup keeps
+// the FIRST copy of a finding it sees (ingest.js) — a load-order
+// accident — so anything the other copy knew and this one doesn't has
+// to move across, or it is gone from the view entirely.
+//
+// The revalidation pass's answer is the case that made this
+// necessary. A report that has been through the pass carries
+// `revalidate` and its reasoning; the analysis it re-examined carries
+// neither; and the two hold the SAME finding under the same id, since
+// a stamp is no part of the id's fingerprint. Whichever report
+// happened to be read first won, so a workspace holding both showed
+// the pass's verdicts or didn't, by load order alone — no stamps on
+// the cards, refuted rows still speaking for their group's
+// confidence, and an outcome dropdown with nothing to offer. Nothing
+// about that is specific to `revalidate`, so this takes any field one
+// copy carries and the other doesn't.
+//
+// GAPS ONLY. Where both copies answer, the survivor's answer stands:
+// two reports that disagree are a question of their own, and
+// first-wins is what the dedup already does with the rest of the
+// finding. `null` counts as no answer — a report is JSON, where a
+// written-out null and an absent key say the same thing.
+//
+// Two kinds of field stay out of it:
+//
+//   * `_`-prefixed ones, which say where a copy CAME FROM — its
+//     report, its producer, its repo fallback — rather than what it
+//     says about the code. The surviving row belongs to the surviving
+//     report and keeps its own;
+//   * the corrected severity, which has a mechanism of its own
+//     (ingest.js recordCorrectedVariant) that keeps BOTH reports'
+//     values as variants. Copying one over the other would settle by
+//     load order the very thing that machinery exists to show.
+const KEEPS_ITS_OWN = new Set(['correctedSeverity', 'correctedSeverityReason'])
+
+// Returns whether the two copies CONFLICTED about the revalidation
+// pass — both answering a `revalidate*` field, differently. Nothing is
+// merged from a conflict (the survivor keeps its own, as everywhere
+// here), but this one is worth reporting rather than settling: two
+// reports disagreeing about what the pass concluded means the view
+// cannot say what it concluded, and ingest.js takes the whole layer
+// off for a set that carries one rather than showing whichever copy
+// happened to load first.
+export function mergeDuplicateFields(survivor, dup) {
+  if (!survivor || !dup || survivor === dup) return false
+  let conflicted = false
+  for (const [key, value] of Object.entries(dup)) {
+    if (key.startsWith('_') || KEEPS_ITS_OWN.has(key)) continue
+    if (value === undefined || value === null) continue
+    const own = survivor[key]
+    if (own === undefined || own === null) { survivor[key] = value; continue }
+    if (own !== value && key.startsWith('revalidate')) conflicted = true
+  }
+  return conflicted
+}
+
 // Per-report ignore is keyed by the source report's filename so an
 // ignore in report A doesn't propagate to the same finding's
 // appearance in report B. The reportName comes from `f._reportName`,
