@@ -445,12 +445,19 @@ describe('revalidate filter — the toolbar dropdown', () => {
       assert.equal(defaultRevalidateFilter(refuted, 0), '')
       const unknown = [[makeFinding('A', { confidence: 9, revalidate: 'unknown' })]]
       assert.equal(defaultRevalidateFilter(unknown, 8), '')
-      // A refuted set with one surviving finding does open on it.
+      // A refuted set with one surviving finding: whether the
+      // knocked-down row is a LOSS is the floor's answer, not a rule
+      // of its own. It reads as confidence 0 (voidsConfidence), so any
+      // floor above 0 leaves it off the range and Confirmed costs
+      // nothing by leaving it off too...
       const mixed = [
         [makeFinding('A', { confidence: 9, revalidate: 'refuted' })],
         [makeFinding('B', { confidence: 9, revalidate: 'confirmed' })],
       ]
-      assert.equal(defaultRevalidateFilter(mixed, 0), 'confirmed')
+      assert.equal(defaultRevalidateFilter(mixed, 8), 'confirmed')
+      // ...while at floor 0 the range hides nothing, so that row IS on
+      // screen and Confirmed would take it away.
+      assert.equal(defaultRevalidateFilter(mixed, 0), '')
     })
 
     // Two reports over the same code — an analysis, and a
@@ -477,31 +484,40 @@ describe('revalidate filter — the toolbar dropdown', () => {
     it('falls back to the range for a row the pass never reached', () => {
       const reached = [pass('4', { confidence: 9 }), stamped('1', { confidence: 9 })]
       assert.equal(defaultRevalidateFilter([reached, [makeFinding('9', { confidence: 9 })]], 8), '')
-      // …including — and this is the case a floor alone gets wrong —
-      // one whose issue carries no confidence at all. The range hides
-      // it above 0 for want of an answer, not because it has one.
-      assert.equal(defaultRevalidateFilter([reached, [makeFinding('9')]], 8), '')
-      // A row where every issue IS scored and none of them clears the
-      // floor is one the range really does leave off, so Confirmed
-      // costs nothing by leaving it off too.
+      // A row the range leaves off costs nothing to leave off — every
+      // issue in it scored, none of them clearing the floor.
       assert.equal(defaultRevalidateFilter([reached, [makeFinding('9', { confidence: 2 })]], 8), 'confirmed')
+      assert.equal(defaultRevalidateFilter([reached, [makeFinding('9')]], 8), 'confirmed')
+      // But a row shows in FULL, so a visible one carries its unscored
+      // members onto the screen with it — and those are findings
+      // Confirmed can lose. This is the row-vs-finding distinction:
+      // the row is on screen for its scored issue, the unscored one is
+      // on screen with it, and Confirmed takes both away.
+      const unscoredRider = [makeFinding('9', { confidence: 9 }), makeFinding('10')]
+      assert.equal(defaultRevalidateFilter([reached, unscoredRider], 8), '')
     })
 
-    // The rows the pass knocked down are what Confirmed is FOR, and a
-    // revalidation report is mostly made of them.
-    it('does not count a row the pass ruled out as a loss', () => {
+    // The rows the pass knocked down are what Confirmed is FOR — but
+    // that isn't a rule of its own here. They read as confidence 0, so
+    // the floor takes them off the range and the comparison never sees
+    // them; only a floor of 0, which hides nothing, puts them back on
+    // screen for Confirmed to lose.
+    it('lets the floor decide whether a knocked-down row is a loss', () => {
       const groups = [
         [stamped('A', { confidence: 9 })],
         [makeFinding('B', { confidence: 9, revalidate: 'refuted' })],
         [makeFinding('C', { confidence: 9, revalidate: 'unreachable' })],
       ]
-      assert.equal(defaultRevalidateFilter(groups, 0), 'confirmed')
-      // A row is only ruled out when ALL of it is: an unjudged issue
-      // sharing the row is still a loss.
+      assert.equal(defaultRevalidateFilter(groups, 8), 'confirmed')
+      assert.equal(defaultRevalidateFilter(groups, 0), '')
+      // A knocked-down row sharing with an unjudged issue is on screen
+      // whatever the floor — the unjudged issue carries it — so
+      // Confirmed loses that issue either way.
       const shared = [
         [stamped('A', { confidence: 9 })],
         [makeFinding('B', { confidence: 9, revalidate: 'refuted' }), makeFinding('C', { confidence: 9 })],
       ]
+      assert.equal(defaultRevalidateFilter(shared, 8), '')
       assert.equal(defaultRevalidateFilter(shared, 0), '')
     })
 
@@ -640,7 +656,6 @@ describe('the findings the pass never saw', () => {
   it('opens a mixed workspace on Confirmed whichever member loads first', () => {
     const revalidated = [
       [makeFinding('D1', { confidence: 9, revalidate: 'confirmed' }), makeFinding('D1r', { confidence: 9, revalidate: 'revalidation' })],
-      [makeFinding('D2', { confidence: 8, revalidate: 'refuted' })],
     ]
     // A Claude Security import carries no confidence of its own
     // (report/src/parse-md.js reads none) and no stamp.
@@ -683,6 +698,83 @@ describe('the findings the pass never saw', () => {
       [imported('B', { confidence: 9 })],
     ]
     assert.equal(defaultRevalidateFilter(refuted, 0), '')
+  })
+})
+
+// An analysis and the revalidation of it, loaded together — the
+// workspace shape the outcome default is really about. The
+// revalidation report carries the analysis's findings again plus the
+// pass's own rows, so ingest dedups the copies and records a merge
+// tying each pass row back to the row it belongs with (ingest.js).
+// The view is that merged result, and it is what decides what the set
+// opens on (switchToWorkspace).
+//
+// Both report shapes and both load orders are pinned here. They were
+// checked end to end against a real build in a browser — toolbar on
+// Confirmed, every row on screen — and this is that check kept where
+// it can run.
+describe('an analysis and its revalidation, loaded together', () => {
+  beforeEach(reset)
+
+  const scored = (id, extra = {}) => makeFinding(id, { confidence: 9, ...extra })
+  const pass = (id) => scored(id, { revalidate: 'revalidation' })
+
+  // One load: `reports` as ingest leaves them — the second one keeps
+  // only the members the first didn't already carry — and `merges` as
+  // it records them. Then the question switchToWorkspace asks once
+  // every member is in.
+  const opensOn = (reports, merges) => {
+    const savedReports = state.reports
+    const savedMerges = state.workspaceMerges
+    try {
+      state.reports = reports.map((groups) => ({ groups }))
+      state.workspaceMerges = merges.map((ids) => new Set(ids))
+      const merged = getMergedGroups()
+      applyOpeningFilters(merged)
+      return { rows: merged.map((g) => g.map((f) => f.id)), outcome: state.filterRevalidate }
+    } finally {
+      state.reports = savedReports
+      state.workspaceMerges = savedMerges
+    }
+  }
+
+  // The revalidation carries a pass row per row: [[4,1,2,3],[7,5,6]]
+  // against an analysis of [[1,2,3],[5,6]].
+  it('opens on Confirmed with a pass row per row', () => {
+    // Analysis first: its findings are already loaded, so the
+    // revalidation contributes only its pass rows, each tied back by a
+    // merge.
+    assert.deepEqual(
+      opensOn(
+        [[[scored('1'), scored('2'), scored('3')], [scored('5'), scored('6')]], [[pass('4')], [pass('7')]]],
+        [['4', '1', '2', '3'], ['7', '5', '6']],
+      ),
+      { rows: [['4', '1', '2', '3'], ['7', '5', '6']], outcome: 'confirmed' },
+    )
+    // Revalidation first: the analysis is wholly a duplicate of what
+    // is loaded and contributes nothing, so there is nothing to merge.
+    assert.deepEqual(
+      opensOn([[[pass('4'), scored('1'), scored('2'), scored('3')], [pass('7'), scored('5'), scored('6')]], []], []),
+      { rows: [['4', '1', '2', '3'], ['7', '5', '6']], outcome: 'confirmed' },
+    )
+  })
+
+  // The revalidation puts the lot in ONE row —
+  // [[4,7,1,2,3,5,6]] — merging two of the analysis's rows. Every
+  // issue is still on screen under Confirmed, so Confirmed still
+  // leads.
+  it('opens on Confirmed when the revalidation merges two rows into one', () => {
+    assert.deepEqual(
+      opensOn(
+        [[[scored('1'), scored('2'), scored('3')], [scored('5'), scored('6')]], [[pass('4'), pass('7')]]],
+        [['4', '7', '1', '2', '3', '5', '6']],
+      ),
+      { rows: [['4', '7', '1', '2', '3', '5', '6']], outcome: 'confirmed' },
+    )
+    assert.deepEqual(
+      opensOn([[[pass('4'), pass('7'), scored('1'), scored('2'), scored('3'), scored('5'), scored('6')]], []], []),
+      { rows: [['4', '7', '1', '2', '3', '5', '6']], outcome: 'confirmed' },
+    )
   })
 })
 
