@@ -487,8 +487,15 @@ describe('revalidate filter — the toolbar dropdown', () => {
       // A row the range leaves off costs nothing to leave off — every
       // issue in it scored, none of them clearing the floor.
       assert.equal(defaultRevalidateFilter([reached, [makeFinding('9', { confidence: 2 })]], 8), 'confirmed')
-      assert.equal(defaultRevalidateFilter([reached, [makeFinding('9')]], 8), 'confirmed')
-      // But a row shows in FULL, so a visible one carries its unscored
+      // An UNSCORED issue is never one of those: it disables the range
+      // for the whole set (render.js hasAnyConfidence), so the floor
+      // that would have hidden it never runs and its row is on screen.
+      assert.equal(defaultRevalidateFilter([reached, [makeFinding('9')]], 8), '')
+      // `critical: true` stands in for a score, so it doesn't disable
+      // anything — and it clears any floor, so its row is on screen
+      // for Confirmed to lose.
+      assert.equal(defaultRevalidateFilter([reached, [makeFinding('9', { critical: true })]], 8), '')
+      // A row shows in FULL, so a visible one carries its unscored
       // members onto the screen with it — and those are findings
       // Confirmed can lose. This is the row-vs-finding distinction:
       // the row is on screen for its scored issue, the unscored one is
@@ -519,6 +526,30 @@ describe('revalidate filter — the toolbar dropdown', () => {
       ]
       assert.equal(defaultRevalidateFilter(shared, 8), '')
       assert.equal(defaultRevalidateFilter(shared, 0), '')
+    })
+
+    // The range is a whole-set control: one unscored finding and
+    // render.js disables it and resets the bounds, so the auto-tuned
+    // floor never runs and every row is on screen. The comparison has
+    // to be made against THAT screen, not against a floor the view is
+    // about to throw away.
+    it('measures against the floor the view will really apply', () => {
+      const reached = [pass('4', { confidence: 9 }), stamped('1', { confidence: 9 })]
+      // Below the floor, so not a loss — while the floor still runs.
+      const low = [makeFinding('9', { confidence: 2 })]
+      assert.equal(defaultRevalidateFilter([reached, low], 8), 'confirmed')
+      // Add one unscored finding ANYWHERE and the floor stops running:
+      // the low row is on screen after all, and Confirmed loses it.
+      assert.equal(defaultRevalidateFilter([reached, low, [makeFinding('8')]], 8), '')
+      // The same set with that finding scored keeps the floor, and the
+      // answer with it.
+      assert.equal(defaultRevalidateFilter([reached, low, [makeFinding('8', { confidence: 9, revalidate: 'confirmed' })]], 8), 'confirmed')
+      // An unscored finding inside a row Confirmed SHOWS costs
+      // nothing on its own account — the floor stops running, but that
+      // row is on screen under both. (Only on its own account: the
+      // rows the floor WAS hiding come back with it, which is what the
+      // assertion above is about.)
+      assert.equal(defaultRevalidateFilter([[...reached, makeFinding('2')]], 8), 'confirmed')
     })
 
     it('stays off when the floor leaves nothing on screen', () => {

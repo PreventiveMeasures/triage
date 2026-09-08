@@ -244,6 +244,27 @@ export function filterRevalidateKind(f) {
   return revalidateKind(f) || (f._source ? 'revalidation' : '')
 }
 
+// The floor the default view will REALLY apply. The range is a
+// whole-set control: one finding on screen with no confidence and no
+// `critical: true` and render.js disables it and resets the bounds to
+// 0—10 (hasAnyConfidence there), so the auto-tuned floor never bites
+// and every row is on screen — an unscored finding is not hidden by a
+// filter that isn't running. Measuring the comparison below against a
+// floor the view is about to throw away would be measuring a screen
+// nobody sees.
+//
+// `critical: true` rides the 10 bucket in place of a score
+// (matchesFilters), so it doesn't block the range any more than a
+// number does.
+//
+// render.js asks this of the on-screen bucket and we ask it of the
+// whole set; at open time, before anything is triaged away, they are
+// the same groups.
+function effectiveFloor(groups, confMin) {
+  const scored = groups.every((g) => g.every((f) => f.confidence !== undefined || f.critical === true))
+  return scored ? confMin : 0
+}
+
 // The revalidation outcome a freshly-loaded set should OPEN on, given
 // the confidence floor ingest.js just auto-tuned: `'confirmed'` for a
 // revalidation report, `''` (no outcome) for everything else.
@@ -287,7 +308,7 @@ export function filterRevalidateKind(f) {
 // Pure in its arguments — it reads no state — so ingest.js can call it
 // between writing the floor and the first render.
 export function defaultRevalidateFilter(groups, confMin) {
-  const shown = groups.filter((g) => showsAtConfidence(g, confMin))
+  const shown = groups.filter((g) => showsAtConfidence(g, effectiveFloor(groups, confMin)))
   if (shown.length === 0) return ''
   const kinds = new Set(activeRevalidateKinds('confirmed', ''))
   if (!groups.some((g) => g.some((f) => kinds.has(revalidateKind(f))))) return ''
