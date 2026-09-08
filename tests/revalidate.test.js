@@ -33,7 +33,7 @@ if (!globalThis[slotKey]) {
 }
 
 const { state } = await import('../client/state.ts')
-const { applyFilters, defaultConfidenceFloor, defaultRevalidateFilter, filterRevalidateKind, matchesFilters } = await import('../ui/view/filters.js')
+const { applyFilters, applyOpeningFilters, defaultConfidenceFloor, defaultRevalidateFilter, filterRevalidateKind, matchesFilters } = await import('../ui/view/filters.js')
 const { getMergedGroups, sortTabs } = await import('../ui/view/group.js')
 const {
   PARTIAL_MODES, REVALIDATE_FILTERS, REVALIDATE_KINDS, activeRevalidateKinds,
@@ -574,6 +574,47 @@ describe('the findings the pass never saw', () => {
     // screen, which is the point of the two halves together.
     state.filterRevalidate = 'confirmed'
     assert.deepEqual(applyFilters(groups).map((g) => g[0].id), ['A', 'B'])
+  })
+
+  // The bug this pins: a workspace is ONE view over its reports, and
+  // the question "what does this set open on" has to be asked of the
+  // set. Asked report by report — which is what a load did, on
+  // whichever member came first — a workspace holding a revalidated
+  // report and an imported one answered from the import alone and sat
+  // on the confidence range, with the revalidated report's own answer
+  // never asked for.
+  it('opens a mixed workspace on Confirmed whichever member loads first', () => {
+    const revalidated = [
+      [makeFinding('D1', { confidence: 9, revalidate: 'confirmed' }), makeFinding('D1r', { confidence: 9, revalidate: 'revalidation' })],
+      [makeFinding('D2', { confidence: 8, revalidate: 'refuted' })],
+    ]
+    // A Claude Security import carries no confidence of its own
+    // (report/src/parse-md.js reads none) and no stamp.
+    const claude = [[imported('C1', { _source: 'claude-security' })]]
+    // The interim answer, from the member that happened to load
+    // first: the import alone is not a revalidation report.
+    assert.equal(defaultRevalidateFilter(claude, defaultConfidenceFloor(claude)), '')
+
+    const reports = state.reports
+    const merges = state.workspaceMerges
+    try {
+      for (const order of [[claude, revalidated], [revalidated, claude]]) {
+        state.workspaceMerges = []
+        state.reports = order.map((groups) => ({ groups }))
+        applyOpeningFilters(getMergedGroups())
+        assert.equal(state.filterRevalidate, 'confirmed', JSON.stringify(order[0][0][0].id))
+        // And the outcome really does show the import, which the
+        // range it was sitting on could not: an unscored finding is
+        // below any floor above 0.
+        assert.deepEqual(
+          applyFilters(getMergedGroups()).map((g) => g[0].id).toSorted(),
+          ['C1', 'D1'],
+        )
+      }
+    } finally {
+      state.reports = reports
+      state.workspaceMerges = merges
+    }
   })
 
   // A pass has to have confirmed something ITSELF before the imports

@@ -3,9 +3,9 @@ import { analyzeContent, computeLinkHint, deleteBundle, deleteFile, deleteWorksp
 import { closeWorkspace as closePresence, deleteBundleFromRemote, deleteFromRemote as deletePresence, isInRemoteOrCached, openWorkspace as openPresence, putFile, triageSync } from './client-sync.js'
 import { openImportConflictDialog } from './dialogs/import-conflict-dialog.js'
 import { dropZone, report } from './dom.js'
-import { toGroup } from './group.js'
+import { getMergedGroups, toGroup } from './group.js'
 import { effectiveSeverity } from './format.js'
-import { defaultConfidenceFloor, defaultRevalidateFilter, resetFilters } from './filters.js'
+import { applyOpeningFilters, resetFilters } from './filters.js'
 import { render } from './render.js'
 import { renderSidebar } from './sidebar.js'
 import { cleanupGraph2, graph2 } from './graph/state.js'
@@ -672,6 +672,21 @@ export async function switchToWorkspace(workspaceId) {
   // unreadable. Same teardown as the empty workspace above — otherwise
   // the previous view stays up while the sidebar says we moved.
   if (ingested === 0 && ws.reports.length > 0) showEmptyMainPane()
+  // What the WORKSPACE opens on. The loop above asked this of its
+  // FIRST member (ingestReport's isFirst branch), which is the answer
+  // for a single file and the wrong one for a set: a revalidated
+  // report sitting behind an imported one leaves the whole workspace
+  // on the confidence range, and a floor tuned to one member's
+  // findings gets applied to everyone's. A workspace is one view over
+  // its reports, so ask once more now that they are all in — nothing
+  // has touched the filters since that first member's resetFilters,
+  // so this is still what a fresh load would set, not a user's
+  // selection being overwritten. Re-render: the last ingest painted
+  // with the interim answer.
+  if (ingested > 0) {
+    applyOpeningFilters(getMergedGroups())
+    render()
+  }
   // Open the per-workspace sync session AFTER every report is ingested
   // — it needs a complete view of state.reports to build its
   // workspace-id set. No-op when sync is disabled (no server URL).
@@ -1255,11 +1270,11 @@ async function ingestReport(name, content, gen = null) {
       // What this set opens on: an auto-tuned confidence floor, and
       // then — for a REVALIDATION report, one where every group that
       // floor leaves on screen carries a row the second pass stamped —
-      // Confirmed instead of the range. Both live in filters.js, so
-      // the App switch can ask the same two questions again when it
-      // reshapes the set (events.js).
-      state.filterConfMin = defaultConfidenceFloor(groups)
-      state.filterRevalidate = defaultRevalidateFilter(groups, state.filterConfMin)
+      // Confirmed instead of the range. Over the merged groups, which
+      // for one report differ from its own only where a partial dupe
+      // inside it merged two (getMergedGroups); a workspace asks again
+      // over all of its members once they are in (switchToWorkspace).
+      applyOpeningFilters(getMergedGroups())
     }
     render()
   } catch (err) {
