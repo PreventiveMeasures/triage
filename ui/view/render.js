@@ -1802,23 +1802,36 @@ function renderImpl() {
   // early-continue since a correction is report data, independent of any
   // triage entry.
   let hasCorrectedSeverity = false
-  // …and which values of `revalidate` are present at all, which decide
-  // the outcomes the <revalidate-filter> can offer (one option covers
-  // more than one value — see REVALIDATE_FILTERS). The toolbar drops
-  // the control when nothing reaches an option, so the dropdown never
-  // lists one that filters to nothing. Scanned over the full loaded
-  // set, like the flags above.
-  const revalidateKinds = new Set()
   for (const g of mergedGroups) {
     for (const f of g) {
       if (hasSeverityCorrection(f)) hasCorrectedSeverity = true
-      const kind = revalidateKind(f)
-      if (kind) revalidateKinds.add(kind)
       const e = state.triage.get(tabKey(f))
       if (!e) continue
       if (e.comment) hasComment = true
       if (e.fix) hasFix = true
       if (e.flagged === true) hasFlagged = true
+    }
+  }
+  // Which values of `revalidate` the rows ON SCREEN carry, which decide
+  // the outcomes the <revalidate-filter> can offer (one option covers
+  // more than one value — see REVALIDATE_FILTERS). The toolbar drops
+  // the control when nothing reaches an option, so the dropdown never
+  // lists one that filters to nothing.
+  //
+  // Over `allGroups`, not the whole load — the bucket the reader is in,
+  // like hasAnyConfidence above, and for the same reason: the two are
+  // one control (conf-filter.js), and a control has to be about what is
+  // in front of the reader. It is also what keeps an outcome from
+  // outliving the bucket it was chosen for. The selection is cleared
+  // below when it stops being reachable, so walking into a bucket
+  // nothing in it was ever stamped for hands back the range and the
+  // rows, rather than a list filtered to nothing under a count that
+  // says otherwise.
+  const revalidateKinds = new Set()
+  for (const g of allGroups) {
+    for (const f of g) {
+      const kind = revalidateKind(f)
+      if (kind) revalidateKinds.add(kind)
     }
   }
   // Preserve first-seen order for the type label so "security, correctness"

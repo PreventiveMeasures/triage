@@ -34,7 +34,7 @@ if (!globalThis[slotKey]) {
 
 const { state } = await import('../client/state.ts')
 const { applyFilters, applyOpeningFilters, defaultConfidenceFloor, defaultRevalidateFilter, filterRevalidateKind, matchesFilters } = await import('../ui/view/filters.js')
-const { getMergedGroups, sortTabs } = await import('../ui/view/group.js')
+const { getMergedGroups, getShownGroups, sortTabs } = await import('../ui/view/group.js')
 const {
   PARTIAL_MODES, REVALIDATE_FILTERS, REVALIDATE_KINDS, activeRevalidateKinds,
   canDropRevalidation, configureRevalidation, formatRunMeta, hasRevalidateField,
@@ -788,6 +788,51 @@ describe('an analysis and its revalidation, loaded together', () => {
       opensOn([[[pass('4'), scored('1'), scored('2'), scored('3')], [pass('7'), scored('5'), scored('6')]], []], []),
       { rows: [['4', '1', '2', '3'], ['7', '5', '6']], outcome: 'confirmed' },
     )
+  })
+
+  // A row the reader has already filed away — fixed, invalid, ignored,
+  // deleted — is not on screen, so it is no part of what either face
+  // of the block would show. Asked over the whole loaded set instead,
+  // one old untriaged-looking row held every later load on the range,
+  // however thoroughly the pass had covered what was actually up.
+  it('ignores the rows the reader has triaged away', () => {
+    const savedReports = state.reports
+    const savedMerges = state.workspaceMerges
+    const savedMode = state.viewMode
+    const savedBucket = state.shownTriage
+    try {
+      state.workspaceMerges = []
+      state.viewMode = 'table'
+      state.shownTriage = null
+      state.reports = [{ groups: [
+        [pass('4'), scored('1'), scored('2')],
+        [scored('9')],
+      ] }]
+      // Both rows live: the unstamped one is on screen and Confirmed
+      // would take it away.
+      applyOpeningFilters(getShownGroups())
+      assert.equal(state.filterRevalidate, '')
+      // Filed away, it leaves the live list — and with it the reason
+      // to hold the range in front.
+      state.triage = new Map([['9', { triage: 'fixed' }]])
+      applyOpeningFilters(getShownGroups())
+      assert.equal(state.filterRevalidate, 'confirmed')
+      // Kanban lays every bucket out at once, so there it IS on screen
+      // and the answer goes back.
+      state.viewMode = 'kanban'
+      applyOpeningFilters(getShownGroups())
+      assert.equal(state.filterRevalidate, '')
+      // …as it does for a reader parked in the bucket it went to.
+      state.viewMode = 'table'
+      state.shownTriage = 'fixed'
+      applyOpeningFilters(getShownGroups())
+      assert.equal(state.filterRevalidate, '')
+    } finally {
+      state.reports = savedReports
+      state.workspaceMerges = savedMerges
+      state.viewMode = savedMode
+      state.shownTriage = savedBucket
+    }
   })
 
   // The revalidation puts the lot in ONE row —
