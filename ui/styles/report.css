@@ -74,8 +74,8 @@
        at 1200px — see `toolbar.css`). The header rides the same
        cap so its right edge sits above the toolbar's right edge,
        not far out at the viewport edge where the sync-status badge
-       would otherwise collide with the fixed `<theme-toggle>` /
-       `<print-button>` stack pinned to viewport top-right. */
+       would otherwise collide with the fixed `<theme-toggle>` pinned
+       to the viewport's top-right. */
     max-width: 1200px;
     width: 100%;
     margin-bottom: 1.125rem;
@@ -279,19 +279,19 @@
 
 /* Narrow-viewport guard — below ~1530px the page-head's right edge
    (after the 1200px cap) gets close enough to the fixed
-   `<theme-toggle>` / `<print-button>` stack (right: .5rem, 30px
-   wide) to overlap. Reserve a 56px right gutter so the badge in the
-   h1 keeps clear space for the toggle. The header shrinks; title
+   `<theme-toggle>` (right: .5rem, 30px wide) to overlap. Reserve a
+   56px right gutter so the badge in the h1 keeps clear space for the
+   toggle. The header shrinks; title
    content reflows inside `.page-title` via `flex-wrap`. */
 @media (width <= 1530px) {
   #report header.page-head { padding-right: 56px; box-sizing: border-box; }
 }
 
-/* WCO mode lays the three floating buttons in a horizontal row
-   (theme.css), so the page-head's right-edge clearance grows from
-   one 30px button to a ~109px 3-button strip. Ramp the right
-   padding up as the OS safe-zone right edge (titlebar-area-x +
-   width) approaches the header budget, down to 0 when there's room.
+/* WCO mode moves the toggle up beside the OS controls (theme.css),
+   so the page-head's right-edge clearance is the OS cluster's rather
+   than one button's. Ramp the right padding up as the OS safe-zone
+   right edge (titlebar-area-x + width) approaches the header budget,
+   down to 0 when there's room.
 
    Expressed in the property value, not a media-query threshold,
    because env() inside `@media (… <= calc(env(…)))` has patchy
@@ -309,9 +309,9 @@
        narrow enough that the header drops below 1200px and shrinks
        1:1 with the viewport — an uncapped ramp would push the right
        edge inward on top of that. Tying the cap to cluster_width
-       keeps the badge tracking OS-controls changes; the ~109px
-       button row sits beneath the OS toolbar vertically so it needs
-       no horizontal clearance from the badge.
+       keeps the badge tracking OS-controls changes; the toggle sits
+       beneath the OS toolbar vertically so it needs no horizontal
+       clearance from the badge.
 
    Final: padding = min(cluster_cap, ramp), tuned so ramp == cap
    exactly at the shrink-start point — no stationary gap, no 2x
@@ -380,8 +380,8 @@
   flex-shrink: 0;
 }
 
-/* In WCO the OS controls + floating button row anchor top-right;
-   without this the slide bar runs full width and tucks under both.
+/* In WCO the OS controls anchor top-right; without this the slide bar
+   runs full width and tucks under them.
    Shared --wco-right-toolbar var (theme.css) keeps the inset in
    sync with the seam-cover blob — single source of truth. */
 /* stylelint-disable-next-line media-feature-name-value-no-unknown */
