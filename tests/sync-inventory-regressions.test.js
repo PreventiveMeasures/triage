@@ -99,6 +99,35 @@ it('does not roll inventory backwards on delayed puts and reports recreation to 
   } finally { client.close() }
 })
 
+it('an overlapping older subscription snapshot cannot roll the inventory backwards', async () => {
+  const k = await keys()
+  let consumer
+  const transport = {
+    addConsumer(c) { consumer = c; return { remove() {} } },
+    acquire: () => ({ release() {} }), getNonce: () => 'nonce',
+  }
+  const client = createObjstoreClient({ serverUrl: '', httpOrigin: 'http://127.0.0.1', transport })
+  try {
+    const session = await client.openWorkspace(k, { workspaceId: 'test', workspaceTag: k.workspaceTag, resources: Promise.resolve([]) })
+    await session.list()
+    const changes = []
+    session.onPut((m) => changes.push(['put', m.resourceTag, m.version]))
+    session.onDeleted((m) => changes.push(['delete', m.resourceTag, m.version]))
+    const snapshot = (rows) => consumer.onMessage({ type: 'workspace-subscribed', workspaceTag: k.workspaceTag, resources: rows })
+    // A forced re-subscribe runs as a second concurrent server handler
+    // with its own inventory lookup, so the ack for the earlier, slower
+    // one can arrive last carrying the older snapshot.
+    snapshot([meta('resource', 5)])
+    snapshot([meta('resource', 3)])
+    assert.equal((await session.list())[0].version, 5, 'older snapshot cannot undo a newer one')
+    assert.deepEqual(changes, [['put', 'resource', 5]], 'presence must not see a version rollback')
+    // The retained floor still admits genuine forward progress.
+    snapshot([meta('resource', 6)])
+    assert.equal((await session.list())[0].version, 6, 'a newer snapshot still advances the inventory')
+    assert.deepEqual(changes, [['put', 'resource', 5], ['put', 'resource', 6]])
+  } finally { client.close() }
+})
+
 it('reconnect snapshots and delayed puts cannot lower the fetch rollback watermark', async (t) => {
   const k = await keys()
   const resourceTag = await computeResourceTag(k.tagKey, 'report.md')

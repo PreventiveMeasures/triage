@@ -457,8 +457,18 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
     state.inventorySeeded = true
     state.inventory.clear()
     for (const m of resources) {
-      state.inventory.set(m.resourceTag, { version: m.version, incarnation: m.incarnation, contentLength: m.contentLength })
-      noteVersion(state, m.resourceTag, m.incarnation, m.version)
+      // Two forced subscribes on one socket run as concurrent server
+      // handlers with independent inventory lookups, so an older
+      // snapshot can land after a newer one. Keep the newer entry for
+      // the same incarnation rather than rolling the tag back — the
+      // same rule the `objstore-put` broadcast path applies, and the
+      // one `seenVersions` already enforces for FETCH freshness. A new
+      // incarnation is a fresh lineage and always wins.
+      const prev = previous.get(m.resourceTag)
+      const stale = prev !== undefined && prev.incarnation === m.incarnation && prev.version > m.version
+      const entry = stale ? prev : { version: m.version, incarnation: m.incarnation, contentLength: m.contentLength }
+      state.inventory.set(m.resourceTag, entry)
+      noteVersion(state, m.resourceTag, entry.incarnation, entry.version)
     }
     state.resolveListed()
     if (!notifyChanges) return
