@@ -1399,11 +1399,58 @@ span.evidence-ref:not([role]) { color: var(--muted); }
   }
   .marks { display: none !important; }
   .tabs { display: none !important; }
-  .tab-body { display: grid !important; }
+  /* Each report of the finding is one block, and a block is where a
+     page should break when the card has to. Without this the seam
+     between two reports is worth no more to the fragmenter than any
+     line inside the second one, and a card of two reports came apart
+     mid-report; with it, the appealing break is the one between them
+     (the card's own `break-inside: avoid` still decides WHETHER to
+     break — this only steers where).
+
+     It answers to the same property as the card, because a box the
+     fragmenter is told to keep whole is one it will move to a fresh
+     page before it splits — and for the card that opens the report,
+     moving is the thing that strands the header (styles/print.css).
+     Lifting the card alone would leave this to hold it back.
+
+     A card of several reports doesn't need the lifting and is worse
+     for it: the cases are break points of their own, so the opening
+     card can give page one its first case and carry the rest over.
+     Left liftable, it fills the page to the line — which is how the
+     "2 of 2" label came to head a page whose case starts on the
+     next one. */
+  .tab-body { display: grid !important; break-inside: var(--finding-print-break, avoid); }
+  :host(.multi-case) .tab-body { break-inside: avoid; }
   .tab-body + .tab-body {
     margin-top: .5rem; padding-top: .5rem;
     border-top: 1px dashed #999;
   }
+
+  /* Evidence prints LAST, whatever order the report wrote it in. On
+     screen it sits where the narrative cites it, folded shut behind
+     its summary; paper has no fold (see the `details` rule below), so
+     printed in place a list of thirty citations pushes the finding's
+     impact and recommendation pages away from the finding. Ordering
+     needs a flex line to act on, hence the column: `order` on the
+     evidence alone would do nothing to a block container.
+     `flex-shrink: 0` keeps the blocks at their content height —
+     a flex item's default shrink would squeeze them.
+     Every other block is unbreakable, which leaves the seam ABOVE
+     the evidence the most appealing place to split the finding: a
+     card too tall for the page opens with what it found and starts
+     its citations on the next page, instead of tearing the narrative
+     in half. The list breaks between citations, never inside one. */
+  .finding-body {
+    display: flex; flex-direction: column;
+    & > * { flex-shrink: 0; }
+    & > :not(.evidence) { break-inside: avoid; }
+  }
+  .evidence { order: 99; }
+  /* Same for the list's own heading — with the break the fragmenter
+     now prefers sitting right above it, "Evidence (38)" is the line
+     most likely to be left behind at the foot of a page. */
+  .evidence > summary { break-after: avoid; }
+  .evidence-list > li { break-inside: avoid; }
   /* On screen the .flat-group-loc header stands in for the in-body
      .line-row (file/line/meta), so :host([in-group]) suppresses the
      duplicate. In print with duplicates (.multi-case) every tab body
@@ -1427,6 +1474,13 @@ span.evidence-ref:not([role]) { color: var(--muted); }
   .print-case-label {
     display: block;
     grid-column: 1 / -1;
+    /* Which report this is, so it belongs to the report below it —
+       said here for the engines that read it on a grid item. Chrome
+       is not one of them (it honours `break-inside` on the tracks and
+       drops this), so what actually keeps the label with its case
+       there is the `break-inside: avoid` the tab body above keeps for
+       a multi-report card. */
+    break-after: avoid;
     font-size: .65rem; font-weight: 600; color: #555;
     background: #eee;
     padding: .1rem .35rem;
