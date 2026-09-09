@@ -615,9 +615,15 @@ a { color: var(--accent); text-decoration: none; }
 
   /* Anchor the toggle just under the OS controls strip. It is the
      only fixed corner control left — print and download moved into
-     the toolbar — so there is no row of offsets to cascade any more. */
+     the toolbar — so there is no row of offsets to cascade any more.
+
+     The 33px is a FLOOR, not just a fallback: the env() is defined in
+     this mode, so a host that reports a zero-height titlebar area (the
+     same case `.sidebar-header`'s `min-height` guards with a 0
+     fallback) would put the toggle inside the strip the OS paints its
+     controls on, where the window drag swallows every click on it. */
   theme-toggle {
-    top: calc(env(titlebar-area-height, 33px) + .35rem);
+    top: calc(max(env(titlebar-area-height, 33px), 33px) + .35rem);
     right: .5rem;
   }
 

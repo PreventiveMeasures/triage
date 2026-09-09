@@ -65,6 +65,21 @@
 }
 .edit-btn:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
 
+/* WCO PWA mode — the page head this chip sits in is part of the
+   window's drag handle (styles/theme.css hands the page background to
+   the OS), and the document's no-drag list cannot reach a control
+   inside this shadow root. Without this the pencil — and the URL field
+   it opens — start a window drag instead of taking the click. */
+/* stylelint-disable-next-line media-feature-name-value-no-unknown */
+@media (display-mode: window-controls-overlay) {
+  .edit-btn,
+  .url-input,
+  input {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+  }
+}
+
 /* Ghost chip — kept in the DOM during edit mode so the host's layout
    footprint matches display mode (h1 flex row stays put).
    `visibility: hidden` keeps the box but suppresses paint, so the old
