@@ -33,6 +33,7 @@ if (!globalThis[slotKey]) {
 }
 
 const { state } = await import('../client/state.ts')
+const { readReport } = await import('../report/index.js')
 const { applyFilters, applyOpeningFilters, confidenceOnScale, defaultConfidenceFloor, defaultRevalidateFilter, filterRevalidateKind, matchesFilters, rangeApplies } = await import('../ui/view/filters.js')
 const { activeTabFor, getMergedGroups, getShownGroups, mergeDuplicateFields, sortTabs } = await import('../ui/view/group.js')
 const {
@@ -687,13 +688,14 @@ describe('revalidate filter — the toolbar dropdown', () => {
 })
 
 // A finding a product's import brought in — Claude Security, Codex
-// Security, DeepSec, Piolium — was never put in front of the
-// revalidation pass, so the pass never ruled it out. It rides
-// `revalidation`, the value that names the pass itself: permanently
-// standing, permanently Confirmed, and carrying no layer for the App
-// switch to take off. That is what keeps a workspace mixing a
-// revalidated report with imported ones from filtering the imports
-// away for lacking a stamp they could never have carried.
+// Security, DeepSec, Piolium — was never put in front of DeepView's
+// revalidation pass, so that pass never ruled it out. Where nothing
+// else judged it either, it rides `revalidation`, the value that names
+// the pass itself: permanently standing, permanently Confirmed, and
+// carrying no layer for the App switch to take off. That is what keeps
+// a workspace mixing a revalidated report with imported ones from
+// filtering the imports away for lacking a stamp they could never have
+// carried — and it stops where the product ran a pass of its own.
 describe('the findings the pass never saw', () => {
   beforeEach(reset)
 
@@ -725,6 +727,28 @@ describe('the findings the pass never saw', () => {
   it('yields to a stamp the row does carry', () => {
     assert.equal(filterRevalidateKind(imported('A', { revalidate: 'refuted' })), 'refuted')
     assert.equal(filterRevalidateKind(imported('B', { revalidate: 'partial' })), 'partial')
+  })
+
+  // And it stands aside for a producer that ran a pass of its own and
+  // wrote down what it concluded, which DeepSec's report does. There
+  // an unstamped row is one the pass did not reach — not one the
+  // report confirmed — and saying otherwise emptied Confirmed of
+  // meaning for exactly the imports that arrive with real verdicts.
+  // `_sourcePass` is ingest.js's answer to "did this producer judge
+  // anything in the document this row came from".
+  it('stands aside where that producer\'s own pass judged something', () => {
+    const judged = (id, extra = {}) => imported(id, { _sourcePass: true, ...extra })
+    assert.equal(filterRevalidateKind(judged('A')), '', 'unstamped: the report never said')
+    assert.equal(filterRevalidateKind(judged('B', { revalidate: 'confirmed' })), 'confirmed')
+    assert.equal(filterRevalidateKind(judged('C', { revalidate: 'refuted' })), 'refuted')
+    // So Confirmed means what it says: the rows that report
+    // confirmed, not every row it shipped.
+    state.filterRevalidate = 'confirmed'
+    assert.equal(matchesFilters(judged('A')), false)
+    assert.equal(matchesFilters(judged('B', { revalidate: 'confirmed' })), true)
+    // A producer whose report carries no pass is untouched — that
+    // stand-in is what keeps a Claude Security import on screen.
+    assert.equal(matchesFilters(imported('D', { _source: 'claude-security' })), true)
   })
 
   it('shows under Confirmed, and under nothing else', () => {
@@ -945,7 +969,9 @@ describe('an analysis and its revalidation, loaded together', () => {
 // scale is a live control at all. An import carries no confidence
 // because its producer emits none, not because anyone was unsure — so
 // it rides the top of the scale instead of taking the scale away from
-// everyone else, which is what it used to do.
+// everyone else, which is what it used to do. Unless the producer DOES
+// rate its findings, as DeepSec does: that number is the finding's own
+// and answers both questions itself.
 describe('the confidence scale', () => {
   beforeEach(reset)
 
@@ -980,12 +1006,20 @@ describe('the confidence scale', () => {
     assert.equal(shown(plain, 1, 10), false)
   })
 
-  // The four cases the toolbar has to tell apart.
-  it('is a live control only where the analyzer put something on it', () => {
+  // The cases the toolbar has to tell apart.
+  it('is a live control only where something scored itself', () => {
     const scored = makeFinding('D', { confidence: 9 })
-    // 1. Nothing on the scale at all — imports only. No range: every
-    //    row is a 10, and a range over one value says nothing.
+    // 1. Nothing on the scale at all — unscored imports only. No
+    //    range: every row is a 10, and a range over one value says
+    //    nothing.
     assert.equal(rangeApplies([[imported('C1')], [imported('C2')]]), false)
+    // 1b. …but a producer that scores its findings establishes the
+    //     scale like the analyzer does. A load of nothing but DeepSec
+    //     is a real range over real numbers, and used to get none.
+    assert.equal(rangeApplies([[imported('C1', { confidence: 6 })], [imported('C2', { confidence: 8 })]]), true)
+    // One scored import is enough, and an unscored one beside it
+    // still rides the top rather than taking the range away.
+    assert.equal(rangeApplies([[imported('C1', { confidence: 4 })], [imported('C2')]]), true)
     // 4. An import beside the analyzer's own scored findings does NOT
     //    take the range away — this is the failure mode: it used to,
     //    which left the range at 0—10 filtering nothing.
@@ -1349,5 +1383,92 @@ describe('the revalidation layer switch', () => {
   it('keeps the layer on by default', () => {
     assert.equal(revalidationShown(), true)
     assert.equal(revalidateKind({ revalidate: 'confirmed' }), 'confirmed')
+  })
+})
+
+// A product that scores its findings and runs a pass of its own — the
+// two halves of this toolbar block, arriving from a producer that is
+// not the analyzer. DeepSec is the one, and the block used to answer
+// both questions by asking whether a row was an import: no range over
+// its numbers, and every row riding Confirmed whatever its report
+// concluded. Driven through the real parser, over findings stamped the
+// way ingest.js stamps them.
+describe('what a DeepSec report opens on', () => {
+  beforeEach(reset)
+
+  // A report in the shape DeepSec's own writer emits
+  // (packages/deepsec/src/commands/report.ts): `counts` findings per
+  // confidence word, each optionally carrying the pass's verdict.
+  const report = (counts, verdicts = {}) => {
+    const blocks = Object.entries(counts).flatMap(([word, n]) => Array.from({ length: n }, (_, i) => [
+      `### ${word} ${i}`, '',
+      `- **File:** \`src/${word}-${i}.js\``,
+      '- **Lines:** 1',
+      `- **Confidence:** ${word}`,
+      ...verdicts[word] ? [`- **Revalidation:** ${verdicts[word]}`, '- **Reasoning:** because.'] : [],
+      '', '---', '',
+    ].join('\n')))
+    return `# Vulnerability Scan Report\n\n## Summary\n\n## HIGH (${blocks.length})\n\n${blocks.join('')}`
+  }
+
+  // The groups the viewer holds: a row each, carrying the marks
+  // ingest.js stamps — its row key, the producer, and whether that
+  // producer's own pass judged anything in this document.
+  const groupsOf = (counts, verdicts) => {
+    const findings = readReport(report(counts, verdicts)).data.findings
+    const judged = findings.some(hasRevalidateStamp)
+    return findings.map((f, i) => [{ ...f, _id: i, _source: 'deepsec', _sourcePass: judged }])
+  }
+
+  // Which confidence words survive the floor a fresh load opens on.
+  const wordsOnScreen = (groups) => {
+    state.filterConfMin = defaultConfidenceFloor(groups)
+    return [...new Set(applyFilters(groups).map((g) => g[0].file.split('/')[1].split('-')[0]))].toSorted()
+  }
+
+  it('is a live control over a load of nothing but DeepSec', () => {
+    // Every row is an import, and every row carries a number its
+    // producer wrote — which is a range, and used to be no range.
+    assert.equal(rangeApplies(groupsOf({ high: 2, medium: 2, low: 2 })), true)
+  })
+
+  it('keeps the mediums where the set is small enough to hold them', () => {
+    const groups = groupsOf({ high: 5, medium: 5, low: 5 })
+    assert.equal(defaultConfidenceFloor(groups), 5)
+    assert.deepEqual(wordsOnScreen(groups), ['high', 'medium'])
+  })
+
+  it('narrows to the highs where it is not', () => {
+    const groups = groupsOf({ high: 20, medium: 20, low: 10 })
+    assert.equal(defaultConfidenceFloor(groups), 7)
+    assert.deepEqual(wordsOnScreen(groups), ['high'])
+  })
+
+  it('opens on the lot where nothing sits under the ladder to hide', () => {
+    const groups = groupsOf({ high: 5, medium: 5 })
+    assert.equal(defaultConfidenceFloor(groups), 0)
+    assert.deepEqual(wordsOnScreen(groups), ['high', 'medium'])
+  })
+
+  // The other face of the block. A report whose pass answered for
+  // every row it kept can lead with the outcome: Confirmed shows what
+  // it confirmed, and the rows it refuted are what the reader picked
+  // Confirmed to be rid of.
+  it('leads with Confirmed where the pass answered for every row', () => {
+    const groups = groupsOf({ high: 2, medium: 1 }, { high: 'confirmed', medium: '~~false positive~~' })
+    assert.equal(defaultRevalidateFilter(groups, defaultConfidenceFloor(groups)), 'confirmed')
+    state.filterRevalidate = 'confirmed'
+    assert.deepEqual(applyFilters(groups).map((g) => g[0].file), ['src/high-0.js', 'src/high-1.js'])
+  })
+
+  // …and where it didn't, the unjudged rows are a cost Confirmed
+  // can't pay: they are not findings the report confirmed, and the
+  // stand-in that used to say they were is what made Confirmed
+  // meaningless for a report carrying real verdicts.
+  it('stays on the range while the pass left rows unjudged', () => {
+    const groups = groupsOf({ high: 2, medium: 1 }, { high: 'confirmed' })
+    assert.equal(defaultRevalidateFilter(groups, defaultConfidenceFloor(groups)), '')
+    state.filterRevalidate = 'confirmed'
+    assert.deepEqual(applyFilters(groups).map((g) => g[0].file), ['src/high-0.js', 'src/high-1.js'])
   })
 })
