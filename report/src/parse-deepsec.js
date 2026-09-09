@@ -17,6 +17,8 @@
 //   - **Lines:** 26, 28
 //   - **Slug:** rule-slug
 //   - **Confidence:** high
+//   - **Revalidation:** confirmed       (only where the pass ran)
+//   - **Reasoning:** what it concluded  (only where the pass ran)
 //
 //   prose body…
 //
@@ -129,6 +131,26 @@ function mapConfidence(s) {
   return CONFIDENCE.get(word(s)) ?? CONFIDENCE.get('medium')
 }
 
+// The verdict of DeepSec's revalidation pass, as the report writer
+// spells it: `confirmed`, `~~false positive~~` struck through in its
+// own hand, and `uncertain` for everything else the pass can answer (a
+// `fixed` or `duplicate` verdict reaches the document under that word
+// too). Onto the app's own outcomes (finding.js REVALIDATE_KINDS),
+// where `refuted` is the one that acts on a number: the range reads a
+// ruled-out row as 0 whatever confidence it carries.
+//
+// Which is why this line belongs to the confidence question rather
+// than beside it. The `Confidence:` above it is the INVESTIGATE pass's
+// self-rating, written before the adversarial pass ever looked at the
+// finding; the verdict is that pass's answer to the same question,
+// and a report saying `high` on one line and `~~false positive~~` on
+// the next is not a finding to put on screen at 8/10.
+const REVALIDATION = new Map([
+  ['confirmed', 'confirmed'],
+  ['falsepositive', 'refuted'],
+  ['uncertain', 'unknown'],
+])
+
 export function parseDeepsecFindings(content) {
   const text = content.replaceAll(/\r\n?/gu, '\n').trim()
   // Format guard — without a single `## SEVERITY (n)` header this isn't
@@ -209,6 +231,18 @@ function parseBlock(block, severity) {
   if (recommendation) finding.recommendation = recommendation.replaceAll('**', '')
   const confidence = mapConfidence(fields.confidence)
   if (confidence !== undefined) finding.confidence = confidence
+  // What the pass concluded, where the report has been through it:
+  // the verdict as an outcome of the app's own, and the reasoning the
+  // writer prints under it as the pass's remark. Read as a pair
+  // because the document writes them as one — a `Reasoning:` line is
+  // the pass's line, not the finding's. First line only, like every
+  // field here; a reasoning that wrapped leaves its remainder in the
+  // prose, where it already was.
+  const revalidate = REVALIDATION.get(word(fields.revalidation))
+  if (revalidate) {
+    finding.revalidate = revalidate
+    if (fields.reasoning) finding.revalidateVerdict = fields.reasoning.replaceAll('**', '')
+  }
   if (fields.slug) finding.slug = fields.slug
   return finding
 }

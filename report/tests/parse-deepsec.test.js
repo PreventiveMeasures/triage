@@ -1,11 +1,13 @@
 // Vercel DeepSec markdown findings parser — `report/src/parse-deepsec.js`.
 // Pure function; covers severity tier mapping, confidence text →
-// numeric mapping, recommendation extraction, and the `## SEVERITY (n)`
-// + `### Title` two-level structure.
+// numeric mapping, the revalidation pass's verdict, recommendation
+// extraction, and the `## SEVERITY (n)` + `### Title` two-level
+// structure.
 
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
+import { deriveFindingId } from '../src/finding-id.js'
 import { parseDeepsecFindings } from '../src/parse-deepsec.js'
 
 const HEADER = [
@@ -107,6 +109,98 @@ describe('parseDeepsecFindings — confidence mapping', () => {
     // `high`.
     assert.equal(confidenceOf('uncertain'), 6)
     assert.equal(confidenceOf('very high'), 6)
+  })
+})
+
+// The same report carries the verdict of DeepSec's second, adversarial
+// pass — its answer to the question the `Confidence:` line above it is
+// the first pass's guess at, made before that pass ever saw the
+// finding.
+describe('parseDeepsecFindings — the revalidation pass', () => {
+  const withVerdict = (verdict, reasoning = 'The route is behind auth.') => build('HIGH (1)', [
+    '### A finding',
+    '',
+    '- **File:** `x.js`',
+    '- **Lines:** 1',
+    '- **Confidence:** high',
+    `- **Revalidation:** ${verdict}`,
+    `- **Reasoning:** ${reasoning}`,
+    '',
+    'prose body.',
+  ].join('\n'))
+
+  const cases = [
+    ['confirmed',          'confirmed'],
+    ['~~false positive~~', 'refuted'],
+    ['uncertain',          'unknown'],
+  ]
+  for (const [text, kind] of cases) {
+    it(`maps the verdict "${text}" → ${kind}`, () => {
+      const f = parseDeepsecFindings(withVerdict(text)).findings[0]
+      assert.equal(f.revalidate, kind)
+      // The verdict leaves the first pass's rating alone: the app is
+      // what reads a ruled-out row as a 0 (ui filters.js
+      // voidsConfidence), and it needs both to do it.
+      assert.equal(f.confidence, 8)
+    })
+  }
+
+  it('carries the reasoning as the pass\'s remark', () => {
+    const f = parseDeepsecFindings(withVerdict('confirmed', 'Reachable from **the** handler.')).findings[0]
+    assert.equal(f.revalidateVerdict, 'Reachable from the handler.')
+    assert.doesNotMatch(f.description, /Reachable from/u)
+  })
+
+  it('leaves both fields off a report the pass never ran over', () => {
+    const md = build('HIGH (1)', '### A finding\n\n- **File:** `x.js`\n- **Lines:** 1\n- **Confidence:** high\n')
+    const f = parseDeepsecFindings(md).findings[0]
+    assert.equal(f.revalidate, undefined)
+    assert.equal(f.revalidateVerdict, undefined)
+  })
+
+  it('ignores a verdict word it does not know, reasoning and all', () => {
+    // Unlike confidence, there is no middle rung to fall back on: an
+    // outcome the app hasn't got is one it can't stamp, and a
+    // reasoning with no verdict over it says nothing.
+    const f = parseDeepsecFindings(withVerdict('mitigated')).findings[0]
+    assert.equal(f.revalidate, undefined)
+    assert.equal(f.revalidateVerdict, undefined)
+  })
+})
+
+// The id a finding keeps is hashed from severity, description and
+// location (finding-id.js) — never from the rating, and never from
+// what the pass said. Reading a field this parser used to drop must
+// not re-key anybody's stored triage, so the same finding has to hash
+// the same with the pass's bullets and without them.
+describe('parseDeepsecFindings — the id survives', () => {
+  const body = (extra) => build('HIGH (1)', [
+    '### A finding',
+    '',
+    '- **File:** `src/x.js`',
+    '- **Lines:** 12',
+    '- **Slug:** sql-injection',
+    '- **Confidence:** high',
+    ...extra,
+    '',
+    'The query is concatenated.',
+    '',
+    '**Recommendation:** parameterize it.',
+  ].join('\n'))
+
+  it('is the same with the pass\'s bullets and without them', async () => {
+    const plain = parseDeepsecFindings(body([])).findings[0]
+    const stamped = parseDeepsecFindings(body([
+      '- **Revalidation:** ~~false positive~~',
+      '- **Reasoning:** The input is validated upstream.',
+    ])).findings[0]
+    assert.equal(stamped.revalidate, 'refuted')
+    // Every field the fingerprint reads, unmoved.
+    assert.equal(stamped.severity, plain.severity)
+    assert.equal(stamped.description, plain.description)
+    assert.equal(stamped.file, plain.file)
+    assert.equal(stamped.line, plain.line)
+    assert.equal(await deriveFindingId(stamped), await deriveFindingId(plain))
   })
 })
 
