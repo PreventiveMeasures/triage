@@ -65,34 +65,48 @@ describe('parseDeepsecFindings — severity tier mapping', () => {
   }
 })
 
+// DeepSec's three self-rated words onto the 0—10 scale the app filters
+// and sorts by. The rungs are where they are for what that scale means
+// here — 8 clears every floor the opening auto-tune can pick, 6 sits
+// on the lowest of them, 4 stays clear of the 0 a withdrawn claim
+// reads as — which parse-deepsec.js sets out in full.
 describe('parseDeepsecFindings — confidence mapping', () => {
+  const confidenceOf = (value) => {
+    const line = value === null ? '' : `- **Confidence:** ${value}\n`
+    const md = build('HIGH (1)', `### A finding\n\n- **File:** \`x.js\`\n- **Lines:** 1\n${line}`)
+    return parseDeepsecFindings(md).findings[0].confidence
+  }
+
   const cases = [
     ['high',   8],
-    ['medium', 5],
-    ['low',    2],
+    ['medium', 6],
+    ['low',    4],
   ]
   for (const [text, numeric] of cases) {
     it(`maps confidence "${text}" → ${numeric}`, () => {
-      const md = build('HIGH (1)',
-        `### A finding\n\n- **File:** \`x.js\`\n- **Lines:** 1\n- **Confidence:** ${text}\n`,
-      )
-      const parsed = parseDeepsecFindings(md)
-      assert.equal(parsed.findings[0].confidence, numeric)
+      assert.equal(confidenceOf(text), numeric)
     })
   }
 
-  it('omits confidence when missing', () => {
-    const md = build('HIGH (1)', '### A finding\n\n- **File:** `x.js`\n- **Lines:** 1\n')
-    const parsed = parseDeepsecFindings(md)
-    assert.equal(parsed.findings[0].confidence, undefined)
+  it('reads the word through whatever punctuation it arrives in', () => {
+    assert.equal(confidenceOf('HIGH'), 8)
+    assert.equal(confidenceOf('`medium`'), 6)
+    assert.equal(confidenceOf('**Low**'), 4)
+    assert.equal(confidenceOf('high.'), 8)
   })
 
-  it('omits confidence when unrecognized', () => {
-    const md = build('HIGH (1)',
-      '### A finding\n\n- **File:** `x.js`\n- **Lines:** 1\n- **Confidence:** uncertain\n',
-    )
-    const parsed = parseDeepsecFindings(md)
-    assert.equal(parsed.findings[0].confidence, undefined)
+  it('omits confidence when the block rated nothing', () => {
+    assert.equal(confidenceOf(null), undefined)
+  })
+
+  it('reads a word the ladder does not know as the middle rung', () => {
+    // NOT dropped: a finding carrying no confidence rides the TOP of
+    // the scale, since an import carries none because its producer
+    // emits none (ui filters.js confidenceOnScale). Dropping a rating
+    // we couldn't read would put it above every finding that said
+    // `high`.
+    assert.equal(confidenceOf('uncertain'), 6)
+    assert.equal(confidenceOf('very high'), 6)
   })
 })
 
