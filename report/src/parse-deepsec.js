@@ -17,6 +17,8 @@
 //   - **Lines:** 26, 28
 //   - **Slug:** rule-slug
 //   - **Confidence:** high
+//   - **Revalidation:** confirmed       (only where the pass ran)
+//   - **Reasoning:** what it concluded  (only where the pass ran)
 //
 //   prose body…
 //
@@ -29,6 +31,10 @@
 //
 //   ## MEDIUM (5)
 //   …
+//
+// The writer is `packages/deepsec/src/commands/report.ts` in
+// vercel-labs/deepsec — the shape above is settled there, and the
+// notes below are checked against it.
 //
 // Returned shape matches the rest of the parser chain:
 //   { type, source: 'deepsec', findings: [...] }
@@ -64,17 +70,86 @@ function mapSeverity(s) {
   }
 }
 
-// Confidence is a textual {low, medium, high} in DeepSec — map onto
-// the 0-10 numeric scale the rest of the UI uses. Roughly thirds:
-// low ~20%, medium ~50%, high ~80%.
+// A field's value reduced to the word it names, whatever punctuation
+// it arrived wrapped in — the writer's own `~~false positive~~`, or
+// the backticks and emphasis a hand-edited document picks up. '' for
+// a field the block didn't carry.
+const word = (s) => String(s ?? '').toLowerCase().replaceAll(/[^a-z]+/gu, '')
+
+// DeepSec rates its own findings `high` / `medium` / `low` — a closed
+// three-word enum (its findings schema validates it) that the report
+// writer prints on every finding. What the words MEAN is nowhere: the
+// investigate prompt asks for one of the three and never says what
+// separates them, DeepSec's docs call it "the agent's self-rated
+// confidence", and nothing in DeepSec reads the value back — it
+// filters, sorts and gates nothing there. So there is no probability
+// to convert; there are three rungs of an ordinal ladder to place on
+// the 0—10 scale this app filters and sorts by, and where they land is
+// settled by what that scale means HERE:
+//
+//   * 0 is where a finding the revalidation pass knocked down reads —
+//     a claim withdrawn (ui filters.js voidsConfidence);
+//   * 10 is "no doubt for a floor to act on", which an import with no
+//     score of its own rides at (confidenceOnScale);
+//   * a fresh load opens on a floor of 6, 7 or 8 — by volume — and
+//     then walks down through any gap that reveals nothing new
+//     (defaultConfidenceFloor).
+//
+// So `high` is 8: the top of a self-rating whose own adversarial
+// second pass still leaves false positives standing is not the app's
+// no-doubt 10, but it clears every floor the tune can pick. `medium`
+// is 6, the lowest of those floors — where the range is a live
+// control over the load, a medium survives a small report's opening
+// view and drops out of a big one's, which is the volume rule the
+// tune exists for. `low` is 4: clear of the 0 that means refuted,
+// because a low-confidence finding is still one the agent chose to
+// report rather than one anybody ruled out, and under every floor the
+// tune can pick, so a fresh load doesn't open on what the producer
+// itself doubted.
+//
+// The even spacing carries as much as the values do — the walk settles
+// in the GAPS, one step under the lowest rung it is keeping: 7 for a
+// report big enough that only the highs fit, 5 for a small one that
+// keeps its mediums too, 0 for one with nothing under the ladder to
+// hide. The 2/5/8 ladder this replaces put medium below every floor
+// the tune can pick and left no gap under 8 for the walk to stop in,
+// so a DeepSec report's mediums were off screen at open whatever its
+// size; and it read low as a 2, next door to the 0 that means the
+// pass withdrew the claim, which is not what a self-rated low says.
+const CONFIDENCE = new Map([['high', 8], ['medium', 6], ['low', 4]])
+
+// The rung a finding's word names. A word the ladder doesn't know
+// reads as the middle rung, for the reason an unrecognized severity
+// tier falls back to medium above: a level DeepSec adds later should
+// neither vanish under the floor nor — which is what scoring it
+// nothing would do — ride the import stand-in at 10, above every
+// finding that said `high`. A block with no `Confidence:` line at all
+// is a document that rated nothing, and there the stand-in is the
+// honest answer, so it keeps no score.
 function mapConfidence(s) {
-  switch ((s || '').toLowerCase()) {
-    case 'high': return 8
-    case 'medium': return 5
-    case 'low': return 2
-    default: return undefined
-  }
+  if (s === undefined) return undefined
+  return CONFIDENCE.get(word(s)) ?? CONFIDENCE.get('medium')
 }
+
+// The verdict of DeepSec's revalidation pass, as the report writer
+// spells it: `confirmed`, `~~false positive~~` struck through in its
+// own hand, and `uncertain` for everything else the pass can answer (a
+// `fixed` or `duplicate` verdict reaches the document under that word
+// too). Onto the app's own outcomes (finding.js REVALIDATE_KINDS),
+// where `refuted` is the one that acts on a number: the range reads a
+// ruled-out row as 0 whatever confidence it carries.
+//
+// Which is why this line belongs to the confidence question rather
+// than beside it. The `Confidence:` above it is the INVESTIGATE pass's
+// self-rating, written before the adversarial pass ever looked at the
+// finding; the verdict is that pass's answer to the same question,
+// and a report saying `high` on one line and `~~false positive~~` on
+// the next is not a finding to put on screen at 8/10.
+const REVALIDATION = new Map([
+  ['confirmed', 'confirmed'],
+  ['falsepositive', 'refuted'],
+  ['uncertain', 'unknown'],
+])
 
 export function parseDeepsecFindings(content) {
   const text = content.replaceAll(/\r\n?/gu, '\n').trim()
@@ -156,6 +231,20 @@ function parseBlock(block, severity) {
   if (recommendation) finding.recommendation = recommendation.replaceAll('**', '')
   const confidence = mapConfidence(fields.confidence)
   if (confidence !== undefined) finding.confidence = confidence
+  // What the pass concluded, where the report has been through it:
+  // the verdict as an outcome of the app's own, the reasoning the
+  // writer prints under it as the pass's remark, and DeepSec named as
+  // whose pass said so. Verdict and reasoning are read as a pair
+  // because the document writes them as one — a `Reasoning:` line is
+  // the pass's line, not the finding's. First line only, like every
+  // field here; a reasoning that wrapped leaves its remainder in the
+  // prose, where it already was.
+  const revalidate = REVALIDATION.get(word(fields.revalidation))
+  if (revalidate) {
+    finding.revalidate = revalidate
+    finding.revalidateSource = 'deepsec'
+    if (fields.reasoning) finding.revalidateVerdict = fields.reasoning.replaceAll('**', '')
+  }
   if (fields.slug) finding.slug = fields.slug
   return finding
 }

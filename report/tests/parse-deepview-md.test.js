@@ -252,6 +252,10 @@ describe('parseDeepviewMarkdown — the facts', () => {
     assert.equal(f.revalidate, 'refuted')
     assert.equal(one({ findings: [finding({ confidence: 0 })] }).confidence, 0)
     assert.equal(one({ findings: [finding({ revalidate: 'revalidation' })] }).revalidate, 'revalidation', 'the pass\'s own row')
+    // And whose pass it was, back off the product's own name.
+    assert.equal(one({ findings: [finding({ revalidate: 'refuted', revalidateSource: 'deepsec' })] }).revalidateSource, 'deepsec')
+    assert.equal(one({ findings: [finding({ revalidate: 'refuted', revalidateSource: 'acme' })] }).revalidateSource, 'acme')
+    assert.equal(one({ findings: [finding({ revalidate: 'refuted' })] }).revalidateSource, undefined)
   })
 
   it('reads the provenance a report attached, under the names it used', () => {

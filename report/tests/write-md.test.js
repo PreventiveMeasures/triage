@@ -337,6 +337,19 @@ describe('writeMarkdown — a finding\'s facts', () => {
     assert.equal(line(writeMarkdown(doc([[finding({ revalidate: 'maybe' })]])), 'Revalidation'), null, 'an unrecognised value is no stamp')
   })
 
+  it('names whose pass a stamp came from, where it wasn\'t the report\'s own', () => {
+    const md = writeMarkdown(doc([[finding({ revalidate: 'refuted', revalidateSource: 'deepsec' })]]))
+    assert.equal(line(md, 'Revalidated by'), 'DeepSec', 'the product, in the words the document spells one with')
+    const acme = writeMarkdown(doc([[finding({ revalidate: 'refuted', revalidateSource: 'acme' })]]))
+    assert.equal(line(acme, 'Revalidated by'), 'acme', 'a key the labels don\'t know prints as itself')
+    const own = writeMarkdown(doc([[finding({ revalidate: 'refuted' })]]))
+    assert.equal(line(own, 'Revalidated by'), null, 'the report\'s own pass needs no naming')
+    const unstamped = writeMarkdown(doc([[finding({ revalidateSource: 'deepsec' })]]))
+    assert.equal(line(unstamped, 'Revalidated by'), null, 'an owner with no verdict under it is no fact')
+    const off = writeMarkdown(doc([[finding({ revalidate: 'refuted', revalidateSource: 'deepsec' })]], { view: { revalidation: false } }))
+    assert.equal(line(off, 'Revalidated by'), null, 'and it goes with the layer')
+  })
+
   it('takes the revalidation layer off with the view', () => {
     const f = finding({ type: 'security', revalidate: 'refuted', revalidateVerdict: 'Not reachable.', revalidateRecommendation: 'Drop it.' })
     const on = writeMarkdown(doc([[f]]))
