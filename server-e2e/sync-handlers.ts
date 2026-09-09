@@ -79,6 +79,7 @@ export type SyncHandlersDeps = {
   // payload budget. Optional: a SQLite deployment passes a no-op.
   publishRevision: (tag: string, revisionId: string) => void
   subscribe: (socket: WebSocket, tag: string) => void
+  pauseBroadcasts: (socket: WebSocket) => () => void
   getNonce: (socket: WebSocket) => string | undefined
   requiresAuth: (socket: WebSocket) => boolean
   // Whether an operator password is configured. The REST save plane's
@@ -348,34 +349,39 @@ export function createSyncHandlers(deps: SyncHandlersDeps): SyncHandlers {
       return
     }
     const tag = msg.workspaceTag
-    subscribe(socket, tag)
-    // Explicit ack — distinguishes "the server processed my subscribe
-    // and registered me as a peer" from "the WebSocket is open". A
-    // client that sent a malformed / bad-sig subscribe never gets this;
-    // a client that did gets one before the chain arrives. Lets the UI
-    // surface a `connecting → online` transition based on real handshake
-    // completion, not just socket state.
-    //
-    // The ack also carries the objstore inventory snapshot: the same
-    // subscribe that registers this socket for objstore-put / -deleted
-    // broadcasts seeds the client's initial inventory in one handshake.
-    // The client keeps it live thereafter from those broadcasts.
-    // Returns [] for a triage-only workspace. A failing inventory
-    // lookup must NOT sink the subscribe — degrade to an empty snapshot
-    // (broadcasts will fill it in) so the ack + chain still go out.
-    let resources: object[] = []
-    try { resources = await objstoreResources(tag) }
-    catch (err) { if (debug) console.warn('subscribe: objstore inventory lookup failed', debugTag(tag), err) }
-    send(socket, { type: 'workspace-subscribed', workspaceTag: tag, resources })
-    // `from` is the last revision id the client claims to have applied —
-    // now a base64url string, not an integer. We send only revisions
-    // after that. Client lying about `from` just means they get a
-    // smaller catch-up — their subsequent saves will reveal stale state
-    // on the usual base-mismatch path. Null / missing → full chain.
-    const fromId = typeof msg.from === 'string' ? msg.from : null
-    const revisions = chainForWire(await chainFrom(handle, tag, fromId))
-    if (debug) console.log(`subscribe ${debugTag(tag)} from=${fromId?.slice(0, 8) ?? 'null'} → chain ${revisions.length}`)
-    send(socket, { type: 'workspace-state', workspaceTag: tag, revisions })
+    const resume = deps.pauseBroadcasts(socket)
+    try {
+      subscribe(socket, tag)
+      // Explicit ack — distinguishes "the server processed my subscribe
+      // and registered me as a peer" from "the WebSocket is open". A
+      // client that sent a malformed / bad-sig subscribe never gets this;
+      // a client that did gets one before the chain arrives. Lets the UI
+      // surface a `connecting → online` transition based on real handshake
+      // completion, not just socket state.
+      //
+      // The ack also carries the objstore inventory snapshot: the same
+      // subscribe that registers this socket for objstore-put / -deleted
+      // broadcasts seeds the client's initial inventory in one handshake.
+      // The client keeps it live thereafter from those broadcasts.
+      // Returns [] for a triage-only workspace. A lookup failure is NOT an
+      // empty inventory: clients interpret absent resources as deletions.
+      // Reconnect to retry the complete handshake on either transport.
+      const resources = await objstoreResources(tag)
+      // `from` is the last revision id the client claims to have applied —
+      // now a base64url string, not an integer. We send only revisions
+      // after that. Client lying about `from` just means they get a
+      // smaller catch-up — their subsequent saves will reveal stale state
+      // on the usual base-mismatch path. Null / missing → full chain.
+      const fromId = typeof msg.from === 'string' ? msg.from : null
+      const revisions = chainForWire(await chainFrom(handle, tag, fromId))
+      if (socket.readyState !== socket.OPEN) return
+      if (debug) console.log(`subscribe ${debugTag(tag)} from=${fromId?.slice(0, 8) ?? 'null'} → chain ${revisions.length}`)
+      send(socket, { type: 'workspace-subscribed', workspaceTag: tag, resources })
+      send(socket, { type: 'workspace-state', workspaceTag: tag, revisions })
+    } catch (err) {
+      if (debug) console.warn('subscribe: snapshot lookup failed', debugTag(tag), err)
+      socket.close(1011, 'subscription unavailable')
+    } finally { resume() }
   }
 
   return { handleSave, handleSaveRest, handleSubscribe, sendSaveError }

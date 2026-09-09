@@ -1,7 +1,7 @@
 import type { State } from '../state.ts'
 import { type SyncHostWorkspace, onSyncHostInstalled } from './host.ts'
 import { RECOVERABLE_SAVE_ERROR_REASONS } from '../../common/save-error-reason.ts'
-import { applyChangeset, changesetEmpty, collectChainConflicts, computeChangeset, statesEqual } from './triage-changeset.ts'
+import { applyChangeset, changesetEmpty, collectChainConflicts, computeChangeset, rebaseLocalState, statesEqual } from './triage-changeset.ts'
 import type { Changeset, Conflict, TriageStateMap } from './triage-changeset.ts'
 import { applyHydrationDecisions, applyToReactiveState, effectiveLocalState, hydrateStateFromBaseState } from './triage-state-projection.ts'
 import { dropPersistedSession, loadAllSessionsResult, loadPersistedSession, mutateAllSessions, onPersistenceDegraded, persistenceDegraded, prunePersistedSessions, setPersistenceDegraded } from './triage-session-store.ts'
@@ -137,6 +137,7 @@ type Session = {
   verifyingKey: Uint8Array<ArrayBuffer> | null
   ids: Set<string>
   baseRevision: string | null
+  recentRevisions: Set<string>
   baseState: TriageStateMap
   savesSinceKeyframe: number
   localState: TriageStateMap
@@ -144,6 +145,8 @@ type Session = {
   pendingSave: boolean
   key: Uint8Array<ArrayBuffer> | null
   encrypting: boolean
+  receiving: boolean
+  generation: number
   subscribed: boolean
   subscribeAcked: boolean
   resyncAttempted: boolean
@@ -563,6 +566,13 @@ function sessionIsLive(session: Session): boolean {
   return sessions.get(session.workspaceId) === session
 }
 
+function rememberRevision(session: Session, id: string): void {
+  session.recentRevisions.add(id)
+  // Covers overlapping catch-up and live broadcasts without retaining the
+  // entire history. Older gaps still use the normal resubscribe path.
+  if (session.recentRevisions.size > 256) session.recentRevisions.delete(session.recentRevisions.values().next().value!)
+}
+
 // Arm the one-shot busy-retry kick. Single timer per session — a
 // second `busy` landing while one is armed is absorbed (the armed
 // fire covers it). The fire re-checks the world before sending:
@@ -706,18 +716,22 @@ function persistSession(target: Session): void {
   // URL, hiding it from `loadPersistedSession` next load. Audit M3
   // (round 1).
   const url = serverUrl
+  const generation = target.generation
+  const snapshot = {
+    serverUrl: url,
+    baseRevision: target.baseRevision,
+    savesSinceKeyframe: target.savesSinceKeyframe ?? 0,
+    baseState: target.baseState,
+  }
   // Fire-and-forget — callers don't await. The lock serializes the
   // RMW; back-to-back calls follow Web Locks FIFO, so the most-recent
   // state for any one workspace wins. Catch the rejection (Web Locks
   // rejects on tab teardown / browser quirks) so this can't leak an
   // unhandledrejection — audit M-3 (round 2).
   mutateAllSessions((all) => {
-    all[target.workspaceId] = {
-      serverUrl: url,
-      baseRevision: target.baseRevision,
-      savesSinceKeyframe: target.savesSinceKeyframe ?? 0,
-      baseState: target.baseState,
-    }
+    if (!sessionIsLive(target) || target.generation !== generation || serverUrl !== url) return false
+    all[target.workspaceId] = snapshot
+    return undefined
   }).catch((err) => { console.warn('Triage sync: persistSession lock failed:', err) })
 }
 
@@ -805,18 +819,21 @@ function send(msg: unknown): boolean {
 // in-band frame on the new-workspace gate (401) or any transport error —
 // idempotent, since a committed save replays to a duplicate-id ack and a
 // stale one to a rebase. WS mode sends in-band, unchanged.
-function dispatchSave(wireMsg: { [k: string]: unknown }): void {
+function dispatchSave(session: Session, wireMsg: { [k: string]: unknown }): void {
   if (!transport.isSse()) { send(wireMsg); return }
-  postSaveRest(wireMsg).then((fallBack) => {
-    if (fallBack) send(wireMsg)
+  const generation = session.generation
+  const pending = session.pending
+  const isCurrent = (): boolean => sessionIsLive(session) && session.generation === generation && session.pending === pending
+  postSaveRest(wireMsg, isCurrent).then((fallBack) => {
+    if (fallBack && isCurrent()) send(wireMsg)
     return null
-  }).catch(() => { send(wireMsg) })
+  }).catch(() => { if (isCurrent()) send(wireMsg) })
 }
 
 // POST the save frame to the REST save plane and map the response into the
 // message path. Returns true when the caller should fall back to the in-band
 // frame (401 new-workspace gate, transport error, or an unexpected status).
-async function postSaveRest(wireMsg: { [k: string]: unknown }): Promise<boolean> {
+async function postSaveRest(wireMsg: { [k: string]: unknown }, isCurrent: () => boolean): Promise<boolean> {
   if (!serverUrl) return true
   let url: string
   try { url = wsUrlToSaveUrl(serverUrl) } catch { return true }
@@ -826,21 +843,25 @@ async function postSaveRest(wireMsg: { [k: string]: unknown }): Promise<boolean>
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(wireMsg),
+      signal: AbortSignal.timeout(30_000),
     })
   } catch { return true }  // offline / network error → in-band (idempotent)
+  if (!isCurrent()) return false
   const tag = wireMsg['workspaceTag']
   const base = (wireMsg['base'] ?? null) as string | null
   if (res.status === 401) return true  // new-workspace gate → in-band (runs the auth flow)
   if (res.ok) {
     let body: { id?: unknown } | null = null
     try { body = await res.json() as { id?: unknown } } catch { return true }
+    if (!isCurrent()) return false
     if (!body || typeof body.id !== 'string') return true
-    onTransportMessage({ type: 'workspace-save-ack', workspaceTag: tag, base, id: body.id })
+    onTransportMessage({ type: 'workspace-save-ack', workspaceTag: tag, base, id: body.id }, isCurrent)
     return false
   }
   if (res.status === 409) {
     let body: { revisions?: unknown } | null = null
     try { body = await res.json() as { revisions?: unknown } } catch { return true }
+    if (!isCurrent()) return false
     const revisions = body && Array.isArray(body.revisions) ? body.revisions : []
     // State FIRST then the typed error — same wire order as the WS stale-base
     // path. A well-formed catch-up clears pending, so the error frame no-ops;
@@ -852,12 +873,12 @@ async function postSaveRest(wireMsg: { [k: string]: unknown }): Promise<boolean>
     // carries no `revisions` and synthesizes the same empty pair, triggering
     // the same reset. Convergent either way: the recovery push only roots an
     // actually-empty chain (server-side null-safe head CAS).
-    onTransportMessage({ type: 'workspace-state', workspaceTag: tag, revisions })
-    onTransportMessage({ type: 'workspace-save-error', workspaceTag: tag, base, reason: 'stale-base' })
+    onTransportMessage({ type: 'workspace-state', workspaceTag: tag, revisions }, isCurrent)
+    onTransportMessage({ type: 'workspace-save-error', workspaceTag: tag, base, reason: 'stale-base' }, isCurrent)
     return false
   }
   if (res.status === 413) {
-    onTransportMessage({ type: 'workspace-save-error', workspaceTag: tag, base, reason: 'too-large' })
+    onTransportMessage({ type: 'workspace-save-error', workspaceTag: tag, base, reason: 'too-large' }, isCurrent)
     return false
   }
   return true  // 400 / 5xx / unexpected → in-band fallback
@@ -873,7 +894,7 @@ async function postSaveRest(wireMsg: { [k: string]: unknown }): Promise<boolean>
 // `baseRevision` returns the gap-filling catch-up chain (same
 // primitive the initial subscribe uses).
 function trySendSubscribe(session: Session, force = false): void {
-  if (!session) return
+  if (!sessionIsLive(session) || !isActive()) return
   const sock = transport.getSocket()
   if (!sock || sock.readyState !== WebSocket.OPEN) return
   if (!force && session.subscribed) return
@@ -891,12 +912,14 @@ function trySendSubscribe(session: Session, force = false): void {
   const startSocket = sock
   const signingKey = session.signingKey
   const workspaceTag = session.workspaceTag
+  const generation = session.generation
   ;(async () => {
     try {
       const signature = await signSubscribePayload(signingKey, workspaceTag, fromBase, startNonce)
       // Bail if the session was removed (closeSession) during the
       // sign await — id lookup is forgery-proof (one entry per id).
       if (sessions.get(session.workspaceId) !== session) return
+      if (session.generation !== generation) return
       // Bail if the captured workspaceTag no longer matches: the
       // privateKey-rotation handler synchronously nulls signing
       // material to poison concurrent IIFEs (audit L2 round-6), but
@@ -930,7 +953,7 @@ function trySendSubscribe(session: Session, force = false): void {
 // its ciphertext. Calls during that window raise pendingSave (like
 // in-flight); the first call's completion drains the queue.
 function trySendSave(session: Session): void {
-  if (!session) return
+  if (!sessionIsLive(session) || !isActive()) return
   // A session in `error` must not auto-retry — a deterministic server
   // reject (e.g. `too-large`) would re-encrypt + re-send on every
   // keystroke, burning CPU/bandwidth and flickering the status
@@ -938,7 +961,7 @@ function trySendSave(session: Session): void {
   // `dismissError()` (after the user shrinks state or the operator
   // lifts the cap).
   if (session.error) return
-  if (session.pending || session.encrypting) {
+  if (session.pending || session.encrypting || session.receiving) {
     session.pendingSave = true
     return
   }
@@ -982,6 +1005,7 @@ function trySendSave(session: Session): void {
   const sessionKey = session.key
   const signingKey = session.signingKey
   const workspaceTag = session.workspaceTag
+  const generation = session.generation
   session.encrypting = true
   ;(async () => {
     try {
@@ -1014,8 +1038,9 @@ function trySendSave(session: Session): void {
       // (a chain landed during encryption) the ciphertext is bound to
       // a stale base, so requeue.
       if (sessions.get(session.workspaceId) !== session) return
+      if (session.generation !== generation) return
       if (session.workspaceTag !== workspaceTag) return
-      if (session.baseRevision !== sentBase) {
+      if (session.baseRevision !== sentBase || session.receiving) {
         session.pendingSave = true
         return
       }
@@ -1033,7 +1058,7 @@ function trySendSave(session: Session): void {
       // missing/false alike, and a minimal message keeps the wire
       // trace cleaner in the common case.
       if (isKeyframe) wireMsg['keyframe'] = true
-      dispatchSave(wireMsg)
+      dispatchSave(session, wireMsg)
       // Crypto round-trip succeeded — clear any prior error /
       // failure-counter so the UI moves out of `error`.
       session.consecutiveFailures = 0
@@ -1047,7 +1072,7 @@ function trySendSave(session: Session): void {
       // session.key/signingKey — non-recoverable here. Bump the
       // counter and, past the threshold, surface an error rather than
       // retrying forever.
-      if (sessions.get(session.workspaceId) === session) {
+      if (sessionIsLive(session) && session.generation === generation) {
         session.consecutiveFailures = (session.consecutiveFailures ?? 0) + 1
         if (session.consecutiveFailures >= maxConsecutiveFailures) {
           session.error = `encrypt/sign failed: ${err instanceof Error ? err.message : String(err)}`
@@ -1055,12 +1080,12 @@ function trySendSave(session: Session): void {
         }
       }
     } finally {
-      if (sessions.get(session.workspaceId) === session) {
+      if (sessionIsLive(session) && session.generation === generation) {
         session.encrypting = false
         // If something queued during encrypt (or base moved), kick it
         // — but not when we've given up via `error`, else a flaky-key
         // state loops forever.
-        if (!session.error && session.pendingSave && !session.pending) {
+        if (!session.error && session.pendingSave && !session.pending && !session.receiving) {
           session.pendingSave = false
           trySendSave(session)
         }
@@ -1069,7 +1094,7 @@ function trySendSave(session: Session): void {
   })()
 }
 
-// Apply a chain of revisions (each `{ base, id, nonce, ciphertext,
+// Apply a chain to a private candidate (each `{ base, id, nonce, ciphertext,
 // signature }`) to baseState. Four checks per revision:
 //   1. continuity — `base` must equal the current baseRevision so
 //      out-of-order/gappy chains can't silently corrupt state.
@@ -1080,8 +1105,8 @@ function trySendSave(session: Session): void {
 //   4. decrypt — AEAD tag check using AAD from (workspaceTag, base).
 // ANY failed check STOPS the apply and returns false. (Two benign
 // cases `continue` instead: a non-object array entry, and a revision
-// whose id already equals the current baseRevision — the idempotent
-// re-delivery skip. Neither advances the cursor.) Revisions already
+// whose id was already verified — the idempotent re-delivery skip.
+// Neither advances the cursor.) Revisions already
 // applied from this chain keep their effect (each was individually
 // verified), but we never advance `baseRevision` past a revision we
 // couldn't independently authenticate — advancing on the relay's
@@ -1098,7 +1123,7 @@ function trySendSave(session: Session): void {
 // apply the bad rev (different verify versions, older clients) and
 // diverged — the keyframe overwrites their baseState wholesale,
 // pulling everyone back into agreement. Audit M5.
-async function applyChainToBase(session: Session, revisions: WireRevision[]): Promise<boolean> {
+async function applyChainToBase(session: Session, revisions: WireRevision[], isCurrent: () => boolean): Promise<boolean> {
   for (const rev of revisions) {
     if (!rev || typeof rev !== 'object') continue
     // Idempotent skip — the chain from a re-subscribe might begin
@@ -1106,7 +1131,7 @@ async function applyChainToBase(session: Session, revisions: WireRevision[]): Pr
     // `from` was the predecessor, so the first rev returned IS our
     // current baseRevision). Without this we'd fail the continuity
     // check below and trigger an unnecessary resync.
-    if (typeof rev.id === 'string' && rev.id === session.baseRevision) continue
+    if (typeof rev.id === 'string' && (rev.id === session.baseRevision || session.recentRevisions.has(rev.id))) continue
     // Continuity check: `rev.base` must equal our current
     // baseRevision. With baseRevision === null (post-init), accept a
     // `null` base OR a keyframe — a keyframe against null is the
@@ -1114,7 +1139,7 @@ async function applyChainToBase(session: Session, revisions: WireRevision[]): Pr
     // rev we don't have, but its content IS full state, so we accept
     // and replace baseState wholesale below.
     const expected = session.baseRevision
-    const isKeyframe = Boolean(rev.keyframe)
+    const isKeyframe = rev.keyframe === true
     const ok = expected == null
       ? (rev.base == null || isKeyframe)
       : rev.base === expected
@@ -1158,7 +1183,7 @@ async function applyChainToBase(session: Session, revisions: WireRevision[]): Pr
       payload,
       rev.signature,
     )
-    if (!sessionIsLive(session)) return false
+    if (!isCurrent()) return false
     if (!ok2) {
       console.warn('Triage sync: revision signature did not verify; resyncing')
       session.savesSinceKeyframe = keyframeInterval
@@ -1170,7 +1195,7 @@ async function applyChainToBase(session: Session, revisions: WireRevision[]): Pr
     // drop it. The keyframe flag is in the canonical bytes, so a
     // flipped flag also fails here.
     const expectedId = await computeRevisionId(payload)
-    if (!sessionIsLive(session)) return false
+    if (!isCurrent()) return false
     if (rev.id !== expectedId) {
       console.warn('Triage sync: revision id does not match content hash; resyncing')
       session.savesSinceKeyframe = keyframeInterval
@@ -1185,12 +1210,14 @@ async function applyChainToBase(session: Session, revisions: WireRevision[]): Pr
       session.savesSinceKeyframe = keyframeInterval
       return false
     }
-    if (!sessionIsLive(session)) return false
+    if (!isCurrent()) return false
     // Keyframes carry a changeset against an EMPTY base, so applying
     // is a wholesale replace; reset the counter, bump on regular revs.
     const applyTo: TriageStateMap = isKeyframe ? Object.create(null) : session.baseState
     session.baseState = applyChangeset(applyTo, changeset ?? {})
     session.baseRevision = rev.id
+    rememberRevision(session, rev.id)
+    if (session.pending?.id === rev.id) session.pending = null
     if (isKeyframe) session.savesSinceKeyframe = 0
     // Cap at keyframeInterval: once over the threshold the next save
     // is a keyframe regardless of how many more peer revs land first,
@@ -1226,6 +1253,7 @@ async function applyOverlayAndPersist(
   // chain to a torn-down workspace would write to the global state.*
   // / localStorage on its behalf.
   if (!sessionIsLive(session)) return
+  const generation = session.generation
   session.localState = applyChangeset(session.baseState, overlay)
   suppressNotify++
   try {
@@ -1238,7 +1266,7 @@ async function applyOverlayAndPersist(
     // longer matches the live value (a saveTriage/action during the
     // dialog window).
     if (decisions && conflicts.length > 0) {
-      applyHydrationDecisions(conflicts, decisions)
+      applyHydrationDecisions(conflicts.filter(({ id }) => session.ids.has(id)), decisions)
       // Re-derive localState from the updated state.* so the next
       // save's changeset diff reflects the merged result.
       session.localState = effectiveLocalState(session.baseState, session.ids)
@@ -1258,7 +1286,11 @@ async function applyOverlayAndPersist(
     suppressNotify--
   }
   // saveTriage's await may have crossed a closeSession; re-check.
-  if (!sessionIsLive(session)) return
+  if (!sessionIsLive(session) || session.generation !== generation) return
+  // notify() is suppressed while persisting this remote update. Refresh
+  // edits made during that await so the caller flushes them even when the
+  // pre-persistence snapshot had no local overlay.
+  session.localState = effectiveLocalState(session.baseState, session.ids)
   redraw()
   // Cross-session propagation: a finding-id can belong to multiple
   // open workspaces. If this apply touched state.* for a shared id,
@@ -1287,6 +1319,7 @@ function captureOverlay(session: Session): Changeset {
 }
 
 async function handleAck(session: Session, msg: WireMessage): Promise<void> {
+  const generation = session.generation
   // Pending save accepted as `msg.id`, built on `msg.base`. Fold the
   // pending changeset into baseState so it becomes the new agreed
   // floor. Match both `base` and `id`: id is content-derived (server
@@ -1300,12 +1333,14 @@ async function handleAck(session: Session, msg: WireMessage): Promise<void> {
     // Capture overlay BEFORE folding pending into baseState — it also
     // catches edits made AFTER the pending save was sent (in state.*
     // but not in pending.changeset, else lost).
-    const overlay = captureOverlay(session)
+    captureOverlay(session)
+    const local = session.localState
     // Keyframe changeset is against an EMPTY base (full state) →
     // wholesale replace; regular saves stack on the current baseState.
     const applyTo: TriageStateMap = session.pending.keyframe ? Object.create(null) : session.baseState
     session.baseState = applyChangeset(applyTo, session.pending.changeset)
     session.baseRevision = msg.id
+    rememberRevision(session, msg.id)
     // Same cap as the chain-apply path — see audit L3 round-6.
     session.savesSinceKeyframe = session.pending.keyframe
       ? 0
@@ -1314,11 +1349,13 @@ async function handleAck(session: Session, msg: WireMessage): Promise<void> {
     // A committed save is the recovery-complete signal for the
     // stale-base full-reset ladder — re-arm it for any future wipe.
     session.staleResetAttempted = false
-    await applyOverlayAndPersist(session, overlay)
+    // Compare with the acknowledged state, not the old base. A user may
+    // have undone the pending edit back to the old base while awaiting ack.
+    await applyOverlayAndPersist(session, computeChangeset(session.baseState, local))
     // applyOverlayAndPersist self-bails if the session was closed
     // during its awaits, but a follow-up trySendSave on the orphan
     // would still fire — gate it.
-    if (!sessionIsLive(session)) return
+    if (!sessionIsLive(session) || session.generation !== generation) return
     // The user may have edited during the round-trip; if there's a
     // residual overlay (or pendingSave was raised), flush it.
     if (session.pendingSave || !statesEqual(session.localState, session.baseState)) {
@@ -1348,126 +1385,113 @@ async function handleAck(session: Session, msg: WireMessage): Promise<void> {
 }
 
 async function handleChain(session: Session, revisions: unknown): Promise<void> {
-  // Wire-order contract with the stale-base typed-error path: the
-  // server emits `workspace-state` (handled here) THEN
-  // `workspace-save-error{stale-base}`, and a NON-empty catch-up
-  // clears `pending` below before that error reaches
-  // `handleSaveError`. Empty `revisions` early-returns WITHOUT
-  // clearing `pending` — deliberately: hoisting `pending = null`
-  // above this guard would re-arm pendingSave on every empty or
-  // malformed frame from a buggy/hostile server. There IS one honest
-  // protocol path where the stale-base catch-up is empty — the
-  // server's chain for this tag is GONE (wiped / moved DB,
-  // SQLite→Neon migration) while we hold a persisted base, so
-  // `chainFrom` has nothing to return (head=null, no keyframe, no
-  // rows). That case therefore reaches `handleSaveError` with
-  // `pending` still set, and its stale-base branch owns the recovery:
-  // one full-state-push reset, latched by `staleResetAttempted`. (A
-  // NON-empty catch-up that fails to APPLY — continuity break, chain
-  // rebuilt past our base — likewise retains `pending` via the `!ok`
-  // first-break branch below and lands in the same recovery; see the
-  // route list in handleSaveError.) Before that branch existed this
-  // wedged the session in a terminal error ↔ dismissError loop —
-  // review finding #1. Audit follow-up to PR #79.
-  if (!Array.isArray(revisions) || revisions.length === 0) return
-  // Key not derived yet — bail; a future open retries once
-  // deriveSessionKey lands and trySendSave re-runs. Also bypasses the
-  // pending-clear, but safe: only reachable pre-key, and trySendSave
-  // gates on `!session.key || !session.signingKey` before assigning
-  // `pending`, so pending is provably null here. Parallel invariant
-  // to the empty-revisions guard: loosening that gate wouldn't break
-  // at runtime, just silently land here with pending set and take the
-  // non-recoverable branch. Pinned by the sync-client pre-key
-  // handleChain tests.
-  if (!session.key) return
-  // Capture overlay BEFORE applyChainToBase mutates baseState, and
-  // stash the OLD baseState reference: applyChainToBase reassigns
-  // `session.baseState`, so this pins a stable pre-rebase view for
-  // the three-way conflict-detection compare below.
-  const overlay = captureOverlay(session)
-  const beforeBaseRevision = session.baseRevision
-  const oldBaseState = session.baseState
-  const ok = await applyChainToBase(session, revisions as WireRevision[])
-  // applyChainToBase self-bails on a closed session (returns false
-  // without mutating baseRevision); double-check before we touch
-  // anything further.
-  if (!sessionIsLive(session)) return
-  if (!ok) {
-    // Continuity break. First try to fill the gap by re-subscribing
-    // with `from = current baseRevision`: in the typical case (a
-    // broadcast that skipped revisions, transient out-of-order
-    // delivery) the subscribe response is the catch-up chain we need
-    // and we keep our state.
-    if (!session.resyncAttempted) {
-      session.resyncAttempted = true
-      console.warn('Triage sync: requesting catch-up from last known baseRevision')
-      trySendSubscribe(session, true)
+  if (!Array.isArray(revisions) || !session.key) return
+  if (revisions.length === 0) {
+    // An empty response to gap recovery confirms we're already at the
+    // relay's head. Resume edits held while checking the missing suffix.
+    // Retain pending saves: a following stale-base error owns recovery
+    // when the relay has lost our chain.
+    if (session.resyncAttempted) {
+      session.resyncAttempted = false
+      if (!session.pending) {
+        session.pendingSave = false
+        trySendSave(session)
+      }
+    }
+    return
+  }
+  const generation = session.generation
+  const workspaceTag = session.workspaceTag
+  const isCurrent = (): boolean => sessionIsLive(session)
+    && session.generation === generation && session.workspaceTag === workspaceTag
+  session.receiving = true
+  try {
+    captureOverlay(session)
+    const oldBaseState = session.baseState
+    const pending = session.pending
+    const beforeBaseRevision = session.baseRevision
+    // Verify/decrypt into a private candidate. Live edits and membership
+    // changes during awaits must still see the old, fully projected base.
+    const candidate = { ...session, recentRevisions: new Set(session.recentRevisions) }
+    const ok = await applyChainToBase(candidate, revisions as WireRevision[], isCurrent)
+    if (!isCurrent()) return
+    const advanced = candidate.baseRevision !== beforeBaseRevision
+    if (advanced) {
+      // REST saves echo through SSE. Once our own save appears in the
+      // verified chain, only edits since THAT save are unsynced intent.
+      const overlayBase = pending && candidate.pending === null
+        ? applyChangeset(pending.keyframe ? Object.create(null) : oldBaseState, pending.changeset)
+        : oldBaseState
+      // Re-read AFTER crypto, and again after the dialog: both await user
+      // activity. Keep using the same baseline through both awaits.
+      captureOverlay(session)
+      const overlay = computeChangeset(overlayBase, session.localState)
+      const preserveKnownState = beforeBaseRevision === null && !(pending && candidate.pending === null)
+      if (preserveKnownState) {
+        // Resetting the cursor does not make an older signed snapshot
+        // authoritative over known values. Include those values in the
+        // conflict scan even when the user hasn't edited them locally.
+        for (const id of Object.keys(overlayBase)) overlay[id] = session.localState[id] ?? null
+      }
+      const conflicts = collectChainConflicts(overlay, overlayBase, candidate.baseState, preserveKnownState)
+        .filter(({ id }) => session.ids.has(id))
+      let decisions: { [key: string]: 'local' | 'imported' } | null = null
+      if (conflicts.length > 0 && hydrationConflictResolver) {
+        try {
+          decisions = (await hydrationConflictResolver(conflicts, candidate.baseState, 'chain')) ?? null
+        } catch (err) {
+          console.warn('Triage sync: chain-conflict resolver failed:', err)
+        }
+        if (!isCurrent()) return
+      }
+      captureOverlay(session)
+      const merged = rebaseLocalState(overlayBase, session.localState, candidate.baseState, preserveKnownState)
+      session.baseRevision = candidate.baseRevision
+      session.recentRevisions = candidate.recentRevisions
+      session.baseState = candidate.baseState
+      session.savesSinceKeyframe = candidate.savesSinceKeyframe
+      if (session.pending) session.pendingSave = true
+      session.pending = null
+      // Project even a partial verified prefix. Otherwise the next catch-up
+      // misreads its unprojected values as local deletions and sends an undo.
+      await applyOverlayAndPersist(session, computeChangeset(session.baseState, merged), conflicts, decisions)
+      if (!isCurrent()) return
+    } else {
+      session.savesSinceKeyframe = candidate.savesSinceKeyframe
+    }
+    if (!ok) {
+      // Hold saves until the missing suffix arrives; a verified prefix alone
+      // does not prove that our current base is the relay's head.
+      session.pendingSave = false
+      if (!session.resyncAttempted) {
+        session.resyncAttempted = true
+        trySendSubscribe(session, true)
+        return
+      }
+      console.warn('Triage sync: catch-up also broke continuity; full state push')
+      session.baseRevision = null
+      session.recentRevisions.clear()
+      session.savesSinceKeyframe = keyframeInterval
+      session.pending = null
+      session.resyncAttempted = false
+      session.pendingSave = true
+      persistSession(session)
+      redraw()
       return
     }
-    // The re-subscribed chain also broke continuity — the server
-    // lost our base or is broken. Fall back to a full state-push:
-    // reset baseRevision/baseState (leave state.* alone — applying
-    // the empty overlay on {} would clear unedited entries) and let
-    // the next save's stale-base catch-up rebuild the chain.
-    console.warn('Triage sync: catch-up also broke continuity; full state push')
-    session.baseRevision = null
-    session.baseState = Object.create(null)
-    session.pending = null
-    session.pendingSave = false
     session.resyncAttempted = false
-    persistSession(session)
-    redraw()
-    trySendSave(session)
-    return
-  }
-  session.resyncAttempted = false
-  // A successfully-applied chain proves the server serves usable
-  // catch-ups again — re-arm the stale-base full-reset ladder too.
-  session.staleResetAttempted = false
-  // If a save was in flight when the chain arrived, the server is
-  // implicitly rejecting it (it brought us forward without acking).
-  // Clear pending so the next save recomputes the changeset against
-  // the freshly-rebased baseState.
-  if (session.pending) {
-    session.pending = null
-    session.pendingSave = true
-  }
-  // Skip the conflict-check + apply pass when the chain didn't move
-  // baseRevision (every rev was an idempotent skip via applyChain-
-  // ToBase's `rev.id === baseRevision` short-circuit). Server
-  // stale-base catch-ups echo the already-applied chain back, so
-  // without this the second (content-identical) chain re-fires the
-  // conflict dialog with the same conflicts though nothing changed.
-  if (session.baseRevision === beforeBaseRevision) {
-    if (!sessionIsLive(session)) return
-    if (session.pendingSave) {
-      session.pendingSave = false
-      trySendSave(session)
+    session.staleResetAttempted = false
+    // Duplicate revisions acknowledge no new state and must not cancel a
+    // newer pending save based on that same cursor.
+    if (!statesEqual(session.localState, session.baseState)) session.pendingSave = true
+  } finally {
+    if (isCurrent()) {
+      session.receiving = false
+      if (session.pendingSave && !session.pending && !session.error) {
+        session.pendingSave = false
+        trySendSave(session)
+      }
     }
-    return
-  }
-  // Chain-conflict detection: if the pre-rebase overlay disagrees
-  // per-property with the new baseState, surface it so the user picks
-  // "keep my local" or "apply from chain" per conflict (no default;
-  // dialog unavoidable, so null only when it can't be shown → keep
-  // local). Without this a peer's view silently flips when another tab
-  // joins with a conflicting unsynced edit, and the joiner's local-wins
-  // overlay silently propagates back through the chain.
-  const conflicts = collectChainConflicts(overlay, oldBaseState, session.baseState)
-  let decisions: { [key: string]: 'local' | 'imported' } | null = null
-  if (conflicts.length > 0 && hydrationConflictResolver) {
-    try {
-      decisions = (await hydrationConflictResolver(conflicts, session.baseState, 'chain')) ?? null
-    } catch (err) {
-      console.warn('Triage sync: chain-conflict resolver failed:', err)
-    }
-    if (!sessionIsLive(session)) return
-  }
-  await applyOverlayAndPersist(session, overlay, conflicts, decisions)
-  if (!sessionIsLive(session)) return
-  if (session.pendingSave || !statesEqual(session.localState, session.baseState)) {
-    session.pendingSave = false
-    trySendSave(session)
   }
 }
 
@@ -1612,12 +1636,10 @@ function handleSaveError(session: Session, wire: WireMessage): void {
   // with a REAL catch-up that rebases us on the normal path (clearing
   // the latch via the applied chain). A MISDETECTED wipe — a glitched
   // frame pair from a relay that still holds the chain — therefore
-  // cannot reset server data. Trade-offs, both shared with the
-  // sibling reset in handleChain: state.* is untouched, but triage
-  // living ONLY in baseState (ids of reports not loaded locally)
-  // drops out of the recovery push, and on a misdetect an unsynced
-  // DELETION (id→null vs the old base) is unrepresentable against the
-  // emptied base, so the rebase resurrects the entry. One reset per
+  // cannot reset server data. Keep baseState as the local merge baseline
+  // and force a keyframe: this preserves unloaded findings in the recovery
+  // push and local deletions when the relay returns a surviving chain.
+  // One reset per
   // recovery cycle (`staleResetAttempted`): a relay replaying the
   // rejection forever gets the terminal error on the second round
   // instead of an infinite full-state loop.
@@ -1625,7 +1647,8 @@ function handleSaveError(session: Session, wire: WireMessage): void {
     session.staleResetAttempted = true
     console.warn('Triage sync: stale-base catch-up did not apply (server chain gone or rebuilt past our base); full state push')
     session.baseRevision = null
-    session.baseState = Object.create(null)
+    session.recentRevisions.clear()
+    session.savesSinceKeyframe = keyframeInterval
     session.pendingSave = false
     session.resyncAttempted = false
     persistSession(session)
@@ -1651,9 +1674,16 @@ function handleSaveError(session: Session, wire: WireMessage): void {
 // chain. (objstore's `onTransportMessage` is sync — its handlers
 // don't await, so it needs no chain.)
 let messageQueue: Promise<void> = Promise.resolve()
+let transportGeneration = 0
 
-function onTransportMessage(msg: { type?: unknown; [k: string]: unknown }): void {
-  messageQueue = messageQueue.then(() => handleMessage(msg as WireMessage)).catch((err) => {
+function onTransportMessage(msg: { type?: unknown; [k: string]: unknown }, isCurrent: () => boolean = () => true): void {
+  const generation = transportGeneration
+  const session = typeof msg['workspaceTag'] === 'string' ? getSessionByTag(msg['workspaceTag']) : null
+  const sessionGeneration = session?.generation
+  messageQueue = messageQueue.then(() => {
+    if (!isCurrent() || transportGeneration !== generation || (session && (!sessionIsLive(session) || session.generation !== sessionGeneration))) return
+    return handleMessage(msg as WireMessage)
+  }).catch((err) => {
     console.warn('Triage sync handler error:', err)
   })
 }
@@ -1669,11 +1699,8 @@ function onTransportConnected(_nonce: string): void {
   for (const session of sessions.values()) {
     session.pending = null
     session.pendingSave = false
-    // `encrypting` is intentionally NOT cleared: an IIFE may still be
-    // in flight across the close boundary, and clearing it would let
-    // the trySendSave below start a parallel encryption against the
-    // new socket. Let the old IIFE drain — its `send()` lands on the
-    // new socket (or no-ops) and `pendingSave` re-kicks via handleAck.
+    // Disconnect invalidated old crypto/HTTP work by generation. Any
+    // encryption started on this new connection still owns its send slot.
     trySendSubscribe(session)
     trySendSave(session)
   }
@@ -1681,6 +1708,8 @@ function onTransportConnected(_nonce: string): void {
 }
 
 function onTransportDisconnected(_reason: string): void {
+  transportGeneration++
+  messageQueue = Promise.resolve()
   // Pending requests died with the socket — free every slot so the
   // reconnect handler resends. `subscribed`/`subscribeAcked` both
   // clear so reconnect re-subscribes and status walks `offline →
@@ -1693,6 +1722,9 @@ function onTransportDisconnected(_reason: string): void {
   // doesn't re-fire). The empty-changeset short-circuit makes the
   // no-op case cheap, so unconditional `true` costs nothing.
   for (const session of sessions.values()) {
+    session.generation++
+    session.encrypting = false
+    session.receiving = false
     session.pending = null
     session.subscribed = false
     session.subscribeAcked = false
@@ -1809,9 +1841,11 @@ function clearSessionErrorForRetry(session: Session): void {
 // re-activate re-subscribes, and clear `encrypting` so a stranded
 // in-flight IIFE doesn't make the next `trySendSave` redundantly raise
 // `pendingSave` (audit M2 round-4). NB: `onTransportDisconnected`
-// deliberately does NOT use this — it raises `pendingSave` and leaves
-// `encrypting` to drain (reconnect contract), so it stays inline.
+// deliberately does NOT use this — it raises `pendingSave` for reconnect
+// and preserves the error, so it stays inline.
 function deactivateSession(session: Session): void {
+  session.generation++
+  session.receiving = false
   session.pending = null
   session.pendingSave = false
   session.encrypting = false
@@ -1832,6 +1866,8 @@ export const triageSync = {
     // the transport and reset every session's pending/subscribed.
     if (next === serverUrl) return
     const prev = serverUrl
+    transportGeneration++
+    messageQueue = Promise.resolve()
     serverUrl = next
     // A different relay (or sync going off) is a fresh diagnosis — drop
     // any auth-proxy latch + pending probe keyed on the old endpoint.
@@ -1870,6 +1906,7 @@ export const triageSync = {
       deactivateSession(session)
       const restored = next ? loadPersistedSession(session.workspaceId, next) : null
       session.baseRevision = restored?.baseRevision ?? null
+      session.recentRevisions.clear()
       session.baseState = restored?.baseState ?? Object.create(null)
       session.savesSinceKeyframe = restored?.savesSinceKeyframe ?? 0
       session.localState = effectiveLocalState(session.baseState, session.ids)
@@ -1896,6 +1933,8 @@ export const triageSync = {
     if (isActive()) {
       for (const session of sessions.values()) clearSessionErrorForRetry(session)
     } else {
+      transportGeneration++
+      messageQueue = Promise.resolve()
       for (const session of sessions.values()) deactivateSession(session)
     }
     applyActive()
@@ -1915,6 +1954,8 @@ export const triageSync = {
     if (isActive()) {
       for (const session of sessions.values()) clearSessionErrorForRetry(session)
     } else {
+      transportGeneration++
+      messageQueue = Promise.resolve()
       for (const session of sessions.values()) deactivateSession(session)
     }
     applyActive()
@@ -2051,6 +2092,7 @@ export const triageSync = {
       // per-server persistence when present; otherwise null / empty
       // / 0 and the first save sends the full local snapshot.
       baseRevision: restored?.baseRevision ?? null,
+      recentRevisions: new Set(),
       baseState: restoredBaseState,
       savesSinceKeyframe: restored?.savesSinceKeyframe ?? 0,
       localState: effectiveLocalState(restoredBaseState, ids),
@@ -2058,6 +2100,8 @@ export const triageSync = {
       pendingSave: false,
       key: null,
       encrypting: false,
+      receiving: false,
+      generation: 0,
       // True once we ship a `workspace-subscribe` on the current
       // socket; resets on close so reconnects re-subscribe. Decoupled
       // from `pending` — an in-sync workspace still wants broadcasts.
@@ -2314,10 +2358,10 @@ onSyncHostInstalled((host) => {
     oldSession.key = null
     oldSession.verifyingKey = null
     oldSession.workspaceTag = null
-    // Disarm any pending busy retry alongside the key disarm — the
-    // rotation paths below drop the entry via `sessions.delete` (both
-    // the IIFE and its catch), bypassing `wipeSessionKey`'s clear.
-    clearBusyRetry(oldSession)
+    // Invalidate pending HTTP responses, queued messages and dialogs too:
+    // they must not replay work signed by the retired key while the
+    // persisted-base wipe below is waiting for its lock.
+    deactivateSession(oldSession)
     // Invalidate any in-flight key derivation too: a kickKeyDerivation
     // IIFE started under the OLD privateKey may still be awaiting, and
     // nulling the fields above doesn't stop it — its commit guard only
@@ -2391,6 +2435,7 @@ onSyncHostInstalled((host) => {
 // case: `saveTriage` (fans gap-filled state.* into the chain via
 // notify) or, when nothing hydrated, `trySendSave` directly.
 function refreshAndPropagate(session: Session): void {
+  const generation = session.generation
   const { conflicts, hydrated } = refreshSessionIds(session)
   // Both branches run inside an async IIFE so saveTriage is ordered
   // (no parallel writes to the deepview.triage blob from back-to-back
@@ -2412,11 +2457,10 @@ function refreshAndPropagate(session: Session): void {
         console.warn('Triage sync: hydration conflict resolver failed:', err)
       }
     }
-    if (!sessionIsLive(session)) return
-    if (decisions) applyHydrationDecisions(conflicts, decisions)
+    if (!sessionIsLive(session) || session.generation !== generation) return
+    if (decisions) applyHydrationDecisions(conflicts.filter(({ id }) => session.ids.has(id)), decisions)
     // Persist state.* (gap-fill + applied decisions) and let the
     // sync layer propagate via saveTriage's notify.
     await saveTriage()
   })().catch((err) => { console.warn('Triage sync: refreshAndPropagate failed:', err) })
 }
-

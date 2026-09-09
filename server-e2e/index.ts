@@ -295,6 +295,7 @@ const publishObjDeleted = (tag: string, resourceTag: string, version: number): v
 
 const { handleSave, handleSaveRest, handleSubscribe, sendSaveError } = createSyncHandlers({
   handle, send, broadcast, publishRevision, subscribe, getNonce,
+  pauseBroadcasts: hub.pauseBroadcasts,
   requiresAuth, passwordConfigured, sendUnauthorized, workspaceExists,
   // Folds the objstore inventory into the `workspace-subscribed` ack.
   // The objstore store keeps its own richer `Handle`, so we wire the
@@ -483,4 +484,3 @@ export { httpServer, wss }
 if (import.meta.main) {
   start()
 }
-

@@ -5,6 +5,7 @@
 // module state, no `state.*`, no I/O — safe to unit-test in isolation.
 
 import type { TriageEntry } from './host.ts'
+import { normalizeEntry } from '../triage-entry.ts'
 
 export type ConflictProperty = 'color' | 'triage' | 'comment' | 'fix' | 'flagged'
 
@@ -70,6 +71,7 @@ export function collectChainConflicts(
   overlay: Changeset,
   oldBaseState: TriageStateMap,
   newBaseState: TriageStateMap,
+  preserveKnownState = false,
 ): Conflict[] {
   const conflicts: Conflict[] = []
   // Only check ids the user touched (= ids in overlay). Chain-only
@@ -95,7 +97,7 @@ export function collectChainConflicts(
       const oldVal = norm(oldEntry)
       const localVal = norm(localEntry)
       const chainVal = norm(chainEntry)
-      const localChanged = localVal !== oldVal
+      const localChanged = localVal !== oldVal || (preserveKnownState && oldVal !== '')
       const chainChanged = chainVal !== oldVal
       if (localChanged && chainChanged && localVal !== chainVal) {
         conflicts.push({ id, property: name, local: localVal, imported: chainVal })
@@ -142,6 +144,54 @@ export function statesEqual(a: TriageStateMap, b: TriageStateMap): boolean {
     if (!entriesEqual(a[id] ?? {}, b[id] ?? {})) return false
   }
   return true
+}
+
+function rebaseIgnoredReports(base: string[] = [], local: string[] = [], remote: string[] = [], preserveKnownState = false): string[] {
+  const before = new Set(base)
+  const current = new Set(local)
+  const merged = new Set(remote)
+  for (const report of before) if (!current.has(report)) merged.delete(report)
+  for (const report of current) if (preserveKnownState || !before.has(report)) merged.add(report)
+  return [...merged]
+}
+
+// Replay only fields the local user changed. Wire changesets replace whole
+// entries, but using that replacement as a local overlay erases independent
+// peer edits to other fields of the same finding.
+// After an anchor reset, a valid signature alone cannot prove a snapshot
+// is newer than the state we already knew. Keep known values as local
+// intent until conflicts are explicitly resolved; also retain local clears.
+export function rebaseLocalState(base: TriageStateMap, local: TriageStateMap, remote: TriageStateMap, preserveKnownState = false): TriageStateMap {
+  const out: TriageStateMap = Object.assign(Object.create(null), remote)
+  for (const id of new Set([...Object.keys(base), ...Object.keys(local)])) {
+    const before = normalizeEntry(base[id]) ?? {}
+    const current = normalizeEntry(local[id]) ?? {}
+    const merged = { ...normalizeEntry(remote[id]) }
+    for (const field of ['color', 'comment', 'fix', 'flagged'] as const) {
+      if (before[field] !== current[field] || (preserveKnownState && before[field] !== undefined)) {
+        // Assign through a patch so TS retains each field's value type.
+        Object.assign(merged, { [field]: current[field] })
+      }
+    }
+    // Triage and ignoredReports are mutually exclusive. A conflicting
+    // bucket/ignore choice keeps the local choice, but when both sides
+    // remain untriaged, merge ignores per report so independent additions
+    // and removals survive.
+    const preserveChoice = preserveKnownState && (before.triage !== undefined || before.ignoredReports !== undefined)
+    if (preserveChoice || before.triage !== current.triage || !ignoredReportsEqual(before.ignoredReports, current.ignoredReports)) {
+      const reports = current.triage === undefined && merged.triage === undefined
+        ? rebaseIgnoredReports(before.ignoredReports, current.ignoredReports, merged.ignoredReports, preserveKnownState)
+        : current.ignoredReports ?? []
+      if (current.triage === undefined) delete merged.triage
+      else merged.triage = current.triage
+      if (reports.length === 0) delete merged.ignoredReports
+      else merged.ignoredReports = reports
+    }
+    const entry = normalizeEntry(merged)
+    if (entry) out[id] = entry
+    else delete out[id]
+  }
+  return out
 }
 
 // Walk a state through a changeset, producing a new state. `null` in

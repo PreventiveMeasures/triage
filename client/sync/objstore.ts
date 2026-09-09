@@ -364,6 +364,7 @@ type SessionState = {
   // put/delete results and by `objstore-put` / `-deleted` broadcasts.
   // `list()` is a read of this map, not a wire request.
   inventory: Map<string, { version: number; incarnation: string; contentLength: number }>
+  inventorySeeded: boolean
   // Resolves once the inventory has been seeded at least once (the first
   // `workspace-subscribed` for this tag). `list()` awaits it so an early
   // read doesn't return an empty snapshot before the subscribe ack lands.
@@ -451,12 +452,32 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
   // then serves v3 on FETCH hits assertFreshOrLater. Resolves the
   // `listed` gate so a pending `list()` returns.
   function seedInventory(state: SessionState, resources: ObjectMeta[]): void {
+    const previous = new Map(state.inventory)
+    const notifyChanges = state.inventorySeeded
+    state.inventorySeeded = true
     state.inventory.clear()
     for (const m of resources) {
       state.inventory.set(m.resourceTag, { version: m.version, incarnation: m.incarnation, contentLength: m.contentLength })
       noteVersion(state, m.resourceTag, m.incarnation, m.version)
     }
     state.resolveListed()
+    if (!notifyChanges) return
+    // Presence listens to put/delete events, so reconnect-only changes
+    // must reach those consumers as well as the list() cache.
+    for (const [resourceTag, old] of previous) {
+      const current = state.inventory.get(resourceTag)
+      if (current?.incarnation === old.incarnation) continue
+      // Recreation starts at v1; consumers must forget the old lineage's
+      // version before processing the put below, just as for live deletes.
+      if (!current) state.seenVersions.delete(resourceTag)
+      for (const h of state.deletedHandlers) { try { h({ resourceTag, version: old.version }) } catch {} }
+    }
+    for (const [resourceTag, current] of state.inventory) {
+      const old = previous.get(resourceTag)
+      if (old?.version === current.version && old.incarnation === current.incarnation) continue
+      const event = { resourceTag, version: current.version, contentLength: current.contentLength }
+      for (const h of state.putHandlers) { try { h(event) } catch {} }
+    }
   }
 
   // Narrow a wire `resources` field to ObjectMeta[] (drops malformed
@@ -525,12 +546,24 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
   // consumer-side handler, this one doesn't. If a future change
   // adds an await, mirror the chain pattern.
   function onTransportMessage(msg: WireMessage): void {
+    // Consume reconnect snapshots in wire order before later broadcasts.
+    // The token remains the fallback for an ack preceding session creation.
+    if (msg.type === 'workspace-subscribed' && typeof msg.workspaceTag === 'string') {
+      const state = sessionsByTag.get(msg.workspaceTag)
+      if (state && Array.isArray(msg['resources'])) seedInventory(state, parseResources(msg['resources']))
+      return
+    }
     // Broadcasts fan to session handlers; subscribers that register
     // AFTER a broadcast arrived miss it (no replay).
     if (msg.type === 'objstore-put' && typeof msg.workspaceTag === 'string' && isObjectMeta(msg)) {
       const state = sessionsByTag.get(msg.workspaceTag)
       if (!state) return  // workspace closed / unknown — drop silently
       const meta = toObjectMeta(msg)
+      const current = state.inventory.get(meta.resourceTag)
+      // A subscription snapshot can already include a later commit than
+      // a broadcast buffered during its lookup. Do not replay an older
+      // version over that snapshot (or a newer PUT response).
+      if (current?.incarnation === meta.incarnation && current.version > meta.version) return
       // Advance the per-tag rollback watermark — a relay that promises
       // v5 in a broadcast then serves v3 on FETCH hits assertFreshOrLater.
       noteVersion(state, meta.resourceTag, meta.incarnation, meta.version)
@@ -556,10 +589,8 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
     }
 
     // Triage-sync frames share the socket (unified transport). Drop
-    // explicitly so they don't pile up in `queue`. `workspace-subscribed`
-    // is triage-sync's subscribe ack — we ride that subscribe and receive
-    // its `resources` inventory snapshot via the `WorkspaceSubscription`
-    // token (triage-sync hands it over), not by observing the ack here.
+    // explicitly so they don't pile up in `queue`. Subscription snapshots
+    // were handled above; the token also covers an ack preceding open.
     // `authenticated` is transport-internal-but-passed-through; `server-info`
     // is the server's mode advertisement (consumed by triage-sync).
     if (msg.type === 'workspace-state' || msg.type === 'workspace-save-ack' || msg.type === 'workspace-save-error' || msg.type === 'workspace-subscribed' || msg.type === 'authenticated' || msg.type === 'server-info') return
@@ -1140,6 +1171,7 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
       deletedHandlers: new Set(),
       seenVersions: new Map(),
       inventory: new Map(),
+      inventorySeeded: false,
       connected: false,
       closed: false,
     }
@@ -1150,13 +1182,13 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
 
     // Seed the inventory from the subscribe-ack snapshot triage-sync
     // handed us in the token. Resolves the `listed` gate so `list()`
-    // returns; thereafter own puts/deletes + objstore-put/-deleted
-    // broadcasts keep the inventory live. Errors are swallowed — a seed
+    // returns; thereafter reconnect snapshots and put/delete broadcasts
+    // keep the inventory live. Errors are swallowed — a seed
     // that never arrives just leaves `list()` to time out.
     void (async () => {
       let rows: readonly unknown[]
       try { rows = await subscription.resources } catch { return }
-      if (!full.closed) seedInventory(full, parseResources(rows))
+      if (!full.closed && !full.inventorySeeded) seedInventory(full, parseResources(rows))
     })()
 
     // Acquire a transport reference — the transport opens the socket
