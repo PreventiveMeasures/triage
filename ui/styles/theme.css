@@ -608,8 +608,18 @@ download-button { top: calc(.5rem + 30px + .35rem + 30px + .35rem); }
   }
 
   /* Content surfaces — opt out so wheel / clicks / selection
-     work inside them. */
-  .findings-content,
+     work inside them.
+
+     The findings views name their surfaces rather than the wrapper
+     around them: the wrapper spans the whole report so the toolbar can
+     run full width (report.css), while the list keeps a readability
+     cap, and opting the wrapper out took the strip beside a capped
+     list — empty page, and a drag handle before that cap moved — out
+     of the body-wide drag baseline with it. */
+  .toolbar,
+  #findings-body-slot,
+  #findings-graph-slot,
+  #empty-state-slot,
   .tree-view,
   .tree-view-table,
   .packages-list,
