@@ -232,8 +232,9 @@ function parseBlock(block, severity) {
   const confidence = mapConfidence(fields.confidence)
   if (confidence !== undefined) finding.confidence = confidence
   // What the pass concluded, where the report has been through it:
-  // the verdict as an outcome of the app's own, and the reasoning the
-  // writer prints under it as the pass's remark. Read as a pair
+  // the verdict as an outcome of the app's own, the reasoning the
+  // writer prints under it as the pass's remark, and DeepSec named as
+  // whose pass said so. Verdict and reasoning are read as a pair
   // because the document writes them as one — a `Reasoning:` line is
   // the pass's line, not the finding's. First line only, like every
   // field here; a reasoning that wrapped leaves its remainder in the
@@ -241,6 +242,7 @@ function parseBlock(block, severity) {
   const revalidate = REVALIDATION.get(word(fields.revalidation))
   if (revalidate) {
     finding.revalidate = revalidate
+    finding.revalidateSource = 'deepsec'
     if (fields.reasoning) finding.revalidateVerdict = fields.reasoning.replaceAll('**', '')
   }
   if (fields.slug) finding.slug = fields.slug

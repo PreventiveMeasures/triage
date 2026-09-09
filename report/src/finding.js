@@ -103,6 +103,16 @@ export function correctedVariants(f) {
 // and carries its reasoning in `revalidateVerdict`, plus, for a
 // refutation, what to do about it in `revalidateRecommendation`.
 //
+// `revalidateSource` names WHOSE pass reached that verdict, keyed like
+// a report's `source` (labels.js) — a product whose document carries
+// its own pass's answers stamps itself there (parse-deepsec.js reads
+// DeepSec's). Absent means the pass of whoever produced the finding,
+// which is the usual case and needs no naming. It earns its keep once
+// two reports meet: dedup carries a stamp from one report onto a
+// finding from another (ui group.js mergeDuplicateFields), and a
+// verdict landing on a finding that isn't its own has nothing else to
+// say where it came from.
+//
 // The remaining value, `revalidation`, marks the row that IS the
 // revalidation pass rather than one it judged. It carries no verdict of
 // its own.

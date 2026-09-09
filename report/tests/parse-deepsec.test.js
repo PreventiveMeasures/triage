@@ -138,6 +138,10 @@ describe('parseDeepsecFindings — the revalidation pass', () => {
     it(`maps the verdict "${text}" → ${kind}`, () => {
       const f = parseDeepsecFindings(withVerdict(text)).findings[0]
       assert.equal(f.revalidate, kind)
+      // Whose pass said so — the verdict travels onto findings from
+      // other reports through dedup, where it would otherwise land
+      // with no owner (ui group.js mergeDuplicateFields).
+      assert.equal(f.revalidateSource, 'deepsec')
       // The verdict leaves the first pass's rating alone: the app is
       // what reads a ruled-out row as a 0 (ui filters.js
       // voidsConfidence), and it needs both to do it.
@@ -151,20 +155,22 @@ describe('parseDeepsecFindings — the revalidation pass', () => {
     assert.doesNotMatch(f.description, /Reachable from/u)
   })
 
-  it('leaves both fields off a report the pass never ran over', () => {
+  it('leaves the fields off a report the pass never ran over', () => {
     const md = build('HIGH (1)', '### A finding\n\n- **File:** `x.js`\n- **Lines:** 1\n- **Confidence:** high\n')
     const f = parseDeepsecFindings(md).findings[0]
     assert.equal(f.revalidate, undefined)
     assert.equal(f.revalidateVerdict, undefined)
+    assert.equal(f.revalidateSource, undefined)
   })
 
-  it('ignores a verdict word it does not know, reasoning and all', () => {
+  it('ignores a verdict word it does not know, reasoning and owner and all', () => {
     // Unlike confidence, there is no middle rung to fall back on: an
-    // outcome the app hasn't got is one it can't stamp, and a
-    // reasoning with no verdict over it says nothing.
+    // outcome the app hasn't got is one it can't stamp, and neither a
+    // reasoning nor an owner says anything with no verdict over it.
     const f = parseDeepsecFindings(withVerdict('mitigated')).findings[0]
     assert.equal(f.revalidate, undefined)
     assert.equal(f.revalidateVerdict, undefined)
+    assert.equal(f.revalidateSource, undefined)
   })
 })
 

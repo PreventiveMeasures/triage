@@ -217,6 +217,7 @@ const FACT_READERS = new Map([
   ['severity', (f, v) => Object.assign(f, readSeverity(v))],
   ['confidence', (f, v) => { const m = /^(\d+(?:\.\d+)?)\/10$/u.exec(v); if (m) f.confidence = Number(m[1]) }],
   ['revalidation', (f, v) => { const kind = readRevalidation(v); if (kind) f.revalidate = kind }],
+  ['revalidated by', (f, v) => { const s = v.trim(); if (s) f.revalidateSource = SOURCE_KEYS.get(s.toLowerCase()) ?? s }],
   ['repository', (f, v) => { f.repo = { github: readRepository(v) } }],
   ['introduced in', (f, v) => { f.commitHash = readCommit(v) }],
   ['package', (f, v) => { f.package = readPackage(v) }],
