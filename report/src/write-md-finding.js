@@ -137,6 +137,16 @@ function triageText(a) {
   return parts.join(' · ')
 }
 
+// Whose revalidation pass a stamp came from, in the words this
+// document spells a producer with (labels.js analyzerText does the
+// same for the finding itself); a key the labels don't know prints as
+// itself. Written under the stamp, so it travels with the layer and
+// says nothing on a finding whose own report ran the pass.
+function sourceText(source) {
+  const s = plainValue(source)
+  return s ? SOURCE_LABELS[s] ?? s : ''
+}
+
 function commitText(f, ctx) {
   const hash = plainValue(f.commitHash)
   if (!hash) return ''
@@ -160,6 +170,7 @@ function metaList(f, ctx, annotation) {
   add('Category', plainValue(f.category))
   const kind = ctx.revalidation ? revalidateKindOf(f) : ''
   if (kind) add('Revalidation', kind === 'revalidation' ? 'the revalidation pass itself' : kind)
+  if (kind) add('Revalidated by', sourceText(f.revalidateSource))
   add('Triage', triageText(annotation))
   if (annotation?.fix) add('Fix', autolink(String(annotation.fix).trim()))
   if (ctx.showReport) add('Report', code(ctx.hooks.report(f) ?? ''))
