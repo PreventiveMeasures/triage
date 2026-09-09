@@ -1398,7 +1398,13 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
       ${revalidateStampTemplate(f)}
       ${codeButton}
     </div>
-    <div>
+    <!-- The finding itself, in the grid's second column. Named so the
+         print sheet can order its blocks: on paper every <details>
+         opens, and the evidence list — folded away on screen — would
+         otherwise sit in the middle of the finding, pushing impact and
+         recommendation past pages of citations (finding-card.css's
+         @media print block moves it last). -->
+    <div class="finding-body">
       <div class="line-row">
         ${lineRowMain}
         ${linePreview?.tip ?? nothing}

@@ -110,6 +110,25 @@
   .page-head .meta-row .status-bar { display: none !important; }
   .page-head { break-after: avoid; }
 
+  /* …but `break-after: avoid` cannot save the FIRST seam on its own.
+     A finding tall enough to fill most of a sheet doesn't fit under
+     the report header, so it starts a new page; honouring the avoid
+     would then mean moving the header down too and leaving page one
+     blank, which the UA refuses — so the header stays behind, alone
+     on a page of its own. That is the reported bug, and no break
+     property fixes it, because the constraint is the card's own
+     `break-inside: avoid` (finding-card.css).
+
+     So the opening card gives that up: it may split across the seam,
+     which means the report starts under its header every time and
+     runs on overleaf. Only this one card — every other finding still
+     moves whole to the next page, where doing so costs a gap and not
+     a blank sheet. Both shapes of the body are named: a group's
+     first card (grouped by file, or the list view's `.flat-group`),
+     and a card sitting directly in the body slot. */
+  #findings-body-slot > :first-child finding-card:first-of-type,
+  #findings-body-slot > finding-card:first-child { --finding-print-break: auto; }
+
   /* Per-finding card print rules (break-inside: avoid, multi-case
      banner, stacked tab bodies, .marks suppression, .badge palette
      overrides) live in `<finding-card>`'s shadow DOM — see the
