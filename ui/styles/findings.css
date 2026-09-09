@@ -136,16 +136,29 @@
     padding-bottom: 1rem;
   }
 }
-/* Details panel = its own glass card, sticky so it follows the
-   scroll. Header bar carries the close button rather than an
-   absolute-positioned one that would float over the finding's
-   title. */
+/* Details panel = its own glass card. Header bar carries the close
+   button rather than an absolute-positioned one that would float over
+   the finding's title. */
 .findings-table-details {
-  position: sticky;
-  /* 1rem from the viewport top once scrolled past; nothing above is
-     sticky, so a small offset is enough. */
-  top: 1rem;
-  max-height: calc(100vh - 2rem);
+  /* Bounded by the GRID AREA, not the viewport. The panel sits in the
+     body slot, which starts below the page header and the toolbar, so
+     a cap of `100vh - 2rem` was taller than the space it had by
+     exactly the height of that chrome — and the surplus pushed
+     `#main-content` into a scroll of its own, carrying the whole app
+     shell up as the reader moved through a long finding. The row is
+     `minmax(0, 1fr)` of a grid that is itself `height: 100%` (see
+     `@media not print` above), so 100% here is the space that is
+     actually free, and the body below scrolls inside it.
+
+     The rem it stops short of the bottom is the same gap the list
+     column keeps there (its `padding-bottom`, inside the scroller):
+     `#report` gives the body slot no bottom padding in these views,
+     so each column pays for its own.
+
+     No `position: sticky` either: it was there to follow that page
+     scroll, and there is no page scroll to follow once the panel
+     fits. */
+  max-height: calc(100% - 1rem);
   max-width: 800px;
   background: var(--surface);
   backdrop-filter: var(--glass-blur);
