@@ -18,7 +18,9 @@ import { html, nothing, unsafeCSS } from 'lit'
 import { buildRawReportsExportGzip, buildWorkspaceExportBundle } from '#client/index.js'
 import { downloadBlob } from '../dom.js'
 import { AppDialog, openAppDialogOrReject } from './app-dialog.js'
+import { dialogTabs } from './shared.js'
 import shareCSS from './dialog-share.css'
+import tabsCSS from './dialog-tabs.css'
 
 const TABS = [
   { id: 'workspace', label: 'Export workspace' },
@@ -26,7 +28,7 @@ const TABS = [
 ]
 
 class WorkspaceExportDialog extends AppDialog {
-  static styles = [...AppDialog.styles, unsafeCSS(shareCSS)]
+  static styles = [...AppDialog.styles, unsafeCSS(shareCSS), unsafeCSS(tabsCSS)]
 
   static properties = {
     workspace: { attribute: false },
@@ -103,19 +105,6 @@ class WorkspaceExportDialog extends AppDialog {
     }
   }
 
-  // Arrow-key navigation across the tablist, as `role="tab"` implies.
-  // Two tabs, so either arrow just flips to the other one; focus
-  // follows the selection (automatic activation) once lit has painted
-  // the new roving tabindex.
-  _onTabsKeydown = async (e) => {
-    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
-    e.preventDefault()
-    const next = this._tab === 'workspace' ? 'raw' : 'workspace'
-    this._selectTab(next)
-    await this.updateComplete
-    this.renderRoot.querySelector(`#wsl-tab-${next}`)?.focus()
-  }
-
   _onPasswordInput = (e) => { this._password = e.target.value; this._error = '' }
   _onConfirmInput = (e) => { this._confirm = e.target.value; this._error = '' }
   _onNoPasswordToggle = (e) => {
@@ -177,24 +166,19 @@ class WorkspaceExportDialog extends AppDialog {
     }
   }
 
-  // Selection lives on `aria-selected` alone — the CSS keys off the
-  // attribute, so there's no parallel `active` class to keep in sync.
+  // The strip itself is shared with `<export-confirm-dialog>` — the
+  // markup, the roving tabindex and the arrow keys all live in
+  // dialogs/shared.js; this dialog supplies the labels and what a
+  // click means. The `wsl` prefix keeps the ids its panel is already
+  // labelled with.
   _tabsTemplate() {
-    return html`
-      <div class="wsl-tabs" role="tablist" @keydown=${this._onTabsKeydown}>
-        ${TABS.map((t) => html`<button
-          type="button"
-          role="tab"
-          class="wsl-tab"
-          id=${`wsl-tab-${t.id}`}
-          aria-controls=${`wsl-panel-${t.id}`}
-          aria-selected=${String(this._tab === t.id)}
-          tabindex=${this._tab === t.id ? 0 : -1}
-          ?disabled=${this._busy && this._tab !== t.id}
-          @click=${() => this._selectTab(t.id)}
-        >${t.label}</button>`)}
-      </div>
-    `
+    return dialogTabs({
+      tabs: TABS,
+      current: this._tab,
+      prefix: 'wsl',
+      disabled: this._busy,
+      select: (id) => this._selectTab(id),
+    })
   }
 
   _workspacePanel() {

@@ -375,6 +375,39 @@
    the graph topbar uses an explicit `.g2-spacer` to push the button
    to the right, and inheriting margin-left would interfere with
    that intentional layout. */
+/* Export button — the download icon at the end of the first toolbar
+   row, beside the app lens. `display: contents` on the host so the
+   button itself is the flex item: the component renders `nothing`
+   where the export makes no sense (graph / kanban), and a host that
+   still counted as an item would leave the row's gap behind it.
+   Sized and framed like the other standalone controls in the row
+   (.trash-btn below, the view-mode group above): 30px tall, bordered,
+   accent on hover. */
+download-button { display: contents; }
+.toolbar-export-btn {
+  /* Pinned right, beside the app lens — the two of them are the row's
+     right-hand pair. The margin is on the BUTTON, not the host: the
+     host is `display: contents` (above), so it has no box for a margin
+     to sit on. */
+  margin-left: auto;
+  height: 30px; box-sizing: border-box;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0 .55rem;
+  /* An icon button in this row, styled as the others are: TRANSPARENT
+     over the toolbar's own glass — a `--bg` fill would paint an opaque
+     black box on it — with the glyph in `--muted` and the group's
+     border for a frame. Hover lifts the glyph to `--text` over the
+     same faint tint the view-mode buttons use, so the two read as one
+     family. */
+  background: transparent; color: var(--muted);
+  border: 1px solid var(--border); border-radius: 4px;
+  font-family: inherit;
+  transition: background .12s, color .12s;
+
+  &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
+  & svg { display: block; }
+}
+
 .trash-btn {
   height: 30px; box-sizing: border-box;
   background: var(--bg); color: var(--text); border: 1px solid var(--border);
@@ -410,6 +443,14 @@ slide-triage-tabs {
   overflow: hidden;
 }
 .toolbar triage-selector { margin-left: auto; }
+
+/* The export button claims the free space in front of the pair, so the
+   lens drops its own claim and sits tight against it. Two auto margins
+   between them would split what is left and drift them apart; keyed on
+   `:has(button)` because the host stays in the row even where the
+   component renders nothing (graph / kanban), and there the lens still
+   needs its own pin. */
+.toolbar download-button:has(button) + revalidation-switch { margin-left: 0; }
 
 /* The App / code lens (revalidation-switch.js). Pinned right with its
    own `margin-left: auto` rather than riding the triage selector's —

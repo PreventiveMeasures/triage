@@ -57,7 +57,6 @@ import './view/triage-selector.js'
 import './view/view-mode-buttons.js'
 import './view/bundle-treemap.js'
 import './view/bundle-compare.js'
-import './view/print-button.js'
 import './view/download-button.js'
 import './view/api.js'
 // Eager side-effect import — registers / unregisters the brotli SW

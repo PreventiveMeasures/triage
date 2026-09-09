@@ -1,21 +1,23 @@
-// `<download-button>` — fixed top-right markdown download icon,
-// stacks below the print button. Shares the print button's visibility
-// predicate (findings view, loaded report, printable view-mode)
-// because the user generally wants the markdown export alongside the
-// print affordance; each owns its visibility via StateElement.
+// `<download-button>` — the export affordance, in the findings
+// toolbar at the right of the first row, immediately left of the app
+// lens (`<revalidation-switch>`) and separate from it. It used to be a
+// fixed icon in the top-right corner, stacked under a print button of
+// its own; both exports now start here, and which one runs is a tab in
+// the dialog (dialogs/export-confirm-dialog.js).
+//
+// Visible on the findings view with a report loaded, and not in the
+// two view-modes that have nothing to give either export: the graph
+// and the kanban board don't read on paper, and the dialog's Print tab
+// is half of what this button is for.
 //
 // Click dispatches a `download-requested` CustomEvent (bubbles +
 // composed); events.js listens on document, confirms the selection,
-// and calls downloadReportsAsMarkdown() (view/markdown-export.js).
+// and either writes the markdown (view/markdown-export.js) or runs the
+// print pipeline, depending on the tab the reader confirmed under.
 import { nothing } from 'lit'
 import { StateElement, html } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'
-
-const DOWNLOAD_ICON = html`<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-  <polyline points="7 10 12 15 17 10"/>
-  <line x1="12" x2="12" y1="15" y2="3"/>
-</svg>`
+import { DOWNLOAD_ICON } from './export-icons.js'
 
 class DownloadButton extends StateElement {
   createRenderRoot() { return this }
@@ -30,7 +32,8 @@ class DownloadButton extends StateElement {
     if (!visible) return nothing
     return html`<button
       type="button"
-      aria-label="download"
+      class="toolbar-export-btn"
+      aria-label="Download or print report"
       @click=${this._onClick}
     >${DOWNLOAD_ICON}</button>`
   }

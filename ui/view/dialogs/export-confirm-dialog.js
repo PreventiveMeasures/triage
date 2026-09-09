@@ -1,9 +1,10 @@
-// `<export-confirm-dialog>` — fronts the toolbar Print and Download
-// (Markdown) buttons. Both exports emit only the findings visible
-// under the active filters (see export-summary.js); this dialog
+// `<export-confirm-dialog>` — what the toolbar's export button opens.
+// The two exports are its two TABS: Markdown writes the file, Print
+// sends the page to paper. Both emit only the findings visible
+// under the active filters (see export-summary.js), so the dialog
 // restates that selection — the included / excluded counts and the
-// active filters in words — so the user knows exactly what's leaving
-// before it prints or downloads.
+// active filters in words — under either tab, and the reader picks
+// which one leaves.
 //
 // Sibling of `<delete-report-dialog>` etc.: extends `AppDialog` for
 // the shared shadow-DOM <dialog> chrome (focus-trap + Esc-to-cancel).
@@ -24,18 +25,33 @@
 //
 // Native Ctrl+P / browser-menu printing bypasses this dialog — those
 // can't be intercepted with an async confirm — so it only guards the
-// in-app buttons (the `print-requested` / `download-requested` events).
+// in-app button (the `download-requested` event).
 import { html, nothing, unsafeCSS } from 'lit'
 import { AppDialog } from './app-dialog.js'
+import { dialogTabs } from './shared.js'
+import { MARKDOWN_ICON, PRINT_ICON } from '../export-icons.js'
 import { exportSelectionSummary } from '../export-summary.js'
 import exportConfirmCSS from './dialog-export-confirm.css'
+import tabsCSS from './dialog-tabs.css'
+
+// Markdown leads: it is the export that always has something to give
+// (print is the one the page can be in the wrong shape for), and the
+// tab the button opens on. The tabs are named for what comes OUT —
+// a markdown file, a printed page — while the button that commits
+// still says what happens (Download / Print). Ids stay the export
+// modes the caller runs on.
+const TABS = [
+  { id: 'download', label: 'Markdown', icon: MARKDOWN_ICON },
+  { id: 'print', label: 'Print', icon: PRINT_ICON },
+]
 
 class ExportConfirmDialog extends AppDialog {
-  static styles = [...AppDialog.styles, unsafeCSS(exportConfirmCSS)]
+  static styles = [...AppDialog.styles, unsafeCSS(exportConfirmCSS), unsafeCSS(tabsCSS)]
 
   static properties = {
-    // 'print' | 'download' — drives the title, intro wording and the
-    // confirm button label.
+    // 'download' | 'print' — the open tab. Drives the intro wording,
+    // the confirm button, and which export the caller runs on
+    // confirm. Reactive state, not just an input: the tabs flip it.
     mode: { type: String },
     included: { type: Number },
     excluded: { type: Number },
@@ -48,14 +64,17 @@ class ExportConfirmDialog extends AppDialog {
     fields: { attribute: false },
     // Non-null only when viewing a trash bucket (e.g. 'Deleted').
     bucketLabel: { type: String },
-    // Print from the focus view-mode emits only the single focused
-    // finding (not the whole filtered set) — see export-summary.js.
+    // Whether PRINT would emit only the single focused finding rather
+    // than the whole filtered set (focus view-mode — see
+    // export-summary.js). Read only under the Print tab, so the flag
+    // is asked for once at open time and survives tab flips; the
+    // counts themselves are the same for both exports.
     focusedOnly: { type: Boolean },
   }
 
   constructor() {
     super()
-    this.mode = 'print'
+    this.mode = 'download'
     this.included = 0
     this.excluded = 0
     this.total = 0
@@ -67,6 +86,18 @@ class ExportConfirmDialog extends AppDialog {
     this._relaxed = false
     this.bucketLabel = null
     this.focusedOnly = false
+  }
+
+  // What the open tab makes of the focus flag: the whole-set copy is
+  // unaffected by focus view-mode, so this is print's alone.
+  get _focusedOnly() { return this.mode === 'print' && this.focusedOnly }
+
+  // Flip the tab. Nothing to recount — both exports run over the same
+  // selection (only the wording and the flag above differ) — so the
+  // dropped filters and the relaxed clone carry across untouched.
+  _selectTab(mode) {
+    if (this.mode === mode) return
+    this.mode = mode
   }
 
   // Focus the primary action — this is a non-destructive confirm, so
@@ -91,6 +122,9 @@ class ExportConfirmDialog extends AppDialog {
       confirmed: action === 'confirm',
       view: action === 'view',
       fields: this._relaxed ? this.fields : null,
+      // Which tab it was confirmed under — the caller prints or writes
+      // the file on the strength of this, not on what it opened with.
+      mode: this.mode,
     })
   }
 
@@ -135,7 +169,7 @@ class ExportConfirmDialog extends AppDialog {
     // filtered set (the focus queue, sized `included`). Only when the
     // queue is non-empty — with everything filtered out there's nothing
     // focused, so fall through to the normal "0 of N" (disabled) copy.
-    if (this.focusedOnly && this.included > 0) {
+    if (this._focusedOnly && this.included > 0) {
       return html`
         <p class="ecd-count">Only the <strong>focused</strong> finding will be printed.</p>
         <p class="ecd-excluded">Focus mode prints just the finding you're viewing. Switch to the list or grouped view to print all ${this.included} matching ${this.included === 1 ? 'finding' : 'findings'}.</p>
@@ -182,22 +216,33 @@ class ExportConfirmDialog extends AppDialog {
 
   render() {
     const isPrint = this.mode === 'print'
-    const title = isPrint ? 'Print report' : 'Download report'
-    const intro = this.focusedOnly
+    const intro = this._focusedOnly
       ? "You're in focus mode — printing outputs just the finding you're focused on."
       : isPrint
         ? 'Prints only the findings matching your current filters — the same set shown on screen. Use the toolbar to change the selection first.'
         : 'Downloads a Markdown file of the findings matching your current filters — the same set shown on screen. Use the toolbar to change the selection first.'
+    // The tab strip is the header — the two labels say what the old
+    // title said, and say which one is about to happen. Same strip the
+    // workspace export wears (dialogs/shared.js + dialog-tabs.css).
     return html`<dialog @close=${this._onClose}>
-      <header>
-        <h3>${title}</h3>
-      </header>
+      <header>${dialogTabs({
+        tabs: TABS,
+        current: this.mode,
+        prefix: 'ecd',
+        select: (id) => this._selectTab(id),
+      })}</header>
+      <div
+        role="tabpanel"
+        id=${`ecd-panel-${this.mode}`}
+        aria-labelledby=${`ecd-tab-${this.mode}`}
+      >
       <p class="nwd-intro">${intro}</p>
       ${this._countSection()}
       ${this.bucketLabel
         ? html`<p class="nwd-note">Scoped to the <strong>${this.bucketLabel}</strong> list — live findings are not included.</p>`
         : nothing}
       ${this._filtersSection()}
+      </div>
       <footer class="nwd-actions">
         <span class="nwd-spacer"></span>
         <button type="button" data-role="cancel" @click=${this._onCancel}>Cancel</button>
@@ -215,8 +260,9 @@ class ExportConfirmDialog extends AppDialog {
 customElements.define('export-confirm-dialog', ExportConfirmDialog)
 
 // Public entry point. Snapshots the current export selection (counts +
-// active filters, on the basis matching `mode`) and opens the dialog.
-// Resolves with `{ confirmed, view, fields }` (see the file header).
+// active filters) and opens the dialog on the `mode` tab. Resolves
+// with `{ confirmed, view, fields, mode }` — `mode` being the tab it
+// was confirmed under, which is what decides the export that runs.
 //
 // Custom open helper rather than the shared `openAppDialog`: the Print
 // / Download buttons stay clickable while another modal is up (the
@@ -226,8 +272,12 @@ customElements.define('export-confirm-dialog', ExportConfirmDialog)
 // hang the `await` in events.js forever and leak the element. Settle to
 // `{ confirmed: false }` on BOTH paths — a conflict collapses to a
 // no-op cancel (the user can retry once the blocking modal closes).
-export function openExportConfirmDialog(mode) {
+export function openExportConfirmDialog(mode = 'download') {
   const summary = exportSelectionSummary(mode)
+  // `focusedOnly` is the one thing the two bases disagree on, and the
+  // reader can flip to Print after the snapshot — so take it on the
+  // print basis now rather than recounting on every tab click.
+  const focusedOnly = mode === 'print' ? summary.focusedOnly : exportSelectionSummary('print').focusedOnly
   return new Promise((resolve) => {
     const el = document.createElement('export-confirm-dialog')
     Object.assign(el, {
@@ -238,15 +288,16 @@ export function openExportConfirmDialog(mode) {
       filters: summary.filters,
       fields: summary.fields,
       bucketLabel: summary.bucketLabel,
-      focusedOnly: summary.focusedOnly,
+      focusedOnly,
     })
     const settle = (detail) => { el.remove(); resolve(detail) }
     el.addEventListener('resolve', (e) => settle({
       confirmed: Boolean(e.detail?.confirmed),
       view: Boolean(e.detail?.view),
       fields: e.detail?.fields ?? null,
+      mode: e.detail?.mode ?? mode,
     }))
-    el.addEventListener('modal-conflict', () => settle({ confirmed: false, view: false, fields: null }))
+    el.addEventListener('modal-conflict', () => settle({ confirmed: false, view: false, fields: null, mode }))
     document.body.append(el)
   })
 }

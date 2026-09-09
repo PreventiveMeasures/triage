@@ -1,0 +1,45 @@
+/* Header tab strip, shared by the dialogs that open on more than one
+   thing: `<workspace-export-dialog>` (Export workspace / Raw reports
+   export) and `<export-confirm-dialog>` (Download / Print). Lives in
+   its own sheet rather than in dialog-share.css, which is the
+   workspace / passkey family's layer — the export-confirm dialog wants
+   the tabs and none of the rest of it.
+
+   The strip IS the dialog's header: a title above it would only repeat
+   the label of the tab that is open — so it carries title weight, and
+   the first tab loses its left padding to sit flush with the body copy
+   below. Selection is drawn from `aria-selected` alone, so there is no
+   second `active` class for a template to keep in step with the ARIA.
+
+   Mirrors the report view's `.bundles-tabs` chrome (styles/report.css),
+   restated here because a shadow tree cannot see that light-DOM
+   sheet. */
+.dlg-tabs {
+  display: flex; gap: .1rem;
+  /* Air under the rule before the panel starts. It collapses with the
+     top margin of whatever the panel opens with, so a dialog whose
+     first block already carries one (the workspace export's) keeps the
+     gap it had, and one whose intro sits flush (the report export's)
+     gets the same. */
+  margin: 0 0 .55rem;
+  border-bottom: 1px solid var(--border);
+}
+.dlg-tab {
+  display: inline-flex; align-items: center; gap: .35rem;
+  background: transparent; border: none;
+  color: var(--muted);
+  padding: .1rem .6rem .4rem;
+  font: inherit; font-size: .85rem; font-weight: 600;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color .12s, border-color .12s;
+
+  &:first-child { padding-left: 0; }
+  &:hover:not(:disabled) { color: var(--text); }
+  &[aria-selected='true'] { color: var(--accent); border-bottom-color: var(--accent); }
+  &:disabled { opacity: .5; }
+  /* A tab may lead with an icon (the export dialog's download / print
+     glyphs); the label carries the meaning, so the glyph rides at the
+     text's colour and weight. */
+  & svg { display: block; }
+}
