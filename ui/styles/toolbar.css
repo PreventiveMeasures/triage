@@ -758,17 +758,10 @@ toolbar-search,
   .toolbar-row.sev-row .search-row { flex-basis: 100%; }
 }
 
-/* When the table-view details panel is open, `.findings-content`
-   expands its max-width to 2000px to host the list + details
-   side-by-side; capping the toolbar back at 1200px keeps the
-   filter strip from stretching across into the details column.
-   The list / details split below stays at its full expanded
-   width — only the filter chrome is constrained. */
-/* Descendant (not child) combinator: render.js drops the toolbar
-   into a `<div id="toolbar-slot">`, so a `>` path wouldn't match.
-   `.toolbar` is unique inside `.findings-content`, so descendant is
-   safe. */
-.findings-content.with-details .toolbar { max-width: 1200px; }
+/* The toolbar takes the full width of every findings view now — the
+   readability cap sits on the list below it (report.css), not on the
+   wrapper around both — so the strip no longer needs pulling back to
+   1200px when the table's details panel widens the wrapper. */
 
 /* Severity-filter chips — segmented control matching
    `triage-selector` / `source-filter` so the three filter groups
