@@ -1358,7 +1358,13 @@ span.evidence-ref:not([role]) { color: var(--muted); }
    (`.tab-body`, `.tabs`, etc.) only apply inside the shadow root. */
 @media print {
   .card {
-    break-inside: avoid;
+    /* Kept whole on one page by default — a finding split down the
+       middle is harder to read than a page that ends early. The
+       light-DOM print sheet lifts this for the card that opens the
+       report (`--finding-print-break: auto` in styles/print.css),
+       where holding a tall finding together is what stranded the
+       report header alone on page one. */
+    break-inside: var(--finding-print-break, avoid);
     padding: .45rem .25rem;
   }
   /* Pure on-screen affordance — the bundle source viewer is an
