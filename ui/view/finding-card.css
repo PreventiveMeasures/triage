@@ -1501,7 +1501,7 @@ span.evidence-ref:not([role]) { color: var(--muted); }
      it solved: a description of two pages cannot be kept whole, and a
      fragmenter that is told to try moves it to a page of its own
      first, leaving most of a sheet blank behind it. */
-  .line-row, .desc-title, .conf-reason, .severity-reason { break-inside: avoid; }
+  .line-row, .desc-title, .conf-reason, .severity-reason, .scope-block { break-inside: avoid; }
   .section-label { break-after: avoid; }
   .desc, .section-body { orphans: 2; widows: 2; }
 
