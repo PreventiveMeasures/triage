@@ -637,6 +637,13 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
            are properties of the loaded SET, so the control doesn't
            resize as the reader moves through it; either one alone is
            reason enough to draw it. See revalidation-switch.js. -->
+      <!-- Export — the download icon that opens the export dialog
+           (Download / Print as its two tabs). It rides at the end of
+           the row beside the app lens, its own bordered control rather
+           than a stop inside that switch: the lens changes what the
+           reader is looking at, this takes a copy of it away. The
+           component owns its visibility (view/download-button.js). -->
+      <download-button></download-button>
       ${canDropLayer || canDetailLayer
         ? html`<revalidation-switch ?can-drop=${canDropLayer} ?can-detail=${canDetailLayer}></revalidation-switch>`
         : nothing}

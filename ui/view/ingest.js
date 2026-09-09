@@ -797,10 +797,9 @@ export async function deleteCurrent({ triage = 'keep', deleteFromRemoteWorkspace
 // Shared empty-state reset — clears all in-memory view state
 // (selections, reports, graph2, repo-url) and repaints `#report` /
 // `#drop-zone` / `<title>` to the empty welcome surface. The
-// `<print-button>` / `<download-button>` hosts hide themselves
-// reactively via their StateElement autoruns (see
-// view/print-button.js / download-button.js) when the predicates fail,
-// so no manual visibility reset here. `goHome`, `deleteCurrent`'s tail,
+// `<download-button>` hides itself reactively via its StateElement
+// autorun (see view/download-button.js) when its predicate fails, so
+// no manual visibility reset here. `goHome`, `deleteCurrent`'s tail,
 // and `leaveWorkspace`'s active-view branch all route through here so
 // the three paths can't drift.
 //

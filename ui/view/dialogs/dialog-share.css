@@ -8,37 +8,6 @@
 /* Wider than the base 480px. */
 dialog { max-width: 520px; width: min(94vw, 520px); }
 
-/* Tab strip — the export dialog's "Export workspace" / "Raw reports
-   export" switcher. Mirrors the report view's `.bundles-tabs` chrome
-   (styles/report.css); duplicated here because shadow trees can't see
-   that light-DOM sheet. Selection is read off `aria-selected` rather
-   than a parallel `.active` class, so the template carries the state
-   once.
-
-   It sits in the dialog's `<header>` INSTEAD of an `<h3>` — the title
-   would only repeat the first tab — so it carries title weight, and
-   the first tab loses its left padding to sit flush with the body copy
-   below. */
-.wsl-tabs {
-  display: flex; gap: .1rem;
-  margin: 0;
-  border-bottom: 1px solid var(--border);
-}
-.wsl-tab {
-  background: transparent; border: none;
-  color: var(--muted);
-  padding: .1rem .6rem .4rem;
-  font: inherit; font-size: .85rem; font-weight: 600;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-  transition: color .12s, border-color .12s;
-
-  &:first-child { padding-left: 0; }
-  &:hover:not(:disabled) { color: var(--text); }
-  &[aria-selected='true'] { color: var(--accent); border-bottom-color: var(--accent); }
-  &:disabled { opacity: .5; }
-}
-
 .wsl-field {
   display: block; margin-top: .6rem;
   color: var(--text); font-size: .78rem;

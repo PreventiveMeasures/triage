@@ -503,55 +503,10 @@ a { color: var(--accent); text-decoration: none; }
    built-ins are always defined — so this is safe to apply globally. */
 :not(:defined) { display: none; }
 
-/* Print + download buttons — fixed-position chrome controls in the
-   top-right corner. Same glass shell as the toolbar / sidebar so they
-   read as part of the matte-glass UI, not floating widgets. The
-   sibling `<theme-toggle>` Lit component carries an equivalent rule in
-   its shadow DOM (see view/theme.js). */
-/* The `<print-button>` and `<download-button>` hosts each render
-   either a `<button>` (when state predicates pass — see the
-   components) or `nothing`. The host element carries the
-   absolute-positioned layout and the per-button `&:hover` chrome
-   directly; `:has(button)` keeps the layout off the host when the
-   button isn't there so it doesn't claim a 30×30 hit target while
-   invisible. The button itself is `display: flex`. */
-print-button:has(button),
-download-button:has(button) {
-  position: absolute; right: .5rem;
-  z-index: 1000;
-  width: 30px; height: 30px;
-
-  & button {
-    display: flex;
-    width: 100%; height: 100%;
-    background: transparent;
-    color: var(--muted);
-    border: 0; border-radius: 6px;
-    font-size: 1rem; line-height: 1;
-    font-family: inherit;
-    align-items: center; justify-content: center;
-    transition: color .12s, background .12s;
-
-    &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
-    & svg { display: block; }
-  }
-}
-
-/* Print sits directly under the theme toggle — its top stacks below
-   the toggle's bottom (.5rem from the viewport top + 30px toggle
-   height + .35rem gap). The component itself decides visibility
-   via `state.reports.length > 0 && state.currentView === 'findings'
-   && state.viewMode !== 'graph' && state.viewMode !== 'kanban'` so
-   the button only appears where window.print() makes sense (graph
-   and kanban don't read on paper; the Files tab isn't findings). */
-print-button { top: calc(.5rem + 30px + .35rem); }
-
-/* Download sits directly under the print button, same .35rem gap. */
-download-button { top: calc(.5rem + 30px + .35rem + 30px + .35rem); }
-
-@media print {
-  print-button, download-button { display: none !important; }
-}
+/* The corner holds the theme toggle alone. Print and download used to
+   stack under it as fixed chrome; both now start from one button in
+   the findings toolbar, where the controls that decide what is
+   exported already live (toolbar.css, view/download-button.js). */
 
 /* Standalone PWA mode (OS title bar above the page, header NOT
    collapsed into the viewport): mirror the sidebar→main vertical
@@ -577,18 +532,17 @@ download-button { top: calc(.5rem + 30px + .35rem + 30px + .35rem); }
    strip reads as one panel from top to bottom with no visible
    seam. Here we hand the page background to the OS as a drag
    handle (so even the empty space between findings can move the
-   window) and re-lay the right-edge floating stack as a row
-   underneath the OS controls strip so the native close button
-   can take the corner. */
+   window) and move the theme toggle down under the OS controls
+   strip so the native close button can take the corner. */
 /* stylelint-disable media-feature-name-value-no-unknown, length-zero-no-unit */
 @media (display-mode: window-controls-overlay) {
   /* OS-controls cluster width on the side the platform paints them
      (right on Win/Linux, left on Mac). Shared by:
        - body::after blob's outer extent (with its own fade pad
          added on top)
-       - any top-aligned bar that would otherwise run under the
-         floating button row (.bundles-slide-bar etc.) — used as a
-         straight inset, no fade pad needed. */
+       - any top-aligned bar that would otherwise run under the OS
+         controls (.bundles-slide-bar etc.) — used as a straight
+         inset, no fade pad needed. */
   :root {
     --wco-right-toolbar: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
   }
@@ -608,8 +562,18 @@ download-button { top: calc(.5rem + 30px + .35rem + 30px + .35rem); }
   }
 
   /* Content surfaces — opt out so wheel / clicks / selection
-     work inside them. */
-  .findings-content,
+     work inside them.
+
+     The findings views name their surfaces rather than the wrapper
+     around them: the wrapper spans the whole report so the toolbar can
+     run full width (report.css), while the list keeps a readability
+     cap, and opting the wrapper out took the strip beside a capped
+     list — empty page, and a drag handle before that cap moved — out
+     of the body-wide drag baseline with it. */
+  .toolbar,
+  #findings-body-slot,
+  #findings-graph-slot,
+  #empty-state-slot,
   .tree-view,
   .tree-view-table,
   .packages-list,
@@ -649,27 +613,19 @@ download-button { top: calc(.5rem + 30px + .35rem + 30px + .35rem); }
     app-region: no-drag;
   }
 
-  /* Anchor row just under the OS controls strip; the cascading
-     right offsets keep the toggle rightmost so the visual order
-     (toggle, print, download — top → bottom in normal mode)
-     reads the same right → left. */
-  theme-toggle,
-  print-button,
-  download-button {
-    top: calc(env(titlebar-area-height, 33px) + .35rem);
+  /* Anchor the toggle just under the OS controls strip. It is the
+     only fixed corner control left — print and download moved into
+     the toolbar — so there is no row of offsets to cascade any more.
+
+     The 33px is a FLOOR, not just a fallback: the env() is defined in
+     this mode, so a host that reports a zero-height titlebar area (the
+     same case `.sidebar-header`'s `min-height` guards with a 0
+     fallback) would put the toggle inside the strip the OS paints its
+     controls on, where the window drag swallows every click on it. */
+  theme-toggle {
+    top: calc(max(env(titlebar-area-height, 33px), 33px) + .35rem);
+    right: .5rem;
   }
-  theme-toggle  { right: .5rem; }
-  /* `print-button` / `download-button` are qualified with `:has(button)`
-     so they tie — and, being later in source order, outrank — the base
-     `print-button:has(button), download-button:has(button)` rule above
-     that pins `right: .5rem`. Bare type selectors here (0,0,1) lose to
-     that rule (0,0,2), which would collapse all three buttons onto
-     `right: .5rem` and stack them on top of each other. theme-toggle
-     needs no such qualifier: its base position lives in the component's
-     shadow `:host`, which an outer-tree rule overrides regardless of
-     specificity (and it renders no inner <button> for `:has` to match). */
-  print-button:has(button)  { right: calc(.5rem + 30px + .35rem); }
-  download-button:has(button) { right: calc(.5rem + 2 * (30px + .35rem)); }
 
   /* In WCO mode there's no OS-painted title-bar strip above the
      viewport — the buttons land on top of the page itself — so the

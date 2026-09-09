@@ -3,6 +3,12 @@
    and the `.nwd-actions` footer; this adds the count headline and the
    active-filters definition list. */
 
+/* Wider than the base 480px — the tab strip put two labelled controls
+   on the header line, and the intro under them reads better before it
+   wraps. (The workspace export widens for the same reason; this one
+   stops short of that 520px because its body is shorter.) */
+dialog { max-width: 515px; width: min(94vw, 515px); }
+
 /* Count headline — the "X of Y findings included" line. Sized up from
    body copy so the number the user is committing to reads at a glance,
    in the accent color to anchor the dialog. */

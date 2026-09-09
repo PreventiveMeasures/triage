@@ -136,16 +136,29 @@
     padding-bottom: 1rem;
   }
 }
-/* Details panel = its own glass card, sticky so it follows the
-   scroll. Header bar carries the close button rather than an
-   absolute-positioned one that would float over the finding's
-   title. */
+/* Details panel = its own glass card. Header bar carries the close
+   button rather than an absolute-positioned one that would float over
+   the finding's title. */
 .findings-table-details {
-  position: sticky;
-  /* 1rem from the viewport top once scrolled past; nothing above is
-     sticky, so a small offset is enough. */
-  top: 1rem;
-  max-height: calc(100vh - 2rem);
+  /* Bounded by the GRID AREA, not the viewport. The panel sits in the
+     body slot, which starts below the page header and the toolbar, so
+     a cap of `100vh - 2rem` was taller than the space it had by
+     exactly the height of that chrome — and the surplus pushed
+     `#main-content` into a scroll of its own, carrying the whole app
+     shell up as the reader moved through a long finding. The row is
+     `minmax(0, 1fr)` of a grid that is itself `height: 100%` (see
+     `@media not print` above), so 100% here is the space that is
+     actually free, and the body below scrolls inside it.
+
+     The rem it stops short of the bottom is the same gap the list
+     column keeps there (its `padding-bottom`, inside the scroller):
+     `#report` gives the body slot no bottom padding in these views,
+     so each column pays for its own.
+
+     No `position: sticky` either: it was there to follow that page
+     scroll, and there is no page scroll to follow once the panel
+     fits. */
+  max-height: calc(100% - 1rem);
   max-width: 800px;
   background: var(--surface);
   backdrop-filter: var(--glass-blur);
@@ -563,13 +576,12 @@
 
   position: fixed;
   inset: 0;
-  /* Above the floating chrome buttons, which sit at z-index 1000 in
-     the same (root) stacking context — `<theme-toggle>` via its own
-     shadow `:host`, print / download via theme.css. At the previous
-     200 they painted through the dim and, once the rail docked into
-     their corner, right on top of its header. The app's `<dialog>`s
-     (comment, fix link) are further up still, so a dialog opened from
-     inside the modal keeps covering it. */
+  /* Above the floating theme toggle, which sits at z-index 1000 in
+     the same (root) stacking context via its own shadow `:host`. At
+     the previous 200 it painted through the dim and, once the rail
+     docked into its corner, right on top of the rail's header. The
+     app's `<dialog>`s (comment, fix link) are further up still, so a
+     dialog opened from inside the modal keeps covering it. */
   z-index: 1100;
   display: grid; place-items: center;
   padding: 1rem;
@@ -581,12 +593,11 @@
 }
 
 /* Chrome the dialog covers rather than competes with. The theme
-   toggle is the only one of the three floating buttons still on
-   screen in kanban view (print and download hide themselves there),
-   and the corner it occupies is the rail's — so it goes away for as
-   long as the dialog is up, at every width. Ordering alone wasn't
-   enough: a live control sitting on the dim, over a dialog it has
-   nothing to do with, reads as part of it. */
+   toggle is the one floating control left on screen, and the corner it
+   occupies is the rail's — so it goes away for as long as the dialog
+   is up, at every width. Ordering alone wasn't enough: a live control
+   sitting on the dim, over a dialog it has nothing to do with, reads
+   as part of it. */
 body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
 
 /* Dim layer — a separate sibling of the modal that animates
