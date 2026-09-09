@@ -1461,12 +1461,19 @@ span.evidence-ref:not([role]) { color: var(--muted); }
   .section-label { break-after: avoid; }
   .desc, .section-body { orphans: 2; widows: 2; }
 
-  /* The citation list is the one long block that stays whole, because
-     a break before it is what the reader wants: the finding ends, and
-     its citations start together on the next page. A list too long
-     for any page still splits — between citations, never inside one —
-     and pays for the attempt with the tail of the page it left. */
-  .evidence { order: 99; break-inside: avoid; }
+  /* A labelled section is a block: the citations, and equally the
+     impact, the reproduction and the recommendation. A break before
+     one is what the reader wants — the finding ends, and the steps to
+     reproduce it or the fix for it start together on the next page —
+     and `break-inside: avoid` buys exactly that, since a block told to
+     keep whole is moved rather than split. A section too long for any
+     page still splits (the citations between rows, never inside one)
+     and pays for the attempt with the tail of the page it left.
+
+     The lead narrative is not in here: it is the prose the section
+     labels interrupt, and it breaks like prose (above). */
+  .section, .recommendation, .evidence { break-inside: avoid; }
+  .evidence { order: 99; }
   .evidence > summary { break-after: avoid; }
   .evidence-list > li { break-inside: avoid; }
   /* On screen the .flat-group-loc header stands in for the in-body
