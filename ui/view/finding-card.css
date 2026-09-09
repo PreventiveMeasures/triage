@@ -1365,6 +1365,11 @@ span.evidence-ref:not([role]) { color: var(--muted); }
        where holding a tall finding together is what stranded the
        report header alone on page one. */
     break-inside: var(--finding-print-break, avoid);
+    /* A card that runs onto the next page takes its frame with it:
+       without this the padding and the border belong to the first
+       fragment alone, and the continuation starts hard against the
+       top of the sheet with an open-ended box around it. */
+    box-decoration-break: clone;
     padding: .45rem .25rem;
   }
   /* Pure on-screen affordance — the bundle source viewer is an
@@ -1399,28 +1404,29 @@ span.evidence-ref:not([role]) { color: var(--muted); }
   }
   .marks { display: none !important; }
   .tabs { display: none !important; }
-  /* Each report of the finding is one block, and a block is where a
-     page should break when the card has to. Without this the seam
-     between two reports is worth no more to the fragmenter than any
-     line inside the second one, and a card of two reports came apart
-     mid-report; with it, the appealing break is the one between them
-     (the card's own `break-inside: avoid` still decides WHETHER to
-     break — this only steers where).
+  /* Each report of the finding is one block, and the seam between two
+     of them is where a page should break when a card of several has
+     to. `break-inside: avoid` is what makes that seam worth more to
+     the fragmenter than any line inside the report below it: a block
+     told to keep whole is moved to a fresh page rather than split, and
+     moving it IS the break before it.
 
-     It answers to the same property as the card, because a box the
-     fragmenter is told to keep whole is one it will move to a fresh
-     page before it splits — and for the card that opens the report,
-     moving is the thing that strands the header (styles/print.css).
-     Lifting the card alone would leave this to hold it back.
+     Everything but the FIRST report, which keeps flowing. A block the
+     fragmenter is told to keep whole is one it moves before it splits,
+     so an unbreakable first report leaves the card's opening — the
+     banner, the "1 of 2" label — stranded at the foot of the page
+     while the report itself starts overleaf. Breaking before the first
+     report is never the answer: there is nothing above it to keep it
+     company. It flows instead, and the seams that follow are the ones
+     the fragmenter prefers.
 
-     A card of several reports doesn't need the lifting and is worse
-     for it: the cases are break points of their own, so the opening
-     card can give page one its first case and carry the rest over.
-     Left liftable, it fills the page to the line — which is how the
-     "2 of 2" label came to head a page whose case starts on the
-     next one. */
+     For a single-report card the block IS the card, so it answers to
+     the same property the card does — the escape hatch that lets the
+     card opening the report start under the header rather than move
+     past it (styles/print.css). */
   .tab-body { display: grid !important; break-inside: var(--finding-print-break, avoid); }
-  :host(.multi-case) .tab-body { break-inside: avoid; }
+  :host(.multi-case) .tab-body { break-inside: auto; }
+  :host(.multi-case) .tab-body + .tab-body { break-inside: avoid; }
   .tab-body + .tab-body {
     margin-top: .5rem; padding-top: .5rem;
     border-top: 1px dashed #999;
@@ -1434,21 +1440,33 @@ span.evidence-ref:not([role]) { color: var(--muted); }
      needs a flex line to act on, hence the column: `order` on the
      evidence alone would do nothing to a block container.
      `flex-shrink: 0` keeps the blocks at their content height —
-     a flex item's default shrink would squeeze them.
-     Every other block is unbreakable, which leaves the seam ABOVE
-     the evidence the most appealing place to split the finding: a
-     card too tall for the page opens with what it found and starts
-     its citations on the next page, instead of tearing the narrative
-     in half. The list breaks between citations, never inside one. */
+     a flex item's default shrink would squeeze them. */
   .finding-body {
     display: flex; flex-direction: column;
     & > * { flex-shrink: 0; }
-    & > :not(.evidence) { break-inside: avoid; }
   }
-  .evidence { order: 99; }
-  /* Same for the list's own heading — with the break the fragmenter
-     now prefers sitting right above it, "Evidence (38)" is the line
-     most likely to be left behind at the foot of a page. */
+
+  /* What a page break may and may not land in. The rule of thumb is
+     the size of the block: prose is long and breaks like prose, in
+     paragraphs, with two lines of it kept together on each side of a
+     seam; the short blocks that would read as debris on their own —
+     the location row, the title, the notes under the finding — go
+     whole or not at all.
+
+     Making the long blocks unbreakable too was worse than the problem
+     it solved: a description of two pages cannot be kept whole, and a
+     fragmenter that is told to try moves it to a page of its own
+     first, leaving most of a sheet blank behind it. */
+  .line-row, .desc-title, .conf-reason, .severity-reason { break-inside: avoid; }
+  .section-label { break-after: avoid; }
+  .desc, .section-body { orphans: 2; widows: 2; }
+
+  /* The citation list is the one long block that stays whole, because
+     a break before it is what the reader wants: the finding ends, and
+     its citations start together on the next page. A list too long
+     for any page still splits — between citations, never inside one —
+     and pays for the attempt with the tail of the page it left. */
+  .evidence { order: 99; break-inside: avoid; }
   .evidence > summary { break-after: avoid; }
   .evidence-list > li { break-inside: avoid; }
   /* On screen the .flat-group-loc header stands in for the in-body
