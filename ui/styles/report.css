@@ -1973,8 +1973,19 @@ bundle-search {
   }
 }
 
-.findings-content { max-width: 1200px; }
-.findings-content.with-details { max-width: 2000px; }
+/* The readability cap lives on the CONTENT, not on the wrapper, so
+   the toolbar above it can run the full width of the view the way it
+   already does in kanban and focus — a filter strip is chrome, and
+   chrome spans what it controls. The list keeps the cap that makes a
+   finding's prose readable at wide viewports (and the 2000px the
+   table's list + details split needs when a row is open); the empty
+   state keeps it too, being a paragraph of text.
+   `.page-head` above carries the same 1200px on its own (see the
+   `header.page-head` block at the top of this file), so the title row
+   still lines up with the list rather than with the toolbar. */
+.findings-content > #findings-body-slot,
+.findings-content > #empty-state-slot { max-width: 1200px; }
+.findings-content.with-details > #findings-body-slot { max-width: 2000px; }
 /* Graph view-mode (Findings tab) embeds the same canvas layout as
    the standalone Graph tab. Drop the readability cap so the
    1fr stage + 300px sidebar grid can use the full viewport,
@@ -1997,6 +2008,7 @@ bundle-search {
    transparent bg override the host defaults (8px, no shadow, opaque
    canvas) so it reads as a glass-panel slot matching the toolbar
    rather than the standalone graph's heavier card. */
+.findings-content.with-graph > #findings-body-slot { max-width: none; }
 .findings-content.with-graph {
   max-width: none;
   display: flex;
@@ -2022,7 +2034,6 @@ bundle-search {
    under the toolbar so only the column bodies scroll. (The body
    slot's flex setup is in the next block.) */
 .findings-content.with-kanban {
-  max-width: none;
   display: flex; flex-direction: column;
   flex: 1; min-height: 0;
 }
@@ -2033,6 +2044,9 @@ bundle-search {
    of `.findings-content`, shifting flex distribution enough in some
    browsers that the board's `flex: 1` loses its height bound. */
 .findings-content.with-kanban #findings-body-slot {
+  /* The board is not prose: it drops the list's readability cap and
+     takes the width the columns need. */
+  max-width: none;
   flex: 1; min-height: 0;
   display: flex; flex-direction: column;
 }
@@ -2093,7 +2107,7 @@ bundle-search {
    pane + sidebar) spreads full-viewport; make the body slot a flex
    column so `.focus-view`'s own `flex: 1` resolves against bounded
    height; trim the toolbar margin (same reason as kanban). */
-.findings-content.with-focus { max-width: none; }
+.findings-content.with-focus > #findings-body-slot { max-width: none; }
 .findings-content.with-focus #findings-body-slot {
   display: flex; flex-direction: column;
 }
