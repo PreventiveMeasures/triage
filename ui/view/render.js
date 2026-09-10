@@ -1961,8 +1961,12 @@ function renderImpl() {
   // the scale rather than gating everyone.
   //
   // Riding the scale is not the same as establishing it, which is the
-  // other half of rangeApplies: a set of nothing but imports is all
-  // 10s, and gets no range at all rather than a disabled one.
+  // other half of rangeApplies: a set of nothing but UNSCORED rows is
+  // all 10s, and gets no range at all rather than a disabled one. A
+  // producer that scores its findings establishes it like the
+  // analyzer does — a load of nothing but DeepSec reports gets the
+  // slider, the sort and the opening floor, over the numbers DeepSec
+  // wrote.
   //
   // The test is per-finding, not per-report: `critical` varies
   // finding-to-finding, so a lone critical finding must not vouch for
