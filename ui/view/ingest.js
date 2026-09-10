@@ -4,7 +4,7 @@ import { closeWorkspace as closePresence, deleteBundleFromRemote, deleteFromRemo
 import { openImportConflictDialog } from './dialogs/import-conflict-dialog.js'
 import { dropZone, report } from './dom.js'
 import { getShownGroups, mergeDuplicateFields, toGroup } from './group.js'
-import { effectiveSeverity } from './format.js'
+import { effectiveSeverity, hasRevalidateStamp } from './format.js'
 import { applyOpeningFilters, resetFilters } from './filters.js'
 import { render } from './render.js'
 import { renderSidebar } from './sidebar.js'
@@ -1126,8 +1126,28 @@ async function ingestReport(name, content, gen = null) {
     // Mutates the finding objects in place; `toGroup` returns them by
     // reference, so the ids are visible to the loop below.
     const rawEntries = reportEntries(data) ?? []
-    await backfillFindingIds(rawEntries.flatMap(toGroup))
+    const rawFindings = rawEntries.flatMap(toGroup)
+    await backfillFindingIds(rawFindings)
     if (stale()) return
+    // Which PRODUCERS judged something in this document — the sources
+    // whose findings carry a verdict of their own here. A product's
+    // import rides `revalidation` in the outcome filter for want of a
+    // stamp it could never have carried (filters.js
+    // filterRevalidateKind), and that reading is only true while
+    // nothing of that producer's was judged: DeepSec writes its own
+    // pass's verdicts into the report it exports, and there an
+    // unstamped row is one its pass did not reach, not one it
+    // confirmed.
+    //
+    // Per producer rather than per document, because a document can
+    // hold several: a re-imported export carries a revalidated
+    // analysis beside imports the pass never saw
+    // (report/src/parse-deepview-md.js stamps each row's own source),
+    // and the analysis being judged says nothing about them. Read off
+    // each finding's own marker, the same one `_source` takes below.
+    const judgedSources = new Set(rawFindings
+      .filter(hasRevalidateStamp)
+      .map((f) => f.source ?? data.source ?? null))
     // Per-report repo URL stamped on each finding so format.js's
     // fileUrl / lineLink resolves the right fallback in workspace mode
     // (where state.repoUrl can't represent N reports at once). Empty
@@ -1252,6 +1272,10 @@ async function ingestReport(name, content, gen = null) {
         // writer's `sourceReader` gives (report/src/write-md.js), read
         // off the finding so the filters don't have to find its report.
         filled._source = filled.source ?? data.source ?? null
+        // …and whether that producer's own pass judged anything here,
+        // which is what the outcome filter's stand-in turns on
+        // (filters.js filterRevalidateKind).
+        filled._sourcePass = judgedSources.has(filled._source)
         // Effective analyzer string for the toolbar's analyzer filter:
         // the producer when there is one, else the per-finding `type`
         // of a native dump (undefined → null, a stable sentinel for

@@ -204,6 +204,12 @@ export function confidenceOnScale(f) {
   return undefined
 }
 
+// Does this finding put itself on the scale, rather than ride the
+// stand-in confidenceOnScale hands a row that carries no score? A
+// number its producer wrote, or the `critical: true` that stands in
+// for one.
+const scoresItself = (f) => f.confidence !== undefined || f.critical === true
+
 // Is the confidence range a live control over these rows — offered,
 // and actually filtering? Two conditions, which the toolbar reads as
 // one (render.js hasAnyConfidence):
@@ -212,19 +218,28 @@ export function confidenceOnScale(f) {
 //     would silently drop the ones that don't. A single analyzer
 //     finding with no confidence and no `critical: true` disables the
 //     control for the whole set;
-//   * some finding of the ANALYZER's own puts itself on that scale —
-//     a real confidence, or the `critical: true` standing in for one.
-//     Imports ride the scale at 10 but don't establish it: a set of
-//     nothing but imports is all 10s by definition, and a range over
-//     one value says nothing. There the control isn't disabled, it
-//     isn't offered at all — the toolbar drops the whole block when
-//     the outcome dropdown beside it has nothing to offer either.
+//   * something on screen puts ITSELF on that scale. A row riding the
+//     stand-in doesn't: a set of nothing but unscored imports is all
+//     10s by definition, and a range over one value says nothing.
+//     There the control isn't disabled, it isn't offered at all — the
+//     toolbar drops the whole block when the outcome dropdown beside
+//     it has nothing to offer either.
+//
+//     What answers this is the SCORE, not who wrote it. Asked as "not
+//     an import" it gave the same answer for every producer that emits
+//     no confidence — and the wrong one for DeepSec, which rates every
+//     finding it reports and whose words this app places on the scale
+//     itself (report/src/parse-deepsec.js). A workspace of nothing but
+//     DeepSec reports is a real range over real numbers, and asking
+//     for a non-import took the slider, the confidence sort and the
+//     opening floor away from exactly the load whose producer had
+//     scored every row in it.
 //
 // Both halves are asked of the rows ON SCREEN by every caller, since
 // this is about a control in front of a reader.
 export function rangeApplies(groups) {
   return groups.every((g) => g.every((f) => confidenceOnScale(f) !== undefined))
-    && groups.some((g) => g.some((f) => !f._source && confidenceOnScale(f) !== undefined))
+    && groups.some((g) => g.some(scoresItself))
 }
 
 function showsAtConfidence(g, min) {
@@ -266,35 +281,46 @@ export function defaultConfidenceFloor(groups) {
 }
 
 // The outcome a row ANSWERS TO when the toolbar filters by one — the
-// pass's own reading for a finding the analyzer produced, and
-// `revalidation` (the value naming the pass itself) for one that came
-// from anywhere else.
+// pass's own reading where there is one, and `revalidation` (the value
+// naming the pass itself) for a row NO pass ever reached.
 //
 // A product's import — Claude Security, Codex Security, DeepSec,
 // Piolium; anything carrying a `source` marker, which is everything
 // that isn't DeepView's own dump (file-display.js PRODUCER_LABELS) —
-// was never put in front of the revalidation pass, so the pass never
-// ruled it out. It stands, exactly as a row the pass re-examined and
-// left alone stands. That makes such a finding permanently part of
-// the app view and permanently Confirmed: the App switch has no layer
-// to take off it, and picking Confirmed in a workspace that mixes a
-// revalidated report with imported ones keeps the imports on screen
-// instead of filtering them away for lacking a stamp they could never
-// have carried.
+// was never put in front of DeepView's revalidation pass, so that pass
+// never ruled it out. Where nothing else judged it either, it stands,
+// exactly as a row the pass re-examined and left alone stands. That
+// makes such a finding permanently part of the app view and
+// permanently Confirmed: the App switch has no layer to take off it,
+// and picking Confirmed in a workspace that mixes a revalidated report
+// with imported ones keeps the imports on screen instead of filtering
+// them away for lacking a stamp they could never have carried.
+//
+// But a product can run a pass of its own and write down what it
+// concluded. DeepSec does, and this app reads it
+// (report/src/parse-deepsec.js). There the stand-in would be a claim
+// the document doesn't make — a finding that report left unjudged is
+// not one it confirmed — and applied to every unstamped row it would
+// empty Confirmed of meaning for exactly the imports that arrive with
+// real verdicts. So the stand-in asks whether the producer's own pass
+// reached the report this row came from at all (`_sourcePass`, stamped
+// per finding by ingest.js), and stands aside where it did: the row
+// then answers nothing, the same as the analyzer's own unstamped rows
+// in a revalidated report.
 //
 // Only the two filter questions below read this. What a card DRAWS
 // still comes from format.js's own readers, so an imported finding
-// grows no stamp, no verdict, and no `revalidate` in its run-meta
-// line — and the toolbar's option list is still scanned off the real
-// values (render.js), so a set with no pass anywhere gets no dropdown
-// rather than a Confirmed option that matches every finding in it.
+// grows no stamp it wasn't given — and the toolbar's option list is
+// still scanned off the real values (render.js), so a set with no pass
+// anywhere gets no dropdown rather than a Confirmed option that
+// matches every finding in it.
 //
-// A stamp the row DOES carry still wins: revalidating an imported
-// report is a thing the pipeline can do, and a product's finding the
+// A stamp the row DOES carry always wins: a product's finding its own
 // pass refuted is refuted like any other. The stand-in only fills the
-// gap where there is no verdict to read.
+// gap where there is no verdict to read and no pass that could have
+// left one.
 export function filterRevalidateKind(f) {
-  return revalidateKind(f) || (f._source ? 'revalidation' : '')
+  return revalidateKind(f) || (f._source && !f._sourcePass ? 'revalidation' : '')
 }
 
 // The floor the default view will REALLY apply. The range is a
