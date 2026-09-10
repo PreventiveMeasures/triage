@@ -7,9 +7,13 @@
 // testable and reasoned about on its own.
 
 import type { WebSocket } from 'ws'
+import { Buffer } from 'node:buffer'
 import type { PeerRegistry } from './peer.ts'
 
 export type Hub = {
+  // Buffer broadcasts during async subscription snapshots. The returned
+  // release flushes them after the snapshot/chain replies, preserving order.
+  pauseBroadcasts(socket: WebSocket): () => void
   subscribe(socket: WebSocket, tag: string): void
   unsubscribeAll(socket: WebSocket): void
   send(socket: WebSocket, msg: object): void
@@ -38,18 +42,34 @@ export function createHub(deps: { peers: PeerRegistry; maxBufferedBytes: number;
   // workspaceTag → Set<WebSocket>. The per-socket reverse index lives on
   // `Peer.tags` (see ./peer.ts) and is read by `unsubscribeAll` on close.
   const subscribers = new Map<string, Set<WebSocket>>()
+  const paused = new WeakMap<WebSocket, { depth: number; payloads: string[]; bytes: number }>()
+
+  function pauseBroadcasts(socket: WebSocket): () => void {
+    const pending = paused.get(socket) ?? { depth: 0, payloads: [], bytes: 0 }
+    pending.depth++
+    paused.set(socket, pending)
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      if (--pending.depth > 0 || paused.get(socket) !== pending) return
+      paused.delete(socket)
+      for (const payload of pending.payloads) sendRaw(socket, payload)
+      pending.payloads.length = 0
+    }
+  }
 
   function subscribe(socket: WebSocket, tag: string): void {
     let set = subscribers.get(tag)
-    if (!set) {
-      set = new Set()
-      subscribers.set(tag, set)
-    }
+    if (!set) { set = new Set(); subscribers.set(tag, set) }
     set.add(socket)
     peers.get(socket)?.tags.add(tag)
   }
 
   function unsubscribeAll(socket: WebSocket): void {
+    const pending = paused.get(socket)
+    if (pending) pending.payloads.length = 0
+    paused.delete(socket)
     const tags = peers.get(socket)?.tags
     if (!tags) return
     for (const tag of tags) {
@@ -102,6 +122,7 @@ export function createHub(deps: { peers: PeerRegistry; maxBufferedBytes: number;
   }
 
   function fanOut(set: Set<WebSocket>, payload: string, except: WebSocket | null): void {
+    const payloadBytes = Buffer.byteLength(payload)
     // Snapshot before iterating — a socket transitioning to CLOSED
     // mid-broadcast triggers `unsubscribeAll` from the 'close' handler,
     // mutating `set` while we walk it. The snapshot also keeps a future
@@ -109,9 +130,19 @@ export function createHub(deps: { peers: PeerRegistry; maxBufferedBytes: number;
     // subscribers. Audit M4 round-3.
     for (const s of [...set]) {
       if (s === except) continue
-      sendRaw(s, payload)
+      const pending = paused.get(s)
+      if (!pending) { sendRaw(s, payload); continue }
+      pending.bytes += payloadBytes
+      if (pending.bytes > maxBufferedBytes) {
+        // Snapshot waits must obey the same memory bound as socket writes.
+        pending.payloads.length = 0
+        paused.delete(s)
+        try { s.terminate() } catch {}
+        continue
+      }
+      pending.payloads.push(payload)
     }
   }
 
-  return { subscribe, unsubscribeAll, send, sendRaw, broadcast, broadcastLocalRaw }
+  return { pauseBroadcasts, subscribe, unsubscribeAll, send, sendRaw, broadcast, broadcastLocalRaw }
 }

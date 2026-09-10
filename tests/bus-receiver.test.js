@@ -234,23 +234,26 @@ describe('bus-receiver — objstore-put branch (`objput`)', () => {
 })
 
 describe('bus-receiver — objstore-deleted branch (`objdel`)', () => {
-  it('broadcasts (tag, resourceTag, version) inline without a DB lookup', async () => {
-    const { hub, sock } = makeHubWithSub('tag-A')
-    let lookupCalled = false
-    const objHandle = {
-      selectLiveOne: { get: () => { lookupCalled = true; return Promise.resolve(undefined) } },
-    }
-    const onBusMessage = createBusReceiver({
-      handle: /** @type {never} */ ({}),
-      objstoreHandle: /** @type {never} */ (objHandle),
-      broadcastLocalRaw: hub.broadcastLocalRaw, debug: false,
+  for (const scoped of [false, true]) {
+    it(`broadcasts a ${scoped ? 'scoped' : 'legacy'} delete inline without a DB lookup`, async () => {
+      const { hub, sock } = makeHubWithSub('tag-A')
+      let lookupCalled = false
+      const objHandle = {
+        selectLiveOne: { get: () => { lookupCalled = true; return Promise.resolve(undefined) } },
+      }
+      const onBusMessage = createBusReceiver({
+        handle: /** @type {never} */ ({}),
+        objstoreHandle: /** @type {never} */ (objHandle),
+        broadcastLocalRaw: hub.broadcastLocalRaw, debug: false,
+      })
+      const scope = scoped ? { incarnation: 'incarnation-A' } : {}
+      await onBusMessage({ kind: 'objdel', tag: 'tag-A', res: 'res-d', ver: 7, ...scope })
+      assert.equal(sock.sent.length, 1)
+      const wire = JSON.parse(sock.sent[0])
+      assert.deepEqual(wire, {
+        type: 'objstore-deleted', workspaceTag: 'tag-A', resourceTag: 'res-d', version: 7, ...scope,
+      })
+      assert.equal(lookupCalled, false, 'objdel must NOT hit the objstore — the bus payload IS the wire data')
     })
-    await onBusMessage({ kind: 'objdel', tag: 'tag-A', res: 'res-d', ver: 7 })
-    assert.equal(sock.sent.length, 1)
-    const wire = JSON.parse(sock.sent[0])
-    assert.deepEqual(wire, {
-      type: 'objstore-deleted', workspaceTag: 'tag-A', resourceTag: 'res-d', version: 7,
-    })
-    assert.equal(lookupCalled, false, 'objdel must NOT hit the objstore — the bus payload IS the wire data')
-  })
+  }
 })

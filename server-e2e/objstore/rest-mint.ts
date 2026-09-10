@@ -219,6 +219,6 @@ async function handleRestDelete(
   // fans out to subscribers (including the originator, matching the WS path's
   // `except: null`) so peers' `onDeleted` fire.
   if (result.deletedVersion === 0) return
-  deps.broadcast(route.tag, { type: 'objstore-deleted', workspaceTag: route.tag, resourceTag: route.resourceTag, version: result.deletedVersion }, null)
-  deps.publishObjDeleted(route.tag, route.resourceTag, result.deletedVersion)
+  deps.broadcast(route.tag, { type: 'objstore-deleted', workspaceTag: route.tag, resourceTag: route.resourceTag, version: result.deletedVersion, incarnation: prevIncarnation! }, null)
+  deps.publishObjDeleted(route.tag, route.resourceTag, result.deletedVersion, prevIncarnation!)
 }

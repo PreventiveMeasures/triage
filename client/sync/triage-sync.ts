@@ -137,6 +137,11 @@ type Session = {
   verifyingKey: Uint8Array<ArrayBuffer> | null
   ids: Set<string>
   baseRevision: string | null
+  // IDs authenticated and incorporated into this base, including complete
+  // catch-ups and our acknowledged saves. Delayed duplicates have no protocol
+  // expiry, so retain them through reconnects; resetting the base or closing
+  // the workspace releases them. Only IDs are retained, never revision bodies.
+  appliedRevisions: Set<string>
   baseState: TriageStateMap
   savesSinceKeyframe: number
   localState: TriageStateMap
@@ -600,6 +605,7 @@ function clearBusyRetry(session: Session): void {
 // CryptoKey — runtime owns its erasure when the ref drops, so that's
 // best-effort.
 function wipeSessionKey(session: Session): void {
+  session.appliedRevisions.clear()
   // Releasing the session also disarms its pending busy retry — the
   // fire-time `sessionIsLive` guard would no-op anyway, but holding a
   // live timer on a torn-down session is just a leak.
@@ -1081,8 +1087,8 @@ function trySendSave(session: Session): void {
 //   4. decrypt — AEAD tag check using AAD from (workspaceTag, base).
 // ANY failed check STOPS the apply and returns false. (Two benign
 // cases `continue` instead: a non-object array entry, and a revision
-// whose id already equals the current baseRevision — the idempotent
-// re-delivery skip. Neither advances the cursor.) Revisions already
+// whose id was already verified — the idempotent re-delivery skip.
+// Neither advances the cursor.) Revisions already
 // applied from this chain keep their effect (each was individually
 // verified), but we never advance `baseRevision` past a revision we
 // couldn't independently authenticate — advancing on the relay's
@@ -1099,7 +1105,7 @@ function trySendSave(session: Session): void {
 // apply the bad rev (different verify versions, older clients) and
 // diverged — the keyframe overwrites their baseState wholesale,
 // pulling everyone back into agreement. Audit M5.
-async function applyChainToBase(session: Session, revisions: WireRevision[], isCurrent: () => boolean): Promise<boolean> {
+async function applyChainToBase(session: Session, revisions: WireRevision[], isCurrent: () => boolean, knownRevisions: ReadonlySet<string>): Promise<boolean> {
   for (const rev of revisions) {
     if (!rev || typeof rev !== 'object') continue
     // Idempotent skip — the chain from a re-subscribe might begin
@@ -1107,7 +1113,7 @@ async function applyChainToBase(session: Session, revisions: WireRevision[], isC
     // `from` was the predecessor, so the first rev returned IS our
     // current baseRevision). Without this we'd fail the continuity
     // check below and trigger an unnecessary resync.
-    if (typeof rev.id === 'string' && rev.id === session.baseRevision) continue
+    if (typeof rev.id === 'string' && (rev.id === session.baseRevision || session.appliedRevisions.has(rev.id) || knownRevisions.has(rev.id))) continue
     // Continuity check: `rev.base` must equal our current
     // baseRevision. With baseRevision === null (post-init), accept a
     // `null` base OR a keyframe — a keyframe against null is the
@@ -1192,6 +1198,7 @@ async function applyChainToBase(session: Session, revisions: WireRevision[], isC
     const applyTo: TriageStateMap = isKeyframe ? Object.create(null) : session.baseState
     session.baseState = applyChangeset(applyTo, changeset ?? {})
     session.baseRevision = rev.id
+    session.appliedRevisions.add(rev.id)
     if (session.pending?.id === rev.id) session.pending = null
     if (isKeyframe) session.savesSinceKeyframe = 0
     // Cap at keyframeInterval: once over the threshold the next save
@@ -1313,6 +1320,7 @@ async function handleAck(session: Session, msg: WireMessage): Promise<void> {
     const applyTo: TriageStateMap = session.pending.keyframe ? Object.create(null) : session.baseState
     session.baseState = applyChangeset(applyTo, session.pending.changeset)
     session.baseRevision = msg.id
+    session.appliedRevisions.add(msg.id)
     // Same cap as the chain-apply path — see audit L3 round-6.
     session.savesSinceKeyframe = session.pending.keyframe
       ? 0
@@ -1381,8 +1389,11 @@ async function handleChain(session: Session, revisions: unknown): Promise<void> 
     const beforeBaseRevision = session.baseRevision
     // Verify/decrypt into a private candidate. Live edits and membership
     // changes during awaits must still see the old, fully projected base.
-    const candidate = { ...session }
-    const ok = await applyChainToBase(candidate, revisions as WireRevision[], isCurrent)
+    // Stage only new IDs. The existing set is read-only during verification,
+    // so stale candidates cannot poison duplicate tracking. Processing a
+    // new chain does not copy the already-retained ID set.
+    const candidate = { ...session, appliedRevisions: new Set<string>() }
+    const ok = await applyChainToBase(candidate, revisions as WireRevision[], isCurrent, session.appliedRevisions)
     if (!isCurrent()) return
     const advanced = candidate.baseRevision !== beforeBaseRevision
     if (advanced) {
@@ -1408,6 +1419,7 @@ async function handleChain(session: Session, revisions: unknown): Promise<void> 
       captureOverlay(session)
       const merged = rebaseLocalState(overlayBase, session.localState, candidate.baseState)
       session.baseRevision = candidate.baseRevision
+      for (const id of candidate.appliedRevisions) session.appliedRevisions.add(id)
       session.baseState = candidate.baseState
       session.savesSinceKeyframe = candidate.savesSinceKeyframe
       if (session.pending) session.pendingSave = true
@@ -1430,6 +1442,7 @@ async function handleChain(session: Session, revisions: unknown): Promise<void> 
       }
       console.warn('Triage sync: catch-up also broke continuity; full state push')
       session.baseRevision = null
+      session.appliedRevisions.clear()
       session.baseState = Object.create(null)
       session.pending = null
       session.resyncAttempted = false
@@ -1608,6 +1621,7 @@ function handleSaveError(session: Session, wire: WireMessage): void {
     session.staleResetAttempted = true
     console.warn('Triage sync: stale-base catch-up did not apply (server chain gone or rebuilt past our base); full state push')
     session.baseRevision = null
+    session.appliedRevisions.clear()
     session.baseState = Object.create(null)
     session.pendingSave = false
     session.resyncAttempted = false
@@ -1855,6 +1869,7 @@ export const triageSync = {
       deactivateSession(session)
       const restored = next ? loadPersistedSession(session.workspaceId, next) : null
       session.baseRevision = restored?.baseRevision ?? null
+      session.appliedRevisions.clear()
       session.baseState = restored?.baseState ?? Object.create(null)
       session.savesSinceKeyframe = restored?.savesSinceKeyframe ?? 0
       session.localState = effectiveLocalState(session.baseState, session.ids)
@@ -2036,6 +2051,7 @@ export const triageSync = {
       // per-server persistence when present; otherwise null / empty
       // / 0 and the first save sends the full local snapshot.
       baseRevision: restored?.baseRevision ?? null,
+      appliedRevisions: new Set(),
       baseState: restoredBaseState,
       savesSinceKeyframe: restored?.savesSinceKeyframe ?? 0,
       localState: effectiveLocalState(restoredBaseState, ids),

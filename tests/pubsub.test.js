@@ -192,10 +192,12 @@ describe('createNeonPubSub — LISTEN/NOTIFY round-trip on PGlite', () => {
     try {
       const pg = sharedInstance()
       const send = (envelope) => pg.query(`SELECT pg_notify($1, $2)`, [CHANNEL, JSON.stringify(envelope)])
-      // Valid: one of each kind, foreign sender so they pass the filter.
+      // Valid: each kind, including legacy and incarnation-scoped deletes.
+      // A foreign sender passes the self-delivery filter.
       await send({ sender: 'fA', kind: 'rev', tag: 't', id: 'r1' })
       await send({ sender: 'fA', kind: 'objput', tag: 't', res: 'p1' })
       await send({ sender: 'fA', kind: 'objdel', tag: 't', res: 'p1', ver: 3 })
+      await send({ sender: 'fA', kind: 'objdel', tag: 't', res: 'p2', ver: 7, incarnation: 'incarnation-A' })
       // Malformed: missing required field / wrong types / unknown kind.
       // None of these should reach `seen`.
       await send({ sender: 'fA', kind: 'rev', tag: 't' })            // no id
@@ -204,16 +206,20 @@ describe('createNeonPubSub — LISTEN/NOTIFY round-trip on PGlite', () => {
       await send({ sender: 'fA', kind: 'objput', tag: 't' })          // no res
       await send({ sender: 'fA', kind: 'objdel', tag: 't', res: 'r' })// no ver
       await send({ sender: 'fA', kind: 'objdel', tag: 't', res: 'r', ver: 1.5 }) // non-int
+      for (const incarnation of [null, 42, '']) {
+        await send({ sender: 'fA', kind: 'objdel', tag: 't', res: 'r', ver: 1, incarnation })
+      }
       await send({ sender: 'fA', kind: 'unknown', tag: 't' })         // unknown kind
       // Also send a non-JSON payload (parseBusMessage guards via try/catch).
       await pg.query(`SELECT pg_notify($1, $2)`, [CHANNEL, 'not-json'])
-      await waitFor(() => seen.length === 3)
+      await waitFor(() => seen.length === 4)
       // Give the loop a few more ticks so any spurious dispatch would surface.
       await new Promise((resolve) => { setTimeout(resolve, 30) })
-      assert.equal(seen.length, 3, `unexpected extra dispatches: ${JSON.stringify(seen)}`)
+      assert.equal(seen.length, 4, `unexpected extra dispatches: ${JSON.stringify(seen)}`)
       assert.deepEqual(seen.find((m) => m.kind === 'rev'), { kind: 'rev', tag: 't', id: 'r1' })
       assert.deepEqual(seen.find((m) => m.kind === 'objput'), { kind: 'objput', tag: 't', res: 'p1' })
       assert.deepEqual(seen.find((m) => m.kind === 'objdel'), { kind: 'objdel', tag: 't', res: 'p1', ver: 3 })
+      assert.deepEqual(seen.find((m) => m.res === 'p2'), { kind: 'objdel', tag: 't', res: 'p2', ver: 7, incarnation: 'incarnation-A' })
     } finally { await ps.stop() }
   })
 
