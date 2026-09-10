@@ -333,6 +333,7 @@
 .mark-comment,
 .mark-fix,
 .mark-flag,
+.mark-upstream,
 .mark-copy,
 .mark-link,
 .mark-issue,
@@ -351,6 +352,11 @@
 .mark-comment.has-comment,
 .mark-fix.has-fix,
 .mark-flag.flagged { color: var(--accent); }
+/* Cause-track colours, matching finding-card.css: a recorded upstream
+   fix is good news, a won't-fix closes a door. */
+.mark-upstream.has-upstream { color: var(--accent); }
+.mark-upstream.upstream-fixed { color: var(--green, #4ade80); }
+.mark-upstream.upstream-wontfix { color: var(--muted); opacity: .85; }
 .mark-flag svg { display: block; }
 /* Pulse the copy / link / claude button briefly after a successful
    click — class set + cleared by the events.js handler. Buttons share

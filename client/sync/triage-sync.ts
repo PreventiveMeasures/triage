@@ -1,7 +1,7 @@
 import type { State } from '../state.ts'
 import { type SyncHostWorkspace, onSyncHostInstalled } from './host.ts'
 import { RECOVERABLE_SAVE_ERROR_REASONS } from '../../common/save-error-reason.ts'
-import { applyChangeset, changesetEmpty, collectChainConflicts, computeChangeset, statesEqual } from './triage-changeset.ts'
+import { applyChangeset, changesetEmpty, collectChainConflicts, computeChangeset, mergeAppTracks, statesEqual } from './triage-changeset.ts'
 import type { Changeset, Conflict, TriageStateMap } from './triage-changeset.ts'
 import { applyHydrationDecisions, applyToReactiveState, effectiveLocalState, hydrateStateFromBaseState } from './triage-state-projection.ts'
 import { dropPersistedSession, loadAllSessionsResult, loadPersistedSession, mutateAllSessions, onPersistenceDegraded, persistenceDegraded, prunePersistedSessions, setPersistenceDegraded } from './triage-session-store.ts'
@@ -1453,7 +1453,13 @@ async function handleChain(session: Session, revisions: unknown): Promise<void> 
   // local). Without this a peer's view silently flips when another tab
   // joins with a conflicting unsynced edit, and the joiner's local-wins
   // overlay silently propagates back through the chain.
-  const conflicts = collectChainConflicts(overlay, oldBaseState, session.baseState)
+  // The app track merges per key rather than riding the overlay's
+  // whole-entry replace — see `mergeAppTracks`. Done before the
+  // conflict scan so the scan sees the entry that will actually be
+  // applied, and before the resolver's await so a slow dialog can't
+  // sit between the merge and its use.
+  const merged = mergeAppTracks(overlay, oldBaseState, session.baseState)
+  const conflicts = collectChainConflicts(merged, oldBaseState, session.baseState)
   let decisions: { [key: string]: 'local' | 'imported' } | null = null
   if (conflicts.length > 0 && hydrationConflictResolver) {
     try {
@@ -1463,7 +1469,7 @@ async function handleChain(session: Session, revisions: unknown): Promise<void> 
     }
     if (!sessionIsLive(session)) return
   }
-  await applyOverlayAndPersist(session, overlay, conflicts, decisions)
+  await applyOverlayAndPersist(session, merged, conflicts, decisions)
   if (!sessionIsLive(session)) return
   if (session.pendingSave || !statesEqual(session.localState, session.baseState)) {
     session.pendingSave = false

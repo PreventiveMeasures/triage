@@ -1,5 +1,5 @@
 import { gunzipToText, gzipText } from '../common/gzip.js'
-import { bucketOf, isReportIgnored, patchEntry, setReportIgnored } from './triage-entry.ts'
+import { bucketOf, isReportIgnored, patchEntry, setAppFix, setAppTriage, setReportIgnored, setUpstream } from './triage-entry.ts'
 import { importRepoUrls, readRepoUrlMap, state } from './state.ts'
 import { SESSION_ID_RE, buildPersistedTriageEntries, saveTriage } from './triage.js'
 
@@ -148,6 +148,32 @@ export async function applyTriageImport(payload, mode) {
     if (typeof v.flagged === 'boolean' && (!keepCurrent || map.get(id)?.flagged === undefined)) {
       patchEntry(map, id, { flagged: v.flagged })
     }
+    // The per-app work track — an additive per-key merge, like the
+    // ignored reports below: each key is one app's own answer, so the
+    // two sides don't collide, and there is nothing for a conflict
+    // dialog to ask. `prefer-current` fills only the apps this profile
+    // has said nothing about. Without this the export's `apps` (which
+    // `buildPersistedTriageEntries` does write) would import as
+    // nothing, and in `replace` mode — where the map was just cleared
+    // — the loss would be the backup's whole point.
+    if (v.apps && typeof v.apps === 'object') {
+      for (const [app, slot] of Object.entries(v.apps)) {
+        if (!app || !slot || typeof slot !== 'object') continue
+        const cur = map.get(id)?.apps?.[app]
+        if (slot.triage && (!keepCurrent || cur?.triage === undefined)) {
+          setAppTriage(map, id, app, slot.triage)
+        }
+        if (slot.fix && (!keepCurrent || cur?.fix === undefined)) {
+          setAppFix(map, id, app, slot.fix)
+        }
+      }
+    }
+    // The cause track is one statement, so it adopts or defers whole
+    // rather than field by field.
+    if (v.upstream && typeof v.upstream === 'object' && (!keepCurrent || !map.get(id)?.upstream)) {
+      setUpstream(map, id, v.upstream)
+    }
+
     // Per-report ignore: mutex with triage state. Skip the
     // ignoredReports merge when this id ended up with a triage
     // state (same rule the cross-tab apply path enforces).

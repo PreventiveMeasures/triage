@@ -72,12 +72,22 @@ function flaggedBadgeTemplate(value) {
   return html`<span class=${`flag-badge${value === 'flagged' ? ' on' : ''}`}>${value}</span>`
 }
 
+// Upstream conflict values arrive as the flattened sentence
+// (triage-changeset upstreamText) — "fixed in 4.17.21 https://…".
+// Rendered in the fix block's shape: it is the same kind of value, a
+// short status with a link in it.
+function upstreamBlockTemplate(value) {
+  if (!value) return html`<em>none</em>`
+  return html`<span class="fix-text">${value}</span>`
+}
+
 function valueTemplate(property, value) {
   if (property === 'color') return colorSwatchTemplate(value)
   if (property === 'comment') return commentBlockTemplate(value)
   if (property === 'fix') return fixBlockTemplate(value)
   if (property === 'triage') return triageBadgeTemplate(value)
   if (property === 'flagged') return flaggedBadgeTemplate(value)
+  if (property === 'upstream') return upstreamBlockTemplate(value)
   return html`${String(value)}`
 }
 
@@ -105,8 +115,8 @@ const DEFAULT_LABELS = {
   importedSideLabel: 'Apply imported',
 }
 
-const PROP_ORDER = { color: 0, comment: 1, fix: 2, triage: 3, flagged: 4 }
-const PROP_LABEL = { color: 'Color', comment: 'Comment', fix: 'Fix', triage: 'Triage state', flagged: 'Flag' }
+const PROP_ORDER = { color: 0, comment: 1, fix: 2, triage: 3, flagged: 4, upstream: 5 }
+const PROP_LABEL = { color: 'Color', comment: 'Comment', fix: 'Fix', triage: 'Triage state', flagged: 'Flag', upstream: 'Upstream status' }
 
 class TriageConflictDialog extends AppDialog {
   static styles = [...AppDialog.styles, unsafeCSS(severityCSS), unsafeCSS(conflictCSS)]

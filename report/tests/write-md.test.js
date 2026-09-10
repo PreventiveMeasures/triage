@@ -368,6 +368,31 @@ describe('writeMarkdown — a finding\'s facts', () => {
     assert.ok(md.endsWith('#### Comment\n\nConfirmed on staging.\n\nSee the ticket.\n'), md)
   })
 
+  it('names the app a triage state was recorded for, and writes the upstream on its own row', () => {
+    // The document can span several apps, and the same dependency
+    // finding can be fixed in one and open in another — so a bucket
+    // one app recorded says which, while the upstream row says what
+    // the dependency's own maintainers did, which is true wherever
+    // the code is shipped.
+    const annotation = () => ({
+      triage: 'fixed', app: 'acme/web',
+      fix: 'https://github.com/acme/web/pull/12',
+      upstream: { state: 'fixed', since: '4.17.21', link: 'https://github.com/o/r/pull/9' },
+    })
+    const md = writeMarkdown(doc([[finding()]]), { annotation })
+    assert.equal(line(md, 'Triage'), 'Fixed in `acme/web`')
+    assert.equal(line(md, 'Fix'), '<https://github.com/acme/web/pull/12>')
+    assert.equal(line(md, 'Upstream'), 'Fixed in `4.17.21` — <https://github.com/o/r/pull/9>')
+  })
+
+  it('writes an upstream state without a version or a link, and none at all when there is none', () => {
+    const reported = writeMarkdown(doc([[finding()]]), { annotation: () => ({ upstream: { state: 'reported' } }) })
+    assert.equal(line(reported, 'Upstream'), 'Reported')
+    const linkOnly = writeMarkdown(doc([[finding()]]), { annotation: () => ({ upstream: { link: 'https://o/r/issues/1' } }) })
+    assert.equal(line(linkOnly, 'Upstream'), '<https://o/r/issues/1>')
+    assert.equal(line(writeMarkdown(doc([[finding()]]), { annotation: () => ({ triage: 'fixed' }) }), 'Upstream'), null)
+  })
+
   it('takes a per-report ignore as the triage state, and a fix that is not a URL as text', () => {
     const md = writeMarkdown(doc([[finding()]]), { annotation: () => ({ ignored: true, fix: 'internal ticket #42' }) })
     assert.equal(line(md, 'Triage'), 'Ignored')

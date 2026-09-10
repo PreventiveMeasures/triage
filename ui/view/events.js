@@ -1,7 +1,7 @@
-import { KANBAN_DETAIL_FULLSCREEN_KEY, SEVERITY_MODE_KEY, VIEW_MODE_KEY, hasLinkedFindings, isEncryptionEnabled, patchEntry, readBundle, saveRepoUrlFor, saveTriage, setReportIgnored, state, subscribeToBundleFindingIndex, subscribeToBundleHashIndex, subscribeToLinkedFindings } from '#client/index.js'
+import { KANBAN_DETAIL_FULLSCREEN_KEY, SEVERITY_MODE_KEY, VIEW_MODE_KEY, hasLinkedFindings, isEncryptionEnabled, patchEntry, readBundle, saveRepoUrlFor, saveTriage, setReportIgnored, setUpstream, state, subscribeToBundleFindingIndex, subscribeToBundleHashIndex, subscribeToLinkedFindings, upstreamOf } from '#client/index.js'
 import { downloadBlob, report } from './dom.js'
 import { commonPrefix, configureRevalidation, handoffBlock, lineRange } from './format.js'
-import { activeTabFor, canApplyFixToGroup, findGroupById, findingRepo, findingReport, fixApplies, getShownGroups, groupState, groupWithPassRows, syncGroupTriage, tabKey, triageActionPlan, triageScope } from './group.js'
+import { activeTabFor, canApplyFixToGroup, findGroupById, findingPackage, findingRepo, findingReport, fixApplies, getShownGroups, groupState, groupWithPassRows, setTabFix, setTabTriage, syncGroupTriage, tabFix, tabKey, triageActionPlan, triageAppScope, triageScope } from './group.js'
 import { applyOpeningFilters, clearFilterOverride, resetFilters, setFilterOverride } from './filters.js'
 import { focusCodeHistory, revealFocusCodeLines } from './focus-code.js'
 import { pushed, stepped } from './focus-code-history.js'
@@ -13,6 +13,7 @@ import { openDownloadBundleDialog } from './dialogs/download-bundle-dialog.js'
 import { openExportConfirmDialog } from './dialogs/export-confirm-dialog.js'
 import { openExportViewDialog } from './dialogs/export-view-dialog.js'
 import { openFixLinkDialog } from './dialogs/fix-link-dialog.js'
+import { openUpstreamDialog } from './dialogs/upstream-dialog.js'
 import { findingLinkFor } from './finding-link.js'
 import { revealFindingInReport } from './finding-link-nav.js'
 import { FOCUS_SPLIT_STEP, nudgeFocusSplit, resetFocusSplit, startFocusSplitDrag } from './focus-splitter.js'
@@ -1154,7 +1155,7 @@ report.addEventListener('click', (e) => {
     if (!group) return
     const activeTab = activeTabFor(group)
     const whole = groupWithPassRows(group)
-    const current = state.triage.get(tabKey(activeTab))?.fix ?? ''
+    const current = tabFix(activeTab)
     openFixLinkDialog({
       initial: current,
       finding: activeTab,
@@ -1170,7 +1171,7 @@ report.addEventListener('click', (e) => {
         : [activeTab]
       let changed = false
       for (const f of targets) {
-        if (patchEntry(state.triage, tabKey(f), { fix: next.value || undefined })) changed = true
+        if (setTabFix(f, next.value)) changed = true
       }
       if (!changed) return null
       // A fix link is one of the marks `activeTabFor` picks the default
@@ -1181,6 +1182,38 @@ report.addEventListener('click', (e) => {
       renderPreservingTableScroll()
       // Paint first, persist after — saveTriage's synchronous head
       // serializes the whole triage map (see the kanban drop below).
+      queueMicrotask(saveTriage)
+      return null
+    }).catch(() => {})
+    return
+  }
+  // Upstream button — the cause track's editor, on dependency
+  // findings only (render-finding.js withholds the button elsewhere;
+  // the scope check here is what makes that a rule rather than a
+  // rendering detail). Unlike every other write in this file, what it
+  // saves is deliberately global: the entry is keyed by the source's
+  // own bytes, so "reported" / "fixed in 4.17.21" reaches every app
+  // shipping them, which is the entire reason to record it.
+  //
+  // Per-active-tab like comment / fix: a multi-tab group's members can
+  // be findings in different packages, and the upstream of one is not
+  // the upstream of the others.
+  const upstreamBtn = pathClosest(e, '.mark-upstream')
+  if (upstreamBtn) {
+    const findingEl = pathClosest(e, '[data-gid]')
+    const group = findingEl ? findGroupById(findingEl.dataset.gid) : null
+    if (!group) return
+    const activeTab = activeTabFor(group)
+    if (triageAppScope(activeTab) === null) return
+    const activeKey = tabKey(activeTab)
+    openUpstreamDialog({
+      initial: upstreamOf(state.triage.get(activeKey)) ?? null,
+      finding: activeTab,
+      packageName: findingPackage(activeTab),
+    }).then((next) => {
+      if (next === null) return null
+      if (!setUpstream(state.triage, activeKey, next.value)) return null
+      renderPreservingTableScroll()
       queueMicrotask(saveTriage)
       return null
     }).catch(() => {})
@@ -1297,24 +1330,27 @@ const KANBAN_DATA_TYPE = 'application/x-deepview-kanban-gid'
 // are mutually exclusive, so each branch clears the other: 'untriaged'
 // clears both (the menu's Restore, and any re-click switching a state
 // off), 'ignored' goes to the per-report ignore store, and every other
-// value to the tab's own triage bucket. No toggling here — callers
+// value to the tab's triage bucket. No toggling here — callers
 // decide set-vs-clear for the whole scope before calling (see
 // `triageActionPlan`), so every tab in a group lands on the same
 // answer.
+//
+// WHICH TRACK each tab's bucket lands on is `setTabTriage`'s call —
+// this app's slot for a work state on a dependency finding, the entry
+// itself for the cause-level verdicts and for the app's own code. The
+// rule lives there, next to the `tabTriage` that reads it back, so
+// this handler and the group-levelling pass can't drift apart on it.
+//
+// Note what that means for a card dragged in a workspace view: the
+// scoped write reaches every app the group's tabs belong to, which is
+// exactly the apps the card was showing. Occurrences NOT on the board
+// — a report loaded later, another workspace, the next scan — are the
+// ones that must not inherit the answer, and don't.
 function applyTriage(targets, target) {
+  const clearing = target === 'untriaged' || target === 'ignored'
   for (const f of targets) {
-    const key = tabKey(f)
-    const reportName = findingReport(f)
-    if (target === 'untriaged') {
-      patchEntry(state.triage, key, { triage: undefined })
-      setReportIgnored(state.triage, key, reportName, false)
-    } else if (target === 'ignored') {
-      patchEntry(state.triage, key, { triage: undefined })
-      setReportIgnored(state.triage, key, reportName, true)
-    } else {
-      patchEntry(state.triage, key, { triage: target })
-      setReportIgnored(state.triage, key, reportName, false)
-    }
+    setTabTriage(f, clearing ? undefined : target)
+    setReportIgnored(state.triage, tabKey(f), findingReport(f), target === 'ignored')
   }
 }
 
