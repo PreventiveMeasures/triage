@@ -109,6 +109,7 @@ export type SocketTransport = {
 
 const INITIAL_RECONNECT_DELAY = 1_000
 const MAX_RECONNECT_DELAY = 30_000
+const STABLE_CONNECTION_MS = 30_000
 
 // Disconnect reason fired when a mid-life re-challenge with a new nonce
 // mints a fresh server session (the SSE replica-hop case in
@@ -150,6 +151,7 @@ export function createSocketTransport(deps: SocketTransportDeps): SocketTranspor
   let protocolLocked = false
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
   let reconnectDelayMs = INITIAL_RECONNECT_DELAY
+  let stableConnectionTimer: ReturnType<typeof setTimeout> | null = null
   let pingIntervalId: ReturnType<typeof setInterval> | null = null
   let pongTimeoutId: ReturnType<typeof setTimeout> | null = null
 
@@ -166,16 +168,22 @@ export function createSocketTransport(deps: SocketTransportDeps): SocketTranspor
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
   }
 
+  function clearStableConnection(): void {
+    if (stableConnectionTimer) { clearTimeout(stableConnectionTimer); stableConnectionTimer = null }
+  }
+
   function scheduleReconnect(): void {
     clearReconnect()
     if (transportClosed) return
     if (protocolLocked) return
     if (acquireCount === 0) return
     if (!serverUrl) return
+    // Equal jitter spreads retries across clients during a relay outage,
+    // while keeping every delay between half and all of the backoff cap.
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null
       openSocket()
-    }, reconnectDelayMs)
+    }, Math.round(reconnectDelayMs * (0.5 + Math.random() * 0.5)))
     reconnectDelayMs = Math.min(reconnectDelayMs * 2, MAX_RECONNECT_DELAY)
   }
 
@@ -386,6 +394,7 @@ export function createSocketTransport(deps: SocketTransportDeps): SocketTranspor
   }
 
   function teardownCurrentSocket(reason: string): void {
+    clearStableConnection()
     if (!socket) return
     const stale = socket
     socket = null
@@ -450,7 +459,15 @@ export function createSocketTransport(deps: SocketTransportDeps): SocketTranspor
     next.addEventListener('open', () => {
       if (socket !== next) return  // stale: fresh socket replaced this one
       hasOpened = true
-      reconnectDelayMs = INITIAL_RECONNECT_DELAY
+      // Opening the stream does not prove that subscription DB lookups
+      // work. Reset only after a stable connection, so repeated 1011
+      // subscription failures retain exponential backoff on WS and SSE.
+      clearStableConnection()
+      stableConnectionTimer = setTimeout(() => {
+        stableConnectionTimer = null
+        if (socket === next) reconnectDelayMs = INITIAL_RECONNECT_DELAY
+      }, STABLE_CONNECTION_MS)
+      stableConnectionTimer.unref?.()
       startHeartbeat()
       // Consumers fire on `challenge`, not `open` — nonce arrives later.
     })
@@ -468,6 +485,7 @@ export function createSocketTransport(deps: SocketTransportDeps): SocketTranspor
 
     next.addEventListener('close', (ev) => {
       if (socket !== next) return  // stale: don't clobber the replacement's state
+      clearStableConnection()
       socket = null
       connectionNonce = null
       cachedPasswordTriedOnThisSocket = false
@@ -534,6 +552,8 @@ export function createSocketTransport(deps: SocketTransportDeps): SocketTranspor
 
   function setServerUrl(url: string): void {
     if (url === serverUrl) return
+    clearReconnect()
+    reconnectDelayMs = INITIAL_RECONNECT_DELAY
     serverUrl = url
     if (socket) teardownCurrentSocket('serverUrl changed')
     // Reopen iff still wanted — symmetric with the close-event

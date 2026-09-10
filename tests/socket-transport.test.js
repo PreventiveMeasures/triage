@@ -84,9 +84,9 @@ class FakeWebSocket {
     const data = typeof obj === 'string' ? obj : JSON.stringify(obj)
     for (const fn of this.listeners.message) fn({ data })
   }
-  simulateClose() {
+  simulateClose(code) {
     this.readyState = FakeWebSocket.CLOSED
-    for (const fn of this.listeners.close) fn()
+    for (const fn of this.listeners.close) fn({ code })
   }
   simulateError() {
     for (const fn of this.listeners.error) fn()
@@ -377,6 +377,86 @@ describe('socket-transport: dispatch routing', () => {
 // ─────────── reconnect ───────────
 
 describe('socket-transport: reconnect', () => {
+  for (const switchWhile of ['open', 'waiting to retry']) {
+    it(`resets relay backoff and cancels the old timer when switching URLs while ${switchWhile}`, (ctx) => {
+      ctx.mock.timers.enable({ apis: ['setTimeout'] })
+      ctx.mock.method(Math, 'random', () => 1 - Number.EPSILON)
+      const t = makeTransport()
+      try {
+        t.acquire()
+        for (const delayMs of [1000, 2000, 4000, 8000, 16000]) {
+          FakeWebSocket.last.handshake()
+          FakeWebSocket.last.simulateClose(1011)
+          ctx.mock.timers.tick(delayMs)
+        }
+        FakeWebSocket.last.handshake()
+        if (switchWhile === 'waiting to retry') FakeWebSocket.last.simulateClose(1011)
+        t.setServerUrl('ws://replacement.invalid/api/sync')
+        const replacement = FakeWebSocket.last
+        assert.equal(replacement.url, 'ws://replacement.invalid/api/sync')
+        replacement.handshake()
+        replacement.simulateClose(1011)
+        const attempts = FakeWebSocket.instances.length
+        ctx.mock.timers.tick(999)
+        assert.equal(FakeWebSocket.instances.length, attempts)
+        ctx.mock.timers.tick(1)
+        assert.equal(FakeWebSocket.instances.length, attempts + 1, 'new relay starts at the initial delay')
+        // A stale callback must not open an unwanted socket after the URL
+        // is cleared, including when the switch interrupted a pending retry.
+        t.setServerUrl('')
+        ctx.mock.timers.tick(30000)
+        assert.equal(FakeWebSocket.instances.length, attempts + 1)
+      } finally { t.close() }
+    })
+  }
+
+  it('backs off repeated subscription failures after open, caps retries, and resets after a stable connection', (ctx) => {
+    ctx.mock.timers.enable({ apis: ['setTimeout'] })
+    ctx.mock.method(Math, 'random', () => 1 - Number.EPSILON)
+    const t = makeTransport()
+    try {
+      t.acquire()
+      let attempts = 1
+      for (const delayMs of [1000, 2000, 4000, 8000, 16000, 30000, 30000]) {
+        FakeWebSocket.last.handshake()
+        // The transport opens successfully, but the subscription's DB
+        // lookup fails. Opening alone must not reset the retry delay.
+        FakeWebSocket.last.simulateClose(1011)
+        ctx.mock.timers.tick(delayMs - 1)
+        assert.equal(FakeWebSocket.instances.length, attempts, 'failed subscriptions retain backoff')
+        ctx.mock.timers.tick(1)
+        assert.equal(FakeWebSocket.instances.length, ++attempts)
+      }
+      FakeWebSocket.last.handshake()
+      ctx.mock.timers.tick(30000)
+      FakeWebSocket.last.simulateClose(1011)
+      ctx.mock.timers.tick(999)
+      assert.equal(FakeWebSocket.instances.length, attempts)
+      ctx.mock.timers.tick(1)
+      assert.equal(FakeWebSocket.instances.length, attempts + 1, 'a stable connection resets backoff')
+    } finally { t.close() }
+  })
+
+  it('jitters retry delays and cancels reconnect when released', (ctx) => {
+    ctx.mock.timers.enable({ apis: ['setTimeout'] })
+    ctx.mock.method(Math, 'random', () => 0)
+    const t = makeTransport()
+    try {
+      const lease = t.acquire()
+      FakeWebSocket.last.handshake()
+      FakeWebSocket.last.simulateClose(1011)
+      ctx.mock.timers.tick(499)
+      assert.equal(FakeWebSocket.instances.length, 1)
+      ctx.mock.timers.tick(1)
+      assert.equal(FakeWebSocket.instances.length, 2, 'equal jitter can halve the delay')
+      FakeWebSocket.last.handshake()
+      FakeWebSocket.last.simulateClose(1011)
+      lease.release()
+      ctx.mock.timers.tick(60000)
+      assert.equal(FakeWebSocket.instances.length, 2, 'release cancels retries and stability timers')
+    } finally { t.close() }
+  })
+
   it('server-initiated close while acquired triggers reconnect after the initial delay', async () => {
     const t = makeTransport()
     t.acquire()

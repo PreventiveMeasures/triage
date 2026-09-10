@@ -17,6 +17,7 @@ import { rmSync } from 'node:fs'
 import path from 'node:path'
 import { Buffer } from 'node:buffer'
 import { encodeUtf8 } from '../common/utf8.js'
+import { signObjstoreDeleteRest } from '../client/sync/objstore-crypto.ts'
 import { bootServer } from './_helpers.js'
 
 const SUBSCRIBE_DOMAIN = 'deepview-triage-sync.v1.subscribe'
@@ -266,28 +267,41 @@ describe('v1.objstore server (REST-primary)', { concurrency: true }, () => {
     c1.ws.close(); c2.ws.close()
   })
 
-  it('DELETE drops the row and broadcasts to peers; sender gets ack first', async () => {
-    const { sk, tag } = await makeKp()
-    const c1 = await connect(serverUrl)
-    const c2 = await connect(serverUrl)
-    await subscribeWS(c1, sk, tag)
-    await subscribeWS(c2, sk, tag)
-    const { ackBody } = await putBlob(c1, sk, tag, 'soon-deleted', Buffer.from('bytes', 'utf8'), null, httpOrigin)
-    await c2.recv((m) => m.type === 'objstore-put' && m.resourceTag === 'soon-deleted')
-    // Drain c1's own put broadcast echo before issuing the delete.
-    await c1.recv((m) => m.type === 'objstore-put' && m.resourceTag === 'soon-deleted')
-    // The delete precondition is the (version, incarnation) the PUT
-    // ack just reported for the live row.
-    const delFields = { workspaceTag: tag, resourceTag: 'soon-deleted', prevVersion: 1, prevIncarnation: ackBody.incarnation }
-    const sig = await signDelete(sk, delFields, c1.connectionNonce)
-    c1.ws.send(JSON.stringify({ type: 'objstore-delete', ...delFields, signature: sig }))
-    const [ack, broadcastMsg] = await Promise.all([
-      c1.recv((m) => m.type === 'objstore-deleted-ack' && m.resourceTag === 'soon-deleted'),
-      c2.recv((m) => m.type === 'objstore-deleted' && m.resourceTag === 'soon-deleted'),
-    ])
-    assert.equal(ack.deletedVersion, 1)
-    assert.equal(broadcastMsg.version, 1)
-    c1.ws.close(); c2.ws.close()
+  ;['WS', 'REST'].forEach((plane) => {
+    it(`${plane} DELETE broadcasts the dropped version and incarnation to peers`, async () => {
+      const { sk, tag } = await makeKp()
+      const c1 = await connect(serverUrl)
+      const c2 = await connect(serverUrl)
+      await subscribeWS(c1, sk, tag)
+      await subscribeWS(c2, sk, tag)
+      const { ackBody } = await putBlob(c1, sk, tag, 'soon-deleted', Buffer.from('bytes', 'utf8'), null, httpOrigin)
+      await c2.recv((m) => m.type === 'objstore-put' && m.resourceTag === 'soon-deleted')
+      // Drain c1's own put broadcast echo before issuing the delete.
+      await c1.recv((m) => m.type === 'objstore-put' && m.resourceTag === 'soon-deleted')
+      // The delete precondition is the (version, incarnation) the PUT
+      // ack just reported for the live row.
+      const delFields = { workspaceTag: tag, resourceTag: 'soon-deleted', prevVersion: 1, prevIncarnation: ackBody.incarnation }
+      let ack
+      if (plane === 'WS') {
+        const signature = await signDelete(sk, delFields, c1.connectionNonce)
+        c1.ws.send(JSON.stringify({ type: 'objstore-delete', ...delFields, signature }))
+        ack = await c1.recv((m) => m.type === 'objstore-deleted-ack' && m.resourceTag === 'soon-deleted')
+      } else {
+        const ts = Date.now()
+        const signature = await signObjstoreDeleteRest(sk, delFields, ts)
+        const response = await fetch(`${httpOrigin}/api/objstore/${tag}/soon-deleted`, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ op: 'delete', ...delFields, ts, signature }),
+        })
+        assert.equal(response.status, 200)
+        ack = await response.json()
+      }
+      const broadcastMsg = await c2.recv((m) => m.type === 'objstore-deleted' && m.resourceTag === 'soon-deleted')
+      assert.equal(ack.deletedVersion, 1)
+      assert.equal(broadcastMsg.version, 1)
+      assert.equal(broadcastMsg.incarnation, ackBody.incarnation)
+      c1.ws.close(); c2.ws.close()
+    })
   })
 
   it('a peer that connects AFTER a delete sees no record', async () => {

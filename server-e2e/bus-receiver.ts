@@ -90,6 +90,7 @@ export function createBusReceiver(deps: BusReceiverDeps): (msg: BusMessage) => P
       workspaceTag: msg.tag,
       resourceTag: msg.res,
       version: msg.ver,
+      ...(msg.incarnation === undefined ? {} : { incarnation: msg.incarnation }),
     }))
   }
 }

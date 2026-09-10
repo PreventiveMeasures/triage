@@ -4,6 +4,8 @@ import { afterEach, it } from 'node:test'
 import { WebSocketServer } from 'ws'
 import { awaitListening, closeWebSocketServer } from './_helpers.js'
 import { rebaseLocalState } from '../client/sync/triage-changeset.ts'
+import { createHub } from '../server-e2e/hub.ts'
+import { createBusReceiver } from '../server-e2e/bus-receiver.ts'
 
 const { triageSync, setHydrationConflictResolver } = await import('../client/sync/triage-sync.ts')
 const { state } = await import('../client/state.ts')
@@ -60,6 +62,11 @@ async function fixture() {
   return {
     workspaceId, messages,
     send: (msg) => socket.send(JSON.stringify({ workspaceTag: kp.publicKeyB64, ...msg })),
+    async reconnect() {
+      const previous = socket
+      previous.terminate()
+      await waitFor(() => socket !== previous && triageSync.status === 'online', 'reconnected')
+    },
     info: () => triageSync.sessionInfo(workspaceId),
     decryptSave(msg) {
       return cryptoMod.decryptJson(key, msg.nonce, msg.ciphertext, cryptoMod.buildAad(kp.publicKeyB64, msg.base))
@@ -166,6 +173,132 @@ it('resumes a deferred edit when gap recovery returns an empty catch-up', async 
   const save = f.messages.find((m) => m.type === 'workspace-save')
   assert.equal(save.base, first.id)
   assert.deepEqual(await f.decryptSave(save), { B: { comment: 'still needs saving' } })
+})
+
+it('ignores overlapping broadcasts of revisions already verified in a catch-up', async () => {
+  const f = await fixture()
+  const first = await f.revision(null, { A: { color: 'red' } })
+  const second = await f.revision(first.id, { A: { color: 'blue' } })
+  const third = await f.revision(second.id, { B: { comment: 'latest' } })
+  f.send({ type: 'workspace-state', revisions: [first, second, third] })
+  await waitFor(() => state.triage.get('B')?.comment === 'latest', 'catch-up applied')
+  const before = f.messages.length
+  f.send({ type: 'workspace-state', revisions: [first] })
+  f.send({ type: 'workspace-state', revisions: [second] })
+  await new Promise((resolve) => { setTimeout(resolve, 75) })
+  assert.equal(f.info().baseRevision, third.id)
+  assert.equal(f.messages.length, before, 'no resubscribe or full-state reset for duplicate delivery')
+})
+
+it('keeps the client on its chain when a subscription buffers more than 256 duplicate revisions', async () => {
+  const f = await fixture()
+  const tag = f.info().workspaceTag
+  const socket = { OPEN: 1, readyState: 1, bufferedAmount: 0, send: (s) => f.send(JSON.parse(s)) }
+  const hub = createHub({ peers: new WeakMap(), maxBufferedBytes: 1_000_000, debug: false })
+  hub.subscribe(socket, tag)
+  const release = hub.pauseBroadcasts(socket)
+  const revisions = []
+  for (let i = 0; i < 258; i++) {
+    const revision = await f.revision(revisions.at(-1)?.id ?? null, { A: { comment: `edit ${i}` } })
+    revisions.push(revision)
+    hub.broadcast(tag, { type: 'workspace-state', workspaceTag: tag, revisions: [revision] }, null)
+  }
+  const before = f.messages.length
+  hub.send(socket, { type: 'workspace-state', workspaceTag: tag, revisions })
+  await waitFor(() => f.info().baseRevision === revisions.at(-1).id, 'large catch-up applied')
+  release()
+  const next = await f.revision(revisions.at(-1).id, { A: { comment: 'live successor' } })
+  hub.broadcast(tag, { type: 'workspace-state', workspaceTag: tag, revisions: [next] }, null)
+  await waitFor(() => f.info().baseRevision === next.id, 'live successor applied after the buffer flush')
+  assert.equal(state.triage.get('A')?.comment, 'live successor')
+  assert.equal(f.messages.length, before, 'no continuity recovery, resubscribe, or full-state reset')
+})
+
+it('ignores delayed bus notifications after a large subscription has completely resumed', async () => {
+  const f = await fixture()
+  const tag = f.info().workspaceTag
+  const socket = { OPEN: 1, readyState: 1, bufferedAmount: 0, send: (s) => f.send(JSON.parse(s)) }
+  const hub = createHub({ peers: new WeakMap(), maxBufferedBytes: 1_000_000, debug: false })
+  hub.subscribe(socket, tag)
+  const release = hub.pauseBroadcasts(socket)
+  const revisions = []
+  for (let i = 0; i < 258; i++) revisions.push(await f.revision(revisions.at(-1)?.id ?? null, { A: { comment: `edit ${i}` } }))
+  const onBusMessage = createBusReceiver({
+    handle: { revisionById: { get: (_tag, id) => Promise.resolve({ ...revisions.find((rev) => rev.id === id), keyframe: 0 }) } },
+    objstoreHandle: {}, broadcastLocalRaw: hub.broadcastLocalRaw, debug: false,
+  })
+  const before = f.messages.length
+  hub.send(socket, { type: 'workspace-state', workspaceTag: tag, revisions })
+  release()
+  await waitFor(() => f.info().baseRevision === revisions.at(-1).id, 'large catch-up applied after final release')
+  // The DB snapshot includes these revisions before their cross-instance
+  // notifications arrive. No unrelated subscription holds a nested pause.
+  for (const { id } of revisions.slice(0, 2)) await onBusMessage({ kind: 'rev', tag, id })
+  const next = await f.revision(revisions.at(-1).id, { A: { comment: 'live successor' } })
+  hub.broadcast(tag, { type: 'workspace-state', workspaceTag: tag, revisions: [next] }, null)
+  await waitFor(() => f.info().baseRevision === next.id, 'live successor applied after delayed notifications')
+  assert.equal(state.triage.get('A')?.comment, 'live successor')
+  assert.equal(f.messages.length, before, 'no recovery subscription or full-state save for delayed duplicates')
+})
+
+it('the client retains complete catch-ups through live traffic, later subscriptions, and reconnects', async () => {
+  const f = await fixture()
+  const revisions = []
+  for (let i = 0; i < 258; i++) revisions.push(await f.revision(revisions.at(-1)?.id ?? null, { A: { comment: `edit ${i}` } }))
+  // Direct client delivery: the relay must not hide its duplicates.
+  f.send({ type: 'workspace-state', revisions })
+  await waitFor(() => f.info().baseRevision === revisions.at(-1).id, 'large catch-up applied')
+  let head = revisions.at(-1).id
+  for (let i = 0; i < 260; i++) {
+    const live = await f.revision(head, { A: { comment: `live ${i}` } })
+    head = live.id
+    f.send({ type: 'workspace-state', revisions: [live] })
+  }
+  await waitFor(() => f.info().baseRevision === head, 'live traffic applied')
+  await triageSync.ensureSubscription(f.workspaceId).resources
+  const later = await f.revision(head, { B: { comment: 'later catch-up' } })
+  // A real keyframe also resets the normal reconnect-compaction counter.
+  const last = await f.revision(later.id, { A: { comment: 'live 259' }, B: { comment: 'caught up again' } }, true)
+  f.send({ type: 'workspace-state', revisions: [later, last] })
+  await waitFor(() => f.info().baseRevision === last.id, 'later catch-up applied')
+  await f.reconnect()
+  const before = f.messages.length
+  f.send({ type: 'workspace-state', revisions: [revisions[0]] })
+  f.send({ type: 'workspace-state', revisions: [revisions[1]] })
+  const next = await f.revision(last.id, { B: { comment: 'fresh successor' } })
+  f.send({ type: 'workspace-state', revisions: [revisions[2], later, next] })
+  await waitFor(() => f.info().baseRevision === next.id, 'fresh successor after delayed duplicates')
+  assert.equal(state.triage.get('B')?.comment, 'fresh successor')
+  assert.deepEqual(f.messages.slice(before), [], 'no recovery request or full-state save')
+})
+
+it('the client recognizes duplicates within a large uncommitted chain candidate', async () => {
+  const f = await fixture()
+  const revisions = []
+  for (let i = 0; i < 258; i++) revisions.push(await f.revision(revisions.at(-1)?.id ?? null, { A: { comment: `edit ${i}` } }))
+  // Finish at a keyframe so normal compaction cannot add a maintenance save.
+  const next = await f.revision(revisions.at(-1).id, { A: { comment: 'edit 257' }, B: { comment: 'valid suffix' } }, true)
+  const before = f.messages.length
+  f.send({ type: 'workspace-state', revisions: [...revisions, revisions[0], revisions[1], next] })
+  await waitFor(() => f.info().baseRevision === next.id, 'candidate including its own duplicates applied')
+  assert.deepEqual(f.messages.slice(before), [], 'duplicates within the candidate do not trigger recovery')
+})
+
+it('the client retains a large verified prefix when its suffix is rejected', async () => {
+  const f = await fixture()
+  const revisions = []
+  for (let i = 0; i < 258; i++) revisions.push(await f.revision(revisions.at(-1)?.id ?? null, { A: { comment: `edit ${i}` } }))
+  const next = await f.revision(revisions.at(-1).id, { B: { comment: 'authentic suffix' } })
+  const initialSubs = f.messages.filter((m) => m.type === 'workspace-subscribe').length
+  f.send({ type: 'workspace-state', revisions: [...revisions, { ...next, signature: 'forged' }] })
+  await waitFor(() => f.messages.filter((m) => m.type === 'workspace-subscribe').length > initialSubs, 'invalid suffix rejected')
+  assert.equal(f.info().baseRevision, revisions.at(-1).id)
+  const before = f.messages.length
+  f.send({ type: 'workspace-state', revisions: [revisions[0]] })
+  f.send({ type: 'workspace-state', revisions: [revisions[1], next] })
+  await waitFor(() => f.info().baseRevision === next.id, 'authentic suffix accepted after prefix duplicates')
+  assert.equal(state.triage.get('B')?.comment, 'authentic suffix')
+  assert.equal(f.messages.length, before, 'duplicates do not turn a recoverable rejection into a reset')
 })
 
 it('rebasing prototype-shaped finding ids keeps them as inert own properties', () => {

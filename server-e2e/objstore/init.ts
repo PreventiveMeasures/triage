@@ -30,7 +30,7 @@ export type ObjstoreInitDeps = {
   // mode passes Postgres LISTEN/NOTIFY-backed implementations. See
   // server-e2e/pubsub.ts for the bus design.
   publishObjPut: (tag: string, resourceTag: string) => void
-  publishObjDeleted: (tag: string, resourceTag: string, version: number) => void
+  publishObjDeleted: (tag: string, resourceTag: string, version: number, incarnation: string) => void
   getNonce: (socket: WebSocket) => string | undefined
   debug: boolean
   // Auth gate for the FIRST objstore-put-begin against a workspace
