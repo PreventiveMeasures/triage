@@ -8,7 +8,7 @@
 // row, ↑/↓ history, click-anywhere-to-focus). All pipeline / fs /
 // command behavior lives in `@preventive/terminal`.
 
-import { LitElement, html, nothing, unsafeCSS } from './view/frontend-global.js'
+import { LitElement, html, nothing, repeat, unsafeCSS } from './view/frontend-global.js'
 import { createTerminal } from '@preventive/terminal'
 // Imported as a text string at build time (see build.js — the
 // lit-css-as-text plugin routes JS-side `.css` imports through the
@@ -80,6 +80,9 @@ class BundleTerminal extends LitElement {
     // suffix-only, so the overlay span has a transparent copy of
     // `_input` to push it past the caret.
     _ghost: { state: true },
+    // Transient hint stack drawn over the top-right corner. Entries
+    // are `{ id, text, dwell }`; see #pushNotes.
+    _notes: { state: true },
   }
 
   static styles = unsafeCSS(terminalCSS)
@@ -102,6 +105,19 @@ class BundleTerminal extends LitElement {
   // Window short enough to feel instant after a pause, long enough
   // that mid-burst typing doesn't trigger a compute every keystroke.
   static #GHOST_DELAY_MS = 200
+  // Live hint timers, keyed by note id: one pending removal each.
+  // `#noteSeq` only ever climbs, so an id is never reused and a
+  // stale timer can't expire a later note that took its slot.
+  #noteTimers = new Map()
+  #noteSeq = 0
+  // A line can report several notes at once (a glob that skipped a
+  // hidden entry *and* matched nothing). Keep the newest few so a
+  // burst can't wallpaper the output it's commenting on.
+  static #NOTE_MAX = 3
+  // Kept in step with the fade-out in terminal.css: each note carries
+  // `--dwell-out` (dwell − fade) so the CSS animation reaches zero
+  // opacity just as the removal timer fires.
+  static #NOTE_FADE_MS = 400
 
   constructor() {
     super()
@@ -110,6 +126,7 @@ class BundleTerminal extends LitElement {
     this._input = ''
     this._cwd = '/'
     this._ghost = ''
+    this._notes = []
   }
 
   // Bind to the current sources map: a Map reference change means
@@ -135,6 +152,9 @@ class BundleTerminal extends LitElement {
       // appear after the swap. Same reasoning for an unsubmitted input.
       this.#completions = null
       this._input = ''
+      // Hints describe a command run against the previous bundle —
+      // they'd be read as commentary on the new one.
+      this.#clearNotes()
       this.#lastSources = this.sources
     }
     if (changed.has('_input')) {
@@ -162,6 +182,10 @@ class BundleTerminal extends LitElement {
   disconnectedCallback() {
     super.disconnectedCallback()
     this.#cancelGhost()
+    // Same reasoning as the ghost timer: the cached element outlives
+    // a detach, and a hint that expires while off-screen would
+    // otherwise reappear mid-fade on the next tab flip.
+    this.#clearNotes()
   }
 
   firstUpdated() { this.#focusInput() }
@@ -195,6 +219,8 @@ class BundleTerminal extends LitElement {
     // built-in. Still recorded in history so ↑ recalls it.
     if (trimmed === 'clear') {
       this._lines = []
+      // The hints are on the screen `clear` is clearing.
+      this.#clearNotes()
       this._input = ''
       if (trimmed.length > 0) this.#history = [...this.#history, line]
       this.#histIdx = -1
@@ -207,6 +233,7 @@ class BundleTerminal extends LitElement {
     if (r.stdout) next.push({ kind: 'stdout', text: r.stdout })
     if (r.stderr) next.push({ kind: 'stderr', text: r.stderr })
     this._lines = next
+    this.#pushNotes(r.notes)
     if (trimmed.length > 0) this.#history = [...this.#history, line]
     this.#histIdx = -1
     this._input = ''
@@ -303,6 +330,67 @@ class BundleTerminal extends LitElement {
     this._ghost = first.slice(input.length)
   }
 
+  // Take the `notes` channel from a run and stack it top-right.
+  // These are informational asides — hidden entries `ls` left out, a
+  // glob that stayed literal, a `head` that truncated — reported
+  // separately from stdout/stderr precisely so a caller can surface
+  // them in its own channel instead of interleaving them with the
+  // transcript. Each entry expires on its own timer; nothing here
+  // waits on a dismissal.
+  #pushNotes(notes) {
+    if (notes.length === 0) return
+    const next = [...this._notes]
+    for (const text of notes) {
+      // Re-running a command re-reports its note. Drop the visible
+      // copy and append a fresh one, so the stack keeps a single
+      // entry whose dwell and fade restart from the top rather than
+      // showing a stuttering pair. The new id re-keys the repeat()
+      // entry, which is what actually restarts the CSS animation.
+      const dup = next.findIndex((n) => n.text === text)
+      if (dup !== -1) this.#dropNote(next, dup)
+      next.push({ id: ++this.#noteSeq, text, dwell: BundleTerminal.#noteDwell(text) })
+    }
+    while (next.length > BundleTerminal.#NOTE_MAX) this.#dropNote(next, 0)
+    for (const note of next) {
+      if (this.#noteTimers.has(note.id)) continue
+      this.#noteTimers.set(note.id, setTimeout(() => this.#expireNote(note.id), note.dwell))
+    }
+    this._notes = next
+  }
+
+  // Notes run ~45-125 characters, so a flat dwell either rushes the
+  // long ones or parks the short ones. Scale with length, floored so
+  // a terse hint is still readable and capped so none of it lingers.
+  static #noteDwell(text) {
+    return Math.min(10000, 3200 + text.length * 55)
+  }
+
+  // Splice an entry out of a *pending* stack, cancelling its timer —
+  // left running it would fire against an id that is no longer
+  // rendered and churn `_notes` for nothing.
+  #dropNote(stack, index) {
+    const [note] = stack.splice(index, 1)
+    this.#clearNoteTimer(note.id)
+  }
+
+  #clearNoteTimer(id) {
+    const timer = this.#noteTimers.get(id)
+    if (timer === undefined) return
+    clearTimeout(timer)
+    this.#noteTimers.delete(id)
+  }
+
+  #expireNote(id) {
+    this.#noteTimers.delete(id)
+    this._notes = this._notes.filter((n) => n.id !== id)
+  }
+
+  #clearNotes() {
+    for (const timer of this.#noteTimers.values()) clearTimeout(timer)
+    this.#noteTimers.clear()
+    this._notes = []
+  }
+
   #historyBack() {
     if (this.#history.length === 0) return
     if (this.#histIdx < 0) {
@@ -357,6 +445,9 @@ class BundleTerminal extends LitElement {
 
   render() {
     return html`
+      <div class="notes" role="status">
+        ${repeat(this._notes, (n) => n.id, (n) => html`<div class="note" style="--dwell-out: ${n.dwell - BundleTerminal.#NOTE_FADE_MS}ms">${n.text}</div>`)}
+      </div>
       <div class="output" @click=${this.#onClickOutput}>
         ${this._lines.map((l) => this.#renderLine(l))}
       </div>
