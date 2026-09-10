@@ -7,6 +7,8 @@
 :host {
   display: flex;
   flex-direction: column;
+  /* Containing block for the .notes overlay. */
+  position: relative;
   height: 100%;
   min-height: 0;
   background: var(--bg, #0c0c0c);
@@ -136,4 +138,73 @@
 
 .ghost-pad {
   color: transparent;
+}
+
+/* Transient hints from the shell's `notes` channel — informational
+   asides (hidden entries `ls` skipped, a glob left literal, a `head`
+   truncation) that are neither output nor error. They sit over the
+   top-right of the component so they read as commentary on the run
+   without displacing a single transcript line, and ui/terminal.js
+   removes each on its own timer.
+
+   `pointer-events: none` keeps the stack inert: click-anywhere-to-
+   focus, drag-select over output, and the scrollbar underneath all
+   keep working through it. That also means there is nothing to
+   dismiss — the timer is the only exit, which is the point. */
+.notes {
+  position: absolute;
+  top: 8px;
+  /* Matches .output's right padding so hints line up with output. */
+  right: 14px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  /* Narrow enough to leave most of the transcript visible beside it.
+     Hints are drawn over whatever is at the top of the viewport, the
+     banner included; the output auto-scrolls, so what they cover is
+     the oldest visible lines rather than the run just made. */
+  max-width: min(52%, 320px);
+  pointer-events: none;
+}
+
+.note {
+  box-sizing: border-box;
+  padding: 5px 9px;
+  border: 1px solid var(--border, #2c2c2c);
+  border-radius: 5px;
+  /* Opaque: these overlap live output, which would otherwise show
+     through and make both unreadable. */
+  background: var(--bg, #0c0c0c);
+  color: var(--muted, #8b949e);
+  font-size: 12px;
+  line-height: 1.4;
+  /* The stack is right-aligned; the text inside it is not. */
+  text-align: left;
+  overflow-wrap: break-word;
+  /* Fade in quickly, hold, then fade out so the removal timer lands
+     on an already-invisible node. --dwell-out (dwell − fade) is set
+     per note by the component. `forwards` on the out animation only:
+     a `backwards` fill would hold opacity 1 through the delay and,
+     as the later animation, override the fade-in. */
+  animation: note-in 140ms ease-out, note-out 400ms ease-in var(--dwell-out, 5600ms) forwards;
+}
+
+@keyframes note-in {
+  0% { opacity: 0; transform: translateY(-4px); }
+  100% { opacity: 1; transform: none; }
+}
+
+@keyframes note-out {
+  100% { opacity: 0; transform: translateY(-4px); }
+}
+
+/* Reduced motion: no slide, no fade. The note appears and then
+   vanishes when its timer fires — the information still arrives and
+   still leaves on its own. */
+@media (prefers-reduced-motion: reduce) {
+  .note {
+    animation: none;
+  }
 }
