@@ -1089,6 +1089,36 @@ describe('socket-transport: SSE fallback', () => {
     t.close()
   })
 
+  for (const newerType of ['workspace-subscribed', 'objstore-put']) {
+    it(`reconnects instead of applying an older SSE inventory after a newer ${newerType}`, async () => {
+      const t = makeTransport()
+      const c = recordingConsumer()
+      t.addConsumer(c)
+      try {
+        t.acquire()
+        FakeWebSocket.last.simulateClose()
+        assert.ok(await awaitFetch(1))
+        const first = lastStream()
+        first.pushEvent('session', 'sid-x')
+        first.pushMessage({ type: 'challenge', nonce: 'n' })
+        await delay(10)
+        t.send({ type: 'workspace-subscribe', workspaceTag: 'tag' })
+        assert.ok(await awaitFetch(2, 500))
+        const current = { resourceTag: 'resource', incarnation: 'B', version: 1 }
+        const newer = newerType === 'workspace-subscribed'
+          ? { type: newerType, workspaceTag: 'tag', resources: [current] }
+          : { type: newerType, workspaceTag: 'tag', ...current }
+        lastStream().pushMessage(newer)
+        await delay(10)
+        first.pushMessage({ type: 'workspace-subscribed', workspaceTag: 'tag', resources: [{ ...current, incarnation: 'A', version: 5 }] })
+        await delay(10)
+        assert.deepEqual(c.messages, [newer], 'old lineage never reaches inventory or token consumers')
+        assert.equal(c.disconnected.length, 1, 'complete reconnect recovers any undelivered acks')
+        assert.equal(t.getSocket(), null)
+      } finally { t.close() }
+    })
+  }
+
   it('a read error on the live downstream disconnects', async () => {
     // Takeover normally end()s the prior response (a clean EOF), but a
     // dropped connection surfaces as a read REJECTION instead. On the
