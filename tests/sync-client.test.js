@@ -637,7 +637,11 @@ describe('triage-sync client', () => {
     // The revision was skipped: state.markers must NOT have the
     // 'red' value the (bogus) chain tried to set.
     await waitFor(
-      () => triageSync.sessionInfo(wsId)?.baseRevision === null,
+      // baseRevision starts null, so it alone can pass before the client
+      // has even processed the bogus chain. Wait for rejection's healing
+      // marker too; then the assertions below exercise the receive path.
+      () => triageSync.sessionInfo(wsId)?.baseRevision === null
+        && (triageSync.sessionInfo(wsId)?.savesSinceKeyframe ?? 0) >= 100,
       'baseRevision reset via continuity-break recovery (M1)',
     )
     assert.equal(state.triage.get('finding-A')?.color, undefined, 'bogus-id revision did not poison state')

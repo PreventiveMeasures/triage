@@ -143,6 +143,9 @@ type Session = {
   // the workspace releases them. Only IDs are retained, never revision bodies.
   appliedRevisions: Set<string>
   baseState: TriageStateMap
+  // Distinguishes an acknowledged empty baseline from a first-time sync.
+  // Keep this knowledge when recovery resets the revision cursor.
+  hasBase: boolean
   savesSinceKeyframe: number
   localState: TriageStateMap
   pending: PendingSave | null
@@ -720,6 +723,7 @@ function persistSession(target: Session): void {
     baseRevision: target.baseRevision,
     savesSinceKeyframe: target.savesSinceKeyframe ?? 0,
     baseState: target.baseState,
+    ...(target.baseRevision === null && target.hasBase ? { hasBase: true } : {}),
   }
   // Fire-and-forget — callers don't await. The lock serializes the
   // RMW; back-to-back calls follow Web Locks FIFO, so the most-recent
@@ -1137,7 +1141,7 @@ async function applyChainToBase(session: Session, revisions: WireRevision[], isC
     // rev we don't have, but its content IS full state, so we accept
     // and replace baseState wholesale below.
     const expected = session.baseRevision
-    const isKeyframe = Boolean(rev.keyframe)
+    const isKeyframe = rev.keyframe === true
     const ok = expected == null
       ? (rev.base == null || isKeyframe)
       : rev.base === expected
@@ -1338,6 +1342,7 @@ async function handleAck(session: Session, msg: WireMessage): Promise<void> {
     const applyTo: TriageStateMap = session.pending.keyframe ? Object.create(null) : session.baseState
     session.baseState = applyChangeset(applyTo, session.pending.changeset)
     session.baseRevision = msg.id
+    session.hasBase = true
     session.appliedRevisions.add(msg.id)
     // Same cap as the chain-apply path — see audit L3 round-6.
     session.savesSinceKeyframe = session.pending.keyframe
@@ -1427,7 +1432,18 @@ async function handleChain(session: Session, revisions: unknown): Promise<void> 
       // activity. Keep using the same baseline through both awaits.
       captureOverlay(session)
       const overlay = computeChangeset(overlayBase, session.localState)
-      const conflicts = collectChainConflicts(overlay, overlayBase, candidate.baseState)
+      const preserveKnownState = beforeBaseRevision === null && !(pending && candidate.pending === null)
+      const preserveKnownIds = preserveKnownState
+        ? new Set([...Object.keys(overlayBase), ...(session.hasBase ? session.ids : [])])
+        : undefined
+      if (preserveKnownIds) {
+        // Resetting the cursor does not make an older signed snapshot
+        // authoritative over known values or absences. Once we have a
+        // baseline, this includes entirely cleared in-scope findings.
+        for (const id of preserveKnownIds) overlay[id] = session.localState[id] ?? null
+      }
+      const conflicts = collectChainConflicts(overlay, overlayBase, candidate.baseState, preserveKnownIds)
+        .filter(({ id }) => session.ids.has(id))
       let decisions: { [key: string]: 'local' | 'imported' } | null = null
       if (conflicts.length > 0 && hydrationConflictResolver) {
         try {
@@ -1438,8 +1454,9 @@ async function handleChain(session: Session, revisions: unknown): Promise<void> 
         if (!isCurrent()) return
       }
       captureOverlay(session)
-      const merged = rebaseLocalState(overlayBase, session.localState, candidate.baseState)
+      const merged = rebaseLocalState(overlayBase, session.localState, candidate.baseState, preserveKnownIds)
       session.baseRevision = candidate.baseRevision
+      session.hasBase = true
       for (const id of candidate.appliedRevisions) session.appliedRevisions.add(id)
       session.baseState = candidate.baseState
       session.savesSinceKeyframe = candidate.savesSinceKeyframe
@@ -1464,7 +1481,7 @@ async function handleChain(session: Session, revisions: unknown): Promise<void> 
       console.warn('Triage sync: catch-up also broke continuity; full state push')
       session.baseRevision = null
       session.appliedRevisions.clear()
-      session.baseState = Object.create(null)
+      session.savesSinceKeyframe = keyframeInterval
       session.pending = null
       session.resyncAttempted = false
       session.pendingSave = true
@@ -1629,12 +1646,10 @@ function handleSaveError(session: Session, wire: WireMessage): void {
   // with a REAL catch-up that rebases us on the normal path (clearing
   // the latch via the applied chain). A MISDETECTED wipe — a glitched
   // frame pair from a relay that still holds the chain — therefore
-  // cannot reset server data. Trade-offs, both shared with the
-  // sibling reset in handleChain: state.* is untouched, but triage
-  // living ONLY in baseState (ids of reports not loaded locally)
-  // drops out of the recovery push, and on a misdetect an unsynced
-  // DELETION (id→null vs the old base) is unrepresentable against the
-  // emptied base, so the rebase resurrects the entry. One reset per
+  // cannot reset server data. Keep baseState as the local merge baseline
+  // and force a keyframe: this preserves unloaded findings in the recovery
+  // push and local deletions when the relay returns a surviving chain.
+  // One reset per
   // recovery cycle (`staleResetAttempted`): a relay replaying the
   // rejection forever gets the terminal error on the second round
   // instead of an infinite full-state loop.
@@ -1643,7 +1658,7 @@ function handleSaveError(session: Session, wire: WireMessage): void {
     console.warn('Triage sync: stale-base catch-up did not apply (server chain gone or rebuilt past our base); full state push')
     session.baseRevision = null
     session.appliedRevisions.clear()
-    session.baseState = Object.create(null)
+    session.savesSinceKeyframe = keyframeInterval
     session.pendingSave = false
     session.resyncAttempted = false
     persistSession(session)
@@ -1906,6 +1921,7 @@ export const triageSync = {
       session.baseRevision = restored?.baseRevision ?? null
       session.appliedRevisions.clear()
       session.baseState = restored?.baseState ?? Object.create(null)
+      session.hasBase = restored?.hasBase === true || session.baseRevision !== null || Object.keys(session.baseState).length > 0
       session.savesSinceKeyframe = restored?.savesSinceKeyframe ?? 0
       session.localState = effectiveLocalState(session.baseState, session.ids)
       clearSessionErrorForRetry(session)
@@ -2092,6 +2108,7 @@ export const triageSync = {
       baseRevision: restored?.baseRevision ?? null,
       appliedRevisions: new Set(),
       baseState: restoredBaseState,
+      hasBase: restored?.hasBase === true || restored?.baseRevision != null || Object.keys(restoredBaseState).length > 0,
       savesSinceKeyframe: restored?.savesSinceKeyframe ?? 0,
       localState: effectiveLocalState(restoredBaseState, ids),
       pending: null,

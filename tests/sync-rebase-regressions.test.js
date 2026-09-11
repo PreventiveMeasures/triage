@@ -369,6 +369,136 @@ it('a frame received without a matching session cannot attach to a workspace ope
   assert.equal(state.triage.get('C')?.comment, 'fresh frame after the session opened')
 })
 
+for (const field of ['color', 'triage', 'comment', 'fix', 'flagged', 'ignoredReports']) {
+  it(`unanchored recovery preserves an acknowledged ${field} clear`, async () => {
+    const f = await fixture()
+    const value = { color: 'red', triage: 'fixed', comment: 'old comment', fix: 'old fix', flagged: true, ignoredReports: ['regression.md'] }[field]
+    const remaining = field === 'comment' ? { fix: 'keep this fix' } : { comment: 'keep this comment' }
+    const old = await f.revision(null, { A: { ...remaining, [field]: value } }, true)
+    f.send({ type: 'workspace-state', revisions: [old] })
+    await waitFor(() => f.info().baseRevision === old.id, 'older keyframe applied')
+    patchEntry(state.triage, 'A', { [field]: undefined })
+    triageSync.notify()
+    await waitFor(() => f.messages.some((m) => m.type === 'workspace-save'), 'clear sent')
+    const save = f.messages.find((m) => m.type === 'workspace-save')
+    const id = await cryptoMod.computeRevisionId({ publicKeyB64: save.workspaceTag, base: save.base, keyframe: save.keyframe, nonceB64: save.nonce, ciphertextB64: save.ciphertext })
+    f.send({ type: 'workspace-save-ack', base: save.base, id })
+    await waitFor(() => f.info().baseRevision === id, 'clear acknowledged')
+    const subscriptions = f.messages.filter((m) => m.type === 'workspace-subscribe').length
+    f.send({ type: 'workspace-state', revisions: [{ base: 'missing', id: 'gap' }] })
+    await waitFor(() => f.messages.filter((m) => m.type === 'workspace-subscribe').length > subscriptions, 'first recovery request')
+    f.send({ type: 'workspace-state', revisions: [{ base: 'missing', id: 'gap' }] })
+    await waitFor(() => f.messages.some((m) => m.type === 'workspace-save' && m.base === null), 'full recovery attempted')
+    const conflicts = []
+    setHydrationConflictResolver((rows) => { conflicts.push(...rows); return {} })
+    const beforeReplay = f.messages.length
+    f.send({ type: 'workspace-state', revisions: [old] })
+    await waitFor(() => f.info().baseRevision === old.id, 'old keyframe processed during recovery')
+    assert.equal(state.triage.get('A')?.[field], undefined, 'acknowledged absence must not be resurrected')
+    await waitFor(() => f.messages.slice(beforeReplay).some((m) => m.type === 'workspace-save' && m.base === old.id), 'recovery save over old keyframe')
+    const recovery = f.messages.slice(beforeReplay).find((m) => m.type === 'workspace-save' && m.base === old.id)
+    assert.deepEqual(await f.decryptSave(recovery), { A: remaining })
+    if (field !== 'ignoredReports') assert.equal(conflicts.some((c) => c.property === field && c.local === ''), true)
+  })
+}
+
+for (const reopen of [false, true]) {
+  it(`unanchored recovery preserves a fully cleared acknowledged finding${reopen ? ' after reopening' : ''}`, async () => {
+    const f = await fixture()
+    const old = await f.revision(null, { A: { color: 'red' } }, true)
+    f.send({ type: 'workspace-state', revisions: [old] })
+    await waitFor(() => f.info().baseRevision === old.id, 'old keyframe applied')
+    state.triage.delete('A')
+    triageSync.notify()
+    await waitFor(() => f.messages.some((m) => m.type === 'workspace-save'), 'clear sent')
+    const save = f.messages.find((m) => m.type === 'workspace-save')
+    const id = await cryptoMod.computeRevisionId({ publicKeyB64: save.workspaceTag, base: save.base, keyframe: save.keyframe, nonceB64: save.nonce, ciphertextB64: save.ciphertext })
+    f.send({ type: 'workspace-save-ack', base: save.base, id })
+    await waitFor(() => f.info().baseRevision === id, 'full clear acknowledged')
+    const subscriptions = f.messages.filter((m) => m.type === 'workspace-subscribe').length
+    f.send({ type: 'workspace-state', revisions: [{ base: 'missing', id: 'gap' }] })
+    await waitFor(() => f.messages.filter((m) => m.type === 'workspace-subscribe').length > subscriptions, 'recovery requested')
+    f.send({ type: 'workspace-state', revisions: [{ base: 'missing', id: 'gap' }] })
+    await waitFor(() => f.messages.some((m) => m.type === 'workspace-save' && m.base === null), 'full recovery attempted')
+    if (reopen) {
+      await navigator.locks.request('deepview.sync.sessions', () => {})
+      const acquire = getSharedTransport().acquire()
+      cleanups.push(() => acquire.release())
+      triageSync.closeSession(f.workspaceId)
+      await triageSync.ensureSubscription(f.workspaceId).resources
+    }
+    const beforeReplay = f.messages.length
+    f.send({ type: 'workspace-state', revisions: [old] })
+    await waitFor(() => f.info().baseRevision === old.id, 'old keyframe processed')
+    assert.equal(state.triage.get('A'), undefined, 'a known empty finding stays empty')
+    await waitFor(() => f.messages.slice(beforeReplay).some((m) => m.type === 'workspace-save' && m.base === old.id), 'clear republished')
+    const recovery = f.messages.slice(beforeReplay).find((m) => m.type === 'workspace-save' && m.base === old.id)
+    assert.deepEqual(await f.decryptSave(recovery), { A: null })
+  })
+}
+
+it('an initial catch-up still fills unknown fields beside an unsynced local edit', async () => {
+  const f = await fixture()
+  patchEntry(state.triage, 'A', { color: 'amber' })
+  const first = await f.revision(null, { A: { comment: 'new peer field' }, B: { color: 'blue' } }, true)
+  f.send({ type: 'workspace-state', revisions: [first] })
+  await waitFor(() => f.info().baseRevision === first.id, 'initial catch-up applied')
+  assert.equal(state.triage.get('A')?.color, 'amber')
+  assert.equal(state.triage.get('A')?.comment, 'new peer field')
+  assert.equal(state.triage.get('B')?.color, 'blue', 'no previous baseline means absence is unknown')
+})
+
+for (const tamper of ['signature', 'id', 'keyframe']) {
+  it(`rejects a tampered ${tamper} after a verified chain prefix`, async () => {
+    const f = await fixture()
+    const first = await f.revision(null, { A: { color: 'red' } })
+    const second = await f.revision(first.id, { A: { color: 'blue' } })
+    const forged = { ...second, [tamper]: tamper === 'keyframe' ? true : 'forged' }
+    const initialSubs = f.messages.filter((m) => m.type === 'workspace-subscribe').length
+    f.send({ type: 'workspace-state', revisions: [first, forged] })
+    await waitFor(() => f.messages.filter((m) => m.type === 'workspace-subscribe').length > initialSubs, 'invalid suffix rejected')
+    assert.equal(f.info().baseRevision, first.id, 'cursor advances only through authenticated content')
+    assert.equal(state.triage.get('A')?.color, 'red', 'forged content never reaches the UI')
+    f.send({ type: 'workspace-state', revisions: [second] })
+    await waitFor(() => state.triage.get('A')?.color === 'blue', 'authentic suffix accepted')
+    assert.equal(f.info().baseRevision, second.id)
+    assert.equal(f.messages.some((m) => m.type === 'workspace-save'), false, 'recovery never republishes a forged overlay')
+  })
+}
+
+it('a forged duplicate id cannot replace state or authorize a fork', async () => {
+  const f = await fixture()
+  const first = await f.revision(null, { A: { color: 'red' } })
+  const second = await f.revision(first.id, { A: { color: 'blue' } })
+  f.send({ type: 'workspace-state', revisions: [first, second] })
+  await waitFor(() => f.info().baseRevision === second.id, 'known chain applied')
+  const initialSubs = f.messages.filter((m) => m.type === 'workspace-subscribe').length
+  const fork = await f.revision(first.id, { A: { color: 'fork' } })
+  f.send({ type: 'workspace-state', revisions: [{ ...first, ciphertext: 'forged' }, fork] })
+  await waitFor(() => f.messages.filter((m) => m.type === 'workspace-subscribe').length > initialSubs, 'fork rejected')
+  assert.equal(f.info().baseRevision, second.id)
+  assert.equal(state.triage.get('A')?.color, 'blue')
+})
+
+it('recovery does not silently roll back known state when a relay replays an older signed root', async () => {
+  const f = await fixture()
+  const first = await f.revision(null, { A: { color: 'red' } })
+  const second = await f.revision(first.id, { A: { color: 'blue' } })
+  f.send({ type: 'workspace-state', revisions: [first, second] })
+  await waitFor(() => f.info().baseRevision === second.id, 'current state applied')
+  const initialSubs = f.messages.filter((m) => m.type === 'workspace-subscribe').length
+  f.send({ type: 'workspace-state', revisions: [{ base: 'missing', id: 'gap' }] })
+  await waitFor(() => f.messages.filter((m) => m.type === 'workspace-subscribe').length > initialSubs, 'first recovery request')
+  f.send({ type: 'workspace-state', revisions: [{ base: 'missing', id: 'gap' }] })
+  await waitFor(() => f.messages.some((m) => m.type === 'workspace-save' && m.base === null), 'full state recovery attempted')
+  const conflicts = []
+  setHydrationConflictResolver((rows) => { conflicts.push(...rows); return {} })
+  f.send({ type: 'workspace-state', revisions: [first] })
+  await waitFor(() => f.messages.some((m) => m.type === 'workspace-save' && m.base === first.id), 'known state republished over the replay')
+  assert.equal(state.triage.get('A')?.color, 'blue', 'old authenticated data cannot silently replace newer local state')
+  assert.deepEqual(conflicts.map((c) => [c.property, c.local, c.imported]), [['color', 'blue', 'red']])
+})
+
 it('rebasing prototype-shaped finding ids keeps them as inert own properties', () => {
   const base = JSON.parse('{"__proto__":{"color":"red"},"constructor":{"comment":"before"}}')
   const local = JSON.parse('{"__proto__":{"color":"blue"},"constructor":{"comment":"after"}}')
@@ -379,6 +509,19 @@ it('rebasing prototype-shaped finding ids keeps them as inert own properties', (
   assert.deepEqual(result.constructor, { comment: 'after', flagged: true })
   assert.equal(({}).color, undefined)
   assert.equal(({}).constructor, Object)
+})
+
+it('an authenticated initial save echo followed by a peer edit accepts the newer value', async () => {
+  const f = await fixture()
+  patchEntry(state.triage, 'A', { color: 'red' })
+  triageSync.notify()
+  await waitFor(() => f.messages.some((m) => m.type === 'workspace-save'), 'initial save')
+  const save = f.messages.find((m) => m.type === 'workspace-save')
+  const id = await cryptoMod.computeRevisionId({ publicKeyB64: save.workspaceTag, base: save.base, keyframe: save.keyframe, nonceB64: save.nonce, ciphertextB64: save.ciphertext })
+  const next = await f.revision(id, { A: { color: 'blue' } })
+  f.send({ type: 'workspace-state', revisions: [{ ...save, id }, next] })
+  await waitFor(() => f.info().baseRevision === next.id, 'peer successor applied')
+  assert.equal(state.triage.get('A')?.color, 'blue', 'our echo establishes a fresh anchor for subsequent peer edits')
 })
 
 it('a server switch during a chain dialog discards the old chain and its queued messages', async () => {
@@ -456,6 +599,22 @@ for (const confirmation of ['ack', 'echo']) {
     assert.equal(state.triage.get('A')?.color, 'blue')
   })
 }
+
+it('a stale-base reset preserves triage for reports that are not loaded locally', async () => {
+  const f = await fixture()
+  const root = await f.revision(null, { A: { color: 'red' }, unloaded: { comment: 'keep remotely' } })
+  f.send({ type: 'workspace-state', revisions: [root] })
+  await waitFor(() => state.triage.get('A')?.color === 'red', 'root applied')
+  state.triage.delete('A')
+  triageSync.notify()
+  await waitFor(() => f.messages.some((m) => m.type === 'workspace-save'), 'delete sent')
+  f.send({ type: 'workspace-state', revisions: [] })
+  f.send({ type: 'workspace-save-error', base: root.id, reason: 'stale-base' })
+  await waitFor(() => f.messages.some((m) => m.type === 'workspace-save' && m.base === null), 'recovery save')
+  const reset = f.messages.find((m) => m.type === 'workspace-save' && m.base === null)
+  assert.equal(reset.keyframe, true)
+  assert.deepEqual(await f.decryptSave(reset), { unloaded: { comment: 'keep remotely' } })
+})
 
 for (const [status, transition] of [[401, 'switching relays'], [413, 'switching relays'], [401, 'rotating keys']]) {
   it(`ignores an old REST ${status} response after ${transition}`, async () => {
