@@ -71,6 +71,7 @@ export function collectChainConflicts(
   overlay: Changeset,
   oldBaseState: TriageStateMap,
   newBaseState: TriageStateMap,
+  preserveKnownIds?: ReadonlySet<string>,
 ): Conflict[] {
   const conflicts: Conflict[] = []
   // Only check ids the user touched (= ids in overlay). Chain-only
@@ -96,7 +97,7 @@ export function collectChainConflicts(
       const oldVal = norm(oldEntry)
       const localVal = norm(localEntry)
       const chainVal = norm(chainEntry)
-      const localChanged = localVal !== oldVal
+      const localChanged = localVal !== oldVal || preserveKnownIds?.has(id)
       const chainChanged = chainVal !== oldVal
       if (localChanged && chainChanged && localVal !== chainVal) {
         conflicts.push({ id, property: name, local: localVal, imported: chainVal })
@@ -157,14 +158,18 @@ function rebaseIgnoredReports(base: string[] = [], local: string[] = [], remote:
 // Replay only fields the local user changed. Wire changesets replace whole
 // entries, but using that replacement as a local overlay erases independent
 // peer edits to other fields of the same finding.
-export function rebaseLocalState(base: TriageStateMap, local: TriageStateMap, remote: TriageStateMap): TriageStateMap {
+// After an anchor reset, a valid signature alone cannot prove a snapshot
+// is newer than the state we already knew. Keep known values as local
+// intent until conflicts are explicitly resolved; also retain local clears.
+export function rebaseLocalState(base: TriageStateMap, local: TriageStateMap, remote: TriageStateMap, preserveKnownIds?: ReadonlySet<string>): TriageStateMap {
   const out: TriageStateMap = Object.assign(Object.create(null), remote)
-  for (const id of new Set([...Object.keys(base), ...Object.keys(local)])) {
+  for (const id of new Set([...Object.keys(base), ...Object.keys(local), ...(preserveKnownIds ?? [])])) {
+    const preserveEntry = preserveKnownIds?.has(id)
     const before = normalizeEntry(base[id]) ?? {}
     const current = normalizeEntry(local[id]) ?? {}
     const merged = { ...normalizeEntry(remote[id]) }
     for (const field of ['color', 'comment', 'fix', 'flagged'] as const) {
-      if (before[field] !== current[field]) {
+      if (before[field] !== current[field] || preserveEntry) {
         // Assign through a patch so TS retains each field's value type.
         Object.assign(merged, { [field]: current[field] })
       }
@@ -173,8 +178,8 @@ export function rebaseLocalState(base: TriageStateMap, local: TriageStateMap, re
     // bucket/ignore choice keeps the local choice, but when both sides
     // remain untriaged, merge ignores per report so independent additions
     // and removals survive.
-    if (before.triage !== current.triage || !ignoredReportsEqual(before.ignoredReports, current.ignoredReports)) {
-      const reports = current.triage === undefined && merged.triage === undefined
+    if (preserveEntry || before.triage !== current.triage || !ignoredReportsEqual(before.ignoredReports, current.ignoredReports)) {
+      const reports = !preserveEntry && current.triage === undefined && merged.triage === undefined
         ? rebaseIgnoredReports(before.ignoredReports, current.ignoredReports, merged.ignoredReports)
         : current.ignoredReports ?? []
       if (current.triage === undefined) delete merged.triage
