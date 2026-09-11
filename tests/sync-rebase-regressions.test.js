@@ -2,10 +2,11 @@ import './_polyfills.js'
 import assert from 'node:assert/strict'
 import { afterEach, it } from 'node:test'
 import { WebSocketServer } from 'ws'
-import { awaitListening, closeWebSocketServer } from './_helpers.js'
+import { awaitListening, bootServer, closeWebSocketServer } from './_helpers.js'
 import { rebaseLocalState } from '../client/sync/triage-changeset.ts'
 import { createHub } from '../server-e2e/hub.ts'
 import { createBusReceiver } from '../server-e2e/bus-receiver.ts'
+import { getSharedTransport } from '../client/sync/sync-transport.ts'
 
 const { triageSync, setHydrationConflictResolver } = await import('../client/sync/triage-sync.ts')
 const { state } = await import('../client/state.ts')
@@ -52,7 +53,7 @@ async function fixture() {
       const msg = JSON.parse(data.toString())
       messages.push(msg)
       if (msg.type === 'workspace-subscribe') {
-        sock.send(JSON.stringify({ type: 'workspace-subscribed', workspaceTag: kp.publicKeyB64, resources: [] }))
+        sock.send(JSON.stringify({ type: 'workspace-subscribed', workspaceTag: msg.workspaceTag, resources: [] }))
       }
     })
   })
@@ -301,6 +302,73 @@ it('the client retains a large verified prefix when its suffix is rejected', asy
   assert.equal(f.messages.length, before, 'duplicates do not turn a recoverable rejection into a reset')
 })
 
+it('a discarded chain candidate cannot poison the retained revision IDs', async () => {
+  const f = await fixture()
+  const root = await f.revision(null, { A: { color: 'red' } })
+  f.send({ type: 'workspace-state', revisions: [root] })
+  await waitFor(() => f.info().baseRevision === root.id, 'root applied')
+  patchEntry(state.triage, 'A', { color: 'amber' })
+  let resolveDialog
+  setHydrationConflictResolver(() => new Promise((resolve) => { resolveDialog = resolve }))
+  const first = await f.revision(root.id, { A: { color: 'blue' } })
+  const second = await f.revision(first.id, { B: { comment: 'verified but not committed' } })
+  f.send({ type: 'workspace-state', revisions: [first, second] })
+  await waitFor(() => resolveDialog != null, 'verified candidate awaiting dialog')
+  try {
+    triageSync.setEnabled(false)
+    setHydrationConflictResolver(null)
+    resolveDialog({ 'A:color': 'imported' })
+    await new Promise((resolve) => { setImmediate(resolve) })
+    assert.equal(f.info().baseRevision, root.id, 'stale candidate was not committed')
+  } finally { triageSync.setEnabled(true) }
+  await waitFor(() => triageSync.status === 'online', 'same workspace reconnected')
+  f.send({ type: 'workspace-state', revisions: [first, second] })
+  await waitFor(() => f.info().baseRevision === second.id, 'discarded IDs were reverified and applied')
+  assert.equal(state.triage.get('B')?.comment, 'verified but not committed')
+})
+
+it('a frame received without a matching session cannot attach to a workspace opened while the queue is blocked', async () => {
+  const f = await fixture()
+  const workspaceId = crypto.randomUUID()
+  const seed = crypto.getRandomValues(new Uint8Array(32)).toBase64()
+  state.reports.push({ fileName: 'other.md', groups: [[{ id: 'C' }]] })
+  await upsertWorkspace({ id: workspaceId, name: 'other', privateKey: seed, reports: ['other.md'] })
+  cleanups.push(() => deleteWorkspace(workspaceId))
+  const key = await cryptoMod.deriveSessionKey(seed)
+  const kp = await cryptoMod.deriveSigningKeypair(seed, workspaceId)
+  async function revision(comment) {
+    const { nonce, ciphertext } = await cryptoMod.encryptJson(key, { C: { comment } }, cryptoMod.buildAad(kp.publicKeyB64, null))
+    const payload = { publicKeyB64: kp.publicKeyB64, base: null, keyframe: false, nonceB64: nonce, ciphertextB64: ciphertext }
+    return { base: null, keyframe: false, nonce, ciphertext, id: await cryptoMod.computeRevisionId(payload), signature: await cryptoMod.signSavePayload(kp.privateKey, payload) }
+  }
+  const stale = await revision('stale frame for an absent session')
+  patchEntry(state.triage, 'A', { color: 'amber' })
+  let resolveDialog
+  setHydrationConflictResolver(() => new Promise((resolve) => { resolveDialog = resolve }))
+  f.send({ type: 'workspace-state', revisions: [await f.revision(null, { A: { color: 'blue' } })] })
+  await waitFor(() => resolveDialog != null, 'earlier handler blocked in a dialog')
+  let observed = false
+  const observer = getSharedTransport().addConsumer({
+    onConnected() {}, onDisconnected() {},
+    onMessage(msg) { if (msg.workspaceTag === kp.publicKeyB64) observed = true },
+  })
+  cleanups.push(() => observer.remove())
+  f.send({ type: 'workspace-state', workspaceTag: kp.publicKeyB64, revisions: [stale] })
+  await waitFor(() => observed, 'tagged frame received on the shared transport')
+  assert.equal(triageSync.sessionInfo(workspaceId), null)
+  const subscription = triageSync.ensureSubscription(workspaceId)
+  await waitFor(() => triageSync.sessionInfo(workspaceId)?.keyReady, 'new session can decrypt before the old queue drains')
+  setHydrationConflictResolver(null)
+  resolveDialog({})
+  await subscription.resources
+  assert.equal(triageSync.sessionInfo(workspaceId).baseRevision, null)
+  assert.equal(state.triage.get('C'), undefined, 'the absent-session frame was dropped at receipt')
+  const fresh = await revision('fresh frame after the session opened')
+  f.send({ type: 'workspace-state', workspaceTag: kp.publicKeyB64, revisions: [fresh] })
+  await waitFor(() => triageSync.sessionInfo(workspaceId).baseRevision === fresh.id, 'fresh frame accepted')
+  assert.equal(state.triage.get('C')?.comment, 'fresh frame after the session opened')
+})
+
 it('rebasing prototype-shaped finding ids keeps them as inert own properties', () => {
   const base = JSON.parse('{"__proto__":{"color":"red"},"constructor":{"comment":"before"}}')
   const local = JSON.parse('{"__proto__":{"color":"blue"},"constructor":{"comment":"after"}}')
@@ -311,6 +379,42 @@ it('rebasing prototype-shaped finding ids keeps them as inert own properties', (
   assert.deepEqual(result.constructor, { comment: 'after', flagged: true })
   assert.equal(({}).color, undefined)
   assert.equal(({}).constructor, Object)
+})
+
+it('a server switch during a chain dialog discards the old chain and its queued messages', async () => {
+  const f = await fixture()
+  patchEntry(state.triage, 'A', { color: 'amber' })
+  let resolveDialog
+  setHydrationConflictResolver(() => new Promise((resolve) => { resolveDialog = resolve }))
+  const remote = await f.revision(null, { A: { color: 'blue' } })
+  f.send({ type: 'workspace-state', revisions: [remote] })
+  await waitFor(() => resolveDialog != null, 'dialog open')
+  const next = await f.revision(remote.id, { B: { comment: 'old relay' } })
+  f.send({ type: 'workspace-state', revisions: [next] })
+  await new Promise((resolve) => { setTimeout(resolve, 30) })
+  triageSync.setServerUrl('')
+  resolveDialog({ 'A:color': 'imported' })
+  await new Promise((resolve) => { setTimeout(resolve, 75) })
+  assert.equal(state.triage.get('A')?.color, 'amber')
+  assert.equal(state.triage.get('B')?.comment, undefined)
+  assert.equal(f.info().baseRevision, null)
+})
+
+it('a server switch invalidates a report-attach conflict dialog', async () => {
+  const f = await fixture()
+  const remote = await f.revision(null, { C: { color: 'blue' } })
+  f.send({ type: 'workspace-state', revisions: [remote] })
+  await waitFor(() => f.info().baseRevision === remote.id, 'out-of-scope finding received')
+  patchEntry(state.triage, 'C', { color: 'amber' })
+  state.reports[0].groups[0].push({ id: 'C' })
+  let resolveDialog
+  setHydrationConflictResolver(() => new Promise((resolve) => { resolveDialog = resolve }))
+  triageSync.refreshSession(f.workspaceId)
+  await waitFor(() => resolveDialog != null, 'attach dialog open')
+  triageSync.setServerUrl('')
+  resolveDialog({ 'C:color': 'imported' })
+  await new Promise((resolve) => { setTimeout(resolve, 75) })
+  assert.equal(state.triage.get('C')?.color, 'amber', 'an old relay dialog cannot write into the new session')
 })
 
 for (const confirmation of ['ack', 'echo']) {
@@ -353,3 +457,69 @@ for (const confirmation of ['ack', 'echo']) {
   })
 }
 
+for (const [status, transition] of [[401, 'switching relays'], [413, 'switching relays'], [401, 'rotating keys']]) {
+  it(`ignores an old REST ${status} response after ${transition}`, async () => {
+    const realWS = globalThis.WebSocket
+    const realFetch = globalThis.fetch
+    const saves = []
+    const inBandSaves = []
+    globalThis.WebSocket = class {
+      static CONNECTING = 0; static OPEN = 1; static CLOSING = 2; static CLOSED = 3
+      constructor() { throw new Error('force SSE') }
+    }
+    globalThis.fetch = (input, init) => {
+      const pathname = new URL(input).pathname
+      const body = init?.body ? JSON.parse(init.body) : {}
+      if (pathname === '/api/sync/save') {
+        const deferred = Promise.withResolvers()
+        saves.push({ ...deferred, body })
+        return deferred.promise
+      }
+      if (pathname === '/api/sync/sse') inBandSaves.push(...(body.frames ?? []).filter((m) => m.type === 'workspace-save'))
+      return realFetch(input, init)
+    }
+    cleanups.push(() => {
+      globalThis.WebSocket = realWS
+      globalThis.fetch = realFetch
+      for (const save of saves) save.resolve(new Response('{}', { status: 200 }))
+    })
+    const server = await bootServer()
+    cleanups.push(() => server.teardown())
+    const workspaceId = crypto.randomUUID()
+    state.triage.clear()
+    state.reports.length = 0
+    state.reports.push({ fileName: 'rest.md', groups: [[{ id: 'A' }]] })
+    await upsertWorkspace({ id: workspaceId, name: 'REST race', privateKey: crypto.getRandomValues(new Uint8Array(32)).toBase64(), reports: ['rest.md'] })
+    cleanups.push(() => deleteWorkspace(workspaceId))
+    triageSync.setServerUrl(server.serverUrl)
+    triageSync.openSession(workspaceId)
+    await waitFor(() => triageSync.status === 'online', 'SSE online')
+    patchEntry(state.triage, 'A', { color: 'red' })
+    triageSync.notify()
+    await waitFor(() => saves.length === 1, 'old HTTP save held')
+    patchEntry(state.triage, 'A', { color: 'blue' })
+    const release = Promise.withResolvers()
+    let lock
+    try {
+      if (transition === 'rotating keys') {
+        const entered = Promise.withResolvers()
+        lock = navigator.locks.request('deepview.sync.sessions', () => { entered.resolve(); return release.promise })
+        await entered.promise
+        await upsertWorkspace({ id: workspaceId, name: 'REST race', privateKey: crypto.getRandomValues(new Uint8Array(32)).toBase64(), reports: ['rest.md'] })
+        assert.equal(triageSync.sessionInfo(workspaceId).workspaceTag, null, 'rotation is waiting for the persisted-base wipe')
+      } else {
+        // A distinct URL creates a new relay generation. The same test
+        // listener isolates the delayed-response race.
+        triageSync.setServerUrl(`${server.serverUrl}?new-relay`)
+        await waitFor(() => saves.length >= 2, 'new HTTP save held')
+      }
+      saves[0].resolve(new Response('{}', { status }))
+      await new Promise((resolve) => { setTimeout(resolve, 200) })
+      assert.equal(triageSync.sessionInfo(workspaceId).error, null)
+      assert.equal(inBandSaves.some((m) => m.ciphertext === saves[0].body.ciphertext), false, 'obsolete save was not replayed in-band')
+      assert.equal(state.triage.get('A')?.color, 'blue')
+    } finally { release.resolve(); await lock }
+    await waitFor(() => saves.length >= 2, 'new HTTP save held')
+    assert.notEqual(triageSync.sessionInfo(workspaceId).pending, null)
+  })
+}
