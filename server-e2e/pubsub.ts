@@ -57,13 +57,13 @@ function newSenderId(): string {
 //   - 'objput': objstore-put broadcast. `res` is the resource tag; the
 //     receiver SELECTs the live row by (tag, res) for the rest of the
 //     metadata fields.
-//   - 'objdel': objstore-deleted broadcast. `ver` is the deleted version
-//     — inline because the row is gone from workspace_object after the
-//     delete commit.
+//   - 'objdel': objstore-deleted broadcast. `ver` and `incarnation` identify
+//     the deleted row, which is gone from workspace_object after commit.
+//     Incarnation is optional only for messages from older relay instances.
 export type BusMessage =
   | { kind: 'rev'; tag: string; id: string }
   | { kind: 'objput'; tag: string; res: string }
-  | { kind: 'objdel'; tag: string; res: string; ver: number }
+  | { kind: 'objdel'; tag: string; res: string; ver: number; incarnation?: string }
 
 // Receiver wired up by the hub layer (see server-e2e/index.ts). Each handler
 // runs once per remote message; failures are logged but don't crash the
@@ -388,7 +388,10 @@ function parseBusMessage(raw: Record<string, unknown>): BusMessage | null {
     const ver = raw['ver']
     if (typeof res !== 'string') return null
     if (typeof ver !== 'number' || !Number.isSafeInteger(ver)) return null
-    return { kind: 'objdel', tag, res, ver }
+    const incarnation = raw['incarnation']
+    if (incarnation === undefined) return { kind: 'objdel', tag, res, ver }
+    if (typeof incarnation !== 'string' || incarnation.length === 0) return null
+    return { kind: 'objdel', tag, res, ver, incarnation }
   }
   return null
 }

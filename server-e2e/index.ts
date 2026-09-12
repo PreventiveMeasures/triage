@@ -289,12 +289,13 @@ const publishRevision = (tag: string, revisionId: string): void => {
 const publishObjPut = (tag: string, resourceTag: string): void => {
   pubsub.publish({ kind: 'objput', tag, res: resourceTag })
 }
-const publishObjDeleted = (tag: string, resourceTag: string, version: number): void => {
-  pubsub.publish({ kind: 'objdel', tag, res: resourceTag, ver: version })
+const publishObjDeleted = (tag: string, resourceTag: string, version: number, incarnation: string): void => {
+  pubsub.publish({ kind: 'objdel', tag, res: resourceTag, ver: version, incarnation })
 }
 
 const { handleSave, handleSaveRest, handleSubscribe, sendSaveError } = createSyncHandlers({
   handle, send, broadcast, publishRevision, subscribe, getNonce,
+  pauseBroadcasts: hub.pauseBroadcasts,
   requiresAuth, passwordConfigured, sendUnauthorized, workspaceExists,
   // Folds the objstore inventory into the `workspace-subscribed` ack.
   // The objstore store keeps its own richer `Handle`, so we wire the

@@ -201,6 +201,9 @@ export class SseTransport extends EventTarget implements WebSocketLike {
   // the instant its successor is issued already observes the higher
   // value and so stays silent.
   private postSeq = 0
+  // HTTP response bodies can drain out of POST order. Once a successor
+  // has delivered a frame, an older response must not roll state back.
+  private lastDispatchedSeq = 0
   // Inactivity watchdog for the live downstream (see downstreamTimeoutMs).
   // (Re)armed when a POST is issued and on every byte the live stream
   // delivers; fires → shutdown. Null when disarmed (never armed / shut
@@ -390,7 +393,7 @@ export class SseTransport extends EventTarget implements WebSocketLike {
         // timer would mask a dead live downstream.
         if (seq === this.postSeq) this.armDownstreamWatchdog()
         const events = parser.parse(decoder.decode(value, { stream: true }))
-        for (const ev of events) this.dispatchEvent_(ev)
+        for (const ev of events) this.dispatchOrderedEvent(ev, seq)
       }
       // Flush any partial UTF-8 sequence buffered in the TextDecoder.
       // `decoder.decode()` with no args ends stream mode and emits
@@ -401,7 +404,7 @@ export class SseTransport extends EventTarget implements WebSocketLike {
       if (this.readyState !== SseTransport.CLOSED) {
         const tail = decoder.decode()
         if (tail.length > 0) {
-          for (const ev of parser.parse(tail)) this.dispatchEvent_(ev)
+          for (const ev of parser.parse(tail)) this.dispatchOrderedEvent(ev, seq)
         }
       }
       // Bare EOF: the server closed this response with neither a `close`
@@ -443,6 +446,19 @@ export class SseTransport extends EventTarget implements WebSocketLike {
   // is the server-initiated graceful-shutdown signal carrying
   // `{code, reason}`. Default-named `message` events are forwarded to
   // the outer transport.
+  private dispatchOrderedEvent(ev: { event: string; data: string }, seq: number): void {
+    if (this.readyState === SseTransport.CLOSED) return
+    if (seq < this.lastDispatchedSeq) {
+      // Do not silently lose an ack or apply an old inventory/lineage.
+      // Reconnect runs a complete subscription and retries pending saves;
+      // socket-transport also invalidates the prior generation's work.
+      this.shutdown()
+      return
+    }
+    this.lastDispatchedSeq = seq
+    this.dispatchEvent_(ev)
+  }
+
   private dispatchEvent_(ev: { event: string; data: string }): void {
     if (ev.event === 'session') {
       // Skip if no longer in a state that can use the token: a

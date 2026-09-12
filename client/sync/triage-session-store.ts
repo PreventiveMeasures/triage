@@ -22,6 +22,7 @@ type PersistedSession = {
   serverUrl?: unknown
   baseRevision?: unknown
   baseState?: unknown
+  hasBase?: unknown
   savesSinceKeyframe?: unknown
 }
 export type PersistedSessionsMap = { [workspaceId: string]: PersistedSession | undefined }
@@ -152,6 +153,7 @@ async function writeAllSessionsRaw(map: PersistedSessionsMap): Promise<boolean> 
 export type RestoredSession = {
   baseRevision: string | null
   baseState: TriageStateMap
+  hasBase?: true
   savesSinceKeyframe: number
 }
 
@@ -166,6 +168,7 @@ export function loadPersistedSession(workspaceId: string, currentServerUrl: stri
   if (!entry || entry.serverUrl !== currentServerUrl) return null
   return {
     baseRevision: typeof entry.baseRevision === 'string' ? entry.baseRevision : null,
+    ...(entry.hasBase === true ? { hasBase: true as const } : {}),
     // Round-12 H6 defense-in-depth: normalise baseState into a
     // null-prototype object so a `__proto__` own key (from a prior
     // version's polluted save) doesn't trigger the Object.prototype
