@@ -1147,7 +1147,7 @@ function tabTemplate(f, isActive, groupSt) {
   const entry = state.triage.get(key)
   const color = entry?.color
   const triage = entry?.triage
-  const classes = ['tab']
+  const classes = ['tab', `tab-severity-${displayedSeverity(f, state.severityMode)}`]
   if (isActive) classes.push('active')
   if (color) classes.push(`tab-mark-${color}`)
   if (triage) {
@@ -1159,7 +1159,7 @@ function tabTemplate(f, isActive, groupSt) {
     // / finding-card CSS.
     classes.push('tab-ignored')
   }
-  return html`<button type="button" class=${classes.join(' ')} data-tid=${key}><span class="tab-label">${severityBadge(f, { variant: 'tab' })} ${f.confidence === undefined ? nothing : html`<span class="tab-conf">${f.confidence}/10</span>`}${tabMarksTemplate(entry)}</span></button>`
+  return html`<button type="button" class=${classes.join(' ')} data-tid=${key} aria-pressed=${isActive} aria-description=${color ? `${color} color label` : nothing}><span class="tab-label"><span class="tab-severity">${severityBadge(f, { variant: 'tab' })}</span> ${f.confidence === undefined ? nothing : html`<span class="tab-conf" aria-label=${`Confidence ${f.confidence} out of 10`}>${f.confidence}<span class="tab-conf-max">/10</span></span>`}<span class="tab-indicators">${tabMarksTemplate(entry)}</span></span></button>`
 }
 
 // Confidence display for the finding-left badge column. The table
@@ -1327,15 +1327,21 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
   return html`<div class=${classMap({ 'tab-body': true, active: isActive })} data-tid=${key}>
     ${total > 1 ? html`<div class="print-case-label">${idx + 1} of ${total}</div>` : nothing}
     <div class="finding-left">
+      ${entry?.color || entry?.flagged === true ? html`<div class=${entry?.color ? `finding-top-marks color-${entry.color}` : 'finding-top-marks'}>
+        ${entry?.color ? html`<span
+          class="finding-color-mark"
+          role="img"
+          aria-label=${`Color label: ${entry.color}`}
+        ></span>` : nothing}
+        ${entry?.flagged === true ? html`<span
+          class="finding-bookmark-mark"
+          role="img"
+          aria-label="Bookmarked"
+        ></span>` : nothing}
+      </div>` : nothing}
       ${severityBadge(f, { variant: 'full' })}
       <div class="value-label">Severity</div>
       ${f.confidence === undefined ? nothing : confTemplate(f)}
-      ${entry?.color ? html`<span
-        class=${`finding-color-mark color-${entry.color}`}
-        role="img"
-        aria-label=${`Color label: ${entry.color}`}
-        data-tooltip=${`Color label: ${entry.color}`}
-      ></span>` : nothing}
       ${revalidateStampTemplate(f)}
       ${codeButton}
     </div>

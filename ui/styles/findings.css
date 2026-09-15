@@ -136,10 +136,11 @@
     padding-bottom: 1rem;
   }
 }
-/* Details panel = its own glass card. Header bar carries the close
-   button rather than an absolute-positioned one that would float over
-   the finding's title. */
+/* Details panel = its own glass card, with the close button in the
+   upper-right corner. Only the metadata row reserves space for it. */
 .findings-table-details {
+  --finding-line-end-inset: 1rem;
+  position: relative;
   /* Bounded by the GRID AREA, not the viewport. The panel sits in the
      body slot, which starts below the page header and the toolbar, so
      a cap of `100vh - 2rem` was taller than the space it had by
@@ -165,31 +166,17 @@
   border: 1px solid var(--border);
   border-radius: 6px;
   box-shadow: var(--shadow-glass);
-  /* overflow: hidden clips content to the rounded corners so the
-     body's scrollbar lives inside the radius cleanly; the flex
-     column splits the chrome header from the scrollable body. */
+  /* Clip the scrollbar to the rounded corners and keep the scrollable
+     body bounded by the panel's height. */
   overflow: hidden;
   display: flex;
   flex-direction: column;
 }
 
-.findings-table-details-bar {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: .5rem;
-  padding: .3rem .35rem .3rem .75rem;
-  border-bottom: 1px solid var(--border);
-}
-.findings-table-details-label {
-  font-size: .68rem;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: .1em;
-  font-weight: 600;
-}
 .findings-table-details-close {
+  position: absolute;
+  top: .25rem; right: .25rem;
+  z-index: 1;
   width: 22px;
   height: 22px;
   display: grid;
@@ -201,6 +188,7 @@
   font: 500 16px/1 ui-monospace, monospace;
 
   &:hover { color: var(--accent); background: var(--surface-active); }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 }
 
 .findings-table-details-body {
@@ -620,6 +608,8 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
   /* Focus uses --surface over the page background. Composite the same
      neutral colors here so the popup stays opaque above the dim layer. */
   --kanban-detail-bg: linear-gradient(var(--surface), var(--surface)), var(--bg);
+  /* Body + card padding between the color tab and the modal edge. */
+  --finding-mark-inset: 1rem;
   position: relative;
   /* Wider than the original 560px cap — finding descriptions
      can include long lines of code spans that clipped on the
@@ -689,6 +679,9 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
    nothing to lift away from, and the shadow's only remaining job would
    be to smudge the rail's border. */
 .kanban-detail-modal.fullscreen {
+  /* The fullscreen pane uses .4rem above the card's .5rem inset. */
+  --finding-mark-inset: .9rem;
+  --finding-mark-sticky-top: .5rem;
   place-self: stretch;
   width: auto;
   max-height: none;

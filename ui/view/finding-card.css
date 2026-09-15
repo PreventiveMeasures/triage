@@ -53,6 +53,9 @@
    Severity has its badge; color labels have a swatch in the left rail.
    Compact table rows retain their fills in finding-row.css. */
 :host(.has-conflict) .card { outline: 2px dashed var(--accent); outline-offset: -2px; }
+/* The regular popup's outer frame already marks conflicts. Fullscreen
+   has no frame, so it keeps the card outline above. */
+:host(.has-conflict[popup][context='kanban-detail']) .card { outline: none; }
 
 /* Deep-link arrival ring. `link-target` is stamped on the host by
    view/finding-link-nav.js after it scrolls a `#finding=…` target into
@@ -722,6 +725,7 @@ span.evidence-ref:not([role]) { color: var(--muted); }
 .line-row {
   display: flex; justify-content: space-between;
   align-items: baseline; gap: .5rem; flex-wrap: wrap;
+  padding-right: var(--finding-line-end-inset, 0);
   /* Anchor for the source-preview tooltip (`.code-preview-tip`). */
   position: relative;
 }
@@ -766,10 +770,8 @@ span.evidence-ref:not([role]) { color: var(--muted); }
 
 .finding-left {
   align-self: start; text-align: center; min-width: 4rem;
-  /* Normally nothing. The kanban dialog's fullscreen mode sets it (see
-     the WCO block in styles/findings.css) when the OS paints its window
-     controls over this corner — this rail is what they land on, and it
-     is the only thing that has to move out from under them. */
+  /* The WCO block in styles/findings.css adds any clearance needed for
+     OS window controls in the fullscreen popup. */
   padding-top: var(--finding-left-inset, 0);
   /* And, in a surface that scrolls the card inside a fixed pane, the
      rail holds its place while the description moves — the severity and
@@ -777,10 +779,15 @@ span.evidence-ref:not([role]) { color: var(--muted); }
      they should still be on screen at the bottom of a long one. It
      needs no ground to cover: nothing scrolls under it, the description
      is a column over. Unset elsewhere, so `top` is inert. */
-  position: var(--finding-left-position, static);
-  top: 0;
+  position: var(--finding-left-position, relative);
+  top: var(--finding-mark-sticky-top, 0);
 
   & .value-label:last-child { margin-bottom: 0; }
+}
+
+/* Lower non-popup badge rails equally, with or without top tags. */
+:host(:not([popup])) .finding-left {
+  padding-top: calc(var(--finding-left-inset, 0px) + 2px);
 }
 
 .conf-score {
@@ -924,55 +931,7 @@ span.evidence-ref:not([role]) { color: var(--muted); }
   font-size: .85em; letter-spacing: .04em; margin-right: .35rem;
 }
 
-.tab {
-  background: transparent; color: var(--text);
-  border: 1px solid var(--border); border-radius: 4px;
-  padding: .2rem .5rem; font-size: .75rem; line-height: 1.3;
-  display: inline-flex; align-items: center; gap: .35rem;
-  font-family: inherit;
-
-  &:hover { border-color: var(--accent); }
-  &.active { border-color: var(--accent); background: var(--surface-active); }
-
-  &.tab-mark-red   { background: var(--mark-red-bg);   border-color: var(--mark-red-tab-border); }
-  &.tab-mark-blue  { background: var(--mark-blue-bg);  border-color: var(--mark-blue-tab-border); }
-  &.tab-mark-green { background: var(--mark-green-bg); border-color: var(--mark-green-tab-border); }
-  &.tab-mark-gray  { background: var(--mark-gray-bg);  border-color: var(--mark-gray-tab-border); }
-
-  &.tab-mark-red.active,
-  &.tab-mark-blue.active,
-  &.tab-mark-green.active,
-  &.tab-mark-gray.active { border-color: var(--text); }
-
-  &.tab-deleted .tab-label { text-decoration: line-through; opacity: .6; }
-  &.tab-inprogress .tab-label::after { content: ' ◐'; opacity: .6; }
-  &.tab-fixed .tab-label { opacity: .65; }
-  &.tab-fixed .tab-label::after { content: ' ✓'; opacity: .6; }
-  &.tab-invalid .tab-label { opacity: .65; }
-  &.tab-invalid .tab-label::after { content: ' ⊘'; opacity: .6; }
-  &.tab-ignored .tab-label { opacity: .55; }
-  &.tab-ignored .tab-label::after { content: ' 👁'; opacity: .6; font-size: .7em; }
-
-  & .tab-conf { color: var(--muted); font-size: .7rem; }
-  &.tab-mark-red .tab-conf,
-  &.tab-mark-blue .tab-conf,
-  &.tab-mark-green .tab-conf,
-  &.tab-mark-gray .tab-conf { color: var(--text); }
-
-  /* Annotation marks (comment / fix / flag) at the tail of a tab (after
-     the severity badge + confidence) whose finding carries one — inert
-     accent glyphs mirroring the action-row icons, so triage annotations
-     read off the collapsed tab strip. Distinct from the .tab-mark-{color}
-     background classes above (those tint the whole button). */
-  & .tab-marks {
-    display: inline-flex; align-items: center; gap: .15rem;
-    margin-left: .25rem; vertical-align: middle; color: var(--accent);
-  }
-  & .tab-marks svg { display: block; }
-  & .tab-marks .has-comment .bubble { fill: var(--accent); fill-opacity: .15; }
-  & .tab-marks .has-fix .wrench { fill: var(--accent); fill-opacity: .15; }
-  & .tab-marks .flagged .flag-cloth { fill: var(--accent); fill-opacity: .15; }
-}
+/* Group tabs share finding-tabs.css with the other finding surface. */
 
 .report-chip {
   display: inline-flex; align-items: center; gap: .3rem;
@@ -1009,6 +968,8 @@ span.evidence-ref:not([role]) { color: var(--muted); }
 
 .mark-action-group {
   display: inline-flex; border: 1px solid var(--border); border-radius: 3px;
+  /* Match row controls without allowing the surrounding surface to tint them. */
+  background: linear-gradient(var(--surface), var(--surface)), var(--bg);
   /* Never shrink — the group's overflow:hidden would otherwise clip its
      buttons when a long report-chip filename squeezes the marks row. The
      report-chip is the designated shrink target instead. */
@@ -1058,7 +1019,8 @@ span.evidence-ref:not([role]) { color: var(--muted); }
   flex-shrink: 0;
 }
 .mark-triage-menu {
-  background: transparent; border: 1px solid var(--border); color: var(--muted);
+  background: linear-gradient(var(--surface), var(--surface)), var(--bg);
+  border: 1px solid var(--border); color: var(--muted);
   border-radius: 3px; padding: 0 .3rem; height: 1.5rem;
   display: inline-flex; align-items: center; justify-content: center;
   gap: .25rem;
@@ -1226,21 +1188,39 @@ span.evidence-ref:not([role]) { color: var(--muted); }
   letter-spacing: .02em;
 }
 
-/* The label belongs to this tab, even when sibling tabs have conflicting
-   colors. Fits the existing rail without changing the content inset. */
-.finding-color-mark {
-  display: block;
-  width: 32px; height: 48px;
-  margin: .75rem auto 0;
-  border-radius: 6px;
-  background: currentcolor;
-  box-shadow: inset 0 0 0 1px rgb(from var(--text) r g b / .15);
+/* Top-edge indicators are outside the content flow: toggling a label or
+   bookmark never moves the severity, confidence, or description. Fixed
+   slots keep the bookmark in place when its color label changes.
+   Dialogs include their pane padding in --finding-mark-inset. */
+.finding-top-marks {
+  position: absolute;
+  top: calc(var(--finding-left-inset, 0px) - var(--finding-mark-inset, .5rem));
+  left: calc(.75rem - var(--finding-mark-inset, .5rem));
+  display: grid;
+  grid-template-columns: 24px 12px;
+  column-gap: 31px;
 
   &.color-red { color: var(--marker-red); }
   &.color-blue { color: var(--marker-blue); }
   &.color-green { color: var(--marker-green); }
   &.color-gray { color: var(--marker-gray); }
 }
+.finding-color-mark {
+  grid-column: 1;
+  display: block;
+  width: 24px; height: 12px;
+  border-radius: 0 0 6px 6px;
+  background: currentcolor;
+  box-shadow: inset 0 0 0 1px rgb(from var(--text) r g b / .15);
+}
+.finding-bookmark-mark {
+  grid-column: 2;
+  display: block;
+  width: 12px; height: 12px;
+  background: var(--bookmark-color);
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 75%, 0 100%);
+}
+:host(:not([popup])) :is(.finding-color-mark, .finding-bookmark-mark) { height: 10px; }
 
 /* Comment + fix-link blocks in the tab body — quote-style notes below
    the description / recommendation / confidence reason, shown when the

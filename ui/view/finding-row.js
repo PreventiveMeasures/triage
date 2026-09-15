@@ -41,6 +41,7 @@ import { unwatchNearViewport, watchNearViewport } from './lazy-render.js'
 import { groupKey } from './group.js'
 import { tableRowClasses, tableRowInnerTemplate } from './render-finding.js'
 import rowCSS from './finding-row.css'
+import tabsCSS from './finding-tabs.css'
 
 // Every class this component might apply to the host. Listed
 // explicitly so `classList.toggle(c, …)` cleanly removes any that no
@@ -61,7 +62,7 @@ class FindingRow extends StateElement {
     selected: { type: Boolean },
   }
 
-  static styles = unsafeCSS(rowCSS)
+  static styles = [unsafeCSS(rowCSS), unsafeCSS(tabsCSS)]
 
   // Whether the row's content is (to be) rendered — flipped by the
   // observer's answer in `_onNear`, and back on a reconnect that lands
