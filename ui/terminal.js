@@ -17,6 +17,25 @@ import { classifyDiff } from './view/diff-color.js'
 // bytes are static, never user input.
 import terminalCSS from './view/terminal.css'
 
+// Where the bundle's file tree is mounted. Not `/`: the writable
+// overlay below is refused when the read-only source tree is mounted at
+// `/`, `/tmp`, or inside `/tmp`, and a tree covering the root would
+// leave nowhere to write. It doubles as the prompt's resting place —
+// `cwd` is left unset so it defaults to the mount.
+const MOUNT = '/sources'
+
+const TERMINAL_OPTIONS = {
+  mount: MOUNT,
+  // `~`, `$HOME` and a bare `cd` land at the root rather than following
+  // the mount (which is what they would default to), so `cd` with no
+  // argument steps out to where both /sources and /tmp are in view.
+  home: '/',
+  // Scratch space, so a redirect has somewhere to go: `foo > /tmp/out`
+  // and the commands that write files work, while the bundle itself
+  // stays read-only — writing into /sources still fails, and says why.
+  writable: '/tmp/',
+}
+
 // Banner suggestions. `ls` and `find /` are always present; the
 // grep example surfaces the first symbol from SEARCH_SYMBOLS that
 // actually appears in the bundle so the suggestion isn't a dead
@@ -125,7 +144,7 @@ class BundleTerminal extends LitElement {
     this.sources = null
     this._lines = []
     this._input = ''
-    this._cwd = '/'
+    this._cwd = MOUNT
     this._ghost = ''
     this._notes = []
   }
@@ -142,8 +161,8 @@ class BundleTerminal extends LitElement {
   // the bundle-swap reset above.
   willUpdate(changed) {
     if (changed.has('sources') && this.sources !== this.#lastSources) {
-      this.#term = this.sources ? createTerminal(this.sources) : null
-      this._cwd = this.#term ? this.#term.cwd() : '/'
+      this.#term = this.sources ? createTerminal(this.sources, TERMINAL_OPTIONS) : null
+      this._cwd = this.#term ? this.#term.cwd() : MOUNT
       this._lines = [{ kind: 'banner', commands: bannerCommands(this.sources) }]
       this.#history = []
       this.#histIdx = -1

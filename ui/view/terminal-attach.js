@@ -48,7 +48,8 @@ function loadTerminal() {
 
 // Strip the shared build-root prefix from every path so the
 // terminal's filesystem matches what the Code tab's tree shows
-// (and so `cd /` lands on a useful root, not on the deploy path).
+// (and so the mount holds the project itself, not a deep deploy
+// path — see MOUNT in terminal.js, where the tree is mounted).
 function buildSourcesFromDetails(details) {
   const raw = bundleSourcesAsMap(details)
   if (raw.size === 0) return raw
