@@ -1330,6 +1330,12 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
       ${severityBadge(f, { variant: 'full' })}
       <div class="value-label">Severity</div>
       ${f.confidence === undefined ? nothing : confTemplate(f)}
+      ${entry?.color ? html`<span
+        class=${`finding-color-mark color-${entry.color}`}
+        role="img"
+        aria-label=${`Color label: ${entry.color}`}
+        data-tooltip=${`Color label: ${entry.color}`}
+      ></span>` : nothing}
       ${revalidateStampTemplate(f)}
       ${codeButton}
     </div>

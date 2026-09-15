@@ -1079,9 +1079,8 @@ function focusMainTemplate(group, corner = nothing) {
 // findings.css drive the visual). Clicking the backdrop (anywhere
 // outside the modal) or pressing Esc clears `state.kanbanPopoverGid`
 // — both transitions go through the same renderImpl path so the
-// animation is symmetric. The modal carries the source group's
-// mark color (or its conflict outline) on its host so a colored
-// finding's detail view reads consistently with its card.
+// animation is symmetric. The modal retains the group's conflict
+// outline; the active finding's color label is a mark in its badge rail.
 //
 // `column` is the bucket the open card belongs to ({ label, items },
 // items in board order) and backs the same-column rail beside the
@@ -1103,7 +1102,6 @@ function kanbanDetailTemplate(focusGroup, column, columns = []) {
   // was last left.
   const full = state.kanbanDetailFullscreen
   const modalClasses = { 'kanban-detail-modal': true, fullscreen: full, 'has-conflict': groupSt.hasConflict }
-  if (!groupSt.hasConflict && groupSt.commonColor) modalClasses[`mark-${groupSt.commonColor}`] = true
   const gid = groupKey(focusGroup)
   const items = column?.items ?? []
   // Position of the open finding within its column. -1 can't happen

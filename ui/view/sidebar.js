@@ -1,7 +1,7 @@
 import { LitElement, html, render as litRender, nothing, unsafeCSS } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { CONFIG_PATH, LINKS_KIND, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, ensureLinkedFindingsIndexed, getCount, getPackagesIndex, getRepositoriesIndex, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, parseServerInfo, readCachedServerInfo, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, state, writeCachedServerInfo } from '#client/index.js'
+import { CONFIG_PATH, LINKS_KIND, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, computeLinkHint, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, ensureLinkedFindingsIndexed, getCount, getPackagesIndex, getRepositoriesIndex, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, parseServerInfo, readCachedServerInfo, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, state, writeCachedServerInfo } from '#client/index.js'
 import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, setSyncForceDisabled, triageSync } from './client-sync.js'
 import { fetchReport as fetchManagedReport, login as managedLogin, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams } from './client-managed.js'
 import { loadAdminBundle } from './client-admin.js'
@@ -22,6 +22,7 @@ let hostEl = null
 let root = null
 let fileList = null
 import { deleteCurrent, deleteCurrentBundle, goHome, leaveWorkspace, persistLastBundle, switchToFile, switchToWorkspace } from './ingest.js'
+import { reportWorkspaceFor } from './finding-link.js'
 import { exportWorkspace } from './workspace-export.js'
 import { maybePromptFirstUse } from './first-import-prompt.js'
 import { openNewWorkspaceDialog } from './dialogs/new-workspace-dialog.js'
@@ -153,6 +154,7 @@ function fileItemTemplate(n, opts = {}) {
   // as a stale state. The same suppression applies to the
   // workspace-row template below.
   const isCurrent = n === state.currentFile
+    && (opts.workspaceId ?? null) === reportWorkspaceFor(n)
     && (state.currentView === 'findings' || state.currentView === 'files'
       || state.currentView === 'links')
   const cls = `file-item${isCurrent ? ' current' : ''}${opts.indented ? ' indented' : ''}`
@@ -419,7 +421,12 @@ export async function renderSidebar() {
   ensureLinkedFindingsIndexed().catch(() => {})
   const names = await listFiles()
   const workspaces = listWorkspaces()
-  const bundleNames = await listBundles()
+  // A report may be moved into a new workspace without being reopened.
+  // Prime parent hints here too, so its next copied link is complete.
+  const [bundleNames] = await Promise.all([
+    listBundles(),
+    ...workspaces.map((w) => computeLinkHint('workspace', w.id)),
+  ])
   // Stash the bundles list on state so the main view's bundles
   // branch (in render.js) can paint synchronously without redoing
   // the OPFS scan. Updated on every sidebar render — drops, deletes,
@@ -841,8 +848,9 @@ async function onSidebarClick(e) {
     // links file, so re-clicking it should no-op the way re-clicking
     // an open report does, not re-read and repaint.
     const showingFile = state.currentView === 'findings' || state.currentView === 'links'
-    if (name && (name !== state.currentFile || !showingFile)) {
-      switchToFile(name)
+    const workspaceId = fileEl.dataset.workspaceId ?? null
+    if (name && (name !== state.currentFile || workspaceId !== state.currentReportWorkspace || !showingFile)) {
+      switchToFile(name, undefined, { workspaceId })
     }
     return
   }
@@ -1765,6 +1773,7 @@ class AppSidebar extends LitElement {
       <div class="sidebar-header">
         <h2 class="brand">
           <button class="brand-button" type="button" data-action="go-home">
+            <img class="brand-icon" src="./icon.svg" width="18" height="18" alt="">
             <span class="brand-name">DeepView</span>
           </button>
           <span class="brand-tag">dev</span>
@@ -1781,7 +1790,7 @@ class AppSidebar extends LitElement {
           <circle cx="6.5" cy="6.5" r="4.5"/>
           <path d="M9.7 9.7L13 13" stroke-linecap="round"/>
         </svg>
-        <input id="sidebar-search-input" type="search" placeholder="Search reports..." autocomplete="off">
+        <input id="sidebar-search-input" type="search" placeholder="Search reports…" aria-label="Search reports" autocomplete="off">
         <sidebar-view-button kind="packages"></sidebar-view-button>
         <sidebar-view-button kind="repositories"></sidebar-view-button>
       </div>

@@ -6,6 +6,8 @@ import { dropZone, report } from './dom.js'
 import { getShownGroups, mergeDuplicateFields, toGroup } from './group.js'
 import { effectiveSeverity, hasRevalidateStamp } from './format.js'
 import { applyOpeningFilters, resetFilters } from './filters.js'
+import { reportWorkspaceFor } from './finding-link.js'
+import { encodeReportLocation } from '../../client/report-location.js'
 import { render } from './render.js'
 import { renderSidebar } from './sidebar.js'
 import { cleanupGraph2, graph2 } from './graph/state.js'
@@ -18,7 +20,8 @@ import { openSyncDownloadDialog } from './dialogs/sync-download-dialog.js'
 
 // localStorage key for the last-viewed file — restored on page load so
 // the user picks back up where they left off. The stored value is the
-// OPFS filename for a single-file view; prefixed with `ws:` for a
+// OPFS filename for a single-file view, or `r:` + JSON containing its
+// name and selected workspace parent; prefixed with `ws:` for a
 // workspace view; or prefixed with `b:` followed by the SRI-shaped
 // integrity for a bundle view, optionally followed by a space and the
 // active sub-tab (`b:<integrity> <tab>`). Mutually exclusive — one
@@ -440,8 +443,9 @@ async function addFiles(files) {
 
 // Replace the active view with the named OPFS file. Pre-fetched
 // `content` skips a redundant OPFS read (drop path passes it through).
-export async function switchToFile(name, content) {
+export async function switchToFile(name, content, { workspaceId } = {}) {
   const gen = ++loadGen
+  state.currentReportWorkspace = reportWorkspaceFor(name, workspaceId)
   // Subscribe-on-report-open: a single-file view of a workspace
   // member should still ride the workspace's chain, so the user sees
   // peer edits and pushes their own without switching to the workspace
@@ -486,7 +490,7 @@ export async function switchToFile(name, content) {
   state.repoUrl = loadRepoUrlFor(name)
   state.repoEditing = false
   resetGraph2()
-  setSecureItem(LAST_FILE_KEY, name).catch(() => {})
+  setSecureItem(LAST_FILE_KEY, encodeReportLocation(name, state.currentReportWorkspace)).catch(() => {})
   if (content === undefined) {
     try {
       content = await readFile(name)
@@ -632,6 +636,7 @@ export async function switchToWorkspace(workspaceId) {
   state.revalidateConflict = false
   state.currentFile = null
   state.currentWorkspace = workspaceId
+  state.currentReportWorkspace = null
   state.currentLinks = null
   state.repoUrl = ''
   state.repoEditing = false
@@ -809,6 +814,7 @@ export async function deleteCurrent({ triage = 'keep', deleteFromRemoteWorkspace
 function clearActiveView() {
   state.currentFile = null
   state.currentWorkspace = null
+  state.currentReportWorkspace = null
   state.currentLinks = null
   state.selectedBundle = null
   state.bundleDetails = null
@@ -1010,14 +1016,14 @@ export async function leaveWorkspace(workspaceId, mode = 'detach', { triage = 'k
 // relies on that).
 async function ingestReport(name, content, gen = null) {
   const stale = () => gen !== null && isStaleLoad(gen)
-  // Prime the deep-link hint for this report's name. Fire-and-forget:
-  // the Link button reads the memo synchronously (it copies inside a
-  // click handler, where an await would cost the clipboard grant), so
-  // the hash has to be computed ahead of the click rather than at it.
-  // Nothing downstream waits on this — a link built before it lands
-  // just omits the hint.
-  void computeLinkHint('report', name)
   try {
+    // Finish both hints before rendering the Link button. Copy remains
+    // synchronous inside its click handler, including on a cold load.
+    await Promise.all([
+      computeLinkHint('report', name),
+      computeLinkHint('workspace', state.currentWorkspace || state.currentReportWorkspace),
+    ])
+    if (stale()) return
     // Persistent triage (markers/deletedIds keyed by uuid) loads once
     // at module init; await it before rendering so the first drop
     // already shows stored marks/deletions for matching findings.
@@ -1373,7 +1379,7 @@ dropZone.addEventListener('drop', (e) => {
   addFiles(e.dataTransfer.files)
 })
 
-// Click-to-browse: only the inline `<button class="drop-prompt-action">`
+// Click-to-browse: only the `<button class="drop-prompt-action">`
 // opens the native file picker — the empty surface around the prompt
 // triggers nothing, so WCO mode can use it as a window drag handle (via
 // body's `app-region: drag` baseline). The button gets affordance +

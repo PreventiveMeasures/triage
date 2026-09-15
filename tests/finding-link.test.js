@@ -56,12 +56,17 @@ const {
 } = await import('../client/finding-locate.js')
 
 const { saveFile } = await import('../client/storage.js')
+const { upsertWorkspace } = await import('../client/workspaces.js')
+const { decodeReportLocation, encodeReportLocation } = await import('../client/report-location.js')
+const { getItem: getSecureItem, setItem: setSecureItem, hydrate: hydrateSecureStorage } = await import('../client/secure-storage.js')
+const { locateLinkedFinding } = await import('../ui/view/finding-link-route.js')
 const { deriveFindingId } = await import('../report/index.js')
 
 const { state } = await import('../client/state.ts')
 const {
   findLoadedFinding,
   findingLinkFor,
+  reportWorkspaceFor,
   unhideFinding,
 } = await import('../ui/view/finding-link.js')
 
@@ -168,16 +173,13 @@ describe('finding deep links — fragment codec', () => {
     assert.equal(encodeFindingRef({ id: UUID_A, report, workspace }), `finding=${UUID_A}&v=${packed}`)
   })
 
-  it('round-trips a one-sided hint pair', () => {
-    // A single-file view has no workspace; a report whose hint hasn't
-    // been hashed yet has no report half. The absent side rides as the
-    // `AAAA` filler so the present one keeps its position.
+  it('keeps report links unchanged and shortens workspace links', () => {
     for (const ref of [
       { id: UUID_A, report: 'aB3-', workspace: null },
       { id: UUID_A, report: null, workspace: 'x_9Z' },
     ]) {
       const encoded = encodeFindingRef(ref)
-      assert.match(encoded, /&v=[\w-]{8}$/u)
+      assert.equal(encoded, `finding=${UUID_A}&v=${ref.report ? 'aB3-AAAA' : 'wx_9Z'}`)
       assert.deepEqual(extractFindingRef(`#${encoded}`), ref)
     }
   })
@@ -252,7 +254,7 @@ describe('finding deep links — fragment codec', () => {
     // The id is what identifies the finding; the hints only speed up
     // finding it (the scan is the real backstop), so a broken one must
     // not sink the whole link.
-    for (const bad of ['%zz', 'security.json', 'toolong', 'aB3-']) {
+    for (const bad of ['%zz', 'security.json', 'toolong', 'aB3', 'aB3-', 'xaB3-', 'WaB3-', 'waB3', 'waB3-0', 'waB3!', 'aB3-x_9ZAQ']) {
       assert.deepEqual(extractFindingRef(`#finding=${UUID_A}&v=${bad}`), {
         id: UUID_A, report: null, workspace: null,
       })
@@ -359,6 +361,7 @@ function reset(groups = []) {
   state.workspaceMerges = []
   state.currentFile = 'security.json'
   state.currentWorkspace = null
+  state.currentReportWorkspace = null
   state.currentView = 'findings'
   state.viewMode = 'table'
   state.severityMode = 'corrected'
@@ -399,17 +402,42 @@ describe('finding deep links — building a link for a finding', () => {
     assert.ok(!url.includes(reportName))
   })
 
-  it('hints at the workspace too when one is open', async () => {
+  it('copies only the workspace location when its combined findings are open', async () => {
     state.currentWorkspace = WS_ID
-    const reportHint = await computeLinkHint('report', 'security.json')
+    await computeLinkHint('report', 'security.json')
     const wsHint = await computeLinkHint('workspace', WS_ID)
     const url = findingLinkFor(makeFinding(UUID_A))
-    // Both hints ride along so the link resolves for a recipient who
-    // has either the workspace or just the report.
     assert.deepEqual(extractFindingRef(url), {
-      id: UUID_A, report: reportHint, workspace: wsHint,
+      id: UUID_A, report: null, workspace: wsHint,
     })
+    assert.equal(url, `#finding=${UUID_A}&v=w${wsHint}`)
     assert.ok(!url.includes(WS_ID))
+  })
+
+  it('copies the report and its parent workspace with the original eight-character format', async () => {
+    const name = uniqueName('workspace-report')
+    await upsertWorkspace({ id: 'report-parent', name: 'Parent', reports: [name] })
+    const reportHint = await computeLinkHint('report', name)
+    const wsHint = await computeLinkHint('workspace', 'report-parent')
+    state.currentFile = name
+    const url = findingLinkFor(makeFinding(UUID_A, { _reportName: name }))
+    assert.equal(url, `#finding=${UUID_A}&v=${reportHint}${wsHint}`)
+  })
+
+  it('uses the selected parent when a report belongs to several workspaces', async () => {
+    const name = uniqueName('shared-report')
+    await upsertWorkspace({ id: 'parent-one', name: 'One', reports: [name] })
+    await upsertWorkspace({ id: 'parent-two', name: 'Two', reports: [name] })
+    assert.equal(reportWorkspaceFor(name), null)
+    state.currentReportWorkspace = 'parent-two'
+    assert.equal(reportWorkspaceFor(name), 'parent-two')
+    const reportHint = await computeLinkHint('report', name)
+    const wsHint = await computeLinkHint('workspace', 'parent-two')
+    assert.equal(findingLinkFor(makeFinding(UUID_A, { _reportName: name })),
+      `#finding=${UUID_A}&v=${reportHint}${wsHint}`)
+    // A moved report must not retain a stale parent in the next link.
+    await upsertWorkspace({ id: 'parent-two', name: 'Two', reports: [] })
+    assert.equal(reportWorkspaceFor(name), 'parent-one')
   })
 
   it('still builds a usable link before the hint is hashed', () => {
@@ -424,6 +452,155 @@ describe('finding deep links — building a link for a finding', () => {
     // re-assigned on the next load.
     assert.equal(findingLinkFor({ _id: 12, severity: 'low' }), null)
     assert.equal(findingLinkFor(null), null)
+  })
+})
+
+describe('finding deep links — restoring a report and its parent', () => {
+  beforeEach(() => reset())
+
+  it('keeps the selected parent and link after a cold storage restore', async () => {
+    const name = uniqueName('restored-shared')
+    await upsertWorkspace({ id: 'restore-first', name: 'First', reports: [name] })
+    await upsertWorkspace({ id: 'restore-second', name: 'Second', reports: [name] })
+    state.currentFile = name
+    state.currentReportWorkspace = 'restore-second'
+    const reportHint = await computeLinkHint('report', name)
+    const workspaceHint = await computeLinkHint('workspace', 'restore-second')
+    await setSecureItem('deepview.lastFile', encodeReportLocation(name, state.currentReportWorkspace))
+
+    // Reload loses all in-memory selection; only persisted metadata
+    // can identify which of the two otherwise equal sidebar rows won.
+    reset()
+    await hydrateSecureStorage()
+    const saved = decodeReportLocation(getSecureItem('deepview.lastFile'))
+    state.currentFile = saved.name
+    state.currentReportWorkspace = reportWorkspaceFor(saved.name, saved.workspaceId)
+    assert.equal(state.currentFile, name)
+    assert.equal(state.currentReportWorkspace, 'restore-second')
+    assert.equal(reportWorkspaceFor(name), 'restore-second')
+    assert.equal(findingLinkFor(makeFinding(UUID_A, { _reportName: name })),
+      `#finding=${UUID_A}&v=${reportHint}${workspaceHint}`)
+  })
+
+  it('revalidates a saved parent that no longer holds the report', async () => {
+    const name = uniqueName('restored-moved')
+    await upsertWorkspace({ id: 'restore-remaining', name: 'Remaining', reports: [name] })
+    const saved = decodeReportLocation(encodeReportLocation(name, 'removed-parent'))
+    assert.equal(reportWorkspaceFor(saved.name, saved.workspaceId), 'restore-remaining')
+    await upsertWorkspace({ id: 'restore-another', name: 'Another', reports: [name] })
+    assert.equal(reportWorkspaceFor(saved.name, saved.workspaceId), null)
+  })
+
+  it('still restores old plain filenames and reports without a workspace', () => {
+    const name = 'standalone report.json'
+    assert.equal(encodeReportLocation(name, null), name)
+    assert.deepEqual(decodeReportLocation(name), { name, workspaceId: null })
+    assert.equal(decodeReportLocation(null), null)
+  })
+
+  it('round-trips punctuation and ignores malformed parent metadata', () => {
+    const name = 'security "quoted": report.json'
+    assert.deepEqual(decodeReportLocation(encodeReportLocation(name, 'parent-id')),
+      { name, workspaceId: 'parent-id' })
+    for (const value of ['r:notes.json', 'r:null', 'r:{"name":"x","workspaceId":42}']) {
+      assert.deepEqual(decodeReportLocation(value), { name: value, workspaceId: null })
+    }
+  })
+})
+
+describe('finding deep links — workspace/report navigation', () => {
+  let calls, navigation, reportHint, reportName, siblingName, workspaceHint, workspaceId
+
+  beforeEach(async () => {
+    reset()
+    reportName = uniqueName('route-report')
+    siblingName = uniqueName('route-sibling')
+    workspaceId = `workspace-${reportName}`
+    for (const name of [reportName, siblingName]) {
+      await saveFile(name, JSON.stringify({ findings: [makeFinding(UUID_A, { _reportName: name })] }))
+    }
+    await upsertWorkspace({ id: workspaceId, name: 'Link target', reports: [reportName, siblingName] })
+    reportHint = await computeLinkHint('report', reportName)
+    workspaceHint = await computeLinkHint('workspace', workspaceId)
+    calls = []
+    navigation = {
+      openReport(name, _content, { workspaceId: parent }) {
+        calls.push(['report', name, parent])
+        state.currentFile = name
+        state.currentWorkspace = null
+        state.currentReportWorkspace = parent
+        state.reports = [{ fileName: name, groups: [[makeFinding(UUID_A, { _reportName: name })]] }]
+      },
+      openWorkspace(id) {
+        calls.push(['workspace', id])
+        state.currentFile = null
+        state.currentWorkspace = id
+        state.currentReportWorkspace = null
+        // The workspace's deduplicated copy came from the sibling.
+        state.reports = [{ fileName: siblingName, groups: [[makeFinding(UUID_A, { _reportName: siblingName })]] }]
+      },
+    }
+  })
+
+  it('opens the named report even when the workspace already shows the finding', async () => {
+    await navigation.openWorkspace(workspaceId)
+    calls.length = 0
+    const hit = await locateLinkedFinding({ id: UUID_A, report: reportHint, workspace: workspaceHint }, navigation)
+    assert.deepEqual(calls, [['report', reportName, workspaceId]])
+    assert.equal(hit.finding._reportName, reportName)
+  })
+
+  it('opens the workspace even when its report already shows the finding', async () => {
+    await navigation.openReport(reportName, undefined, { workspaceId })
+    calls.length = 0
+    const hit = await locateLinkedFinding({ id: UUID_A, report: null, workspace: workspaceHint }, navigation)
+    assert.deepEqual(calls, [['workspace', workspaceId]])
+    assert.equal(hit.finding._reportName, siblingName)
+  })
+
+  it('opens a report directly on a cold load and retains its workspace parent', async () => {
+    state.reports = []
+    const hit = await locateLinkedFinding({ id: UUID_A, report: reportHint, workspace: workspaceHint }, navigation)
+    assert.deepEqual(calls, [['report', reportName, workspaceId]])
+    assert.equal(hit.finding.id, UUID_A)
+  })
+
+  it('does not promote an old report-only link to the merged workspace', async () => {
+    await locateLinkedFinding({ id: UUID_A, report: reportHint, workspace: null }, navigation)
+    assert.deepEqual(calls, [['report', reportName, workspaceId]])
+  })
+
+  it('selects the hinted parent when the report is already open in another workspace', async () => {
+    await upsertWorkspace({ id: 'another-parent', name: 'Another', reports: [reportName] })
+    await navigation.openReport(reportName, undefined, { workspaceId: 'another-parent' })
+    calls.length = 0
+    await locateLinkedFinding({ id: UUID_A, report: reportHint, workspace: workspaceHint }, navigation)
+    assert.deepEqual(calls, [['report', reportName, workspaceId]])
+  })
+
+  it('does not reload a finding already in the requested context', async () => {
+    await navigation.openReport(reportName, undefined, { workspaceId })
+    calls.length = 0
+    assert.ok(await locateLinkedFinding({ id: UUID_A, report: reportHint, workspace: workspaceHint }, navigation))
+    assert.deepEqual(calls, [])
+  })
+
+  it('falls back to a locally stored report when the workspace is unavailable', async () => {
+    state.reports = []
+    const missingWorkspace = await computeLinkHint('workspace', 'not-joined')
+    const hit = await locateLinkedFinding({ id: UUID_A, report: null, workspace: missingWorkspace }, navigation)
+    assert.ok(hit)
+    assert.equal(calls[0][0], 'report')
+  })
+
+  it('preserves the viewer\'s display mode in both directions', async () => {
+    for (const mode of ['kanban', 'focus', 'table', 'list', 'grouped']) {
+      state.viewMode = mode
+      await locateLinkedFinding({ id: UUID_A, report: reportHint, workspace: workspaceHint }, navigation)
+      assert.equal(state.viewMode, mode)
+      await locateLinkedFinding({ id: UUID_A, report: null, workspace: workspaceHint }, navigation)
+      assert.equal(state.viewMode, mode)
+    }
   })
 })
 

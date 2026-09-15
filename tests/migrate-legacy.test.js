@@ -21,6 +21,7 @@ const { setCount, getCount, getKind } = await import('../client/counts.js')
 const { upsertWorkspace, listWorkspaces, deleteWorkspace } = await import('../client/workspaces.js')
 const { saveRepoUrlFor, loadRepoUrlFor, state } = await import('../client/state.ts')
 const { setReportIgnored, isReportIgnored } = await import('../client/triage-entry.ts')
+const { decodeReportLocation, encodeReportLocation } = await import('../client/report-location.js')
 
 const LAST_FILE_KEY = 'deepview.lastFile'
 
@@ -183,6 +184,20 @@ describe('migrateLegacyFilenames', () => {
 
     assert.equal(globalThis.localStorage.getItem(LAST_FILE_KEY), sentinel,
       'unrelated pointer not touched')
+  })
+
+  it('preserves the selected workspace when renaming the restored report', async () => {
+    const legacy = uniqueLegacyName('last-parent')
+    const target = legacy.replace(/\.deepseek$/u, '.md')
+    await saveFile(legacy, '# X\n\n## HIGH (1)\n\n### F\n')
+    const { setItem, getItem } = await import('../client/secure-storage.js')
+    await setItem(LAST_FILE_KEY, encodeReportLocation(legacy, 'selected-parent'))
+
+    await freshMigrate()
+
+    assert.deepEqual(decodeReportLocation(getItem(LAST_FILE_KEY)), {
+      name: target, workspaceId: 'selected-parent',
+    })
   })
 
   it('carries per-report repo URL across the rename', async () => {

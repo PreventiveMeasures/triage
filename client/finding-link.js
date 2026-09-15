@@ -24,8 +24,8 @@
 // names already on disk, not reading a single file (see
 // `finding-locate.js`).
 //
-// The hint is a HINT, not an address. The receiver tries the workspace,
-// then the report, then a scan of everything stored locally (see
+// The hint is a HINT, not an address. The receiver tries the named report
+// or workspace, then a scan of everything stored locally (see
 // `ui/view/finding-link-nav.js`) — so a link built in a workspace still
 // lands for a recipient who only has the single report, and a stale
 // hint costs a scan rather than the finding.
@@ -98,7 +98,8 @@ const HINT_CHARS = 4
 const HINT_RE = /^[\w-]{4}$/u
 
 // Both hints travel as ONE `v=` parameter: 6 bytes, 8 base64url
-// characters, report half first. Purely a length decision — two named
+// characters, report half first. Workspace-only links use `w` followed
+// by their 3-byte / 4-character hint. Purely a length decision — two named
 // params spend 20 characters (`&report=aB3-&ws=x_9Z`) to carry 8
 // characters of payload, and a link is something people paste into
 // chat, tickets and commit messages.
@@ -193,6 +194,9 @@ function packLinkHints(report, workspace) {
     halves.push(hint)
   }
   if (halves.every((h) => h === NO_HINT)) return null
+  // Workspace → finding needs only the workspace half. Report links
+  // retain their original six-byte / eight-character encoding.
+  if (halves[0] === NO_HINT) return `w${halves[1]}`
   return halves.join('')
 }
 
@@ -209,7 +213,8 @@ function unpackLinkHints(value) {
 // Build the fragment body (no leading '#') for a finding reference.
 // `report` / `workspace` are hint TOKENS (from `computeLinkHint` /
 // `knownLinkHint`), not names; they leave as the single packed `v=`
-// param, which is omitted when neither is known.
+// param: `w` + four characters for a workspace, eight for a report with its
+// optional workspace. Omitted when neither is known.
 //
 // The id is percent-encoded: usually a uuid with nothing to escape, but
 // the codex importer's finding-URL ids carry `/`, `:`, `?` and —
@@ -265,12 +270,17 @@ export function extractFindingRef(hash) {
     const key = part.slice(0, eq)
     const rawValue = part.slice(eq + 1)
     if (!rawValue) continue
-    // The packed hints are a fixed-width token pair — validated
+    // The packed hints are one workspace token or a token pair — validated
     // verbatim rather than decoded, since base64url has nothing
     // `encodeURIComponent` would have touched. Anything else is a link
     // from another era or a mangled paste; drop it and let the scan
     // take over.
     if (key === 'v') {
+      if (rawValue.length === 5 && rawValue[0] === 'w' && isLinkHint(rawValue.slice(1))) {
+        const workspace = rawValue.slice(1)
+        Object.assign(found, { report: null, workspace: workspace === NO_HINT ? null : workspace })
+        continue
+      }
       if (!COMBINED_RE.test(rawValue)) continue
       Object.assign(found, unpackLinkHints(rawValue))
       continue

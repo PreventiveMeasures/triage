@@ -49,13 +49,9 @@
    the shell painting and the body arriving doesn't collapse the list
    under the reader. */
 .card.card-pending { min-height: 8rem; }
-/* No `.is-critical` card tint — the severity badge already carries the
-   color, and a card-wide red collides with `.mark-red`'s identical-hue
-   tint. Mirrors the removal in finding-row.css. */
-:host(.mark-red) .card   { background: var(--mark-red-bg); }
-:host(.mark-blue) .card  { background: var(--mark-blue-bg); }
-:host(.mark-green) .card { background: var(--mark-green-bg); }
-:host(.mark-gray) .card  { background: var(--mark-gray-bg); }
+/* Full finding cards keep a neutral reading surface in every context.
+   Severity has its badge; color labels have a swatch in the left rail.
+   Compact table rows retain their fills in finding-row.css. */
 :host(.has-conflict) .card { outline: 2px dashed var(--accent); outline-offset: -2px; }
 
 /* Deep-link arrival ring. `link-target` is stamped on the host by
@@ -1230,18 +1226,21 @@ span.evidence-ref:not([role]) { color: var(--muted); }
   letter-spacing: .02em;
 }
 
-/* Subtle mark-color tints for the focus context. The list / table
-   views paint the full surface in the saturated mark color to stand
-   out from row neighbours; in focus the card is the only finding and
-   is already framed in its own glass panel, so full saturation feels
-   heavy. `color-mix` against the solid page `--bg` (NOT --surface,
-   which is itself translucent — alpha-stacking against an alpha
-   surface produced a muddy mid-toned wash) gives a clean opaque tint
-   at a fraction of the mark hue's weight. */
-:host([context='focus'].mark-red) .card   { background: color-mix(in srgb, var(--mark-red-bg) 15%, var(--bg)); }
-:host([context='focus'].mark-blue) .card  { background: color-mix(in srgb, var(--mark-blue-bg) 15%, var(--bg)); }
-:host([context='focus'].mark-green) .card { background: color-mix(in srgb, var(--mark-green-bg) 15%, var(--bg)); }
-:host([context='focus'].mark-gray) .card  { background: color-mix(in srgb, var(--mark-gray-bg) 15%, var(--bg)); }
+/* The label belongs to this tab, even when sibling tabs have conflicting
+   colors. Fits the existing rail without changing the content inset. */
+.finding-color-mark {
+  display: block;
+  width: 32px; height: 48px;
+  margin: .75rem auto 0;
+  border-radius: 6px;
+  background: currentcolor;
+  box-shadow: inset 0 0 0 1px rgb(from var(--text) r g b / .15);
+
+  &.color-red { color: var(--marker-red); }
+  &.color-blue { color: var(--marker-blue); }
+  &.color-green { color: var(--marker-green); }
+  &.color-gray { color: var(--marker-gray); }
+}
 
 /* Comment + fix-link blocks in the tab body — quote-style notes below
    the description / recommendation / confidence reason, shown when the

@@ -357,8 +357,13 @@ describe('parseCommentRefs — self-links to a finding', () => {
   it('re-emits the fragment canonically', () => {
     // An unrecognised extra param, and a mangled hint, are dropped rather
     // than carried into the href.
-    const link = onlyLink(`https://triage.space/#finding=${ID}&v=nope&utm=x`)
+    const link = onlyLink(`https://triage.space/#finding=${ID}&v=bad-hint!&utm=x`)
     assert.equal(link.url, `#finding=${ID}`)
+  })
+
+  it('preserves a compact workspace finding link', () => {
+    const link = onlyLink(`https://triage.space/#finding=${ID}&v=wx_9Z`)
+    assert.equal(link.url, `#finding=${ID}&v=wx_9Z`)
   })
 
   it('labels a non-uuid id without a meaningless prefix', () => {

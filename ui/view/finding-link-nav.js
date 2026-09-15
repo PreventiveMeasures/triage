@@ -4,23 +4,10 @@
 // un-hide it (which in kanban means opening its detail modal), paint,
 // scroll it into view, flash a ring.
 //
-// Resolution walks from cheap to thorough, stopping at the first hit:
-//
-//   1. Already loaded — the recipient is looking at the report (or a
-//      workspace merging it) right now. No navigation at all.
-//   2. The `v=` workspace half matches a local workspace → open it.
-//   3. The `v=` report half matches a local report filename → open it.
-//   4. Neither matched, or what they named no longer carries the
-//      finding: scan every other stored report for the id and open
-//      wherever it actually lives.
-//
-// Step 4 is what makes the hashed hints safe to be approximate. They
-// are 3-byte digests of the SENDER's filename / workspace id, so they
-// match only a recipient holding the very same name — and the same
-// finding routinely lives under a different one (a re-run, a re-export,
-// a copy in someone's own workspace). Rather than declare that a dead
-// link, the scan finds the finding and shows it in whichever report
-// does hold it. A stale or colliding hint costs one wasted load.
+// Resolve the workspace/report in `v=` before inspecting loaded findings.
+// A report hint selects that report; a workspace hint on its own selects
+// the workspace. Missing or stale hints fall back to locally held data.
+// The viewer's display mode is preserved throughout.
 //
 // Nothing here fetches from the network: the finding must already be in
 // local storage. A link is a pointer into the recipient's own data, not
@@ -29,9 +16,10 @@
 //
 // The state rules (which bucket, which filters, which member of a dedup
 // group) live in `finding-link.js`; this module is navigation + paint.
-import { findReportWithFinding, listWorkspaces, reportForHint, saveTriage, state, workspaceForHint, workspacesHoldingReport } from '#client/index.js'
+import { saveTriage, state } from '#client/index.js'
 import { report } from './dom.js'
 import { findLoadedFinding, unhideFinding } from './finding-link.js'
+import { locateLinkedFinding } from './finding-link-route.js'
 import { groupKey, syncGroupTriage } from './group.js'
 import { switchToFile, switchToWorkspace } from './ingest.js'
 import { scrollRootOf } from './lazy-render.js'
@@ -189,65 +177,6 @@ async function findRenderedFinding(gid) {
     ?? report.querySelector(`[data-gid="${escaped}"]`)
 }
 
-// Open a report by name, preferring the workspace it belongs to.
-//
-// A report attached to exactly one workspace is normally READ through
-// that workspace — merged with its siblings, deduped across them — so
-// dropping the user into a bare single-file view would show them the
-// finding stripped of the context they'd have reached it with. With
-// zero or several candidate workspaces there's no unambiguous choice,
-// and the single-file view is the honest answer.
-async function openReport(name) {
-  const holders = workspacesHoldingReport(name)
-  if (holders.length === 1) {
-    if (state.currentWorkspace !== holders[0].id) await switchToWorkspace(holders[0].id)
-    return
-  }
-  if (state.currentFile !== name) await switchToFile(name)
-}
-
-// Steps 2 and 3: turn the hint digests back into something local and
-// switch to it. Returns true when a switch happened, so the caller
-// re-runs the lookup against the new report set.
-//
-// Workspace first: a link built in workspace mode carries both hints,
-// and the workspace is where the sender was looking. The report hint
-// then covers the recipient who has the file but never joined the
-// workspace.
-async function navigateToHint({ report: reportHint, workspace }) {
-  const ws = await workspaceForHint(workspace)
-  if (ws && ws.id !== state.currentWorkspace) {
-    await switchToWorkspace(ws.id)
-    return true
-  }
-  const name = await reportForHint(reportHint)
-  if (!name || state.currentFile === name) return false
-  // Dropping out of a workspace into a single-file view is the right
-  // move when the workspace doesn't hold the hinted report (the link
-  // came from elsewhere, or the workspace was never attached) — and the
-  // wrong one when it does: we'd already have found the finding above,
-  // so the report is loaded and simply no longer carries it. Leaving
-  // the merged view there would cost the user their context and still
-  // fail. The scan (step 4) covers what's left either way.
-  const current = state.currentWorkspace
-    ? listWorkspaces().find((w) => w.id === state.currentWorkspace)
-    : null
-  if (current?.reports.includes(name)) return false
-  await openReport(name)
-  return true
-}
-
-// Step 4: the hints got us nowhere, so go looking. Reports already
-// loaded are excluded — their in-memory groups were searched first, so
-// re-reading them off disk could only repeat the miss.
-async function navigateByScan(id) {
-  const loaded = state.reports.map((r) => r.fileName).filter(Boolean)
-  const name = await findReportWithFinding(id, { skip: loaded })
-  if (!name) return false
-  await openReport(name)
-  return true
-}
-
 // Put a located finding on screen: un-hide it, paint, scroll to it,
 // ring it. Shared by both entry points below — everything up to this
 // point is about FINDING the thing, and everything from here is the
@@ -289,40 +218,17 @@ async function focusFound(hit, id) {
 // into an already-open tab looks like the app ignored the paste.
 export async function revealFinding(ref) {
   if (!ref?.id) return { ok: false, reason: 'This link is missing a finding id.' }
-  let hit = findLoadedFinding(ref.id)
-  if (!hit && await navigateToHint(ref)) hit = findLoadedFinding(ref.id)
-  if (!hit && await navigateByScan(ref.id)) hit = findLoadedFinding(ref.id)
+  const hit = await locateLinkedFinding(ref, {
+    openReport: switchToFile,
+    openWorkspace: switchToWorkspace,
+  })
   if (!hit) return { ok: false, reason: NOT_FOUND }
   return await focusFound(hit, ref.id)
 }
 
-// Reveal a finding in a NAMED report, rather than wherever the app
-// would find it first.
-//
-// The Links view is the caller, and the distinction is its whole
-// point: a linked finding is interesting because of the several
-// reports carrying it, and its row names each one. Clicking one of
-// those has to land on that report's copy — the one with that
-// analyzer's severity, that report's correction, and whatever the
-// colleague who read it wrote there. `revealFinding` above would stop
-// at whichever copy happened to be loaded, which is the right answer
-// for a pasted link (it says an id and nothing about where) and the
-// wrong one for a click that named a report out loud.
-//
-// The report is opened even when the finding is already on screen from
-// another one; that IS the request.
-//
-// And it is opened ON ITS OWN — `switchToFile`, not the `openReport`
-// the other paths use. That helper prefers the workspace holding the
-// report, which is right when the report is merely where a finding
-// lives: the merged view is how the reader would normally reach it.
-// Here it would defeat the whole point. Workspace ingest drops a
-// finding whose id a previously-loaded report already contributed (see
-// `seenIds` in ui/view/ingest.js), so in a merged view the only copy
-// of a linked id is the FIRST report's — and this entry point exists
-// precisely to open a named report's copy, which would then be the one
-// copy that isn't there. A single-file view of the named report is the
-// only place its own copy is guaranteed to be the one found.
+// The Links view names a specific report's copy, even when a workspace
+// holds several reports with that id. Open it directly so the selected
+// copy retains that report's severity, corrections, and annotations.
 export async function revealFindingInReport(id, reportName) {
   if (!id || !reportName) return { ok: false, reason: 'Missing finding id or report name.' }
   if (state.currentFile !== reportName || state.currentWorkspace) await switchToFile(reportName)

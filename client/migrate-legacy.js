@@ -20,6 +20,7 @@ import { loadRepoUrlFor, saveRepoUrlFor, state } from './state.ts'
 import { saveTriage, loadPromise as triageLoadPromise } from './triage.js'
 import { getItem as getSecureItem, setItem as setSecureItem } from './secure-storage.js'
 import { setReportIgnored } from './triage-entry.ts'
+import { decodeReportLocation, encodeReportLocation } from './report-location.js'
 
 // Inlined to avoid the circular import sidebar.js → migrate-legacy.js
 // → ingest.js → sidebar.js. The constant is also exported from
@@ -128,8 +129,9 @@ async function run() {
     // Last-viewed-file pointer — update so the next reload restores
     // the renamed entry rather than failing to find it. Goes through
     // secure-storage so the encrypted form is preserved.
-    if (getSecureItem(LAST_FILE_KEY) === name) {
-      try { await setSecureItem(LAST_FILE_KEY, target) } catch {}
+    const savedReport = decodeReportLocation(getSecureItem(LAST_FILE_KEY))
+    if (savedReport?.name === name) {
+      try { await setSecureItem(LAST_FILE_KEY, encodeReportLocation(target, savedReport.workspaceId)) } catch {}
     }
   }
 

@@ -12,7 +12,7 @@
 // storage. A link is a pointer into the recipient's own data, not a
 // transfer — that's what the workspace share link and the export bundle
 // are for.
-import { buildFindingUrl, isLinkableFindingId, knownLinkHint, state } from '#client/index.js'
+import { buildFindingUrl, isLinkableFindingId, knownLinkHint, state, workspacesHoldingReport } from '#client/index.js'
 import { applyFilters, resetFilters } from './filters.js'
 import { getMergedGroups, groupKey, groupState, sortTabs, tabKey } from './group.js'
 import { cleanupGraph2 } from './graph/state.js'
@@ -23,11 +23,10 @@ import { cleanupGraph2 } from './graph/state.js'
 // non-null result, so a link that would rot on the next reload is never
 // offered in the first place.
 //
-// Both location hints ride along when known: the report the finding was
-// ingested from (`_reportName`, stamped on every finding) and the
-// workspace being viewed — each as the 3-byte digest `computeLinkHint`
-// derives, never the name itself. In workspace mode the link carries
-// both, so it resolves for a recipient holding either.
+// Workspace links carry only the workspace hint. Report links carry the
+// report hint plus its parent workspace when known. Each is a 3-byte
+// digest, never the name itself. Neither includes a display mode: that
+// remains the viewer's choice.
 //
 // `knownLinkHint` is the SYNCHRONOUS memo read, because this runs inside
 // the Link button's click handler and the clipboard write must not be
@@ -40,11 +39,21 @@ export function findingLinkFor(finding) {
   const id = tabKey(finding)
   if (!isLinkableFindingId(id)) return null
   const reportName = finding._reportName || state.currentFile || ''
+  const workspaceId = state.currentWorkspace || reportWorkspaceFor(reportName)
   return buildFindingUrl({
     id,
-    report: knownLinkHint('report', reportName),
-    workspace: knownLinkHint('workspace', state.currentWorkspace ?? ''),
+    report: state.currentWorkspace ? null : knownLinkHint('report', reportName),
+    workspace: knownLinkHint('workspace', workspaceId ?? ''),
   })
+}
+
+// A report can belong to several workspaces. Preserve the row the user
+// opened; otherwise infer a parent only when membership is unambiguous.
+// Rechecking membership also handles reports moved while still open.
+export function reportWorkspaceFor(name, preferred = state.currentReportWorkspace || state.currentWorkspace) {
+  const holders = workspacesHoldingReport(name)
+  if (holders.some((w) => w.id === preferred)) return preferred
+  return holders.length === 1 ? holders[0].id : null
 }
 
 // Locate a finding id in what's currently loaded. Walks the merged

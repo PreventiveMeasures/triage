@@ -1,0 +1,79 @@
+{
+  "type": "security",
+  "description": "Synthetic demonstration report for a fictional checkout API. These findings do not describe this repository or any real service.",
+  "findings": [
+    {
+      "id": "sample-checkout-001",
+      "file": "src/api/orders.ts",
+      "line": 84,
+      "severity": "critical",
+      "confidence": 10,
+      "description": "Order lookup is missing an ownership check\n\nIn this fictional example, the order endpoint looks up an order by its identifier without checking that it belongs to the signed-in customer. A customer could read another customer's delivery details.\n\n```ts\nconst order = await orders.findById(request.params.id);\nreturn response.json(order);\n```",
+      "recommendation": "Scope the lookup to the authenticated customer and return a consistent not-found response for inaccessible orders. Add a cross-customer access test.",
+      "reproduction": "Using two test customers in the sample application, create an order as the first customer and request its identifier while signed in as the second. The request should return no order details."
+    },
+    {
+      "id": "sample-checkout-002",
+      "file": "src/api/webhooks.ts",
+      "line": 42,
+      "severity": "high",
+      "confidence": 9,
+      "description": "Payment webhook accepts unverified events\n\nThe sample webhook updates payment status before authenticating the provider's signature. An unauthenticated event could mark an unpaid order as paid.",
+      "recommendation": "Verify the signature against the raw request body before processing the event. Reject stale timestamps and deduplicate event identifiers."
+    },
+    {
+      "id": "sample-checkout-003",
+      "file": "src/auth/password-reset.ts",
+      "line": 117,
+      "severity": "high",
+      "confidence": 9,
+      "description": "Password reset token remains valid after use\n\nThe fictional reset flow updates a password without consuming its reset token. Reusing the same token could change the password again until the token expires.",
+      "recommendation": "Consume the token atomically with the password update. Test that a second reset using the same token is rejected."
+    },
+    {
+      "id": "sample-checkout-004",
+      "file": "src/api/uploads.ts",
+      "line": 63,
+      "severity": "medium",
+      "confidence": 8,
+      "description": "Upload limits are checked after buffering\n\nThe sample upload handler buffers the entire request before checking its size. Concurrent oversized uploads could exhaust the process memory.",
+      "recommendation": "Enforce byte limits while streaming the request and terminate oversized uploads early. Apply limits at the reverse proxy as well."
+    },
+    {
+      "id": "sample-checkout-005",
+      "file": "src/auth/session.ts",
+      "line": 31,
+      "severity": "medium",
+      "confidence": 8,
+      "description": "Session cookie does not require HTTPS\n\nThe fictional session configuration omits the Secure flag. The browser could send the session cookie over an unencrypted connection.",
+      "recommendation": "Require Secure cookies in the production configuration and cover cookie attributes in the authentication integration tests."
+    },
+    {
+      "id": "sample-checkout-006",
+      "file": "src/middleware/request-log.ts",
+      "line": 25,
+      "severity": "medium",
+      "confidence": 8,
+      "description": "Request logs include authentication headers\n\nThe sample logger records all incoming request headers, including authorization and cookie values. Anyone with log access could read active credentials.",
+      "recommendation": "Redact authorization, cookie, and other credential fields before serialization. Prefer an explicit allowlist of safe log fields."
+    },
+    {
+      "id": "sample-checkout-007",
+      "file": "src/middleware/errors.ts",
+      "line": 56,
+      "severity": "low",
+      "confidence": 9,
+      "description": "Error responses expose internal stack traces\n\nThe fictional production error handler includes a stack trace in its JSON response. This reveals internal paths and implementation details.",
+      "recommendation": "Return a generic error and a request identifier to clients. Keep detailed traces in access-controlled server logs."
+    },
+    {
+      "id": "sample-checkout-008",
+      "file": "src/config/security-headers.ts",
+      "line": 12,
+      "severity": "informational",
+      "confidence": 10,
+      "description": "Content security policy is in report-only mode\n\nThe sample application collects policy violations but does not enforce its content security policy. Review the collected violations before enabling enforcement.",
+      "recommendation": "Resolve expected resource violations in staging, then roll out an enforcing policy and monitor the results."
+    }
+  ]
+}
