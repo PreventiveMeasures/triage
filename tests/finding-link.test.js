@@ -57,6 +57,8 @@ const {
 
 const { saveFile } = await import('../client/storage.js')
 const { upsertWorkspace } = await import('../client/workspaces.js')
+const { decodeReportLocation, encodeReportLocation } = await import('../client/report-location.js')
+const { getItem: getSecureItem, setItem: setSecureItem, hydrate: hydrateSecureStorage } = await import('../client/secure-storage.js')
 const { locateLinkedFinding } = await import('../ui/view/finding-link-route.js')
 const { deriveFindingId } = await import('../report/index.js')
 
@@ -450,6 +452,59 @@ describe('finding deep links — building a link for a finding', () => {
     // re-assigned on the next load.
     assert.equal(findingLinkFor({ _id: 12, severity: 'low' }), null)
     assert.equal(findingLinkFor(null), null)
+  })
+})
+
+describe('finding deep links — restoring a report and its parent', () => {
+  beforeEach(() => reset())
+
+  it('keeps the selected parent and link after a cold storage restore', async () => {
+    const name = uniqueName('restored-shared')
+    await upsertWorkspace({ id: 'restore-first', name: 'First', reports: [name] })
+    await upsertWorkspace({ id: 'restore-second', name: 'Second', reports: [name] })
+    state.currentFile = name
+    state.currentReportWorkspace = 'restore-second'
+    const reportHint = await computeLinkHint('report', name)
+    const workspaceHint = await computeLinkHint('workspace', 'restore-second')
+    await setSecureItem('deepview.lastFile', encodeReportLocation(name, state.currentReportWorkspace))
+
+    // Reload loses all in-memory selection; only persisted metadata
+    // can identify which of the two otherwise equal sidebar rows won.
+    reset()
+    await hydrateSecureStorage()
+    const saved = decodeReportLocation(getSecureItem('deepview.lastFile'))
+    state.currentFile = saved.name
+    state.currentReportWorkspace = reportWorkspaceFor(saved.name, saved.workspaceId)
+    assert.equal(state.currentFile, name)
+    assert.equal(state.currentReportWorkspace, 'restore-second')
+    assert.equal(reportWorkspaceFor(name), 'restore-second')
+    assert.equal(findingLinkFor(makeFinding(UUID_A, { _reportName: name })),
+      `#finding=${UUID_A}&v=${reportHint}${workspaceHint}`)
+  })
+
+  it('revalidates a saved parent that no longer holds the report', async () => {
+    const name = uniqueName('restored-moved')
+    await upsertWorkspace({ id: 'restore-remaining', name: 'Remaining', reports: [name] })
+    const saved = decodeReportLocation(encodeReportLocation(name, 'removed-parent'))
+    assert.equal(reportWorkspaceFor(saved.name, saved.workspaceId), 'restore-remaining')
+    await upsertWorkspace({ id: 'restore-another', name: 'Another', reports: [name] })
+    assert.equal(reportWorkspaceFor(saved.name, saved.workspaceId), null)
+  })
+
+  it('still restores old plain filenames and reports without a workspace', () => {
+    const name = 'standalone report.json'
+    assert.equal(encodeReportLocation(name, null), name)
+    assert.deepEqual(decodeReportLocation(name), { name, workspaceId: null })
+    assert.equal(decodeReportLocation(null), null)
+  })
+
+  it('round-trips punctuation and ignores malformed parent metadata', () => {
+    const name = 'security "quoted": report.json'
+    assert.deepEqual(decodeReportLocation(encodeReportLocation(name, 'parent-id')),
+      { name, workspaceId: 'parent-id' })
+    for (const value of ['r:notes.json', 'r:null', 'r:{"name":"x","workspaceId":42}']) {
+      assert.deepEqual(decodeReportLocation(value), { name: value, workspaceId: null })
+    }
   })
 })
 

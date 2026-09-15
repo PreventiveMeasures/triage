@@ -7,6 +7,7 @@ import { getShownGroups, mergeDuplicateFields, toGroup } from './group.js'
 import { effectiveSeverity, hasRevalidateStamp } from './format.js'
 import { applyOpeningFilters, resetFilters } from './filters.js'
 import { reportWorkspaceFor } from './finding-link.js'
+import { encodeReportLocation } from '../../client/report-location.js'
 import { render } from './render.js'
 import { renderSidebar } from './sidebar.js'
 import { cleanupGraph2, graph2 } from './graph/state.js'
@@ -19,7 +20,8 @@ import { openSyncDownloadDialog } from './dialogs/sync-download-dialog.js'
 
 // localStorage key for the last-viewed file — restored on page load so
 // the user picks back up where they left off. The stored value is the
-// OPFS filename for a single-file view; prefixed with `ws:` for a
+// OPFS filename for a single-file view, or `r:` + JSON containing its
+// name and selected workspace parent; prefixed with `ws:` for a
 // workspace view; or prefixed with `b:` followed by the SRI-shaped
 // integrity for a bundle view, optionally followed by a space and the
 // active sub-tab (`b:<integrity> <tab>`). Mutually exclusive — one
@@ -488,7 +490,7 @@ export async function switchToFile(name, content, { workspaceId } = {}) {
   state.repoUrl = loadRepoUrlFor(name)
   state.repoEditing = false
   resetGraph2()
-  setSecureItem(LAST_FILE_KEY, name).catch(() => {})
+  setSecureItem(LAST_FILE_KEY, encodeReportLocation(name, state.currentReportWorkspace)).catch(() => {})
   if (content === undefined) {
     try {
       content = await readFile(name)

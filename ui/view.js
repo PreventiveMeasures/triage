@@ -17,6 +17,7 @@ import { renderSidebar } from './view/sidebar.js'
 import { BUNDLE_TABS, LAST_FILE_KEY, switchToFile, switchToWorkspace } from './view/ingest.js'
 import { openBundle, selectBundle } from './view/bundle-load.js'
 import { revealFinding } from './view/finding-link-nav.js'
+import { decodeReportLocation } from '../client/report-location.js'
 import { installHydrationConflictResolver } from './view/hydration-conflict.js'
 import { installSyncAuthResolver } from './view/sync-auth.js'
 import { runLegacyOriginCheck } from './view/origin-check.js'
@@ -323,7 +324,10 @@ async function restoreInitialView() {
       }
     } else {
       const names = await listFiles()
-      if (names.includes(last)) await switchToFile(last)
+      const savedReport = decodeReportLocation(last)
+      if (savedReport && names.includes(savedReport.name)) {
+        await switchToFile(savedReport.name, undefined, { workspaceId: savedReport.workspaceId })
+      }
     }
   }
 }
