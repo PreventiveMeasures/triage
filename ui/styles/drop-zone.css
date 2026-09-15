@@ -1,109 +1,155 @@
 #drop-zone {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  flex: 1; padding: 2rem;
-  /* Not a click target (only inline `.drop-prompt-action` opens the
-     picker), but accepts file drops + shows a `.hover` tint on
-     dragover. In WCO mode it inherits `app-region: drag` from body
-     (theme.css), so it doubles as a window drag handle with no
-     @media rule here. */
-  transition: background .12s ease-out;
+  flex: 1 0 auto;
+  padding: 2rem;
+  container-type: inline-size;
+  animation: welcome-reveal .14s ease-out;
 
-  &.hover { background: var(--surface-active); }
-  &.hidden { display: none; }
+  /* The full surface accepts drops; only the browse button opens the
+     picker, leaving the surrounding space available for window dragging. */
+  &.hidden, &[hidden] { display: none; }
+  &.hover .drop-import {
+    background: rgb(from var(--accent) r g b / .1);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgb(from var(--accent) r g b / .1);
+  }
+}
+
+@keyframes welcome-reveal {
+  0% { opacity: 0; }
+  100% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #drop-zone { animation: none; }
 }
 
 .drop-prompt {
-  text-align: center; color: var(--muted);
-  max-width: 600px;
+  width: 100%; max-width: 780px;
+  color: var(--muted);
+}
 
-  /* Lead paragraph — larger + brighter than the action/instruction
-     lines so it reads as headline copy, but calmer than a heading
-     (no bold, no size jump). */
-  & .drop-prompt-intro {
-    color: var(--text);
-    font-size: 1.05rem;
-    line-height: 1.45;
+.drop-heading {
+  margin-bottom: 1.25rem;
+
+  & .drop-eyebrow {
     margin-bottom: .5rem;
+    color: var(--accent);
+    font-size: .7rem; font-weight: 600;
+    letter-spacing: .12em; text-transform: uppercase;
   }
-  & p { font-size: .95rem; }
+  & h1 {
+    color: var(--text);
+    max-width: 18em;
+    font-size: clamp(1.75rem, 4.7cqi, 2.5rem);
+    font-weight: 600; line-height: 1.15; letter-spacing: -.04em;
+    text-wrap: balance;
+  }
+  & .drop-prompt-intro {
+    margin-top: .5rem;
+    font-size: .95rem; line-height: 1.5;
+    text-wrap: pretty;
+  }
 }
 
-/* "click to browse" — inline file-picker button, painted as plain
-   accent text so it sits inline with the prompt sentence (no
-   underline/cursor/border). `&:active { opacity: 1 }` overrides
-   theme.css's `[role='button']:active { opacity: .7 }`: an opacity
-   flash on one-line inline text reads as broken, not feedback. */
-.drop-prompt-action {
-  background: transparent;
-  border: 0;
-  padding: 0;
-  margin: 0;
-  font: inherit;
+.drop-import {
+  display: flex; flex-direction: column; align-items: center;
+  padding: 1rem;
+  text-align: center;
+  border: 1px dashed color-mix(in srgb, var(--border) 70%, var(--muted));
+  border-radius: 12px;
+  background: var(--surface);
+  transition: background .15s, border-color .15s, box-shadow .15s;
+
+  & h2 {
+    color: var(--text);
+    margin-bottom: .4rem;
+    font-size: 1.125rem; font-weight: 600; letter-spacing: -.02em;
+  }
+  & p { font-size: .8125rem; line-height: 1.6; }
+  & .drop-import-hint { margin-top: .5rem; font-size: .75rem; }
+}
+
+.drop-import-icon {
+  display: grid; place-items: center;
+  width: 36px; height: 36px;
+  margin-bottom: .5rem;
   color: var(--accent);
-  cursor: inherit;
-
-  &:hover {
-    color: color-mix(in srgb, var(--accent) 80%, var(--text));
-  }
-  &:active { opacity: 1; }
-  &:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-    border-radius: 2px;
-  }
+  background: rgb(from var(--accent) r g b / .09);
+  border: 1px solid rgb(from var(--accent) r g b / .16);
+  border-radius: 12px;
 }
 
-/* Supported-formats showcase — three sections (Reports / Bundles /
-   Workspaces) as auto-fit columns that wrap to one column on narrow
-   viewports without a media query. Informational only, so
-   pointer-events: none. */
+.drop-prompt-action {
+  display: inline-flex; align-items: center; justify-content: center; gap: .5rem;
+  min-height: 32px;
+  margin-top: .75rem;
+  padding: .375rem .75rem;
+  background: var(--action-bg); color: var(--action-text);
+  border: 1px solid rgb(255 255 255 / .12); border-radius: 7px;
+  box-shadow: 0 1px 2px rgb(0 0 0 / .15);
+  font: inherit; font-size: .8125rem; font-weight: 600;
+  cursor: pointer;
+  transition: background .12s, box-shadow .12s;
+
+  &:hover { background: color-mix(in srgb, var(--action-bg) 88%, #fff); }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+}
+
+/* Explicit four / two / one-column layouts keep the format groups
+   together even with a collapsed sidebar or a narrow split preview. */
 .drop-supported {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 1.25rem 1.5rem;
-  margin-top: 1.75rem;
+  grid-template-columns: 1.3fr 1fr 1.35fr 1fr;
+  gap: .875rem 1.5rem;
+  margin-top: 1.25rem;
   text-align: left;
-  pointer-events: none;
 }
 
 .drop-supported-section {
+  min-width: 0;
+
   & h2 {
-    font-size: .7rem;
-    font-weight: 600;
-    color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: .08em;
     margin-bottom: .55rem;
-    padding-bottom: .35rem;
-    border-bottom: 1px solid var(--border);
+    color: var(--muted);
+    font-size: .625rem; font-weight: 600;
+    text-transform: uppercase; letter-spacing: .1em;
   }
   & ul {
     list-style: none;
-    padding: 0;
-    margin: 0;
-    display: flex;
-    flex-direction: column;
-    gap: .4rem;
+    display: flex; flex-direction: column; gap: .4rem;
+    padding: 0; margin: 0;
   }
   & li {
-    display: flex;
-    align-items: center;
-    gap: .55rem;
+    display: flex; align-items: center; gap: .5rem;
     color: var(--text);
-    font-size: .9rem;
+    font-size: .75rem;
   }
 }
 
 .drop-supported-icon {
   display: inline-flex;
-  width: 20px;
-  height: 20px;
-  flex-shrink: 0;
+  width: 16px; height: 16px; flex-shrink: 0;
 
-  /* Sidebar's 14px row glyphs (view/drop-supported-icons.js)
-     rescaled to 20px so these rows breathe more than the dense
-     sidebar list. */
-  & .file-icon { width: 20px; height: 20px; color: var(--muted); }
+  & .file-icon { width: 16px; height: 16px; color: var(--muted); }
 }
 
-.drop-supported-label { line-height: 1; }
+.drop-supported-label { line-height: 1.4; }
+
+.drop-local-note {
+  display: flex; align-items: flex-start; gap: .5rem;
+  margin-top: 1.25rem; padding-top: .75rem;
+  border-top: 1px solid var(--border);
+  font-size: .6875rem; line-height: 1.6;
+
+  & svg { flex-shrink: 0; margin-top: .1rem; }
+}
+
+@container (width < 620px) {
+  .drop-supported { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@container (width < 280px) {
+  .drop-supported { grid-template-columns: 1fr; }
+  .drop-import { padding-inline: .75rem; }
+}

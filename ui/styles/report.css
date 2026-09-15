@@ -69,15 +69,9 @@
   & header.page-head {
     display: flex; align-items: flex-start; justify-content: space-between;
     gap: 1rem;
-    /* Cap matching the toolbar (.findings-content / its
-       .with-details `.toolbar` override below both pin the toolbar
-       at 1200px — see `toolbar.css`). The header rides the same
-       cap so its right edge sits above the toolbar's right edge,
-       not far out at the viewport edge where the sync-status badge
-       would otherwise collide with the fixed `<theme-toggle>` pinned
-       to the viewport's top-right. */
-    max-width: 1200px;
     width: 100%;
+    /* Full-width chrome, with room for the fixed theme button. */
+    padding-right: 56px;
     margin-bottom: 1.125rem;
 
     /* Page-title fills the header so the sync-status badge nested
@@ -227,8 +221,7 @@
        (flex row alongside file-chip / repo-chip / files-toggle-btn)
        so it shares their baseline. `margin-left: auto` eats the
        remaining h1 space, pushing the badge to the header's right
-       edge (capped at 1200px above, so it lands above the toolbar's
-       right end). Two `data-status` states:
+       edge, inside the window-control clearance. Two `data-status` states:
          local — hard-drive icon, neutral chrome (not yet in remote
                  inventory); clickable to open the upload dialog
          cloud — cloud icon, accent border + text (tag present in
@@ -277,53 +270,12 @@
   }
 }
 
-/* Narrow-viewport guard — below ~1530px the page-head's right edge
-   (after the 1200px cap) gets close enough to the fixed
-   `<theme-toggle>` (right: .5rem, 30px wide) to overlap. Reserve a
-   56px right gutter so the badge in the h1 keeps clear space for the
-   toggle. The header shrinks; title
-   content reflows inside `.page-title` via `flex-wrap`. */
-@media (width <= 1530px) {
-  #report header.page-head { padding-right: 56px; box-sizing: border-box; }
-}
-
-/* WCO mode moves the toggle up beside the OS controls (theme.css),
-   so the page-head's right-edge clearance is the OS cluster's rather
-   than one button's. Ramp the right padding up as the OS safe-zone
-   right edge (titlebar-area-x + width) approaches the header budget,
-   down to 0 when there's room.
-
-   Expressed in the property value, not a media-query threshold,
-   because env() inside `@media (… <= calc(env(…)))` has patchy
-   browser support whereas env() inside a property-value calc() is
-   well-supported across all engines that ship WCO.
-
-   Two pieces:
-     • ramp = max(0, 1508 - safe_zone_right): 0 at/past 1508px,
-       scales up as the safe zone shrinks. 1508 = where the header
-       starts shrinking: sidebar (260) + scrollbar gutter (~0 on
-       Chromium with stable gutter, no overflow) + #report padding
-       (24+24) + header max-width (1200).
-     • cluster_cap = the OS-controls cluster width (no clearance
-       constant). Plateau the badge sits at once the viewport is
-       narrow enough that the header drops below 1200px and shrinks
-       1:1 with the viewport — an uncapped ramp would push the right
-       edge inward on top of that. Tying the cap to cluster_width
-       keeps the badge tracking OS-controls changes; the toggle sits
-       beneath the OS toolbar vertically so it needs no horizontal
-       clearance from the badge.
-
-   Final: padding = min(cluster_cap, ramp), tuned so ramp == cap
-   exactly at the shrink-start point — no stationary gap, no 2x
-   sweep, badge moves 1:1 in both regimes and lands 24px from the OS
-   toolbar's left edge (#report's right padding) on the plateau. */
+/* The uncapped header reserves the actual PWA window-control area,
+   while keeping clearance for the theme button beneath that strip. */
 /* stylelint-disable-next-line media-feature-name-value-no-unknown */
 @media (display-mode: window-controls-overlay) {
   #report header.page-head {
-    padding-right: min(
-      calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw)),
-      max(0px, calc(1508px - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw)))
-    );
+    padding-right: max(56px, var(--wco-right-toolbar, 0px));
   }
 }
 
@@ -1979,10 +1931,7 @@ bundle-search {
    chrome spans what it controls. The list keeps the cap that makes a
    finding's prose readable at wide viewports (and the 2000px the
    table's list + details split needs when a row is open); the empty
-   state keeps it too, being a paragraph of text.
-   `.page-head` above carries the same 1200px on its own (see the
-   `header.page-head` block at the top of this file), so the title row
-   still lines up with the list rather than with the toolbar. */
+   state keeps it too, being a paragraph of text. */
 .findings-content > #findings-body-slot,
 .findings-content > #empty-state-slot { max-width: 1200px; }
 .findings-content.with-details > #findings-body-slot { max-width: 2000px; }

@@ -10,7 +10,7 @@
 // this; they pick up the slot post-boot via the same
 // `Symbol.for('@rray/frontend')`.
 import './view/frontend-install.js'
-import { sidebar } from './view/dom.js'
+import { dropZone, sidebar } from './view/dom.js'
 import { attachSharedWorkspace, extractFindingRef, extractShareEncoded, getSecureItem, hydrateSecureStorage, isDisablingInThisTab, isEncryptionEnabled, isUnlocked, listFiles, listWorkspaces, onVaultStateChange, setTriageReloadNotifier, state, syncObservedAfterHydrate } from '#client/index.js'
 import { onAutoDownloaded, onBundleAutoDownloaded, onChange as onPresenceChange, setRedraw, triageSync } from './view/client-sync.js'
 import { renderSidebar } from './view/sidebar.js'
@@ -257,6 +257,17 @@ let bootContinuationRan = false
 async function continueBoot() {
   if (bootContinuationRan) return
   bootContinuationRan = true
+  try {
+    await restoreInitialView()
+  } finally {
+    // The static welcome stays hidden while storage and the saved view
+    // load. Restoring a report adds `.hidden`; only an empty result
+    // reveals the welcome once this initial-load gate is removed.
+    dropZone.hidden = false
+  }
+}
+
+async function restoreInitialView() {
   // Hydrate the encrypted-localStorage cache (workspaces, sync
   // sessions, repoUrls, fileCounts, lastFile). MUST run BEFORE
   // renderSidebar / restore-last-file — those paths read the cache

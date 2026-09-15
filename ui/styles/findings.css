@@ -260,8 +260,8 @@
 .kanban-column {
   display: flex; flex-direction: column;
   min-width: 0; min-height: 0;
-  background: var(--surface); backdrop-filter: var(--glass-blur);
-  border: var(--kanban-col-border, 1px) solid var(--border); border-radius: 6px;
+  background: rgb(from var(--text) r g b / .025);
+  border: var(--kanban-col-border, 1px) solid var(--border); border-radius: 10px;
   box-shadow: var(--shadow-glass);
   overflow: hidden;
   transition: border-color .12s, background .12s;
@@ -385,7 +385,6 @@
   font-size: .75rem;
   text-align: center;
   padding: .75rem .5rem;
-  font-style: italic;
 }
 
 /* Compact kanban card — three-area grid: title clamps to three
@@ -405,18 +404,19 @@
     'meta  meta';
   gap: .1rem .35rem;
   padding: .25rem .35rem;
-  background: var(--bg, transparent);
+  background: var(--surface-raised);
   border-radius: 4px;
+  box-shadow: inset 0 0 0 1px var(--border);
   font-size: .75rem;
-  cursor: grab; user-select: none;
-  transition: background .12s, opacity .12s;
+  cursor: default; user-select: none;
+  transition: background .12s, box-shadow .12s, opacity .12s;
 
-  /* Borderless by default — the column's body padding + the inter-
-     card gap already separates cards visually. Hover gets a faint
-     fill so the click target remains discoverable, and conflict
-     cards keep their dashed outline since the indicator carries
-     meaning. */
-  &:hover { background: rgb(from var(--text) r g b / .05); }
+  /* Raised cards separate actionable findings from the quieter board.
+     Marker fills below still take precedence over the hover surface. */
+  &:hover {
+    background: color-mix(in srgb, var(--surface-raised) 96%, var(--text));
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 65%, var(--muted));
+  }
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   /* Open in the detail popover — the accent ring tracks the active card
      as arrow keys walk the column. State-driven (not :focus-visible) so
@@ -425,8 +425,7 @@
      focused and active shows a single outline. The focus-side variant
      has its own .active treatment below. */
   &.active:not(.focus-side-card) { outline: 2px solid var(--accent); outline-offset: 1px; }
-  &:active { cursor: grabbing; }
-  &.dragging { opacity: .45; cursor: grabbing; }
+  &.dragging { opacity: .45; }
   &.has-conflict { outline: 1px dashed var(--accent); outline-offset: -1px; }
   /* Deep-link arrival ring — stamped by view/finding-link-nav.js after
      it scrolls a `#finding=…` target into view and cleared on a timer.
@@ -478,7 +477,7 @@
   background: none;
   line-height: 0;
   color: var(--muted);
-  cursor: pointer;
+  cursor: default;
 
   &:hover { color: var(--accent); }
   & svg { width: 12px; height: 12px; }
@@ -618,6 +617,9 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
 }
 
 .kanban-detail-modal {
+  /* Focus uses --surface over the page background. Composite the same
+     neutral colors here so the popup stays opaque above the dim layer. */
+  --kanban-detail-bg: linear-gradient(var(--surface), var(--surface)), var(--bg);
   position: relative;
   /* Wider than the original 560px cap — finding descriptions
      can include long lines of code spans that clipped on the
@@ -627,7 +629,7 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
      instead (see the media query below). */
   width: min(1100px, calc(100vw - 2rem));
   max-height: calc(100vh - 2rem);
-  background: var(--bg, var(--surface));
+  background: var(--kanban-detail-bg);
   border: 1px solid var(--border); border-radius: 8px;
   /* Tighter shadow — the previous 12px/40px stack visibly flickered
      during view-transition snapshots as the modal morphed sizes,
@@ -641,15 +643,8 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
      reach buttons / tabs. */
   pointer-events: auto;
 
-  /* Mirror the card's color marker on the modal so a red-tagged
-     finding opens into a red-tinted detail panel — the visual
-     continuity also reinforces the "modal came out of this card"
-     metaphor that the shared view-transition sets up. */
+  /* Labels appear in the left rail; the reading surface stays neutral. */
   &.has-conflict { border-color: var(--accent); border-style: dashed; }
-  &.mark-red   { background: var(--mark-red-bg);   border-color: var(--mark-red-tab-border); }
-  &.mark-blue  { background: var(--mark-blue-bg);  border-color: var(--mark-blue-tab-border); }
-  &.mark-green { background: var(--mark-green-bg); border-color: var(--mark-green-tab-border); }
-  &.mark-gray  { background: var(--mark-gray-bg);  border-color: var(--mark-gray-tab-border); }
 }
 
 /* Expand + close, pinned to the modal's top-right corner as one
@@ -692,8 +687,7 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
    The border and shadow go with the inset. Both exist to lift a panel
    off the page behind it; against the viewport's own edges there's
    nothing to lift away from, and the shadow's only remaining job would
-   be to smudge the rail's border. A colour-marked finding keeps its
-   tinted background, which is what carries the mark here. */
+   be to smudge the rail's border. */
 .kanban-detail-modal.fullscreen {
   place-self: stretch;
   width: auto;
@@ -705,8 +699,7 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
   /* Pin the card's action row to the bottom of its pane (finding-card
      .marks spends these): at this size a description runs for screens,
      and the buttons that act on it shouldn't be screens away. The row
-     needs a ground of its own to scroll content under, which is this
-     dialog's — including the tint, when the finding carries a colour. */
+     needs the dialog's background to scroll content under. */
   --finding-left-position: sticky;
   --finding-marks-position: sticky;
   /* The row sits against the bottom of the pane whether or not there is
@@ -715,16 +708,12 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
   --finding-card-display: flex;
   --finding-marks-margin-top: auto;
   --finding-card-pad-bottom: 0;
-  --finding-marks-bg: var(--bg, var(--surface));
+  --finding-marks-bg: var(--kanban-detail-bg);
   /* The row pins flush to the pane's bottom edge (the pane gives up its
      bottom inset below, so no strip is left for text to scroll through
      under the row) and keeps the buttons off that edge itself. */
   --finding-marks-pad-bottom: .4rem;
 
-  &.mark-red   { --finding-marks-bg: var(--mark-red-bg); }
-  &.mark-blue  { --finding-marks-bg: var(--mark-blue-bg); }
-  &.mark-green { --finding-marks-bg: var(--mark-green-bg); }
-  &.mark-gray  { --finding-marks-bg: var(--mark-gray-bg); }
 }
 
 /* The inset belongs to the backdrop, not the modal, so shedding it is
@@ -1031,18 +1020,6 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
   &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 }
 
-/* The rail's cards ARE the focus queue's cards — badge + clamped
-   title + meta, no drag affordance, accent tint on the active one.
-   The one difference is the cursor: in the rail a card is a click
-   target that swaps the dialog's finding, so it points. Qualified by
-   the container so it outranks `.kanban-card.focus-side-card` no
-   matter which of the two blocks lands later in this file. */
-.kanban-detail-side .kanban-card.focus-side-card {
-  cursor: pointer;
-
-  &:active { cursor: pointer; }
-}
-
 /* WCO PWA mode (the hidden-title-bar window): the fullscreen dialog
    and the docked rail both run to the screen's edges, and up there the
    edges belong to the OS window controls — top-left on macOS, top-right
@@ -1112,18 +1089,13 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
 }
 
 /* Shared-element fly transition (open: card → modal, close:
-   modal → card). The source card is stamped with
-   `view-transition-name: kanban-detail-modal` via inline style
-   in events.js around each transition; the browser pairs the
-   card and modal snapshots by name and the GROUP pseudo morphs
-   position + size between them via its default transform
-   animation.
+   modal → card). events.js pairs the snapshots
+   by name and the GROUP pseudo morphs position + size between them
+   via its default transform animation.
 
-   OLD / NEW pseudos animate `clip-path` rather than opacity.
-   Opacity-crossfading two snapshots over a translucent layer
-   reads as a washed-out frame at the midpoint (the
-   "bright → dark → bright" effect). Clip-path keeps both at
-   full opacity throughout.
+   Both snapshots animate `clip-path` at full opacity. The closing
+   card's background fills its animated box, while `object-fit: none`
+   keeps the captured text at its natural size inside that box.
 
    The pseudos are CENTERED inside the image-pair via `top: 50%;
    left: 50%; translate: -50% -50%`. The spec default puts each
@@ -1143,9 +1115,6 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
    at the "small" end of the animation the modal's visible
    area exactly overlaps the card's visible area, producing a
    single rect rather than two-rectangles-at-different-sizes.
-   The card pseudo is itself card-sized, so the same calc
-   evaluates to `inset(0)` for it and the card just stays
-   visible (overlapped by the modal at full alpha).
 
    `animation-fill-mode: forwards` holds the terminal keyframe
    until the pseudo is detached — otherwise the pseudo snaps
@@ -1188,6 +1157,12 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
 ::view-transition-group(kanban-detail-dim) {
   z-index: 1;
 }
+::view-transition-group(kanban-detail-side) {
+  /* Snapshot groups have their own stacking order. Keep the sidebar
+     above the dim during both fades, matching the live overlay, so
+     it doesn't jump in brightness when the transition ends. */
+  z-index: 3;
+}
 ::view-transition-old(kanban-detail-modal),
 ::view-transition-new(kanban-detail-modal) {
   inset: auto;
@@ -1201,13 +1176,16 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
   animation: kanban-clip-reveal .18s cubic-bezier(0, 0, .25, 1) forwards;
 }
 
-/* On open, hide the card-side pseudo (OLD = card). The card
-   snapshot has a different proportion than the modal (~200×60
-   vs ~560×400) and was visible underneath the modal's clip-
-   path animation as a mis-sized stub. events.js stamps
-   `kanban-opening` on <html> around the open transition so we
-   can target the OLD here. The close path keeps both pseudos
-   visible — debugging that direction is deferred. */
+/* Preserve the original card motion and full opacity. Only the
+   captured image stays unscaled, so the text cannot balloon. Fill
+   the surrounding box with the card's actual color as it resizes. */
+html.kanban-closing::view-transition-new(kanban-detail-modal) {
+  object-fit: none;
+  background: var(--kanban-return-card-bg);
+  border-radius: 4px;
+}
+
+/* Opening keeps the original card snapshot hidden. */
 html.kanban-opening::view-transition-old(kanban-detail-modal) {
   visibility: hidden;
 }
@@ -1388,9 +1366,7 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
   border: 1px solid var(--border);
   border-radius: 6px;
   box-shadow: var(--shadow-glass);
-  /* Clip the inner `.card` (shadow-DOM, square corners) to the
-     wrapper's rounded outline so a mark-tinted card doesn't leak
-     past the curve onto the surrounding `--surface` underneath. */
+  /* Clip the inner card's content to the wrapper's rounded outline. */
   overflow: hidden;
 }
 /* Cap the wrapper at a comfy reading width ONLY when the Code
@@ -1564,15 +1540,9 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
 
 /* `.focus-side-card` reuses `.kanban-card` (badge + clamped title
    + meta) for visual consistency with the kanban view's untriaged
-   column. Drops the kanban variant's `cursor: grab` (no drag) —
-   we use the default cursor so the card doesn't visually pretend
-   to be draggable. Active card picks up an accent outline + tint
+   column. Active card picks up an accent outline + tint
    to anchor the queue against the centered finding. */
 .kanban-card.focus-side-card {
-  cursor: default;
-
-  &:active { cursor: default; }
-
   &.active {
     background: rgb(from var(--accent) r g b / .14);
     outline: 1px solid var(--accent);

@@ -31,10 +31,29 @@
 <app-sidebar role="complementary" aria-label="Reports and workspaces"></app-sidebar>
 
 <main id="main-content">
-  <div id="drop-zone" aria-label="Drop reports here">
+  <div id="drop-zone" aria-label="Drop reports here" hidden>
     <div class="drop-prompt">
-      <p class="drop-prompt-intro">Browse, search, and triage findings from your code-security analyzers and source bundles — all locally in your browser, with optional cross-device sync.</p>
-      <p>Drop a file here, <button type="button" class="drop-prompt-action">click to browse</button>, or pick one from the sidebar.</p>
+      <div class="drop-heading">
+        <p class="drop-eyebrow">Your security workspace</p>
+        <h1>Bring your findings into focus.</h1>
+        <p class="drop-prompt-intro">Review reports, explore source code, and turn security findings into clear next steps.</p>
+      </div>
+      <div class="drop-import">
+        <div class="drop-import-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 15V3m-4 4 4-4 4 4M4 14v5a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5"/>
+          </svg>
+        </div>
+        <h2>Start with a report</h2>
+        <p>Drop reports, source bundles, or a workspace here.</p>
+        <button type="button" class="drop-prompt-action">
+          <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+            <path d="M8 3v10M3 8h10" stroke-linecap="round"/>
+          </svg>
+          Browse files
+        </button>
+        <p class="drop-import-hint">Or reopen a report from the sidebar.</p>
+      </div>
       <!-- Supported-formats list — each row's icon placeholder is
            filled at boot by view/drop-supported-icons.js with the
            same SVG markup the sidebar uses for its file / bundle /
@@ -75,6 +94,13 @@
           </ul>
         </section>
       </div>
+      <p class="drop-local-note">
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.25" aria-hidden="true">
+          <rect x="2" y="2.5" width="12" height="8" rx="1.5"/>
+          <path d="M5 13.5h6M8 10.5v3" stroke-linecap="round"/>
+        </svg>
+        Review locally in your browser. Sync across devices when you need it.
+      </p>
     </div>
   </div>
   <div id="report"></div>

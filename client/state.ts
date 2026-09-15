@@ -104,6 +104,7 @@ export interface State {
   workspaceMerges: Array<Set<string>>
   currentFile: string | null
   currentWorkspace: string | null
+  currentReportWorkspace: string | null
   currentView: CurrentView
   currentLinks: OpenLinksFile | null
   storedFiles: string[]
@@ -419,6 +420,8 @@ export const state: State = store<State>({
   // workspace. Persists via the same LAST_FILE_KEY entry, prefixed
   // with `ws:` when set.
   currentWorkspace: null,
+  // Parent of the selected report row, without enabling merged mode.
+  currentReportWorkspace: null,
   // Top-level view — 'findings' (default; table / list / grouped /
   // graph view-modes inside), 'files' (per-file cards listing,
   // reached via the page-header Files toggle), or 'bundles' (list

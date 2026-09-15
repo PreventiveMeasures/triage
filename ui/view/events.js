@@ -1403,12 +1403,9 @@ report.addEventListener('drop', (e) => {
 // Kanban detail popover — open / close via document.startViewTransition
 // so the modal animates via the CSS keyframes on
 // `::view-transition-{new,old}(kanban-detail-modal)` in findings.css.
-// Intentionally NOT a shared-element pairing (card doesn't get the
-// same view-transition-name): morphing a 200×60 card into a 560×~400
-// modal flickers the drop-shadow and leaves the transition in a
-// sometimes-stuck shape (next click no-ops, the one after works — the
-// "every third click" report). Animating the modal in place against
-// the unchanged board is stable and still snappy.
+// The real card and modal share the transition name in both directions.
+// On close, CSS preserves the card image's natural text size while its
+// background follows the group's original size / position animation.
 //
 // kanbanTransitioning is true between `startViewTransition` and its
 // `.finished` settling. It swallows rapid follow-up open / close
@@ -1449,6 +1446,10 @@ function updateKanbanClipVars(stampedCard) {
   document.documentElement.style.setProperty(
     '--kanban-clip-card-h',
     `${Math.floor(rect.height)}px`,
+  )
+  document.documentElement.style.setProperty(
+    '--kanban-return-card-bg',
+    getComputedStyle(card).backgroundColor,
   )
 }
 
@@ -1528,14 +1529,8 @@ function setKanbanPopoverGid(next) {
   syncOpenedGroupTriage(next)
   kanbanTransitioning = true
 
-  // Direction class on <html> so the CSS can hide the card-side
-  // pseudo for the transition's duration. The card snapshot is a
-  // different proportion than the modal (~200×60 vs ~560×400), so
-  // during the morph it shows under the scaling modal as a
-  // mis-proportioned stub; hiding it leaves only the modal pseudo's
-  // clip-path animation visible. CSS picks the pseudo by direction:
-  // ::view-transition-old for opening (OLD = card),
-  // ::view-transition-new for closing (NEW = card).
+  // Opening hides the old card snapshot; closing keeps the new card
+  // visible and prevents its text from scaling with the animated box.
   const directionClass = opening ? 'kanban-opening' : 'kanban-closing'
   document.documentElement.classList.add(directionClass)
 
@@ -1596,10 +1591,8 @@ function setKanbanPopoverGid(next) {
     return
   }
 
-  // closing — invert: stamp the destination (the formerly-focused
-  // card) inside the callback after render() has removed the modal,
-  // so the NEW snapshot holds the name and the browser morphs the
-  // OLD modal back into the card.
+  // Closing pairs the modal with the real destination card. Keep the
+  // destination snapshot visible throughout its return to the board.
   updateKanbanClipVars()
   showKanbanFinding(next)
   let closeCard = null
@@ -2633,4 +2626,3 @@ document.addEventListener('keydown', (e) => {
     render()
   }
 })
-
