@@ -782,13 +782,15 @@ let persistentFindingTable = null
 // view/lazy-render.js). The single-card surfaces — the table's
 // details aside, the focus view, the kanban dialog — leave it off and
 // paint at once.
-function findingCardPlaceholder(g, inGroup = false, context = null, lazy = false) {
+// `popup` selects the modal-specific marker sizing and conflict outline.
+function findingCardPlaceholder(g, inGroup = false, context = null, lazy = false, popup = false) {
   return html`<finding-card
     data-gid=${groupKey(g)}
     .group=${g}
     ?in-group=${inGroup}
     context=${context ?? nothing}
     ?lazy=${lazy}
+    ?popup=${popup}
   ></finding-card>`
 }
 
@@ -987,7 +989,7 @@ function focusCodeLinesTemplate(code) {
 // grid item of `.focus-main` (findings.css parks it on the card's cell)
 // rather than inside the pane, so it neither scrolls with the card nor
 // needs to know where the divider currently sits.
-function focusMainTemplate(group, corner = nothing) {
+function focusMainTemplate(group, corner = nothing, popup = false) {
   // Lazy bundle-source fetch for the inline Code panel. Returns
   // `null` when this finding has no bundle code reference,
   // `{ loading: true }` while the first load is in flight (the
@@ -1015,7 +1017,7 @@ function focusMainTemplate(group, corner = nothing) {
   return html`<div class=${mainClass} style=${splitStyle}>
       <div class="focus-pane focus-pane-card">
         <div class="focus-card-wrapper">
-          ${findingCardPlaceholder(group, false, 'focus')}
+          ${findingCardPlaceholder(group, false, 'focus', false, popup)}
         </div>
       </div>
       ${corner}
@@ -1147,8 +1149,8 @@ function kanbanDetailTemplate(focusGroup, column, columns = []) {
            bundle overlay instead. -->
       <div class="kanban-detail-body">
         ${full
-          ? focusMainTemplate(focusGroup, actions)
-          : findingCardPlaceholder(focusGroup, false, 'kanban-detail')}
+          ? focusMainTemplate(focusGroup, actions, true)
+          : findingCardPlaceholder(focusGroup, false, 'kanban-detail', false, true)}
       </div>
     </div>
     ${items.length === 0 ? nothing : html`<aside class="kanban-detail-side" aria-label=${`${column.label} findings`}>
@@ -1248,11 +1250,8 @@ function findingsBodyTemplate(filtered) {
            list's scroll position, avoiding a full shadow-DOM rebuild
            on every state change. -->
       <div class="findings-table-list"><div class="finding-table-slot"></div></div>
-      ${selectedGroup ? html`<aside class="findings-table-details" id="findings-table-details">
-        <header class="findings-table-details-bar">
-          <span class="findings-table-details-label">Details</span>
-          <button type="button" class="findings-table-details-close" data-table-deselect aria-label="Close details">×</button>
-        </header>
+      ${selectedGroup ? html`<aside class="findings-table-details" id="findings-table-details" aria-label="Finding details">
+        <button type="button" class="findings-table-details-close" data-table-deselect aria-label="Close details">×</button>
         <div class="findings-table-details-body">${findingCardPlaceholder(selectedGroup)}</div>
       </aside>` : nothing}
     </div>`

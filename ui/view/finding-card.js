@@ -39,6 +39,7 @@ import { groupKey } from './group.js'
 import { findingCardClasses, findingCardInnerTemplate } from './render-finding.js'
 import { revealCitedLines } from './reveal-cited.js'
 import cardCSS from './finding-card.css'
+import tabsCSS from './finding-tabs.css'
 import codeTokensCSS from '../styles/code-tokens.css'
 
 const MANAGED_HOST_CLASSES = [
@@ -65,11 +66,9 @@ class FindingCard extends StateElement {
     lazy: { type: Boolean },
   }
 
-  // Two sheets: the card's own, and the Prism token palette it shares
-  // with the export preview dialog (styles/code-tokens.css) — the card
-  // paints highlighted code in two places, the fenced blocks in a
-  // description and the source previews beside its links.
-  static styles = [unsafeCSS(cardCSS), unsafeCSS(codeTokensCSS)]
+  // Share group tabs with table rows and the Prism token palette with
+  // the export preview dialog. The remaining styles belong to the card.
+  static styles = [unsafeCSS(cardCSS), unsafeCSS(tabsCSS), unsafeCSS(codeTokensCSS)]
 
   // Whether the body is (to be) rendered. Always true for an eager
   // card; for a lazy one it flips when the observer reports the card

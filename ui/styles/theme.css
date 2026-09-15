@@ -57,6 +57,9 @@
   --marker-blue:  oklch(.72 .15 240deg);
   --marker-green: oklch(.74 .15 145deg);
   --marker-gray:  oklch(.55 .01 260deg);
+  /* Bookmarks stay magenta independently of color labels and severity.
+     Pale themes lower its lightness for contrast against the surface. */
+  --bookmark-color: oklch(.74 .20 325deg);
   /* Bug-class severities (DeepSec HIGH_BUG / BUG — non-vuln defects).
      Earthy tones distinguish them from the saturated red/orange/amber
      vuln palette: terracotta for high_bug (still draws attention),
@@ -184,6 +187,7 @@ body.theme-light {
   /* Same darkening for the yellow, and kept greener than the amber
      above so `partial` and `unknown` still read apart here. */
   --yellow: #7d6a00;
+  --bookmark-color: oklch(.52 .20 325deg);
   --high-bug: #a85a14;
   --bug: #6b5e52;
   --info: #218bff;
@@ -305,6 +309,7 @@ body.theme-pink {
   --warning: #9a6700;
   /* And the yellow, darkened for the same reason. */
   --yellow: #7d6a00;
+  --bookmark-color: oklch(.52 .20 325deg);
   --high-bug: #a85a14;
   --bug: #8c5e6c;
   --info: #218bff;

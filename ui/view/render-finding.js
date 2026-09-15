@@ -9,6 +9,7 @@ import { highlightedCode } from './code-highlight.js'
 import { attachedBundle, bundleSource, focusCodePosition } from './focus-code.js'
 import { samePos } from './focus-code-history.js'
 import { FILE_ICONS, PRODUCER_LABELS, displayName, groupOf } from './file-display.js'
+import { CLAUDE_MARK_PATH } from './icons.js'
 
 // All `<finding-row>` / `<finding-card>` shadow-DOM markup is built
 // here as Lit `html` template results (no `unsafeHTML`). Lit
@@ -835,14 +836,9 @@ function codePreview(f, site, bundle, path, line) {
 }
 
 // Claude mark for the `[hand off to Claude Code]` shortcut button.
-// Same size + stroke weight as the other action icons.
-const CLAUDE_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
-  <g stroke="currentColor" stroke-width="1.2" stroke-linecap="round" fill="none">
-    <line x1="8" y1="1.8" x2="8" y2="14.2"/>
-    <line x1="1.8" y1="8" x2="14.2" y2="8"/>
-    <line x1="3.6" y1="3.6" x2="12.4" y2="12.4"/>
-    <line x1="12.4" y1="3.6" x2="3.6" y2="12.4"/>
-  </g>
+// Reuse the report sticker's mark at the existing action-icon size.
+const CLAUDE_ICON = html`<svg viewBox="4 5 8 8" width="11" height="11" fill="currentColor" aria-hidden="true">
+  <path d=${CLAUDE_MARK_PATH}/>
 </svg>`
 
 // GitHub "issue opened" glyph (circle + center dot) for the `[github
@@ -1147,7 +1143,7 @@ function tabTemplate(f, isActive, groupSt) {
   const entry = state.triage.get(key)
   const color = entry?.color
   const triage = entry?.triage
-  const classes = ['tab']
+  const classes = ['tab', `tab-severity-${displayedSeverity(f, state.severityMode)}`]
   if (isActive) classes.push('active')
   if (color) classes.push(`tab-mark-${color}`)
   if (triage) {
@@ -1159,7 +1155,7 @@ function tabTemplate(f, isActive, groupSt) {
     // / finding-card CSS.
     classes.push('tab-ignored')
   }
-  return html`<button type="button" class=${classes.join(' ')} data-tid=${key}><span class="tab-label">${severityBadge(f, { variant: 'tab' })} ${f.confidence === undefined ? nothing : html`<span class="tab-conf">${f.confidence}/10</span>`}${tabMarksTemplate(entry)}</span></button>`
+  return html`<button type="button" class=${classes.join(' ')} data-tid=${key} aria-pressed=${isActive} aria-description=${color ? `${color} color label` : nothing}><span class="tab-label"><span class="tab-severity">${severityBadge(f, { variant: 'tab' })}</span> ${f.confidence === undefined ? nothing : html`<span class="tab-conf" aria-label=${`Confidence ${f.confidence} out of 10`}>${f.confidence}<span class="tab-conf-max">/10</span></span>`}<span class="tab-indicators">${tabMarksTemplate(entry)}</span></span></button>`
 }
 
 // Confidence display for the finding-left badge column. The table
@@ -1327,15 +1323,21 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
   return html`<div class=${classMap({ 'tab-body': true, active: isActive })} data-tid=${key}>
     ${total > 1 ? html`<div class="print-case-label">${idx + 1} of ${total}</div>` : nothing}
     <div class="finding-left">
+      ${entry?.color || entry?.flagged === true ? html`<div class=${entry?.color ? `finding-top-marks color-${entry.color}` : 'finding-top-marks'}>
+        ${entry?.color ? html`<span
+          class="finding-color-mark"
+          role="img"
+          aria-label=${`Color label: ${entry.color}`}
+        ></span>` : nothing}
+        ${entry?.flagged === true ? html`<span
+          class="finding-bookmark-mark"
+          role="img"
+          aria-label="Bookmarked"
+        ></span>` : nothing}
+      </div>` : nothing}
       ${severityBadge(f, { variant: 'full' })}
       <div class="value-label">Severity</div>
       ${f.confidence === undefined ? nothing : confTemplate(f)}
-      ${entry?.color ? html`<span
-        class=${`finding-color-mark color-${entry.color}`}
-        role="img"
-        aria-label=${`Color label: ${entry.color}`}
-        data-tooltip=${`Color label: ${entry.color}`}
-      ></span>` : nothing}
       ${revalidateStampTemplate(f)}
       ${codeButton}
     </div>
