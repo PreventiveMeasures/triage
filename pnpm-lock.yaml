@@ -22,8 +22,8 @@ importers:
         specifier: ^2.3.0
         version: 2.3.0
       '@preventive/terminal':
-        specifier: ^1.7.1
-        version: 1.7.1
+        specifier: ^1.8.0
+        version: 1.8.0
       '@rray/frontend':
         specifier: ^1.0.0
         version: 1.0.0
@@ -454,8 +454,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@preventive/terminal@1.7.1':
-    resolution: {integrity: sha512-NC23bVrn22B91Vm0H0ueHmHj7s/gYVWaRxCNZxgGn9qaaaB196f/ormy25H/1FWV4G42sAnrLlYqcE3htz+9ew==, tarball: https://registry.npmjs.org/@preventive/terminal/-/terminal-1.7.1.tgz}
+  '@preventive/terminal@1.8.0':
+    resolution: {integrity: sha512-hRCtPJ1lVxZLqUTgZQ6Yq4634F31EH7MgCp9x9auRUDX+UFRBtJ7CzSSr+kJXJn7GoFxYWXFW7rH8EOhSBR4zg==, tarball: https://registry.npmjs.org/@preventive/terminal/-/terminal-1.8.0.tgz}
 
   '@rray/frontend@1.0.0':
     resolution: {integrity: sha512-FgJTZ89e42pR3a1ALQId3SGgt47FIfY/7ydsphu94wY7oyuwOed3/GOTn279ypvA8hz/3fcnoMFg2M3uuqcrSg==, tarball: https://registry.npmjs.org/@rray/frontend/-/frontend-1.0.0.tgz}
@@ -1335,7 +1335,7 @@ snapshots:
   '@oxlint/binding-win32-x64-msvc@1.79.0':
     optional: true
 
-  '@preventive/terminal@1.7.1':
+  '@preventive/terminal@1.8.0':
     dependencies:
       '@exodus/bytes': 1.15.1
     transitivePeerDependencies:

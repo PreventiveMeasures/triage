@@ -10,6 +10,7 @@
 
 import { LitElement, html, nothing, repeat, unsafeCSS } from './view/frontend-global.js'
 import { createTerminal } from '@preventive/terminal'
+import { classifyDiff } from './view/diff-color.js'
 // Imported as a text string at build time (see build.js — the
 // lit-css-as-text plugin routes JS-side `.css` imports through the
 // text loader). unsafeCSS wraps the literal in a CSSResult; the
@@ -230,7 +231,10 @@ class BundleTerminal extends LitElement {
     const r = this.#term.run(line)
     this._cwd = r.cwd
     const next = [...this._lines, { kind: 'prompt', cwd: cwdBefore, text: line }]
-    if (r.stdout) next.push({ kind: 'stdout', text: r.stdout })
+    // Classified here rather than in render(): render reruns on every
+    // keystroke (the ghost and the hint stack both drive updates), and a
+    // diff can be thousands of lines. `diff` is null for ordinary output.
+    if (r.stdout) next.push({ kind: 'stdout', text: r.stdout, diff: classifyDiff(r.stdout) })
     if (r.stderr) next.push({ kind: 'stderr', text: r.stderr })
     this._lines = next
     this.#pushNotes(r.notes)
@@ -482,9 +486,22 @@ class BundleTerminal extends LitElement {
     if (l.kind === 'prompt') {
       return html`<div class="line"><span class="cwd">${l.cwd}</span><span class="sigil">$</span>${l.text}</div>`
     }
-    if (l.kind === 'stdout') return html`<pre class="stdout">${l.text}</pre>`
+    if (l.kind === 'stdout') return this.#renderStdout(l)
     if (l.kind === 'stderr') return html`<pre class="stderr">${l.text}</pre>`
     return nothing
+  }
+
+  // Diff output gets a span per classified line; everything else stays
+  // the bare text node it was. The newlines are emitted between the
+  // pieces so the <pre> still holds exactly the bytes the command
+  // wrote — selecting and copying a diff yields the original text.
+  #renderStdout(l) {
+    if (!l.diff) return html`<pre class="stdout">${l.text}</pre>`
+    const parts = l.diff.flatMap((d, i) => {
+      const line = d.kind ? html`<span class="diff-${d.kind}">${d.text}</span>` : d.text
+      return i === 0 ? [line] : ['\n', line]
+    })
+    return html`<pre class="stdout">${parts}</pre>`
   }
 }
 

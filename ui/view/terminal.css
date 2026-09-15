@@ -61,6 +61,22 @@
 
 .stderr { color: var(--critical, #d8413a); }
 
+/* Diff colouring. ui/view/diff-color.js decides whether a block of
+   stdout is a diff at all and labels each line; these are the six
+   labels it hands back. Theme tokens rather than raw hues, so a diff
+   retunes with the rest of the UI — and only the lines a rule claimed
+   carry a span, so the context lines that make up most of a unified
+   diff stay plain text inside the same <pre>. */
+.diff-head {
+  color: var(--text, #e6edf3);
+  font-weight: 600;
+}
+.diff-hunk { color: var(--accent, #58a6ff); }
+.diff-add { color: var(--green, #3fb950); }
+.diff-del { color: var(--critical, #d8413a); }
+.diff-chg { color: var(--yellow, #d29922); }
+.diff-meta { color: var(--muted, #8b949e); }
+
 .form {
   flex: 0 0 auto;
   display: flex;
