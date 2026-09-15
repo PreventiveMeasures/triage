@@ -9,6 +9,7 @@ import { highlightedCode } from './code-highlight.js'
 import { attachedBundle, bundleSource, focusCodePosition } from './focus-code.js'
 import { samePos } from './focus-code-history.js'
 import { FILE_ICONS, PRODUCER_LABELS, displayName, groupOf } from './file-display.js'
+import { CLAUDE_MARK_PATH } from './icons.js'
 
 // All `<finding-row>` / `<finding-card>` shadow-DOM markup is built
 // here as Lit `html` template results (no `unsafeHTML`). Lit
@@ -835,14 +836,9 @@ function codePreview(f, site, bundle, path, line) {
 }
 
 // Claude mark for the `[hand off to Claude Code]` shortcut button.
-// Same size + stroke weight as the other action icons.
-const CLAUDE_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
-  <g stroke="currentColor" stroke-width="1.2" stroke-linecap="round" fill="none">
-    <line x1="8" y1="1.8" x2="8" y2="14.2"/>
-    <line x1="1.8" y1="8" x2="14.2" y2="8"/>
-    <line x1="3.6" y1="3.6" x2="12.4" y2="12.4"/>
-    <line x1="12.4" y1="3.6" x2="3.6" y2="12.4"/>
-  </g>
+// Reuse the report sticker's mark at the existing action-icon size.
+const CLAUDE_ICON = html`<svg viewBox="4 5 8 8" width="11" height="11" fill="currentColor" aria-hidden="true">
+  <path d=${CLAUDE_MARK_PATH}/>
 </svg>`
 
 // GitHub "issue opened" glyph (circle + center dot) for the `[github

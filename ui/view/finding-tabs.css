@@ -2,7 +2,8 @@
    the badge palette; color labels mark the corner, and confidence sits
    in the bottom-right without adding another row. */
 .tab {
-  --tab-severity: var(--low);
+  /* Reports may preserve custom severities; only known tiers use the badge palette. */
+  --tab-severity: var(--bg);
 
   position: relative;
   display: inline-flex;
@@ -16,27 +17,31 @@
   font-family: inherit;
   font-size: .75rem;
   line-height: 1.3;
-  color: #fff;
+  color: var(--text);
   background: var(--tab-severity);
-  /* Paint through the border box so the corner follows the tab radius.
-     Selected tabs repeat the corner above their selection stroke. */
-  background-image: linear-gradient(135deg, var(--tab-marker, transparent) 50%, transparent 50%);
+  /* The diagonal shadow separates labels from similar severity colors.
+     Paint through the border box so the 12px corner follows the radius;
+     selected tabs repeat the corner above their selection stroke. */
+  background-image: linear-gradient(135deg, var(--tab-marker, transparent) 50%, var(--tab-marker-shadow, transparent) 50%, transparent 60%);
   background-size: 12px 12px;
   background-repeat: no-repeat;
   background-origin: border-box;
 
-  &.tab-severity-critical { --tab-severity: var(--critical); }
-  &.tab-severity-high { --tab-severity: var(--high); }
+  &.tab-severity-critical { --tab-severity: var(--critical); color: #fff; }
+  &.tab-severity-high { --tab-severity: var(--high); color: #fff; }
   &.tab-severity-medium { --tab-severity: var(--medium); color: #000; }
   &.tab-severity-low { --tab-severity: var(--low); color: var(--badge-low-text); }
-  &.tab-severity-high_bug { --tab-severity: var(--high-bug); }
-  &.tab-severity-bug { --tab-severity: var(--bug); }
-  &.tab-severity-informational { --tab-severity: var(--info); }
+  &.tab-severity-high_bug { --tab-severity: var(--high-bug); color: #fff; }
+  &.tab-severity-bug { --tab-severity: var(--bug); color: #fff; }
+  &.tab-severity-informational { --tab-severity: var(--info); color: #fff; }
 
   &.tab-mark-red { --tab-marker: var(--marker-red); }
   &.tab-mark-blue { --tab-marker: var(--marker-blue); }
   &.tab-mark-green { --tab-marker: var(--marker-green); }
   &.tab-mark-gray { --tab-marker: var(--marker-gray); }
+  &:is(.tab-mark-red, .tab-mark-blue, .tab-mark-green, .tab-mark-gray) {
+    --tab-marker-shadow: rgb(0 0 0 / .3);
+  }
 
   &:hover { border-color: var(--muted); }
   &.active { border-color: var(--text); box-shadow: inset 0 0 0 1px var(--text); }
