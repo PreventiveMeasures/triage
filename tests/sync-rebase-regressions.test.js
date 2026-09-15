@@ -31,7 +31,7 @@ async function waitFor(predicate, label) {
   assert.fail(`timed out: ${label}`)
 }
 
-async function fixture() {
+async function fixture({ ackResources = [] } = {}) {
   state.triage.clear()
   state.reports.length = 0
   state.reports.push({ fileName: 'regression.md', groups: [[{ id: 'A' }, { id: 'B' }]] })
@@ -53,7 +53,11 @@ async function fixture() {
       const msg = JSON.parse(data.toString())
       messages.push(msg)
       if (msg.type === 'workspace-subscribe') {
-        sock.send(JSON.stringify({ type: 'workspace-subscribed', workspaceTag: msg.workspaceTag, resources: [] }))
+        // `ackResources: null` models a relay that acks without an
+        // inventory snapshot at all, rather than one reporting no objects.
+        const ack = { type: 'workspace-subscribed', workspaceTag: msg.workspaceTag }
+        if (ackResources !== null) ack.resources = ackResources
+        sock.send(JSON.stringify(ack))
       }
     })
   })
@@ -79,6 +83,23 @@ async function fixture() {
     },
   }
 }
+
+it('an acknowledgment carrying no resources is not an empty inventory', async () => {
+  const f = await fixture({ ackResources: null })
+  // Registered before the reconnect below, so the next subscribe ack is
+  // the one that decides whether this token resolves.
+  const subscription = triageSync.ensureSubscription(f.workspaceId)
+  await f.reconnect()
+  const stillWaiting = Symbol('still waiting')
+  const settled = await Promise.race([
+    subscription.resources,
+    new Promise((resolve) => { setTimeout(() => resolve(stillWaiting), 100) }),
+  ])
+  assert.equal(settled, stillWaiting, 'an ack without resources must not resolve the token as an empty snapshot')
+  f.send({ type: 'workspace-subscribed', resources: [{ resourceTag: 'resource', version: 2, incarnation: 'incarnation', contentLength: 5 }] })
+  const rows = await subscription.resources
+  assert.deepEqual(rows.map((m) => m.resourceTag), ['resource'], 'the next ack carrying a snapshot resolves it')
+})
 
 it('rebases independent fields on the same finding without deleting the peer edit', async () => {
   const f = await fixture()
