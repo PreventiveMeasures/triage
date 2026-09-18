@@ -137,7 +137,7 @@
     "@exodus/stasis-core": "^1.0.0-beta.4",
     "@noble/ciphers": "^2.3.0",
     "@preventive/diff": "^1.0.0",
-    "@preventive/terminal": "^1.11.0",
+    "@preventive/terminal": "^1.11.1",
     "@rray/frontend": "^1.0.0",
     "@stylistic/stylelint-plugin": "^5.3.0",
     "@types/node": "^26.2.0",
