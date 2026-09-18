@@ -267,7 +267,7 @@ export function buildBundleGraphData(details) {
   // different.
   const splitOwnDirs = graph2.splitOwnDirs && canSplitOwnDirs
   const pkgOf = (p) => bundleGraphPackageOf(p, strippedToOrig.get(p) ?? p, { splitOwnDirs, packageDir: packageDirOf?.(p) })
-  const layerRoots = bundleLayerRoots(details, origToStripped, pkgOf, origPackageDirs)
+  const layerRoots = bundleLayerRoots(details, origToStripped, pkgOf, origPackageDirs, full.origToStripped)
   // `canPackagesView` gates the topbar "Packages" toggle (and the
   // mode itself, via the flag buildGraphFromPrep stamps on the
   // graph): a package-level view needs 3+ packages under the

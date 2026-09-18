@@ -55,7 +55,7 @@ export function bundleImportsAsMap(details) {
 // App identity comes from bundle entries, not a directory spelling. Some
 // bundles omit app source but retain imports from it; keep those connections
 // as a virtual App root instead of discarding them with out-of-bundle files.
-export function bundleLayerRoots(details, origToStripped, pkgOf, packageDirs) {
+export function bundleLayerRoots(details, origToStripped, pkgOf, packageDirs, fullOrigToStripped = origToStripped) {
   const imports = bundleImportsAsMap(details)
   const roots = new Set()
   // Split dirs changes the app's display buckets, not its dependency depth.
@@ -90,7 +90,9 @@ export function bundleLayerRoots(details, origToStripped, pkgOf, packageDirs) {
   }
   const appImports = new Set()
   for (const [parent, targets] of imports) {
-    if (origToStripped.has(parent)) continue
+    // Filtered-out bundled files must not regain their edges through a
+    // virtual App node. Only genuinely unbundled source qualifies here.
+    if (fullOrigToStripped.has(parent)) continue
     if (bundlePkgOf(parent, { splitOwnDirs: false, packageDir: packageDirs?.get(parent) }) !== '__own__') continue
     for (const target of targets) {
       const path = origToStripped.get(target)

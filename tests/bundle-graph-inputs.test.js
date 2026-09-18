@@ -127,3 +127,42 @@ it('filters both nodes and edges by reason while preserving original-path mappin
   assert.deepEqual(Object.keys(single.tree), ['app.js', 'build.js', 'shared.js'])
   assert.equal(filterBundleGraphReason(tree, paths, new Map(), 'build').selected, null)
 })
+
+it('does not restore reason-excluded app imports as virtual connections', () => {
+  const tree = {
+    'src/run.js': { imports: [], size: 100 },
+    'src/build.js': { imports: ['node_modules/dep/index.js'], size: 200 },
+    'node_modules/dep/index.js': { imports: [], size: 300 },
+    'node_modules/other/index.js': { imports: [], size: 400 },
+  }
+  const paths = new Map(Object.keys(tree).map((p) => [`project/${p}`, p]))
+  const imports = new Map([
+    ['project/src/build.js', new Map([['dep', 'project/node_modules/dep/index.js']])],
+  ])
+  const details = { kind: 'stasis', bundle: {
+    imports: new Map([['default', imports]]),
+    entries: new Set(['project/src/build.js']),
+  } }
+  const pkgOf = (p) => bundlePkgOf(p, { splitOwnDirs: false })
+  const reasons = new Map([
+    ['run', new Set(['project/src/run.js', 'project/node_modules/dep/index.js'])],
+    ['deps', new Set(['project/node_modules/dep/index.js'])],
+  ])
+  for (const reason of reasons.keys()) {
+    const filtered = filterBundleGraphReason(tree, paths, reasons, reason)
+    assert.deepEqual(bundleLayerRoots(details, filtered.origToStripped, pkgOf, undefined, paths), {
+      roots: reason === 'run' ? ['__own__'] : [], appImports: [],
+    })
+  }
+
+  // Source truly absent from the bundle can still supply virtual edges,
+  // but only to targets retained by the reason filter.
+  imports.set('project/absent.js', new Map([
+    ['dep', 'project/node_modules/dep/index.js'],
+    ['other', 'project/node_modules/other/index.js'],
+  ]))
+  const filtered = filterBundleGraphReason(tree, paths, reasons, 'deps')
+  assert.deepEqual(bundleLayerRoots(details, filtered.origToStripped, pkgOf, undefined, paths), {
+    roots: ['__own__'], appImports: ['dep'],
+  })
+})
