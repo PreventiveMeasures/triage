@@ -1563,9 +1563,22 @@ async function handleMessage(wire: WireMessage): Promise<void> {
     // The ack also carries the objstore inventory snapshot. Resolve
     // any `ensureSubscription` callers waiting for it so the objstore
     // presence layer seeds without observing this ack itself.
-    const rows = Array.isArray(wire.resources) ? wire.resources as object[] : []
-    const waiters = session.objstoreResourceWaiters.splice(0)
-    for (const w of waiters) { try { w(rows) } catch {} }
+    //
+    // An ack WITHOUT a usable `resources` array carries no inventory
+    // information — that is not the same as an empty inventory, and the
+    // relay closes the subscription rather than acking a failed lookup
+    // for exactly that reason. `objstore`'s own wire handler already
+    // ignores such an ack (`Array.isArray` guard); resolving the token
+    // with `[]` here instead seeds an EMPTY inventory, so absent
+    // resources read as deletions on the one path that still trusts
+    // them. Leave the waiters for an ack that actually carries a
+    // snapshot — the same "seed that never arrives" case `list()`
+    // already tolerates.
+    if (Array.isArray(wire.resources)) {
+      const rows = wire.resources as object[]
+      const waiters = session.objstoreResourceWaiters.splice(0)
+      for (const w of waiters) { try { w(rows) } catch {} }
+    }
     emitStatusIfChanged()
   }
 }
