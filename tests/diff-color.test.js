@@ -1,11 +1,15 @@
 // `ui/view/diff-color.js` — `classifyDiff`, which decides whether a
 // block of terminal stdout is diff output and, if so, what each line
-// is. Three things are pinned here: the three diff formats GNU emits
-// are each recognised and labelled, ordinary text that merely contains
-// `+` or `---` is left alone, and — the part that can drift — the
-// labels still match what `@preventive/terminal` actually prints. The
-// classifier reads structure rather than argv, so a change to the
-// package's diff output would silently stop colouring it.
+// is. The recognition is @preventive/diff/color.js's; what this module
+// adds is the translation from its styleText-shaped style names to the
+// CSS classes the terminal paints. So four things are pinned here: the
+// three diff formats are each recognised and labelled, ordinary text
+// that merely contains `+` or `---` is left alone, every style the
+// library emits translates to a class rather than falling through to
+// plain, and — the part that can drift — the labels still match what
+// `@preventive/terminal` actually prints. Recognition reads structure
+// rather than argv, so a change to either package's diff output would
+// otherwise stop the colouring silently.
 
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
@@ -14,6 +18,7 @@ import { describe, it } from 'node:test'
 // frontend global the rest of ui/view/ needs.
 const { classifyDiff } = await import('../ui/view/diff-color.js')
 const { createTerminal } = await import('@preventive/terminal')
+const { diffLineStyles } = await import('@preventive/diff/color.js')
 
 const kinds = (text) => classifyDiff(text)?.map((d) => d.kind)
 
@@ -104,6 +109,45 @@ describe('classifyDiff — not a diff', () => {
     assert.equal(classifyDiff('@@ not a hunk header\n+x'), null)
     assert.equal(classifyDiff('3x3\n< a\n> b'), null, 'x is not an a/c/d command')
     assert.equal(classifyDiff('**********\n! x'), null, 'fence is exactly 15 stars')
+  })
+})
+
+describe('classifyDiff — translating the library\'s styles', () => {
+  // classifyDiff maps the library's style names onto CSS classes. A name
+  // it does not know renders that line plain, which would be a silent
+  // hole rather than a crash — so assert every line the library styled
+  // came back with a class. Fixtures below cover all six documented
+  // styles between them (bold/cyan/green/red from unified, yellow from
+  // context, gray from the unified no-newline marker).
+  const fixtures = {
+    unified: ['--- a.txt', '+++ b.txt', '@@ -1,2 +1,2 @@', ' ctx', '-old', '+new', '\\ No newline at end of file'].join('\n'),
+    context: ['*** a.txt', '--- b.txt', '***************', '*** 1,3 ****', '! was', '--- 1,3 ----', '! now', '+ added', '- gone'].join('\n'),
+    normal: ['3c3', '< old', '---', '> new'].join('\n'),
+  }
+
+  for (const [name, text] of Object.entries(fixtures)) {
+    it(`leaves no ${name} line the library styled without a class`, () => {
+      const styles = diffLineStyles(text)
+      assert.notEqual(styles, null, 'the fixture is recognised as a diff')
+      const labelled = classifyDiff(text)
+      for (let i = 0; i < styles.length; i++) {
+        if (styles[i] === null) continue
+        assert.notEqual(labelled[i].kind, '', `line ${i} (${JSON.stringify(text.split('\n')[i])}) has style ${styles[i]} but no class`)
+      }
+    })
+  }
+
+  it('covers all six styles the library documents', () => {
+    const seen = new Set()
+    for (const text of Object.values(fixtures)) {
+      for (const style of diffLineStyles(text)) if (style !== null) seen.add(style)
+    }
+    assert.deepEqual([...seen].toSorted(), ['bold', 'cyan', 'gray', 'green', 'red', 'yellow'])
+  })
+
+  it('reports no style for a line the library left unstyled', () => {
+    const labelled = classifyDiff(fixtures.unified)
+    assert.equal(labelled[3].kind, '', 'the context line stays plain')
   })
 })
 
