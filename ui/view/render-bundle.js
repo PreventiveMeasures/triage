@@ -25,6 +25,7 @@ import { bundlePackageDirs, bundleSourcesAsMap } from './bundle-sources.js'
 import { bundleHasSbomComponents } from './sbom.js'
 import { buildSearchMatcher, runBundleSearch } from './bundle-search-scan.js'
 import { bundlePkgOf, ownSourceSplittable } from './bundle-pkg-of.js'
+import { bundleGraphPackageOf, bundleGraphReasons, bundleImportsAsMap, bundleLayerRoots, filterBundleGraphReason } from './bundle-graph-inputs.js'
 import { tabKey } from './group.js'
 import { computeFileHash } from '../../report/index.js'
 import { langForPath, highlight as prismHighlight } from './prism-highlight.js'
@@ -55,25 +56,6 @@ import { render } from './render.js'
 // the `buildGraph` call lives in lazy `ui/graph.js`, which the
 // refresh helpers re-dispatch this prep to on each chip click.
 let _currentBundlePrep = null
-
-// File → set of resolved import paths. The stasis Bundle exposes
-// imports as Map<conditionsKey, Map<parent, Map<specifier, resolved>>>
-// (see `@exodus/stasis-core/bundle`); union resolved targets across all
-// condition keys (node, import, module-sync, ...) and dedupe per
-// parent. Sourcemaps have no import info, so the map is empty.
-function bundleImportsAsMap(details) {
-  const result = new Map()
-  if (!details || details.kind !== 'stasis' || !details.bundle) return result
-  for (const byParent of details.bundle.imports.values()) {
-    for (const [parent, specMap] of byParent) {
-      if (!result.has(parent)) result.set(parent, new Set())
-      for (const resolved of specMap.values()) {
-        if (typeof resolved === 'string') result.get(parent).add(resolved)
-      }
-    }
-  }
-  return result
-}
 
 // Synthesise a treeData blob shaped like the analyzer's tree dump so
 // buildGraph (graph/data.js) consumes it unmodified. The shared
@@ -125,11 +107,12 @@ export async function computeBundleFileHashes(details) {
 // topbar's triage selector visibility / counts. Walks the same
 // hash → finding index bundleFindingsByFile uses, bucketing each
 // finding by triage state (or 'live' when none).
-export function countBundleTriageBuckets(details) {
+export function countBundleTriageBuckets(details, sourcePaths = null) {
   const counts = { inprogress: 0, fixed: 0, invalid: 0, deleted: 0 }
   if (!details?.fileHashes) return counts
   const seen = new Set()
-  for (const hash of details.fileHashes.values()) {
+  for (const [file, hash] of details.fileHashes) {
+    if (sourcePaths && !sourcePaths.has(file)) continue
     if (seen.has(hash)) continue
     seen.add(hash)
     for (const f of findingsForFileHash(hash)) {
@@ -198,10 +181,16 @@ function bundleFindingsByFile(fileHashes, mode = 'graph') {
 // graph would never light up findings — they'd be looked up under
 // original paths while nodes live under stripped ones.
 //
-// Every file in the bundle is a node — unlike the findings-tab graph,
-// the bundle graph has no "All files" toggle (see `files` below).
+// Every file in the chosen reason is a node; All includes the full bundle.
 export function buildBundleGraphData(details) {
-  const { tree, origToStripped } = buildBundleTree(details)
+  const full = buildBundleTree(details)
+  const reasons = bundleGraphReasons(details, full.origToStripped.keys())
+  if (graph2.bundleReasonFor !== details.integrity) {
+    graph2.bundleReasonFor = details.integrity
+    graph2.bundleReason = null
+  }
+  const { tree, origToStripped, selected } = filterBundleGraphReason(full.tree, full.origToStripped, reasons, graph2.bundleReason)
+  graph2.bundleReason = selected
   const allFiles = Object.keys(tree)
   if (allFiles.length === 0) return null
   let strippedHashes = null
@@ -259,7 +248,8 @@ export function buildBundleGraphData(details) {
   // dir, or none at all) — flipping it would be a no-op. Workspace
   // packages are excluded via the package map so they don't masquerade
   // as splittable own source.
-  const canSplitOwnDirs = ownSourceSplittable(allFiles, packageDirOf)
+  const ownFiles = allFiles.filter((p) => bundleGraphPackageOf(p, strippedToOrig.get(p) ?? p, { packageDir: packageDirOf?.(p) }) === '__own__')
+  const canSplitOwnDirs = ownSourceSplittable(ownFiles, packageDirOf)
   // `pkgOf` rides in `options` so packaging recognizes both
   // `node_modules/` and `dependencies/` regardless of the global
   // depsDir picked from state.reports, which would otherwise miss
@@ -276,7 +266,8 @@ export function buildBundleGraphData(details) {
   // bundle — its hidden toggle can't be the reason the grouping looks
   // different.
   const splitOwnDirs = graph2.splitOwnDirs && canSplitOwnDirs
-  const pkgOf = (p) => bundlePkgOf(p, { splitOwnDirs, packageDir: packageDirOf?.(p) })
+  const pkgOf = (p) => bundleGraphPackageOf(p, strippedToOrig.get(p) ?? p, { splitOwnDirs, packageDir: packageDirOf?.(p) })
+  const layerRoots = bundleLayerRoots(details, origToStripped, pkgOf, origPackageDirs, full.origToStripped)
   // `canPackagesView` gates the topbar "Packages" toggle (and the
   // mode itself, via the flag buildGraphFromPrep stamps on the
   // graph): a package-level view needs 3+ packages under the
@@ -319,6 +310,9 @@ export function buildBundleGraphData(details) {
     strippedToOrig,
     canSplitOwnDirs,
     canPackagesView,
+    supportsLayers: true,
+    layerRoots,
+    reasons: [...reasons.keys()],
   }
 }
 

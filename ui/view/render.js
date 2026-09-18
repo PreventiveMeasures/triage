@@ -1686,7 +1686,7 @@ function renderImpl() {
           const prep = buildBundleGraphData(state.bundleDetails)
           if (prep) {
             setCurrentBundleGraphPrep(prep)
-            const triageCounts = countBundleTriageBuckets(state.bundleDetails)
+            const triageCounts = countBundleTriageBuckets(state.bundleDetails, new Set(prep.strippedToOrig.values()))
             // The triage selector inside the bundle graph topbar
             // reads `state.shownTriage` directly (via
             // `<triage-selector>`); the bundle path always uses the
@@ -1706,6 +1706,7 @@ function renderImpl() {
               // (default) vs. one node per package. Hidden below 3
               // packages, where the package graph carries no signal.
               showPackagesView: prep.canPackagesView,
+              showBundleLayouts: true,
             }
             // First open of the graph tab triggers the dynamic
             // import of `ui/graph.js` (LitElement + ~37 KB shadow
