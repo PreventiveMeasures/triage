@@ -923,7 +923,7 @@ report.addEventListener('click', (e) => {
     graph2.layoutCache = null
     graph2.solo = null
     graph2.focusedPkg = null
-    if (graph2.packagesView) graph2.selected = null
+    if (graph2.packagesView || graph2.bundleLayout === 'layers') graph2.selected = null
     cleanupGraph2()
     render()
     return
@@ -943,6 +943,20 @@ report.addEventListener('click', (e) => {
     graph2.packagesView = !graph2.packagesView
     graph2.layoutCache = null
     graph2.selected = null
+    graph2.focusedPkg = null
+    cleanupGraph2()
+    render()
+    return
+  }
+  const g2Layout = pathClosest(e, '[data-g2-layout]')
+  if (g2Layout) {
+    const next = g2Layout.dataset.g2Layout
+    if (next !== 'graph' && next !== 'layers') return
+    if (graph2.bundleLayout === next && !graph2.focusedPkg) return
+    graph2.bundleLayout = next
+    graph2.layoutCache = null
+    graph2.selected = null
+    graph2.solo = null
     graph2.focusedPkg = null
     cleanupGraph2()
     render()
@@ -990,7 +1004,7 @@ report.addEventListener('click', (e) => {
   if (pathClosest(e, '#g2-back-to-full')) {
     graph2.focusedPkg = null
     graph2.layoutCache = null
-    if (graph2.packagesView) graph2.selected = null
+    if (graph2.packagesView || graph2.bundleLayout === 'layers') graph2.selected = null
     cleanupGraph2()
     render()
     return
@@ -2314,6 +2328,19 @@ report.addEventListener('bundle-search-mode-change', (e) => {
   state.bundleCodeSearchMode = mode
   render()
   if (mode === 'files') revealBundleCodeCurrent()
+})
+// Native select changes do not cross shadow roots; graph-layout emits this
+// composed event so the main and lazy graph bundles share one selection.
+report.addEventListener('bundle-graph-reason-change', (e) => {
+  const reason = e.detail?.reason
+  if (reason !== null && typeof reason !== 'string') return
+  graph2.bundleReason = reason
+  graph2.layoutCache = null
+  graph2.selected = null
+  graph2.solo = null
+  graph2.focusedPkg = null
+  cleanupGraph2()
+  render()
 })
 // `<bundle-search>` (the Search tab's github-style bar) dispatches
 // this when the trailing `.*` modifier is clicked — flip between

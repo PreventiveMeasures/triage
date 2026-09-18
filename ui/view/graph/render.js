@@ -1,4 +1,5 @@
 import { classMap, html, repeat, styleMap } from '../frontend-global.js'
+import { live } from 'lit/directives/live.js'
 import { SEVERITIES, formatBytes } from '../format.js'
 import { graph2 } from './state.js'
 import { pkgColor } from './utils.js'
@@ -29,6 +30,11 @@ import { pkgLabelOf, pkgRelative } from './data.js'
 // the view-mode chooser inside the graph's own toolbar instead of
 // stacking a separate findings toolbar above the canvas.
 export function renderTopBar(graph, options) {
+  const layers = options.showBundleLayouts && graph2.bundleLayout === 'layers'
+  const layoutSelector = options.showBundleLayouts ? html`<div class="g2-layout-tabs" role="group" aria-label="Bundle layout">
+    <button type="button" data-g2-layout="graph" aria-pressed=${String(!layers)}>Graph</button>
+    <button type="button" data-g2-layout="layers" aria-pressed=${String(!!layers)}>Layers</button>
+  </div>` : null
   const extraTopRow = options.extraTopRow
   const hideAllFiles = options.hideAllFiles ?? false
   const triageCounts = options.triageCounts ?? { inprogress: 0, fixed: 0, invalid: 0, deleted: 0 }
@@ -109,7 +115,7 @@ export function renderTopBar(graph, options) {
   // (per top-level dir under Split dirs) with aggregated import
   // edges. Same rebuild-on-flip contract as the toggles above —
   // the layout and hit-testing operate on a different node set.
-  const showPackagesView = options.showPackagesView ?? false
+  const showPackagesView = !layers && (options.showPackagesView ?? false)
   const packagesViewBtn = showPackagesView ? html`<button
     type="button"
     class=${classMap({ 'g2-topbar-toggle': true, on: graph2.packagesView })}
@@ -133,6 +139,7 @@ export function renderTopBar(graph, options) {
       ${triageBtn}
     </div>` : null}
     <div class="graph2-topbar-row graph2-topbar-row-main toolbar-row sev-row">
+    ${layoutSelector}
     ${hasAnyVisible ? html`<severity-chips
       .counts=${issueCounts}
       .selected=${[...graph2.selectedSeverities]}
@@ -150,6 +157,15 @@ export function renderTopBar(graph, options) {
          sibling), so it stays live as the user types without re-
          rendering the topbar per keystroke — input redraws the canvas
          but not the chrome. -->
+    ${graph.reasons?.length > 0 ? html`<label class="g2-reason-filter">
+      <span>Reason</span>
+      <select aria-label="Reason" .value=${live(graph2.bundleReason ?? '')} @change=${(e) => e.currentTarget.dispatchEvent(new CustomEvent('bundle-graph-reason-change', {
+        detail: { reason: e.currentTarget.value || null }, bubbles: true, composed: true,
+      }))}>
+        <option value="" ?selected=${graph2.bundleReason === null}>All</option>
+        ${graph.reasons.map((reason) => html`<option value=${reason} ?selected=${reason === graph2.bundleReason}>${reason}</option>`)}
+      </select>
+    </label>` : null}
     <div class="toolbar-search g2-path-filter-wrap">
       <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
         <circle cx="11" cy="11" r="7"/>
@@ -403,6 +419,9 @@ export function renderSelectionCard(graph, ctx = {}) {
     </div>`
   }
   if (graph2.solo) {
+    if (graph2.solo === '__own__' && !graph.pkgCount.has('__own__') && graph.layerRoots?.appImports.length > 0) {
+      return html`<div class="g2-empty-state"><strong>App</strong>App source is not included in this view. Connections come from its recorded imports.</div>`
+    }
     return renderPackageCard(graph, graph2.solo)
   }
   return html`<div class="g2-empty-state">Click a node or a package row to inspect.</div>`

@@ -49,6 +49,9 @@ function createImpl() {
     // mode) only engage when the bundle has 3+ packages — see
     // `canPackagesView` in buildBundleGraphData. Off by default.
     packagesView: false,
+    bundleLayout: 'graph', // 'graph' | 'layers'; bundle-only, files keep their graph
+    bundleReason: null, // null = all reasons; shared by graph and layers
+    bundleReasonFor: null, // bundle integrity; reset selection on bundle changes
     selected: null,        // file path or null
     // Package focus mode — when set, the canvas drops the spiral
     // and renders ONLY this package's intra-imports in graph v1

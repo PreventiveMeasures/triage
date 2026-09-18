@@ -6,6 +6,8 @@ import { buildPackageGraph, pkgLabelOf, pkgRelative } from './data.js'
 import { pkgColor } from './utils.js'
 import { forceLayout } from './force-layout.js'
 import { formatBytes } from '../format.js'
+import { layoutDependencyLayers } from './layered-layout.js'
+import { drawDependencyLayers } from './layered-render.js'
 
 // Severity palette baked into the canvas. Vivid hot colors for
 // critical/high pop above the package hue; calmer tones for
@@ -172,15 +174,31 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
   // topbar doesn't even offer the switch — and outside a package-
   // focus drill-in, which is a file-level mode and takes priority
   // (back out of focus and the packages view resumes).
-  const pkgViewOn = () => graph2.packagesView && (graph.canPackagesView ?? false) && !graph2.focusedPkg
+  const layersOn = () => graph.supportsLayers && graph2.bundleLayout === 'layers' && !graph2.focusedPkg
+  const pkgViewOn = () => layersOn() || (graph2.packagesView && (graph.canPackagesView ?? false) && !graph2.focusedPkg)
+  let layers = null
   // Derived once per attach on first use; the file graph is
   // immutable for the attachment's lifetime, so the aggregate is
   // too. Lazy so the findings tab / file views never pay for it.
   let _pkgGraph = null
   function getPkgGraph() {
-    if (!_pkgGraph) _pkgGraph = buildPackageGraph(graph)
+    if (!_pkgGraph) {
+      _pkgGraph = buildPackageGraph(graph)
+      if (layersOn() && graph.layerRoots?.appImports.length > 0) {
+        if (!_pkgGraph.byPkg.has('__own__')) {
+          const app = { file: '__own__', pkg: '__own__', label: 'App (source not bundled)', size: null, fileCount: 0, totalIssues: 0 }
+          _pkgGraph.nodes.push(app)
+          _pkgGraph.byPkg.set('__own__', app)
+        }
+        _pkgGraph.importsOf.set('__own__', [...new Set([
+          ...(_pkgGraph.importsOf.get('__own__') ?? []), ...graph.layerRoots.appImports,
+        ])])
+      }
+    }
     return _pkgGraph
   }
+
+  const layerLabel = (id) => id === '__own__' ? 'App' : layers?.depth.get(id) === 0 ? `App · ${pkgLabelOf(id)}` : pkgLabelOf(id)
 
   // Package-node layout — same split the package-focus mode makes
   // for files, at the same 50-node limit: force-directed while the
@@ -215,6 +233,14 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
   // ── Layout (deferred until we have real canvas dimensions) ─────
   function ensureLayout() {
     if (!needsLayout) return
+    if (layersOn()) {
+      const pg = getPkgGraph()
+      layers = layoutDependencyLayers(pg.nodes.map((n) => ({ id: n.pkg, size: n.size })), pg.importsOf, graph.layerRoots?.roots ?? ['__own__'], {
+        width: Math.max(360, layoutW - 190),
+      })
+      needsLayout = false
+      return
+    }
     const cache = graph2.layoutCache
     const focused = graph2.focusedPkg
     const pkgView = pkgViewOn()
@@ -260,6 +286,12 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
   // Bounds come from whichever node set is on screen — package
   // aggregates in packages view, files otherwise.
   function computeFit() {
+    if (layersOn() && layers) {
+      const k = Math.min((W - 24) / (layers.width + 185), (H - 70) / (layers.height + layers.gap), 1.5)
+      const scale = Math.max(0.05, k)
+      return { k: scale, tx: (W - (layers.width + 185) * scale) / 2 + 145 * scale,
+        ty: 24 + Math.max(0, (H - 70 - (layers.height + layers.gap) * scale) / 2) }
+    }
     const nodes = pkgViewOn() ? getPkgGraph().nodes : graph.nodes
     if (nodes.length === 0) {
       return { k: 1, tx: W / 2, ty: H / 2 }
@@ -477,6 +509,22 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     const selKey = pkgView ? graph2.solo : graph2.selected
     const sel = selKey ? G.nodeByFile.get(selKey) : null
     const selected = sel ? selKey : null
+
+    if (layersOn()) {
+      ctx.save()
+      ctx.translate(viewport.tx, viewport.ty)
+      ctx.scale(viewport.k, viewport.k)
+      drawDependencyLayers(ctx, layers, {
+        theme: T, scale: viewport.k, selected, hovered,
+        colorOf: pkgColor,
+        labelOf: layerLabel,
+        sizeLabel: (value) => formatBytes(typeof value === 'number' ? value : G.byPkg.get(value).size) || 'Size unknown',
+        dimmed: (id) => nodeIsDimmed(G.byPkg.get(id)),
+      })
+      ctx.restore()
+      if (zoomEl) zoomEl.textContent = `${Math.round(viewport.k * 100)}%`
+      return
+    }
 
     // Packages view, few packages (≤ 50): v1-style package chrome —
     // curved edges, arrowheads, always-on labels — the same split
@@ -1124,6 +1172,13 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
   // dot paths draw nodeRadius-sized ones — picking must agree with
   // what's on screen or rim clicks miss.
   function pickNode(sx, sy) {
+    if (layersOn()) {
+      const [x, y] = screenToWorld(sx, sy)
+      for (const r of layers.rects.values()) {
+        if (r.width > 0 && x >= r.x && x < r.x + r.width && y >= r.y && y <= r.y + r.height) return getPkgGraph().byPkg.get(r.id)
+      }
+      return null
+    }
     const pkgView = pkgViewOn()
     const G = pkgView ? getPkgGraph() : graph
     const rich = pkgView && G.nodes.length <= 50
@@ -1171,7 +1226,10 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     const col = pkgColor(p.pkg)
     const sizeText = formatBytes(p.size)
     render(html`
-      <div class="g2-tt-path">${p.label}</div>
+      <div class="g2-tt-path">${layersOn() ? layerLabel(p.pkg) : p.label}</div>
+      ${layersOn() ? html`<div class="g2-tt-pkg">${layers.depth.has(p.pkg)
+        ? `Level ${layers.depth.get(p.pkg)} · shortest import distance from App`
+        : 'No known import path from App'}</div>` : null}
       <div class="g2-tt-head">
         <span class="g2-tt-dot" style=${`background:${col}`}></span>
         <span class="g2-tt-pkg">${p.fileCount} ${p.fileCount === 1 ? 'file' : 'files'}${sizeText ? ` · ${sizeText}` : ''}</span>

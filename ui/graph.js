@@ -84,5 +84,8 @@ export function buildGraphFromPrep(prep) {
   // a toggle value persisted from another bundle can't flip a
   // 2-package (or findings-tab) graph into package mode.
   graph.canPackagesView = prep.canPackagesView ?? false
+  graph.supportsLayers = prep.supportsLayers ?? false
+  graph.layerRoots = prep.layerRoots
+  graph.reasons = prep.reasons ?? []
   return graph
 }

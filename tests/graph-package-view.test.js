@@ -12,6 +12,8 @@
 
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
+import { layoutDependencyLayers } from '../ui/view/graph/layered-layout.js'
+import { bundleLayerRoots } from '../ui/view/bundle-graph-inputs.js'
 
 // data.js → utils.js → format.js → frontend-global.js throws at
 // module load when the `@rray/frontend` slot isn't installed. Tests
@@ -180,5 +182,45 @@ describe('buildPackageGraph', () => {
     }))
     assert.equal(pg.edges.length, 0)
     assert.equal(pg.byPkg.get('__own__').deg, 0)
+  })
+
+  it('feeds package layers with app bytes and directed shortest distances', () => {
+    const pg = buildPackageGraph(graphFrom(tree))
+    const layers = layoutDependencyLayers(pg.nodes.map((n) => ({ id: n.pkg, size: n.size })), pg.importsOf, ['__own__'])
+    assert.equal(layers.levels[0].size, 150)
+    assert.equal(layers.depth.get('__own__'), 0)
+    assert.equal(layers.depth.get('x'), 1)
+    assert.equal(layers.depth.get('y'), 1)
+  })
+
+  it('splits app directories within the top layer without changing dependency levels or byte totals', () => {
+    const sourceTree = {
+      'src/main.js': { imports: ['lib/helper.js'], size: 100 },
+      'lib/helper.js': { imports: ['node_modules/x/index.js'], size: 300 },
+      'index.js': { imports: [], size: 50 },
+      'node_modules/x/index.js': { imports: ['node_modules/y/index.js'], size: 1000 },
+      'node_modules/y/index.js': { imports: [], size: 200 },
+    }
+    const paths = new Map(Object.keys(sourceTree).map((p) => [p, p]))
+    const details = { kind: 'stasis', bundle: {
+      entries: new Set(['src/main.js']),
+      imports: new Map([['default', new Map(Object.entries(sourceTree).map(([p, file]) => [p, new Map(file.imports.map((target) => [target, target]))]))]]),
+    } }
+    const layouts = [false, true].map((splitOwnDirs) => {
+      const pg = buildPackageGraph(graphFrom(sourceTree, { splitOwnDirs }))
+      const { roots } = bundleLayerRoots(details, paths, (p) => bundlePkgOf(p, { splitOwnDirs }))
+      return layoutDependencyLayers(pg.nodes.map((n) => ({ id: n.pkg, size: n.size })), pg.importsOf, roots)
+    })
+    for (const layers of layouts) {
+      assert.equal(layers.levels[0].size, 450)
+      assert.equal(layers.totalSize, 1650)
+      assert.equal(layers.levels[0].share, 450 / 1650)
+      assert.equal(layers.depth.get('x'), 1)
+      assert.equal(layers.depth.get('y'), 2)
+    }
+    assert.deepEqual(layouts[0].levels[0].ids, ['__own__'])
+    assert.deepEqual(new Set(layouts[1].levels[0].ids), new Set(['src', 'lib', '__own__']))
+    assert.equal(layouts[1].levels[0].ids[0], 'lib')
+    assert.equal(layouts[1].rects.get('lib').width, 3 * layouts[1].rects.get('src').width)
   })
 })
