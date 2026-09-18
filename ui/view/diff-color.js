@@ -1,56 +1,27 @@
-// Recognises diff output and labels each line, so ui/terminal.js can
-// paint it. A port of the terminal package's own REPL colorizer
-// (`bin/diff-color.js` in PreventiveMeasures/terminal): the library
-// returns plain text and each front end paints it, so the rules are
-// shared but the output is not — the REPL writes ANSI through
-// styleText, this hands back line kinds for the shadow-DOM stylesheet.
-//
-// The format is recognised from its own structural markers rather than
-// from the command that ran, because a `RunResult` carries no argv to
-// look at, and because `cat` of a patch file deserves the same
-// treatment as `diff`. Each marker is one a real diff emits and
-// ordinary text does not, so a source file full of `+` bullets or
-// `---` rules stays plain.
+// CSS-side adapter over @preventive/diff/color.js, which does the
+// recognising: which of the three formats a block of text is written
+// in, and what part each line plays, from the text's own markers
+// rather than from the command that ran — so `cat` of a patch file is
+// coloured too. The terminal package's REPL colorizer calls the same
+// function; only the painting differs, a stream there, classes here.
 
-const UNIFIED_HUNK = /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/u
-const CONTEXT_FENCE = /^\*{15}$/u
-const NORMAL_COMMAND = /^\d+(?:,\d+)?[acd]\d+(?:,\d+)?$/u
+import { diffLineStyles } from '@preventive/diff/color.js'
 
-// Longest prefix first, so `---` is read as a file header rather than a
-// removed line, and `+++` before `+`.
-const UNIFIED = [
-  [/^--- /u, 'head'], [/^\+\+\+ /u, 'head'], [UNIFIED_HUNK, 'hunk'],
-  [/^\+/u, 'add'], [/^-/u, 'del'], [/^\\ /u, 'meta'],
-]
-const CONTEXT = [
-  [CONTEXT_FENCE, 'hunk'], [/^\*{3} \d/u, 'hunk'], [/^--- \d/u, 'hunk'],
-  [/^\*{3} /u, 'head'], [/^--- /u, 'head'],
-  [/^! /u, 'chg'], [/^\+ /u, 'add'], [/^- /u, 'del'],
-]
-const NORMAL = [
-  [NORMAL_COMMAND, 'hunk'], [/^< /u, 'del'], [/^> /u, 'add'], [/^---$/u, 'meta'],
-]
+// Styles are named as node:util's styleText names them, for that ANSI
+// caller. Against theme tokens the names mislead — `cyan` is the accent
+// blue, `bold` no hue at all — so they are translated once, here.
+const KIND = { bold: 'head', cyan: 'hunk', green: 'add', red: 'del', yellow: 'chg', gray: 'meta' }
 
-function rulesFor(lines) {
-  // Context diffs also carry `---` headers, so the fence is checked first.
-  if (lines.some((line) => CONTEXT_FENCE.test(line))) return CONTEXT
-  if (lines.some((line) => UNIFIED_HUNK.test(line))) return UNIFIED
-  if (lines.some((line) => NORMAL_COMMAND.test(line))) return NORMAL
-  return null
-}
-
-// `null` for anything that isn't a diff — the caller keeps rendering it
-// as the single text node it already was, so nothing changes for the
-// ordinary case. Otherwise one entry per line, `kind` empty for lines no
-// rule claims: a unified diff is mostly context lines, and leaving those
-// unwrapped keeps a large diff from becoming a span per line.
+// null when the text is not a diff, leaving the caller to render it as
+// the one text node it already was. An empty `kind` leaves a line
+// unwrapped — most of a unified diff is context lines — and a style
+// this map doesn't know falls back to it, rendering that line plain
+// rather than emitting a dead class name.
 export function classifyDiff(text) {
-  if (text === '') return null
-  const lines = text.split('\n')
-  const rules = rulesFor(lines)
-  if (!rules) return null
-  return lines.map((line) => ({
+  const styles = diffLineStyles(text)
+  if (styles === null) return null
+  return text.split('\n').map((line, i) => ({
     text: line,
-    kind: rules.find(([pattern]) => pattern.test(line))?.[1] ?? '',
+    kind: styles[i] === null ? '' : KIND[styles[i]] ?? '',
   }))
 }
