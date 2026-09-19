@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { it } from 'node:test'
-import { circleOutside, createRenderCache, edgeGradient, edgeOutside, haloGradient, updateRenderCache } from '../ui/view/graph/render-cache.js'
+import { circleOutside, createRenderCache, edgeGradient, edgeOutside, edgePaints, haloGradient, updateRenderCache } from '../ui/view/graph/render-cache.js'
 
 function fixture() {
   const nodes = [
@@ -107,30 +107,52 @@ it('evaluates filters per node even for a densely connected selection', () => {
   assert.equal(cache.neighbors.size, count)
 })
 
-it('reuses gradient paint objects and refreshes them for geometry, theme, and emphasis changes', () => {
+it('keeps edge gradients in graph coordinates through pan/zoom and refreshes layout/theme changes', () => {
   const cache = createRenderCache(fixture())
   const options = { viewport: { k: 1, tx: 0, ty: 0 }, selected: null, visible: () => true, dimmed: () => false, radius: () => 3.5, color: () => '#aabbcc' }
   const gradient = (...coordinates) => ({ coordinates, stops: [], addColorStop(...stop) { this.stops.push(stop) } })
   const ctx = { createLinearGradient: gradient, createRadialGradient: gradient }
-  const alphaHex = (alpha) => Math.round(alpha * 255).toString(16).padStart(2, '0')
   updateRenderCache(cache, options)
   const entry = cache.edges[0], node = cache.nodes[0]
-  const halo = haloGradient(node, 12, ctx), line = edgeGradient(entry, cache, .22, ctx, alphaHex)
+  const halo = haloGradient(node, 12, ctx), line = edgeGradient(entry, ctx)
   assert.deepEqual(line.coordinates, [1, 2, -3, 4])
-  assert.deepEqual(line.stops, [[0, '#aabbcc38'], [1, '#aabbcc38']])
+  assert.deepEqual(line.stops, [[0, '#aabbcc'], [1, '#aabbcc']])
   assert.deepEqual(halo.coordinates, [1, 2, 0, 1, 2, 12])
   assert.deepEqual(halo.stops, [[0, '#aabbcc55'], [1, '#aabbcc00']])
   updateRenderCache(cache, options)
-  assert.equal(edgeGradient(entry, cache, .22, ctx, alphaHex), line)
+  assert.equal(edgeGradient(entry, ctx), line)
   assert.equal(haloGradient(node, 12, ctx), halo)
-  assert.notEqual(edgeGradient(entry, cache, .85, ctx, alphaHex), line)
   assert.notEqual(haloGradient(node, 18, ctx), halo)
   options.viewport.tx = 100
+  options.viewport.ty = -20
+  options.viewport.k = 2
   updateRenderCache(cache, options)
-  assert.deepEqual(edgeGradient(entry, cache, .22, ctx, alphaHex).coordinates, [101, 2, 97, 4])
-  assert.deepEqual(haloGradient(node, 12, ctx).coordinates, [101, 2, 0, 101, 2, 12])
-  options.color = () => '#112233'
+  assert.equal(edgeGradient(entry, ctx), line, 'moving the camera does not allocate another gradient')
+  assert.deepEqual(haloGradient(node, 12, ctx).coordinates, [102, -16, 0, 102, -16, 12])
+  entry.a.node.x = 10
+  assert.deepEqual(edgeGradient(entry, ctx).coordinates, [10, 2, -3, 4], 'relayout updates graph-space endpoints')
+  options.color = (pkg) => pkg === 'app' ? '#112233' : '#445566'
   updateRenderCache(cache, options)
-  assert.deepEqual(edgeGradient(entry, cache, .22, ctx, alphaHex).stops, [[0, '#11223338'], [1, '#11223338']])
+  assert.deepEqual(edgeGradient(cache.edges[1], ctx).stops, [[0, '#112233'], [1, '#445566']])
   assert.deepEqual(haloGradient(node, 12, ctx).stops, [[0, '#11223355'], [1, '#11223300']])
+})
+
+it('reuses edge paints and preserves opacity, highlighting, filtering, and theme colors', () => {
+  const cache = createRenderCache(fixture())
+  const neutral = (alpha) => `rgba(180, 195, 215, ${alpha})`
+  for (const selected of [false, true]) {
+    const paints = edgePaints(cache, .22, neutral, selected)
+    const base = selected ? .22 * .25 : .22
+    const emphasis = selected ? .85 : Math.min(.9, .22 + .5)
+    for (const [key, alpha] of [['base', base], ['emphasis', emphasis], ['baseDim', Math.min(base, .04)], ['emphasisDim', .04]]) {
+      assert.equal(paints[key].opacity, Math.round(alpha * 255) / 255, 'same 8-bit alpha as the original gradient stops')
+      assert.equal(paints[key].neutral, `rgba(180, 195, 215, ${alpha * .7})`)
+    }
+    assert.equal(edgePaints(cache, .22, neutral, selected), paints, 'same styles are shared on subsequent frames')
+  }
+  const light = edgePaints(cache, .22, (alpha) => `rgba(50, 70, 100, ${alpha})`, false)
+  assert.equal(light.base.neutral, `rgba(50, 70, 100, ${.22 * .7})`)
+  const faint = edgePaints(cache, .01, neutral, true)
+  assert.equal(faint.base.opacity, Math.round(.01 * .25 * 255) / 255)
+  assert.equal(faint.baseDim.opacity, faint.base.opacity, 'filtering never brightens an already-fainter edge')
 })

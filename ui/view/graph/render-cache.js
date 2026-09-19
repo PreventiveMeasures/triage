@@ -11,10 +11,6 @@ export function createRenderCache(graph) {
 }
 
 export function updateRenderCache(cache, { viewport, selected, visible, dimmed, radius, color, paintKey }) {
-  if (cache.k !== viewport.k || cache.tx !== viewport.tx || cache.ty !== viewport.ty) {
-    cache.k = viewport.k; cache.tx = viewport.tx; cache.ty = viewport.ty
-    cache.geometryVersion = (cache.geometryVersion ?? 0) + 1
-  }
   // Hover and file selection don't change these values. The caller's key
   // includes viewport, sizing, theme, and every filter (including Set contents).
   if (paintKey === undefined || cache.paintKey !== paintKey) {
@@ -43,15 +39,34 @@ export function updateRenderCache(cache, { viewport, selected, visible, dimmed, 
   }
 }
 
-export function edgeGradient(entry, frame, alpha, ctx, alphaHex) {
+// A frame uses only two edge opacities (ordinary/emphasized), each with a
+// filter-dimmed variant. Reuse the parsed color strings instead of formatting
+// the same rgba() value for every intra-package edge on every repaint.
+export function edgePaints(cache, opacity, neutral, selected) {
+  if (cache.paints && cache.edgeOpacity === opacity && cache.neutral === neutral && cache.edgeSelected === selected) return cache.paints
+  const paint = (alpha) => ({ opacity: Math.max(0, Math.min(255, Math.round(alpha * 255))) / 255, neutral: neutral(alpha * 0.7) })
+  const base = selected ? opacity * 0.25 : opacity
+  const emphasis = selected ? 0.85 : Math.min(0.9, opacity + 0.5)
+  cache.paints = {
+    base: paint(base), emphasis: paint(emphasis),
+    baseDim: paint(Math.min(base, 0.04)), emphasisDim: paint(Math.min(emphasis, 0.04)),
+  }
+  cache.edgeOpacity = opacity; cache.neutral = neutral; cache.edgeSelected = selected
+  return cache.paints
+}
+
+// Gradient endpoints live in graph coordinates. The edge pass applies the
+// viewport transform at draw time, so pan/zoom and emphasis can reuse the same
+// paint object. Opacity is applied separately through ctx.globalAlpha.
+export function edgeGradient(entry, ctx) {
   const { a, b } = entry
-  if (!entry.gradient || entry.geometryVersion !== frame.geometryVersion || entry.alpha !== alpha
+  if (!entry.gradient || entry.ax !== a.node.x || entry.ay !== a.node.y || entry.bx !== b.node.x || entry.by !== b.node.y
       || entry.colorA !== a.color || entry.colorB !== b.color) {
-    entry.gradient = ctx.createLinearGradient(a.x, a.y, b.x, b.y)
-    entry.gradient.addColorStop(0, a.color + alphaHex(alpha))
-    entry.gradient.addColorStop(1, b.color + alphaHex(alpha))
-    entry.geometryVersion = frame.geometryVersion
-    entry.alpha = alpha; entry.colorA = a.color; entry.colorB = b.color
+    entry.gradient = ctx.createLinearGradient(a.node.x, a.node.y, b.node.x, b.node.y)
+    entry.gradient.addColorStop(0, a.color)
+    entry.gradient.addColorStop(1, b.color)
+    entry.ax = a.node.x; entry.ay = a.node.y; entry.bx = b.node.x; entry.by = b.node.y
+    entry.colorA = a.color; entry.colorB = b.color
   }
   return entry.gradient
 }

@@ -64,9 +64,10 @@ export function drawDependencyLayers(ctx, layout, { theme, scale, colorOf, label
   ctx.textAlign = 'right'
   ctx.fillStyle = theme.labelDefault
   ctx.font = '11px system-ui, sans-serif'
+  const layerRing = theme.edgeIntra(0.16)
   for (const row of layout.levels) {
     const cx = -112, cy = row.y + 26, radius = 18
-    ctx.strokeStyle = theme.edgeIntra.replace('ALPHA', '0.16')
+    ctx.strokeStyle = layerRing
     ctx.lineWidth = 3
     ctx.beginPath()
     ctx.arc(cx, cy, radius, 0, Math.PI * 2)

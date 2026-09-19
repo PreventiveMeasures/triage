@@ -8,7 +8,7 @@ import { forceLayout } from './force-layout.js'
 import { formatBytes } from '../format.js'
 import { layoutDependencyLayers } from './layered-layout.js'
 import { drawDependencyLayers } from './layered-render.js'
-import { circleOutside, createRenderCache, edgeGradient, edgeOutside, haloGradient, updateRenderCache } from './render-cache.js'
+import { circleOutside, createRenderCache, edgeGradient, edgeOutside, edgePaints, haloGradient, updateRenderCache } from './render-cache.js'
 import { createNodePicker } from './node-picker.js'
 import { outsideDamage, panDamage } from './pan-damage.js'
 
@@ -43,8 +43,8 @@ const G2_THEMES = {
     bg: '#0c0c0c',
     grid: 'rgba(255, 255, 255, 0.022)',
     selectRing: '#ffffff',
-    edgeIntra: 'rgba(180, 195, 215, ALPHA)',
-    hubRing: 'rgba(255, 255, 255, ALPHA)',
+    edgeIntra: (alpha) => `rgba(180, 195, 215, ${alpha})`,
+    hubRing: (alpha) => `rgba(255, 255, 255, ${alpha})`,
     labelFill: 'rgba(230, 233, 238, 0.78)',
     // Package-view label palette — tuned so labels read against
     // the canvas backdrop without bleeding into adjacent nodes.
@@ -58,8 +58,8 @@ const G2_THEMES = {
     bg: '#f6f8fa',
     grid: 'rgba(0, 0, 0, 0.04)',
     selectRing: '#0969da',
-    edgeIntra: 'rgba(50, 70, 100, ALPHA)',
-    hubRing: 'rgba(0, 0, 0, ALPHA)',
+    edgeIntra: (alpha) => `rgba(50, 70, 100, ${alpha})`,
+    hubRing: (alpha) => `rgba(0, 0, 0, ${alpha})`,
     labelFill: 'rgba(40, 50, 70, 0.85)',
     labelShadow: 'rgba(255, 255, 255, 0.95)',
     labelOutline: 'rgba(255, 255, 255, 0.9)',
@@ -78,8 +78,8 @@ const G2_THEMES = {
     bg: '#fff0f7',
     grid: 'rgba(0, 0, 0, 0.04)',
     selectRing: '#0969da',
-    edgeIntra: 'rgba(50, 70, 100, ALPHA)',
-    hubRing: 'rgba(0, 0, 0, ALPHA)',
+    edgeIntra: (alpha) => `rgba(50, 70, 100, ${alpha})`,
+    hubRing: (alpha) => `rgba(0, 0, 0, ${alpha})`,
     labelFill: 'rgba(40, 50, 70, 0.85)',
     labelShadow: 'rgba(255, 255, 255, 0.95)',
     labelOutline: 'rgba(255, 255, 255, 0.9)',
@@ -101,9 +101,6 @@ function currentTheme() {
   return G2_THEMES.dark
 }
 
-// 0..1 → 2-digit hex alpha — appended to a 6-digit hex color so we
-// can compose `'#ffaa00' + alphaHex(0.3)` cheaply in inner draw
-// loops without ctx.globalAlpha bookkeeping.
 // Screen-space AABB overlap test shared by the label collision passes.
 const overlaps = (a, b) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1
 
@@ -122,9 +119,12 @@ function placeLabels(candidates) {
   return placed
 }
 
+// Precompute the 256 suffixes once; hot node/halo/arrow loops only round,
+// clamp, and index instead of allocating strings with toString/padStart.
+const ALPHA_HEX = Array.from({ length: 256 }, (_, i) => i.toString(16).padStart(2, '0'))
 function alphaHex(a) {
   const v = Math.max(0, Math.min(255, Math.round(a * 255)))
-  return v.toString(16).padStart(2, '0')
+  return ALPHA_HEX[v]
 }
 
 // Wire up the v2 canvas: layout (deferred to first resize so the
@@ -147,6 +147,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
   const canvas = root.querySelector('#g2-canvas')
   const tooltip = root.querySelector('#g2-tooltip')
   const stage = root.querySelector('.graph2-stage')
+  const statsEl = root.querySelector('.g2-stage-stats')
   const zoomEl = root.querySelector('#g2-zoom-pct')
 
   if (!canvas) return
@@ -163,6 +164,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
   let dpr = window.devicePixelRatio || 1
   let H = 0
   let W = 0
+  let statsSafeHeight = 0
   const viewport = { tx: 0, ty: 0, k: 1 }
   let hovered = null
   let layoutH = 0
@@ -290,7 +292,8 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
   }
 
   // (k, tx, ty) that fits the graph's bounding box into the
-  // viewport with 10% padding. Pure — doesn't mutate viewport.
+  // viewport with max(20px, 3%) padding, plus one stats line and an 8px gap below.
+  // Pure — doesn't mutate viewport or measure DOM in the wheel handler.
   // Used by fitToView() and by the wheel handler to clamp
   // min-zoom and locate "centered" for the pan-to-center fallback.
   // Bounds come from whichever node set is on screen — package
@@ -304,7 +307,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     }
     const nodes = pkgViewOn() ? getPkgGraph().nodes : graph.nodes
     if (nodes.length === 0) {
-      return { k: 1, tx: W / 2, ty: H / 2 }
+      return { k: 1, tx: W / 2, ty: (H - statsSafeHeight) / 2 }
     }
     let maxX = -Infinity
     let maxY = -Infinity
@@ -320,10 +323,10 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     const w = Math.max(20, maxX - minX)
     const cx = (minX + maxX) / 2
     const cy = (minY + maxY) / 2
-    const pad = Math.min(W, H) * 0.1
-    const rawK = Math.min((W - pad * 2) / w, (H - pad * 2) / h, 4)
+    const pad = Math.max(20, Math.min(W, H) * 0.03)
+    const rawK = Math.min((W - pad * 2) / w, (H - pad * 2 - statsSafeHeight) / h, 4)
     const k = Math.max(0.05, rawK)
-    return { k, tx: W / 2 - cx * k, ty: H / 2 - cy * k }
+    return { k, tx: W / 2 - cx * k, ty: (H - statsSafeHeight) / 2 - cy * k }
   }
 
   function fitToView() {
@@ -451,6 +454,8 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     const prevW = W
     W = Math.max(80, rect.width)
     H = Math.max(80, rect.height)
+    // Reserve one line plus a gap above it, even when stats wrap; measure only on resize.
+    statsSafeHeight = statsEl ? (parseFloat(getComputedStyle(statsEl).lineHeight) || 0) + 8 : 0
     dpr = window.devicePixelRatio || 1
     canvas.width = W * dpr; canvas.height = H * dpr
     paintedFrame = null
@@ -621,19 +626,19 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     // get distinct visual treatment (cross = gradient between
     // package hues, intra = neutral structural gray) so the
     // axis is still readable without a topbar toggle.
+    const paints = edgePaints(frame, graph2.edgeOpacity, T.edgeIntra, !!selected)
+    const focus = selected || hovered
+    const crossWidth = 0.85 / viewport.k, intraWidth = 0.55 / viewport.k
+    let lastAlpha = null, lastStroke = null, lastWidth = null
+    ctx.save()
+    ctx.translate(viewport.tx, viewport.ty)
+    ctx.scale(viewport.k, viewport.k)
     for (const entry of frame.edges) {
       const { edge: e, a, b } = entry
       if (!a.visible || !b.visible || edgeOutside(a, b, W, H)) continue
       if (outsideDamage(damage, Math.min(a.x, b.x) - 2, Math.min(a.y, b.y) - 2, Math.max(a.x, b.x) + 2, Math.max(a.y, b.y) + 2)) continue
 
-      let alpha = graph2.edgeOpacity
-      if (selected) {
-        const touches = e.a === selected || e.b === selected
-        alpha = touches ? 0.85 : graph2.edgeOpacity * 0.25
-      } else if (hovered) {
-        const touches = e.a === hovered || e.b === hovered
-        if (touches) alpha = Math.min(0.9, alpha + 0.5)
-      }
+      const touches = focus && (e.a === focus || e.b === focus)
       // Soft-dim when neither endpoint passes the active
       // filter set (severity highlight + package solo). The
       // edge connects two "context" nodes in that case; fade
@@ -641,31 +646,27 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
       // least one endpoint matches, keep the edge legible
       // so the user can trace what the matching node
       // connects to.
-      if (a.dimmed && b.dimmed) {
-        alpha = Math.min(alpha, 0.04)
-      }
+      const style = a.dimmed && b.dimmed
+        ? (touches ? paints.emphasisDim : paints.baseDim)
+        : (touches ? paints.emphasis : paints.base)
 
-      const ax = a.x, ay = a.y, bx = b.x, by = b.y
-
-      if (e.cross) {
-        // Gradient between package colors so the eye can trace
-        // who's on which side of a cross-package import without
-        // having to chase node colors visually.
-        ctx.strokeStyle = edgeGradient(entry, frame, alpha, ctx, alphaHex)
-        ctx.lineWidth = 0.85
-      } else {
-        // Intra-package edges use the theme's neutral edge color
-        // so they read as "structural" rather than competing
-        // with the vivid cross-package gradients.
-        ctx.strokeStyle = T.edgeIntra.replace('ALPHA', String(alpha * 0.7))
-        ctx.lineWidth = 0.55
-      }
+      // Cross-package gradients retain their endpoint hues; intra-package
+      // edges keep the theme's neutral color. Avoid repeated native setters
+      // for runs sharing a style, without batching/reordering translucent
+      // strokes (which would change their overlaps).
+      const stroke = e.cross ? edgeGradient(entry, ctx) : style.neutral
+      const alpha = e.cross ? style.opacity : 1
+      const width = e.cross ? crossWidth : intraWidth
+      if (stroke !== lastStroke) { ctx.strokeStyle = stroke; lastStroke = stroke }
+      if (alpha !== lastAlpha) { ctx.globalAlpha = alpha; lastAlpha = alpha }
+      if (width !== lastWidth) { ctx.lineWidth = width; lastWidth = width }
 
       ctx.beginPath()
-      ctx.moveTo(ax, ay)
-      ctx.lineTo(bx, by)
+      ctx.moveTo(a.node.x, a.node.y)
+      ctx.lineTo(b.node.x, b.node.y)
       ctx.stroke()
     }
+    ctx.restore()
 
     // ── Halos (hubs / hover / selected) ─────────────────────────
     {
@@ -722,7 +723,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
       if (n.isHub) {
         // White ring on dark, near-black on light — the hub marker
         // needs maximum contrast against the package-colored fill.
-        ctx.strokeStyle = T.hubRing.replace('ALPHA', String(0.55 * dim))
+        ctx.strokeStyle = T.hubRing(0.55 * dim)
         ctx.lineWidth = 0.8
         ctx.stroke()
       }
@@ -859,6 +860,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
   // assumes the layout pass produced a force-directed arrangement.
   function drawPackageView(T, selected, sel) {
     const baseColor = pkgColor(graph2.focusedPkg)
+    const hubRing = T.hubRing(0.55)
     // Connected-files set for hover dimming (mirrors v1's pattern)
     const connected = new Set()
     if (hovered) {
@@ -959,7 +961,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
       ctx.fill()
 
       if (n.isHub) {
-        ctx.strokeStyle = T.hubRing.replace('ALPHA', '0.55')
+        ctx.strokeStyle = hubRing
         ctx.lineWidth = 0.9
         ctx.stroke()
       }
