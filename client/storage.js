@@ -773,6 +773,7 @@ export async function deleteFile(name) {
 // be large; gzip-base64ing them through localStorage's ~5MB cap
 // rarely makes sense, and this is a non-essential side feature.
 const BUNDLE_META_FILE = '_meta.json'
+const BUNDLE_INDEX_SUFFIX = '.index-v1'
 
 function getOpfsBundlesDir() {
   return openOpfsDir(OPFS_BUNDLES_DIR, { create: true })
@@ -982,6 +983,8 @@ export async function deleteBundle(integrity) {
     // saveBundle vs deleteBundle within the same vault state. Audit
     // round-12 H7.
     await lockBundleMeta(async () => {
+      try { await dir.removeEntry(integrityToOpfsKey(integrity) + BUNDLE_INDEX_SUFFIX) }
+      catch (err) { if (!(err instanceof DOMException) || err.name !== 'NotFoundError') throw err }
       const meta = await readBundleMeta(dir)
       const filtered = meta.filter((e) => e.integrity !== integrity)
       // No-op short-circuit: deleting a non-existent integrity (or
@@ -1020,6 +1023,34 @@ export async function readBundle(integrity) {
     return await gunzipBytes(bytes)
   }
   return bytes
+}
+
+// Read only on demand. This derived index uses a distinct bundle AAD slot;
+// the ordinary bundle migration sweep also encrypts/decrypts it, since its
+// filename reverses to that exact slot. No source bytes or global RAM cache.
+export async function readBundleIndex(integrity) {
+  const dir = await getOpfsBundlesDir()
+  if (!dir || (isEncryptionEnabled() && !getSessionKey())) return null
+  try {
+    const fh = await dir.getFileHandle(integrityToOpfsKey(integrity) + BUNDLE_INDEX_SUFFIX)
+    let bytes = new Uint8Array(await (await fh.getFile()).arrayBuffer())
+    if (hasEnvelopeMagic(bytes)) bytes = await openForBundle(bytes, integrity + BUNDLE_INDEX_SUFFIX)
+    return JSON.parse(decodeUtf8(await gunzipBytes(bytes)))
+  } catch { return null } // Absent, old, or corrupt cache: rebuild from the bundle.
+}
+
+export async function saveBundleIndex(integrity, index) {
+  const bytes = await gzipBytes(encodeUtf8(JSON.stringify(index)))
+  return navigator.locks.request(VAULT_LOCK, { mode: 'shared' }, () => lockBundleMeta(async () => {
+    const dir = await getOpfsBundlesDir()
+    if (!dir) return
+    // Don't resurrect an index after a concurrent bundle deletion.
+    await dir.getFileHandle(integrityToOpfsKey(integrity))
+    const slot = integrity + BUNDLE_INDEX_SUFFIX
+    const sealed = await sealForStorage(bytes, sealForBundle, slot, 'bundle index')
+    const fh = await dir.getFileHandle(integrityToOpfsKey(slot), { create: true })
+    await writeOpfsFile(fh, sealed)
+  }))
 }
 
 // Migration helpers — driven by passkey-vault.js's enable/disable

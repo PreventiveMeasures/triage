@@ -9,12 +9,59 @@
 // events.js), the bundle-only drop branch in `ingest.js`, and the
 // boot-time `LAST_FILE_KEY` bundle restore in `view.js`.
 import { Bundle } from '@exodus/stasis-core/bundle'
-import { ensureBundleFindingsIndexed, hasBundleFileHashes, readBundle, recordBundleFileHashes, state } from '#client/index.js'
+import { ensureBundleFindingsIndexed, hasBundleFileHashes, readBundle, readBundleIndex, recordBundleFileHashes, saveBundleIndex, state } from '#client/index.js'
 import { decodeUtf8 } from '../../common/utf8.js'
 import { brotliDecompress } from './brotli-decompress.js'
 import { graph2 } from './graph/state.js'
 import { render } from './render.js'
-import { computeBundleFileHashes } from './render-bundle.js'
+import { bundleNeedsSources, computeBundleFileHashes, createBundleMetadata, parseBundleMetadata } from './bundle-metadata.js'
+
+const sourceLoads = new Map()
+const metadataLoads = new Map()
+const sourceUpgrades = new WeakMap()
+
+async function cachedMetadata(integrity) {
+  try {
+    const data = await readBundleIndex(integrity)
+    return data ? parseBundleMetadata(data, integrity) : null
+  } catch { return null }
+}
+
+// In-flight deduplication only: completed source bodies are owned by their
+// active view, never retained in a process-wide preload/cache of bundles.
+export function buildBundleDetails(integrity, entry, { sources = true } = {}) {
+  const loads = sources ? sourceLoads : metadataLoads
+  const kind = entry.name.toLowerCase().endsWith('.map') ? 'sourcemap' : 'stasis'
+  const active = state.bundleDetails
+  // Share the bundle already owned by the active view with finding source
+  // links and comparison/code consumers, without retaining another bundle.
+  if (active?.integrity === integrity && active.kind === kind && !active.error
+      && (!sources || !active.metadataOnly)) return Promise.resolve(active)
+  const key = `${integrity}:${kind}`
+  if (loads.has(key)) return loads.get(key)
+  const job = (async () => {
+    if (!sources) {
+      const cached = await cachedMetadata(integrity)
+      if (cached?.kind === kind) return cached
+      return buildBundleDetails(integrity, entry)
+    }
+    const [details, cached] = await Promise.all([readBundleDetails(integrity, entry), cachedMetadata(integrity)])
+    if (!details.error) {
+      if (cached?.kind === details.kind) {
+        details.fileHashes = cached.fileHashes
+        details.fileSizes = cached.fileSizes
+      } else {
+        // Generate once, after a source load was actually requested. Cache
+        // persistence is best-effort and cannot fail opening the real bundle.
+        createBundleMetadata(details).then((index) => saveBundleIndex(integrity, index)).catch(() => {})
+      }
+    }
+    return details
+  })()
+  loads.set(key, job)
+  job.finally(() => { if (loads.get(key) === job) loads.delete(key) }).catch(() => {})
+  return job
+}
 
 // Reset every per-bundle UI slot and make `integrity` the selected
 // bundle on the bundles view. Shared by the sidebar bundle-row click,
@@ -50,11 +97,9 @@ export function selectBundle(integrity, tab = 'overview') {
 // `details.bundle` is an `@exodus/stasis-core` `Bundle` (handles v0 +
 // v1 uniformly; .sources / .imports / .modules are Map-shaped).
 //
-// Exported so non-state-mutating callers (focus view's inline code
-// panel in focus-code.js, the Compare slide's other-bundle parse in
-// bundle-compare.js, and prefetchBundleHashes below) can parse
-// without touching `state.bundleDetails`.
-export async function buildBundleDetails(integrity, entry) {
+// buildBundleDetails also exposes this to the focus view's inline code
+// panel and Compare without touching `state.bundleDetails`.
+async function readBundleDetails(integrity, entry) {
   try {
     const bytes = await readBundle(integrity)
     const isMap = entry.name.toLowerCase().endsWith('.map')
@@ -88,6 +133,7 @@ export async function buildBundleDetails(integrity, entry) {
 // row mid-hash) drop silently.
 function kickFileHashes(details) {
   if (!details?.json && !details?.bundle) return
+  if (details.fileHashes) { recordBundleFileHashes(details.integrity, details.fileHashes); return }
   ;(async () => {
     try {
       const fileHashes = await computeBundleFileHashes(details)
@@ -95,23 +141,20 @@ function kickFileHashes(details) {
       // navigating away — the report-card's "Code →" lookup needs it
       // regardless of the bundle panel's visibility.
       recordBundleFileHashes(details.integrity, fileHashes)
-      if (state.selectedBundle !== details.integrity) return
+      if (state.bundleDetails !== details) return
       details.fileHashes = fileHashes
       render()
     } catch {}
   })()
 }
 
-// State-free variant of the open path — parses and records per-file
-// hashes without touching `state.bundleDetails` / `selectedBundle`.
-// Seeds the index for a freshly-loaded report's findings so "Code →"
-// surfaces without the user opening every bundle. Idempotent + cheap:
-// skipped if hashes for this integrity already exist.
+// Report-driven lookups may read a saved index, but never preload/decompress
+// an unopened source bundle. A cache miss waits for an explicit bundle open.
 export async function prefetchBundleHashes(integrity) {
   if (hasBundleFileHashes(integrity)) return
   const entry = (state.bundles ?? []).find((b) => b.integrity === integrity)
   if (!entry) return
-  const details = await buildBundleDetails(integrity, entry)
+  const details = await cachedMetadata(integrity)
   if (!details?.json && !details?.bundle) return
   try {
     const fileHashes = await computeBundleFileHashes(details)
@@ -133,10 +176,30 @@ export async function prefetchBundleHashes(integrity) {
 export async function openBundle(integrity) {
   const entry = (state.bundles ?? []).find((b) => b.integrity === integrity)
   if (!entry) return
-  const details = await buildBundleDetails(integrity, entry)
+  const details = await buildBundleDetails(integrity, entry, {
+    sources: bundleNeedsSources(state.bundleDetailsTab, state.bundleSourceFile),
+  })
   if (state.selectedBundle !== integrity) return
   state.bundleDetails = details
   render()
   kickFileHashes(details)
   ensureBundleFindingsIndexed().catch(() => {})
+}
+
+// Upgrade metadata only when a body-consuming view is requested. Hashes and
+// sizes survive the upgrade; rapid tab/source clicks share the same load.
+export function ensureBundleSources(details = state.bundleDetails) {
+  if (!details?.metadataOnly) return Promise.resolve(details)
+  if (sourceUpgrades.has(details)) return sourceUpgrades.get(details)
+  const entry = (state.bundles ?? []).find((b) => b.integrity === details.integrity)
+  if (!entry) return Promise.resolve(null)
+  const job = buildBundleDetails(details.integrity, entry).then((full) => {
+    if (state.bundleDetails !== details) return full
+    if (!full.error) { full.fileHashes = details.fileHashes; full.fileSizes = details.fileSizes }
+    state.bundleDetails = full
+    render()
+    return full
+  })
+  sourceUpgrades.set(details, job)
+  return job
 }

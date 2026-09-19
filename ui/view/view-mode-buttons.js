@@ -21,6 +21,8 @@ import { classMap } from 'lit/directives/class-map.js'
 import { StateElement, html } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'
 import { ensureHostAria } from './host-aria.js'
+import { unsafeHTML } from 'lit/directives/unsafe-html.js'
+import { GRAPH_ICON_SVG } from './icons.js'
 
 const VIEW_ICONS = {
   // table   — gridded cell layout
@@ -72,14 +74,7 @@ const VIEW_ICONS = {
     <rect x="11.2" y="8.9" width="3.3" height="2.5" rx=".4" fill="currentColor" opacity=".22"/>
   </svg>`,
   // graph   — three nodes connected by edges
-  graph: html`<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true">
-    <line x1="4.5" y1="4.5" x2="11.5" y2="6.5"/>
-    <line x1="4.5" y1="4.5" x2="6.5" y2="11.5"/>
-    <line x1="11.5" y1="6.5" x2="6.5" y2="11.5"/>
-    <circle cx="4.5" cy="4.5" r="2" fill="currentColor"/>
-    <circle cx="11.5" cy="6.5" r="2" fill="currentColor"/>
-    <circle cx="6.5" cy="11.5" r="2" fill="currentColor"/>
-  </svg>`,
+  graph: html`${unsafeHTML(GRAPH_ICON_SVG)}`,
 }
 
 const VIEW_TITLES = {

@@ -20,6 +20,8 @@ import { renderTreeView } from './render-files.js'
 import { graph2 } from './graph/state.js'
 import { attachGraphLayout, loadedGraphMod } from './graph-attach.js'
 import { attachTerminal } from './terminal-attach.js'
+import { ensureBundleSources } from './bundle-load.js'
+import { bundleNeedsSources } from './bundle-metadata.js'
 import { packageOf } from './graph/utils.js'
 import { renderPackagesView } from './render-packages.js'
 import { renderRepositoriesView } from './render-repositories.js'
@@ -1127,14 +1129,14 @@ function kanbanDetailTemplate(focusGroup, column, columns = []) {
   const actions = html`<div class="kanban-detail-actions">
     <button
       type="button"
-      class="kanban-detail-expand"
+      class="kanban-detail-expand detail-action"
       data-kanban-detail-fullscreen
       aria-pressed=${full ? 'true' : 'false'}
       aria-label=${full ? 'Back to the readable width' : 'Fill the available space'}
     >${full ? COLLAPSE_ICON : EXPAND_ICON}</button>
     <button
       type="button"
-      class="kanban-detail-close"
+      class="kanban-detail-close detail-action"
       aria-label="Close details"
     >×</button>
   </div>`
@@ -1529,6 +1531,7 @@ function findingsBodyTemplate(filtered) {
 // `#report` means the modal survives the report's `innerHTML`
 // rebuilds the dispatch branches do.
 function mountBundleSourceOverlay() {
+  if (state.bundleSourceFile) ensureBundleSources().catch(() => {})
   const slot = document.querySelector('#bundle-source-overlay-slot')
   if (slot) litRender(renderBundleSourceModal(), slot)
 }
@@ -1669,6 +1672,7 @@ function renderImpl() {
       // to findings rather than render an empty list.
       state.currentView = 'findings'
     } else {
+      if (bundleNeedsSources(state.bundleDetailsTab, state.bundleSourceFile)) ensureBundleSources().catch(() => {})
       const slot = ensureReportSlot('bundles-slot')
       if (slot) litRender(renderBundlesList(state.bundles), slot)
       const details = state.bundleDetails
@@ -1724,7 +1728,7 @@ function renderImpl() {
       // The attach helper is idempotent for the same bundle
       // (matched by `integrity`), so flipping tabs in and out
       // preserves the running shell session.
-      if (bundleOpen && state.bundleDetailsTab === 'terminal') {
+      if (bundleOpen && !details.metadataOnly && state.bundleDetailsTab === 'terminal') {
         const terminalSlot = document.querySelector('#bundle-terminal-slot')
         if (terminalSlot) attachTerminal(terminalSlot, state.bundleDetails)
       }

@@ -130,9 +130,11 @@ export {
   migrateOpfsFilesEncrypt,
   onFileMutated,
   readBundle,
+  readBundleIndex,
   readFile,
   readFileBytes,
   saveBundle,
+  saveBundleIndex,
   saveFile,
   saveFileBytes,
 } from './storage.js'

@@ -92,9 +92,7 @@ describe('bundlePkgOf', () => {
       assert.notEqual(a, b)
     })
 
-    it('lets the node_modules heuristic win over a redundant dep packageDir', () => {
-      // A dep's stasis dir IS node_modules/<pkg>; the bare package
-      // name (existing behavior + color) must still win.
+    it('uses the recorded node_modules directory for the package name', () => {
       assert.equal(
         bundlePkgOf('node_modules/foo/index.js', { packageDir: 'node_modules/foo' }),
         'foo',
@@ -103,6 +101,24 @@ describe('bundlePkgOf', () => {
         bundlePkgOf('a/node_modules/@s/p/i.js', { packageDir: 'a/node_modules/@s/p' }),
         '@s/p',
       )
+      assert.equal(
+        bundlePkgOf('dependencies/filename.js', { packageDir: 'node_modules/.pnpm/@s+p@1.0.0/node_modules/@s/p' }),
+        '@s/p',
+      )
+      assert.equal(
+        bundlePkgOf('node_modules/outer/node_modules/inner/index.js', { packageDir: 'node_modules/outer/node_modules/inner' }),
+        'inner',
+      )
+    })
+
+    it('keeps dependency-named source folders in their recorded owning module', () => {
+      const path = 'subdir/dependencies/filename.js'
+      assert.equal(bundlePkgOf(path, { packageDir: '.', splitOwnDirs: false }), '__own__')
+      assert.equal(bundlePkgOf(path, { packageDir: '.', splitOwnDirs: true }), 'subdir')
+      assert.equal(bundlePkgOf(path, { packageDir: 'subdir', splitOwnDirs: false }), 'subdir')
+      assert.equal(bundlePkgOf('dependencies/filename.js', { packageDir: 'packages/app' }), 'packages/app')
+      // Without metadata, the legacy dependency-directory heuristic still applies.
+      assert.equal(bundlePkgOf(path, { splitOwnDirs: false }), 'filename.js')
     })
 
     it('treats the `.` root dir as own source (split by top-level dir)', () => {
@@ -140,6 +156,11 @@ describe('ownSourceSplittable', () => {
   it('is true when a top-level dir coexists with repo-root files', () => {
     // split → { src, __own__ }: the root file separates from src.
     assert.equal(ownSourceSplittable(['src/a.js', 'index.js']), true)
+  })
+
+  it('includes dependency-named own-source folders when authoritative metadata is present', () => {
+    assert.equal(ownSourceSplittable(['index.js', 'subdir/dependencies/filename.js'], () => '.'), true)
+    assert.equal(ownSourceSplittable(['subdir/dependencies/filename.js', 'subdir/main.js'], () => '.'), false)
   })
 
   describe('with a stasis packageDirOf', () => {

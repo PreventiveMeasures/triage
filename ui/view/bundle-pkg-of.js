@@ -26,22 +26,23 @@
 //
 // `packageDir` is this path's authoritative stasis package directory
 // (from `bundlePackageDirs` in bundle-sources.js), when one is known.
-// It only matters for workspace packages the heuristic can't see —
-// non-`node_modules` dirs like PHP's `vendor/<vendor>/<pkg>` or a
-// monorepo's `packages/<name>` — which would otherwise collapse into a
-// single shared-parent bucket; supplying the dir returns it verbatim so
-// siblings stay separate. `node_modules` deps still resolve to the bare
-// package name above (their dir is redundant), and the `.` root falls
-// through to own-source bucketing below so the "Split dirs" behavior is
-// unchanged for first-party code.
+// It takes precedence over path heuristics: a module can contain its own
+// `dependencies/` directory without those files becoming new packages.
+// Recorded `node_modules/<pkg>` directories use the bare package name;
+// other named module directories stay separate, and `.` uses own-source
+// bucketing. Only bundles without this metadata use the path heuristic.
 export function bundlePkgOf(path, { splitOwnDirs = true, packageDir = null } = {}) {
-  const re = /(?:^|\/)(?:node_modules|dependencies)\/(@[^/]+\/[^/]+|[^/]+)/gu
-  let m
-  while ((m = re.exec(path)) !== null) {
-    if (m[1] !== '.pnpm') return m[1]
-  }
-  if (packageDir && packageDir !== '.' && !packageDir.includes('node_modules')) {
-    return packageDir
+  if (packageDir) {
+    if (packageDir !== '.') {
+      const npm = packageDir.match(/(?:^|\/)node_modules\/(@[^/]+\/[^/]+|[^/]+)$/u)
+      return npm && npm[1] !== '.pnpm' ? npm[1] : packageDir
+    }
+  } else {
+    const re = /(?:^|\/)(?:node_modules|dependencies)\/(@[^/]+\/[^/]+|[^/]+)/gu
+    let m
+    while ((m = re.exec(path)) !== null) {
+      if (m[1] !== '.pnpm') return m[1]
+    }
   }
   if (splitOwnDirs) {
     const slash = path.indexOf('/')

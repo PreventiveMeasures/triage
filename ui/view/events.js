@@ -180,7 +180,7 @@ function renderSearchNextFrame() {
     render()
   })
 }
-import { openBundle, selectBundle } from './bundle-load.js'
+import { ensureBundleSources, openBundle, selectBundle } from './bundle-load.js'
 import { renderSidebar } from './sidebar.js'
 import { BUNDLE_TABS, persistLastBundle, switchToFile } from './ingest.js'
 import { treeAnchor } from './file-counts.js'
@@ -351,9 +351,12 @@ report.addEventListener('click', (e) => {
       scrollSourceLineIntoView(line, { block: 'start', behavior: 'instant' })
     }
     if (state.selectedBundle === integrity && state.bundleDetails?.integrity === integrity) {
-      // Already parsed — render to mount the modal, then scroll.
+      // An already-open metadata view may still need source bodies.
       render()
-      scrollToFindingLine()
+      ensureBundleSources().then(() => {
+        if (state.selectedBundle === integrity && state.bundleSourceFile === file) scrollToFindingLine()
+        return null
+      })
       return
     }
     state.selectedBundle = integrity
@@ -574,7 +577,10 @@ report.addEventListener('click', (e) => {
       // Tear down the canvas when leaving Graph so its rAF /
       // observers stop. attachGraph2Interaction will re-wire on
       // re-entry.
-      if (state.bundleDetailsTab === 'graph' && tab !== 'graph') cleanupGraph2()
+      if (state.bundleDetailsTab === 'graph' && tab !== 'graph') {
+        cleanupGraph2()
+        document.body.classList.remove('report-fullscreen')
+      }
       // Tab switch resets the source-viewer pointer so a stale
       // bundleSourceFile from a different tab (Code slide
       // selection, or modal opened from the Files tab) doesn't
@@ -589,7 +595,12 @@ report.addEventListener('click', (e) => {
       // pickDefaultBundleCodeFile); bring its tree row into view —
       // the worst-issue file can live deep in a long node_modules
       // subtree the rail opens scrolled past.
-      if (tab === 'code') revealBundleCodeCurrent()
+      if (tab === 'code') {
+        ensureBundleSources().then(() => {
+          if (state.bundleDetailsTab === 'code') revealBundleCodeCurrent()
+          return null
+        })
+      }
     }
     return
   }
@@ -761,7 +772,10 @@ report.addEventListener('click', (e) => {
       // (the line IS the focus, so equal context above and below
       // reads better).
       const block = sourceOpen.dataset.bundleViewScrollBlock || 'center'
-      scrollSourceLineIntoView(line, { block, behavior: 'smooth' })
+      ensureBundleSources().then(() => {
+        if (state.bundleSourceFile === path) scrollSourceLineIntoView(line, { block, behavior: 'smooth' })
+        return null
+      })
     }
     return
   }
@@ -951,7 +965,7 @@ report.addEventListener('click', (e) => {
   const g2Layout = pathClosest(e, '[data-g2-layout]')
   if (g2Layout) {
     const next = g2Layout.dataset.g2Layout
-    if (next !== 'graph' && next !== 'layers') return
+    if (next !== 'graph' && next !== 'layers' && next !== 'matrix') return
     if (graph2.bundleLayout === next && !graph2.focusedPkg) return
     graph2.bundleLayout = next
     graph2.layoutCache = null
