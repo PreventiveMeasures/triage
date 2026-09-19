@@ -11,6 +11,7 @@
 import { LitElement, html, nothing, repeat, unsafeCSS } from './view/frontend-global.js'
 import { createTerminal } from '@preventive/terminal'
 import { classifyDiff } from './view/diff-color.js'
+import { silencedGaps } from './view/silenced-gaps.js'
 // Imported as a text string at build time (see build.js — the
 // lit-css-as-text plugin routes JS-side `.css` imports through the
 // text loader). unsafeCSS wraps the literal in a CSSResult; the
@@ -256,7 +257,7 @@ class BundleTerminal extends LitElement {
     if (r.stdout) next.push({ kind: 'stdout', text: r.stdout, diff: classifyDiff(r.stdout) })
     if (r.stderr) next.push({ kind: 'stderr', text: r.stderr })
     this._lines = next
-    this.#pushNotes(r.notes)
+    this.#pushHints(r)
     if (trimmed.length > 0) this.#history = [...this.#history, line]
     this.#histIdx = -1
     this._input = ''
@@ -353,17 +354,31 @@ class BundleTerminal extends LitElement {
     this._ghost = first.slice(input.length)
   }
 
-  // Take the `notes` channel from a run and stack it top-right.
-  // These are informational asides — hidden entries `ls` left out, a
-  // glob that stayed literal, a `head` that truncated — reported
-  // separately from stdout/stderr precisely so a caller can surface
-  // them in its own channel instead of interleaving them with the
-  // transcript. Each entry expires on its own timer; nothing here
-  // waits on a dismissal.
+  // Everything a run wants to say in the corner, from its two silent
+  // channels. `notes` are informational asides — hidden entries `ls`
+  // left out, a glob that stayed literal, a `head` that truncated —
+  // reported apart from stdout/stderr precisely so a caller can
+  // surface them in its own channel. The gaps are the ones the
+  // command line threw away before anyone could read them (see
+  // silenced-gaps.js); they carry the word `silenced` because a bare
+  // `ls: unknown option: --bogus` in the corner gives no clue why it
+  // is not in the transcript with everything else.
+  //
+  // Gaps go in last, so when a line says more than the stack holds it
+  // is the notes that fall off the top: a hint about hidden entries
+  // can wait, a gap nothing else will report cannot.
+  #pushHints(r) {
+    const hints = r.notes.map((text) => ({ text, kind: 'note' }))
+    for (const message of silencedGaps(r)) hints.push({ text: `silenced: ${message}`, kind: 'gap' })
+    this.#pushNotes(hints)
+  }
+
+  // Stack the given hints top-right. Each expires on its own timer;
+  // nothing here waits on a dismissal.
   #pushNotes(notes) {
     if (notes.length === 0) return
     const next = [...this._notes]
-    for (const text of notes) {
+    for (const { text, kind } of notes) {
       // Re-running a command re-reports its note. Drop the visible
       // copy and append a fresh one, so the stack keeps a single
       // entry whose dwell and fade restart from the top rather than
@@ -371,7 +386,7 @@ class BundleTerminal extends LitElement {
       // entry, which is what actually restarts the CSS animation.
       const dup = next.findIndex((n) => n.text === text)
       if (dup !== -1) this.#dropNote(next, dup)
-      next.push({ id: ++this.#noteSeq, text, dwell: BundleTerminal.#noteDwell(text) })
+      next.push({ id: ++this.#noteSeq, text, kind, dwell: BundleTerminal.#noteDwell(text) })
     }
     while (next.length > BundleTerminal.#NOTE_MAX) this.#dropNote(next, 0)
     for (const note of next) {
@@ -381,9 +396,11 @@ class BundleTerminal extends LitElement {
     this._notes = next
   }
 
-  // Notes run ~45-125 characters, so a flat dwell either rushes the
-  // long ones or parks the short ones. Scale with length, floored so
-  // a terse hint is still readable and capped so none of it lingers.
+  // Hints run from ~45 characters to a few hundred (a gap naming an
+  // unknown command lists the ones it does have), so a flat dwell
+  // either rushes the long ones or parks the short ones. Scale with
+  // length, floored so a terse hint is still readable and capped so
+  // none of it lingers.
   static #noteDwell(text) {
     return Math.min(10000, 3200 + text.length * 55)
   }
@@ -469,7 +486,7 @@ class BundleTerminal extends LitElement {
   render() {
     return html`
       <div class="notes" role="status">
-        ${repeat(this._notes, (n) => n.id, (n) => html`<div class="note" style="--dwell-out: ${n.dwell - BundleTerminal.#NOTE_FADE_MS}ms">${n.text}</div>`)}
+        ${repeat(this._notes, (n) => n.id, (n) => html`<div class="note ${n.kind === 'gap' ? 'note-gap' : ''}" style="--dwell-out: ${n.dwell - BundleTerminal.#NOTE_FADE_MS}ms">${n.text}</div>`)}
       </div>
       <div class="output" @click=${this.#onClickOutput}>
         ${this._lines.map((l) => this.#renderLine(l))}

@@ -207,6 +207,17 @@
   animation: note-in 140ms ease-out, note-out 400ms ease-in var(--dwell-out, 5600ms) forwards;
 }
 
+/* A gap the command line hid — see ui/view/silenced-gaps.js. Warmer
+   than a plain note because it reports something the run refused to
+   do, which nothing in the transcript is going to mention: the amber
+   edge marks it as a diagnostic rather than an aside. The word
+   `silenced` in the text carries the same distinction, so the colour
+   is never the only thing saying it. */
+.note-gap {
+  border-color: var(--warning, #d97706);
+  color: var(--text, #e6edf3);
+}
+
 @keyframes note-in {
   0% { opacity: 0; transform: translateY(-4px); }
   100% { opacity: 1; transform: none; }
