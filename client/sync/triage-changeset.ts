@@ -4,10 +4,9 @@
 // over them: diff, apply, equality, and the three-way conflict scan. No
 // module state, no `state.*`, no I/O — safe to unit-test in isolation.
 
-import { appsEqual, upstreamEqual, upstreamText } from '../triage-entry.ts'
-import type { AppEntry, UpstreamEntry } from '../state.ts'
+import { appsEqual, normalizeEntry, upstreamEqual, upstreamText } from '../triage-entry.ts'
+import type { AppEntry, UpstreamEntry } from '../triage-tracks.ts'
 import type { TriageEntry } from './host.ts'
-import { normalizeEntry } from '../triage-entry.ts'
 
 export type ConflictProperty = 'color' | 'triage' | 'comment' | 'fix' | 'flagged' | 'upstream'
 
@@ -182,6 +181,45 @@ function rebaseIgnoredReports(base: string[] = [], local: string[] = [], remote:
   return [...merged]
 }
 
+function slotsEqual(a: AppEntry | undefined, b: AppEntry | undefined): boolean {
+  return (a?.triage ?? '') === (b?.triage ?? '') && (a?.fix ?? '') === (b?.fix ?? '')
+}
+
+// The app track rebases per KEY, not as one value, because its keys are
+// separate apps' separate answers. Replaying the local entry whole would
+// delete a chain entry's app A while carrying this client's edit to app
+// B — work a peer did, that this client never had a view on, silently
+// gone and then propagated as a deletion on the retry.
+//
+// So: three-way per key against the base. A key this client changed
+// keeps its value (local-wins, as every other field does here), a key it
+// didn't takes the chain's — including one the chain added that this
+// client never saw — and a key it cleared stays cleared.
+//
+// `preserve` holds the local map whole instead, absences included: an
+// anchor reset leaves the snapshot unable to prove it is newer than what
+// we know, so a key we don't have reads as our own clear rather than
+// news we missed — the rule triage-sync.ts states for every other field
+// ("known values or absences").
+function rebaseApps(
+  base: { [appKey: string]: AppEntry } | undefined,
+  local: { [appKey: string]: AppEntry } | undefined,
+  remote: { [appKey: string]: AppEntry } | undefined,
+  preserve: boolean,
+): { [appKey: string]: AppEntry } | undefined {
+  if (!local && !remote) return undefined
+  // Null-prototype for the reason `normalizeApps` uses one: the keys are
+  // app names off a peer's changeset.
+  const out: { [appKey: string]: AppEntry } = Object.create(null)
+  for (const app of new Set([...Object.keys(local ?? {}), ...Object.keys(remote ?? {})])) {
+    const mine = local?.[app]
+    const keepMine = preserve || !slotsEqual(mine, base?.[app])
+    const slot = keepMine ? mine : remote?.[app]
+    if (slot) out[app] = slot
+  }
+  return Object.keys(out).length > 0 ? out : undefined
+}
+
 // Replay only fields the local user changed. Wire changesets replace whole
 // entries, but using that replacement as a local overlay erases independent
 // peer edits to other fields of the same finding.
@@ -191,7 +229,7 @@ function rebaseIgnoredReports(base: string[] = [], local: string[] = [], remote:
 export function rebaseLocalState(base: TriageStateMap, local: TriageStateMap, remote: TriageStateMap, preserveKnownIds?: ReadonlySet<string>): TriageStateMap {
   const out: TriageStateMap = Object.assign(Object.create(null), remote)
   for (const id of new Set([...Object.keys(base), ...Object.keys(local), ...(preserveKnownIds ?? [])])) {
-    const preserveEntry = preserveKnownIds?.has(id)
+    const preserveEntry = preserveKnownIds?.has(id) ?? false
     const before = normalizeEntry(base[id]) ?? {}
     const current = normalizeEntry(local[id]) ?? {}
     const merged = { ...normalizeEntry(remote[id]) }
@@ -213,6 +251,16 @@ export function rebaseLocalState(base: TriageStateMap, local: TriageStateMap, re
       else merged.triage = current.triage
       if (reports.length === 0) delete merged.ignoredReports
       else merged.ignoredReports = reports
+    }
+    // The two triage tracks the entry-level fields above don't cover.
+    // `apps` merges per key (see `rebaseApps`); `upstream` is one record
+    // about the code itself, so it replays whole, like a scalar.
+    const apps = rebaseApps(before.apps, current.apps, merged.apps, preserveEntry)
+    if (apps) merged.apps = apps
+    else delete merged.apps
+    if (preserveEntry || !upstreamEqual(before.upstream, current.upstream)) {
+      if (current.upstream === undefined) delete merged.upstream
+      else merged.upstream = current.upstream
     }
     const entry = normalizeEntry(merged)
     if (entry) out[id] = entry

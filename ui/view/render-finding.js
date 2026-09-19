@@ -923,7 +923,7 @@ function upstreamButtonTemplate(f, isFocus) {
   return html`<button
     type="button"
     class=${classMap({ 'mark-upstream': true, 'has-upstream': Boolean(label), [`upstream-${up?.state ?? 'none'}`]: true })}
-    title=${title}
+    data-tooltip=${title}
     aria-label=${title}
   >${UPSTREAM_ICON}${isFocus ? html`<span class="mark-btn-label">Upstream</span>` : nothing}</button>`
 }
@@ -1464,7 +1464,8 @@ function tabBodyTemplate(f, isActive, idx, total, context, tabIds) {
 }
 
 // The two facts the board can't show, under the finding they belong
-// to:
+// to — last on the card, below even the reader's own comment and fix,
+// because they are the only part of it that is about somewhere else:
 //
 //   * what the OTHER apps did about this same code. It is the same
 //     entry — one dependency, one id, however many apps pull it in —

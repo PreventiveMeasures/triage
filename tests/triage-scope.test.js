@@ -34,7 +34,7 @@ const {
   entryIsEmpty, normalizeEntry, patchEntry, setAppFix, setAppTriage, setUpstream,
   upstreamOf,
 } = await import('../client/triage-entry.ts')
-const { mergeAppTracks } = await import('../client/sync/triage-changeset.ts')
+const { rebaseLocalState } = await import('../client/sync/triage-changeset.ts')
 const { state } = await import('../client/state.ts')
 const {
   findingApp, findingApps, isDependencyFinding, isUnscopedBucket, scopedApps,
@@ -416,52 +416,93 @@ describe('a card standing for several apps', () => {
 // which would drop a peer's slot for another app — work this client
 // never had a view on, deleted and then propagated as a deletion on
 // the retry (Codex review of #260, P1).
-describe('mergeAppTracks', () => {
+describe('rebaseLocalState, on the two tracks', () => {
   const ID = 'shared-id'
   const entry = (apps) => ({ apps })
 
   it('keeps a peer\'s slot for an app this client did not touch', () => {
-    const oldBase = {}
-    const newBase = { [ID]: entry({ [APP_A]: { triage: 'fixed' } }) }
-    const overlay = { [ID]: entry({ [APP_B]: { triage: 'inprogress' } }) }
-    const out = mergeAppTracks(overlay, oldBase, newBase)
+    const base = {}
+    const remote = { [ID]: entry({ [APP_A]: { triage: 'fixed' } }) }
+    const local = { [ID]: entry({ [APP_B]: { triage: 'inprogress' } }) }
+    const out = rebaseLocalState(base, local, remote)
     assert.deepEqual(Object.keys(out[ID].apps).toSorted(), [APP_B, APP_A].toSorted())
     assert.equal(out[ID].apps[APP_A].triage, 'fixed', "the peer's app survives")
     assert.equal(out[ID].apps[APP_B].triage, 'inprogress', 'ours survives')
   })
 
   it('local wins where both edited the same app', () => {
-    const oldBase = { [ID]: entry({ [APP_A]: { triage: 'inprogress' } }) }
-    const newBase = { [ID]: entry({ [APP_A]: { triage: 'fixed' } }) }
-    const overlay = { [ID]: entry({ [APP_A]: { triage: 'inprogress', fix: 'https://mine' } }) }
-    const out = mergeAppTracks(overlay, oldBase, newBase)
+    const base = { [ID]: entry({ [APP_A]: { triage: 'inprogress' } }) }
+    const remote = { [ID]: entry({ [APP_A]: { triage: 'fixed' } }) }
+    const local = { [ID]: entry({ [APP_A]: { triage: 'inprogress', fix: 'https://mine' } }) }
+    const out = rebaseLocalState(base, local, remote)
     assert.equal(out[ID].apps[APP_A].fix, 'https://mine')
   })
 
   it('a slot this client cleared stays cleared', () => {
-    const oldBase = { [ID]: entry({ [APP_A]: { triage: 'fixed' } }) }
-    const newBase = { [ID]: entry({ [APP_A]: { triage: 'fixed' } }) }
-    const overlay = { [ID]: { color: 'red' } }
-    const out = mergeAppTracks(overlay, oldBase, newBase)
+    const base = { [ID]: entry({ [APP_A]: { triage: 'fixed' } }) }
+    const remote = { [ID]: entry({ [APP_A]: { triage: 'fixed' } }) }
+    const local = { [ID]: { color: 'red' } }
+    const out = rebaseLocalState(base, local, remote)
     assert.equal(out[ID].apps, undefined)
     assert.equal(out[ID].color, 'red', 'the rest of the entry is untouched')
   })
 
   it('a delete keeps only what the peer added under a key we never had', () => {
-    const oldBase = { [ID]: entry({ [APP_A]: { triage: 'fixed' } }) }
-    const newBase = { [ID]: entry({ [APP_A]: { triage: 'fixed' }, [APP_B]: { triage: 'fixed' } }) }
-    const out = mergeAppTracks({ [ID]: null }, oldBase, newBase)
+    const base = { [ID]: entry({ [APP_A]: { triage: 'fixed' } }) }
+    const remote = { [ID]: entry({ [APP_A]: { triage: 'fixed' }, [APP_B]: { triage: 'fixed' } }) }
+    const out = rebaseLocalState(base, {}, remote)
     assert.deepEqual(Object.keys(out[ID].apps), [APP_B])
   })
 
   it('a delete with nothing of the peer\'s stays a delete', () => {
-    const oldBase = { [ID]: entry({ [APP_A]: { triage: 'fixed' } }) }
-    const newBase = { [ID]: entry({ [APP_A]: { triage: 'fixed' } }) }
-    assert.equal(mergeAppTracks({ [ID]: null }, oldBase, newBase)[ID], null)
+    const base = { [ID]: entry({ [APP_A]: { triage: 'fixed' } }) }
+    const remote = { [ID]: entry({ [APP_A]: { triage: 'fixed' } }) }
+    assert.equal(rebaseLocalState(base, {}, remote)[ID], undefined)
   })
 
   it('leaves entries with no app track alone', () => {
-    const overlay = { [ID]: { color: 'red' } }
-    assert.deepEqual(mergeAppTracks(overlay, {}, {})[ID], { color: 'red' })
+    const local = { [ID]: { color: 'red' } }
+    assert.deepEqual(rebaseLocalState({}, local, {})[ID], { color: 'red' })
+  })
+
+  // A preserved id holds local intent over the whole app map, absences
+  // included: an anchor reset means the signed snapshot can't be shown to
+  // be newer than what we know, so a key we don't have reads as a clear we
+  // made rather than news we missed (the rule triage-sync.ts states for
+  // every other field — "known values or absences").
+  it('holds local intent over the whole app map for a preserved id', () => {
+    const base = { [ID]: entry({ [APP_A]: { triage: 'fixed' } }) }
+    const local = { [ID]: entry({ [APP_A]: { triage: 'inprogress' } }) }
+    const remote = { [ID]: entry({ [APP_A]: { triage: 'fixed' }, [APP_B]: { triage: 'fixed' } }) }
+    const out = rebaseLocalState(base, local, remote, new Set([ID]))
+    assert.equal(out[ID].apps[APP_A].triage, 'inprogress', 'local intent is held')
+    assert.equal(out[ID].apps[APP_B], undefined, 'and a key we do not have is not resurrected')
+  })
+
+  // The cause track is one record about the code itself, so it replays
+  // whole rather than per key — but it still has to replay at all, or a
+  // rebase would hand the chain's record back over a local edit.
+  it('local wins on the upstream record when this client changed it', () => {
+    const base = { [ID]: { upstream: { state: 'reported' } } }
+    const local = { [ID]: { upstream: { state: 'fixed', since: '4.17.21' } } }
+    const remote = { [ID]: { upstream: { state: 'wontfix' } } }
+    const out = rebaseLocalState(base, local, remote)
+    assert.deepEqual(out[ID].upstream, { state: 'fixed', since: '4.17.21' })
+  })
+
+  it('takes the chain\'s upstream record when this client did not touch it', () => {
+    const base = { [ID]: { upstream: { state: 'reported' } } }
+    const local = { [ID]: { upstream: { state: 'reported' } } }
+    const remote = { [ID]: { upstream: { state: 'fixed', since: '4.17.21' } } }
+    const out = rebaseLocalState(base, local, remote)
+    assert.deepEqual(out[ID].upstream, { state: 'fixed', since: '4.17.21' })
+  })
+
+  it('an upstream record this client cleared stays cleared', () => {
+    const base = { [ID]: { color: 'red', upstream: { state: 'reported' } } }
+    const local = { [ID]: { color: 'red' } }
+    const remote = { [ID]: { color: 'red', upstream: { state: 'reported' } } }
+    const out = rebaseLocalState(base, local, remote)
+    assert.equal(out[ID].upstream, undefined)
   })
 })

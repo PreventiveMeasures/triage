@@ -70,74 +70,11 @@ export type ShownTriage = TriageBucket | 'ignored'
 export type AnnotationFilterState = '' | 'with' | 'without'
 
 // One finding's triage annotations, keyed by `tabKey(f)` in
-// `state.triage`. Unset fields are absent (not empty): the helpers in
-// `triage-entry.ts` prune emptied fields and drop the id entirely when
-// nothing remains, so iteration / persistence / GC only ever see
-// meaningful ids. `ignoredReports` lists the report names in which the
-// finding is per-report ignored. `deleted` is the legacy persisted/wire
-// form, migrated to `triage: 'deleted'` on load and never written back
-// in-memory.
-//
-// TWO TRACKS. A finding id is derived from the source's own bytes
-// (report/finding-id.js), so the SAME id is what every app shipping
-// that code reads — one dependency file, one entry, however many apps
-// pull it in. That makes a single "fixed" two different claims wearing
-// one word: "this app doesn't have the problem any more" (true here,
-// nowhere else) and "the code doesn't have the bug any more" (true
-// everywhere, and only the upstream can say it). Writing the first
-// into a shared entry is what marked a dependency fixed in apps nobody
-// had looked at.
-//
-//   * `apps` — the work track, one slot per app (see `findingApp` in
-//     ui/view/group.js). Removing the dependency, pinning it, guarding
-//     the call site: all answers about ONE app, so they are stored
-//     under that app's key and never read by another.
-//   * `upstream` — the cause track, global by id on purpose. Reporting
-//     a bug once and seeing it everywhere is the whole point, and an
-//     entry keyed by the vulnerable bytes is exactly where "superseded
-//     in 4.17.21" belongs: everyone still shipping them reads it.
-//
-// `triage` keeps its meaning for a finding in the app's OWN code —
-// there the app IS the upstream, so one verdict is the whole truth —
-// and grandfathers the unscoped values written before the split
-// (see `bucketOf` / `tabTriage`).
-export type AppTriage = 'inprogress' | 'fixed'
-
-// One app's answer about one finding. `fix` is that app's own
-// reference (the PR that removed the dependency), distinct from the
-// entry's cause-level `fix`.
-export type AppEntry = {
-  triage?: AppTriage
-  fix?: string
-}
-
-// What the upstream has done about the cause. `since` names the first
-// version carrying the fix, which is what turns another app's copy of
-// this finding from "no known remedy" into "upgrade to 4.17.21".
-export type UpstreamState = 'reported' | 'fixed' | 'wontfix'
-export type UpstreamEntry = {
-  state?: UpstreamState
-  link?: string
-  since?: string
-}
-
-export type TriageEntry = {
-  color?: string
-  triage?: TriageBucket
-  comment?: string
-  fix?: string
-  // Tri-state attention flag. `undefined` = never set; `true` =
-  // flagged; `false` = explicitly UN-flagged — a tombstone that is
-  // deliberately NOT pruned. Keeping `false` distinct from absent is
-  // load-bearing for sync/conflict resolution: unflagging is a real
-  // change that must overwrite a peer's stale `true`, not read as "no
-  // opinion" and get silently undone.
-  flagged?: boolean
-  ignoredReports?: string[]
-  apps?: { [appKey: string]: AppEntry }
-  upstream?: UpstreamEntry
-  deleted?: boolean
-}
+// `state.triage`. Defined in ./triage-tracks.ts, with the two triage
+// tracks it carries, and re-exported here because this is where every
+// consumer has always imported it from.
+import type { TriageEntry } from './triage-tracks.ts'
+export type { TriageEntry }
 
 // Deepview state schema. Fields with ad-hoc / nested shapes (parsed
 // bundle metadata, ingested findings) stay `unknown` for now — they
