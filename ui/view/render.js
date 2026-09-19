@@ -576,7 +576,7 @@ function triageFilterTemplate(colorCounts) {
 // so the host drops it in unconditionally.
 
 function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCounts, flags, analyzerSelect, repoOptions) {
-  const { showSource, showConfidence, showPriority, showGraphMode, showFileSort, kanbanMode, showRepo, hasComment, hasFix, hasFlagged, showSeverityMode, revalidateOptions, showPartial, canDropLayer, canDetailLayer } = flags
+  const { showSource, showConfidence, showPriority, showGraphMode, showFileSort, kanbanMode, showRepo, hasComment, hasFix, hasFlagged, showSeverityMode, revalidateOptions, showPartial, canDropLayer, canDetailLayer, canUpstreamLens } = flags
   // The findings tab gains a "graph" view-mode option when a
   // tree-bearing report is loaded (showGraphMode). The focus and
   // kanban modes sit between grouped and graph. Switching to graph
@@ -639,7 +639,10 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
            view is folding rows or holding the partial line back. Both
            are properties of the loaded SET, so the control doesn't
            resize as the reader moves through it; either one alone is
-           reason enough to draw it. See revalidation-switch.js. -->
+           reason enough to draw it — as is can-upstream, the third
+           half, which is offered on its own terms wherever the set
+           holds an upstream finding and so can be the only one in the
+           shell. See revalidation-switch.js. -->
       <!-- Export — the download icon that opens the export dialog
            (Download / Print as its two tabs). It rides at the end of
            the row beside the app lens, its own bordered control rather
@@ -647,8 +650,8 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
            reader is looking at, this takes a copy of it away. The
            component owns its visibility (view/download-button.js). -->
       <download-button></download-button>
-      ${canDropLayer || canDetailLayer
-        ? html`<revalidation-switch ?can-drop=${canDropLayer} ?can-detail=${canDetailLayer}></revalidation-switch>`
+      ${canDropLayer || canDetailLayer || canUpstreamLens
+        ? html`<revalidation-switch ?can-drop=${canDropLayer} ?can-detail=${canDetailLayer} ?can-upstream=${canUpstreamLens}></revalidation-switch>`
         : nothing}
     </div>
     <!-- Filter row: severity chips + mark-color triage pill + search
@@ -1663,6 +1666,24 @@ function renderImpl() {
     if (!canDropLayer && state.showRevalidation === false) state.showRevalidation = true
   }
   configureRevalidation(state.showRevalidation)
+  // The upstream lens is offered wherever the SET holds an upstream
+  // finding. Read off the reports rather than the groups on screen, for
+  // the same reason the layer above reads raw: answered from what the
+  // lens itself left drawn, the control would keep itself lit and then
+  // take its own ground away. `isUpstream` is stamped just above
+  // (stampUpstreamFindings), so this sees the settled answer.
+  const canUpstreamLens = state.reports.some((r) => (r.groups ?? []).some((g) => g.some((f) => f.isUpstream)))
+  // …and a lens left on by a report that had them can't outlive it, or
+  // the list would stay narrowed with no control on screen to say so.
+  //
+  // Here, beside the layer's own reset and BEFORE anything derives the
+  // displayed groups, because the clear has to reach this render. Left
+  // until the toolbar's flags are gathered, it would land after
+  // `getMergedGroups()` had already narrowed a set with no upstream
+  // finding in it down to nothing: the switch away from that report
+  // paints an empty list with no control on screen, and only some
+  // later, unrelated render puts it back.
+  if (!canUpstreamLens) state.upstreamOnly = false
   // Print-button body class is owned by an observer-util autorun (see
   // view/print-btn-visibility.js) — render() must not touch it.
   // Bundles view — paints from `state.bundles` (cached by
@@ -2263,6 +2284,7 @@ function renderImpl() {
       showPartial,
       canDropLayer,
       canDetailLayer,
+      canUpstreamLens,
       hasFix,
       hasFlagged,
       // Corrected/Original lens switch — shown only when a correction

@@ -61,6 +61,7 @@ const { decodeReportLocation, encodeReportLocation } = await import('../client/r
 const { getItem: getSecureItem, setItem: setSecureItem, hydrate: hydrateSecureStorage } = await import('../client/secure-storage.js')
 const { locateLinkedFinding } = await import('../ui/view/finding-link-route.js')
 const { deriveFindingId } = await import('../report/index.js')
+const { groupKey } = await import('../ui/view/group.js')
 
 const { state } = await import('../client/state.ts')
 const {
@@ -72,6 +73,7 @@ const {
 
 const UUID_A = '1b4e28ba-2fa1-4d3b-a3f5-cc9f2f6d1a77'
 const UUID_B = '9f2c1d0e-7a44-4b8e-9c31-0d5e6f7a8b90'
+const UUID_C = '3e7a5c19-8b62-4f0d-95a7-1c2b3d4e5f60'
 const WS_ID = 'c0ffee00-1111-8222-8333-444455556666'
 
 // Every seeded report gets a unique name: the in-memory storage isn't
@@ -388,6 +390,7 @@ function reset(groups = []) {
   state.filterFlagged = ''
   state.showRevalidation = true
   state.revalidationDetailed = false
+  state.upstreamOnly = false
 }
 
 describe('finding deep links — building a link for a finding', () => {
@@ -633,6 +636,28 @@ describe('finding deep links — locating a linked finding', () => {
     state.workspaceMerges = [new Set([UUID_A, UUID_B])]
     assert.deepEqual(findLoadedFinding(UUID_B).group, [a, b])
   })
+
+  it('finds an app-side finding while the upstream lens is on', () => {
+    // The lens narrows the list the view draws (group.js onlyUpstream)
+    // — it does not decide what is LOADED. Answered through the
+    // narrowed list, a link to an app-side finding in an open report
+    // comes back null and the router reports it as gone.
+    const app = makeFinding(UUID_A)
+    const up = makeFinding(UUID_B, { isUpstream: true })
+    reset([[app, up]])
+    state.upstreamOnly = true
+    assert.equal(findLoadedFinding(UUID_A)?.finding, app)
+    // …and it resolves to the WHOLE group, which is what unhideFinding
+    // then keeps on screen by taking the lens off.
+    assert.deepEqual(findLoadedFinding(UUID_A).group, [app, up])
+  })
+
+  it('finds a finding in a group the upstream lens drops entirely', () => {
+    const app = makeFinding(UUID_A)
+    reset([[app]])
+    state.upstreamOnly = true
+    assert.equal(findLoadedFinding(UUID_A)?.finding, app)
+  })
 })
 
 describe('finding deep links — un-hiding the target', () => {
@@ -734,6 +759,38 @@ describe('finding deep links — un-hiding the target', () => {
     const gid = unhideFinding(group, UUID_B)
     assert.equal(state.revalidationDetailed, true)
     assert.equal(state.activeTabByGroup.get(gid), UUID_B)
+  })
+
+  it('takes the upstream lens off for a target it would narrow away', () => {
+    // The lens reaches INSIDE the group, so it can hide the target
+    // while still drawing its group — under a gid built from the
+    // members it kept, which is not the one this returns.
+    const group = [makeFinding(UUID_A), makeFinding(UUID_B, { isUpstream: true })]
+    reset([group])
+    state.upstreamOnly = true
+    const gid = unhideFinding(group, UUID_A)
+    assert.equal(state.upstreamOnly, false)
+    assert.equal(gid, groupKey(group))
+    assert.equal(state.activeTabByGroup.get(gid), UUID_A)
+  })
+
+  it('keeps the upstream lens on for an all-upstream group', () => {
+    // There the lens hands the group back whole, so the gid is the one
+    // on screen and a reader who followed an upstream link stays in
+    // the lens they were reading in.
+    const group = [makeFinding(UUID_B, { isUpstream: true }), makeFinding(UUID_C, { isUpstream: true })]
+    reset([group])
+    state.upstreamOnly = true
+    const gid = unhideFinding(group, UUID_C)
+    assert.equal(state.upstreamOnly, true)
+    assert.equal(gid, groupKey(group))
+  })
+
+  it('leaves the upstream lens alone when it is already off', () => {
+    const group = [makeFinding(UUID_A), makeFinding(UUID_B, { isUpstream: true })]
+    reset([group])
+    unhideFinding(group, UUID_A)
+    assert.equal(state.upstreamOnly, false)
   })
 
   it('leaves the app view folded for a target it was already showing', () => {

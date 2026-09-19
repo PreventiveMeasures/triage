@@ -311,6 +311,36 @@ export function findingRepo(f) {
   return f.repo?.github || findingRepoFallback(f) || null
 }
 
+// The members a group's triage speaks for, and is read from.
+//
+// A group can hold both halves of one problem: the app's own finding,
+// and the upstream code underneath it — the rows the App lens folds
+// away and "Show underlying code findings" brings back. They look
+// alike on the card and they are not the same claim. "Fixed" on the
+// app's finding says THIS app no longer has the problem, usually
+// because the dependency was dropped or pinned; the dependency itself
+// is no more fixed for that, and everyone else still shipping those
+// bytes still has it. Letting one write answer for both is how a
+// dependency ends up marked fixed in apps nobody has looked at.
+//
+// So a group-level write lands on the app's own members only, and the
+// rollup reads the same set — what the card shows, which kanban column
+// it sits in and which triage filter it answers to are all decided by
+// the findings that write would have reached. An upstream member keeps
+// whatever it was told directly, which is how it is told anything at
+// all: with its own tab active, the conflicted branch of `triageScope`
+// writes to that tab and nothing else.
+//
+// A group of nothing BUT upstream members has no second reading to
+// prefer — there they are what the card is, and they both decide and
+// receive. Returns the group itself whenever nothing is dropped, so
+// callers relying on array identity keep it.
+export function triageTabs(group) {
+  if (!Array.isArray(group)) return []
+  const own = group.filter((f) => !f.isUpstream)
+  return own.length === 0 || own.length === group.length ? group : own
+}
+
 // Group-level triage rollup. User spec:
 //   1. A tab is "annotated" if it has a color AND/OR a triage state
 //      (inprogress / fixed / invalid / deleted). Unannotated tabs are neutral —
@@ -374,7 +404,7 @@ export function groupState(group) {
   let anyTriage = false
   // Every annotated tab carries a truthy bucket !== 'ignored'.
   let allBucketed = true
-  for (const f of group) {
+  for (const f of triageTabs(group)) {
     const entry = state.triage.get(tabKey(f))
     const bucket = tabTriage(f, entry)
     const color = entry?.color
@@ -479,7 +509,7 @@ export function triageActionPlan(group, action) {
 // to every tab. Shared with the kanban drop path so a menu click and a
 // column drop can't disagree about which tabs they touch.
 export function triageScope(group, st = groupState(group)) {
-  return st.hasConflict ? [activeTabFor(group)] : group
+  return st.hasConflict ? [activeTabFor(group)] : triageTabs(group)
 }
 
 // The state that scope currently shows — what the menu marks active,
@@ -522,12 +552,16 @@ export function scopedTriage(group, st = groupState(group), active = null) {
 // its partial state; its tabs keep showing their own (see
 // tabTemplate), which is the signal that something is unresolved.
 export function syncGroupTriage(group) {
-  if (!Array.isArray(group) || group.length < 2) return false
+  // The same set the rollup below was read from: levelling is the
+  // rollup written back, so reaching an upstream member here would
+  // extend a verdict it never took part in deciding.
+  const tabs = triageTabs(group)
+  if (tabs.length < 2) return false
   const st = groupState(group)
   const bucket = st.commonTriage
   if (!bucket || bucket === 'ignored') return false
   let changed = false
-  for (const f of group) {
+  for (const f of tabs) {
     const key = tabKey(f)
     const entry = state.triage.get(key)
     // Anything still off the bucket here carries no bucket at all — an
@@ -585,8 +619,59 @@ function withoutPassRows(groups) {
   return out
 }
 
-export function getMergedGroups() {
+// The upstream lens: with it on, the list is the dependencies' own code
+// and nothing else.
+//
+// Every other control in the toolbar CHOOSES BETWEEN groups — a group
+// either matches the filter or it doesn't, and the ones that match
+// arrive whole. This one reaches inside them, because the thing it is
+// about lives there: a card commonly holds the app's finding and the
+// upstream rows underneath it in one dedup group, and a reader asking
+// for the upstream code does not want the app's row shown as part of
+// the answer. So `[app, own, upstream0, upstream1]` comes back as
+// `[upstream0, upstream1]`, and a group with no upstream member is
+// dropped rather than drawn empty.
+//
+// Narrowing the group rather than hiding tabs inside it is also what
+// carries the verdict across: `triageTabs` sees a group whose every
+// member is upstream, so the rollup reads those rows and a group-level
+// write lands on them — the same rule as always, from the other side.
+//
+// Which means the lens can turn a settled row into a CONFLICTED one:
+// a group whose app-side members agree, holding two upstream rows that
+// don't, reads as agreed with the lens off and as a disagreement with
+// it on. That is the truth about it either way — the disagreement was
+// always there, in rows the app-side verdict was speaking over — and it
+// resolves like any other: `triageScope` narrows to the active tab,
+// which under this lens is one of the upstream rows.
+//
+// Same shape as `withoutPassRows` above, including handing back the
+// group itself when nothing was dropped.
+function onlyUpstream(groups) {
+  if (!state.upstreamOnly) return groups
+  const out = []
+  for (const g of groups) {
+    const kept = g.filter((f) => f.isUpstream)
+    if (kept.length > 0) out.push(kept.length === g.length ? g : kept)
+  }
+  return out
+}
+
+// The list before the upstream lens narrows it — every group the view
+// COULD show, which is the set a deep link has to resolve against.
+//
+// A link names one finding, and whether it exists is a fact about what
+// is loaded, not about the lens the reader happens to be standing
+// behind. Resolved through the narrowed list instead, a link to an
+// app-side finding in a loaded report finds nothing and is reported as
+// gone; `unhideFinding` then takes the lens off to show it, the same
+// way it clears a filter that excluded its target.
+export function linkableGroups() {
   return withoutPassRows(mergedGroups())
+}
+
+export function getMergedGroups() {
+  return onlyUpstream(linkableGroups())
 }
 
 // The merged groups the view actually SHOWS — the triage bucket the

@@ -97,6 +97,14 @@
     },
     {
       "files": [
+        "client/state.ts"
+      ],
+      "rules": {
+        "max-lines": "off"
+      }
+    },
+    {
+      "files": [
         "server-e2e/sync-handlers.ts",
         "server-e2e/sse-server.ts",
         "server-e2e/ws-server.ts"

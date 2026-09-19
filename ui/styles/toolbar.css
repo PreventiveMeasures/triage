@@ -496,8 +496,13 @@ revalidation-switch {
   cursor: pointer;
 
   &:not(:last-child) { border-right: 1px solid var(--border); }
-  &:hover { color: var(--text); }
+  &:hover:not(:disabled) { color: var(--text); }
   &.on { color: var(--text); }
+  /* Inert while the upstream lens is on — it bypasses this line, and
+     the stop the reader left it at is kept rather than reset. Faded
+     like the detail glyph's own disabled state, and not dropped: the
+     row would jump under the click that did it. */
+  &:disabled { opacity: .4; cursor: default; }
   &.on .revalidation-switch { background: color-mix(in oklch, var(--accent) 22%, transparent); }
   &.on .revalidation-switch::after { transform: translateX(12px); background: var(--accent); }
   &:focus-visible { outline: 1px solid var(--accent); outline-offset: -2px; }
@@ -525,6 +530,30 @@ revalidation-switch {
   &:hover:not(:disabled) { color: var(--text); background: rgb(from var(--text) r g b / .06); }
   &.on { color: var(--accent); background: var(--surface-active); }
   &:disabled { opacity: .4; cursor: default; }
+  &:focus-visible { outline: 1px solid var(--accent); outline-offset: -2px; }
+}
+/* The upstream icon — an arrow out of a box, lit while the list is the
+   dependencies' own code (revalidation-switch.js). Same chip as the
+   detail glyph beside it, and never disabled: it stands on its own
+   terms rather than on the app/code line's, and is drawn wherever the
+   set holds an upstream finding — including where no App switch is
+   offered at all. */
+.revalidation-upstream {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 100%; box-sizing: border-box;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background .12s, color .12s;
+
+  /* Divided from the half before it the way the switch divides from the
+     detail glyph — and only when there IS one, so a lone upstream chip
+     keeps the shell's own border and nothing more. */
+  &:not(:first-child) { border-left: 1px solid var(--border); }
+  &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
+  &.on { color: var(--accent); background: var(--surface-active); }
   &:focus-visible { outline: 1px solid var(--accent); outline-offset: -2px; }
 }
 .revalidation-switch {

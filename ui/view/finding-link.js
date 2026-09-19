@@ -14,7 +14,7 @@
 // are for.
 import { buildFindingUrl, isLinkableFindingId, knownLinkHint, state, workspacesHoldingReport } from '#client/index.js'
 import { applyFilters, resetFilters } from './filters.js'
-import { getMergedGroups, groupKey, groupState, sortTabs, tabKey } from './group.js'
+import { groupKey, groupState, linkableGroups, sortTabs, tabKey } from './group.js'
 import { cleanupGraph2 } from './graph/state.js'
 
 // Shareable URL for one finding, or null when the finding can't carry a
@@ -61,8 +61,14 @@ export function reportWorkspaceFor(name, preferred = state.currentReportWorkspac
 // super-group resolves to the group the UI actually renders — selecting
 // the per-report group would stamp an active-tab / selection key no
 // rendered element carries.
+//
+// `linkableGroups`, not `getMergedGroups`: whether a finding is loaded
+// is not a question about the upstream lens, and a link answered
+// through it would report an app-side finding in an open report as
+// gone. `unhideFinding` takes the lens off for such a target, which is
+// also what keeps the group returned here the one that renders.
 export function findLoadedFinding(id) {
-  for (const group of getMergedGroups()) {
+  for (const group of linkableGroups()) {
     for (const finding of group) {
       if (tabKey(finding) === id) return { group, finding }
     }
@@ -137,6 +143,14 @@ export function unhideFinding(group, id) {
     // equal write still wakes every autorun reading the field.
     state.shownTriage = bucket
   }
+  // A fifth: the upstream lens, which unlike every filter above reaches
+  // INSIDE the group (group.js onlyUpstream) — so it can hide the
+  // target while still drawing its group, under a gid built from the
+  // members it kept. Off it comes, unless every member is upstream:
+  // there the lens hands the group back whole, the gid below is the one
+  // on screen, and a reader who arrived at an upstream finding through
+  // an upstream link has no reason to leave the lens they were in.
+  if (state.upstreamOnly && !group.every((f) => f.isUpstream)) state.upstreamOnly = false
   if (applyFilters([group]).length === 0) {
     const sortBy = state.sortBy
     resetFilters()

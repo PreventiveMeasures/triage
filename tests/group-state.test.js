@@ -45,7 +45,7 @@ if (!globalThis[slotKey]) {
 const { state } = await import('../client/state.ts')
 const {
   activeTabFor, canApplyFixToGroup, fixApplies, getMergedGroups, groupState, groupTabsByLevel, groupWithPassRows,
-  primaryTab, scopedTriage, sortTabs, syncGroupTriage, tabTriage, triageActionPlan,
+  primaryTab, scopedTriage, sortTabs, syncGroupTriage, tabTriage, triageActionPlan, triageScope, triageTabs,
 } = await import('../ui/view/group.js')
 
 const REPORT = 'report-a.json'
@@ -106,6 +106,8 @@ function reset() {
   // The App lens defaults on, i.e. the pass's own rows are part of
   // every group (see withoutPassRows).
   state.showRevalidation = true
+  // …and the upstream lens defaults off, i.e. groups arrive whole.
+  state.upstreamOnly = false
 }
 
 // Each case: name, tab annotations (null = unannotated), expected
@@ -289,6 +291,81 @@ describe('scopedTriage', () => {
     const a = tab({ color: 'red' }, { severity: 'high', confidence: 9 })
     const b = tab({ color: 'green' }, { severity: 'low', confidence: 1 })
     assert.equal(scopedTriage([a, b]), null)
+  })
+})
+
+// A group can hold the app's own finding and the upstream code under
+// it (`isUpstream`, stamped per finding). The two are different
+// claims, so a group-level verdict is decided by — and lands on — the
+// app's own members alone.
+describe('upstream members keep out of the group verdict', () => {
+  const upstream = (ann = null) => tab(ann, { isUpstream: true })
+
+  it('leaves them out of the set a group speaks for', () => {
+    reset()
+    const dep = upstream(), own = tab(null)
+    assert.deepEqual(triageTabs([own, dep]), [own])
+  })
+
+  it('keeps the group itself when there is nothing to drop', () => {
+    reset()
+    const plain = [tab(null), tab(null)]
+    assert.equal(triageTabs(plain), plain, 'no upstream members — same array back')
+    const allDeps = [upstream(), upstream()]
+    assert.equal(triageTabs(allDeps), allDeps, 'nothing but upstream — they are what the card is')
+    assert.deepEqual(triageTabs(null), [])
+  })
+
+  it('does not extend a group write to them', () => {
+    reset()
+    const dep = upstream(), own = tab(null)
+    // The scope a menu click and a kanban drop both apply to.
+    assert.deepEqual(triageScope([own, dep]), [own])
+    assert.deepEqual(triageActionPlan([own, dep], 'fixed').targets, [own])
+  })
+
+  it('writes to an upstream finding when it is the whole group', () => {
+    reset()
+    const deps = [upstream(), upstream()]
+    assert.deepEqual(triageScope(deps), deps, 'otherwise they could never be triaged at all')
+  })
+
+  it('reads the verdict off the app-side members only', () => {
+    reset()
+    // The dependency was marked fixed on its own; the app's finding is
+    // still live, and the card is still live with it.
+    const group = [tab(null), upstream({ triage: 'fixed' })]
+    assert.equal(groupState(group).commonTriage, null)
+    assert.equal(groupState(group).anyTriage, false)
+    reset()
+    // …and the other way: the app's answer stands whatever the
+    // dependency underneath says, with no conflict between them.
+    const mixed = [tab({ triage: 'fixed' }), upstream({ triage: 'inprogress' })]
+    const st = groupState(mixed)
+    assert.equal(st.hasConflict, false)
+    assert.equal(st.commonTriage, 'fixed')
+  })
+
+  it('ignores their colors in the rollup too', () => {
+    reset()
+    const group = [tab({ color: 'green' }), upstream({ color: 'blue' })]
+    const st = groupState(group)
+    assert.equal(st.hasConflict, false, 'a dependency\u2019s mark is not a disagreement')
+    assert.equal(st.commonColor, 'green')
+  })
+
+  it('does not level the agreed bucket onto them', () => {
+    reset()
+    const bare = tab(null), dep = upstream(), own = tab({ triage: 'fixed' })
+    assert.equal(syncGroupTriage([own, bare, dep]), true)
+    assert.equal(tabTriage(bare), 'fixed')
+    assert.equal(tabTriage(dep), undefined, 'the dependency was never party to the verdict')
+  })
+
+  it('has nothing to level when the app side is a single finding', () => {
+    reset()
+    const group = [tab({ triage: 'fixed' }), upstream(), upstream()]
+    assert.equal(syncGroupTriage(group), false)
   })
 })
 
@@ -503,6 +580,82 @@ describe('canApplyFixToGroup', () => {
     assert.equal(fixApplies(bare, PR), true)
     assert.equal(fixApplies(landed, PR), false, 'a link that arrived meanwhile is not ours to move')
     assert.equal(fixApplies(tab({ fix: `${PR} ` }), PR), true, 'trimmed on both sides here too')
+  })
+})
+
+// The upstream lens (`state.upstreamOnly`) — the one control that
+// reaches INSIDE a group rather than choosing between groups. With it
+// on, the list is the dependencies' own code: a group keeps only its
+// upstream members, one holding none is gone, and the verdict is then
+// read off and written to the rows that are left.
+describe('the upstream lens', () => {
+  const upstream = (ann = null) => tab(ann, { isUpstream: true })
+  const load = (...groups) => { state.reports = [{ fileName: 'r.json', groups }] }
+
+  it('keeps only the upstream members of a group', () => {
+    reset()
+    const app = tab(null), dep0 = upstream(), dep1 = upstream(), own = tab(null)
+    load([app, own, dep0, dep1])
+    assert.deepEqual(getMergedGroups()[0].map((f) => f.id), [app.id, own.id, dep0.id, dep1.id])
+    state.upstreamOnly = true
+    assert.deepEqual(getMergedGroups()[0].map((f) => f.id), [dep0.id, dep1.id])
+  })
+
+  it('drops a group with nothing upstream in it', () => {
+    reset()
+    const dep = upstream()
+    load([tab(null), tab(null)], [tab(null), dep])
+    state.upstreamOnly = true
+    const shown = getMergedGroups()
+    assert.equal(shown.length, 1)
+    assert.deepEqual(shown[0].map((f) => f.id), [dep.id])
+  })
+
+  it('hands back the group itself when every member is upstream', () => {
+    reset()
+    const deps = [upstream(), upstream()]
+    load(deps)
+    state.upstreamOnly = true
+    assert.equal(getMergedGroups()[0], deps, 'nothing dropped — same array')
+  })
+
+  it('reads the verdict off the rows it left, and writes back to them', () => {
+    reset()
+    // The app side is fixed; the dependency underneath is not.
+    const app = tab({ triage: 'fixed' }), dep = upstream()
+    load([app, dep])
+    assert.equal(groupState(getMergedGroups()[0]).commonTriage, 'fixed')
+    state.upstreamOnly = true
+    const shown = getMergedGroups()[0]
+    assert.equal(groupState(shown).commonTriage, null, 'the dependency is still live')
+    assert.deepEqual(triageScope(shown), shown, 'and a drop here lands on it')
+  })
+
+  it('can turn a settled row into a conflicted one', () => {
+    reset()
+    // The app side agrees. The two upstream rows under it do not — a
+    // disagreement the app-side verdict was speaking over.
+    const app = tab({ triage: 'fixed' }), own = tab({ triage: 'fixed' })
+    const dep0 = upstream({ triage: 'fixed' }), dep1 = upstream({ triage: 'invalid' })
+    load([app, own, dep0, dep1])
+    assert.equal(groupState(getMergedGroups()[0]).hasConflict, false)
+    state.upstreamOnly = true
+    const shown = getMergedGroups()[0]
+    const st = groupState(shown)
+    assert.equal(st.hasConflict, true)
+    assert.equal(st.commonTriage, null)
+    // Resolvable the usual way: narrowed to the active tab, which under
+    // this lens is one of the upstream rows.
+    assert.deepEqual(triageScope(shown, st), [activeTabFor(shown)])
+    assert.equal(shown.includes(activeTabFor(shown)), true)
+  })
+
+  it('is off by default and leaves the list alone', () => {
+    reset()
+    const group = [tab(null), upstream()]
+    load(group)
+    assert.equal(state.upstreamOnly, false)
+    assert.equal(getMergedGroups()[0], group)
   })
 })
 
