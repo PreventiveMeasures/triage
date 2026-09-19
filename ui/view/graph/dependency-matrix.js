@@ -6,10 +6,11 @@ import { MATRIX_LEFT, MATRIX_TOP, matrixFitCell, matrixHit, matrixZoomCell, pain
 import { renderMatrixPanel } from './matrix-panel.js'
 import css from './dependency-matrix.css'
 import sidebarListCSS from './sidebar-list.css'
+import detailActionCSS from '../../styles/detail-action.css'
 
 class DependencyMatrix extends LitElement {
   static properties = { graph: { attribute: false } }
-  static styles = [unsafeCSS(sidebarListCSS), unsafeCSS(css)]
+  static styles = [unsafeCSS(sidebarListCSS), unsafeCSS(css), unsafeCSS(detailActionCSS)]
 
   constructor() {
     super()

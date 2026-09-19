@@ -1127,14 +1127,14 @@ function kanbanDetailTemplate(focusGroup, column, columns = []) {
   const actions = html`<div class="kanban-detail-actions">
     <button
       type="button"
-      class="kanban-detail-expand"
+      class="kanban-detail-expand detail-action"
       data-kanban-detail-fullscreen
       aria-pressed=${full ? 'true' : 'false'}
       aria-label=${full ? 'Back to the readable width' : 'Fill the available space'}
     >${full ? COLLAPSE_ICON : EXPAND_ICON}</button>
     <button
       type="button"
-      class="kanban-detail-close"
+      class="kanban-detail-close detail-action"
       aria-label="Close details"
     >×</button>
   </div>`
