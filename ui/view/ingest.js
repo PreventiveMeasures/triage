@@ -250,6 +250,26 @@ async function importReportContent({ name, content, existingNames }) {
 // `sessions.get(workspaceId)` and throws "Workspace … is not open"
 // if openPresence's `sessions.set` hasn't run yet. Awaiting also
 // catches a chunk-load rejection so it doesn't bubble unhandled.
+// The repository the sender named for a report they exported
+// (workspace-export.js `manualRepo` puts it on the entry). Without
+// this the reports land but their file links resolve to nothing on a
+// machine that never typed the URL — the hand-off the raw export is
+// for.
+//
+// Same rule the workspace import applies to its `repoUrls` map
+// (client/workspace-import.js): keyed on the name the report actually
+// LANDED under, so a rename on a name collision takes the URL with
+// it, and never written over a URL this browser already holds —
+// overwriting what the reader typed here is the surprise. A report
+// carrying no `repo` leaves whatever is on this side alone. The chip
+// is refreshed in step when the report is the one on screen.
+function adoptImportedRepo(name, repo) {
+  const url = typeof repo?.github === 'string' ? repo.github : ''
+  if (!url || loadRepoUrlFor(name)) return
+  saveRepoUrlFor(name, url)
+  if (state.currentFile === name) state.repoUrl = url
+}
+
 async function uploadReportToWorkspaces(name, workspaces) {
   let bytes
   try {
@@ -339,6 +359,7 @@ async function addFiles(files) {
             const saved = await importReportContent({ name: r.name, content: r.content, existingNames })
             if (!saved) continue
             setCount(saved.name, result.count, result.source)
+            adoptImportedRepo(saved.name, r.repo)
             last = { name: saved.name, content: saved.content }
           }
         }
