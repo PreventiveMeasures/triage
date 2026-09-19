@@ -22,7 +22,22 @@ import { bundleToCycloneDx, bundleToSpdx, sbomBaseName } from './sbom.js'
 // When another OPFS report finishes parsing, re-render if the user is
 // viewing a bundle — Issues tab and Graph view both pull from the
 // index, so newly-indexed findings must land without a tab flip / re-open.
+// Coalesce refreshes until both one frame and 350ms have passed, allowing
+// report loading and painting to progress before starting the graph rebuild.
+let findingIndexRenderQueued = false
 subscribeToBundleFindingIndex(() => {
+  if (findingIndexRenderQueued) return
+  findingIndexRenderQueued = true
+  let waitsRemaining = 2
+  function ready() {
+    if (--waitsRemaining === 0) refreshFindingIndexView()
+  }
+  requestAnimationFrame(ready)
+  setTimeout(ready, 350)
+})
+
+function refreshFindingIndexView() {
+  findingIndexRenderQueued = false
   if (state.currentView === 'bundles' && state.selectedBundle) render()
   else if (state.currentView === 'packages') render()
   else if (state.currentView === 'repositories') render()
@@ -40,10 +55,10 @@ subscribeToBundleFindingIndex(() => {
     // can't see a module Map fill, so bump the tick they read.
     // Gated on there being a links file at all: with none, no card
     // shows that row and every other card would re-render for nothing,
-    // once per report the walk gets through.
+    // on every refresh while reports are being indexed.
     if (hasLinkedFindings()) state.findingIndexTick++
   }
-})
+}
 
 // A bundle's per-file hashes landed (or a deleted bundle's were
 // dropped). Everything that joins a finding to bundle source goes
