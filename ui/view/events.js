@@ -574,7 +574,10 @@ report.addEventListener('click', (e) => {
       // Tear down the canvas when leaving Graph so its rAF /
       // observers stop. attachGraph2Interaction will re-wire on
       // re-entry.
-      if (state.bundleDetailsTab === 'graph' && tab !== 'graph') cleanupGraph2()
+      if (state.bundleDetailsTab === 'graph' && tab !== 'graph') {
+        cleanupGraph2()
+        document.body.classList.remove('report-fullscreen')
+      }
       // Tab switch resets the source-viewer pointer so a stale
       // bundleSourceFile from a different tab (Code slide
       // selection, or modal opened from the Files tab) doesn't

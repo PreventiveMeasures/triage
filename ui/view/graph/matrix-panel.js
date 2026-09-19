@@ -14,8 +14,7 @@ export function renderMatrixPanel(model, graph, selection, { select, expand, exp
   const row = model.byId.get(selection?.from), target = model.byId.get(selection?.to)
   if (!row) {
     const hubs = [...model.rows].toSorted((a, b) => b.incoming - a.incoming).slice(0, 15)
-    return html`<div class="matrix-panel-head"><h3>Dependency overview</h3></div>
-      <div class="matrix-metrics"><span><b>${number(graph.nodes.length)}</b>files</span><span><b>${number(graph.packages.length)}</b>packages</span><span><b>${number(model.importCount)}</b>imports</span></div>
+    return html`<div class="matrix-metrics"><span><b>${number(graph.nodes.length)}</b>files</span><span><b>${number(graph.packages.length)}</b>packages</span><span><b>${number(model.importCount)}</b>imports</span></div>
       <p class="matrix-empty">Select a row to inspect a package. Select a cell to see the files behind a dependency.</p>
       <h4>Most imported</h4>${hubs.map((n) => rowButton(n, n.incoming, select))}
       ${model.cycleCount ? html`<h4>Cyclic groups <b>${model.cycleCount}</b></h4>${model.rows.filter((n) => n.cyclic).slice(0, 12).map((n) => rowButton(n, n.outgoing, select))}` : null}`
@@ -25,8 +24,7 @@ export function renderMatrixPanel(model, graph, selection, { select, expand, exp
   const cycleSize = row.cyclic ? [...model.byId.values()].filter((n) => n.component === row.component).length : 0
   const outgoing = [...(model.cells.get(row.id)?.values() ?? [])].filter((c) => c.to !== row.id).toSorted((a, b) => b.count - a.count)
   const incoming = [...model.cells.values()].map((targets) => targets.get(row.id)).filter((c) => c && c.from !== row.id).toSorted((a, b) => b.count - a.count)
-  return html`<div class="matrix-panel-head"><h3>${target ? 'Dependency' : row.file ? 'File' : 'Package'}</h3><button @click=${clear} aria-label="Clear matrix selection">×</button></div>
-    <button class="matrix-selected-name" @click=${() => select(row.id)}>${row.label}</button>
+  return html`<div class="matrix-panel-head"><button class="matrix-selected-name" @click=${() => select(row.id)}>${row.label}</button><button @click=${clear} aria-label="Clear matrix selection">×</button></div>
     ${target ? html`<div class="matrix-direction">imports →</div><button class="matrix-selected-name" @click=${() => select(target.id)}>${target.label}</button>` : null}
     ${(target ? cell?.cyclic : row.cyclic) ? html`<span class="matrix-cycle-label">${target ? 'Import participates in a cycle' : `Cyclic group · ${cycleSize} members`}</span>` : null}
     <div class="matrix-metrics"><span><b>${target ? number(cell?.count ?? 0) : number(row.files.length)}</b>${target ? 'file imports' : 'files'}</span><span><b>${formatBytes(row.size)}</b>source size</span></div>

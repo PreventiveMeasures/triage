@@ -78,7 +78,7 @@ export function buildDependencyMatrix(graph, { expanded = new Set(), order = 'st
   const { groups, componentOf } = stronglyConnected(ids, links)
   const cyclic = new Set(groups.flatMap((group) => group.length > 1 || links.get(group[0]).has(group[0]) ? group : []))
   for (const row of byId.values()) { row.cyclic = cyclic.has(row.id); row.component = componentOf.get(row.id) }
-  const appPackages = new Set(graph.layerRoots?.roots ?? [])
+  const appPackages = graph.ownSourcePackages ?? new Set(graph.layerRoots?.roots ?? [])
   const appRank = (row) => row.pkg === '__own__' ? 0 : appPackages.has(row.pkg) ? 1 : 2
   const boundaryRank = (row) => incoming.has(row.id) && outgoing.has(row.id) ? 0 : 1
   const componentAppRank = new Map(groups.map((members, component) =>
@@ -115,12 +115,8 @@ export function buildDependencyMatrix(graph, { expanded = new Set(), order = 'st
     }
   }
   const compare = (a, b) => {
-    // All own-source directories/files precede dependencies, even when a
-    // dependency shares a cycle with one directory but not the others.
-    const appDiff = appRank(a) - appRank(b)
-    if (appDiff) return appDiff
     if (order === 'structure') {
-      // Keep cycle members together within the own-source/dependency sections.
+      // Cycle blocks take priority; source directories lead within each block.
       const componentDiff = componentAppRank.get(a.component) - componentAppRank.get(b.component)
       if (componentDiff) return componentDiff
       const boundaryDiff = boundaryRank(a) - boundaryRank(b)
@@ -128,6 +124,8 @@ export function buildDependencyMatrix(graph, { expanded = new Set(), order = 'st
       const diff = a.component - b.component // Kosaraju returns condensation DAG order.
       if (diff) return diff
     }
+    const appDiff = appRank(a) - appRank(b)
+    if (appDiff) return appDiff
     const boundaryDiff = boundaryRank(a) - boundaryRank(b)
     if (boundaryDiff) return boundaryDiff
     if (order === 'structure' && a.component === b.component) {

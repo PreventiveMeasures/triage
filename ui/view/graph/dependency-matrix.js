@@ -72,7 +72,7 @@ class DependencyMatrix extends LitElement {
     graph2.graphState = this.bridge
     // Render controls in the shared topbar, retaining this component's state
     // and handlers. Pointer/zoom updates need not rerender the parent toolbar.
-    const controlsKey = JSON.stringify([this.order, this.cyclesOnly, this.model.cycleCount, this.expanded.size, !!this.neighborhood])
+    const controlsKey = JSON.stringify([this.cyclesOnly, this.model.cycleCount, this.expanded.size, !!this.neighborhood])
     if (controlsKey !== this.controlsKey) {
       this.controlsKey = controlsKey
       this.dispatchEvent(new CustomEvent('matrix-controls-change', { detail: this.renderControls(), bubbles: true, composed: true }))
@@ -188,10 +188,7 @@ class DependencyMatrix extends LitElement {
 
   renderControls() {
     return html`<div class="g2-matrix-controls">
-        <label class="g2-reason-filter"><select aria-label="Matrix order" @change=${(e) => { this.order = e.target.value; this.dirty = true; this.requestUpdate() }}>
-          <option value="structure" ?selected=${this.order === 'structure'}>Structure ↓</option><option value="name" ?selected=${this.order === 'name'}>Name ↓</option><option value="importers" ?selected=${this.order === 'importers'}>Most imported ↓</option><option value="imports" ?selected=${this.order === 'imports'}>Most imports ↓</option>
-        </select></label>
-        <button aria-pressed=${String(this.cyclesOnly)} @click=${() => { this.cyclesOnly = !this.cyclesOnly; this.dirty = true; this.requestUpdate() }}>${this.model.cycleCount} ${this.model.cycleCount === 1 ? 'cycle' : 'cycles'}</button>
+        <button type="button" class=${`g2-topbar-toggle${this.cyclesOnly ? ' on' : ''}`} aria-pressed=${String(this.cyclesOnly)} @click=${() => { this.cyclesOnly = !this.cyclesOnly; this.dirty = true; this.requestUpdate() }}><span>${this.model.cycleCount} ${this.model.cycleCount === 1 ? 'cycle' : 'cycles'}</span><span class="g2-switch"></span></button>
         ${this.expanded.size > 0 ? html`<button @click=${() => { this.expanded.clear(); this.selection = null; this.dirty = true; this.requestUpdate() }}>Collapse all</button>` : null}
         ${this.neighborhood ? html`<button @click=${() => { this.neighborhood = null; this.dirty = true; this.requestUpdate() }}>All dependencies</button>` : null}
       </div>`
@@ -203,6 +200,9 @@ class DependencyMatrix extends LitElement {
     const hoverImports = hoverCol && hoverRow ? this.model.cells.get(hoverRow.id)?.get(hoverCol.id)?.count ?? 0 : 0
     return html`<div class="matrix-layout">
       <div class="matrix-stage" style=${`--matrix-label-width: ${MATRIX_LEFT}px`}>
+        <select class="matrix-order" aria-label="Matrix order" @change=${(e) => { this.order = e.target.value; this.dirty = true; this.requestUpdate() }}>
+          <option value="structure" ?selected=${this.order === 'structure'}>Structure ↓</option><option value="name" ?selected=${this.order === 'name'}>Name ↓</option><option value="importers" ?selected=${this.order === 'importers'}>Most imported ↓</option><option value="imports" ?selected=${this.order === 'imports'}>Most imports ↓</option>
+        </select>
         <canvas tabindex="0" role="img" aria-label="Dependency matrix. Rows import columns. Arrow keys select cells; Enter expands a package."
           @keydown=${(e) => this.key(e)} @pointermove=${(e) => this.move(e)} @pointerleave=${() => { if (!this.drag) { this.hover = null; this.requestUpdate() } }}
           @pointerdown=${(e) => { if (e.button !== 0) return; this.canvas.setPointerCapture(e.pointerId); this.drag = { x: e.clientX, y: e.clientY, ox: this.view.x, oy: this.view.y, moved: false } }}

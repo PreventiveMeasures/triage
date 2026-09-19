@@ -2070,8 +2070,11 @@ bundle-search {
    panel naturally takes the full available space minus #report's
    .5rem padding. */
 body.report-fullscreen {
+  --graph-fullscreen-inset: max(56px, var(--wco-right-toolbar, 0px));
+
   & app-sidebar { display: none; }
   & #report header.page-head { display: none; }
+  & .bundles-slide-bar { display: none; }
   & #report { max-width: none; padding: .5rem; }
 }
 

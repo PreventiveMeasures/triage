@@ -61,8 +61,7 @@
 .graph2-layout { display: contents; }
 
 :host([matrix]) {
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-areas: 'topbar' 'stage';
+  grid-template-columns: minmax(0, 1fr) 320px;
 }
 
 /* Findings-view chrome (6px radius + glass shadow + transparent
@@ -115,7 +114,7 @@
   gap: 8px;
   font-size: 11px;
 
-  & button {
+  & button:not(.g2-topbar-toggle) {
     height: 30px;
     padding: 4px 7px;
     border: 1px solid var(--border);
@@ -125,7 +124,7 @@
     font: inherit;
   }
 
-  & button:hover, & button[aria-pressed='true'] {
+  & button:not(.g2-topbar-toggle):hover, & button:not(.g2-topbar-toggle)[aria-pressed='true'] {
     background: var(--graph-hover-bg);
     border-color: var(--muted);
   }

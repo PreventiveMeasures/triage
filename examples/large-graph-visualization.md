@@ -39,9 +39,9 @@ Primary sources:
   package and intensity proportional to the log of the count.
 - Structure order groups strongly connected components (sets mutually
   reachable through imports), then follows dependency order between them.
-  Own source and all split own-source directories stay ahead of dependencies
-  in every order, including when a dependency shares their cycle. Structure
-  keeps cycle members together within those source/dependency sections.
+  Structure keeps each cycle together, with own-source directories before
+  dependency modules inside the cycle. Cycles containing own source precede
+  dependency-only groups. Other sort modes put own source first globally.
   Other modules missing imports or importers come last. Package-internal imports
   do not count as connections to other modules for this ordering.
   Within a cycle, weighted dependency ordering favors imports above the diagonal

@@ -110,7 +110,6 @@ export function renderTopBar(graph, options, extraControls = null) {
     class=${classMap({ 'g2-topbar-toggle': true, on: graph2.splitOwnDirs })}
     data-g2-split-own
     aria-pressed=${String(graph2.splitOwnDirs)}
-    data-tooltip="Split your own source into a group per top-level directory (off: one 'own source' group)"
   ><span>Split dirs</span><span class="g2-switch"></span></button>` : null
 
   // "Packages" — bundle Graph tab only (gated by the caller's
