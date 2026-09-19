@@ -169,16 +169,21 @@ export async function buildWorkspaceExportPayload(workspace, { includeBundleByte
   // URLs go in the bundle; unrelated entries are dropped so the
   // export stays a clean self-contained slice.
   //
-  // The same URLs also ride on the report entries themselves, as
+  // The same URLs ride on the report entries themselves, as
   // `repo: { github }` (see `manualRepo`). This map is what the
   // importer reads and what every export before it wrote, so it stays
   // where it is; the per-entry copy is for a reader that takes one
   // report out of the file and needs it to say, on its own, which
   // repository it was read against.
+  //
+  // Built FROM those entries rather than by asking again. The map is
+  // shared across tabs and a sibling can rewrite it while this export
+  // is being built — read twice, one file could end up telling the
+  // importer one repository and an entry reader another. One snapshot
+  // per export, taken where the reports are read.
   const repoUrls = {}
   for (const r of reports) {
-    const url = loadRepoUrlFor(r.name)
-    if (url) repoUrls[r.name] = url
+    if (r.repo?.github) repoUrls[r.name] = r.repo.github
   }
 
   // Bundle membership rides as a top-level list of sha512 integrities
