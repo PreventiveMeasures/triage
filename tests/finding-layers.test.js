@@ -95,6 +95,28 @@ describe('stampUpstreamFindings', () => {
     assert.equal(vendored.isUpstream, true)
   })
 
+  it('revises its own answer when a later report moves the deps dir', () => {
+    // A workspace ingests its reports one at a time and renders between
+    // them, so the first report is stamped under the marker the set had
+    // then. `dependencies/` is the fallback, and it stops counting the
+    // moment a report brings a real one.
+    const fallback = { isApp: false, file: 'dependencies/pkg/index.js' }
+    const first = report(fallback)
+    configureDepsDir(first)
+    stampUpstreamFindings(first)
+    assert.equal(fallback.isUpstream, true, 'upstream while `dependencies` is the marker')
+
+    const both = [...first, ...report({ isApp: false, file: 'node_modules/x/i.js' })]
+    configureDepsDir(both)
+    stampUpstreamFindings(both)
+    assert.equal('isUpstream' in fallback, false, 'the dir moved out from under it')
+
+    // And back again, should the set that picked `node_modules` go away.
+    configureDepsDir(first)
+    stampUpstreamFindings(first)
+    assert.equal(fallback.isUpstream, true)
+  })
+
   it('is idempotent, and survives a report with no groups', () => {
     const dep = { isApp: false, file: 'node_modules/x/i.js' }
     const reports = [...report(dep), {}]

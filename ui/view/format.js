@@ -294,30 +294,49 @@ export function isModule(file) {
   return moduleRe.test(file)
 }
 
+// The findings whose `isUpstream` was derived here, as opposed to one
+// that arrived carrying its own answer. Only the derived ones may be
+// revised — see the deps-dir note below for why any of them must be.
+const derivedUpstream = new WeakSet()
+
 // Stamp the other half of the layer split onto each finding: one that
 // describes the source underneath (`isApp === false`, settled at
 // ingest) and sits in the dependency tree is UPSTREAM code — someone
 // else's source, shipped here. An app-layer finding is never upstream
 // however its file reads, so only the source-layer ones are asked.
 //
-// Only `true` is ever written, and only where the field is absent: a
-// finding that arrived carrying its own answer keeps it, and the ones
-// this doesn't apply to are left without the field rather than stamped
-// `false` — absent means "not upstream", which is what every other
-// reading of a missing flag already means.
+// Only `true` is ever written: the findings this doesn't apply to are
+// left without the field rather than stamped `false` — absent means
+// "not upstream", which is what every other reading of a missing flag
+// already means here. A finding that arrived carrying the field keeps
+// its own answer untouched.
 //
 // Here rather than at ingest because `isModule` reads the deps dir,
-// and that is chosen from the WHOLE loaded set: a report is ingested
-// before its own paths have been weighed, so a vendor-tree project
-// would be asked under the default marker and answer no. Called right
-// after `configureDepsDir` (render.js), it sees the settled dir, and
-// re-running per render is what lets a later report's findings be
-// stamped under a dir its own arrival helped pick.
+// and that is chosen from the WHOLE loaded set. Called right after
+// `configureDepsDir` (render.js), this sees the dir that set settled
+// on rather than the one in force before the report arrived.
+//
+// And the answer is REVISED, not just filled in, because the set grows
+// under it: a workspace ingests its reports one at a time and renders
+// between them (ingest.js switchToWorkspace), so a `dependencies/…`
+// finding from the first report is stamped under the fallback marker,
+// and a later report carrying `node_modules/` moves the dir out from
+// under it. Re-deriving each render is what keeps every flag agreeing
+// with the dir the loaded set has actually settled on.
 export function stampUpstreamFindings(reports) {
   for (const r of reports ?? []) {
     for (const g of r.groups ?? []) {
       for (const f of g) {
-        if (f.isApp === false && !('isUpstream' in f) && isModule(f.file)) f.isUpstream = true
+        if (f.isApp !== false) continue
+        const derived = derivedUpstream.has(f)
+        if ('isUpstream' in f && !derived) continue
+        if (isModule(f.file)) {
+          f.isUpstream = true
+          derivedUpstream.add(f)
+        } else if (derived) {
+          delete f.isUpstream
+          derivedUpstream.delete(f)
+        }
       }
     }
   }
