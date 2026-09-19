@@ -1418,5 +1418,10 @@ function openFilePicker() {
 // Event-delegate via the drop-zone so the listener survives Lit
 // re-renders if the prompt template ever becomes a component.
 dropZone.addEventListener('click', (e) => {
+  const workspace = e.target.closest('[data-landing-workspace]')
+  if (workspace) {
+    void switchToWorkspace(workspace.dataset.landingWorkspace)
+    return
+  }
   if (e.target.closest('.drop-prompt-action')) openFilePicker()
 })

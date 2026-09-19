@@ -10,6 +10,7 @@ import fileIconCSS from '../styles/file-icon.css'
 import { initEncryptionToggle, refreshEncryptionToggle } from './encryption-toggle.js'
 import { initStorageStatus, scheduleStorageStatusRefresh } from './storage-status.js'
 import { render } from './render.js'
+import { renderLandingWorkspaces } from './landing-workspaces.js'
 
 // Set on mount (`<app-sidebar>` firstUpdated). `hostEl` is the
 // custom-element host (light DOM — the `.classList` collapse
@@ -421,6 +422,7 @@ export async function renderSidebar() {
   ensureLinkedFindingsIndexed().catch(() => {})
   const names = await listFiles()
   const workspaces = listWorkspaces()
+  renderLandingWorkspaces(workspaces)
   // A report may be moved into a new workspace without being reopened.
   // Prime parent hints here too, so its next copied link is complete.
   const [bundleNames] = await Promise.all([
