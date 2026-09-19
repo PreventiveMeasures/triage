@@ -2,8 +2,14 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { parseLinkedFindings } from '../client/linked-findings.js'
 import { groupLinkedReportRows } from '../ui/view/linked-report-rows.js'
+import { isAppFinding } from '../report/index.js'
 
-const row = (report, ids, source = null) => ({ report, index: 0, members: ids.map((id) => ({ id, title: `Finding ${id}`, source })) })
+// Mirror what the index stamps on each member (client/bundle-finding-index.js):
+// the layer answer, derived once from the producer and the revalidation stamp.
+// Re-applied by the tests that edit those two fields after building a row.
+const stampRow = (r) => { for (const f of r.members) f.isApp = isAppFinding(f, f.source); return r }
+const row = (report, ids, source = null) =>
+  stampRow({ report, index: 0, members: ids.map((id) => ({ id, title: `Finding ${id}`, source })) })
 const members = (rows) => rows.map((r) => r.members.map((f) => f.id))
 
 describe('linked report rows', () => {
@@ -27,6 +33,7 @@ describe('linked report rows', () => {
     // Equivalent metadata must not depend on object property order or whether
     // an absent revalidation stamp is represented as undefined or empty.
     second.members = second.members.map((f) => ({ source: f.source, revalidate: '', title: f.title, id: f.id }))
+    stampRow(second)
     const { rows } = groupLinkedReportRows(['A', 'B'], [
       row('first', ['A', 'B']), second, row('first', ['A', 'B']),
     ])
@@ -39,6 +46,7 @@ describe('linked report rows', () => {
       const first = row('first', ['A', 'B'])
       const second = row('second', ['A', 'B'])
       second.members[0][field] = value
+      stampRow(second)
       const { rows } = groupLinkedReportRows(['A', 'B'], [first, second])
       assert.equal(rows.length, 2)
       assert.notEqual(rows[0].key, rows[1].key)
@@ -76,6 +84,7 @@ describe('linked report rows', () => {
     for (const [id, source] of [['codex', 'codex-security'], ['deepsec', 'deepsec'], ['claude', 'claude-security'], ['piolium', 'piolium']]) {
       input.members.find((f) => f.id === id).source = source
     }
+    stampRow(input)
     const original = structuredClone(input)
     const result = groupLinkedReportRows(['linked', 'missing'], [input])
     assert.deepEqual(members(result.rows), [['linked', 'pass', 'codex', 'deepsec', 'claude', 'piolium']])
@@ -98,6 +107,7 @@ describe('linked report rows', () => {
     const first = row('first', ['A', 'B'])
     const second = row('second', ['A', 'B'])
     second.members[1].revalidate = 'revalidation'
+    stampRow(second)
     const { rows } = groupLinkedReportRows(['A'], [first, second])
     assert.deepEqual(members(rows), [['A'], ['A', 'B']])
     assert.deepEqual(rows.map((r) => r.reports.map((p) => p.name)), [['first'], ['second']])

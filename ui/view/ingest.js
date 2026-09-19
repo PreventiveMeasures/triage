@@ -12,7 +12,7 @@ import { render } from './render.js'
 import { renderSidebar } from './sidebar.js'
 import { cleanupGraph2, graph2 } from './graph/state.js'
 import { openBundle, prefetchBundleHashes, selectBundle } from './bundle-load.js'
-import { backfillFindingIds, detectFormat, inheritReportMeta, parseCodexCsvToScans, readReport, reportEntries, reportRepoGithub } from '../../report/index.js'
+import { backfillFindingIds, detectFormat, inheritReportMeta, isAppFinding, parseCodexCsvToScans, readReport, reportEntries, reportRepoGithub } from '../../report/index.js'
 import { importWorkspaceFromGzip } from './workspace-import.js'
 import { maybePromptFirstUse } from './first-import-prompt.js'
 import { openPasskeyUnlockDialog } from './dialogs/passkey-unlock-dialog.js'
@@ -1240,6 +1240,14 @@ async function ingestReport(name, content, gen = null) {
         // writer's `sourceReader` gives (report/src/write-md.js), read
         // off the finding so the filters don't have to find its report.
         filled._source = filled.source ?? data.source ?? null
+        // Which LAYER this finding describes — the app as it runs, or
+        // the source underneath. The producer answer above decides it
+        // (see `isAppFinding`), so it is settled here, once, rather
+        // than re-derived by each surface that sorts or filters on it.
+        // A finding that arrived carrying the field keeps its own
+        // answer: a re-imported export can have been written by a
+        // reader that already knew.
+        if (!('isApp' in filled)) filled.isApp = isAppFinding(filled, filled._source)
         // …and whether that producer's own pass judged anything here,
         // which is what the outcome filter's stand-in turns on
         // (filters.js filterRevalidateKind).
