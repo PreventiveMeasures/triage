@@ -154,12 +154,12 @@
    shell from styles/toolbar.css (same as the findings tab's
    "Search findings" field), so the look + height + focus state
    match. Local additions here are just (a) cap the field to a
-   compact 14rem so the topbar's other controls keep their
+   compact 12rem so the topbar's other controls keep their
    inline rhythm, (b) anchor the clear button on the right inside
    the wrapper. */
 .g2-path-filter-wrap {
   position: relative;
-  flex: 0 0 14rem;
+  flex: 0 0 12rem;
   /* Reserve space on the right for the absolutely-positioned
      clear button so the input text can't slide under it. */
   padding-right: 22px;

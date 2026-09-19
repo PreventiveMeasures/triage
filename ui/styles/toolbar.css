@@ -821,9 +821,9 @@ severity-chips {
   overflow: hidden;
 }
 .sev-chip {
-  display: inline-flex; align-items: center; gap: .4rem;
+  display: inline-flex; align-items: center; gap: .35rem;
   background: transparent; border: 0;
-  padding: 0 .6rem;
+  padding: 0 .4rem;
   color: var(--muted);
   font-family: inherit; font-size: .8rem;
   transition: background .12s, color .12s;
@@ -846,9 +846,7 @@ severity-chips {
   & .n {
     align-self: flex-start;
     /* Negative side margins pull the badge tight to the label on
-       the left and out toward the chip's right edge (the .6rem
-       chip padding + .4rem flex gap left it floating with more
-       breathing room than the corner indicator needs). */
+       the left and out toward the chip's right edge. */
     margin: 1px -5px 0;
     color: var(--muted);
     font-variant-numeric: tabular-nums;
