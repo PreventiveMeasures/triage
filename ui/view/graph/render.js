@@ -1,5 +1,7 @@
 import { classMap, html, repeat, styleMap } from '../frontend-global.js'
 import { live } from 'lit/directives/live.js'
+import { unsafeHTML } from 'lit/directives/unsafe-html.js'
+import { GRAPH_ICON_SVG, LAYERS_ICON_SVG, MATRIX_ICON_SVG } from '../icons.js'
 import { SEVERITIES, formatBytes } from '../format.js'
 import { graph2 } from './state.js'
 import { pkgColor } from './utils.js'
@@ -29,11 +31,13 @@ import { pkgLabelOf, pkgRelative } from './data.js'
 // row above the main topbar. Used by the Findings-tab embed to host
 // the view-mode chooser inside the graph's own toolbar instead of
 // stacking a separate findings toolbar above the canvas.
-export function renderTopBar(graph, options) {
+export function renderTopBar(graph, options, extraControls = null) {
   const layers = options.showBundleLayouts && graph2.bundleLayout === 'layers'
+  const matrix = options.showBundleLayouts && graph2.bundleLayout === 'matrix'
   const layoutSelector = options.showBundleLayouts ? html`<div class="g2-layout-tabs" role="group" aria-label="Bundle layout">
-    <button type="button" data-g2-layout="graph" aria-pressed=${String(!layers)}>Graph</button>
-    <button type="button" data-g2-layout="layers" aria-pressed=${String(!!layers)}>Layers</button>
+    <button type="button" data-g2-layout="graph" aria-label="Graph" aria-pressed=${String(!layers && !matrix)}>${unsafeHTML(GRAPH_ICON_SVG)}</button>
+    <button type="button" data-g2-layout="layers" aria-label="Layers" aria-pressed=${String(!!layers)}>${unsafeHTML(LAYERS_ICON_SVG)}</button>
+    <button type="button" data-g2-layout="matrix" aria-label="Matrix" aria-pressed=${String(!!matrix)}>${unsafeHTML(MATRIX_ICON_SVG)}</button>
   </div>` : null
   const extraTopRow = options.extraTopRow
   const hideAllFiles = options.hideAllFiles ?? false
@@ -115,7 +119,7 @@ export function renderTopBar(graph, options) {
   // (per top-level dir under Split dirs) with aggregated import
   // edges. Same rebuild-on-flip contract as the toggles above —
   // the layout and hit-testing operate on a different node set.
-  const showPackagesView = !layers && (options.showPackagesView ?? false)
+  const showPackagesView = !layers && !matrix && (options.showPackagesView ?? false)
   const packagesViewBtn = showPackagesView ? html`<button
     type="button"
     class=${classMap({ 'g2-topbar-toggle': true, on: graph2.packagesView })}
@@ -158,7 +162,6 @@ export function renderTopBar(graph, options) {
          rendering the topbar per keystroke — input redraws the canvas
          but not the chrome. -->
     ${graph.reasons?.length > 0 ? html`<label class="g2-reason-filter">
-      <span>Reason</span>
       <select aria-label="Reason" .value=${live(graph2.bundleReason ?? '')} @change=${(e) => e.currentTarget.dispatchEvent(new CustomEvent('bundle-graph-reason-change', {
         detail: { reason: e.currentTarget.value || null }, bubbles: true, composed: true,
       }))}>
@@ -182,6 +185,7 @@ export function renderTopBar(graph, options) {
     ${extraTopRow ? null : allFilesBtn}
     ${extraTopRow ? null : splitOwnBtn}
     ${extraTopRow ? null : packagesViewBtn}
+    ${extraControls}
     <div class="g2-spacer"></div>
     ${extraTopRow ? null : triageBtn}
     <!-- Fullscreen — toggles body.report-fullscreen. The sidebar
@@ -455,7 +459,7 @@ function renderFileCard(graph, n, file, ctx) {
         <span class="g2-sel-pkg">${pkgLabel}</span>
       </div>
     </div>
-    <div class="g2-sel-fullpath" title=${file}>${file}</div>
+    <div class="g2-sel-fullpath" data-tooltip=${file}>${file}</div>
     ${formatBytes(n.size) ? html`<div class="g2-sel-size">${formatBytes(n.size)}</div>` : null}
     <!-- Own + subtree finding chips — same chrome as graph v1's
          sidebar (.tree-info-section / .tree-count-chip) so it reads

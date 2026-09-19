@@ -60,6 +60,11 @@
    match. */
 .graph2-layout { display: contents; }
 
+:host([matrix]) {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: 'topbar' 'stage';
+}
+
 /* Findings-view chrome (6px radius + glass shadow + transparent
    panel bg) lives in the LIGHT-DOM cascade (report.css) targeting
    `.findings-content.with-graph graph-layout` — selectors don't
@@ -102,6 +107,29 @@
 }
 
 .graph2-topbar .g2-spacer { flex: 1; }
+
+.g2-matrix-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 11px;
+
+  & button {
+    height: 30px;
+    padding: 4px 7px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+  }
+
+  & button:hover, & button[aria-pressed='true'] {
+    background: var(--graph-hover-bg);
+    border-color: var(--muted);
+  }
+}
 
 /* Triage selector flushes right. The `.g2-spacer` above is `flex: 1`,
    but the toolbar-search ahead of it is also `flex: 1` and eats the
@@ -181,13 +209,16 @@
   gap: 2px;
 
   & button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     border: 0;
     border-radius: 4px;
     background: transparent;
     color: var(--muted);
     font: inherit;
     font-size: 11px;
-    padding: 4px 9px;
+    padding: 5px 7px;
   }
 
   & button[aria-pressed='true'] {
@@ -634,7 +665,7 @@
 }
 /* Full path under the head — small monospace muted, single
    line with ellipsis. Hover reveals the untruncated path via
-   the title attribute. */
+   the shared styled tooltip. */
 .g2-sel-fullpath {
   padding: 7px 13px;
   border-bottom: 1px solid var(--graph-divider);
@@ -788,7 +819,8 @@
   background: transparent;
   border: 0;
   border-radius: 3px;
-  padding: 3px 6px;
+  padding: 2px 6px;
+  min-height: 20.5px;
   font: 400 11px/1.4 ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
   color: var(--accent);
   text-align: left;
@@ -848,7 +880,7 @@
 .g2-dist-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 0;
   /* Fills the remaining height inside #g2-top-pkgs-block (panel
      title + dist bar above are fixed-size). Long package lists
      scroll inside this container. */
@@ -873,52 +905,6 @@
   font-style: italic;
   padding: 6px 0;
   text-align: center;
-}
-
-/* Top-packages list rows — clickable buttons that route to
-   the package-click handler in events.js (same as palette
-   swatches). Highlighted with .on when the user has solo'd
-   that package. */
-.g2-dist-item {
-  display: grid;
-  grid-template-columns: 8px 1fr auto auto;
-  gap: 8px;
-  align-items: center;
-  font-size: 10px;
-  padding: 4px 6px;
-  margin: 0 -6px;
-  background: transparent;
-  border: 0;
-  border-radius: 4px;
-  font-family: inherit;
-  text-align: left;
-  width: calc(100% + 12px);
-
-  &:hover { background: var(--graph-hover-bg); }
-  &.on {
-    background: var(--surface-active);
-    & .g2-dist-name { color: var(--accent); }
-  }
-
-  & .g2-dist-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-  & .g2-dist-name {
-    color: var(--muted);
-    font-family: ui-monospace, monospace;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  & .g2-dist-count {
-    font-family: ui-monospace, monospace;
-    color: var(--text);
-  }
-  & .g2-dist-pct {
-    font-family: ui-monospace, monospace;
-    color: var(--muted);
-    width: 36px;
-    text-align: right;
-    opacity: .85;
-  }
 }
 
 /* Print: the graph is interactive-only. Hide it on paper so the

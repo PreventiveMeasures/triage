@@ -49,7 +49,7 @@ function createImpl() {
     // mode) only engage when the bundle has 3+ packages — see
     // `canPackagesView` in buildBundleGraphData. Off by default.
     packagesView: false,
-    bundleLayout: 'graph', // 'graph' | 'layers'; bundle-only, files keep their graph
+    bundleLayout: 'graph', // 'graph' | 'layers' | 'matrix'; bundle-only
     bundleReason: null, // null = all reasons; shared by graph and layers
     bundleReasonFor: null, // bundle integrity; reset selection on bundle changes
     selected: null,        // file path or null

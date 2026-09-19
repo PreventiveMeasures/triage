@@ -223,7 +223,10 @@ export function buildBundleGraphData(details) {
     colorSets.set(file, cols)
     fileFindings.set(file, ff)
   }
-  const transitiveCounts = computeTransitiveCounts(tree, ownCounts)
+  // Matrix cells use direct imports and own findings. Computing reachability
+  // from every file is quadratic on large bundles and adds no matrix data.
+  const transitiveCounts = graph2.bundleLayout === 'matrix' || ownCounts.size === 0
+    ? null : computeTransitiveCounts(tree, ownCounts)
   // Stripped→original mapping the lazy `buildGraphFromPrep` applies
   // to each node's `origFile` field — the selection card's "View
   // source →" button hands the unstripped path to the source viewer

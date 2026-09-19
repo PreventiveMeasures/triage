@@ -3,6 +3,7 @@ import { it } from 'node:test'
 import { bundleGraphPackageOf, bundleGraphReasons, bundleImportsAsMap, bundleLayerRoots, filterBundleGraphReason } from '../ui/view/bundle-graph-inputs.js'
 import { bundlePkgOf } from '../ui/view/bundle-pkg-of.js'
 import { Bundle } from '@exodus/stasis-core/bundle'
+import { bundlePackageDirs } from '../ui/view/bundle-sources.js'
 
 function inputs({ dirs, entries = [], imports = {}, splitOwnDirs = false }) {
   const details = { kind: 'stasis', bundle: {
@@ -20,6 +21,27 @@ it('classifies dependencies before display-prefix stripping and own directories 
   assert.equal(bundleGraphPackageOf('index.js', 'node_modules/a/index.js'), 'a')
   assert.equal(bundleGraphPackageOf('src/index.js', 'project/src/index.js', { splitOwnDirs: true }), 'src')
   assert.equal(bundleGraphPackageOf('src/index.js', 'project/src/index.js'), '__own__')
+})
+
+it('uses Stasis module ownership for source files beneath dependencies directories', () => {
+  const bundle = Bundle.parse(new Bundle({
+    modules: new Map([
+      ['.', { name: 'app', version: '1.0.0', files: { 'index.js': '', 'subdir/dependencies/filename.js': '' } }],
+      ['node_modules/dep', { name: 'dep', version: '1.0.0', files: { 'index.js': '' } }],
+    ]),
+    imports: new Map([['node,import', new Map([
+      ['index.js', new Map([['./helper', 'subdir/dependencies/filename.js']])],
+      ['subdir/dependencies/filename.js', new Map([['dep', 'node_modules/dep/index.js']])],
+    ])]]),
+  }).serialize())
+  const details = { kind: 'stasis', bundle }, dirs = bundlePackageDirs(details)
+  const paths = new Map([...bundle.sources.keys()].map((p) => [p, p]))
+  const pkgOf = (p) => bundleGraphPackageOf(p, p, { packageDir: dirs.get(p) })
+  assert.equal(pkgOf('subdir/dependencies/filename.js'), '__own__')
+  assert.equal(bundleGraphPackageOf('dependencies/filename.js', 'subdir/dependencies/filename.js', { packageDir: '.' }), '__own__')
+  assert.equal(bundleGraphPackageOf('dependencies/filename.js', 'subdir/dependencies/filename.js', { packageDir: '.', splitOwnDirs: true }), 'dependencies')
+  assert.deepEqual(new Set([...paths.keys()].map(pkgOf)), new Set(['__own__', 'dep']))
+  assert.deepEqual(bundleLayerRoots(details, paths, pkgOf, dirs), { roots: ['__own__'], appImports: [] })
 })
 
 it('recognizes app/ as the root without explicit entry metadata', () => {

@@ -951,7 +951,7 @@ report.addEventListener('click', (e) => {
   const g2Layout = pathClosest(e, '[data-g2-layout]')
   if (g2Layout) {
     const next = g2Layout.dataset.g2Layout
-    if (next !== 'graph' && next !== 'layers') return
+    if (next !== 'graph' && next !== 'layers' && next !== 'matrix') return
     if (graph2.bundleLayout === next && !graph2.focusedPkg) return
     graph2.bundleLayout = next
     graph2.layoutCache = null

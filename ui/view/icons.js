@@ -30,6 +30,11 @@ export const BUNDLE_ICON_SVG = '<svg class="file-icon" viewBox="0 0 16 16" width
 // peer to bundle rows.
 export const WORKSPACE_ICON_SVG = '<svg class="file-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="4" width="11" height="9" rx="1.2"/><path d="M6 4V3h4v1"/></svg>'
 
+// Layout glyphs; graph is also used by the findings view selector.
+export const GRAPH_ICON_SVG = '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="m4.5 4.5 7 2-5 5z"/><circle cx="4.5" cy="4.5" r="2" fill="currentColor"/><circle cx="11.5" cy="6.5" r="2" fill="currentColor"/><circle cx="6.5" cy="11.5" r="2" fill="currentColor"/></svg>'
+export const LAYERS_ICON_SVG = '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><rect x="1" y="1.5" width="14" height="3" rx=".5"/><rect x="1" y="6.5" width="8" height="3" rx=".5"/><rect x="11" y="6.5" width="4" height="3" rx=".5"/><rect x="1" y="11.5" width="4" height="3" rx=".5"/><rect x="7" y="11.5" width="8" height="3" rx=".5"/></svg>'
+export const MATRIX_ICON_SVG = '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M1 1h4v4H1zm5 5h4v4H6zm5 5h4v4h-4z"/><path d="M6 1h4v4H6zm5 0h4v4h-4zM1 6h4v4H1zm10 0h4v4h-4zM1 11h4v4H1zm5 0h4v4H6z" opacity=".35"/></svg>'
+
 // Links-file glyph — two interlocking chain links, the picture of the
 // one thing the file does: hold two findings together. Same stroke
 // treatment as the bundle / workspace glyphs above, which is also the

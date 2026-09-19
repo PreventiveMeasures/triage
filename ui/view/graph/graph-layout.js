@@ -31,23 +31,28 @@
 // host element when an event crosses the shadow boundary).
 import { LitElement, html, unsafeCSS } from '../frontend-global.js'
 import graph2CSS from './graph2.css'
+import sidebarListCSS from './sidebar-list.css'
 import treeCountChipCSS from '../../styles/tree-count-chip.css'
 import toolbarCSS from '../../styles/toolbar.css'
 import { renderRightPanel, renderStage, renderTopBar } from './render.js'
 import { installShadowTooltipListener } from '../tooltip.js'
+import { graph2 } from './state.js'
+import './dependency-matrix.js'
 
 class GraphLayout extends LitElement {
   static properties = {
     graph:   { attribute: false },
     options: { attribute: false },
+    matrixControls: { state: true },
   }
 
-  static styles = [unsafeCSS(toolbarCSS), unsafeCSS(treeCountChipCSS), unsafeCSS(graph2CSS)]
+  static styles = [unsafeCSS(toolbarCSS), unsafeCSS(treeCountChipCSS), unsafeCSS(graph2CSS), unsafeCSS(sidebarListCSS)]
 
   constructor() {
     super()
     this.graph = null
     this.options = {}
+    this.matrixControls = null
   }
 
   connectedCallback() {
@@ -60,8 +65,22 @@ class GraphLayout extends LitElement {
     installShadowTooltipListener(this.renderRoot)
   }
 
+  willUpdate() {
+    if (!this.options.showBundleLayouts || graph2.bundleLayout !== 'matrix') this.matrixControls = null
+  }
+
+  updated() {
+    this.toggleAttribute('matrix', !!this.options.showBundleLayouts && graph2.bundleLayout === 'matrix')
+  }
+
   render() {
     if (!this.graph) return html``
+    if (this.options.showBundleLayouts && graph2.bundleLayout === 'matrix') {
+      return html`<div class="graph2-layout g2-matrix-layout">
+        ${renderTopBar(this.graph, this.options, this.matrixControls)}
+        <dependency-matrix .graph=${this.graph} @matrix-controls-change=${(e) => { this.matrixControls = e.detail }}></dependency-matrix>
+      </div>`
+    }
     return html`<div class="graph2-layout">
       ${renderTopBar(this.graph, this.options)}
       ${renderStage(this.graph)}
