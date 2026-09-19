@@ -3,7 +3,7 @@
 // triage store and the original report's source/bundle metadata.
 import { computeLinkHint, loadRepoUrlFor, readFile, state, triageLoadPromise, workspacesHoldingReport } from '#client/index.js'
 import { store } from '@rray/frontend/state-management'
-import { inheritReportMeta, loadFindings, reportEntries, reportRepoGithub } from '../../report/index.js'
+import { inheritReportMeta, isAppFinding, loadFindings, reportEntries, reportRepoGithub } from '../../report/index.js'
 
 let preview = null
 let generation = 0
@@ -46,6 +46,10 @@ export async function openLinksPreview(id, reportName, rowIndex) {
       }
       inheritReportMeta(filled, data)
       filled._analyzer = filled._source ?? filled.type ?? null
+      // The preview renders through the same card as a loaded report,
+      // so its findings carry the layer answer too — the tab strip
+      // splits on it (group.js groupTabsByLevel).
+      if (!('isApp' in filled)) filled.isApp = isAppFinding(filled, filled._source)
       return filled
     })
     // Prime the same hints as report navigation for the card's Copy link.

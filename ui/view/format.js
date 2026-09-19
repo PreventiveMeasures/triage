@@ -294,6 +294,35 @@ export function isModule(file) {
   return moduleRe.test(file)
 }
 
+// Stamp the other half of the layer split onto each finding: one that
+// describes the source underneath (`isApp === false`, settled at
+// ingest) and sits in the dependency tree is UPSTREAM code — someone
+// else's source, shipped here. An app-layer finding is never upstream
+// however its file reads, so only the source-layer ones are asked.
+//
+// Only `true` is ever written, and only where the field is absent: a
+// finding that arrived carrying its own answer keeps it, and the ones
+// this doesn't apply to are left without the field rather than stamped
+// `false` — absent means "not upstream", which is what every other
+// reading of a missing flag already means.
+//
+// Here rather than at ingest because `isModule` reads the deps dir,
+// and that is chosen from the WHOLE loaded set: a report is ingested
+// before its own paths have been weighed, so a vendor-tree project
+// would be asked under the default marker and answer no. Called right
+// after `configureDepsDir` (render.js), it sees the settled dir, and
+// re-running per render is what lets a later report's findings be
+// stamped under a dir its own arrival helped pick.
+export function stampUpstreamFindings(reports) {
+  for (const r of reports ?? []) {
+    for (const g of r.groups ?? []) {
+      for (const f of g) {
+        if (f.isApp === false && !('isUpstream' in f) && isModule(f.file)) f.isUpstream = true
+      }
+    }
+  }
+}
+
 // "Is this path inside SOMEBODY ELSE'S source?" — the same question
 // `isModule` asks, but of every marker rather than only the one this
 // report happens to use. `isModule` exists to classify a project's own

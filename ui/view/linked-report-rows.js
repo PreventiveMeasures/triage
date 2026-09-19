@@ -1,5 +1,3 @@
-import { SOURCE_LABELS } from '../../report/index.js'
-
 // Identical report cards share a block and its report chips. Compare their
 // complete membership, not only the ids in this link: [A,B,X] and [A,B,Y]
 // must not become one row just because the link happens to name A and B.
@@ -13,8 +11,9 @@ export function groupLinkedReportRows(ids, reportRows) {
     for (const f of matches) located.add(f.id)
     // Match the sidebar's producer classification: native/unknown sources
     // are DeepView. Only its revalidation pass is useful as unlinked context.
-    const members = allMembers.filter((f) => linked.has(f.id)
-      || Object.hasOwn(SOURCE_LABELS, f.source) || f.revalidate === 'revalidation')
+    // Both halves of that are what `isApp` says, stamped per member where the
+    // index builds them (client/bundle-finding-index.js).
+    const members = allMembers.filter((f) => linked.has(f.id) || f.isApp)
     // Reports can stamp the same id differently, so share report chips only
     // when both the original membership and visible member metadata agree.
     // Fixed tuples make property order irrelevant; sort by id so reordered
