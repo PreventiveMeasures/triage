@@ -17,7 +17,7 @@ import { classMap } from 'lit/directives/class-map.js'
 import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { FILE_ICONS, displayName, groupOf } from './file-display.js'
+import { FILE_ICONS, REPORT_LOGOS, displayName, groupOf } from './file-display.js'
 import { BUNDLE_ICON_SVG } from './icons.js'
 import { findingsForFileHash, indexedHashFindingCount, reportsForFinding, reportsForFindingByPackage, reportsForFindingByRepo, state } from '#client/index.js'
 import { SEVERITIES, SEVERITY_ORDER, formatBytes, formatRunMeta, stripCommonPathPrefix, titledDescription } from './format.js'
@@ -726,7 +726,7 @@ function renderBundleSourceFindingPanel(findings) {
       ${reports.length > 0 ? html`<div class="bundle-source-panel-reports">
         <div class="bundle-source-panel-reports-label">Reported by</div>
         ${reports.map((name) => {
-          const iconHtml = FILE_ICONS[groupOf(name)] ?? FILE_ICONS.default
+          const iconHtml = REPORT_LOGOS[groupOf(name)] ?? REPORT_LOGOS.default
           return html`<button
             type="button"
             class="report-chip bundle-source-panel-report"
@@ -1906,7 +1906,7 @@ function bundleIssueReportsTemplate(finding, ctx = {}) {
   const extra = reports.length - visible.length
   return html`<div class="bundle-issue-reports">
     ${visible.map((name) => {
-      const iconHtml = FILE_ICONS[groupOf(name)] ?? FILE_ICONS.default
+      const iconHtml = REPORT_LOGOS[groupOf(name)] ?? REPORT_LOGOS.default
       return html`<button type="button" class="report-chip" data-tooltip=${name} data-bundle-issue-report=${name}>${unsafeHTML(iconHtml)}<span class="report-chip-label">${displayName(name)}</span></button>`
     })}
     ${extra > 0 ? html`<span class="bundle-issue-reports-more">, and ${extra} more…</span>` : nothing}

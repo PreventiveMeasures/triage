@@ -44,11 +44,31 @@ if (!globalThis[slotKey]) {
 
 const { state } = await import('../client/state.ts')
 const {
-  activeTabFor, canApplyFixToGroup, fixApplies, getMergedGroups, groupState, groupWithPassRows,
+  activeTabFor, canApplyFixToGroup, fixApplies, getMergedGroups, groupState, groupTabsByLevel, groupWithPassRows,
   primaryTab, scopedTriage, sortTabs, syncGroupTriage, tabTriage, triageActionPlan,
 } = await import('../ui/view/group.js')
 
 const REPORT = 'report-a.json'
+
+describe('tab levels', () => {
+  it('groups external producers and DeepView revalidations ahead of source findings', () => {
+    const source = { id: 'source' }
+    const codex = { id: 'codex', source: 'codex-security' }
+    const confirmed = { id: 'confirmed', revalidate: 'confirmed' }
+    const pass = { id: 'pass', revalidate: ' Revalidation ' }
+    const claude = { id: 'claude', _source: 'claude-security' }
+    const tabs = [source, codex, confirmed, pass, claude]
+    assert.deepEqual(groupTabsByLevel(tabs), { app: [codex, pass, claude], source: [source, confirmed] })
+    assert.deepEqual(tabs, [source, codex, confirmed, pass, claude])
+  })
+
+  it('leaves one level empty when only app or source findings are present', () => {
+    const app = [{ source: 'deepsec' }, { source: 'piolium' }, { revalidate: 'revalidation' }]
+    const source = [{}, { source: 'deepview' }, { revalidate: 'refuted' }]
+    assert.deepEqual(groupTabsByLevel(app), { app, source: [] })
+    assert.deepEqual(groupTabsByLevel(source), { app: [], source })
+  })
+})
 
 let nextId = 0
 // One finding (= one tab). `ann` carries the triage-entry fields to

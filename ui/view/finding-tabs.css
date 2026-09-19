@@ -1,6 +1,14 @@
 /* Shared by finding cards and table rows in every view. Severity uses
    the badge palette; color labels mark the corner, and confidence sits
    in the bottom-right without adding another row. */
+.tab-level-separator {
+  align-self: center;
+  padding-inline: .125rem;
+  color: var(--muted);
+  font-size: .75rem;
+  line-height: 1;
+}
+
 .tab {
   /* Reports may preserve custom severities; only known tiers use the badge palette. */
   --tab-severity: var(--bg);

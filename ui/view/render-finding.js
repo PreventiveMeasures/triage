@@ -3,8 +3,8 @@ import { classMap } from 'lit/directives/class-map.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { bundleFilePath, bundlesForFileHash, duplicatesOf, encodeFindingRef, isLinkableFindingId, isPlaceholderNpmPackage, reportsForFindingId, state } from '#client/index.js'
-import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, githubRefLabel, hasSeverityCorrection, isHttpUrl, lineRange, listSegments, locationLabel, markdownLinkToken, parseCommentRefs, revalidateStamp, revalidationShown, shortFindingId, snippetWindow, splitDescription, stripExportMarker } from './format.js'
-import { activeTabFor, findingRepo, findingRepoFallback, groupState, isIgnored, scopedTriage, sortTabs, tabKey } from './group.js'
+import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayFindingId, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, githubRefLabel, hasSeverityCorrection, isHttpUrl, lineRange, listSegments, locationLabel, markdownLinkToken, parseCommentRefs, revalidateStamp, revalidationShown, shortFindingId, snippetWindow, splitDescription, stripExportMarker } from './format.js'
+import { activeTabFor, findingRepo, findingRepoFallback, groupState, groupTabsByLevel, isIgnored, scopedTriage, sortTabs, tabKey } from './group.js'
 import { highlightedCode } from './code-highlight.js'
 import { attachedBundle, bundleSource, focusCodePosition } from './focus-code.js'
 import { samePos } from './focus-code-history.js'
@@ -359,14 +359,17 @@ function producerLabel(reportName) {
 // indexes fill in the background on every load — the links index
 // decides whether this row exists at all, the finding index what its
 // marks and names say.
-function duplicatesTemplate(f) {
+function duplicatesTemplate(f, tabIds) {
   void state.linksTick
   void state.findingIndexTick
   const id = tabKey(f)
-  const ids = isLinkableFindingId(id) ? duplicatesOf(id) : []
+  // Already-visible row tabs are direct access to these findings.
+  // Keep only copies elsewhere (including members hidden by the tab lens).
+  const ids = isLinkableFindingId(id) ? duplicatesOf(id).filter((other) => !tabIds.has(other)) : []
   if (ids.length === 0) return nothing
   return html`<div class="duplicates-block"><span class="duplicates-label">Duplicates:</span>${
     ids.map((other) => {
+      const displayId = displayFindingId(other)
       const reports = reportsForFindingId(other)
       const where = reports.length === 0
         ? ''
@@ -374,10 +377,10 @@ function duplicatesTemplate(f) {
       return html`<a
         class="duplicate-ref"
         href=${`#${encodeFindingRef({ id: other })}`}
-        data-tooltip=${`${other}${where}`}
+        data-tooltip=${`${displayId}${where}`}
       >${distinctGroups(reports).map((g) => unsafeHTML(FILE_ICONS[g] ?? FILE_ICONS.default))}<span
         class="duplicate-ref-id"
-      >${shortFindingId(other) ?? other}</span></a>`
+      >${shortFindingId(other) ?? displayId}</span></a>`
     })
   }</div>`
 }
@@ -1120,6 +1123,17 @@ function tabMarksTemplate(entry) {
   }</span>`
 }
 
+function tabsTemplate(tabs, activeKey, groupSt) {
+  const { app, source } = groupTabsByLevel(tabs)
+  const renderTab = (f) => tabTemplate(f, tabKey(f) === activeKey, groupSt)
+  return html`<div class="tabs">
+    ${app.map(renderTab)}
+    ${app.length > 0 && source.length > 0 ? html`<span class="tab-level-separator" aria-hidden="true">•</span>` : nothing}
+    ${source.map(renderTab)}
+  </div>`
+}
+
+
 // One tab button. Carries severity badge + (optional) confidence +
 // annotation marks (comment / fix / flag, when present), plus the
 // per-tab color class and — when it still says something the group
@@ -1219,8 +1233,9 @@ function npmChipTemplate(npm) {
 // (line row, description, recommendation, conf reason). Only the
 // active body is `display: grid` on screen; print mode shows them
 // all stacked. `idx` / `total` feed the print-only "N of M" subhead;
-// suppressed for single-tab groups via the default args.
-function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
+// suppressed for single-tab groups. `tabIds` excludes those same tabs
+// from the Duplicates section.
+function tabBodyTemplate(f, isActive, idx, total, context, tabIds) {
   const key = tabKey(f)
   const entry = state.triage.get(key)
   const comment = entry?.comment ?? ''
@@ -1371,7 +1386,7 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
         ? sectionTemplate('Revalidation recommendation', stripExportMarker(f.revalidateRecommendation, f), 'recommendation', { collapsible: true })
         : nothing}
       ${hasSeverityCorrection(f) && f.correctedSeverityReason ? html`<div class="severity-reason"><span class="severity-reason-label">Severity correction:</span> ${renderHighlighted(f.correctedSeverityReason)}</div>` : nothing}
-      ${duplicatesTemplate(f)}
+      ${duplicatesTemplate(f, tabIds)}
       ${comment ? html`<div class="comment-block"><span class="comment-label">Comment:</span> ${renderCommentText(comment)}</div>` : nothing}
       ${fix
         ? html`<div class="fix-block"><span class="fix-label">Fix:</span> ${isHttpUrl(fix)
@@ -1405,6 +1420,7 @@ export function findingCardInnerTemplate(g, opts = {}) {
   const { context = null } = opts
   const groupSt = groupState(g)
   const sortedTabs = sortTabs(g)
+  const tabIds = new Set(sortedTabs.map(tabKey))
   const active = activeTabFor(g)
   const activeKey = tabKey(active)
   const commitRef = active.commitHash
@@ -1412,12 +1428,12 @@ export function findingCardInnerTemplate(g, opts = {}) {
     : nothing
   const liftCommit = state.currentWorkspace && commitRef !== nothing
   return html`
-    ${sortedTabs.map((f, i) => tabBodyTemplate(f, tabKey(f) === activeKey, i, sortedTabs.length, context))}
+    ${sortedTabs.map((f, i) => tabBodyTemplate(f, tabKey(f) === activeKey, i, sortedTabs.length, context, tabIds))}
     ${liftCommit ? html`<div class="marks-commit-row">${commitRef}</div>` : nothing}
     <div class="marks">
       <div class="marks-left">
         ${liftCommit ? nothing : commitRef}
-        ${sortedTabs.length > 1 ? html`<div class="tabs">${sortedTabs.map((f) => tabTemplate(f, tabKey(f) === activeKey, groupSt))}</div>` : nothing}
+        ${sortedTabs.length > 1 ? tabsTemplate(sortedTabs, activeKey, groupSt) : nothing}
       </div>
       ${actionButtonsTemplate(g, sortedTabs, groupSt, active, context)}
     </div>
@@ -1481,7 +1497,7 @@ export function tableRowInnerTemplate(g) {
           ${actionButtonsTemplate(g, sortedTabs, groupSt, active)}
         </div>
       </div>
-      ${sortedTabs.length > 1 ? html`<div class="tabs-row"><div class="tabs">${sortedTabs.map((tabF) => tabTemplate(tabF, tabKey(tabF) === activeKey, groupSt))}</div></div>` : nothing}
+      ${sortedTabs.length > 1 ? html`<div class="tabs-row">${tabsTemplate(sortedTabs, activeKey, groupSt)}</div>` : nothing}
     </div>
   `
 }

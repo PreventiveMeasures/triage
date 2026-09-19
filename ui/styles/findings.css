@@ -1053,14 +1053,14 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
    to modal on the left, modal to rail on the right. Its cap is then
    `100%` of what that leaves rather than of the viewport. */
 @media (width >= 1400px) {
-  .kanban-detail-backdrop {
+  .kanban-detail-backdrop:has(> .kanban-detail-side) {
     padding-right: calc(var(--kanban-side-w) + 1rem);
   }
 
   /* Fullscreen reserves the rail's width and nothing else — the 1rem
      that separates the two in the normal layout is the gutter the
      dialog just gave up. */
-  .kanban-detail-backdrop:has(> .kanban-detail-modal.fullscreen) {
+  .kanban-detail-backdrop:has(> .kanban-detail-side):has(> .kanban-detail-modal.fullscreen) {
     padding-right: var(--kanban-side-w);
   }
 

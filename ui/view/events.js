@@ -15,6 +15,7 @@ import { openExportViewDialog } from './dialogs/export-view-dialog.js'
 import { openFixLinkDialog } from './dialogs/fix-link-dialog.js'
 import { findingLinkFor } from './finding-link.js'
 import { revealFindingInReport } from './finding-link-nav.js'
+import { closeLinksPreview, getLinksPreview, openLinksPreview } from './links-preview.js'
 import { FOCUS_SPLIT_STEP, nudgeFocusSplit, resetFocusSplit, startFocusSplitDrag } from './focus-splitter.js'
 import { downloadReportsAsMarkdown, reportsToMarkdown } from './markdown-export.js'
 import { bundleToCycloneDx, bundleToSpdx, sbomBaseName } from './sbom.js'
@@ -64,14 +65,14 @@ subscribeToBundleFindingIndex(() => {
 let hashIndexRenderQueued = false
 subscribeToBundleHashIndex(() => {
   // The bundle views don't read this index (they hold their open
-  // bundle's own `details.fileHashes`), so only the two tabs that
-  // join by hash need the repaint.
-  if (state.currentView !== 'findings' && state.currentView !== 'files') return
+  // bundle's own `details.fileHashes`), so only finding surfaces
+  // that join by hash need the repaint, including Links previews.
+  if (state.currentView !== 'findings' && state.currentView !== 'files' && !getLinksPreview()) return
   if (hashIndexRenderQueued) return
   hashIndexRenderQueued = true
   queueMicrotask(() => {
     hashIndexRenderQueued = false
-    if (state.currentView !== 'findings' && state.currentView !== 'files') return
+    if (state.currentView !== 'findings' && state.currentView !== 'files' && !getLinksPreview()) return
     // A parent render() alone doesn't reach the "Code →" button:
     // `<finding-card>` paints from its own observer-util autorun, and
     // an unchanged property binding gives it no reason to re-run. The
@@ -180,7 +181,7 @@ function renderSearchNextFrame() {
     render()
   })
 }
-import { ensureBundleSources, openBundle, selectBundle } from './bundle-load.js'
+import { ensureBundleSources, openBundle, prefetchBundleHashes, selectBundle } from './bundle-load.js'
 import { renderSidebar } from './sidebar.js'
 import { BUNDLE_TABS, persistLastBundle, switchToFile } from './ingest.js'
 import { treeAnchor } from './file-counts.js'
@@ -483,13 +484,11 @@ report.addEventListener('click', (e) => {
   // Packages details — click a report row to navigate to it.
   // Mirrors the bundle Issues report-chip handler (switchToFile
   // loads it into findings + flips currentView away from packages).
-  // Links view report chip → that report's copy of THAT finding. Not
-  // the same action as the report chip below: those open a report,
-  // this one opens a finding in a named report, which is the whole
-  // reason the Links view lists the reports per finding rather than
-  // per file.
+  // Links view report chips open a finding in that
+  // original report, preserving the row's grouping and annotations.
   const linksReport = e.target.closest('[data-links-report][data-links-finding]')
   if (linksReport) {
+    e.preventDefault()
     const { linksReport: name, linksFinding: id } = linksReport.dataset
     if (name && id) {
       void (async () => {
@@ -1680,12 +1679,46 @@ function navigateKanban(direction) {
   }
 }
 
+let linksPreviewTrigger = null
+
+function dismissLinksPreview() {
+  closeLinksPreview()
+  state.focusCodeStack = []
+  state.focusCodeAt = 0
+  render()
+  if (linksPreviewTrigger?.isConnected) linksPreviewTrigger.focus({ preventScroll: true })
+  linksPreviewTrigger = null
+}
+
 report.addEventListener('click', (e) => {
+  const previewTrigger = e.target.closest?.('[data-links-preview]')
+  if (previewTrigger) {
+    e.preventDefault()
+    linksPreviewTrigger = previewTrigger
+    const rowIndex = previewTrigger.dataset.previewRow
+    const loading = openLinksPreview(previewTrigger.dataset.linksPreview, previewTrigger.dataset.previewReport,
+      rowIndex === undefined ? undefined : Number(rowIndex))
+    render()
+    report.querySelector('.kanban-detail-close')?.focus({ preventScroll: true })
+    void loading.then(() => {
+      render()
+      revealFocusCodeLines()
+      // Read only the saved hash index, as report navigation does;
+      // unopened bundle bodies stay unloaded.
+      const hashes = getLinksPreview()?.group?.[0]._bundleHashes
+      if (Array.isArray(hashes)) {
+        for (const integrity of hashes) prefetchBundleHashes(integrity).catch(() => {})
+      }
+      return null
+    })
+    return
+  }
   // × button inside the modal — close. Listed first so the card
   // toggle below doesn't intercept clicks landing here when the
   // card and modal overlap z-wise (they don't, but cheap to
   // sequence).
   if (e.target.closest?.('.kanban-detail-close')) {
+    if (getLinksPreview()) { dismissLinksPreview(); return }
     setKanbanPopoverGid(null)
     return
   }
@@ -1780,6 +1813,7 @@ report.addEventListener('click', (e) => {
   // this file; what matters here is that neither counts as a click
   // outside the dialog.
   if (e.target.closest?.('.kanban-detail-modal, .kanban-detail-side')) return
+  if (getLinksPreview()) { dismissLinksPreview(); return }
   // Click anywhere else while the modal is open → close. With the
   // backdrop set to pointer-events: none, these clicks bubble up
   // from whatever non-modal, non-card DOM was under the cursor
@@ -1807,6 +1841,10 @@ report.addEventListener('change', (e) => {
 // column doesn't skip straight back to the whole board.
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return
+  if (getLinksPreview()) {
+    if (!e.defaultPrevented && !focusNavBlocked(e) && !document.querySelector(':popover-open')) dismissLinksPreview()
+    return
+  }
   if (state.kanbanPopoverGid) {
     setKanbanPopoverGid(null)
     return
