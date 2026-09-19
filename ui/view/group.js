@@ -7,7 +7,7 @@ import { bundlePkgOf } from './bundle-pkg-of.js'
 // module evaluates first resolves the other's hoisted function
 // declarations by the time anything runs.
 import { matchesRunFilters } from './filters.js'
-import { SOURCE_LABELS, revalidateKindOf } from '../../report/index.js'
+import { revalidateKindOf } from '../../report/index.js'
 import { getLinksPreview } from './links-preview.js'
 
 // ID helpers. Internally every `state.reports[].groups[i]` is a
@@ -61,7 +61,11 @@ export function toGroup(entry) { return Array.isArray(entry) ? entry : [entry] }
 //     calling the row native while a later markdown export called it
 //     the other product's (report/src/write-md.js reads `f.source`
 //     first).
-const KEEPS_ITS_OWN = new Set(['correctedSeverity', 'correctedSeverityReason', 'source'])
+//   * `isApp` / `isUpstream`, which are read OFF that provenance —
+//     the layer answers each construction site stamps from its own
+//     copy's producer and path. Letting a dropped copy fill one in
+//     would be `source` crossing over by another name.
+const KEEPS_ITS_OWN = new Set(['correctedSeverity', 'correctedSeverityReason', 'isApp', 'isUpstream', 'source'])
 
 // Returns whether the two copies CONFLICTED about the revalidation
 // pass — both answering a `revalidate*` field, differently. Nothing is
@@ -345,13 +349,12 @@ export function sortTabs(group) {
 export function primaryTab(group) { return group.length === 1 ? group[0] : sortTabs(group)[0] }
 
 // Presentation groups for the tab strip, preserving the sorted order within
-// each level. Read the raw revalidation stamp regardless of the App lens.
+// each level. `isApp` is stamped per finding where it is built and answers the same
+// question this used to re-derive — including reading the revalidation stamp
+// raw, regardless of the App lens.
 export function groupTabsByLevel(tabs) {
   const app = [], source = []
-  for (const f of tabs) {
-    const appLevel = Object.hasOwn(SOURCE_LABELS, f.source ?? f._source) || isRevalidationRow(f)
-    ;(appLevel ? app : source).push(f)
-  }
+  for (const f of tabs) (f.isApp ? app : source).push(f)
   return { app, source }
 }
 

@@ -8,7 +8,7 @@ import { FOCUS_SPLIT_MAX, FOCUS_SPLIT_MIN, listBundles, listWorkspaces, state } 
 import { isBundleInRemote, isInRemote, remoteCount, triageSync } from './client-sync.js'
 import { installShadowTooltipListener } from './tooltip.js'
 import { dropZone, report } from './dom.js'
-import { SEVERITIES, canDropRevalidation, configureDepsDir, configureRevalidation, displayedSeverity, fileLink, findingDisplayName, findingTitle, formatRunMeta, hasSeverityCorrection, isHttpUrl, isModule, lineLink, lineRangeLabel, reachableRevalidateFilters, revalidateKind } from './format.js'
+import { SEVERITIES, canDropRevalidation, configureDepsDir, configureRevalidation, displayedSeverity, fileLink, findingDisplayName, findingTitle, formatRunMeta, hasSeverityCorrection, isHttpUrl, isModule, lineLink, lineRangeLabel, reachableRevalidateFilters, revalidateKind, stampUpstreamFindings } from './format.js'
 import { activeTabFor, findingRepoFallback, getMergedGroups, groupKey, groupState, primaryTab, tabKey } from './group.js'
 import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, applySorting, modelOfFinding, rangeApplies, repoOfFinding } from './filters.js'
 import { ANALYZER_LABELS } from './analyzer-select.js'
@@ -1613,6 +1613,10 @@ function renderImpl() {
   // (fallback). Once per render is enough — every helper call below
   // sees the freshly chosen dir.
   configureDepsDir(state.reports)
+  // With the dir settled, the source-layer findings that sit in it can
+  // be marked as upstream code. Cheap and idempotent — it only fills a
+  // field in, so a re-render costs a walk and writes nothing new.
+  stampUpstreamFindings(state.reports)
   // Same deal for the revalidation layer — the toolbar's "App" switch.
   // Hand format.js the mode before anything reads a `revalidate` value
   // through it, and every helper below sees one answer for this render

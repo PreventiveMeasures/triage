@@ -26,7 +26,7 @@
 import { addFindingToBucket, dropKeyFromBucket, indexFindingByVersion, isPlaceholderNpmPackage, newBucket, packageVersionOf, pruneVersionSlot, recomputeBucketReports } from './bundle-finding-versions.js'
 import { listFiles, onFileMutated, readFile } from './storage.js'
 import { loadRepoUrlFor, onRepoUrlChanged } from './state.ts'
-import { findingTitle, inheritReportMeta, loadFindings, reportEntries, reportRepoGithub, revalidateKindOf } from '../report/index.js'
+import { findingTitle, inheritReportMeta, isAppFinding, loadFindings, reportEntries, reportRepoGithub, revalidateKindOf } from '../report/index.js'
 
 const byHash = new Map()
 const byPackage = new Map()
@@ -555,11 +555,13 @@ async function indexOne(name) {
       const members = (Array.isArray(raw) ? raw : [raw]).filter((f) => f?.id)
       if (members.length === 0) continue
       const row = { report: name, index,
-        members: members.map((f) => ({
-          id: f.id, title: findingTitle(f),
-          source: f.source ?? data.source ?? null,
-          revalidate: revalidateKindOf(f),
-        })),
+        // Built from the raw report rather than from ingest's objects, so
+        // each member carries the layer answer too, under the same
+        // report-marker fallback ingest resolves into `_source`.
+        members: members.map((f) => {
+          const source = f.source ?? data.source ?? null
+          return { id: f.id, title: findingTitle(f), source, revalidate: revalidateKindOf(f), isApp: f.isApp ?? isAppFinding(f, source) }
+        }),
       }
       for (const f of members) if (indexFindingById(f, name, row)) added = true
     }

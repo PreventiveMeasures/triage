@@ -18,6 +18,7 @@
 // the state it holds.
 
 import { fenceRanges, inFence } from './md-structure.js'
+import { SOURCE_LABELS } from './labels.js'
 
 // Severity ranking — higher = more severe. The ladder splits into two
 // stacks: vulnerabilities on top (critical → low) and bug-class findings
@@ -130,6 +131,28 @@ const REVALIDATE_SET = new Set(REVALIDATE_KINDS)
 export function revalidateKindOf(f) {
   const v = typeof f?.revalidate === 'string' ? f.revalidate.trim().toLowerCase() : ''
   return REVALIDATE_SET.has(v) ? v : ''
+}
+
+// Does this finding belong to the APP layer — the view of the code as
+// the application runs it — rather than to the source underneath?
+//
+// A finding another product wrote is app-layer by construction: its
+// producer looked at the application, and `source` naming one of the
+// four in labels.js is exactly "not DeepView's own dump". DeepView's
+// own findings are source-layer, with the one exception of the row
+// that IS its revalidation pass: that row describes the app's run, not
+// a line of code, so it belongs with the app's own answers.
+//
+// `source` is passed separately because callers resolve it against the
+// report's marker first (a finding without its own `source` inherits
+// the report's — ui ingest.js `_source`, and the same fallback in
+// client/bundle-finding-index.js).
+//
+// This is the sole definition of the split. Readers take the answer
+// off the finding as `isApp`, stamped once where each path builds its
+// findings, rather than re-deriving it per call site.
+export function isAppFinding(f, source = f?.source) {
+  return Object.hasOwn(SOURCE_LABELS, source) || revalidateKindOf(f) === 'revalidation'
 }
 
 // ── Run meta ─────────────────────────────────────────────────────────

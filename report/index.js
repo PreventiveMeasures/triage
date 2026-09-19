@@ -104,7 +104,7 @@ export { COLOR_LABELS, SEVERITY_LABELS, SOURCE_LABELS, TRIAGE_LABELS, UPSTREAM_L
 export {
   REVALIDATE_KINDS, SEVERITIES, SEVERITY_ORDER, correctedVariants, descriptionSections,
   displayedSeverity, effectiveSeverity, evidenceNote, findingDisplayName, findingTitle,
-  firstLine, hasSeverityCorrection, locationLabel, prettyModel, revalidateKindOf,
+  firstLine, hasSeverityCorrection, isAppFinding, locationLabel, prettyModel, revalidateKindOf,
   runMetaLine, splitDescription, stripExportMarker, titledDescription,
 } from './src/finding.js'
 
