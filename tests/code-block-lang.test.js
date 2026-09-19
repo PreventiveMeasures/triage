@@ -51,17 +51,32 @@ describe('langForTag — recognized tags', () => {
     assert.equal(langForTag('rs'), 'rust')
     assert.equal(langForTag('php'), 'php')
     assert.equal(langForTag('phtml'), 'php')
+    assert.equal(langForTag('java'), 'java')
+  })
+
+  it('maps the C-family tags', () => {
+    // C++ answers for the headers too: it extends the C grammar, so it
+    // is the one that colours a `.h` whichever of the three wrote it.
+    for (const tag of ['cpp', 'c++', 'cc', 'cxx', 'hpp', 'hh', 'hxx', 'h++', 'h']) {
+      assert.equal(langForTag(tag), 'cpp', tag)
+    }
+    assert.equal(langForTag('c'), 'c')
+    for (const tag of ['objc', 'objectivec', 'objective-c', 'm', 'mm']) {
+      assert.equal(langForTag(tag), 'objectivec', tag)
+    }
   })
 
   it('case-folds the tag', () => {
     assert.equal(langForTag('TS'), 'typescript')
     assert.equal(langForTag('JSON'), 'json')
+    assert.equal(langForTag('C++'), 'cpp')
+    assert.equal(langForTag('Objective-C'), 'objectivec')
   })
 })
 
 describe('langForTag — everything else', () => {
   it('refuses a language the bundle carries no grammar for', () => {
-    for (const tag of ['python', 'py', 'go', 'java', 'ruby', 'sql', 'diff', 'text']) {
+    for (const tag of ['python', 'py', 'go', 'ruby', 'sql', 'diff', 'text', 'swift', 'kotlin']) {
       assert.equal(langForTag(tag), null, tag)
     }
   })
@@ -120,9 +135,14 @@ describe('langForTag — allowlist matches the prism bundle', () => {
       'ts', 'typescript', 'mts', 'cts', 'tsx', 'js', 'javascript', 'mjs', 'cjs', 'node', 'jsx',
       'sh', 'bash', 'shell', 'zsh', 'console', 'json', 'css', 'yml', 'yaml', 'md', 'markdown',
       'html', 'htm', 'xml', 'svg', 'markup', 'sol', 'solidity', 'rs', 'rust', 'php', 'phtml',
+      'java', 'c', 'cpp', 'c++', 'cc', 'cxx', 'hpp', 'hh', 'hxx', 'h++', 'h',
+      'objc', 'objectivec', 'objective-c', 'm', 'mm',
     ]
     for (const tag of tags) assert.ok(langForTag(tag), `${tag} should be allowlisted`)
-    for (const ext of ['ts', 'tsx', 'js', 'jsx', 'json', 'css', 'html', 'yml', 'sh', 'md', 'sol', 'php', 'rs']) {
+    for (const ext of [
+      'ts', 'tsx', 'js', 'jsx', 'json', 'css', 'html', 'yml', 'sh', 'md', 'sol', 'php', 'rs',
+      'java', 'c', 'h', 'cpp', 'cc', 'cxx', 'c++', 'hpp', 'hh', 'hxx', 'h++', 'm', 'mm',
+    ]) {
       assert.ok(langForPath(`a/b.${ext}`), `.${ext} should resolve for the source viewers`)
     }
   })

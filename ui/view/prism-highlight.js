@@ -39,6 +39,15 @@ const EXT_TO_LANG = {
   sol: 'solidity',
   php: 'php', phtml: 'php',
   rs: 'rust',
+  java: 'java',
+  // .h is claimed by C, C++ and Objective-C alike. The C++ grammar
+  // extends the C one, so it is the superset that colours a header
+  // from any of the three; the C grammar would leave a C++ header's
+  // class/template/namespace keywords plain.
+  cpp: 'cpp', cc: 'cpp', cxx: 'cpp', 'c++': 'cpp',
+  hpp: 'cpp', hh: 'cpp', hxx: 'cpp', 'h++': 'cpp', h: 'cpp',
+  c: 'c',
+  m: 'objectivec', mm: 'objectivec',
 }
 
 export function langForPath(path) {
@@ -64,6 +73,10 @@ export function langForPath(path) {
 // `ts` / `sh` fence), the full names (```typescript), and the shell
 // synonyms. Null-prototype so a tag like `constructor` can't alias an
 // inherited key.
+//
+// C is in the list because cpp and objectivec are: both grammars
+// extend it, so `ui/prism.js` has to import it either way and
+// answering a plain C fence with it costs nothing further.
 const TAG_TO_LANG = {
   __proto__: null,
   js: 'javascript', javascript: 'javascript', mjs: 'javascript', cjs: 'javascript', node: 'javascript',
@@ -79,6 +92,10 @@ const TAG_TO_LANG = {
   sol: 'solidity', solidity: 'solidity',
   rs: 'rust', rust: 'rust',
   php: 'php', phtml: 'php',
+  java: 'java',
+  cpp: 'cpp', 'c++': 'cpp', cc: 'cpp', cxx: 'cpp', hpp: 'cpp', hh: 'cpp', hxx: 'cpp', 'h++': 'cpp', h: 'cpp',
+  c: 'c',
+  objc: 'objectivec', objectivec: 'objectivec', 'objective-c': 'objectivec', m: 'objectivec', mm: 'objectivec',
 }
 
 export function langForTag(tag) {
