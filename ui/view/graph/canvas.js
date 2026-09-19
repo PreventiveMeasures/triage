@@ -8,6 +8,8 @@ import { forceLayout } from './force-layout.js'
 import { formatBytes } from '../format.js'
 import { layoutDependencyLayers } from './layered-layout.js'
 import { drawDependencyLayers } from './layered-render.js'
+import { circleOutside, createRenderCache, edgeGradient, edgeOutside, haloGradient, updateRenderCache } from './render-cache.js'
+import { createNodePicker } from './node-picker.js'
 
 // Severity palette baked into the canvas. Vivid hot colors for
 // critical/high pop above the package hue; calmer tones for
@@ -166,6 +168,8 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
   let layoutW = 0
   let needsLayout = true
   let needsFit = true
+  const renderCaches = new WeakMap()
+  let nodePicker = null
 
   // Package-level view (the bundle Graph tab's "Packages" toggle).
   // Effective only when the graph qualifies — 3+ packages, stamped
@@ -233,6 +237,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
   // ── Layout (deferred until we have real canvas dimensions) ─────
   function ensureLayout() {
     if (!needsLayout) return
+    nodePicker = null
     if (layersOn()) {
       const pg = getPkgGraph()
       layers = layoutDependencyLayers(pg.nodes.map((n) => ({ id: n.pkg, size: n.size })), pg.importsOf, graph.layerRoots?.roots ?? ['__own__'], {
@@ -443,6 +448,10 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     H = Math.max(80, rect.height)
     dpr = window.devicePixelRatio || 1
     canvas.width = W * dpr; canvas.height = H * dpr
+    // Canvas resize resets its context (and may change DPR). Paint objects
+    // were created under the old transform, so rebuild them on the next draw.
+    renderCaches.delete(graph)
+    if (_pkgGraph) renderCaches.delete(_pkgGraph)
     canvas.style.width = W + 'px'; canvas.style.height = H + 'px'
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     // Layout in the same pixel space the canvas paints in, so
@@ -551,15 +560,19 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
       return
     }
 
+    if (!renderCaches.has(G)) renderCaches.set(G, createRenderCache(G))
+    const frame = renderCaches.get(G)
+    const paintKey = JSON.stringify([viewport.k, viewport.tx, viewport.ty, graph2.nodeSize, T.bg,
+      graph2.solo, graph2.pathFilter, [...graph2.selectedSeverities], [...graph2.selectedColors], [...graph2.hidden]])
+    updateRenderCache(frame, { viewport, selected, paintKey, visible: nodeVisible, dimmed: nodeIsDimmed, radius: nodeRadius, color: pkgColor })
+
     // ── Edges (back layer) — always drawn, cross/intra still
     // get distinct visual treatment (cross = gradient between
     // package hues, intra = neutral structural gray) so the
     // axis is still readable without a topbar toggle.
-    for (const e of G.edges) {
-      const na = G.nodeByFile.get(e.a)
-      const nb = G.nodeByFile.get(e.b)
-      if (!na || !nb) continue
-      if (!nodeVisible(na) || !nodeVisible(nb)) continue
+    for (const entry of frame.edges) {
+      const { edge: e, a, b } = entry
+      if (!a.visible || !b.visible || edgeOutside(a, b, W, H)) continue
 
       let alpha = graph2.edgeOpacity
       if (selected) {
@@ -576,21 +589,17 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
       // least one endpoint matches, keep the edge legible
       // so the user can trace what the matching node
       // connects to.
-      if (nodeIsDimmed(na) && nodeIsDimmed(nb)) {
+      if (a.dimmed && b.dimmed) {
         alpha = Math.min(alpha, 0.04)
       }
 
-      const [ax, ay] = worldToScreen(na.x, na.y)
-      const [bx, by] = worldToScreen(nb.x, nb.y)
+      const ax = a.x, ay = a.y, bx = b.x, by = b.y
 
       if (e.cross) {
         // Gradient between package colors so the eye can trace
         // who's on which side of a cross-package import without
         // having to chase node colors visually.
-        const grad = ctx.createLinearGradient(ax, ay, bx, by)
-        grad.addColorStop(0, pkgColor(na.pkg) + alphaHex(alpha))
-        grad.addColorStop(1, pkgColor(nb.pkg) + alphaHex(alpha))
-        ctx.strokeStyle = grad
+        ctx.strokeStyle = edgeGradient(entry, frame, alpha, ctx, alphaHex)
         ctx.lineWidth = 0.85
       } else {
         // Intra-package edges use the theme's neutral edge color
@@ -608,23 +617,20 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
 
     // ── Halos (hubs / hover / selected) ─────────────────────────
     {
-      for (const n of G.nodes) {
-        if (!nodeVisible(n)) continue
+      for (const entry of frame.nodes) {
+        if (!entry.visible) continue
+        const n = entry.node
         const isHov = n.file === hovered
         const isSel = n.file === selected
         if (!n.isHub && !isHov && !isSel) continue
         // Skip halos for filter-dimmed nodes (severity or
         // package-solo) unless they're the hover / selection
         // target — those should always read clearly.
-        if (nodeIsDimmed(n) && !isHov && !isSel) continue
-        const [sx, sy] = worldToScreen(n.x, n.y)
-        const r = nodeRadius(n)
+        if (entry.dimmed && !isHov && !isSel) continue
+        const r = entry.radius, sx = entry.x, sy = entry.y
         const haloR = r * (isSel ? 6 : isHov ? 4.5 : 3)
-        const grad = ctx.createRadialGradient(sx, sy, 0, sx, sy, haloR)
-        const col = pkgColor(n.pkg)
-        grad.addColorStop(0, col + '55')
-        grad.addColorStop(1, col + '00')
-        ctx.fillStyle = grad
+        if (circleOutside(sx, sy, haloR, W, H)) continue
+        ctx.fillStyle = haloGradient(entry, haloR, ctx)
         ctx.beginPath()
         ctx.arc(sx, sy, haloR, 0, Math.PI * 2)
         ctx.fill()
@@ -632,17 +638,17 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     }
 
     // ── Nodes ───────────────────────────────────────────────────
-    for (const n of G.nodes) {
-      if (!nodeVisible(n)) continue
-      const [sx, sy] = worldToScreen(n.x, n.y)
-      const r = nodeRadius(n)
+    for (const entry of frame.nodes) {
+      if (!entry.visible) continue
+      const n = entry.node
+      const r = entry.radius, sx = entry.x, sy = entry.y
+      // Includes the widest severity ring and its stroke. Labels retain
+      // their existing separate bounds/collision pass below.
+      if (circleOutside(sx, sy, r + 6, W, H)) continue
       let dim = 1
       const isExplicitlySelected = selected && n.file === selected
       if (selected && !isExplicitlySelected) {
-        const touches = (G.adj.get(selected) ?? []).some((ei) => {
-          const e = G.edges[ei]; return e.a === n.file || e.b === n.file
-        })
-        dim = touches ? 1 : 0.25
+        dim = frame.neighbors.has(n.file) ? 1 : 0.25
       }
       // Filter dim — severity-filter-out OR package-solo-out
       // nodes drop to 0.1 so the highlighted subgraph reads
@@ -650,11 +656,11 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
       // (always full opacity) and stacks with file-selection
       // dim via Math.min, so a non-matching non-touching node
       // ends up at min(0.25, 0.1) = 0.1.
-      if (!isExplicitlySelected && nodeIsDimmed(n)) {
+      if (!isExplicitlySelected && entry.dimmed) {
         dim = Math.min(dim, 0.1)
       }
 
-      ctx.fillStyle = pkgColor(n.pkg) + alphaHex(dim)
+      ctx.fillStyle = entry.color + alphaHex(dim)
       ctx.beginPath()
       ctx.arc(sx, sy, r, 0, Math.PI * 2)
       ctx.fill()
@@ -1182,6 +1188,11 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     const pkgView = pkgViewOn()
     const G = pkgView ? getPkgGraph() : graph
     const rich = pkgView && G.nodes.length <= 50
+    if (G.nodes.length > 50) {
+      nodePicker ??= createNodePicker(G.nodes)
+      const maxRadius = 4.9 * graph2.nodeSize * Math.max(0.6, Math.min(1.6, viewport.k))
+      return nodePicker(sx, sy, viewport, maxRadius, nodeRadius, nodeVisible)
+    }
     let best = null, bestD = Infinity
     const tol = 6
     for (const n of G.nodes) {

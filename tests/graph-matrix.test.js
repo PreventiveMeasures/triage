@@ -227,7 +227,7 @@ it('limits zoom-out to the smaller of 100% and fit, including a fully expanded g
   assert.equal(matrixFitCell(4, 900, 700), 24)
   assert.equal(matrixZoomCell(1, 4, 900, 700), 18)
   assert.equal(matrixZoomCell(20, 4, 900, 700), 20)
-  assert.equal(matrixZoomCell(100, 4, 900, 700), 48)
+  assert.equal(matrixZoomCell(100, 4, 900, 700), 27, 'maximum is 150% of the 18px base size')
   for (const rows of [1016, 26423]) {
     const fit = matrixFitCell(rows, 900, 700)
     assert.ok(fit < 18)

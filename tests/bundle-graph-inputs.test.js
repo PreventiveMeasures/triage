@@ -102,12 +102,21 @@ it('collects platform-specific resolutions as well as ordinary imports', () => {
   assert.equal(bundleImportsAsMap({ kind: 'sourcemap' }).size, 0)
 })
 
-it('reads reason metadata using the installed Stasis parser, including a single reason', () => {
+it('hides reasons equivalent to All using the installed Stasis parser', () => {
   const original = new Bundle({ modules: new Map([['.', { name: 'app', version: '1.0.0', files: { 'index.js': 'export {}' } }]]) }).withReason('run')
   const bundle = Bundle.parse(original.serialize())
   const reasons = bundleGraphReasons({ kind: 'stasis', bundle }, bundle.sources.keys())
-  assert.deepEqual([...reasons], [['run', new Set(['index.js'])]])
+  assert.equal(reasons.size, 0)
   assert.equal(bundleGraphReasons({ kind: 'sourcemap' }, ['index.js']).size, 0)
+})
+
+it('shows a single subset reason but hides any number of reasons matching All', () => {
+  const read = (reason) => bundleGraphReasons({ kind: 'stasis', bundle: { reason } }, ['app.js', 'shared.js'])
+  assert.deepEqual([...read({ run: ['app.js'] })], [['run', new Set(['app.js'])]])
+  assert.equal(read({ run: ['app.js', 'shared.js'], build: ['shared.js', 'app.js', 'app.js', 'missing.js'] }).size, 0)
+  assert.deepEqual([...read({ run: ['app.js', 'shared.js'], build: ['shared.js'] })], [
+    ['build', new Set(['shared.js'])], ['run', new Set(['app.js', 'shared.js'])],
+  ])
 })
 
 it('ignores malformed and unavailable reason files and preserves shared membership', () => {

@@ -51,6 +51,7 @@ import { LitElement, html, render as litRender, nothing, svg } from 'lit'
 import { styleMap } from 'lit/directives/style-map.js'
 import { classMap } from 'lit/directives/class-map.js'
 import { bundlePackageDirs, bundleSourcesAsMap } from './bundle-sources.js'
+import { bundleGraphReasons } from './bundle-graph-inputs.js'
 import { formatBytes, stripCommonPathPrefix } from './format.js'
 import { pkgColor } from './graph/utils.js'
 import { bundlePkgOf, pkgLabel } from './bundle-pkg-of.js'
@@ -73,6 +74,7 @@ const MIN_ARC = 1.5   // px — sunburst arcs thinner than this along their oute
 // path string, not node refs — `_rebuild` re-resolves it against
 // the fresh tree and silently drops paths that no longer exist.
 const _focusPathByBundle = new Map()
+const _reasonByBundle = new Map()
 
 // Last chosen projection ('treemap' | 'sunburst'). Outlives instances
 // for the same reason as the focus store above; a single slot rather
@@ -287,6 +289,7 @@ class BundleTreemap extends LitElement {
     _focus: { state: true },
     // Active projection, 'treemap' | 'sunburst' (the header switch).
     _mode: { state: true },
+    _reason: { state: true },
   }
 
   // Light DOM so report.css rules apply and file-cell clicks bubble to
@@ -301,6 +304,8 @@ class BundleTreemap extends LitElement {
     this._root = null
     this._focus = []
     this._mode = _sharedMode
+    this._reason = ''
+    this._reasons = new Map()
     this._dirByPath = new Map()
     this._status = 'loading'
     this._meta = { total: 0, prefix: '' }
@@ -311,7 +316,8 @@ class BundleTreemap extends LitElement {
   }
 
   willUpdate(changed) {
-    if (changed.has('details')) this._rebuild()
+    if (changed.has('details')) this._reason = _reasonByBundle.get(this.details?.integrity) ?? ''
+    if (changed.has('details') || changed.has('_reason')) this._rebuild()
   }
 
   firstUpdated() {
@@ -384,7 +390,7 @@ class BundleTreemap extends LitElement {
     if (this._tooltip) this._tooltip.classList.remove('show')
   }
 
-  // Parse the bundle into a path tree once per `details` change:
+  // Parse the bundle into a path tree once per bundle or reason change:
   // build dirs from prefix-stripped paths, collapse single-child
   // chains, then roll up sizes/counts. Layout itself happens per
   // render (it depends on the measured size).
@@ -396,11 +402,19 @@ class BundleTreemap extends LitElement {
     // ref-keyed) is re-resolved at the end once the new tree stands.
     this._focus = []
     this._dirByPath = new Map()
+    this._reasons = new Map()
     this._meta = { total: 0, prefix: '' }
+    this._hideTooltip()
     if (!this.details) { this._status = 'loading'; return }
     const sources = bundleSourcesAsMap(this.details)
     if (!sources || sources.size === 0) { this._status = 'empty'; return }
     const origPaths = [...sources.keys()]
+    this._reasons = bundleGraphReasons(this.details, origPaths)
+    if (!this._reasons.has(this._reason)) {
+      this._reason = ''
+      _reasonByBundle.delete(this.details.integrity)
+    }
+    const reasonFiles = this._reasons.get(this._reason)
     // Stasis package boundaries (keyed by original path) so each leaf
     // is colored by its authoritative package — sibling workspace
     // packages stay distinct instead of merging under a shared parent
@@ -412,6 +426,9 @@ class BundleTreemap extends LitElement {
     const root = { name: '', children: new Map(), value: 0, isFile: false }
     let total = 0
     for (let i = 0; i < origPaths.length; i++) {
+      // Keep the full bundle's display prefix and original source paths
+      // stable while filtering either projection.
+      if (reasonFiles && !reasonFiles.has(origPaths[i])) continue
       const content = sources.get(origPaths[i])
       const size = typeof content === 'string' ? enc.encode(content).byteLength : 0
       if (size <= 0) continue
@@ -523,6 +540,15 @@ class BundleTreemap extends LitElement {
     this._mode = this._mode === 'sunburst' ? 'treemap' : 'sunburst'
     _sharedMode = this._mode
     this._hideTooltip()
+  }
+
+  _changeReason(e) {
+    this._reason = e.target.value
+    const integrity = this.details?.integrity
+    if (integrity) {
+      if (this._reason) _reasonByBundle.set(integrity, this._reason)
+      else _reasonByBundle.delete(integrity)
+    }
   }
 
   // Plot-level click delegate. Only directory cells carry
@@ -738,6 +764,10 @@ class BundleTreemap extends LitElement {
         ${this._renderCrumbs()}
         <span class="bundle-treemap-head-right">
           <span class="bundle-treemap-sub">${curFiles} ${curFiles === 1 ? 'file' : 'files'} · ${formatBytes(curBytes)}${prefix ? html` · <span class="mono">${prefix}</span>` : ''}</span>
+          ${this._reasons.size > 0 ? html`<select class="bundle-treemap-reason" aria-label="Reason" @change=${this._changeReason}>
+            <option value="" ?selected=${!this._reason}>All</option>
+            ${[...this._reasons.keys()].map((reason) => html`<option value=${reason} ?selected=${this._reason === reason}>${reason}</option>`)}
+          </select>` : nothing}
           <button
             type="button"
             class=${classMap({ 'bundle-treemap-mode-toggle': true, on: sunburst })}

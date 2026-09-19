@@ -12,6 +12,10 @@ export function bundleGraphReasons(details, sourcePaths) {
     const present = new Set(files.filter((file) => typeof file === 'string' && paths.has(file)))
     if (present.size > 0) reasons.set(reason, present)
   }
+  // A reason is only useful as a filter if it changes the set of files.
+  // Keep all named options when at least one differs, otherwise hide the
+  // selector (and discard any stale selection) in every visualization.
+  if (![...reasons.values()].some((files) => files.size < paths.size)) reasons.clear()
   return reasons
 }
 

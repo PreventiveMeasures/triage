@@ -7,7 +7,7 @@ export function matrixFitCell(rowCount, width, height) {
 }
 
 export function matrixZoomCell(cell, rowCount, width, height) {
-  return Math.max(Math.min(18, matrixFitCell(rowCount, width, height)), Math.min(48, cell))
+  return Math.max(Math.min(18, matrixFitCell(rowCount, width, height)), Math.min(27, cell))
 }
 
 export function matrixHit(x, y, model, view) {

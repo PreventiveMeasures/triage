@@ -15,7 +15,7 @@ export function renderMatrixPanel(model, graph, selection, { select, expand, exp
   if (!row) {
     const hubs = [...model.rows].toSorted((a, b) => b.incoming - a.incoming).slice(0, 15)
     return html`<div class="matrix-metrics"><span><b>${number(graph.nodes.length)}</b>files</span><span><b>${number(graph.packages.length)}</b>packages</span><span><b>${number(model.importCount)}</b>imports</span></div>
-      <p class="matrix-empty">Select a row to inspect a package. Select a cell to see the files behind a dependency.</p>
+      <p class="matrix-empty">Select a row to inspect a package.<br>Select a cell to see the files behind a dependency.</p>
       <h4>Most imported</h4>${hubs.map((n) => rowButton(n, n.incoming, select))}
       ${model.cycleCount ? html`<h4>Cyclic groups <b>${model.cycleCount}</b></h4>${model.rows.filter((n) => n.cyclic).slice(0, 12).map((n) => rowButton(n, n.outgoing, select))}` : null}`
   }
