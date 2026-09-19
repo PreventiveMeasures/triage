@@ -16,9 +16,13 @@ export function groupLinkedReportRows(ids, reportRows) {
     const members = allMembers.filter((f) => linked.has(f.id)
       || Object.hasOwn(SOURCE_LABELS, f.source) || f.revalidate === 'revalidation')
     // Reports can stamp the same id differently, so share report chips only
-    // when both the original card and its visible members agree.
+    // when both the original membership and visible member metadata agree.
+    // Fixed tuples make property order irrelevant; sort by id so reordered
+    // copies still share a block without borrowing another report's title.
     const key = JSON.stringify([
-      allMembers.map((f) => f.id).toSorted(), members.map((f) => f.id).toSorted(),
+      allMembers.map((f) => f.id).toSorted(),
+      members.map((f) => [f.id, f.title ?? '', f.source ?? null, f.revalidate ?? ''])
+        .toSorted(([a], [b]) => a.localeCompare(b)),
     ])
     let variant = variants.get(key)
     if (!variant) {

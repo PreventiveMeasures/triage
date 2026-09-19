@@ -23,11 +23,41 @@ describe('linked report rows', () => {
   })
 
   it('matches membership independent of order and deduplicates report chips', () => {
+    const second = row('second', ['B', 'A'])
+    // Equivalent metadata must not depend on object property order or whether
+    // an absent revalidation stamp is represented as undefined or empty.
+    second.members = second.members.map((f) => ({ source: f.source, revalidate: '', title: f.title, id: f.id }))
     const { rows } = groupLinkedReportRows(['A', 'B'], [
-      row('first', ['A', 'B']), row('second', ['B', 'A']), row('first', ['A', 'B']),
+      row('first', ['A', 'B']), second, row('first', ['A', 'B']),
     ])
     assert.deepEqual(members(rows), [['A', 'B']])
     assert.deepEqual(rows[0].reports, [{ name: 'first', findingId: 'A', rowIndex: 0 }, { name: 'second', findingId: 'B', rowIndex: 0 }])
+  })
+
+  for (const [field, value] of [['title', 'Updated title'], ['source', 'claude-security'], ['revalidate', 'revalidation']]) {
+    it(`keeps report copies separate when a linked member's ${field} differs`, () => {
+      const first = row('first', ['A', 'B'])
+      const second = row('second', ['A', 'B'])
+      second.members[0][field] = value
+      const { rows } = groupLinkedReportRows(['A', 'B'], [first, second])
+      assert.equal(rows.length, 2)
+      assert.notEqual(rows[0].key, rows[1].key)
+      assert.deepEqual(rows.map((r) => r.members), [first.members, second.members])
+      assert.deepEqual(rows.map((r) => r.reports), [
+        [{ name: 'first', findingId: 'A', rowIndex: 0 }],
+        [{ name: 'second', findingId: 'A', rowIndex: 0 }],
+      ])
+    })
+  }
+
+  it('preserves titles on visible context members as well as explicitly linked findings', () => {
+    const first = row('first', ['A', 'B'], 'codex-security')
+    const second = row('second', ['A', 'B'], 'codex-security')
+    second.members[1].title = 'A different context title'
+    const { rows } = groupLinkedReportRows(['A'], [first, second])
+    assert.equal(rows.length, 2)
+    assert.deepEqual(rows.map((r) => r.members), [first.members, second.members])
+    assert.deepEqual(rows.map((r) => r.reports.map((report) => report.name)), [['first'], ['second']])
   })
 
   it('keeps unlinked findings from other tools as row context', () => {
