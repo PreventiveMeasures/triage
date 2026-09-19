@@ -144,6 +144,7 @@ export interface State {
   filterPartial: string
   showRevalidation: boolean
   revalidationDetailed: boolean
+  upstreamOnly: boolean
   revalidateConflict: boolean
   codePreviews: Set<string>
   filterConfMin: number
@@ -639,6 +640,12 @@ export const state: State = store<State>({
   // switch alone used to mean. Offered only where it would change
   // something: a pass row sharing its group, or partial rows to sort.
   revalidationDetailed: false,
+  // The upstream lens — offered wherever the set holds an upstream
+  // finding, App switch or no. On, the list is the dependencies' own
+  // code, narrowed group by group rather than filtered between them,
+  // which is what leaves the card answering for those rows alone
+  // (group.js onlyUpstream has the whole of it).
+  upstreamOnly: false,
   // Set at ingest when two copies of one finding disagree about what
   // the revalidation pass concluded — the same id under two different
   // `revalidate*` answers (group.js mergeDuplicateFields). Dedup keeps

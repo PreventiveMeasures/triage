@@ -84,10 +84,22 @@ const DETAIL_GLYPH = html`<svg viewBox="0 0 16 16" width="13" height="13" aria-h
 
 const DETAIL_LABEL = 'Show underlying code findings'
 
+// An arrow leaving a box, upward and out — the dependency's own code,
+// upstream of everything here. Same 16-box, same 1.2 stroke as the
+// plates beside it, so the two read as one row of glyphs.
+const UPSTREAM_GLYPH = html`<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+  <path d="M8 9.6V2.4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+  <path d="M5.2 5.2 8 2.4l2.8 2.8" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M3 10.4v2.2a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-2.2" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+</svg>`
+
+const UPSTREAM_LABEL = 'Show only upstream dependency findings'
+
 class RevalidationSwitch extends StateElement {
   static properties = {
     canDrop: { type: Boolean, attribute: 'can-drop' },
     canDetail: { type: Boolean, attribute: 'can-detail' },
+    canUpstream: { type: Boolean, attribute: 'can-upstream' },
   }
 
   createRenderRoot() { return this }
@@ -96,6 +108,7 @@ class RevalidationSwitch extends StateElement {
     super()
     this.canDrop = false
     this.canDetail = false
+    this.canUpstream = false
   }
 
   connectedCallback() {
@@ -109,6 +122,19 @@ class RevalidationSwitch extends StateElement {
     // re-rated is already on the strip, and a lit glyph would claim
     // credit for a view the switch beside it is drawing.
     const detailed = on && state.revalidationDetailed === true
+    // Not gated on `on`: this lens is about which findings the list is
+    // drawn from, which the app/code line has no say over. It is lit
+    // and clickable with the switch beside it off, and with no switch
+    // beside it at all.
+    const upstreamOnly = state.upstreamOnly === true
+    // …and while it IS on, the two halves before it go inert, because
+    // it bypasses both. The app/code line only ever drops the pass's
+    // own rows, which are never upstream, and detail only unfolds rows
+    // under a pass row, which an all-upstream group hasn't got — so
+    // neither changes a thing about what this lens draws. Their STATE
+    // is left exactly as the reader set it, to be handed back
+    // unchanged the moment the lens comes off; a control that quietly
+    // reset itself would be worse than one that waits.
     // A SWITCH, not a chip: this doesn't narrow the list the way the
     // filters beside it do, it changes what the list is about — and a
     // switch is the control that says a thing is either on or off,
@@ -126,6 +152,7 @@ class RevalidationSwitch extends StateElement {
           class=${classMap({ 'revalidation-toggle': true, on })}
           aria-pressed=${String(on)}
           aria-label="App view — hide the issues the revalidation pass ruled out"
+          ?disabled=${upstreamOnly}
           @click=${this._toggle}
         ><span>App</span><span class="revalidation-switch"></span></button>`
       : nothing}${this.canDetail
@@ -135,9 +162,18 @@ class RevalidationSwitch extends StateElement {
           aria-pressed=${String(detailed)}
           aria-label=${DETAIL_LABEL}
           data-tooltip=${DETAIL_LABEL}
-          ?disabled=${!on}
+          ?disabled=${!on || upstreamOnly}
           @click=${this._toggleDetail}
         >${DETAIL_GLYPH}</button>`
+      : nothing}${this.canUpstream
+      ? html`<button
+          type="button"
+          class=${classMap({ 'revalidation-upstream': true, on: upstreamOnly })}
+          aria-pressed=${String(upstreamOnly)}
+          aria-label=${UPSTREAM_LABEL}
+          data-tooltip=${UPSTREAM_LABEL}
+          @click=${this._toggleUpstream}
+        >${UPSTREAM_GLYPH}</button>`
       : nothing}`
   }
 
@@ -152,6 +188,14 @@ class RevalidationSwitch extends StateElement {
   _toggleDetail = () => {
     this.dispatchEvent(new CustomEvent('revalidation-detail-change', {
       detail: { on: state.revalidationDetailed !== true },
+      bubbles: true,
+      composed: true,
+    }))
+  }
+
+  _toggleUpstream = () => {
+    this.dispatchEvent(new CustomEvent('upstream-only-change', {
+      detail: { on: state.upstreamOnly !== true },
       bubbles: true,
       composed: true,
     }))

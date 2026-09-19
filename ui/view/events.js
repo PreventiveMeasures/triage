@@ -2385,6 +2385,14 @@ report.addEventListener('revalidation-detail-change', (e) => {
   state.revalidationDetailed = e.detail.on === true
   render()
 })
+// The upstream lens. A full render like its neighbours: it changes
+// which groups exist and which members they hold (group.js
+// onlyUpstream), so every count, column and filter on screen is drawn
+// from a different set afterwards.
+report.addEventListener('upstream-only-change', (e) => {
+  state.upstreamOnly = e.detail.on === true
+  render()
+})
 // `<bundle-code-search>` dispatches this when a Files / Code /
 // Issues mode tab is clicked in the bundle code rail's search row.
 // Switching back to Files rebuilds the tree at its remembered
