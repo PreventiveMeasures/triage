@@ -26,7 +26,7 @@
 import { addFindingToBucket, dropKeyFromBucket, indexFindingByVersion, isPlaceholderNpmPackage, newBucket, packageVersionOf, pruneVersionSlot, recomputeBucketReports } from './bundle-finding-versions.js'
 import { listFiles, onFileMutated, readFile } from './storage.js'
 import { loadRepoUrlFor, onRepoUrlChanged } from './state.ts'
-import { findingTitle, inheritReportMeta, loadFindings, reportRepoGithub } from '../report/index.js'
+import { findingTitle, inheritReportMeta, loadFindings, reportEntries, reportRepoGithub, revalidateKindOf } from '../report/index.js'
 
 const byHash = new Map()
 const byPackage = new Map()
@@ -43,8 +43,10 @@ const byPackage = new Map()
 // without any repo signal aren't indexed here — there's nothing
 // to bucket them under.
 const byRepo = new Map()
-// Finding id → `{ reports }`, a Map of report name → the title that
-// report gives the finding. Unlike the three buckets above this one is
+// Finding id → `{ reports }`, a Map of report name → { title, rows }.
+// Rows retain member ids/titles and source/revalidation metadata, shared by every member's index entry;
+// they preserve the report's card boundaries without retaining its full parse.
+// Unlike the three buckets above this one is
 // keyed by the finding's OWN id rather than by something about its
 // file, so it answers for every finding an id could name — including
 // the ones with no `fileHash` and no package path, which the other
@@ -250,10 +252,23 @@ export function reportsForFindingId(id) {
 export function findingTitleForId(id) {
   const entry = byId.get(id)
   if (!entry) return ''
-  for (const title of entry.reports.values()) {
+  for (const { title } of entry.reports.values()) {
     if (title) return title
   }
   return ''
+}
+
+// Each original report row containing at least one requested id, once.
+// Overlapping rows stay distinct: [A,B] and [A,C] are different cards even
+// though both contain A. The returned objects belong to the read-only index.
+export function reportRowsForFindingIds(ids) {
+  const rows = new Set()
+  for (const id of ids) {
+    for (const report of byId.get(id)?.reports.values() ?? []) {
+      for (const row of report.rows) rows.add(row)
+    }
+  }
+  return [...rows]
 }
 
 // Dedupe key — preferred form is the analyzer's stable `id`; falls
@@ -275,16 +290,14 @@ function rememberContribution(name, kind, ref) {
   entry[kind].push(ref)
 }
 
-// Id-keyed bucket update. No dedupe key and no bucket shape: an id IS
-// the key, and the only things worth remembering about it are which
-// reports carry it and what it is called. Returns true when this
-// report is new to the id, so a second report holding the same finding
-// still repaints the views that name its origins.
-function indexFindingById(f, name) {
+// Keep the title and original rows for each report carrying this id.
+// Returns true for a new report so attribution changes repaint the views.
+function indexFindingById(f, name, row) {
   let entry = byId.get(f.id)
   if (!entry) byId.set(f.id, entry = { reports: new Map() })
-  if (entry.reports.has(name)) return false
-  entry.reports.set(name, findingTitle(f))
+  const existing = entry.reports.get(name)
+  if (existing) { existing.rows.add(row); return false }
+  entry.reports.set(name, { title: findingTitle(f), rows: new Set([row]) })
   rememberContribution(name, 'id', f.id)
   return true
 }
@@ -476,8 +489,8 @@ function invalidateName(name) {
   // Id index — flat, so the prune is too: drop this report from each
   // id it contributed, and drop the id itself once no report carries
   // it any more (an id nobody holds must read as "not in any of your
-  // reports", not as an empty set of holders). The report's title for
-  // the finding goes with it, since it is the map's value.
+  // reports", not as an empty set of holders). Its title and original
+  // row memberships are dropped with the report.
   for (const id of contrib.id) {
     const entry = byId.get(id)
     if (!entry) continue
@@ -534,11 +547,21 @@ async function indexOne(name) {
       if (f.fileHash && indexFindingByHash(f, key, name)) added = true
       if (f.file && indexFindingByPackage(f, key, name)) added = true
       if (f.file && indexFindingByRepo(f, key, name, reportFallback)) added = true
-      // No `f.file` gate: a finding is locatable by id whether or not
-      // the report said where it lives. `loadFindings` has already
-      // derived an id for anything that arrived without one, so this
-      // covers every format the app reads.
-      if (f.id && indexFindingById(f, name)) added = true
+    }
+    // loadFindings derived ids on the parser's objects in place. Read the
+    // original entries to retain grouping for both `findings` and `groups`,
+    // including grouped markdown exports, using this same report read.
+    for (const [index, raw] of reportEntries(data).entries()) {
+      const members = (Array.isArray(raw) ? raw : [raw]).filter((f) => f?.id)
+      if (members.length === 0) continue
+      const row = { report: name, index,
+        members: members.map((f) => ({
+          id: f.id, title: findingTitle(f),
+          source: f.source ?? data.source ?? null,
+          revalidate: revalidateKindOf(f),
+        })),
+      }
+      for (const f of members) if (indexFindingById(f, name, row)) added = true
     }
     // Mid-flight `invalidateName` detection (audit round-12 M-B).
     // `onFileMutated` runs synchronously when `saveFile` /

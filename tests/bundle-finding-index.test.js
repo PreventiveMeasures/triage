@@ -46,6 +46,7 @@ const {
   reportsForFindingByRepo,
   findingTitleForId,
   reportsForFindingId,
+  reportRowsForFindingIds,
   subscribeToBundleFindingIndex,
 } = await import('../client/bundle-finding-index.js')
 const { compareVersionsDesc, isPlaceholderNpmPackage, packageVersionOf } = await import('../client/bundle-finding-versions.js')
@@ -186,6 +187,71 @@ describe('bundle-finding-index — reportsForFindingId (attribution from an id a
 
   it('returns an empty array for an id nothing indexed', () => {
     assert.deepEqual(reportsForFindingId('never-indexed-id'), [])
+  })
+})
+
+describe('bundle-finding-index — original report rows', () => {
+  it('preserves overlaps, single findings, and complete row membership', async () => {
+    const prefix = `rows-${Date.now()}`
+    const f = (id) => ({ id: `${prefix}-${id}`, title: `Finding ${id}`, source: null, revalidate: '' })
+    const first = await seedReport({ findings: [[f('A'), f('B')], [f('A'), f('C')], f('D')] })
+    const second = await seedReport({ groups: [[f('A'), f('B')]] })
+    await ensureBundleFindingsIndexed()
+    const rows = reportRowsForFindingIds([`${prefix}-A`, `${prefix}-B`, `${prefix}-D`])
+    assert.deepEqual(rows.filter((r) => r.report === first), [
+      { report: first, index: 0, members: [f('A'), f('B')] },
+      { report: first, index: 1, members: [f('A'), f('C')] },
+      { report: first, index: 2, members: [f('D')] },
+    ])
+    assert.deepEqual(rows.filter((r) => r.report === second), [{ report: second, index: 0, members: [f('A'), f('B')] }])
+    assert.deepEqual(reportRowsForFindingIds(['never-indexed-row-id']), [])
+  })
+
+  it('replaces memberships on overwrite and removes them on delete', async () => {
+    const id = `row-overwrite-${Date.now()}`
+    const name = await seedReport({ findings: [[{ id, title: 'Original' }, { id: id + '-old' }]] })
+    await ensureBundleFindingsIndexed()
+    assert.equal(reportRowsForFindingIds([id])[0].members.length, 2)
+    await saveFile(name, JSON.stringify({ groups: [[{ id, title: 'Updated' }, { id: id + '-new' }]] }))
+    await ensureBundleFindingsIndexed()
+    assert.deepEqual(reportRowsForFindingIds([id])[0].members, [
+      { id, title: 'Updated', source: null, revalidate: '' }, { id: id + '-new', title: '', source: null, revalidate: '' },
+    ])
+    assert.deepEqual(reportRowsForFindingIds([id + '-old']), [])
+    await deleteFile(name)
+    assert.deepEqual(reportRowsForFindingIds([id, id + '-new']), [])
+  })
+
+  it('uses derived IDs in grouped findings, matching the report viewer', async () => {
+    const { loadFindings } = await import('../report/index.js')
+    const data = { groups: [[{ description: 'Grouped without ID A' }, { description: 'Grouped without ID B' }]] }
+    const name = await seedReport(data)
+    const { findings } = await loadFindings(JSON.stringify(data))
+    await ensureBundleFindingsIndexed()
+    assert.deepEqual(reportRowsForFindingIds([findings[0].id]).filter((r) => r.report === name), [{
+      report: name, index: 0,
+      members: findings.map((f) => ({ id: f.id, title: f.description, source: null, revalidate: '' })),
+    }])
+  })
+
+  it('retains per-finding source and normalized revalidation with report source fallback', async () => {
+    const id = `row-metadata-${Date.now()}`
+    const name = await seedReport({
+      source: 'codex-security',
+      groups: [[
+        { id, title: 'From Codex' },
+        { id: id + '-native', source: 'deepview', revalidate: ' Revalidation ' },
+        { id: id + '-claude', source: 'claude-security', revalidate: 'CONFIRMED' },
+      ]],
+    })
+    await ensureBundleFindingsIndexed()
+    assert.deepEqual(reportRowsForFindingIds([id]), [{
+      report: name, index: 0, members: [
+        { id, title: 'From Codex', source: 'codex-security', revalidate: '' },
+        { id: id + '-native', title: '', source: 'deepview', revalidate: 'revalidation' },
+        { id: id + '-claude', title: '', source: 'claude-security', revalidate: 'confirmed' },
+      ],
+    }])
   })
 })
 

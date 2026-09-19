@@ -1,120 +1,94 @@
-// The Links view — what one links file says, and nothing more.
-//
-// A links file (client/linked-findings.js) is a list of links; each
-// link names two or more findings that are the same finding, reported
-// twice. It carries no findings of its own, so this page deliberately
-// shows none: for every linked finding it prints the id, where that
-// finding actually lives — which of the user's reports carry it — and
-// a link that takes them to it. Reading the finding is the findings
-// view's job; this page's job is to get you there and to make the
-// shape of the file legible.
-//
-// Which is also why there is no filter, no sort and no triage
-// selector here: those all operate on findings, and this page holds
-// none. What it holds is a file the user dropped, listed as written.
-//
-// `renderLinksView(badge)` is the single export; `render.js` calls it
-// for `state.currentView === 'links'`, painting whatever
-// `state.currentLinks` holds (set by `switchToFile` when the file it
-// read turned out to be links). `badge` is the sync-status chip,
-// built by the caller because it reads workspace / remote state this
-// module has no other business with — a links file in a workspace is
-// a member like any other, and this page is the one place that can
-// say whether this device has shared it yet.
-//
-// Two indexes feed it, both filled in the background and both re-read
-// on every paint (events.js re-renders this view when either lands):
-// the OPFS-wide finding index answers "which reports hold this id",
-// and the counts cache answers what each of those reports IS, for its
-// row icon.
+// A links file names ids; the reports supply their titles and card boundaries.
+// Identical cards share their report chips, while overlapping cards remain
+// separate. The OPFS finding index preserves this without reading reports again.
 import { html, nothing } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { encodeFindingRef, ensureBundleFindingsIndexed, findingTitleForId, reportsForFindingId, state } from '#client/index.js'
-import { FILE_ICONS, displayName, groupOf } from './file-display.js'
-import { shortFindingId } from './format.js'
+import { bucketOf, encodeFindingRef, ensureBundleFindingsIndexed, findingTitleForId, isLinkableFindingId, isReportIgnored, reportRowsForFindingIds, reportsForFindingId, state } from '#client/index.js'
+import { FILE_ICONS, REPORT_LOGOS, displayName, groupOf } from './file-display.js'
+import { displayFindingId, shortFindingId } from './format.js'
+import { groupLinkedReportRows } from './linked-report-rows.js'
+import { TRIAGE_LABELS } from '../../report/index.js'
 
-// One linked finding, as a row: its id, what it is called, and the
-// reports it was found in.
-//
-// The id is a `#finding=…` anchor exactly like the ones in a comment —
-// same fragment format, same in-page navigation, same `hashchange`
-// handler in ui/view.js — so following one lands on the finding with
-// its report opened, its filters cleared if they hid it, and a ring
-// around it. `encodeFindingRef` is safe to call unguarded: the parser
-// only keeps ids `isLinkableFindingId` accepts, which is the same test
-// this throws on.
-//
-// Every tooltip in the row is the untruncated form of the text under
-// it and nothing else — the whole id behind its 8-char label, the
-// whole title, the whole report name behind a chip that clips at
-// 16rem. They used to lead with "Show …", which spent the line saying
-// what a link does; the one thing a clipped label can't tell you is
-// what it says.
-//
-// The title comes from the OPFS-wide index (`findingTitleForId`), so
-// it is present for any finding the user actually holds and absent for
-// the rest — which is the same thing the report chips say, and the
-// reason it can be left out silently rather than standing in for
-// itself. It elides at whatever width the row leaves it; the whole
-// line is on the tooltip.
-//
-// Each report is a BUTTON to that report's copy, not merely to the
-// report: a linked finding is interesting because several analyzers
-// found it, and "read DeepSec's version of this" is the click the row
-// exists for (`revealFindingInReport`, via the delegate in events.js).
-//
-// A finding no report of the user's carries still renders as a link.
-// The index knows what is on disk RIGHT NOW; the link's own resolution
-// re-checks (and says so plainly if it comes up empty), and a report
-// dropped a minute from now makes the same link work. Muting it here
-// would be the page pretending to a certainty it doesn't have — so it
-// says "not in your reports" beside it instead, which is the honest
-// version of the same information.
-function linkedFindingRow(id) {
-  const reports = reportsForFindingId(id).toSorted((a, b) => displayName(a).localeCompare(displayName(b)))
-  const label = shortFindingId(id) ?? id
-  const title = findingTitleForId(id)
-  return html`<li class="links-finding">
-    <a class="links-finding-id mono" href=${`#${encodeFindingRef({ id })}`} data-tooltip=${id}>${label}</a>
-    ${title ? html`<span class="links-finding-title" data-tooltip=${title}>${title}</span>` : nothing}
-    ${reports.length === 0
-      ? html`<span class="links-finding-missing">not in your reports</span>`
-      : html`<span class="links-finding-reports">${reports.map((r) => html`<button
-          type="button"
-          class="links-finding-report"
-          data-tooltip=${displayName(r)}
-          data-links-report=${r}
-          data-links-finding=${id}
-        >${unsafeHTML(FILE_ICONS[groupOf(r)] ?? FILE_ICONS.default)}<span class="links-finding-report-label">${displayName(r)}</span></button>`)}</span>`}
+function count(n, singular, plural) {
+  return `${n} ${n === 1 ? singular : plural}`
+}
+
+function statusTemplate(id, reports) {
+  const triage = bucketOf(state.triage.get(id))
+  const ignored = reports.filter(({ name }) => isReportIgnored(state.triage, id, name))
+  const status = triage ?? (ignored.length > 0 ? 'ignored' : null)
+  if (!status) return nothing
+  const partial = status === 'ignored' && ignored.length < reports.length
+  const label = partial ? `Ignored in ${ignored.length}/${reports.length} reports` : TRIAGE_LABELS[status]
+  return html`<span class=${`links-finding-status triage-${status}`}
+    data-tooltip=${partial ? ignored.map(({ name }) => displayName(name)).join(', ') : nothing}
+  >${label}</span>`
+}
+
+function memberTemplate({ id, title }, reports = [], linked = true, chips = nothing) {
+  const report = reports[0]?.name
+  const displayId = displayFindingId(id)
+  const label = shortFindingId(id) ?? displayId
+  return html`<li class=${linked ? 'links-finding' : 'links-finding links-finding-context'}>
+    ${report ? html`<button type="button" class="links-finding-id mono"
+      data-links-preview=${id} data-preview-report=${report}
+      data-preview-row=${reports[0].rowIndex ?? nothing}
+      data-tooltip=${displayId} aria-haspopup="dialog"
+    >${label}</button>` : isLinkableFindingId(id) ? html`<a class="links-finding-id mono"
+      href=${`#${encodeFindingRef({ id })}`} data-tooltip=${displayId}
+    >${label}</a>` : html`<span class="links-finding-id mono">${label}</span>`}
+    ${title ? html`<span class="links-finding-title">${title}</span>` : nothing}
+    ${statusTemplate(id, reports)}
+    ${linked ? nothing : html`<span class="links-member-context">not in this link</span>`}
+    ${chips}
   </li>`
 }
 
-// One link — the findings it holds, in the order the file wrote them.
-// Numbered rather than titled because a link has no name: the file
-// gives it none, and inventing one from a member finding would put the
-// reader's eye on one of them as though it were the original.
+function reportChipsTemplate(reports) {
+  return html`<div class="links-finding-reports">${reports.map(({ name, findingId }) => html`<button
+    type="button" class="links-finding-report" data-tooltip=${displayName(name)}
+    data-links-report=${name} data-links-finding=${findingId}
+  >${unsafeHTML(REPORT_LOGOS[groupOf(name)] ?? REPORT_LOGOS.default)}<span class="links-finding-report-label">${displayName(name)}</span></button>`)}</div>`
+}
+
+function reportRowTemplate(row, linked) {
+  const reports = row.reports.toSorted((a, b) => displayName(a.name).localeCompare(displayName(b.name)))
+  if (row.members.length === 1) {
+    const member = row.members[0]
+    return html`<li class="links-report-row links-report-row-single">
+      <ul class="links-row-members">${memberTemplate(member, reports, linked.has(member.id), reportChipsTemplate(reports))}</ul>
+    </li>`
+  }
+  return html`<li class="links-report-row">
+    <div class="links-report-row-head">
+      <span class="links-row-count">${count(row.members.length, 'finding', 'findings')} in row</span>
+      ${reportChipsTemplate(reports)}
+    </div>
+    <ul class="links-row-members">${row.members.map((f) => memberTemplate(f, reports, linked.has(f.id)))}</ul>
+  </li>`
+}
+
 function linkGroupTemplate(group, index) {
+  const { rows, missing } = groupLinkedReportRows(group, reportRowsForFindingIds(group))
+  const linked = new Set(group)
   return html`<li class="links-group">
     <div class="links-group-head">
       <span class="links-group-index">Link ${index + 1}</span>
-      <span class="links-group-count">${group.length} findings</span>
+      <span class="links-group-count">${count(group.length, 'finding', 'findings')}</span>
     </div>
-    <ul class="links-group-findings">${group.map((id) => linkedFindingRow(id))}</ul>
+    <ul class="links-group-rows">${repeat(rows, (row) => row.key, (row) => reportRowTemplate(row, linked))}</ul>
+    ${missing.length > 0 ? html`<div class="links-unlocated">
+      <div class="links-finding-missing">Not in your reports</div>
+      <ul class="links-row-members">${missing.map((id) => memberTemplate({ id, title: findingTitleForId(id) }))}</ul>
+    </div>` : nothing}
   </li>`
-}
-
-// n of a thing, with the plural picked for it.
-function count(n, singular, plural) {
-  return `${n} ${n === 1 ? singular : plural}`
 }
 
 export function renderLinksView(badge = nothing) {
   const open = state.currentLinks
   if (!open) return nothing
-  // The reports this page attributes findings to come from the
-  // OPFS-wide index; kick its walk if nothing else has. Rows fill in
-  // as it goes — the subscriber in events.js repaints this view.
+  // The index subscriber repaints as reports become available or change.
   ensureBundleFindingsIndexed().catch(() => {})
   const { name, groups, skipped } = open
   const linkedIds = new Set()
@@ -150,11 +124,8 @@ export function renderLinksView(badge = nothing) {
     } in this file could not be linked — an id the app can't follow (a session-local number, or something that isn't an id at all).</p>` : nothing}
     ${groups.length === 0
       ? html`<p class="links-empty">This file declares no links: every entry in it named fewer than two findings this app can reach.</p>`
-      : html`<ol class="links-list">
-        ${/* Keyed on the position AND the ids: a file is free to write
-              the same link twice, and two identical keys would have Lit
-              reusing one row for both. */
-          repeat(groups, (g, i) => `${i}:${g.join(' ')}`, (g, i) => linkGroupTemplate(g, i))}
-      </ol>`}
+      : html`<ol class="links-list">${
+        repeat(groups, (g, i) => `${i}:${g.join(' ')}`, (g, i) => linkGroupTemplate(g, i))
+      }</ol>`}
   </div>`
 }

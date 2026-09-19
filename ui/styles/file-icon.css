@@ -6,8 +6,22 @@
    contrasting color so they don't blend into surrounding surfaces
    across themes. Top-level (not scoped under .file-item) so the page
    header's file-chip can reuse the classes. */
-.file-icon.brand-deepview { & .bg { fill: #2563eb; } & .fg { fill: #fff; } }
-.file-icon.brand-claude   { & .bg { fill: #d97757; } & .fg { fill: #fff; } }
-.file-icon.brand-codex    { & .bg { fill: #fff; stroke: #000; stroke-width: .5; } & .fg { fill: #000; } }
-.file-icon.brand-vercel   { & .bg { fill: #000; stroke: #fff; stroke-width: .5; } & .fg { fill: #fff; } }
-.file-icon.brand-piolium  { & .bg { fill: #fbb829; } & .fg { fill: #1c1b19; } }
+:is(.file-icon, .report-logo) {
+  &.brand-deepview { --brand-bg: #2563eb; --brand-fg: #fff; }
+  &.brand-claude { --brand-bg: #d97757; --brand-fg: #fff; }
+  &.brand-codex { --brand-bg: #fff; --brand-fg: #000; }
+  &.brand-vercel { --brand-bg: #000; --brand-fg: #fff; }
+  &.brand-piolium { --brand-bg: #fbb829; --brand-fg: #1c1b19; }
+  & .bg { fill: var(--brand-bg); }
+  & .fg { fill: var(--brand-fg); }
+}
+.file-icon:is(.brand-codex, .brand-vercel) .bg { stroke: var(--brand-fg); stroke-width: .5; }
+
+.report-logo {
+  display: grid;
+  place-items: center;
+  align-self: stretch;
+  flex: 0 0 20px;
+  background: var(--brand-bg);
+  border-right: 1px solid var(--border);
+}

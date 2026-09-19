@@ -26,6 +26,7 @@ import { packageOf } from './graph/utils.js'
 import { renderPackagesView } from './render-packages.js'
 import { renderRepositoriesView } from './render-repositories.js'
 import { renderLinksView } from './render-links.js'
+import { closeLinksPreview, getLinksPreview } from './links-preview.js'
 import { resolveWorkspaceContext } from './sync-scope.js'
 import {
   buildBundleGraphData,
@@ -1096,9 +1097,9 @@ function focusMainTemplate(group, corner = nothing, popup = false) {
 // `columns` is every bucket ({ key, label, count, firstGid }) for the
 // rail's header picker — the way across to a bucket the open finding
 // isn't in.
-function kanbanDetailTemplate(focusGroup, column, columns = []) {
-  if (!focusGroup) return nothing
-  const groupSt = groupState(focusGroup)
+function kanbanDetailTemplate(focusGroup, column, columns = [], preview = null) {
+  if (!focusGroup && !preview) return nothing
+  const groupSt = focusGroup ? groupState(focusGroup) : {}
   // Fullscreen drops the modal's width cap and stretches it over the
   // whole backdrop — which already holds the rail's strip out of its
   // box, so "everything available" means everything but the rail. The
@@ -1106,7 +1107,7 @@ function kanbanDetailTemplate(focusGroup, column, columns = []) {
   // was last left.
   const full = state.kanbanDetailFullscreen
   const modalClasses = { 'kanban-detail-modal': true, fullscreen: full, 'has-conflict': groupSt.hasConflict }
-  const gid = groupKey(focusGroup)
+  const gid = focusGroup ? groupKey(focusGroup) : null
   const items = column?.items ?? []
   // Position of the open finding within its column. -1 can't happen
   // for a group that came out of the same bucket map, but the counter
@@ -1140,19 +1141,19 @@ function kanbanDetailTemplate(focusGroup, column, columns = []) {
       aria-label="Close details"
     >×</button>
   </div>`
-  return html`<div class="kanban-detail-backdrop">
+  return html`<div class=${classMap({ 'kanban-detail-backdrop': true, 'links-preview-backdrop': !!preview })}>
     <div class="kanban-detail-dim"></div>
-    <div class=${classMap(modalClasses)} role="dialog" aria-modal="true">
-      ${full ? nothing : actions}
+    <div class=${classMap(modalClasses)} role="dialog" aria-modal="true" aria-label=${preview ? 'Finding preview' : 'Finding details'}>
+      ${full && focusGroup ? nothing : actions}
       <!-- Fullscreen swaps the single scrolling column for the focus
            view's workbench: the card in one pane, the bundle's source
            in the other. At the readable width there is no room for a
            second pane, so the card keeps its Code shortcut into the
            bundle overlay instead. -->
       <div class="kanban-detail-body">
-        ${full
-          ? focusMainTemplate(focusGroup, actions, true)
-          : findingCardPlaceholder(focusGroup, false, 'kanban-detail', false, true)}
+        ${focusGroup
+          ? (full ? focusMainTemplate(focusGroup, actions, true) : findingCardPlaceholder(focusGroup, false, 'kanban-detail', false, true))
+          : html`<div class="links-preview-message" role="status">${preview.error || 'Loading finding…'}</div>`}
       </div>
     </div>
     ${items.length === 0 ? nothing : html`<aside class="kanban-detail-side" aria-label=${`${column.label} findings`}>
@@ -1603,6 +1604,7 @@ const nullLastCmp = (a, b) => {
 let modeBeforeConflict = null
 
 function renderImpl() {
+  if (!getLinksPreview()) closeLinksPreview()
   mountBundleSourceOverlay()
   // Recompute the active deps dir before any helper consults it
   // (isModule / packageOf / stripPackagePrefix / pkgRelative). The
@@ -1782,7 +1784,12 @@ function renderImpl() {
       // the same claim on it as a report — it is a workspace member
       // like any other, and its page is the one place that can say
       // whether this device has shared it yet.
-      if (slot) litRender(renderLinksView(syncBadgeTemplate()), slot)
+      const preview = getLinksPreview()
+      if (slot) {
+        litRender(html`${renderLinksView(syncBadgeTemplate())}${
+          preview ? kanbanDetailTemplate(preview.group, null, [], preview) : nothing
+        }`, slot)
+      }
       report.classList.add('active')
       dropZone.classList.add('hidden')
       document.title = `DeepView — ${state.currentLinks.name}`

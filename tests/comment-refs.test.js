@@ -30,7 +30,28 @@ if (!globalThis[slotKey]) {
   }
 }
 
-const { parseCommentRefs } = await import('../ui/view/format.js')
+const { displayFindingId, parseCommentRefs, shortFindingId } = await import('../ui/view/format.js')
+
+describe('finding ID display', () => {
+  it('strips only the Codex finding URL prefix for display', () => {
+    const prefix = 'https://chatgpt.com/codex/cloud/security/findings/'
+    const suffix = 'finding_abc123'
+    assert.equal(displayFindingId(prefix + suffix), suffix)
+    assert.equal(displayFindingId('A'), 'A')
+    assert.equal(displayFindingId(12), '12')
+    assert.equal(displayFindingId('https://example.com/findings/A'), 'https://example.com/findings/A')
+    assert.equal(displayFindingId('prefix-' + prefix + suffix), 'prefix-' + prefix + suffix)
+  })
+
+  it('shortens native and Codex IDs to eight characters while retaining full tooltip IDs', () => {
+    const id = '12345678-1234-5678-9abc-123456789abc'
+    assert.equal(shortFindingId(id) ?? displayFindingId(id), '12345678')
+    const codex = 'https://chatgpt.com/codex/cloud/security/findings/' + id
+    assert.equal(shortFindingId(codex) ?? displayFindingId(codex), '12345678')
+    assert.equal(displayFindingId(codex), id)
+    assert.equal(shortFindingId('https://chatgpt.com/codex/cloud/security/findings/abcdef0123456789'), 'abcdef01')
+  })
+})
 
 // The single link token in a comment whose ONLY non-trivial segment is
 // one URL. Asserts there's exactly one link and returns it.

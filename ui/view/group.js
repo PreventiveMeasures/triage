@@ -6,7 +6,8 @@ import { SEVERITY_ORDER, displayedSeverity, isRevalidation, isRevalidationRow } 
 // module evaluates first resolves the other's hoisted function
 // declarations by the time anything runs.
 import { matchesRunFilters } from './filters.js'
-import { revalidateKindOf } from '../../report/index.js'
+import { SOURCE_LABELS, revalidateKindOf } from '../../report/index.js'
+import { getLinksPreview } from './links-preview.js'
 
 // ID helpers. Internally every `state.reports[].groups[i]` is a
 // Finding[] (single-finding entries are wrapped at ingest, so code
@@ -158,6 +159,9 @@ export function tabTriage(f, entry = state.triage.get(tabKey(f))) {
 // sortTabs's identity note below still holds for every set without a
 // pass row in it.
 function drawnTabs(group) {
+  // Links previews show the entire original report row, including the
+  // clicked finding when the normal App lens would fold it under a pass.
+  if (getLinksPreview()?.group === group) return group
   if (state.revalidationDetailed || group.length <= 1) return group
   if (!group.some(isRevalidation)) return group
   return group.filter(isRevalidation)
@@ -207,6 +211,17 @@ export function sortTabs(group) {
 }
 
 export function primaryTab(group) { return group.length === 1 ? group[0] : sortTabs(group)[0] }
+
+// Presentation groups for the tab strip, preserving the sorted order within
+// each level. Read the raw revalidation stamp regardless of the App lens.
+export function groupTabsByLevel(tabs) {
+  const app = [], source = []
+  for (const f of tabs) {
+    const appLevel = Object.hasOwn(SOURCE_LABELS, f.source ?? f._source) || isRevalidationRow(f)
+    ;(appLevel ? app : source).push(f)
+  }
+  return { app, source }
+}
 
 // Whether a tab (finding) carries an annotation marker — a comment, a
 // fix link, or a raised attention flag, i.e. the glyphs the tab strip
@@ -680,6 +695,8 @@ export function groupWithPassRows(group) {
 }
 
 export function findGroupById(gid) {
+  const previewGroup = getLinksPreview()?.group
+  if (previewGroup && groupKey(previewGroup) === gid) return previewGroup
   for (const g of getMergedGroups()) if (groupKey(g) === gid) return g
   return null
 }

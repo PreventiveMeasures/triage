@@ -1269,8 +1269,8 @@ function githubRefToken(candidate) {
 // overwhelming majority of cases (the analyzer's, or the one
 // `report/src/finding-id.js` derives), and abbreviating it to its first
 // group mirrors how the commit label abbreviates a sha. The codex
-// importer's finding-URL ids have no meaningful prefix to show, so they
-// fall back to the bare word.
+// importer's finding-URL ids show the first eight characters after
+// their URL prefix.
 //
 // Lower-case-only and ASCII-explicit for the same reason the github
 // validators are: under `/iu` Unicode case-folding pulls non-ASCII
@@ -1278,15 +1278,25 @@ function githubRefToken(candidate) {
 // hex anyway.
 const FINDING_UUID_RE = /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/u
 
-// The abbreviation above, on its own: a finding id's first uuid group,
-// or null when the id isn't a uuid and has no meaningful prefix to
-// show. Exported because the Links view and the finding card's
+// The abbreviation above, on its own: a finding id's first UUID group
+// or the first eight characters of a Codex finding ID, otherwise null.
+// Exported because the Links view and the finding card's
 // "Duplicates:" row name findings by id too, and all three have to
 // abbreviate the same one the same way — a reader following a
 // duplicate link should recognise the id they clicked in the id the
 // card they land on carries.
 export function shortFindingId(id) {
-  return typeof id === 'string' && FINDING_UUID_RE.test(id) ? id.slice(0, 8) : null
+  if (typeof id !== 'string') return null
+  const display = displayFindingId(id)
+  return display !== id || FINDING_UUID_RE.test(id) ? display.slice(0, 8) : null
+}
+
+// Codex imports use a URL as their canonical id, but our links resolve locally.
+// Omit that URL prefix in labels/tooltips; preserve the original id for lookups.
+export function displayFindingId(id) {
+  const value = String(id)
+  const prefix = 'https://chatgpt.com/codex/cloud/security/findings/'
+  return value.startsWith(prefix) ? value.slice(prefix.length) : value
 }
 
 // Validate one candidate URL string as a per-finding deep link into THIS
