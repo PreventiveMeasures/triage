@@ -19,7 +19,7 @@ const {
   buildTriageExportPayload,
   parseTriageExportGzip,
 } = await import('../client/triage-export.js')
-const { patchEntry, setReportIgnored, isReportIgnored } = await import('../client/triage-entry.ts')
+const { appFixOf, appTriageOf, patchEntry, setAppFix, setAppTriage, setReportIgnored, isReportIgnored, setUpstream } = await import('../client/triage-entry.ts')
 const { hasEnvelopeMagic } = await import('../client/passkey-crypto.ts')
 const vault = await import('../client/passkey-vault.js')
 const secureStorage = await import('../client/secure-storage.js')
@@ -322,3 +322,58 @@ async function gzipBlob(text) {
   const stream = new Blob([encodeUtf8(text)]).stream().pipeThrough(new CompressionStream('gzip'))
   return await new Response(stream).blob()
 }
+
+// The backup carries both triage tracks (buildPersistedTriageEntries
+// runs every entry through `normalizeEntry`), so the importer has to
+// read them back. It didn't, which made a round trip drop every
+// per-app answer and every upstream record — and in `replace` mode,
+// where the map is cleared first, the loss was the backup's whole
+// point (Codex review of #260, P1).
+describe('applyTriageImport: the app and upstream tracks', () => {
+  beforeEach(clearState)
+
+  const ID = '00000000-0000-4000-8000-0000000000ff'
+  const APP_A = 'acme/web'
+  const APP_B = 'acme/admin'
+
+  async function exported(build) {
+    build()
+    const payload = await buildTriageExportPayload()
+    state.triage.clear()
+    return payload
+  }
+
+  it('round-trips per-app slots and the upstream record', async () => {
+    const payload = await exported(() => {
+      setAppTriage(state.triage, ID, APP_A, 'fixed')
+      setAppFix(state.triage, ID, APP_A, 'https://example.test/pr/1')
+      setAppTriage(state.triage, ID, APP_B, 'inprogress')
+      setUpstream(state.triage, ID, { state: 'fixed', since: '4.17.21' })
+    })
+    await applyTriageImport(payload, 'replace')
+    assert.equal(appTriageOf(state.triage.get(ID), APP_A), 'fixed')
+    assert.equal(appFixOf(state.triage.get(ID), APP_A), 'https://example.test/pr/1')
+    assert.equal(appTriageOf(state.triage.get(ID), APP_B), 'inprogress')
+    assert.deepEqual(state.triage.get(ID)?.upstream, { state: 'fixed', since: '4.17.21' })
+  })
+
+  it('merges per app key, so an import never drops the profile\'s other apps', async () => {
+    const payload = await exported(() => setAppTriage(state.triage, ID, APP_A, 'fixed'))
+    setAppTriage(state.triage, ID, APP_B, 'inprogress')
+    await applyTriageImport(payload, 'prefer-imported')
+    assert.equal(appTriageOf(state.triage.get(ID), APP_A), 'fixed')
+    assert.equal(appTriageOf(state.triage.get(ID), APP_B), 'inprogress')
+  })
+
+  it('prefer-current keeps the local answer for an app both sides have', async () => {
+    const payload = await exported(() => {
+      setAppTriage(state.triage, ID, APP_A, 'fixed')
+      setUpstream(state.triage, ID, { state: 'wontfix' })
+    })
+    setAppTriage(state.triage, ID, APP_A, 'inprogress')
+    setUpstream(state.triage, ID, { state: 'reported' })
+    await applyTriageImport(payload, 'prefer-current')
+    assert.equal(appTriageOf(state.triage.get(ID), APP_A), 'inprogress')
+    assert.equal(state.triage.get(ID)?.upstream?.state, 'reported')
+  })
+})

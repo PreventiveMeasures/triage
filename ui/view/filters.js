@@ -1,6 +1,6 @@
 import { state } from '#client/index.js'
 import { SEVERITY_ORDER, activeRevalidateKinds, displayedSeverity, findingText, isModule, isRuledOut, prettyModel, revalidateKind, voidsConfidence } from './format.js'
-import { primaryTab, tabKey } from './group.js'
+import { primaryTab, tabFix, tabKey } from './group.js'
 
 // Stand-in for the "no analyzer" bucket in the analyzer dropdown.
 // Plain `'null'` would collide with a legitimate analyzer literally
@@ -544,10 +544,14 @@ export function matchesFilters(f) {
     // keyword like "false positive" surfaces findings the user
     // annotated, and pasting a fix URL surfaces the finding it's filed
     // against.
+    // The fix link comes through `tabFix`: on a dependency finding it
+    // lives in this app's slot, and a query that pasted the PR URL
+    // must find the finding it was filed against wherever the link is
+    // kept.
     const entry = state.triage.get(tabKey(f))
     const hit = findingText(f).includes(inc)
       || (entry?.comment ?? '').toLowerCase().includes(inc)
-      || (entry?.fix ?? '').toLowerCase().includes(inc)
+      || tabFix(f, entry).toLowerCase().includes(inc)
     // Negation toggle: when on, the query excludes — keep the findings
     // that DON'T match. Per-finding (a group stays visible if any tab
     // is a non-match, same group rule as every other filter below).
@@ -566,13 +570,16 @@ export function matchesFilters(f) {
 function matchesAnnotationFilters(group) {
   const F = activeFilters()
   if (!F.filterComment && !F.filterFix && !F.filterFlagged) return true
-  const groupHas = (pred) => group.some((f) => pred(state.triage.get(tabKey(f))))
+  // The predicate takes the finding as well as its entry: "has a fix"
+  // is a question about the link the card SHOWS (`tabFix`), which on a
+  // dependency finding is this app's, not the entry's.
+  const groupHas = (pred) => group.some((f) => pred(state.triage.get(tabKey(f)), f))
   if (F.filterComment) {
     const has = groupHas((e) => Boolean(e?.comment))
     if (F.filterComment === 'with' ? !has : has) return false
   }
   if (F.filterFix) {
-    const has = groupHas((e) => Boolean(e?.fix))
+    const has = groupHas((e, f) => Boolean(tabFix(f, e)))
     if (F.filterFix === 'with' ? !has : has) return false
   }
   if (F.filterFlagged) {

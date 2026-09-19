@@ -70,28 +70,11 @@ export type ShownTriage = TriageBucket | 'ignored'
 export type AnnotationFilterState = '' | 'with' | 'without'
 
 // One finding's triage annotations, keyed by `tabKey(f)` in
-// `state.triage`. Unset fields are absent (not empty): the helpers in
-// `triage-entry.ts` prune emptied fields and drop the id entirely when
-// nothing remains, so iteration / persistence / GC only ever see
-// meaningful ids. `ignoredReports` lists the report names in which the
-// finding is per-report ignored. `deleted` is the legacy persisted/wire
-// form, migrated to `triage: 'deleted'` on load and never written back
-// in-memory.
-export type TriageEntry = {
-  color?: string
-  triage?: TriageBucket
-  comment?: string
-  fix?: string
-  // Tri-state attention flag. `undefined` = never set; `true` =
-  // flagged; `false` = explicitly UN-flagged — a tombstone that is
-  // deliberately NOT pruned. Keeping `false` distinct from absent is
-  // load-bearing for sync/conflict resolution: unflagging is a real
-  // change that must overwrite a peer's stale `true`, not read as "no
-  // opinion" and get silently undone.
-  flagged?: boolean
-  ignoredReports?: string[]
-  deleted?: boolean
-}
+// `state.triage`. Defined in ./triage-tracks.ts, with the two triage
+// tracks it carries, and re-exported here because this is where every
+// consumer has always imported it from.
+import type { TriageEntry } from './triage-tracks.ts'
+export type { TriageEntry }
 
 // Deepview state schema. Fields with ad-hoc / nested shapes (parsed
 // bundle metadata, ingested findings) stay `unknown` for now — they

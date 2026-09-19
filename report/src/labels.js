@@ -18,6 +18,13 @@ export const TRIAGE_LABELS = {
 
 export const COLOR_LABELS = { red: 'Red', blue: 'Blue', green: 'Green', gray: 'Gray', none: 'Unmarked' }
 
+// The cause track — what the code's own maintainers did about a
+// finding, as distinct from what an app did about shipping it. Its
+// words are the ones the upstream editor's picker offers.
+export const UPSTREAM_LABELS = {
+  reported: 'Reported', fixed: 'Fixed', wontfix: 'Won’t fix',
+}
+
 // The producer behind a report's `source` marker — the library's own
 // name for each format it reads (index.js MARKDOWN_FORMATS, plus the
 // codex splitter). The analyzer's own dump carries none and is

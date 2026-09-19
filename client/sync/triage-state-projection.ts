@@ -14,8 +14,8 @@
 // observer-util per-id re-render behavior the UI depends on.
 
 import { syncHost } from './host.ts'
-import { bucketOf, normalizeEntry, patchEntry, setEntry, setReportIgnored } from '../triage-entry.ts'
-import type { Conflict, ConflictProperty, TriageStateMap } from './triage-changeset.ts'
+import { bucketOf, normalizeEntry, patchEntry, setAppFix, setAppTriage, setEntry, setReportIgnored, setUpstream } from '../triage-entry.ts'
+import { type Conflict, type ConflictProperty, type TriageStateMap, upstreamText } from './triage-changeset.ts'
 
 // The session's "effective" local state — what the next save
 // represents as the workspace's full triage. Starts from `baseState`
@@ -118,6 +118,37 @@ export function hydrateStateFromBaseState(baseState: TriageStateMap, ids: Iterab
       }
     }
 
+    // The cause track — one statement about the dependency, so it
+    // gap-fills and conflicts exactly like `fix` above. The conflict
+    // carries the imported RECORD alongside the sentence, since the
+    // sentence can't be parsed back into state / link / version.
+    if (entry.upstream) {
+      const localText = upstreamText(cur)
+      const importedText = upstreamText(entry)
+      if (localText === '') patchEntry(state.triage, id, { upstream: entry.upstream })
+      else if (localText !== importedText) {
+        conflicts.push({
+          id, property: 'upstream', local: localText, imported: importedText,
+          importedUpstream: entry.upstream,
+        })
+      }
+    }
+
+    // The app track merges per KEY rather than per field: each key is
+    // a different app's own answer about its own code, so a peer's
+    // slot for app B is never in disagreement with our slot for app A
+    // — it's news. Local wins within a key (like every gap-fill
+    // above), and there is no conflict path, matching what
+    // `ignoredReports` does with the other per-scope collection.
+    if (entry.apps) {
+      for (const [app, slot] of Object.entries(entry.apps)) {
+        if (!slot || typeof slot !== 'object') continue
+        const local = cur?.apps?.[app]
+        if (slot.triage && local?.triage === undefined) setAppTriage(state.triage, id, app, slot.triage)
+        if (slot.fix && local?.fix === undefined) setAppFix(state.triage, id, app, slot.fix)
+      }
+    }
+
     // Per-report ignore: skipped when triage is set (mutex), and when
     // the id already carries any ignoredReports (local-wins, like the
     // checks above). No conflict path for ignoredReports — the mutex
@@ -167,6 +198,9 @@ export function applyHydrationDecisions(
       } else {
         patchEntry(state.triage, c.id, { triage: undefined })
       }
+    } else if (c.property === 'upstream') {
+      // Written from the record, not from the displayed sentence.
+      setUpstream(state.triage, c.id, c.importedUpstream)
     } else if (c.property === 'flagged') {
       // Map the conflict token back to the tri-state. 'not flagged'
       // resolves to the explicit `false` tombstone, never to undefined,
@@ -185,6 +219,10 @@ function currentLocalValue(id: string, property: ConflictProperty): string {
   if (property === 'comment') return entry?.comment ?? ''
   if (property === 'fix') return entry?.fix ?? ''
   if (property === 'flagged') return entry?.flagged === true ? 'flagged' : entry?.flagged === false ? 'not flagged' : ''
+  // Same formatter the conflict was built with, so the "did the user
+  // re-vote local while the dialog was open" check compares like for
+  // like.
+  if (property === 'upstream') return upstreamText(entry)
   return ''
 }
 

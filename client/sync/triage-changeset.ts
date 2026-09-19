@@ -4,21 +4,29 @@
 // over them: diff, apply, equality, and the three-way conflict scan. No
 // module state, no `state.*`, no I/O — safe to unit-test in isolation.
 
+import { appsEqual, normalizeEntry, upstreamEqual, upstreamText } from '../triage-entry.ts'
+import type { AppEntry, UpstreamEntry } from '../triage-tracks.ts'
 import type { TriageEntry } from './host.ts'
-import { normalizeEntry } from '../triage-entry.ts'
 
-export type ConflictProperty = 'color' | 'triage' | 'comment' | 'fix' | 'flagged'
+export type ConflictProperty = 'color' | 'triage' | 'comment' | 'fix' | 'flagged' | 'upstream'
 
 export type Conflict = {
   id: string
   property: ConflictProperty
   local: string
   imported: string
+  // The imported side of an `upstream` conflict as the record it
+  // actually is. `local` / `imported` are the sentences the dialog
+  // shows, and "fixed in 4.17.21 https://…" can't be parsed back into
+  // its three fields — so the applier reads this instead of trying.
+  importedUpstream?: UpstreamEntry
 }
 
 // `TriageEntry` (the per-finding-id triage value carried on the wire
 // and in baseState) is defined in `../state.ts` — the same shape
 // `state.triage` stores live — and re-exported through `host.ts`.
+export { upstreamText }
+
 export type TriageStateMap = { [id: string]: TriageEntry | undefined }
 export type Changeset = { [id: string]: TriageEntry | null | undefined }
 
@@ -48,6 +56,16 @@ function normFix(entry: TriageEntry | null | undefined): string {
 function normFlagged(entry: TriageEntry | null | undefined): string {
   return entry?.flagged === true ? 'flagged' : entry?.flagged === false ? 'not flagged' : ''
 }
+// The cause track, flattened to the sentence the conflict dialog shows
+// — it is one statement about the dependency ("fixed upstream in
+// 4.17.21"), and two peers who recorded different versions have
+// disagreed about that one statement, not about three fields.
+
+// `apps` is deliberately NOT a conflict property. Each key is one
+// app's own answer, so two peers editing DIFFERENT apps aren't
+// disagreeing about anything — and two peers editing the same app's
+// slot resolve the way the entry does, last write wins, which is what
+// the per-report `ignoredReports` field has always done.
 
 // Per-property comparison between the user's pre-rebase overlay
 // (= unsynced state.* edits captured before the chain landed) and the
@@ -92,6 +110,7 @@ export function collectChainConflicts(
       { name: 'comment' as const, norm: normComment },
       { name: 'fix' as const, norm: normFix },
       { name: 'flagged' as const, norm: normFlagged },
+      { name: 'upstream' as const, norm: upstreamText },
     ]
     for (const { name, norm } of props) {
       const oldVal = norm(oldEntry)
@@ -100,7 +119,9 @@ export function collectChainConflicts(
       const localChanged = localVal !== oldVal || preserveKnownIds?.has(id)
       const chainChanged = chainVal !== oldVal
       if (localChanged && chainChanged && localVal !== chainVal) {
-        conflicts.push({ id, property: name, local: localVal, imported: chainVal })
+        const conflict: Conflict = { id, property: name, local: localVal, imported: chainVal }
+        if (name === 'upstream' && chainEntry?.upstream) conflict.importedUpstream = chainEntry.upstream
+        conflicts.push(conflict)
       }
     }
   }
@@ -136,6 +157,11 @@ function entriesEqual(a: TriageEntry, b: TriageEntry): boolean {
     && (a.fix ?? '') === (b.fix ?? '')
     && a.flagged === b.flagged
     && ignoredReportsEqual(a.ignoredReports, b.ignoredReports)
+    // Shared with `client/triage-entry.ts` rather than mirrored: an
+    // equality here that disagreed with the one the live map uses
+    // would let a peer's edit read as "no change" and be dropped.
+    && appsEqual(a.apps, b.apps)
+    && upstreamEqual(a.upstream, b.upstream)
 }
 
 export function statesEqual(a: TriageStateMap, b: TriageStateMap): boolean {
@@ -155,6 +181,45 @@ function rebaseIgnoredReports(base: string[] = [], local: string[] = [], remote:
   return [...merged]
 }
 
+function slotsEqual(a: AppEntry | undefined, b: AppEntry | undefined): boolean {
+  return (a?.triage ?? '') === (b?.triage ?? '') && (a?.fix ?? '') === (b?.fix ?? '')
+}
+
+// The app track rebases per KEY, not as one value, because its keys are
+// separate apps' separate answers. Replaying the local entry whole would
+// delete a chain entry's app A while carrying this client's edit to app
+// B — work a peer did, that this client never had a view on, silently
+// gone and then propagated as a deletion on the retry.
+//
+// So: three-way per key against the base. A key this client changed
+// keeps its value (local-wins, as every other field does here), a key it
+// didn't takes the chain's — including one the chain added that this
+// client never saw — and a key it cleared stays cleared.
+//
+// `preserve` holds the local map whole instead, absences included: an
+// anchor reset leaves the snapshot unable to prove it is newer than what
+// we know, so a key we don't have reads as our own clear rather than
+// news we missed — the rule triage-sync.ts states for every other field
+// ("known values or absences").
+function rebaseApps(
+  base: { [appKey: string]: AppEntry } | undefined,
+  local: { [appKey: string]: AppEntry } | undefined,
+  remote: { [appKey: string]: AppEntry } | undefined,
+  preserve: boolean,
+): { [appKey: string]: AppEntry } | undefined {
+  if (!local && !remote) return undefined
+  // Null-prototype for the reason `normalizeApps` uses one: the keys are
+  // app names off a peer's changeset.
+  const out: { [appKey: string]: AppEntry } = Object.create(null)
+  for (const app of new Set([...Object.keys(local ?? {}), ...Object.keys(remote ?? {})])) {
+    const mine = local?.[app]
+    const keepMine = preserve || !slotsEqual(mine, base?.[app])
+    const slot = keepMine ? mine : remote?.[app]
+    if (slot) out[app] = slot
+  }
+  return Object.keys(out).length > 0 ? out : undefined
+}
+
 // Replay only fields the local user changed. Wire changesets replace whole
 // entries, but using that replacement as a local overlay erases independent
 // peer edits to other fields of the same finding.
@@ -164,7 +229,7 @@ function rebaseIgnoredReports(base: string[] = [], local: string[] = [], remote:
 export function rebaseLocalState(base: TriageStateMap, local: TriageStateMap, remote: TriageStateMap, preserveKnownIds?: ReadonlySet<string>): TriageStateMap {
   const out: TriageStateMap = Object.assign(Object.create(null), remote)
   for (const id of new Set([...Object.keys(base), ...Object.keys(local), ...(preserveKnownIds ?? [])])) {
-    const preserveEntry = preserveKnownIds?.has(id)
+    const preserveEntry = preserveKnownIds?.has(id) ?? false
     const before = normalizeEntry(base[id]) ?? {}
     const current = normalizeEntry(local[id]) ?? {}
     const merged = { ...normalizeEntry(remote[id]) }
@@ -186,6 +251,16 @@ export function rebaseLocalState(base: TriageStateMap, local: TriageStateMap, re
       else merged.triage = current.triage
       if (reports.length === 0) delete merged.ignoredReports
       else merged.ignoredReports = reports
+    }
+    // The two triage tracks the entry-level fields above don't cover.
+    // `apps` merges per key (see `rebaseApps`); `upstream` is one record
+    // about the code itself, so it replays whole, like a scalar.
+    const apps = rebaseApps(before.apps, current.apps, merged.apps, preserveEntry)
+    if (apps) merged.apps = apps
+    else delete merged.apps
+    if (preserveEntry || !upstreamEqual(before.upstream, current.upstream)) {
+      if (current.upstream === undefined) delete merged.upstream
+      else merged.upstream = current.upstream
     }
     const entry = normalizeEntry(merged)
     if (entry) out[id] = entry
