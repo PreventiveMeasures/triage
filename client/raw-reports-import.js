@@ -10,8 +10,9 @@ import { isEncryptedBundle } from './workspace-bundle-crypto.js'
 // (`workspace-import.js`: reports + triage + repo URLs + bundle
 // pointers + the private key). The other is
 // `workspace-export.js` buildRawReportsExportPayload: the report
-// DOCUMENTS on their own, `{ reports: [{ name, content }] }` and
-// nothing else.
+// DOCUMENTS on their own, `{ reports: [{ name, content, repo? }] }`
+// and nothing else — `repo` being the repository the user named for
+// that report, where they named one.
 //
 // The second is not an import of its own. It is a drop of the reports
 // that were in it, and lands the way dragging those files in lands —

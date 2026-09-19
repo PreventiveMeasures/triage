@@ -70,12 +70,28 @@ async function readBundleBlobs(integrities) {
   return blobs
 }
 
+// The repo the USER named for this report in the header chip
+// (state.ts `saveRepoUrlFor` / `loadRepoUrlFor`), in the shape the
+// report library gives a finding's own: `{ github }`, carrying what
+// was typed — a slug, a host path or a full URL — the way a report's
+// own declaration carries it.
+//
+// Only that. A repo the report DECLARED is already inside `content`
+// and travels with it, so restating it out here would put the file's
+// own words in the export's voice, and a reader could no longer tell
+// which of the two it was looking at. An unset chip gets no `repo`
+// key at all, rather than an empty one.
+function manualRepo(name) {
+  const github = loadRepoUrlFor(name)
+  return github ? { github } : null
+}
+
 // Read the workspace's report documents from OPFS into the wire
-// shape `[{ name, content }]`. Shared by the workspace export and the
-// raw-reports export so both get the same skip-and-prune semantics
-// (and so a change to either only has to be made once). Side effect:
-// drops stale workspace report references when their OPFS entry is
-// gone (defensive prune).
+// shape `[{ name, content, repo? }]`. Shared by the workspace export
+// and the raw-reports export so both get the same skip-and-prune
+// semantics (and so a change to either only has to be made once).
+// Side effect: drops stale workspace report references when their
+// OPFS entry is gone (defensive prune).
 async function readWorkspaceReports(workspace) {
   const reports = []
   for (const name of workspace.reports ?? []) {
@@ -102,7 +118,8 @@ async function readWorkspaceReports(workspace) {
       }
       continue
     }
-    reports.push({ name, content })
+    const repo = manualRepo(name)
+    reports.push(repo ? { name, content, repo } : { name, content })
   }
   return reports
 }
@@ -151,6 +168,13 @@ export async function buildWorkspaceExportPayload(workspace, { includeBundleByte
   // (see state.js / loadRepoUrlFor). Only THIS workspace's reports'
   // URLs go in the bundle; unrelated entries are dropped so the
   // export stays a clean self-contained slice.
+  //
+  // The same URLs also ride on the report entries themselves, as
+  // `repo: { github }` (see `manualRepo`). This map is what the
+  // importer reads and what every export before it wrote, so it stays
+  // where it is; the per-entry copy is for a reader that takes one
+  // report out of the file and needs it to say, on its own, which
+  // repository it was read against.
   const repoUrls = {}
   for (const r of reports) {
     const url = loadRepoUrlFor(r.name)
@@ -229,9 +253,13 @@ export async function buildWorkspaceExportBundle(workspace, { password, includeB
 }
 
 // Raw reports export — the workspace's report DOCUMENTS and nothing
-// else: `{ reports: [{ name, content }] }`, gzipped. No workspace
-// record (id / name / private key), no triage, no repo URLs, no
-// bundle pointers or bytes, and no password option.
+// else: `{ reports: [{ name, content, repo? }] }`, gzipped. No
+// workspace record (id / name / private key), no triage, no bundle
+// pointers or bytes, and no password option. `repo` is there only
+// where the user named a repository for that report in the UI (see
+// `manualRepo`) — it is the one thing the reader added that the
+// document itself doesn't carry, and without it the file would hand
+// on findings whose paths no longer resolve to anything.
 //
 // Deliberately NOT a workspace export: the payload carries neither
 // `version` nor `workspace`, so `parseWorkspaceJson` rejects it and a

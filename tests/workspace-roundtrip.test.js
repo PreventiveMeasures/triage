@@ -17,7 +17,7 @@ import assert from 'node:assert/strict'
 import { Buffer } from 'node:buffer'
 import { before, beforeEach, describe, it } from 'node:test'
 
-const { state } = await import('../client/state.ts')
+const { state, loadRepoUrlFor, readRepoUrlMap, saveRepoUrlFor } = await import('../client/state.ts')
 const {
   parseWorkspaceJson,
   applyWorkspaceImport,
@@ -53,6 +53,10 @@ function clearState() {
   // it between tests so files / workspaces / counts / triage from
   // a prior test don't leak in.
   globalThis.localStorage.clear()
+  // The per-report repo map is served from secure-storage's in-memory
+  // cache, which the line above does not reach: clear the entries
+  // themselves, or a URL one test typed is still readable in the next.
+  for (const name of Object.keys(readRepoUrlMap())) saveRepoUrlFor(name, '')
 }
 
 // Plain inline JSON report so the export path's `reportFindingIds`
@@ -67,6 +71,25 @@ function reportContent(ids) {
       file: 'src/x.js',
       line: 1,
       description: 'finding',
+    })),
+  })
+}
+
+// The same report with a repository of its OWN — declared in the
+// document, the way an analyzer that knew the upstream writes it. The
+// export must not restate this as a `repo` of its own: it rides in
+// `content` already.
+function reportContentWithRepo(ids, github) {
+  return JSON.stringify({
+    type: 'report',
+    repo: { github },
+    findings: ids.map((id) => ({
+      id,
+      severity: 'high',
+      file: 'src/x.js',
+      line: 1,
+      description: 'finding',
+      repo: { github },
     })),
   })
 }
@@ -599,6 +622,40 @@ describe('applyWorkspaceImport: triage migration', () => {
 describe('export → import round-trip', () => {
   before(() => clearState())
   beforeEach(() => clearState())
+
+  it('carries a named repository on the report entry as well as in the map', async () => {
+    // Two places, one value: `repoUrls` is what the importer reads and
+    // what every export before this one wrote; the entry's own `repo`
+    // is for a reader that takes a single report out of the file.
+    const { saveFile } = await import('../client/storage.js')
+    await saveFile('named.json', reportContent([FINDING_A]))
+    await saveFile('bare.json', reportContent([FINDING_B]))
+    saveRepoUrlFor('named.json', 'owner/name')
+
+    const payload = await buildWorkspaceExportPayload(
+      makeWorkspace({ reports: ['named.json', 'bare.json'] }),
+    )
+    const byName = Object.fromEntries(payload.reports.map((r) => [r.name, r]))
+    assert.deepEqual(byName['named.json'].repo, { github: 'owner/name' })
+    assert.equal(Object.hasOwn(byName['bare.json'], 'repo'), false)
+    assert.deepEqual(payload.repoUrls, { 'named.json': 'owner/name' })
+  })
+
+  it('restores a named repository on the far side', async () => {
+    // The importer still reads the map, so the round-trip is unchanged
+    // by the entry gaining a copy of what it says.
+    const { saveFile } = await import('../client/storage.js')
+    await saveFile('named.json', reportContent([FINDING_A]))
+    saveRepoUrlFor('named.json', 'owner/name')
+    const payload = await buildWorkspaceExportPayload(makeWorkspace({ reports: ['named.json'] }))
+
+    clearState()
+    assert.equal(loadRepoUrlFor('named.json'), '', 'gone before the import')
+    await applyWorkspaceImport(parseWorkspaceJson(JSON.stringify(payload)), {
+      conflictResolver: () => null,
+    })
+    assert.equal(loadRepoUrlFor('named.json'), 'owner/name')
+  })
 
   it('round-trips triage in the new-shape end-to-end', async () => {
     // Seed local state with markers + triage buckets + comments +
@@ -1200,6 +1257,59 @@ describe('buildRawReportsExportGzip', () => {
 
     const payload = await buildRawReportsExportPayload(ws)
     assert.deepEqual(payload.reports.map((r) => r.name), ['present.json'])
+  })
+
+  it('carries the repository the user named for a report, beside its content', async () => {
+    const { saveFile } = await import('../client/storage.js')
+    await saveFile('r.json', reportContent([FINDING_A]))
+    saveRepoUrlFor('r.json', 'owner/name')
+    const ws = makeWorkspace({ reports: ['r.json'] })
+
+    const payload = await buildRawReportsExportPayload(ws)
+    assert.deepEqual(payload.reports, [{
+      name: 'r.json',
+      content: reportContent([FINDING_A]),
+      repo: { github: 'owner/name' },
+    }])
+  })
+
+  it('carries what was typed, whatever form it was typed in', async () => {
+    // The chip stores the string as given — a slug, a host path, a
+    // full URL — and the export hands on that, not a normalization of
+    // it the user never wrote.
+    const { saveFile } = await import('../client/storage.js')
+    await saveFile('r.json', reportContent([FINDING_A]))
+    saveRepoUrlFor('r.json', 'https://github.com/owner/name/')
+    const ws = makeWorkspace({ reports: ['r.json'] })
+
+    const payload = await buildRawReportsExportPayload(ws)
+    assert.deepEqual(payload.reports[0].repo, { github: 'https://github.com/owner/name/' })
+  })
+
+  it('leaves the key off a report nobody named a repository for', async () => {
+    const { saveFile } = await import('../client/storage.js')
+    await saveFile('named.json', reportContent([FINDING_A]))
+    await saveFile('bare.json', reportContent([FINDING_B]))
+    saveRepoUrlFor('named.json', 'owner/name')
+    const ws = makeWorkspace({ reports: ['named.json', 'bare.json'] })
+
+    const payload = await buildRawReportsExportPayload(ws)
+    const bare = payload.reports.find((r) => r.name === 'bare.json')
+    assert.equal(Object.hasOwn(bare, 'repo'), false, 'no empty repo key rides along')
+    assert.deepEqual(Object.keys(bare), ['name', 'content'])
+  })
+
+  it("says nothing about a repository the report itself declares", async () => {
+    // Parsed out of the document, not named by the reader: it is in
+    // `content` and comes back from it on the other side. Only what
+    // the user added gets a `repo` of its own.
+    const { saveFile } = await import('../client/storage.js')
+    const content = reportContentWithRepo([FINDING_A], 'declared/in-report')
+    await saveFile('r.json', content)
+    const ws = makeWorkspace({ reports: ['r.json'] })
+
+    const payload = await buildRawReportsExportPayload(ws)
+    assert.deepEqual(payload.reports, [{ name: 'r.json', content }])
   })
 
   it('exports an empty reports list for a workspace with no reports', async () => {

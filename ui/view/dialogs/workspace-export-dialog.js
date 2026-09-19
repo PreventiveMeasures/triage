@@ -6,11 +6,12 @@
 //     by default; opt-out is an explicit checkbox that disables the
 //     password fields, surfaces a warning, and relabels the primary
 //     button.
-//   Raw reports export — just the report documents, gzipped, always
-//     unencrypted. The panel warns about everything the file leaves
-//     behind before the download fires. Dropped back in, it imports as
-//     those reports — the documents, without the triage it never
-//     carried (client/raw-reports-import.js).
+//   Raw reports export — the report documents (each with the
+//     repository the user named for it, where they named one),
+//     gzipped, always unencrypted. The panel warns about everything
+//     the file leaves behind before the download fires. Dropped back
+//     in, it imports as those reports — the documents, without the
+//     triage it never carried (client/raw-reports-import.js).
 //
 // Extends `AppDialog` for the same shared shadow-DOM chrome the share-link
 // dialogs use.
