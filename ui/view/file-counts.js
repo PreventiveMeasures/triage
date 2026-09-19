@@ -71,29 +71,43 @@ export function mergeReportsTree(reports) {
   return merged
 }
 
-// Transitive subtree finding counts: for each file, sum of own
-// counts across every file reachable through its `imports`
-// (recursively), excluding the file itself. Cycles handled by a
-// visited set.
+// For each finding-bearing file, walk its importers and add its counts once
+// to every ancestor. Most files have no findings: walking outward from every
+// file repeated the same reachability work tens of thousands of times.
+// Numeric indices and visit stamps keep the traversal sparse without allocating
+// a Set per walk. A cycle includes a file's own findings only when a non-empty
+// import path reaches it again, matching the original forward traversal.
 export function computeTransitiveCounts(tree, ownCounts) {
-  const transitive = new Map()
-  for (const file of Object.keys(tree)) {
-    const visited = new Set()
-    const stack = (tree[file].imports ?? []).filter((i) => tree[i])
-    while (stack.length > 0) {
-      const dep = stack.pop()
-      if (visited.has(dep)) continue
-      visited.add(dep)
-      for (const next of (tree[dep]?.imports ?? [])) if (tree[next]) stack.push(next)
+  const files = Object.keys(tree)
+  const index = new Map(files.map((file, i) => [file, i]))
+  const sums = files.map(() => emptyCounts())
+  const importers = files.map(() => [])
+  for (const [i, file] of files.entries()) {
+    for (const target of tree[file].imports ?? []) {
+      const to = index.get(target)
+      if (to !== undefined) importers[to].push(i)
     }
-    const sum = emptyCounts()
-    for (const f of visited) {
-      const c = ownCounts.get(f)
-      if (c) for (const k of SEVERITIES) sum[k] += c[k] ?? 0
-    }
-    transitive.set(file, sum)
   }
-  return transitive
+  const visited = new Uint32Array(files.length)
+  let stamp = 0
+  for (const [file, counts] of ownCounts) {
+    const target = index.get(file)
+    if (target === undefined || !counts) continue
+    const values = SEVERITIES.map((severity) => [severity, counts[severity] ?? 0]).filter(([, value]) => value !== 0)
+    if (values.length === 0) continue
+    const currentStamp = ++stamp
+    const stack = []
+    const visit = (i) => {
+      if (visited[i] !== currentStamp) { visited[i] = currentStamp; stack.push(i) }
+    }
+    for (const i of importers[target]) visit(i)
+    while (stack.length > 0) {
+      const i = stack.pop()
+      for (const [severity, value] of values) sums[i][severity] += value
+      for (const parent of importers[i]) visit(parent)
+    }
+  }
+  return new Map(files.map((file, i) => [file, sums[i]]))
 }
 
 // Has-issues predicate: own findings OR something in its subtree

@@ -11,7 +11,13 @@
 // data) and `terminal-attach.js` (in-shell FS) read one definition —
 // a new bundle kind or field handled here is visible to both.
 
+const sourcesCache = new WeakMap()
+const sizesCache = new WeakMap()
+
 export function bundleSourcesAsMap(details) {
+  if (details?.metadataOnly) return new Map()
+  const key = details?.bundle ?? details?.json
+  if (key && sourcesCache.has(key)) return sourcesCache.get(key)
   const result = new Map()
   if (!details) return result
   if (details.kind === 'stasis') {
@@ -27,7 +33,27 @@ export function bundleSourcesAsMap(details) {
       if (typeof contents[i] === 'string') result.set(srcs[i], contents[i])
     }
   }
+  if (key) sourcesCache.set(key, result)
   return result
+}
+
+// Metadata views need byte sizes and paths, never the source bodies. The
+// persistent index supplies this map directly; full parses compute it once.
+// Null distinguishes a resource / absent sourcemap body from an empty source.
+export function bundleSourceSizes(details) {
+  if (details?.fileSizes) return details.fileSizes
+  const key = details?.bundle ?? details?.json
+  if (key && sizesCache.has(key)) return sizesCache.get(key)
+  const sizes = new Map()
+  const encoder = new TextEncoder()
+  const sources = bundleSourcesAsMap(details)
+  const paths = details?.kind === 'stasis' ? details.bundle?.sources.keys() : details?.json?.sources
+  for (const path of paths ?? []) {
+    const content = sources.get(path)
+    sizes.set(path, typeof content === 'string' ? encoder.encode(content).byteLength : null)
+  }
+  if (key) sizesCache.set(key, sizes)
+  return sizes
 }
 
 // Map each stasis bundle source path to the package directory that

@@ -21,13 +21,13 @@ import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 import { BUNDLE_ICON_SVG } from './icons.js'
 import { findingsForFileHash, indexedHashFindingCount, reportsForFinding, reportsForFindingByPackage, reportsForFindingByRepo, state } from '#client/index.js'
 import { SEVERITIES, SEVERITY_ORDER, formatBytes, formatRunMeta, stripCommonPathPrefix, titledDescription } from './format.js'
-import { bundlePackageDirs, bundleSourcesAsMap } from './bundle-sources.js'
+import { bundlePackageDirs, bundleSourceSizes, bundleSourcesAsMap } from './bundle-sources.js'
+import { bundleNeedsSources, computeBundleFileHashes } from './bundle-metadata.js'
 import { bundleHasSbomComponents } from './sbom.js'
 import { buildSearchMatcher, runBundleSearch } from './bundle-search-scan.js'
 import { bundlePkgOf, ownSourceSplittable } from './bundle-pkg-of.js'
 import { bundleGraphPackageOf, bundleGraphReasons, bundleImportsAsMap, bundleLayerRoots, filterBundleGraphReason } from './bundle-graph-inputs.js'
 import { tabKey } from './group.js'
-import { computeFileHash } from '../../report/index.js'
 import { langForPath, highlight as prismHighlight } from './prism-highlight.js'
 import { computeTransitiveCounts } from './file-counts.js'
 import { pkgColor } from './graph/utils.js'
@@ -69,24 +69,28 @@ let _currentBundlePrep = null
 // `{ tree, origToStripped }`; callers translating other per-file
 // metadata (e.g. SHA-512 hashes for finding match) onto stripped
 // keys reuse the mapping.
+const bundleTrees = new WeakMap()
 function buildBundleTree(details) {
-  const sources = bundleSourcesAsMap(details)
+  if (bundleTrees.has(details)) return bundleTrees.get(details)
+  const sizes = bundleSourceSizes(details)
   const imports = bundleImportsAsMap(details)
-  const origFiles = [...sources.keys()]
+  const origFiles = [...sizes.keys()].filter((file) => sizes.get(file) !== null)
   const { stripped } = stripCommonPathPrefix(origFiles)
   const origToStripped = new Map(origFiles.map((f, i) => [f, stripped[i]]))
   const tree = {}
-  for (const [origFile, content] of sources) {
+  for (const origFile of origFiles) {
     const file = origToStripped.get(origFile)
     const imps = imports.get(origFile)
     tree[file] = {
       imports: imps
         ? [...imps].map((i) => origToStripped.get(i)).filter(Boolean)
         : [],
-      size: new TextEncoder().encode(content).byteLength,
+      size: sizes.get(origFile),
     }
   }
-  return { tree, origToStripped }
+  const result = { tree, origToStripped }
+  bundleTrees.set(details, result)
+  return result
 }
 
 // SHA-512 of each bundle source, in the canonical `sha512-${base64}`
@@ -94,14 +98,7 @@ function buildBundleTree(details) {
 // the same hashing the analyzer stamps on findings, so the strings
 // compare equal. Async because crypto.subtle.digest is. Returns
 // Map<file, integrity>.
-export async function computeBundleFileHashes(details) {
-  const sources = bundleSourcesAsMap(details)
-  const result = new Map()
-  for (const [file, content] of sources) {
-    result.set(file, await computeFileHash(content))
-  }
-  return result
-}
+export { computeBundleFileHashes }
 
 // Per-bucket counts of bundle-matched findings — drives the graph
 // topbar's triage selector visibility / counts. Walks the same
@@ -817,7 +814,8 @@ export function renderBundleSourceModal() {
     <div class=${classMap({ 'bundle-source-modal': true, 'with-panel': state.bundleSourceFindingIdx != null })}>
       ${renderBundleSourceBar(path)}
       <div class="bundle-source-body">
-        ${renderBundleSourceCodeWrap(path, content, state.bundleDetails?.integrity, fileFindings, lineFindings)}
+        ${state.bundleDetails?.metadataOnly ? html`<div class="bundles-slide-placeholder">Loading source…</div>`
+          : renderBundleSourceCodeWrap(path, content, state.bundleDetails?.integrity, fileFindings, lineFindings)}
       </div>
     </div>
   </div>`
@@ -1765,6 +1763,7 @@ function renderBundleSlide(entry) {
   const details = state.bundleDetails
   const detailsReady = Boolean(details && details.integrity === entry.integrity)
   const detailsParsed = detailsReady && !details.error && Boolean(details.json || details.bundle)
+    && !(details.metadataOnly && bundleNeedsSources(tab))
   // Kick the fetch lazily — only once the user has actually clicked
   // into the Advisories tab AND granted consent. The cache is
   // module-scoped (keyed by integrity); a re-render with the entry
@@ -1869,7 +1868,7 @@ function renderBundleSlide(entry) {
               ['issues', () => renderBundleIssuesList(details)],
               ['advisories', () => renderBundleAdvisoriesTab(details)],
             ])
-          : detailsReady
+          : detailsReady && !details.metadataOnly
             ? html`<div class=${classMap({ 'bundles-slide-placeholder': true, 'is-error': Boolean(details.error) })}>
                 ${details.error ? `Failed to parse: ${details.error}` : 'Bundle contents not parsed.'}
               </div>`
@@ -2252,15 +2251,15 @@ function renderBundleDetails(entry, details) {
   if (details.kind === 'sourcemap' && details.json) {
     const json = details.json
     const sources = json.sources ?? []
-    const contents = json.sourcesContent ?? []
-    const sizes = sources.map((_, i) => typeof contents[i] === 'string'
-      ? new TextEncoder().encode(contents[i]).byteLength
-      : null)
+    const sizeMap = bundleSourceSizes(details)
+    const sizes = details.sourceSizes ?? (sizeMap.size === sources.length
+      ? sources.map((path) => sizeMap.get(path) ?? null)
+      : sources.map((_, i) => typeof json.sourcesContent?.[i] === 'string' ? new TextEncoder().encode(json.sourcesContent[i]).byteLength : null))
     const extras = html`
       <dt>Version</dt><dd>${String(json.version ?? '?')}</dd>
       ${json.file ? html`<dt>Output</dt><dd class="mono">${json.file}</dd>` : nothing}
       ${json.sourceRoot ? html`<dt>Source root</dt><dd class="mono">${json.sourceRoot}</dd>` : nothing}
-      ${json.names ? html`<dt>Names</dt><dd>${json.names.length}</dd>` : nothing}
+      ${json.names || details.namesCount != null ? html`<dt>Names</dt><dd>${json.names?.length ?? details.namesCount}</dd>` : nothing}
     `
     // Sourcemaps carry no package metadata — pass null so the panel
     // falls back to the path heuristic for bucketing.
@@ -2268,8 +2267,8 @@ function renderBundleDetails(entry, details) {
   }
   if (details.kind === 'stasis' && details.bundle) {
     const bundle = details.bundle
-    const sourceMap = bundle.sources
-    const sourceNames = [...sourceMap.keys()]
+    const sizeMap = bundleSourceSizes(details)
+    const sourceNames = [...sizeMap.keys()]
     // Each `bundle.imports` key is either `*` or a `, `-joined
     // condition set (see `State#conditionsKey` in @exodus/stasis-core);
     // a bundle commonly carries several keys whose underlying
@@ -2285,12 +2284,7 @@ function renderBundleDetails(entry, details) {
       for (const cond of base.split(', ')) importKinds.add(cond)
     }
     const sortedKinds = [...importKinds].toSorted()
-    const sizes = sourceNames.map((s) => {
-      const content = sourceMap.get(s)
-      return typeof content === 'string'
-        ? new TextEncoder().encode(content).byteLength
-        : null
-    })
+    const sizes = sourceNames.map((s) => sizeMap.get(s))
     const extras = html`
       <dt>Version</dt><dd>${String(bundle.version)}</dd>
       ${sortedKinds.length > 0

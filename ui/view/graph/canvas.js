@@ -10,6 +10,7 @@ import { layoutDependencyLayers } from './layered-layout.js'
 import { drawDependencyLayers } from './layered-render.js'
 import { circleOutside, createRenderCache, edgeGradient, edgeOutside, haloGradient, updateRenderCache } from './render-cache.js'
 import { createNodePicker } from './node-picker.js'
+import { outsideDamage, panDamage } from './pan-damage.js'
 
 // Severity palette baked into the canvas. Vivid hot colors for
 // critical/high pop above the package hue; calmer tones for
@@ -170,6 +171,8 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
   let needsFit = true
   const renderCaches = new WeakMap()
   let nodePicker = null
+  let paintedFrame = null
+  let paintBounds = null
 
   // Package-level view (the bundle Graph tab's "Packages" toggle).
   // Effective only when the graph qualifies — 3+ packages, stamped
@@ -237,6 +240,8 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
   // ── Layout (deferred until we have real canvas dimensions) ─────
   function ensureLayout() {
     if (!needsLayout) return
+    paintedFrame = null
+    paintBounds = null
     nodePicker = null
     if (layersOn()) {
       const pg = getPkgGraph()
@@ -448,6 +453,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     H = Math.max(80, rect.height)
     dpr = window.devicePixelRatio || 1
     canvas.width = W * dpr; canvas.height = H * dpr
+    paintedFrame = null
     // Canvas resize resets its context (and may change DPR). Paint objects
     // were created under the old transform, so rebuild them on the next draw.
     renderCaches.delete(graph)
@@ -499,6 +505,51 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
   }
 
   function draw() {
+    const G = pkgViewOn() ? getPkgGraph() : graph
+    // Only the dense dot renderer, below its label threshold, is invariant
+    // under translation. Label collision/placement depends on viewport edges.
+    if (paintBounds?.graph !== G) {
+      paintBounds = { graph: G, x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity }
+      for (const n of G.nodes) {
+        paintBounds.x0 = Math.min(paintBounds.x0, n.x); paintBounds.x1 = Math.max(paintBounds.x1, n.x)
+        paintBounds.y0 = Math.min(paintBounds.y0, n.y); paintBounds.y1 = Math.max(paintBounds.y1, n.y)
+      }
+    }
+    // Canvas backends can rasterize clipped strokes differently. Keep the
+    // fast path to overviews containing the entire graph (including halos);
+    // once a primitive reaches an edge, use the ordinary renderer.
+    const margin = nodeRadius({ isHub: true }) * 6 + 8
+    const contained = paintBounds.x0 * viewport.k + viewport.tx > margin
+      && paintBounds.y0 * viewport.k + viewport.ty > margin
+      && paintBounds.x1 * viewport.k + viewport.tx < W - margin
+      && paintBounds.y1 * viewport.k + viewport.ty < H - margin
+    const canReuse = contained && viewport.k <= 1.4 && G.nodes.length > 50 && !layersOn()
+    const next = { tx: viewport.tx, ty: viewport.ty, key: JSON.stringify([
+      viewport.k, currentTheme().bg, graph2.nodeSize, graph2.edgeOpacity,
+      hovered, graph2.selected, graph2.solo, graph2.focusedPkg, pkgViewOn(),
+      graph2.showAll, graph2.pathFilter, [...graph2.selectedSeverities], [...graph2.selectedColors], [...graph2.hidden],
+    ]) }
+    const damage = canReuse ? panDamage(paintedFrame, next, W, H, dpr) : null
+    ctx.save()
+    try {
+      if (damage) {
+        // Self-blit has snapshot semantics: overlapping source/destination is
+        // safe and needs no additional full-size offscreen canvas allocation.
+        ctx.save()
+        ctx.setTransform(1, 0, 0, 1, 0, 0)
+        ctx.globalCompositeOperation = 'copy'
+        ctx.drawImage(canvas, damage.dx, damage.dy)
+        ctx.restore()
+        ctx.beginPath()
+        for (const r of damage.rects) ctx.rect(r.x, r.y, r.w, r.h)
+        ctx.clip()
+      }
+      paint(damage)
+      paintedFrame = canReuse ? next : null
+    } finally { ctx.restore() }
+  }
+
+  function paint(damage) {
     const T = currentTheme()
     ctx.fillStyle = T.bg
     ctx.fillRect(0, 0, W, H)
@@ -573,6 +624,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     for (const entry of frame.edges) {
       const { edge: e, a, b } = entry
       if (!a.visible || !b.visible || edgeOutside(a, b, W, H)) continue
+      if (outsideDamage(damage, Math.min(a.x, b.x) - 2, Math.min(a.y, b.y) - 2, Math.max(a.x, b.x) + 2, Math.max(a.y, b.y) + 2)) continue
 
       let alpha = graph2.edgeOpacity
       if (selected) {
@@ -630,6 +682,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
         const r = entry.radius, sx = entry.x, sy = entry.y
         const haloR = r * (isSel ? 6 : isHov ? 4.5 : 3)
         if (circleOutside(sx, sy, haloR, W, H)) continue
+        if (outsideDamage(damage, sx - haloR - 2, sy - haloR - 2, sx + haloR + 2, sy + haloR + 2)) continue
         ctx.fillStyle = haloGradient(entry, haloR, ctx)
         ctx.beginPath()
         ctx.arc(sx, sy, haloR, 0, Math.PI * 2)
@@ -645,6 +698,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
       // Includes the widest severity ring and its stroke. Labels retain
       // their existing separate bounds/collision pass below.
       if (circleOutside(sx, sy, r + 6, W, H)) continue
+      if (outsideDamage(damage, sx - r - 8, sy - r - 8, sx + r + 8, sy + r + 8)) continue
       let dim = 1
       const isExplicitlySelected = selected && n.file === selected
       if (selected && !isExplicitlySelected) {

@@ -50,7 +50,7 @@
 import { LitElement, html, render as litRender, nothing, svg } from 'lit'
 import { styleMap } from 'lit/directives/style-map.js'
 import { classMap } from 'lit/directives/class-map.js'
-import { bundlePackageDirs, bundleSourcesAsMap } from './bundle-sources.js'
+import { bundlePackageDirs, bundleSourceSizes } from './bundle-sources.js'
 import { bundleGraphReasons } from './bundle-graph-inputs.js'
 import { formatBytes, stripCommonPathPrefix } from './format.js'
 import { pkgColor } from './graph/utils.js'
@@ -406,9 +406,9 @@ class BundleTreemap extends LitElement {
     this._meta = { total: 0, prefix: '' }
     this._hideTooltip()
     if (!this.details) { this._status = 'loading'; return }
-    const sources = bundleSourcesAsMap(this.details)
-    if (!sources || sources.size === 0) { this._status = 'empty'; return }
-    const origPaths = [...sources.keys()]
+    const sizes = bundleSourceSizes(this.details)
+    const origPaths = [...sizes.keys()].filter((path) => sizes.get(path) !== null)
+    if (origPaths.length === 0) { this._status = 'empty'; return }
     this._reasons = bundleGraphReasons(this.details, origPaths)
     if (!this._reasons.has(this._reason)) {
       this._reason = ''
@@ -422,15 +422,13 @@ class BundleTreemap extends LitElement {
     // heuristic alone.
     const packageDirs = bundlePackageDirs(this.details)
     const { prefix, stripped } = stripCommonPathPrefix(origPaths)
-    const enc = new TextEncoder()
     const root = { name: '', children: new Map(), value: 0, isFile: false }
     let total = 0
     for (let i = 0; i < origPaths.length; i++) {
       // Keep the full bundle's display prefix and original source paths
       // stable while filtering either projection.
       if (reasonFiles && !reasonFiles.has(origPaths[i])) continue
-      const content = sources.get(origPaths[i])
-      const size = typeof content === 'string' ? enc.encode(content).byteLength : 0
+      const size = sizes.get(origPaths[i])
       if (size <= 0) continue
       const parts = stripped[i].split('/')
       // Walk/create a directory node per segment but the last. A source
