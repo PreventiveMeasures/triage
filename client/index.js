@@ -104,6 +104,7 @@ export {
   KANBAN_DETAIL_FULLSCREEN_KEY,
   SEVERITY_MODE_KEY,
   VIEW_MODE_KEY,
+  adoptRepoUrlFor,
   clampFocusSplit,
   loadRepoUrlFor,
   saveRepoUrlFor,

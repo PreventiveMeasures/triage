@@ -1,5 +1,5 @@
 import { render as litRender, nothing } from 'lit'
-import { analyzeContent, computeLinkHint, deleteBundle, deleteFile, deleteWorkspace, dropBundleFromHashIndex, getSecureItem, listBundles, listFiles, listWorkspaces, loadRepoUrlFor, parseLinkedFindings, pruneOrphanTriage, readFile, readFileBytes, removeCount, removeSecureItem, saveBundle, saveFile, saveRepoUrlFor, setBundleWorkspace, setCount, setReportWorkspace, setSecureItem, state, triageLoadPromise } from '#client/index.js'
+import { adoptRepoUrlFor, analyzeContent, computeLinkHint, deleteBundle, deleteFile, deleteWorkspace, dropBundleFromHashIndex, getSecureItem, listBundles, listFiles, listWorkspaces, loadRepoUrlFor, parseLinkedFindings, pruneOrphanTriage, readFile, readFileBytes, removeCount, removeSecureItem, saveBundle, saveFile, saveRepoUrlFor, setBundleWorkspace, setCount, setReportWorkspace, setSecureItem, state, triageLoadPromise } from '#client/index.js'
 import { closeWorkspace as closePresence, deleteBundleFromRemote, deleteFromRemote as deletePresence, isInRemoteOrCached, openWorkspace as openPresence, putFile, triageSync } from './client-sync.js'
 import { openImportConflictDialog } from './dialogs/import-conflict-dialog.js'
 import { dropZone, report } from './dom.js'
@@ -261,13 +261,26 @@ async function importReportContent({ name, content, existingNames }) {
 // LANDED under, so a rename on a name collision takes the URL with
 // it, and never written over a URL this browser already holds —
 // overwriting what the reader typed here is the surprise. A report
-// carrying no `repo` leaves whatever is on this side alone. The chip
-// is refreshed in step when the report is the one on screen.
-function adoptImportedRepo(name, repo) {
+// carrying no `repo` leaves whatever is on this side alone.
+//
+// `adoptRepoUrlFor` decides that inside secure-storage's per-key
+// lock rather than here: a check in this tab followed by a write
+// would hand a sibling tab a window to type a URL into, and the
+// write would take it back. It refreshes the header chip too, when
+// the report it adopted for is the one on screen.
+//
+// Best-effort, like the workspace upload below it: the report itself
+// is already on disk, so a repo-URL write that loses (a sibling tab
+// locking the vault mid-drop) is a line in the console, not a failed
+// import.
+async function adoptImportedRepo(name, repo) {
   const url = typeof repo?.github === 'string' ? repo.github : ''
-  if (!url || loadRepoUrlFor(name)) return
-  saveRepoUrlFor(name, url)
-  if (state.currentFile === name) state.repoUrl = url
+  if (!url) return
+  try {
+    await adoptRepoUrlFor(name, url)
+  } catch (err) {
+    console.warn(`Import: failed to adopt the repository "${url}" for "${name}":`, err)
+  }
 }
 
 async function uploadReportToWorkspaces(name, workspaces) {
@@ -359,7 +372,7 @@ async function addFiles(files) {
             const saved = await importReportContent({ name: r.name, content: r.content, existingNames })
             if (!saved) continue
             setCount(saved.name, result.count, result.source)
-            adoptImportedRepo(saved.name, r.repo)
+            await adoptImportedRepo(saved.name, r.repo)
             last = { name: saved.name, content: saved.content }
           }
         }

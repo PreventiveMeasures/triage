@@ -24,14 +24,23 @@ if (globalThis.localStorage === undefined) {
 }
 
 const {
+  REPO_URLS_KEY,
+  adoptRepoUrlFor,
   loadRepoUrlFor,
+  onRepoUrlChanged,
   propagateRepoUrlChangesFromStorage,
+  readRepoUrlMap,
   saveRepoUrlFor,
   state,
 } = await import('../client/state.ts')
+const { drainWriteChain } = await import('../client/secure-storage.js')
 
 function clearState() {
   globalThis.localStorage.clear()
+  // The map is served from secure-storage's in-memory cache, which
+  // the line above does not reach: clear the entries themselves, or
+  // a URL one test wrote is still readable in the next.
+  for (const name of Object.keys(readRepoUrlMap())) saveRepoUrlFor(name, '')
   state.currentFile = null
   state.repoUrl = ''
   state.repoEditing = false
@@ -68,6 +77,72 @@ describe('saveRepoUrlFor / loadRepoUrlFor', () => {
     saveRepoUrlFor('a.json', 'https://github.com/o/a')
     assert.equal(loadRepoUrlFor('a.json'), 'https://github.com/o/a',
       'next save overwrites the corrupt blob')
+  })
+})
+
+describe('adoptRepoUrlFor', () => {
+  beforeEach(clearState)
+
+  it('fills a report this browser has no URL for', async () => {
+    assert.equal(await adoptRepoUrlFor('r.json', 'https://github.com/o/r'), true)
+    assert.equal(loadRepoUrlFor('r.json'), 'https://github.com/o/r')
+  })
+
+  it('leaves a URL the reader typed here alone', async () => {
+    saveRepoUrlFor('r.json', 'https://github.com/mine/local')
+    assert.equal(await adoptRepoUrlFor('r.json', 'https://github.com/theirs/remote'), false)
+    assert.equal(loadRepoUrlFor('r.json'), 'https://github.com/mine/local')
+  })
+
+  it("declines a URL a sibling tab wrote after this tab's last read", async () => {
+    // The window a check here followed by a write would drive
+    // straight through: the sibling's URL is on disk, but this tab's
+    // cache — what `loadRepoUrlFor` serves — has not seen the storage
+    // event yet. The decision is made on the in-lock hydrate instead,
+    // so it sees the write this tab cannot.
+    await drainWriteChain()
+    localStorage.setItem(REPO_URLS_KEY, JSON.stringify({ 'r.json': 'https://github.com/o/sibling' }))
+    assert.equal(loadRepoUrlFor('r.json'), '', 'this tab still reads the map as empty')
+    assert.equal(await adoptRepoUrlFor('r.json', 'https://github.com/o/file'), false)
+    assert.equal(loadRepoUrlFor('r.json'), 'https://github.com/o/sibling',
+      "the sibling's URL survives the import")
+  })
+
+  it('ignores a missing name or URL', async () => {
+    assert.equal(await adoptRepoUrlFor('', 'https://github.com/o/r'), false)
+    assert.equal(await adoptRepoUrlFor(null, 'https://github.com/o/r'), false)
+    assert.equal(await adoptRepoUrlFor('r.json', ''), false)
+    assert.deepEqual(readRepoUrlMap(), {})
+  })
+
+  it("refreshes the active report's chip", async () => {
+    state.currentFile = 'r.json'
+    state.repoUrl = ''
+    await adoptRepoUrlFor('r.json', 'https://github.com/o/r')
+    assert.equal(state.repoUrl, 'https://github.com/o/r')
+  })
+
+  it('leaves the chip alone while the reader is editing it', async () => {
+    state.currentFile = 'r.json'
+    state.repoUrl = 'mid-edit-typed-by-user'
+    state.repoEditing = true
+    assert.equal(await adoptRepoUrlFor('r.json', 'https://github.com/o/r'), true)
+    assert.equal(state.repoUrl, 'mid-edit-typed-by-user')
+    assert.equal(loadRepoUrlFor('r.json'), 'https://github.com/o/r', 'stored either way')
+  })
+
+  it('fires repo-URL listeners only when the URL landed', async () => {
+    // The bundle index stamps `loadRepoUrlFor` at index time and
+    // re-indexes off this signal; a declined adoption changed
+    // nothing, so it must stay quiet.
+    const fired = []
+    const off = onRepoUrlChanged((name) => fired.push(name))
+    try {
+      await adoptRepoUrlFor('r.json', 'https://github.com/o/r')
+      assert.deepEqual(fired, ['r.json'])
+      await adoptRepoUrlFor('r.json', 'https://github.com/o/other')
+      assert.deepEqual(fired, ['r.json'], 'declined adoption is silent')
+    } finally { off() }
   })
 })
 

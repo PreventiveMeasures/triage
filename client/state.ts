@@ -375,6 +375,42 @@ export async function importRepoUrls(imported: Record<string, string>, mode: 're
   propagateRepoUrlChangesFromStorage()
 }
 
+// Adopt the repo URL an import carried for ONE report, and only
+// where this browser holds none of its own: what the reader typed
+// here wins over what the file says. `prefer-current` for a single
+// key, in other words — and, like `importRepoUrls`, the whole
+// read-decide-write runs inside one `mutateSecureItem` turn, on that
+// turn's in-lock hydrate of the decrypted disk view. A
+// `loadRepoUrlFor` check followed by a `saveRepoUrlFor` cannot keep
+// the promise: `saveRepoUrlFor`'s merge re-applies its value
+// unconditionally, so a sibling tab writing this report's URL in
+// between would be overwritten — the one outcome the rule exists to
+// prevent.
+//
+// Resolves true when the URL landed, false when a local one held the
+// slot. The two follow-ups only make sense in the first case: the
+// header chip is re-derived the way `importRepoUrls` does it, and
+// the repo-URL listeners fire because the bundle index stamps
+// `loadRepoUrlFor(name)` at index time and has no other way to learn
+// the fallback moved (bundle-finding-index.js).
+export async function adoptRepoUrlFor(name: string | null | undefined, url: string): Promise<boolean> {
+  if (!name || !url) return false
+  let adopted = false
+  await mutateSecureItem(REPO_URLS_KEY, (currentFromDisk: string | null) => {
+    const map = parseRepoUrlMap(currentFromDisk)
+    // Returned unchanged, so `mutateSecureItem` skips the write
+    // entirely — a declined adoption touches neither disk nor cache.
+    if (map[name]) { adopted = false; return currentFromDisk }
+    adopted = true
+    map[name] = url
+    return JSON.stringify(map)
+  })
+  if (!adopted) return false
+  propagateRepoUrlChangesFromStorage()
+  notifyRepoUrlChanged(name)
+  return true
+}
+
 // Centralised mutable view state. Every module that reads or writes
 // shared state imports this object and accesses fields directly —
 // `state.reports`, `state.currentView = 'files'`, etc. Wrapped in
