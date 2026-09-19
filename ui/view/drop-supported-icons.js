@@ -1,5 +1,6 @@
 // Hydrate the supported-formats list on the empty drop-zone with
-// the SAME SVG markup the sidebar uses for its row icons.
+// the same SVG markup the sidebar uses for its row icons. Stasis
+// uses its own logo directly in index.html, only on the landing page.
 // `index.html` ships empty
 // `<span class="drop-supported-icon" data-icon="…">` placeholders
 // keyed by bucket name; this module looks each one up and writes
@@ -12,9 +13,8 @@
 import { FILE_ICONS } from './file-display.js'
 import { BUNDLE_ICON_SVG, LINKS_ICON_SVG, WORKSPACE_ICON_SVG } from './icons.js'
 
-// `data-icon` value → raw SVG string. Bundle keys
-// (`stasis` / `sourcemap`) both map to the generic bundle glyph
-// since the two formats share a row icon in the sidebar too.
+// `data-icon` value → raw SVG string. Sourcemaps keep the generic
+// bundle glyph shared with the sidebar.
 const ICONS = {
   'default': FILE_ICONS.default,
   'claude-security': FILE_ICONS['claude-security'],

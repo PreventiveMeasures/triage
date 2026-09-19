@@ -141,7 +141,7 @@
   border: 1px solid rgb(255 255 255 / .12); border-radius: 7px;
   box-shadow: 0 1px 2px rgb(0 0 0 / .15);
   font: inherit; font-size: .8125rem; font-weight: 600;
-  cursor: pointer;
+  cursor: default;
   transition: background .12s, box-shadow .12s;
 
   &:hover { background: color-mix(in srgb, var(--action-bg) 88%, #fff); }
@@ -187,6 +187,12 @@
 }
 
 .drop-supported-label { line-height: 1.4; }
+
+a.drop-supported-label {
+  cursor: default;
+
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+}
 
 .drop-local-note {
   display: flex; align-items: flex-start; gap: .5rem;

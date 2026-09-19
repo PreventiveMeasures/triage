@@ -1,0 +1,45 @@
+<!--
+Stasis logo: https://github.com/ExodusOSS/stasis/blob/main/stasis/logo.svg
+Original blob: 518bc0a94f2177907f39fa71af118f2654d37687
+
+MIT License
+Copyright (c) 2026 Exodus Movement
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" aria-label="Stasis" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="b" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#1f9cff"/>
+      <stop offset="60%" stop-color="#8c5bfe"/>
+      <stop offset="100%" stop-color="#b85bfe"/>
+    </linearGradient>
+    <clipPath id="a">
+      <rect width="126.5" height="126.5" x=".75" y=".75" rx="27.25" ry="27.25"/>
+    </clipPath>
+  </defs>
+  <rect width="128" height="128" fill="#969696" fill-opacity=".09" rx="28" ry="28"/>
+  <g fill="none" stroke="#8c8c8c" stroke-width="1.5" opacity=".42">
+    <g clip-path="url(#a)">
+      <path d="M0 12 12 0M0 26.5 26.5 0M0 41 41 0M0 55.5 55.5 0M0 70 70 0M0 84.5 84.5 0M0 99 99 0M0 113.5 113.5 0M0 128 128 0M14.5 128 128 14.5M29 128l99-99m-84.5 99L128 43.5M58 128l70-70m-55.5 70L128 72.5M87 128l41-41m-26.5 41 26.5-26.5M116 128l12-12"/>
+    </g>
+    <rect width="126.5" height="126.5" x=".75" y=".75" rx="27.25" ry="27.25"/>
+  </g>
+  <circle cx="64" cy="64" r="28.16" fill="url(#b)"/>
+</svg>
