@@ -1,4 +1,4 @@
-import { loadRepoUrlFor, saveRepoUrlFor, state } from './state.ts'
+import { adoptRepoUrls, state } from './state.ts'
 import { saveBundle, saveFile } from './storage.js'
 import { upsertWorkspace } from './workspaces.js'
 import { saveTriage } from './triage.js'
@@ -530,16 +530,35 @@ export async function applyWorkspaceImport(data, { conflictResolver } = {}) {
 
   // Per-report repo URLs round-trip in `data.repoUrls`. Only adopt
   // entries that map to reports we saved AND have no local URL —
-  // overwriting the user's existing entry would be surprising. If the
-  // adopted URL is for the currently-active report, sync
-  // `state.repoUrl` so the header chip refreshes immediately.
+  // overwriting the user's existing entry would be surprising.
+  //
+  // `adoptRepoUrls` weighs every entry against the freshest disk view
+  // from inside secure-storage's per-key lock, in ONE turn. Reading
+  // `loadRepoUrlFor` out here and writing after it can't hold the
+  // rule: `saveRepoUrlFor` re-applies its value unconditionally, so a
+  // sibling tab typing a URL for one of these reports in between
+  // would have been overwritten. It syncs the header chip for the
+  // active report too, and leaves an in-progress chip edit alone.
+  //
+  // Best-effort: the reports and the workspace row are already
+  // written, so a repo-URL write that loses (a sibling tab locking
+  // the vault mid-import) belongs in the console, not in a failed
+  // import.
   const savedSet = new Set(savedNames)
+  // Null-prototype: the keys come out of the dropped file, so they
+  // are data here, never `__proto__` reaching an object's prototype.
+  const offered = Object.create(null)
   if (data.repoUrls && typeof data.repoUrls === 'object') {
     for (const [name, url] of Object.entries(data.repoUrls)) {
       if (!savedSet.has(name) || typeof url !== 'string' || !url) continue
-      if (loadRepoUrlFor(name)) continue
-      saveRepoUrlFor(name, url)
-      if (state.currentFile === name) state.repoUrl = url
+      offered[name] = url
+    }
+  }
+  if (Object.keys(offered).length > 0) {
+    try {
+      await adoptRepoUrls(offered)
+    } catch (err) {
+      console.warn('Workspace import: failed to adopt per-report repository URLs:', err)
     }
   }
 

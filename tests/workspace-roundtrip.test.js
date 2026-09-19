@@ -18,6 +18,8 @@ import { Buffer } from 'node:buffer'
 import { before, beforeEach, describe, it } from 'node:test'
 
 const { state, loadRepoUrlFor, readRepoUrlMap, saveRepoUrlFor } = await import('../client/state.ts')
+const { drainWriteChain } = await import('../client/secure-storage.js')
+const { REPO_URLS_KEY } = await import('../client/state.ts')
 const {
   parseWorkspaceJson,
   applyWorkspaceImport,
@@ -655,6 +657,56 @@ describe('export → import round-trip', () => {
       conflictResolver: () => null,
     })
     assert.equal(loadRepoUrlFor('named.json'), 'owner/name')
+  })
+
+  it('leaves a repository this browser already holds alone', async () => {
+    // The importing side typed its own URL for the same report. The
+    // file only fills what is empty — overwriting what the reader
+    // named here is the surprise — and the decision is made inside
+    // secure-storage's lock, so a sibling tab racing the import can't
+    // lose its write either.
+    const { saveFile } = await import('../client/storage.js')
+    await saveFile('named.json', reportContent([FINDING_A]))
+    await saveFile('bare.json', reportContent([FINDING_B]))
+    saveRepoUrlFor('named.json', 'theirs/remote')
+    saveRepoUrlFor('bare.json', 'theirs/bare')
+    const payload = await buildWorkspaceExportPayload(
+      makeWorkspace({ reports: ['named.json', 'bare.json'] }),
+    )
+
+    clearState()
+    await saveFile('named.json', reportContent([FINDING_A]))
+    saveRepoUrlFor('named.json', 'mine/local')
+    await applyWorkspaceImport(parseWorkspaceJson(JSON.stringify(payload)), {
+      conflictResolver: () => null,
+    })
+    assert.equal(loadRepoUrlFor('named.json'), 'mine/local', 'the local URL wins')
+    assert.equal(loadRepoUrlFor('bare.json'), 'theirs/bare', 'an empty slot still fills')
+  })
+
+  it("keeps a URL only the disk knows about (a sibling tab's write)", async () => {
+    // The import weighs the file against the freshest disk view, not
+    // against this tab's cache: the sibling's URL is on disk for a
+    // report THIS tab never named, so nothing of its own can
+    // resurrect a value, and the import must leave it there. (The
+    // check-then-save window itself is pinned one level down, on
+    // `adoptRepoUrls` in tests/state.test.js, where the decision is
+    // made.)
+    const { saveFile } = await import('../client/storage.js')
+    await saveFile('fresh.json', reportContent([FINDING_A]))
+    const payload = await buildWorkspaceExportPayload(makeWorkspace({ reports: ['fresh.json'] }))
+    payload.repoUrls = { 'fresh.json': 'theirs/remote' }
+
+    clearState()
+    await drainWriteChain()
+    localStorage.setItem(REPO_URLS_KEY, JSON.stringify({ 'fresh.json': 'sibling/typed' }))
+    assert.equal(loadRepoUrlFor('fresh.json'), '', 'this tab still reads the map as empty')
+
+    await applyWorkspaceImport(parseWorkspaceJson(JSON.stringify(payload)), {
+      conflictResolver: () => null,
+    })
+    assert.equal(loadRepoUrlFor('fresh.json'), 'sibling/typed',
+      "the sibling's URL survives the import")
   })
 
   it('round-trips triage in the new-shape end-to-end', async () => {

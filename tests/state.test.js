@@ -26,6 +26,7 @@ if (globalThis.localStorage === undefined) {
 const {
   REPO_URLS_KEY,
   adoptRepoUrlFor,
+  adoptRepoUrls,
   loadRepoUrlFor,
   onRepoUrlChanged,
   propagateRepoUrlChangesFromStorage,
@@ -142,6 +143,55 @@ describe('adoptRepoUrlFor', () => {
       assert.deepEqual(fired, ['r.json'])
       await adoptRepoUrlFor('r.json', 'https://github.com/o/other')
       assert.deepEqual(fired, ['r.json'], 'declined adoption is silent')
+    } finally { off() }
+  })
+})
+
+describe('adoptRepoUrls', () => {
+  beforeEach(clearState)
+
+  it('fills the empty slots and reports which they were', async () => {
+    saveRepoUrlFor('held.json', 'https://github.com/mine/local')
+    const landed = await adoptRepoUrls({
+      'held.json': 'https://github.com/theirs/remote',
+      'free.json': 'https://github.com/theirs/free',
+    })
+    assert.deepEqual(landed, ['free.json'])
+    assert.equal(loadRepoUrlFor('held.json'), 'https://github.com/mine/local')
+    assert.equal(loadRepoUrlFor('free.json'), 'https://github.com/theirs/free')
+  })
+
+  it('skips entries with no name or no URL', async () => {
+    const landed = await adoptRepoUrls({ '': 'https://github.com/o/r', 'r.json': '', 'ok.json': 'o/ok' })
+    assert.deepEqual(landed, ['ok.json'])
+    assert.deepEqual(readRepoUrlMap(), { 'ok.json': 'o/ok' })
+  })
+
+  it("declines the ones a sibling tab wrote after this tab's last read", async () => {
+    // Half the map is taken on disk by a write this tab's cache has
+    // not seen — the window a check out here followed by a write
+    // would drive straight through.
+    await drainWriteChain()
+    localStorage.setItem(REPO_URLS_KEY, JSON.stringify({ 'a.json': 'https://github.com/o/sibling' }))
+    assert.equal(loadRepoUrlFor('a.json'), '', 'this tab still reads the map as empty')
+    const landed = await adoptRepoUrls({
+      'a.json': 'https://github.com/o/file-a',
+      'b.json': 'https://github.com/o/file-b',
+    })
+    assert.deepEqual(landed, ['b.json'])
+    assert.equal(loadRepoUrlFor('a.json'), 'https://github.com/o/sibling', "the sibling's URL survives")
+    assert.equal(loadRepoUrlFor('b.json'), 'https://github.com/o/file-b')
+  })
+
+  it('fires listeners for the adopted names only', async () => {
+    saveRepoUrlFor('held.json', 'https://github.com/mine/local')
+    const fired = []
+    const off = onRepoUrlChanged((name) => fired.push(name))
+    try {
+      await adoptRepoUrls({ 'held.json': 'o/declined', 'free.json': 'o/taken' })
+      assert.deepEqual(fired, ['free.json'])
+      await adoptRepoUrls({})
+      assert.deepEqual(fired, ['free.json'], 'an empty offer is silent')
     } finally { off() }
   })
 })
