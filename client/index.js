@@ -105,6 +105,7 @@ export {
   SEVERITY_MODE_KEY,
   VIEW_MODE_KEY,
   adoptRepoUrlFor,
+  adoptRepoUrls,
   clampFocusSplit,
   loadRepoUrlFor,
   saveRepoUrlFor,

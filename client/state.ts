@@ -375,40 +375,57 @@ export async function importRepoUrls(imported: Record<string, string>, mode: 're
   propagateRepoUrlChangesFromStorage()
 }
 
-// Adopt the repo URL an import carried for ONE report, and only
-// where this browser holds none of its own: what the reader typed
-// here wins over what the file says. `prefer-current` for a single
-// key, in other words — and, like `importRepoUrls`, the whole
+// Adopt the repo URLs an import carried, but only where this browser
+// holds none of its own: what the reader typed here wins over what
+// the file says. `prefer-current` restricted to the keys the file
+// names, in other words — and, like `importRepoUrls`, the whole
 // read-decide-write runs inside one `mutateSecureItem` turn, on that
 // turn's in-lock hydrate of the decrypted disk view. A
 // `loadRepoUrlFor` check followed by a `saveRepoUrlFor` cannot keep
 // the promise: `saveRepoUrlFor`'s merge re-applies its value
-// unconditionally, so a sibling tab writing this report's URL in
-// between would be overwritten — the one outcome the rule exists to
-// prevent.
+// unconditionally, so a sibling tab writing one of these reports'
+// URLs in between would be overwritten — the one outcome the rule
+// exists to prevent. Entries with no name or no URL are skipped, so
+// callers can hand over what they have.
 //
-// Resolves true when the URL landed, false when a local one held the
-// slot. The two follow-ups only make sense in the first case: the
-// header chip is re-derived the way `importRepoUrls` does it, and
-// the repo-URL listeners fire because the bundle index stamps
+// Resolves with the names that landed — nothing when a local URL
+// held every slot. That answer is what `importRepoUrls` can't give,
+// and both follow-ups need it: the header chip is re-derived the way
+// `importRepoUrls` does it, and the repo-URL listeners fire for the
+// adopted names only, because the bundle index stamps
 // `loadRepoUrlFor(name)` at index time and has no other way to learn
 // the fallback moved (bundle-finding-index.js).
-export async function adoptRepoUrlFor(name: string | null | undefined, url: string): Promise<boolean> {
-  if (!name || !url) return false
-  let adopted = false
+export async function adoptRepoUrls(imported: Record<string, string>): Promise<string[]> {
+  if (!imported || typeof imported !== 'object') return []
+  let landed: string[] = []
   await mutateSecureItem(REPO_URLS_KEY, (currentFromDisk: string | null) => {
     const map = parseRepoUrlMap(currentFromDisk)
+    // Reset per run: `mutateSecureItem` calls the updater once, but
+    // the answer must describe the turn that actually wrote.
+    landed = []
+    for (const [name, url] of Object.entries(imported)) {
+      if (!name || typeof url !== 'string' || !url || map[name]) continue
+      map[name] = url
+      landed.push(name)
+    }
     // Returned unchanged, so `mutateSecureItem` skips the write
-    // entirely — a declined adoption touches neither disk nor cache.
-    if (map[name]) { adopted = false; return currentFromDisk }
-    adopted = true
-    map[name] = url
+    // entirely — an import that adopts nothing touches neither disk
+    // nor cache.
+    if (landed.length === 0) return currentFromDisk
     return JSON.stringify(map)
   })
-  if (!adopted) return false
+  if (landed.length === 0) return landed
   propagateRepoUrlChangesFromStorage()
-  notifyRepoUrlChanged(name)
-  return true
+  for (const name of landed) notifyRepoUrlChanged(name)
+  return landed
+}
+
+// The one-report case, for an import that learns the name it landed
+// under one at a time (the raw-reports drop renames on a collision).
+export async function adoptRepoUrlFor(name: string | null | undefined, url: string): Promise<boolean> {
+  if (!name || !url) return false
+  const landed = await adoptRepoUrls({ [name]: url })
+  return landed.length > 0
 }
 
 // Centralised mutable view state. Every module that reads or writes
