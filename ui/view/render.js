@@ -1666,6 +1666,24 @@ function renderImpl() {
     if (!canDropLayer && state.showRevalidation === false) state.showRevalidation = true
   }
   configureRevalidation(state.showRevalidation)
+  // The upstream lens is offered wherever the SET holds an upstream
+  // finding. Read off the reports rather than the groups on screen, for
+  // the same reason the layer above reads raw: answered from what the
+  // lens itself left drawn, the control would keep itself lit and then
+  // take its own ground away. `isUpstream` is stamped just above
+  // (stampUpstreamFindings), so this sees the settled answer.
+  const canUpstreamLens = state.reports.some((r) => (r.groups ?? []).some((g) => g.some((f) => f.isUpstream)))
+  // …and a lens left on by a report that had them can't outlive it, or
+  // the list would stay narrowed with no control on screen to say so.
+  //
+  // Here, beside the layer's own reset and BEFORE anything derives the
+  // displayed groups, because the clear has to reach this render. Left
+  // until the toolbar's flags are gathered, it would land after
+  // `getMergedGroups()` had already narrowed a set with no upstream
+  // finding in it down to nothing: the switch away from that report
+  // paints an empty list with no control on screen, and only some
+  // later, unrelated render puts it back.
+  if (!canUpstreamLens) state.upstreamOnly = false
   // Print-button body class is owned by an observer-util autorun (see
   // view/print-btn-visibility.js) — render() must not touch it.
   // Bundles view — paints from `state.bundles` (cached by
@@ -2118,16 +2136,6 @@ function renderImpl() {
   // switch is standing at, so the control keeps its size and its stops
   // while the reader moves through them.
   const canDetailLayer = hasFoldedRows || hasPartialRow
-  // The upstream lens is offered wherever the SET holds an upstream
-  // finding. Read off the reports rather than the groups on screen, for
-  // the same reason the two above read raw: answered from what the lens
-  // itself left drawn, the control would keep itself lit and then take
-  // its own ground away. `isUpstream` is stamped earlier in this render
-  // (format.js stampUpstreamFindings), so this sees the settled answer.
-  const canUpstreamLens = state.reports.some((r) => (r.groups ?? []).some((g) => g.some((f) => f.isUpstream)))
-  // …and a lens left on by a report that had them can't outlive it,
-  // or the list would stay narrowed with no control on screen to say so.
-  if (!canUpstreamLens) state.upstreamOnly = false
   // If a previously-loaded report had node_modules and the user
   // narrowed the source filter, switching to a report without any
   // node_modules paths would leave the filter at 'own' or 'modules'

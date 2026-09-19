@@ -657,8 +657,21 @@ function onlyUpstream(groups) {
   return out
 }
 
+// The list before the upstream lens narrows it — every group the view
+// COULD show, which is the set a deep link has to resolve against.
+//
+// A link names one finding, and whether it exists is a fact about what
+// is loaded, not about the lens the reader happens to be standing
+// behind. Resolved through the narrowed list instead, a link to an
+// app-side finding in a loaded report finds nothing and is reported as
+// gone; `unhideFinding` then takes the lens off to show it, the same
+// way it clears a filter that excluded its target.
+export function linkableGroups() {
+  return withoutPassRows(mergedGroups())
+}
+
 export function getMergedGroups() {
-  return onlyUpstream(withoutPassRows(mergedGroups()))
+  return onlyUpstream(linkableGroups())
 }
 
 // The merged groups the view actually SHOWS — the triage bucket the
