@@ -11,13 +11,21 @@
 //   foo 2>/dev/null          no output, no error, and exit 127
 //   ls --bogus 2>/dev/null   an unknown option, reported to no one
 //
-// Those are the ones worth surfacing. An entry whose message did reach
-// stderr is left out: the transcript is already showing it, and a hint
+// Those are the ones worth surfacing. An entry whose message reached
+// the transcript is left out: it is already on screen, and a hint
 // would only say the same thing twice, in a smaller font.
-
-// Substring rather than equality because stderr carries the message
+//
+// Both streams count as the transcript, because both are rendered.
+// `2>&1` does not silence a diagnostic, it moves it: `foo 2>&1` leaves
+// stderr empty while the message sits in stdout, in plain view. Only
+// once something downstream drops it — `foo 2>&1 | grep -c x`, whose
+// stdout is a count — is there nothing left to read.
+//
+// Substring rather than equality because a stream carries the message
 // with a trailing newline, and shell-level gaps additionally carry a
 // generic `error: ` prefix that the entry's own message omits.
-export function silencedGaps({ stderr, unsupported }) {
-  return unsupported.filter((gap) => !stderr.includes(gap.message)).map((gap) => gap.message)
+export function silencedGaps({ stdout, stderr, unsupported }) {
+  return unsupported
+    .filter((gap) => !stderr.includes(gap.message) && !stdout.includes(gap.message))
+    .map((gap) => gap.message)
 }
