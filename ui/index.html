@@ -3,7 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'; manifest-src 'self'; form-action 'none'; connect-src 'self'">
+<!-- `worker-src 'self'` is what lets the brotli fallback decoder run
+     off the main thread (view/brotli-decompress.js); `child-src` repeats
+     it for browsers that predate `worker-src` and resolve a worker
+     through `child-src` instead, and `frame-src 'none'` keeps that
+     repeat from admitting frames, which `default-src 'none'` blocked. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; worker-src 'self'; child-src 'self'; frame-src 'none'; style-src 'self' 'unsafe-inline'; img-src 'self'; manifest-src 'self'; form-action 'none'; connect-src 'self'">
 <title>DeepView</title>
 <link rel="icon" href="./icon.svg" type="image/svg+xml" />
 <link rel="apple-touch-icon" href="./icon.svg" />

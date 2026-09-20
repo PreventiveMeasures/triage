@@ -90,7 +90,9 @@ if (mode === 'build') {
     // silently dropped and the dynamic import resolved to an empty
     // namespace ("brotliDecompress is not a function"). index.html
     // already loads view.js with `type="module"`, so ESM is
-    // expected on the page side too.
+    // expected on the page side too — as is the dedicated worker
+    // `view/brotli-decompress.js` spawns from the same entry with
+    // `{ type: 'module' }` to keep the decode off the main thread.
     format: 'esm',
   })
 } else if (mode === 'serve') {
