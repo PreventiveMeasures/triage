@@ -221,11 +221,16 @@ export function stripExportMarker(text, f) {
     result = result.replace(/^\((?:[^()]|\([^()]*\))*\): \[export:\s*\w+\] /u, '')
     result = result.replace(/^\[export:\s*\w+\] /u, '')
   }
-  for (const name of [f?.exportName, f?.methodName].filter(Boolean)) {
-    const escaped = name.replaceAll(/[.*+?^${}()|[\]\\]/gu, '\\$&')
-    result = result.replaceAll(new RegExp(`\\[export:\\s*${escaped}\\]\\s*`, 'gu'), '')
-    result = result.replace(new RegExp(`^\\(\`?${escaped}\`?\\): `, 'u'), '')
-  }
+  const names = [f?.exportName, f?.methodName].filter(Boolean)
+    .map((name) => name.replaceAll(/[.*+?^${}()|[\]\\]/gu, '\\$&'))
+  // Every marker first, then the prefixes. The two passes are ordered,
+  // not merely grouped: a `(Foo): ` prefix can sit BEHIND a marker
+  // naming the OTHER name — `[export: bar] (Foo): …` — and the prefix
+  // strip only ever looks at the front of the text, so a per-name pass
+  // that checked the prefix before the other name's marker came off
+  // would leave it there.
+  for (const name of names) result = result.replaceAll(new RegExp(`\\[export:\\s*${name}\\]\\s*`, 'gu'), '')
+  for (const name of names) result = result.replace(new RegExp(`^\\(\`?${name}\`?\\): `, 'u'), '')
   return result
 }
 
