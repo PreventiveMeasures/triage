@@ -592,3 +592,37 @@ describe('parseDeepviewMarkdown — every format the library reads, out and back
     assert.ok(unmarked.findings.every((f) => typeof f.id === 'string' && f.id.length > 0), 'ids derived at load')
   })
 })
+
+// A path can hold brackets and parens — `app/(main)/[id]/page.ts` in a
+// Next.js tree, and stranger things besides — and the writer puts it in
+// a code span inside the link's label (write-md-finding.js
+// locationText), where markdown reads its brackets as literal. The
+// reader has to agree: read with brackets that must balance, a path
+// carrying an unmatched one lost its url on the way back, silently.
+describe('parseDeepviewMarkdown — a path with brackets in it', () => {
+  const paths = [
+    'app/(main)/[id]/page.ts',
+    'src/[...slug]/route.ts',
+    'src/[[...all]]/route.ts',
+    'src/[id.ts',
+    'src/a]b.ts',
+    'a/b/c.ts',
+  ]
+  for (const file of paths) {
+    it(`round-trips \`${file}\``, () => {
+      const f = one({ findings: [finding({ file, line: '7', location: 'https://e.com/x#L7' })] })
+      assert.equal(f.file, file)
+      assert.equal(f.line, '7')
+      assert.equal(f.location, 'https://e.com/x#L7', 'the url the document linked')
+    })
+  }
+
+  it('round-trips such a path in an evidence row', () => {
+    const f = one({ findings: [finding({
+      evidence: [{ file: 'app/(main)/[id]/page.ts', line: '12', url: 'https://e.com/p#L12', text: 'Here.' }],
+    })] })
+    assert.deepEqual(f.evidence, [{
+      file: 'app/(main)/[id]/page.ts', line: '12', url: 'https://e.com/p#L12', text: 'Here.',
+    }])
+  })
+})

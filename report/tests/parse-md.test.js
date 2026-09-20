@@ -613,10 +613,18 @@ describe('parseMarkdownFindings — paths with brackets and parens', () => {
     assert.equal(f.location, 'https://example.com/a(foo(bar)).ts#L7')
   })
 
-  it('reads past a label whose brackets never close', () => {
-    const f = located('[unclosed [src/a.ts:7](https://example.com/a.ts#L7)')
-    assert.equal(f.file, 'src/a.ts')
+  it('keeps a path whose bracket never closes', () => {
+    // No balanced reading of these brackets exists, so the label is
+    // read up to the first `]` — which is how this was read before
+    // there was a scanner, and the path survives whole.
+    const f = located('[src/[id.ts:7](https://example.com/x#L7)')
+    assert.equal(f.file, 'src/[id.ts')
     assert.equal(f.line, '7')
+    assert.equal(f.location, 'https://example.com/x#L7')
+    // The same rule, applied to a label that is prose rather than a
+    // path: it reads as it always did, to the first `]`, rather than
+    // the scanner picking the link out of the middle of it.
+    assert.equal(located('[unclosed [src/a.ts:7](https://example.com/a.ts#L7)').file, 'unclosed [src/a.ts')
   })
 
   it('still leaves a line with no link as the raw text it is', () => {

@@ -280,29 +280,42 @@ export function parseCodeRef(raw) {
 export function stripBold(text) { return text.replaceAll('**', '') }
 
 // An inline link — `[label](destination)` — the first one in `s`, or
-// null. Scanned rather than matched with one expression, because both
-// halves nest, and an expression permissive enough for the nesting can
-// no longer tell where a link STARTS: a line reading `[context] see
+// null. Scanned rather than matched with one expression: both halves
+// nest, and an expression permissive enough for the nesting can no
+// longer tell where a link STARTS — a line reading `[context] see
 // [src/a.ts:7](…)` opens on a bracket pair that is not a link.
 //
-//   * the LABEL is bracket-BALANCED, which is markdown's own rule, so
-//     a path carrying brackets of its own stays whole —
-//     `[app/(main)/[id]/page.ts:12](…)` is one link labelled with that
-//     path. `[context]`, closing with no `(` behind it, is not a label
-//     at all, and the scan moves on to the next `[`;
-//   * the DESTINATION is either `<…>` — what md-text.js `link` writes
-//     when a url holds a space, a paren or an angle bracket, so a
-//     document this library wrote comes back through here — or a bare
-//     run in which parens balance, to any depth. A class that merely
-//     stops at the first `)` truncates a url the writer never
-//     percent-encoded: `…/app/(main)/page.ts` comes back as
-//     `…/app/(main`.
+// At each `[`, the label is read two ways, in this order:
 //
-// A backslash hides the character after it from both scans, which is
-// how a report escapes a bracket it means literally. Whitespace ends a
-// bare destination without closing it — markdown would read what
-// follows as a link title, which nothing here writes — so that
-// candidate is abandoned and the scan carries on.
+//   1. up to the FIRST `]`, which is how this was read before there
+//      was a scanner. Every line that parsed then parses the same way
+//      now, and it is the reading a path with an UNMATCHED bracket
+//      needs: `[`src/[id.ts:7`](…)` is what this library's own writer
+//      emits for such a path (write-md-finding.js), and no balanced
+//      reading of those brackets exists;
+//   2. bracket-BALANCED, markdown's own rule, which is what a path
+//      carrying brackets of its own needs —
+//      `[app/(main)/[id]/page.ts:12](…)` is one link labelled with
+//      that path, and reading (1) stops inside it. A code span is
+//      skipped whole here: backticks make their content literal, which
+//      is exactly why the writer wraps a path in them, so a stray `]`
+//      in a path can't close the label early.
+//
+// Both readings only count when a `(` follows, so `[context]` — which
+// closes with no destination behind it — is not a label at all under
+// either, and the scan moves on to the next `[`.
+//
+// The DESTINATION is either `<…>` — what md-text.js `link` writes when
+// a url holds a space, a paren or an angle bracket — or a bare run in
+// which parens balance, to any depth. A class that merely stops at the
+// first `)` truncates a url the writer never percent-encoded:
+// `…/app/(main)/page.ts` comes back as `…/app/(main`. Whitespace ends a
+// bare destination without closing it, where markdown would read a
+// title and nothing here writes one, so that candidate is abandoned
+// and the scan carries on.
+//
+// A backslash hides the character after it from every scan here, which
+// is how a report escapes a bracket it means literally.
 //
 // `index` comes back with it, so a caller that means "the value STARTS
 // with a link" can say so (parse-deepview-fields.js readLink, reading
@@ -311,25 +324,43 @@ export function stripBold(text) { return text.replaceAll('**', '') }
 export function findMdLink(s) {
   const text = String(s ?? '')
   for (let open = text.indexOf('['); open !== -1; open = text.indexOf('[', open + 1)) {
-    const close = labelEnd(text, open)
-    if (close === -1 || text[close + 1] !== '(') continue
-    const dest = destination(text, close + 1)
-    if (dest) return { label: text.slice(open + 1, close), url: dest.url, index: open }
+    for (const close of [text.indexOf(']', open + 1), balancedLabelEnd(text, open)]) {
+      if (close === -1 || text[close + 1] !== '(') continue
+      const dest = destination(text, close + 1)
+      if (dest) return { label: text.slice(open + 1, close), url: dest.url, index: open }
+    }
   }
   return null
 }
 
-// The `]` closing the label opened at `open`, or -1 when the brackets
-// from there never balance.
-function labelEnd(text, open) {
+// The `]` closing the label opened at `open` once its brackets balance,
+// or -1 when they never do. Escapes and code spans are passed over
+// whole — neither one's brackets are structure.
+function balancedLabelEnd(text, open) {
   let depth = 0
   for (let i = open; i < text.length; i++) {
     const c = text[i]
     if (c === '\\') i++
+    else if (c === '`') i = codeSpanEnd(text, i) ?? i
     else if (c === '[') depth++
     else if (c === ']' && --depth === 0) return i
   }
   return -1
+}
+
+// The last backtick of the run that closes the code span opening at
+// `i`, or null when nothing closes it — in which case the backticks
+// are ordinary text, which is the reading markdown gives them too. The
+// fence is as many backticks as opened the span, and a longer run is
+// not that fence (md-text.js code, whose spans these are).
+function codeSpanEnd(text, i) {
+  let n = 0
+  while (text[i + n] === '`') n++
+  const fence = '`'.repeat(n)
+  for (let j = text.indexOf(fence, i + n); j !== -1; j = text.indexOf(fence, j + 1)) {
+    if (text[j - 1] !== '`' && text[j + n] !== '`') return j + n - 1
+  }
+  return null
 }
 
 // The destination opened at `open` (its `(`), as `{ url }`, or null
