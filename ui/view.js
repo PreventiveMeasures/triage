@@ -60,9 +60,11 @@ import './view/bundle-treemap.js'
 import './view/bundle-compare.js'
 import './view/download-button.js'
 import './view/api.js'
-// Eager side-effect import — registers / unregisters the brotli SW
-// based on whether DecompressionStream('br') works natively; kicks the
-// detect+register pass at boot itself.
+// Eager side-effect import — runs the native DecompressionStream('br')
+// detection at boot and drops any leftover brotli SW from an older
+// revision. The JS fallback decoder it dispatches to when native is
+// missing runs in a worker, and only starts once a brotli payload
+// actually arrives.
 import './view/brotli-decompress.js'
 // Side-effect import — paints the empty drop-zone's supported-formats
 // list with the same SVG glyphs the sidebar uses for its rows.
