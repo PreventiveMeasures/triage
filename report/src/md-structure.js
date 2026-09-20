@@ -363,7 +363,7 @@ function balancedLabelEnds(text, spans) {
   const open = []
   for (let i = 0; i < text.length; i++) {
     const c = text[i]
-    if (c === '\\') i++
+    if (escapes(text, i)) i++
     else if (c === '`') i = spans.get(i) ?? i
     else if (c === '[') open.push(i)
     else if (c === ']' && open.length > 0) ends.set(open.pop(), i)
@@ -409,20 +409,32 @@ function destinationEnds(text) {
   const n = text.length
   const nextClose = new Int32Array(n + 1).fill(-1)
   const nextSpace = new Int32Array(n + 1).fill(-1)
+  // …and what ends an angle-bracket one, for the same reason: looked
+  // up per candidate, a line of `[x](<` with no `>` in it scanned to
+  // the end once per bracket — 1.5s over 800k characters.
+  const nextAngle = new Int32Array(n + 1).fill(-1)
+  const nextLine = new Int32Array(n + 1).fill(-1)
   for (let i = n - 1; i >= 0; i--) {
     nextClose[i] = text[i] === ')' ? i : nextClose[i + 1]
     nextSpace[i] = /\s/u.test(text[i]) ? i : nextSpace[i + 1]
+    nextAngle[i] = text[i] === '>' ? i : nextAngle[i + 1]
+    nextLine[i] = text[i] === '\n' ? i : nextLine[i + 1]
   }
   const balanced = new Map()
   const open = []
   for (let i = 0; i < n; i++) {
     const c = text[i]
-    if (c === '\\') i++
+    // A backslash hides the character behind it — but only one it can
+    // actually escape. `not\ a-url` is a backslash and a SPACE, not an
+    // escaped space, and the space ends a bare destination: read as an
+    // escape it made `[badge](not\ a-url)` a link, and a reference
+    // behind it was never reached.
+    if (escapes(text, i)) i++
     else if (nextSpace[i] === i) open.length = 0
     else if (c === '(') open.push(i)
     else if (c === ')' && open.length > 0) balanced.set(open.pop(), i)
   }
-  return { balanced, nextClose, nextSpace }
+  return { balanced, nextClose, nextSpace, nextAngle, nextLine }
 }
 
 // The destination opened at `open` (its `(`), as its url, or null when
@@ -433,7 +445,7 @@ function destinationEnds(text) {
 // the bare readings, which take the angle brackets themselves as the
 // url, as that expression did.
 function destination(text, open, dests) {
-  const angled = angleDestination(text, open)
+  const angled = angleDestination(text, open, dests)
   if (angled) return angled
   const balanced = dests.balanced.get(open)
   if (balanced !== undefined) return balanced > open + 1 ? text.slice(open + 1, balanced) : null
@@ -449,10 +461,10 @@ function destination(text, open, dests) {
 
 // The `<…>` form md-text.js `link` writes when a url can't sit bare,
 // or '' when this destination isn't one.
-function angleDestination(text, open) {
+function angleDestination(text, open, dests) {
   if (text[open + 1] !== '<') return ''
-  const close = text.indexOf('>', open + 2)
-  const line = text.indexOf('\n', open + 2)
+  const close = dests.nextAngle[open + 2]
+  const line = dests.nextLine[open + 2]
   if (close === -1 || (line !== -1 && line < close) || text[close + 1] !== ')') return ''
   return text.slice(open + 2, close)
 }
@@ -464,6 +476,17 @@ function angleDestination(text, open) {
 // punctuation can be escaped (CommonMark), so a `\n` or a Windows
 // `C:\path` keeps its backslash.
 const MD_ESCAPE_RE = /\\([!-/:-@[-`{-~])/gu
+
+// The same rule asked of one position: is the backslash at `i` an
+// escape, or just a backslash? Only ASCII punctuation can be escaped,
+// so `\ ` is two characters and `\[` is one — which is what keeps a
+// scanner from reading a space as hidden (findMdLink) when markdown
+// would read it as the whitespace that ends a destination.
+const MD_ESCAPABLE = /[!-/:-@[-`{-~]/u
+
+function escapes(text, i) {
+  return text[i] === '\\' && MD_ESCAPABLE.test(text[i + 1] ?? '')
+}
 
 export function unescapeMd(s) {
   return typeof s === 'string' ? s.replace(MD_ESCAPE_RE, '$1') : s
