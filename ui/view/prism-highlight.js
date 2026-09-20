@@ -39,6 +39,7 @@ const EXT_TO_LANG = {
   sol: 'solidity',
   php: 'php', phtml: 'php',
   rs: 'rust',
+  rb: 'ruby',
   java: 'java',
   // .h is claimed by C, C++ and Objective-C alike. The C++ grammar
   // extends the C one, so it is the superset that colours a header
@@ -91,6 +92,7 @@ const TAG_TO_LANG = {
   md: 'markdown', markdown: 'markdown',
   sol: 'solidity', solidity: 'solidity',
   rs: 'rust', rust: 'rust',
+  rb: 'ruby', ruby: 'ruby',
   php: 'php', phtml: 'php',
   java: 'java',
   cpp: 'cpp', 'c++': 'cpp', cc: 'cpp', cxx: 'cpp', hpp: 'cpp', hh: 'cpp', hxx: 'cpp', 'h++': 'cpp', h: 'cpp',
