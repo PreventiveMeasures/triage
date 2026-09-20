@@ -637,6 +637,17 @@ describe('parseMarkdownFindings — paths with brackets and parens', () => {
     assert.equal(located('[unclosed [src/a.ts:7](https://example.com/a.ts#L7)').file, 'unclosed [src/a.ts')
   })
 
+  it('reads past a badge to the reference behind it', () => {
+    // An empty label is no label, and an empty destination no
+    // destination — which is what lets the reading reach the second
+    // link here rather than stopping at the image in front of it.
+    const f = located('![](badge.svg) [src/a.ts:7](https://example.com/a.ts#L7)')
+    assert.equal(f.file, 'src/a.ts')
+    assert.equal(f.line, '7')
+    assert.equal(f.location, 'https://example.com/a.ts#L7')
+    assert.equal(located('[]() [src/b.ts:9](https://example.com/b.ts#L9)').file, 'src/b.ts')
+  })
+
   it('still leaves a line with no link as the raw text it is', () => {
     const f = located('a/b/app/(main)/[id]/index.ts:12')
     assert.equal(f.file, 'a/b/app/(main)/[id]/index.ts')
@@ -669,9 +680,12 @@ describe('findMdLink — nothing the old expression read reads differently', () 
     'https://e.com/a.ts', '',
   ]
   // The positions a reference turns up in: alone on the line, behind
-  // prose (bracketed or not), ahead of it, and as a list item.
+  // prose (bracketed or not), ahead of it, as a list item — and behind
+  // another LINK, which is how a badge sits at the head of a row and
+  // the dimension whose absence here let an empty one through.
   const around = [
     (l) => l, (l) => `[context] see ${l}`, (l) => `${l} and more`, (l) => `see ${l} here`, (l) => `- ${l}`,
+    (l) => `![](badge.svg) ${l}`, (l) => `![badge](b.svg) ${l}`, (l) => `[]() ${l}`, (l) => `[x](y) ${l}`,
   ]
 
   it('matches where it matched, on every shape these spell', () => {
@@ -693,7 +707,7 @@ describe('findMdLink — nothing the old expression read reads differently', () 
     }
     // A guard on the guard: if the shapes above stop reaching the old
     // expression, the loop asserts nothing and says so.
-    assert.ok(read > 100, `only ${read} of these shapes reached the old expression`)
+    assert.ok(read > 300, `only ${read} of these shapes reached the old expression`)
   })
 })
 
@@ -718,4 +732,13 @@ describe('findMdLink — a malformed line is read once, not per bracket', () => 
   it('rejects a line of nothing but brackets', () => under(1000, '['.repeat(50_000)))
   it('rejects a line of openings that never close', () => under(1000, '[x]('.repeat(12_500)))
   it('rejects a line of nested openings', () => under(1000, '([x]('.repeat(10_000)))
+
+  it('rejects a line of code fences that never close', () => {
+    // Runs of growing length, so no run closes any other: read per
+    // run, each one scanned the rest of the line for a fence of its
+    // own length, which took ~5s over 20k characters.
+    let text = ''
+    for (let n = 1; text.length < 20_000; n++) text += `${'`'.repeat(n)}x`
+    under(1000, text)
+  })
 })

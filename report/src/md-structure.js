@@ -333,7 +333,7 @@ export function findMdLink(s) {
   // 3s to come back null, a run of `[x](` with no `)` in it 10s, each
   // bracket paying for the remainder of the line again. One pass apiece
   // instead.
-  const labels = balancedLabelEnds(text)
+  const labels = balancedLabelEnds(text, codeSpanEnds(text))
   const dests = destinationEnds(text)
   let plain = text.indexOf(']')
   for (let open = text.indexOf('['); open !== -1; open = text.indexOf('[', open + 1)) {
@@ -341,7 +341,11 @@ export function findMdLink(s) {
     // again: `open` only advances, so this does too.
     while (plain !== -1 && plain <= open) plain = text.indexOf(']', plain + 1)
     for (const close of [plain, labels.get(open) ?? -1]) {
-      if (close === -1 || text[close + 1] !== '(') continue
+      // An EMPTY label is no label: `![](badge.svg)` ahead of a
+      // reference is a badge, and the expression this replaced — which
+      // wanted a character in both halves — read past it to the real
+      // link. So does this.
+      if (close === -1 || close === open + 1 || text[close + 1] !== '(') continue
       const url = destination(text, close + 1, dests)
       if (url !== null) return { label: text.slice(open + 1, close), url, index: open }
     }
@@ -354,32 +358,46 @@ export function findMdLink(s) {
 // code spans are passed over whole: neither one's brackets are
 // structure, and a code span's are literal wherever it sits, which is
 // the reading markdown gives it too.
-function balancedLabelEnds(text) {
+function balancedLabelEnds(text, spans) {
   const ends = new Map()
   const open = []
   for (let i = 0; i < text.length; i++) {
     const c = text[i]
     if (c === '\\') i++
-    else if (c === '`') i = codeSpanEnd(text, i) ?? i
+    else if (c === '`') i = spans.get(i) ?? i
     else if (c === '[') open.push(i)
     else if (c === ']' && open.length > 0) ends.set(open.pop(), i)
   }
   return ends
 }
 
-// The last backtick of the run that closes the code span opening at
-// `i`, or null when nothing closes it — in which case the backticks
-// are ordinary text, which is the reading markdown gives them too. The
-// fence is as many backticks as opened the span, and a longer run is
-// not that fence (md-text.js code, whose spans these are).
-function codeSpanEnd(text, i) {
-  let n = 0
-  while (text[i + n] === '`') n++
-  const fence = '`'.repeat(n)
-  for (let j = text.indexOf(fence, i + n); j !== -1; j = text.indexOf(fence, j + 1)) {
-    if (text[j - 1] !== '`' && text[j + n] !== '`') return j + n - 1
+// Every backtick RUN in `text` that opens a code span, paired with the
+// last backtick of the run that closes it — the next run of exactly
+// the same length, which is how markdown fences one (md-text.js code,
+// whose spans these are). A run nothing matches is absent: its
+// backticks are ordinary text, the reading markdown gives them too.
+//
+// Read backwards over the runs, each remembering the nearest one of
+// its own length ahead of it, so a line of unmatched runs of growing
+// lengths — `` `x``x```x… `` — costs one pass rather than a scan to
+// the end of the line per run, which took 4.8s over 20k characters.
+function codeSpanEnds(text) {
+  const runs = []
+  for (let i = text.indexOf('`'); i !== -1; i = text.indexOf('`', i)) {
+    let n = 1
+    while (text[i + n] === '`') n++
+    runs.push([i, n])
+    i += n
   }
-  return null
+  const ends = new Map()
+  const nearest = new Map()
+  for (let r = runs.length - 1; r >= 0; r--) {
+    const [start, length] = runs[r]
+    const close = nearest.get(length)
+    if (close !== undefined) ends.set(start, close + length - 1)
+    nearest.set(length, start)
+  }
+  return ends
 }
 
 // What a bare destination can close on, for every position in `text`:
@@ -409,24 +427,34 @@ function destinationEnds(text) {
 
 // The destination opened at `open` (its `(`), as its url, or null when
 // nothing reads it: an angle-bracket form, else the bare run its own
-// parens close, else the bare run the first `)` closes.
+// parens close, else the bare run the first `)` closes. An EMPTY
+// destination is none of them — `[a]()` was not a link to the
+// expression this replaced either — and an empty `<>` falls through to
+// the bare readings, which take the angle brackets themselves as the
+// url, as that expression did.
 function destination(text, open, dests) {
-  if (text[open + 1] === '<') {
-    const close = text.indexOf('>', open + 2)
-    const line = text.indexOf('\n', open + 2)
-    if (close === -1 || (line !== -1 && line < close) || text[close + 1] !== ')') return null
-    return text.slice(open + 2, close)
-  }
+  const angled = angleDestination(text, open)
+  if (angled) return angled
   const balanced = dests.balanced.get(open)
-  if (balanced !== undefined) return text.slice(open + 1, balanced)
+  if (balanced !== undefined) return balanced > open + 1 ? text.slice(open + 1, balanced) : null
   // Failing that, up to the first `)` — how this was read before there
   // was a scanner, and the only reading a url with an UNMATCHED paren
   // has. Whitespace before that `)` disqualifies it, where markdown
   // would read a title and nothing here writes one.
   const flat = dests.nextClose[open + 1]
   const space = dests.nextSpace[open + 1]
-  if (flat === -1 || (space !== -1 && space < flat)) return null
+  if (flat === -1 || flat === open + 1 || (space !== -1 && space < flat)) return null
   return text.slice(open + 1, flat)
+}
+
+// The `<…>` form md-text.js `link` writes when a url can't sit bare,
+// or '' when this destination isn't one.
+function angleDestination(text, open) {
+  if (text[open + 1] !== '<') return ''
+  const close = text.indexOf('>', open + 2)
+  const line = text.indexOf('\n', open + 2)
+  if (close === -1 || (line !== -1 && line < close) || text[close + 1] !== ')') return ''
+  return text.slice(open + 2, close)
 }
 
 // Markdown backslash escapes — `a/b/\_cc\_cc/index.js` is a report
