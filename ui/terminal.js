@@ -485,7 +485,16 @@ class BundleTerminal extends LitElement {
 
   render() {
     return html`
-      <div class="notes" role="status">
+      <!-- A live region, rendered even when empty: assistive tech has to
+           have the region before content lands in it, or the first hint
+           goes unannounced. \`log\` rather than \`status\` because that is
+           what this is — new entries in order, old ones disappearing —
+           and because \`status\` carries an implicit aria-atomic="true",
+           which re-reads every hint still on screen each time one
+           arrives. aria-atomic is then stated rather than left to the
+           role's implicit value, since an implicit value is exactly
+           what made the stack re-announce itself. -->
+      <div class="notes" role="log" aria-atomic="false">
         ${repeat(this._notes, (n) => n.id, (n) => html`<div class="note ${n.kind === 'gap' ? 'note-gap' : ''}" style="--dwell-out: ${n.dwell - BundleTerminal.#NOTE_FADE_MS}ms">${n.text}</div>`)}
       </div>
       <div class="output" @click=${this.#onClickOutput}>
