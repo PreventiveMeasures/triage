@@ -506,3 +506,100 @@ describe('parseMarkdownFindings — multiple findings', () => {
     assert.match(parsed.findings[0].description, /Real title/u)
   })
 })
+
+// Paths that carry brackets or parens of their own — a Next.js app
+// router writes `app/(main)/[id]/page.ts`, and the report links it as
+// `[<path>:<line>](<url>)`. Read with a label class that stops at the
+// first `]`, none of these matched at all: the whole `[…](…)` text
+// became the file name, the line came back `?`, and an evidence row
+// lost its url with it.
+describe('parseMarkdownFindings — paths with brackets and parens', () => {
+  const REF = '[a/b/src/app/(main)/c/[id]/index.ts:123–124](https://github.com/org/repo/blob/master/a/b/c/app/%28main%29/c/%5Bid%5D/index.ts#L123-L124)'
+  const URL = 'https://github.com/org/repo/blob/master/a/b/c/app/%28main%29/c/%5Bid%5D/index.ts#L123-L124'
+  const located = (ref) => parseMarkdownFindings([
+    '# T', '', '## Location', ref, '', '---', '**Severity:** medium',
+  ].join('\n')).findings[0]
+
+  it('reads the path, the line and the url out of the link', () => {
+    const f = located(REF)
+    assert.equal(f.file, 'a/b/src/app/(main)/c/[id]/index.ts')
+    assert.equal(f.line, '123-124')
+    assert.equal(f.location, URL)
+  })
+
+  it('keeps a url whose own parens were never encoded', () => {
+    // Markdown ends a bare destination on the first UNBALANCED `)`, so
+    // `(main)` inside it is part of the url; stopping at the first one
+    // truncated it to `…/app/(main`.
+    const f = located('[app/(main)/x.ts:7](https://github.com/o/r/blob/m/app/(main)/x.ts#L7)')
+    assert.equal(f.file, 'app/(main)/x.ts')
+    assert.equal(f.line, '7')
+    assert.equal(f.location, 'https://github.com/o/r/blob/m/app/(main)/x.ts#L7')
+  })
+
+  it('takes the angle-bracket form this library\'s own writer emits', () => {
+    // md-text.js `link` wraps a url holding a space, a paren or an
+    // angle bracket, so an export of one of these findings comes back
+    // through here on re-import.
+    const f = located('[app/(main)/[id]/x.ts:7-9](<https://github.com/o/r/blob/m/app/(main)/[id]/x.ts#L7-L9>)')
+    assert.equal(f.file, 'app/(main)/[id]/x.ts')
+    assert.equal(f.line, '7-9')
+    assert.equal(f.location, 'https://github.com/o/r/blob/m/app/(main)/[id]/x.ts#L7-L9')
+  })
+
+  it('unescapes brackets a report escaped for markdown', () => {
+    const f = located('[a/b/app/\\[id\\]/index.ts:12](https://example.com/x#L12)')
+    assert.equal(f.file, 'a/b/app/[id]/index.ts')
+    assert.equal(f.line, '12')
+  })
+
+  it('gives every evidence row its own path, line and url', () => {
+    const f = parseMarkdownFindings([
+      '# T', '',
+      '## Evidence',
+      `1. ${REF}`,
+      '   The segment is read here.',
+      '2. [app/(main)/[id]/query.ts:8](https://github.com/o/r/blob/m/q.ts#L8)',
+      '',
+      '---', '**Severity:** medium',
+    ].join('\n')).findings[0]
+    assert.deepEqual(f.evidence, [
+      {
+        file: 'a/b/src/app/(main)/c/[id]/index.ts',
+        line: '123-124',
+        url: URL,
+        text: 'The segment is read here.',
+      },
+      { file: 'app/(main)/[id]/query.ts', line: '8', url: 'https://github.com/o/r/blob/m/q.ts#L8' },
+    ])
+    // …and the finding's own location is the first row, as ever.
+    assert.equal(f.file, 'a/b/src/app/(main)/c/[id]/index.ts')
+    assert.equal(f.line, '123-124')
+  })
+
+  it('finds such a link in an Evidence section written without markers', () => {
+    // The marker-less fallback looks for the first line carrying a
+    // link — which a bracketed path used to hide from it, leaving the
+    // section as prose in the description and the finding unlocated.
+    const f = parseMarkdownFindings([
+      '# T', '',
+      '## Evidence',
+      'See the handler:',
+      REF,
+      'and the loader.',
+      '',
+      '---', '**Severity:** medium',
+    ].join('\n')).findings[0]
+    assert.equal(f.evidence.length, 1)
+    assert.equal(f.evidence[0].file, 'a/b/src/app/(main)/c/[id]/index.ts')
+    assert.equal(f.evidence[0].url, URL)
+    assert.equal(f.evidence[0].text, 'See the handler:\nand the loader.')
+  })
+
+  it('still leaves a line with no link as the raw text it is', () => {
+    const f = located('a/b/app/(main)/[id]/index.ts:12')
+    assert.equal(f.file, 'a/b/app/(main)/[id]/index.ts')
+    assert.equal(f.line, '12')
+    assert.equal(f.location, 'a/b/app/(main)/[id]/index.ts:12')
+  })
+})

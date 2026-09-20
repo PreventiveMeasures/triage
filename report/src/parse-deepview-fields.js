@@ -15,7 +15,7 @@
 
 import { REVALIDATE_KINDS, firstLine } from './finding.js'
 import { SEVERITY_LABELS, SOURCE_LABELS } from './labels.js'
-import { fenceRanges, inFence } from './md-structure.js'
+import { fenceRanges, findMdLink, inFence } from './md-structure.js'
 import { isHttpUrl, unescapeHeadings } from './md-text.js'
 
 // label (case-folded) → key, for the words the writer spells the app's
@@ -42,13 +42,14 @@ export function codeSpan(s) {
   return inner
 }
 
-// A markdown link at the start of `s` — `[label](url)`, the URL in
-// angle brackets when the writer had to (md-text.js link). The label
-// may hold a code span with brackets of its own, so it is read lazily
-// up to the `](` a destination follows.
+// A markdown link at the START of `s` — `[label](url)`, the URL in
+// angle brackets when the writer had to (md-text.js link). The reading
+// itself is md-structure.js's, which is the whole library's; a link
+// found further along belongs to something else in the value, so only
+// one at index 0 answers here.
 export function readLink(s) {
-  const m = /^\[(.*?)\]\((?:<([^>]*)>|([^)\s]*))\)/u.exec(String(s ?? ''))
-  return m ? { label: m[1], url: m[2] ?? m[3] } : null
+  const link = findMdLink(String(s ?? ''))
+  return link?.index === 0 ? { label: link.label, url: link.url } : null
 }
 
 // A bare `<url>` autolink (md-text.js autolink), or null.

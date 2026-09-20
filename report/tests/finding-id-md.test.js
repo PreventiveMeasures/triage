@@ -206,3 +206,86 @@ describe('markdown finding ids — the golden table', () => {
     })
   }
 })
+
+// The documents the bracket fix was about, pinned by id.
+//
+// A path like `app/(main)/[id]/index.ts` used to defeat parse-md.js's
+// link reader outright: `file` came back as the whole `[…](…)` text,
+// `line` as `?`, and an evidence row carried no url. Those findings
+// are in users' workspaces with triage hanging off them, so fixing
+// what the card SHOWS must not move what the triage is keyed by.
+//
+// It doesn't, and not by luck: the fingerprint is parse-md-id.js's own
+// parse, which is frozen — it reads these documents with exactly the
+// same blindness, and keeping that is the point. The uuids below were
+// captured from the parser BEFORE the fix, against the two shapes that
+// key differently: a `## Location` finding keys off the location (here
+// the raw `[…](…)` text, as the frozen parse left it), and an
+// evidence-only finding keys off file 'unknown' / line '?', since
+// `## Evidence` is outside the frozen subset.
+describe('markdown finding ids — a path with brackets and parens', () => {
+  const REF = '[a/b/src/app/(main)/c/[id]/index.ts:123–124](https://github.com/org/repo/blob/master/a/b/c/app/%28main%29/c/%5Bid%5D/index.ts#L123-L124)'
+  const META = ['---', '**Severity:** high', '**Status:** Open', '**Category:** Security', '**Repository:** org/repo']
+
+  const LOCATION_DOC = [
+    '# Unvalidated id reaches the query',
+    '',
+    '## Details',
+    'The route handler passes the dynamic segment straight through.',
+    '',
+    '## Location',
+    REF,
+    '',
+    '## Impact',
+    'Any caller can read another tenant’s row.',
+    '',
+    ...META,
+  ].join('\n')
+
+  const EVIDENCE_DOC = [
+    '# Unvalidated id reaches the query',
+    '',
+    '## Details',
+    'The route handler passes the dynamic segment straight through.',
+    '',
+    '## Evidence',
+    `1. ${REF}`,
+    '   The segment is read here.',
+    `2. ${REF}`,
+    '   And spliced into the query here.',
+    '',
+    ...META,
+  ].join('\n')
+
+  it('derives the golden id for the `## Location` shape', async () => {
+    assert.deepEqual(await idsOf(LOCATION_DOC), ['208fc943-543f-492c-8911-880ca0a4439d'])
+  })
+
+  it('derives the golden id for the `## Evidence` shape', async () => {
+    assert.deepEqual(await idsOf(EVIDENCE_DOC), ['01aa90ee-00c7-45aa-84e9-ced5ba52c00b'])
+  })
+
+  // What the fingerprint holds for these two — the values the golden
+  // uuids above are the hash of. Neither moved when the reader learnt
+  // to read the link, because neither comes from that reader.
+  it('keys off the frozen parse, which reads the link no better', () => {
+    const [located] = parseMarkdownFindings(LOCATION_DOC).findings
+    assert.equal(located._idBasis.location, REF, 'the raw link text, as the frozen parse left it')
+    const [evidenced] = parseMarkdownFindings(EVIDENCE_DOC).findings
+    assert.equal(evidenced._idBasis.file, 'unknown')
+    assert.equal(evidenced._idBasis.line, '?')
+  })
+
+  // …while the finding itself now carries the path, the line and the
+  // url the document cited. This is the half that was allowed to move.
+  it('hands the card the path the id could not', () => {
+    const [located] = parseMarkdownFindings(LOCATION_DOC).findings
+    assert.equal(located.file, 'a/b/src/app/(main)/c/[id]/index.ts')
+    assert.equal(located.line, '123-124')
+    const [evidenced] = parseMarkdownFindings(EVIDENCE_DOC).findings
+    assert.equal(evidenced.evidence.length, 2)
+    assert.equal(evidenced.evidence[0].file, 'a/b/src/app/(main)/c/[id]/index.ts')
+    assert.equal(evidenced.evidence[0].line, '123-124')
+    assert.match(evidenced.evidence[0].url, /^https:\/\/github\.com\/org\/repo\/blob\//u)
+  })
+})

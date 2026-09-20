@@ -279,6 +279,33 @@ export function parseCodeRef(raw) {
 
 export function stripBold(text) { return text.replaceAll('**', '') }
 
+// An inline link — `[label](destination)` — the first one in `s`, or
+// null. Two rules, both of them markdown's own, and both of them
+// things a naive `\[([^\]]+)\]\(([^)\s]+)\)` gets wrong on a path:
+//
+//   * the LABEL runs to the first `](`, so a path carrying brackets of
+//     its own stays whole. `[app/(main)/[id]/page.ts:12](…)` is one
+//     link labelled with that path — a label class that stops at the
+//     first `]` matches nothing here, and the caller is left holding
+//     the raw `[…](…)` text as if it were a file name;
+//   * the DESTINATION is either `<…>` — what md-text.js `link` writes
+//     when a URL holds a space, a paren or an angle bracket — or a
+//     bare run in which parens BALANCE: ordinary characters, an
+//     escape, or one `(…)` group. A bare class that merely stops at
+//     the first `)` truncates a URL the writer didn't percent-encode
+//     (`…/app/(main)/page.ts` comes back as `…/app/(main`).
+//
+// `index` comes back with it, so a caller that means "the value STARTS
+// with a link" can say so (parse-deepview-fields.js readLink, reading
+// a document this library wrote) while one reading a foreign document
+// takes the first link on the line (parse-md.js).
+const MD_LINK_RE = /\[([^\n]*?)\]\((?:<([^>\n]*)>|((?:[^()\s\\]|\\.|\([^()\s]*\))*))\)/u
+
+export function findMdLink(s) {
+  const m = MD_LINK_RE.exec(String(s ?? ''))
+  return m ? { label: m[1], url: m[2] ?? m[3] ?? '', index: m.index } : null
+}
+
 // Markdown backslash escapes — `a/b/\_cc\_cc/index.js` is a report
 // escaping the underscores that would otherwise open emphasis, not a
 // path with backslashes in it. Undo them wherever a value is a NAME
