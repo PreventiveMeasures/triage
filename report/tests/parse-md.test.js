@@ -31,6 +31,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
+import { findMdLink } from '../src/md-structure.js'
 import { parseMarkdownFindings } from '../src/parse-md.js'
 
 describe('parseMarkdownFindings — format guards', () => {
@@ -504,5 +505,240 @@ describe('parseMarkdownFindings — multiple findings', () => {
     assert.ok(parsed)
     assert.equal(parsed.findings.length, 1)
     assert.match(parsed.findings[0].description, /Real title/u)
+  })
+})
+
+// Paths that carry brackets or parens of their own — a Next.js app
+// router writes `app/(main)/[id]/page.ts`, and the report links it as
+// `[<path>:<line>](<url>)`. Read with a label class that stops at the
+// first `]`, none of these matched at all: the whole `[…](…)` text
+// became the file name, the line came back `?`, and an evidence row
+// lost its url with it.
+describe('parseMarkdownFindings — paths with brackets and parens', () => {
+  const REF = '[a/b/src/app/(main)/c/[id]/index.ts:123–124](https://github.com/org/repo/blob/master/a/b/c/app/%28main%29/c/%5Bid%5D/index.ts#L123-L124)'
+  const URL = 'https://github.com/org/repo/blob/master/a/b/c/app/%28main%29/c/%5Bid%5D/index.ts#L123-L124'
+  const located = (ref) => parseMarkdownFindings([
+    '# T', '', '## Location', ref, '', '---', '**Severity:** medium',
+  ].join('\n')).findings[0]
+
+  it('reads the path, the line and the url out of the link', () => {
+    const f = located(REF)
+    assert.equal(f.file, 'a/b/src/app/(main)/c/[id]/index.ts')
+    assert.equal(f.line, '123-124')
+    assert.equal(f.location, URL)
+  })
+
+  it('keeps a url whose own parens were never encoded', () => {
+    // Markdown ends a bare destination on the first UNBALANCED `)`, so
+    // `(main)` inside it is part of the url; stopping at the first one
+    // truncated it to `…/app/(main`.
+    const f = located('[app/(main)/x.ts:7](https://github.com/o/r/blob/m/app/(main)/x.ts#L7)')
+    assert.equal(f.file, 'app/(main)/x.ts')
+    assert.equal(f.line, '7')
+    assert.equal(f.location, 'https://github.com/o/r/blob/m/app/(main)/x.ts#L7')
+  })
+
+  it('takes the angle-bracket form this library\'s own writer emits', () => {
+    // md-text.js `link` wraps a url holding a space, a paren or an
+    // angle bracket, so an export of one of these findings comes back
+    // through here on re-import.
+    const f = located('[app/(main)/[id]/x.ts:7-9](<https://github.com/o/r/blob/m/app/(main)/[id]/x.ts#L7-L9>)')
+    assert.equal(f.file, 'app/(main)/[id]/x.ts')
+    assert.equal(f.line, '7-9')
+    assert.equal(f.location, 'https://github.com/o/r/blob/m/app/(main)/[id]/x.ts#L7-L9')
+  })
+
+  it('unescapes brackets a report escaped for markdown', () => {
+    const f = located('[a/b/app/\\[id\\]/index.ts:12](https://example.com/x#L12)')
+    assert.equal(f.file, 'a/b/app/[id]/index.ts')
+    assert.equal(f.line, '12')
+  })
+
+  it('gives every evidence row its own path, line and url', () => {
+    const f = parseMarkdownFindings([
+      '# T', '',
+      '## Evidence',
+      `1. ${REF}`,
+      '   The segment is read here.',
+      '2. [app/(main)/[id]/query.ts:8](https://github.com/o/r/blob/m/q.ts#L8)',
+      '',
+      '---', '**Severity:** medium',
+    ].join('\n')).findings[0]
+    assert.deepEqual(f.evidence, [
+      {
+        file: 'a/b/src/app/(main)/c/[id]/index.ts',
+        line: '123-124',
+        url: URL,
+        text: 'The segment is read here.',
+      },
+      { file: 'app/(main)/[id]/query.ts', line: '8', url: 'https://github.com/o/r/blob/m/q.ts#L8' },
+    ])
+    // …and the finding's own location is the first row, as ever.
+    assert.equal(f.file, 'a/b/src/app/(main)/c/[id]/index.ts')
+    assert.equal(f.line, '123-124')
+  })
+
+  it('finds such a link in an Evidence section written without markers', () => {
+    // The marker-less fallback looks for the first line carrying a
+    // link — which a bracketed path used to hide from it, leaving the
+    // section as prose in the description and the finding unlocated.
+    const f = parseMarkdownFindings([
+      '# T', '',
+      '## Evidence',
+      'See the handler:',
+      REF,
+      'and the loader.',
+      '',
+      '---', '**Severity:** medium',
+    ].join('\n')).findings[0]
+    assert.equal(f.evidence.length, 1)
+    assert.equal(f.evidence[0].file, 'a/b/src/app/(main)/c/[id]/index.ts')
+    assert.equal(f.evidence[0].url, URL)
+    assert.equal(f.evidence[0].text, 'See the handler:\nand the loader.')
+  })
+
+  it('starts at the first real link, not at the first bracket', () => {
+    // A bracket pair that closes with no `(` behind it is not a
+    // label — `[context]` here — and the reading has to carry on past
+    // it rather than swallow it into the next link's label.
+    const f = located('[context] see [src/a.ts:7](https://example.com/a.ts#L7)')
+    assert.equal(f.file, 'src/a.ts')
+    assert.equal(f.line, '7')
+    assert.equal(f.location, 'https://example.com/a.ts#L7')
+  })
+
+  it('keeps a url whose own paren never closes', () => {
+    // No balanced reading of that url exists, so it is read to the
+    // first `)` — how it was read before there was a scanner.
+    const f = located('[src/(legacy/file.ts:7](https://example.com/src/(legacy/file.ts#L7)')
+    assert.equal(f.file, 'src/(legacy/file.ts')
+    assert.equal(f.line, '7')
+    assert.equal(f.location, 'https://example.com/src/(legacy/file.ts#L7')
+  })
+
+  it('takes a url whose own parens nest', () => {
+    const f = located('[src/a(foo(bar)).ts:7](https://example.com/a(foo(bar)).ts#L7)')
+    assert.equal(f.file, 'src/a(foo(bar)).ts')
+    assert.equal(f.line, '7')
+    assert.equal(f.location, 'https://example.com/a(foo(bar)).ts#L7')
+  })
+
+  it('keeps a path whose bracket never closes', () => {
+    // No balanced reading of these brackets exists, so the label is
+    // read up to the first `]` — which is how this was read before
+    // there was a scanner, and the path survives whole.
+    const f = located('[src/[id.ts:7](https://example.com/x#L7)')
+    assert.equal(f.file, 'src/[id.ts')
+    assert.equal(f.line, '7')
+    assert.equal(f.location, 'https://example.com/x#L7')
+    // The same rule, applied to a label that is prose rather than a
+    // path: it reads as it always did, to the first `]`, rather than
+    // the scanner picking the link out of the middle of it.
+    assert.equal(located('[unclosed [src/a.ts:7](https://example.com/a.ts#L7)').file, 'unclosed [src/a.ts')
+  })
+
+  it('reads past a badge to the reference behind it', () => {
+    // An empty label is no label, and an empty destination no
+    // destination — which is what lets the reading reach the second
+    // link here rather than stopping at the image in front of it.
+    const f = located('![](badge.svg) [src/a.ts:7](https://example.com/a.ts#L7)')
+    assert.equal(f.file, 'src/a.ts')
+    assert.equal(f.line, '7')
+    assert.equal(f.location, 'https://example.com/a.ts#L7')
+    assert.equal(located('[]() [src/b.ts:9](https://example.com/b.ts#L9)').file, 'src/b.ts')
+  })
+
+  it('still leaves a line with no link as the raw text it is', () => {
+    const f = located('a/b/app/(main)/[id]/index.ts:12')
+    assert.equal(f.file, 'a/b/app/(main)/[id]/index.ts')
+    assert.equal(f.line, '12')
+    assert.equal(f.location, 'a/b/app/(main)/[id]/index.ts:12')
+  })
+})
+
+// The compatibility property every one of the readings above exists to
+// keep: a line the expression this replaced could read still reads the
+// same way. That expression is the reference below — it is the whole
+// of what parse-md.js did before `findMdLink`, so wherever it matched,
+// the scanner has to match at the same place with the same label.
+//
+// The url is compared with `startsWith` rather than for equality,
+// because the one thing the scanner is allowed to do better is finish
+// a url the old class cut short: `…/a(foo(bar)).ts#L7` came back as
+// `…/a(foo(bar` (the class stopped at the first `)`), and now comes
+// back whole. Every other shape has to be untouched.
+describe('findMdLink — nothing the old expression read reads differently', () => {
+  const OLD = /\[([^\]]+)\]\(([^)\s]+)\)/u
+
+  const labels = [
+    'src/a.ts:7', 'app/(main)/x.ts:7', 'app/(main)/[id]/x.ts:7', 'src/[id.ts:7', 'src/a]b.ts:7',
+    'a/b/\\[id\\]/x.ts:7', '`src/[id.ts:7`', '`app/(main)/[id]/x.ts:7`', 'a/b/\\_c\\_/x.ts:10', 'x', '',
+  ]
+  const urls = [
+    'https://e.com/a.ts#L7', 'https://e.com/app/(main)/a.ts#L7', 'https://e.com/a(foo(bar)).ts#L7',
+    'https://e.com/src/(legacy/a.ts#L7', 'https://e.com/%28main%29/%5Bid%5D/a.ts#L7-L9',
+    'https://e.com/a.ts', '',
+  ]
+  // The positions a reference turns up in: alone on the line, behind
+  // prose (bracketed or not), ahead of it, as a list item — and behind
+  // another LINK, which is how a badge sits at the head of a row and
+  // the dimension whose absence here let an empty one through.
+  const around = [
+    (l) => l, (l) => `[context] see ${l}`, (l) => `${l} and more`, (l) => `see ${l} here`, (l) => `- ${l}`,
+    (l) => `![](badge.svg) ${l}`, (l) => `![badge](b.svg) ${l}`, (l) => `[]() ${l}`, (l) => `[x](y) ${l}`,
+  ]
+
+  it('matches where it matched, on every shape these spell', () => {
+    let read = 0
+    for (const label of labels) {
+      for (const url of urls) {
+        for (const place of around) {
+          const line = place(`[${label}](${url})`)
+          const old = OLD.exec(line)
+          if (!old) continue
+          read++
+          const now = findMdLink(line)
+          assert.ok(now, `no link read in ${JSON.stringify(line)}`)
+          assert.equal(now.index, old.index, line)
+          assert.equal(now.label, old[1], line)
+          assert.ok(now.url.startsWith(old[2]), `${JSON.stringify(now.url)} does not extend ${JSON.stringify(old[2])}`)
+        }
+      }
+    }
+    // A guard on the guard: if the shapes above stop reaching the old
+    // expression, the loop asserts nothing and says so.
+    assert.ok(read > 300, `only ${read} of these shapes reached the old expression`)
+  })
+})
+
+// A reference is a short line; a malformed document's need not be, and
+// every reading here is a scan to the end when nothing closes it. Read
+// per candidate, that was quadratic — 50k of `[` and nothing else took
+// ~3s to come back null, and a run of `[x](` with no `)` in it ~10s,
+// each bracket paying for the remainder of the line again. The closing
+// positions are read off the text once instead.
+//
+// The bound is deliberately loose — 50x the linear cost on this input,
+// which is ~20ms — so this fails on the shape of the work rather than
+// on how busy the machine is. Quadratic would need ~50s here.
+describe('findMdLink — a malformed line is read once, not per bracket', () => {
+  const under = (ms, text) => {
+    const started = process.hrtime.bigint()
+    assert.equal(findMdLink(text), null)
+    const took = Number(process.hrtime.bigint() - started) / 1e6
+    assert.ok(took < ms, `${text.length} characters took ${took.toFixed(0)}ms`)
+  }
+
+  it('rejects a line of nothing but brackets', () => under(1000, '['.repeat(50_000)))
+  it('rejects a line of openings that never close', () => under(1000, '[x]('.repeat(12_500)))
+  it('rejects a line of nested openings', () => under(1000, '([x]('.repeat(10_000)))
+
+  it('rejects a line of code fences that never close', () => {
+    // Runs of growing length, so no run closes any other: read per
+    // run, each one scanned the rest of the line for a fence of its
+    // own length, which took ~5s over 20k characters.
+    let text = ''
+    for (let n = 1; text.length < 20_000; n++) text += `${'`'.repeat(n)}x`
+    under(1000, text)
   })
 })

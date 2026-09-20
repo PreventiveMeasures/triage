@@ -45,7 +45,7 @@
 // unrecognized).
 
 import { frozenIdBasis } from './parse-md-id.js'
-import { splitHeadingLine, unescapeMd } from './md-structure.js'
+import { findMdLink, splitHeadingLine, unescapeMd } from './md-structure.js'
 
 const VALID_SEVERITIES = new Set(['critical', 'high', 'medium', 'low', 'high_bug', 'bug', 'informational'])
 
@@ -209,10 +209,15 @@ function parseMeta(metaText) {
 // the same finding produce the same UUID and dedupe / share triage.
 function parseLocation(loc) {
   let file = '', line = '?', locationLink = ''
-  const linkMatch = loc.match(/\[([^\]]+)\]\(([^)\s]+)\)/u)
-  if (linkMatch) {
-    file = linkMatch[1].trim()
-    locationLink = linkMatch[2].trim()
+  // md-structure.js reads the link, brackets and parens and all: a
+  // path like `app/(main)/[id]/page.ts` is ordinary in a Next.js tree,
+  // and read with a label class that stops at the first `]` it matched
+  // nothing at all — the whole `[…](…)` text became the file name, the
+  // line came back `?`, and an evidence row got no url.
+  const link = findMdLink(loc)
+  if (link) {
+    file = link.label.trim()
+    locationLink = link.url.trim()
     const lineFromUrl = locationLink.match(/#L(\d+)(?:-L?(\d+))?/u)
     if (lineFromUrl) line = lineFromUrl[2] ? `${lineFromUrl[1]}-${lineFromUrl[2]}` : lineFromUrl[1]
   } else {
@@ -234,7 +239,10 @@ function parseLocation(loc) {
     file = colonMatch[1]
     if (line === '?') line = colonMatch[3] ? `${colonMatch[2]}-${colonMatch[3]}` : colonMatch[2]
   }
-  return { file, line, locationLink }
+  // `linked` is how the row came in, which the caller can't tell from
+  // `locationLink` alone: the no-link fallback puts the raw text there
+  // as well, and that is an id discriminator, not an href.
+  return { file, line, locationLink, linked: link !== null }
 }
 
 // Rows of an `## Evidence` section, in document order. A row leads with
@@ -255,7 +263,6 @@ function parseLocation(loc) {
 // free prose yields no rows at all, and parseBlock leaves it in the
 // description as written rather than promoting a sentence to a path.
 const EVIDENCE_ITEM_RE = /^[ \t]*(?:\d+[.)]|[-*+])\s+/u
-const MD_LINK_RE = /\[[^\]]+\]\([^)\s]+\)/u
 
 function evidenceRows(text) {
   const rows = []
@@ -265,7 +272,7 @@ function evidenceRows(text) {
   }
   if (rows.length === 0) {
     const bare = text.split('\n').map((l) => l.trim()).filter(Boolean)
-    const at = bare.findIndex((l) => MD_LINK_RE.test(l))
+    const at = bare.findIndex((l) => findMdLink(l) !== null)
     if (at === -1 && bare.length !== 1) return []
     const refAt = at === -1 ? 0 : at
     rows.push({ ref: bare[refAt], note: bare.filter((_, i) => i !== refAt) })
@@ -278,9 +285,9 @@ function evidenceRows(text) {
 // markdown link — parseLocation's raw-text fallback is an id
 // discriminator, not something to hand a renderer as an href.
 function evidenceEntry({ ref, note }) {
-  const { file, line, locationLink } = parseLocation(ref)
+  const { file, line, locationLink, linked } = parseLocation(ref)
   const entry = { file: file || 'unknown', line }
-  if (locationLink && MD_LINK_RE.test(ref)) entry.url = locationLink
+  if (locationLink && linked) entry.url = locationLink
   const text = note.join('\n')
   if (text) entry.text = text
   return entry
