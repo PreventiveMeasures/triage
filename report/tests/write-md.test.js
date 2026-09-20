@@ -331,10 +331,12 @@ describe('writeMarkdown — a finding\'s facts', () => {
   })
 
   it('stamps the revalidation outcome, and the pass\'s own row', () => {
-    const md = writeMarkdown(doc([[finding({ revalidate: 'Refuted ' })], [finding({ id: 'f2', revalidate: 'revalidation' })]]))
+    const md = writeMarkdown(doc([[finding({ revalidate: 'refuted' })], [finding({ id: 'f2', revalidate: 'revalidation' })]]))
     assert.match(md, /- \*\*Revalidation:\*\* refuted$/mu)
     assert.match(md, /- \*\*Revalidation:\*\* the revalidation pass itself$/mu)
-    assert.equal(line(writeMarkdown(doc([[finding({ revalidate: 'maybe' })]])), 'Revalidation'), null, 'an unrecognised value is no stamp')
+    for (const bad of ['maybe', 'Refuted ']) {
+      assert.equal(line(writeMarkdown(doc([[finding({ revalidate: bad })]])), 'Revalidation'), null, `${bad} is no stamp`)
+    }
   })
 
   it('names whose pass a stamp came from, where it wasn\'t the report\'s own', () => {

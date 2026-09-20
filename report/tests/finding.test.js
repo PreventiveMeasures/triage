@@ -8,19 +8,26 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { REVALIDATE_KINDS, SEVERITIES, SEVERITY_ORDER, correctedVariants, displayedSeverity, effectiveSeverity, hasSeverityCorrection, prettyModel, revalidateKindOf, runMetaLine, splitDescription } from '../index.js'
+import { REVALIDATE_KINDS, SEVERITIES, SEVERITY_ORDER, correctedVariants, displayedSeverity, effectiveSeverity, hasSeverityCorrection, prettyModel, revalidateKindOf, runMetaLine, splitDescription, stripExportMarker } from '../index.js'
 
 describe('revalidateKindOf', () => {
-  it('reads the stamp as the data has it, case-folded and trimmed', () => {
-    for (const kind of REVALIDATE_KINDS) {
-      assert.equal(revalidateKindOf({ revalidate: kind }), kind)
-      assert.equal(revalidateKindOf({ revalidate: ` ${kind.toUpperCase()} ` }), kind)
-    }
+  it('reads the stamp as the data has it', () => {
+    for (const kind of REVALIDATE_KINDS) assert.equal(revalidateKindOf({ revalidate: kind }), kind)
   })
 
   it('answers nothing for an unrecognised or missing value', () => {
     for (const bad of ['maybe', '', 42, null, undefined]) assert.equal(revalidateKindOf({ revalidate: bad }), '')
     assert.equal(revalidateKindOf(undefined), '')
+  })
+
+  // The field is one of those words, spelt as they are spelt — a
+  // spelling that drifted is a document's problem, and the document's
+  // reader is where it is folded back (parse-deepview-md.test.js). A
+  // reader this side of that boundary takes the analyzer at its word.
+  it('does not case-fold a value that is not one of them', () => {
+    for (const drifted of [' refuted', 'Refuted', 'REFUTED', 'refuted ']) {
+      assert.equal(revalidateKindOf({ revalidate: drifted }), '', JSON.stringify(drifted))
+    }
   })
 })
 
@@ -74,5 +81,49 @@ describe('splitDescription — a fence at the top', () => {
     const description = '```ts\nconst a = 1\n```\n\nProse under it.'
     assert.deepEqual(splitDescription({ description }), { title: '', body: description })
     assert.deepEqual(splitDescription({ description: 'Title\n\n```ts\nx\n```' }), { title: 'Title', body: '```ts\nx\n```' })
+  })
+})
+
+// The markers the exports pipeline injects into a finding's prose, and
+// the order the two strips run in. Nothing covered this before, which
+// is how a pass that merged them — checking each name's prefix before
+// the other name's marker came off — got as far as review.
+describe('stripExportMarker', () => {
+  const f = { exportName: 'Foo', methodName: 'bar' }
+
+  it('takes a marker off, for either name', () => {
+    assert.equal(stripExportMarker('[export: Foo] Finding text', f), 'Finding text')
+    assert.equal(stripExportMarker('[export: bar] Finding text', f), 'Finding text')
+    assert.equal(stripExportMarker('text with [export: bar] inside', f), 'text with inside')
+  })
+
+  it('takes a `(name): ` prefix off, backticked or not', () => {
+    assert.equal(stripExportMarker('(Foo): Finding text', f), 'Finding text')
+    assert.equal(stripExportMarker('(`Foo`): Finding text', f), 'Finding text')
+    assert.equal(stripExportMarker('(bar): Finding text', f), 'Finding text')
+  })
+
+  // The ordering: a prefix can sit BEHIND a marker naming the OTHER
+  // name, and the prefix strip only looks at the front of the text. So
+  // every marker comes off before any prefix is looked for.
+  it('reaches a prefix behind the other name\'s marker', () => {
+    assert.equal(stripExportMarker('[export: bar] (Foo): Finding text', f), 'Finding text')
+    assert.equal(stripExportMarker('[export: Foo] (bar): Finding text', f), 'Finding text')
+    assert.equal(stripExportMarker('[export: bar] (`Foo`): Finding text', f), 'Finding text')
+  })
+
+  // Isolate mode injects a marker naming a sibling export, which is
+  // not this finding's name at all — those come off by shape.
+  it('takes isolate mode\'s own prefixes off whatever they name', () => {
+    const iso = { ...f, exportsMode: 'isolate' }
+    assert.equal(stripExportMarker('[export: other] Finding text', iso), 'Finding text')
+    assert.equal(stripExportMarker('(Other): [export: other] Finding text', iso), 'Finding text')
+    assert.equal(stripExportMarker('[export: other] Finding text', f), '[export: other] Finding text', 'and only in that mode')
+  })
+
+  it('leaves prose that carries neither', () => {
+    assert.equal(stripExportMarker('Finding text', f), 'Finding text')
+    assert.equal(stripExportMarker('', f), '')
+    assert.equal(stripExportMarker(undefined, f), undefined)
   })
 })

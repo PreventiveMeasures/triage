@@ -3,7 +3,8 @@
 // parse-piolium.js, which owns the document structure; everything here
 // is a pure string classifier.
 
-import { stripBrackets } from './md-structure.js'
+import { isCommitHash, stripBrackets } from './md-structure.js'
+import { isRepoSlug } from './meta.js'
 
 // Piolium grades findings CRITICAL / HIGH / MEDIUM (a consistency check
 // in its report assembler rejects Low-severity leakage into
@@ -163,12 +164,12 @@ export function preambleMeta(head) {
   const target = /^\s*(?:[-*] +)?\*\*Target:?\*\*\s*(.*)$/imu.exec(head || '')
   if (target) {
     const v = value(target[1])
-    if (/^[\w.-]+\/[\w.-]+$/u.test(v)) meta.repo = v
+    if (isRepoSlug(v)) meta.repo = v
   }
   const commit = /^\s*(?:[-*] +)?\*\*Commit[^:*]*:?\*\*\s*(.*)$/imu.exec(head || '')
   if (commit) {
     const v = value(commit[1])
-    if (/^[0-9a-f]{7,64}$/iu.test(v)) meta.commitHash = v
+    if (isCommitHash(v)) meta.commitHash = v
   }
   return meta
 }

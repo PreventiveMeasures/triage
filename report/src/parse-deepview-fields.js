@@ -15,7 +15,7 @@
 
 import { REVALIDATE_KINDS, firstLine } from './finding.js'
 import { SEVERITY_LABELS, SOURCE_LABELS } from './labels.js'
-import { fenceRanges, findMdLink, inFence } from './md-structure.js'
+import { FILE_LINE_RE, fenceRanges, findMdLink, inFence, isCommitHash } from './md-structure.js'
 import { isHttpUrl, unescapeHeadings } from './md-text.js'
 
 // label (case-folded) → key, for the words the writer spells the app's
@@ -31,7 +31,7 @@ const REVALIDATE_SET = new Set(REVALIDATE_KINDS)
 // content (md-text.js code) — always more than any run inside it, so
 // the first closing run of that length is the fence — and a space of
 // padding on each side when the content itself starts or ends on one.
-export function codeSpan(s) {
+function codeSpan(s) {
   const m = /(`+)(.+?)\1(?!`)/u.exec(String(s ?? ''))
   if (!m) return null
   const inner = m[2]
@@ -62,7 +62,7 @@ function autolinkUrl(s) {
 // `10-20` range, `?` when the label carried none (finding.js
 // locationLabel).
 function fileLine(label) {
-  const m = /^(.+):(\d+(?:-\d+)?)$/u.exec(label)
+  const m = FILE_LINE_RE.exec(label)
   return m ? { file: m[1], line: m[2] } : { file: label, line: '?' }
 }
 
@@ -86,7 +86,7 @@ export function tierOf(label) {
 // then the export it sits in (write-md-finding.js locationText). The
 // link is the report's own location link (finding.js: `location`),
 // which the card links to in preference to anything reconstructed.
-export function readLocation(value) {
+function readLocation(value) {
   const out = {}
   let s = value.trim()
   const named = / · (`+)(.+?)\1$/u.exec(s)
@@ -110,7 +110,7 @@ const VARIES = ' (varies across reports — '
 // the line reads `Medium — corrected to High`; either way it says which
 // is which. The per-report variants are the viewer's own bookkeeping
 // of a workspace merge, not a finding's field.
-export function readSeverity(value) {
+function readSeverity(value) {
   const out = {}
   let s = value.trim()
   if (s.endsWith(CRITICAL_FLAG)) {
@@ -184,7 +184,7 @@ function readCommit(value) {
   const link = readLink(value.trim())
   if (link) {
     const tail = link.url.split('/').at(-1) ?? ''
-    if (/^[0-9a-f]{7,64}$/iu.test(tail)) return tail
+    if (isCommitHash(tail)) return tail
     return codeSpan(link.label) ?? tail
   }
   return codeSpan(value) ?? value.trim()

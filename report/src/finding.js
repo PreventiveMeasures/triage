@@ -118,19 +118,24 @@ export function correctedVariants(f) {
 // revalidation pass rather than one it judged. It carries no verdict of
 // its own.
 //
-// Values are case-folded and trimmed: these arrive from JSON a report
-// generator wrote, and an unrecognised one answers "no stamp" rather
-// than leaking into a display.
+// One of these words or nothing: an unrecognised value answers "no
+// stamp" rather than leaking into a display.
 export const REVALIDATE_KINDS = ['revalidation', 'refuted', 'unreachable', 'confirmed', 'partial', 'unknown']
 const REVALIDATE_SET = new Set(REVALIDATE_KINDS)
 
-// The row's revalidation outcome as the DATA has it — case-folded, or ''
-// when it carries none (an unrecognised value included). The viewer's
-// `revalidateKind` (format.js) is this behind the layer switch; readers
-// that must see the field whatever the switch says come here.
+// The row's revalidation outcome as the DATA has it, or '' when it
+// carries none. The viewer's `revalidateKind` (format.js) is this
+// behind the layer switch; readers that must see the field whatever the
+// switch says come here.
+//
+// Read as written. `Refuted ` is not this field's value — the field is
+// one of the words above, spelt as they are spelt. A DOCUMENT is where
+// a spelling can drift, because a person can edit one, and that is
+// where it is folded back (parse-deepview-fields.js readRevalidation);
+// past that boundary the value is the analyzer's own, and a reader that
+// case-folds it says the opposite.
 export function revalidateKindOf(f) {
-  const v = typeof f?.revalidate === 'string' ? f.revalidate.trim().toLowerCase() : ''
-  return REVALIDATE_SET.has(v) ? v : ''
+  return REVALIDATE_SET.has(f?.revalidate) ? f.revalidate : ''
 }
 
 // Does this finding belong to the APP layer — the view of the code as
@@ -217,14 +222,15 @@ export function stripExportMarker(text, f) {
     result = result.replace(/^\[export:\s*\w+\] /u, '')
   }
   const names = [f?.exportName, f?.methodName].filter(Boolean)
-  for (const name of names) {
-    const escaped = name.replaceAll(/[.*+?^${}()|[\]\\]/gu, '\\$&')
-    result = result.replaceAll(new RegExp(`\\[export:\\s*${escaped}\\]\\s*`, 'gu'), '')
-  }
-  for (const name of names) {
-    const escaped = name.replaceAll(/[.*+?^${}()|[\]\\]/gu, '\\$&')
-    result = result.replace(new RegExp(`^\\(\`?${escaped}\`?\\): `, 'u'), '')
-  }
+    .map((name) => name.replaceAll(/[.*+?^${}()|[\]\\]/gu, '\\$&'))
+  // Every marker first, then the prefixes. The two passes are ordered,
+  // not merely grouped: a `(Foo): ` prefix can sit BEHIND a marker
+  // naming the OTHER name — `[export: bar] (Foo): …` — and the prefix
+  // strip only ever looks at the front of the text, so a per-name pass
+  // that checked the prefix before the other name's marker came off
+  // would leave it there.
+  for (const name of names) result = result.replaceAll(new RegExp(`\\[export:\\s*${name}\\]\\s*`, 'gu'), '')
+  for (const name of names) result = result.replace(new RegExp(`^\\(\`?${name}\`?\\): `, 'u'), '')
   return result
 }
 
@@ -263,9 +269,14 @@ export function firstLine(text) {
   return ''
 }
 
+// The `title` a finding carries, trimmed — '' when it has none, or
+// none a reader can use. The three readers below all open on it.
+function ownTitle(f) {
+  return typeof f?.title === 'string' ? f.title.trim() : ''
+}
+
 export function findingTitle(f) {
-  const own = typeof f?.title === 'string' ? f.title.trim() : ''
-  return own || firstLine(stripExportMarker(f?.description, f))
+  return ownTitle(f) || firstLine(stripExportMarker(f?.description, f))
 }
 
 // Title + body for a heading-over-body layout.
@@ -285,7 +296,7 @@ export function findingTitle(f) {
 // `` ```ts `` heading.
 export function splitDescription(f) {
   const text = stripExportMarker(f?.description, f) || ''
-  const own = typeof f?.title === 'string' ? f.title.trim() : ''
+  const own = ownTitle(f)
   if (own) {
     const body = text.trim()
     const nl = body.indexOf('\n')
@@ -310,7 +321,7 @@ export function splitDescription(f) {
 // rather than a heading over a body. A finding that carries no `title`
 // gets its description back untouched.
 export function titledDescription(f) {
-  const own = typeof f?.title === 'string' ? f.title.trim() : ''
+  const own = ownTitle(f)
   if (!own) return stripExportMarker(f?.description, f) || ''
   const { body } = splitDescription(f)
   return body ? `${own}\n\n${body}` : own

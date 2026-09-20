@@ -247,11 +247,16 @@ describe('parseDeepviewMarkdown — the facts', () => {
   })
 
   it('reads the confidence and the revalidation stamp', () => {
-    const f = one({ findings: [finding({ confidence: 8, revalidate: 'Refuted ' })] })
+    const f = one({ findings: [finding({ confidence: 8, revalidate: 'refuted' })] })
     assert.equal(f.confidence, 8)
     assert.equal(f.revalidate, 'refuted')
     assert.equal(one({ findings: [finding({ confidence: 0 })] }).confidence, 0)
     assert.equal(one({ findings: [finding({ revalidate: 'revalidation' })] }).revalidate, 'revalidation', 'the pass\'s own row')
+    // A DOCUMENT is where a spelling can drift, because a person can
+    // edit one — so this reader folds, and is the only one that does
+    // (finding.js revalidateKindOf).
+    assert.equal(parseDeepviewMarkdown(exportOf({ findings: [finding()] })
+      .replace('- **Severity:** High', '- **Severity:** High\n- **Revalidation:** Refuted ')).findings[0].revalidate, 'refuted')
     // And whose pass it was, back off the product's own name.
     assert.equal(one({ findings: [finding({ revalidate: 'refuted', revalidateSource: 'deepsec' })] }).revalidateSource, 'deepsec')
     assert.equal(one({ findings: [finding({ revalidate: 'refuted', revalidateSource: 'acme' })] }).revalidateSource, 'acme')

@@ -67,13 +67,10 @@
 // naming every format it does read.
 
 import { locationLabel } from './finding.js'
-import { splitByHeading, splitLeading } from './md-structure.js'
+import { H2_RE, H3_RE, H4_RE, normalizeNewlines, splitByHeading, splitLeading } from './md-structure.js'
 import { applyFact, buildDescription, narrativeSplit, readAnalyzer, readEvidence, readProse, readRepository, splitFacts, splitSections, tierOf } from './parse-deepview-fields.js'
 
 const MARKER_RE = /^<!--\s*DeepView findings export\b[^>]*-->/u
-const H2_RE = /^## +(.*)$/gmu
-const H3_RE = /^### +(.*)$/gmu
-const H4_RE = /^#### +(.*)$/gmu
 const CASE_RE = /^Case \d+ of \d+(?:\s|$)/u
 const HEADER_FACT_RE = /^- \*\*([^*\n]+?):\*\* ?(.*)$/gmu
 
@@ -83,7 +80,7 @@ const HEADER_FACT_RE = /^- \*\*([^*\n]+?):\*\* ?(.*)$/gmu
 const OWN_SECTIONS = new Set(['evidence', 'severity correction', 'comment'])
 
 export function parseDeepviewMarkdown(content) {
-  const text = content.replaceAll(/\r\n?/gu, '\n').trim()
+  const text = normalizeNewlines(content).trim()
   if (!MARKER_RE.test(text)) return null
   const { head, subs } = splitLeading(text, H2_RE)
   const entries = []

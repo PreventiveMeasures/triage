@@ -45,12 +45,12 @@
 // unrecognized).
 
 import { frozenIdBasis } from './parse-md-id.js'
-import { findMdLink, splitHeadingLine, unescapeMd } from './md-structure.js'
+import { findMdLink, normalizeNewlines, splitHeadingLine, unescapeMd } from './md-structure.js'
 
 const VALID_SEVERITIES = new Set(['critical', 'high', 'medium', 'low', 'high_bug', 'bug', 'informational'])
 
 export function parseMarkdownFindings(content) {
-  const text = content.replaceAll(/\r\n?/gu, '\n').trim()
+  const text = normalizeNewlines(content).trim()
   // Cheap format guard: real markdown findings always start with an
   // h1. Anything else (random text, an empty file, a JSON-shaped blob
   // that failed to parse) returns null so the caller surfaces the

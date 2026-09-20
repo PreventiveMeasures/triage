@@ -18,6 +18,8 @@
 import { correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceNote, findingDisplayName, findingTitle, firstLine, hasSeverityCorrection, locationLabel, revalidateKindOf, runMetaLine, splitDescription, stripExportMarker } from './finding.js'
 import { COLOR_LABELS, SOURCE_LABELS, TRIAGE_LABELS, severityLabel } from './labels.js'
 import { autolink, code, heading, indentUnder, isHttpUrl, joinBlocks, link, plural, prose } from './md-text.js'
+import { isRepoSlug } from './meta.js'
+import { normalizeNewlines } from './md-structure.js'
 
 // A heading has to fit on a line. A JSON finding whose whole
 // description is one paragraph is NAMED by that paragraph — the row
@@ -35,7 +37,7 @@ export function findingHeading(f) {
 export function repoRef(repo) {
   const s = String(repo ?? '').trim()
   if (isHttpUrl(s)) return autolink(s)
-  return /^[\w.-]+\/[\w.-]+$/u.test(s) ? link(s, `https://github.com/${s}`) : s
+  return isRepoSlug(s) ? link(s, `https://github.com/${s}`) : s
 }
 
 // What produced the finding, as the document names it. A finding out
@@ -222,7 +224,7 @@ function descriptionBlocks(f, ctx, depth) {
   const split = splitDescription(f)
   // Line endings first: the paragraph split below reads blank lines,
   // and a `\r\n\r\n` a JSON report wrote is not one to it.
-  const body = split.body.replaceAll(/\r\n?/gu, '\n')
+  const body = normalizeNewlines(split.body)
   // A one-line description IS the heading; printing it again under the
   // heading is a stutter. A heading that could not carry the whole name
   // (HEADING_MAX) has the body open on it instead — then the only place

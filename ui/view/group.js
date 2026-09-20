@@ -81,12 +81,11 @@ export function mergeDuplicateFields(survivor, dup) {
     if (key.startsWith('_') || KEEPS_ITS_OWN.has(key)) continue
     if (value === undefined || value === null) continue
     // The stamp is compared as the app READS it, not as the file
-    // wrote it: the reader trims and case-folds, and answers "no
-    // stamp" for anything it doesn't recognise (report/src/finding.js
-    // revalidateKindOf). So `confirmed` and ` Confirmed ` agree, and
-    // a value the app can't read is no answer at all — it neither
-    // blocks the other copy's real stamp from landing nor takes the
-    // layer off a whole workspace for a typo.
+    // wrote it: the reader answers "no stamp" for anything that isn't
+    // one of the words (report/src/finding.js revalidateKindOf), so a
+    // value the app can't read is no answer at all — it neither blocks
+    // the other copy's real stamp from landing nor takes the layer off
+    // a whole workspace for a typo.
     if (key === 'revalidate') {
       const theirs = revalidateKindOf(dup)
       if (!theirs) continue
