@@ -1,11 +1,11 @@
 // Shared structural-markdown helpers for the report parsers: fence-
 // aware heading splitting, table reading, and labelled-field
-// extraction. Extracted from parse-piolium.js, which needs all of them;
-// parse-md.js and parse-deepsec.js predate this module and, beyond the
-// heading-line split, keep their own (subtly different) section and
-// label readers — fold those in only with their behavior pinned by
-// tests first, since finding ids are derived from parser output and a
-// drift in parsing silently re-keys stored triage.
+// extraction. parse-piolium.js reads through all of them; parse-md.js
+// and parse-deepsec.js share only the heading-line split and keep their
+// own (subtly different) section and label readers — fold those in only
+// with their behavior pinned by tests first, since finding ids are
+// derived from parser output and a drift in parsing silently re-keys
+// stored triage.
 
 // Byte ranges of fenced code blocks (``` / ~~~), fences included. The
 // closing fence must use the opening marker, so a `~~~` line inside a
@@ -309,12 +309,10 @@ export function stripBold(text) { return text.replaceAll('**', '') }
 //
 // At each `[`, the label is read two ways, in this order:
 //
-//   1. up to the FIRST `]`, which is how this was read before there
-//      was a scanner. Every line that parsed then parses the same way
-//      now, and it is the reading a path with an UNMATCHED bracket
-//      needs: `[`src/[id.ts:7`](…)` is what this library's own writer
-//      emits for such a path (write-md-finding.js), and no balanced
-//      reading of those brackets exists;
+//   1. up to the FIRST `]`, the reading a path with an UNMATCHED
+//      bracket needs: `[`src/[id.ts:7`](…)` is what this library's own
+//      writer emits for such a path (write-md-finding.js), and no
+//      balanced reading of those brackets exists;
 //   2. bracket-BALANCED, markdown's own rule, which is what a path
 //      carrying brackets of its own needs —
 //      `[app/(main)/[id]/page.ts:12](…)` is one link labelled with
@@ -330,14 +328,14 @@ export function stripBold(text) { return text.replaceAll('**', '') }
 // The DESTINATION is `<…>` — what md-text.js `link` writes when a url
 // holds a space, a paren or an angle bracket — or, failing that, a bare
 // run read the same two ways the label is, and for the same reasons:
-// parens BALANCED to any depth first, since a class that merely stops
-// at the first `)` truncates a url the writer never percent-encoded
-// (`…/app/(main)/page.ts` → `…/app/(main`), then up to the first `)`
-// as this was read before, which is the only reading a url with an
-// UNMATCHED paren has — a `src/(legacy/file.ts` path a report left
-// unencoded. Whitespace disqualifies a bare destination under either
-// reading, where markdown would read a title and nothing here writes
-// one, so that candidate is abandoned and the scan carries on.
+// parens BALANCED to any depth first, since a reading that stops at the
+// first `)` truncates a url the writer never percent-encoded
+// (`…/app/(main)/page.ts` → `…/app/(main`), then up to the first `)`,
+// the only reading a url with an UNMATCHED paren has — a
+// `src/(legacy/file.ts` path a report left unencoded. Whitespace
+// disqualifies a bare destination under either reading, where markdown
+// would read a title and nothing here writes one, so that candidate is
+// abandoned and the scan carries on.
 //
 // A backslash hides the character after it from every scan here, which
 // is how a report escapes a bracket it means literally.
@@ -351,10 +349,9 @@ export function findMdLink(s) {
   // Where each reading would CLOSE, read off the text once rather than
   // rescanned per candidate. A reference is a short line, but a
   // malformed document's need not be, and every reading here is a scan
-  // to the end when nothing closes it: 50k of `[` and nothing else took
-  // 3s to come back null, a run of `[x](` with no `)` in it 10s, each
-  // bracket paying for the remainder of the line again. One pass apiece
-  // instead.
+  // to the end when nothing closes it — 50k of `[` with no `]`, or a
+  // run of `[x](` with no `)`, would cost every bracket the remainder
+  // of the line. One pass apiece instead.
   const labels = balancedLabelEnds(text, codeSpanEnds(text))
   const dests = destinationEnds(text)
   let plain = text.indexOf(']')
@@ -364,9 +361,7 @@ export function findMdLink(s) {
     while (plain !== -1 && plain <= open) plain = text.indexOf(']', plain + 1)
     for (const close of [plain, labels.get(open) ?? -1]) {
       // An EMPTY label is no label: `![](badge.svg)` ahead of a
-      // reference is a badge, and the expression this replaced — which
-      // wanted a character in both halves — read past it to the real
-      // link. So does this.
+      // reference is a badge, and the link wanted is the one behind it.
       if (close === -1 || close === open + 1 || text[close + 1] !== '(') continue
       const url = destination(text, close + 1, dests)
       if (url !== null) return { label: text.slice(open + 1, close), url, index: open }
@@ -402,7 +397,7 @@ function balancedLabelEnds(text, spans) {
 // Read backwards over the runs, each remembering the nearest one of
 // its own length ahead of it, so a line of unmatched runs of growing
 // lengths — `` `x``x```x… `` — costs one pass rather than a scan to
-// the end of the line per run, which took 4.8s over 20k characters.
+// the end of the line per run.
 function codeSpanEnds(text) {
   const runs = []
   for (let i = text.indexOf('`'); i !== -1; i = text.indexOf('`', i)) {
@@ -432,8 +427,8 @@ function destinationEnds(text) {
   const nextClose = new Int32Array(n + 1).fill(-1)
   const nextSpace = new Int32Array(n + 1).fill(-1)
   // …and what ends an angle-bracket one, for the same reason: looked
-  // up per candidate, a line of `[x](<` with no `>` in it scanned to
-  // the end once per bracket — 1.5s over 800k characters.
+  // up per candidate, a line of `[x](<` with no `>` in it would scan
+  // to the end once per bracket.
   const nextAngle = new Int32Array(n + 1).fill(-1)
   const nextLine = new Int32Array(n + 1).fill(-1)
   for (let i = n - 1; i >= 0; i--) {
@@ -462,19 +457,17 @@ function destinationEnds(text) {
 // The destination opened at `open` (its `(`), as its url, or null when
 // nothing reads it: an angle-bracket form, else the bare run its own
 // parens close, else the bare run the first `)` closes. An EMPTY
-// destination is none of them — `[a]()` was not a link to the
-// expression this replaced either — and an empty `<>` falls through to
-// the bare readings, which take the angle brackets themselves as the
-// url, as that expression did.
+// destination is none of them — `[a]()` is not a link — while an empty
+// `<>` falls through to the bare readings, which take the angle
+// brackets themselves as the url.
 function destination(text, open, dests) {
   const angled = angleDestination(text, open, dests)
   if (angled) return angled
   const balanced = dests.balanced.get(open)
   if (balanced !== undefined) return balanced > open + 1 ? text.slice(open + 1, balanced) : null
-  // Failing that, up to the first `)` — how this was read before there
-  // was a scanner, and the only reading a url with an UNMATCHED paren
-  // has. Whitespace before that `)` disqualifies it, where markdown
-  // would read a title and nothing here writes one.
+  // Failing that, up to the first `)` — the only reading a url with an
+  // UNMATCHED paren has. Whitespace before that `)` disqualifies it,
+  // where markdown would read a title and nothing here writes one.
   const flat = dests.nextClose[open + 1]
   const space = dests.nextSpace[open + 1]
   if (flat === -1 || flat === open + 1 || (space !== -1 && space < flat)) return null

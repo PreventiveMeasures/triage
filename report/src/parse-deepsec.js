@@ -111,11 +111,10 @@ const word = (s) => String(s ?? '').toLowerCase().replaceAll(/[^a-z]+/gu, '')
 // in the GAPS, one step under the lowest rung it is keeping: 7 for a
 // report big enough that only the highs fit, 5 for a small one that
 // keeps its mediums too, 0 for one with nothing under the ladder to
-// hide. The 2/5/8 ladder this replaces put medium below every floor
-// the tune can pick and left no gap under 8 for the walk to stop in,
-// so a DeepSec report's mediums were off screen at open whatever its
-// size; and it read low as a 2, next door to the 0 that means the
-// pass withdrew the claim, which is not what a self-rated low says.
+// hide. So a rung only ever moves together with the gap under it: pack
+// them tighter and the walk has nowhere to stop, and a tier every floor
+// the tune can pick sits above is off screen at open whatever the
+// report's size.
 const CONFIDENCE = new Map([['high', 8], ['medium', 6], ['low', 4]])
 
 // The rung a finding's word names. A word the ladder doesn't know
@@ -221,10 +220,9 @@ function parseBlock(block, severity) {
   // The path arrives backticked (`path/file.js`); the backticks are
   // notation, not part of it.
   const file = (fields.file || 'unknown').replace(/^`(.*)`$/u, '$1')
-  // First non-empty line only for now — the renderer takes a single
-  // `f.line`, and lineLink wraps it as a `#L<n>` anchor when a fileUrl
-  // is available. Surfacing additional lines could go into the
-  // expanded body later.
+  // First non-empty line only — the renderer takes a single `f.line`,
+  // and lineLink wraps it as a `#L<n>` anchor when a fileUrl is
+  // available. The siblings of a `26, 28` list are dropped.
   const line = (fields.lines || '').split(',').map((s) => s.trim()).find(Boolean) || '?'
 
   const finding = { file, line, severity, description: fullDescription }

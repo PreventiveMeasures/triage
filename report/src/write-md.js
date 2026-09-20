@@ -129,8 +129,8 @@ function viewText(view) {
     // Which app view: the pass's verdict standing in for the rows it
     // re-rated (the default on screen — those rows are folded under
     // it, here as there), or the detailed one that lists them. Said
-    // only where the caller answers, so a document written without
-    // the detail flag reads as it always did.
+    // only where the caller answers, so a caller that doesn't track
+    // the detail says the layer is applied and no more.
     if (view.revalidationDetail === true) parts.push('detailed app view — the revalidation pass is applied, with the rows it re-rated')
     else if (view.revalidationDetail === false) parts.push('app view — the revalidation pass is applied, standing in for the rows it re-rated')
     else parts.push('app view — the revalidation pass is applied')

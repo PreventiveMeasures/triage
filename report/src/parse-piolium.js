@@ -238,7 +238,7 @@ function parseFindingBlock(heading, body, index, pending, sev) {
   // A `### ` heading with NO id and NO index row of its own, holding
   // id-shaped `#### ` entries, is a CATEGORY grouping (`### Category
   // name` over `#### p10-015 — Title` blocks) — its entries are the
-  // findings, and emitting the heading itself produced one emptyish
+  // findings, and emitting the heading itself would add one emptyish
   // title-only result per category.
   const isCategory = parent !== null && !parent.id
     && subs.some((s) => !isVariantsHeading(s.heading) && headingHasId(s.heading))
@@ -299,9 +299,9 @@ function parseFindingsBody(body, sev, index, pending) {
   // An id/title table here is the INDEX in another position — the real
   // reports put the overview table under `## Findings by Severity` and
   // the full blocks under per-severity sections, so emitting rows
-  // eagerly double-reported every finding (bare row + full block). Rows
-  // merge into the index instead: blocks adopt their PoC / parent /
-  // severity, and the gated index fallback emits only ids no block
+  // eagerly would double-report every finding (bare row + full block).
+  // Rows merge into the index instead: blocks adopt their PoC, parent
+  // and severity, and the gated index fallback emits only ids no block
   // claimed. Rows without an id can't be index-keyed and defer via
   // pending, as do list items — the same both-forms rule.
   const rows = tableObjects(body).map(indexRowOf).filter((r) => r.id || r.title)

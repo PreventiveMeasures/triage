@@ -134,9 +134,9 @@ export function parseHeading(headingText) {
   if (bracket) {
     const tok = idFromToken(bracket[1].trim())
     if (tok) return { id: tok.id, title: bracket[2].trim() || slugTitle(tok.slug) || tok.id, link }
-    // Non-id bracket content keeps the loose behavior: the content is
-    // still a usable dedupe key for the seen-set even when it isn't a
-    // recognized scheme (`[SEC-001]`).
+    // Non-id bracket content is read loosely: it is still a usable
+    // dedupe key for the seen-set even when it isn't a recognized
+    // scheme (`[SEC-001]`).
     return { id: bracket[1].trim().toUpperCase(), title: bracket[2].trim(), link }
   }
   const lead = leadingId(text)
