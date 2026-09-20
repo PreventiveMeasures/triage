@@ -258,10 +258,17 @@ export function parseLabelledFields(body) {
 export function parseCodeRef(raw) {
   let text = (raw || '').trim()
   let locationLink = ''
-  const link = /\[([^\]]+)\]\(([^)]+)\)/u.exec(text)
+  // Read the link the way findMdLink reads one — brackets, parens and
+  // all. Piolium cites paths a Next.js tree is full of
+  // (`app/(main)/[id]/page.ts`), and an expression whose label stops at
+  // the first `]` matched none of them: the whole `[…](…)` text became
+  // the file name, or the path came back off its code span with the
+  // url dropped. What the FINGERPRINT reads is the old expression,
+  // frozen in parse-piolium-id.js, so fixing this moves no ids.
+  const link = findMdLink(text)
   if (link) {
-    text = link[1].trim()
-    locationLink = link[2].trim()
+    text = link.label.trim()
+    locationLink = link.url.trim()
   }
 
   // A `#L<n>` anchor on the link is the most reliable line source (and

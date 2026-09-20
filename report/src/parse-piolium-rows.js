@@ -5,6 +5,7 @@
 // structure and the finding BLOCKS.
 
 import { cellValue, parseCodeRef, stripBold, tableObjects } from './md-structure.js'
+import { frozenIdBasis } from './parse-piolium-id.js'
 import {
   idCell, leadingId, leadingLink, mapSeverity, severityFromId, slugTitle,
 } from './parse-piolium-tokens.js'
@@ -48,6 +49,11 @@ export function fromIndexRow(row, sevFallback = '') {
   }
   if (locationLink) finding.location = locationLink
   else if (finding.file === 'unknown' && row.id) finding.location = `piolium:${row.id}`
+  // The fingerprint reads the same reference its own way — see
+  // parse-piolium-id.js.
+  finding._idBasis = frozenIdBasis({
+    severity, description: finding.description, ref: row.location || '', id: row.id,
+  })
   if (row.pocStatus) finding.pocStatus = row.pocStatus
   if (row.status) finding.status = row.status
   if (row.parent) finding.parent = row.parent

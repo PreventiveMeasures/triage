@@ -1342,3 +1342,55 @@ describe('parsePioliumFindings — no repo derivation', () => {
     }
   })
 })
+
+// Paths a Next.js tree is full of — `app/(main)/[id]/page.ts` — cited
+// the way this format cites any reference. Read with a link expression
+// whose label stops at the first `]`, none of them matched: the whole
+// `[…](…)` text became the file name, or the path came back off its
+// code span with the url dropped. The id keeps the old reading, frozen
+// (finding-id-piolium.test.js).
+describe('parsePioliumFindings — references with brackets and parens', () => {
+  const located = (location) => parsePioliumFindings([
+    '# Security Audit Report: example-project', '',
+    '## Summary of Findings', '',
+    '| ID | Title | Severity | PoC Status | Parent |', '|----|-------|----------|------------|--------|',
+    '| [H1] | A finding | HIGH | blocked | -- |', '',
+    '## Technical Findings Detail', '',
+    '### [H1] A finding', '',
+    `**Location:** ${location}`, '',
+  ].join('\n')).findings[0]
+
+  it('reads a route group and a dynamic segment', () => {
+    const f = located('[`app/(main)/[id]/page.ts:12`](https://github.com/o/r/blob/abc/app/%28main%29/%5Bid%5D/page.ts#L12)')
+    assert.equal(f.file, 'app/(main)/[id]/page.ts')
+    assert.equal(f.line, '12')
+    assert.equal(f.location, 'https://github.com/o/r/blob/abc/app/%28main%29/%5Bid%5D/page.ts#L12')
+  })
+
+  it('keeps the url of a reference whose path carries a bracket', () => {
+    // The path read correctly even before, off its code span — the url
+    // was what went missing, because the link expression never matched.
+    const f = located('[`src/[id]/route.ts:7`](https://github.com/o/r/blob/abc/src/%5Bid%5D/route.ts#L7)')
+    assert.equal(f.file, 'src/[id]/route.ts')
+    assert.equal(f.location, 'https://github.com/o/r/blob/abc/src/%5Bid%5D/route.ts#L7')
+  })
+
+  it('keeps a url whose own parens were never encoded', () => {
+    const f = located('[`src/x.ts:3`](https://github.com/o/r/blob/abc/app/(main)/x.ts#L3)')
+    assert.equal(f.location, 'https://github.com/o/r/blob/abc/app/(main)/x.ts#L3')
+  })
+
+  it('takes the angle-bracket form too', () => {
+    const f = located('[`src/[...slug]/page.ts:9`](<https://github.com/o/r/blob/abc/src/[...slug]/page.ts#L9>)')
+    assert.equal(f.file, 'src/[...slug]/page.ts')
+    assert.equal(f.line, '9')
+    assert.equal(f.location, 'https://github.com/o/r/blob/abc/src/[...slug]/page.ts#L9')
+  })
+
+  it('still reads a reference that is not a link at all', () => {
+    const f = located('`app/(main)/[id]/page.ts:12`')
+    assert.equal(f.file, 'app/(main)/[id]/page.ts')
+    assert.equal(f.line, '12')
+    assert.equal(f.location, undefined)
+  })
+})

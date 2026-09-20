@@ -76,6 +76,7 @@
 // finding (see md-structure.js).
 
 import { H2_RE, H3_RE, H4_RE, normalizeNewlines, parseCodeRef, parseLabelledFields, splitByHeading, splitLeading, tableObjects } from './md-structure.js'
+import { frozenIdBasis } from './parse-piolium-id.js'
 import { fromIndexRow, indexRowOf, listFindings, variantFindings } from './parse-piolium-rows.js'
 import {
   CODE_REF_FIELDS, codeRefOf, headerSeverity, idCell, idFromToken,
@@ -347,7 +348,7 @@ function parseBlock(heading, body, index, groupSeverity = '') {
   const ref = parseCodeRef(codeRefOf(fields))
   // A `**Line:**` / `**Lines:**` bullet supplies the line when the
   // reference itself carries none.
-  const lineBullet = /\d+/u.exec(fields.line || fields.lines || '')?.[0]
+  const lineBullet = /\d+/u.exec(fields.line || fields.lines || '')?.[0] ?? ''
   const line = ref.line === '?' && lineBullet ? lineBullet : ref.line
 
   // `- **Variant of** [p10-011](#p10-011) · …` names the parent, with
@@ -370,6 +371,14 @@ function parseBlock(heading, body, index, groupSeverity = '') {
   // Last-resort fingerprint discriminator for an unlocated finding —
   // see fromIndexRow for why.
   else if (finding.file === 'unknown' && id) finding.location = `piolium:${id}`
+  // The id fingerprint is parse-piolium-id.js's own reading of the
+  // same reference, not the one above: what `parseCodeRef` makes of a
+  // reference is presentation and free to improve, the fingerprint is
+  // not. finding-id.js prefers `_idBasis` when deriving the uuid; read
+  // that module's header before touching either side.
+  finding._idBasis = frozenIdBasis({
+    severity, description: finding.description, ref: codeRefOf(fields), lineBullet, id,
+  })
   // Auxiliary provenance kept as plain string fields. Nothing renders
   // these specifically today, but they let a future view (or a printed
   // export) cite the audit's own artifacts without re-parsing the

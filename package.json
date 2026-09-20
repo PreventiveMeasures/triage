@@ -94,6 +94,7 @@
     "report/src/parse-deepview-md.js",
     "report/src/parse-md-id.js",
     "report/src/parse-md.js",
+    "report/src/parse-piolium-id.js",
     "report/src/parse-piolium-rows.js",
     "report/src/parse-piolium-tokens.js",
     "report/src/parse-piolium.js",
