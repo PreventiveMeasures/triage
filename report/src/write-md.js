@@ -16,28 +16,26 @@
 //   - **Location:** …             the facts
 //   <description>  #### Evidence  #### Impact  …
 //
-// The header is the honest part. An export is a SELECTION — the current
-// triage view narrowed by whatever the toolbar filters were — and a
-// reader who wasn't at the screen has to be told that a file of 12
-// findings is 12 of 40, and which 28 are missing and why. So the filters
-// ride in the header, in the words the confirmation dialog used, and
-// the counts are the dialog's counts.
+// The header is the honest part. An export is a SELECTION — the triage
+// view narrowed by the toolbar filters — and a reader who wasn't at the
+// screen has to be told that a file of 12 findings is 12 of 40, and
+// which 28 are missing and why. So the filters ride in the header, in
+// the confirmation dialog's own words and counts.
 //
-// The document is also a report this library READS (parse-deepview-md.js
-// is its parser): the first line marks it as one, every finding carries
-// its id, and what the facts and sections say is what comes back —
-// whichever format the findings first arrived in. So a value goes on
-// the page in a shape the reader can take back off it: a fact on one
-// line, a location in a code span, the analyzer as the product's name
-// or the run's meta line, a line of prose that would read as a heading
-// escaped (md-text.js prose).
+// The document is also a report this library READS
+// (parse-deepview-md.js): the first line marks it, every finding carries
+// its id, and what the facts and sections say is what comes back,
+// whichever format the findings first arrived in. So a value goes on the
+// page in a shape the reader can take back off it — a fact on one line,
+// a location in a code span, a line of prose that would read as a
+// heading escaped.
 //
-// `doc` is plain data the caller assembles — the viewer's adapter
-// (ui/view/markdown-export.js), or anything else holding findings out
-// of index.js — and `hooks` are the few answers only the caller
-// has: where a location links to, what a reader wrote on a finding,
-// which report a case came from. Every hook is optional; the defaults
-// link what the report itself linked and annotate nothing.
+// `doc` is plain data the caller assembles (ui/view/markdown-export.js,
+// or anything else holding findings out of index.js); `hooks` are the
+// few answers only the caller has — where a location links, what a
+// reader wrote on a finding, which report a case came from. All
+// optional: the defaults link what the report linked and annotate
+// nothing.
 //
 //   writeMarkdown({
 //     title, workspace, reports: [{ name, source }], repo, generatedAt,
@@ -51,12 +49,10 @@ import { SOURCE_LABELS, severityLabel } from './labels.js'
 import { analyzerText, findingHeading, groupSection, repoRef } from './write-md-finding.js'
 import { anchorSlug, cell, code, escapeBrackets, formatTimestamp, heading, joinBlocks, link, plural, table } from './md-text.js'
 
-// The first line of every document this writes, and what its reader
-// (parse-deepview-md.js) keys on. An HTML comment: invisible rendered,
-// one line of raw markdown, and no other format begins with it. The
-// reader matches the phrase and reads past whatever follows it, so a
-// later document that has to be told apart from this one can say so
-// after a comma.
+// The first line of every document this writes, and what its reader keys
+// on: an HTML comment, invisible rendered, and no other format begins
+// with one. The reader matches the phrase and reads past what follows,
+// so a later document that must be told apart can say so after a comma.
 export const DOCUMENT_MARKER = '<!-- DeepView findings export -->'
 
 // What a caller can answer about a finding, and what is assumed when
@@ -78,14 +74,12 @@ function withDefaults(hooks) {
   return out
 }
 
-// Which producer a finding came from — a `source` marker
-// (report/index.js), null for the analyzer's own dump. The finding's
-// own, when it carries one: a product's finding out of a re-imported
-// document that mixed products with the analyzer's runs is stamped
-// with it (parse-deepview-md.js), and is that product's whatever
-// report it now sits in. Otherwise its report's — the one report's
-// when the document has one, else the report the `report` hook names
-// for the finding, looked up by name in `doc.reports`.
+// Which producer a finding came from — a `source` marker, null for the
+// analyzer's own dump. Its own when it carries one: a re-imported
+// document that mixed products stamps each product's findings, and a
+// finding stays that product's whatever report it now sits in.
+// Otherwise its report's, found by the `report` hook's name in
+// `doc.reports` when the document holds more than one.
 function sourceReader(reports, hooks) {
   const own = (f) => (typeof f?.source === 'string' && f.source ? f.source : null)
   if (reports.length === 1) return (f) => own(f) ?? reports[0].source ?? null
@@ -93,11 +87,10 @@ function sourceReader(reports, hooks) {
   return (f) => own(f) ?? byName.get(hooks.report(f)) ?? null
 }
 
-// The per-document decisions, made once: which lens severities show
-// under, whether the revalidation layer is applied, and whether the
-// per-finding analyzer and report lines say anything — they are written
-// only where they vary, so a single-run report isn't told forty times
-// which run it was.
+// The per-document decisions, made once: the severity lens, whether the
+// revalidation layer is applied, and whether the per-finding analyzer
+// and report lines say anything — written only where they vary, so a
+// single-run report isn't told forty times which run it was.
 function buildContext(doc, hooks, cases) {
   const revalidation = doc.view?.revalidation !== false
   const reports = (Array.isArray(doc.reports) ? doc.reports : []).filter((r) => r && typeof r === 'object')
@@ -126,11 +119,10 @@ function viewText(view) {
   else if (view.severityMode === 'corrected') parts.push('corrected severities')
   if (view.revalidation === false) parts.push('code view — the revalidation pass is not applied')
   else if (view.revalidation === true) {
-    // Which app view: the pass's verdict standing in for the rows it
-    // re-rated (the default on screen — those rows are folded under
-    // it, here as there), or the detailed one that lists them. Said
-    // only where the caller answers, so a document written without
-    // the detail flag reads as it always did.
+    // Which app view: the verdict standing in for the rows it re-rated
+    // (the default on screen, folded here as there), or the detailed one
+    // that lists them. A caller that doesn't track the detail says the
+    // layer is applied and no more.
     if (view.revalidationDetail === true) parts.push('detailed app view — the revalidation pass is applied, with the rows it re-rated')
     else if (view.revalidationDetail === false) parts.push('app view — the revalidation pass is applied, standing in for the rows it re-rated')
     else parts.push('app view — the revalidation pass is applied')
@@ -147,20 +139,18 @@ function includedText(counts) {
   return `${included} of ${plural(total, 'finding')} (${total - included} filtered out)`
 }
 
-// The header list: what was exported, from where, when, and — the part
-// a reader can't otherwise know — under which view and filters. Each
-// line is written only when it has something to say; the filter line
-// says "none" outright, so its absence never has to be interpreted.
+// The header list: what was exported, from where, when, and under which
+// view and filters. Each line is written only when it has something to
+// say, and the filter line says "none" outright, so its absence never
+// has to be interpreted.
 //
 // `Source` names the products the loaded reports came from, `Analyzer`
-// what produced the included findings (analyzerText). For a report
-// from one product those are the same word, and the analyzer line is
-// left out rather than said twice — but only when it would say exactly
-// what the Source line says, the same products and no fewer: a
-// workspace of two products filtered down to one names the one, and a
-// document that also holds the analyzer's own runs lists every
-// analyzer, the products among them. The reader takes the one analyzer
-// named here as every finding's.
+// what produced the included findings. For one product they are the same
+// word and the analyzer line is left out — but only when it would say
+// exactly what Source says, the same products and no fewer: two products
+// filtered down to one name the one, and a document holding the
+// analyzer's own runs lists every analyzer. The reader takes a single
+// analyzer named here as every finding's.
 function headerList(doc, ctx, cases) {
   const rows = []
   const add = (label, value) => { if (value) rows.push(`- **${label}:** ${value}`) }
@@ -183,10 +173,9 @@ function headerList(doc, ctx, cases) {
   return rows.join('\n')
 }
 
-// The groups bucketed by the severity their primary case displays
-// under, in ladder order (a tier the ladder doesn't know goes last, as
-// the report spelt it), numbered through the document, each with the
-// heading it will be written under and the anchor that heading gets.
+// The groups bucketed by the severity their primary case displays under,
+// in ladder order — an unknown tier last, as the report spelt it —
+// numbered through the document, each with its heading and anchor.
 function documentEntries(groups, ctx) {
   const buckets = new Map()
   for (const g of groups) {
@@ -236,9 +225,9 @@ function annotationSummary(entries, ctx) {
   return parts.length > 0 ? `Annotations: ${parts.join(', ')}.` : ''
 }
 
-// The index — one row per finding, linked to its section, so a reader
-// can see the whole report on one screen and jump. The confidence
-// column exists only when something has a confidence.
+// One row per finding, linked to its section, so a reader sees the whole
+// report on one screen and can jump. The confidence column appears only
+// when something has a confidence.
 function indexTable(entries) {
   const withConfidence = entries.some(({ group }) => group.some((f) => f.confidence !== undefined && f.confidence !== null))
   const headers = ['#', 'Severity', 'Finding', 'Location']

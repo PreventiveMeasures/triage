@@ -100,10 +100,9 @@ export function parseCodexCsvToScans(text) {
       throw new Error(`Codex CSV: scan ${scanId} contains multiple repositories: ${[...repos].join(', ')}`)
     }
     const repo = [...repos][0] || 'unknown-repo'
-    // Display name: `${repo}:${scanIdSuffix}`. The suffix is whatever
-    // follows the first `:` in configured_scan_id (typical id shape is
-    // something like `uuid:<github-id>` — strip the discriminator
-    // prefix and keep the human-meaningful id).
+    // `${repo}:${suffix}`, the suffix being whatever follows the first
+    // `:` in configured_scan_id (`uuid:<github-id>`) — the
+    // human-meaningful half.
     const displayName = `${repo}:${scanId.replace(/^[^:]+:/u, '')}`
     scans.push({
       displayName,
@@ -124,10 +123,9 @@ function rowToFinding(r) {
   const description = [r.title, r.description].filter(Boolean).join('\n\n')
 
   const finding = {
-    // finding_url is unique per upstream finding — use it directly so
-    // triage (markers / deletions) keys off the stable URL and
-    // persists across reloads. The triage saver was loosened to
-    // accept any non-numeric id (URLs included), see triage.js.
+    // finding_url is unique per upstream finding, so triage keys off it
+    // and survives a reload. The saver takes any non-numeric id, URLs
+    // included (triage.js).
     id: r.finding_url,
     file,
     // Codex CSVs lack line numbers — '?' is the same placeholder
@@ -136,14 +134,11 @@ function rowToFinding(r) {
     severity: (r.severity || 'medium').toLowerCase(),
     description,
     repo: { github: r.repository },
-    // No per-finding `type` here — the codex CSV doesn't carry a
-    // category column, and stamping a synthetic 'security' on every
-    // row used to make the run-meta line read "security" on every
-    // finding even though there's nothing categorical to differentiate
-    // them. The renderer already suppresses an empty run-meta
-    // (filter(Boolean) → '' → no <span>), so leaving this off is the
-    // cleanest result. data.type at the report level still keeps a
-    // sensible 'security' default for document.title.
+    // No per-finding `type`: the CSV carries no category column, and a
+    // synthetic 'security' would print the same word on every run-meta
+    // line with nothing to tell the findings apart. An empty run-meta
+    // renders as no line at all. The report-level `type` still defaults
+    // to 'security' for document.title.
   }
   if (r.commit_hash) finding.commitHash = r.commit_hash
   if (r.detected_at) finding.detectedAt = r.detected_at

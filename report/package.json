@@ -44,6 +44,7 @@
     "src/parse-deepview-md.js",
     "src/parse-md-id.js",
     "src/parse-md.js",
+    "src/parse-piolium-id.js",
     "src/parse-piolium-rows.js",
     "src/parse-piolium-tokens.js",
     "src/parse-piolium.js",

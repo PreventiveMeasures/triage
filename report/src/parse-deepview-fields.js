@@ -1,17 +1,14 @@
-// The readers for one case of the DeepView markdown document — the
-// fact list under a finding's heading, the sections under that, the
-// evidence list, and the description they add up to. The document side
-// (which section is a finding, which `####` is a case) lives in
-// parse-deepview-md.js; this module knows how write-md-finding.js spelt
-// each value, and hands it back into the field it was read from.
+// The readers for one case of the DeepView markdown document: the fact
+// list under a finding's heading, the sections under that, the evidence
+// list, the description they add up to. Which section is a finding and
+// which `####` is a case belongs to parse-deepview-md.js; this module
+// knows how write-md-finding.js spelt each value.
 //
-// Every reader is the inverse of a writer: `readLocation` of
-// locationText, `readSeverity` of severityText, `readAnalyzer` of
-// analyzerText, `readEvidence` of evidenceList — and `narrativeSplit`
-// undoes the one thing the writer folds: a `**Label:**` paragraph the
-// description carried and a field of the same name both became a
-// section, and which was which is settled by where the writer put them
-// (the fields come last, in a fixed order).
+// Every reader is the inverse of a writer — `readLocation` of
+// locationText, `readSeverity` of severityText, and so on — and
+// `narrativeSplit` undoes the one thing the writer folds: a `**Label:**`
+// paragraph and a field of the same name both became a section, and
+// only their position says which was which.
 
 import { REVALIDATE_KINDS, firstLine } from './finding.js'
 import { SEVERITY_LABELS, SOURCE_LABELS } from './labels.js'
@@ -132,18 +129,16 @@ function readSeverity(value) {
   return out
 }
 
-// The reasoning-effort ladder and the import modes a run is described
-// with (ui/view/analyzer-tags.js orders the same words) — closed
+// The effort ladder and import modes a run is described with — closed
 // vocabularies, which is what lets a run's line be read back by
 // position: `<type> · [revalidate] · <model> · <effort> · <mode>`, an
 // absent part elided (finding.js runMetaLine).
 const EFFORTS = new Set(['max', 'xhigh', 'high', 'medium', 'low', 'minimal'])
 const IMPORT_MODES = new Set(['list', 'isolate'])
 
-// A model's pretty name carries a version — `opus 5`, `gpt 5.5` — or
-// at least a family; a mode (`security`, `correctness`) carries
-// neither. Consulted only when the line leaves one free word, whose
-// slot is otherwise ambiguous.
+// A model's pretty name carries a version — `opus 5`, `gpt 5.5` — or at
+// least a family, where a mode (`security`) carries neither. Consulted
+// only when the line leaves one free word, whose slot is ambiguous.
 function looksLikeModel(word) {
   return /\d/u.test(word) || /^(?:opus|sonnet|haiku|gpt|gemini|fable|mythos|llama|mistral)\b/iu.test(word)
 }
@@ -206,13 +201,11 @@ function readRevalidation(value) {
   return REVALIDATE_SET.has(s) ? s : undefined
 }
 
-// One fact back onto the finding, keyed by the label the writer gave
-// it (write-md-finding.js metaList, PLAIN_FIELDS, CODE_FIELDS). Not
-// here: `Analyzer`, which the document settles for all findings at
-// once (parse-deepview-md.js); `Triage` / `Fix` (and the `Comment`
-// section), the reader's annotations, which live in the viewer's
-// triage store keyed by the id and follow the id; and `Report`, which
-// names the file a case came from — now this one.
+// One fact back onto the finding, keyed by the label the writer gave it.
+// Not here: `Analyzer`, which the document settles for every finding at
+// once; `Triage` / `Fix` and the `Comment` section, the reader's
+// annotations, which live in the viewer's triage store and follow the
+// id; and `Report`, which names the file a case came from — now this one.
 const FACT_READERS = new Map([
   ['location', (f, v) => Object.assign(f, readLocation(v))],
   ['severity', (f, v) => Object.assign(f, readSeverity(v))],
@@ -244,15 +237,12 @@ export function applyFact(f, label, value) {
 const FACT_RE = /^- \*\*([^*\n]+?):\*\* ?(.*)$/u
 
 // The fact list at the top of a case: consecutive `- **Label:** value`
-// lines. A paragraph BEFORE the list is the case's own title — written
-// for a case of a group named differently from its group
-// (write-md-finding.js groupSection) — but only when a list follows;
-// a case with no facts at all keeps its opening paragraph as prose.
-// Prose comes back with the writer's heading escape taken off
-// (md-text.js prose / unescapeHeadings) — the title here, an evidence
-// note in readEvidence, the lead and the sections' bodies where the
-// document reader consumes them (readProse) — so `\## Internal
-// detail` is the `## Internal detail` the description held.
+// lines. A paragraph BEFORE the list is the case's own title, written
+// where a case is named differently from its group — but only when a
+// list follows, since a case with no facts keeps its opening paragraph
+// as prose. Prose comes back with the writer's heading escape off, here
+// and wherever readProse is used, so `\## Internal detail` is the
+// `## Internal detail` the description held.
 export function splitFacts(body) {
   const lines = body.split('\n')
   let i = 0
@@ -345,17 +335,15 @@ const NARRATIVE = new Map([
 ])
 const NARRATIVE_ORDER = [...NARRATIVE.keys()]
 
-// Which sections were fields and which were the description's own. The
-// writer prints the description's labelled paragraphs first, whatever
-// they are called, then the fields in NARRATIVE order — so the fields
-// are the longest run of narrative labels in that order at the END,
-// and every section before it goes back into the description as the
-// `**Label:**` paragraph it was. A report that wrote `**Impact:**` into
-// its prose thus comes back with an `impact` field where a native dump
-// would have one — the card and the writer read the two alike — while
-// a `**Root Cause:**` paragraph, and any `**Impact:**` written before
-// it, stay paragraphs in their place, so a second export reads as the
-// first did.
+// Which sections were fields and which the description's own. The writer
+// prints the description's labelled paragraphs first, whatever they are
+// called, then the fields in NARRATIVE order — so the fields are the
+// longest run of narrative labels in that order at the END, and
+// everything before goes back into the description as the `**Label:**`
+// paragraph it was. A report that wrote `**Impact:**` into its prose
+// comes back with an `impact` field, as a native dump would have; a
+// `**Root Cause:**` paragraph and any `**Impact:**` before it stay
+// paragraphs, so a second export reads as the first did.
 export function narrativeSplit(sections) {
   let start = sections.length
   let last = Infinity
@@ -373,11 +361,9 @@ export function narrativeSplit(sections) {
 
 // The description back from its parts: the heading's text as the first
 // line — unless the lead already opens with it, which is how a name too
-// long for a heading was carried (write-md-finding.js
-// descriptionBlocks) — then the lead, then the description's own
-// labelled paragraphs, the way every parser writes them. No heading
-// text (a finding the writer could only head by its location) leaves
-// the lead to speak for itself.
+// long for a heading travels — then the lead, then the description's own
+// labelled paragraphs, as every parser writes them. No heading text
+// leaves the lead to speak for itself.
 export function buildDescription(title, lead, paragraphs) {
   const parts = []
   const first = firstLine(lead)

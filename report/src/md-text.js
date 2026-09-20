@@ -6,12 +6,10 @@
 
 import { fenceRanges, inFence, normalizeNewlines } from './md-structure.js'
 
-// Returns true only for parseable http:// / https:// URLs. Values that
-// get linked come from reports and from the user's own notes (a fix
-// reference can be "internal ticket #42", "see Slack"), and other
-// schemes (file://, javascript:, data:) are either useless or a
-// security footgun — so only these two become links, here and in the
-// viewer (ui/view/format.js re-exports this for its `<a>` gates).
+// Parseable http:// / https:// only. What gets linked comes from reports
+// and from the user's own notes, where a fix reference can be "internal
+// ticket #42", and the other schemes are useless (file:) or a footgun
+// (javascript:, data:). The viewer's `<a>` gates read this too.
 export function isHttpUrl(s) {
   if (typeof s !== 'string' || s.length === 0) return false
   try {
@@ -61,9 +59,8 @@ export function autolink(s) {
 }
 
 // GitHub's heading anchor: lower-cased, punctuation dropped, spaces to
-// hyphens, and a `-N` suffix on a repeat. Other renderers differ at the
-// margins, but this is the scheme GitHub, GitLab and most editors read.
-// `taken` is the document's registry of anchors handed out so far.
+// hyphens, `-N` on a repeat — what GitHub, GitLab and most editors read.
+// `taken` is the document's registry of anchors handed out.
 export function anchorSlug(text, taken) {
   const base = String(text ?? '').toLowerCase()
     .replaceAll(/[^\p{L}\p{N}\p{M}\s_-]/gu, '')
@@ -107,25 +104,22 @@ export function joinBlocks(blocks) {
   return blocks.filter((b) => typeof b === 'string' && b.trim()).map((b) => b.replace(/\s+$/u, '')).join('\n\n')
 }
 
-// A run of a report's own markdown, as it lands in the document: line
-// endings normalised, edges trimmed, a fence the report left open
-// closed, and a line that would read as a heading escaped.
+// A run of a report's own markdown as it lands in the document: line
+// endings normalised, edges trimmed, an open fence closed, a line that
+// would read as a heading escaped.
 //
-// Every parser reads a dangling fence as running to the end of the
-// FINDING — a reader of the card sees the snippet, not a problem — but
-// in a document one open fence would swallow every finding after it,
-// so the fence is closed with the marker that opened it.
+// A dangling fence runs to the end of the FINDING for every parser — a
+// card's reader sees the snippet, not a problem — but in a document it
+// would swallow every finding after it, so it is closed with the marker
+// that opened it.
 //
-// And a `## Internal detail` line in an analyzer's own prose is the
-// text the card shows it as, not a section of the document; written
-// bare it would be read as one — by a renderer, and by the document's
-// own reader (parse-deepview-md.js), which splits on headings and
-// would end the finding there. So it goes on the page as
-// `\## Internal detail`, which renders as the text and which the
-// reader strips back (unescapeHeadings). A line already opening on a
-// backslash before its `#` gets one more, so that one strip is exact
-// whatever the prose held. Fenced code is left alone: nothing in it is
-// structure, and a `#` there is code.
+// A `## Internal detail` line in an analyzer's prose is text the card
+// shows, not a section: written bare, a renderer and the document's own
+// reader (parse-deepview-md.js) would both end the finding there. It
+// goes on the page as `\## Internal detail` and is stripped back
+// (unescapeHeadings), with a line already opening on a backslash getting
+// one more, so that strip is exact whatever the prose held. Fenced code
+// is left alone — a `#` there is code.
 const FENCE_OPEN_RE = /^ *(`{3,}|~{3,})/u
 const HEADING_LINE_RE = /^( {0,3})(\\*#)/u
 
@@ -165,9 +159,8 @@ export function unescapeHeadings(s) {
   return mapProseLines(String(s ?? ''), (line) => line.replace(/^( {0,3})\\(\\*#)/u, '$1$2'))
 }
 
-// Continuation lines of a list item, indented to the item's content
-// column so markdown reads them (a note, a fenced snippet inside it) as
-// the item's own. Blank lines stay empty rather than carrying spaces.
+// Continuation lines indented to a list item's content column, so
+// markdown reads them as the item's own. Blank lines stay empty.
 export function indentUnder(marker, text) {
   const pad = ' '.repeat(marker.length)
   return text.split('\n').map((l) => (l ? pad + l : '')).join('\n')

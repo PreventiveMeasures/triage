@@ -1,11 +1,10 @@
-// Shared finding-id helpers — used by the analyzer (Node) when stamping
-// ids onto its JSON output, and by the viewer (browser) when filling in
-// ids for findings that arrived without one. Web Crypto is the common
-// surface: globalThis.crypto.subtle is available in modern Node and in
-// secure browser contexts, so a single implementation runs in both.
+// Finding ids, stamped by the analyzer onto its JSON output and filled
+// in by the viewer for findings that arrive without one. Web Crypto is
+// the common surface — `crypto.subtle` exists in modern Node and in
+// secure browser contexts — so one implementation runs in both.
 //
-// Two reports produced from the same source yield the same id for the
-// same finding; edits to description or source invalidate it.
+// Two reports from the same source give a finding the same id; an edit
+// to its description or its source invalidates it.
 
 import { encodeUtf8 } from './utf8.js'
 
@@ -13,24 +12,18 @@ function toHex(bytes) {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
 }
 
-// Canonical file-content hash used throughout the JSON output format.
-// sha512 because the per-finding id (below) takes sha256 of a string
-// that already includes this hash — so collisions here would propagate
-// directly into id collisions. Base64 (padded) matches the shape JSON
-// consumers already parse; `sha512-` prefix is the SRI-style algorithm
-// tag so downstream tools can tell hash algorithms apart at a glance.
-// `btoa` over the digest as a binary string rather than
-// `Uint8Array#toBase64`: the library runs in plain Node too, where that
-// method is still behind a flag.
+// The file-content hash the JSON output format uses. sha512 because the
+// id below hashes a string that already includes it, so a collision here
+// would propagate into an id collision. Padded base64 with the SRI-style
+// tag. `btoa` rather than `Uint8Array#toBase64`, still flagged in Node.
 export async function computeFileHash(source) {
   const bytes = typeof source === 'string' ? encodeUtf8(source) : source
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-512', bytes))
   return `sha512-${btoa(String.fromCodePoint(...digest))}`
 }
 
-// Hash a fingerprint object into a v4-shaped UUID. Not a real random
-// UUID (it's derived, not generated) but the shape lets downstream tools
-// treat it as an opaque id without caring.
+// A fingerprint hashed into a v4-shaped UUID: derived, not random, but
+// the shape lets a downstream tool treat it as an opaque id.
 async function fingerprintToId(fingerprint) {
   const bytes = encodeUtf8(JSON.stringify(fingerprint))
   const digest = await crypto.subtle.digest('SHA-256', bytes)
@@ -45,31 +38,26 @@ async function fingerprintToId(fingerprint) {
 
 // Stable per-finding id from the (severity, description, fileHash) triple
 // the analyzer emits. fileHash being undefined is fine — JSON.stringify
-// drops undefined keys, matching the legacy behavior so re-runs over the
-// same source yield the same ids.
+// drops undefined keys, so a finding with no hash keys off the pair and
+// re-runs over the same source yield the same ids.
 export function findingId(severity, description, fileHash) {
   return fingerprintToId({ severity, description, fileHash })
 }
 
-// Derive an id from a finding object — picks a discriminator from the
-// finding's available fields. Returns null when crypto.subtle isn't
-// available (e.g. some `file://` setups), so the caller can fall back
-// to a session-local id and the UI still functions, just without
-// persistent triage on these findings.
+// An id derived from a finding, on the first discriminator it carries.
+// null when `crypto.subtle` is unavailable (some `file://` setups), so
+// the caller can fall back to a session-local id — the UI still works,
+// without persistent triage on those findings.
 //
-// Discriminator selection (in order):
-//   - _idBasis  — a FROZEN fingerprint the parser stamped (markdown
-//                 imports; see report/src/parse-md-id.js). Used verbatim:
-//                 it exists precisely so later changes to the rendered
-//                 description can't re-key stored triage.
-//   - fileHash  — preferred when present (matches `findingId` above)
-//   - location  — used by markdown imports (the URL of the first
-//                 `## Evidence` row, or of `## Location` in older
-//                 reports), also a stable identifier
-//   - file/line — last-resort defensive fallback for JSON findings
-//                 that have neither (rare; not what the spec
-//                 prescribes, but better than collapsing two
-//                 unrelated findings into one id).
+// In order:
+//   - _idBasis  — a FROZEN fingerprint a parser stamped, used verbatim;
+//                 it exists so a change to the rendered description
+//                 can't re-key stored triage (parse-md-id.js).
+//   - fileHash  — as `findingId` above.
+//   - location  — a markdown import's url, also stable.
+//   - file/line — last resort for a JSON finding with neither: not what
+//                 the spec prescribes, but better than collapsing two
+//                 unrelated findings onto one id.
 export async function deriveFindingId(f) {
   if (typeof crypto?.subtle?.digest !== 'function') return null
   const fingerprint = fingerprintOf(f)
@@ -80,9 +68,9 @@ export async function deriveFindingId(f) {
   }
 }
 
-// The discriminator choice above, as the object that gets hashed. Key
-// order is part of the id (JSON.stringify keeps insertion order), so
-// every shape lists severity and description first.
+// The choice above as the object that gets hashed. Key order is part of
+// the id — JSON.stringify keeps insertion order — so every shape lists
+// severity and description first.
 function fingerprintOf(f) {
   if (f._idBasis) return f._idBasis
   const { severity, description } = f

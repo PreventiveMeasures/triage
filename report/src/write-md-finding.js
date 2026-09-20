@@ -1,19 +1,17 @@
-// One finding as markdown — its heading, the facts that aren't prose as
-// a labelled list, then the narrative in the order a reader needs it.
-// The document (write-md.js) hands in the heading text and the depth to
-// write at; everything about WHAT a finding carries is read here, off
-// the parser's own object, through finding.js.
+// One finding as markdown: its heading, the facts that aren't prose as a
+// labelled list, then the narrative in the order a reader needs it. The
+// document (write-md.js) hands in the heading text and the depth; what a
+// finding CARRIES is read here, off the parser's object through
+// finding.js.
 //
-// Nothing a finding carries is dropped for being unfamiliar to the
-// viewer. The fields the markdown importers preserve for exactly this
-// purpose — a report's status and branch, an audit's PoC state and its
-// own commit — land on the list beside the ones every card shows, and
-// each narrative field gets a section of its own rather than a bold
-// label buried in a paragraph.
+// Nothing is dropped for being unfamiliar to the viewer — a report's
+// status and branch, an audit's PoC state and commit land on the list
+// beside the facts every card shows, and each narrative field gets a
+// section rather than a bold label buried in a paragraph.
 //
-// A dedup group — one finding reported several times, across reports
-// or by several runs — is one heading with a case under it per member,
-// so the reader meets the finding once and its reports as its cases.
+// A dedup group — one finding reported several times — is one heading
+// with a case under it per member, so the reader meets the finding once
+// and its reports as its cases.
 
 import { correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceNote, findingDisplayName, findingTitle, firstLine, hasSeverityCorrection, locationLabel, revalidateKindOf, runMetaLine, splitDescription, stripExportMarker } from './finding.js'
 import { COLOR_LABELS, SOURCE_LABELS, TRIAGE_LABELS, severityLabel } from './labels.js'
@@ -21,10 +19,9 @@ import { autolink, code, heading, indentUnder, isHttpUrl, joinBlocks, link, plur
 import { isRepoSlug } from './meta.js'
 import { normalizeNewlines } from './md-structure.js'
 
-// A heading has to fit on a line. A JSON finding whose whole
-// description is one paragraph is NAMED by that paragraph — the row
-// cell shows it in full, a heading can't — so past this it is cut, and
-// the body then carries the whole name (see descriptionBlocks).
+// A heading has to fit on a line, and a JSON finding whose description
+// is one paragraph is NAMED by that paragraph. Past this it is cut, and
+// the body carries the whole name (descriptionBlocks).
 const HEADING_MAX = 120
 
 export function findingHeading(f) {
@@ -40,24 +37,20 @@ export function repoRef(repo) {
   return isRepoSlug(s) ? link(s, `https://github.com/${s}`) : s
 }
 
-// What produced the finding, as the document names it. A finding out
-// of a source-marked report — Claude Security, Codex Security, DeepSec,
-// Piolium — was produced by that product, which is one analyzer with
-// no runs to tell apart, so its name is the whole answer; a finding
-// out of the analyzer's own dump names its run: the mode, the model,
-// the effort, the import mode (finding.js runMetaLine). What a report
-// filed a finding UNDER — Claude Security's `**Category:**` — is not
-// its analyzer and gets its own line (metaList).
+// What produced the finding, as the document names it: a product, which
+// is one analyzer with no runs to tell apart, so its name is the whole
+// answer — or, out of the analyzer's own dump, the run itself (finding.js
+// runMetaLine). What a report filed a finding UNDER, Claude Security's
+// `**Category:**`, is not its analyzer and gets its own line.
 export function analyzerText(f, source, revalidation) {
   if (source) return SOURCE_LABELS[source] ?? String(source)
   return runMetaLine(f, revalidation)
 }
 
-// The narrative fields beyond the description, as `[heading, field,
-// pass]` in the order a reader needs them: what it means, how to
-// trigger it, how to fix it, then the analyzer's and the pass's remarks
-// about it — the order the card reads them in. The pass's two travel
-// with the revalidation layer (ctx.revalidation).
+// The narrative fields beyond the description, `[heading, field, pass]`
+// in the order the card reads them: what it means, how to trigger it,
+// how to fix it, then the analyzer's and the pass's remarks. The pass's
+// two travel with the revalidation layer (ctx.revalidation).
 const NARRATIVE = [
   ['Impact', 'impact', false],
   ['Reproduction', 'reproduction', false],
@@ -68,13 +61,11 @@ const NARRATIVE = [
 ]
 
 // The plain facts a report may attach, `[label, field]`, printed as
-// written — under the name the report that attached them used, so a
-// reader of the original recognises each: Claude Security's `Status`
-// / `Branch` / `Date created`, Codex's `detected_at` / `committed_at`
-// columns, Piolium's `PoC status` / `Variant of` / `Detailed report`
-// and its preamble's `Commit audited`, DeepSec's `Slug`. Strings and
-// numbers only — a report's own structures (an object) have no line
-// to print on.
+// written and under the name the report used, so a reader of the
+// original recognises each: Claude Security's `Status` / `Branch` /
+// `Date created`, Codex's `detected_at`, Piolium's `PoC status` /
+// `Variant of`, DeepSec's `Slug`. Strings and numbers only — an object
+// has no line to print on.
 const PLAIN_FIELDS = [
   ['Status', 'status'], ['Branch', 'branch'], ['Date created', 'dateCreated'],
   ['Detected at', 'detectedAt'], ['Committed at', 'committedAt'],
@@ -84,10 +75,9 @@ const PLAIN_FIELDS = [
 // …and the ones that are paths or hashes, set in code.
 const CODE_FIELDS = [['Detailed report', 'reportPath'], ['Commit audited', 'auditedCommit']]
 
-// A fact is one line of the list. A value that arrived with line
-// breaks (a Piolium bullet wrapped onto a continuation line) is
-// reflowed onto one, or the break would end the list. Prose — a
-// section's text — keeps its lines (proseValue).
+// A fact is one line of the list, so a value that arrived with line
+// breaks (a wrapped Piolium bullet) is reflowed onto one — the break
+// would end the list. Prose keeps its lines (proseValue).
 function plainValue(v) {
   if (typeof v === 'number') return Number.isFinite(v) ? String(v) : ''
   return typeof v === 'string' ? v.replaceAll(/\s*\n\s*/gu, ' ').trim() : ''
@@ -97,10 +87,9 @@ function proseValue(v) {
   return typeof v === 'string' ? v.trim() : ''
 }
 
-// The severity as the reader's lens shows it, with the other value of
-// a corrected finding beside it — the document has no toggle, so both
-// are always on the page — and the per-report divergence a workspace
-// merge can carry.
+// The severity under the reader's lens, with a corrected finding's other
+// value beside it — the document has no toggle, so both are on the page —
+// and the per-report divergence a workspace merge can carry.
 function severityText(f, ctx) {
   const original = ctx.severityMode === 'original'
   let text = severityLabel(displayedSeverity(f, ctx.severityMode))
@@ -139,11 +128,10 @@ function triageText(a) {
   return parts.join(' · ')
 }
 
-// Whose revalidation pass a stamp came from, in the words this
-// document spells a producer with (labels.js analyzerText does the
-// same for the finding itself); a key the labels don't know prints as
-// itself. Written under the stamp, so it travels with the layer and
-// says nothing on a finding whose own report ran the pass.
+// Whose revalidation pass a stamp came from, in the words this document
+// spells a producer with; an unknown key prints as itself. Written under
+// the stamp, so it travels with the layer and says nothing where the
+// finding's own report ran the pass.
 function sourceText(source) {
   const s = plainValue(source)
   return s ? SOURCE_LABELS[s] ?? s : ''
@@ -156,12 +144,11 @@ function commitText(f, ctx) {
   return isHttpUrl(url) ? link(code(hash.slice(0, 7)), url) : code(hash)
 }
 
-// The labelled list under a finding's heading — every fact that isn't
-// prose, in the order the card's rail and line row read them, then the
-// provenance the report attached, and the finding's id last: the one
-// fact that means nothing to a reader and everything to the reader of
-// the file (parse-deepview-md.js), which keys stored triage off it. A
-// line is written only when its fact is there.
+// The labelled list under a finding's heading: every fact that isn't
+// prose, in the order the card's rail reads them, then the provenance
+// the report attached, then the id — the one fact that means nothing to
+// a reader and everything to the reader of the file, which keys stored
+// triage off it. A line is written only when its fact is there.
 function metaList(f, ctx, annotation) {
   const rows = []
   const add = (label, value) => { if (value) rows.push(`- **${label}:** ${value}`) }
@@ -195,10 +182,10 @@ function section(depth, label, text) {
   return body ? `${heading(depth, label)}\n\n${body}` : heading(depth, label)
 }
 
-// The `## Evidence` rows as a loose numbered list: the reference (linked
-// where the caller can link it), and the report's note about it as its
-// own paragraph under the reference — loose, because a note that shared
-// the reference's line would be reflowed onto it.
+// The `## Evidence` rows as a loose numbered list: the reference, linked
+// where the caller can, and the report's note as its own paragraph under
+// it — loose, or a note sharing the reference's line would be reflowed
+// onto it.
 function evidenceList(f, ctx) {
   const rows = Array.isArray(f.evidence) ? f.evidence : []
   return rows.map((row, i) => {
@@ -215,21 +202,20 @@ function evidenceList(f, ctx) {
 }
 
 // The description's lead, its evidence, then the labelled sections the
-// report wrote — the order a claude-security report writes them in,
-// and the one the card reads them in. A `**Label:**` paragraph becomes
-// a section with a heading, the same treatment the finding's own
-// impact / reproduction fields get, so a report that wrote those as
-// fields and one that wrote them into its prose read identically.
+// report wrote — the order a claude-security report writes and the card
+// reads. A `**Label:**` paragraph becomes a section with a heading, as
+// the finding's own impact / reproduction fields do, so a report that
+// wrote those as fields and one that wrote them into its prose read
+// identically.
 function descriptionBlocks(f, ctx, depth) {
   const split = splitDescription(f)
   // Line endings first: the paragraph split below reads blank lines,
   // and a `\r\n\r\n` a JSON report wrote is not one to it.
   const body = normalizeNewlines(split.body)
-  // A one-line description IS the heading; printing it again under the
-  // heading is a stutter. A heading that could not carry the whole name
-  // (HEADING_MAX) has the body open on it instead — then the only place
-  // the whole name appears, and where the reader of the file
-  // (parse-deepview-md.js) finds it again.
+  // A one-line description IS the heading, and printing it again is a
+  // stutter — unless the heading could not carry the whole name
+  // (HEADING_MAX), where the body opens on it instead, the only place
+  // the whole name appears and where the file's reader finds it.
   const title = findingTitle(f)
   const cut = title !== '' && findingHeading(f) !== title
   const stutter = !cut && !split.title && body.trim() === title
@@ -246,8 +232,8 @@ function descriptionBlocks(f, ctx, depth) {
 }
 
 // Everything under one case's heading: the facts, the description, the
-// narrative sections, and the reader's comment last — it is about the
-// finding rather than part of it.
+// narrative sections, then the reader's comment — about the finding
+// rather than part of it.
 function caseBlocks(f, ctx, depth) {
   const annotation = ctx.hooks.annotation(f)
   const blocks = [metaList(f, ctx, annotation), ...descriptionBlocks(f, ctx, depth)]
@@ -265,10 +251,10 @@ function caseBlocks(f, ctx, depth) {
   return blocks
 }
 
-// One group under its heading. A single case writes straight under it;
-// several get a heading each — numbered, located — with the group's
-// sections one level down from there. A case that names itself
-// differently from the group says so under its own heading.
+// One group under its heading: a single case writes straight under it,
+// several get a numbered, located heading each with their sections one
+// level down. A case named differently from the group says so under its
+// own heading.
 export function groupSection(group, ctx, { headingText, depth }) {
   const blocks = [heading(depth, headingText)]
   if (group.length === 1) return joinBlocks([...blocks, ...caseBlocks(group[0], ctx, depth + 1)])

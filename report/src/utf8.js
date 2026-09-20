@@ -1,30 +1,12 @@
-// UTF-8 encoding for the id hashing, and the library's own copy of it.
+// UTF-8 encoding for the id hashing — a copy of the app's
+// `common/utf8.js` minus its decoding half, since nothing under
+// `report/` imports from outside it. Both copies' tests assert the same
+// cases byte for byte.
 //
-// `common/utf8.js` is the app's — same encoder, plus the decoding half
-// this directory has no use for. The duplication is deliberate: nothing
-// under `report/` imports from outside it, so the library can be lifted
-// into another project (or published on its own) without dragging a
-// `common/` along for one function.
-//
-// The tests are duplicated with it, for the same reason and to the same
-// expectations: `tests/utf8.test.js` here and the app's
-// `tests/utf8.test.js` assert the same case list byte for byte, without
-// either importing the other's module. A fix made to one encoder and
-// not the other fails whichever suite it was not made in — which
-// matters most here, since these bytes are what every finding id is
-// hashed from.
-//
-// Centralised rather than reaching for `new TextEncoder().encode(...)`
-// at the call site, because the WHATWG encoder silently replaces lone
-// surrogates with U+FFFD. That is fine for best-effort display and a
-// footgun anywhere the bytes feed a hash: the string the hasher
-// actually saw is no longer recoverable from the one we thought we
-// produced, and the finding id that comes out is stable but wrong.
-// Failing fast surfaces that at the call site instead of as a finding
-// whose id nothing else derives.
-//
-// The TextEncoder instance is reused — the spec guarantees it is
-// stateless across `.encode()` calls.
+// Centralised rather than `new TextEncoder().encode(...)` per call site,
+// because the WHATWG encoder silently replaces lone surrogates with
+// U+FFFD: fine for display, a footgun where the bytes feed a hash, where
+// the id comes out stable but hashed from a string nobody meant.
 
 const encoder = new TextEncoder()
 

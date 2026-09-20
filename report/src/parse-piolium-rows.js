@@ -1,10 +1,10 @@
-// Table-row and list-item → finding conversion for the Piolium report
-// parser: the index / overview / variants tables and the link-list
-// rendering all reduce to the same row shape and the same finding
-// construction. Split from parse-piolium.js, which owns the document
-// structure and the finding BLOCKS.
+// Table rows and list items → findings for the Piolium parser: the
+// index, overview and variants tables and the link-list rendering all
+// reduce to one row shape and one construction. parse-piolium.js owns
+// the document structure and the finding BLOCKS.
 
 import { cellValue, parseCodeRef, stripBold, tableObjects } from './md-structure.js'
+import { frozenIdBasis } from './parse-piolium-id.js'
 import {
   idCell, leadingId, leadingLink, mapSeverity, severityFromId, slugTitle,
 } from './parse-piolium-tokens.js'
@@ -25,15 +25,13 @@ export function indexRowOf(obj) {
 }
 
 // A finding known only from a table row. Rows usually carry no path, so
-// they land on the same `unknown` / `?` placeholders — and finding-id.js
-// would then derive the SAME uuid for two rows sharing a title and
-// tier, letting ingest's dedupe silently swallow one. The report id is
-// the only discriminator such a row carries; it is stamped as the
-// `location` fingerprint field (preferred over file/line by
-// deriveFindingId, and never rendered — its one consumer is the id
-// derivation), namespaced so it reads as an opaque token rather than a
-// URL. Variant / group tables may carry a Location column; when they
-// do, it is parsed like any code reference.
+// they land on the same `unknown` / `?` placeholders, and two rows
+// sharing a title and tier would derive the SAME uuid for ingest's
+// dedupe to swallow one of. The report id is the only discriminator such
+// a row has, so it goes in the `location` fingerprint field — which
+// deriveFindingId prefers over file/line and nothing renders —
+// namespaced to read as an opaque token rather than a URL. A Location
+// column, where a table has one, is parsed like any code reference.
 export function fromIndexRow(row, sevFallback = '') {
   const severity = mapSeverity(row.severity)
     || sevFallback
@@ -48,17 +46,21 @@ export function fromIndexRow(row, sevFallback = '') {
   }
   if (locationLink) finding.location = locationLink
   else if (finding.file === 'unknown' && row.id) finding.location = `piolium:${row.id}`
+  // The fingerprint reads the same reference its own way — see
+  // parse-piolium-id.js.
+  finding._idBasis = frozenIdBasis({
+    severity, description: finding.description, ref: row.location || '', id: row.id,
+  })
   if (row.pocStatus) finding.pocStatus = row.pocStatus
   if (row.status) finding.status = row.status
   if (row.parent) finding.parent = row.parent
   return finding
 }
 
-// Findings rendered as a list — the mode outline says "with links to
-// per-finding report.md", so items usually lead with a
-// `[<id>-<slug>](…/report.md)` link or a bold id, followed by a short
-// summary. Label bullets (`- **Severity:** …`) and "none found"
-// placeholders are not findings.
+// Findings rendered as a list: the mode outline asks for "links to
+// per-finding report.md", so an item leads with a
+// `[<id>-<slug>](…/report.md)` link or a bold id, then a summary. Label
+// bullets and "none found" placeholders are not findings.
 export function listFindings(body, sev, index) {
   const out = []
   for (const line of body.split('\n')) {
@@ -106,12 +108,11 @@ export function listFindings(body, sev, index) {
   return out
 }
 
-// Variant-table rows → findings, parented to the enclosing block when
-// the row doesn't name a parent. Rows are also REGISTERED as index rows
-// so a variant's own `#### <id>` entry adopts the row's severity / PoC
-// / parent even in a report with no `## Summary of Findings`. Rows
-// without a table fall back to a bullet list at the caller's group
-// severity.
+// Variant rows → findings, parented to the enclosing block where the row
+// names none. They are also REGISTERED as index rows, so a variant's own
+// `#### <id>` entry adopts their severity / PoC / parent even with no
+// `## Summary of Findings` in the report. No table falls back to a
+// bullet list at the caller's group severity.
 export function variantFindings(tableText, index, parentId, sevFallback = '') {
   const out = []
   for (const obj of tableObjects(tableText)) {
