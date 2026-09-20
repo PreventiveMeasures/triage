@@ -127,6 +127,10 @@ export function activeFilterDescriptions(fields = state) {
     const v = fields[field]
     if (v) out.push({ key: `annotation:${noun}`, label: 'Annotation', value: `${v === 'with' ? 'With' : 'Without'} ${noun}`, clear: { [field]: '' } })
   }
+  if (!state.currentWorkspace && fields.filterDuplicates) {
+    out.push({ key: 'duplicates', label: 'Duplicates', value: fields.filterDuplicates === 'with'
+      ? 'Only rows linked to other reports' : 'Exclude rows linked to other reports', clear: { filterDuplicates: '' } })
+  }
   return out
 }
 

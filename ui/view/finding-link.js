@@ -13,8 +13,9 @@
 // transfer — that's what the workspace share link and the export bundle
 // are for.
 import { buildFindingUrl, isLinkableFindingId, knownLinkHint, state, workspacesHoldingReport } from '#client/index.js'
-import { applyFilters, resetFilters } from './filters.js'
-import { groupKey, groupState, linkableGroups, sortTabs, tabKey } from './group.js'
+import { applyFilters, matchesConfirmed, resetFilters, shouldLockConfirmed } from './filters.js'
+import { getMergedGroups, getShownGroups, groupKey, groupState, linkableGroups, sortTabs, tabKey } from './group.js'
+import { configureRevalidation, isRuledOut } from './format.js'
 import { cleanupGraph2 } from './graph/state.js'
 
 // Shareable URL for one finding, or null when the finding can't carry a
@@ -68,9 +69,14 @@ export function reportWorkspaceFor(name, preferred = state.currentReportWorkspac
 // gone. `unhideFinding` takes the lens off for such a target, which is
 // also what keeps the group returned here the one that renders.
 export function findLoadedFinding(id) {
-  for (const group of linkableGroups()) {
-    for (const finding of group) {
-      if (tabKey(finding) === id) return { group, finding }
+  // Prefer the visible copy: a workspace may also have a hidden, ruled-out
+  // answer for this id in another app. Raw rows remain the fallback for links
+  // to findings that the current lens hides entirely.
+  for (const groups of [getMergedGroups(), linkableGroups()]) {
+    for (const group of groups) {
+      for (const finding of group) {
+        if (tabKey(finding) === id) return { group, finding }
+      }
     }
   }
   return null
@@ -151,6 +157,24 @@ export function unhideFinding(group, id) {
   // on screen, and a reader who arrived at an upstream finding through
   // an upstream link has no reason to leave the lens they were in.
   if (state.upstreamOnly && !group.every((f) => f.isUpstream)) state.upstreamOnly = false
+  configureRevalidation(state.showRevalidation, state.upstreamOnly)
+  // Following a link explicitly asks to see its target, including a ruled-out
+  // finding, a folded tab or a row excluded by the fixed Confirmed view.
+  const target = group.find((f) => tabKey(f) === id)
+  const needsUnderlying = isRuledOut(target)
+    || (shouldLockConfirmed(getShownGroups()) && !matchesConfirmed(group))
+    || !sortTabs(group).some((f) => tabKey(f) === id)
+  if (needsUnderlying) {
+    if (state.currentWorkspace) {
+      // A workspace cannot unfold an app-specific verdict. Reveal source
+      // findings in the corresponding source lens, then resolve its merged row.
+      if (target?.isUpstream) state.upstreamOnly = true
+      else state.showRevalidation = false
+      configureRevalidation(state.showRevalidation, state.upstreamOnly)
+      const revealed = getMergedGroups().find((g) => g.some((f) => tabKey(f) === id))
+      if (revealed) return unhideFinding(revealed, id)
+    } else state.revalidationDetailed = true
+  }
   if (applyFilters([group]).length === 0) {
     const sortBy = state.sortBy
     resetFilters()
@@ -158,13 +182,6 @@ export function unhideFinding(group, id) {
   }
   const gid = groupKey(group)
   if (group.length > 1) {
-    // A fourth thing that can hide a finding that exists: the
-    // simplified app view folds the rows the pass re-rated under its
-    // own row (group.js drawnTabs), so a link to one of them would
-    // open its group on the pass's row — the wrong finding, which the
-    // note on (3) above calls worse than a changed view. Detail comes
-    // on for it, the way a filter that excluded the target is cleared.
-    if (!sortTabs(group).some((f) => tabKey(f) === id)) state.revalidationDetailed = true
     state.activeTabByGroup.set(gid, id)
   }
   // Per-mode selection — each mode's own "this one" state. Table opens

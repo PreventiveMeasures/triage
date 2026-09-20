@@ -1,8 +1,8 @@
 import { KANBAN_DETAIL_FULLSCREEN_KEY, SEVERITY_MODE_KEY, VIEW_MODE_KEY, hasLinkedFindings, isEncryptionEnabled, patchEntry, readBundle, saveRepoUrlFor, saveTriage, setReportIgnored, state, subscribeToBundleFindingIndex, subscribeToBundleHashIndex, subscribeToLinkedFindings } from '#client/index.js'
 import { downloadBlob, report } from './dom.js'
 import { commonPrefix, configureRevalidation, handoffBlock, lineRange } from './format.js'
-import { activeTabFor, canApplyFixToGroup, findGroupById, findingRepo, findingReport, fixApplies, getShownGroups, groupState, groupWithPassRows, syncGroupTriage, tabKey, triageActionPlan, triageScope } from './group.js'
-import { applyOpeningFilters, clearFilterOverride, resetFilters, setFilterOverride } from './filters.js'
+import { activeTabFor, canApplyFixToGroup, canTriageFinding, findGroupById, findingRepo, findingReport, fixApplies, getShownGroups, groupState, groupWithPassRows, syncGroupTriage, tabKey, triageActionPlan, triageEntry, triageScope } from './group.js'
+import { applyOpeningFilters, clearFilterOverride, defaultConfidenceFloor, defaultRevalidateFilter, resetFilters, setFilterOverride } from './filters.js'
 import { focusCodeHistory, revealFocusCodeLines } from './focus-code.js'
 import { pushed, stepped } from './focus-code-history.js'
 import { refreshGraph2Sidebar, refreshGraph2TopPkgs, render } from './render.js'
@@ -13,6 +13,7 @@ import { openDownloadBundleDialog } from './dialogs/download-bundle-dialog.js'
 import { openExportConfirmDialog } from './dialogs/export-confirm-dialog.js'
 import { openExportViewDialog } from './dialogs/export-view-dialog.js'
 import { openFixLinkDialog } from './dialogs/fix-link-dialog.js'
+import { openRevalidationConflictsDialog } from './dialogs/revalidation-conflicts-dialog.js'
 import { findingLinkFor } from './finding-link.js'
 import { revealFindingInReport } from './finding-link-nav.js'
 import { closeLinksPreview, getLinksPreview, openLinksPreview } from './links-preview.js'
@@ -57,7 +58,12 @@ function refreshFindingIndexView() {
     // Gated on there being a links file at all: with none, no card
     // shows that row and every other card would re-render for nothing,
     // on every refresh while reports are being indexed.
-    if (hasLinkedFindings()) state.findingIndexTick++
+    if (hasLinkedFindings()) {
+      state.findingIndexTick++
+      // Resolution changes can add/remove the report-only Duplicates
+      // filter or change which rows its active selection displays.
+      if (state.currentView === 'findings' && !state.currentWorkspace) render()
+    }
   }
 }
 
@@ -499,9 +505,9 @@ report.addEventListener('click', (e) => {
   // Packages details — click a report row to navigate to it.
   // Mirrors the bundle Issues report-chip handler (switchToFile
   // loads it into findings + flips currentView away from packages).
-  // Links view report chips open a finding in that
+  // Links view and workspace finding report chips open a finding in that
   // original report, preserving the row's grouping and annotations.
-  const linksReport = e.target.closest('[data-links-report][data-links-finding]')
+  const linksReport = pathClosest(e, '[data-links-report][data-links-finding]')
   if (linksReport) {
     e.preventDefault()
     const { linksReport: name, linksFinding: id } = linksReport.dataset
@@ -1079,6 +1085,7 @@ report.addEventListener('click', (e) => {
     // already shows; both land on the same 'untriaged' write the
     // kanban's untriaged column performs.
     const { targets, clearing } = triageActionPlan(group, action)
+    if (targets.length === 0) return
     applyTriage(targets, clearing ? 'untriaged' : action)
     try { popover.hidePopover() } catch {}
     saveTriage()
@@ -1098,10 +1105,11 @@ report.addEventListener('click', (e) => {
     const group = findGroupById(gid)
     if (!group) return
     const activeTab = activeTabFor(group)
+    if (!canTriageFinding(activeTab)) return
     const activeKey = tabKey(activeTab)
-    const current = state.triage.get(activeKey)?.comment ?? ''
+    const current = triageEntry(activeTab)?.comment ?? ''
     openCommentDialog({ initial: current, finding: activeTab }).then((next) => {
-      if (next === null) return null
+      if (next === null || !canTriageFinding(activeTab)) return null
       patchEntry(state.triage, activeKey, { comment: next || undefined })
       saveTriage()
       renderPreservingTableScroll()
@@ -1195,20 +1203,21 @@ report.addEventListener('click', (e) => {
     const group = gid ? findGroupById(gid) : null
     if (!group) return
     const activeTab = activeTabFor(group)
+    if (!canTriageFinding(activeTab)) return
     const whole = groupWithPassRows(group)
-    const current = state.triage.get(tabKey(activeTab))?.fix ?? ''
+    const current = triageEntry(activeTab)?.fix ?? ''
     openFixLinkDialog({
       initial: current,
       finding: activeTab,
       canApplyToGroup: canApplyFixToGroup(whole, current),
     }).then((next) => {
-      if (next === null) return null
+      if (next === null || !canTriageFinding(activeTab)) return null
       // The offer was granted before the dialog opened; `fixApplies`
       // re-asks per tab now, so a link a sync peer or another browser
       // tab landed on a sibling meanwhile isn't overwritten by a
       // permission that has since expired.
       const targets = next.scope === 'group'
-        ? whole.filter((f) => f === activeTab || fixApplies(f, current))
+        ? whole.filter((f) => canTriageFinding(f) && (f === activeTab || fixApplies(f, current)))
         : [activeTab]
       let changed = false
       for (const f of targets) {
@@ -1237,8 +1246,11 @@ report.addEventListener('click', (e) => {
   const flagBtn = pathClosest(e, '[data-flag-toggle]')
   if (flagBtn) {
     const key = flagBtn.dataset.flagToggle
+    const gid = pathClosest(e, '[data-gid]')?.dataset.gid
+    const finding = (gid ? findGroupById(gid) : null)?.find((f) => tabKey(f) === key)
+    if (!finding || !canTriageFinding(finding)) return
     // Toggle: true → false (explicit tombstone), false/unset → true.
-    const cur = state.triage.get(key)?.flagged
+    const cur = triageEntry(finding)?.flagged
     patchEntry(state.triage, key, { flagged: cur !== true })
     saveTriage()
     renderPreservingTableScroll()
@@ -1345,6 +1357,7 @@ const KANBAN_DATA_TYPE = 'application/x-deepview-kanban-gid'
 // answer.
 function applyTriage(targets, target) {
   for (const f of targets) {
+    if (!canTriageFinding(f)) continue
     const key = tabKey(f)
     const reportName = findingReport(f)
     if (target === 'untriaged') {
@@ -1374,6 +1387,8 @@ report.addEventListener('dragstart', (e) => {
   if (!card || !e.dataTransfer) return
   const gid = card.dataset.gid
   if (!gid) return
+  const group = findGroupById(gid)
+  if (!group || triageScope(group).length === 0) { e.preventDefault(); return }
   // Setting both a private type (for our drop predicate) and a
   // plain-text fallback (so dragging out of the app shows the gid
   // rather than nothing). `effectAllowed = 'move'` matches the
@@ -1430,7 +1445,9 @@ report.addEventListener('drop', (e) => {
   // The column the card landed in names the state outright, so there's
   // nothing to toggle — only the scope question, which `triageScope`
   // answers for the menu too.
-  applyTriage(triageScope(group), target)
+  const targets = triageScope(group)
+  if (targets.length === 0) return
+  applyTriage(targets, target)
   // Paint first; persist after. saveTriage's synchronous portion
   // does a localStorage.setItem of the (potentially large)
   // pending-key JSON which can stall the next frame; doing it
@@ -2105,10 +2122,12 @@ report.addEventListener('mark-color', (e) => {
   const gid = findingEl.dataset.gid
   const group = findGroupById(gid)
   if (!group) return
-  const activeKey = tabKey(activeTabFor(group))
+  const activeTab = activeTabFor(group)
+  if (!canTriageFinding(activeTab)) return
+  const activeKey = tabKey(activeTab)
   const color = e.detail?.color
   if (!color) return
-  const current = state.triage.get(activeKey)?.color
+  const current = triageEntry(activeTab)?.color
   if (current === color) patchEntry(state.triage, activeKey, { color: undefined })
   else patchEntry(state.triage, activeKey, { color })
   saveTriage()
@@ -2363,9 +2382,17 @@ report.addEventListener('partial-change', (e) => {
 // and it is still set to the mode the previous render drew.
 report.addEventListener('revalidation-change', (e) => {
   state.showRevalidation = e.detail.on
-  configureRevalidation(state.showRevalidation)
+  configureRevalidation(state.showRevalidation, state.upstreamOnly)
   applyOpeningFilters(getShownGroups())
   render()
+})
+report.addEventListener('revalidation-conflicts-open', () => {
+  void (async () => {
+    const selected = await openRevalidationConflictsDialog(state.revalidateConflicts)
+    if (!selected) return
+    const result = await revealFindingInReport(selected.id, selected.reportName)
+    if (!result.ok) alert(result.reason)
+  })().catch((err) => console.warn('revalidation: open conflicting finding failed:', err))
 })
 // The detail icon in the same pill — the line INSIDE the app view:
 // whether a group the pass re-examined shows the rows it re-rated, or
@@ -2382,6 +2409,7 @@ report.addEventListener('revalidation-change', (e) => {
 // the chip stops being offered — a control that isn't on screen must
 // not keep narrowing.)
 report.addEventListener('revalidation-detail-change', (e) => {
+  if (state.currentWorkspace) return
   state.revalidationDetailed = e.detail.on === true
   render()
 })
@@ -2391,6 +2419,14 @@ report.addEventListener('revalidation-detail-change', (e) => {
 // from a different set afterwards.
 report.addEventListener('upstream-only-change', (e) => {
   state.upstreamOnly = e.detail.on === true
+  configureRevalidation(state.showRevalidation, state.upstreamOnly)
+  if (!state.upstreamOnly) {
+    const groups = getShownGroups()
+    if (defaultRevalidateFilter(groups, defaultConfidenceFloor(groups)) === 'confirmed') {
+      state.filterRevalidate = 'confirmed'
+      state.filterPartial = ''
+    }
+  }
   render()
 })
 // `<bundle-code-search>` dispatches this when a Files / Code /
@@ -2605,7 +2641,7 @@ report.addEventListener('source-toggle', (e) => {
   if (!wasActive) state.filterSources.add(v)
   render()
 })
-// Annotation filter chips (comment | fix | flag) — cycle the matching
+// Annotation filter chips (comment | fix | flag | duplicates) — cycle the matching
 // tri-state ('' → 'with' → 'without' → '') and re-render. Each is an
 // independent AND filter (matchesFilters).
 report.addEventListener('annotation-filter-toggle', (e) => {
@@ -2614,6 +2650,7 @@ report.addEventListener('annotation-filter-toggle', (e) => {
   if (key === 'comment') state.filterComment = next(state.filterComment)
   else if (key === 'fix') state.filterFix = next(state.filterFix)
   else if (key === 'flag') state.filterFlagged = next(state.filterFlagged)
+  else if (key === 'duplicates' && !state.currentWorkspace) state.filterDuplicates = next(state.filterDuplicates)
   else return
   render()
 })

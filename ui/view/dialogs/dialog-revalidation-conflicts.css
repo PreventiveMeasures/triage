@@ -1,0 +1,37 @@
+dialog { width: min(94vw, 880px); max-width: 880px; }
+.conflicts-list {
+  list-style: none;
+  display: flex; flex-direction: column; gap: .6rem;
+  max-height: 65vh; overflow-y: auto; overscroll-behavior: contain;
+}
+.conflict-card {
+  padding: .6rem .7rem;
+  border: 1px solid var(--border); border-radius: 6px;
+}
+.finding-meta {
+  display: flex; flex-wrap: wrap; align-items: center; gap: .4rem;
+  color: var(--muted); font-size: .72rem;
+}
+.location, code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+.location { flex: 1; }
+h4 { margin: .4rem 0 .55rem; font-size: .88rem; font-weight: 600; overflow-wrap: anywhere; }
+dt { margin-top: .5rem; color: var(--muted); font-size: .72rem; }
+.variant {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 15rem); gap: .65rem;
+  padding: .4rem 0; font-size: .8rem;
+  & + & { border-top: 1px solid var(--border); }
+}
+.value { white-space: pre-wrap; overflow-wrap: anywhere; }
+.reports { display: flex; flex-wrap: wrap; place-content: start flex-end; gap: .3rem; }
+.report-button {
+  display: inline-flex; align-items: center; gap: .4rem;
+  max-width: 100%; min-height: 22px; padding: 0 .4rem 0 0;
+  border: 1px solid var(--border); border-radius: 4px; overflow: hidden;
+  background: var(--bg); color: var(--text); font: inherit; font-size: .72rem;
+  cursor: default; text-align: left;
+  & > span:last-child { min-width: 0; overflow-wrap: anywhere; }
+  &:hover { border-color: var(--accent); }
+}

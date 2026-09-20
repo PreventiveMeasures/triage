@@ -1,7 +1,7 @@
-// `<annotation-filter>` — a comment | fix | flag chip group in the
+// `<annotation-filter>` — comment | fix | flag | duplicates chips in the
 // findings toolbar, right after the Sources / Dependencies switch. Each
 // chip cycles an INDEPENDENT, AND-combined tri-state filter (state.filterComment /
-// filterFix / filterFlagged: '' → 'with' → 'without' → ''): selecting more narrows the row set further
+// filterFix / filterFlagged / filterDuplicates: '' → 'with' → 'without' → ''): selecting more narrows the row set further
 // (see matchesFilters in filters.js). Mirrors `<source-filter>`'s
 // multi-chip pill, using the same glyphs as the per-finding marks.
 //
@@ -10,6 +10,8 @@
 // render.js's toolbarTemplate over the loaded set) OR while its filter is
 // active — so a left-active filter can always be switched off. The whole
 // group is dropped by the toolbar when none of the chips would show.
+// Duplicates is report-only and requires a resolved link outside the report;
+// its selection is cleared when no qualifying row remains.
 //
 // Reactivity: extends StateElement, so the active highlights follow the
 // `state.filter*` tri-states. Click dispatches `annotation-filter-toggle`
@@ -34,11 +36,20 @@ const FIX_GLYPH = html`<svg viewBox="0 0 16 16" width="12" height="12" aria-hidd
 const FLAG_GLYPH = html`<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
   <path class="flag-cloth" d="M5 1.5h6v13l-3-2.7-3 2.7z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
 </svg>`
+// Same chain glyph as the finding's Link action.
+const DUPLICATES_GLYPH = html`<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+  <g fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round">
+    <path d="M6.2 11.2H4.8a3.2 3.2 0 0 1 0-6.4h1.4"/>
+    <path d="M9.8 4.8h1.4a3.2 3.2 0 0 1 0 6.4H9.8"/>
+    <path d="M5.6 8h4.8"/>
+  </g>
+</svg>`
 
 const CHIPS = [
   { key: 'comment', glyph: COMMENT_GLYPH, label: 'commented', stateKey: 'filterComment', hasKey: 'hasComment' },
   { key: 'fix',     glyph: FIX_GLYPH,     label: 'fixed',      stateKey: 'filterFix',     hasKey: 'hasFix' },
   { key: 'flag',    glyph: FLAG_GLYPH,    label: 'flagged',    stateKey: 'filterFlagged', hasKey: 'hasFlagged' },
+  { key: 'duplicates', glyph: DUPLICATES_GLYPH, label: 'rows with duplicates in other reports', stateKey: 'filterDuplicates', hasKey: 'hasDuplicates' },
 ]
 
 class AnnotationFilter extends StateElement {
@@ -46,6 +57,7 @@ class AnnotationFilter extends StateElement {
     hasComment: { attribute: false },
     hasFix:     { attribute: false },
     hasFlagged: { attribute: false },
+    hasDuplicates: { attribute: false },
   }
 
   createRenderRoot() { return this }
@@ -55,6 +67,7 @@ class AnnotationFilter extends StateElement {
     this.hasComment = false
     this.hasFix = false
     this.hasFlagged = false
+    this.hasDuplicates = false
   }
 
   connectedCallback() {
@@ -65,16 +78,19 @@ class AnnotationFilter extends StateElement {
   render() {
     // A chip shows when its annotation exists in the loaded set OR its
     // filter is active (so it can be cycled back off).
-    const visible = CHIPS.filter((c) => this[c.hasKey] || state[c.stateKey])
+    const visible = CHIPS.filter((c) => c.key === 'duplicates'
+      ? !state.currentWorkspace && this.hasDuplicates
+      : this[c.hasKey] || state[c.stateKey])
     if (visible.length === 0) return nothing
     return html`${visible.map((c) => {
       // Tri-state: '' → 'with' (only) → 'without' (exclude) → ''.
       const sel = state[c.stateKey]
+      const label = c.key === 'duplicates' ? c.label : `${c.label} findings`
       const title = sel === 'with'
-        ? `Showing only ${c.label} findings — click to exclude them`
+        ? `Showing only ${label} — click to exclude them`
         : sel === 'without'
-          ? `Excluding ${c.label} findings — click to clear`
-          : `Show only ${c.label} findings`
+          ? `Excluding ${label} — click to clear`
+          : `Show only ${label}`
       return html`<button
         type="button"
         class=${classMap({ 'annotation-chip': true, 'sel-with': sel === 'with', 'sel-without': sel === 'without' })}

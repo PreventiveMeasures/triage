@@ -1,6 +1,7 @@
 import { state } from '#client/index.js'
 import { SEVERITY_ORDER, activeRevalidateKinds, displayedSeverity, findingText, isModule, isRuledOut, prettyModel, revalidateKind, voidsConfidence } from './format.js'
-import { primaryTab, tabKey } from './group.js'
+import { drawnTabs, primaryTab, tabKey, triageEntry, underlyingFindingsShown } from './group.js'
+import { reportDuplicateIds } from './report-duplicates.js'
 
 // Stand-in for the "no analyzer" bucket in the analyzer dropdown.
 // Plain `'null'` would collide with a legitimate analyzer literally
@@ -80,14 +81,26 @@ export function matchesRunFilters(f) {
 }
 
 // Resolve a finding's repo to a single string key, or null when no
-// repo signal is available. Mirrors `repoOf` in
-// client/bundle-finding-index.js — kept local because that helper
-// takes a per-report fallback matchesFilters lacks (state.reports
-// findings already have `_repoFallback` stamped at ingest).
+// repo signal is available. DeepView App findings describe the app in
+// their report, even when their source code lives in a dependency repo.
+// Prefer their report's repo (stamped at ingest as `_repoFallback`) for
+// both the repository selector and its matching predicate. Other findings
+// keep the source repo first. File/source links resolve separately.
 export function repoOfFinding(f) {
+  const reportRepo = typeof f._repoFallback === 'string' && f._repoFallback ? f._repoFallback : null
+  if (f.isApp && !(f._source ?? f.source) && reportRepo) return reportRepo
   if (typeof f.repo?.github === 'string' && f.repo.github) return f.repo.github
-  if (typeof f._repoFallback === 'string' && f._repoFallback) return f._repoFallback
-  return null
+  return reportRepo
+}
+
+// The caller supplies the scope-filtered, visible tabs from applyScopeFilters.
+// Use the same repo resolver for both selector choices and matching.
+export function repositoryFilterValues(groups) {
+  const repos = new Set()
+  for (const group of groups) {
+    for (const finding of group) repos.add(repoOfFinding(finding))
+  }
+  return repos
 }
 
 export function resetFilters() {
@@ -104,6 +117,7 @@ export function resetFilters() {
   state.filterComment = ''
   state.filterFix = ''
   state.filterFlagged = ''
+  state.filterDuplicates = ''
   // Including the revalidation outcome: this is "no filters", and one
   // that survived would keep hiding findings after a reset — which
   // matters more now that a revalidation report can OPEN on it (see
@@ -129,7 +143,7 @@ const FILTER_FIELDS = [
   'filterAnalyzer', 'filterModel', 'filterRepo',
   'filterConfMin', 'filterConfMax',
   'filterInclude', 'filterIncludeNegate',
-  'filterComment', 'filterFix', 'filterFlagged',
+  'filterComment', 'filterFix', 'filterFlagged', 'filterDuplicates',
   'filterRevalidate', 'filterPartial',
 ]
 
@@ -323,6 +337,11 @@ export function filterRevalidateKind(f) {
   return revalidateKind(f) || (f._source && !f._sourcePass ? 'revalidation' : '')
 }
 
+export function matchesConfirmed(group) {
+  const kinds = activeRevalidateKinds('confirmed', '')
+  return group.some((f) => kinds.includes(filterRevalidateKind(f)))
+}
+
 // The floor the default view will REALLY apply. The range is a
 // whole-set control: one finding on screen with no confidence and no
 // `critical: true` and render.js disables it and resets the bounds to
@@ -394,7 +413,7 @@ export function defaultRevalidateFilter(groups, confMin) {
   // row shows in full when any of its findings answers the outcome.
   const onScreen = new Set()
   for (const g of groups) {
-    if (!g.some((f) => kinds.has(filterRevalidateKind(f)))) continue
+    if (!matchesConfirmed(g)) continue
     for (const f of g) onScreen.add(tabKey(f))
   }
   for (const g of shown) {
@@ -411,6 +430,21 @@ export function defaultRevalidateFilter(groups, confMin) {
     }
   }
   return 'confirmed'
+}
+
+// Basic App view can fix the outcome to Confirmed only when it is already
+// the opening default, Confirmed covers every finding the opening confidence
+// range would show, and it also covers every non-LOW row the 6–10 range would
+// show. LOW rows below the opening floor are deliberately allowed to remain
+// hidden: a large set can open at 7 or 8, so those rows are outside the
+// reader's default view even though they sit in the broader 6–10 band.
+export function shouldLockConfirmed(groups) {
+  if (state.showRevalidation === false || state.upstreamOnly || underlyingFindingsShown()) return false
+  if (defaultRevalidateFilter(groups, defaultConfidenceFloor(groups)) !== 'confirmed') return false
+  const floor = effectiveFloor(groups, 6)
+  return groups.every((g) => !showsAtConfidence(g, floor)
+    || !g.some((f) => displayedSeverity(f, state.severityMode) !== 'low')
+    || matchesConfirmed(g))
 }
 
 // Put the confidence block where a fresh load of `groups` would put
@@ -440,21 +474,10 @@ export function applyOpeningFilters(groups) {
   state.filterPartial = ''
 }
 
-// Per-tab filter predicate. Factored out so `applyFilters` (group-level)
-// can ask "does ANY tab in this group match?" — per the user spec,
-// one matching tab keeps the whole group visible.
-export function matchesFilters(f) {
+// Source/dependency and confidence/revalidation selectors establish the
+// scope for the second-row counts and repository choices below them.
+function matchesScopeFilters(f) {
   const F = activeFilters()
-  const inc = F.filterInclude.toLowerCase()
-  // Severity + color filters are multi-select Sets: empty = no
-  // filter, non-empty = membership required. Unmarked tabs bucket
-  // under the literal `'none'` so ticking only that chip isolates
-  // unreviewed findings.
-  if (F.filterSeverities.size > 0 && !F.filterSeverities.has(displayedSeverity(f, state.severityMode))) return false
-  if (F.filterColors.size > 0) {
-    const col = state.triage.get(tabKey(f))?.color ?? 'none'
-    if (!F.filterColors.has(col)) return false
-  }
   // Source filter — empty OR full (both 'own' and 'modules' set) =
   // no filter; otherwise restrict to the picked side. Both-checked
   // goes inert because including everything is what "no filter"
@@ -463,28 +486,6 @@ export function matchesFilters(f) {
     const allowOwn = F.filterSources.has('own')
     if (allowOwn && isModule(f.file)) return false
     if (!allowOwn && !isModule(f.file)) return false
-  }
-  // NOTE: the annotation filters (comment | fix | flag) are intentionally
-  // NOT evaluated here — they're GROUP-level (see matchesAnnotationFilters
-  // / applyFilters) so 'with' / 'without' stay complementary across a
-  // dedup group.
-  // Analyzer + model filters — the `<analyzer-select>` dropdown's two
-  // dimensions, shared with group.js's default-tab resolution via
-  // matchesRunFilters (see its comment above for the matching rules).
-  // applyFilters runs this at the GROUP level via `g.some(...)`, so a
-  // dedup group shows in full when any entry matches — same
-  // group-visibility as severity / color.
-  if (!matchesRunFilters(f)) return false
-  // Repo filter — single-select dropdown shown only in workspace
-  // view (parent gates the chip on `state.currentWorkspace` + a
-  // multi-repo option list). Empty = no filter; `NO_REPO_SENTINEL`
-  // selects findings whose repo can't be derived (no `repo.github`
-  // and no `_repoFallback`). Group-visibility via applyFilters's
-  // `g.some(...)`, same as the other per-finding predicates above.
-  if (F.filterRepo) {
-    const r = repoOfFinding(f)
-    const want = F.filterRepo === NO_REPO_SENTINEL ? null : F.filterRepo
-    if (r !== want) return false
   }
   // Revalidation outcome — single-select dropdown shown only when the
   // loaded set has something to choose between (the toolbar drops the
@@ -535,6 +536,47 @@ export function matchesFilters(f) {
       if (F.filterConfMax < 10 && conf > F.filterConfMax) return false
     }
   }
+  return true
+}
+
+// Per-tab filter predicate. Factored out so `applyFilters` (group-level)
+// can ask "does ANY tab in this group match?" — per the user spec,
+// one matching tab keeps the whole group visible.
+export function matchesFilters(f) {
+  if (!matchesScopeFilters(f)) return false
+  const F = activeFilters()
+  const inc = F.filterInclude.toLowerCase()
+  // Severity + color filters are multi-select Sets: empty = no
+  // filter, non-empty = membership required. Unmarked tabs bucket
+  // under the literal `'none'` so ticking only that chip isolates
+  // unreviewed findings.
+  if (F.filterSeverities.size > 0 && !F.filterSeverities.has(displayedSeverity(f, state.severityMode))) return false
+  if (F.filterColors.size > 0) {
+    const col = triageEntry(f)?.color ?? 'none'
+    if (!F.filterColors.has(col)) return false
+  }
+  // NOTE: the annotation filters (comment | fix | flag) are intentionally
+  // NOT evaluated here — they're GROUP-level (see matchesAnnotationFilters
+  // / applyFilters) so 'with' / 'without' stay complementary across a
+  // dedup group.
+  // Analyzer + model filters — the `<analyzer-select>` dropdown's two
+  // dimensions, shared with group.js's default-tab resolution via
+  // matchesRunFilters (see its comment above for the matching rules).
+  // applyFilters runs this at the GROUP level via `g.some(...)`, so a
+  // dedup group shows in full when any entry matches — same
+  // group-visibility as severity / color.
+  if (!matchesRunFilters(f)) return false
+  // Repo filter — single-select dropdown shown only in workspace
+  // view (parent gates the chip on `state.currentWorkspace` + a
+  // multi-repo option list). Empty = no filter; `NO_REPO_SENTINEL`
+  // selects findings whose repo can't be derived (no `repo.github`
+  // and no `_repoFallback`). Group-visibility via applyFilters's
+  // `g.some(...)`, same as the other per-finding predicates above.
+  if (F.filterRepo) {
+    const r = repoOfFinding(f)
+    const want = F.filterRepo === NO_REPO_SENTINEL ? null : F.filterRepo
+    if (r !== want) return false
+  }
   if (inc) {
     // Triage annotations (the free-form `comment` and the `fix`
     // reference — PR URL, issue link, or free-text note) live off the
@@ -544,7 +586,7 @@ export function matchesFilters(f) {
     // keyword like "false positive" surfaces findings the user
     // annotated, and pasting a fix URL surfaces the finding it's filed
     // against.
-    const entry = state.triage.get(tabKey(f))
+    const entry = triageEntry(f)
     const hit = findingText(f).includes(inc)
       || (entry?.comment ?? '').toLowerCase().includes(inc)
       || (entry?.fix ?? '').toLowerCase().includes(inc)
@@ -566,7 +608,7 @@ export function matchesFilters(f) {
 function matchesAnnotationFilters(group) {
   const F = activeFilters()
   if (!F.filterComment && !F.filterFix && !F.filterFlagged) return true
-  const groupHas = (pred) => group.some((f) => pred(state.triage.get(tabKey(f))))
+  const groupHas = (pred) => group.some((f) => pred(triageEntry(f)))
   if (F.filterComment) {
     const has = groupHas((e) => Boolean(e?.comment))
     if (F.filterComment === 'with' ? !has : has) return false
@@ -582,11 +624,23 @@ function matchesAnnotationFilters(group) {
   return true
 }
 
+// Base rows for analyzer/severity/color counts and repository options. The
+// caller supplies the current lens's rows and triage bucket. After filtering
+// rows, project their visible tabs too: App mode folds underlying findings
+// inside surviving rows, and those hidden tabs must not contribute values.
+// Annotation and second-row filters don't narrow these selector choices.
+export function applyScopeFilters(groups) {
+  return groups.filter((g) => g.some(matchesScopeFilters)).map(drawnTabs)
+}
+
 export function applyFilters(groups) {
   // Per-tab existential filters (severity / color / source / analyzer /
   // model / repo / search) via `g.some`, AND the group-level annotation
   // filters.
-  return groups.filter((g) => g.some(matchesFilters) && matchesAnnotationFilters(g))
+  const duplicatesMode = !state.currentWorkspace && activeFilters().filterDuplicates
+  const duplicateIds = duplicatesMode ? reportDuplicateIds() : null
+  return groups.filter((g) => g.some(matchesFilters) && matchesAnnotationFilters(g)
+    && (!duplicatesMode || (duplicatesMode === 'with') === g.some((f) => duplicateIds.has(tabKey(f)))))
 }
 
 // Numeric-field comparator factory behind the `priority-*` modes

@@ -20,7 +20,7 @@ import { saveTriage, state } from '#client/index.js'
 import { report } from './dom.js'
 import { findLoadedFinding, unhideFinding } from './finding-link.js'
 import { locateLinkedFinding } from './finding-link-route.js'
-import { groupKey, syncGroupTriage } from './group.js'
+import { findGroupById, groupKey, syncGroupTriage } from './group.js'
 import { switchToFile, switchToWorkspace } from './ingest.js'
 import { scrollRootOf } from './lazy-render.js'
 import { render } from './render.js'
@@ -188,7 +188,8 @@ async function focusFound(hit, id) {
   // syncGroupTriage). It lives here rather than in `unhideFinding`,
   // which is a pure state mutation by contract; persistence waits for
   // the paint, as everywhere else that levels.
-  if (syncGroupTriage(hit.group)) queueMicrotask(saveTriage)
+  const shownGroup = findGroupById(gid)
+  if (shownGroup && syncGroupTriage(shownGroup)) queueMicrotask(saveTriage)
   render()
   const el = await findRenderedFinding(gid)
   if (!el) {

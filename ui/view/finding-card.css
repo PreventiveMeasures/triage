@@ -933,46 +933,13 @@ span.evidence-ref:not([role]) { color: var(--muted); }
 
 /* Group tabs share finding-tabs.css with the other finding surface. */
 
-.report-chip {
-  display: inline-flex; align-items: center; gap: .3rem;
-  padding: 0 .35rem; height: 1.4rem;
-  border: 1px solid var(--border); border-radius: 3px;
-  color: var(--muted); font-size: .72rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  margin-right: .65rem;
-  max-width: 16rem;
-  /* Shrink target when the marks row is tight: the action cluster to the
-     right is flex-shrink:0, so this chip absorbs the squeeze and ellipsises
-     the filename (label below) rather than the buttons clipping. */
-  min-width: 0;
-
-  & .report-chip-label {
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    min-width: 0;
-  }
-}
-
-/* Brand-sticker colors for every inline file icon this card renders —
-   the report chip above, and the producer marks on the duplicates row
-   below. Shadow DOM can't reach styles/file-icon.css, so the fills are
-   restated here; keep them in sync with that file (and with
-   sidebar.css's copy). */
-:is(.report-chip, .duplicates-block) {
-  & .file-icon { flex-shrink: 0; }
-  & .brand-deepview { & .bg { fill: #2563eb; } & .fg { fill: #fff; } }
-  & .brand-claude   { & .bg { fill: #d97757; } & .fg { fill: #fff; } }
-  & .brand-codex    { & .bg { fill: #fff; stroke: #000; stroke-width: .5; } & .fg { fill: #000; } }
-  & .brand-vercel   { & .bg { fill: #000; stroke: #fff; stroke-width: .5; } & .fg { fill: #fff; } }
-  & .brand-piolium  { & .bg { fill: #fbb829; } & .fg { fill: #1c1b19; } }
-}
+.duplicates-block .file-icon { flex-shrink: 0; }
 
 .mark-action-group {
   display: inline-flex; border: 1px solid var(--border); border-radius: 3px;
   /* Match row controls without allowing the surrounding surface to tint them. */
   background: linear-gradient(var(--surface), var(--surface)), var(--bg);
-  /* Never shrink — the group's overflow:hidden would otherwise clip its
-     buttons when a long report-chip filename squeezes the marks row. The
-     report-chip is the designated shrink target instead. */
+  /* Keep each group of action buttons intact when the footer wraps. */
   overflow: hidden; margin-right: .25rem; flex-shrink: 0;
 }
 .mark-comment,
@@ -984,10 +951,10 @@ span.evidence-ref:not([role]) { color: var(--muted); }
 .mark-claude {
   background: transparent; border: 0; color: var(--muted);
   padding: 0 .25rem; height: 1.4rem;
-  cursor: pointer;
+  cursor: default;
   display: inline-flex; align-items: center; justify-content: center;
   &:not(:last-child) { border-right: 1px solid var(--border); }
-  &:hover { color: var(--accent); background: var(--surface-active); }
+  &:not(:disabled):hover { color: var(--accent); background: var(--surface-active); }
 }
 /* The issue button is an <a> (a real link to GitHub's new-issue form),
    so drop the default underline + link color the icon/label would
@@ -1019,6 +986,7 @@ span.evidence-ref:not([role]) { color: var(--muted); }
   flex-shrink: 0;
 }
 .mark-triage-menu {
+  cursor: default;
   background: linear-gradient(var(--surface), var(--surface)), var(--bg);
   border: 1px solid var(--border); color: var(--muted);
   border-radius: 3px; padding: 0 .3rem; height: 1.5rem;
@@ -1026,7 +994,12 @@ span.evidence-ref:not([role]) { color: var(--muted); }
   gap: .25rem;
   font: inherit;
 }
-.mark-triage-menu:hover { color: var(--text); border-color: var(--accent); }
+.mark-triage-menu:not(:disabled):hover { color: var(--text); border-color: var(--accent); }
+.mark-comment:disabled,
+.mark-fix:disabled,
+.mark-flag:disabled,
+.mark-triage-menu:disabled,
+.triage-menu-item:disabled { opacity: .4; }
 .mark-triage-menu.with-label {
   padding: 0 .35rem 0 .5rem;
   font-size: .72rem;
@@ -1063,6 +1036,7 @@ span.evidence-ref:not([role]) { color: var(--muted); }
 .triage-menu[popover]:not(:popover-open) { display: none; }
 .triage-menu[popover]:popover-open { display: flex; }
 .triage-menu-item {
+  cursor: default;
   background: transparent;
   border: 0;
   padding: .35rem .5rem;
@@ -1072,12 +1046,12 @@ span.evidence-ref:not([role]) { color: var(--muted); }
   border-radius: 3px;
   font-family: inherit;
 }
-.triage-menu-item:hover { background: var(--surface); }
+.triage-menu-item:not(:disabled):hover { background: var(--surface); }
 .triage-menu-item.active::before { content: '✓ '; color: var(--accent); }
-.triage-menu-inprogress:hover { color: var(--warning, #d97706); }
-.triage-menu-fixed:hover   { color: var(--green, #4ade80); }
-.triage-menu-invalid:hover { color: var(--muted); }
-.triage-menu-deleted:hover { color: var(--critical); }
+.triage-menu-inprogress:not(:disabled):hover { color: var(--warning, #d97706); }
+.triage-menu-fixed:not(:disabled):hover   { color: var(--green, #4ade80); }
+.triage-menu-invalid:not(:disabled):hover { color: var(--muted); }
+.triage-menu-deleted:not(:disabled):hover { color: var(--critical); }
 
 /* Focus-view context — set via `context="focus"` on the host (see
    findingCardPlaceholder in render.js). Two tweaks make the centered
@@ -1127,7 +1101,7 @@ span.evidence-ref:not([role]) { color: var(--muted); }
   border-color: var(--accent);
   color: var(--accent);
 }
-:host([context='focus']) .triage-menu-item:hover { background: var(--surface-active); }
+:host([context='focus']) .triage-menu-item:not(:disabled):hover { background: var(--surface-active); }
 :host([context='focus']) .triage-menu-inprogress.active {
   background: rgb(from var(--warning, #d97706) r g b / .12);
   border-color: var(--warning, #d97706);

@@ -3,12 +3,12 @@ import { adoptRepoUrlFor, analyzeContent, computeLinkHint, deleteBundle, deleteF
 import { closeWorkspace as closePresence, deleteBundleFromRemote, deleteFromRemote as deletePresence, isInRemoteOrCached, openWorkspace as openPresence, putFile, triageSync } from './client-sync.js'
 import { openImportConflictDialog } from './dialogs/import-conflict-dialog.js'
 import { dropZone, report } from './dom.js'
-import { getShownGroups, mergeDuplicateFields, toGroup } from './group.js'
-import { effectiveSeverity, hasRevalidateStamp } from './format.js'
+import { clearMergedGroups, getRevalidationConflicts, getShownGroups, toGroup } from './group.js'
+import { configureDepsDir, hasRevalidateStamp, stampUpstreamFindings } from './format.js'
 import { applyOpeningFilters, resetFilters } from './filters.js'
 import { reportWorkspaceFor } from './finding-link.js'
 import { encodeReportLocation } from '../../client/report-location.js'
-import { render } from './render.js'
+import { configureReportRevalidation, render } from './render.js'
 import { renderSidebar } from './sidebar.js'
 import { cleanupGraph2, graph2 } from './graph/state.js'
 import { openBundle, prefetchBundleHashes, selectBundle } from './bundle-load.js'
@@ -56,6 +56,26 @@ export function persistLastBundle(integrity, tab = 'overview') {
 // repeated-ingest accumulation still works.
 let loadGen = 0
 const isStaleLoad = (captured) => captured !== loadGen
+
+// Keep expensive view renders out of the report-ingest call stack. A
+// workspace can contain many reports, and rendering after each parse both
+// blocks the next read and makes the final workspace render redundant. A
+// frame boundary lets the browser paint other work first; the timeout
+// fallback keeps headless callers moving when requestAnimationFrame is not
+// available.
+function nextAnimationFrame() {
+  return new Promise((resolve) => {
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(resolve)
+    else setTimeout(resolve, 0)
+  })
+}
+
+async function renderAfterAnimationFrame(gen) {
+  await nextAnimationFrame()
+  if (gen !== null && isStaleLoad(gen)) return false
+  render()
+  return true
+}
 
 // Reset graph v2 so a new report / workspace doesn't open with the
 // previous file's selection / hidden / soloed pkg. Layout cache also
@@ -503,8 +523,9 @@ export async function switchToFile(name, content, { workspaceId } = {}) {
   // cost of a cold cache on return visits) makes that impossible.
   closeSessionsExcept(desiredWorkspaceIds)
   state.reports = []
+  clearMergedGroups()
   state.workspaceMerges = []
-  state.revalidateConflict = false
+  state.revalidateConflicts = new Map()
   state.currentFile = name
   state.currentWorkspace = null
   state.currentLinks = null
@@ -666,8 +687,9 @@ export async function switchToWorkspace(workspaceId) {
   // of a deep link's location hint.
   void computeLinkHint('workspace', workspaceId)
   state.reports = []
+  clearMergedGroups()
   state.workspaceMerges = []
-  state.revalidateConflict = false
+  state.revalidateConflicts = new Map()
   state.currentFile = null
   state.currentWorkspace = workspaceId
   state.currentReportWorkspace = null
@@ -705,7 +727,10 @@ export async function switchToWorkspace(workspaceId) {
     // reject it as an unreadable report. Skip it here; its sidebar row
     // under this workspace still opens it in its own view.
     if (parseLinkedFindings(content)) continue
-    await ingestReport(ws.reports[i], content, gen)
+    // Workspace loads accumulate all reports before painting. Rendering
+    // here would force one expensive graph/list pass per report and block
+    // the next report's ingest on the main thread.
+    await ingestReport(ws.reports[i], content, gen, { renderView: false })
     ingested++
     if (isStaleLoad(gen)) return
   }
@@ -722,11 +747,10 @@ export async function switchToWorkspace(workspaceId) {
   // its reports, so ask once more now that they are all in — nothing
   // has touched the filters since that first member's resetFilters,
   // so this is still what a fresh load would set, not a user's
-  // selection being overwritten. Re-render: the last ingest painted
-  // with the interim answer.
+  // selection being overwritten. Paint the complete workspace once.
   if (ingested > 0) {
     applyOpeningFilters(getShownGroups())
-    render()
+    if (!(await renderAfterAnimationFrame(gen))) return
   }
   // Open the per-workspace sync session AFTER every report is ingested
   // — it needs a complete view of state.reports to build its
@@ -855,8 +879,9 @@ function clearActiveView() {
   state.bundleSourceFile = null
   state.bundleSourceFindingIdx = null
   state.reports = []
+  clearMergedGroups()
   state.workspaceMerges = []
-  state.revalidateConflict = false
+  state.revalidateConflicts = new Map()
   state.repoUrl = ''
   state.repoEditing = false
   state.shownTriage = null
@@ -1048,7 +1073,7 @@ export async function leaveWorkspace(workspaceId, mode = 'detach', { triage = 'k
 // push. The headless `window.__loadFile` path passes nothing, staying
 // unguarded so it keeps accumulating across calls (the print pipeline
 // relies on that).
-async function ingestReport(name, content, gen = null) {
+async function ingestReport(name, content, gen = null, { renderView = true } = {}) {
   const stale = () => gen !== null && isStaleLoad(gen)
   try {
     // Finish both hints before rendering the Link button. Copy remains
@@ -1072,65 +1097,6 @@ async function ingestReport(name, content, gen = null) {
     // switchToFile / deleteCurrent, accumulating in the headless print
     // flow). Gates both the filter reset and the auto-tune below.
     const isFirst = state.reports.length === 0
-    // Dedup by exporter-provided uuid id across ALL loaded reports.
-    // Entries are a single Finding or a Finding[] (an upstream dedup
-    // group). A new group is dropped if ANY member's id matches a
-    // seen id — one overlap means "already loaded" (groups don't
-    // split / reshape across reloads). Id-less findings (legacy /
-    // pre-uuid JSON) can't be deduped and always pass through.
-    // `idToGroupKey` lets the dupe branch distinguish "same group
-    // already loaded" (one key matched) from "this entry binds >1
-    // existing groups into one finding" (>1 keys) — the latter is
-    // recorded as a workspace-level merge so the dedup hint survives
-    // dropping the entry.
-    const seenIds = new Set()
-    const idToGroupKey = new Map()
-    // id → the SURVIVING finding object for that id (first occurrence
-    // wins, matching the dedup below). Lets the dedup branches keep
-    // what the dropped copy knew: its per-report effective severity,
-    // so an application-specific correction that DIFFERS across
-    // reports stays visible in the merged view (recordCorrectedVariant
-    // + format.js correctedVariants), and every other field the
-    // survivor has no answer for — the revalidation pass's verdict
-    // above all (group.js mergeDuplicateFields). The dropped object
-    // itself is discarded as before.
-    const idToFinding = new Map()
-    for (let ri = 0; ri < state.reports.length; ri++) {
-      const r = state.reports[ri]
-      for (let gi = 0; gi < r.groups.length; gi++) {
-        const g = r.groups[gi]
-        const key = `${ri}:${gi}`
-        for (const f of g) {
-          if (f.id) {
-            seenIds.add(f.id); idToGroupKey.set(f.id, key)
-            if (!idToFinding.has(f.id)) idToFinding.set(f.id, f)
-          }
-        }
-      }
-    }
-    // Record a deduped duplicate's effective severity onto the survivor,
-    // keyed by report name. Only builds the `_correctedByReport` map when
-    // a correction is actually present on either side — same id implies an
-    // identical INTRINSIC severity (it's in the id fingerprint), so two
-    // occurrences can only diverge via a correction. Seeds the survivor's
-    // own entry on first divergence so the map fully describes every
-    // report's value. Defined outside the entry loop (no per-iteration
-    // closure) so oxlint's no-loop-func stays happy.
-    const recordCorrectedVariant = (survivor, dupReportName, dup) => {
-      if (!survivor || (!dup.correctedSeverity && !survivor.correctedSeverity)) return
-      if (!survivor._correctedByReport) {
-        survivor._correctedByReport = {
-          [survivor._reportName ?? '']: {
-            severity: effectiveSeverity(survivor),
-            reason: survivor.correctedSeverityReason,
-          },
-        }
-      }
-      survivor._correctedByReport[dupReportName ?? ''] = {
-        severity: effectiveSeverity(dup),
-        reason: dup.correctedSeverityReason,
-      }
-    }
     // The report's entries, under whichever of the two names it files
     // them (report/index.js reportEntries): `findings`, or `groups`
     // for a report that arrives already deduplicated — a native dump
@@ -1183,73 +1149,15 @@ async function ingestReport(name, content, gen = null) {
     // view rather than splitting the same repo across two keys.
     const declaredRepo = reportRepoGithub(data)
     const repoFallback = declaredRepo ?? loadRepoUrlFor(name)
+    // Preserve report boundaries and every original copy. Workspace grouping
+    // depends on the App lens, so discarding duplicates here would make it
+    // impossible to keep App rows separate and later merge their source rows.
     const groups = []
-    let dupeCount = 0
     for (const entry of rawEntries) {
       const members = toGroup(entry)
       if (members.length === 0) continue
-      // Partition members by whether their id was already seen across
-      // prior reports + earlier entries here. Three branches:
-      //   1. all-new      → push as a fresh group (no merge)
-      //   2. all-seen     → drop the entry; record a cross-report merge
-      //                     when it binds >1 distinct existing groups,
-      //                     so the dedup hint survives the drop
-      //   3. partial-seen → stamp the new members as a fresh group AND
-      //                     record a merge with all member ids, so the
-      //                     load-order case (combined entry arrives
-      //                     between the two singletons it merges) still
-      //                     collapses to one super-group
-      // Recorded merges carry every entry id in source-array order;
-      // `getMergedGroups` orders the merged super-group from that, so
-      // the combined entry's [A, B] beats any incidental load-order
-      // [B, A].
-      const seenMembers = members.filter((f) => f.id && seenIds.has(f.id))
-      const newMembers = members.filter((f) => !f.id || !seenIds.has(f.id))
-      const matchedGroupKeys = new Set()
-      for (const f of seenMembers) {
-        const k = idToGroupKey.get(f.id)
-        if (k !== undefined) matchedGroupKeys.add(k)
-      }
-      const entryMergeIds = members.filter((f) => f.id).map((f) => f.id)
-      if (newMembers.length === 0) {
-        if (matchedGroupKeys.size > 1) {
-          state.workspaceMerges.push(new Set(entryMergeIds))
-        }
-        // Preserve each dropped duplicate's corrected severity on its
-        // survivor before discarding the entry.
-        for (const m of seenMembers) {
-          const survivor = idToFinding.get(m.id)
-          recordCorrectedVariant(survivor, name, m)
-          // …and anything else this copy knew that the survivor
-          // doesn't — the pass's verdict above all. A disagreement
-          // about that verdict is reported rather than settled: the
-          // layer comes off the whole set (group.js
-          // mergeDuplicateFields, render.js).
-          if (mergeDuplicateFields(survivor, m)) state.revalidateConflict = true
-        }
-        dupeCount += seenMembers.length; continue
-      }
-      // Stamp a session-local `_id` on each member as a fallback key
-      // for findings lacking the exporter uuid `id` — `tabKey(f)`
-      // prefers `f.id` (persistent), falls back to `String(f._id)`.
-      // Register ids as we stamp so duplicate entries WITHIN this drop
-      // are caught too.
-      //
-      // Inherit run-level meta (type / model / think / effort /
-      // exportsMode) from the header onto each finding, field by field —
-      // see inheritReportMeta. A finding out of the deduplicate command
-      // carries its own `model` (one per source run) while the rest of
-      // the run meta stays in the header, so filling gaps individually
-      // is what keeps such a finding's analyzer from reading as "none".
-      //
-      // Plain for-loop rather than .map — the callback would close over
-      // the outer loop's `data` / `name` / `repoFallback`, which
-      // oxlint's no-loop-func flags. The closure is invoked
-      // synchronously this iteration so the capture is safe; the
-      // for-loop sidesteps the lint without changing semantics.
       const stamped = []
-      for (const f of newMembers) {
-        if (f.id) seenIds.add(f.id)
+      for (const f of members) {
         // `_bundleHashes`: the report-level integrities the analyzer
         // ran against, stamped per-finding so the finding-card's
         // "Code →" lookup constrains its search to bundles this report
@@ -1291,44 +1199,10 @@ async function ingestReport(name, content, gen = null) {
         // of a native dump (undefined → null, a stable sentinel for
         // the "no analyzer" bucket).
         filled._analyzer = filled._source ?? (filled.type ?? null)
-        if (filled.id && !idToFinding.has(filled.id)) idToFinding.set(filled.id, filled)
         stamped.push(filled)
-      }
-      // Stamp the new members' group key so a later partial-dupe entry
-      // in this report sees them as distinct from any previously-loaded
-      // group. Reads `groups.length` BEFORE the push so the key matches
-      // the slot about to be filled. The `state.reports.length` prefix
-      // is THIS report's eventual index (pushed at function end) — safe
-      // only because the seed loop above walks `ri <
-      // state.reports.length` against the pre-push length, so this
-      // report's index can't already be in the map. If a future
-      // refactor pushes the report shell early (e.g. streaming),
-      // snapshot the index once before this loop instead of re-reading
-      // per iteration.
-      if (seenMembers.length > 0) {
-        // Partial-dupe: count seen members as dropped dupes (only the
-        // new ones are stamped) and tie the fresh group to the existing
-        // groups holding the seen members via a workspace merge.
-        dupeCount += seenMembers.length
-        state.workspaceMerges.push(new Set(entryMergeIds))
-        for (const m of seenMembers) {
-          const survivor = idToFinding.get(m.id)
-          recordCorrectedVariant(survivor, name, m)
-          // …and anything else this copy knew that the survivor
-          // doesn't — the pass's verdict above all. A disagreement
-          // about that verdict is reported rather than settled: the
-          // layer comes off the whole set (group.js
-          // mergeDuplicateFields, render.js).
-          if (mergeDuplicateFields(survivor, m)) state.revalidateConflict = true
-        }
-      }
-      const newGroupKey = `${state.reports.length}:${groups.length}`
-      for (const f of newMembers) {
-        if (f.id) idToGroupKey.set(f.id, newGroupKey)
       }
       groups.push(stamped)
     }
-    if (dupeCount > 0) console.log(`${name}: skipped ${dupeCount} duplicate finding${dupeCount === 1 ? '' : 's'}`)
     state.reports.push({
       type: data.type || 'analysis',
       // `source` is set by the markdown parser ('claude-security'),
@@ -1347,6 +1221,12 @@ async function ingestReport(name, content, gen = null) {
       tree: data.tree ?? null,
       bundleHashes: data.bundleHashes ?? [],
     })
+    configureDepsDir(state.reports)
+    if (stampUpstreamFindings(state.reports)) clearMergedGroups()
+    state.revalidateConflicts = getRevalidationConflicts()
+    // Restore/disable the lens before deriving opening filters, including when
+    // leaving a conflicted workspace for one of its individual reports.
+    configureReportRevalidation()
     // Pre-parse bundles the analyzer ran against so the finding-card's
     // "Code →" shortcut resolves without manually opening each bundle.
     // Only locally-stored bundles are prefetched (mismatched
@@ -1372,7 +1252,7 @@ async function ingestReport(name, content, gen = null) {
       // (switchToWorkspace).
       applyOpeningFilters(getShownGroups())
     }
-    render()
+    if (renderView) await renderAfterAnimationFrame(gen)
   } catch (err) {
     alert(`Failed to parse ${name}: ${err.message}`)
   }

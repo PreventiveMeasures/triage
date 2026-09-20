@@ -19,10 +19,10 @@
 // column previews how many groups each analyzer would show under
 // that model (and vice versa), which is what makes nonexistent
 // combinations visible before clicking (they read 0 and dim, but
-// stay clickable). Counts are group-level over the same set the
-// toolbar's "X of Y" denominator uses, matching the severity-chip
-// convention ("counts preview filter-click results"); a group counts
-// for a value when SOME tab passes both that value and the other
+// stay clickable). Counts are group-level over rows remaining after
+// the source/confidence/outcome selectors and App/underlying/upstream
+// lens; a group counts for a value when SOME tab passes both that
+// value and the other
 // dimension's filter — exactly matchesFilters' per-finding
 // conjunction.
 //
@@ -44,9 +44,8 @@
 //                   its dimension has more than one distinct value.
 //   * `models`    — ordered pretty model names (strings or `null`).
 //   * `groups`    — the dedup-group list the counts run over (the
-//                   parent's `allGroups`, i.e. the current triage
-//                   bucket — NOT the filtered output, so counts don't
-//                   feed back into themselves).
+//                   parent's scope-filtered groups. Annotation and
+//                   second-row selectors don't narrow this base set).
 import { nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { StateElement, html } from '@rray/frontend/state-element'

@@ -79,6 +79,7 @@ function reset() {
   state.filterPartial = ''
   state.shownTriage = null
   state.showRevalidation = true
+  state.upstreamOnly = false
   state.revalidationDetailed = false
   state.severityMode = 'corrected'
   state.sortBy = 'severity'
@@ -100,6 +101,22 @@ describe('reportsToMarkdown — triage annotations', () => {
     assert.equal(line(md, 'Fix'), null)
     assert.equal(line(md, 'Triage'), 'Red mark · Flagged')
     assert.ok(md.endsWith('#### Comment\n\nnot fixed yet\n'), md)
+  })
+
+  it('omits upstream annotations in App view without deleting their saved values', () => {
+    load(finding({ isUpstream: true }))
+    const saved = { comment: 'upstream note', fix: PR, color: 'red', flagged: true }
+    state.triage.set('f1', saved)
+    for (const [appOn, upstreamOn] of [[true, false], [true, true], [false, false], [true, false]]) {
+      state.showRevalidation = appOn
+      state.upstreamOnly = upstreamOn
+      const allowed = !appOn || upstreamOn
+      const md = reportsToMarkdown()
+      assert.equal(line(md, 'Fix'), allowed ? `<${PR}>` : null)
+      assert.equal(line(md, 'Triage'), allowed ? 'Red mark · Flagged' : null)
+      assert.equal(md.includes('#### Comment\n\nupstream note'), allowed)
+      assert.deepEqual(state.triage.get('f1'), saved)
+    }
   })
 })
 
@@ -166,9 +183,10 @@ describe('reportsToMarkdown — the lenses', () => {
   beforeEach(reset)
 
   it('takes the revalidation layer off with the App switch', () => {
+    state.revalidationDetailed = true
     load(finding({ revalidate: 'refuted', revalidateVerdict: 'Not reachable.' }))
     const on = reportsToMarkdown()
-    assert.equal(line(on, 'View'), 'Live findings · app view — the revalidation pass is applied, standing in for the rows it re-rated')
+    assert.equal(line(on, 'View'), 'Live findings · detailed app view — the revalidation pass is applied, with the rows it re-rated')
     assert.equal(line(on, 'Revalidation'), 'refuted')
     assert.ok(on.includes('#### Revalidation verdict\n\nNot reachable.'))
     state.showRevalidation = false
