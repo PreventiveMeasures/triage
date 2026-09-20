@@ -42,7 +42,7 @@
 // `## SEVERITY (n)` headers anywhere) — caller falls through to the
 // next parser.
 
-import { splitHeadingLine } from './md-structure.js'
+import { normalizeNewlines, splitHeadingLine } from './md-structure.js'
 
 // The `## SEVERITY (n)` section header — the shape that marks a DeepSec
 // document. Splitting on it with the tier captured interleaves tiers
@@ -152,7 +152,7 @@ const REVALIDATION = new Map([
 ])
 
 export function parseDeepsecFindings(content) {
-  const text = content.replaceAll(/\r\n?/gu, '\n').trim()
+  const text = normalizeNewlines(content).trim()
   // Format guard — without a single `## SEVERITY (n)` header this isn't
   // a DeepSec doc; bail out so the chain moves on to
   // parseMarkdownFindings.

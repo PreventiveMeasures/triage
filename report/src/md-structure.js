@@ -83,6 +83,31 @@ export function inFence(ranges, index) {
   return ranges.some(([start, end]) => index >= start && index < end)
 }
 
+// A document's own line endings, normalised — what every parser does
+// to the text before it reads a line of it, and the writer to a
+// report's prose before it puts it on the page.
+export function normalizeNewlines(text) {
+  return String(text ?? '').replaceAll(/\r\n?/gu, '\n')
+}
+
+// The headings the parsers split on. Global and multiline, the heading
+// text in capture 1 — the shape splitByHeading and splitLeading below
+// take, and shared instances because they only ever reach them through
+// `matchAll`, which reads a regex without advancing it.
+export const H2_RE = /^## +(.*)$/gmu
+export const H3_RE = /^### +(.*)$/gmu
+export const H4_RE = /^#### +(.*)$/gmu
+
+// `file:line` — the line a number or a `10-20` RANGE, kept whole: the
+// file:line displays print it verbatim, and link anchors parseInt() it
+// down to the start line.
+export const FILE_LINE_RE = /^(.+):(\d+(?:-\d+)?)$/u
+
+// A git hash as a report writes one: short or full, either case.
+export function isCommitHash(s) {
+  return /^[0-9a-f]{7,64}$/iu.test(s)
+}
+
 // Split `text` at every line matching `re` (global + multiline, heading
 // text in capture 1) that sits outside a code fence. Content before the
 // first heading (a setext underline, prose) is dropped.
@@ -266,10 +291,7 @@ export function parseCodeRef(raw) {
     file = frag[1]
     if (!line) line = frag[2]
   }
-  // A `:60-90` RANGE is kept whole in `line`: the file:line displays
-  // print it verbatim, and link anchors parseInt() it down to the
-  // start line.
-  const colon = /^(.+):(\d+(?:-\d+)?)$/u.exec(file)
+  const colon = FILE_LINE_RE.exec(file)
   if (colon) {
     if (!line) line = colon[2]
     return { file: colon[1], line, locationLink }

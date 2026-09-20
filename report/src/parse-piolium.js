@@ -75,7 +75,7 @@
 // must not end a section nor a fenced `### run this` fabricate a
 // finding (see md-structure.js).
 
-import { parseCodeRef, parseLabelledFields, splitByHeading, splitLeading, tableObjects } from './md-structure.js'
+import { H2_RE, H3_RE, H4_RE, normalizeNewlines, parseCodeRef, parseLabelledFields, splitByHeading, splitLeading, tableObjects } from './md-structure.js'
 import { fromIndexRow, indexRowOf, listFindings, variantFindings } from './parse-piolium-rows.js'
 import {
   CODE_REF_FIELDS, codeRefOf, headerSeverity, idCell, idFromToken,
@@ -83,9 +83,6 @@ import {
   severityFromId, severityGroupOf,
 } from './parse-piolium-tokens.js'
 
-const H2_RE = /^## +(.*)$/gmu
-const H3_RE = /^### +(.*)$/gmu
-const H4_RE = /^#### +(.*)$/gmu
 
 // Section headers whose body holds the findings themselves. Deliberate
 // non-matches: 'summary of findings' (the index table, read
@@ -124,7 +121,7 @@ function hasIdBlocks(body) {
 }
 
 export function parsePioliumFindings(content) {
-  const text = content.replaceAll(/\r\n?/gu, '\n').trim()
+  const text = normalizeNewlines(content).trim()
   // Format guard. Any one signal is enough on its own: the H1 is the
   // template's but a project could retitle it, and a partial /
   // hand-trimmed report could drop the prose sections while keeping the

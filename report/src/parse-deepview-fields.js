@@ -15,7 +15,7 @@
 
 import { REVALIDATE_KINDS, firstLine } from './finding.js'
 import { SEVERITY_LABELS, SOURCE_LABELS } from './labels.js'
-import { fenceRanges, findMdLink, inFence } from './md-structure.js'
+import { FILE_LINE_RE, fenceRanges, findMdLink, inFence, isCommitHash } from './md-structure.js'
 import { isHttpUrl, unescapeHeadings } from './md-text.js'
 
 // label (case-folded) → key, for the words the writer spells the app's
@@ -62,7 +62,7 @@ function autolinkUrl(s) {
 // `10-20` range, `?` when the label carried none (finding.js
 // locationLabel).
 function fileLine(label) {
-  const m = /^(.+):(\d+(?:-\d+)?)$/u.exec(label)
+  const m = FILE_LINE_RE.exec(label)
   return m ? { file: m[1], line: m[2] } : { file: label, line: '?' }
 }
 
@@ -184,7 +184,7 @@ function readCommit(value) {
   const link = readLink(value.trim())
   if (link) {
     const tail = link.url.split('/').at(-1) ?? ''
-    if (/^[0-9a-f]{7,64}$/iu.test(tail)) return tail
+    if (isCommitHash(tail)) return tail
     return codeSpan(link.label) ?? tail
   }
   return codeSpan(value) ?? value.trim()

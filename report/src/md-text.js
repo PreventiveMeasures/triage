@@ -4,7 +4,7 @@
 // writing-side sibling of md-structure.js, which reads. Pure string
 // work; nothing here knows what a finding is.
 
-import { fenceRanges, inFence } from './md-structure.js'
+import { fenceRanges, inFence, normalizeNewlines } from './md-structure.js'
 
 // Returns true only for parseable http:// / https:// URLs. Values that
 // get linked come from reports and from the user's own notes (a fix
@@ -130,7 +130,7 @@ const FENCE_OPEN_RE = /^ *(`{3,}|~{3,})/u
 const HEADING_LINE_RE = /^( {0,3})(\\*#)/u
 
 export function prose(text) {
-  const s = closeFence(String(text ?? '').replaceAll(/\r\n?/gu, '\n').trim())
+  const s = closeFence(normalizeNewlines(text).trim())
   return s ? escapeHeadings(s) : ''
 }
 

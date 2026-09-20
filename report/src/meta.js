@@ -59,6 +59,14 @@ export function inheritReportMeta(finding, data) {
 const GITHUB_URL_RE = /^(?:https?:\/\/)?(?:www\.)?github\.com\/([^/?#]+)\/([^/?#]+?)(?:\.git)?(?:[/?#].*)?$/iu
 const SLUG_RE = /^[\w.-]+\/[\w.-]+$/u
 
+// Is this value that slug already? Asked wherever a report hands over
+// something that may be one — its own `repo.github` below, a Piolium
+// preamble's `**Target:**` (parse-piolium-tokens.js), a finding's repo
+// on the way to a link (write-md-finding.js).
+export function isRepoSlug(s) {
+  return SLUG_RE.test(s)
+}
+
 export function reportRepoGithub(data) {
   const raw = data?.repo?.github
   if (typeof raw !== 'string') return null
@@ -66,5 +74,5 @@ export function reportRepoGithub(data) {
   if (!trimmed) return null
   const url = GITHUB_URL_RE.exec(trimmed)
   const slug = (url ? `${url[1]}/${url[2]}` : trimmed).replace(/\.git$/u, '')
-  return SLUG_RE.test(slug) ? slug : null
+  return isRepoSlug(slug) ? slug : null
 }
