@@ -305,14 +305,17 @@ export function stripBold(text) { return text.replaceAll('**', '') }
 // closes with no destination behind it — is not a label at all under
 // either, and the scan moves on to the next `[`.
 //
-// The DESTINATION is either `<…>` — what md-text.js `link` writes when
-// a url holds a space, a paren or an angle bracket — or a bare run in
-// which parens balance, to any depth. A class that merely stops at the
-// first `)` truncates a url the writer never percent-encoded:
-// `…/app/(main)/page.ts` comes back as `…/app/(main`. Whitespace ends a
-// bare destination without closing it, where markdown would read a
-// title and nothing here writes one, so that candidate is abandoned
-// and the scan carries on.
+// The DESTINATION is `<…>` — what md-text.js `link` writes when a url
+// holds a space, a paren or an angle bracket — or, failing that, a bare
+// run read the same two ways the label is, and for the same reasons:
+// parens BALANCED to any depth first, since a class that merely stops
+// at the first `)` truncates a url the writer never percent-encoded
+// (`…/app/(main)/page.ts` → `…/app/(main`), then up to the first `)`
+// as this was read before, which is the only reading a url with an
+// UNMATCHED paren has — a `src/(legacy/file.ts` path a report left
+// unencoded. Whitespace disqualifies a bare destination under either
+// reading, where markdown would read a title and nothing here writes
+// one, so that candidate is abandoned and the scan carries on.
 //
 // A backslash hides the character after it from every scan here, which
 // is how a report escapes a bracket it means literally.
@@ -364,7 +367,8 @@ function codeSpanEnd(text, i) {
 }
 
 // The destination opened at `open` (its `(`), as `{ url }`, or null
-// when it doesn't close before whitespace or the end of the text.
+// when nothing reads it: an angle-bracket form, else a bare run its
+// parens close, else the bare run the first `)` closes.
 function destination(text, open) {
   if (text[open + 1] === '<') {
     const close = text.indexOf('>', open + 2)
@@ -372,6 +376,11 @@ function destination(text, open) {
     if (close === -1 || (line !== -1 && line < close) || text[close + 1] !== ')') return null
     return { url: text.slice(open + 2, close) }
   }
+  return balancedDestination(text, open) ?? flatDestination(text, open)
+}
+
+// The bare destination whose own parens balance, to any depth.
+function balancedDestination(text, open) {
   let depth = 0
   for (let i = open; i < text.length; i++) {
     const c = text[i]
@@ -381,6 +390,17 @@ function destination(text, open) {
     else if (c === ')' && --depth === 0) return { url: text.slice(open + 1, i) }
   }
   return null
+}
+
+// The bare destination as this was read before there was a scanner:
+// everything up to the first `)`. It is what a url carrying an
+// unmatched `(` has instead of a balanced reading, and it stays behind
+// the balanced one so a url that closes its own parens keeps them.
+function flatDestination(text, open) {
+  const close = text.indexOf(')', open + 1)
+  if (close === -1) return null
+  const url = text.slice(open + 1, close)
+  return /\s/u.test(url) ? null : { url }
 }
 
 // Markdown backslash escapes — `a/b/\_cc\_cc/index.js` is a report

@@ -606,6 +606,7 @@ describe('parseDeepviewMarkdown — a path with brackets in it', () => {
     'src/[[...all]]/route.ts',
     'src/[id.ts',
     'src/a]b.ts',
+    'src/(legacy/x.ts',
     'a/b/c.ts',
   ]
   for (const file of paths) {

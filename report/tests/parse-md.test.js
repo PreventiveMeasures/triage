@@ -31,6 +31,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
+import { findMdLink } from '../src/md-structure.js'
 import { parseMarkdownFindings } from '../src/parse-md.js'
 
 describe('parseMarkdownFindings — format guards', () => {
@@ -606,6 +607,15 @@ describe('parseMarkdownFindings — paths with brackets and parens', () => {
     assert.equal(f.location, 'https://example.com/a.ts#L7')
   })
 
+  it('keeps a url whose own paren never closes', () => {
+    // No balanced reading of that url exists, so it is read to the
+    // first `)` — how it was read before there was a scanner.
+    const f = located('[src/(legacy/file.ts:7](https://example.com/src/(legacy/file.ts#L7)')
+    assert.equal(f.file, 'src/(legacy/file.ts')
+    assert.equal(f.line, '7')
+    assert.equal(f.location, 'https://example.com/src/(legacy/file.ts#L7')
+  })
+
   it('takes a url whose own parens nest', () => {
     const f = located('[src/a(foo(bar)).ts:7](https://example.com/a(foo(bar)).ts#L7)')
     assert.equal(f.file, 'src/a(foo(bar)).ts')
@@ -632,5 +642,57 @@ describe('parseMarkdownFindings — paths with brackets and parens', () => {
     assert.equal(f.file, 'a/b/app/(main)/[id]/index.ts')
     assert.equal(f.line, '12')
     assert.equal(f.location, 'a/b/app/(main)/[id]/index.ts:12')
+  })
+})
+
+// The compatibility property every one of the readings above exists to
+// keep: a line the expression this replaced could read still reads the
+// same way. That expression is the reference below — it is the whole
+// of what parse-md.js did before `findMdLink`, so wherever it matched,
+// the scanner has to match at the same place with the same label.
+//
+// The url is compared with `startsWith` rather than for equality,
+// because the one thing the scanner is allowed to do better is finish
+// a url the old class cut short: `…/a(foo(bar)).ts#L7` came back as
+// `…/a(foo(bar` (the class stopped at the first `)`), and now comes
+// back whole. Every other shape has to be untouched.
+describe('findMdLink — nothing the old expression read reads differently', () => {
+  const OLD = /\[([^\]]+)\]\(([^)\s]+)\)/u
+
+  const labels = [
+    'src/a.ts:7', 'app/(main)/x.ts:7', 'app/(main)/[id]/x.ts:7', 'src/[id.ts:7', 'src/a]b.ts:7',
+    'a/b/\\[id\\]/x.ts:7', '`src/[id.ts:7`', '`app/(main)/[id]/x.ts:7`', 'a/b/\\_c\\_/x.ts:10', 'x', '',
+  ]
+  const urls = [
+    'https://e.com/a.ts#L7', 'https://e.com/app/(main)/a.ts#L7', 'https://e.com/a(foo(bar)).ts#L7',
+    'https://e.com/src/(legacy/a.ts#L7', 'https://e.com/%28main%29/%5Bid%5D/a.ts#L7-L9',
+    'https://e.com/a.ts', '',
+  ]
+  // The positions a reference turns up in: alone on the line, behind
+  // prose (bracketed or not), ahead of it, and as a list item.
+  const around = [
+    (l) => l, (l) => `[context] see ${l}`, (l) => `${l} and more`, (l) => `see ${l} here`, (l) => `- ${l}`,
+  ]
+
+  it('matches where it matched, on every shape these spell', () => {
+    let read = 0
+    for (const label of labels) {
+      for (const url of urls) {
+        for (const place of around) {
+          const line = place(`[${label}](${url})`)
+          const old = OLD.exec(line)
+          if (!old) continue
+          read++
+          const now = findMdLink(line)
+          assert.ok(now, `no link read in ${JSON.stringify(line)}`)
+          assert.equal(now.index, old.index, line)
+          assert.equal(now.label, old[1], line)
+          assert.ok(now.url.startsWith(old[2]), `${JSON.stringify(now.url)} does not extend ${JSON.stringify(old[2])}`)
+        }
+      }
+    }
+    // A guard on the guard: if the shapes above stop reaching the old
+    // expression, the loop asserts nothing and says so.
+    assert.ok(read > 100, `only ${read} of these shapes reached the old expression`)
   })
 })
