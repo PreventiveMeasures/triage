@@ -14,6 +14,8 @@
 // run. ES module evaluation order matches the import order here,
 // so base-grammar chains stay correct: clike must precede the
 // javascript/typescript that extend it (→ jsx/tsx), markup before html.
+// c and java extend clike too, and c in turn is the base cpp and
+// objectivec extend — so c must land before both of them.
 // php needs markup-templating (which needs markup, above), and
 // php-extras augments php via insertBefore so it must follow php.
 import Prism from 'prismjs/prism.js'
@@ -30,6 +32,10 @@ import 'prismjs/components/prism-bash.js'
 import 'prismjs/components/prism-markdown.js'
 import 'prismjs/components/prism-solidity.js'
 import 'prismjs/components/prism-rust.js'
+import 'prismjs/components/prism-c.js'
+import 'prismjs/components/prism-cpp.js'
+import 'prismjs/components/prism-objectivec.js'
+import 'prismjs/components/prism-java.js'
 import 'prismjs/components/prism-markup-templating.js'
 import 'prismjs/components/prism-php.js'
 import 'prismjs/components/prism-php-extras.js'

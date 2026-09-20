@@ -39,6 +39,10 @@
 .token.variable,
 .token.property,
 .token.parameter { color: var(--code-variable); }
+/* Java stamps `@Override` and friends as an `annotation` aliased to
+   `punctuation`, which would sink a declaration's decorators into the
+   grey its braces wear. Keyed after that rule so it wins the tie. */
+.token.annotation { color: var(--code-function); }
 .token.deleted { color: var(--code-deleted); }
 .token.inserted { color: var(--code-inserted); }
 .token.italic { font-style: italic; }
