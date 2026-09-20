@@ -47,7 +47,10 @@ describe('isAppFinding', () => {
     assert.equal(isAppFinding({ source: 'deepview' }), false, 'an unknown marker is not one of the four')
     assert.equal(isAppFinding({ revalidate: 'confirmed' }), false, 'a verdict judges a finding, it is not the pass')
     assert.equal(isAppFinding({ revalidate: 'revalidation' }), true)
-    assert.equal(isAppFinding({ revalidate: ' Revalidation ' }), true, 'read as the app reads it')
+    // Read as the app reads it — which is as the data spells it: the
+    // field is an enumeration, and a value that drifted is no stamp
+    // (report/src/finding.js revalidateKindOf).
+    assert.equal(isAppFinding({ revalidate: ' Revalidation ' }), false)
   })
 
   it('takes the resolved producer over the finding’s own field', () => {

@@ -118,7 +118,7 @@ export function splitHeadingLine(block) {
 // single character class — a `[\s:|-]*\|?\s*$` shape would carry two
 // overlapping whitespace quantifiers and backtrack quadratically on a
 // long space-padded cell.
-export function tableRows(text) {
+function tableRows(text) {
   const rows = []
   for (const line of text.split('\n')) {
     const trimmed = line.trim()

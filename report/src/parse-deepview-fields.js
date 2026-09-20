@@ -31,7 +31,7 @@ const REVALIDATE_SET = new Set(REVALIDATE_KINDS)
 // content (md-text.js code) — always more than any run inside it, so
 // the first closing run of that length is the fence — and a space of
 // padding on each side when the content itself starts or ends on one.
-export function codeSpan(s) {
+function codeSpan(s) {
   const m = /(`+)(.+?)\1(?!`)/u.exec(String(s ?? ''))
   if (!m) return null
   const inner = m[2]
@@ -86,7 +86,7 @@ export function tierOf(label) {
 // then the export it sits in (write-md-finding.js locationText). The
 // link is the report's own location link (finding.js: `location`),
 // which the card links to in preference to anything reconstructed.
-export function readLocation(value) {
+function readLocation(value) {
   const out = {}
   let s = value.trim()
   const named = / · (`+)(.+?)\1$/u.exec(s)
@@ -110,7 +110,7 @@ const VARIES = ' (varies across reports — '
 // the line reads `Medium — corrected to High`; either way it says which
 // is which. The per-report variants are the viewer's own bookkeeping
 // of a workspace merge, not a finding's field.
-export function readSeverity(value) {
+function readSeverity(value) {
   const out = {}
   let s = value.trim()
   if (s.endsWith(CRITICAL_FLAG)) {

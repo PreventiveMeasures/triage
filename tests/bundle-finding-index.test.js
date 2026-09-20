@@ -235,14 +235,18 @@ describe('bundle-finding-index — original report rows', () => {
     }])
   })
 
-  it('retains per-finding source and normalized revalidation with report source fallback', async () => {
+  it('retains per-finding source and the revalidation stamp with report source fallback', async () => {
     const id = `row-metadata-${Date.now()}`
     const name = await seedReport({
       source: 'codex-security',
       groups: [[
         { id, title: 'From Codex' },
-        { id: id + '-native', source: 'deepview', revalidate: ' Revalidation ' },
-        { id: id + '-claude', source: 'claude-security', revalidate: 'CONFIRMED' },
+        { id: id + '-native', source: 'deepview', revalidate: 'revalidation' },
+        { id: id + '-claude', source: 'claude-security', revalidate: 'confirmed' },
+        // The field is an enumeration, read as the data spells it —
+        // a value that drifted is no stamp (report/src/finding.js
+        // revalidateKindOf), not a stamp to be folded back here.
+        { id: id + '-drifted', source: 'claude-security', revalidate: ' CONFIRMED ' },
       ]],
     })
     await ensureBundleFindingsIndexed()
@@ -253,6 +257,7 @@ describe('bundle-finding-index — original report rows', () => {
         // DeepView's own, and `deepview` is no producer marker — but this row IS the pass.
         { id: id + '-native', title: '', source: 'deepview', revalidate: 'revalidation', isApp: true },
         { id: id + '-claude', title: '', source: 'claude-security', revalidate: 'confirmed', isApp: true },
+        { id: id + '-drifted', title: '', source: 'claude-security', revalidate: '', isApp: true },
       ],
     }])
   })

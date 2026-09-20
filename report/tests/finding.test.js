@@ -11,16 +11,23 @@ import { describe, it } from 'node:test'
 import { REVALIDATE_KINDS, SEVERITIES, SEVERITY_ORDER, correctedVariants, displayedSeverity, effectiveSeverity, hasSeverityCorrection, prettyModel, revalidateKindOf, runMetaLine, splitDescription } from '../index.js'
 
 describe('revalidateKindOf', () => {
-  it('reads the stamp as the data has it, case-folded and trimmed', () => {
-    for (const kind of REVALIDATE_KINDS) {
-      assert.equal(revalidateKindOf({ revalidate: kind }), kind)
-      assert.equal(revalidateKindOf({ revalidate: ` ${kind.toUpperCase()} ` }), kind)
-    }
+  it('reads the stamp as the data has it', () => {
+    for (const kind of REVALIDATE_KINDS) assert.equal(revalidateKindOf({ revalidate: kind }), kind)
   })
 
   it('answers nothing for an unrecognised or missing value', () => {
     for (const bad of ['maybe', '', 42, null, undefined]) assert.equal(revalidateKindOf({ revalidate: bad }), '')
     assert.equal(revalidateKindOf(undefined), '')
+  })
+
+  // The field is one of those words, spelt as they are spelt — a
+  // spelling that drifted is a document's problem, and the document's
+  // reader is where it is folded back (parse-deepview-md.test.js). A
+  // reader this side of that boundary takes the analyzer at its word.
+  it('does not case-fold a value that is not one of them', () => {
+    for (const drifted of [' refuted', 'Refuted', 'REFUTED', 'refuted ']) {
+      assert.equal(revalidateKindOf({ revalidate: drifted }), '', JSON.stringify(drifted))
+    }
   })
 })
 

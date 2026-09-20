@@ -77,10 +77,13 @@ function makeFinding(id, extra = {}) {
 }
 
 describe('revalidateKind — reading the field', () => {
-  it('takes every known value, case-folded and trimmed', () => {
-    for (const kind of REVALIDATE_KINDS) {
-      assert.equal(revalidateKind({ revalidate: kind }), kind)
-      assert.equal(revalidateKind({ revalidate: `  ${kind.toUpperCase()} ` }), kind)
+  it('takes every known value, as the data spells it', () => {
+    for (const kind of REVALIDATE_KINDS) assert.equal(revalidateKind({ revalidate: kind }), kind)
+    // …and only as they are spelt: the field is an enumeration, and a
+    // value that drifted is a document's problem, folded back by the
+    // document's own reader (report/src/finding.js revalidateKindOf).
+    for (const drifted of ['Refuted', ' refuted ', 'REFUTED']) {
+      assert.equal(revalidateKind({ revalidate: drifted }), '', drifted)
     }
   })
 
