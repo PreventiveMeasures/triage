@@ -280,30 +280,76 @@ export function parseCodeRef(raw) {
 export function stripBold(text) { return text.replaceAll('**', '') }
 
 // An inline link — `[label](destination)` — the first one in `s`, or
-// null. Two rules, both of them markdown's own, and both of them
-// things a naive `\[([^\]]+)\]\(([^)\s]+)\)` gets wrong on a path:
+// null. Scanned rather than matched with one expression, because both
+// halves nest, and an expression permissive enough for the nesting can
+// no longer tell where a link STARTS: a line reading `[context] see
+// [src/a.ts:7](…)` opens on a bracket pair that is not a link.
 //
-//   * the LABEL runs to the first `](`, so a path carrying brackets of
-//     its own stays whole. `[app/(main)/[id]/page.ts:12](…)` is one
-//     link labelled with that path — a label class that stops at the
-//     first `]` matches nothing here, and the caller is left holding
-//     the raw `[…](…)` text as if it were a file name;
+//   * the LABEL is bracket-BALANCED, which is markdown's own rule, so
+//     a path carrying brackets of its own stays whole —
+//     `[app/(main)/[id]/page.ts:12](…)` is one link labelled with that
+//     path. `[context]`, closing with no `(` behind it, is not a label
+//     at all, and the scan moves on to the next `[`;
 //   * the DESTINATION is either `<…>` — what md-text.js `link` writes
-//     when a URL holds a space, a paren or an angle bracket — or a
-//     bare run in which parens BALANCE: ordinary characters, an
-//     escape, or one `(…)` group. A bare class that merely stops at
-//     the first `)` truncates a URL the writer didn't percent-encode
-//     (`…/app/(main)/page.ts` comes back as `…/app/(main`).
+//     when a url holds a space, a paren or an angle bracket, so a
+//     document this library wrote comes back through here — or a bare
+//     run in which parens balance, to any depth. A class that merely
+//     stops at the first `)` truncates a url the writer never
+//     percent-encoded: `…/app/(main)/page.ts` comes back as
+//     `…/app/(main`.
+//
+// A backslash hides the character after it from both scans, which is
+// how a report escapes a bracket it means literally. Whitespace ends a
+// bare destination without closing it — markdown would read what
+// follows as a link title, which nothing here writes — so that
+// candidate is abandoned and the scan carries on.
 //
 // `index` comes back with it, so a caller that means "the value STARTS
 // with a link" can say so (parse-deepview-fields.js readLink, reading
 // a document this library wrote) while one reading a foreign document
-// takes the first link on the line (parse-md.js).
-const MD_LINK_RE = /\[([^\n]*?)\]\((?:<([^>\n]*)>|((?:[^()\s\\]|\\.|\([^()\s]*\))*))\)/u
-
+// takes the first link in the line (parse-md.js).
 export function findMdLink(s) {
-  const m = MD_LINK_RE.exec(String(s ?? ''))
-  return m ? { label: m[1], url: m[2] ?? m[3] ?? '', index: m.index } : null
+  const text = String(s ?? '')
+  for (let open = text.indexOf('['); open !== -1; open = text.indexOf('[', open + 1)) {
+    const close = labelEnd(text, open)
+    if (close === -1 || text[close + 1] !== '(') continue
+    const dest = destination(text, close + 1)
+    if (dest) return { label: text.slice(open + 1, close), url: dest.url, index: open }
+  }
+  return null
+}
+
+// The `]` closing the label opened at `open`, or -1 when the brackets
+// from there never balance.
+function labelEnd(text, open) {
+  let depth = 0
+  for (let i = open; i < text.length; i++) {
+    const c = text[i]
+    if (c === '\\') i++
+    else if (c === '[') depth++
+    else if (c === ']' && --depth === 0) return i
+  }
+  return -1
+}
+
+// The destination opened at `open` (its `(`), as `{ url }`, or null
+// when it doesn't close before whitespace or the end of the text.
+function destination(text, open) {
+  if (text[open + 1] === '<') {
+    const close = text.indexOf('>', open + 2)
+    const line = text.indexOf('\n', open + 2)
+    if (close === -1 || (line !== -1 && line < close) || text[close + 1] !== ')') return null
+    return { url: text.slice(open + 2, close) }
+  }
+  let depth = 0
+  for (let i = open; i < text.length; i++) {
+    const c = text[i]
+    if (c === '\\') i++
+    else if (/\s/u.test(c)) return null
+    else if (c === '(') depth++
+    else if (c === ')' && --depth === 0) return { url: text.slice(open + 1, i) }
+  }
+  return null
 }
 
 // Markdown backslash escapes — `a/b/\_cc\_cc/index.js` is a report

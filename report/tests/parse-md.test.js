@@ -596,6 +596,29 @@ describe('parseMarkdownFindings — paths with brackets and parens', () => {
     assert.equal(f.evidence[0].text, 'See the handler:\nand the loader.')
   })
 
+  it('starts at the first real link, not at the first bracket', () => {
+    // A bracket pair that closes with no `(` behind it is not a
+    // label — `[context]` here — and the reading has to carry on past
+    // it rather than swallow it into the next link's label.
+    const f = located('[context] see [src/a.ts:7](https://example.com/a.ts#L7)')
+    assert.equal(f.file, 'src/a.ts')
+    assert.equal(f.line, '7')
+    assert.equal(f.location, 'https://example.com/a.ts#L7')
+  })
+
+  it('takes a url whose own parens nest', () => {
+    const f = located('[src/a(foo(bar)).ts:7](https://example.com/a(foo(bar)).ts#L7)')
+    assert.equal(f.file, 'src/a(foo(bar)).ts')
+    assert.equal(f.line, '7')
+    assert.equal(f.location, 'https://example.com/a(foo(bar)).ts#L7')
+  })
+
+  it('reads past a label whose brackets never close', () => {
+    const f = located('[unclosed [src/a.ts:7](https://example.com/a.ts#L7)')
+    assert.equal(f.file, 'src/a.ts')
+    assert.equal(f.line, '7')
+  })
+
   it('still leaves a line with no link as the raw text it is', () => {
     const f = located('a/b/app/(main)/[id]/index.ts:12')
     assert.equal(f.file, 'a/b/app/(main)/[id]/index.ts')
