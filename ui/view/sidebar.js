@@ -1601,7 +1601,14 @@ async function onSidebarDrop(e) {
   }
   if (targetId) await addReportToWorkspace(filename, targetId)
   if (sourceWsId && sourceWsId !== targetId) await removeReportFromWorkspace(filename, sourceWsId)
-  renderSidebar()
+  // A report dropped into (or out of) the active workspace changes the
+  // main findings set as well as the sidebar membership. Re-load that
+  // workspace in place so its merged rows, filters, and graph refresh
+  // immediately instead of waiting for a navigate-away / navigate-back.
+  const activeWorkspaceChanged = state.currentWorkspace
+    && (state.currentWorkspace === targetId || state.currentWorkspace === sourceWsId)
+  if (activeWorkspaceChanged) await switchToWorkspace(state.currentWorkspace)
+  else renderSidebar()
 }
 
 // Wire the event delegates onto the shadow root + the search input,

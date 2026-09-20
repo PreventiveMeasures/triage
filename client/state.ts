@@ -145,7 +145,7 @@ export interface State {
   showRevalidation: boolean
   revalidationDetailed: boolean
   upstreamOnly: boolean
-  revalidateConflict: boolean
+  revalidateConflicts: Map<string, { finding: unknown, copies: Array<{ reportName: string, fields: Record<string, unknown> }> }>
   codePreviews: Set<string>
   filterConfMin: number
   filterConfMax: number
@@ -158,6 +158,8 @@ export interface State {
   filterComment: AnnotationFilterState
   filterFix: AnnotationFilterState
   filterFlagged: AnnotationFilterState
+  // Report-only links to resolved finding IDs absent from this report.
+  filterDuplicates: AnnotationFilterState
   repoUrl: string
   repoEditing: boolean
   sortBy: string
@@ -648,7 +650,8 @@ export const state: State = store<State>({
   // Repository filter — single-select dropdown, only meaningful in
   // workspace view (single-file mode usually has one repo). Empty
   // string = no filter. Otherwise the value matches a finding's
-  // resolved repo (`f.repo?.github ?? f._repoFallback`).
+  // resolved repo: DeepView App findings prefer the report repo;
+  // other findings prefer their source repo (view/filters.js).
   // `NO_REPO_SENTINEL` (a control character, exported from
   // view/filters.js) selects findings with no derivable repo —
   // picked over the bare word `'null'` so a legitimate repo slug
@@ -699,14 +702,14 @@ export const state: State = store<State>({
   // which is what leaves the card answering for those rows alone
   // (group.js onlyUpstream has the whole of it).
   upstreamOnly: false,
-  // Set at ingest when two copies of one finding disagree about what
+  // Recorded at ingest when two copies of one finding disagree about what
   // the revalidation pass concluded — the same id under two different
   // `revalidate*` answers (group.js mergeDuplicateFields). Dedup keeps
   // whichever loaded first, so with a disagreement in the set the view
   // cannot say what the pass concluded: render.js takes the layer off
-  // and stops offering the switch rather than showing one copy's
-  // verdicts as if they were settled. Cleared with `state.reports`.
-  revalidateConflict: false,
+  // and replaces the switch with a button to inspect the differing
+  // fields and their source reports. Cleared with `state.reports`.
+  revalidateConflicts: new Map(),
   // Which source previews are open — the `</>` beside a finding's code
   // links, keyed `<tabKey>\0<path>\0<line>` (render-finding.js
   // codePreviewKey). A Set rather than one open at a time: the
@@ -733,6 +736,7 @@ export const state: State = store<State>({
   filterComment: '',
   filterFix: '',
   filterFlagged: '',
+  filterDuplicates: '',
   repoUrl: '',
   // Transient flag — true while the header's repo chip has expanded
   // into its `<input>` form (user clicked the pencil). Cleared on

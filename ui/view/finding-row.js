@@ -42,6 +42,9 @@ import { groupKey } from './group.js'
 import { tableRowClasses, tableRowInnerTemplate } from './render-finding.js'
 import rowCSS from './finding-row.css'
 import tabsCSS from './finding-tabs.css'
+import fileIconsCSS from '../styles/file-icon.css'
+import reportButtonCSS from '../styles/report-button.css'
+import actionsCSS from './finding-actions.css'
 
 // Every class this component might apply to the host. Listed
 // explicitly so `classList.toggle(c, …)` cleanly removes any that no
@@ -62,7 +65,7 @@ class FindingRow extends StateElement {
     selected: { type: Boolean },
   }
 
-  static styles = [unsafeCSS(rowCSS), unsafeCSS(tabsCSS)]
+  static styles = [unsafeCSS(fileIconsCSS), unsafeCSS(reportButtonCSS), unsafeCSS(rowCSS), unsafeCSS(actionsCSS), unsafeCSS(tabsCSS)]
 
   // Whether the row's content is (to be) rendered — flipped by the
   // observer's answer in `_onNear`, and back on a reconnect that lands

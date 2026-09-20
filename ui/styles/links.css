@@ -185,27 +185,3 @@ button.links-finding-id {
 }
 .links-report-row-single .links-finding-reports { flex: 0 1 auto; }
 .links-report-row-head .links-finding-reports { justify-content: flex-end; }
-
-/* Report chip — a button, because it opens that card in its report
-   (events.js routes `data-links-report` to revealFindingInReport). Bordered pill rather
-   than the full-width row the Packages details panel uses: several sit
-   side by side on one line here. */
-.links-finding-report {
-  display: inline-flex; align-items: center;
-  max-width: 16rem;
-  padding: 0;
-  overflow: hidden;
-  background: transparent;
-  border: 1px solid var(--border); border-radius: 3px;
-  color: var(--muted);
-  font: inherit;
-  font-size: .7rem;
-  transition: border-color .12s, color .12s;
-  &:hover { border-color: var(--accent); color: var(--accent); }
-  &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-}
-.links-finding-report-label {
-  min-width: 0;
-  padding: .1rem .4rem;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}

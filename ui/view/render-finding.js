@@ -4,11 +4,11 @@ import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { bundleFilePath, bundlesForFileHash, duplicatesOf, encodeFindingRef, isLinkableFindingId, isPlaceholderNpmPackage, reportsForFindingId, state } from '#client/index.js'
 import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayFindingId, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, githubRefLabel, hasSeverityCorrection, isHttpUrl, lineRange, listSegments, locationLabel, markdownLinkToken, parseCommentRefs, revalidateStamp, revalidationShown, shortFindingId, snippetWindow, splitDescription, stripExportMarker } from './format.js'
-import { activeTabFor, findingRepo, findingRepoFallback, groupState, groupTabsByLevel, isIgnored, scopedTriage, sortTabs, tabKey } from './group.js'
+import { activeTabFor, canTriageFinding, findingRepo, findingRepoFallback, groupKey, groupState, groupTabsByLevel, scopedTriage, sortTabs, tabKey, tabTriage, triageEntry, triageScope, triageTabs } from './group.js'
 import { highlightedCode } from './code-highlight.js'
 import { attachedBundle, bundleSource, focusCodePosition } from './focus-code.js'
 import { samePos } from './focus-code-history.js'
-import { FILE_ICONS, PRODUCER_LABELS, displayName, groupOf } from './file-display.js'
+import { FILE_ICONS, PRODUCER_LABELS, REPORT_LOGOS, displayName, groupOf } from './file-display.js'
 import { CLAUDE_MARK_PATH } from './icons.js'
 
 // All `<finding-row>` / `<finding-card>` shadow-DOM markup is built
@@ -869,13 +869,14 @@ export const FLAG_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" ar
 // explicit `false` tombstone on un-flag (never undefined) so the removal
 // syncs. Keyed to the active tab's `key`, mirroring the per-tab color /
 // comment / fix marks beside it.
-function flagButtonTemplate(key, isFocus = false) {
-  const flagged = state.triage.get(key)?.flagged === true
+function flagButtonTemplate(f, isFocus = false) {
+  const flagged = triageEntry(f)?.flagged === true
   const title = flagged ? 'Remove flag' : 'Flag this finding'
   return html`<button
     type="button"
     class=${classMap({ 'mark-flag': true, flagged })}
-    data-flag-toggle=${key}
+    data-flag-toggle=${tabKey(f)}
+    ?disabled=${!canTriageFinding(f)}
     aria-label=${title}
     aria-pressed=${String(flagged)}
   >${FLAG_ICON}${isFocus ? html`<span class="mark-btn-label">${flagged ? 'Flagged' : 'Flag'}</span>` : nothing}</button>`
@@ -911,15 +912,17 @@ function issueBody(f) {
 }
 
 // Workspace-merged views show which report a finding came from.
-// The chip mirrors the sidebar's file row (brand sticker + display
-// name) and lives at the start of the action row. Single-file
+// The chip reuses the Links report button and opens the active finding
+// in its original report. It lives at the start of the action row. Single-file
 // loads omit it (the title bar already shows the filename).
-function reportChipTemplate(group) {
+function reportChipTemplate(finding) {
   if (!state.currentWorkspace) return nothing
-  const reportName = group[0]?._reportName
+  const reportName = finding._reportName
   if (!reportName) return nothing
-  const iconHtml = FILE_ICONS[groupOf(reportName)] ?? FILE_ICONS.default
-  return html`<span class="report-chip" title=${reportName}>${unsafeHTML(iconHtml)}<span class="report-chip-label">${displayName(reportName)}</span></span>`
+  const logo = REPORT_LOGOS[groupOf(reportName)] ?? REPORT_LOGOS.default
+  return html`<button type="button" class="report-chip report-button"
+    data-links-report=${reportName} data-links-finding=${tabKey(finding)}
+  >${unsafeHTML(logo)}<span class="report-chip-label report-button-label">${displayName(reportName)}</span></button>`
 }
 
 // Action buttons — workspace-only report chip + comment / fix /
@@ -931,29 +934,30 @@ function reportChipTemplate(group) {
 // on `report` resolves the gid via the same `[data-gid]` walk used
 // for the other buttons.
 function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = null) {
-  const reportChip = reportChipTemplate(group)
+  // Table rows stay compact; the report is already represented by the
+  // workspace's surrounding row context, so reserve the chip for the
+  // larger card/details surfaces.
+  const reportChip = context === 'table' ? nothing : reportChipTemplate(activeTab)
   const activeKey = tabKey(activeTab)
-  const activeEntry = state.triage.get(activeKey)
+  const activeEntry = triageEntry(activeTab)
+  const disabled = !canTriageFinding(activeTab)
   const activeColor = activeEntry?.color ?? null
   const activeComment = activeEntry?.comment ?? ''
   const activeFix = activeEntry?.fix ?? ''
   const commentTitle = activeComment ? `Edit comment: ${activeComment}` : 'Add comment'
   const fixTitle = activeFix ? `Edit fix link: ${activeFix}` : 'Add fix link (PR URL, etc.)'
-  const isFocus = context === 'focus'
-  // Focus-view variant gives each button a text label after the
-  // icon so the row reads as primary chrome (`[ ⌐ Comment ]`,
-  // `[ ⚙ Fix link ]`, `[ ⎘ Copy ]`). The list-view default keeps
-  // icons-only for compactness.
+  // Keep actions compact when the report chip shares their row.
+  const showActionLabels = context === 'focus' && reportChip === nothing
   const commentLabel = activeComment ? 'Edit comment' : 'Comment'
   const fixLabel = activeFix ? 'Edit fix link' : 'Fix link'
-  const commentBtn = html`<button type="button" class=${classMap({ 'mark-comment': true, 'has-comment': activeComment })} data-tooltip=${commentTitle} aria-label=${commentTitle}>${COMMENT_ICON}${isFocus ? html`<span class="mark-btn-label">${commentLabel}</span>` : nothing}</button>`
-  const fixBtn = html`<button type="button" class=${classMap({ 'mark-fix': true, 'has-fix': activeFix })} data-tooltip=${fixTitle} aria-label=${fixTitle}>${FIX_ICON}${isFocus ? html`<span class="mark-btn-label">${fixLabel}</span>` : nothing}</button>`
+  const commentBtn = html`<button type="button" ?disabled=${disabled} class=${classMap({ 'mark-comment': true, 'has-comment': activeComment })} data-tooltip=${commentTitle} aria-label=${commentTitle}>${COMMENT_ICON}${showActionLabels ? html`<span class="mark-btn-label">${commentLabel}</span>` : nothing}</button>`
+  const fixBtn = html`<button type="button" ?disabled=${disabled} class=${classMap({ 'mark-fix': true, 'has-fix': activeFix })} data-tooltip=${fixTitle} aria-label=${fixTitle}>${FIX_ICON}${showActionLabels ? html`<span class="mark-btn-label">${fixLabel}</span>` : nothing}</button>`
   // Attention flag — third chip in the comment/fix group.
-  const flagBtn = flagButtonTemplate(activeKey, isFocus)
+  const flagBtn = flagButtonTemplate(activeTab, showActionLabels)
   // Copy button — writes a labeled `File / Line / Description /
   // Confidence` block for the active tab to the clipboard (handler
   // in events.js, active tab resolved via the same gid lookup).
-  const copyBtn = html`<button type="button" class="mark-copy" data-tooltip="Copy file, line, description, confidence to clipboard" aria-label="Copy finding details to clipboard">${COPY_ICON}${isFocus ? html`<span class="mark-btn-label">Copy</span>` : nothing}</button>`
+  const copyBtn = html`<button type="button" class="mark-copy" data-tooltip="Copy file, line, description, confidence to clipboard" aria-label="Copy finding details to clipboard">${COPY_ICON}${showActionLabels ? html`<span class="mark-btn-label">Copy</span>` : nothing}</button>`
   // Link button — copies a `#finding=<id>` URL that reopens the app on
   // THIS finding (handler in events.js; resolution in
   // view/finding-link.js). Suppressed for a session-local numeric id:
@@ -962,7 +966,7 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = 
   // affordance than one that quietly rots. Sits next to Copy, the other
   // "take this with you" action.
   const linkBtn = isLinkableFindingId(activeKey)
-    ? html`<button type="button" class="mark-link" data-tooltip="Copy a link to this finding" aria-label="Copy a link to this finding">${LINK_ICON}${isFocus ? html`<span class="mark-btn-label">Link</span>` : nothing}</button>`
+    ? html`<button type="button" class="mark-link" data-tooltip="Copy a link to this finding" aria-label="Copy a link to this finding">${LINK_ICON}${showActionLabels ? html`<span class="mark-btn-label">Link</span>` : nothing}</button>`
     : nothing
   // GitHub-issue link — a plain anchor (no JS handoff) to GitHub's
   // pre-filled new-issue form for the finding's repo, with the finding
@@ -975,13 +979,13 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = 
   const findingRepoId = findingRepo(activeTab)
   const issueHref = githubIssueUrl(findingRepoId, { title: issueTitle(activeTab), body: issueBody(activeTab) })
   const issueBtn = issueHref
-    ? html`<a class="mark-issue" href=${issueHref} target="_blank" rel="noopener" data-tooltip="Create a pre-filled GitHub issue for this finding" aria-label="Create a GitHub issue for this finding">${ISSUE_ICON}${isFocus ? html`<span class="mark-btn-label">Issue</span>` : nothing}</a>`
+    ? html`<a class="mark-issue" href=${issueHref} target="_blank" rel="noopener" data-tooltip="Create a pre-filled GitHub issue for this finding" aria-label="Create a GitHub issue for this finding">${ISSUE_ICON}${showActionLabels ? html`<span class="mark-btn-label">Issue</span>` : nothing}</a>`
     : nothing
   // Claude button — hands off the same finding block the copy
   // button writes (prefixed with "Confirm and fix:") to Claude Code
   // via the `claude://code/new?q=…` URL scheme.
-  const claudeBtn = html`<button type="button" class="mark-claude" data-tooltip="Open in Claude Code (claude://) with a confirm-and-fix prompt" aria-label="Open finding in Claude Code">${CLAUDE_ICON}${isFocus ? html`<span class="mark-btn-label">Claude</span>` : nothing}</button>`
-  const picker = html`<color-marker .selected=${activeColor}></color-marker>`
+  const claudeBtn = html`<button type="button" class="mark-claude" data-tooltip="Open in Claude Code (claude://) with a confirm-and-fix prompt" aria-label="Open finding in Claude Code">${CLAUDE_ICON}${showActionLabels ? html`<span class="mark-btn-label">Claude</span>` : nothing}</button>`
+  const picker = html`<color-marker .selected=${activeColor} .disabled=${disabled}></color-marker>`
   // Triage menu — chevron button that opens a small popover with
   // Fixed / Invalid / Delete actions. In any triage view (Fixed /
   // Invalid / Deleted), the button's label switches to the current
@@ -990,10 +994,15 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = 
   // first restoring + re-triaging. In the live view the button is
   // a chevron-only chip.
   // Conflict groups scope the action to the active tab.
-  const menuTitle = groupSt.hasConflict
+  const mixedLevels = triageTabs(group) !== group
+  const menuTitle = group.linkedTabs
+    ? 'change triage state for linked findings'
+    : mixedLevels
+    ? 'change triage state for App and own-source findings'
+    : groupSt.hasConflict
     ? 'change triage state (colors mismatch — acts per-tab)'
     : (sortedTabs.length > 1 ? 'change triage state for the whole group' : 'change triage state')
-  return html`${reportChip}<span class="mark-action-group">${commentBtn}${fixBtn}${flagBtn}</span><span class="mark-action-group">${copyBtn}${linkBtn}${issueBtn}${claudeBtn}</span>${picker}${triageMenuTemplate(group, menuTitle, context, groupSt, activeTab)}`
+  return html`<div class="finding-actions">${reportChip}<div class="finding-action-controls"><span class="mark-action-group">${commentBtn}${fixBtn}${flagBtn}</span><span class="mark-action-group">${copyBtn}${linkBtn}${issueBtn}${claudeBtn}</span>${picker}${triageMenuTemplate(group, menuTitle, context, groupSt, activeTab)}</div></div>`
 }
 
 // Triage menu — chevron button toggling a popover with the Fixed /
@@ -1045,13 +1054,14 @@ function positionTriagePopover(e) {
 // (which got them from the row / card template) so a single row render
 // resolves them once rather than once per nested helper.
 function triageMenuTemplate(group, title, context, groupSt, activeTab) {
-  const gid = tabKey(group[0])
+  const gid = groupKey(group)
+  const disabled = !canTriageFinding(activeTab) || triageScope(group, groupSt).length === 0
   // What the scope currently shows — the active tab's bucket on a
   // conflicted group, the rollup's otherwise. `scopedTriage` is the
   // one definition `triageActionPlan` also decides set-vs-clear from,
   // so the item marked active here is exactly the one a click
   // switches off.
-  const current = scopedTriage(group, groupSt, activeTab)
+  const current = disabled ? null : scopedTriage(group, groupSt, activeTab)
   const STATE_LABELS = { inprogress: 'In progress', fixed: 'Fixed', invalid: 'Invalid', deleted: 'Deleted', ignored: 'Ignored' }
   const ACTION_LABELS = { inprogress: 'In progress', fixed: 'Fixed', invalid: 'Invalid', deleted: 'Delete', ignored: 'Ignore' }
   const inTriageView = Boolean(state.shownTriage)
@@ -1084,7 +1094,7 @@ function triageMenuTemplate(group, title, context, groupSt, activeTab) {
   // valid CSS-selectable id.
   const popId = `triage-menu-${gid.replaceAll(/[^A-Za-z0-9_-]/gu, '_')}`
   return html`<div class="triage-menu-wrap">
-    <button type="button" class=${btnClasses.join(' ')} popovertarget=${popId} popovertargetaction="toggle" data-tooltip=${title} aria-label=${title}>
+    <button type="button" class=${btnClasses.join(' ')} popovertarget=${popId} popovertargetaction="toggle" data-tooltip=${title} aria-label=${title} ?disabled=${disabled}>
       ${buttonLabel ? html`<span class="mark-triage-label">${buttonLabel}</span>` : nothing}
       <svg viewBox="0 0 12 12" width="11" height="11" aria-hidden="true">
         <path d="M2 4l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -1095,6 +1105,7 @@ function triageMenuTemplate(group, title, context, groupSt, activeTab) {
         type="button"
         class=${classMap({ 'triage-menu-item': true, [`triage-menu-${a.key}`]: true, active: current === a.key })}
         data-triage-action=${a.key}
+        ?disabled=${disabled}
         role="menuitem"
       >${a.label}</button>`)}
     </div>
@@ -1134,7 +1145,7 @@ function tabsTemplate(tabs, activeKey, groupSt) {
 }
 
 
-// One tab button. Carries severity badge + (optional) confidence +
+// One tab button. Carries severity badge + analyzer mark (or DeepView confidence) +
 // annotation marks (comment / fix / flag, when present), plus the
 // per-tab color class and — when it still says something the group
 // doesn't — the per-tab state class behind that state's glyph (`◐` /
@@ -1154,22 +1165,28 @@ function tabsTemplate(tabs, activeKey, groupSt) {
 // tab does.
 function tabTemplate(f, isActive, groupSt) {
   const key = tabKey(f)
-  const entry = state.triage.get(key)
+  const entry = triageEntry(f)
   const color = entry?.color
-  const triage = entry?.triage
+  const triage = tabTriage(f, entry)
   const classes = ['tab', `tab-severity-${displayedSeverity(f, state.severityMode)}`]
   if (isActive) classes.push('active')
   if (color) classes.push(`tab-mark-${color}`)
-  if (triage) {
-    if (groupSt.commonTriage === null) classes.push(`tab-${triage}`)
-  } else if (!groupSt.allIgnored && isIgnored(f)) {
+  if (triage === 'ignored' && !groupSt.allIgnored) {
     // Per-tab by nature — each tab carries its own report — and
     // mutually exclusive with the triage classes via the action
     // handler. Falls through to a muted opacity hint via finding-row
     // / finding-card CSS.
     classes.push('tab-ignored')
-  }
-  return html`<button type="button" class=${classes.join(' ')} data-tid=${key} aria-pressed=${isActive} aria-description=${color ? `${color} color label` : nothing}><span class="tab-label"><span class="tab-severity">${severityBadge(f, { variant: 'tab' })}</span> ${f.confidence === undefined ? nothing : html`<span class="tab-conf" aria-label=${`Confidence ${f.confidence} out of 10`}>${f.confidence}<span class="tab-conf-max">/10</span></span>`}<span class="tab-indicators">${tabMarksTemplate(entry)}</span></span></button>`
+  } else if (triage && triage !== 'ignored' && groupSt.commonTriage === null) classes.push(`tab-${triage}`)
+  const analyzer = f._source ?? f.source
+  const logo = analyzer !== 'default' && Object.hasOwn(REPORT_LOGOS, analyzer) ? REPORT_LOGOS[analyzer] : null
+  const hasConfidence = !logo && f.confidence != null
+  if (logo) classes.push('tab-with-analyzer')
+  else if (hasConfidence) classes.push('tab-with-confidence')
+  const detail = logo
+    ? html`<span class="tab-analyzer" role="img" aria-label=${PRODUCER_LABELS[analyzer]}>${unsafeHTML(logo)}</span>`
+    : hasConfidence ? html`<span class="tab-conf" aria-label=${`Confidence ${f.confidence} out of 10`}>${f.confidence}<span class="tab-conf-max">/10</span></span>` : nothing
+  return html`<button type="button" class=${classes.join(' ')} data-tid=${key} aria-pressed=${isActive} aria-description=${color ? `${color} color label` : nothing}><span class="tab-label"><span class="tab-severity">${severityBadge(f, { variant: 'tab' })}</span><span class="tab-indicators">${tabMarksTemplate(entry)}</span></span>${detail}</button>`
 }
 
 // Confidence display for the finding-left badge column. The table
@@ -1237,7 +1254,7 @@ function npmChipTemplate(npm) {
 // from the Duplicates section.
 function tabBodyTemplate(f, isActive, idx, total, context, tabIds) {
   const key = tabKey(f)
-  const entry = state.triage.get(key)
+  const entry = triageEntry(f)
   const comment = entry?.comment ?? ''
   const fix = entry?.fix ?? ''
   // Location is rendered as `file:line` (linkified when we have a
@@ -1494,7 +1511,7 @@ export function tableRowInnerTemplate(g) {
         <span class="row-loc">${rowLocationTemplate(f, url)}${exportPart}</span>
         ${githubRef(url)}
         <div class="marks">
-          ${actionButtonsTemplate(g, sortedTabs, groupSt, active)}
+          ${actionButtonsTemplate(g, sortedTabs, groupSt, active, 'table')}
         </div>
       </div>
       ${sortedTabs.length > 1 ? html`<div class="tabs-row">${tabsTemplate(sortedTabs, activeKey, groupSt)}</div>` : nothing}

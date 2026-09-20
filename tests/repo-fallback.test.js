@@ -33,10 +33,12 @@ if (!globalThis[slotKey]) {
 
 const { state } = await import('../client/state.ts')
 const { findingRepo, findingRepoFallback } = await import('../ui/view/group.js')
-const { findingUrl } = await import('../ui/view/format.js')
+const { configureRevalidation, findingUrl } = await import('../ui/view/format.js')
+const { applyFilters, applyScopeFilters, repoOfFinding, repositoryFilterValues, resetFilters } = await import('../ui/view/filters.js')
 
 const REPO = 'https://github.com/owner/name'
 const finding = (extra = {}) => ({ file: 'src/a.js', line: 7, ...extra })
+const repositoryOptions = (groups) => [...repositoryFilterValues(applyScopeFilters(groups))]
 
 describe('findingRepoFallback', () => {
   beforeEach(() => { state.repoUrl = '' })
@@ -94,5 +96,93 @@ describe('findingRepo', () => {
 
   it('returns null — not an empty string — when nothing is known', () => {
     assert.equal(findingRepo(finding({ _repoFallback: '' })), null)
+  })
+})
+
+describe('repository filter for DeepView App findings', () => {
+  beforeEach(() => {
+    state.reports = []
+    state.repoUrl = ''
+    state.currentWorkspace = 'workspace'
+    state.showRevalidation = true
+    state.upstreamOnly = false
+    state.revalidationDetailed = false
+    configureRevalidation(true)
+    resetFilters()
+  })
+
+  const appFinding = (extra = {}) => finding({
+    isApp: true, _source: null,
+    repo: { github: 'dependency/source' }, _repoFallback: 'owner/app',
+    ...extra,
+  })
+
+  it('uses the report repo for choices and matching, retaining the source for file links', () => {
+    const f = appFinding()
+    assert.equal(repoOfFinding(f), 'owner/app')
+    state.filterRepo = 'owner/app'
+    assert.deepEqual(applyFilters([[f]]), [[f]])
+    state.filterRepo = 'dependency/source'
+    assert.deepEqual(applyFilters([[f]]), [])
+    assert.equal(findingUrl(f, findingRepoFallback(f)), 'https://github.com/dependency/source/blob/HEAD/src/a.js#L7')
+    assert.equal(f.repo.github, 'dependency/source')
+  })
+
+  it('matches separate app reports independently even when they reference the same source repo', () => {
+    const first = [appFinding()]
+    const second = [appFinding({ _repoFallback: 'owner/other-app' })]
+    state.filterRepo = 'owner/other-app'
+    assert.deepEqual(applyFilters([first, second]), [second])
+  })
+
+  it('falls back to the source repo when the report repo is unavailable', () => {
+    for (const _repoFallback of [undefined, null, '', 42]) {
+      assert.equal(repoOfFinding(appFinding({ _repoFallback })), 'dependency/source')
+    }
+    assert.equal(repoOfFinding(appFinding({ repo: {}, _repoFallback: '' })), null)
+    assert.equal(repoOfFinding(appFinding({ repo: {} })), 'owner/app')
+  })
+
+  it('keeps source-level DeepView findings matched by their source repo', () => {
+    // The stamped layer flag decides this, not a fresh inference from revalidate.
+    const f = appFinding({ isApp: false, revalidate: 'revalidation' })
+    assert.equal(repoOfFinding(f), 'dependency/source')
+    assert.equal(repoOfFinding(appFinding({ isApp: undefined })), 'dependency/source')
+  })
+
+  it('keeps imported App findings matched by their source repo', () => {
+    for (const source of ['codex-security', 'claude-security', 'deepsec', 'piolium']) {
+      assert.equal(repoOfFinding(appFinding({ _source: source })), 'dependency/source')
+      assert.equal(repoOfFinding(appFinding({ source })), 'dependency/source')
+    }
+  })
+
+  it('lists report repos without source repos from hidden underlying tabs', () => {
+    const app = appFinding({ revalidate: 'revalidation' })
+    const source = appFinding({ isApp: false })
+    const other = appFinding({ _repoFallback: 'owner/other-app' })
+    const groups = [[app, source], [other]]
+    assert.deepEqual(repositoryOptions(groups), ['owner/app', 'owner/other-app'])
+    // A visible source-only row still contributes its own repository.
+    assert.deepEqual(repositoryOptions([...groups, [source]]), ['owner/app', 'owner/other-app', 'dependency/source'])
+  })
+
+  it('includes source repos when the underlying/source lens actually displays those findings', () => {
+    const app = appFinding({ revalidate: 'revalidation' })
+    const source = appFinding({ isApp: false })
+    state.currentWorkspace = null
+    state.revalidationDetailed = true
+    assert.deepEqual(repositoryOptions([[app, source]]), ['owner/app', 'dependency/source'])
+    configureRevalidation(false)
+    assert.deepEqual(repositoryOptions([[source]]), ['dependency/source'])
+  })
+
+  it('uses the visible tabs of a linked workspace row', () => {
+    const app = appFinding({ revalidate: 'revalidation' })
+    const source = appFinding({ isApp: false })
+    const linkedApp = appFinding({ _repoFallback: 'owner/linked-app' })
+    const group = [app, source, linkedApp]
+    group.linkedTabs = [app, linkedApp]
+    assert.deepEqual(repositoryOptions([group]), ['owner/app', 'owner/linked-app'])
   })
 })

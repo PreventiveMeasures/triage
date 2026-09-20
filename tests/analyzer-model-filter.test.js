@@ -56,6 +56,8 @@ function reset() {
   state.filterComment = ''
   state.filterFix = ''
   state.filterFlagged = ''
+  state.showRevalidation = true
+  state.upstreamOnly = false
   state.triage = new Map()
   state.activeTabByGroup = new Map()
 }
@@ -63,6 +65,39 @@ function reset() {
 function makeFinding(id, extra = {}) {
   return { id, severity: 'high', file: `src/${id}.js`, description: `desc for ${id}`, ...extra }
 }
+
+describe('upstream annotations in filters', () => {
+  beforeEach(reset)
+
+  it('ignores upstream colors, comments, fix links and flags only in App view', () => {
+    const dep = makeFinding('dep', { isUpstream: true })
+    const own = makeFinding('own')
+    state.triage.set(dep.id, { color: 'red', comment: 'upstream note', fix: 'upstream patch', flagged: true })
+    const groups = [[own, dep]]
+    for (const [appOn, upstreamOn] of [[true, false], [true, true], [false, false], [false, true], [true, false]]) {
+      state.showRevalidation = appOn
+      state.upstreamOnly = upstreamOn
+      const allowed = !appOn || upstreamOn
+      state.filterColors = new Set(['red'])
+      assert.equal(matchesFilters(dep), allowed)
+      state.filterColors = new Set(['none'])
+      assert.equal(matchesFilters(dep), !allowed)
+      state.filterColors = new Set()
+      for (const query of ['upstream note', 'upstream patch']) {
+        state.filterInclude = query
+        assert.equal(matchesFilters(dep), allowed)
+      }
+      state.filterInclude = ''
+      for (const key of ['filterComment', 'filterFix', 'filterFlagged']) {
+        state[key] = 'with'
+        assert.deepEqual(applyFilters(groups), allowed ? groups : [])
+        state[key] = 'without'
+        assert.deepEqual(applyFilters(groups), allowed ? [] : groups)
+        state[key] = ''
+      }
+    }
+  })
+})
 
 describe('matchesFilters — analyzer / model dimensions', () => {
   beforeEach(reset)

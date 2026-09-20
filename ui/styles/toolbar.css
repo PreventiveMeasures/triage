@@ -476,8 +476,8 @@ slide-triage-tabs {
    divide their chips. The border and the rounding live here rather
    than on the buttons: two bordered boxes at the end of the row read
    as two unrelated controls, and this is one decision in two parts.
-   Either half can be absent (each is offered on its own terms), and
-   the shell fits whatever is left. */
+   The detail half requires an available App switch. Conflicts replace
+   both halves with a button using the same shell. */
 revalidation-switch {
   display: inline-flex; align-items: center;
   height: 30px; box-sizing: border-box;
@@ -507,6 +507,10 @@ revalidation-switch {
   &.on .revalidation-switch::after { transform: translateX(12px); background: var(--accent); }
   &:focus-visible { outline: 1px solid var(--accent); outline-offset: -2px; }
 }
+.revalidation-conflicts {
+  color: var(--text);
+  cursor: default;
+}
 /* The detail icon — stacked plates, lit when the app view is showing
    the rows the pass re-rated (revalidation-switch.js). An icon chip in
    the `annotation-chip` mould rather than a second switch: what it
@@ -532,7 +536,7 @@ revalidation-switch {
   &:disabled { opacity: .4; cursor: default; }
   &:focus-visible { outline: 1px solid var(--accent); outline-offset: -2px; }
 }
-/* The upstream icon — an arrow out of a box, lit while the list is the
+/* The upstream icon — a dependency branch, lit while the list is the
    dependencies' own code (revalidation-switch.js). Same chip as the
    detail glyph beside it, and never disabled: it stands on its own
    terms rather than on the app/code line's, and is drawn wherever the

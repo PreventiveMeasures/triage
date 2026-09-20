@@ -2,6 +2,7 @@
    above on paper. */
 @import './styles/theme.css';
 @import './styles/file-icon.css';
+@import './styles/report-button.css';
 @import './styles/dialogs.css';
 @import './styles/sidebar-chrome.css';
 @import './styles/drop-zone.css';

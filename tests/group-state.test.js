@@ -44,8 +44,8 @@ if (!globalThis[slotKey]) {
 
 const { state } = await import('../client/state.ts')
 const {
-  activeTabFor, canApplyFixToGroup, fixApplies, getMergedGroups, groupState, groupTabsByLevel, groupWithPassRows,
-  primaryTab, scopedTriage, sortTabs, syncGroupTriage, tabTriage, triageActionPlan, triageScope, triageTabs,
+  activeTabFor, canApplyFixToGroup, canTriageFinding, fixApplies, getMergedGroups, groupState, groupTabsByLevel, groupWithPassRows, isIgnored,
+  primaryTab, scopedTriage, sortTabs, syncGroupTriage, tabHasMarks, tabTriage, triageActionPlan, triageEntry, triageScope, triageTabs,
 } = await import('../ui/view/group.js')
 
 const REPORT = 'report-a.json'
@@ -90,6 +90,8 @@ function tab(ann = null, extra = {}) {
     if (ann.color) entry.color = ann.color
     if (ann.triage) entry.triage = ann.triage
     if (ann.fix) entry.fix = ann.fix
+    if (ann.comment) entry.comment = ann.comment
+    if (ann.flagged) entry.flagged = ann.flagged
     if (ann.ignored) entry.ignoredReports = [REPORT]
     state.triage.set(f.id, entry)
   }
@@ -324,10 +326,85 @@ describe('upstream members keep out of the group verdict', () => {
     assert.deepEqual(triageActionPlan([own, dep], 'fixed').targets, [own])
   })
 
-  it('writes to an upstream finding when it is the whole group', () => {
+  it('writes to an upstream finding when it is the whole group in upstream view', () => {
     reset()
+    state.upstreamOnly = true
     const deps = [upstream(), upstream()]
     assert.deepEqual(triageScope(deps), deps, 'otherwise they could never be triaged at all')
+  })
+
+  it('only reads and writes upstream status outside App view or inside upstream view', () => {
+    for (const appOn of [true, false]) {
+      for (const upstreamOn of [true, false]) {
+        for (const status of ['inprogress', 'fixed', 'invalid', 'deleted', 'ignored']) {
+          reset()
+          state.showRevalidation = appOn
+          state.upstreamOnly = upstreamOn
+          const allowed = !appOn || upstreamOn
+          const dep = upstream(status === 'ignored' ? { ignored: true } : { triage: status })
+          const saved = { ...state.triage.get(dep.id) }
+          assert.equal(canTriageFinding(dep), allowed)
+          assert.equal(tabTriage(dep), allowed ? status : undefined)
+          assert.equal(isIgnored(dep), allowed && status === 'ignored')
+          assert.equal(groupState([dep]).commonTriage, allowed ? status : null)
+          assert.equal(scopedTriage([dep]), allowed ? status : null)
+          assert.equal(groupState([dep]).anyTriage, allowed && status !== 'ignored')
+          for (const action of ['inprogress', 'fixed', 'invalid', 'deleted', 'ignored', 'restore']) {
+            assert.deepEqual(triageActionPlan([dep], action).targets, allowed ? [dep] : [])
+          }
+          assert.deepEqual(state.triage.get(dep.id), saved, 'mode changes preserve the saved status')
+        }
+      }
+    }
+  })
+
+  it('cannot bypass the App guard through a conflicted row or automatic levelling', () => {
+    reset()
+    const dep = upstream({ triage: 'fixed' })
+    const blank = upstream()
+    const ownA = tab({ color: 'red' }), ownB = tab({ color: 'blue' })
+    const group = [ownA, ownB, dep]
+    state.activeTabByGroup.set(ownA.id, dep.id)
+    assert.equal(groupState(group).hasConflict, true)
+    assert.deepEqual(triageScope(group), [], 'an active upstream tab cannot receive a conflict action')
+    assert.equal(syncGroupTriage([dep, blank]), false)
+    assert.equal(state.triage.has(blank.id), false)
+    state.upstreamOnly = true
+    assert.equal(syncGroupTriage([dep, blank]), true)
+    assert.equal(tabTriage(blank), 'fixed')
+  })
+
+  it('ignores all upstream annotations in App view and restores them in the other lenses', () => {
+    reset()
+    const dep = upstream({ color: 'red', comment: 'Upstream note', fix: 'upstream fix', flagged: true })
+    const own = tab(null)
+    const saved = { ...state.triage.get(dep.id) }
+    const group = [own, dep]
+    for (const [appOn, upstreamOn] of [[true, false], [true, true], [false, false], [false, true], [true, false]]) {
+      state.showRevalidation = appOn
+      state.upstreamOnly = upstreamOn
+      const allowed = !appOn || upstreamOn
+      assert.deepEqual(triageEntry(dep), allowed ? saved : undefined)
+      assert.equal(groupState([dep]).commonColor, allowed ? 'red' : null)
+      assert.equal(tabHasMarks(dep), allowed)
+      assert.equal(sortTabs(group)[0], allowed ? dep : own)
+      assert.equal(activeTabFor(group), allowed ? dep : own)
+      assert.deepEqual(state.triage.get(dep.id), saved)
+    }
+  })
+
+  it('offers group fix links only for eligible siblings and never targets a restricted dependency', () => {
+    reset()
+    const app = tab({ fix: 'app fix' }, { isApp: true })
+    const own = tab(null)
+    const dep = upstream({ fix: 'different upstream fix' })
+    assert.equal(canApplyFixToGroup([app, dep], 'app fix'), false)
+    assert.equal(canApplyFixToGroup([app, own, dep], 'app fix'), true)
+    assert.deepEqual([app, own, dep].filter((f) => fixApplies(f, 'app fix')), [app, own])
+    assert.equal(fixApplies(dep, 'different upstream fix'), false)
+    state.upstreamOnly = true
+    assert.equal(fixApplies(dep, 'different upstream fix'), true)
+    assert.equal(canApplyFixToGroup([app, own, dep], 'app fix'), false, 'eligible siblings keep their distinct links')
   })
 
   it('reads the verdict off the app-side members only', () => {

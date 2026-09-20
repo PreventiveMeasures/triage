@@ -59,14 +59,18 @@ export { isHttpUrl }
 // (report/src/finding.js's `revalidateKindOf`).
 //
 // The flag is module state, set once per render by render.js from
-// `state.showRevalidation` (see configureDepsDir below for the same
+// `state.showRevalidation` and `state.upstreamOnly` (see configureDepsDir below for the same
 // pattern and the reason: this module stays free of any `#client/...`
 // import so it can ride the lazy graph bundle). It defaults to ON, so
 // a consumer reaching a helper before the first render — the headless
 // API, a deep link — sees the app view, which is the default anyway.
 let revalidationOn = true
 
-export function configureRevalidation(on) { revalidationOn = on !== false }
+// Upstream findings describe the dependency itself, so app-specific verdicts
+// stay hidden there without changing the reader's saved App switch setting.
+export function configureRevalidation(on, upstreamOnly = false) {
+  revalidationOn = on !== false && !upstreamOnly
+}
 
 // Whether the layer is applied right now. For the display sites that
 // read a `revalidate*` field directly rather than going through
@@ -324,6 +328,7 @@ const derivedUpstream = new WeakSet()
 // under it. Re-deriving each render is what keeps every flag agreeing
 // with the dir the loaded set has actually settled on.
 export function stampUpstreamFindings(reports) {
+  let changed = false
   for (const r of reports ?? []) {
     for (const g of r.groups ?? []) {
       for (const f of g) {
@@ -331,15 +336,18 @@ export function stampUpstreamFindings(reports) {
         const derived = derivedUpstream.has(f)
         if ('isUpstream' in f && !derived) continue
         if (isModule(f.file)) {
+          if (f.isUpstream !== true) changed = true
           f.isUpstream = true
           derivedUpstream.add(f)
         } else if (derived) {
+          changed = true
           delete f.isUpstream
           derivedUpstream.delete(f)
         }
       }
     }
   }
+  return changed
 }
 
 // "Is this path inside SOMEBODY ELSE'S source?" — the same question

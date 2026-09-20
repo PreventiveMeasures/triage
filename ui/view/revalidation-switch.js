@@ -47,7 +47,10 @@
 // on the layer's own reader would make it vanish the moment it was
 // used, with no way back.
 //
-// The DETAIL half is offered where the app view is folding rows or
+// Conflicting copies replace the App controls with an inspection button;
+// the upstream lens remains available independently.
+// The DETAIL half requires an available App switch. It is offered where
+// the app view is folding rows or
 // holding the partial line back (render.js canDetailLayer) — asked of
 // the loaded SET, not of the view currently drawn. With the layer off
 // it has nothing to unfold, and it goes DISABLED rather than away: a
@@ -84,13 +87,13 @@ const DETAIL_GLYPH = html`<svg viewBox="0 0 16 16" width="13" height="13" aria-h
 
 const DETAIL_LABEL = 'Show underlying code findings'
 
-// An arrow leaving a box, upward and out — the dependency's own code,
-// upstream of everything here. Same 16-box, same 1.2 stroke as the
-// plates beside it, so the two read as one row of glyphs.
-const UPSTREAM_GLYPH = html`<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
-  <path d="M8 9.6V2.4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
-  <path d="M5.2 5.2 8 2.4l2.8 2.8" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M3 10.4v2.2a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-2.2" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+// One node connected to its upstream dependencies. Same size and stroke
+// as the detail glyph, with a branching silhouette distinct from export.
+const UPSTREAM_GLYPH = html`<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <path d="M3 5.5v2h10v-2M8 7.5v3"/>
+  <rect x="1" y="1.5" width="4" height="4" rx=".6"/>
+  <rect x="11" y="1.5" width="4" height="4" rx=".6"/>
+  <rect x="6" y="10.5" width="4" height="4" rx=".6"/>
 </svg>`
 
 const UPSTREAM_LABEL = 'Show only upstream dependency findings'
@@ -117,6 +120,13 @@ class RevalidationSwitch extends StateElement {
   }
 
   render() {
+    const conflicts = state.revalidateConflicts.size
+    const conflictButton = conflicts > 0 ? html`<button type="button"
+        class="revalidation-toggle revalidation-conflicts"
+        aria-haspopup="dialog"
+        aria-label=${`View ${conflicts} revalidation conflict${conflicts === 1 ? '' : 's'}`}
+        @click=${this._openConflicts}
+      >${conflicts} ${conflicts === 1 ? 'conflict' : 'conflicts'}</button>` : nothing
     const on = state.showRevalidation !== false
     // Lit only while the layer is on: with it off, every row the pass
     // re-rated is already on the strip, and a lit glyph would claim
@@ -146,7 +156,7 @@ class RevalidationSwitch extends StateElement {
     // `aria-pressed` carries the state, and the label says what is
     // being pressed — no `title`, which would only repeat the word
     // under the cursor and never reaches a keyboard or a touch.
-    return html`${this.canDrop
+    return html`${conflictButton}${conflicts === 0 && this.canDrop
       ? html`<button
           type="button"
           class=${classMap({ 'revalidation-toggle': true, on })}
@@ -155,7 +165,7 @@ class RevalidationSwitch extends StateElement {
           ?disabled=${upstreamOnly}
           @click=${this._toggle}
         ><span>App</span><span class="revalidation-switch"></span></button>`
-      : nothing}${this.canDetail
+      : nothing}${conflicts === 0 && this.canDrop && this.canDetail
       ? html`<button
           type="button"
           class=${classMap({ 'revalidation-detail': true, on: detailed })}
@@ -183,6 +193,10 @@ class RevalidationSwitch extends StateElement {
       bubbles: true,
       composed: true,
     }))
+  }
+
+  _openConflicts = () => {
+    this.dispatchEvent(new CustomEvent('revalidation-conflicts-open', { bubbles: true, composed: true }))
   }
 
   _toggleDetail = () => {

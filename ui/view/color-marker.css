@@ -17,7 +17,8 @@ button {
   opacity: .55;
   transition: opacity .12s, transform .12s;
 }
-button:hover { opacity: 1; transform: scale(1.12); }
+button:not(:disabled):hover { opacity: 1; transform: scale(1.12); }
+button:disabled { opacity: .25; }
 
 /* Active = filled disc + 1px surface-colored gap + 1px outer colored
    ring, via two stacked box-shadows: the gap reads as the dot

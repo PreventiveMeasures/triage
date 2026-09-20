@@ -1,0 +1,32 @@
+/* Keep the controls together. Flex wrapping lifts the full report name
+   above them as soon as the two no longer fit on one line. */
+.finding-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: .25rem 1rem;
+  min-width: 0;
+  max-width: 100%;
+}
+.finding-action-controls {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: .35rem;
+  max-width: 100%;
+}
+.finding-actions .report-chip {
+  flex: 0 1 auto;
+  width: max-content;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 1.4rem;
+}
+.finding-actions .report-chip-label {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
+}

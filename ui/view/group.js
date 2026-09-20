@@ -1,107 +1,31 @@
-import { getPackagesIndex, isReportIgnored, patchEntry, state } from '#client/index.js'
-import { SEVERITY_ORDER, displayedSeverity, isRevalidation, isRevalidationRow } from './format.js'
+import { duplicatesOf, getPackagesIndex, isReportIgnored, patchEntry, state } from '#client/index.js'
+import { SEVERITY_ORDER, displayedSeverity, isRevalidation, isRuledOut } from './format.js'
 // NOTE: filters.js imports from this module too (primaryTab / tabKey).
 // The cycle is deliberate and benign: both sides only call across
 // inside function bodies, never during module evaluation, so whichever
 // module evaluates first resolves the other's hoisted function
 // declarations by the time anything runs.
 import { matchesRunFilters } from './filters.js'
-import { revalidateKindOf } from '../../report/index.js'
+import { mergeReportGroups } from './workspace-groups.js'
 import { getLinksPreview } from './links-preview.js'
+import { mergeLinkedWorkspaceGroups } from './linked-workspace-groups.js'
 
 // ID helpers. Internally every `state.reports[].groups[i]` is a
 // Finding[] (single-finding entries are wrapped at ingest, so code
 // downstream never branches on "is it a group?"). `tabKey` identifies
 // an individual tab (= finding); `groupKey` identifies the group as a
-// whole — uses the first member so it survives tab-sort reordering.
+// whole — uses the first member, or the App identity of a separate workspace
+// row, so it survives tab-sort reordering without sharing a source-only key.
 export function tabKey(f) { return f.id ?? String(f._id) }
-export function groupKey(group) { return tabKey(group[0]) }
+export function groupKey(group) { return group.workspaceKey ?? tabKey(group[0]) }
 export function toGroup(entry) { return Array.isArray(entry) ? entry : [entry] }
 
-// What a dropped duplicate leaves behind on its survivor. Dedup keeps
-// the FIRST copy of a finding it sees (ingest.js) — a load-order
-// accident — so anything the other copy knew and this one doesn't has
-// to move across, or it is gone from the view entirely.
-//
-// The revalidation pass's answer is the case that made this
-// necessary. A report that has been through the pass carries
-// `revalidate` and its reasoning; the analysis it re-examined carries
-// neither; and the two hold the SAME finding under the same id, since
-// a stamp is no part of the id's fingerprint. Whichever report
-// happened to be read first won, so a workspace holding both showed
-// the pass's verdicts or didn't, by load order alone — no stamps on
-// the cards, refuted rows still speaking for their group's
-// confidence, and an outcome dropdown with nothing to offer. Nothing
-// about that is specific to `revalidate`, so this takes any field one
-// copy carries and the other doesn't.
-//
-// GAPS ONLY. Where both copies answer, the survivor's answer stands:
-// two reports that disagree are a question of their own, and
-// first-wins is what the dedup already does with the rest of the
-// finding. `null` counts as no answer — a report is JSON, where a
-// written-out null and an absent key say the same thing.
-//
-// Two kinds of field stay out of it:
-//
-//   * `_`-prefixed ones, which say where a copy CAME FROM — its
-//     report, its producer, its repo fallback — rather than what it
-//     says about the code. The surviving row belongs to the surviving
-//     report and keeps its own;
-//   * the corrected severity, which has a mechanism of its own
-//     (ingest.js recordCorrectedVariant) that keeps BOTH reports'
-//     values as variants. Copying one over the other would settle by
-//     load order the very thing that machinery exists to show.
-//   * `source`, which is provenance too — the public half of it,
-//     stamped per finding by a re-imported export that mixed a
-//     product's findings with the analyzer's own runs. It reads like
-//     any other field but names the copy's PRODUCER, and ingest has
-//     already derived `_source` / `_analyzer` from it by the time a
-//     duplicate is dropped: filling it here would leave the toolbar
-//     calling the row native while a later markdown export called it
-//     the other product's (report/src/write-md.js reads `f.source`
-//     first).
-//   * `isApp` / `isUpstream`, which are read OFF that provenance —
-//     the layer answers each construction site stamps from its own
-//     copy's producer and path. Letting a dropped copy fill one in
-//     would be `source` crossing over by another name.
-const KEEPS_ITS_OWN = new Set(['correctedSeverity', 'correctedSeverityReason', 'isApp', 'isUpstream', 'source'])
-
-// Returns whether the two copies CONFLICTED about the revalidation
-// pass — both answering a `revalidate*` field, differently. Nothing is
-// merged from a conflict (the survivor keeps its own, as everywhere
-// here), but this one is worth reporting rather than settling: two
-// reports disagreeing about what the pass concluded means the view
-// cannot say what it concluded, and ingest.js takes the whole layer
-// off for a set that carries one rather than showing whichever copy
-// happened to load first.
-export function mergeDuplicateFields(survivor, dup) {
-  if (!survivor || !dup || survivor === dup) return false
-  let conflicted = false
-  for (const [key, value] of Object.entries(dup)) {
-    if (key.startsWith('_') || KEEPS_ITS_OWN.has(key)) continue
-    if (value === undefined || value === null) continue
-    // The stamp is compared as the app READS it, not as the file
-    // wrote it: the reader answers "no stamp" for anything that isn't
-    // one of the words (report/src/finding.js revalidateKindOf), so a
-    // value the app can't read is no answer at all — it neither blocks
-    // the other copy's real stamp from landing nor takes the layer off
-    // a whole workspace for a typo.
-    if (key === 'revalidate') {
-      const theirs = revalidateKindOf(dup)
-      if (!theirs) continue
-      const mine = revalidateKindOf(survivor)
-      if (!mine) survivor[key] = value
-      else if (mine !== theirs) conflicted = true
-      continue
-    }
-    const own = survivor[key]
-    if (own === undefined || own === null) { survivor[key] = value; continue }
-    // The pass's prose either side of the stamp, compared past the
-    // whitespace two writers can differ on for the same words.
-    if (key.startsWith('revalidate') && String(own).trim() !== String(value).trim()) conflicted = true
-  }
-  return conflicted
+// Revalidation details belong to one app/report, never the cross-app workspace.
+export function underlyingFindingsShown() {
+  return !state.currentWorkspace && state.revalidationDetailed === true
 }
+
+export { mergeDuplicateFields, mergeReportDuplicateFields } from './finding-duplicates.js'
 
 // Per-report ignore is keyed by the source report's filename so an
 // ignore in report A doesn't propagate to the same finding's
@@ -113,8 +37,19 @@ export function mergeDuplicateFields(survivor, dup) {
 export function findingReport(f) {
   return f?._reportName ?? ''
 }
+
+// App view neither reads nor writes upstream triage data. The upstream lens
+// and code mode expose the dependency's saved annotations without changing them.
+export function canTriageFinding(f) {
+  return !f.isUpstream || state.showRevalidation === false || state.upstreamOnly === true
+}
+
+export function triageEntry(f) {
+  return canTriageFinding(f) ? state.triage.get(tabKey(f)) : undefined
+}
+
 export function isIgnored(f) {
-  return isReportIgnored(state.triage, tabKey(f), findingReport(f))
+  return canTriageFinding(f) && isReportIgnored(state.triage, tabKey(f), findingReport(f))
 }
 
 // One tab's triage "bucket": its triage value if set, else 'ignored'
@@ -127,7 +62,8 @@ export function isIgnored(f) {
 // — groupState reads it for the color axis anyway, and this is the
 // hottest helper in the findings render path, so it must not cost a
 // second observable read per tab.
-export function tabTriage(f, entry = state.triage.get(tabKey(f))) {
+export function tabTriage(f, entry = triageEntry(f)) {
+  if (!canTriageFinding(f)) return undefined
   return entry?.triage ?? (isIgnored(f) ? 'ignored' : undefined)
 }
 
@@ -142,30 +78,29 @@ export function tabTriage(f, entry = state.triage.get(tabKey(f))) {
 // keeps every tab it has.
 //
 // Through the layer's own GATE (`isRevalidation`, not the raw
-// `isRevalidationRow` withoutPassRows reads): this hides rows only
+// the raw revalidation kind the group builder reads): this hides rows only
 // while the app view is the one on screen, and off it answers false
 // for every row, which is the whole guard it needs. The two readers
-// pull in opposite directions on purpose — withoutPassRows has to see
+// pull in opposite directions on purpose — the group builder has to see
 // the pass's rows precisely when the gate has stopped showing them,
 // to take them out; this one has nothing to do the moment they are
 // gone.
 //
-// PRESENTATION only, unlike the row-dropping the switch does. The rows
-// this leaves out stay IN the group — they still count, still filter,
-// still take the group's triage and the fix that lands on it — because
-// they are the same findings, spoken for by the row above them. The
-// two directions differ on purpose: "off" says those rows are not what
-// the reader is looking at, while this says the pass has already
-// answered for them.
+// Unlike row-dropping, this leaves the underlying findings IN the group
+// for row filtering and triage. Selector stats use this visible projection
+// so hidden tabs don't contribute values to the toolbar.
+// Row status actions include own source, but leave underlying dependency
+// statuses alone (see triageTabs), regardless of this display switch.
 //
 // Returns the group array itself whenever nothing is hidden, so
 // sortTabs's identity note below still holds for every set without a
 // pass row in it.
-function drawnTabs(group) {
+export function drawnTabs(group) {
   // Links previews show the entire original report row, including the
   // clicked finding when the normal App lens would fold it under a pass.
   if (getLinksPreview()?.group === group) return group
-  if (state.revalidationDetailed || group.length <= 1) return group
+  if (group.linkedTabs) return group.linkedTabs
+  if (underlyingFindingsShown() || group.length <= 1) return group
   if (!group.some(isRevalidation)) return group
   return group.filter(isRevalidation)
 }
@@ -201,8 +136,8 @@ export function sortTabs(group) {
     const aRevalidation = isRevalidation(a) ? 1 : 0
     const bRevalidation = isRevalidation(b) ? 1 : 0
     if (aRevalidation !== bRevalidation) return bRevalidation - aRevalidation
-    const aColored = state.triage.get(tabKey(a))?.color ? 1 : 0
-    const bColored = state.triage.get(tabKey(b))?.color ? 1 : 0
+    const aColored = triageEntry(a)?.color ? 1 : 0
+    const bColored = triageEntry(b)?.color ? 1 : 0
     if (aColored !== bColored) return bColored - aColored
     const aSev = SEVERITY_ORDER[displayedSeverity(a, state.severityMode)] || 0
     const bSev = SEVERITY_ORDER[displayedSeverity(b, state.severityMode)] || 0
@@ -231,7 +166,7 @@ export function groupTabsByLevel(tabs) {
 // / `false`-tombstone forms count as absent, matching that render and
 // the toolbar annotation filters.
 export function tabHasMarks(f) {
-  const entry = state.triage.get(tabKey(f))
+  const entry = triageEntry(f)
   return Boolean(entry?.comment) || Boolean(entry?.fix) || entry?.flagged === true
 }
 
@@ -327,8 +262,9 @@ export function findingRepo(f) {
 // it sits in and which triage filter it answers to are all decided by
 // the findings that write would have reached. An upstream member keeps
 // whatever it was told directly, which is how it is told anything at
-// all: with its own tab active, the conflicted branch of `triageScope`
-// writes to that tab and nothing else.
+// all: the upstream lens exposes those findings for triage separately.
+// A mixed App row never writes to the underlying dependency, even when
+// that dependency is the active tab.
 //
 // A group of nothing BUT upstream members has no second reading to
 // prefer — there they are what the card is, and they both decide and
@@ -368,6 +304,7 @@ export function triageTabs(group) {
 //   A(green, deleted), B(green), C()       → conflict (triage disagrees: deleted vs none)
 //   A(green, fixed), B(green, deleted), C()→ conflict (triage disagrees: fixed vs deleted)
 export function groupState(group) {
+  const statusMembers = triageTabs(group)
   // Per-tab "bucket": triage value if set, else 'ignored' if the
   // tab is in the ignore set, else undefined (live). Ignore behaves
   // like a fourth bucket for rollup / conflict detection but
@@ -380,9 +317,8 @@ export function groupState(group) {
   // first-seen + conflict flags rather than intermediate arrays/Sets.
   // We only ever need "zero / one / more than one distinct values"
   // plus the first member, which the flags capture exactly. The
-  // observable reads (state.triage.get per tab; isIgnored only when
-  // the entry carries no triage) are unchanged so observer-util
-  // dependency tracking stays identical.
+  // Observable reads follow the active lens: restricted upstream entries
+  // are not read until the lens makes their annotations applicable.
   let annotatedCount = 0
   // Distinct non-undefined colors across annotated tabs.
   let colorsConflict = false
@@ -403,8 +339,8 @@ export function groupState(group) {
   let anyTriage = false
   // Every annotated tab carries a truthy bucket !== 'ignored'.
   let allBucketed = true
-  for (const f of triageTabs(group)) {
-    const entry = state.triage.get(tabKey(f))
+  for (const f of statusMembers) {
+    const entry = triageEntry(f)
     const bucket = tabTriage(f, entry)
     const color = entry?.color
     if (color === undefined && bucket === undefined) continue
@@ -438,7 +374,7 @@ export function groupState(group) {
     // tabTemplate). Safe as a count comparison: with no conflict, every
     // annotated tab shares the 'ignored' bucket, so a full annotated
     // count means a fully ignored group.
-    allIgnored: commonTriage === 'ignored' && annotatedCount === group.length,
+    allIgnored: commonTriage === 'ignored' && annotatedCount === statusMembers.length,
     // Convenience flags so downstream code that asks "is this group in
     // the trash bucket" needn't branch on commonTriage.
     isInProgress: commonTriage === 'inprogress',
@@ -450,8 +386,8 @@ export function groupState(group) {
 }
 
 // Whether a fix link edited on one tab can be offered to the whole
-// group. Two conditions: the group has siblings to apply it to, and
-// every tab either carries no link or carries the very link being
+// group. Two conditions: the group has eligible siblings to apply it to, and
+// every eligible tab either carries no link or carries the very link being
 // edited (its value BEFORE this edit). Anywhere else the siblings hold
 // references of their own, and a fix link names one specific PR or
 // commit — a group whose members already differ is one where someone
@@ -464,8 +400,10 @@ export function groupState(group) {
 // withhold the offer from a group that agrees.
 export function canApplyFixToGroup(group, current) {
   if (!Array.isArray(group) || group.length < 2) return false
+  const eligible = group.filter(canTriageFinding)
+  if (eligible.length < 2) return false
   const want = (current ?? '').trim()
-  return group.every((f) => fixApplies(f, want))
+  return eligible.every((f) => fixApplies(f, want))
 }
 
 // One tab's half of that test, so the write can re-ask it per tab at
@@ -473,7 +411,8 @@ export function canApplyFixToGroup(group, current) {
 // and a sync peer or another browser tab can land a link on a sibling
 // while it sits there.
 export function fixApplies(f, current) {
-  const fix = (state.triage.get(tabKey(f))?.fix ?? '').trim()
+  if (!canTriageFinding(f)) return false
+  const fix = (triageEntry(f)?.fix ?? '').trim()
   return fix === '' || fix === (current ?? '').trim()
 }
 
@@ -485,9 +424,8 @@ export function fixApplies(f, current) {
 // then flipped back) instead of the plain on/off a state menu owes the
 // user.
 //
-// Scope: a conflicted group narrows to the active tab, so resolving a
-// disagreement doesn't overwrite siblings the user hasn't looked at.
-// Everything else applies to every tab.
+// Scope: mixed rows target App and own-source findings; other conflicted rows
+// retain the existing active-tab behavior. Source-only rows target sources.
 //
 // `clearing` is true when the scope ALREADY shows `action` — a
 // re-click switches it off — and always for 'restore', which only
@@ -495,6 +433,9 @@ export function fixApplies(f, current) {
 // tabs (see syncGroupTriage), which is exactly why the question is
 // asked of the rollup rather than of each tab.
 export function triageActionPlan(group, action) {
+  // Controls belong to the displayed finding, even when their write would
+  // otherwise target eligible siblings. Kanban drops use triageScope directly.
+  if (!canTriageFinding(activeTabFor(group))) return { targets: [], clearing: false }
   const st = groupState(group)
   return {
     targets: triageScope(group, st),
@@ -502,13 +443,14 @@ export function triageActionPlan(group, action) {
   }
 }
 
-// The tabs a group-level triage write lands on. A conflicted group
-// narrows to the active tab, so resolving a disagreement doesn't
-// overwrite siblings the user hasn't looked at; everything else applies
-// to every tab. Shared with the kanban drop path so a menu click and a
-// column drop can't disagree about which tabs they touch.
+// Both menu actions and kanban drops skip underlying dependencies in App rows,
+// regardless of the active tab or the underlying-detail switch. A homogeneous
+// conflicted group retains its active-tab scope.
 export function triageScope(group, st = groupState(group)) {
-  return st.hasConflict ? [activeTabFor(group)] : triageTabs(group)
+  const members = triageTabs(group)
+  const targets = group.linkedTabs || (members !== group && group.some((f) => f.isApp))
+    ? members : st.hasConflict ? [activeTabFor(group)] : members
+  return targets.every(canTriageFinding) ? targets : targets.filter(canTriageFinding)
 }
 
 // The state that scope currently shows — what the menu marks active,
@@ -520,6 +462,7 @@ export function triageScope(group, st = groupState(group)) {
 // resolved both for the row, and the conflicted branch would otherwise
 // re-sort the group's tabs to find the active one.
 export function scopedTriage(group, st = groupState(group), active = null) {
+  if (group.linkedTabs || (group.some((f) => f.isApp) && triageTabs(group) !== group)) return st.commonTriage ?? null
   if (!st.hasConflict) return st.commonTriage ?? null
   return tabTriage(active ?? activeTabFor(group)) ?? null
 }
@@ -544,12 +487,8 @@ export function scopedTriage(group, st = groupState(group), active = null) {
 // so a whole-map serialize can't land between an open and its paint —
 // the rule the kanban drop path already follows.
 //
-// `commonTriage` is null for any conflicted group, so agreement is
-// already the condition for getting past the first guard — including
-// a COLOR disagreement, which the rollup folds into the same value. A
-// group whose buckets agree but whose colors differ therefore keeps
-// its partial state; its tabs keep showing their own (see
-// tabTemplate), which is the signal that something is unresolved.
+// `commonTriage` requires agreement among the status-bearing members.
+// Colors and statuses are read from the same non-upstream members.
 export function syncGroupTriage(group) {
   // The same set the rollup below was read from: levelling is the
   // rollup written back, so reaching an upstream member here would
@@ -561,6 +500,7 @@ export function syncGroupTriage(group) {
   if (!bucket || bucket === 'ignored') return false
   let changed = false
   for (const f of tabs) {
+    if (!canTriageFinding(f)) continue
     const key = tabKey(f)
     const entry = state.triage.get(key)
     // Anything still off the bucket here carries no bucket at all — an
@@ -580,42 +520,27 @@ export function syncGroupTriage(group) {
   return changed
 }
 
-// Flatten every loaded report's groups into the workspace list,
-// applying `state.workspaceMerges` so groups bound by a cross-report
-// dedup hint render as a single super-group. Each merge instruction is
-// a Set of finding ids in the order the source combined entry listed
-// them — that order is canonical (the upstream dedup pass deliberately
-// picked a primary), so the super-group sorts members by
-// merge-instruction order, falling back to load order for anything no
-// instruction mentioned (e.g. a member of a multi-finding source group
-// the merge only named once). Per-report `state.reports[*].groups` is
-// untouched — single-report views and per-report iteration keep their
-// shape; only the merged display uses this view.
-// Taking the revalidation layer off (the toolbar's "App" switch, see
-// format.js) drops the rows that ARE the pass — and only those. Their
-// duplicates stay: a row the pass judged is still the analyzer's
-// finding about the code, and the code view is the whole point of the
-// switch. A group left with nothing goes with them.
-//
-// Here rather than in a filter because this is the one list every
-// consumer reads — the toolbar counts, the filters, the tab strip, the
-// deep links, the file tallies — so the pass's rows are gone from all
-// of them at once, instead of surviving in whichever count forgot to
-// ask. `isRevalidationRow` reads the raw field on purpose: by the time
-// this runs, the gated reader has already stopped seeing them.
-//
-// Untouched groups keep their identity — the arrays are only rebuilt
-// where something actually comes out — so nothing downstream that
-// keys off a group re-derives for a set that has no pass rows in it.
-function withoutPassRows(groups) {
-  if (state.showRevalidation) return groups
-  if (!groups.some((g) => g.some(isRevalidationRow))) return groups
-  const out = []
-  for (const g of groups) {
-    const kept = g.filter((f) => !isRevalidationRow(f))
-    if (kept.length > 0) out.push(kept.length === g.length ? g : kept)
+// Original report rows are immutable. Cache the derived partitions until
+// another report arrives; toggling the lens never re-parses reports or discards
+// their App rows. Report entries are replaced wholesale by the loading path.
+let groupCache = null
+
+export function clearMergedGroups() { groupCache = null }
+
+function groupModel(showRevalidation, upstreamOnly = false, hideRuledOut = false) {
+  const reports = state.reports
+  const merges = state.workspaceMerges
+  if (!groupCache || groupCache.reports.length !== reports.length
+      || groupCache.reports.some((r, i) => r !== reports[i])
+      || groupCache.merges !== merges || groupCache.mergeCount !== merges.length) {
+    groupCache = { reports: [...reports], merges, mergeCount: merges.length }
   }
-  return out
+  const mode = upstreamOnly ? 'upstream' : showRevalidation ? hideRuledOut ? 'workspace-app' : 'app' : 'code'
+  if (!groupCache[mode]) {
+    const input = upstreamOnly ? reports.map((r) => ({ ...r, groups: onlyUpstream(r.groups) })) : reports
+    groupCache[mode] = mergeReportGroups(input, { showRevalidation: showRevalidation && !upstreamOnly, hideRuledOut, merges })
+  }
+  return groupCache[mode]
 }
 
 // The upstream lens: with it on, the list is the dependencies' own code
@@ -644,8 +569,9 @@ function withoutPassRows(groups) {
 // resolves like any other: `triageScope` narrows to the active tab,
 // which under this lens is one of the upstream rows.
 //
-// Same shape as `withoutPassRows` above, including handing back the
-// group itself when nothing was dropped.
+// Hand back the group itself when nothing was dropped. Narrow original
+// report rows before merging so shared dependencies from separate App
+// contexts appear once in the upstream lens.
 function onlyUpstream(groups) {
   if (!state.upstreamOnly) return groups
   const out = []
@@ -666,11 +592,34 @@ function onlyUpstream(groups) {
 // gone; `unhideFinding` then takes the lens off to show it, the same
 // way it clears a filter that excluded its target.
 export function linkableGroups() {
-  return withoutPassRows(mergedGroups())
+  return groupModel(state.showRevalidation !== false).groups
 }
 
+export function getRevalidationGroups() { return groupModel(true).groups }
+export function getRevalidationConflicts() { return groupModel(true, false, Boolean(state.currentWorkspace)).conflicts }
+
 export function getMergedGroups() {
-  return onlyUpstream(linkableGroups())
+  const model = groupModel(state.showRevalidation !== false, state.upstreamOnly === true, Boolean(state.currentWorkspace))
+  const groups = model.groups
+  if (state.showRevalidation === false || state.upstreamOnly || underlyingFindingsShown()) return groups
+  if (state.currentWorkspace) {
+    // Link grouping runs after visibility, report grouping and conflict
+    // detection. Status disagreements use groupState, never App-mode gating.
+    if (!model.linkedGroups || model.linksTick !== state.linksTick) {
+      model.linkedGroups = mergeLinkedWorkspaceGroups(groups, duplicatesOf, drawnTabs)
+      model.linksTick = state.linksTick
+    }
+    return model.linkedGroups
+  }
+  // Hide ruled-out findings before counts, filters, tabs and outcome options
+  // are derived. isRuledOut already follows the App/upstream lens.
+  return model.visibleGroups ??= groups.flatMap((group) => {
+    const kept = group.filter((f) => !isRuledOut(f))
+    if (kept.length === group.length) return [group]
+    if (kept.length === 0) return []
+    kept.workspaceKey = groupKey(group)
+    return [kept]
+  })
 }
 
 // The merged groups the view actually SHOWS — the triage bucket the
@@ -691,81 +640,8 @@ export function getShownGroups() {
   return groups.filter((g) => groupState(g).commonTriage === state.shownTriage)
 }
 
-// The same merge walk without the lens filter — the group as the DATA
-// has it. Only `getMergedGroups` (which applies the filter) and
-// `groupWithPassRows` (which wants what it dropped) call this.
-function mergedGroups() {
-  const allGroups = state.reports.flatMap((r) => r.groups)
-  const merges = state.workspaceMerges
-  if (!merges || merges.length === 0) return allGroups
-  const parent = allGroups.map((_, i) => i)
-  const find = (i) => {
-    let r = i
-    while (parent[r] !== r) r = parent[r]
-    while (parent[i] !== r) { const next = parent[i]; parent[i] = r; i = next }
-    return r
-  }
-  const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb }
-  const idToIdx = new Map()
-  for (let i = 0; i < allGroups.length; i++) {
-    for (const f of allGroups[i]) if (f.id) idToIdx.set(f.id, i)
-  }
-  for (const merge of merges) {
-    let first = -1
-    for (const id of merge) {
-      const idx = idToIdx.get(id)
-      if (idx === undefined) continue
-      if (first === -1) first = idx
-      else union(first, idx)
-    }
-  }
-  // Walk allGroups in order; first hit on each root opens its output
-  // slot (so the super-group lands at its earliest member's position).
-  // Members are then ordered by merge-instruction order — first-recorded
-  // instruction wins; ids no instruction names get appended in load order.
-  const seenRoots = new Set()
-  const merged = []
-  for (let i = 0; i < allGroups.length; i++) {
-    const root = find(i)
-    if (seenRoots.has(root)) continue
-    seenRoots.add(root)
-    const findings = []
-    for (let j = i; j < allGroups.length; j++) {
-      if (find(j) === root) findings.push(...allGroups[j])
-    }
-    const idSet = new Set(findings.map((f) => f.id).filter(Boolean))
-    const canonical = []
-    const placed = new Set()
-    for (const merge of merges) {
-      for (const id of merge) {
-        if (placed.has(id)) continue
-        if (idSet.has(id)) { canonical.push(id); placed.add(id) }
-      }
-    }
-    if (canonical.length === 0) {
-      merged.push(findings)
-      continue
-    }
-    const byId = new Map()
-    for (const f of findings) {
-      if (f.id && !byId.has(f.id)) byId.set(f.id, f)
-    }
-    const used = new Set()
-    const ordered = []
-    for (const id of canonical) {
-      const f = byId.get(id)
-      if (f) { ordered.push(f); used.add(f) }
-    }
-    for (const f of findings) {
-      if (!used.has(f)) ordered.push(f)
-    }
-    merged.push(ordered)
-  }
-  return merged
-}
-
 // A rendered group plus the revalidation rows the App lens dropped
-// from it (see withoutPassRows) — the group as the data has it, which
+// from it (see mergeReportGroups) — the group as the data has it, which
 // is what a whole-group WRITE is about. The pass's row is the same
 // issue re-rated, so the PR that fixes the base finding fixes that row
 // too, and an annotation applied to the group belongs on it whether or
@@ -778,7 +654,12 @@ function mergedGroups() {
 export function groupWithPassRows(group) {
   if (state.showRevalidation || !Array.isArray(group) || group.length === 0) return group
   const keys = new Set(group.map(tabKey))
-  return mergedGroups().find((g) => g.some((f) => keys.has(tabKey(f)))) ?? group
+  const whole = new Map()
+  for (const g of getRevalidationGroups()) {
+    if (g.some((f) => keys.has(tabKey(f)))) for (const f of g) whole.set(tabKey(f), f)
+  }
+  if (whole.size === group.length && group.every((f) => whole.get(tabKey(f)) === f)) return group
+  return whole.size > 0 ? [...whole.values()] : group
 }
 
 export function findGroupById(gid) {

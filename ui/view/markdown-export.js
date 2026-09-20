@@ -21,7 +21,7 @@ import { downloadBlob } from './dom.js'
 import { activeFilterDescriptions, exportBucketGroups, exportBucketLabel } from './export-summary.js'
 import { activeFilters, applyFilters, applySorting } from './filters.js'
 import { commitUrl, commonPrefix, evidenceUrl, findingUrl, hasRevalidateField, hasSeverityCorrection, isModule } from './format.js'
-import { findingRepoFallback, isIgnored, sortTabs, tabKey } from './group.js'
+import { findingRepoFallback, isIgnored, sortTabs, triageEntry, underlyingFindingsShown } from './group.js'
 import { writeMarkdown } from '../../report/index.js'
 
 // The bucket's groups the selection in force lets through, in on-screen
@@ -40,7 +40,7 @@ function visibleGroups(bucket) {
 // carry no `fix` or `comment` field, ever.
 const HOOKS = {
   annotation(f) {
-    const entry = state.triage.get(tabKey(f))
+    const entry = triageEntry(f)
     const ignored = isIgnored(f)
     if (!entry && !ignored) return null
     return {
@@ -138,7 +138,7 @@ export function reportsToMarkdown() {
       // wonder where a case they remember went. Null with the layer
       // off, where the fold is inert and the line reads "code view".
       revalidationDetail: hasRevalidation && state.showRevalidation !== false
-        ? state.revalidationDetailed === true
+        ? underlyingFindingsShown()
         : null,
     },
     filters: activeFilterDescriptions(fields),

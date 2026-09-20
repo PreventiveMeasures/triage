@@ -61,7 +61,8 @@ const { decodeReportLocation, encodeReportLocation } = await import('../client/r
 const { getItem: getSecureItem, setItem: setSecureItem, hydrate: hydrateSecureStorage } = await import('../client/secure-storage.js')
 const { locateLinkedFinding } = await import('../ui/view/finding-link-route.js')
 const { deriveFindingId } = await import('../report/index.js')
-const { groupKey } = await import('../ui/view/group.js')
+const { findGroupById, getMergedGroups, groupKey, sortTabs } = await import('../ui/view/group.js')
+const { configureRevalidation } = await import('../ui/view/format.js')
 
 const { state } = await import('../client/state.ts')
 const {
@@ -391,6 +392,7 @@ function reset(groups = []) {
   state.showRevalidation = true
   state.revalidationDetailed = false
   state.upstreamOnly = false
+  configureRevalidation(true)
 }
 
 describe('finding deep links — building a link for a finding', () => {
@@ -759,6 +761,66 @@ describe('finding deep links — un-hiding the target', () => {
     const gid = unhideFinding(group, UUID_B)
     assert.equal(state.revalidationDetailed, true)
     assert.equal(state.activeTabByGroup.get(gid), UUID_B)
+  })
+
+  it('reveals a standalone ruled-out finding through the underlying-code switch', () => {
+    for (const revalidate of ['refuted', 'unreachable']) {
+      const group = [makeFinding(UUID_A, { revalidate })]
+      reset([group])
+      assert.equal(findLoadedFinding(UUID_A)?.finding.id, UUID_A)
+      unhideFinding(group, UUID_A)
+      assert.equal(state.revalidationDetailed, true)
+    }
+  })
+
+  it('reveals a source row excluded by the fixed Confirmed view', () => {
+    const confirmed = [makeFinding(UUID_A, { confidence: 9, revalidate: 'confirmed' })]
+    const source = [makeFinding(UUID_B, { confidence: 2 })]
+    reset([confirmed, source])
+    state.filterRevalidate = 'confirmed'
+    const gid = unhideFinding(source, UUID_B)
+    assert.equal(state.revalidationDetailed, true)
+    assert.equal(state.filterRevalidate, '')
+    assert.equal(state.tableSelectedGid, gid)
+  })
+
+  it('reveals a workspace dependency in upstream view instead of enabling report detail', () => {
+    const group = [makeFinding(UUID_A, { isApp: true, revalidate: 'revalidation' }), makeFinding(UUID_B, { isUpstream: true, revalidate: 'refuted' })]
+    reset([group])
+    state.currentWorkspace = WS_ID
+    const gid = unhideFinding(group, UUID_B)
+    assert.equal(state.revalidationDetailed, false)
+    assert.equal(state.upstreamOnly, true)
+    assert.deepEqual(findGroupById(gid).map((f) => f.id), [UUID_B])
+    assert.equal(findGroupById(gid)[0].revalidate, undefined)
+    assert.equal(state.tableSelectedGid, gid)
+  })
+
+  it('reveals a workspace own-source finding in code mode', () => {
+    const group = [makeFinding(UUID_A, { isApp: true, revalidate: 'revalidation' }), makeFinding(UUID_B, { revalidate: 'confirmed' })]
+    reset([group])
+    state.currentWorkspace = WS_ID
+    const gid = unhideFinding(group, UUID_B)
+    assert.equal(state.revalidationDetailed, false)
+    assert.equal(state.showRevalidation, false)
+    assert.equal(state.upstreamOnly, false)
+    assert.deepEqual(sortTabs(findGroupById(gid)).map((f) => f.id), [UUID_B])
+  })
+
+  it('prefers a visible workspace answer to another app\'s hidden answer', () => {
+    reset()
+    state.currentWorkspace = WS_ID
+    state.reports = [
+      { fileName: 'hidden.json', groups: [[makeFinding(UUID_A, { revalidate: 'refuted' })]] },
+      { fileName: 'visible.json', groups: [[makeFinding(UUID_A, { revalidate: 'confirmed' })]] },
+    ]
+    const hit = findLoadedFinding(UUID_A)
+    assert.equal(hit.finding.revalidate, 'confirmed')
+    const gid = unhideFinding(hit.group, UUID_A)
+    assert.equal(state.showRevalidation, true)
+    assert.equal(state.upstreamOnly, false)
+    assert.equal(state.revalidationDetailed, false)
+    assert.equal(findGroupById(gid), getMergedGroups()[0])
   })
 
   it('takes the upstream lens off for a target it would narrow away', () => {

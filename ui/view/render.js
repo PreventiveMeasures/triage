@@ -9,9 +9,10 @@ import { isBundleInRemote, isInRemote, remoteCount, triageSync } from './client-
 import { installShadowTooltipListener } from './tooltip.js'
 import { dropZone, report } from './dom.js'
 import { SEVERITIES, canDropRevalidation, configureDepsDir, configureRevalidation, displayedSeverity, fileLink, findingDisplayName, findingTitle, formatRunMeta, hasSeverityCorrection, isHttpUrl, isModule, lineLink, lineRangeLabel, reachableRevalidateFilters, revalidateKind, stampUpstreamFindings } from './format.js'
-import { activeTabFor, findingRepoFallback, getMergedGroups, groupKey, groupState, primaryTab, tabKey } from './group.js'
-import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, applySorting, modelOfFinding, rangeApplies, repoOfFinding } from './filters.js'
+import { activeTabFor, clearMergedGroups, findingRepoFallback, getMergedGroups, getRevalidationGroups, groupKey, groupState, primaryTab, triageEntry, triageScope, underlyingFindingsShown } from './group.js'
+import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, applyScopeFilters, applySorting, modelOfFinding, rangeApplies, repositoryFilterValues, shouldLockConfirmed } from './filters.js'
 import { ANALYZER_LABELS } from './analyzer-select.js'
+import { reportDuplicateIds } from './report-duplicates.js'
 import { SOURCE_LABELS, revalidateKindOf } from '../../report/index.js'
 import { COMBO_FIELDS, buildAnalyzerTags } from './analyzer-tags.js'
 import { COMMENT_ICON, FIX_ICON, FLAG_ICON, badgeLabel } from './render-finding.js'
@@ -92,7 +93,7 @@ function buildGraph2Data() {
       const sev = displayedSeverity(f, state.severityMode)
       if (!severitySets.has(f.file)) severitySets.set(f.file, new Set())
       severitySets.get(f.file).add(sev)
-      const color = state.triage.get(tabKey(f))?.color ?? 'none'
+      const color = triageEntry(f)?.color ?? 'none'
       if (!colorSets.has(f.file)) colorSets.set(f.file, new Set())
       colorSets.get(f.file).add(color)
       if (!fileFindings.has(f.file)) fileFindings.set(f.file, [])
@@ -576,7 +577,7 @@ function triageFilterTemplate(colorCounts) {
 // so the host drops it in unconditionally.
 
 function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCounts, flags, analyzerSelect, repoOptions) {
-  const { showSource, showConfidence, showPriority, showGraphMode, showFileSort, kanbanMode, showRepo, hasComment, hasFix, hasFlagged, showSeverityMode, revalidateOptions, showPartial, canDropLayer, canDetailLayer, canUpstreamLens } = flags
+  const { showSource, showConfidence, showPriority, showGraphMode, showFileSort, kanbanMode, showRepo, hasComment, hasFix, hasFlagged, hasDuplicates, showSeverityMode, revalidateOptions, showPartial, canDropLayer, canDetailLayer, canUpstreamLens, confirmedLocked } = flags
   // The findings tab gains a "graph" view-mode option when a
   // tree-bearing report is loaded (showGraphMode). The focus and
   // kanban modes sit between grouped and graph. Switching to graph
@@ -609,8 +610,8 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
         ?show-priority=${showPriority}
       ></findings-sort>
       ${showSource ? html`<source-filter></source-filter>` : nothing}
-      ${hasComment || hasFix || hasFlagged || state.filterComment || state.filterFix || state.filterFlagged
-        ? html`<annotation-filter .hasComment=${hasComment} .hasFix=${hasFix} .hasFlagged=${hasFlagged}></annotation-filter>`
+      ${hasComment || hasFix || hasFlagged || hasDuplicates || state.filterComment || state.filterFix || state.filterFlagged
+        ? html`<annotation-filter .hasComment=${hasComment} .hasFix=${hasFix} .hasFlagged=${hasFlagged} .hasDuplicates=${hasDuplicates}></annotation-filter>`
         : nothing}
       <!-- Confidence range + the revalidation outcome, one block: the
            outcome dropdown sits inside it and REPLACES the range when
@@ -622,7 +623,7 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
            revalidation filter with it. The reachable options come from
            the scan above, so the dropdown can't list one that filters
            to nothing. -->
-      ${showConfidence || revalidateOptions.length > 0
+      ${!confirmedLocked && (showConfidence || revalidateOptions.length > 0)
         ? html`<conf-filter
             ?range-disabled=${!showConfidence}
             .revalidateOptions=${revalidateOptions}
@@ -638,11 +639,9 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
            (format.js canDropRevalidation), can-detail where the app
            view is folding rows or holding the partial line back. Both
            are properties of the loaded SET, so the control doesn't
-           resize as the reader moves through it; either one alone is
-           reason enough to draw it — as is can-upstream, the third
-           half, which is offered on its own terms wherever the set
-           holds an upstream finding and so can be the only one in the
-           shell. See revalidation-switch.js. -->
+           resize as the reader moves through it. Conflicts replace
+           the App controls with an inspection button; the upstream lens
+           is available wherever the set holds upstream findings. -->
       <!-- Export — the download icon that opens the export dialog
            (Download / Print as its two tabs). It rides at the end of
            the row beside the app lens, its own bordered control rather
@@ -650,7 +649,7 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
            reader is looking at, this takes a copy of it away. The
            component owns its visibility (view/download-button.js). -->
       <download-button></download-button>
-      ${canDropLayer || canDetailLayer || canUpstreamLens
+      ${canDropLayer || canUpstreamLens || state.revalidateConflicts.size > 0
         ? html`<revalidation-switch ?can-drop=${canDropLayer} ?can-detail=${canDetailLayer} ?can-upstream=${canUpstreamLens}></revalidation-switch>`
         : nothing}
     </div>
@@ -673,8 +672,7 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
            likewise omitted inside the panel). The component owns the
            trigger pill + the two-column popover, the friendly
            ANALYZER_LABELS lookup, and the cross-filtered counts (run
-           over .groups = allGroups, the same denominator as the
-           result count). Values with no carrier get synthetic
+           over the rows remaining after the source/confidence/outcome selectors). Values with no carrier get synthetic
            "(none)" / "(no model)" rows riding NULL_ANALYZER_SENTINEL
            / NULL_MODEL_SENTINEL — control characters that can't
            collide with an analyzer or model literally named "null".
@@ -873,7 +871,7 @@ function kanbanCardTemplate(g, opts = {}) {
   // of the card). Display-only here — the card is a drag/click target,
   // so toggling lives in the detail popover's finding-card; we only
   // surface the indicator when the active tab is flagged.
-  const activeEntry = state.triage.get(tabKey(activeTab))
+  const activeEntry = triageEntry(activeTab)
   const flagged = activeEntry?.flagged === true
   // Fix-link / comment shortcut — pinned to the bottom of the badge
   // column, directly above the meta row's confidence number (kanban
@@ -915,7 +913,7 @@ function kanbanCardTemplate(g, opts = {}) {
       class=${classMap(classes)}
       data-gid=${groupKey(g)}
       data-kanban-source
-      draggable="true"
+      draggable=${triageScope(g, groupSt).length > 0 ? 'true' : 'false'}
       role="button"
       tabindex="0"
       aria-current=${active ? 'true' : 'false'}
@@ -1606,46 +1604,9 @@ const nullLastCmp = (a, b) => {
 // renders, not anything a view persists or a component reads.
 let modeBeforeConflict = null
 
-function renderImpl() {
-  if (!getLinksPreview()) closeLinksPreview()
-  mountBundleSourceOverlay()
-  // Recompute the active deps dir before any helper consults it
-  // (isModule / packageOf / stripPackagePrefix / pkgRelative). The
-  // detection scans paths in the loaded reports + tree blobs to
-  // pick `node_modules` (preferred when present) vs `dependencies`
-  // (fallback). Once per render is enough — every helper call below
-  // sees the freshly chosen dir.
-  configureDepsDir(state.reports)
-  // With the dir settled, the source-layer findings that sit in it can
-  // be marked as upstream code. Cheap and idempotent — it only fills a
-  // field in, so a re-render costs a walk and writes nothing new.
-  stampUpstreamFindings(state.reports)
-  // Same deal for the revalidation layer — the toolbar's "App" switch.
-  // Hand format.js the mode before anything reads a `revalidate` value
-  // through it, and every helper below sees one answer for this render
-  // (see the note over configureRevalidation). group.js reads
-  // `state.showRevalidation` directly for the row-dropping pass, since
-  // getMergedGroups is reachable from outside a render.
-  //
-  // Whether the switch is offered at all decides the mode first: a set
-  // it isn't offered for is forced back ONTO the layer, the way the
-  // stale filter clears further down put an unreachable selection
-  // back. A report loaded while the switch was off would otherwise
-  // open with the pass's rows dropped and no control on screen to
-  // bring them back — and for a set with nothing the pass ruled out,
-  // dropping those rows is all "off" would ever do (format.js
-  // canDropRevalidation). Written only when it actually differs, since
-  // this runs on every render and `state` is observed.
-  //
-  // A set whose reports CONTRADICT each other about the pass goes the
-  // other way: the layer comes off and stays off. Two copies of one
-  // finding under two different `revalidate*` answers (ingest.js, via
-  // group.js mergeDuplicateFields) means the view cannot say what the
-  // pass concluded — dedup keeps whichever loaded first, so the app
-  // view would be one report's verdicts chosen by an accident of read
-  // order. Better to show the code as written and no switch, than a
-  // verdict that might be the other report's opposite.
-  const conflicted = state.revalidateConflict === true
+export function configureReportRevalidation() {
+  if (state.currentWorkspace && state.revalidationDetailed) state.revalidationDetailed = false
+  const conflicted = state.revalidateConflicts.size > 0
   const canDropLayer = !conflicted && canDropRevalidation(state.reports)
   if (conflicted) {
     // Remember the mode the conflict takes away, so leaving that set
@@ -1665,7 +1626,54 @@ function renderImpl() {
     }
     if (!canDropLayer && state.showRevalidation === false) state.showRevalidation = true
   }
-  configureRevalidation(state.showRevalidation)
+  // Clear a lens left on by a previous report before configuring the display
+  // and opening filters for a set without upstream findings.
+  if (state.upstreamOnly && !state.reports.some((r) => (r.groups ?? []).some((g) => g.some((f) => f.isUpstream)))) {
+    state.upstreamOnly = false
+  }
+  configureRevalidation(state.showRevalidation, state.upstreamOnly)
+  return canDropLayer
+}
+
+function renderImpl() {
+  if (!getLinksPreview()) closeLinksPreview()
+  mountBundleSourceOverlay()
+  // Recompute the active deps dir before any helper consults it
+  // (isModule / packageOf / stripPackagePrefix / pkgRelative). The
+  // detection scans paths in the loaded reports + tree blobs to
+  // pick `node_modules` (preferred when present) vs `dependencies`
+  // (fallback). Once per render is enough — every helper call below
+  // sees the freshly chosen dir.
+  configureDepsDir(state.reports)
+  // With the dir settled, the source-layer findings that sit in it can
+  // be marked as upstream code. Cheap and idempotent — it only fills a
+  // field in, so a re-render costs a walk and writes nothing new.
+  if (stampUpstreamFindings(state.reports)) clearMergedGroups()
+  // Same deal for the revalidation layer — the toolbar's "App" switch.
+  // Hand format.js the mode before anything reads a `revalidate` value
+  // through it, and every helper below sees one answer for this render
+  // (see the note over configureRevalidation). group.js reads
+  // `state.showRevalidation` directly for the row-dropping pass, since
+  // getMergedGroups is reachable from outside a render.
+  //
+  // Whether the switch is offered at all decides the mode first: a set
+  // it isn't offered for is forced back ONTO the layer, the way the
+  // stale filter clears further down put an unreachable selection
+  // back. A report loaded while the switch was off would otherwise
+  // open with the pass's rows dropped and no control on screen to
+  // bring them back — and for a set with nothing the pass ruled out,
+  // dropping those rows is all "off" would ever do (format.js
+  // canDropRevalidation). Written only when it actually differs, since
+  // this runs on every render and `state` is observed.
+  //
+  // A set whose reports CONTRADICT each other about the pass goes the
+  // other way: the layer comes off and stays off. Two copies of one
+  // finding in a mergeable row under two different `revalidate*` answers (via
+  // finding-duplicates.js mergeDuplicateFields) means the view cannot say what the
+  // pass concluded — dedup keeps whichever loaded first, so the app
+  // view would be one report's verdicts chosen by an accident of read
+  // order. Show code mode and a conflict inspection button in that case.
+  const canDropLayer = configureReportRevalidation()
   // The upstream lens is offered wherever the SET holds an upstream
   // finding. Read off the reports rather than the groups on screen, for
   // the same reason the layer above reads raw: answered from what the
@@ -1673,17 +1681,8 @@ function renderImpl() {
   // take its own ground away. `isUpstream` is stamped just above
   // (stampUpstreamFindings), so this sees the settled answer.
   const canUpstreamLens = state.reports.some((r) => (r.groups ?? []).some((g) => g.some((f) => f.isUpstream)))
-  // …and a lens left on by a report that had them can't outlive it, or
-  // the list would stay narrowed with no control on screen to say so.
-  //
-  // Here, beside the layer's own reset and BEFORE anything derives the
-  // displayed groups, because the clear has to reach this render. Left
-  // until the toolbar's flags are gathered, it would land after
-  // `getMergedGroups()` had already narrowed a set with no upstream
-  // finding in it down to nothing: the switch away from that report
-  // paints an empty list with no control on screen, and only some
-  // later, unrelated render puts it back.
-  if (!canUpstreamLens) state.upstreamOnly = false
+  // configureReportRevalidation already cleared a stale upstream lens before
+  // configuring the display, so the first render sees the correct mode.
   // Print-button body class is owned by an observer-util autorun (see
   // view/print-btn-visibility.js) — render() must not touch it.
   // Bundles view — paints from `state.bundles` (cached by
@@ -1886,13 +1885,18 @@ function renderImpl() {
   for (const g of mergedGroups) {
     for (const f of g) {
       if (hasSeverityCorrection(f)) hasCorrectedSeverity = true
-      const e = state.triage.get(tabKey(f))
+      const e = triageEntry(f)
       if (!e) continue
       if (e.comment) hasComment = true
       if (e.fix) hasFix = true
       if (e.flagged === true) hasFlagged = true
     }
   }
+  const duplicateIds = reportDuplicateIds()
+  const hasDuplicates = mergedGroups.some((g) => g.some((f) => duplicateIds.has(f.id)))
+  // Unlike the annotation chips, this report-only filter disappears when
+  // no qualifying row remains (or on entering a workspace).
+  if (!hasDuplicates) state.filterDuplicates = ''
   // Which values of `revalidate` the rows ON SCREEN carry, which decide
   // the outcomes the <revalidate-filter> can offer (one option covers
   // more than one value — see REVALIDATE_FILTERS). The toolbar drops
@@ -1921,14 +1925,20 @@ function renderImpl() {
   // the control would resize itself mid-click.
   let hasFoldedRows = false
   let hasPartialRow = false
+  let hasRuledOutRow = false
   for (const g of allGroups) {
-    let passRow = false
-    let ownRow = false
     for (const f of g) {
       const kind = revalidateKind(f)
       if (kind) revalidateKinds.add(kind)
+    }
+  }
+  for (const g of getRevalidationGroups()) {
+    let passRow = false
+    let ownRow = false
+    for (const f of g) {
       const raw = revalidateKindOf(f)
       if (raw === 'partial') hasPartialRow = true
+      if (raw === 'unreachable' || raw === 'refuted') hasRuledOutRow = true
       if (raw === 'revalidation') passRow = true
       else ownRow = true
     }
@@ -1939,32 +1949,6 @@ function renderImpl() {
   const types = [...new Set(state.reports.map((r) => r.type))]
   const typeLabel = types.join(', ')
   const fileNames = state.reports.map((r) => r.fileName)
-
-  // Severity + color stats count GROUPS (not individual tabs). A group is
-  // counted under every severity/color that appears in any of its tabs —
-  // so sums can exceed the total group count when groups have mixed tabs.
-  // This matches the filter semantics (click "high" → all groups where
-  // any tab is high; click "red" → all groups with any red-marked tab),
-  // and gives a useful preview of filter-click results. Unmarked tabs
-  // bucket under `'none'` so the user can isolate unreviewed findings.
-  const counts = { critical: 0, high: 0, medium: 0, low: 0, high_bug: 0, bug: 0, informational: 0 }
-  const colorCounts = { red: 0, blue: 0, green: 0, gray: 0, none: 0 }
-  for (const g of allGroups) {
-    // Single-finding groups (the common case) need no distinct-value
-    // Sets — count the lone tab's severity/color directly.
-    if (g.length === 1) {
-      const f = g[0]
-      const sev = displayedSeverity(f, state.severityMode)
-      counts[sev] = (counts[sev] || 0) + 1
-      const c = state.triage.get(tabKey(f))?.color ?? 'none'
-      colorCounts[c] = (colorCounts[c] || 0) + 1
-      continue
-    }
-    const sevs = new Set(g.map((f) => displayedSeverity(f, state.severityMode)))
-    for (const s of sevs) counts[s] = (counts[s] || 0) + 1
-    const cols = new Set(g.map((f) => state.triage.get(tabKey(f))?.color ?? 'none'))
-    for (const c of cols) colorCounts[c] = (colorCounts[c] || 0) + 1
-  }
 
   // Per-render applicability flags. The toolbar hides controls the
    // user can't act on usefully, and the underlying filter state is
@@ -2092,26 +2076,6 @@ function renderImpl() {
     const want = state.filterModel === NULL_MODEL_SENTINEL ? null : state.filterModel
     if (!modelSet.has(want) || modelSet.size < 2) state.filterModel = ''
   }
-  // Distinct repos across the loaded reports — feeds the workspace
-  // view's repo dropdown. Same shape as the analyzer set above: built
-  // from mergedGroups (not allGroups) so the option list stays stable
-  // when the user flips between live and trash views. `null` (no
-  // derivable repo for the finding) becomes a synthetic "(no repo)"
-  // option in the dropdown via NO_REPO_SENTINEL — picked over the
-  // bare word `'null'` so a legitimate repo slug literally named
-  // "null" stays distinguishable. Sorted alphabetically with the
-  // null bucket pinned last.
-  const repoSet = new Set()
-  for (const g of mergedGroups) {
-    for (const f of g) repoSet.add(repoOfFinding(f))
-  }
-  const repoOptions = [...repoSet].toSorted(nullLastCmp)
-  // Same stale-clear guard as analyzer above — a workspace switch
-  // can drop the previously-selected repo from the option list.
-  if (state.filterRepo) {
-    const want = state.filterRepo === NO_REPO_SENTINEL ? null : state.filterRepo
-    if (!repoSet.has(want)) state.filterRepo = ''
-  }
   // Same for a revalidation outcome the loaded set no longer reaches —
   // a report unloaded out from under the selection would otherwise
   // filter every finding away with no visible cause.
@@ -2119,6 +2083,8 @@ function renderImpl() {
   if (state.filterRevalidate && !revalidateOptions.some((o) => o.value === state.filterRevalidate)) {
     state.filterRevalidate = ''
   }
+  const confirmedLocked = shouldLockConfirmed(allGroups)
+  if (confirmedLocked) state.filterRevalidate = 'confirmed'
   // The partial switch rides inside the Confirmed option (see
   // revalidate-filter.js), so it's offered only where there are
   // partial rows to sort — and only in the DETAILED app view, since
@@ -2128,20 +2094,23 @@ function renderImpl() {
   // line it draws. A mode left set from a report that had them, or
   // from the detailed view, is cleared here, or it would keep
   // narrowing Confirmed with no control on screen to say so.
-  const showPartial = revalidateKinds.has('partial') && state.revalidationDetailed === true
+  const showPartial = revalidateKinds.has('partial') && underlyingFindingsShown()
   if (!showPartial) state.filterPartial = ''
   // The switch's third stop — the detailed app view — offered where it
   // would change something: rows folded under a pass row, or the
   // partial line to draw. A property of the SET, not of the stop the
   // switch is standing at, so the control keeps its size and its stops
-  // while the reader moves through them.
-  const canDetailLayer = hasFoldedRows || hasPartialRow
+  // while the reader moves through them. Only individual reports offer
+  // the underlying-findings button, not the merged workspace view.
+  const canDetailLayer = !state.currentWorkspace && canDropLayer && (hasFoldedRows || hasPartialRow || hasRuledOutRow)
   // If a previously-loaded report had node_modules and the user
   // narrowed the source filter, switching to a report without any
   // node_modules paths would leave the filter at 'own' or 'modules'
   // and silently empty the list. resetFilters() runs only on isFirst
-  // in ingest.js, so guard here too.
-  if (!hasAnyModulesPath && state.filterSources.size > 0) state.filterSources.clear()
+  // in ingest.js, so guard here too. Upstream view already selects only
+  // dependencies, so hide the redundant control and clear its selection.
+  const showSource = hasAnyModulesPath && !state.upstreamOnly
+  if (!showSource && state.filterSources.size > 0) state.filterSources.clear()
   if (!hasAnyConfidence) {
     state.filterConfMin = 0; state.filterConfMax = 10
     // Sort options for confidence drop out alongside the filter, so a
@@ -2157,6 +2126,35 @@ function renderImpl() {
     state.sortBy = 'severity'
   }
   if (!hasMultipleFiles && state.sortBy === 'file') state.sortBy = 'severity'
+
+  const selectorGroups = applyScopeFilters(allGroups)
+  // Severity/color stats count each surviving row once per value its
+  // visible tabs contain, excluding source tabs folded away by App mode.
+  const counts = { critical: 0, high: 0, medium: 0, low: 0, high_bug: 0, bug: 0, informational: 0 }
+  const colorCounts = { red: 0, blue: 0, green: 0, gray: 0, none: 0 }
+  for (const g of selectorGroups) {
+    if (g.length === 1) {
+      const sev = displayedSeverity(g[0], state.severityMode)
+      counts[sev] = (counts[sev] || 0) + 1
+      const color = triageEntry(g[0])?.color ?? 'none'
+      colorCounts[color] = (colorCounts[color] || 0) + 1
+      continue
+    }
+    const sevs = new Set(g.map((f) => displayedSeverity(f, state.severityMode)))
+    for (const sev of sevs) counts[sev] = (counts[sev] || 0) + 1
+    const colors = new Set(g.map((f) => triageEntry(f)?.color ?? 'none'))
+    for (const color of colors) colorCounts[color] = (colorCounts[color] || 0) + 1
+  }
+  // Repository choices follow source/confidence/outcome filtering within
+  // the active App/underlying/upstream lens, before the other filters.
+  // Null represents findings with no known repo.
+  const repoSet = repositoryFilterValues(selectorGroups)
+  const repoOptions = [...repoSet].toSorted(nullLastCmp)
+  // A scope filter or workspace change can remove the selected repo.
+  if (state.filterRepo) {
+    const want = state.filterRepo === NO_REPO_SENTINEL ? null : state.filterRepo
+    if (!repoSet.has(want)) state.filterRepo = ''
+  }
 
   const filtered = applySorting(applyFilters(allGroups))
 
@@ -2266,7 +2264,7 @@ function renderImpl() {
 
   if (!renderGraphInBody) {
     toolbarTpl = toolbarTemplate(filtered.length, allGroups.length, triageCounts, counts, colorCounts, {
-      showSource: hasAnyModulesPath,
+      showSource,
       showConfidence: hasAnyConfidence,
       showPriority: hasAnyPriority,
       showGraphMode: treeAvailable,
@@ -2285,19 +2283,18 @@ function renderImpl() {
       canDropLayer,
       canDetailLayer,
       canUpstreamLens,
+      confirmedLocked,
       hasFix,
       hasFlagged,
+      hasDuplicates,
       // Corrected/Original lens switch — shown only when a correction
       // exists in the loaded set, or while parked in 'original' so the
       // user can always flip back (mirrors the annotation-filter rule).
       showSeverityMode: hasCorrectedSeverity || state.severityMode === 'original',
     },
-    // Analyzer/model dropdown wiring: counts inside the panel run
-    // over allGroups (the current triage bucket) so they preview
-    // filter-click results against the same denominator as the
-    // "X of Y" result count — while the option LISTS come from
-    // mergedGroups above so they stay stable across live/trash flips.
-    { analyzers: analyzerOptions, models: modelOptions, groups: allGroups }, repoOptions)
+    // Counts use scope-filtered groups; analyzer/model option lists
+    // stay stable so values excluded by those filters can still show zero.
+    { analyzers: analyzerOptions, models: modelOptions, groups: selectorGroups }, repoOptions)
 
     // Empty-state line — slot-based so the typeLabel (which can carry
     // user-controlled analyzer-type strings) flows through Lit's

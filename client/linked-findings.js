@@ -12,9 +12,8 @@
 // carries only ids of findings that must already live in reports the
 // reader holds. So it never reaches `ingestReport` / `state.reports`,
 // it has its own view (`ui/view/render-links.js`) that points at the
-// findings rather than showing them, and its one effect on the
-// findings surfaces is the "Duplicates:" row a linked finding grows
-// at the bottom of its card.
+// findings. It also supplies the "Duplicates:" row on finding cards
+// and groups explicitly linked rows in workspace App view.
 //
 // Pure — no storage, no DOM, no app state. `linked-findings-index.js`
 // beside this file is the OPFS-wide store built on top; everything

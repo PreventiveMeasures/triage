@@ -47,9 +47,9 @@ function memberTemplate({ id, title }, reports = [], linked = true, chips = noth
 
 function reportChipsTemplate(reports) {
   return html`<div class="links-finding-reports">${reports.map(({ name, findingId }) => html`<button
-    type="button" class="links-finding-report" data-tooltip=${displayName(name)}
+    type="button" class="links-finding-report report-button" data-tooltip=${displayName(name)}
     data-links-report=${name} data-links-finding=${findingId}
-  >${unsafeHTML(REPORT_LOGOS[groupOf(name)] ?? REPORT_LOGOS.default)}<span class="links-finding-report-label">${displayName(name)}</span></button>`)}</div>`
+  >${unsafeHTML(REPORT_LOGOS[groupOf(name)] ?? REPORT_LOGOS.default)}<span class="links-finding-report-label report-button-label">${displayName(name)}</span></button>`)}</div>`
 }
 
 function reportRowTemplate(row, linked) {

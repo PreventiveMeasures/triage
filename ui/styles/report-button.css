@@ -1,0 +1,21 @@
+/* Shared report navigation button in Links and finding action rows. */
+.report-button {
+  display: inline-flex; align-items: center;
+  max-width: 16rem;
+  padding: 0;
+  overflow: hidden;
+  background: transparent;
+  border: 1px solid var(--border); border-radius: 3px;
+  color: var(--muted);
+  font: inherit;
+  font-size: .7rem;
+  cursor: default;
+  transition: border-color .12s, color .12s;
+  &:hover { border-color: var(--accent); color: var(--accent); }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+}
+.report-button-label {
+  min-width: 0;
+  padding: .1rem .4rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}

@@ -24,6 +24,7 @@ const COLORS = ['red', 'blue', 'green', 'gray']
 class ColorMarker extends LitElement {
   static properties = {
     selected: { type: String },
+    disabled: { type: Boolean },
   }
 
   static styles = unsafeCSS(markerCSS)
@@ -31,6 +32,7 @@ class ColorMarker extends LitElement {
   constructor() {
     super()
     this.selected = null
+    this.disabled = false
   }
 
   connectedCallback() {
@@ -46,11 +48,13 @@ class ColorMarker extends LitElement {
       data-color=${color}
       aria-label=${`mark ${color}`}
       data-tooltip=${`mark ${color}`}
+      ?disabled=${this.disabled}
       @click=${this._onClick}
     ></button>`)}`
   }
 
   _onClick = (e) => {
+    if (this.disabled) return
     const color = e.currentTarget.dataset.color
     this.dispatchEvent(new CustomEvent('mark-color', {
       detail: { color },

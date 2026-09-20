@@ -34,8 +34,8 @@ if (!globalThis[slotKey]) {
 
 const { state } = await import('../client/state.ts')
 const { readReport } = await import('../report/index.js')
-const { applyFilters, applyOpeningFilters, confidenceOnScale, defaultConfidenceFloor, defaultRevalidateFilter, filterRevalidateKind, matchesFilters, rangeApplies } = await import('../ui/view/filters.js')
-const { activeTabFor, getMergedGroups, getShownGroups, mergeDuplicateFields, sortTabs } = await import('../ui/view/group.js')
+const { applyFilters, applyOpeningFilters, confidenceOnScale, defaultConfidenceFloor, defaultRevalidateFilter, filterRevalidateKind, matchesFilters, rangeApplies, shouldLockConfirmed } = await import('../ui/view/filters.js')
+const { activeTabFor, getMergedGroups, getShownGroups, groupKey, linkableGroups, mergeDuplicateFields, sortTabs } = await import('../ui/view/group.js')
 const {
   PARTIAL_MODES, REVALIDATE_FILTERS, REVALIDATE_KINDS, activeRevalidateKinds,
   canDropRevalidation, configureRevalidation, formatRunMeta, hasRevalidateField,
@@ -55,6 +55,7 @@ function reset() {
   state.filterRevalidate = ''
   state.filterPartial = ''
   state.showRevalidation = true
+  state.upstreamOnly = false
   configureRevalidation(true)
   // The app view as a reader gets it: simplified, i.e. a group the
   // pass re-examined shows its row alone (group.js drawnTabs).
@@ -194,6 +195,56 @@ describe('the app view folds the rows the pass re-rated', () => {
 
   const pass = (id) => makeFinding(id, { revalidate: 'revalidation' })
 
+  it('hides ruled-out findings before deriving rows, tabs and outcome options', () => {
+    const reports = state.reports
+    const merges = state.workspaceMerges
+    try {
+      const mixed = [makeFinding('R', { revalidate: 'refuted' }), makeFinding('C', { revalidate: 'confirmed' })]
+      const original = [mixed, [makeFinding('U', { revalidate: 'unreachable' })], [makeFinding('N')]]
+      state.reports = [{ groups: original }]
+      state.workspaceMerges = []
+      const shownIds = () => getMergedGroups().map((g) => sortTabs(g).map((f) => f.id))
+      const outcomes = () => reachableRevalidateFilters(getMergedGroups().flat().map(revalidateKind)).map((o) => o.value)
+
+      assert.deepEqual(shownIds(), [['C'], ['N']])
+      assert.equal(groupKey(getMergedGroups()[0]), groupKey(mixed), 'hiding the first tab preserves the row identity')
+      assert.deepEqual(outcomes(), ['confirmed'])
+      assert.equal(linkableGroups().flat().length, 4, 'hidden findings remain available to links')
+
+      state.revalidationDetailed = true
+      assert.deepEqual(shownIds(), [['R', 'C'], ['U'], ['N']])
+      assert.deepEqual(outcomes(), ['confirmed', 'unreachable', 'refuted'])
+      state.revalidationDetailed = false
+      assert.deepEqual(shownIds(), [['C'], ['N']])
+      assert.deepEqual(state.reports[0].groups, original, 'display changes preserve the report')
+
+      state.showRevalidation = false
+      configureRevalidation(false)
+      assert.deepEqual(shownIds(), [['R', 'C'], ['U'], ['N']])
+    } finally {
+      state.reports = reports
+      state.workspaceMerges = merges
+      reset()
+    }
+  })
+
+  it('keeps ruled-out dependency findings in upstream view', () => {
+    const reports = state.reports
+    const merges = state.workspaceMerges
+    try {
+      state.reports = [{ groups: [[makeFinding('U', { isUpstream: true, revalidate: 'unreachable' })]] }]
+      state.workspaceMerges = []
+      assert.deepEqual(getMergedGroups(), [])
+      state.upstreamOnly = true
+      configureRevalidation(true, true)
+      assert.deepEqual(getMergedGroups().flat().map((f) => f.id), ['U'])
+    } finally {
+      state.reports = reports
+      state.workspaceMerges = merges
+      reset()
+    }
+  })
+
   it('leaves the pass row alone on the strip, and hands the rest back on request', () => {
     const group = [makeFinding('A', { confidence: 9 }), pass('P'), makeFinding('B', { revalidate: 'confirmed' })]
     assert.deepEqual(sortTabs(group).map((f) => f.id), ['P'])
@@ -253,6 +304,107 @@ describe('the app view folds the rows the pass re-rated', () => {
     const high = makeFinding('B', { severity: 'critical', revalidate: 'revalidation' })
     const plain = makeFinding('C', { severity: 'critical' })
     assert.deepEqual(sortTabs([low, plain, high]).map((f) => f.id), ['B', 'A'])
+  })
+})
+
+describe('fixed Confirmed in basic App view', () => {
+  beforeEach(reset)
+  const confirmed = (id, extra = {}) => makeFinding(id, { confidence: 9, revalidate: 'confirmed', ...extra })
+
+  it('locks when Confirmed is default and covers the 6–10 rows', () => {
+    const groups = [[confirmed('C')], [makeFinding('low', { confidence: 2 })]]
+    assert.equal(defaultRevalidateFilter(groups, defaultConfidenceFloor(groups)), 'confirmed')
+    assert.equal(shouldLockConfirmed(groups), true)
+    state.filterRevalidate = 'confirmed'
+    assert.deepEqual(applyFilters(groups), [groups[0]])
+    state.filterInclude = 'missing'
+    assert.equal(shouldLockConfirmed(groups), true, 'search does not decide whether the control is available')
+  })
+
+  it('keeps the choice when the auto-tuned default skipped unconfirmed 6s or 7s', () => {
+    for (const confidence of [6, 7]) {
+      const groups = [
+        ...Array.from({ length: 26 }, (_, i) => [confirmed(`C${i}`)]),
+        [makeFinding('not revalidated', { confidence })],
+      ]
+      const floor = defaultConfidenceFloor(groups)
+      assert.ok(floor > confidence)
+      assert.equal(defaultRevalidateFilter(groups, floor), 'confirmed')
+      assert.equal(shouldLockConfirmed(groups), false)
+    }
+  })
+
+  it('allows LOW rows below the opening floor to stay outside locked Confirmed', () => {
+    const groups = [
+      ...Array.from({ length: 26 }, (_, i) => [confirmed(`C${i}`)]),
+      [makeFinding('low', { severity: 'low', confidence: 6 })],
+    ]
+    assert.equal(defaultConfidenceFloor(groups), 7)
+    assert.equal(defaultRevalidateFilter(groups, defaultConfidenceFloor(groups)), 'confirmed')
+    assert.equal(shouldLockConfirmed(groups), true)
+  })
+
+  it('still keeps the confidence choice for a non-LOW row in the 6–10 band', () => {
+    const groups = [
+      ...Array.from({ length: 26 }, (_, i) => [confirmed(`C${i}`)]),
+      [makeFinding('medium', { severity: 'medium', confidence: 6 })],
+    ]
+    assert.equal(defaultConfidenceFloor(groups), 7)
+    assert.equal(defaultRevalidateFilter(groups, defaultConfidenceFloor(groups)), 'confirmed')
+    assert.equal(shouldLockConfirmed(groups), false)
+  })
+
+  it('checks coverage of each row, not row counts or repeated finding IDs', () => {
+    const groups = [
+      [confirmed('same')],
+      [makeFinding('same', { confidence: 9 })],
+      [confirmed('extra')],
+    ]
+    assert.equal(defaultRevalidateFilter(groups, defaultConfidenceFloor(groups)), 'confirmed')
+    assert.equal(shouldLockConfirmed(groups), false, 'a repeated ID does not cover the unstamped row')
+  })
+
+  it('keeps the choice if significant findings have not been revalidated', () => {
+    assert.equal(shouldLockConfirmed([[confirmed('C')], [makeFinding('missing', { confidence: 9 })]]), false)
+    assert.equal(shouldLockConfirmed([[confirmed('C')], [makeFinding('critical', { critical: true })]]), false)
+    assert.equal(shouldLockConfirmed([[confirmed('C')], [makeFinding('unscored')]]), false)
+  })
+
+  it('still requires Confirmed to be available and the opening default', () => {
+    assert.equal(shouldLockConfirmed([]), false)
+    assert.equal(shouldLockConfirmed([[makeFinding('plain', { confidence: 9 })]]), false)
+    const groups = [[confirmed('low', { confidence: 2 })], [makeFinding('lower', { confidence: 1 })]]
+    assert.equal(defaultRevalidateFilter(groups, defaultConfidenceFloor(groups)), '')
+    assert.equal(shouldLockConfirmed(groups), false)
+  })
+
+  it('uses the existing group and imported-confidence semantics', () => {
+    assert.equal(shouldLockConfirmed([[confirmed('C', { confidence: 3 }), makeFinding('high', { confidence: 9 })]]), true)
+    assert.equal(shouldLockConfirmed([[confirmed('C')], [makeFinding('import', { _source: 'claude-security', isApp: true })]]), true)
+  })
+
+  it('keeps low-confidence DeepSec App findings in a mixed Confirmed view', () => {
+    const groups = [
+      [confirmed('C')],
+      [makeFinding('app', { _source: 'deepsec', _sourcePass: false, isApp: true, confidence: 4 })],
+      [makeFinding('source', { isApp: false, confidence: 4 })],
+    ]
+    assert.equal(shouldLockConfirmed(groups), true)
+    state.filterRevalidate = 'confirmed'
+    assert.deepEqual(applyFilters(groups), groups.slice(0, 2))
+  })
+
+  it('unlocks in detailed App view, code mode and upstream view', () => {
+    const groups = [[confirmed('C')]]
+    assert.equal(shouldLockConfirmed(groups), true)
+    state.revalidationDetailed = true
+    assert.equal(shouldLockConfirmed(groups), false)
+    state.revalidationDetailed = false
+    state.upstreamOnly = true
+    assert.equal(shouldLockConfirmed(groups), false)
+    state.upstreamOnly = false
+    state.showRevalidation = false
+    assert.equal(shouldLockConfirmed(groups), false)
   })
 })
 
@@ -1204,6 +1356,25 @@ describe('what a dropped duplicate leaves behind', () => {
 describe('the revalidation layer switch', () => {
   beforeEach(reset)
 
+  it('hides revalidation in the upstream lens and restores the saved App setting afterwards', () => {
+    for (const appOn of [true, false]) {
+      state.showRevalidation = appOn
+      configureRevalidation(state.showRevalidation, true)
+      assert.equal(state.showRevalidation, appOn, 'the App preference is unchanged')
+      assert.equal(revalidationShown(), false, 'verdicts and recommendations are hidden')
+      for (const kind of REVALIDATE_KINDS) {
+        assert.equal(revalidateStamp({ revalidate: kind }), null, kind)
+        assert.equal(revalidateKind({ revalidate: kind }), '', kind)
+        assert.equal(voidsConfidence({ revalidate: kind }), false, kind)
+      }
+      assert.equal(formatRunMeta({ type: 'security', revalidate: 'revalidation' }), 'security')
+      assert.equal(defaultRevalidateFilter([[makeFinding('A', { revalidate: 'confirmed' })]], 0), '')
+      configureRevalidation(state.showRevalidation, false)
+      assert.equal(revalidationShown(), appOn)
+      assert.equal(revalidateStamp({ revalidate: 'confirmed' }), appOn ? 'confirmed' : null)
+    }
+  })
+
   it('reads the field past the switch where it has to', () => {
     // These two gate the switch and drop the pass's own rows, so they
     // answer the same either way — otherwise turning the layer off
@@ -1433,6 +1604,17 @@ describe('what a DeepSec report opens on', () => {
     // Every row is an import, and every row carries a number its
     // producer wrote — which is a range, and used to be no range.
     assert.equal(rangeApplies(groupsOf({ high: 2, medium: 2, low: 2 })), true)
+  })
+
+  it('keeps the confidence slider for standalone DeepSec reports without stamps', () => {
+    for (const counts of [{ high: 2, medium: 2, low: 2 }, { high: 2 }, { low: 2 }]) {
+      const groups = groupsOf(counts)
+      assert.ok(groups.every((g) => g.every((f) => !hasRevalidateField(f))))
+      applyOpeningFilters(groups)
+      assert.equal(state.filterRevalidate, '', 'imports alone do not default to Confirmed')
+      assert.equal(rangeApplies(groups), true)
+      assert.equal(shouldLockConfirmed(groups), false, 'the new rule must keep the slider visible')
+    }
   })
 
   it('keeps the mediums where the set is small enough to hold them', () => {
