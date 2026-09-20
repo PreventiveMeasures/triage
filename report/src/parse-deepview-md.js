@@ -1,12 +1,9 @@
-// DeepView markdown findings parser — the reader for the document the
-// library's own writer produces (write-md.js: the file the viewer's
-// Download button saves). A report exported from the viewer reads back
-// in through the same door as every other format (index.js), each
-// finding with the id it had — so the triage keyed off it still
-// applies — and with its facts in the fields the parser that first read
-// it used, whichever format that was: a Claude Security finding comes
-// back as one, a DeepSec finding as one, a native dump's finding with
-// its run.
+// The reader for the document this library's own writer produces
+// (write-md.js, what the viewer's Download button saves). An export
+// reads back in through the same door as every other format, each
+// finding with the id it had — so its triage still applies — and with
+// its facts in the fields the parser that first read it used: a Claude
+// Security finding comes back as one, a native dump's with its run.
 //
 // The document (write-md.js for the whole shape):
 //
@@ -28,43 +25,33 @@
 //   #### Case 1 of 2 — `src/a.js:7`
 //   - **Location:** … / ##### Impact …
 //
-// What comes back is the JSON shape the rest of the chain emits:
+// Out comes the JSON shape the rest of the chain emits:
 //
 //   { type, source?, model?, effort?, exportsMode?, repo?, findings }
 //
-// or `groups` in place of `findings` when an entry has several cases
-// (a pre-deduplicated dump's shape, index.js reportEntries). The
-// producer and the run travel the way a native dump carries them:
-// report-level when every finding shares them — `source`, or the
-// `type` / `model` / `effort` / `exportsMode` ingest hands down to
-// each finding (meta.js inheritReportMeta) — and per finding when
-// they vary. A document that mixes products with the analyzer's own
-// runs stamps `source` on each finding of a product, which the viewer
-// reads as that finding's analyzer.
+// with `groups` in place of `findings` when an entry has several cases —
+// a pre-deduplicated dump's shape. The producer and the run travel as a
+// native dump carries them: report-level where every finding shares
+// them, per finding where they vary. A document mixing products with the
+// analyzer's own runs stamps `source` on each product's findings, which
+// the viewer reads as that finding's analyzer.
 //
-// Not read back: what the reader wrote on a finding (Triage, Fix, the
-// Comment section) — annotations live in the viewer's triage store,
-// keyed by the id, and follow the id — and the header's own account of
-// the export (the view, the filters, the counts): the findings on the
-// page ARE the selection. Prose comes back with the writer's heading
-// escape taken off (md-text.js prose / unescapeHeadings).
+// Not read back: what the reader wrote on a finding (Triage, Fix,
+// Comment), which lives in the viewer's triage store and follows the id;
+// and the header's account of the export (view, filters, counts), since
+// the findings on the page ARE the selection. Prose comes back with the
+// writer's heading escape off (md-text.js unescapeHeadings).
 //
-// The marker line is the whole guard, and the only one: text without
-// it is not this document and returns null, so the chain moves on;
-// text with it is, and is read as the report it is — the guard reads
-// the phrase and not what follows it, so a later document that says
-// more there is still recognised as this library's, and read as well
-// as this reader can, and a document that holds NO finding is still
-// the report its header describes. An export is a SELECTION, and a
-// selection can be empty — the filters left nothing on screen, the
-// trash bucket is clear — which its header says outright ("Included:
-// no findings"); that is as much a report as the `{ "findings": [] }`
-// dump the readers have always taken. So an empty export of a Claude
-// Security report reads back as one, off the header alone —
-// `{ type: 'security', source: 'claude-security', findings: [] }` —
-// rather than as a file no format recognises, which is what the
-// viewer would otherwise refuse at the drop zone with a message
-// naming every format it does read.
+// The marker line is the whole guard: without it the text is not this
+// document and returns null, so the chain moves on. The guard reads the
+// phrase and not what follows, so a later document that says more there
+// is still recognised and read as well as this reader can. A document
+// holding NO finding is still the report its header describes — an
+// export is a SELECTION and a selection can be empty, which the header
+// says outright ("Included: no findings") — so an empty export of a
+// Claude Security report reads back as
+// `{ type: 'security', source: 'claude-security', findings: [] }`
+// rather than as a file no format recognises.
 
 import { locationLabel } from './finding.js'
 import { H2_RE, H3_RE, H4_RE, normalizeNewlines, splitByHeading, splitLeading } from './md-structure.js'
@@ -92,18 +79,15 @@ export function parseDeepviewMarkdown(content) {
   return assemble(readHeader(head), entries)
 }
 
-// `High (2)` → 'high'. A section named after no tier gives its findings
-// the name as printed — the fact line under each finding is the
-// authoritative severity anyway.
+// `High (2)` → 'high'. A section named after no tier passes its name
+// through as printed; the fact line under each finding is authoritative.
 function sectionTier(heading) {
   const m = /^(.*?)\s*\(\d+\)\s*$/u.exec(heading.trim())
   return tierOf(m ? m[1] : heading)
 }
 
 // The header list: the products the reports came from, the analyzers
-// named for the findings, the document's repository. The rest of it —
-// report names, the export time, the view, the filters, the counts —
-// describes the export, not the findings.
+// named, the repository. The rest describes the export, not the findings.
 function readHeader(head) {
   const facts = new Map()
   for (const m of head.matchAll(HEADER_FACT_RE)) {
@@ -126,10 +110,9 @@ function readEntry({ heading, body }, tier) {
   return cases.map((s) => readCase(s.body, 5, title, tier))
 }
 
-// One case's text into a finding: the facts, the description the lead
-// and the description's own sections add up to, the evidence, the
-// narrative fields. What the Analyzer fact said rides beside the
-// finding for `assemble` to settle at the report level.
+// One case's text into a finding: the facts, the description its lead
+// and sections add up to, the evidence, the narrative fields. The
+// Analyzer fact rides beside it for `assemble` to settle report-level.
 function readCase(body, depth, entryTitle, tier) {
   const { title, facts, rest } = splitFacts(body)
   const { lead, sections } = splitSections(rest, depth)
@@ -156,13 +139,11 @@ function readCase(body, depth, entryTitle, tier) {
   return { finding: f, analyzer }
 }
 
-// The producer and the run for the whole report, from the Analyzer
-// facts when the writer had to name one on each finding — a product
-// every case shares goes to the report level, each run to its finding,
-// and a product some cases came from to those cases — and otherwise
-// from the header: the one analyzer named there, or the one product the
-// Source line names. The run's pass marker is a per-finding fact and
-// not a report-level one.
+// The producer and the run for the whole report: from the Analyzer facts
+// where the writer named one per finding — a product every case shares
+// goes report-level, a run to its finding, a product only some cases
+// came from to those cases — else from the header's one analyzer or its
+// Source line. The pass marker is per-finding, never report-level.
 function settleAnalyzers(header, cases) {
   const out = { source: null, run: {} }
   if (cases.some((c) => c.analyzer !== null)) {
@@ -181,16 +162,16 @@ function settleAnalyzers(header, cases) {
   return out
 }
 
-// The report: what the header and the findings agree on at the top,
-// and the findings — grouped only where an entry had cases.
+// The report: what the header and findings agree on at the top, then the
+// findings, grouped only where an entry had cases.
 function assemble(header, entries) {
   const cases = entries.flat()
   const { source, run } = settleAnalyzers(header, cases)
   const data = {}
-  // The report's `type` is the run's — or, when each finding names its
-  // own run, the one mode they all ran in, the way a deduplicated dump
-  // keeps the mode in its header while its findings carry their models.
-  // A product's report is a security report, as its own parser says.
+  // The report's `type` is the run's — or, where each finding names its
+  // own, the one mode they all ran in, as a deduplicated dump keeps the
+  // mode in its header while its findings carry their models. A
+  // product's report is a security report, as its own parser says.
   const modes = new Set(cases.map((c) => c.finding.type).filter(Boolean))
   const type = run.type ?? (modes.size === 1 ? [...modes][0] : null) ?? (source ? 'security' : null)
   if (type) data.type = type

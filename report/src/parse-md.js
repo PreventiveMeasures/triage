@@ -1,31 +1,20 @@
-// Markdown findings parser — secondary input format (intentionally
-// undocumented; supported as a convenience but not advertised in the
-// README). Returns the same shape `ingest.js` expects from JSON:
-//   { type, source, findings: [{ file, line, severity, description, ... }] }
-// or null when the input doesn't look like the markdown format, so
-// callers can fall back to a JSON parse failure message.
+// Claude Security's markdown findings — a secondary input format,
+// supported but deliberately not advertised in the README. Returns what
+// ingest.js expects from JSON, `{ type, source, findings }`, or null when
+// the text isn't this format, so the caller can surface the JSON parse
+// failure instead.
 //
-// Format (one finding shown; multiple are separated by a `---` line):
+// One finding (several are separated by a `---` line):
 //
 //   # <Title>
 //
 //   ## Details
-//   <Details>
-//
 //   ## Evidence
 //   1. [<name>](<url>)
 //      <Description>
-//   2. [<name>](<url>)
-//      <Description>
-//
 //   ## Impact
-//   <Impact>
-//
 //   ## Reproduction steps
-//   <Reproduction>
-//
 //   ## Recommended fix
-//   <Recommendation>
 //
 //   ---
 //   **Severity:** <critical|high|medium|low>
@@ -35,14 +24,10 @@
 //   **Branch:** <branch>
 //   **Date created:** <YYYY-MM-DD>
 //
-// A report cites its site either as a single-line `## Location`
-// ([<name>](<url>)) or as an `## Evidence` list; both are read, and
-// `## Location` wins when a report carries both.
-//
-// Every `## …` section is optional (any missing one is just dropped
-// from the description); only the title and the metadata block carry
-// mandatory information (severity defaults to medium if absent or
-// unrecognized).
+// A report cites its site as a one-line `## Location` or as an
+// `## Evidence` list; both are read, `## Location` winning. Every
+// `## …` section is optional — only the title and the metadata block
+// carry anything mandatory.
 
 import { frozenIdBasis } from './parse-md-id.js'
 import { findMdLink, normalizeNewlines, splitHeadingLine, unescapeMd } from './md-structure.js'
@@ -51,10 +36,9 @@ const VALID_SEVERITIES = new Set(['critical', 'high', 'medium', 'low', 'high_bug
 
 export function parseMarkdownFindings(content) {
   const text = normalizeNewlines(content).trim()
-  // Cheap format guard: real markdown findings always start with an
-  // h1. Anything else (random text, an empty file, a JSON-shaped blob
-  // that failed to parse) returns null so the caller surfaces the
-  // JSON error instead of a misleading markdown error.
+  // Format guard: these documents always start with an h1. Anything
+  // else returns null, so the caller surfaces the JSON error rather
+  // than a misleading markdown one.
   if (!text.startsWith('# ')) return null
 
   // Each finding starts at a line beginning with `# `; whatever
@@ -68,18 +52,12 @@ export function parseMarkdownFindings(content) {
   }
   if (findings.length === 0) return null
 
-  // `source` lets the renderer recognize Claude-Security-format
-  // reports without re-parsing them — used for the page header
-  // title (`Claude Security results` instead of the JSON-style
-  // `DeepView results, analyzers: …`). Kept under a marker rather
-  // than file-extension sniffing so a renamed `.md` file doesn't
-  // change behavior, and so a future MD producer with a different
-  // identity could opt into its own label.
-  //
-  // The report-level `type` is the product's category, 'security', as
-  // for every other source-marked producer: Claude Security is ONE
-  // analyzer, and the per-finding `**Category:**` is what kind of
-  // issue a finding is (see parseBlock), not which run found it.
+  // `source` is what the renderer recognises the product by — the page
+  // header reads `Claude Security results` — rather than sniffing the
+  // extension, which a rename defeats. The report-level `type` is the
+  // product's category as for every source-marked producer: this is ONE
+  // analyzer, and the per-finding `**Category:**` says what kind of
+  // issue a finding is, not which run found it.
   return { type: 'security', source: 'claude-security', findings }
 }
 
@@ -91,17 +69,15 @@ function parseBlock(block) {
   const sections = parseSections(sectionsText)
   const meta = parseMeta(metaText)
   const evidence = evidenceRows(sections.evidence || '')
-  // The finding's own location: `## Location` when the report carries
-  // one, otherwise the FIRST `## Evidence` row — the primary site, by
-  // the format's convention. Every row (this one included) also lands
-  // on `finding.evidence` below, which is what the card renders as a
-  // list.
+  // `## Location`, else the FIRST `## Evidence` row — the primary site
+  // by the format's convention. Every row, this one included, also
+  // lands on `finding.evidence` below.
   const { file, line, locationLink } = parseLocation(
     sections.location || evidence[0]?.ref || '',
   )
 
-  // Severity defaults to medium when missing or unrecognized — keeps
-  // an unparsable finding visible rather than dropping it silently.
+  // Medium when missing or unrecognized, so an unparsable finding stays
+  // visible rather than dropping out silently.
   const sevRaw = (meta.severity || '').toLowerCase()
   const severity = VALID_SEVERITIES.has(sevRaw) ? sevRaw : 'medium'
 
@@ -110,51 +86,38 @@ function parseBlock(block) {
   const finding = { file: file || 'unknown', line, severity, description }
   if (locationLink) finding.location = locationLink
   if (evidence.length > 0) finding.evidence = evidence.map(evidenceEntry)
-  // `## Reproduction steps` and `## Recommended fix` are the finding's
-  // own narrative fields, not part of its description — the same two
-  // slots a native dump fills, so the card and the markdown writer
-  // treat a report that names them here and one that carries them as
-  // fields alike. A field is also what render-finding.js can collapse:
-  // it gives one a `<details>` — long, and what a reader turns to after
-  // deciding a finding is worth acting on — where a `**Label:**`
-  // paragraph in the description is a plain always-open block. The
-  // fields come back as fields from this finding's own export too,
-  // which writes them as sections that parse-deepview-md.js
-  // narrativeSplit reads back.
+  // Narrative FIELDS, not description — the same two slots a native
+  // dump fills, so a report that names them here and one that carries
+  // them as fields read alike. The field is also what render-finding.js
+  // can collapse into a `<details>`, where a `**Label:**` paragraph in
+  // the description is an always-open block. They survive a round trip
+  // through this finding's own export, which writes them as sections
+  // that parse-deepview-md.js narrativeSplit reads back as fields.
   if (sections['reproduction steps']) finding.reproduction = sections['reproduction steps']
   if (sections['recommended fix']) finding.recommendation = sections['recommended fix']
   if (meta.repository) finding.repo = { github: meta.repository }
-  // Preserve auxiliary metadata as plain string fields. The renderer
-  // doesn't surface these specifically, but keeping them on the
-  // finding means a future view (or a printed export) can pick them up
-  // without re-parsing the source.
+  // Auxiliary metadata, kept as plain strings: nothing renders these
+  // specifically, but the markdown export prints what a finding carries.
   if (meta.branch) finding.branch = meta.branch
   if (meta['date created']) finding.dateCreated = meta['date created']
   if (meta.status) finding.status = meta.status
   // The issue class the report filed the finding under ("insufficient
-  // verification of data authenticity"), kept as written under its own
-  // name. It is NOT the finding's `type`: that slot is the analyzer run
-  // a native dump names (`security` / `correctness`), and a report from
-  // Claude Security has exactly one analyzer — Claude Security — which
-  // the `source` marker above already says. The card's meta line shows
-  // the category (ui/view/format.js formatRunMeta) and the markdown
-  // export lists it as `Category`.
+  // verification of data authenticity"), as written. NOT the finding's
+  // `type`, which is the analyzer run a native dump names — this report
+  // has one analyzer, and `source` above says which.
   if (meta.category) finding.category = meta.category
-  // The id fingerprint is parse-md-id.js's own parse of this same
-  // block, not the fields above: those are presentation and free to
-  // change, the fingerprint is not. Nothing this parser resolves is
-  // passed in — `## Evidence` is outside the fingerprint's subset of
-  // the format. finding-id.js prefers `_idBasis` when deriving the
-  // uuid; read that module's header before touching either side.
+  // The fingerprint is parse-md-id.js's own parse of this same block,
+  // not the fields above: those are presentation and free to change, it
+  // is not. Nothing this parser resolved is passed in. Read that
+  // module's header before touching either side.
   const idBasis = frozenIdBasis(block)
   if (idBasis) finding._idBasis = idBasis
 
   return finding
 }
 
-// Split a finding body into its sections half (everything before the
-// first `---` separator) and its metadata half (the block between that
-// separator and either the next `---` or end of input).
+// The sections half (before the first `---`) and the metadata half
+// (from there to the next `---` or the end).
 function splitBody(body) {
   const dashRe = /^---\s*$/mu
   const dashMatch = dashRe.exec(body)
@@ -178,8 +141,7 @@ function parseSections(sectionsText) {
   return sections
 }
 
-// Metadata: each line is `**Label:** value`. Field names are case-
-// folded so consumers don't have to mind the source casing.
+// `**Label:** value` per line, keyed case-folded.
 function parseMeta(metaText) {
   const meta = {}
   for (const m of metaText.matchAll(/\*\*([^:]+):\*\*\s*(.+)/gu)) {
@@ -188,26 +150,21 @@ function parseMeta(metaText) {
   return meta
 }
 
-// A code reference — one `## Location` line or one `## Evidence` row.
-// Prefer a markdown link `[name](url)`. The line can come from a
-// `#L<n>` / `#L<n>-L<m>` anchor in the URL, a `:<n>` / `:<n>-<m>`
-// suffix on the name, or be absent altogether (rendered as `?`). A
-// RANGE is kept whole (`10-20`): the file:line displays print it
-// verbatim and the link anchors parseInt() it down to the start line,
-// matching how parse-piolium.js carries ranges. En / em dashes (the
-// Evidence template writes `10–20`) normalize to a plain hyphen so one
-// spelling reaches the displays. The original link (URL when present,
-// raw text otherwise) is preserved as `locationLink` — the
-// deterministic id derivation in finding-id.js uses it as the
-// discriminator when no fileHash is available, so two MD imports of
-// the same finding produce the same UUID and dedupe / share triage.
+// One `## Location` line or one `## Evidence` row, a markdown link
+// preferred. The line comes from a `#L<n>` anchor in the url, a `:<n>`
+// suffix on the name, or nowhere (`?`). A RANGE is kept whole (`10-20`),
+// as parse-piolium.js keeps it, with the en / em dashes the Evidence
+// template writes normalized to a hyphen.
+//
+// `locationLink` is the url, or the raw text when there is none:
+// finding-id.js keys off it with no fileHash available, so two imports
+// of a finding share one uuid and its triage.
 function parseLocation(loc) {
   let file = '', line = '?', locationLink = ''
-  // md-structure.js reads the link, brackets and parens and all: a
-  // path like `app/(main)/[id]/page.ts` is ordinary in a Next.js tree,
-  // and a reading that stops at the first `]` finds no link there at
-  // all — which leaves the whole `[…](…)` text as the file name, the
-  // line `?`, and an evidence row with no url.
+  // Brackets and parens and all: `app/(main)/[id]/page.ts` is an
+  // ordinary Next.js path, and a reading that stops at the first `]`
+  // finds no link in it — leaving the whole `[…](…)` as the file name,
+  // the line `?`, and an evidence row with no url.
   const link = findMdLink(loc)
   if (link) {
     file = link.label.trim()
@@ -218,44 +175,37 @@ function parseLocation(loc) {
     file = loc.trim()
     locationLink = loc.trim()
   }
-  // Backticks some reports wrap the path in are notation, not part of
-  // the path itself, and a `\_` in the label is the report escaping
-  // markdown — the path is the unescaped name, which is what the
-  // displays print and what a reconstructed blob URL has to address.
-  // The link's URL is left exactly as written: reports don't escape
-  // there, and it is the id discriminator (see finding-id.js).
+  // Backticks are notation and a `\_` is the report escaping markdown;
+  // the path is the unescaped name, which is what the displays print
+  // and what a rebuilt blob URL must address. The url is left exactly
+  // as written — reports don't escape there, and it keys the id.
   file = unescapeMd(file.replaceAll('`', '')).trim()
-  // `:42` / `:10–20` suffix on the file path — common shorthand. Only
-  // consume the number if we don't already have one from the anchor;
-  // the path always sheds it either way.
+  // A `:42` / `:10–20` suffix: taken only when the anchor gave no line,
+  // but shed from the path either way.
   const colonMatch = file.match(/^(.+):(\d+)(?:\s*[-–—]\s*L?(\d+))?$/u)
   if (colonMatch) {
     file = colonMatch[1]
     if (line === '?') line = colonMatch[3] ? `${colonMatch[2]}-${colonMatch[3]}` : colonMatch[2]
   }
-  // `linked` is how the row came in, which the caller can't tell from
-  // `locationLink` alone: the no-link fallback puts the raw text there
-  // as well, and that is an id discriminator, not an href.
+  // `linked` says how the row came in, which `locationLink` can't —
+  // the fallback puts raw text there, and that is an id discriminator,
+  // not an href.
   return { file, line, locationLink, linked: link !== null }
 }
 
-// Rows of an `## Evidence` section, in document order. A row leads with
-// the code reference and carries its own note on the lines under it:
+// Rows of an `## Evidence` section, in document order:
 //
 //   1. [libs/a.ts:10–20](https://github.com/o/r/blob/<sha>/libs/a.ts#L10-L20)
 //      Why this line matters.
 //
-// so only an item's marker line is a reference; the prose under it is
-// that row's note. Numbered (`1.` / `1)`) and bulleted (`-` / `*` /
-// `+`) markers both open a row. Note lines are left-trimmed: the
-// renderer indents the row (a real `<ol>`, so a note that wraps stays
-// under its reference), and the source's own indentation would only
-// double up on that.
+// Only a marker line is a reference — numbered or bulleted — and the
+// prose under it is that row's note, left-trimmed, since the renderer
+// indents the row itself.
 //
-// A section written without any marker still yields one row when it is
-// a single line, or around the first line carrying a markdown link —
-// free prose yields no rows at all, and parseBlock leaves it in the
-// description as written rather than promoting a sentence to a path.
+// A section with no markers still yields one row when it is a single
+// line, or around the first line carrying a link. Free prose yields
+// none, and parseBlock leaves it in the description rather than
+// promoting a sentence to a path.
 const EVIDENCE_ITEM_RE = /^[ \t]*(?:\d+[.)]|[-*+])\s+/u
 
 function evidenceRows(text) {
@@ -274,10 +224,9 @@ function evidenceRows(text) {
   return rows.filter((r) => r.ref)
 }
 
-// One row as it lands on the finding: the parsed reference plus the
-// report's note. `url` is set only when the row actually carried a
-// markdown link — parseLocation's raw-text fallback is an id
-// discriminator, not something to hand a renderer as an href.
+// One row as it lands on the finding. `url` only where the row carried
+// a real link — the raw-text fallback is an id discriminator, not an
+// href to hand a renderer.
 function evidenceEntry({ ref, note }) {
   const { file, line, locationLink, linked } = parseLocation(ref)
   const entry = { file: file || 'unknown', line }
@@ -287,24 +236,17 @@ function evidenceEntry({ ref, note }) {
   return entry
 }
 
-// Build the description from the title + body sections. Section labels
-// are emitted as `**Label:**`, the same shape parse-piolium gives its
-// labelled fields — render-finding.js's renderHighlighted turns those
-// into real `<strong>` emphasis (asterisks dropped) rather than
-// printing the markers, and the markdown export re-emits them as the
-// markdown they are. The report's own `**bold**` rides along for the
-// same treatment; everything else (line breaks, list bullets, indented
-// continuation lines) survives verbatim, with white-space: pre-wrap on
-// the .desc CSS rule keeping the shape the report wrote.
+// Title + body sections, section labels emitted as `**Label:**` — the
+// shape parse-piolium gives its fields, which render-finding.js turns
+// into real `<strong>` emphasis and the markdown export re-emits as the
+// markdown it is. Everything else survives verbatim, `pre-wrap` on
+// `.desc` keeping the shape the report wrote.
 function buildDescription(title, sections, hasEvidenceRows) {
   const bodyParts = [title]
   if (sections.details) bodyParts.push(sections.details)
-  // An Evidence section that parsed into rows belongs to
-  // `finding.evidence` — the card renders it as a list and the text
-  // surfaces rebuild it from there (format.js evidenceMarkdown), so
-  // repeating it here would only duplicate it. A section that parsed
-  // into NO rows is free prose: it stays in the body, since dropping
-  // it would lose it.
+  // An Evidence section that parsed into rows lives on
+  // `finding.evidence`, and repeating it here would double it. One that
+  // parsed into none is free prose, and stays rather than being lost.
   if (sections.evidence && !hasEvidenceRows) bodyParts.push(`**Evidence:**\n${sections.evidence}`)
   if (sections.impact) bodyParts.push(`**Impact:** ${sections.impact}`)
   return bodyParts.join('\n\n')
