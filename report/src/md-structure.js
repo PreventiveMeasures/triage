@@ -326,29 +326,45 @@ export function stripBold(text) { return text.replaceAll('**', '') }
 // takes the first link in the line (parse-md.js).
 export function findMdLink(s) {
   const text = String(s ?? '')
+  // Where each reading would CLOSE, read off the text once rather than
+  // rescanned per candidate. A reference is a short line, but a
+  // malformed document's need not be, and every reading here is a scan
+  // to the end when nothing closes it: 50k of `[` and nothing else took
+  // 3s to come back null, a run of `[x](` with no `)` in it 10s, each
+  // bracket paying for the remainder of the line again. One pass apiece
+  // instead.
+  const labels = balancedLabelEnds(text)
+  const dests = destinationEnds(text)
+  let plain = text.indexOf(']')
   for (let open = text.indexOf('['); open !== -1; open = text.indexOf('[', open + 1)) {
-    for (const close of [text.indexOf(']', open + 1), balancedLabelEnd(text, open)]) {
+    // The first `]` after this `[`. Carried forward, not looked up
+    // again: `open` only advances, so this does too.
+    while (plain !== -1 && plain <= open) plain = text.indexOf(']', plain + 1)
+    for (const close of [plain, labels.get(open) ?? -1]) {
       if (close === -1 || text[close + 1] !== '(') continue
-      const dest = destination(text, close + 1)
-      if (dest) return { label: text.slice(open + 1, close), url: dest.url, index: open }
+      const url = destination(text, close + 1, dests)
+      if (url !== null) return { label: text.slice(open + 1, close), url, index: open }
     }
   }
   return null
 }
 
-// The `]` closing the label opened at `open` once its brackets balance,
-// or -1 when they never do. Escapes and code spans are passed over
-// whole — neither one's brackets are structure.
-function balancedLabelEnd(text, open) {
-  let depth = 0
-  for (let i = open; i < text.length; i++) {
+// Every `[` in `text` paired with the `]` that closes it once its
+// brackets balance — one left-to-right pass with a stack. Escapes and
+// code spans are passed over whole: neither one's brackets are
+// structure, and a code span's are literal wherever it sits, which is
+// the reading markdown gives it too.
+function balancedLabelEnds(text) {
+  const ends = new Map()
+  const open = []
+  for (let i = 0; i < text.length; i++) {
     const c = text[i]
     if (c === '\\') i++
     else if (c === '`') i = codeSpanEnd(text, i) ?? i
-    else if (c === '[') depth++
-    else if (c === ']' && --depth === 0) return i
+    else if (c === '[') open.push(i)
+    else if (c === ']' && open.length > 0) ends.set(open.pop(), i)
   }
-  return -1
+  return ends
 }
 
 // The last backtick of the run that closes the code span opening at
@@ -366,41 +382,51 @@ function codeSpanEnd(text, i) {
   return null
 }
 
-// The destination opened at `open` (its `(`), as `{ url }`, or null
-// when nothing reads it: an angle-bracket form, else a bare run its
+// What a bare destination can close on, for every position in `text`:
+// the `)` that balances each `(`, and — for the reading that doesn't
+// need them balanced — the next `)` and the next whitespace from any
+// point. Whitespace ends a bare destination either way, so a run of it
+// abandons every `(` still open.
+function destinationEnds(text) {
+  const n = text.length
+  const nextClose = new Int32Array(n + 1).fill(-1)
+  const nextSpace = new Int32Array(n + 1).fill(-1)
+  for (let i = n - 1; i >= 0; i--) {
+    nextClose[i] = text[i] === ')' ? i : nextClose[i + 1]
+    nextSpace[i] = /\s/u.test(text[i]) ? i : nextSpace[i + 1]
+  }
+  const balanced = new Map()
+  const open = []
+  for (let i = 0; i < n; i++) {
+    const c = text[i]
+    if (c === '\\') i++
+    else if (nextSpace[i] === i) open.length = 0
+    else if (c === '(') open.push(i)
+    else if (c === ')' && open.length > 0) balanced.set(open.pop(), i)
+  }
+  return { balanced, nextClose, nextSpace }
+}
+
+// The destination opened at `open` (its `(`), as its url, or null when
+// nothing reads it: an angle-bracket form, else the bare run its own
 // parens close, else the bare run the first `)` closes.
-function destination(text, open) {
+function destination(text, open, dests) {
   if (text[open + 1] === '<') {
     const close = text.indexOf('>', open + 2)
     const line = text.indexOf('\n', open + 2)
     if (close === -1 || (line !== -1 && line < close) || text[close + 1] !== ')') return null
-    return { url: text.slice(open + 2, close) }
+    return text.slice(open + 2, close)
   }
-  return balancedDestination(text, open) ?? flatDestination(text, open)
-}
-
-// The bare destination whose own parens balance, to any depth.
-function balancedDestination(text, open) {
-  let depth = 0
-  for (let i = open; i < text.length; i++) {
-    const c = text[i]
-    if (c === '\\') i++
-    else if (/\s/u.test(c)) return null
-    else if (c === '(') depth++
-    else if (c === ')' && --depth === 0) return { url: text.slice(open + 1, i) }
-  }
-  return null
-}
-
-// The bare destination as this was read before there was a scanner:
-// everything up to the first `)`. It is what a url carrying an
-// unmatched `(` has instead of a balanced reading, and it stays behind
-// the balanced one so a url that closes its own parens keeps them.
-function flatDestination(text, open) {
-  const close = text.indexOf(')', open + 1)
-  if (close === -1) return null
-  const url = text.slice(open + 1, close)
-  return /\s/u.test(url) ? null : { url }
+  const balanced = dests.balanced.get(open)
+  if (balanced !== undefined) return text.slice(open + 1, balanced)
+  // Failing that, up to the first `)` — how this was read before there
+  // was a scanner, and the only reading a url with an UNMATCHED paren
+  // has. Whitespace before that `)` disqualifies it, where markdown
+  // would read a title and nothing here writes one.
+  const flat = dests.nextClose[open + 1]
+  const space = dests.nextSpace[open + 1]
+  if (flat === -1 || (space !== -1 && space < flat)) return null
+  return text.slice(open + 1, flat)
 }
 
 // Markdown backslash escapes — `a/b/\_cc\_cc/index.js` is a report

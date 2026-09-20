@@ -696,3 +696,26 @@ describe('findMdLink — nothing the old expression read reads differently', () 
     assert.ok(read > 100, `only ${read} of these shapes reached the old expression`)
   })
 })
+
+// A reference is a short line; a malformed document's need not be, and
+// every reading here is a scan to the end when nothing closes it. Read
+// per candidate, that was quadratic — 50k of `[` and nothing else took
+// ~3s to come back null, and a run of `[x](` with no `)` in it ~10s,
+// each bracket paying for the remainder of the line again. The closing
+// positions are read off the text once instead.
+//
+// The bound is deliberately loose — 50x the linear cost on this input,
+// which is ~20ms — so this fails on the shape of the work rather than
+// on how busy the machine is. Quadratic would need ~50s here.
+describe('findMdLink — a malformed line is read once, not per bracket', () => {
+  const under = (ms, text) => {
+    const started = process.hrtime.bigint()
+    assert.equal(findMdLink(text), null)
+    const took = Number(process.hrtime.bigint() - started) / 1e6
+    assert.ok(took < ms, `${text.length} characters took ${took.toFixed(0)}ms`)
+  }
+
+  it('rejects a line of nothing but brackets', () => under(1000, '['.repeat(50_000)))
+  it('rejects a line of openings that never close', () => under(1000, '[x]('.repeat(12_500)))
+  it('rejects a line of nested openings', () => under(1000, '([x]('.repeat(10_000)))
+})
