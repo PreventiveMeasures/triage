@@ -57,9 +57,8 @@ export function parseMarkdownFindings(content) {
   // JSON error instead of a misleading markdown error.
   if (!text.startsWith('# ')) return null
 
-  // Each finding starts at a line beginning with `# `. Splitting on
-  // that pattern gives us per-finding chunks; the first split element
-  // is whatever preamble preceded the first `# ` (usually empty).
+  // Each finding starts at a line beginning with `# `; whatever
+  // preceded the first one is preamble, and empty chunks drop out.
   const blocks = text.split(/^# /mu).filter((b) => b.trim().length > 0)
 
   const findings = []
@@ -85,7 +84,6 @@ export function parseMarkdownFindings(content) {
 }
 
 function parseBlock(block) {
-  // First line is the title; the rest is the body (sections + meta).
   const { title, body } = splitHeadingLine(block)
   if (!title) return null
 
@@ -116,16 +114,13 @@ function parseBlock(block) {
   // own narrative fields, not part of its description — the same two
   // slots a native dump fills, so the card and the markdown writer
   // treat a report that names them here and one that carries them as
-  // fields alike. Reproduction reached the card as a `**Reproduction:**`
-  // paragraph until now, which read as the same section but could not
-  // be collapsed: render-finding.js gives the FIELD a `<details>` (it
-  // is what a reader turns to after deciding a finding is worth
-  // acting on, and it is long) and a description paragraph a plain
-  // always-open block. So a Claude Security card collapsed its
-  // Recommendation and not its Reproduction, and the finding re-read
-  // from its own export collapsed both — the export writes the
-  // paragraph as a section, and parse-deepview-md.js narrativeSplit
-  // takes it back as the field.
+  // fields alike. A field is also what render-finding.js can collapse:
+  // it gives one a `<details>` — long, and what a reader turns to after
+  // deciding a finding is worth acting on — where a `**Label:**`
+  // paragraph in the description is a plain always-open block. The
+  // fields come back as fields from this finding's own export too,
+  // which writes them as sections that parse-deepview-md.js
+  // narrativeSplit reads back.
   if (sections['reproduction steps']) finding.reproduction = sections['reproduction steps']
   if (sections['recommended fix']) finding.recommendation = sections['recommended fix']
   if (meta.repository) finding.repo = { github: meta.repository }
@@ -171,9 +166,8 @@ function splitBody(body) {
   return { sectionsText, metaText }
 }
 
-// Split sectionsText into named sections by `## Header`. The first
-// split element — whatever preceded the first ## (usually a blank
-// line) — is dropped.
+// Named sections, split on `## Header`. Whatever precedes the first
+// heading is dropped.
 function parseSections(sectionsText) {
   const sections = {}
   for (const part of sectionsText.split(/^## /mu).slice(1)) {
@@ -211,9 +205,9 @@ function parseLocation(loc) {
   let file = '', line = '?', locationLink = ''
   // md-structure.js reads the link, brackets and parens and all: a
   // path like `app/(main)/[id]/page.ts` is ordinary in a Next.js tree,
-  // and read with a label class that stops at the first `]` it matched
-  // nothing at all — the whole `[…](…)` text became the file name, the
-  // line came back `?`, and an evidence row got no url.
+  // and a reading that stops at the first `]` finds no link there at
+  // all — which leaves the whole `[…](…)` text as the file name, the
+  // line `?`, and an evidence row with no url.
   const link = findMdLink(loc)
   if (link) {
     file = link.label.trim()

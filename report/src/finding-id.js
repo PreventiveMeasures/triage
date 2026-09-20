@@ -45,8 +45,8 @@ async function fingerprintToId(fingerprint) {
 
 // Stable per-finding id from the (severity, description, fileHash) triple
 // the analyzer emits. fileHash being undefined is fine — JSON.stringify
-// drops undefined keys, matching the legacy behavior so re-runs over the
-// same source yield the same ids.
+// drops undefined keys, so a finding with no hash keys off the pair and
+// re-runs over the same source yield the same ids.
 export function findingId(severity, description, fileHash) {
   return fingerprintToId({ severity, description, fileHash })
 }

@@ -124,10 +124,10 @@ function rowToFinding(r) {
   const description = [r.title, r.description].filter(Boolean).join('\n\n')
 
   const finding = {
-    // finding_url is unique per upstream finding — use it directly so
+    // finding_url is unique per upstream finding — used directly so
     // triage (markers / deletions) keys off the stable URL and
-    // persists across reloads. The triage saver was loosened to
-    // accept any non-numeric id (URLs included), see triage.js.
+    // persists across reloads. The triage saver takes any non-numeric
+    // id, URLs included (triage.js).
     id: r.finding_url,
     file,
     // Codex CSVs lack line numbers — '?' is the same placeholder
@@ -137,13 +137,12 @@ function rowToFinding(r) {
     description,
     repo: { github: r.repository },
     // No per-finding `type` here — the codex CSV doesn't carry a
-    // category column, and stamping a synthetic 'security' on every
-    // row used to make the run-meta line read "security" on every
-    // finding even though there's nothing categorical to differentiate
-    // them. The renderer already suppresses an empty run-meta
-    // (filter(Boolean) → '' → no <span>), so leaving this off is the
-    // cleanest result. data.type at the report level still keeps a
-    // sensible 'security' default for document.title.
+    // category column, and a synthetic 'security' on every row would
+    // print the same word on every run-meta line with nothing
+    // categorical to tell the findings apart. The renderer suppresses
+    // an empty run-meta (filter(Boolean) → '' → no <span>), so the
+    // line simply isn't there. data.type at the report level still
+    // keeps a 'security' default for document.title.
   }
   if (r.commit_hash) finding.commitHash = r.commit_hash
   if (r.detected_at) finding.detectedAt = r.detected_at
