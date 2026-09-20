@@ -1,6 +1,6 @@
 {
   "name": "@preventive/report",
-  "version": "1.0.0-alpha.1",
+  "version": "1.0.0-alpha.2",
   "description": "Parsers for security-scan reports, and a markdown writer whose document reads back in",
   "license": "MIT",
   "author": {
