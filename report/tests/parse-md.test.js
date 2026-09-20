@@ -648,6 +648,20 @@ describe('parseMarkdownFindings — paths with brackets and parens', () => {
     assert.equal(located('[]() [src/b.ts:9](https://example.com/b.ts#L9)').file, 'src/b.ts')
   })
 
+  it('reads past a destination a space broke', () => {
+    // `not\\ a-url` is a backslash and a space, not an escaped space:
+    // only punctuation can be escaped, and the space ends a bare
+    // destination — so this is not a link, and the reference behind it
+    // is.
+    const f = located('[badge](not\\ a-url) [src/a.ts:7](https://example.com/a.ts#L7)')
+    assert.equal(f.file, 'src/a.ts')
+    assert.equal(f.line, '7')
+    assert.equal(f.location, 'https://example.com/a.ts#L7')
+    // …while a backslash that IS an escape still hides what follows it.
+    assert.equal(located('[a/b/\\[id\\]/x.ts:12](https://example.com/x#L12)').file, 'a/b/[id]/x.ts')
+    assert.equal(located('[a](https://example.com/x\\)y#L1)').location, 'https://example.com/x\\)y#L1')
+  })
+
   it('still leaves a line with no link as the raw text it is', () => {
     const f = located('a/b/app/(main)/[id]/index.ts:12')
     assert.equal(f.file, 'a/b/app/(main)/[id]/index.ts')
@@ -686,6 +700,9 @@ describe('findMdLink — nothing the old expression read reads differently', () 
   const around = [
     (l) => l, (l) => `[context] see ${l}`, (l) => `${l} and more`, (l) => `see ${l} here`, (l) => `- ${l}`,
     (l) => `![](badge.svg) ${l}`, (l) => `![badge](b.svg) ${l}`, (l) => `[]() ${l}`, (l) => `[x](y) ${l}`,
+    // …and a link whose destination is no destination: a space the
+    // backslash can't escape, and an angle bracket nothing closes.
+    (l) => `[badge](not\\ a-url) ${l}`, (l) => `[b](<unterminated ${l}`,
   ]
 
   it('matches where it matched, on every shape these spell', () => {
@@ -732,6 +749,12 @@ describe('findMdLink — a malformed line is read once, not per bracket', () => 
   it('rejects a line of nothing but brackets', () => under(1000, '['.repeat(50_000)))
   it('rejects a line of openings that never close', () => under(1000, '[x]('.repeat(12_500)))
   it('rejects a line of nested openings', () => under(1000, '([x]('.repeat(10_000)))
+
+  it('rejects a line of angle destinations that never close', () => {
+    // Read per candidate, each `<` scanned the rest of the line for a
+    // `>` that never comes: 1.5s over 800k characters.
+    under(1000, '[x](<'.repeat(160_000))
+  })
 
   it('rejects a line of code fences that never close', () => {
     // Runs of growing length, so no run closes any other: read per
