@@ -12,7 +12,21 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-const { bundlePackageDirs, bundlePackageVersions } = await import('../ui/view/bundle-sources.js')
+const { Bundle } = await import('@exodus/stasis-core/bundle')
+const { createTerminal } = await import('@preventive/terminal')
+const { bundlePackageDirs, bundlePackageVersions, bundleSourcesAsMap } = await import('../ui/view/bundle-sources.js')
+
+// A real Bundle, because the point of these cases is what the package
+// actually stores: `Bundle.sources` is the raw content of every entry,
+// resources included, so only `Bundle.formats` separates source from
+// the rest.
+function bundleWith(files, formats) {
+  return { kind: 'stasis', bundle: new Bundle({
+    config: { scope: 'full' },
+    modules: new Map([['.', { name: 'app', version: '1.0.0', files }]]),
+    formats: new Map(Object.entries(formats)),
+  }) }
+}
 
 // Minimal stand-in for an `@exodus/stasis-core` Bundle: the helper only
 // touches `.modules` (a Map<dir, { files }>), so that's all we build.
@@ -93,5 +107,85 @@ describe('bundlePackageVersions', () => {
     assert.equal(bundlePackageVersions({ kind: 'sourcemap', json: {} }).size, 0)
     assert.equal(bundlePackageVersions({ kind: 'stasis' }).size, 0)
     assert.equal(bundlePackageVersions(null).size, 0)
+  })
+})
+
+describe('bundleSourcesAsMap — what counts as a source', () => {
+  it('keeps ordinary source entries', () => {
+    const map = bundleSourcesAsMap(bundleWith({ 'index.js': 'export const a = 1\n' }, { 'index.js': 'commonjs' }))
+    assert.deepEqual([...map], [['index.js', 'export const a = 1\n']])
+  })
+
+  // The reported bug: a readdir capture's content is a JSON array of
+  // names, which is a string, so a type check waves it through and the
+  // terminal mounts a file where a directory belongs.
+  it('drops a `directory` capture rather than calling its listing a file', () => {
+    const map = bundleSourcesAsMap(bundleWith(
+      { 'index.js': 'x\n', 'assets': JSON.stringify(['a.png', 'b.png']) },
+      { 'index.js': 'commonjs', 'assets': 'directory' },
+    ))
+    assert.deepEqual([...map.keys()], ['index.js'])
+    assert.equal(map.get('assets'), undefined, 'the listing is not source')
+  })
+
+  it('drops resources, base64 ones included', () => {
+    // `resource` is bytes and was already skipped by type; `resource:base64`
+    // is stored as base64 TEXT and was not, despite every consumer being
+    // told resources are absent.
+    const map = bundleSourcesAsMap(bundleWith(
+      { 'index.js': 'x\n', 'logo.png': 'iVBORw0KGgoAAAANSUhEUg==', 'blob.bin': Buffer.from([1, 2, 3]) },
+      { 'index.js': 'commonjs', 'logo.png': 'resource:base64', 'blob.bin': 'resource' },
+    ))
+    assert.deepEqual([...map.keys()], ['index.js'])
+  })
+
+  it('keeps every entry of a bundle that records no formats (v0)', () => {
+    // v0 bundles carry no per-file formats: `formats.get` is undefined,
+    // which is not a resource format, so nothing is newly dropped.
+    const map = bundleSourcesAsMap(bundleWith({ 'index.js': 'x\n', 'other.js': 'y\n' }, {}))
+    assert.deepEqual([...map.keys()].toSorted(), ['index.js', 'other.js'])
+  })
+
+  it('leaves sourcemap bundles alone', () => {
+    const map = bundleSourcesAsMap({ kind: 'sourcemap', json: { sources: ['a.js', 'b.js'], sourcesContent: ['A', null] } })
+    assert.deepEqual([...map], [['a.js', 'A']], 'an omitted sourcesContent slot is still skipped')
+  })
+})
+
+describe('bundleSourcesAsMap — the filesystem the terminal is handed', () => {
+  // A directory capture keyed at a path real files also live under is
+  // the damaging shape: before the format check the terminal saw both a
+  // file and a directory at `lib`.
+  const details = bundleWith(
+    {
+      'index.js': 'x\n',
+      'lib/util.js': 'y\n',
+      'lib': JSON.stringify(['util.js']),
+    },
+    { 'index.js': 'commonjs', 'lib/util.js': 'commonjs', 'lib': 'directory' },
+  )
+
+  const terminal = () => createTerminal(bundleSourcesAsMap(details), { mount: '/sources', home: '/', writable: '/tmp/' })
+
+  it('lists the directory once, not once per role', () => {
+    assert.deepEqual(terminal().run('ls').stdout, 'index.js\nlib\n')
+  })
+
+  it('lets the directory be listed, which the phantom file prevented', () => {
+    assert.deepEqual(terminal().run('ls lib').stdout, 'util.js\n')
+  })
+
+  it('reports the path as a directory rather than reading a listing out of it', () => {
+    const r = terminal().run('cat lib')
+    assert.equal(r.stdout, '')
+    assert.match(r.stderr, /Is a directory/u)
+  })
+
+  it('walks each path exactly once', () => {
+    const paths = terminal().run('find /sources').stdout.trim().split('\n')
+    assert.deepEqual(paths, [...new Set(paths)], 'no path appears twice')
+    assert.deepEqual(paths.toSorted(), [
+      '/sources', '/sources/index.js', '/sources/lib', '/sources/lib/util.js',
+    ])
   })
 })
