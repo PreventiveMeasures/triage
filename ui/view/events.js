@@ -975,7 +975,12 @@ report.addEventListener('click', (e) => {
   // altitude, not a different slice.
   const g2PackagesView = pathClosest(e, '[data-g2-packages-view]')
   if (g2PackagesView) {
-    graph2.packagesView = !graph2.packagesView
+    if (graph2.bundleLayout === 'dependencies') {
+      graph2.dependencyPackagesView = !graph2.dependencyPackagesView
+      graph2.solo = null
+    } else {
+      graph2.packagesView = !graph2.packagesView
+    }
     graph2.layoutCache = null
     graph2.selected = null
     graph2.focusedPkg = null
@@ -986,9 +991,10 @@ report.addEventListener('click', (e) => {
   const g2Layout = pathClosest(e, '[data-g2-layout]')
   if (g2Layout) {
     const next = g2Layout.dataset.g2Layout
-    if (next !== 'graph' && next !== 'layers' && next !== 'matrix') return
+    if (next !== 'graph' && next !== 'layers' && next !== 'matrix' && next !== 'dependencies') return
     if (graph2.bundleLayout === next && !graph2.focusedPkg) return
     graph2.bundleLayout = next
+    if (next === 'dependencies') graph2.dependencyPackagesView = false
     graph2.layoutCache = null
     graph2.selected = null
     graph2.solo = null

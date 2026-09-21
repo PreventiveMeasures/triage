@@ -49,7 +49,10 @@ function createImpl() {
     // mode) only engage when the bundle has 3+ packages — see
     // `canPackagesView` in buildBundleGraphData. Off by default.
     packagesView: false,
-    bundleLayout: 'graph', // 'graph' | 'layers' | 'matrix'; bundle-only
+    // Fourth view: small bundles start at file level; larger ones always
+    // aggregate packages. Independent of the first Graph view's switch.
+    dependencyPackagesView: false,
+    bundleLayout: 'graph', // 'graph' | 'layers' | 'matrix' | 'dependencies'; bundle-only
     bundleReason: null, // null = all reasons; shared by graph and layers
     bundleReasonFor: null, // bundle integrity; reset selection on bundle changes
     selected: null,        // file path or null

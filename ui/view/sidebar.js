@@ -692,8 +692,7 @@ async function onSidebarClick(e) {
   // same full bundle switch the `bundle-swap` listener in events.js,
   // the bundle-only drop branch in ingest.js, and the boot restore in
   // view.js perform (per-row setup must clear the prior load's parsed
-  // details, search boxes, and detail-tab choice so the new bundle
-  // starts on the Overview tab).
+  // details and search boxes while keeping the current bundle detail tab).
   const bundleEl = e.target.closest('.file-item[data-bundle-integrity]')
   if (bundleEl) {
     // Missing-bundle rows (imported workspace claims an integrity the
@@ -707,7 +706,7 @@ async function onSidebarClick(e) {
     const integrity = bundleEl.dataset.bundleIntegrity
     if (state.selectedBundle === integrity && state.currentView === 'bundles') return
     selectBundle(integrity)
-    persistLastBundle(integrity)
+    persistLastBundle(integrity, state.bundleDetailsTab)
     render()
     renderSidebar()
     openBundle(integrity)

@@ -480,7 +480,8 @@
     font-family: inherit; font-size: 13px;
 
     &:last-child { border-bottom: 0; }
-    &:hover { color: var(--accent); background: var(--surface-active); }
+    &:hover:not(:disabled) { color: var(--accent); background: var(--surface-active); }
+    &:disabled { opacity: .35; }
   }
 }
 

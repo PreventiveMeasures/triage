@@ -1,11 +1,12 @@
 import { classMap, html, repeat, styleMap } from '../frontend-global.js'
 import { live } from 'lit/directives/live.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { GRAPH_ICON_SVG, LAYERS_ICON_SVG, MATRIX_ICON_SVG } from '../icons.js'
+import { DEPENDENCIES_ICON_SVG, GRAPH_ICON_SVG, LAYERS_ICON_SVG, MATRIX_ICON_SVG } from '../icons.js'
 import { SEVERITIES, formatBytes } from '../format.js'
 import { graph2 } from './state.js'
 import { pkgColor } from './utils.js'
 import { pkgLabelOf, pkgRelative } from './data.js'
+import { dependencyFilesOn, dependencyNetwork, packageNetwork } from './package-network.js'
 // `<graph-layout>` is defined in `./graph-layout.js`, behind the
 // lazy entry `ui/graph.js` (loaded by `view/graph-attach.js` on
 // first show). Nothing here imports it: the per-section templates
@@ -34,10 +35,12 @@ import { pkgLabelOf, pkgRelative } from './data.js'
 export function renderTopBar(graph, options, extraControls = null) {
   const layers = options.showBundleLayouts && graph2.bundleLayout === 'layers'
   const matrix = options.showBundleLayouts && graph2.bundleLayout === 'matrix'
+  const dependencies = options.showBundleLayouts && graph2.bundleLayout === 'dependencies'
   const layoutSelector = options.showBundleLayouts ? html`<div class="g2-layout-tabs" role="group" aria-label="Bundle layout">
-    <button type="button" data-g2-layout="graph" aria-label="Graph" aria-pressed=${String(!layers && !matrix)}>${unsafeHTML(GRAPH_ICON_SVG)}</button>
+    <button type="button" data-g2-layout="graph" aria-label="Graph" aria-pressed=${String(!layers && !matrix && !dependencies)}>${unsafeHTML(GRAPH_ICON_SVG)}</button>
     <button type="button" data-g2-layout="layers" aria-label="Layers" aria-pressed=${String(!!layers)}>${unsafeHTML(LAYERS_ICON_SVG)}</button>
     <button type="button" data-g2-layout="matrix" aria-label="Matrix" aria-pressed=${String(!!matrix)}>${unsafeHTML(MATRIX_ICON_SVG)}</button>
+    <button type="button" data-g2-layout="dependencies" aria-label="Dependencies" aria-pressed=${String(!!dependencies)}>${unsafeHTML(DEPENDENCIES_ICON_SVG)}</button>
   </div>` : null
   const extraTopRow = options.extraTopRow
   const hideAllFiles = options.hideAllFiles ?? false
@@ -114,9 +117,9 @@ export function renderTopBar(graph, options, extraControls = null) {
   // (per top-level dir under Split dirs) with aggregated import
   // edges. Same rebuild-on-flip contract as the toggles above —
   // the layout and hit-testing operate on a different node set.
-  const showPackagesView = !layers && !matrix && (options.showPackagesView ?? false)
+  const showPackagesView = dependencies ? graph.nodes.length <= 100 : !layers && !matrix && (options.showPackagesView ?? false)
   const packagesViewBtn = showPackagesView ? html`<mode-switch
-    label="Packages" .checked=${graph2.packagesView}
+    label="Packages" .checked=${dependencies ? graph2.dependencyPackagesView : graph2.packagesView}
     data-g2-packages-view
   ></mode-switch>` : null
 
@@ -284,7 +287,10 @@ export function renderStage(graph) {
   let cross = 0; for (const e of graph.edges) if (e.cross) cross++
   const intra = graph.edges.length - cross
   let issues = 0; for (const n of graph.nodes) issues += n.totalIssues
-  const avgDeg = graph.nodes.length === 0 ? '0.0' : (graph.edges.length * 2 / graph.nodes.length).toFixed(1)
+  const network = graph.supportsLayers && graph2.bundleLayout === 'dependencies' && !graph2.focusedPkg ? dependencyNetwork(graph, graph2.dependencyPackagesView) : null
+  const nodeCount = network?.nodes.length ?? graph.nodes.length
+  const edgeCount = network?.directedEdges.length ?? graph.edges.length
+  const avgDeg = nodeCount === 0 ? '0.0' : (edgeCount * 2 / nodeCount).toFixed(1)
 
   const focusedLabel = pkgLabelOf(graph2.focusedPkg)
 
@@ -304,9 +310,9 @@ export function renderStage(graph) {
          populated (button) or empty (nothing to drill into). -->
     <div id="g2-focus-overlay-slot" class="g2-stage-overlay-tr"></div>
     <div class="g2-stage-stats">
-      <span><b>${graph.nodes.length}</b> files</span>
-      <span><b>${graph.packages.length}</b> packages</span>
-      <span><b>${graph.edges.length}</b> edges (${intra} intra · ${cross} cross)</span>
+      ${!network || network.fileLevel ? html`<span><b>${graph.nodes.length}</b> files</span>` : null}
+      <span><b>${network && !network.fileLevel ? network.nodes.length : graph.packages.length}</b> packages</span>
+      <span><b>${edgeCount}</b> ${network ? 'dependencies' : html`edges (${intra} intra · ${cross} cross)`}</span>
       <span><b>${issues}</b> issues</span>
       <span>avg degree <b>${avgDeg}</b></span>
     </div>
@@ -329,6 +335,7 @@ export function renderStage(graph) {
 // template, or null/`''` to leave the slot empty. Exported so the
 // refresh helper in render.js can swap it on selection change.
 export function renderFocusOverlay(graph) {
+  if (graph.supportsLayers && graph2.bundleLayout === 'dependencies') return null
   let pkg = null
   if (graph2.selected) {
     const sel = graph.nodeByFile.get(graph2.selected)
@@ -382,6 +389,11 @@ export function renderRightPanel() {
 // no node has findings (clean bundle/report — nothing to rank). If
 // the active tab is gated off, falls back to Files.
 export function renderTopPkgsBlock(graph) {
+  if (graph.supportsLayers && graph2.bundleLayout === 'dependencies' && !graph2.focusedPkg && !dependencyFilesOn(graph, graph2.dependencyPackagesView)) {
+    const pg = packageNetwork(graph)
+    const ids = pg.nodes.toSorted((a, b) => pg.importedBy.get(b.pkg).length - pg.importedBy.get(a.pkg).length || a.pkg.localeCompare(b.pkg)).map((n) => n.pkg)
+    return html`<div class="g2-panel-title">Packages · importers</div>${renderDependencyList(pg, ids, true)}`
+  }
   const showSize = graph2.showAll && graph.nodes.length > 0
     && graph.nodes.every((n) => typeof n.size === 'number')
   const showIssues = graph.nodes.some((n) => n.totalIssues > 0)
@@ -408,6 +420,9 @@ export function renderTopPkgsBlock(graph) {
 //   2. A package is solo'd (palette swatch or top-pkgs click) → pkg card
 //   3. Neither → empty placeholder
 export function renderSelectionCard(graph, ctx = {}) {
+  if (graph.supportsLayers && graph2.bundleLayout === 'dependencies' && !graph2.focusedPkg && !dependencyFilesOn(graph, graph2.dependencyPackagesView)) {
+    return renderDependencyCard(packageNetwork(graph), graph2.solo)
+  }
   const file = graph2.selected
   if (file) {
     const n = graph.nodeByFile.get(file)
@@ -676,5 +691,37 @@ function renderDistribution(graph, activeTab) {
         data-tooltip=${label}
       ><span class="g2-dist-dot" style=${styleMap({ background: c })}></span><span class="g2-dist-name">${label}</span><span class="g2-dist-count">${cnt}</span><span class="g2-dist-pct">${pct}%</span></button>`
     })}
+  </div>`
+}
+
+// Package-level inspection stays at the same altitude as the new canvas.
+function renderDependencyList(pg, ids, counts = false) {
+  return html`<div class="g2-dist-list">
+    ${repeat(ids, (id) => id, (id) => html`<button type="button" class=${classMap({ 'g2-dist-item': true, on: graph2.solo === id })} data-g2-pkg=${id}>
+      <span class="g2-dist-dot" style=${styleMap({ background: pkgColor(id) })}></span>
+      <span class="g2-dist-name">${pkgLabelOf(id)}</span>
+      ${counts ? html`<span class="g2-dist-count">${pg.importedBy.get(id).length}</span>` : null}
+    </button>`)}
+  </div>`
+}
+
+function renderDependencyCard(pg, id) {
+  const n = pg.byPkg.get(id)
+  if (!n) return html`<div class="g2-empty-state">Select a package to trace its importers and dependencies.</div>`
+  const importers = pg.importedBy.get(id) ?? [], imports = pg.importsOf.get(id) ?? []
+  return html`<div class="g2-selection-card">
+    <div class="g2-sel-head">
+      <span class="g2-sel-dot" style=${styleMap({ background: pkgColor(id) })}></span>
+      <span class="g2-sel-id">${n.label}</span>
+    </div>
+    ${n.totalIssues ? html`<div class="g2-sel-section">${renderSevChips(n.own)}</div>` : null}
+    <div class="g2-sel-section">
+      <div class="g2-sel-section-label">Imported by (${importers.length})</div>
+      ${renderDependencyList(pg, importers.toSorted())}
+    </div>
+    <div class="g2-sel-section">
+      <div class="g2-sel-section-label">Dependencies (${imports.length})</div>
+      ${renderDependencyList(pg, imports.toSorted())}
+    </div>
   </div>`
 }

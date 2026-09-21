@@ -185,6 +185,7 @@ export function buildBundleGraphData(details) {
   const reasons = bundleGraphReasons(details, full.origToStripped.keys())
   if (graph2.bundleReasonFor !== details.integrity) {
     graph2.bundleReasonFor = details.integrity
+    graph2.dependencyPackagesView = false
     graph2.bundleReason = null
   }
   const { tree, origToStripped, selected } = filterBundleGraphReason(full.tree, full.origToStripped, reasons, graph2.bundleReason)

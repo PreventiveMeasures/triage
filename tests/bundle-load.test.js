@@ -20,7 +20,7 @@ const index = await createBundleMetadata({ integrity: entry.integrity, kind: 'so
 beforeEach(() => {
   stored.clear(); recorded.clear(); reads = 0; writes = 0; renders = 0; readGate = null
   saved = Promise.withResolvers()
-  state.bundles = [entry]; selectBundle(entry.integrity)
+  state.bundles = [entry]; selectBundle(entry.integrity, 'overview')
 })
 
 it('does not preload source bundles for report hash lookups, even on cache misses', async () => {
@@ -70,7 +70,7 @@ it('source tabs load full bundles directly and stale upgrades cannot replace a n
     assert.equal(state.bundleDetails.fileHashes.size, 1)
   }
   assert.equal(reads, 4)
-  selectBundle(entry.integrity)
+  selectBundle(entry.integrity, 'overview')
   await openBundle(entry.integrity)
   let release
   readGate = new Promise((resolve) => { release = resolve })
@@ -93,4 +93,33 @@ it('a corrupt index falls back to parsing and regenerates a valid index after th
   const metadata = await buildBundleDetails(entry.integrity, entry, { sources: false })
   assert.equal(metadata.metadataOnly, true)
   assert.equal(reads, 1)
+})
+
+it('keeps detail tabs between bundles and clears bundle-specific source/search state', () => {
+  for (const tab of ['graph', 'code', 'search', 'terminal', 'treemap', 'issues', 'overview']) {
+    selectBundle(entry.integrity, tab)
+    state.bundleSourceFile = 'src/main.js'
+    state.bundleCodeSearchQuery = 'old bundle'
+    state.bundleSearchQuery = 'old search'
+    selectBundle('second-bundle')
+    assert.equal(state.bundleDetailsTab, tab)
+    assert.equal(state.selectedBundle, 'second-bundle')
+    assert.equal(state.bundleSourceFile, null)
+    assert.equal(state.bundleCodeSearchQuery, '')
+    assert.equal(state.bundleSearchQuery, '')
+  }
+})
+
+it('resets to Overview after a non-bundle view, but honors explicit tab restores', () => {
+  for (const view of ['findings', 'links', 'packages', 'repositories']) {
+    selectBundle(entry.integrity, 'graph')
+    state.currentView = view
+    selectBundle('second-bundle')
+    assert.equal(state.bundleDetailsTab, 'overview')
+  }
+  state.currentView = 'findings'
+  selectBundle(entry.integrity, 'graph')
+  assert.equal(state.bundleDetailsTab, 'graph', 'boot restores the saved tab')
+  selectBundle('second-bundle', 'compare')
+  assert.equal(state.bundleDetailsTab, 'compare', 'explicit navigation wins')
 })

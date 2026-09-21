@@ -488,7 +488,7 @@ async function addFiles(files) {
     // open-bundle pipeline so the panel populates without a second
     // click.
     selectBundle(lastBundleIntegrity)
-    persistLastBundle(lastBundleIntegrity)
+    persistLastBundle(lastBundleIntegrity, state.bundleDetailsTab)
     render()
     await renderSidebar()
     openBundle(lastBundleIntegrity)
