@@ -428,14 +428,14 @@ describe('workspace conflicts follow App visibility', () => {
     assert.equal(getRevalidationConflicts().size, 1)
   })
 
-  it('cannot inherit report detail mode in a workspace, including a one-report workspace', () => {
+  it('unfolds a workspace row without handing back what the merge ruled out', () => {
     state.reports = [report('first.json', [app('P'), upstream('confirmed', 'Reachable.')], [source('X', { revalidate: 'refuted' })])]
-    state.revalidationDetailed = true
-    assert.equal(underlyingFindingsShown(), false)
     assert.deepEqual(ids(getMergedGroups().map(sortTabs)), [['P']])
+    state.revalidationDetailed = true
+    assert.equal(underlyingFindingsShown(), true, 'the detail stop reads the same in a workspace')
+    assert.deepEqual(ids(getMergedGroups().map(sortTabs)), [['P', 'D']], 'the folded row comes back, the refuted one stays out of the merge')
     state.currentWorkspace = null
-    assert.equal(underlyingFindingsShown(), true)
-    assert.deepEqual(ids(getMergedGroups().map(sortTabs)), [['P', 'D'], ['X']])
+    assert.deepEqual(ids(getMergedGroups().map(sortTabs)), [['P', 'D'], ['X']], 'a single report hands its ruled-out row back too')
   })
 
   it('retains conflict detection inside an individual report', () => {

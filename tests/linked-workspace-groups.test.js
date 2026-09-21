@@ -99,6 +99,10 @@ describe('workspace linked-row integration', () => {
   it('merges only in workspace App view, including a workspace with a single report', async () => {
     await link([a.id, b.id])
     assert.deepEqual(ids(getMergedGroups().map(sortTabs)), [[a.id, b.id]], 'imported App tab stays visible beside the pass tab')
+    state.revalidationDetailed = true
+    assert.deepEqual(ids(getMergedGroups().map(sortTabs)), [[a.id, depA.id, b.id]], 'the linked row stays one row and shows its workings')
+    state.revalidationDetailed = false
+    assert.deepEqual(ids(getMergedGroups().map(sortTabs)), [[a.id, b.id]], 'and folds them away again')
     state.currentWorkspace = null
     assert.equal(getMergedGroups().length, 2, 'report view never merges by links')
     state.currentWorkspace = 'workspace'
@@ -116,6 +120,15 @@ describe('workspace linked-row integration', () => {
     assert.equal(getMergedGroups().length, 1, 'one-report workspaces still use explicit App links')
     state.currentWorkspace = null
     assert.equal(getMergedGroups().length, 2, 'opening that report restores its own rows')
+  })
+
+  it('keeps row boundaries where a link runs through tabs the detail stop reveals', async () => {
+    state.reports = [{ fileName: 'first.json', groups: [[a, depA]] }, { fileName: 'second.json', groups: [[b, depB]] }]
+    await link([depA.id, depB.id])
+    assert.equal(getMergedGroups().length, 2, 'a link between folded dependency tabs does not join two App rows')
+    state.revalidationDetailed = true
+    assert.equal(getMergedGroups().length, 2, 'and still does not once the reader can see them')
+    state.revalidationDetailed = false
   })
 
   it('uses the triage conflict indicator without disabling App mode or changing source status', async () => {

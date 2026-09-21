@@ -1,7 +1,12 @@
 // Explicit links combine already-resolved workspace App rows. This is a view
 // grouping, not report deduplication: each report's revalidation answer has
 // already been checked in its own row, and links never create report conflicts.
-export function mergeLinkedWorkspaceGroups(groups, duplicatesOf, visibleTabs) {
+//
+// `visibleTabs` decides which tabs may BRIDGE two rows; `retainedTabs` (the
+// same projection unless the caller says otherwise) decides which tabs the
+// combined row keeps. They part when a display choice shows a row more of
+// itself without meaning to re-draw the workspace's row boundaries.
+export function mergeLinkedWorkspaceGroups(groups, duplicatesOf, visibleTabs, retainedTabs = visibleTabs) {
   const parent = groups.map((_, i) => i)
   const find = (i) => {
     while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i] }
@@ -40,7 +45,7 @@ export function mergeLinkedWorkspaceGroups(groups, duplicatesOf, visibleTabs) {
     // Retain the tabs visible in each original row. An imported App finding
     // or an unjudged source row must not disappear when linked to a pass row.
     const visible = new Map()
-    for (const i of indices) for (const f of tabs[i]) if (!visible.has(key(f))) visible.set(key(f), f)
+    for (const i of indices) for (const f of retainedTabs(groups[i])) if (!visible.has(key(f))) visible.set(key(f), f)
     const members = new Map()
     for (const i of indices) {
       for (const f of groups[i]) {
