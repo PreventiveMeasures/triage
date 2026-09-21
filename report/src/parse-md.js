@@ -30,7 +30,7 @@
 // carry anything mandatory.
 
 import { frozenIdBasis } from './parse-md-id.js'
-import { findMdLink, normalizeNewlines, splitHeadingLine, unescapeMd } from './md-structure.js'
+import { LIST_MARKER_RE, findMdLink, normalizeNewlines, splitHeadingLine, unescapeMd } from './md-structure.js'
 
 const VALID_SEVERITIES = new Set(['critical', 'high', 'medium', 'low', 'high_bug', 'bug', 'informational'])
 
@@ -93,7 +93,9 @@ function parseBlock(block) {
   // the description is an always-open block. They survive a round trip
   // through this finding's own export, which writes them as sections
   // that parse-deepview-md.js narrativeSplit reads back as fields.
-  if (sections['reproduction steps']) finding.reproduction = sections['reproduction steps']
+  if (sections['reproduction steps']) {
+    finding.reproduction = normalizeStepList(sections['reproduction steps'])
+  }
   if (sections['recommended fix']) finding.recommendation = sections['recommended fix']
   if (meta.repository) finding.repo = { github: meta.repository }
   // Auxiliary metadata, kept as plain strings: nothing renders these
@@ -191,6 +193,67 @@ function parseLocation(loc) {
   // the fallback puts raw text there, and that is an id discriminator,
   // not an href.
   return { file, line, locationLink, linked: link !== null }
+}
+
+// The `## Reproduction steps` section as a reader can follow it. This
+// report sometimes writes a whole sequence as ONE list item, in two
+// shapes, and neither reads as a list:
+//
+//   * a RUN-IN enumeration — `1. 1) Save 2) Restart 3) Watch`, which
+//     markdown reads as one step whose text holds all the others —
+//     becomes a line per step;
+//   * a list of ONE step stops being a list, its marker numbering the
+//     single thing the section says.
+//
+// The steps keep the numbers the report gave them, gaps and all: this
+// text is printed as written, so a `6)` behind a `4)` is the report's
+// own count rather than something to renumber.
+//
+// Only a section that IS one item is touched — no other line may open a
+// list of its own — and the run-in reading is tried behind the outer
+// marker (`1. 1) …`) and at the line's own start (`1) … 2) …`), since
+// either can carry the enumeration. The id comes from the RAW block
+// (parse-md-id.js), so reading the section better moves nothing.
+function normalizeStepList(text) {
+  const lines = text.split('\n')
+  const at = lines.findIndex((line) => line.trim())
+  if (at === -1 || !LIST_MARKER_RE.test(lines[at])) return text
+  if (lines.some((line, i) => i !== at && LIST_MARKER_RE.test(line))) return text
+  const item = lines[at].replace(/^ */u, '')
+  const body = item.replace(LIST_MARKER_RE, '')
+  if (!body.trim()) return text
+  const steps = runInSteps(body) ?? runInSteps(item)
+  // A body that opens on a marker of its own is an enumeration this
+  // can't read — `1. 3) Later 2) Earlier` counts down — and unwrapping
+  // the item would leave that marker leading the section.
+  if (steps === null && LIST_MARKER_RE.test(body)) return text
+  const read = steps === null ? [body]
+    : steps.length === 1 ? [steps[0].step]
+      : steps.map(({ number, step }) => `${number}. ${step}`)
+  lines.splice(at, 1, ...read)
+  return lines.join('\n')
+}
+
+// `1) Save 2) Restart` → a step per marker, or null when the text is no
+// run-in list: the first marker has to open it and the numbers have to
+// ascend, or a step that merely cites `RFC 2616) …` would split the
+// prose around it. A number in parens — `curl(1)`, `(2) results` — is
+// not a marker, and a marker with NOTHING behind it — a truncated
+// `1) Save 2)` — is a sequence this can't read, not a step of its own.
+const RUN_IN_STEP_RE = /(?:^|[ \t])(\d{1,9})\)(?=[ \t]|$)/gu
+
+function runInSteps(text) {
+  const marks = [...text.matchAll(RUN_IN_STEP_RE)]
+  if (marks.length === 0 || marks[0].index !== 0) return null
+  const steps = []
+  for (const [i, mark] of marks.entries()) {
+    const number = Number(mark[1])
+    if (i > 0 && number <= steps[i - 1].number) return null
+    const step = text.slice(mark.index + mark[0].length, marks[i + 1]?.index).trim()
+    if (!step) return null
+    steps.push({ number, step })
+  }
+  return steps
 }
 
 // Rows of an `## Evidence` section, in document order:

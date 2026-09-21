@@ -21,7 +21,7 @@
 const FENCE_RE = /^( *)(```|~~~)/u
 // A list marker and the gap to its text; `m[0].length` is the column
 // the item's continuation lines are indented to.
-const LIST_MARKER_RE = /^( *)(?:[-*+]|\d{1,9}[.)]) +(?=\S)/u
+export const LIST_MARKER_RE = /^( *)(?:[-*+]|\d{1,9}[.)]) +(?=\S)/u
 
 export function fenceRanges(text) {
   const ranges = []
