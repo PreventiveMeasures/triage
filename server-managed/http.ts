@@ -11,6 +11,7 @@
 //   GET  /api/reports/<id>       → view a report: admin, or ≥view role + team membership | 401/404
 //   GET  /api/reports/<id>/triage → triage entries (by finding id, shared across reports) for a viewable report's findings | 401/404
 //   POST /api/reports/<id>/triage → write triage entries: admin, or ≥triage role + membership | 401/403/404
+//   GET  /api/reports/<id>/triage/history?finding=<fid> → one visible finding's triage trail, newest first | 400/401/404
 //   GET  /api/avatar/<id>        → cached avatar bytes by user id | 401/404
 //   GET  /api/admin/users        → admin-only user list | 401/403
 //   POST /api/admin/set-role     → admin sets another user's role | 401/403/404
@@ -40,7 +41,7 @@ import type { AvatarStore } from './avatar-store.ts'
 import type { BlobStore } from './blob-store.ts'
 import { bundleIntegrity, bundleKind, reportBundleHashes } from './bundle.ts'
 import type { ManagedConfig } from './config.ts'
-import type { ManagedDb, ManagedSession, StoredUser, TriageRow } from './db.ts'
+import type { ManagedDb, ManagedSession, StoredUser, TriageEventRow, TriageRow } from './db.ts'
 import type { OriginGate } from '../server-common/origin.ts'
 import { isRole, roleAtLeast } from '../common/managed/roles.ts'
 import { VISIBILITY_PERMISSIONS, parseTeamUserPermissions } from '../common/managed/permissions.ts'
@@ -69,6 +70,9 @@ const BUNDLE_PREFIX = '/api/admin/bundles/'
 const MY_TEAMS_PATH = '/api/teams'
 const MY_REPORT_PREFIX = '/api/reports/'
 const MY_REPORT_TRIAGE_SUFFIX = '/triage'
+const MY_REPORT_TRIAGE_HISTORY_SUFFIX = '/triage/history'
+// The most trail rows one history read returns (newest first).
+const MAX_TRIAGE_HISTORY = 200
 const ADMIN_TEAMS_PATH = '/api/admin/teams'
 const TEAM_DELETE_PATH = '/api/admin/teams/delete'
 const TEAM_RENAME_PATH = '/api/admin/teams/rename'
@@ -692,10 +696,11 @@ async function visibleFindingIds(deps: ManagedHttpDeps, user: StoredUser, report
   return ids
 }
 
-// A stored triage row → its wire entry: only set fields present, `false` kept
-// for flagged (the explicit un-flag tombstone must round-trip), and null for
-// the row of a cleared entry (every field null) — the reader adopts the clear.
-function triageWireEntry(row: TriageRow): TriageEntryPatch | null {
+// A stored triage row (current state or a trail event) → its wire entry: only
+// set fields present, `false` kept for flagged (the explicit un-flag tombstone
+// must round-trip), and null for the row of a cleared entry (every field
+// null) — the reader adopts the clear.
+function triageWireEntry(row: Pick<TriageRow, 'color' | 'triage' | 'comment' | 'fix' | 'flagged'>): TriageEntryPatch | null {
   const e: TriageEntryPatch = {}
   if (row.color != null) e.color = row.color
   if (isTriageBucket(row.triage)) e.triage = row.triage
@@ -720,6 +725,26 @@ async function handleGetReportTriage(res: ServerResponse, deps: ManagedHttpDeps,
   const entries: Record<string, TriageEntryPatch | null> = {}
   for (const row of await deps.db.listTriage([...visible])) entries[row.findingId] = triageWireEntry(row)
   sendJson(res, 200, { entries })
+}
+
+// GET /api/reports/<id>/triage/history?finding=<fid> — one finding's triage
+// trail (newest first, capped), gated exactly like the entries: the caller
+// may view the report, and the finding is one their visibility permissions
+// keep in it (a stripped or foreign id 404s without revealing whether it
+// exists). Each event is the entry as written then (null = a clear), who
+// wrote it and when; "what changed" is the diff against the next-older event.
+async function handleGetReportTriageHistory(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string, query: URLSearchParams): Promise<void> {
+  const s = await readSession(deps.config, deps.db, cookie, Date.now())
+  if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
+  if (!(await canViewReport(deps, s.user, id))) { sendJson(res, 404, { error: 'no-report' }); return }
+  const finding = query.get('finding') ?? ''
+  if (finding === '' || finding.length > MAX_FINDING_ID) { sendJson(res, 400, { error: 'bad-request' }); return }
+  const visible = await visibleFindingIds(deps, s.user, id)
+  if (!visible.has(finding)) { sendJson(res, 404, { error: 'no-finding' }); return }
+  const events = (await deps.db.listTriageHistory(finding, MAX_TRIAGE_HISTORY)).map((row: TriageEventRow) => ({
+    seq: row.seq, at: row.at, actorLogin: row.actorLogin, batchId: row.batchId, entry: triageWireEntry(row),
+  }))
+  sendJson(res, 200, { finding, events })
 }
 
 // POST /api/reports/<id>/triage — write triage entries for a report's findings.
@@ -981,9 +1006,15 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (method === 'DELETE') { await handleDeleteBundle(req, res, deps, cookie, id); return }
       send405(res, 'GET, DELETE'); return
     }
-    // Per-finding triage on a viewable report. The '/triage' suffix is matched
-    // before the bare per-id slice below (a report id is a uuid, so it never
-    // ends in '/triage') — same trick as REPORT_SET_REPO_PATH above.
+    // Per-finding triage on a viewable report. The '/triage' suffixes are
+    // matched before the bare per-id slice below (a report id is a uuid, so it
+    // never ends in them) — same trick as REPORT_SET_REPO_PATH above; the
+    // longer '/triage/history' goes first.
+    if (path.startsWith(MY_REPORT_PREFIX) && path.endsWith(MY_REPORT_TRIAGE_HISTORY_SUFFIX)) {
+      const id = path.slice(MY_REPORT_PREFIX.length, -MY_REPORT_TRIAGE_HISTORY_SUFFIX.length)
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      await handleGetReportTriageHistory(res, deps, cookie, id, url.searchParams); return
+    }
     if (path.startsWith(MY_REPORT_PREFIX) && path.endsWith(MY_REPORT_TRIAGE_SUFFIX)) {
       const id = path.slice(MY_REPORT_PREFIX.length, -MY_REPORT_TRIAGE_SUFFIX.length)
       if (method === 'GET') { await handleGetReportTriage(res, deps, cookie, id); return }

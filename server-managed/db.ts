@@ -148,6 +148,31 @@ CREATE TABLE IF NOT EXISTS finding_triage (
   updated_at       INTEGER NOT NULL
 ) STRICT;
 
+-- The trail behind finding_triage: one row per write that CHANGED an entry,
+-- holding the entry as written (every field NULL = a clear), who wrote it and
+-- when. finding_triage stays the current-state projection reads hit; this is
+-- walked only for a finding's history. The wire is whole-entry replace, so a
+-- snapshot per write is exactly what arrived and "what changed" is the diff
+-- against the previous row for the same id, computed on read. batch_id groups
+-- the rows of one request. seq is the rowid: a total order that breaks ties
+-- on at. actor_id / actor_login follow the uploaded_by / uploaded_by_login
+-- convention (live account, durable login snapshot). Rows are never deleted
+-- here — an id no report carries any more is the tombstone GC's concern.
+CREATE TABLE IF NOT EXISTS finding_triage_event (
+  seq          INTEGER PRIMARY KEY,
+  finding_id   TEXT NOT NULL,
+  batch_id     TEXT NOT NULL,
+  color        TEXT,
+  triage       TEXT,
+  comment      TEXT,
+  fix          TEXT,
+  flagged      INTEGER,
+  actor_id     TEXT REFERENCES managed_user(id) ON DELETE SET NULL,
+  actor_login  TEXT,
+  at           INTEGER NOT NULL
+) STRICT;
+CREATE INDEX IF NOT EXISTS finding_triage_event_finding_idx ON finding_triage_event(finding_id, seq);
+
 -- Teams group users + repos for access scoping. A team has just a name here;
 -- the two link tables below carry the many-many relations.
 CREATE TABLE IF NOT EXISTS managed_team (
@@ -312,6 +337,22 @@ export interface TriageRow {
   updatedAt: number
 }
 
+// One row of a finding's triage trail: the entry as written by that event
+// (every field null = a clear), the actor's login resolved like TriageRow's
+// writer, and the request it came in with.
+export interface TriageEventRow {
+  seq: number
+  findingId: string
+  batchId: string
+  color: string | null
+  triage: string | null
+  comment: string | null
+  fix: string | null
+  flagged: boolean | null
+  actorLogin: string | null
+  at: number
+}
+
 // A stored bundle's metadata. Bytes live in the blob-store keyed by `id`;
 // `integrity` (sha512-<base64>) is the content-addressed identity (UNIQUE),
 // matched against a report's bundleHashes to auto-link.
@@ -423,10 +464,14 @@ export interface ManagedDb {
   // entry comes back as a row with every field null (its tombstone).
   // setTriage replaces one row wholesale, stamping the writer — a null/empty
   // entry writes the tombstone rather than deleting; setTriageEntries does the
-  // same for a batch in one transaction: it lands whole or not at all.
+  // same for a batch in one transaction: it lands whole or not at all. A write
+  // that leaves the entry as it is changes nothing — neither the row's writer
+  // stamp nor the trail. Every change also appends to finding_triage_event;
+  // listTriageHistory walks one finding's trail, newest first.
   listTriage(findingIds: readonly string[]): Promise<TriageRow[]>
   setTriage(findingId: string, entry: TriageEntryPatch | null, updatedBy: string | null, updatedByLogin: string | null, now: number): Promise<void>
   setTriageEntries(entries: readonly (readonly [string, TriageEntryPatch | null])[], updatedBy: string | null, updatedByLogin: string | null, now: number): Promise<void>
+  listTriageHistory(findingId: string, limit: number): Promise<TriageEventRow[]>
   // Bundles ("Manage bundles"). insertBundle records an uploaded bundle (bytes
   // in the blob-store); getBundleByIntegrity dedupes uploads + resolves a
   // report's bundleHashes; getBundle reads one row (download); listBundles joins
@@ -571,6 +616,23 @@ function prepareStatements(db: DatabaseSync) {
          color = excluded.color, triage = excluded.triage, comment = excluded.comment,
          fix = excluded.fix, flagged = excluded.flagged, updated_by = excluded.updated_by,
          updated_by_login = excluded.updated_by_login, updated_at = excluded.updated_at`,
+    ),
+    selectTriageStateStmt: db.prepare(
+      `SELECT color, triage, comment, fix, flagged FROM finding_triage WHERE finding_id = ?`,
+    ),
+    insertTriageEventStmt: db.prepare(
+      `INSERT INTO finding_triage_event (finding_id, batch_id, color, triage, comment, fix, flagged, actor_id, actor_login, at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ),
+    selectTriageHistoryStmt: db.prepare(
+      `SELECT e.seq AS seq, e.finding_id AS findingId, e.batch_id AS batchId, e.color AS color, e.triage AS triage,
+              e.comment AS comment, e.fix AS fix, e.flagged AS flagged,
+              COALESCE(u.login, e.actor_login) AS actorLogin, e.at AS at
+         FROM finding_triage_event e
+         LEFT JOIN managed_user u ON u.id = e.actor_id
+        WHERE e.finding_id = ?
+        ORDER BY e.seq DESC
+        LIMIT ?`,
     ),
     // The ids arrive as one JSON array (json_each), so a report's worth of
     // them is one statement, not a chunked IN list. COALESCE the live login
@@ -768,25 +830,42 @@ type TriageDbRow = {
   comment: string | null; fix: string | null; flagged: number | null
   updatedByLogin: string | null; updatedAt: number
 }
+type TriageStateDbRow = { color: string | null; triage: string | null; comment: string | null; fix: string | null; flagged: number | null }
+type TriageEventDbRow = TriageStateDbRow & { seq: number; findingId: string; batchId: string; actorLogin: string | null; at: number }
 
 // The per-finding triage slice of ManagedDb. Closes over its prepared
 // statements (and the handle, for the batch write's transaction). A
 // null/empty entry writes the tombstone — every field NULL, writer and time
 // stamped — so a later reader learns the entry was cleared rather than never
-// set.
+// set. Every change is also appended to the trail; a write equal to the
+// current row is skipped altogether, so a client re-pushing what already
+// stands neither re-stamps the writer nor echoes into the trail.
 function triageMethods(db: DatabaseSync, stmts: ReturnType<typeof prepareStatements>) {
-  const { upsertTriageStmt, selectTriageStmt } = stmts
-  function writeEntry(findingId: string, entry: TriageEntryPatch | null, updatedBy: string | null, updatedByLogin: string | null, now: number): void {
+  const { upsertTriageStmt, selectTriageStmt, selectTriageStateStmt, insertTriageEventStmt, selectTriageHistoryStmt } = stmts
+  function writeEntry(findingId: string, entry: TriageEntryPatch | null, batchId: string, updatedBy: string | null, updatedByLogin: string | null, now: number): void {
     const e = entry ?? {}
     // `flagged: false` is a real value (the explicit un-flag tombstone), so it
     // is 0 here and only null/absent maps to NULL.
-    upsertTriageStmt.run(
-      findingId, e.color ?? null, e.triage ?? null, e.comment ?? null,
-      e.fix ?? null, e.flagged == null ? null : (e.flagged ? 1 : 0),
-      updatedBy, updatedByLogin, now,
-    )
+    const next: TriageStateDbRow = {
+      color: e.color ?? null, triage: e.triage ?? null, comment: e.comment ?? null,
+      fix: e.fix ?? null, flagged: e.flagged == null ? null : (e.flagged ? 1 : 0),
+    }
+    const cur = selectTriageStateStmt.get(findingId) as TriageStateDbRow | undefined
+    if (cur != null && cur.color === next.color && cur.triage === next.triage && cur.comment === next.comment
+      && cur.fix === next.fix && cur.flagged === next.flagged) return
+    upsertTriageStmt.run(findingId, next.color, next.triage, next.comment, next.fix, next.flagged, updatedBy, updatedByLogin, now)
+    insertTriageEventStmt.run(findingId, batchId, next.color, next.triage, next.comment, next.fix, next.flagged, updatedBy, updatedByLogin, now)
   }
   return {
+    listTriageHistory(findingId: string, limit: number): Promise<TriageEventRow[]> {
+      const rows = selectTriageHistoryStmt.all(findingId, limit) as TriageEventDbRow[]
+      return Promise.resolve(rows.map((r) => ({
+        seq: r.seq, findingId: r.findingId, batchId: r.batchId,
+        color: r.color, triage: r.triage, comment: r.comment, fix: r.fix,
+        flagged: r.flagged == null ? null : r.flagged === 1,
+        actorLogin: r.actorLogin, at: r.at,
+      })))
+    },
     listTriage(findingIds: readonly string[]): Promise<TriageRow[]> {
       if (findingIds.length === 0) return Promise.resolve([])
       const rows = selectTriageStmt.all(JSON.stringify(findingIds)) as TriageDbRow[]
@@ -797,15 +876,25 @@ function triageMethods(db: DatabaseSync, stmts: ReturnType<typeof prepareStateme
       })))
     },
     setTriage(findingId: string, entry: TriageEntryPatch | null, updatedBy: string | null, updatedByLogin: string | null, now: number): Promise<void> {
-      writeEntry(findingId, entry, updatedBy, updatedByLogin, now)
+      // A single write is its own batch. The row and its event go together.
+      db.exec('BEGIN')
+      try {
+        writeEntry(findingId, entry, randomUUID(), updatedBy, updatedByLogin, now)
+        db.exec('COMMIT')
+      } catch (err) {
+        try { db.exec('ROLLBACK') } catch {}
+        throw err
+      }
       return Promise.resolve()
     },
     setTriageEntries(entries: readonly (readonly [string, TriageEntryPatch | null])[], updatedBy: string | null, updatedByLogin: string | null, now: number): Promise<void> {
       // One transaction, so a batch is never half-applied by a mid-loop error
-      // (and costs one fsync under synchronous = FULL, not one per row).
+      // (and costs one fsync under synchronous = FULL, not one per row); one
+      // batch id groups its rows in the trail.
+      const batchId = randomUUID()
       db.exec('BEGIN')
       try {
-        for (const [findingId, entry] of entries) writeEntry(findingId, entry, updatedBy, updatedByLogin, now)
+        for (const [findingId, entry] of entries) writeEntry(findingId, entry, batchId, updatedBy, updatedByLogin, now)
         db.exec('COMMIT')
       } catch (err) {
         try { db.exec('ROLLBACK') } catch {}
