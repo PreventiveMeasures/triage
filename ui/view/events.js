@@ -2389,7 +2389,7 @@ report.addEventListener('revalidation-change', (e) => {
     showToast('App mode off is not recommended; it can conflate triage for issues in dependencies.', { kind: 'warning' })
   } else if (e.detail.on) hideToast()
   configureRevalidation(state.showRevalidation, state.upstreamOnly)
-  applyOpeningFilters(getShownGroups())
+  applyOpeningFilters(getShownGroups(), { resetSort: false })
   render()
 })
 report.addEventListener('revalidation-conflicts-open', () => {

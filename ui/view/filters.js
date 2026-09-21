@@ -128,13 +128,11 @@ export function resetFilters() {
   // is on screen.
   state.filterRevalidate = ''
   state.filterPartial = ''
-  // Default sort tracks the dataset: if any finding carries a
-  // `priority`, sort priority-descending (most important first),
-  // else severity. Called on first-ingest only (subsequent loads
-  // keep the user's choice).
-  const hasPriority = state.reports.some((r) =>
-    r.groups.some((g) => g.some((f) => f.priority !== undefined)))
-  state.sortBy = hasPriority ? 'priority-desc' : 'severity'
+  // Opening sort is derived from the complete, merged view in
+  // applyOpeningFilters(). Reports are ingested one at a time, so
+  // looking at state.reports here would let an early report decide the
+  // sort before the workspace's other rows have arrived.
+  state.sortBy = 'severity'
 }
 
 // Every `filter*` field the predicates below read — the same set
@@ -285,8 +283,13 @@ function showsAtConfidence(g, min) {
 // reshapes the set and so has to ask again rather than keep an answer
 // that was about a different one.
 export function defaultConfidenceFloor(groups) {
-  if (!groups.some((g) => g.some((f) => confidenceOnScale(f) !== undefined))) return 0
-  const countAtMin = (min) => groups.reduce((n, g) =>
+  // App mode folds the source tabs a revalidation pass already answered
+  // under its App tab. Those hidden copies must not lower the opening floor
+  // for a workspace that otherwise has the same visible rows as its App
+  // report. Keep source-only rows intact; they are real rows in the App view.
+  const visible = groups.map(drawnTabs).filter((g) => g.length > 0)
+  if (!visible.some((g) => g.some((f) => confidenceOnScale(f) !== undefined))) return 0
+  const countAtMin = (min) => visible.reduce((n, g) =>
     n + (g.some((f) => (confidenceOnScale(f) ?? -1) >= min) ? 1 : 0), 0)
   let base
   if (countAtMin(6) <= 25) base = 6
@@ -404,34 +407,56 @@ function effectiveFloor(groups, confMin) {
 //     too), so opening it on an outcome would set a filter with no
 //     control on screen to clear it.
 //
-// Pure in its arguments — it reads no state — so ingest.js can call it
-// between writing the floor and the first render.
-export function defaultRevalidateFilter(groups, confMin) {
-  const shown = groups.filter((g) => showsAtConfidence(g, effectiveFloor(groups, confMin)))
-  if (shown.length === 0) return ''
-  const kinds = new Set(activeRevalidateKinds('confirmed', ''))
-  if (!groups.some((g) => g.some((f) => kinds.has(revalidateKind(f))))) return ''
-  // Every finding Confirmed would put on screen — whole rows, since a
-  // row shows in full when any of its findings answers the outcome.
-  const onScreen = new Set()
-  for (const g of groups) {
-    if (!matchesConfirmed(g)) continue
-    for (const f of g) onScreen.add(tabKey(f))
+// Both the opening default and the dropdown lock use the same coverage:
+// findings represented by Confirmed rows, plus findings explicitly ruled out.
+// Read the original groups before drawnTabs folds away their source members.
+function confirmedCoverage(groups) {
+  // A workspace may carry an un-stamped source copy from report A while
+  // report B explicitly ruled out the same id. The ruled-out copy is
+  // removed before workspace rows are merged, so it cannot vouch for its
+  // source copy during the coverage check below. Remember those ids before
+  // that projection disappears: Confirmed may hide the source copy too,
+  // even when the App finding that caused the ruling has no
+  // `revalidateInputs` list of its own.
+  const covered = new Set(groups.ruledOutIds ?? [])
+  for (const raw of groups) {
+    for (const f of raw) if (isRuledOut(f)) covered.add(tabKey(f))
   }
-  for (const g of shown) {
-    for (const f of g) {
-      // A finding the pass RULED OUT is never a cost: refuted or
-      // unreachable, it isn't a finding any more, and leaving it off
-      // is what the reader picked Confirmed for. It has to be exempt
-      // per FINDING rather than per row — a row is on screen for
-      // whichever of its findings answers the filter, so a knocked-
-      // down one riding a row that Confirmed drops would otherwise
-      // hold the range in front on its own account.
-      if (isRuledOut(f)) continue
-      if (!onScreen.has(tabKey(f))) return ''
+  for (const raw of groups) {
+    const g = drawnTabs(raw)
+    if (g.length === 0) continue
+    if (!matchesConfirmed(g)) continue
+    // A folded source copy is not a cost of Confirmed, but its id is still
+    // represented by the App row. Keep all raw members in the coverage set
+    // so a duplicate source-only row from another report is recognized as
+    // the same issue rather than making Confirmed look lossy.
+    for (const f of raw) {
+      covered.add(tabKey(f))
+      // App reports can carry the source findings they represent only as
+      // `revalidateInputs`, rather than as members of the same physical row.
+      // Those inputs are still present in the App row's visible result, so a
+      // duplicate source-only row from another report must not keep the
+      // workspace on Confidence.
+      if (f.isApp && Array.isArray(f.revalidateInputs)) {
+        for (const id of f.revalidateInputs) if (id) covered.add(id)
+      }
     }
   }
-  return 'confirmed'
+  return covered
+}
+
+function confirmedIsDefault(visible, confMin, covered) {
+  const floor = effectiveFloor(visible, confMin)
+  const shown = visible.filter((g) => showsAtConfidence(g, floor))
+  if (shown.length === 0) return false
+  const kinds = new Set(activeRevalidateKinds('confirmed', ''))
+  if (!visible.some((g) => g.some((f) => kinds.has(revalidateKind(f))))) return false
+  return shown.every((g) => g.every((f) => covered.has(tabKey(f))))
+}
+
+export function defaultRevalidateFilter(groups, confMin) {
+  const visible = groups.map(drawnTabs).filter((g) => g.length > 0)
+  return confirmedIsDefault(visible, confMin, confirmedCoverage(groups)) ? 'confirmed' : ''
 }
 
 // Basic App view can fix the outcome to Confirmed only when it is already
@@ -442,11 +467,13 @@ export function defaultRevalidateFilter(groups, confMin) {
 // reader's default view even though they sit in the broader 6–10 band.
 export function shouldLockConfirmed(groups) {
   if (state.showRevalidation === false || state.upstreamOnly || underlyingFindingsShown()) return false
-  if (defaultRevalidateFilter(groups, defaultConfidenceFloor(groups)) !== 'confirmed') return false
-  const floor = effectiveFloor(groups, 6)
-  return groups.every((g) => !showsAtConfidence(g, floor)
+  const visible = groups.map(drawnTabs).filter((g) => g.length > 0)
+  const covered = confirmedCoverage(groups)
+  if (!confirmedIsDefault(visible, defaultConfidenceFloor(groups), covered)) return false
+  const floor = effectiveFloor(visible, 6)
+  return visible.every((g) => !showsAtConfidence(g, floor)
     || !g.some((f) => displayedSeverity(f, state.severityMode) !== 'low')
-    || matchesConfirmed(g))
+    || g.every((f) => covered.has(tabKey(f))))
 }
 
 // Put the confidence block where a fresh load of `groups` would put
@@ -469,11 +496,42 @@ export function shouldLockConfirmed(groups) {
 //
 // Always the groups the view SHOWS — getMergedGroups, not a report's
 // own — since that is the set the answer will be applied to.
-export function applyOpeningFilters(groups) {
+export function applyOpeningFilters(groups, { resetSort = true } = {}) {
   state.filterConfMin = defaultConfidenceFloor(groups)
   state.filterConfMax = 10
   state.filterRevalidate = defaultRevalidateFilter(groups, state.filterConfMin)
   state.filterPartial = ''
+  if (resetSort) state.sortBy = priorityApplies(groups) ? 'priority-desc' : 'severity'
+}
+
+// Priority is a meaningful ordering only when every visible row can be
+// ordered. A workspace can merge a priority-stamped source finding from one
+// report with an App finding from another, so checking for any priority would
+// promote an ordering whose primary App entries have no value. Rows carrying
+// App entries must have a priority on one of those App entries; a source copy
+// cannot stand in for it while the App layer is on screen.
+export function priorityApplies(groups) {
+  if (!Array.isArray(groups) || groups.length === 0) return false
+  return groups.every((group) => {
+    if (priorityForGroup(group) === undefined) return false
+    const app = group.filter((f) => f.isApp)
+    if (app.length === 0) return true
+    // A ruled-out App finding has a useful implicit priority of zero when
+    // the row has no explicit priority anywhere. An explicit source-copy
+    // priority cannot vouch for an App entry in a row that has one.
+    const rowHasExplicit = group.some((f) => f.priority !== undefined)
+    return app.some((f) => f.priority !== undefined
+      || (!rowHasExplicit && isRuledOut(f)))
+  })
+}
+
+// A ruled-out finding still needs a stable place in a priority ordering. It
+// is priority 0 when the row carries no explicit priority; an explicit value
+// anywhere in that row wins, as it does for the availability test above.
+export function priorityForGroup(group) {
+  const explicit = group.find((f) => f.priority !== undefined)
+  if (explicit) return explicit.priority
+  return group.some(isRuledOut) ? 0 : undefined
 }
 
 // Source/dependency and confidence/revalidation selectors establish the
@@ -765,6 +823,19 @@ const SORTERS = {
 export function applySorting(groups) {
   const cmp = SORTERS[state.sortBy]
   if (!cmp) return [...groups]
+  if (state.sortBy === 'priority-desc' || state.sortBy === 'priority-asc') {
+    const dir = state.sortBy === 'priority-desc' ? 'desc' : 'asc'
+    const missing = dir === 'desc' ? -1 : 11
+    return groups
+      .map((g) => ({ p: priorityForGroup(g), g }))
+      .toSorted((a, b) => {
+        const va = a.p ?? missing
+        const vb = b.p ?? missing
+        return (dir === 'desc' ? vb - va : va - vb)
+          || primaryTab(a.g).file.localeCompare(primaryTab(b.g).file)
+      })
+      .map((x) => x.g)
+  }
   return groups
     .map((g) => ({ p: primaryTab(g), g }))
     .toSorted((a, b) => cmp(a.p, b.p))

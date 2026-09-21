@@ -619,13 +619,17 @@ export function getMergedGroups() {
   }
   // Hide ruled-out findings before counts, filters, tabs and outcome options
   // are derived. isRuledOut already follows the App/upstream lens.
-  return model.visibleGroups ??= groups.flatMap((group) => {
-    const kept = group.filter((f) => !isRuledOut(f))
-    if (kept.length === group.length) return [group]
-    if (kept.length === 0) return []
-    kept.workspaceKey = groupKey(group)
-    return [kept]
-  })
+  return model.visibleGroups ??= (() => {
+    const visibleGroups = groups.flatMap((group) => {
+      const kept = group.filter((f) => !isRuledOut(f))
+      if (kept.length === group.length) return [group]
+      if (kept.length === 0) return []
+      kept.workspaceKey = groupKey(group)
+      return [kept]
+    })
+    Object.defineProperty(visibleGroups, 'ruledOutIds', { value: groups.ruledOutIds, configurable: true })
+    return visibleGroups
+  })()
 }
 
 // The merged groups the view actually SHOWS — the triage bucket the
@@ -643,7 +647,9 @@ export function getMergedGroups() {
 export function getShownGroups() {
   const groups = getMergedGroups()
   if (state.viewMode === 'kanban') return groups
-  return groups.filter((g) => groupState(g).commonTriage === state.shownTriage)
+  const shown = groups.filter((g) => groupState(g).commonTriage === state.shownTriage)
+  Object.defineProperty(shown, 'ruledOutIds', { value: groups.ruledOutIds, configurable: true })
+  return shown
 }
 
 // A rendered group plus the revalidation rows the App lens dropped

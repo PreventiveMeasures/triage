@@ -23,11 +23,11 @@
 //     `.value=` below lands on a `<select>` that has no options
 //     yet; the browser drops a value it can't match and then, once
 //     the options do arrive with none of them marked selected,
-//     falls back to the first one. That silently showed `Severity ↓`
-//     over a list really ordered by priority — the ingest default
-//     whenever findings carry `priority` (see resetFilters in
-//     filters.js), which every view inherits and the kanban board
-//     makes most visible. The attribute rides along with the option
+//     falls back to the first one. That can silently show `Severity ↓`
+//     over a list really ordered by priority — the opening default is
+//     derived from the complete merged set (including implicit priority
+//     zero for ruled-out rows), which every view inherits and the kanban
+//     board makes most visible. The attribute rides along with the option
 //     itself, so it is in place before the browser picks.
 //   * `.value=` through Lit's `live()` directive covers every later
 //     render — a stale-filter clear in the parent's pipeline

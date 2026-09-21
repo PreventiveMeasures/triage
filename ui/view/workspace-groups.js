@@ -8,9 +8,13 @@ import { splitRevalidationInputs } from './revalidation-input-groups.js'
 // which rows may merge; imports from other analyzers remain App findings.
 export function mergeReportGroups(reports, { showRevalidation = true, upstreamOnly = false, hideRuledOut = false, merges = [] } = {}) {
   const rows = []
+  const ruledOutIds = new Set()
   for (let reportIndex = 0; reportIndex < reports.length; reportIndex++) {
     const report = reports[reportIndex]
     for (const original of report.groups) {
+      for (const finding of original) {
+        if (finding.id && ['refuted', 'unreachable'].includes(revalidateKindOf(finding))) ruledOutIds.add(finding.id)
+      }
       // Visibility precedes merging: a hidden answer from another app must
       // neither cause a conflict nor gap-fill the answer the reader will see.
       const kept = upstreamOnly
@@ -133,6 +137,7 @@ export function mergeReportGroups(reports, { showRevalidation = true, upstreamOn
         : conflict)
     }
   }
+  Object.defineProperty(groups, 'ruledOutIds', { value: ruledOutIds, configurable: true })
   return { groups, conflicts }
 }
 
