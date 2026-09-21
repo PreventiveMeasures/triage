@@ -420,7 +420,9 @@ button:not(:disabled):active,
    chrome class names (-title / -meta / -label / -header / -section /
    -chip(s) / -count / -bar / -tag(s) / -hint / -stat(s) / -name) so
    new chrome inherits the treatment without having to touch this
-   rule. */
+   rule. They are a heuristic over THIS project's naming, so anything
+   whose class names come from elsewhere has to be exempted below —
+   see `.token`. */
 button,
 summary,
 select,
@@ -478,13 +480,30 @@ h6,
    Chrome/Safari, but the explicit rule guarantees the inherited
    `none` from a wrapping `.toolbar` or `.packages-detail-meta`
    doesn't reach the field across UAs — and re-enables text cursor
-   on the copyable blobs inside chrome-cursored containers. */
+   on the copyable blobs inside chrome-cursored containers.
+
+   `.token` is here because the chrome wildcards above read class
+   names the project does not write. Prism stamps `<span class="token
+   class-name">` around the `SyntaxError` in `throw new
+   SyntaxError(err)`, and `[class$='-name']` matches that attribute
+   as squarely as it matches `bundles-name` — so the identifier went
+   unselectable, and dragging across the line copied `throw new
+   (err)`. Nine of the bundled grammars' token kinds collide this way
+   (class-name, attr-name, macro-name, function-name, argument-name,
+   attribute-class-name, doctype-tag, table-header, type-hint), and a
+   new grammar can always add another, so the exemption is `.token`
+   itself rather than a patch per suffix. Reasserting on the token is
+   what it takes: the `pre` / `code` entries above only cover the
+   container, and a wildcard matching the span DIRECTLY beats an
+   inherited value. Equal specificity to the wildcards, so it is
+   source order that wins it — keep this rule below them. */
 input,
 textarea,
 [contenteditable],
 pre,
 code,
-.mono {
+.mono,
+.token {
   cursor: text;
   user-select: text;
   -webkit-user-select: text;
