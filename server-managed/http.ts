@@ -9,7 +9,7 @@
 //   GET  /api/auth/session       → { user, csrfToken } | 401
 //   GET  /api/teams              → the current user's teams + their reports | 401
 //   GET  /api/reports/<id>       → view a report: admin, or ≥view role + team membership | 401/404
-//   GET  /api/reports/<id>/triage → per-finding triage entries for a viewable report | 401/404
+//   GET  /api/reports/<id>/triage → triage entries (by finding id, shared across reports) for a viewable report's findings | 401/404
 //   POST /api/reports/<id>/triage → write triage entries: admin, or ≥triage role + membership | 401/403/404
 //   GET  /api/avatar/<id>        → cached avatar bytes by user id | 401/404
 //   GET  /api/admin/users        → admin-only user list | 401/403
@@ -40,7 +40,7 @@ import type { AvatarStore } from './avatar-store.ts'
 import type { BlobStore } from './blob-store.ts'
 import { bundleIntegrity, bundleKind, reportBundleHashes } from './bundle.ts'
 import type { ManagedConfig } from './config.ts'
-import type { ManagedDb, ManagedSession, ReportTriageRow, StoredUser } from './db.ts'
+import type { ManagedDb, ManagedSession, StoredUser, TriageRow } from './db.ts'
 import type { OriginGate } from '../server-common/origin.ts'
 import { isRole, roleAtLeast } from '../common/managed/roles.ts'
 import { VISIBILITY_PERMISSIONS, parseTeamUserPermissions } from '../common/managed/permissions.ts'
@@ -653,64 +653,84 @@ async function canTriageReport(deps: ManagedHttpDeps, user: StoredUser, reportId
   return deps.db.userCanReadReport(user.id, reportId)
 }
 
-// The finding ids a non-admin/manage viewer may see in a report: the stored
-// bytes run through the viewer's content filter (viewerReportBytes' rule),
-// then parse + flatten + id-backfill THE SAME WAY the client ingests them, so
-// the set matches the ids that viewer's client renders and keys triage by.
-// null = unrestricted (admin/manage see the whole report); missing bytes or an
-// unparseable report yield an empty set (nothing is provably visible).
-async function visibleFindingIds(deps: ManagedHttpDeps, user: StoredUser, reportId: string): Promise<Set<string> | null> {
-  if (user.role === 'admin' || user.role === 'manage') return null
+// The finding ids a viewer sees in a report — what the report-scoped triage
+// endpoints read and write, since the rows themselves are per finding id. The
+// stored bytes run through the viewer's content filter (viewerReportBytes'
+// rule: admin/manage whole, others per their visibility permissions), then
+// parse + flatten + id-backfill THE SAME WAY the client ingests them, so the
+// set matches the ids that viewer's client renders and keys triage by. Missing
+// bytes or an unparseable report yield an empty set (nothing is provably
+// visible). A report is immutable, so the set is memoized per (report, filter)
+// — a bounded map per deps, dropping the oldest entries — rather than
+// re-parsed on every debounced push.
+const VISIBLE_IDS_CACHE_MAX = 256
+const visibleIdsCaches = new WeakMap<ManagedHttpDeps, Map<string, Set<string>>>()
+async function visibleFindingIds(deps: ManagedHttpDeps, user: StoredUser, reportId: string): Promise<Set<string>> {
+  const whole = user.role === 'admin' || user.role === 'manage'
+  const perms = whole ? null : await deps.db.reportPermissionsFor(user.id, reportId)
+  const key = `${reportId}\n${perms == null ? 'whole' : `${perms.dependencies}/${perms.security}`}`
+  let cache = visibleIdsCaches.get(deps)
+  if (cache == null) { cache = new Map(); visibleIdsCaches.set(deps, cache) }
+  const hit = cache.get(key)
+  if (hit != null) return hit
   const ids = new Set<string>()
   const bytes = await deps.reportStore.get(reportId)
   if (bytes == null) return ids
-  const perms = await deps.db.reportPermissionsFor(user.id, reportId)
-  const report = await loadFindings(filterReportContent(bytes.toString('utf8'), perms))
+  const text = bytes.toString('utf8')
+  const report = await loadFindings(perms == null ? text : filterReportContent(text, perms))
   if (report == null) return ids
   for (const f of report.findings) {
     const id = (f as { id?: unknown }).id
     if (typeof id === 'string' && id !== '') ids.add(id)
   }
+  while (cache.size >= VISIBLE_IDS_CACHE_MAX) {
+    const oldest = cache.keys().next().value
+    if (oldest === undefined) break
+    cache.delete(oldest)
+  }
+  cache.set(key, ids)
   return ids
 }
 
-// A stored triage row → its wire entry: only set fields present, and `false`
-// kept for flagged (the explicit un-flag tombstone must round-trip).
-function triageWireEntry(row: ReportTriageRow): TriageEntryPatch {
+// A stored triage row → its wire entry: only set fields present, `false` kept
+// for flagged (the explicit un-flag tombstone must round-trip), and null for
+// the row of a cleared entry (every field null) — the reader adopts the clear.
+function triageWireEntry(row: TriageRow): TriageEntryPatch | null {
   const e: TriageEntryPatch = {}
   if (row.color != null) e.color = row.color
   if (isTriageBucket(row.triage)) e.triage = row.triage
   if (row.comment != null) e.comment = row.comment
   if (row.fix != null) e.fix = row.fix
   if (row.flagged != null) e.flagged = row.flagged
-  return e
+  return Object.keys(e).length > 0 ? e : null
 }
 
-// GET /api/reports/<id>/triage — the stored per-finding triage entries for a
-// report the caller may view (canViewReport; 404 hides existence and denial
-// alike, matching handleViewReport). A non-admin/manage viewer only receives
-// entries for findings their visibility permissions keep in the report — an
-// entry on a stripped finding must not leak that the finding exists.
+// GET /api/reports/<id>/triage — the stored triage entries for the findings of
+// a report the caller may view (canViewReport; 404 hides existence and denial
+// alike, matching handleViewReport). Entries are keyed by finding id and shared
+// by every report carrying the finding; a viewer only receives entries for
+// findings their visibility permissions keep in THIS report — an entry on a
+// stripped finding must not leak that the finding exists. A cleared entry is
+// sent as null (the server's tombstone), distinct from one never set.
 async function handleGetReportTriage(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string): Promise<void> {
   const s = await readSession(deps.config, deps.db, cookie, Date.now())
   if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
   if (!(await canViewReport(deps, s.user, id))) { sendJson(res, 404, { error: 'no-report' }); return }
   const visible = await visibleFindingIds(deps, s.user, id)
-  const entries: Record<string, TriageEntryPatch> = {}
-  for (const row of await deps.db.listReportTriage(id)) {
-    if (visible != null && !visible.has(row.findingId)) continue
-    entries[row.findingId] = triageWireEntry(row)
-  }
+  const entries: Record<string, TriageEntryPatch | null> = {}
+  for (const row of await deps.db.listTriage([...visible])) entries[row.findingId] = triageWireEntry(row)
   sendJson(res, 200, { entries })
 }
 
-// POST /api/reports/<id>/triage — write per-finding triage entries. Mutation:
-// same-origin + CSRF, then canTriageReport (404 on any failure — role too low,
-// no membership, or no such report). Body { entries: { <findingId>: entry|null } }
-// — whole-entry replace, last write wins, null clears the row; each entry
-// validates through parseTriageEntryPatch (400 on a malformed one). A
-// non-admin/manage writer may only touch findings their visibility permissions
-// keep in the report — a stripped finding id 404s without revealing it exists.
+// POST /api/reports/<id>/triage — write triage entries for a report's findings.
+// Mutation: same-origin + CSRF, then canTriageReport (404 on any failure — role
+// too low, no membership, or no such report). Body { entries: { <findingId>:
+// entry|null } } — whole-entry replace, last write wins, null clears the entry
+// (a tombstone, so a later reader adopts the clear); each entry validates
+// through parseTriageEntryPatch (400 on a malformed one). Every id must be a
+// finding the writer sees in THIS report — the report is the authorization
+// scope for rows that are themselves per finding id — so a stripped (or
+// foreign) finding id 404s without revealing whether it exists.
 async function handleSetReportTriage(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string): Promise<void> {
   const s = await checkMutation(req, res, deps, cookie)
   if (s == null) return
@@ -730,10 +750,10 @@ async function handleSetReportTriage(req: IncomingMessage, res: ServerResponse, 
     parsed.push([findingId, patch])
   }
   const visible = await visibleFindingIds(deps, s.user, id)
-  if (visible != null && parsed.some(([findingId]) => !visible.has(findingId))) {
+  if (parsed.some(([findingId]) => !visible.has(findingId))) {
     sendJson(res, 404, { error: 'no-finding' }); return
   }
-  await deps.db.setReportTriageEntries(id, parsed, s.user.id, s.user.login, Date.now())
+  await deps.db.setTriageEntries(parsed, s.user.id, s.user.login, Date.now())
   sendJson(res, 200, { ok: true })
 }
 

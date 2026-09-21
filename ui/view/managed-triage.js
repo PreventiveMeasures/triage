@@ -1,20 +1,20 @@
 // Server-side triage for managed team reports. When a team report is open
 // (`state.managedReport`), the server's per-finding entries hydrate the local
-// triage map, and local edits made while it is open push back debounced
-// through the triage change-notifier slot — the managed counterpart of the
-// e2e sync fan-out (which claims the same slot, but only when its client
-// loads, and never in managed mode). The wire carries color / triage /
-// comment / fix / flagged; `ignoredReports` stays client-local and `deleted`
-// folds into the bucket.
+// triage map, and local edits push back debounced through the triage
+// change-notifier slot — the managed counterpart of the e2e sync fan-out
+// (which claims the same slot, but only when its client loads, and never in
+// managed mode). The wire carries color / triage / comment / fix / flagged;
+// `ignoredReports` stays client-local and `deleted` folds into the bucket.
 //
-// `state.triage` is ONE map keyed by finding id across every loaded report —
-// the app's rule that the same finding (same fingerprint id) in two scans
-// shares its triage. The server's rows are per (report, finding), so only what
-// changes WHILE a report is open counts as that report's edit: an entry that
-// was already local when the report opened (made in another report, or
-// hydrated from one) is displayed under the app's rule but never pushed on
-// the open report's behalf — nothing crosses reports server-side by merely
-// viewing them.
+// Both sides are keyed by finding id alone. `state.triage` is one map across
+// every loaded report — reports mostly repeat one another (a re-scan of the
+// same code carries the same finding ids), and a finding's triage is shared
+// by every report that carries it — and the server stores one row per finding
+// id the same way; a report is only the scope through which a viewer may read
+// or write the ids it carries. So opening a report merges the two maps over
+// its findings: an id the server knows (a value, or the tombstone of a cleared
+// entry) is adopted wholesale, and one it has never seen carries whatever is
+// local up.
 import { bucketOf, saveTriage, setEntry, setTriageChangeNotifier, state } from '#client/index.js'
 import { roleAtLeast } from '../../common/managed/roles.ts'
 import { MAX_FINDING_ID, MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_COLOR, MAX_TRIAGE_ENTRIES, MAX_TRIAGE_TEXT } from '../../common/managed/triage.ts'
@@ -27,8 +27,8 @@ const BODY_OVERHEAD_BYTES = 14
 
 // Wire projection of a triage entry — the five server-persisted fields, empty
 // fields omitted. Returns null when nothing server-relevant remains (which
-// pushes as a row clear). Applied to SERVER values too, so a hydrated entry
-// can't smuggle unexpected fields into the local map.
+// pushes as a clear). Applied to SERVER values too, so a hydrated entry can't
+// smuggle unexpected fields into the local map.
 function wireEntryOf(entry) {
   if (!entry) return null
   const out = {}
@@ -41,8 +41,8 @@ function wireEntryOf(entry) {
   return Object.keys(out).length > 0 ? out : null
 }
 
-// Canonical comparison key for a wire entry; '' = no entry, so "absent from
-// the snapshot" and "cleared" compare equal.
+// Canonical comparison key for a wire entry; '' = no entry, so "unknown to the
+// server" and "cleared" compare equal.
 function wireKey(e) {
   return e == null ? '' : JSON.stringify([e.color ?? '', e.triage ?? '', e.comment ?? '', e.fix ?? '', e.flagged])
 }
@@ -59,15 +59,19 @@ function fitsWire(id, wire) {
 
 const utf8Length = (s) => new TextEncoder().encode(s).length
 
-// The open report's baseline: per finding id, the wire state (wireKey) the
-// server is taken to hold. Seeded on hydrate — from the local map for every
-// loaded id, then from the GET for the ids it returned — and advanced by each
-// landed push. An edit is whatever differs from it.
-let baseline = new Map()
+// What the server is known to hold, per finding id (wireKey strings): learned
+// from every GET and advanced by every landed push, across reports — the ids
+// are the same everywhere. An edit is whatever differs from it; an id absent
+// here is one the server has never been seen to hold.
+const baseline = new Map()
 
-// The edits captured since they last landed, per report id: the report, the
-// baseline they were diffed against, and the wire entries (null = clear) by
-// finding id. Captured at edit time, so neither a view switch nor the next
+// The report whose GET has been adopted — pushes for a report wait for its
+// hydrate, so nothing goes up before the server's copy has been read.
+let hydratedReport = null
+
+// The edits captured since they last landed, per report id: the report they
+// were made in (the endpoint they go to) and the wire entries (null = clear)
+// by finding id. Captured at edit time, so neither a view switch nor the next
 // report's hydrate changes what gets sent — the timer only decides WHEN. A
 // batch that fails transiently is put back here for the next flush.
 const pending = new Map()
@@ -108,7 +112,7 @@ function refusedAsSent(status) {
 function requeue(p, ids) {
   let q = pending.get(p.report.id)
   if (q == null) {
-    q = { report: p.report, baseline: p.baseline, changes: new Map() }
+    q = { report: p.report, changes: new Map() }
     pending.set(p.report.id, q)
   }
   for (const id of ids) if (!q.changes.has(id)) q.changes.set(id, p.changes.get(id))
@@ -145,7 +149,7 @@ async function flush(p) {
     // and let the baseline absorb those entries so they aren't sent again
     // until they change (the other batches still go).
     if (!landed) console.warn('managed: the server refused a triage batch', p.report.id, status, Object.keys(batch))
-    for (const id of Object.keys(batch)) p.baseline.set(id, wireKey(batch[id]))
+    for (const id of Object.keys(batch)) baseline.set(id, wireKey(batch[id]))
   }
 }
 
@@ -159,11 +163,12 @@ function flushPending() {
 }
 
 // The change-notifier hook: fires at the tail of every saveTriage. No-op
-// outside an open team report; otherwise capture the edits now and debounce
-// the send, so a burst (kanban drag, comment typing) collapses into one POST.
+// outside an open, hydrated team report; otherwise capture the edits now and
+// debounce the send, so a burst (kanban drag, comment typing) collapses into
+// one POST.
 function scheduleTriagePush() {
   const open = state.managedReport
-  if (open == null || !canPushTriage()) return
+  if (open == null || open.id !== hydratedReport || !canPushTriage()) return
   let q = pending.get(open.id)
   for (const id of loadedFindingIds()) {
     const wire = wireEntryOf(state.triage.get(id))
@@ -178,7 +183,7 @@ function scheduleTriagePush() {
       continue
     }
     if (q == null) {
-      q = { report: open, baseline, changes: new Map() }
+      q = { report: open, changes: new Map() }
       pending.set(open.id, q)
     }
     q.changes.set(id, wire)
@@ -199,45 +204,45 @@ export function initManagedTriagePush() {
   setTriageChangeNotifier(scheduleTriagePush)
 }
 
-// Hydrate `state.triage` from the server's entries for a just-opened team
-// report. The trusted server wins wholesale per entry — except the client-
-// local `ignoredReports`, which is preserved unless the server entry carries a
-// triage bucket (the triage⊻ignore mutex, mirroring applyTriageEntries).
-// Local entries the server has none for are kept for display (see the header)
-// but become part of this report's baseline, never its edits: only what
-// changes from here on pushes.
+// Merge the server's entries for a just-opened team report's findings into
+// `state.triage`. The trusted server wins wholesale per id it knows — a value,
+// or null for a cleared entry (its tombstone), which clears the local one —
+// except the client-local `ignoredReports`, preserved unless the server entry
+// carries a triage bucket (the triage⊻ignore mutex, mirroring
+// applyTriageEntries). Ids the server has never seen keep their local entry,
+// which the follow-up push carries up: the user's triage of those findings,
+// never uploaded. Pushes for the report wait for this to finish.
 export async function hydrateManagedReportTriage(reportId) {
   if (state.serverMode !== 'managed' || state.managedSession == null) return
+  hydratedReport = null
   // Whatever is still pending goes first, and lands before the server copy is
   // read — so an edit made moments ago is what "server wins" then confirms,
   // not what it reverts.
   flushPending()
-  // The baseline, synchronously: every loaded id starts at its local wire
-  // state, so an edit made before the GET returns is diffed against that and
-  // nothing already local is mistaken for this report's edit.
-  const seeded = new Map()
-  for (const id of loadedFindingIds()) {
-    const key = wireKey(wireEntryOf(state.triage.get(id)))
-    if (key !== '') seeded.set(id, key)
-  }
-  baseline = seeded
   await flushChain
   const entries = await fetchReportTriage(reportId)
   // Bail when the fetch failed or the user already navigated elsewhere.
   if (entries == null || state.managedReport?.id !== reportId) return
   let changed = false
-  for (const [id, raw] of Object.entries(entries)) {
-    const wire = wireEntryOf(raw)
-    seeded.set(id, wireKey(wire))
-    if (wire == null) continue
-    const ignoredReports = wire.triage == null ? state.triage.get(id)?.ignoredReports : undefined
+  for (const id of loadedFindingIds()) {
+    if (!Object.hasOwn(entries, id)) {
+      // Never seen by the server: whatever the baseline remembered is stale.
+      baseline.delete(id)
+      continue
+    }
+    const wire = wireEntryOf(entries[id])
+    baseline.set(id, wireKey(wire))
+    const ignoredReports = wire?.triage == null ? state.triage.get(id)?.ignoredReports : undefined
     if (setEntry(state.triage, id, { ...wire, ignoredReports })) changed = true
   }
+  hydratedReport = reportId
   if (changed) {
     // Persist the adopted entries and repaint the imperatively-rendered
-    // surfaces (kanban, toolbar counts) that don't observe state.triage. The
-    // save's notifier finds nothing to push: the baseline already says so.
+    // surfaces (kanban, toolbar counts) that don't observe state.triage; the
+    // save's notifier then pushes what the server hasn't seen.
     await saveTriage()
     render()
+  } else {
+    scheduleTriagePush()
   }
 }

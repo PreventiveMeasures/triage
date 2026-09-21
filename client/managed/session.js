@@ -66,11 +66,13 @@ export async function fetchReport(id) {
   try { return await res.text() } catch { return null }
 }
 
-// GET /api/reports/<id>/triage → the server's per-finding triage entries for a
-// team report, as `{ <findingId>: { color?, triage?, comment?, fix?, flagged? } }`
-// (already restricted server-side to the findings this viewer may see), or
-// null on any failure / no access. `ignoredReports` never rides this wire —
-// the per-report ignore stays a client-local concept.
+// GET /api/reports/<id>/triage → the server's triage entries for a team
+// report's findings, as `{ <findingId>: { color?, triage?, comment?, fix?,
+// flagged? } | null }` — null for an entry cleared server-side (its
+// tombstone), an absent id for one the server has never seen — restricted
+// server-side to the findings this viewer may see; null on any failure / no
+// access. `ignoredReports` never rides this wire — the per-report ignore stays
+// a client-local concept.
 export async function fetchReportTriage(id) {
   const body = await getJson(`/api/reports/${encodeURIComponent(id)}/triage`)
   const entries = body?.entries

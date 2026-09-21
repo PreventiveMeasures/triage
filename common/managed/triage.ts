@@ -1,10 +1,13 @@
-// Per-finding triage annotations on a managed team report — shared by the
-// managed server (which stores one row per (report, finding) and validates the
-// wire shape) and the managed client (which mirrors entries into its local
-// triage map). A wire entry carries the five server-persisted fields below;
-// the client's `ignoredReports` deliberately does NOT ride this wire — the
-// per-report ignore is a client-local, multi-report concept keyed by report
-// name, meaningless to a single server-stored report.
+// Per-finding triage annotations on a managed server — shared by the server
+// (which stores one row per finding id, validates the wire shape, and decides
+// per report which ids a viewer may read or write) and the managed client
+// (which mirrors entries into its local triage map). Keyed by finding id
+// alone, like that map: reports mostly repeat one another (a re-scan of the
+// same code carries the same finding ids), and a finding's triage is shared by
+// every report that carries it. A wire entry carries the five server-persisted
+// fields below, or is null for a cleared entry (the server's tombstone); the
+// client's `ignoredReports` deliberately does NOT ride this wire — the
+// per-report ignore is a client-local concept keyed by report name.
 export type TriageBucket = 'inprogress' | 'fixed' | 'invalid' | 'deleted'
 
 export const TRIAGE_BUCKETS: readonly TriageBucket[] = ['inprogress', 'fixed', 'invalid', 'deleted']
