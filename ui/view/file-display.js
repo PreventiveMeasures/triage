@@ -65,6 +65,23 @@ export const PRODUCER_LABELS = {
   'default': 'DeepView',
 }
 
+// The branded producer a FINDING carries, or null when it has none to
+// show. Its own `_source` marker decides it (ingest.js stamps it per
+// finding, null for the analyzer's own dump), and the answer is a
+// REPORT_LOGOS / PRODUCER_LABELS key.
+//
+// Null covers both "DeepView's own" and "a marker nothing here draws":
+// the surfaces that mark a finding with its producer — the finding
+// tabs' branded segment, the kanban card's corner — are the ones where
+// DeepView is the unmarked default, so they want one question answered
+// ("is there a logo for this?"), not two. `'default'` is excluded
+// explicitly because a report CAN name it as its source, and that
+// spelling of "mine" should read the same as naming nothing.
+export function findingBrand(f) {
+  const analyzer = f._source ?? f.source
+  return analyzer !== 'default' && Object.hasOwn(REPORT_LOGOS, analyzer) ? analyzer : null
+}
+
 // Resolve the bucket key (default / claude-security / codex-security
 // / deepsec / piolium) for a given OPFS filename. The content's own
 // answer decides it, cached on counts.js: DeepSec, Piolium and Claude

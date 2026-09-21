@@ -26,7 +26,7 @@ function createLocalStorage() {
 globalThis.localStorage ??= createLocalStorage()
 
 const { setCount } = await import('../client/counts.js')
-const { FILE_ICONS, PRODUCER_LABELS, displayName, groupOf } = await import('../ui/view/file-display.js')
+const { FILE_ICONS, PRODUCER_LABELS, displayName, findingBrand, groupOf } = await import('../ui/view/file-display.js')
 
 describe('groupOf — the bucket a file lands in', () => {
   beforeEach(() => { globalThis.localStorage.clear() })
@@ -106,6 +106,50 @@ describe('every bucket has an icon and a producer name', () => {
     setCount('dupes.json', 3, 'links')
     assert.equal(groupOf('dupes.json'), 'links')
     assert.ok(FILE_ICONS.links)
+  })
+})
+
+// The rule behind every surface that marks a finding with WHO wrote
+// it — the finding tabs' branded right segment and the workspace
+// kanban card's bottom-right corner. Both ask one question ("is there
+// a logo to draw here?"), so `null` has to cover the analyzer's own
+// findings as squarely as it covers a marker with no artwork.
+describe('findingBrand — the producer a finding is marked with', () => {
+  it('names the producer a finding carries', () => {
+    for (const source of ['claude-security', 'codex-security', 'deepsec', 'piolium']) {
+      assert.equal(findingBrand({ _source: source }), source)
+    }
+  })
+
+  // The finding's OWN marker outranks the report's: a re-imported
+  // export can mix a product's findings with the analyzer's own runs,
+  // and ingest stamps `_source` per finding for exactly that reason.
+  it('reads the finding\'s own marker, falling back to a bare `source`', () => {
+    assert.equal(findingBrand({ _source: 'deepsec', source: 'piolium' }), 'deepsec')
+    assert.equal(findingBrand({ source: 'piolium' }), 'piolium')
+  })
+
+  it('marks nothing for the analyzer\'s own findings', () => {
+    assert.equal(findingBrand({ _source: null }), null, 'no producer named — a DeepView dump')
+    assert.equal(findingBrand({}), null, 'nothing stamped at all')
+    assert.equal(findingBrand({ _source: 'default' }), null, 'the bucket key spelled out')
+  })
+
+  it('marks nothing for a producer with no artwork', () => {
+    assert.equal(findingBrand({ _source: 'some-new-product' }), null)
+  })
+
+  // `Object.hasOwn` and not `in`: a finding whose marker happens to
+  // spell an Object.prototype key must not resolve to one.
+  it('does not mistake an inherited property for a logo', () => {
+    assert.equal(findingBrand({ _source: 'toString' }), null)
+    assert.equal(findingBrand({ _source: 'constructor' }), null)
+  })
+
+  it('has a producer name for every brand it can return', () => {
+    for (const source of ['claude-security', 'codex-security', 'deepsec', 'piolium']) {
+      assert.ok(PRODUCER_LABELS[findingBrand({ _source: source })], `no producer name for ${source}`)
+    }
   })
 })
 

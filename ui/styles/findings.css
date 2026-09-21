@@ -548,6 +548,45 @@
   }
 }
 
+/* Producer mark for a finding another analyzer wrote — workspace
+   kanban only (see kanbanCardTemplate for who gets one). The finding
+   tabs' branded right segment (view/finding-tabs.css `.tab-analyzer`)
+   at a smaller scale and cut loose into a rounded chip of its own,
+   ringed on all four sides.
+   It rides the meta row's flow as that row's last item rather than
+   being pinned to the card's corner, which is what keeps it on the
+   same line as file:line and the confidence number — and means the
+   row's own gap and the card's padding do the spacing, with nothing
+   to reserve and nothing to overlap. `align-self` because the row
+   aligns its text on a shared baseline and a glyph box has none worth
+   sharing. */
+.kanban-card .kanban-analyzer {
+  flex: 0 0 auto;
+  align-self: center;
+  /* Nudged a pixel down off the row's optical center, where it sits
+     better against the descender-less file path beside it. Relative
+     rather than a margin so it is a paint offset only — the layout
+     box stays put and the row (and so the card) keeps its height. */
+  position: relative;
+  top: 1px;
+  box-sizing: border-box;
+  display: flex;
+  width: 15px;
+  height: 15px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  /* Brand fills are the loudest color on an otherwise muted row; back
+     them off a touch so the chip identifies without competing with
+     the severity badge above it. */
+  opacity: .9;
+
+  /* The logo fills the chip; its own right-hand rule is the file
+     row's separator and has nothing to separate here. */
+  & .report-logo { flex: 1; border: 0; }
+  & svg { display: block; width: 11px; height: 11px; }
+}
+
 /* ── Kanban detail modal ────────────────────────────────────────────
    Centered overlay opened from a kanban card click. The wrapping
    backdrop catches outside-clicks; the inner panel holds a real

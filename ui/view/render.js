@@ -3,7 +3,7 @@ import { classMap } from 'lit/directives/class-map.js'
 import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { FILE_ICONS } from './file-display.js'
+import { FILE_ICONS, PRODUCER_LABELS, REPORT_LOGOS, findingBrand } from './file-display.js'
 import { FOCUS_SPLIT_MAX, FOCUS_SPLIT_MIN, listBundles, listWorkspaces, state } from '#client/index.js'
 import { isBundleInRemote, isInRemote, remoteCount, triageSync } from './client-sync.js'
 import { installShadowTooltipListener } from './tooltip.js'
@@ -860,6 +860,15 @@ function kanbanCardTemplate(g, opts = {}) {
   const title = findingTitle(activeTab) || '(untitled finding)'
   const isKanban = variant === 'kanban'
   const isRail = variant === 'kanban-side'
+  // Producer mark — a small branded chip closing the meta row, on the
+  // same line as file:line and the confidence number. Workspace views
+  // only — that is the one place a board mixes analyzers, so elsewhere
+  // the mark would be the same on every card and say nothing — and
+  // only for a finding some other analyzer produced, DeepView's own
+  // being the unmarked default (`findingBrand` answers both at once).
+  // Board cards only, like the fix / comment shortcut above: the
+  // focus-side queue stays indicator-free.
+  const brand = isKanban && state.currentWorkspace ? findingBrand(activeTab) : null
   const classes = {
     'kanban-card': true,
     'has-conflict': groupSt.hasConflict,
@@ -918,6 +927,9 @@ function kanbanCardTemplate(g, opts = {}) {
       ${activeTab.confidence === undefined || activeTab.confidence === null
         ? nothing
         : html`<span class="kanban-conf" title=${`Confidence ${activeTab.confidence}/10`}>${activeTab.confidence}</span>`}
+      ${brand
+        ? html`<span class="kanban-analyzer" role="img" title=${PRODUCER_LABELS[brand]} aria-label=${PRODUCER_LABELS[brand]}>${unsafeHTML(REPORT_LOGOS[brand])}</span>`
+        : nothing}
     </div>`
   if (isKanban) {
     return html`<div
