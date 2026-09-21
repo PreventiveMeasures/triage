@@ -35,7 +35,7 @@ export function mergeLinkedWorkspaceGroups(groups, duplicatesOf, visibleTabs) {
   }
   if (components.size === groups.length) return groups
   const key = (f) => f.id ?? String(f._id)
-  return [...components.values()].map((indices) => {
+  const merged = [...components.values()].map((indices) => {
     if (indices.length === 1) return groups[indices[0]]
     // Retain the tabs visible in each original row. An imported App finding
     // or an unjudged source row must not disappear when linked to a pass row.
@@ -53,4 +53,6 @@ export function mergeLinkedWorkspaceGroups(groups, duplicatesOf, visibleTabs) {
     group.linkedTabs = [...visible.values()]
     return group
   })
+  Object.defineProperty(merged, 'ruledOutIds', { value: groups.ruledOutIds, configurable: true })
+  return merged
 }

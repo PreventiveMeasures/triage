@@ -11,8 +11,8 @@ const { mergeReportGroups } = await import('../ui/view/workspace-groups.js')
 const { revalidationDifferences } = await import('../ui/view/revalidation-conflicts.js')
 const { state } = await import('../client/state.ts')
 const { canDropRevalidation, configureDepsDir, configureRevalidation, stampUpstreamFindings } = await import('../ui/view/format.js')
-const { applyOpeningFilters } = await import('../ui/view/filters.js')
-const { findGroupById, getMergedGroups, getRevalidationConflicts, groupKey, groupWithPassRows, sortTabs, underlyingFindingsShown } = await import('../ui/view/group.js')
+const { applyFilters, applyOpeningFilters, shouldLockConfirmed } = await import('../ui/view/filters.js')
+const { findGroupById, getMergedGroups, getShownGroups, getRevalidationConflicts, groupKey, groupWithPassRows, sortTabs, underlyingFindingsShown } = await import('../ui/view/group.js')
 
 const { isAppFinding } = await import('../report/index.js')
 const source = (id, extra = {}) => ({ id, severity: 'high', confidence: 9, file: 'src/auth.js', description: `Finding ${id}`, isApp: isAppFinding(extra, extra.source ?? extra._source), ...extra })
@@ -29,6 +29,75 @@ function permutations(items) {
   if (items.length <= 1) return [items]
   return items.flatMap((item, i) => permutations(items.filter((_, j) => i !== j)).map((rest) => [item, ...rest]))
 }
+
+describe('workspace Confirmed dropdown lock', () => {
+  let saved
+  beforeEach(() => {
+    const fields = ['reports', 'workspaceMerges', 'currentWorkspace', 'showRevalidation', 'upstreamOnly', 'revalidationDetailed', 'viewMode', 'shownTriage', 'triage']
+    saved = Object.fromEntries(fields.map((key) => [key, state[key]]))
+    state.reports = []
+    state.workspaceMerges = []
+    state.showRevalidation = true
+    state.upstreamOnly = false
+    state.revalidationDetailed = false
+    state.shownTriage = null
+    state.triage = new Map()
+    configureRevalidation(true)
+  })
+  afterEach(() => {
+    Object.assign(state, saved)
+    configureRevalidation(state.showRevalidation, state.upstreamOnly)
+  })
+
+  const reports = () => {
+    const inputs = Array.from({ length: 26 }, (_, i) => source(`source-${i}`))
+    const low = source('low', { severity: 'low', confidence: 7 })
+    const refuted = source('refuted'), unreachable = source('unreachable')
+    return [
+      report('analysis.json', ...[...inputs, low, refuted, unreachable].map((f) => [f])),
+      report('app.json',
+        ...inputs.map((f, i) => i % 2 === 0
+          ? [{ ...app(`App-${i}`), revalidateInputs: [f.id] }]
+          : [app(`App-${i}`), { ...f, revalidate: 'partial' }]),
+        [low], [{ ...refuted, revalidate: 'refuted' }], [{ ...unreachable, revalidate: 'unreachable' }]),
+    ]
+  }
+
+  it('hides the whole dropdown for C and A+C in either load order and every findings layout', () => {
+    const [analysis, appReport] = reports()
+    for (const viewMode of ['kanban', 'table', 'list', 'grouped', 'focus']) {
+      state.viewMode = viewMode
+      for (const loaded of [[appReport], [analysis, appReport], [appReport, analysis]]) {
+        state.currentWorkspace = loaded.length > 1 ? 'workspace' : null
+        state.reports = loaded
+        const groups = getShownGroups()
+        applyOpeningFilters(groups)
+        assert.equal(state.filterConfMin, 8)
+        assert.equal(state.filterRevalidate, 'confirmed')
+        assert.equal(shouldLockConfirmed(groups), true, `${viewMode}: ${loaded.map((r) => r.fileName)}`)
+      }
+    }
+  })
+
+  it('keeps the dropdown for a new non-LOW source finding in the 6–10 band', () => {
+    const [analysis, appReport] = reports()
+    analysis.groups.push([source('not represented', { confidence: 6, severity: 'medium' })])
+    state.currentWorkspace = 'workspace'
+    state.reports = [analysis, appReport]
+    const groups = getShownGroups()
+    applyOpeningFilters(groups)
+    assert.equal(state.filterRevalidate, 'confirmed', 'the new 6 is outside the opening 8–10 range')
+    assert.equal(shouldLockConfirmed(groups), false, 'the non-LOW 6–10 coverage check still applies')
+  })
+
+  it('restores the dropdown in the report when underlying findings are shown', () => {
+    state.currentWorkspace = null
+    state.reports = [reports()[1]]
+    assert.equal(shouldLockConfirmed(getShownGroups()), true)
+    state.revalidationDetailed = true
+    assert.equal(shouldLockConfirmed(getShownGroups()), false)
+  })
+})
 
 describe('workspace App row boundaries', () => {
   it('uses the stamped App flag and merges shared upstream findings in the upstream lens', () => {
@@ -76,6 +145,73 @@ describe('workspace App row boundaries', () => {
     assert.equal(conflicts.size, 0)
     applyOpeningFilters(groups)
     assert.equal(state.filterRevalidate, 'confirmed')
+  })
+  it('keeps Confirmed when a source report is fully represented by App inputs', () => {
+    configureRevalidation(true)
+    state.showRevalidation = true
+    state.revalidationDetailed = false
+    const sourceReport = report('analysis.json', [source('a')], [source('b')])
+    const appReport = report(
+      'app.json',
+      [{ ...app('A'), revalidateInputs: ['a'] }],
+      [{ ...app('B'), revalidateInputs: ['b'] }],
+    )
+    const { groups } = mergeReportGroups([sourceReport, appReport])
+    applyOpeningFilters(groups)
+    assert.equal(state.filterRevalidate, 'confirmed')
+    state.filterRevalidate = 'confirmed'
+    assert.deepEqual(applyFilters(groups).map((g) => g.map((f) => f.id)), [['A'], ['B']])
+  })
+  it('keeps Confirmed when represented source copies are ruled out by the App report', () => {
+    configureRevalidation(true)
+    state.showRevalidation = true
+    state.revalidationDetailed = false
+    const sourceReport = report('analysis.json', [source('a')])
+    const appReport = report('app.json', [
+      { ...app('A'), revalidateInputs: ['a'] },
+      source('a', { revalidate: 'refuted' }),
+    ])
+    const { groups } = mergeReportGroups([sourceReport, appReport], { hideRuledOut: true })
+    applyOpeningFilters(groups)
+    assert.equal(state.filterRevalidate, 'confirmed')
+  })
+  it('keeps Confirmed through the live workspace group projection', () => {
+    configureRevalidation(true)
+    state.currentWorkspace = 'workspace'
+    state.showRevalidation = true
+    state.upstreamOnly = false
+    state.revalidationDetailed = false
+    state.workspaceMerges = []
+    state.reports = [
+      report('analysis.json', [source('a')]),
+      report('app.json', [
+        { ...app('A'), revalidateInputs: ['a'] },
+        source('a', { revalidate: 'refuted' }),
+      ]),
+    ]
+    const groups = getMergedGroups()
+    applyOpeningFilters(groups)
+    assert.equal(state.filterRevalidate, 'confirmed')
+    assert.equal(shouldLockConfirmed(groups), true)
+    state.currentWorkspace = null
+    state.reports = []
+  })
+  it('does not let a source copy block Confirmed when another report ruled out its id', () => {
+    configureRevalidation(true)
+    state.currentWorkspace = 'workspace'
+    state.showRevalidation = true
+    state.upstreamOnly = false
+    state.revalidationDetailed = false
+    state.workspaceMerges = []
+    state.reports = [
+      report('analysis.json', [source('a')]),
+      report('app.json', [app('A'), source('a', { revalidate: 'refuted' })]),
+    ]
+    const groups = getMergedGroups()
+    applyOpeningFilters(groups)
+    assert.equal(state.filterRevalidate, 'confirmed')
+    state.currentWorkspace = null
+    state.reports = []
   })
 
   it('merges rows sharing an App id, including partial overlap, and records real conflicts', () => {

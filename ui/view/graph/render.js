@@ -120,6 +120,15 @@ export function renderTopBar(graph, options, extraControls = null) {
     data-g2-packages-view
   ></mode-switch>` : null
 
+  const reasonFilter = graph.reasons?.length > 0 ? html`<label class="g2-reason-filter">
+    <select aria-label="Reason" .value=${live(graph2.bundleReason ?? '')} @change=${(e) => e.currentTarget.dispatchEvent(new CustomEvent('bundle-graph-reason-change', {
+      detail: { reason: e.currentTarget.value || null }, bubbles: true, composed: true,
+    }))}>
+      <option value="" ?selected=${graph2.bundleReason === null}>All</option>
+      ${graph.reasons.map((reason) => html`<option value=${reason} ?selected=${reason === graph2.bundleReason}>${reason}</option>`)}
+    </select>
+  </label>` : null
+
   // When the topbar carries an extra row (Findings-tab embed), the
   // view-mode chooser + All files + Trash sit on the new top row,
   // and the main row keeps the data-shaping filters (severity /
@@ -136,6 +145,8 @@ export function renderTopBar(graph, options, extraControls = null) {
     </div>` : null}
     <div class="graph2-topbar-row graph2-topbar-row-main toolbar-row sev-row">
     ${layoutSelector}
+    ${reasonFilter}
+    ${extraTopRow ? null : splitOwnBtn}
     ${hasAnyVisible ? html`<severity-chips
       .counts=${issueCounts}
       .selected=${[...graph2.selectedSeverities]}
@@ -153,14 +164,6 @@ export function renderTopBar(graph, options, extraControls = null) {
          sibling), so it stays live as the user types without re-
          rendering the topbar per keystroke — input redraws the canvas
          but not the chrome. -->
-    ${graph.reasons?.length > 0 ? html`<label class="g2-reason-filter">
-      <select aria-label="Reason" .value=${live(graph2.bundleReason ?? '')} @change=${(e) => e.currentTarget.dispatchEvent(new CustomEvent('bundle-graph-reason-change', {
-        detail: { reason: e.currentTarget.value || null }, bubbles: true, composed: true,
-      }))}>
-        <option value="" ?selected=${graph2.bundleReason === null}>All</option>
-        ${graph.reasons.map((reason) => html`<option value=${reason} ?selected=${reason === graph2.bundleReason}>${reason}</option>`)}
-      </select>
-    </label>` : null}
     <div class="toolbar-search g2-path-filter-wrap">
       <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
         <circle cx="11" cy="11" r="7"/>
@@ -175,7 +178,6 @@ export function renderTopBar(graph, options, extraControls = null) {
       <button type="button" class="g2-path-filter-clear" id="g2-path-filter-clear" aria-label="Clear filter">✕</button>
     </div>
     ${extraTopRow ? null : allFilesBtn}
-    ${extraTopRow ? null : splitOwnBtn}
     ${extraTopRow ? null : packagesViewBtn}
     ${extraControls}
     <div class="g2-spacer"></div>

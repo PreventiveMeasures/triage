@@ -9,8 +9,8 @@ import { isBundleInRemote, isInRemote, remoteCount, triageSync } from './client-
 import { installShadowTooltipListener } from './tooltip.js'
 import { dropZone, report } from './dom.js'
 import { SEVERITIES, canDropRevalidation, configureDepsDir, configureRevalidation, displayedSeverity, fileLink, findingDisplayName, findingTitle, formatRunMeta, hasSeverityCorrection, isHttpUrl, isModule, lineLink, lineRangeLabel, reachableRevalidateFilters, revalidateKind, stampUpstreamFindings } from './format.js'
-import { activeTabFor, clearMergedGroups, findingRepoFallback, getMergedGroups, getRevalidationGroups, groupKey, groupState, primaryTab, triageEntry, triageScope, underlyingFindingsShown } from './group.js'
-import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, applyScopeFilters, applySorting, isAppStackedGroup, isCrossContextGroup, modelOfFinding, rangeApplies, repositoryFilterValues, shouldLockConfirmed } from './filters.js'
+import { activeTabFor, clearMergedGroups, drawnTabs, findingRepoFallback, getMergedGroups, getRevalidationGroups, groupKey, groupState, primaryTab, triageEntry, triageScope, underlyingFindingsShown } from './group.js'
+import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, applyScopeFilters, applySorting, isAppStackedGroup, isCrossContextGroup, modelOfFinding, priorityApplies, rangeApplies, repositoryFilterValues, shouldLockConfirmed } from './filters.js'
 import { ANALYZER_LABELS } from './analyzer-select.js'
 import { reportDuplicateIds } from './report-duplicates.js'
 import { SOURCE_LABELS, revalidateKindOf } from '../../report/index.js'
@@ -1881,6 +1881,9 @@ function renderImpl() {
     if (t) triageCounts[t]++
     if (isKanban || t === state.shownTriage) allGroups.push(g)
   }
+  // The Confirmed lock needs the same ruled-out evidence as opening filters,
+  // even though those copies were removed before workspace rows were merged.
+  Object.defineProperty(allGroups, 'ruledOutIds', { value: mergedGroups.ruledOutIds })
   // The annotation filter group (comment | fix | flag) self-gates per
   // chip like the triage selector: a chip shows only once at least one
   // finding carries that annotation (scanned over the full loaded set,
@@ -2015,8 +2018,12 @@ function renderImpl() {
   // viewing Untriaged with every untriaged finding scored shows the
   // slider even when hidden buckets (fixed / ignored) hold unscored
   // ones.
-  const hasAnyConfidence = allGroups.length > 0 && rangeApplies(allGroups)
-  const hasAnyPriority = mergedGroups.some((g) => g.some((f) => f.priority !== undefined))
+  const visibleAllGroups = allGroups.map(drawnTabs).filter((g) => g.length > 0)
+  const hasAnyConfidence = visibleAllGroups.length > 0 && rangeApplies(visibleAllGroups)
+  // Priority is offered only when it can order every row. In App view an
+  // App row's source copy cannot supply the missing value: rows carrying App
+  // entries need priority on an App entry as well (see priorityApplies).
+  const hasAnyPriority = priorityApplies(mergedGroups)
   const hasAnyModulesPath = mergedGroups.some((g) => g.some((f) => isModule(f.file)))
   const hasAnySourcePath = mergedGroups.some((g) => g.some((f) => !isModule(f.file)))
   // File sort is only meaningful across multiple files — a single-file

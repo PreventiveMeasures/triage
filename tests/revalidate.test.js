@@ -34,7 +34,7 @@ if (!globalThis[slotKey]) {
 
 const { state } = await import('../client/state.ts')
 const { readReport } = await import('../report/index.js')
-const { applyFilters, applyOpeningFilters, confidenceOnScale, defaultConfidenceFloor, defaultRevalidateFilter, filterRevalidateKind, matchesFilters, rangeApplies, shouldLockConfirmed } = await import('../ui/view/filters.js')
+const { applyFilters, applyOpeningFilters, applySorting, confidenceOnScale, defaultConfidenceFloor, defaultRevalidateFilter, filterRevalidateKind, matchesFilters, priorityApplies, priorityForGroup, rangeApplies, shouldLockConfirmed } = await import('../ui/view/filters.js')
 const { activeTabFor, getMergedGroups, getShownGroups, groupKey, linkableGroups, mergeDuplicateFields, sortTabs } = await import('../ui/view/group.js')
 const {
   PARTIAL_MODES, REVALIDATE_FILTERS, REVALIDATE_KINDS, activeRevalidateKinds,
@@ -76,6 +76,44 @@ function reset() {
 function makeFinding(id, extra = {}) {
   return { id, severity: 'high', file: `src/${id}.js`, description: `desc for ${id}`, ...extra }
 }
+
+describe('priority availability in merged rows', () => {
+  beforeEach(reset)
+
+  it('requires every row and an App entry in App-bearing rows to carry priority', () => {
+    const app = makeFinding('A', { isApp: true, priority: 8 })
+    const source = makeFinding('A', { priority: 4 })
+    assert.equal(priorityApplies([[app, source], [makeFinding('B', { priority: 2 })]]), true)
+    assert.equal(priorityApplies([[makeFinding('A', { isApp: true }), source]]), false)
+    assert.equal(priorityApplies([[app, source], [makeFinding('B')]]), false)
+  })
+
+  it('treats an otherwise unprioritized refuted or unreachable row as priority 0', () => {
+    const refuted = makeFinding('R', { revalidate: 'refuted' })
+    const unreachable = makeFinding('U', { revalidate: 'unreachable' })
+    assert.equal(priorityForGroup([refuted]), 0)
+    assert.equal(priorityForGroup([unreachable]), 0)
+    assert.equal(priorityApplies([[refuted], [makeFinding('P', { priority: 3 })]]), true)
+    assert.equal(priorityForGroup([refuted, makeFinding('R', { priority: 7 })]), 7)
+  })
+
+  it('orders an otherwise unprioritized ruled-out row below positive priorities', () => {
+    state.sortBy = 'priority-desc'
+    const refuted = [makeFinding('R', { revalidate: 'refuted' })]
+    const prioritized = [makeFinding('P', { priority: 1 })]
+    assert.deepEqual(applySorting([refuted, prioritized]), [prioritized, refuted])
+  })
+
+  it('opens on Priority only after the complete merged set is known', () => {
+    state.reports = [{ groups: [[makeFinding('A', { priority: 5 })]] }]
+    state.sortBy = 'severity'
+    applyOpeningFilters([[makeFinding('A', { priority: 5 })]])
+    assert.equal(state.sortBy, 'priority-desc')
+    state.sortBy = 'priority-desc'
+    applyOpeningFilters([[makeFinding('A', { priority: 5 })], [makeFinding('B')]])
+    assert.equal(state.sortBy, 'severity')
+  })
+})
 
 describe('revalidateKind — reading the field', () => {
   it('takes every known value, as the data spells it', () => {
@@ -354,14 +392,23 @@ describe('fixed Confirmed in basic App view', () => {
     assert.equal(shouldLockConfirmed(groups), false)
   })
 
-  it('checks coverage of each row, not row counts or repeated finding IDs', () => {
+  it('keeps duplicate source copies from reopening the dropdown', () => {
     const groups = [
       [confirmed('same')],
       [makeFinding('same', { confidence: 9 })],
       [confirmed('extra')],
     ]
     assert.equal(defaultRevalidateFilter(groups, defaultConfidenceFloor(groups)), 'confirmed')
-    assert.equal(shouldLockConfirmed(groups), false, 'a repeated ID does not cover the unstamped row')
+    assert.equal(shouldLockConfirmed(groups), true, 'Confirmed already represents the repeated ID')
+  })
+
+  it('keeps the dropdown when a source row is only partly covered', () => {
+    const groups = [
+      ...Array.from({ length: 26 }, (_, i) => [confirmed(`C${i}`)]),
+      [makeFinding('C0', { confidence: 6 }), makeFinding('new', { confidence: 6 })],
+    ]
+    assert.equal(defaultRevalidateFilter(groups, defaultConfidenceFloor(groups)), 'confirmed')
+    assert.equal(shouldLockConfirmed(groups), false, 'every finding in a non-LOW row must be covered')
   })
 
   it('keeps the choice if significant findings have not been revalidated', () => {
@@ -707,6 +754,18 @@ describe('revalidate filter — the toolbar dropdown', () => {
       // One issue the stamped row does NOT carry is a real loss.
       const extra = [...b, [makeFinding('3', { confidence: 9 })]]
       assert.equal(defaultRevalidateFilter(extra, 0), '')
+    })
+
+    it('counts App revalidation inputs as covered source rows in a workspace', () => {
+      const app = [pass('A', { confidence: 9, isApp: true, revalidateInputs: ['a', 'b'] })]
+      const source = [
+        makeFinding('a', { confidence: 9 }),
+        makeFinding('b', { confidence: 9 }),
+      ]
+      // The App report represents these source ids through its App row;
+      // another report carrying the source copies adds no issue to the
+      // App-visible table and must not disqualify Confirmed.
+      assert.equal(defaultRevalidateFilter([app, ...source.map((f) => [f])], 8), 'confirmed')
     })
 
     // A row the pass never reached holds the range in front — those
