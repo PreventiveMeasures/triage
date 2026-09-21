@@ -21,9 +21,20 @@ export function tabKey(f) { return f.id ?? String(f._id) }
 export function groupKey(group) { return group.workspaceKey ?? tabKey(group[0]) }
 export function toGroup(entry) { return Array.isArray(entry) ? entry : [entry] }
 
-// Revalidation details belong to one app/report, never the cross-app workspace.
+// The detail stop of the App switch: whether a group the pass re-examined
+// shows the rows it re-rated, or the pass's row alone speaking for them.
+//
+// A workspace answers this the same way a report does. Folding is a fact
+// about ONE row — a pass row and the analyzer's own rows beneath it, which
+// arrive together from one report — so a merged view has the same thing to
+// unfold, and the reader asking to see the workings is asking about the rows
+// in front of them, not about how many apps contributed them. What a
+// workspace cannot hand back is the rows the pass RULED OUT: those are
+// dropped before its rows merge (workspace-groups.js hideRuledOut), so that
+// one app's refutation can neither bridge two rows nor gap-fill another app's
+// answer. render.js does not offer the stop on their account there.
 export function underlyingFindingsShown() {
-  return !state.currentWorkspace && state.revalidationDetailed === true
+  return state.revalidationDetailed === true
 }
 
 export { mergeDuplicateFields, mergeReportDuplicateFields } from './finding-duplicates.js'
@@ -116,7 +127,23 @@ export function drawnTabs(group) {
   // clicked finding when the normal App lens would fold it under a pass.
   if (getLinksPreview()?.group === group) return group
   if (group.linkedTabs) return group.linkedTabs
-  if (underlyingFindingsShown() || group.length <= 1) return group
+  if (underlyingFindingsShown()) return group
+  return foldedTabs(group)
+}
+
+// The same fold with the detail stop left out of it — what the app view
+// shows of a row when it is speaking for the rows beneath it.
+//
+// Which rows a workspace MERGES is answered through this rather than
+// through `drawnTabs`, so that the detail stop stays what it says it is: a
+// display choice about one row, not a change to which rows exist. Answered
+// through the drawn projection instead, an explicit link between two rows'
+// dependency tabs would join their App rows the moment the reader asked to
+// see the workings, and part them again on the way back — moving each
+// row's identity, its active tab and the scope of a status write under a
+// control that promised to change none of them.
+function foldedTabs(group) {
+  if (group.length <= 1) return group
   if (!group.some(isRevalidation)) return group
   return group.filter(isRevalidation)
 }
@@ -625,16 +652,35 @@ export function getRevalidationConflicts() { return groupModel(true, false, Bool
 export function getMergedGroups() {
   const model = groupModel(state.showRevalidation !== false, state.upstreamOnly === true, Boolean(state.currentWorkspace))
   const groups = model.groups
-  if (state.showRevalidation === false || state.upstreamOnly || underlyingFindingsShown()) return groups
+  if (state.showRevalidation === false || state.upstreamOnly) return groups
   if (state.currentWorkspace) {
     // Link grouping runs after visibility, report grouping and conflict
     // detection. Status disagreements use groupState, never App-mode gating.
-    if (!model.linkedGroups || model.linksTick !== state.linksTick) {
-      model.linkedGroups = mergeLinkedWorkspaceGroups(groups, duplicatesOf, drawnTabs)
+    //
+    // Ahead of the detail check below, because a link is the reader's own
+    // statement that two rows are one finding — unlike the App and upstream
+    // lenses above, which change which findings are on the list at all, the
+    // detail stop only changes how much of a row it shows, and a row does
+    // not stop being linked because its workings are visible.
+    //
+    // Which rows may bridge is asked of `foldedTabs`, so the answer is the
+    // same at either stop; only the tabs the combined row KEEPS follow the
+    // stop, which is why the merge is cached per detail state as well as
+    // per links tick.
+    const detailed = underlyingFindingsShown()
+    if (!model.linkedGroups || model.linksTick !== state.linksTick || model.linkedDetailed !== detailed) {
+      model.linkedGroups = mergeLinkedWorkspaceGroups(groups, duplicatesOf, foldedTabs, drawnTabs)
       model.linksTick = state.linksTick
+      model.linkedDetailed = detailed
     }
     return model.linkedGroups
   }
+  // The detailed app view hands back what the simplified one folded away,
+  // ruled-out rows included — so it skips the pass below rather than
+  // filtering them straight out again. A workspace never reaches here: its
+  // model dropped those rows before merging, which is why the stop is not
+  // offered on their account there (render.js canDetailLayer).
+  if (underlyingFindingsShown()) return groups
   // Hide ruled-out findings before counts, filters, tabs and outcome options
   // are derived. isRuledOut already follows the App/upstream lens.
   return model.visibleGroups ??= (() => {

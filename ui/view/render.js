@@ -1616,7 +1616,6 @@ const nullLastCmp = (a, b) => {
 let modeBeforeConflict = null
 
 export function configureReportRevalidation() {
-  if (state.currentWorkspace && state.revalidationDetailed) state.revalidationDetailed = false
   const conflicted = state.revalidateConflicts.size > 0
   const canDropLayer = !conflicted && canDropRevalidation(state.reports)
   if (conflicted) {
@@ -1960,7 +1959,13 @@ function renderImpl() {
     for (const f of g) {
       const raw = revalidateKindOf(f)
       if (raw === 'partial') hasPartialRow = true
-      if (raw === 'unreachable' || raw === 'refuted') hasRuledOutRow = true
+      if (raw === 'unreachable' || raw === 'refuted') {
+        hasRuledOutRow = true
+        // A workspace dropped this row before its reports' rows merged, so
+        // it is no part of what the detail stop could unfold there — and a
+        // pass row left alone by it has nothing folded underneath.
+        if (state.currentWorkspace) continue
+      }
       if (raw === 'revalidation') passRow = true
       else ownRow = true
     }
@@ -2127,9 +2132,16 @@ function renderImpl() {
   // would change something: rows folded under a pass row, or the
   // partial line to draw. A property of the SET, not of the stop the
   // switch is standing at, so the control keeps its size and its stops
-  // while the reader moves through them. Only individual reports offer
-  // the underlying-findings button, not the merged workspace view.
-  const canDetailLayer = !state.currentWorkspace && canDropLayer && (hasFoldedRows || hasPartialRow || hasRuledOutRow)
+  // while the reader moves through them.
+  //
+  // Ruled-out rows count only outside a workspace. There they are dropped
+  // before the reports' rows merge, so that one app's refutation neither
+  // bridges two rows nor gap-fills another app's answer
+  // (workspace-groups.js hideRuledOut) — the stop has no way to hand them
+  // back, and offering it for a set whose only qualifying rows are those
+  // would put a control on screen that does nothing when clicked.
+  const canDetailLayer = canDropLayer
+    && (hasFoldedRows || hasPartialRow || (!state.currentWorkspace && hasRuledOutRow))
   // If a previously-loaded report had node_modules and the user
   // narrowed the source filter, switching to a report without any
   // node_modules paths would leave the filter at 'own' or 'modules'

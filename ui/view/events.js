@@ -2421,7 +2421,6 @@ report.addEventListener('revalidation-conflicts-open', () => {
 // the chip stops being offered — a control that isn't on screen must
 // not keep narrowing.)
 report.addEventListener('revalidation-detail-change', (e) => {
-  if (state.currentWorkspace) return
   state.revalidationDetailed = e.detail.on === true
   render()
 })
