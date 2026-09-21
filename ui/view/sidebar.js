@@ -232,13 +232,21 @@ function teamReportTemplate(r) {
 // Fetch a managed team report's content and render it in place via switchToFile
 // (which, given content, reads/writes no OPFS — the report is never cached).
 // Then claim the open-report slot + hydrate the server-side triage entries.
+//
+// `teamReportGen` counts opens: a slower earlier open must neither render over
+// nor claim the slot from a later one — and two team reports may share a
+// filename, so the active file's name alone is no identity.
+let teamReportGen = 0
 async function openTeamReport(r) {
+  const gen = ++teamReportGen
   const content = await fetchManagedReport(r.id)
+  if (gen !== teamReportGen) return
   if (content == null) { console.warn('managed: could not load team report', r.id); return }
   await switchToFile(r.filename, content)
-  // switchToFile cleared the slot; only claim it when this report is still the
-  // active view (a faster concurrent switch may have superseded this load).
-  if (state.currentFile !== r.filename) return
+  // switchToFile cleared the slot; claim it only when this open is still the
+  // latest AND the view is still this file (any other switch — a local report,
+  // a workspace — superseded it without touching the generation).
+  if (gen !== teamReportGen || state.currentFile !== r.filename) return
   state.managedReport = { id: r.id, filename: r.filename }
   await hydrateManagedReportTriage(r.id)
 }

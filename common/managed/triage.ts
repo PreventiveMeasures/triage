@@ -25,6 +25,14 @@ export type TriageEntryPatch = {
 export const MAX_TRIAGE_TEXT = 10_000
 export const MAX_TRIAGE_COLOR = 50
 
+// Caps on one write request as a whole — shared with the client, which batches
+// within them: entries per request, the finding-id length (real ids are 36-char
+// uuids), and the JSON body (the server's small default is too small for entry
+// batches, which carry free text).
+export const MAX_TRIAGE_ENTRIES = 200
+export const MAX_FINDING_ID = 100
+export const MAX_TRIAGE_BODY_BYTES = 262_144
+
 export function isTriageBucket(x: unknown): x is TriageBucket {
   return typeof x === 'string' && (TRIAGE_BUCKETS as readonly string[]).includes(x)
 }

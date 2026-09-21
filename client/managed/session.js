@@ -79,13 +79,12 @@ export async function fetchReportTriage(id) {
 
 // POST /api/reports/<id>/triage → push locally-changed triage entries
 // (`{ <findingId>: entry | null }`; null clears the server's row), sending the
-// double-submit CSRF token the server requires for mutations. Resolves true on
-// success, false on any failure (network / auth / validation) — pushes are
-// best-effort, the caller retries via its diff on the next change.
+// double-submit CSRF token the server requires for mutations. Resolves with
+// the HTTP status — 0 on a network failure — so the caller can tell a batch
+// the server refused as sent (4xx) from one that may land on a retry.
 export async function pushReportTriage(id, entries, csrfToken) {
-  let res
   try {
-    res = await fetch(`/api/reports/${encodeURIComponent(id)}/triage`, {
+    const res = await fetch(`/api/reports/${encodeURIComponent(id)}/triage`, {
       method: 'POST',
       credentials: 'same-origin',
       headers: {
@@ -94,8 +93,8 @@ export async function pushReportTriage(id, entries, csrfToken) {
       },
       body: JSON.stringify({ entries }),
     })
-  } catch { return false }
-  return res.ok
+    return res.status
+  } catch { return 0 }
 }
 
 // Hand off to the server's OAuth entry — a top-level navigation to GitHub and

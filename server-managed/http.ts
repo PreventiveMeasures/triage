@@ -10,7 +10,7 @@
 //   GET  /api/teams              → the current user's teams + their reports | 401
 //   GET  /api/reports/<id>       → view a report: admin, or ≥view role + team membership | 401/404
 //   GET  /api/reports/<id>/triage → per-finding triage entries for a viewable report | 401/404
-//   POST /api/reports/<id>/triage → write triage entries: admin|manage, or ≥triage role + membership | 401/403/404
+//   POST /api/reports/<id>/triage → write triage entries: admin, or ≥triage role + membership | 401/403/404
 //   GET  /api/avatar/<id>        → cached avatar bytes by user id | 401/404
 //   GET  /api/admin/users        → admin-only user list | 401/403
 //   POST /api/admin/set-role     → admin sets another user's role | 401/403/404
@@ -46,7 +46,7 @@ import { isRole, roleAtLeast } from '../common/managed/roles.ts'
 import { VISIBILITY_PERMISSIONS, parseTeamUserPermissions } from '../common/managed/permissions.ts'
 import { filterReportContent } from '../common/managed/report-filter.ts'
 import type { TriageEntryPatch } from '../common/managed/triage.ts'
-import { isTriageBucket, parseTriageEntryPatch } from '../common/managed/triage.ts'
+import { MAX_FINDING_ID, MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_ENTRIES, isTriageBucket, parseTriageEntryPatch } from '../common/managed/triage.ts'
 import { loadFindings } from '../report/index.js'
 import { CONFIG_PATH } from '../common/server-info.ts'
 import { collectRepos, installUrl } from './github-app.ts'
@@ -78,12 +78,6 @@ const TEAM_SET_MEMBER_PATH = '/api/admin/teams/set-member'
 const TEAM_REMOVE_MEMBER_PATH = '/api/admin/teams/remove-member'
 const MAX_TEAM_NAME = 100
 const MAX_TEAM_PATH = 500
-// Caps on the triage write endpoint: a JSON body above the default 4 KiB cap
-// (entry batches carry free text), a bounded entry count per request, and a
-// sane finding-id length (real ids are 36-char uuids).
-const MAX_TRIAGE_BODY_BYTES = 262_144
-const MAX_TRIAGE_ENTRIES = 200
-const MAX_FINDING_ID = 100
 
 export interface ManagedHttpDeps {
   config: ManagedConfig
@@ -646,14 +640,16 @@ async function viewerReportBytes(deps: ManagedHttpDeps, user: StoredUser, report
   return filtered === text ? bytes : Buffer.from(filtered, 'utf8')
 }
 
-// Server-side authorization to WRITE per-finding triage on a report: admin and
-// manage may annotate any existing report; everyone else needs AT LEAST a
-// 'triage' role AND membership of a team holding the report's repo. The caller
-// reports any failure as 404 — the same "neither existence nor denial is
-// probeable" rule as canViewReport.
+// Server-side authorization to WRITE per-finding triage on a report — the shape
+// of canViewReport one rung up the ladder: an admin may annotate any existing
+// report; everyone else needs AT LEAST a 'triage' role AND membership of a team
+// holding the report's repo. That includes 'manage': managing the stored
+// reports is not membership of the teams reading them, and nobody may write
+// triage on a report they can't read. The caller reports any failure as 404 —
+// the same "neither existence nor denial is probeable" rule as canViewReport.
 async function canTriageReport(deps: ManagedHttpDeps, user: StoredUser, reportId: string): Promise<boolean> {
-  if (user.role === 'admin' || user.role === 'manage') return (await deps.db.getReport(reportId)) != null
   if (!roleAtLeast(user.role, 'triage')) return false
+  if (user.role === 'admin') return (await deps.db.getReport(reportId)) != null
   return deps.db.userCanReadReport(user.id, reportId)
 }
 
@@ -737,10 +733,7 @@ async function handleSetReportTriage(req: IncomingMessage, res: ServerResponse, 
   if (visible != null && parsed.some(([findingId]) => !visible.has(findingId))) {
     sendJson(res, 404, { error: 'no-finding' }); return
   }
-  const now = Date.now()
-  for (const [findingId, patch] of parsed) {
-    await deps.db.setReportTriage(id, findingId, patch, s.user.id, s.user.login, now)
-  }
+  await deps.db.setReportTriageEntries(id, parsed, s.user.id, s.user.login, Date.now())
   sendJson(res, 200, { ok: true })
 }
 

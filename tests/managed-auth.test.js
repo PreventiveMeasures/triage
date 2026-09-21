@@ -1359,6 +1359,13 @@ test('db: report triage — set/list, whole-entry upsert, null/empty clears, rep
   await db.setReportTriage(reportId, 'f2', {}, uid, 'alice', now + 3)
   assert.deepEqual(await db.listReportTriage(reportId), [])
 
+  // A batch lands whole or not at all: the second entry has no finding id
+  // (NOT NULL) — and the first must not be left behind when it fails.
+  await db.setReportTriageEntries(reportId, [['f4', { color: 'red' }], ['f5', null]], uid, 'alice', now + 4)
+  assert.deepEqual((await db.listReportTriage(reportId)).map((r) => r.findingId), ['f4'])
+  await assert.rejects(async () => { await db.setReportTriageEntries(reportId, [['f6', { comment: 'c' }], [null, { comment: 'd' }]], uid, 'alice', now + 5) }, /NOT NULL/u)
+  assert.deepEqual((await db.listReportTriage(reportId)).map((r) => r.findingId), ['f4'])
+
   // Rows die with their report (FK cascade).
   await db.setReportTriage(reportId, 'f3', { comment: 'c' }, uid, 'alice', now + 4)
   assert.equal(await db.deleteReport(reportId), true)
@@ -1401,15 +1408,18 @@ async function reportTriageFixture(db, reportStore) {
   const carolSess = await mk(3, 'carol', 2000)
   const daveSess = await mk(4, 'dave', 3000)
   const erinSess = await mk(5, 'erin', 4000)
+  const frankSess = await mk(6, 'frank', 5000)
   const userOf = async (sess) => (await readSession(config, db, cookiePair(sess.setCookie), now)).user
   const admin = await userOf(adminSess)
   const bob = await userOf(bobSess)
   const carol = await userOf(carolSess)
   const dave = await userOf(daveSess)
   const erin = await userOf(erinSess)
+  const frank = await userOf(frankSess)
   await db.setUserRole(bob.id, 'triage')
   await db.setUserRole(carol.id, 'view')
   await db.setUserRole(erin.id, 'triage') // dave stays 'none'
+  await db.setUserRole(frank.id, 'manage') // frank is in no team
   await db.selectRepo({ repoId: 7, fullName: 'o/r', private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: admin.id }, now)
   await db.selectRepo({ repoId: 8, fullName: 'o/other', private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: admin.id }, now)
   const blue = randomUUID()
@@ -1429,7 +1439,7 @@ async function reportTriageFixture(db, reportStore) {
     { id: 'dep', file: 'node_modules/x/y.js' },
     { id: 'sec', file: 'src/b.js', security: true },
   ] })))
-  return { now, reportId, admin, adminSess, bobSess, carolSess, daveSess, erinSess }
+  return { now, reportId, admin, adminSess, bobSess, carolSess, daveSess, erinSess, frankSess }
 }
 
 test('GET /api/reports/<id>/triage: view-gated (401/404), entries filtered to the viewer visible findings', async () => {
@@ -1447,6 +1457,7 @@ test('GET /api/reports/<id>/triage: view-gated (401/404), entries filtered to th
   assert.equal((await send('GET', T(fx.reportId), null)).statusCode, 401) // unauthenticated
   assert.equal((await send('GET', T(fx.reportId), cookiePair(fx.daveSess.setCookie))).statusCode, 404) // role 'none', even in-team
   assert.equal((await send('GET', T(fx.reportId), cookiePair(fx.erinSess.setCookie))).statusCode, 404) // wrong team (no repo 7)
+  assert.equal((await send('GET', T(fx.reportId), cookiePair(fx.frankSess.setCookie))).statusCode, 404) // manage, but no membership (the admin surface is his read path)
   assert.equal((await send('GET', T(randomUUID()), cookiePair(fx.adminSess.setCookie))).statusCode, 404) // unknown report
   assert.equal((await send('PUT', T(fx.reportId), cookiePair(fx.adminSess.setCookie))).statusCode, 405) // GET/POST only
 
@@ -1484,6 +1495,9 @@ test('POST /api/reports/<id>/triage: CSRF + role/membership gating, validation, 
   assert.equal((await post(cookiePair(fx.carolSess.setCookie), fx.carolSess.csrfToken, { entries: { own: null } })).statusCode, 404)
   assert.equal((await post(cookiePair(fx.daveSess.setCookie), fx.daveSess.csrfToken, { entries: { own: null } })).statusCode, 404)
   assert.equal((await post(cookiePair(fx.erinSess.setCookie), fx.erinSess.csrfToken, { entries: { own: null } })).statusCode, 404)
+  // ...and so does a manage-role NON-member: nobody writes triage on a report
+  // they can't read through this plane (write ⊆ read).
+  assert.equal((await post(cookiePair(fx.frankSess.setCookie), fx.frankSess.csrfToken, { entries: { own: null } })).statusCode, 404)
   // Validation: bad body shape, malformed entry, over the entry-count cap.
   assert.equal((await post(bCk, fx.bobSess.csrfToken, { entries: [] })).statusCode, 400)
   assert.equal((await post(bCk, fx.bobSess.csrfToken, { entries: { own: { triage: 'wizard' } } })).statusCode, 400)

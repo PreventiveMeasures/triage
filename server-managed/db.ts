@@ -415,9 +415,11 @@ export interface ManagedDb {
   // Per-finding triage annotations on a report. listReportTriage reads every
   // row for a report (the endpoint filters to the viewer's visible findings);
   // setReportTriage replaces one (report, finding) row wholesale, stamping the
-  // writer — a null/empty entry deletes the row instead.
+  // writer — a null/empty entry deletes the row instead. setReportTriageEntries
+  // does the same for a batch in one transaction: it lands whole or not at all.
   listReportTriage(reportId: string): Promise<ReportTriageRow[]>
   setReportTriage(reportId: string, findingId: string, entry: TriageEntryPatch | null, updatedBy: string | null, updatedByLogin: string | null, now: number): Promise<void>
+  setReportTriageEntries(reportId: string, entries: readonly (readonly [string, TriageEntryPatch | null])[], updatedBy: string | null, updatedByLogin: string | null, now: number): Promise<void>
   // Bundles ("Manage bundles"). insertBundle records an uploaded bundle (bytes
   // in the blob-store); getBundleByIntegrity dedupes uploads + resolves a
   // report's bundleHashes; getBundle reads one row (download); listBundles joins
@@ -760,10 +762,26 @@ type ReportTriageDbRow = {
 }
 
 // The per-finding report-triage slice of ManagedDb. Closes over its prepared
-// statements. A null/empty entry deletes the row — the store never keeps
-// empty shells, mirroring the client's triage map.
-function reportTriageMethods(stmts: ReturnType<typeof prepareStatements>) {
+// statements (and the handle, for the batch write's transaction). A null/empty
+// entry deletes the row — the store never keeps empty shells, mirroring the
+// client's triage map.
+function reportTriageMethods(db: DatabaseSync, stmts: ReturnType<typeof prepareStatements>) {
   const { upsertReportTriageStmt, deleteReportTriageStmt, selectReportTriageStmt } = stmts
+  function writeEntry(reportId: string, findingId: string, entry: TriageEntryPatch | null, updatedBy: string | null, updatedByLogin: string | null, now: number): void {
+    // `flagged: false` is a real value (the explicit un-flag tombstone), so
+    // emptiness is "every field null-or-absent", not falsiness.
+    const empty = entry == null || (entry.color == null && entry.triage == null
+      && entry.comment == null && entry.fix == null && entry.flagged == null)
+    if (empty) {
+      deleteReportTriageStmt.run(reportId, findingId)
+      return
+    }
+    upsertReportTriageStmt.run(
+      reportId, findingId, entry.color ?? null, entry.triage ?? null, entry.comment ?? null,
+      entry.fix ?? null, entry.flagged == null ? null : (entry.flagged ? 1 : 0),
+      updatedBy, updatedByLogin, now,
+    )
+  }
   return {
     listReportTriage(reportId: string): Promise<ReportTriageRow[]> {
       const rows = selectReportTriageStmt.all(reportId) as ReportTriageDbRow[]
@@ -774,19 +792,20 @@ function reportTriageMethods(stmts: ReturnType<typeof prepareStatements>) {
       })))
     },
     setReportTriage(reportId: string, findingId: string, entry: TriageEntryPatch | null, updatedBy: string | null, updatedByLogin: string | null, now: number): Promise<void> {
-      // `flagged: false` is a real value (the explicit un-flag tombstone), so
-      // emptiness is "every field null-or-absent", not falsiness.
-      const empty = entry == null || (entry.color == null && entry.triage == null
-        && entry.comment == null && entry.fix == null && entry.flagged == null)
-      if (empty) {
-        deleteReportTriageStmt.run(reportId, findingId)
-        return Promise.resolve()
+      writeEntry(reportId, findingId, entry, updatedBy, updatedByLogin, now)
+      return Promise.resolve()
+    },
+    setReportTriageEntries(reportId: string, entries: readonly (readonly [string, TriageEntryPatch | null])[], updatedBy: string | null, updatedByLogin: string | null, now: number): Promise<void> {
+      // One transaction, so a batch is never half-applied by a mid-loop error
+      // (and costs one fsync under synchronous = FULL, not one per row).
+      db.exec('BEGIN')
+      try {
+        for (const [findingId, entry] of entries) writeEntry(reportId, findingId, entry, updatedBy, updatedByLogin, now)
+        db.exec('COMMIT')
+      } catch (err) {
+        try { db.exec('ROLLBACK') } catch {}
+        throw err
       }
-      upsertReportTriageStmt.run(
-        reportId, findingId, entry.color ?? null, entry.triage ?? null, entry.comment ?? null,
-        entry.fix ?? null, entry.flagged == null ? null : (entry.flagged ? 1 : 0),
-        updatedBy, updatedByLogin, now,
-      )
       return Promise.resolve()
     },
   }
@@ -1020,7 +1039,7 @@ export function openSqliteManagedDb(path: string): ManagedDb {
     },
     ...selectedRepoMethods(stmts),
     ...reportMethods(stmts),
-    ...reportTriageMethods(stmts),
+    ...reportTriageMethods(db, stmts),
     ...bundleMethods(stmts),
     ...teamMethods(stmts),
     close() {
