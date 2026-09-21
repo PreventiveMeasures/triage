@@ -497,6 +497,11 @@ async function addFiles(files) {
 
 // Replace the active view with the named OPFS file. Pre-fetched
 // `content` skips a redundant OPFS read (drop path passes it through).
+// Resolves true when this load is what ended up on screen — every other
+// exit (a newer switch took over, the read failed, a recovery flow
+// re-entered) resolves undefined, so a caller that must act on ITS
+// load (the managed team-report opener claims a slot keyed by report
+// id, not by the file name a local report may share) can tell.
 export async function switchToFile(name, content, { workspaceId } = {}) {
   const gen = ++loadGen
   state.currentReportWorkspace = reportWorkspaceFor(name, workspaceId)
@@ -658,6 +663,7 @@ export async function switchToFile(name, content, { workspaceId } = {}) {
     openPresence(id)
   }
   await renderSidebar()
+  return true
 }
 
 // Replace the active view with the merged contents of an entire
