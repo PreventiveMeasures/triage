@@ -93,6 +93,18 @@
   border-top-color: var(--accent, #58a6ff);
 }
 
+/* While a line is running the send is refused (see #onSubmit), so the
+   row says as much rather than letting Enter look broken: the sigil
+   dims and the caret stops blinking. Typing still works — what is
+   composed here is sent once the running line is done. */
+.form[aria-busy='true'] .sigil {
+  opacity: .4;
+}
+
+.form[aria-busy='true'] .input {
+  caret-color: transparent;
+}
+
 /* Prompt-row cwd shrinks with ellipsis so a deep `cd` doesn't push
    the input off the right edge. min-width: 0 overrides the flex-item
    default `min-width: auto`, which would keep the span at content

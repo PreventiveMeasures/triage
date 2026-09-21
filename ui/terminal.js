@@ -104,6 +104,9 @@ class BundleTerminal extends LitElement {
     // Transient hint stack drawn over the top-right corner. Entries
     // are `{ id, text, dwell }`; see #pushNotes.
     _notes: { state: true },
+    // True while a line is in flight. Drives the busy cue, and is the
+    // guard that keeps a second line from being sent — see #onSubmit.
+    _running: { state: true },
   }
 
   static styles = unsafeCSS(terminalCSS)
@@ -148,6 +151,7 @@ class BundleTerminal extends LitElement {
     this._cwd = MOUNT
     this._ghost = ''
     this._notes = []
+    this._running = false
   }
 
   // Bind to the current sources map: a Map reference change means
@@ -230,9 +234,20 @@ class BundleTerminal extends LitElement {
     if (out) out.scrollTop = out.scrollHeight
   }
 
+  // One line at a time. `run` is a promise since 2.0, and a genuinely
+  // asynchronous one — even `pwd` does not settle within a microtask —
+  // so a second Enter can land while the first line is still going.
+  // Both would then read their own snapshot of the prompt's cwd and the
+  // transcript, so `cd sub` followed straight by `pwd` would print the
+  // second prompt at the old directory; and `clear` would empty a
+  // transcript that a pending line then appended to.
+  //
+  // The send is refused rather than queued. The field stays live, so
+  // the next command can be typed while one runs — it just is not sent
+  // until that one is done.
   #onSubmit = async (e) => {
     e.preventDefault()
-    if (!this.#term) return
+    if (!this.#term || this._running) return
     const line = this._input
     const trimmed = line.trim()
     // `clear` is a UI-only command — the shell module doesn't carry
@@ -258,6 +273,7 @@ class BundleTerminal extends LitElement {
     // stream. One line runs at a time over the tree, so lines still
     // resolve in the order they were entered even unawaited.
     let r
+    this._running = true
     try {
       r = await this.#term.run(line)
     } catch (err) {
@@ -269,6 +285,8 @@ class BundleTerminal extends LitElement {
         { kind: 'prompt', cwd: cwdBefore, text: line },
         { kind: 'stderr', text: `${err?.message ?? err}\n` }]
       return
+    } finally {
+      this._running = false
     }
     this._cwd = r.cwd
     const next = [...this._lines, { kind: 'prompt', cwd: cwdBefore, text: line }]
@@ -518,7 +536,7 @@ class BundleTerminal extends LitElement {
       <div class="output" @click=${this.#onClickOutput}>
         ${this._lines.map((l) => this.#renderLine(l))}
       </div>
-      <form class="form" @submit=${this.#onSubmit}>
+      <form class="form" @submit=${this.#onSubmit} aria-busy=${this._running ? 'true' : 'false'}>
         <span class="cwd">${this._cwd}</span><span class="sigil">$</span>
         <div class="input-wrap">
           ${this._ghost ? html`<div class="ghost" aria-hidden="true"><span class="ghost-pad">${this._input}</span>${this._ghost}</div>` : nothing}
