@@ -25,8 +25,8 @@ importers:
         specifier: ^1.0.0
         version: 1.0.0
       '@preventive/terminal':
-        specifier: ^1.12.0
-        version: 1.12.0
+        specifier: 2.0.0-beta.0
+        version: 2.0.0-beta.0
       '@rray/frontend':
         specifier: ^1.0.0
         version: 1.0.0
@@ -461,8 +461,8 @@ packages:
     resolution: {integrity: sha512-voZPhZLUkbM1R8N4TxZ1LjHYmAoy8/4cohXYq5gL5DXYag3MQ/XehTSGa+871V6ffsNptixV9iURVtqqMHLOHg==, tarball: https://registry.npmjs.org/@preventive/diff/-/diff-1.0.0.tgz}
     engines: {node: '>=24.14.0'}
 
-  '@preventive/terminal@1.12.0':
-    resolution: {integrity: sha512-DsZnivtzn0/suw9Xx4BmkABQ9A1XAfOlkWU7xXWKY3/c6zsIfJUJlnN6GvIT0sGxP+SK9gFwSlkUxZ2pxPa1Ug==, tarball: https://registry.npmjs.org/@preventive/terminal/-/terminal-1.12.0.tgz}
+  '@preventive/terminal@2.0.0-beta.0':
+    resolution: {integrity: sha512-rrO4Hh7tIc33XhLEeGOZGDa9GDWB6fwY94YEgu25lnOOoMFQ/WakNaPewP2/HuPsKuz5VzazczULONjUjxWFtA==, tarball: https://registry.npmjs.org/@preventive/terminal/-/terminal-2.0.0-beta.0.tgz}
 
   '@rray/frontend@1.0.0':
     resolution: {integrity: sha512-FgJTZ89e42pR3a1ALQId3SGgt47FIfY/7ydsphu94wY7oyuwOed3/GOTn279ypvA8hz/3fcnoMFg2M3uuqcrSg==, tarball: https://registry.npmjs.org/@rray/frontend/-/frontend-1.0.0.tgz}
@@ -1344,7 +1344,7 @@ snapshots:
 
   '@preventive/diff@1.0.0': {}
 
-  '@preventive/terminal@1.12.0':
+  '@preventive/terminal@2.0.0-beta.0':
     dependencies:
       '@exodus/bytes': 1.15.1
       '@preventive/diff': 1.0.0

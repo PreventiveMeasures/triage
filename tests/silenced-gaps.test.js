@@ -65,9 +65,9 @@ describe('silencedGaps — the containment rule', () => {
 })
 
 describe('silencedGaps — against real terminal runs', () => {
-  it('stays quiet when the gap is already in the transcript', () => {
+  it('stays quiet when the gap is already in the transcript', async () => {
     for (const line of ['foo', 'ls --bogus', 'while true; do :; done']) {
-      const r = run(line)
+      const r = await run(line)
       assert.notEqual(r.unsupported.length, 0, `${line} hits a gap`)
       assert.notEqual(r.stderr, '', `${line} reports it on stderr`)
       assert.deepEqual(silencedGaps(r), [], `${line} needs no hint`)
@@ -84,8 +84,8 @@ describe('silencedGaps — against real terminal runs', () => {
     ['a subshell', '( foo ) 2>/dev/null'],
     ['an unknown option, silenced', 'ls --bogus 2>/dev/null'],
   ]) {
-    it(`recovers the gap ${what}`, () => {
-      const r = run(line)
+    it(`recovers the gap ${what}`, async () => {
+      const r = await run(line)
       assert.equal(r.stderr, '', 'the command line silenced stderr')
       assert.notEqual(r.unsupported.length, 0, 'but the channel still carries it')
       const hidden = silencedGaps(r)
@@ -96,15 +96,15 @@ describe('silencedGaps — against real terminal runs', () => {
 
   // The stderr-only version of this check called `foo 2>&1` silenced
   // and hinted a message the transcript was already showing.
-  it('stays quiet when `2>&1` moves the gap into stdout', () => {
-    const r = run('foo 2>&1')
+  it('stays quiet when `2>&1` moves the gap into stdout', async () => {
+    const r = await run('foo 2>&1')
     assert.equal(r.stderr, '', 'stderr is empty')
     assert.ok(r.stdout.includes('command not found'), 'but stdout carries the diagnostic')
     assert.deepEqual(silencedGaps(r), [], 'so there is nothing to hint')
   })
 
-  it('still recovers it once the pipe drops what 2>&1 moved', () => {
-    const r = run('foo 2>&1 | grep -c nothing')
+  it('still recovers it once the pipe drops what 2>&1 moved', async () => {
+    const r = await run('foo 2>&1 | grep -c nothing')
     assert.equal(r.stderr, '')
     assert.ok(!r.stdout.includes('command not found'), 'grep replaced it with a count')
     assert.deepEqual(silencedGaps(r), r.unsupported.map((u) => u.message))
@@ -114,25 +114,25 @@ describe('silencedGaps — against real terminal runs', () => {
   // leaves a single entry. When either hit reported it, the user has
   // seen it and no hint is due; only when every hit was silenced is
   // there something left to say.
-  it('treats one gap hit twice as the single entry it is', () => {
+  it('treats one gap hit twice as the single entry it is', async () => {
     for (const line of ['foo; foo 2>/dev/null', 'foo 2>/dev/null; foo']) {
-      const r = run(line)
+      const r = await run(line)
       assert.equal(r.unsupported.length, 1, `${line} reports one entry`)
       assert.deepEqual(silencedGaps(r), [], `${line} was reported to the user once`)
     }
-    const hidden = run('foo 2>/dev/null; foo 2>/dev/null')
+    const hidden = await run('foo 2>/dev/null; foo 2>/dev/null')
     assert.equal(hidden.unsupported.length, 1)
     assert.deepEqual(silencedGaps(hidden), hidden.unsupported.map((u) => u.message))
   })
 
-  it('recovers only the silenced one when a line hides half its gaps', () => {
-    const r = run('ls --bogus; cat --nope 2>/dev/null')
+  it('recovers only the silenced one when a line hides half its gaps', async () => {
+    const r = await run('ls --bogus; cat --nope 2>/dev/null')
     assert.deepEqual(r.unsupported.map((u) => u.detail).toSorted(), ['--bogus', '--nope'])
     assert.deepEqual(silencedGaps(r), ['cat: unknown option: --nope'])
   })
 
-  it('says nothing about a run that hit no gap at all', () => {
-    const r = run('cat /sources/a.txt')
+  it('says nothing about a run that hit no gap at all', async () => {
+    const r = await run('cat /sources/a.txt')
     assert.deepEqual(r.unsupported, [])
     assert.deepEqual(silencedGaps(r), [])
   })

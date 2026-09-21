@@ -3,15 +3,34 @@
 // expose sources via `@exodus/stasis-core`'s `Bundle.sources` getter
 // (flat Map<projectRelPath, content> from `.modules`); sourcemaps
 // split them across parallel `sources` / `sourcesContent` arrays on
-// the raw .map JSON. Non-string content is skipped — for stasis that
-// drops resource (base64) entries; for sourcemaps, sources where
-// `sourcesContent[i]` was omitted.
+// the raw .map JSON. Sourcemap sources whose `sourcesContent[i]` was
+// omitted are skipped.
+//
+// What a stasis bundle records is not all source: `Bundle.formats`
+// marks each entry, and three of those formats are files only in the
+// sense that they occupy a path. `Bundle.sources` hands back the raw
+// stored content for every one of them, so the format is what has to
+// be asked — the content's JS type cannot tell them apart:
+//
+//   directory        a readdir capture, content `["a.js","b.js"]`
+//   resource:base64  an image or font, content its base64 text
+//   resource         raw bytes, the one case not a string already
+//
+// A directory capture is the one that does real damage, because it
+// claims a path a directory also occupies: hand it to the terminal
+// and `ls` lists the name twice and stops listing what is under it.
+// The base64 resources are quieter but equally wrong — a PNG read as
+// a wall of text, counted toward the language shares that
+// render-bundle.js says resources are kept out of.
 //
 // Own module so `render-bundle.js` (Code tab, finding tree, graph
 // data) and `terminal-attach.js` (in-shell FS) read one definition —
 // a new bundle kind or field handled here is visible to both.
 
+import { Bundle } from '@exodus/stasis-core/bundle'
+
 const sourcesCache = new WeakMap()
+const filesCache = new WeakMap()
 const sizesCache = new WeakMap()
 
 export function bundleSourcesAsMap(details) {
@@ -22,8 +41,16 @@ export function bundleSourcesAsMap(details) {
   if (!details) return result
   if (details.kind === 'stasis') {
     if (!details.bundle) return result
+    const formats = details.bundle.formats
     for (const [file, content] of details.bundle.sources) {
-      if (typeof content === 'string') result.set(file, content)
+      if (typeof content !== 'string') continue
+      // `isResourceFormat` is the package's own list, so a format it
+      // adds later is excluded here without this needing to know. A v0
+      // bundle records no formats at all: `get` returns undefined,
+      // which is not a resource format, and every entry is kept as
+      // before.
+      if (Bundle.isResourceFormat(formats?.get(file))) continue
+      result.set(file, content)
     }
   } else if (details.kind === 'sourcemap') {
     if (!details.json) return result
@@ -35,6 +62,48 @@ export function bundleSourcesAsMap(details) {
   }
   if (key) sourcesCache.set(key, result)
   return result
+}
+
+// Every file the bundle carries, for a reader that wants the filesystem
+// rather than the source: what `bundleSourcesAsMap` returns, plus the
+// resources it leaves out, each in the form that is true to it.
+//
+// The two resource formats are not two encodings of the same thing.
+// Stasis picks between them by whether the bytes are valid UTF-8:
+// `resource` is that text, stored verbatim, so it stays a string and a
+// reader sees the SVG or the licence file it is. `resource:base64` is
+// the other case — bytes no string spells — and it is handed over
+// still spelt that way, as `{ format: 'base64', data }`. The terminal
+// takes that form since 2.0 and decodes it the first time the file is
+// read, so a bundle carrying a hundred images costs a hundred strings
+// rather than a hundred decoded buffers, and pays for the one that is
+// opened. Either way it knows what it is holding: `ls -l` and `wc -c`
+// report the real byte count rather than the length of the base64, and
+// `cat` declines instead of printing mojibake.
+//
+// Decoding there also puts the diagnostic where the file is named: a
+// spelling that does not decode is reported by the command that read
+// it, under the detail `base64 source`. Decoding here could only drop
+// the file and say nothing.
+//
+// Directory captures stay out. They are the one entry that is not a
+// file in any encoding, and mounting one puts a second `lib` beside
+// the directory it names.
+export function bundleFilesAsMap(details) {
+  const key = details?.bundle ?? details?.json
+  if (key && filesCache.has(key)) return filesCache.get(key)
+  const files = new Map(bundleSourcesAsMap(details))
+  if (details?.kind === 'stasis' && details.bundle) {
+    const formats = details.bundle.formats
+    for (const [file, content] of details.bundle.sources) {
+      if (typeof content !== 'string') continue
+      const format = formats?.get(file)
+      if (format === 'resource') files.set(file, content)
+      else if (format === 'resource:base64') files.set(file, { format: 'base64', data: content })
+    }
+  }
+  if (key) filesCache.set(key, files)
+  return files
 }
 
 // Metadata views need byte sizes and paths, never the source bodies. The
