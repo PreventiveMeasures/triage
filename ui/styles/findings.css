@@ -563,6 +563,12 @@
 .kanban-card .kanban-analyzer {
   flex: 0 0 auto;
   align-self: center;
+  /* Nudged a pixel down off the row's optical center, where it sits
+     better against the descender-less file path beside it. Relative
+     rather than a margin so it is a paint offset only — the layout
+     box stays put and the row (and so the card) keeps its height. */
+  position: relative;
+  top: 1px;
   box-sizing: border-box;
   display: flex;
   width: 15px;
@@ -570,6 +576,10 @@
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 4px;
+  /* Brand fills are the loudest color on an otherwise muted row; back
+     them off a touch so the chip identifies without competing with
+     the severity badge above it. */
+  opacity: .9;
 
   /* The logo fills the chip; its own right-hand rule is the file
      row's separator and has nothing to separate here. */
