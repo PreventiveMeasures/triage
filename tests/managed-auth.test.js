@@ -14,6 +14,7 @@ import { OAuthError, buildLoginRedirect, ensureUserAccessToken, handleCallback, 
 import { appJwt, collectRepos, githubAppConfigured, installUrl, listInstalledRepos, listUserRepos, mergeRepos, repoAccessToken } from '../server-managed/github-app.ts'
 import { bundleIntegrity } from '../server-managed/bundle.ts'
 import { filterReportContent } from '../common/managed/report-filter.ts'
+import { parseTriageEntryPatch } from '../common/managed/triage.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 
 const config = {
@@ -823,12 +824,13 @@ test('db: bundles — insert/get/list/delete, integrity dedup-key, report link +
   await db.close()
 })
 
-// Shared HTTP harness for the bundle / link tests: a handler over in-memory
-// stores + an always-allow origin gate, with raw-body upload + plain send.
-function bundleHarness(db, cfg = config) {
+// Shared HTTP harness for the bundle / link / report-triage tests: a handler
+// over in-memory stores + an always-allow origin gate, with raw-body upload +
+// plain send. Pass a reportStore when a fixture needs to seed report bytes.
+function bundleHarness(db, cfg = config, reportStore = fakeBlobStore()) {
   let pending = Promise.resolve()
   const handler = createManagedRequestHandler({
-    config: cfg, db, avatarStore: fakeAvatarStore(), reportStore: fakeBlobStore(), bundleStore: fakeBlobStore(),
+    config: cfg, db, avatarStore: fakeAvatarStore(), reportStore, bundleStore: fakeBlobStore(),
     originGate: { trustProxy: false, isOriginAllowed: () => true },
     isShuttingDown: () => false, track: (p) => { pending = p },
   })
@@ -1326,5 +1328,263 @@ test('teams API: admin|manage gating, create (409 dup), repo/member links + perm
   assert.equal((await upload('/api/admin/teams/remove-repo', aCk, csrf, JSON.stringify({ teamId, repoId: 7 }))).statusCode, 200)
   assert.equal((await upload('/api/admin/teams/delete', aCk, csrf, JSON.stringify({ teamId }))).statusCode, 200)
   assert.equal((await upload('/api/admin/teams/delete', aCk, csrf, JSON.stringify({ teamId }))).statusCode, 404) // gone
+  await db.close()
+})
+
+test('db: finding triage — set/list by id, whole-entry upsert, null/empty tombstones, batch atomicity, login snapshot', async () => {
+  const db = openSqliteManagedDb(':memory:')
+  const now = Date.now()
+  const uid = await db.upsertUser({ githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
+
+  // Two entries: flagged false (the explicit un-flag tombstone) must round-trip
+  // as false, not collapse to null; a writer already gone (updated_by NULL)
+  // keeps the durable login snapshot, like uploaded_by_login on reports. Rows
+  // are keyed by finding id alone — listTriage reads the ids it is asked for.
+  await db.setTriage('f1', { color: 'red', comment: 'look', flagged: false }, uid, 'alice', now)
+  await db.setTriage('f2', { triage: 'fixed', fix: 'PR-9', flagged: true }, null, 'ghost', now + 1)
+  assert.deepEqual(await db.listTriage(['f1', 'f2', 'never']), [
+    { findingId: 'f1', color: 'red', triage: null, comment: 'look', fix: null, flagged: false, updatedByLogin: 'alice', updatedAt: now },
+    { findingId: 'f2', color: null, triage: 'fixed', comment: null, fix: 'PR-9', flagged: true, updatedByLogin: 'ghost', updatedAt: now + 1 },
+  ])
+  assert.deepEqual(await db.listTriage(['f2']), [
+    { findingId: 'f2', color: null, triage: 'fixed', comment: null, fix: 'PR-9', flagged: true, updatedByLogin: 'ghost', updatedAt: now + 1 },
+  ])
+  assert.deepEqual(await db.listTriage([]), [])
+
+  // Upsert replaces the WHOLE entry (no field merge — absent fields null out),
+  // and the live login wins over a stale write-time snapshot while the user exists.
+  await db.setTriage('f1', { triage: 'invalid' }, uid, 'old-alice', now + 2)
+  assert.deepEqual(await db.listTriage(['f1']), [
+    { findingId: 'f1', color: null, triage: 'invalid', comment: null, fix: null, flagged: null, updatedByLogin: 'alice', updatedAt: now + 2 },
+  ])
+
+  // null (and an all-absent entry) writes the tombstone: the row stays, every
+  // field null, the writer and time stamped — "cleared", not "never set".
+  await db.setTriage('f1', null, uid, 'alice', now + 3)
+  await db.setTriage('f2', {}, uid, 'alice', now + 3)
+  assert.deepEqual(await db.listTriage(['f1', 'f2']), [
+    { findingId: 'f1', color: null, triage: null, comment: null, fix: null, flagged: null, updatedByLogin: 'alice', updatedAt: now + 3 },
+    { findingId: 'f2', color: null, triage: null, comment: null, fix: null, flagged: null, updatedByLogin: 'alice', updatedAt: now + 3 },
+  ])
+
+  // A batch lands whole or not at all: the second entry has no finding id
+  // (NOT NULL) — and the first must not be left behind when it fails.
+  await db.setTriageEntries([['f4', { color: 'red' }], ['f5', null]], uid, 'alice', now + 4)
+  assert.deepEqual((await db.listTriage(['f4', 'f5', 'f6'])).map((r) => [r.findingId, r.color]), [['f4', 'red'], ['f5', null]])
+  await assert.rejects(async () => { await db.setTriageEntries([['f6', { comment: 'c' }], [null, { comment: 'd' }]], uid, 'alice', now + 5) }, /NOT NULL/u)
+  assert.deepEqual((await db.listTriage(['f6'])), [])
+  await db.close()
+})
+
+test('parseTriageEntryPatch: full/partial/null round-trip; malformed values are invalid', () => {
+  // Full + partial patches pass through; empty strings count as absent.
+  assert.deepEqual(parseTriageEntryPatch({ color: 'red', triage: 'fixed', comment: 'c', fix: 'PR-1', flagged: true }),
+    { color: 'red', triage: 'fixed', comment: 'c', fix: 'PR-1', flagged: true })
+  assert.deepEqual(parseTriageEntryPatch({ comment: 'only' }), { comment: 'only' })
+  assert.deepEqual(parseTriageEntryPatch({ color: '', comment: '' }), {})
+  // flagged:false is a real value (the explicit un-flag tombstone), not empty.
+  assert.deepEqual(parseTriageEntryPatch({ flagged: false }), { flagged: false })
+  // null = clear; unknown keys (e.g. the client-local ignoredReports) are ignored.
+  assert.equal(parseTriageEntryPatch(null), null)
+  assert.deepEqual(parseTriageEntryPatch({ fix: 'x', ignoredReports: ['r.json'] }), { fix: 'x' })
+  // Malformed: unknown bucket, over-cap strings, non-boolean flag, non-objects.
+  assert.equal(parseTriageEntryPatch({ triage: 'wizard' }), 'invalid')
+  assert.equal(parseTriageEntryPatch({ comment: 'x'.repeat(10_001) }), 'invalid')
+  assert.equal(parseTriageEntryPatch({ color: 'x'.repeat(51) }), 'invalid')
+  assert.equal(parseTriageEntryPatch({ flagged: 'yes' }), 'invalid')
+  assert.equal(parseTriageEntryPatch({ color: 42 }), 'invalid')
+  assert.equal(parseTriageEntryPatch('red'), 'invalid')
+  assert.equal(parseTriageEntryPatch([]), 'invalid')
+})
+
+// Shared fixture for the report-triage endpoint tests: admin alice (in no
+// team); three Blue members on repo 7 — bob (role triage, sees security but
+// not dependencies), carol (role view, sees dependencies but not security),
+// dave (role none) — plus erin (role triage) in Green, whose repo 8 has no
+// report. One stored report on repo 7 with an own / dependency / security
+// finding, ids explicit so the triage keys are stable.
+async function reportTriageFixture(db, reportStore) {
+  const now = Date.now()
+  const mk = (githubUserId, login, offset) => createSession(config, db, { githubUserId, login, name: null, avatarUrl: null }, now + offset)
+  const adminSess = await mk(1, 'alice', 0)
+  const bobSess = await mk(2, 'bob', 1000)
+  const carolSess = await mk(3, 'carol', 2000)
+  const daveSess = await mk(4, 'dave', 3000)
+  const erinSess = await mk(5, 'erin', 4000)
+  const frankSess = await mk(6, 'frank', 5000)
+  const userOf = async (sess) => (await readSession(config, db, cookiePair(sess.setCookie), now)).user
+  const admin = await userOf(adminSess)
+  const bob = await userOf(bobSess)
+  const carol = await userOf(carolSess)
+  const dave = await userOf(daveSess)
+  const erin = await userOf(erinSess)
+  const frank = await userOf(frankSess)
+  await db.setUserRole(bob.id, 'triage')
+  await db.setUserRole(carol.id, 'view')
+  await db.setUserRole(erin.id, 'triage') // dave stays 'none'
+  await db.setUserRole(frank.id, 'manage') // frank is in no team
+  await db.selectRepo({ repoId: 7, fullName: 'o/r', private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: admin.id }, now)
+  await db.selectRepo({ repoId: 8, fullName: 'o/other', private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: admin.id }, now)
+  const blue = randomUUID()
+  await db.createTeam(blue, 'Blue', now)
+  await db.setTeamRepo(blue, 7, null)
+  await db.setTeamMember(blue, bob.id, { dependencies: false, security: true })
+  await db.setTeamMember(blue, carol.id, { dependencies: true, security: false })
+  await db.setTeamMember(blue, dave.id, { dependencies: true, security: true })
+  const green = randomUUID()
+  await db.createTeam(green, 'Green', now)
+  await db.setTeamRepo(green, 8, null)
+  await db.setTeamMember(green, erin.id, { dependencies: true, security: true })
+  const reportId = randomUUID()
+  await db.insertReport({ id: reportId, filename: 'scan.json', contentType: 'application/json', byteSize: 5, sha256: 'x', uploadedBy: admin.id, uploadedByLogin: 'alice', repoId: 7, bundleId: null, bundleIntegrity: null }, now)
+  await reportStore.put(reportId, Buffer.from(JSON.stringify({ source: 'native', findings: [
+    { id: 'own', file: 'src/a.js' },
+    { id: 'dep', file: 'node_modules/x/y.js' },
+    { id: 'sec', file: 'src/b.js', security: true },
+  ] })))
+  return { now, reportId, admin, adminSess, bobSess, carolSess, daveSess, erinSess, frankSess }
+}
+
+test('filterReportContent: a groups-shaped dump is filtered the same way, under its own key', () => {
+  const grouped = JSON.stringify({ source: 'native', groups: [
+    [{ id: 'a', file: 'src/a.js' }],
+    [{ id: 'd', file: 'node_modules/x/y.js' }],
+    [{ id: 's', file: 'src/s.js', security: true }, { id: 's2', file: 'src/s2.js' }],
+  ] })
+  const ids = (s) => JSON.parse(s).groups.map((g) => g[0].id)
+  const noDeps = filterReportContent(grouped, { dependencies: false, security: true })
+  assert.deepEqual(ids(noDeps), ['a', 's'])
+  assert.equal(JSON.parse(noDeps).findings, undefined, 'written back as groups, no findings key invented')
+  assert.deepEqual(ids(filterReportContent(grouped, { dependencies: true, security: false })), ['a', 'd'])
+  assert.deepEqual(ids(filterReportContent(grouped, { dependencies: false, security: false })), ['a'])
+  assert.equal(filterReportContent(grouped, { dependencies: true, security: true }), grouped)
+})
+
+test('GET /api/reports/<id>/triage: view-gated (401/404), entries filtered to the viewer visible findings', async () => {
+  const db = openSqliteManagedDb(':memory:')
+  const reportStore = fakeBlobStore()
+  const fx = await reportTriageFixture(db, reportStore)
+  const { send } = bundleHarness(db, config, reportStore)
+  // Seed one entry per finding straight through the db — the endpoint's READ
+  // side (gating + per-viewer filtering) is what's under test here.
+  await db.setTriage('own', { color: 'red' }, fx.admin.id, 'alice', fx.now)
+  await db.setTriage('dep', { triage: 'invalid' }, fx.admin.id, 'alice', fx.now)
+  await db.setTriage('sec', { comment: 'urgent', flagged: false }, fx.admin.id, 'alice', fx.now)
+  // An entry on a finding no report carries, and one the report carries but
+  // nobody annotated: neither shows up.
+  await db.setTriage('elsewhere', { color: 'blue' }, fx.admin.id, 'alice', fx.now)
+
+  const T = (id) => `/api/reports/${id}/triage`
+  assert.equal((await send('GET', T(fx.reportId), null)).statusCode, 401) // unauthenticated
+  assert.equal((await send('GET', T(fx.reportId), cookiePair(fx.daveSess.setCookie))).statusCode, 404) // role 'none', even in-team
+  assert.equal((await send('GET', T(fx.reportId), cookiePair(fx.erinSess.setCookie))).statusCode, 404) // wrong team (no repo 7)
+  assert.equal((await send('GET', T(fx.reportId), cookiePair(fx.frankSess.setCookie))).statusCode, 404) // manage, but no membership (the admin surface is his read path)
+  assert.equal((await send('GET', T(randomUUID()), cookiePair(fx.adminSess.setCookie))).statusCode, 404) // unknown report
+  assert.equal((await send('PUT', T(fx.reportId), cookiePair(fx.adminSess.setCookie))).statusCode, 405) // GET/POST only
+
+  // admin (in no team) sees every entry, unfiltered; flagged:false round-trips.
+  const adminRes = await send('GET', T(fx.reportId), cookiePair(fx.adminSess.setCookie))
+  assert.equal(adminRes.statusCode, 200)
+  assert.deepEqual(JSON.parse(adminRes.body), { entries: {
+    own: { color: 'red' },
+    dep: { triage: 'invalid' },
+    sec: { comment: 'urgent', flagged: false },
+  } })
+  // bob (security yes, dependencies no) has the 'dep' entry withheld — an
+  // entry on a stripped finding would leak that the finding exists.
+  const bobRes = await send('GET', T(fx.reportId), cookiePair(fx.bobSess.setCookie))
+  assert.equal(bobRes.statusCode, 200)
+  assert.deepEqual(Object.keys(JSON.parse(bobRes.body).entries).toSorted(), ['own', 'sec'])
+  // carol (dependencies yes, security no) has 'sec' withheld instead.
+  const carolRes = await send('GET', T(fx.reportId), cookiePair(fx.carolSess.setCookie))
+  assert.deepEqual(Object.keys(JSON.parse(carolRes.body).entries).toSorted(), ['dep', 'own'])
+
+  // Entries are per finding id, shared by every report carrying the finding:
+  // a re-scan (same repo, 'own' again plus a new finding) reads 'own' as is,
+  // and a cleared entry arrives as null — the tombstone, unlike 'new', which
+  // the server has never seen.
+  const rescanId = randomUUID()
+  await db.insertReport({ id: rescanId, filename: 'scan2.json', contentType: 'application/json', byteSize: 5, sha256: 'y', uploadedBy: fx.admin.id, uploadedByLogin: 'alice', repoId: 7, bundleId: null, bundleIntegrity: null }, fx.now)
+  await reportStore.put(rescanId, Buffer.from(JSON.stringify({ source: 'native', findings: [{ id: 'own', file: 'src/a.js' }, { id: 'new', file: 'src/c.js' }] })))
+  await db.setTriage('sec', null, fx.admin.id, 'alice', fx.now + 1)
+  assert.deepEqual(JSON.parse((await send('GET', T(rescanId), cookiePair(fx.bobSess.setCookie))).body), { entries: { own: { color: 'red' } } })
+  assert.deepEqual(JSON.parse((await send('GET', T(fx.reportId), cookiePair(fx.bobSess.setCookie))).body), { entries: { own: { color: 'red' }, sec: null } })
+
+  // A pre-deduplicated (groups-shaped) dump is filtered for the viewer just the
+  // same: bob (no dependencies) must not learn of 'dep' through its entry.
+  const groupedId = randomUUID()
+  await db.insertReport({ id: groupedId, filename: 'scan3.json', contentType: 'application/json', byteSize: 5, sha256: 'z', uploadedBy: fx.admin.id, uploadedByLogin: 'alice', repoId: 7, bundleId: null, bundleIntegrity: null }, fx.now)
+  await reportStore.put(groupedId, Buffer.from(JSON.stringify({ source: 'native', groups: [
+    [{ id: 'own', file: 'src/a.js' }, { id: 'own2', file: 'src/a2.js' }],
+    [{ id: 'dep', file: 'node_modules/x/y.js' }],
+  ] })))
+  assert.deepEqual(JSON.parse((await send('GET', T(groupedId), cookiePair(fx.bobSess.setCookie))).body), { entries: { own: { color: 'red' } } })
+  assert.deepEqual(JSON.parse((await send('GET', T(groupedId), cookiePair(fx.adminSess.setCookie))).body), { entries: { own: { color: 'red' }, dep: { triage: 'invalid' } } })
+  await db.close()
+})
+
+test('POST /api/reports/<id>/triage: CSRF + role/membership gating, validation, visibility, clear + overwrite', async () => {
+  const db = openSqliteManagedDb(':memory:')
+  const reportStore = fakeBlobStore()
+  const fx = await reportTriageFixture(db, reportStore)
+  const { upload, send } = bundleHarness(db, config, reportStore)
+  const T = `/api/reports/${fx.reportId}/triage`
+  const bCk = cookiePair(fx.bobSess.setCookie)
+  const post = (cookie, csrf, payload) => upload(T, cookie, csrf, JSON.stringify(payload))
+
+  // Gating: CSRF missing → 403; role below 'triage' (carol view / dave none)
+  // and a triage-role NON-member (erin) → 404 — existence and denial both hidden.
+  assert.equal((await post(bCk, null, { entries: { own: null } })).statusCode, 403)
+  assert.equal((await post(cookiePair(fx.carolSess.setCookie), fx.carolSess.csrfToken, { entries: { own: null } })).statusCode, 404)
+  assert.equal((await post(cookiePair(fx.daveSess.setCookie), fx.daveSess.csrfToken, { entries: { own: null } })).statusCode, 404)
+  assert.equal((await post(cookiePair(fx.erinSess.setCookie), fx.erinSess.csrfToken, { entries: { own: null } })).statusCode, 404)
+  // ...and so does a manage-role NON-member: nobody writes triage on a report
+  // they can't read through this plane (write ⊆ read).
+  assert.equal((await post(cookiePair(fx.frankSess.setCookie), fx.frankSess.csrfToken, { entries: { own: null } })).statusCode, 404)
+  // Validation: bad body shape, malformed entry, over the entry-count cap.
+  assert.equal((await post(bCk, fx.bobSess.csrfToken, { entries: [] })).statusCode, 400)
+  assert.equal((await post(bCk, fx.bobSess.csrfToken, { entries: { own: { triage: 'wizard' } } })).statusCode, 400)
+  const many = Object.fromEntries(Array.from({ length: 201 }, (_, i) => [`f${i}`, null]))
+  assert.equal((await post(bCk, fx.bobSess.csrfToken, { entries: many })).statusCode, 400)
+  // bob may not touch 'dep' — his permissions strip it from the report, so a
+  // write to it 404s without revealing the finding exists (through a
+  // groups-shaped dump of the same findings just the same)...
+  assert.equal((await post(bCk, fx.bobSess.csrfToken, { entries: { dep: { color: 'red' } } })).statusCode, 404)
+  const groupedId = randomUUID()
+  await db.insertReport({ id: groupedId, filename: 'scan3.json', contentType: 'application/json', byteSize: 5, sha256: 'z', uploadedBy: fx.admin.id, uploadedByLogin: 'alice', repoId: 7, bundleId: null, bundleIntegrity: null }, fx.now)
+  await reportStore.put(groupedId, Buffer.from(JSON.stringify({ source: 'native', groups: [[{ id: 'own', file: 'src/a.js' }], [{ id: 'dep', file: 'node_modules/x/y.js' }]] })))
+  assert.equal((await upload(`/api/reports/${groupedId}/triage`, bCk, fx.bobSess.csrfToken, JSON.stringify({ entries: { dep: { color: 'red' } } }))).statusCode, 404)
+  assert.equal((await upload(`/api/reports/${groupedId}/triage`, bCk, fx.bobSess.csrfToken, JSON.stringify({ entries: { own: { color: 'red' } } }))).statusCode, 200)
+  // ...while the admin (unrestricted) may annotate it — but not a finding the
+  // report doesn't carry: the report is the scope, even for an admin.
+  assert.equal((await post(cookiePair(fx.adminSess.setCookie), fx.adminSess.csrfToken, { entries: { dep: { color: 'gray' } } })).statusCode, 200)
+  assert.equal((await post(cookiePair(fx.adminSess.setCookie), fx.adminSess.csrfToken, { entries: { elsewhere: { color: 'gray' } } })).statusCode, 404)
+
+  // bob (triage role) writes two entries; flagged:false lands as false.
+  assert.equal((await post(bCk, fx.bobSess.csrfToken, { entries: {
+    own: { color: 'red', flagged: false },
+    sec: { triage: 'fixed', comment: 'patched upstream' },
+  } })).statusCode, 200)
+  const bobView = async () => JSON.parse((await send('GET', T, bCk)).body).entries
+  assert.deepEqual(await bobView(), {
+    own: { color: 'red', flagged: false },
+    sec: { triage: 'fixed', comment: 'patched upstream' },
+  })
+  // The write is attributed to bob.
+  const [ownRow] = await db.listTriage(['own'])
+  assert.equal(ownRow.updatedByLogin, 'bob')
+
+  // End-to-end read plane: carol (view role, dependencies-only) sees bob's
+  // 'own' entry + the admin's 'dep' one; the security entry stays withheld.
+  const carolEntries = JSON.parse((await send('GET', T, cookiePair(fx.carolSess.setCookie))).body).entries
+  assert.deepEqual(carolEntries, { own: { color: 'red', flagged: false }, dep: { color: 'gray' } })
+
+  // Whole-entry overwrite drops the fields the replacement doesn't carry.
+  assert.equal((await post(bCk, fx.bobSess.csrfToken, { entries: { sec: { comment: 'still open' } } })).statusCode, 200)
+  assert.deepEqual((await bobView()).sec, { comment: 'still open' })
+  // null clears an entry — which reads back as null (the tombstone), so a
+  // reader adopts the clear rather than mistaking it for never-set.
+  assert.equal((await post(bCk, fx.bobSess.csrfToken, { entries: { own: null } })).statusCode, 200)
+  assert.equal((await bobView()).own, null)
   await db.close()
 })

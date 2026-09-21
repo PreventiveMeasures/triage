@@ -4,6 +4,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { CONFIG_PATH, LINKS_KIND, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, computeLinkHint, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, ensureLinkedFindingsIndexed, getCount, getPackagesIndex, getRepositoriesIndex, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, parseServerInfo, readCachedServerInfo, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, state, writeCachedServerInfo } from '#client/index.js'
 import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, setSyncForceDisabled, triageSync } from './client-sync.js'
 import { fetchReport as fetchManagedReport, login as managedLogin, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams } from './client-managed.js'
+import { hydrateManagedReportTriage, initManagedTriagePush } from './managed-triage.js'
 import { loadAdminBundle } from './client-admin.js'
 import sidebarCSS from './sidebar.css'
 import fileIconCSS from '../styles/file-icon.css'
@@ -230,10 +231,23 @@ function teamReportTemplate(r) {
 
 // Fetch a managed team report's content and render it in place via switchToFile
 // (which, given content, reads/writes no OPFS — the report is never cached).
+// Then claim the open-report slot + hydrate the server-side triage entries.
+//
+// `teamReportGen` counts opens: a slower earlier open must not render over a
+// later one. The slot is claimed only when switchToFile says THIS load is what
+// ended up on screen — any other switch in between (a later team report, a
+// local report that may share the filename, a workspace) supersedes it, and a
+// file name is no identity for a slot keyed by report id.
+let teamReportGen = 0
 async function openTeamReport(r) {
+  const gen = ++teamReportGen
   const content = await fetchManagedReport(r.id)
+  if (gen !== teamReportGen) return
   if (content == null) { console.warn('managed: could not load team report', r.id); return }
-  await switchToFile(r.filename, content)
+  const current = await switchToFile(r.filename, content)
+  if (!current || gen !== teamReportGen) return
+  state.managedReport = { id: r.id, filename: r.filename }
+  await hydrateManagedReportTriage(r.id)
 }
 
 // Packages + Repositories navigation buttons live as
@@ -1654,6 +1668,9 @@ async function refreshManagedSession() {
   try {
     state.managedSession = await managedProbeSession()
     renderAuthStatus()
+    // Claim the triage change-notifier for the server push — a no-op unless
+    // the session's role can write triage (reads still hydrate without it).
+    initManagedTriagePush()
     // The user's teams (sidebar Teams section). probeTeams never throws; empty
     // when logged out. Repaint the sidebar so the section reflects the result.
     state.managedTeams = state.managedSession == null ? [] : await managedProbeTeams()

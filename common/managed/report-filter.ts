@@ -1,8 +1,10 @@
 // Server-side report filtering by a viewer's visibility permissions, applied
 // before a team report's bytes are served (see server-managed/http.ts). A report
-// is the analyzer's native JSON dump — `{ findings: [...] }` where each entry is
-// a single finding object OR an array of finding objects (a dedup "duplicates"
-// group; the client's toGroup() normalises both to an array of tabs).
+// is the analyzer's native JSON dump — `{ findings: [...] }`, or `{ groups:
+// [...] }` for a pre-deduplicated dump (the shape a merged export writes; see
+// report/index.js reportEntries) — where each entry is a single finding object
+// OR an array of finding objects (a dedup "duplicates" group; the client's
+// toGroup() normalises both to an array of tabs).
 //
 // A viewer who lacks a permission has the matching findings stripped:
 //   - dependencies off → drop findings classified as dependencies, i.e. whose
@@ -72,15 +74,19 @@ function tabIsSecurity(tab: unknown, reportSource: unknown): boolean {
 
 // Filter `content` for a viewer with `perms`. Returns the (possibly rewritten)
 // content string; the original is returned untouched when nothing is stripped or
-// the content isn't a JSON findings dump.
+// the content isn't a JSON findings dump. The entries are read from `findings`
+// or, failing that, `groups` — the same precedence as reportEntries — and
+// written back under the key they came from.
 export function filterReportContent(content: string, perms: ViewerPermissions): string {
   if (perms.dependencies && perms.security) return content // sees everything → no work
   let data: unknown
   try { data = JSON.parse(content) } catch { return content } // not JSON → pass through
   if (data == null || typeof data !== 'object') return content
-  const findings = (data as { findings?: unknown }).findings
-  if (!Array.isArray(findings)) return content
-  const reportSource = (data as { source?: unknown }).source
+  const d = data as { findings?: unknown; groups?: unknown; source?: unknown }
+  const key = Array.isArray(d.findings) ? 'findings' : Array.isArray(d.groups) ? 'groups' : null
+  if (key == null) return content
+  const findings = d[key] as unknown[]
+  const reportSource = d.source
   // Pair each original entry with its tabs (so kept entries keep their exact
   // shape), and pick the deps-dir matcher from the full set of tabs.
   const entries = findings.map((entry) => ({ entry, tabs: tabsOf(entry) }))
@@ -92,5 +98,5 @@ export function filterReportContent(content: string, perms: ViewerPermissions): 
     kept.push(entry)
   }
   if (kept.length === findings.length) return content // nothing stripped
-  return JSON.stringify({ ...(data as object), findings: kept })
+  return JSON.stringify({ ...(data as object), [key]: kept })
 }
