@@ -1445,6 +1445,21 @@ async function reportTriageFixture(db, reportStore) {
   return { now, reportId, admin, adminSess, bobSess, carolSess, daveSess, erinSess, frankSess }
 }
 
+test('filterReportContent: a groups-shaped dump is filtered the same way, under its own key', () => {
+  const grouped = JSON.stringify({ source: 'native', groups: [
+    [{ id: 'a', file: 'src/a.js' }],
+    [{ id: 'd', file: 'node_modules/x/y.js' }],
+    [{ id: 's', file: 'src/s.js', security: true }, { id: 's2', file: 'src/s2.js' }],
+  ] })
+  const ids = (s) => JSON.parse(s).groups.map((g) => g[0].id)
+  const noDeps = filterReportContent(grouped, { dependencies: false, security: true })
+  assert.deepEqual(ids(noDeps), ['a', 's'])
+  assert.equal(JSON.parse(noDeps).findings, undefined, 'written back as groups, no findings key invented')
+  assert.deepEqual(ids(filterReportContent(grouped, { dependencies: true, security: false })), ['a', 'd'])
+  assert.deepEqual(ids(filterReportContent(grouped, { dependencies: false, security: false })), ['a'])
+  assert.equal(filterReportContent(grouped, { dependencies: true, security: true }), grouped)
+})
+
 test('GET /api/reports/<id>/triage: view-gated (401/404), entries filtered to the viewer visible findings', async () => {
   const db = openSqliteManagedDb(':memory:')
   const reportStore = fakeBlobStore()
@@ -1494,6 +1509,17 @@ test('GET /api/reports/<id>/triage: view-gated (401/404), entries filtered to th
   await db.setTriage('sec', null, fx.admin.id, 'alice', fx.now + 1)
   assert.deepEqual(JSON.parse((await send('GET', T(rescanId), cookiePair(fx.bobSess.setCookie))).body), { entries: { own: { color: 'red' } } })
   assert.deepEqual(JSON.parse((await send('GET', T(fx.reportId), cookiePair(fx.bobSess.setCookie))).body), { entries: { own: { color: 'red' }, sec: null } })
+
+  // A pre-deduplicated (groups-shaped) dump is filtered for the viewer just the
+  // same: bob (no dependencies) must not learn of 'dep' through its entry.
+  const groupedId = randomUUID()
+  await db.insertReport({ id: groupedId, filename: 'scan3.json', contentType: 'application/json', byteSize: 5, sha256: 'z', uploadedBy: fx.admin.id, uploadedByLogin: 'alice', repoId: 7, bundleId: null, bundleIntegrity: null }, fx.now)
+  await reportStore.put(groupedId, Buffer.from(JSON.stringify({ source: 'native', groups: [
+    [{ id: 'own', file: 'src/a.js' }, { id: 'own2', file: 'src/a2.js' }],
+    [{ id: 'dep', file: 'node_modules/x/y.js' }],
+  ] })))
+  assert.deepEqual(JSON.parse((await send('GET', T(groupedId), cookiePair(fx.bobSess.setCookie))).body), { entries: { own: { color: 'red' } } })
+  assert.deepEqual(JSON.parse((await send('GET', T(groupedId), cookiePair(fx.adminSess.setCookie))).body), { entries: { own: { color: 'red' }, dep: { triage: 'invalid' } } })
   await db.close()
 })
 
@@ -1521,8 +1547,14 @@ test('POST /api/reports/<id>/triage: CSRF + role/membership gating, validation, 
   const many = Object.fromEntries(Array.from({ length: 201 }, (_, i) => [`f${i}`, null]))
   assert.equal((await post(bCk, fx.bobSess.csrfToken, { entries: many })).statusCode, 400)
   // bob may not touch 'dep' — his permissions strip it from the report, so a
-  // write to it 404s without revealing the finding exists...
+  // write to it 404s without revealing the finding exists (through a
+  // groups-shaped dump of the same findings just the same)...
   assert.equal((await post(bCk, fx.bobSess.csrfToken, { entries: { dep: { color: 'red' } } })).statusCode, 404)
+  const groupedId = randomUUID()
+  await db.insertReport({ id: groupedId, filename: 'scan3.json', contentType: 'application/json', byteSize: 5, sha256: 'z', uploadedBy: fx.admin.id, uploadedByLogin: 'alice', repoId: 7, bundleId: null, bundleIntegrity: null }, fx.now)
+  await reportStore.put(groupedId, Buffer.from(JSON.stringify({ source: 'native', groups: [[{ id: 'own', file: 'src/a.js' }], [{ id: 'dep', file: 'node_modules/x/y.js' }]] })))
+  assert.equal((await upload(`/api/reports/${groupedId}/triage`, bCk, fx.bobSess.csrfToken, JSON.stringify({ entries: { dep: { color: 'red' } } }))).statusCode, 404)
+  assert.equal((await upload(`/api/reports/${groupedId}/triage`, bCk, fx.bobSess.csrfToken, JSON.stringify({ entries: { own: { color: 'red' } } }))).statusCode, 200)
   // ...while the admin (unrestricted) may annotate it — but not a finding the
   // report doesn't carry: the report is the scope, even for an admin.
   assert.equal((await post(cookiePair(fx.adminSess.setCookie), fx.adminSess.csrfToken, { entries: { dep: { color: 'gray' } } })).statusCode, 200)
