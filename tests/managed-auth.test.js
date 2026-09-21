@@ -14,7 +14,7 @@ import { OAuthError, buildLoginRedirect, ensureUserAccessToken, handleCallback, 
 import { appJwt, collectRepos, githubAppConfigured, installUrl, listInstalledRepos, listUserRepos, mergeRepos, repoAccessToken } from '../server-managed/github-app.ts'
 import { bundleIntegrity } from '../server-managed/bundle.ts'
 import { filterReportContent } from '../common/managed/report-filter.ts'
-import { parseTriageEntryPatch } from '../common/managed/triage.ts'
+import { MAX_TRIAGE_HISTORY, parseTriageEntryPatch } from '../common/managed/triage.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 
 const config = {
@@ -1405,6 +1405,14 @@ test('db: finding triage trail — one event per change, none for a no-op write,
   assert.equal((await db.listTriageHistory('f1', 10)).length, 3)
   assert.equal((await db.listTriageHistory('f1', 2)).length, 2, 'limit applies')
   assert.deepEqual(await db.listTriageHistory('never', 10), [])
+  // The trail is bounded: a writer alternating a value past MAX_TRIAGE_HISTORY
+  // changes keeps only the newest that many, oldest trimmed first.
+  for (let i = 0; i < MAX_TRIAGE_HISTORY + 5; i++) await db.setTriage('f9', { comment: `v${i}` }, bob, 'bob', now + 10 + i)
+  const bounded = await db.listTriageHistory('f9', MAX_TRIAGE_HISTORY + 50)
+  assert.equal(bounded.length, MAX_TRIAGE_HISTORY)
+  assert.equal(bounded[0].comment, `v${MAX_TRIAGE_HISTORY + 4}`)
+  assert.equal(bounded.at(-1).comment, 'v5', 'the five oldest are gone')
+  assert.equal((await db.listTriageHistory('f1', 10)).length, 3, 'other findings untouched')
   await db.close()
 })
 

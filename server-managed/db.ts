@@ -22,6 +22,7 @@ import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import type { Role } from '../common/managed/roles.ts'
 import type { TeamUserPermissions } from '../common/managed/permissions.ts'
+import { MAX_TRIAGE_HISTORY } from '../common/managed/triage.ts'
 import type { TriageEntryPatch } from '../common/managed/triage.ts'
 
 const SQLITE_SCHEMA = `
@@ -156,8 +157,11 @@ CREATE TABLE IF NOT EXISTS finding_triage (
 -- against the previous row for the same id, computed on read. batch_id groups
 -- the rows of one request. seq is the rowid: a total order that breaks ties
 -- on at. actor_id / actor_login follow the uploaded_by / uploaded_by_login
--- convention (live account, durable login snapshot). Rows are never deleted
--- here — an id no report carries any more is the tombstone GC's concern.
+-- convention (live account, durable login snapshot). Only the newest
+-- MAX_TRIAGE_HISTORY rows per finding are kept (the most a read returns) —
+-- trimmed on insert, so a writer alternating a value can't grow the store
+-- without bound; an id no report carries any more is the tombstone GC's
+-- concern.
 CREATE TABLE IF NOT EXISTS finding_triage_event (
   seq          INTEGER PRIMARY KEY,
   finding_id   TEXT NOT NULL,
@@ -624,6 +628,12 @@ function prepareStatements(db: DatabaseSync) {
       `INSERT INTO finding_triage_event (finding_id, batch_id, color, triage, comment, fix, flagged, actor_id, actor_login, at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ),
+    // Keep the newest MAX_TRIAGE_HISTORY events of a finding; the rest go.
+    trimTriageEventsStmt: db.prepare(
+      `DELETE FROM finding_triage_event
+        WHERE finding_id = ?
+          AND seq NOT IN (SELECT seq FROM finding_triage_event WHERE finding_id = ? ORDER BY seq DESC LIMIT ?)`,
+    ),
     selectTriageHistoryStmt: db.prepare(
       `SELECT e.seq AS seq, e.finding_id AS findingId, e.batch_id AS batchId, e.color AS color, e.triage AS triage,
               e.comment AS comment, e.fix AS fix, e.flagged AS flagged,
@@ -841,7 +851,7 @@ type TriageEventDbRow = TriageStateDbRow & { seq: number; findingId: string; bat
 // current row is skipped altogether, so a client re-pushing what already
 // stands neither re-stamps the writer nor echoes into the trail.
 function triageMethods(db: DatabaseSync, stmts: ReturnType<typeof prepareStatements>) {
-  const { upsertTriageStmt, selectTriageStmt, selectTriageStateStmt, insertTriageEventStmt, selectTriageHistoryStmt } = stmts
+  const { upsertTriageStmt, selectTriageStmt, selectTriageStateStmt, insertTriageEventStmt, trimTriageEventsStmt, selectTriageHistoryStmt } = stmts
   function writeEntry(findingId: string, entry: TriageEntryPatch | null, batchId: string, updatedBy: string | null, updatedByLogin: string | null, now: number): void {
     const e = entry ?? {}
     // `flagged: false` is a real value (the explicit un-flag tombstone), so it
@@ -855,6 +865,7 @@ function triageMethods(db: DatabaseSync, stmts: ReturnType<typeof prepareStateme
       && cur.fix === next.fix && cur.flagged === next.flagged) return
     upsertTriageStmt.run(findingId, next.color, next.triage, next.comment, next.fix, next.flagged, updatedBy, updatedByLogin, now)
     insertTriageEventStmt.run(findingId, batchId, next.color, next.triage, next.comment, next.fix, next.flagged, updatedBy, updatedByLogin, now)
+    trimTriageEventsStmt.run(findingId, findingId, MAX_TRIAGE_HISTORY)
   }
   return {
     listTriageHistory(findingId: string, limit: number): Promise<TriageEventRow[]> {
