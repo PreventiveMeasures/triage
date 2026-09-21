@@ -3,7 +3,7 @@
 // triage store and the original report's source/bundle metadata.
 import { computeLinkHint, loadRepoUrlFor, readFile, state, triageLoadPromise, workspacesHoldingReport } from '#client/index.js'
 import { store } from '@rray/frontend/state-management'
-import { inheritReportMeta, isAppFinding, loadFindings, reportEntries, reportRepoGithub } from '../../report/index.js'
+import { inheritReportMeta, isAppFinding, loadFindings, repoDirectory, reportEntries, reportRepoGithub } from '../../report/index.js'
 
 let preview = null
 let generation = 0
@@ -41,6 +41,7 @@ export async function openLinksPreview(id, reportName, rowIndex) {
         ...finding,
         _reportName: reportName,
         _repoFallback: reportRepoGithub(data) ?? loadRepoUrlFor(reportName),
+        _repoDirectory: repoDirectory(data?.repo),
         _bundleHashes: data.bundleHashes ?? [],
         _source: finding.source ?? data.source ?? null,
       }

@@ -16,12 +16,15 @@
 // — deliberately NOT part of that inheritance (a dependency finding's
 // own `repo.github` names its upstream, not the scanned project), and
 // normalised to an `owner/name` slug so links, the header chip and the
-// Repositories view all key off one form.
+// Repositories view all key off one form — and `repoDirectory`, the
+// `directory` declared beside it (`{ github: 'babel/babel',
+// directory: 'packages/babel-core' }`), normalised to the bare
+// relative path the link builders prefix a file with.
 
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { META_FIELDS, inheritReportMeta, reportRepoGithub } from '../index.js'
+import { META_FIELDS, inheritReportMeta, repoDirectory, reportRepoGithub } from '../index.js'
 
 // The header shape the analyzer emits at the top of a native dump.
 const header = () => ({
@@ -144,5 +147,55 @@ describe('reportRepoGithub', () => {
     const f = finding()
     inheritReportMeta(f, { ...header(), repo: { github: 'owner/name' } })
     assert.equal(f.repo, undefined, 'per-finding repo left alone')
+  })
+})
+
+describe('repoDirectory', () => {
+  const dir = (directory) => repoDirectory({ github: 'babel/babel', directory })
+
+  it('takes a bare relative path as-is', () => {
+    assert.equal(dir('packages/babel-core'), 'packages/babel-core')
+    assert.equal(dir('  packages/babel-core  '), 'packages/babel-core', 'surrounding whitespace trimmed')
+  })
+
+  it('normalises the ways a path says the same thing', () => {
+    for (const raw of ['./packages/babel-core', '/packages/babel-core', 'packages/babel-core/', '//packages//babel-core//']) {
+      assert.equal(dir(raw), 'packages/babel-core', raw)
+    }
+  })
+
+  it('reads the repo root as no directory at all', () => {
+    assert.equal(dir(''), '')
+    assert.equal(dir('   '), '')
+    assert.equal(dir('.'), '')
+    assert.equal(dir('/'), '')
+  })
+
+  it('rejects a value that would build a broken link', () => {
+    // `fileUrl` splices this in front of the path and `findingUrl`
+    // puts `#L42` behind it, so a `?` / `#` would cut the file (and
+    // the line anchor) off the URL, and `..` climbs out of the repo.
+    assert.equal(dir('packages/x?raw=1'), '')
+    assert.equal(dir('packages/x#L1'), '')
+    assert.equal(dir('../elsewhere'), '')
+    assert.equal(dir('packages/../../elsewhere'), '')
+    assert.equal(dir('packages..core'), 'packages..core', 'only a whole `..` segment climbs')
+  })
+
+  it('returns no directory when nothing usable is declared', () => {
+    assert.equal(repoDirectory(undefined), '')
+    assert.equal(repoDirectory(null), '')
+    assert.equal(repoDirectory({}), '')
+    assert.equal(repoDirectory({ github: 'babel/babel' }), '')
+    assert.equal(repoDirectory({ directory: null }), '')
+    assert.equal(repoDirectory({ directory: 42 }), '', 'non-string ignored')
+    assert.equal(repoDirectory({ directory: ['packages/x'] }), '')
+  })
+
+  it('is read off whichever `repo` is asked — the report header or a finding', () => {
+    // The same field in both places `repo` is stamped: the report
+    // header, and a finding naming its own upstream.
+    assert.equal(repoDirectory({ github: 'babel/babel', directory: 'packages/babel-core' }), 'packages/babel-core')
+    assert.equal(repoDirectory(finding({ repo: { github: 'babel/babel', directory: 'packages/babel-traverse' } }).repo), 'packages/babel-traverse')
   })
 })

@@ -9,7 +9,7 @@ import { isBundleInRemote, isInRemote, remoteCount, triageSync } from './client-
 import { installShadowTooltipListener } from './tooltip.js'
 import { dropZone, report } from './dom.js'
 import { SEVERITIES, canDropRevalidation, configureDepsDir, configureRevalidation, displayedSeverity, fileLink, findingDisplayName, findingTitle, formatRunMeta, hasSeverityCorrection, isHttpUrl, isModule, lineLink, lineRangeLabel, reachableRevalidateFilters, revalidateKind, stampUpstreamFindings } from './format.js'
-import { activeTabFor, clearMergedGroups, drawnTabs, findingRepoFallback, getMergedGroups, getRevalidationGroups, groupKey, groupState, primaryTab, triageEntry, triageScope, underlyingFindingsShown } from './group.js'
+import { activeTabFor, clearMergedGroups, drawnTabs, findingRepoTarget, getMergedGroups, getRevalidationGroups, groupKey, groupState, primaryTab, triageEntry, triageScope, underlyingFindingsShown } from './group.js'
 import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, applyScopeFilters, applySorting, isAppStackedGroup, isCrossContextGroup, modelOfFinding, priorityApplies, rangeApplies, repositoryFilterValues, shouldLockConfirmed } from './filters.js'
 import { ANALYZER_LABELS } from './analyzer-select.js'
 import { reportDuplicateIds } from './report-duplicates.js'
@@ -1489,7 +1489,7 @@ function findingsBodyTemplate(filtered) {
       const probe = primaryTab(items[0])
       return html`<div class="file-group">
         <div class="file-header">
-          <span>${fileLink(probe, findingRepoFallback(probe))}</span>
+          <span>${fileLink(probe, findingRepoTarget(probe))}</span>
           <span class="count">${items.length}</span>
         </div>
         <div class="file-body">${repeat(items, (g) => groupKey(g), (g) => findingCardPlaceholder(g, false, null, true))}</div>
@@ -1514,13 +1514,13 @@ function findingsBodyTemplate(filtered) {
   // styles/print.css and finding-card.css's @media print block.
   return html`${repeat(items, (g) => groupKey(g), (g) => {
     const p = activeTabFor(g)
-    const lineLinkTpl = lineLink(p, findingRepoFallback(p))
+    const lineLinkTpl = lineLink(p, findingRepoTarget(p))
     const meta = formatRunMeta(p)
     const displayName = findingDisplayName(p)
     const multiCase = g.length > 1
     return html`<div class=${classMap({ 'flat-group': true, 'multi-case': multiCase })}>
       <div class="flat-group-loc">
-        <span class="file">${fileLink(p, findingRepoFallback(p))}</span>
+        <span class="file">${fileLink(p, findingRepoTarget(p))}</span>
         ${lineLinkTpl === nothing ? nothing : html`<span class="line-num">${lineLinkTpl}</span>`}
         ${displayName ? html`<span class="meta">${displayName}</span>` : nothing}
         ${meta ? html`<span class="run-meta">${meta}</span>` : nothing}

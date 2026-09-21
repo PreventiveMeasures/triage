@@ -49,3 +49,28 @@ export function reportRepoGithub(data) {
   const slug = (url ? `${url[1]}/${url[2]}` : trimmed).replace(/\.git$/u, '')
   return isRepoSlug(slug) ? slug : null
 }
+
+// `"directory": "packages/babel-core"` beside that `github` — where
+// inside the repository the tree the report describes sits, the same
+// field npm's `repository` object carries for a package in a monorepo
+// (`{ "github": "babel/babel", "directory": "packages/babel-core" }`).
+// The paths a report writes are relative to that tree, so a link is
+// the repo, then this, then the path: `babel/babel` +
+// `packages/babel-core` + `src/index.js`. Declared in both the places
+// `repo` is — the report header and a finding's own — and read off
+// whichever of the two answered for the repo, never mixed.
+//
+// Normalised to a bare relative path: no leading `./` or `/`, no
+// trailing one, no repeated separators, and `''` — same as declaring
+// none — for the repo root. `''` too for anything a link builder
+// would splice into a broken URL, the rule `reportRepoGithub` follows
+// above: a non-string, a `?` or `#` (either cuts the path short of the
+// file, and swallows the `#L42` anchor a line link puts after it), or
+// a `..` segment climbing out of the repository.
+export function repoDirectory(repo) {
+  const raw = typeof repo?.directory === 'string' ? repo.directory.trim() : ''
+  const path = raw.replace(/^(?:\.\/)+/u, '').replaceAll(/^\/+|\/+$/gu, '').replaceAll(/\/{2,}/gu, '/')
+  if (!path || path === '.') return ''
+  if (/[?#]/u.test(path) || path.split('/').includes('..')) return ''
+  return path
+}
