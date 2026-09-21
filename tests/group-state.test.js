@@ -358,6 +358,26 @@ describe('upstream members keep out of the group verdict', () => {
     }
   })
 
+  it('allows dependency triage when the loaded report has no App layer', () => {
+    reset()
+    const dep = upstream({ triage: 'fixed' })
+    state.reports = [{ groups: [[dep]] }]
+    state.showRevalidation = true
+    assert.equal(canTriageFinding(dep), true)
+    assert.equal(tabTriage(dep), 'fixed')
+    assert.deepEqual(triageScope([dep]), [dep])
+  })
+
+  it('keeps dependency triage restricted when the App layer is available', () => {
+    reset()
+    const dep = tab({ triage: 'fixed' }, { isUpstream: true, revalidate: 'confirmed' })
+    state.reports = [{ groups: [[dep]] }]
+    state.showRevalidation = true
+    assert.equal(canTriageFinding(dep), false)
+    assert.equal(tabTriage(dep), undefined)
+    assert.deepEqual(triageScope([dep]), [])
+  })
+
   it('cannot bypass the App guard through a conflicted row or automatic levelling', () => {
     reset()
     const dep = upstream({ triage: 'fixed' })

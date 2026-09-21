@@ -1,24 +1,27 @@
 import { revalidateKindOf } from '../../report/index.js'
 import { mergeReportDuplicateFields } from './finding-duplicates.js'
+import { splitRevalidationInputs } from './revalidation-input-groups.js'
 
 // Reports retain their original rows. Merge only this derived view, so two
 // application findings that refer to the same source issue keep their own
 // context, verdicts, and tabs. Code mode removes pass findings BEFORE deciding
 // which rows may merge; imports from other analyzers remain App findings.
-export function mergeReportGroups(reports, { showRevalidation = true, hideRuledOut = false, merges = [] } = {}) {
+export function mergeReportGroups(reports, { showRevalidation = true, upstreamOnly = false, hideRuledOut = false, merges = [] } = {}) {
   const rows = []
   for (let reportIndex = 0; reportIndex < reports.length; reportIndex++) {
     const report = reports[reportIndex]
     for (const original of report.groups) {
       // Visibility precedes merging: a hidden answer from another app must
       // neither cause a conflict nor gap-fill the answer the reader will see.
-      const kept = showRevalidation
+      const kept = upstreamOnly
+        ? original.filter((f) => f.isUpstream && revalidateKindOf(f) !== 'revalidation').map(withoutRevalidation)
+        : showRevalidation
         ? hideRuledOut
           ? original.filter((f) => !['refuted', 'unreachable'].includes(revalidateKindOf(f)))
           : original
         : original.filter((f) => revalidateKindOf(f) !== 'revalidation').map(withoutRevalidation)
       const group = kept.length === original.length && kept.every((f, i) => f === original[i]) ? original : kept
-      if (group.length > 0) rows.push({ group, reportIndex, reportName: report.fileName ?? '', hasApp: group.some((f) => f.isApp) })
+      if (group.length > 0) rows.push({ group, sourceGroup: original, reportIndex, reportName: report.fileName ?? '', hasApp: group.some((f) => f.isApp) })
     }
   }
   const parent = rows.map((_, i) => i)
@@ -89,8 +92,8 @@ export function mergeReportGroups(reports, { showRevalidation = true, hideRuledO
       if (app) {
         const group = [...original]
         group.workspaceKey = app.id ?? String(app._id)
-        groups.push(group)
-      } else groups.push(original)
+        groups.push(...splitOutput(component, group, showRevalidation, upstreamOnly))
+      } else groups.push(...splitOutput(component, original, showRevalidation, upstreamOnly))
       continue
     }
     const rowConflicts = new Map()
@@ -122,7 +125,7 @@ export function mergeReportGroups(reports, { showRevalidation = true, hideRuledO
       const app = group.find((f) => f.isApp)
       if (app) group.workspaceKey = app.id ?? String(app._id)
     }
-    groups.push(group)
+    groups.push(...splitOutput(component, group, showRevalidation, upstreamOnly))
     for (const [id, conflict] of rowConflicts) {
       const previous = conflicts.get(id)
       conflicts.set(id, previous
@@ -131,6 +134,32 @@ export function mergeReportGroups(reports, { showRevalidation = true, hideRuledO
     }
   }
   return { groups, conflicts }
+}
+
+function splitOutput(component, group, keepAppLayer, upstreamOnly) {
+  if (keepAppLayer) return [group]
+  if (upstreamOnly) {
+    // Upstream projection removes the App and own-source members before this
+    // function runs. Reconstruct the complete source component first so an
+    // App's inputs outside the upstream lens still determine its partition.
+    const complete = component.flatMap((row) => row.sourceGroup)
+    const partitions = splitRevalidationInputs(complete)
+    if (partitions.length === 1) return [group]
+    const projected = []
+    const covered = new Set()
+    for (const partition of partitions) {
+      const ids = new Set(partition.filter((f) => !f.isApp && f.id).map((f) => f.id))
+      const visible = group.filter((f) => ids.has(f.id))
+      if (visible.length > 0) {
+        projected.push(visible)
+        for (const finding of visible) covered.add(finding.id)
+      }
+    }
+    const groupIds = new Set(group.map((f) => f.id).filter(Boolean))
+    return covered.size === groupIds.size ? projected : [group]
+  }
+  const appFindings = component.flatMap((row) => row.sourceGroup.filter((f) => f.isApp))
+  return splitRevalidationInputs(group, appFindings)
 }
 
 function withoutRevalidation(finding) {

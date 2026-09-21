@@ -29,6 +29,15 @@ export function computeBundleFileHashes(details) {
   return job
 }
 
+// Count source lines without charging a trailing newline as an extra line.
+// The source map intentionally excludes non-text resources, so a null entry
+// remains the metadata marker for images, fonts, and other binary payloads.
+export function bundleSourceLineCount(content) {
+  if (typeof content !== 'string' || content.length === 0) return 0
+  const breaks = content.match(/\r\n|\r|\n/gu)?.length ?? 0
+  return breaks + (/[\r\n]$/u.test(content) ? 0 : 1)
+}
+
 function mapObject(value) {
   return value instanceof Map ? Object.fromEntries([...value].map(([key, v]) => [key, mapObject(v)])) : value
 }
@@ -38,8 +47,10 @@ function mapObject(value) {
 export async function createBundleMetadata(details) {
   const hashes = await computeBundleFileHashes(details)
   const sizes = bundleSourceSizes(details)
+  const sourceLines = details.lineCounts ??= new Map([...bundleSourcesAsMap(details)]
+    .map(([path, content]) => [path, bundleSourceLineCount(content)]))
   const result = { version: 1, integrity: details.integrity, kind: details.kind, size: details.size,
-    files: [...sizes].map(([path, size]) => [path, size, hashes.get(path) ?? null]) }
+    files: [...sizes].map(([path, size]) => [path, size, hashes.get(path) ?? null, sourceLines.get(path) ?? null]) }
   if (details.kind === 'sourcemap') {
     const { version, file, sourceRoot, names, sources = [], sourcesContent = [] } = details.json
     result.json = { version, file, sourceRoot, sources }
@@ -73,16 +84,20 @@ export async function createBundleMetadata(details) {
 export function parseBundleMetadata(data, integrity) {
   if (data?.version !== 1 || data.integrity !== integrity || !['stasis', 'sourcemap'].includes(data.kind)
       || !Number.isSafeInteger(data.size) || data.size < 0 || !Array.isArray(data.files)) throw new Error('Invalid bundle metadata')
-  const fileHashes = new Map(), fileSizes = new Map()
+  const fileHashes = new Map(), fileSizes = new Map(), lineCounts = new Map()
+  let needsLineCounts = false
   for (const row of data.files) {
-    if (!Array.isArray(row) || row.length !== 3) throw new Error('Invalid bundle metadata file')
-    const [path, size, hash] = row
+    if (!Array.isArray(row) || (row.length !== 3 && row.length !== 4)) throw new Error('Invalid bundle metadata file')
+    const [path, size, hash, lines] = row
+    if (row.length === 3) needsLineCounts = true
     if (typeof path !== 'string' || fileSizes.has(path) || (size !== null && (!Number.isSafeInteger(size) || size < 0))
-        || (size === null ? hash !== null : typeof hash !== 'string' || !/^sha512-[A-Za-z0-9+/]{86}==$/u.test(hash))) throw new Error('Invalid bundle metadata file')
+        || (size === null ? hash !== null : typeof hash !== 'string' || !/^sha512-[A-Za-z0-9+/]{86}==$/u.test(hash))
+        || (lines !== undefined && lines !== null && (!Number.isSafeInteger(lines) || lines < 0))) throw new Error('Invalid bundle metadata file')
     fileSizes.set(path, size)
     if (hash !== null) fileHashes.set(path, hash)
+    if (lines !== undefined && lines !== null) lineCounts.set(path, lines)
   }
-  const details = { integrity, kind: data.kind, size: data.size, metadataOnly: true, fileSizes, fileHashes }
+  const details = { integrity, kind: data.kind, size: data.size, metadataOnly: true, fileSizes, fileHashes, lineCounts, needsLineCounts }
   if (data.kind === 'stasis') {
     details.bundle = Bundle.parse(JSON.stringify(data.bundle))
     const paths = details.bundle.sources

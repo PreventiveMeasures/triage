@@ -110,7 +110,7 @@ class TriageSelector extends StateElement {
         class=${classMap({ 'triage-state-btn': true, [`triage-state-${s}`]: true, active })}
         data-triage-show=${s}
         aria-pressed=${String(active)}
-      >${label} (${n})</button>`
+      ><span>${label}</span><span class="n">${n}</span></button>`
     })}`
   }
 }

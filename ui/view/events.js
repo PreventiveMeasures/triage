@@ -1,6 +1,6 @@
-import { KANBAN_DETAIL_FULLSCREEN_KEY, SEVERITY_MODE_KEY, VIEW_MODE_KEY, hasLinkedFindings, isEncryptionEnabled, patchEntry, readBundle, saveRepoUrlFor, saveTriage, setReportIgnored, state, subscribeToBundleFindingIndex, subscribeToBundleHashIndex, subscribeToLinkedFindings } from '#client/index.js'
+import { KANBAN_DETAIL_FULLSCREEN_KEY, SEVERITY_MODE_KEY, hasLinkedFindings, isEncryptionEnabled, patchEntry, readBundle, saveRepoUrlFor, saveTriage, setReportIgnored, state, subscribeToBundleFindingIndex, subscribeToBundleHashIndex, subscribeToLinkedFindings } from '#client/index.js'
 import { downloadBlob, report } from './dom.js'
-import { commonPrefix, configureRevalidation, handoffBlock, lineRange } from './format.js'
+import { commonPrefix, configureRevalidation, handoffBlock, isModule, lineRange } from './format.js'
 import { activeTabFor, canApplyFixToGroup, canTriageFinding, findGroupById, findingRepo, findingReport, fixApplies, getShownGroups, groupState, groupWithPassRows, syncGroupTriage, tabKey, triageActionPlan, triageEntry, triageScope } from './group.js'
 import { applyOpeningFilters, clearFilterOverride, defaultConfidenceFloor, defaultRevalidateFilter, resetFilters, setFilterOverride } from './filters.js'
 import { focusCodeHistory, revealFocusCodeLines } from './focus-code.js'
@@ -207,6 +207,7 @@ import { renderSidebar } from './sidebar.js'
 import { BUNDLE_TABS, persistLastBundle, switchToFile } from './ingest.js'
 import { treeAnchor } from './file-counts.js'
 import { graph2, cleanupGraph2 } from './graph/state.js'
+import { hideToast, showToast } from './toast.js'
 
 // composedPath-aware Element.closest — needed for clicks originating
 // inside a shadow DOM (e.g. `<finding-table>`'s `.tab` / `.mark-*`
@@ -2382,6 +2383,11 @@ report.addEventListener('partial-change', (e) => {
 // and it is still set to the mode the previous render drew.
 report.addEventListener('revalidation-change', (e) => {
   state.showRevalidation = e.detail.on
+  const hasDependencyIssues = !e.detail.on && state.reports.some((r) =>
+    (r.groups ?? []).some((g) => g.some((f) => !f.isApp && (f.isUpstream || isModule(f.file)))))
+  if (hasDependencyIssues) {
+    showToast('App mode off is not recommended; it can conflate triage for issues in dependencies.', { kind: 'warning' })
+  } else if (e.detail.on) hideToast()
   configureRevalidation(state.showRevalidation, state.upstreamOnly)
   applyOpeningFilters(getShownGroups())
   render()
@@ -2641,7 +2647,8 @@ report.addEventListener('source-toggle', (e) => {
   if (!wasActive) state.filterSources.add(v)
   render()
 })
-// Annotation filter chips (comment | fix | flag | duplicates) — cycle the matching
+// Annotation filter chips (comment | fix | flag | duplicates | cross-context |
+// App-stacked) — cycle the matching
 // tri-state ('' → 'with' → 'without' → '') and re-render. Each is an
 // independent AND filter (matchesFilters).
 report.addEventListener('annotation-filter-toggle', (e) => {
@@ -2651,6 +2658,8 @@ report.addEventListener('annotation-filter-toggle', (e) => {
   else if (key === 'fix') state.filterFix = next(state.filterFix)
   else if (key === 'flag') state.filterFlagged = next(state.filterFlagged)
   else if (key === 'duplicates' && !state.currentWorkspace) state.filterDuplicates = next(state.filterDuplicates)
+  else if (key === 'cross-context') state.filterCrossContext = next(state.filterCrossContext)
+  else if (key === 'app-stacked') state.filterAppStacked = next(state.filterAppStacked)
   else return
   render()
 })
@@ -2672,17 +2681,13 @@ report.addEventListener('slide-triage-toggle', (e) => {
 report.addEventListener('view-mode-change', (e) => {
   if (e.detail.kind === 'files') {
     // Files-tab toggle — flips state.filesViewMode (table | list).
-    // Not persisted to localStorage; only the findings tab's mode
-    // round-trips since that's what the user sees first on a
-    // typical load. Re-render is enough for the Files tab.
+    // Files-tab mode is session-local too; re-render is enough for this
+    // tab because neither layout preference is persisted.
     state.filesViewMode = e.detail.mode
     render()
     return
   }
   state.viewMode = e.detail.mode
-  // Persist so the user's preferred view sticks across reloads —
-  // state.js reads it back on boot.
-  try { localStorage.setItem(VIEW_MODE_KEY, state.viewMode) } catch {}
   // Switching away from kanban drops the popover gid — the modal
   // only renders inside the kanban template, so a stale gid here
   // would leak across view-mode changes when the user returns.

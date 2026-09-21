@@ -1,4 +1,4 @@
-import { state } from '#client/index.js'
+import { isPlaceholderNpmPackage, state } from '#client/index.js'
 import { SEVERITY_ORDER, activeRevalidateKinds, displayedSeverity, findingText, isModule, isRuledOut, prettyModel, revalidateKind, voidsConfidence } from './format.js'
 import { drawnTabs, primaryTab, tabKey, triageEntry, underlyingFindingsShown } from './group.js'
 import { reportDuplicateIds } from './report-duplicates.js'
@@ -118,6 +118,8 @@ export function resetFilters() {
   state.filterFix = ''
   state.filterFlagged = ''
   state.filterDuplicates = ''
+  state.filterCrossContext = ''
+  state.filterAppStacked = ''
   // Including the revalidation outcome: this is "no filters", and one
   // that survived would keep hiding findings after a reset — which
   // matters more now that a revalidation report can OPEN on it (see
@@ -143,7 +145,7 @@ const FILTER_FIELDS = [
   'filterAnalyzer', 'filterModel', 'filterRepo',
   'filterConfMin', 'filterConfMax',
   'filterInclude', 'filterIncludeNegate',
-  'filterComment', 'filterFix', 'filterFlagged', 'filterDuplicates',
+  'filterComment', 'filterFix', 'filterFlagged', 'filterDuplicates', 'filterCrossContext', 'filterAppStacked',
   'filterRevalidate', 'filterPartial',
 ]
 
@@ -624,6 +626,58 @@ function matchesAnnotationFilters(group) {
   return true
 }
 
+// Return the npm package carried by a finding, or recover it from a
+// dependency path when the analyzer did not stamp one. Own-source paths
+// deliberately return null: a top-level directory is not an npm package.
+function npmPackageOfFinding(f) {
+  const npm = f?.package?.npm
+  if (typeof npm?.name === 'string' && npm.name && !isPlaceholderNpmPackage(npm)) return npm.name
+  const file = typeof f?.file === 'string' ? f.file : ''
+  const match = /(?:^|\/)(?:node_modules|dependencies|vendor)\/(@[^/]+\/[^/]+|[^/]+)(?:\/|$)/u.exec(file)
+  return match?.[1] ?? null
+}
+
+// App mode is the default revalidation lens, with only the upstream lens
+// explicitly excluded. Showing underlying findings adds detail to App mode;
+// it does not change the mode itself. These two filter predicates are kept
+// separate because they answer different questions and are offered in
+// different modes.
+export function appLensActive() {
+  return state.showRevalidation !== false && !state.upstreamOnly
+}
+
+// A source/underlying row is cross-context when its visible findings span
+// multiple repositories or multiple npm packages. Unknown context is not a
+// second context: the filter is deliberately about an observable repo/package
+// split, rather than merely about a row having two tabs.
+export function isCrossContextGroup(group) {
+  if (appLensActive()) return false
+  const visible = drawnTabs(group)
+  if (visible.length < 2) return false
+
+  const repos = new Set()
+  const packages = new Set()
+  for (const f of visible) {
+    const repo = repoOfFinding(f)
+    if (repo) repos.add(repo)
+    const pkg = npmPackageOfFinding(f)
+    if (pkg) packages.add(pkg)
+  }
+  return repos.size > 1 || packages.size > 1
+}
+
+// An App stack counts only App findings when the row has any. Thus
+// `[App, App]` qualifies while `[App, source, source]` does not. The App
+// identities come from the row itself: two App findings can carry different
+// revalidation stamps even when the default tab projection chooses one pass.
+export function isAppStackedGroup(group) {
+  if (!appLensActive()) return false
+  const visible = drawnTabs(group)
+  if (visible.length === 0) return false
+  const app = group.filter((f) => f.isApp)
+  return app.length > 0 && app.length > 1
+}
+
 // Base rows for analyzer/severity/color counts and repository options. The
 // caller supplies the current lens's rows and triage bucket. After filtering
 // rows, project their visible tabs too: App mode folds underlying findings
@@ -639,8 +693,12 @@ export function applyFilters(groups) {
   // filters.
   const duplicatesMode = !state.currentWorkspace && activeFilters().filterDuplicates
   const duplicateIds = duplicatesMode ? reportDuplicateIds() : null
+  const crossContextMode = activeFilters().filterCrossContext
+  const appStackedMode = activeFilters().filterAppStacked
   return groups.filter((g) => g.some(matchesFilters) && matchesAnnotationFilters(g)
-    && (!duplicatesMode || (duplicatesMode === 'with') === g.some((f) => duplicateIds.has(tabKey(f)))))
+    && (!duplicatesMode || (duplicatesMode === 'with') === g.some((f) => duplicateIds.has(tabKey(f))))
+    && (!crossContextMode || (crossContextMode === 'with') === isCrossContextGroup(g))
+    && (!appStackedMode || (appStackedMode === 'with') === isAppStackedGroup(g)))
 }
 
 // Numeric-field comparator factory behind the `priority-*` modes

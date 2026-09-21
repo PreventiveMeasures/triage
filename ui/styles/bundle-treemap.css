@@ -126,43 +126,6 @@
   font-size: .68rem;
   line-height: 1.2;
 }
-/* Projection toggle — the Search tab's Context pill
-   (.bundle-search-context-toggle in report.css), sized down to this
-   header's tighter type scale. On = sunburst, off = treemap. */
-.bundle-treemap-mode-toggle {
-  flex-shrink: 0;
-  display: inline-flex; align-items: center; gap: 7px;
-  margin: 0;
-  padding: 2px 8px;
-  box-sizing: border-box;
-  background: rgb(from var(--text) r g b / .04);
-  border: 1px solid var(--border); border-radius: 6px;
-  color: var(--muted);
-  font-size: .68rem; font-weight: 500; line-height: 1.2;
-  white-space: nowrap;
-
-  &:hover { color: var(--text); }
-  &.on .bundle-treemap-switch { background: color-mix(in oklch, var(--accent) 22%, transparent); }
-  &.on .bundle-treemap-switch::after { transform: translateX(10px); background: var(--accent); }
-}
-.bundle-treemap-switch {
-  position: relative;
-  flex-shrink: 0;
-  width: 22px; height: 12px;
-  background: var(--border);
-  border-radius: 7px;
-  transition: background .15s;
-
-  &::after {
-    content: '';
-    position: absolute;
-    top: 2px; left: 2px;
-    width: 8px; height: 8px;
-    border-radius: 50%;
-    background: var(--muted);
-    transition: transform .15s, background .15s;
-  }
-}
 .bundle-treemap-plot {
   position: relative;
   flex: 1;

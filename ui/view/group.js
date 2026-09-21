@@ -1,5 +1,5 @@
 import { duplicatesOf, getPackagesIndex, isReportIgnored, patchEntry, state } from '#client/index.js'
-import { SEVERITY_ORDER, displayedSeverity, isRevalidation, isRuledOut } from './format.js'
+import { SEVERITY_ORDER, canDropRevalidation, displayedSeverity, isRevalidation, isRuledOut } from './format.js'
 // NOTE: filters.js imports from this module too (primaryTab / tabKey).
 // The cycle is deliberate and benign: both sides only call across
 // inside function bodies, never during module evaluation, so whichever
@@ -9,6 +9,7 @@ import { matchesRunFilters } from './filters.js'
 import { mergeReportGroups } from './workspace-groups.js'
 import { getLinksPreview } from './links-preview.js'
 import { mergeLinkedWorkspaceGroups } from './linked-workspace-groups.js'
+import { splitRevalidationInputs } from './revalidation-input-groups.js'
 
 // ID helpers. Internally every `state.reports[].groups[i]` is a
 // Finding[] (single-finding entries are wrapped at ingest, so code
@@ -38,10 +39,25 @@ export function findingReport(f) {
   return f?._reportName ?? ''
 }
 
+// A report without an App layer has no App-specific triage restriction. Keep
+// this cached by the reports array identity because canTriageFinding() is
+// called for every tab and action control during a render.
+let revalidationAvailabilityReports = null
+let revalidationAvailable = true
+function appLayerAvailable() {
+  const reports = state.reports
+  if (!Array.isArray(reports) || reports.length === 0) return true
+  if (reports !== revalidationAvailabilityReports) {
+    revalidationAvailabilityReports = reports
+    revalidationAvailable = canDropRevalidation(reports)
+  }
+  return revalidationAvailable
+}
+
 // App view neither reads nor writes upstream triage data. The upstream lens
 // and code mode expose the dependency's saved annotations without changing them.
 export function canTriageFinding(f) {
-  return !f.isUpstream || state.showRevalidation === false || state.upstreamOnly === true
+  return !f.isUpstream || state.showRevalidation === false || state.upstreamOnly === true || !appLayerAvailable()
 }
 
 export function triageEntry(f) {
@@ -537,8 +553,7 @@ function groupModel(showRevalidation, upstreamOnly = false, hideRuledOut = false
   }
   const mode = upstreamOnly ? 'upstream' : showRevalidation ? hideRuledOut ? 'workspace-app' : 'app' : 'code'
   if (!groupCache[mode]) {
-    const input = upstreamOnly ? reports.map((r) => ({ ...r, groups: onlyUpstream(r.groups) })) : reports
-    groupCache[mode] = mergeReportGroups(input, { showRevalidation: showRevalidation && !upstreamOnly, hideRuledOut, merges })
+    groupCache[mode] = mergeReportGroups(reports, { showRevalidation: showRevalidation && !upstreamOnly, upstreamOnly, hideRuledOut, merges })
   }
   return groupCache[mode]
 }
@@ -569,19 +584,10 @@ function groupModel(showRevalidation, upstreamOnly = false, hideRuledOut = false
 // resolves like any other: `triageScope` narrows to the active tab,
 // which under this lens is one of the upstream rows.
 //
-// Hand back the group itself when nothing was dropped. Narrow original
-// report rows before merging so shared dependencies from separate App
-// contexts appear once in the upstream lens.
-function onlyUpstream(groups) {
-  if (!state.upstreamOnly) return groups
-  const out = []
-  for (const g of groups) {
-    const kept = g.filter((f) => f.isUpstream)
-    if (kept.length > 0) out.push(kept.length === g.length ? g : kept)
-  }
-  return out
-}
-
+// Hand back the group itself when nothing was dropped. The merge model keeps
+// the full source row available while projecting the upstream members, so
+// revalidation input boundaries can still be recovered before that lens
+// reaches the cards.
 // The list before the upstream lens narrows it — every group the view
 // COULD show, which is the set a deep link has to resolve against.
 //
@@ -652,11 +658,13 @@ export function getShownGroups() {
 // a group's key. With the lens on, nothing was dropped and the group
 // is already whole.
 export function groupWithPassRows(group) {
-  if (state.showRevalidation || !Array.isArray(group) || group.length === 0) return group
+  if (state.showRevalidation || state.upstreamOnly || !Array.isArray(group) || group.length === 0) return group
   const keys = new Set(group.map(tabKey))
   const whole = new Map()
   for (const g of getRevalidationGroups()) {
-    if (g.some((f) => keys.has(tabKey(f)))) for (const f of g) whole.set(tabKey(f), f)
+    for (const partition of splitRevalidationInputs(g)) {
+      if (partition.some((f) => keys.has(tabKey(f)))) for (const f of partition) whole.set(tabKey(f), f)
+    }
   }
   if (whole.size === group.length && group.every((f) => whole.get(tabKey(f)) === f)) return group
   return whole.size > 0 ? [...whole.values()] : group

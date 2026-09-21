@@ -42,7 +42,7 @@ export function buildBundleDetails(integrity, entry, { sources = true } = {}) {
   const job = (async () => {
     if (!sources) {
       const cached = await cachedMetadata(integrity)
-      if (cached?.kind === kind) return cached
+      if (cached?.kind === kind && !cached.needsLineCounts) return cached
       return buildBundleDetails(integrity, entry)
     }
     const [details, cached] = await Promise.all([readBundleDetails(integrity, entry), cachedMetadata(integrity)])
@@ -50,9 +50,12 @@ export function buildBundleDetails(integrity, entry, { sources = true } = {}) {
       if (cached?.kind === details.kind) {
         details.fileHashes = cached.fileHashes
         details.fileSizes = cached.fileSizes
-      } else {
-        // Generate once, after a source load was actually requested. Cache
-        // persistence is best-effort and cannot fail opening the real bundle.
+        if (!cached.needsLineCounts) details.lineCounts = cached.lineCounts
+      }
+      // Existing indexes predate the per-file line-count stamp. Refresh them
+      // after an explicit bundle open so later metadata-only opens can render
+      // the language bar without source bodies. Persistence is best-effort.
+      if (!cached || cached.kind !== details.kind || cached.needsLineCounts) {
         createBundleMetadata(details).then((index) => saveBundleIndex(integrity, index)).catch(() => {})
       }
     }

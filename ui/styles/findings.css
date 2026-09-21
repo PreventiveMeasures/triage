@@ -89,6 +89,25 @@
    rendering. Gated off print so paginated output never interacts
    with containment. */
 @media not print {
+  /* Lit inserts the list shell before the first lazy card completes.
+     Keep the whole body slot out of the paint until at least one real
+     card is ready; otherwise the location header / glass surface can
+     flash for a frame before the finding content arrives. Once the
+     first card is ready, individual pending cards remain hidden by the
+     rules below while they are built. */
+  #findings-body-slot:has(> .flat-group):not(:has(> .flat-group > finding-card.content-ready)),
+  #findings-body-slot:has(> .file-group):not(:has(> .file-group > .file-body > finding-card.content-ready)) {
+    visibility: hidden;
+  }
+
+  /* The header and surface live outside the card's shadow root. Hide
+     the complete visual wrapper until it has content, retaining its
+     layout box so the viewport observer can still request the body. */
+  .flat-group:has(> finding-card[lazy]:not(.content-ready)),
+  .file-group:not(:has(> .file-body > finding-card.content-ready)) {
+    visibility: hidden;
+  }
+
   .flat-group,
   .file-body > finding-card {
     content-visibility: auto;
@@ -217,7 +236,6 @@
      has to reproduce the normal card width from them. `--kanban-cols`
      (the column count) is stamped inline by render.js. */
   --kanban-gap: .4rem;
-  --kanban-body-pad: .3rem;
   --kanban-col-border: 1px;
 
   display: grid;
@@ -250,7 +268,6 @@
   min-width: 0; min-height: 0;
   background: rgb(from var(--text) r g b / .025);
   border: var(--kanban-col-border, 1px) solid var(--border); border-radius: 10px;
-  box-shadow: var(--shadow-glass);
   overflow: hidden;
   transition: border-color .12s, background .12s;
 }
@@ -302,7 +319,7 @@
   background: none;
   line-height: 0;
   color: var(--muted);
-  cursor: pointer;
+  cursor: default;
 
   &:hover { color: var(--accent); }
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -324,8 +341,8 @@
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: none;
-  padding: var(--kanban-body-pad, .3rem);
-  display: flex; flex-direction: column; gap: .25rem;
+  padding: 0;
+  display: flex; flex-direction: column;
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
 
@@ -339,14 +356,7 @@
    would have shown) rather than one, so a wide column shows a wide
    grid of cards instead of a single very long strip.
 
-   The column gap is what keeps the cards exactly the width they had on
-   the normal board. There, each of the N columns is
-   `(W - (N - 1) × gap) / N` wide and gives up `2 × (pad + border)` of
-   that to its own chrome; here a single column pays that once for all N
-   tracks. Folding the N - 1 columns' worth of chrome the board no
-   longer draws back into the inter-card gap — `gap + 2 × pad +
-   2 × border` — makes the tracks come out the same width to the pixel.
-   Row gap keeps the .25rem from the flex layout above.
+   The cards fill their grid cells, with separators instead of gutters.
 
    `align-content: start` is load-bearing: grid rows are auto-sized, and
    the default stretch would balloon them to fill a body taller than its
@@ -355,10 +365,9 @@
   display: grid;
   grid-template-columns: repeat(var(--kanban-cols, 6), minmax(0, 1fr));
   align-content: start;
-  column-gap: calc(
-    var(--kanban-gap, .4rem) +
-    (var(--kanban-body-pad, .3rem) + var(--kanban-col-border, 1px)) * 2
-  );
+  gap: 0;
+
+  & > .kanban-card:not(.kanban-expanded-track-last) { border-right: 1px solid var(--border); }
 }
 
 /* The empty-state line is a grid item too once the column is
@@ -373,6 +382,15 @@
   font-size: .75rem;
   text-align: center;
   padding: .75rem .5rem;
+}
+
+/* Sidebars identify their selected item with a leading edge. Kanban rows
+   stay flush with the column and use the background tint alone. */
+.kanban-card.focus-side-card.active {
+  box-shadow: inset 3px 0 var(--accent);
+}
+.kanban-card.focus-side-card {
+  padding: .25rem .5rem;
 }
 
 /* Compact kanban card — three-area grid: title clamps to three
@@ -391,28 +409,20 @@
     'title badge'
     'meta  meta';
   gap: .1rem .35rem;
-  padding: .25rem .35rem;
-  background: var(--surface-raised);
-  border-radius: 4px;
-  box-shadow: inset 0 0 0 1px var(--border);
+  padding: .25rem .4rem;
+  background: transparent;
+  border-bottom: 1px solid var(--border);
   font-size: .75rem;
   cursor: default; user-select: none;
-  transition: background .12s, box-shadow .12s, opacity .12s;
+  transition: background .12s, opacity .12s;
 
-  /* Raised cards separate actionable findings from the quieter board.
-     Marker fills below still take precedence over the hover surface. */
-  &:hover {
-    background: color-mix(in srgb, var(--surface-raised) 96%, var(--text));
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 65%, var(--muted));
+  &:hover { background: rgb(from var(--text) r g b / .04); }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  /* A flat selected row with a tint. Sidebars add the accent edge below;
+     Kanban itself stays aligned to its column without a leading stripe. */
+  &.active {
+    background: rgb(from var(--accent) r g b / .14);
   }
-  &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-  /* Open in the detail popover — the accent ring tracks the active card
-     as arrow keys walk the column. State-driven (not :focus-visible) so
-     it's engine-independent and doesn't hinge on which node holds DOM
-     focus; matches the :focus-visible ring above so a card that's both
-     focused and active shows a single outline. The focus-side variant
-     has its own .active treatment below. */
-  &.active:not(.focus-side-card) { outline: 2px solid var(--accent); outline-offset: 1px; }
   &.dragging { opacity: .45; }
   &.has-conflict { outline: 1px dashed var(--accent); outline-offset: -1px; }
   /* Deep-link arrival ring — stamped by view/finding-link-nav.js after
@@ -992,8 +1002,8 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: .3rem;
-  display: flex; flex-direction: column; gap: .25rem;
+  padding: 0;
+  display: flex; flex-direction: column;
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
 
@@ -1482,7 +1492,6 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
   min-width: 0; min-height: 0;
   background: var(--surface); backdrop-filter: var(--glass-blur);
   border: 1px solid var(--border); border-radius: 6px;
-  box-shadow: var(--shadow-glass);
   overflow: hidden;
 }
 
@@ -1510,33 +1519,13 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: .3rem;
-  display: flex; flex-direction: column; gap: .25rem;
+  padding: 0;
+  display: flex; flex-direction: column;
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
 
   &::-webkit-scrollbar { width: 5px; }
   &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-}
-
-/* `.focus-side-card` reuses `.kanban-card` (badge + clamped title
-   + meta) for visual consistency with the kanban view's untriaged
-   column. Active card picks up an accent outline + tint
-   to anchor the queue against the centered finding. */
-.kanban-card.focus-side-card {
-  &.active {
-    background: rgb(from var(--accent) r g b / .14);
-    outline: 1px solid var(--accent);
-    outline-offset: -1px;
-  }
-  /* When the active card is also color-marked, keep each mark's
-     own background as the dominant tint and rely on the outline
-     alone to signal "this is the current one" — stacking two
-     background tints washed out both. */
-  &.active.mark-red   { background: var(--mark-red-bg); }
-  &.active.mark-blue  { background: var(--mark-blue-bg); }
-  &.active.mark-green { background: var(--mark-green-bg); }
-  &.active.mark-gray  { background: var(--mark-gray-bg); }
 }
 
 /* Narrow viewports: stack the queue under the main pane so the

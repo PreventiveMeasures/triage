@@ -22,7 +22,7 @@ import { BUNDLE_ICON_SVG } from './icons.js'
 import { findingsForFileHash, indexedHashFindingCount, reportsForFinding, reportsForFindingByPackage, reportsForFindingByRepo, state } from '#client/index.js'
 import { SEVERITIES, SEVERITY_ORDER, formatBytes, formatRunMeta, stripCommonPathPrefix, titledDescription } from './format.js'
 import { bundlePackageDirs, bundleSourceSizes, bundleSourcesAsMap } from './bundle-sources.js'
-import { bundleNeedsSources, computeBundleFileHashes } from './bundle-metadata.js'
+import { bundleNeedsSources, bundleSourceLineCount, computeBundleFileHashes } from './bundle-metadata.js'
 import { bundleHasSbomComponents } from './sbom.js'
 import { buildSearchMatcher, runBundleSearch } from './bundle-search-scan.js'
 import { bundlePkgOf, ownSourceSplittable } from './bundle-pkg-of.js'
@@ -33,6 +33,7 @@ import { computeTransitiveCounts } from './file-counts.js'
 import { pkgColor } from './graph/utils.js'
 import { graph2 } from './graph/state.js'
 import { loadedGraphMod } from './graph-attach.js'
+import { hideTooltip, showTooltip } from './tooltip.js'
 import { ensureBundleAdvisories, renderBundleAdvisoriesTab, showAdvisoriesTab } from './render-bundle-advisories.js'
 // Inline `` `code` `` / "quote" highlighting shared with the finding
 // card so bundle-side descriptions read the same as the findings tab.
@@ -1694,13 +1695,11 @@ function renderBundleSearchView(details) {
   return html`<div class="bundle-search-view">
     <div class="bundle-search-bar-row">
       <bundle-search></bundle-search>
-      <button
-        type="button"
-        class=${classMap({ 'bundle-search-context-toggle': true, on: showContext })}
+      <mode-switch
         data-bundle-search-context
-        aria-pressed=${String(showContext)}
-        aria-label="Toggle context lines"
-      ><span>Context</span><span class="bundle-search-switch" aria-hidden="true"></span></button>
+        label="Context" .checked=${showContext}
+        accessible-label="Toggle context lines"
+      ></mode-switch>
     </div>
     <div class="bundle-search-main">
       ${renderBundleSearchResults(details, sources, query, useRegex, caseSensitive, showContext)}
@@ -2173,6 +2172,111 @@ const SPDX_ICON = html`<svg viewBox="0 0 24 24" width="12" height="12" fill="cur
   <path d="M0 0v24H8.222l2.089-2.373 2.09-2.374V13.2H18.978l2.51-2.488L24 8.223V0H12zm5.2 5.2h13.791L12.2 12c-3.735 3.74-6.838 6.8-6.896 6.8-.057 0-.104-3.06-.104-6.8zm8.4 8.8v10H24V14h-5.2z"/>
 </svg>`
 
+// GitHub-style language bar for parsed Stasis bundles. The segments use
+// source lines, which makes the bar describe the code the user can read
+// rather than the compressed/encoded artifact size. Resource entries have no
+// textual source body and are therefore excluded. Unknown extensions still
+// get a segment; their labels stay in the shared hover tooltip instead of
+// adding another legend to the Overview.
+const BUNDLE_LANGUAGE_LABELS = Object.freeze({
+  javascript: 'JavaScript', jsx: 'JSX', typescript: 'TypeScript', tsx: 'TSX',
+  json: 'JSON', css: 'CSS', markup: 'HTML', yaml: 'YAML', bash: 'Shell',
+  markdown: 'Markdown', solidity: 'Solidity', php: 'PHP', rust: 'Rust',
+  ruby: 'Ruby', java: 'Java', cpp: 'C++', c: 'C', objectivec: 'Objective-C',
+  python: 'Python', go: 'Go', kotlin: 'Kotlin', swift: 'Swift', dart: 'Dart',
+  sql: 'SQL', lua: 'Lua', csharp: 'C#', scala: 'Scala', vue: 'Vue', svelte: 'Svelte',
+})
+const BUNDLE_LANGUAGE_COLORS = Object.freeze({
+  javascript: '#f1e05a', jsx: '#f1e05a', typescript: '#3178c6', tsx: '#3178c6',
+  json: '#f1e05a', css: '#663399', markup: '#e34c26', yaml: '#cb171e',
+  bash: '#89e051', markdown: '#083fa1', solidity: '#AA6746', php: '#4F5D95',
+  rust: '#dea584', ruby: '#701516', java: '#b07219', cpp: '#f34b7d',
+  c: '#555555', objectivec: '#438eff', python: '#3572A5', go: '#00ADD8',
+  kotlin: '#A97BFF', swift: '#F05138', dart: '#00B4AB', sql: '#e38c00',
+  lua: '#000080', csharp: '#178600', scala: '#DC322F', vue: '#41B883', svelte: '#FF3E00',
+})
+const UNKNOWN_BUNDLE_LANGUAGE_COLORS = Object.freeze([
+  '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#06b6d4', '#84cc16', '#e11d48', '#a855f7',
+])
+
+const BUNDLE_EXTENSION_LANGUAGES = Object.freeze({
+  py: 'python', pyw: 'python', go: 'go', kt: 'kotlin', kts: 'kotlin', swift: 'swift',
+  dart: 'dart', sql: 'sql', lua: 'lua', cs: 'csharp', scala: 'scala', sc: 'scala',
+  vue: 'vue', svelte: 'svelte',
+})
+
+function bundleLanguageOf(path) {
+  const basename = typeof path === 'string' ? path.slice(path.lastIndexOf('/') + 1) : ''
+  const dot = basename.lastIndexOf('.')
+  const ext = dot > 0 ? basename.slice(dot + 1).trim().toLowerCase() : ''
+  const lang = langForPath(path) ?? BUNDLE_EXTENSION_LANGUAGES[ext]
+  if (lang) return { key: lang, label: BUNDLE_LANGUAGE_LABELS[lang] ?? lang }
+  return ext ? { key: `extension:${ext}`, label: `.${ext}` } : { key: 'other', label: 'Other' }
+}
+
+function bundleLanguageColor(key) {
+  if (BUNDLE_LANGUAGE_COLORS[key]) return BUNDLE_LANGUAGE_COLORS[key]
+  let hash = 0
+  for (const char of key) hash = Math.imul(hash, 31) + char.codePointAt(0) | 0
+  return UNKNOWN_BUNDLE_LANGUAGE_COLORS[(hash >>> 0) % UNKNOWN_BUNDLE_LANGUAGE_COLORS.length]
+}
+
+function languageBarPointerOver(e) {
+  const bar = e.currentTarget
+  const segment = e.target.closest?.('.bundles-languages-segment')
+  if (!segment || !bar.contains(segment)) return
+  bar.dataset.tooltip = segment.dataset.languageTooltip ?? ''
+  // The entire bar owns the tooltip. Moving between segments only changes
+  // its text; it does not trigger the normal hide/show hand-off between
+  // adjacent elements.
+  showTooltip(bar)
+}
+
+function languageBarPointerLeave(e) {
+  delete e.currentTarget.dataset.tooltip
+  hideTooltip()
+}
+
+function renderBundleLanguagesBar(details) {
+  if (details?.kind !== 'stasis' || !details.bundle) return nothing
+  // `bundleSourcesAsMap` includes only textual sources. Stasis resources
+  // (images, fonts, and other binary payloads) are intentionally absent,
+  // so they cannot distort the language shares or get a fake extension.
+  const lines = details.lineCounts?.size > 0
+    ? details.lineCounts
+    : new Map([...bundleSourcesAsMap(details)].map(([path, content]) => [path, bundleSourceLineCount(content)]))
+  const totals = new Map()
+  let total = 0
+  for (const [path, count] of lines) {
+    if (count <= 0) continue
+    const language = bundleLanguageOf(path)
+    totals.set(language.key, {
+      label: language.label,
+      lines: (totals.get(language.key)?.lines ?? 0) + count,
+    })
+    total += count
+  }
+  if (total <= 0 || totals.size === 0) return nothing
+  const segments = [...totals.entries()]
+    .toSorted((a, b) => b[1].lines - a[1].lines || a[1].label.localeCompare(b[1].label))
+  return html`<div
+    class="bundles-languages-bar"
+    data-tooltip-managed
+    aria-label="Languages in this bundle"
+    @pointerover=${languageBarPointerOver}
+    @pointerleave=${languageBarPointerLeave}
+  >
+    ${segments.map(([key, { label, lines: lineCount }]) => {
+      const pct = lineCount / total * 100
+      return html`<span
+        class="bundles-languages-segment"
+        style=${styleMap({ flexGrow: lineCount, background: bundleLanguageColor(key) })}
+        data-language-tooltip=${`${label} · ${pct < 1 ? pct.toFixed(1) : pct.toFixed(0)}% · ${lineCount} ${lineCount === 1 ? 'line' : 'lines'}`}
+      ></span>`
+    })}
+  </div>`
+}
+
 // Exports column for the Overview's `.bundles-detail-meta-row` — a
 // sibling "column" to the metadata blocks holding the bundle's export
 // actions. "Download bundle" saves the raw artifact (events.js reads
@@ -2185,10 +2289,12 @@ const SPDX_ICON = html`<svg viewBox="0 0 24 24" width="12" height="12" fill="cur
 // sourcemap / un-parsed on the other Overview branches → bundle-only).
 function bundleExportsColumn(entry, details) {
   const hasSbom = bundleHasSbomComponents(details)
+  const languages = renderBundleLanguagesBar(details)
   // Inner `-row` wrapper holds the buttons so the outer column can be a
   // size container (CSS): the buttons right-align while the column sits
   // narrow and flip to a left-aligned row once it spans its own line.
   return html`<div class="bundles-overview-exports">
+    ${languages}
     <div class="bundles-overview-exports-row">
       <button type="button" class="bundles-download-btn" data-bundle-download=${entry.integrity}>
         ${DOWNLOAD_ICON}<span>Download bundle</span>

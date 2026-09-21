@@ -10,7 +10,7 @@ import { installShadowTooltipListener } from './tooltip.js'
 import { dropZone, report } from './dom.js'
 import { SEVERITIES, canDropRevalidation, configureDepsDir, configureRevalidation, displayedSeverity, fileLink, findingDisplayName, findingTitle, formatRunMeta, hasSeverityCorrection, isHttpUrl, isModule, lineLink, lineRangeLabel, reachableRevalidateFilters, revalidateKind, stampUpstreamFindings } from './format.js'
 import { activeTabFor, clearMergedGroups, findingRepoFallback, getMergedGroups, getRevalidationGroups, groupKey, groupState, primaryTab, triageEntry, triageScope, underlyingFindingsShown } from './group.js'
-import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, applyScopeFilters, applySorting, modelOfFinding, rangeApplies, repositoryFilterValues, shouldLockConfirmed } from './filters.js'
+import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, applyScopeFilters, applySorting, isAppStackedGroup, isCrossContextGroup, modelOfFinding, rangeApplies, repositoryFilterValues, shouldLockConfirmed } from './filters.js'
 import { ANALYZER_LABELS } from './analyzer-select.js'
 import { reportDuplicateIds } from './report-duplicates.js'
 import { SOURCE_LABELS, revalidateKindOf } from '../../report/index.js'
@@ -577,7 +577,7 @@ function triageFilterTemplate(colorCounts) {
 // so the host drops it in unconditionally.
 
 function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCounts, flags, analyzerSelect, repoOptions) {
-  const { showSource, showConfidence, showPriority, showGraphMode, showFileSort, kanbanMode, showRepo, hasComment, hasFix, hasFlagged, hasDuplicates, showSeverityMode, revalidateOptions, showPartial, canDropLayer, canDetailLayer, canUpstreamLens, confirmedLocked } = flags
+  const { showSource, showConfidence, showPriority, showGraphMode, showFileSort, kanbanMode, showRepo, hasComment, hasFix, hasFlagged, hasDuplicates, hasCrossContext, hasAppStacked, showSeverityMode, revalidateOptions, showPartial, canDropLayer, canDetailLayer, canUpstreamLens, confirmedLocked } = flags
   // The findings tab gains a "graph" view-mode option when a
   // tree-bearing report is loaded (showGraphMode). The focus and
   // kanban modes sit between grouped and graph. Switching to graph
@@ -610,9 +610,6 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
         ?show-priority=${showPriority}
       ></findings-sort>
       ${showSource ? html`<source-filter></source-filter>` : nothing}
-      ${hasComment || hasFix || hasFlagged || hasDuplicates || state.filterComment || state.filterFix || state.filterFlagged
-        ? html`<annotation-filter .hasComment=${hasComment} .hasFix=${hasFix} .hasFlagged=${hasFlagged} .hasDuplicates=${hasDuplicates}></annotation-filter>`
-        : nothing}
       <!-- Confidence range + the revalidation outcome, one block: the
            outcome dropdown sits inside it and REPLACES the range when
            picked (see conf-filter.js). Shown when there is either a
@@ -629,6 +626,9 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
             .revalidateOptions=${revalidateOptions}
             ?has-partial=${showPartial}
           ></conf-filter>`
+        : nothing}
+      ${hasComment || hasFix || hasFlagged || state.filterComment || state.filterFix || state.filterFlagged
+        ? html`<annotation-filter .hasComment=${hasComment} .hasFix=${hasFix} .hasFlagged=${hasFlagged}></annotation-filter>`
         : nothing}
       ${kanbanMode ? nothing : html`<triage-selector .counts=${triageCounts}></triage-selector>`}
       <!-- App / code lens — the far right of the row, past the triage
@@ -648,10 +648,20 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
            than a stop inside that switch: the lens changes what the
            reader is looking at, this takes a copy of it away. The
            component owns its visibility (view/download-button.js). -->
-      <download-button></download-button>
-      ${canDropLayer || canUpstreamLens || state.revalidateConflicts.size > 0
-        ? html`<revalidation-switch ?can-drop=${canDropLayer} ?can-detail=${canDetailLayer} ?can-upstream=${canUpstreamLens}></revalidation-switch>`
-        : nothing}
+      <div class="toolbar-end">
+        <download-button></download-button>
+        ${(!state.currentWorkspace && (hasDuplicates || state.filterDuplicates)) || hasCrossContext || hasAppStacked || state.filterCrossContext || state.filterAppStacked
+          ? html`<annotation-filter group="context" .hasDuplicates=${hasDuplicates} .hasCrossContext=${hasCrossContext} .hasAppStacked=${hasAppStacked}></annotation-filter>`
+          : nothing}
+        ${canDropLayer || state.revalidateConflicts.size > 0
+          ? html`<revalidation-switch
+              ?can-drop=${canDropLayer}
+              ?can-detail=${canDetailLayer}
+              ?can-upstream=${canUpstreamLens && canDropLayer}
+              .upstreamDisabled=${state.showRevalidation === false && canDropLayer}
+            ></revalidation-switch>`
+          : nothing}
+      </div>
     </div>
     <!-- Filter row: severity chips + mark-color triage pill + search
          field, all inline so they read as one composable filter strip.
@@ -844,7 +854,7 @@ const SEVERITY_LETTERS = {
   informational: 'i',
 }
 function kanbanCardTemplate(g, opts = {}) {
-  const { variant = 'kanban', active = false } = opts
+  const { variant = 'kanban', active = false, expandedTrackLast = false } = opts
   const groupSt = groupState(g)
   const activeTab = activeTabFor(g)
   const title = findingTitle(activeTab) || '(untitled finding)'
@@ -854,6 +864,7 @@ function kanbanCardTemplate(g, opts = {}) {
     'kanban-card': true,
     'has-conflict': groupSt.hasConflict,
     'focus-side-card': !isKanban,
+    'kanban-expanded-track-last': expandedTrackLast,
     // Active = the focus-view queue's current card, or (kanban) the
     // card whose detail popover is open. Drives the accent ring so it
     // tracks arrow-key navigation independently of DOM focus.
@@ -1414,15 +1425,15 @@ function findingsBodyTemplate(filtered) {
               class="kanban-expand"
               data-kanban-expand=${c.key}
               aria-pressed=${isExpanded}
-              data-tooltip=${isExpanded ? 'Show all columns' : `Show only ${c.label}`}
               aria-label=${isExpanded ? 'Show all columns' : `Show only ${c.label}`}
             >${isExpanded ? COLLAPSE_ICON : EXPAND_ICON}</button>
           </div>
           <div class="kanban-column-body">
             ${items.length === 0
               ? html`<div class="kanban-empty">No ${c.label.toLowerCase()} findings.</div>`
-              : repeat(items, (g) => groupKey(g), (g) => kanbanCardTemplate(g, {
+              : repeat(items, (g) => groupKey(g), (g, index) => kanbanCardTemplate(g, {
                   active: groupKey(g) === state.kanbanPopoverGid,
+                  expandedTrackLast: (index + 1) % columns.length === 0,
                 }))}
           </div>
         </div>`
@@ -1628,7 +1639,7 @@ export function configureReportRevalidation() {
   }
   // Clear a lens left on by a previous report before configuring the display
   // and opening filters for a set without upstream findings.
-  if (state.upstreamOnly && !state.reports.some((r) => (r.groups ?? []).some((g) => g.some((f) => f.isUpstream)))) {
+  if (state.upstreamOnly && (!canDropLayer || state.showRevalidation === false || !state.reports.some((r) => (r.groups ?? []).some((g) => g.some((f) => f.isUpstream))))) {
     state.upstreamOnly = false
   }
   configureRevalidation(state.showRevalidation, state.upstreamOnly)
@@ -1897,6 +1908,14 @@ function renderImpl() {
   // Unlike the annotation chips, this report-only filter disappears when
   // no qualifying row remains (or on entering a workspace).
   if (!hasDuplicates) state.filterDuplicates = ''
+  // These two filters are mutually exclusive by lens. Cross-context rows
+  // are offered only outside App mode; App-stacked rows are offered in App
+  // mode, including underlying detail. Both predicates inspect the tabs after
+  // the active lens has narrowed the row.
+  const hasCrossContext = allGroups.some(isCrossContextGroup)
+  const hasAppStacked = allGroups.some(isAppStackedGroup)
+  if (!hasCrossContext) state.filterCrossContext = ''
+  if (!hasAppStacked) state.filterAppStacked = ''
   // Which values of `revalidate` the rows ON SCREEN carry, which decide
   // the outcomes the <revalidate-filter> can offer (one option covers
   // more than one value — see REVALIDATE_FILTERS). The toolbar drops
@@ -1999,6 +2018,7 @@ function renderImpl() {
   const hasAnyConfidence = allGroups.length > 0 && rangeApplies(allGroups)
   const hasAnyPriority = mergedGroups.some((g) => g.some((f) => f.priority !== undefined))
   const hasAnyModulesPath = mergedGroups.some((g) => g.some((f) => isModule(f.file)))
+  const hasAnySourcePath = mergedGroups.some((g) => g.some((f) => !isModule(f.file)))
   // File sort is only meaningful across multiple files — a single-file
   // dataset would have nothing to reorder at the file level, so drop
   // the option from the dropdown and guard against a stale selection
@@ -2109,7 +2129,11 @@ function renderImpl() {
   // and silently empty the list. resetFilters() runs only on isFirst
   // in ingest.js, so guard here too. Upstream view already selects only
   // dependencies, so hide the redundant control and clear its selection.
-  const showSource = hasAnyModulesPath && !state.upstreamOnly
+  // The source/dependency lens only makes sense when both sides exist. App
+  // mode already speaks for App findings, so it hides this code-level lens;
+  // when the App layer is unavailable, its effective behavior is code mode.
+  const appModeActive = canDropLayer && state.showRevalidation !== false
+  const showSource = !appModeActive && !state.upstreamOnly && hasAnyModulesPath && hasAnySourcePath
   if (!showSource && state.filterSources.size > 0) state.filterSources.clear()
   if (!hasAnyConfidence) {
     state.filterConfMin = 0; state.filterConfMax = 10
@@ -2287,6 +2311,8 @@ function renderImpl() {
       hasFix,
       hasFlagged,
       hasDuplicates,
+      hasCrossContext,
+      hasAppStacked,
       // Corrected/Original lens switch — shown only when a correction
       // exists in the loaded set, or while parked in 'original' so the
       // user can always flip back (mirrors the annotation-filter rule).

@@ -122,6 +122,53 @@ describe('workspace App row boundaries', () => {
     assert.deepEqual(ids(groups), [['A', 'P', 'Q']])
   })
 
+  it('splits source rows by complete App revalidation input components in code mode', () => {
+    const row = [
+      { ...app('A'), revalidateInputs: ['a'] },
+      { ...app('B'), revalidateInputs: ['b', 'c'] },
+      { ...app('C'), revalidateInputs: ['c', 'd'] },
+      { ...app('E') },
+      source('a'), source('b'), source('c'), source('d'),
+    ]
+    const { groups } = mergeReportGroups([report('inputs.json', row)], { showRevalidation: false })
+    assert.deepEqual(ids(groups), [['a'], ['b', 'c', 'd']])
+  })
+
+  it('keeps the row intact when App inputs do not exactly cover its source findings', () => {
+    const row = [
+      { ...app('A'), revalidateInputs: ['a'] },
+      source('a'), source('unaccounted'),
+    ]
+    const { groups } = mergeReportGroups([report('incomplete.json', row)], { showRevalidation: false })
+    assert.deepEqual(ids(groups), [['a', 'unaccounted']])
+  })
+
+  it('applies the same input split before the upstream lens projection', () => {
+    const row = [
+      { ...app('A'), revalidateInputs: ['a'] },
+      { ...app('B'), revalidateInputs: ['b', 'c'] },
+      source('a', { isUpstream: true }), source('b', { isUpstream: true }), source('c', { isUpstream: true }),
+    ]
+    const { groups } = mergeReportGroups([report('upstream-inputs.json', row)], { showRevalidation: false, upstreamOnly: true })
+    assert.deepEqual(ids(groups), [['a'], ['b', 'c']])
+  })
+
+  it('splits upstream rows using App inputs outside the upstream projection', () => {
+    const first = [
+      { ...app('A'), revalidateInputs: ['a'] },
+      source('a'), source('b', { isUpstream: true }),
+    ]
+    const second = [
+      { ...app('B'), revalidateInputs: ['c'] },
+      source('c'), source('d', { isUpstream: true }),
+    ]
+    const { groups } = mergeReportGroups([
+      report('first.json', first),
+      report('second.json', second),
+    ], { showRevalidation: false, upstreamOnly: true })
+    assert.deepEqual(ids(groups), [['b'], ['d']])
+  })
+
   it('keeps row keys and metadata stable through repeated mode switches', () => {
     state.workspaceMerges = []
     state.reports = [

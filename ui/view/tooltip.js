@@ -59,9 +59,13 @@ const VIEWPORT_MARGIN_PX = 8
 
 export function showTooltip(el, { placement = 'cursor' } = {}) {
   const node = ensureEl()
-  if (currentTarget === el) return
   const text = el.dataset.tooltip ?? ''
   if (!text) return
+  // Some compound controls (for example the language bar) keep one
+  // tooltip owner while changing its text as the pointer crosses child
+  // segments. Reuse the visible node in that case instead of hiding and
+  // re-showing it for every child.
+  if (currentTarget === el && node.textContent === text) return
   node.textContent = text
   if (placement === 'right') {
     // Anchor to the element's right edge, vertically centered.
@@ -159,15 +163,16 @@ export function installGlobalTooltipListener() {
   if (globalInstalled) return
   globalInstalled = true
   document.body.addEventListener('mouseover', (e) => {
+    if (e.target.closest('[data-tooltip-managed]')) return
     const el = e.target.closest('[data-tooltip]')
     if (!el || el === currentTarget) return
     hideTooltip()
     scheduleTooltip(el)
   })
   document.body.addEventListener('mouseout', (e) => {
+    if (e.target.closest('[data-tooltip-managed]') || e.relatedTarget?.closest?.('[data-tooltip-managed]')) return
     if (!currentTarget && !showTimer) return
     if (currentTarget && currentTarget.contains(e.relatedTarget)) return
     hideTooltip()
   })
 }
-

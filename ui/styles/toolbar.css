@@ -385,11 +385,6 @@
    accent on hover. */
 download-button { display: contents; }
 .toolbar-export-btn {
-  /* Pinned right, beside the app lens — the two of them are the row's
-     right-hand pair. The margin is on the BUTTON, not the host: the
-     host is `display: contents` (above), so it has no box for a margin
-     to sit on. */
-  margin-left: auto;
   height: 30px; box-sizing: border-box;
   display: inline-flex; align-items: center; justify-content: center;
   padding: 0 .55rem;
@@ -444,33 +439,17 @@ slide-triage-tabs {
 }
 .toolbar triage-selector { margin-left: auto; }
 
-/* The export button claims the free space in front of the pair, so the
-   lens drops its own claim and sits tight against it. Two auto margins
-   between them would split what is left and drift them apart; keyed on
-   `:has(button)` because the host stays in the row even where the
-   component renders nothing (graph / kanban), and there the lens still
-   needs its own pin. */
-.toolbar download-button:has(button) + revalidation-switch { margin-left: 0; }
+/* Export, row filters and App mode sit together at the right. Each control
+   keeps its own border, separated by the normal toolbar gap. */
+.toolbar-end {
+  display: flex; align-items: center; gap: .75rem;
+  margin-left: auto;
 
-/* The App / code lens (revalidation-switch.js). Pinned right with its
-   own `margin-left: auto` rather than riding the triage selector's —
-   that one is dropped in kanban mode and hides itself when no bucket
-   has anything in it, and the lens must not drift back into the row
-   when it goes.
+  &:not(:has(.toolbar-export-btn, annotation-filter, revalidation-switch)) { display: none; }
+}
 
-   A SWITCH, because it doesn't narrow the list the way the filters to
-   its left do: it changes what the list is ABOUT. Same shape as the
-   Graph tab's "All files" (.g2-topbar-toggle + .g2-switch in
-   graph2.css) and the bundle search's "Context" pill
-   (.bundle-search-context-toggle in report.css) — a third copy rather
-   than a shared class because each of the three is tuned to the bar it
-   sits in, and the graph's lives behind a shadow boundary anyway. This
-   one takes the 30px height every other control on this row carries.
-
-   The track is `--border` so the off state stays visible in both
-   themes: `--surface-active` is a pale blue in the light ones and
-   would all but vanish against the toolbar's own surface. */
-.toolbar revalidation-switch { margin-left: auto; }
+/* The shared mode-switch supplies the App control. This wrapper joins it
+   to the detail/upstream buttons in a single bordered pill. */
 /* ONE pill holding both halves — the switch and the detail icon flush
    against it, divided the way `source-filter` and the severity lens
    divide their chips. The border and the rounding live here rather
@@ -485,31 +464,20 @@ revalidation-switch {
   overflow: hidden;
 }
 .revalidation-toggle {
-  display: inline-flex; align-items: center; gap: 8px;
-  height: 100%; box-sizing: border-box;
+  height: 100%;
+
+  &:has(+ .revalidation-detail) { border-right: 1px solid var(--border); }
+}
+.revalidation-conflicts {
   padding: 0 .6rem;
   background: transparent;
   border: none;
-  color: var(--muted);
-  font: inherit; font-size: .78rem; font-weight: 500; line-height: 1;
-  white-space: nowrap;
-  cursor: pointer;
-
-  &:not(:last-child) { border-right: 1px solid var(--border); }
-  &:hover:not(:disabled) { color: var(--text); }
-  &.on { color: var(--text); }
-  /* Inert while the upstream lens is on — it bypasses this line, and
-     the stop the reader left it at is kept rather than reset. Faded
-     like the detail glyph's own disabled state, and not dropped: the
-     row would jump under the click that did it. */
-  &:disabled { opacity: .4; cursor: default; }
-  &.on .revalidation-switch { background: color-mix(in oklch, var(--accent) 22%, transparent); }
-  &.on .revalidation-switch::after { transform: translateX(12px); background: var(--accent); }
-  &:focus-visible { outline: 1px solid var(--accent); outline-offset: -2px; }
-}
-.revalidation-conflicts {
   color: var(--text);
+  font: inherit;
+  font-size: .78rem;
   cursor: default;
+
+  &:focus-visible { outline: 1px solid var(--accent); outline-offset: -2px; }
 }
 /* The detail icon — stacked plates, lit when the app view is showing
    the rows the pass re-rated (revalidation-switch.js). An icon chip in
@@ -528,7 +496,7 @@ revalidation-switch {
   background: transparent;
   border: none;
   color: var(--muted);
-  cursor: pointer;
+  cursor: default;
   transition: background .12s, color .12s, opacity .12s;
 
   &:hover:not(:disabled) { color: var(--text); background: rgb(from var(--text) r g b / .06); }
@@ -538,10 +506,9 @@ revalidation-switch {
 }
 /* The upstream icon — a dependency branch, lit while the list is the
    dependencies' own code (revalidation-switch.js). Same chip as the
-   detail glyph beside it, and never disabled: it stands on its own
-   terms rather than on the app/code line's, and is drawn wherever the
-   set holds an upstream finding — including where no App switch is
-   offered at all. */
+   detail glyph beside it. It is available with the App layer and disabled
+   when the reader has explicitly switched to code mode, because the code
+   view's dependency filter already covers the same scope. */
 .revalidation-upstream {
   display: inline-flex; align-items: center; justify-content: center;
   width: 30px; height: 100%; box-sizing: border-box;
@@ -549,34 +516,17 @@ revalidation-switch {
   background: transparent;
   border: none;
   color: var(--muted);
-  cursor: pointer;
+  cursor: default;
   transition: background .12s, color .12s;
 
   /* Divided from the half before it the way the switch divides from the
      detail glyph — and only when there IS one, so a lone upstream chip
      keeps the shell's own border and nothing more. */
   &:not(:first-child) { border-left: 1px solid var(--border); }
-  &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
+  &:hover:not(:disabled) { color: var(--text); background: rgb(from var(--text) r g b / .06); }
   &.on { color: var(--accent); background: var(--surface-active); }
+  &:disabled { opacity: .4; cursor: default; }
   &:focus-visible { outline: 1px solid var(--accent); outline-offset: -2px; }
-}
-.revalidation-switch {
-  position: relative;
-  flex-shrink: 0;
-  width: 26px; height: 14px;
-  background: var(--border);
-  border-radius: 8px;
-  transition: background .15s;
-
-  &::after {
-    content: '';
-    position: absolute;
-    top: 2px; left: 2px;
-    width: 10px; height: 10px;
-    border-radius: 50%;
-    background: var(--muted);
-    transition: transform .15s, background .15s;
-  }
 }
 /* No buckets to show → the component renders nothing and tags itself
    `is-empty`; drop the pill chrome so an empty bordered box doesn't linger. */
@@ -584,13 +534,15 @@ triage-selector.is-empty { display: none; }
 .triage-state-btn {
   background: transparent; border: none; color: var(--muted);
   padding: 0 .55rem;
-  display: inline-flex; align-items: center;
+  display: inline-flex; align-items: center; gap: .35rem;
   transition: background .12s, color .12s;
   font-family: inherit; font-size: .8rem;
+  cursor: default;
 
   &:not(:last-child) { border-right: 1px solid var(--border); }
   &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
   &.active { background: var(--surface-active); }
+
 }
 .triage-state-btn.active.triage-state-deleted    { color: var(--critical); }
 .triage-state-btn.active.triage-state-fixed      { color: var(--green, #4ade80); }
@@ -691,9 +643,8 @@ severity-mode-switch {
   }
 }
 
-/* Flag filter — a single flag-icon chip right after the Sources /
-   Dependencies switch. Same pill chrome as source-filter; accent +
-   filled cloth when the flagged-only filter is on. */
+/* Shared shell for annotation filters and the separate row filters next
+   to App mode. Same pill chrome as source-filter. */
 annotation-filter {
   display: inline-flex;
   height: 30px; box-sizing: border-box;
@@ -706,7 +657,7 @@ annotation-filter {
     padding: 0 .45rem;
     display: inline-flex; align-items: center;
     transition: background .12s, color .12s;
-    cursor: pointer;
+    cursor: default;
 
     &:not(:last-child) { border-right: 1px solid var(--border); }
     &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
@@ -853,7 +804,7 @@ severity-chips {
   border: 1px solid var(--border); border-radius: 4px;
   overflow: hidden;
 }
-.sev-chip {
+severity-chips > .sev-chip {
   display: inline-flex; align-items: center; gap: .35rem;
   background: transparent; border: 0;
   padding: 0 .4rem;
@@ -869,6 +820,10 @@ severity-chips {
     flex-shrink: 0;
     background: currentcolor;  /* per-severity rule below sets the real color */
   }
+}
+
+/* Shared count bubbles for the severity and triage state filters. */
+:is(.sev-chip, .triage-state-btn) {
   /* Count badge — same 8.5px pill as `.triage-filter .count`, but
      kept in flex flow (not absolute) so the chip's width tracks the
      count's digit count: a 1-digit `8` chip is narrower than a
@@ -891,10 +846,11 @@ severity-chips {
     text-align: center; line-height: 11px;
   }
 
-  &.active {
-    color: var(--text);
-    & .n { color: var(--text); }
-  }
+  &.active .n { color: var(--text); }
+}
+
+severity-chips > button.sev-chip {
+  &.active { color: var(--text); }
 
   /* Per-severity hue on the swatch (always visible) + a wash on the
      active chip's background so the highlight echoes the severity

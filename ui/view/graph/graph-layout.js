@@ -38,6 +38,7 @@ import { renderRightPanel, renderStage, renderTopBar } from './render.js'
 import { installShadowTooltipListener } from '../tooltip.js'
 import { graph2 } from './state.js'
 import './dependency-matrix.js'
+import '../mode-switch.js'
 
 class GraphLayout extends LitElement {
   static properties = {
