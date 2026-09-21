@@ -945,6 +945,7 @@ span.evidence-ref:not([role]) { color: var(--muted); }
 .mark-comment,
 .mark-fix,
 .mark-flag,
+.mark-upstream,
 .mark-copy,
 .mark-link,
 .mark-issue,
@@ -962,6 +963,7 @@ span.evidence-ref:not([role]) { color: var(--muted); }
 .mark-issue { text-decoration: none; }
 .mark-comment.has-comment,
 .mark-fix.has-fix,
+.mark-upstream.has-upstream,
 .mark-flag.flagged { color: var(--accent); }
 .mark-flag svg { display: block; }
 /* Pulse the copy / link / claude button briefly after a successful
@@ -998,6 +1000,7 @@ span.evidence-ref:not([role]) { color: var(--muted); }
 .mark-comment:disabled,
 .mark-fix:disabled,
 .mark-flag:disabled,
+.mark-upstream:disabled,
 .mark-triage-menu:disabled,
 .triage-menu-item:disabled { opacity: .4; }
 .mark-triage-menu.with-label {

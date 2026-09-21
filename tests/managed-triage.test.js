@@ -116,6 +116,18 @@ test('server entries win per id on hydrate — a tombstone clears — persist + 
   assert.deepEqual(pushes(), [push('B', { x: { triage: 'invalid', fix: 'mine' } })])
 })
 
+test('the client-local upstream record survives a hydrate, and is no part of the wire', async () => {
+  const upstream = { state: 'fixed', since: '4.17.21' }
+  state.triage.set('x', { triage: 'fixed', upstream })
+  state.triage.set('w', { upstream })
+  serverEntries = { B: { x: { triage: 'invalid' }, w: null } }
+  await open('B', ['x', 'w'])
+  assert.deepEqual(state.triage.get('x').upstream, upstream, 'a server value replaces the wire fields, not the cause record')
+  assert.deepEqual(state.triage.get('w'), { upstream }, 'the tombstone clears the entry and keeps the record')
+  await drain()
+  assert.deepEqual(pushes(), [], 'and nothing about it goes up')
+})
+
 test('the same id across reports: what landed from one report is not re-sent from the next', async () => {
   await open('A', ['x'])
   await edit('x', { triage: 'fixed' })
