@@ -25,7 +25,7 @@ import { ensureHostAria } from './host-aria.js'
 
 const SOURCES = [
   ['own',     'Sources'],
-  ['modules', 'Dependencies'],
+  ['modules', 'Deps'],
 ]
 
 class SourceFilter extends StateElement {

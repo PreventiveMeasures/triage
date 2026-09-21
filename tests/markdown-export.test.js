@@ -104,7 +104,12 @@ describe('reportsToMarkdown — triage annotations', () => {
   })
 
   it('omits upstream annotations in App view without deleting their saved values', () => {
-    load(finding({ isUpstream: true }))
+    // An App layer is required for App mode to hide dependency triage. The
+    // no-App case is covered below and deliberately behaves like code mode.
+    load(
+      finding({ isUpstream: true }),
+      finding({ id: 'app-judgement', file: 'src/app.js', isApp: true, revalidate: 'confirmed' }),
+    )
     const saved = { comment: 'upstream note', fix: PR, color: 'red', flagged: true }
     state.triage.set('f1', saved)
     for (const [appOn, upstreamOn] of [[true, false], [true, true], [false, false], [true, false]]) {
@@ -117,6 +122,17 @@ describe('reportsToMarkdown — triage annotations', () => {
       assert.equal(md.includes('#### Comment\n\nupstream note'), allowed)
       assert.deepEqual(state.triage.get('f1'), saved)
     }
+  })
+
+  it('keeps upstream annotations when App mode is unavailable', () => {
+    load(finding({ isUpstream: true }))
+    const saved = { comment: 'upstream note', fix: PR, color: 'red', flagged: true }
+    state.triage.set('f1', saved)
+    const md = reportsToMarkdown()
+    assert.equal(line(md, 'Fix'), `<${PR}>`)
+    assert.equal(line(md, 'Triage'), 'Red mark · Flagged')
+    assert.ok(md.includes('#### Comment\n\nupstream note'))
+    assert.deepEqual(state.triage.get('f1'), saved)
   })
 })
 

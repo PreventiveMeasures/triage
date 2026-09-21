@@ -13,10 +13,11 @@
 // of `state.viewMode` (or `state.filesViewMode` when `kind="files"`)
 // inside render() are auto-tracked, so flipping the active button
 // doesn't require the parent to pass an updated `mode` prop — the
-// highlight follows the state mutation on its own.
+// highlight follows the state mutation on its own. The selection is
+// session-local; reloads intentionally return to Kanban.
 //
 // `view-mode-change(detail.mode)` (bubbles + composed) fires on click;
-// the host persists the value to localStorage and re-renders.
+// the host updates the session state and re-renders.
 import { classMap } from 'lit/directives/class-map.js'
 import { StateElement, html } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'

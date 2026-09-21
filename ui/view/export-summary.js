@@ -131,6 +131,14 @@ export function activeFilterDescriptions(fields = state) {
     out.push({ key: 'duplicates', label: 'Duplicates', value: fields.filterDuplicates === 'with'
       ? 'Only rows linked to other reports' : 'Exclude rows linked to other reports', clear: { filterDuplicates: '' } })
   }
+  if (fields.filterCrossContext) {
+    out.push({ key: 'cross-context', label: 'Context', value: fields.filterCrossContext === 'with'
+      ? 'Only rows across multiple repos or packages' : 'Exclude rows across multiple repos or packages', clear: { filterCrossContext: '' } })
+  }
+  if (fields.filterAppStacked) {
+    out.push({ key: 'app-stacked', label: 'App stack', value: fields.filterAppStacked === 'with'
+      ? 'Only rows with multiple App findings' : 'Exclude rows with multiple App findings', clear: { filterAppStacked: '' } })
+  }
   return out
 }
 

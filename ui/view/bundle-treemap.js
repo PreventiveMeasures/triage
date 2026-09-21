@@ -766,13 +766,11 @@ class BundleTreemap extends LitElement {
             <option value="" ?selected=${!this._reason}>All</option>
             ${[...this._reasons.keys()].map((reason) => html`<option value=${reason} ?selected=${this._reason === reason}>${reason}</option>`)}
           </select>` : nothing}
-          <button
-            type="button"
-            class=${classMap({ 'bundle-treemap-mode-toggle': true, on: sunburst })}
-            aria-pressed=${String(sunburst)}
-            aria-label="Toggle sunburst view"
+          <mode-switch compact
+            label="Sunburst" .checked=${sunburst}
+            accessible-label="Toggle sunburst view"
             @click=${this._toggleMode}
-          ><span>Sunburst</span><span class="bundle-treemap-switch" aria-hidden="true"></span></button>
+          ></mode-switch>
         </span>
       </header>
       <div class="bundle-treemap-plot" @click=${this._onPlotClick} @pointermove=${this._onPointerMove} @pointerleave=${this._onPointerLeave}>

@@ -103,6 +103,7 @@ class RevalidationSwitch extends StateElement {
     canDrop: { type: Boolean, attribute: 'can-drop' },
     canDetail: { type: Boolean, attribute: 'can-detail' },
     canUpstream: { type: Boolean, attribute: 'can-upstream' },
+    upstreamDisabled: { type: Boolean, attribute: 'upstream-disabled' },
   }
 
   createRenderRoot() { return this }
@@ -112,6 +113,7 @@ class RevalidationSwitch extends StateElement {
     this.canDrop = false
     this.canDetail = false
     this.canUpstream = false
+    this.upstreamDisabled = false
   }
 
   connectedCallback() {
@@ -137,6 +139,7 @@ class RevalidationSwitch extends StateElement {
     // and clickable with the switch beside it off, and with no switch
     // beside it at all.
     const upstreamOnly = state.upstreamOnly === true
+    const upstreamActive = upstreamOnly && !this.upstreamDisabled
     // …and while it IS on, the two halves before it go inert, because
     // it bypasses both. The app/code line only ever drops the pass's
     // own rows, which are never upstream, and detail only unfolds rows
@@ -150,21 +153,20 @@ class RevalidationSwitch extends StateElement {
     // switch is the control that says a thing is either on or off,
     // rather than one more pill that happens to be lit. Same shape as
     // the Graph tab's "All files" and the bundle search's "Context"
-    // (toolbar.css has the rules and the note on why each place keeps
-    // its own copy).
+    // through the shared mode-switch component.
     //
     // `aria-pressed` carries the state, and the label says what is
     // being pressed — no `title`, which would only repeat the word
     // under the cursor and never reaches a keyboard or a touch.
     return html`${conflictButton}${conflicts === 0 && this.canDrop
-      ? html`<button
-          type="button"
-          class=${classMap({ 'revalidation-toggle': true, on })}
-          aria-pressed=${String(on)}
-          aria-label="App view — hide the issues the revalidation pass ruled out"
-          ?disabled=${upstreamOnly}
+      ? html`<mode-switch
+          class="revalidation-toggle"
+          label="App" borderless
+          .checked=${on}
+          accessible-label="App view — hide the issues the revalidation pass ruled out"
+          .disabled=${upstreamOnly}
           @click=${this._toggle}
-        ><span>App</span><span class="revalidation-switch"></span></button>`
+        ></mode-switch>`
       : nothing}${conflicts === 0 && this.canDrop && this.canDetail
       ? html`<button
           type="button"
@@ -178,12 +180,13 @@ class RevalidationSwitch extends StateElement {
       : nothing}${this.canUpstream
       ? html`<button
           type="button"
-          class=${classMap({ 'revalidation-upstream': true, on: upstreamOnly })}
-          aria-pressed=${String(upstreamOnly)}
+          class=${classMap({ 'revalidation-upstream': true, on: upstreamActive })}
+          aria-pressed=${String(upstreamActive)}
           aria-label=${UPSTREAM_LABEL}
           data-tooltip=${UPSTREAM_LABEL}
+          ?disabled=${this.upstreamDisabled}
           @click=${this._toggleUpstream}
-        >${UPSTREAM_GLYPH}</button>`
+      >${UPSTREAM_GLYPH}</button>`
       : nothing}`
   }
 
@@ -208,6 +211,7 @@ class RevalidationSwitch extends StateElement {
   }
 
   _toggleUpstream = () => {
+    if (this.upstreamDisabled) return
     this.dispatchEvent(new CustomEvent('upstream-only-change', {
       detail: { on: state.upstreamOnly !== true },
       bubbles: true,

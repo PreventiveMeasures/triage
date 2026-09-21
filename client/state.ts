@@ -7,7 +7,6 @@ export const SEVERITY_MODE_KEY = 'deepview.severityMode'
 export const REPO_URLS_KEY = 'deepview.repoUrls'
 export const FOCUS_SPLIT_KEY = 'deepview.focusSplit'
 export const KANBAN_DETAIL_FULLSCREEN_KEY = 'deepview.kanbanDetailFullscreen'
-const VALID_VIEW_MODES = new Set(['grouped', 'list', 'table', 'kanban', 'focus'])
 const VALID_SEVERITY_MODES = new Set(['corrected', 'original'])
 
 // Focus view: where the divider between the finding-card and the
@@ -160,6 +159,10 @@ export interface State {
   filterFlagged: AnnotationFilterState
   // Report-only links to resolved finding IDs absent from this report.
   filterDuplicates: AnnotationFilterState
+  // Source/underlying rows spanning multiple repositories or npm packages.
+  filterCrossContext: AnnotationFilterState
+  // App rows with more than one App finding in the row.
+  filterAppStacked: AnnotationFilterState
   repoUrl: string
   repoEditing: boolean
   sortBy: string
@@ -208,16 +211,10 @@ export interface State {
   managedTeams: { id: string; name: string; reports: { id: string; filename: string }[] }[]
 }
 
-// Hoisted so the `state` object literal below can call it during its
-// own initialization. Reads localStorage and validates against the
-// known set — anything else (missing, corrupted, future-only value)
-// returns null and the default kicks in.
-function readSavedViewMode(): ViewMode | null {
-  try {
-    const v = localStorage.getItem(VIEW_MODE_KEY)
-    return v !== null && VALID_VIEW_MODES.has(v) ? (v as ViewMode) : null
-  } catch { return null }
-}
+// View mode is deliberately session-local. Older builds persisted the
+// user's last choice under this key; clear it once so an upgrade cannot
+// carry a stale list/graph choice into the new default.
+try { localStorage.removeItem(VIEW_MODE_KEY) } catch {}
 
 // Same validate-on-read pattern as the view mode. A non-sensitive UI
 // preference (which severity lens to show), so it lives in raw
@@ -737,6 +734,8 @@ export const state: State = store<State>({
   filterFix: '',
   filterFlagged: '',
   filterDuplicates: '',
+  filterCrossContext: '',
+  filterAppStacked: '',
   repoUrl: '',
   // Transient flag — true while the header's repo chip has expanded
   // into its `<input>` form (user clicked the pencil). Cleared on
@@ -753,12 +752,12 @@ export const state: State = store<State>({
   // flat in sort order (each in a self-contained card with its own
   // location header). 'grouped' renders the same per-finding cards
   // under per-file headers, the original layout. Selected via the
-  // icon-button group in the toolbar; persisted to localStorage so
-  // the choice survives reloads (events.js writes on click).
-  viewMode: readSavedViewMode() ?? 'kanban',
+  // icon-button group in the toolbar. It is intentionally not persisted:
+  // every reload starts at the triage board, regardless of the last view.
+  viewMode: 'kanban',
   // Severity display lens — 'corrected' (default) or 'original'. Global,
   // persisted to raw localStorage (events.js writes on toggle), so the
-  // choice survives reloads like viewMode. The corrected DATA is per-
+  // choice survives reloads. The corrected DATA is per-
   // report and read-only; this is only which value the UI surfaces.
   severityMode: readSavedSeverityMode() ?? 'corrected',
   // Per-finding triage annotations — color, triage bucket, comment,

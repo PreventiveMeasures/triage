@@ -141,6 +141,9 @@ class FindingCard extends StateElement {
   // we set: if the box is still sitting where we put it, it is ours to
   // move, and if it isn't, they scrolled it and we leave it alone.
   updated() {
+    // The outer list headers and backgrounds may appear only after the
+    // body has reached the DOM, including after a reconnect goes lazy.
+    this.classList.toggle('content-ready', !!this.group && (!this.lazy || this._near))
     for (const preview of this.renderRoot.querySelectorAll('.code-preview')) {
       const ours = preview.dataset.revealedTo
       if (ours !== undefined && Math.round(preview.scrollTop) !== Number(ours)) continue

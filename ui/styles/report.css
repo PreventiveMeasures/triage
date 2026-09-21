@@ -438,6 +438,23 @@
 .bundles-overview-exports {
   container-type: inline-size;
 }
+/* GitHub-style language composition bar. It is deliberately label-free:
+   each segment's shared tooltip carries the language, share, and LOC
+   count, while the bar stays compact enough to sit above the export row. */
+.bundles-languages-bar {
+  display: flex;
+  width: 100%;
+  height: 8px;
+  margin: 0 0 .5rem;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--border);
+}
+.bundles-languages-segment {
+  flex-basis: 0;
+  min-width: 1px;
+  height: 100%;
+}
 /* The buttons. They keep their natural width and wrap, so they stack
    while the column is narrow and flow into a row once it widens.
    Right-aligned (hugging the column's right edge) while it sits as the
@@ -1070,43 +1087,6 @@ bundle-code-search {
   padding: .6rem .75rem;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
-}
-/* Context show/hide pill — modelled on the Graph tab's "All files"
-   toggle (.g2-topbar-toggle + .g2-switch), replicated here because
-   that chrome lives in the graph component's shadow DOM. Pinned to
-   the header's right edge by the bar row's space-between. */
-.bundle-search-context-toggle {
-  flex-shrink: 0;
-  display: inline-flex; align-items: center; gap: 8px;
-  height: 30px; box-sizing: border-box;
-  padding: 5px 10px;
-  background: rgb(from var(--text) r g b / .04);
-  border: 1px solid var(--border); border-radius: 6px;
-  color: var(--muted);
-  font-size: .72rem; font-weight: 500; line-height: 1;
-  white-space: nowrap;
-
-  &:hover { color: var(--text); }
-  &.on .bundle-search-switch { background: color-mix(in oklch, var(--accent) 22%, transparent); }
-  &.on .bundle-search-switch::after { transform: translateX(12px); background: var(--accent); }
-}
-.bundle-search-switch {
-  position: relative;
-  flex-shrink: 0;
-  width: 26px; height: 14px;
-  background: var(--border);
-  border-radius: 8px;
-  transition: background .15s;
-
-  &::after {
-    content: '';
-    position: absolute;
-    top: 2px; left: 2px;
-    width: 10px; height: 10px;
-    border-radius: 50%;
-    background: var(--muted);
-    transition: transform .15s, background .15s;
-  }
 }
 /* Below the bar: results column on the left, the clicked result's
    source docked in a right sidebar. The sidebar only renders once a

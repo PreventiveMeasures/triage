@@ -53,9 +53,12 @@ const EXT_TO_LANG = {
 
 export function langForPath(path) {
   if (typeof path !== 'string') return null
-  const dot = path.lastIndexOf('.')
-  if (dot < 0) return null
-  return EXT_TO_LANG[path.slice(dot + 1).toLowerCase()] ?? null
+  // Only the filename can contribute an extension. A dotted directory such
+  // as `.abc/edf` is a path segment, not an extension on `edf`.
+  const basename = path.slice(path.lastIndexOf('/') + 1)
+  const dot = basename.lastIndexOf('.')
+  if (dot <= 0) return null
+  return EXT_TO_LANG[basename.slice(dot + 1).toLowerCase()] ?? null
 }
 
 // Fence info string → prism language, for the ```ts blocks a finding

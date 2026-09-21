@@ -147,6 +147,8 @@ describe('langForTag — allowlist matches the prism bundle', () => {
     ]) {
       assert.ok(langForPath(`a/b.${ext}`), `.${ext} should resolve for the source viewers`)
     }
+    assert.equal(langForPath('.abc/edf'), null, 'a dotted directory is not an extension')
+    assert.equal(langForPath('a/.js'), null, 'a leading dot is not an extension')
   })
 })
 

@@ -13,7 +13,7 @@ if (!globalThis[slotKey]) {
   }
 }
 const { state } = await import('../client/state.ts')
-const { applyFilters, applyScopeFilters, resetFilters } = await import('../ui/view/filters.js')
+const { applyFilters, applyScopeFilters, isAppStackedGroup, isCrossContextGroup, resetFilters } = await import('../ui/view/filters.js')
 const { configureDepsDir, configureRevalidation } = await import('../ui/view/format.js')
 const { getMergedGroups } = await import('../ui/view/group.js')
 const finding = (id, extra = {}) => ({ id, file: `src/${id}.js`, severity: 'high', confidence: 9, ...extra })
@@ -104,5 +104,29 @@ describe('selector scope', () => {
     state.upstreamOnly = true
     configureRevalidation(true, true)
     assert.deepEqual(ids(applyScopeFilters(getMergedGroups())), [['dep'], ['refuted']])
+  })
+
+  it('keeps the App-stack and cross-context filters distinct', () => {
+    const appA = finding('app-a', { isApp: true, repo: { github: 'acme/app' } })
+    const appB = finding('app-b', { isApp: true, repo: { github: 'acme/app' } })
+    const sourceA = finding('source-a', { isApp: false, file: 'node_modules/alpha/index.js', repo: { github: 'acme/alpha' } })
+    const sourceB = finding('source-b', { isApp: false, file: 'node_modules/beta/index.js', repo: { github: 'acme/beta' } })
+    const mixed = [appA, sourceA, sourceB]
+    assert.equal(isAppStackedGroup([appA, appB]), true)
+    assert.equal(isAppStackedGroup(mixed), false, 'App mode counts only App findings when one is present')
+    assert.equal(isCrossContextGroup([sourceA, sourceB]), false, 'cross-context filter is unavailable in App mode')
+    assert.equal(isCrossContextGroup([sourceA, { ...sourceA, id: 'source-a-copy' }]), false, 'one repository/package is not cross-context')
+
+    state.showRevalidation = false
+    configureRevalidation(false)
+    assert.equal(isAppStackedGroup([appA, appB]), false, 'App-stack filter is unavailable outside App mode')
+    assert.equal(isCrossContextGroup([sourceA, sourceB]), true, 'source mode counts distinct repositories')
+
+    state.showRevalidation = true
+    state.revalidationDetailed = true
+    configureRevalidation(true)
+    assert.equal(isAppStackedGroup([appA, appB]), true, 'underlying findings keep the App-stack filter available')
+    assert.equal(isAppStackedGroup(mixed), false, 'App-stack counts only App findings when one is present')
+    assert.equal(isCrossContextGroup(mixed), false, 'underlying findings do not leave App mode')
   })
 })

@@ -91,12 +91,10 @@ export function renderTopBar(graph, options, extraControls = null) {
   // to on (full inventory). Hidden entirely when the caller passes
   // `hideAllFiles` — bundle sourcemaps don't carry import edges,
   // so there's nothing for the toggle to filter against.
-  const allFilesBtn = hideAllFiles ? null : html`<button
-    type="button"
-    class=${classMap({ 'g2-topbar-toggle': true, on: graph2.showAll })}
+  const allFilesBtn = hideAllFiles ? null : html`<mode-switch
+    label="All files" .checked=${graph2.showAll}
     data-g2-show-all
-    aria-pressed=${String(graph2.showAll)}
-  ><span>All files</span><span class="g2-switch"></span></button>`
+  ></mode-switch>`
 
   // "Split dirs" — bundle Graph tab only (gated by the caller's
   // `showSplitOwnDirs`). Off: all own (non-dependency) source shares
@@ -105,12 +103,10 @@ export function renderTopBar(graph, options, extraControls = null) {
   // (colors + clustering + the Packages distribution), so flipping it
   // rebuilds the graph rather than just re-styling it.
   const showSplitOwnDirs = options.showSplitOwnDirs ?? false
-  const splitOwnBtn = showSplitOwnDirs ? html`<button
-    type="button"
-    class=${classMap({ 'g2-topbar-toggle': true, on: graph2.splitOwnDirs })}
+  const splitOwnBtn = showSplitOwnDirs ? html`<mode-switch
+    label="Split dirs" .checked=${graph2.splitOwnDirs}
     data-g2-split-own
-    aria-pressed=${String(graph2.splitOwnDirs)}
-  ><span>Split dirs</span><span class="g2-switch"></span></button>` : null
+  ></mode-switch>` : null
 
   // "Packages" — bundle Graph tab only (gated by the caller's
   // `showPackagesView`, which requires 3+ packages under the current
@@ -119,13 +115,10 @@ export function renderTopBar(graph, options, extraControls = null) {
   // edges. Same rebuild-on-flip contract as the toggles above —
   // the layout and hit-testing operate on a different node set.
   const showPackagesView = !layers && !matrix && (options.showPackagesView ?? false)
-  const packagesViewBtn = showPackagesView ? html`<button
-    type="button"
-    class=${classMap({ 'g2-topbar-toggle': true, on: graph2.packagesView })}
+  const packagesViewBtn = showPackagesView ? html`<mode-switch
+    label="Packages" .checked=${graph2.packagesView}
     data-g2-packages-view
-    aria-pressed=${String(graph2.packagesView)}
-    data-tooltip="Show one node per package with aggregated import edges (off: one node per file)"
-  ><span>Packages</span><span class="g2-switch"></span></button>` : null
+  ></mode-switch>` : null
 
   // When the topbar carries an extra row (Findings-tab embed), the
   // view-mode chooser + All files + Trash sit on the new top row,

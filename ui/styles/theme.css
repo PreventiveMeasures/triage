@@ -497,6 +497,33 @@ textarea {
 
 a { color: var(--accent); text-decoration: none; }
 
+#app-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 1rem;
+  z-index: 300;
+  max-width: min(36rem, calc(100vw - 2rem));
+  padding: .55rem .75rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--shadow-glass);
+  color: var(--text);
+  font-size: .78rem;
+  line-height: 1.35;
+  text-align: center;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, calc(100% + 1rem));
+  transition: opacity .15s, transform .15s;
+}
+#app-toast.visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+#app-toast.warning { border-color: var(--warning); }
+
 /* Main column scrolls independently of the sidebar — body is height-
    constrained + overflow hidden, so the report's tall finding lists
    only push this column, not the sidebar's file list. */

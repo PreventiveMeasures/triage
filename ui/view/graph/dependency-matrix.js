@@ -189,7 +189,7 @@ class DependencyMatrix extends LitElement {
 
   renderControls() {
     return html`<div class="g2-matrix-controls">
-        <button type="button" class=${`g2-topbar-toggle${this.cyclesOnly ? ' on' : ''}`} aria-pressed=${String(this.cyclesOnly)} @click=${() => { this.cyclesOnly = !this.cyclesOnly; this.dirty = true; this.requestUpdate() }}><span>${this.model.cycleCount} ${this.model.cycleCount === 1 ? 'cycle' : 'cycles'}</span><span class="g2-switch"></span></button>
+        <mode-switch label=${`${this.model.cycleCount} ${this.model.cycleCount === 1 ? 'cycle' : 'cycles'}`} .checked=${this.cyclesOnly} @click=${() => { this.cyclesOnly = !this.cyclesOnly; this.dirty = true; this.requestUpdate() }}></mode-switch>
         ${this.expanded.size > 0 ? html`<button @click=${() => { this.expanded.clear(); this.selection = null; this.dirty = true; this.requestUpdate() }}>Collapse all</button>` : null}
         ${this.neighborhood ? html`<button @click=${() => { this.neighborhood = null; this.dirty = true; this.requestUpdate() }}>All dependencies</button>` : null}
       </div>`

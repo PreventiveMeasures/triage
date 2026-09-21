@@ -114,7 +114,7 @@
   gap: 8px;
   font-size: 11px;
 
-  & button:not(.g2-topbar-toggle) {
+  & button {
     height: 30px;
     padding: 4px 7px;
     border: 1px solid var(--border);
@@ -124,7 +124,7 @@
     font: inherit;
   }
 
-  & button:not(.g2-topbar-toggle):hover, & button:not(.g2-topbar-toggle)[aria-pressed='true'] {
+  & button:hover, & button[aria-pressed='true'] {
     background: var(--graph-hover-bg);
     border-color: var(--muted);
   }
@@ -196,9 +196,6 @@
    matching nodes draw at full opacity, others fade to 0.1 in
    canvas.js. */
 
-/* Compact topbar toggle — on/off pill sized to fit the 44px
-   topbar without wrapping. The .g2-switch child reuses the same
-   styling rules from below, so the visual stays consistent. */
 .g2-layout-tabs {
   display: inline-flex;
   flex-shrink: 0;
@@ -245,26 +242,6 @@
     color: var(--text);
     font: inherit;
   }
-}
-
-.g2-topbar-toggle {
-  display: inline-flex;
-  align-items: center;
-  height: 30px; box-sizing: border-box;
-  gap: 8px;
-  padding: 5px 10px;
-  background: var(--graph-hover-bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--muted);
-  font: 500 11px/1 inherit;
-  font-family: inherit;
-  white-space: nowrap;
-
-  &:hover { color: var(--text); }
-  &.on { color: var(--text); }
-  &.on .g2-switch { background: color-mix(in srgb, var(--accent) 22%, transparent); }
-  &.on .g2-switch::after { transform: translateX(12px); background: var(--accent); }
 }
 
 /* ── Right panel ───────────────────────────────────────────── */
@@ -365,32 +342,6 @@
 
   &:hover { color: var(--text); background: var(--graph-hover-bg); }
   &.on { background: var(--surface-active); color: var(--accent); }
-}
-
-/* Used by the topbar's "All files" pill (.g2-topbar-toggle
-   .g2-switch). */
-.g2-switch {
-  width: 26px; height: 14px;
-  /* Track uses --border so it stays visible against the panel
-     surface in both themes. --surface-active is a pale blue
-     (#ddf4ff) in light mode — almost no contrast against the
-     white-ish panel; --border (#d1d9e0 light / #2c2c2c dark) gives
-     a clear off-state slot in both. */
-  background: var(--border);
-  border-radius: 8px;
-  position: relative;
-  transition: background .15s;
-  flex-shrink: 0;
-
-  &::after {
-    content: '';
-    position: absolute;
-    top: 2px; left: 2px;
-    width: 10px; height: 10px;
-    border-radius: 50%;
-    background: var(--muted);
-    transition: transform .15s, background .15s;
-  }
 }
 
 /* ── Stage ─────────────────────────────────────────────────── */

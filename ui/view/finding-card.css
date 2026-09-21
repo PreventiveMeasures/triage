@@ -17,6 +17,9 @@
 
 :host { display: block; }
 :host(.hidden) { display: none; }
+/* Keep lazy placeholders measurable for the viewport observer. The outer
+   list wrappers follow this readiness state too (styles/findings.css). */
+:host([lazy]:not(.content-ready)) { visibility: hidden; }
 /* Resolved/dismissed buckets dim when their bucket view is shown.
    In-progress is intentionally NOT dimmed — it's active work, not a
    settled state, so it reads at full strength like the live view. */
@@ -44,10 +47,7 @@
   flex: 1;
 }
 :host(:last-child) .card { border-bottom: none; }
-/* The shell a lazily-built card shows before its body lands
-   (finding-card.js): a card's worth of height, so the frame between
-   the shell painting and the body arriving doesn't collapse the list
-   under the reader. */
+/* Reserve a card's worth of height while the lazy body is pending. */
 .card.card-pending { min-height: 8rem; }
 /* Full finding cards keep a neutral reading surface in every context.
    Severity has its badge; color labels have a swatch in the left rail.
