@@ -8,7 +8,7 @@ import { activeTabFor, canTriageFinding, findingRepo, findingRepoTarget, groupKe
 import { highlightedCode } from './code-highlight.js'
 import { attachedBundle, bundleSource, focusCodePosition } from './focus-code.js'
 import { samePos } from './focus-code-history.js'
-import { FILE_ICONS, PRODUCER_LABELS, REPORT_LOGOS, displayName, groupOf } from './file-display.js'
+import { FILE_ICONS, PRODUCER_LABELS, REPORT_LOGOS, displayName, findingBrand, groupOf } from './file-display.js'
 import { CLAUDE_MARK_PATH } from './icons.js'
 
 // All `<finding-row>` / `<finding-card>` shadow-DOM markup is built
@@ -1178,8 +1178,8 @@ function tabTemplate(f, isActive, groupSt) {
     // / finding-card CSS.
     classes.push('tab-ignored')
   } else if (triage && triage !== 'ignored' && groupSt.commonTriage === null) classes.push(`tab-${triage}`)
-  const analyzer = f._source ?? f.source
-  const logo = analyzer !== 'default' && Object.hasOwn(REPORT_LOGOS, analyzer) ? REPORT_LOGOS[analyzer] : null
+  const analyzer = findingBrand(f)
+  const logo = analyzer ? REPORT_LOGOS[analyzer] : null
   const hasConfidence = !logo && f.confidence != null
   if (logo) classes.push('tab-with-analyzer')
   else if (hasConfidence) classes.push('tab-with-confidence')

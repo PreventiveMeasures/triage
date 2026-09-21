@@ -406,6 +406,12 @@
    with floated children; a column reservation for the chip is a
    small layout cost for getting the ellipsis back. */
 .kanban-card {
+  /* Both read by the producer mark in the bottom-right corner: it is
+     sized off the first, and the meta row clears it by the part that
+     overhangs the row's own edge (size minus the card's padding). */
+  --kanban-card-pad-x: .4rem;
+  --kanban-analyzer-size: 16px;
+
   position: relative;
   display: grid;
   grid-template-columns: 1fr auto;
@@ -413,7 +419,7 @@
     'title badge'
     'meta  meta';
   gap: .1rem .35rem;
-  padding: .25rem .4rem;
+  padding: .25rem var(--kanban-card-pad-x);
   background: transparent;
   border-bottom: 1px solid var(--border);
   font-size: .75rem;
@@ -546,6 +552,39 @@
     color: var(--muted);
     font-variant-numeric: tabular-nums;
   }
+}
+
+/* Producer mark for a finding another analyzer wrote — workspace
+   kanban only (see kanbanCardTemplate for who gets one). The finding
+   tabs' branded right segment (view/finding-tabs.css `.tab-analyzer`)
+   at a smaller scale and turned into a corner: flush with the card's
+   right and bottom edges, so only the two exposed edges carry the
+   hairline and the single rounded corner. Sits over the meta row's
+   right end, which pads itself out of the way below. */
+.kanban-card .kanban-analyzer {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+  box-sizing: border-box;
+  display: flex;
+  width: var(--kanban-analyzer-size);
+  height: var(--kanban-analyzer-size);
+  overflow: hidden;
+  border-top: 1px solid var(--border);
+  border-left: 1px solid var(--border);
+  border-radius: 4px 0 0;
+
+  /* The logo fills the corner; its own right-hand rule is the file
+     row's separator and has nothing to separate here. */
+  & .report-logo { flex: 1; border: 0; }
+  & svg { display: block; width: 12px; height: 12px; }
+}
+/* Keep file:line and the confidence number out from under the corner.
+   The mark is pinned to the card's edge, so only what it overhangs the
+   meta row by needs clearing — plus a hair of breathing room. */
+.kanban-card.has-analyzer .kanban-meta {
+  padding-right: calc(var(--kanban-analyzer-size) - var(--kanban-card-pad-x) + .2rem);
 }
 
 /* ── Kanban detail modal ────────────────────────────────────────────
