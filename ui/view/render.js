@@ -860,7 +860,8 @@ function kanbanCardTemplate(g, opts = {}) {
   const title = findingTitle(activeTab) || '(untitled finding)'
   const isKanban = variant === 'kanban'
   const isRail = variant === 'kanban-side'
-  // Producer mark in the card's bottom-right corner. Workspace views
+  // Producer mark — a small branded chip closing the meta row, on the
+  // same line as file:line and the confidence number. Workspace views
   // only — that is the one place a board mixes analyzers, so elsewhere
   // the mark would be the same on every card and say nothing — and
   // only for a finding some other analyzer produced, DeepView's own
@@ -872,7 +873,6 @@ function kanbanCardTemplate(g, opts = {}) {
     'kanban-card': true,
     'has-conflict': groupSt.hasConflict,
     'focus-side-card': !isKanban,
-    'has-analyzer': brand !== null,
     'kanban-expanded-track-last': expandedTrackLast,
     // Active = the focus-view queue's current card, or (kanban) the
     // card whose detail popover is open. Drives the accent ring so it
@@ -927,10 +927,10 @@ function kanbanCardTemplate(g, opts = {}) {
       ${activeTab.confidence === undefined || activeTab.confidence === null
         ? nothing
         : html`<span class="kanban-conf" title=${`Confidence ${activeTab.confidence}/10`}>${activeTab.confidence}</span>`}
-    </div>
-    ${brand
-      ? html`<span class="kanban-analyzer" role="img" title=${PRODUCER_LABELS[brand]} aria-label=${PRODUCER_LABELS[brand]}>${unsafeHTML(REPORT_LOGOS[brand])}</span>`
-      : nothing}`
+      ${brand
+        ? html`<span class="kanban-analyzer" role="img" title=${PRODUCER_LABELS[brand]} aria-label=${PRODUCER_LABELS[brand]}>${unsafeHTML(REPORT_LOGOS[brand])}</span>`
+        : nothing}
+    </div>`
   if (isKanban) {
     return html`<div
       class=${classMap(classes)}
