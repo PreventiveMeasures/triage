@@ -4,7 +4,7 @@ import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { bundleFilePath, bundlesForFileHash, duplicatesOf, encodeFindingRef, isLinkableFindingId, isPlaceholderNpmPackage, reportsForFindingId, state } from '#client/index.js'
 import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayFindingId, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, githubRefLabel, hasSeverityCorrection, isHttpUrl, lineRange, listSegments, locationLabel, markdownLinkToken, parseCommentRefs, revalidateStamp, revalidationShown, shortFindingId, snippetWindow, splitDescription, stripExportMarker } from './format.js'
-import { activeTabFor, canTriageFinding, findingRepo, findingRepoFallback, groupKey, groupState, groupTabsByLevel, scopedTriage, sortTabs, tabKey, tabTriage, triageEntry, triageScope, triageTabs } from './group.js'
+import { activeTabFor, canTriageFinding, findingRepo, findingRepoTarget, groupKey, groupState, groupTabsByLevel, scopedTriage, sortTabs, tabKey, tabTriage, triageEntry, triageScope, triageTabs } from './group.js'
 import { highlightedCode } from './code-highlight.js'
 import { attachedBundle, bundleSource, focusCodePosition } from './focus-code.js'
 import { samePos } from './focus-code-history.js'
@@ -520,7 +520,7 @@ function evidencePanelRef(bundle, row, label) {
 function evidenceTemplate(f, context) {
   const rows = Array.isArray(f.evidence) ? f.evidence : []
   if (rows.length === 0) return nothing
-  const repoFallback = findingRepoFallback(f)
+  const repoFallback = findingRepoTarget(f)
   // Every row cites a place in the code, so every row that the
   // attached bundle can answer for gets a `</>` beside its link.
   const bundle = attachedBundle(f)
@@ -900,7 +900,7 @@ function issueTitle(f) {
 // file with no resolvable upstream repo). Blocks join with a blank line
 // so the file link and confidence bracket the description paragraph.
 function issueBody(f) {
-  const href = findingUrl(f, findingRepoFallback(f))
+  const href = findingUrl(f, findingRepoTarget(f))
   const loc = locationLabel(f)
   const blocks = []
   if (f.file) blocks.push(`File: ${href ? `[${loc}](${href})` : loc}`)
@@ -1264,7 +1264,7 @@ function tabBodyTemplate(f, isActive, idx, total, context, tabIds) {
   // `.flat-group-loc` / `.file-header` already paint the same info
   // above the card. exportName (or `exportName.methodName` when the
   // finding carries both) joins with a comma when present.
-  const url = findingUrl(f, findingRepoFallback(f))
+  const url = findingUrl(f, findingRepoTarget(f))
   const locLink = rowLocationTemplate(f, url)
   const exportLabel = findingDisplayName(f)
   // The finding's own location, previewable in place when a bundle
@@ -1495,7 +1495,7 @@ export function tableRowInnerTemplate(g) {
   const typeLabel = formatRunMeta(f)
   const exportLabel = findingDisplayName(f)
   const exportPart = exportLabel ? `, ${exportLabel}` : ''
-  const url = findingUrl(f, findingRepoFallback(f))
+  const url = findingUrl(f, findingRepoTarget(f))
 
   return html`
     <div class="row-score">

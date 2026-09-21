@@ -56,6 +56,106 @@ describe('fileUrl — package references', () => {
   })
 })
 
+// `repo.directory` — where inside the repository the tree a report
+// describes sits, the npm `repository.directory` field's meaning
+// (`{ github: 'babel/babel', directory: 'packages/babel-core' }`). It
+// is declared in both the places `repo` is, the report header (which
+// reaches the builders as the resolved fallback, group.js
+// findingRepoTarget) and a finding's own, and each one's directory
+// travels with its own repo: the two are never mixed, or a monorepo
+// path would be spliced onto a dependency's upstream.
+describe('fileUrl — repository directory', () => {
+  const monorepo = { github: 'babel/babel', directory: 'packages/babel-core' }
+
+  it('prefixes the path with the finding repo directory', () => {
+    assert.equal(
+      fileUrl('src/index.js', monorepo, ''),
+      'https://github.com/babel/babel/blob/HEAD/packages/babel-core/src/index.js',
+    )
+  })
+
+  it('prefixes the path with the report repo directory', () => {
+    assert.equal(
+      fileUrl('src/index.js', null, monorepo),
+      'https://github.com/babel/babel/blob/HEAD/packages/babel-core/src/index.js',
+    )
+  })
+
+  it('prefixes under a typed repo URL too', () => {
+    assert.equal(
+      fileUrl('src/index.js', '', { github: 'https://github.com/babel/babel', directory: 'packages/babel-core' }),
+      'https://github.com/babel/babel/blob/HEAD/packages/babel-core/src/index.js',
+    )
+  })
+
+  it('sits between the repo and the package-relative path of a dependency', () => {
+    // The `node_modules/<pkg>/` prefix comes off first — the path is
+    // rooted at the package's own repo — and the directory says where
+    // in that repo the package lives.
+    assert.equal(
+      fileUrl('node_modules/@babel/core/lib/index.js', { github: 'babel/babel', directory: 'packages/babel-core' }, ''),
+      'https://github.com/babel/babel/blob/HEAD/packages/babel-core/lib/index.js',
+    )
+  })
+
+  it('keeps each directory with the repo it was declared beside', () => {
+    // The finding names its own upstream, so the report's directory —
+    // a path in the PROJECT's repo — has no business on that link.
+    assert.equal(
+      fileUrl('src/a.js', { github: 'acme/widgets' }, monorepo),
+      'https://github.com/acme/widgets/blob/HEAD/src/a.js',
+    )
+    // And the report's answers only while the finding names none.
+    assert.equal(
+      fileUrl('src/a.js', { directory: 'packages/babel-core' }, { github: 'acme/widgets' }),
+      'https://github.com/acme/widgets/blob/HEAD/src/a.js',
+    )
+  })
+
+  it('links exactly as before without one', () => {
+    for (const repo of ['acme/widgets', { github: 'acme/widgets' }, { github: 'acme/widgets', directory: '' }]) {
+      assert.equal(fileUrl('src/a.js', repo, ''), 'https://github.com/acme/widgets/blob/HEAD/src/a.js')
+    }
+    for (const fallback of ['acme/widgets', { github: 'acme/widgets' }, { github: 'acme/widgets', directory: './' }]) {
+      assert.equal(fileUrl('src/a.js', '', fallback), 'https://github.com/acme/widgets/blob/HEAD/src/a.js')
+    }
+  })
+
+  it('links nothing a directory alone can hang off', () => {
+    assert.equal(fileUrl('src/a.js', { directory: 'packages/babel-core' }, ''), null)
+    assert.equal(fileUrl('@babel/core@7.0.0', monorepo, ''), null, 'still not a path')
+  })
+
+  it('anchors the line on the directory-qualified link', () => {
+    assert.equal(
+      findingUrl({ file: 'src/index.js', line: '42', repo: monorepo }, ''),
+      'https://github.com/babel/babel/blob/HEAD/packages/babel-core/src/index.js#L42',
+    )
+    assert.equal(
+      findingUrl({ file: 'src/index.js', line: '42' }, monorepo),
+      'https://github.com/babel/babel/blob/HEAD/packages/babel-core/src/index.js#L42',
+    )
+  })
+
+  it('carries the directory onto the evidence rows', () => {
+    const f = { file: 'src/index.js', line: '10', repo: monorepo, evidence: [{ file: 'src/index.js', line: '10' }, { file: 'src/parse.js', line: '3' }] }
+    assert.equal(
+      evidenceUrl(f.evidence[0], f, '', 0),
+      'https://github.com/babel/babel/blob/HEAD/packages/babel-core/src/index.js#L10',
+    )
+    assert.equal(
+      evidenceUrl(f.evidence[1], f, '', 1),
+      'https://github.com/babel/babel/blob/HEAD/packages/babel-core/src/parse.js#L3',
+      'own source under the finding repo, directory and all',
+    )
+    assert.equal(
+      evidenceUrl({ file: 'src/other.ts', line: '5' }, { file: 'src/index.js' }, monorepo, 1),
+      'https://github.com/babel/babel/blob/HEAD/packages/babel-core/src/other.ts#L5',
+      'and the report repo answers the same way',
+    )
+  })
+})
+
 // A markdown import carries the report's own link for the finding's
 // location (`## Evidence` / `## Location`), pinned to the revision the
 // report was produced from. It wins over the `HEAD` reconstruction —

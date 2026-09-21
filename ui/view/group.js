@@ -228,9 +228,11 @@ export function activeTabFor(group) {
   return pool.find(tabHasMarks) ?? pool[0]
 }
 
-// The repo a finding's file / line links resolve against — the
+// The repo a finding's file / line links resolve against, as a bare
+// identifier — the handoff block's `Repo:` line, and half of the
 // `repoFallback` argument `fileUrl` / `findingUrl` / `fileLink` /
-// `lineLink` all take. Per-report `_repoFallback` first (stamped at
+// `lineLink` take (`findingRepoTarget` below pairs it with the
+// directory). Per-report `_repoFallback` first (stamped at
 // ingest: the report's own `repo.github` declaration when it has one,
 // else the URL typed for that report), so a workspace merge resolves
 // each report against its own repo; the single-file view's
@@ -244,6 +246,22 @@ export function activeTabFor(group) {
 // repo is not a repo; only a non-empty one ends the chain.
 export function findingRepoFallback(f) {
   return f?._repoFallback || state.repoUrl || ''
+}
+
+// That repo with the `directory` its report declared beside it — the
+// `{ github, directory }` pair format.js's link builders take, and so
+// what every caller rendering a file / line / evidence link passes.
+// `_repoDirectory` is the ingest stamp of the report header's
+// `repo.directory` (report/src/meta.js repoDirectory): where inside
+// the repository the tree the report describes sits, which is a fact
+// about that report's paths rather than about one repo, so it
+// qualifies whichever repo answers for the report above — the one it
+// declared, or the URL the reader typed when it declared none.
+//
+// A finding's OWN `repo` carries its own directory and is read off the
+// finding by `fileUrl`; the two are never mixed.
+export function findingRepoTarget(f) {
+  return { github: findingRepoFallback(f), directory: f?._repoDirectory ?? '' }
 }
 
 // Repo identifier (slug or URL) for a finding, matching the `Repo:`

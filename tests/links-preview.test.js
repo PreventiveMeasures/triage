@@ -41,7 +41,7 @@ describe('Links finding preview', () => {
 
   it('loads the exact report copy without navigating or changing the report set', async () => {
     const name = await fixture({
-      type: 'security', model: 'report-model', repo: { github: 'owner/project' }, bundleHashes: ['bundle-hash'],
+      type: 'security', model: 'report-model', repo: { github: 'owner/project', directory: 'packages/app' }, bundleHashes: ['bundle-hash'],
       findings: [[{ id: 'A', title: 'First' }, { id: 'B', title: 'Chosen', source: 'codex-security', correctedSeverity: 'low' }]],
     })
     const reports = state.reports
@@ -56,6 +56,7 @@ describe('Links finding preview', () => {
     assert.equal(chosen._reportName, name)
     assert.equal(chosen._source, 'codex-security')
     assert.equal(chosen._repoFallback, 'owner/project')
+    assert.equal(chosen._repoDirectory, 'packages/app', 'the declared subdirectory rides along for the links')
     assert.deepEqual(chosen._bundleHashes, ['bundle-hash'])
     assert.equal(chosen.correctedSeverity, 'low')
     assert.equal(chosen.model, 'report-model')
@@ -92,6 +93,7 @@ describe('Links finding preview', () => {
     assert.equal(finding._source, 'claude-security')
     assert.equal(finding._analyzer, 'claude-security')
     assert.equal(finding._repoFallback, 'owner/fallback')
+    assert.equal(finding._repoDirectory, '', 'no directory declared, no prefix')
     assert.equal(finding.revalidate, 'revalidation')
   })
 

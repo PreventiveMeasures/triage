@@ -88,7 +88,7 @@ import { deriveFindingId } from './src/finding-id.js'
 // run-meta projection a caller applies to the findings it loads.
 export { parseCodexCsvToScans } from './src/parse-codex.js'
 export { computeFileHash, deriveFindingId, findingId } from './src/finding-id.js'
-export { META_FIELDS, inheritReportMeta, reportRepoGithub } from './src/meta.js'
+export { META_FIELDS, inheritReportMeta, repoDirectory, reportRepoGithub } from './src/meta.js'
 // The writing side: the document writer, and the label tables it
 // spells the app's enumerations with, for the viewer's surfaces that
 // describe the same things in prose.

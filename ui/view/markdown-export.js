@@ -21,7 +21,7 @@ import { downloadBlob } from './dom.js'
 import { activeFilterDescriptions, exportBucketGroups, exportBucketLabel } from './export-summary.js'
 import { activeFilters, applyFilters, applySorting } from './filters.js'
 import { commitUrl, commonPrefix, evidenceUrl, findingUrl, hasRevalidateField, hasSeverityCorrection, isModule } from './format.js'
-import { findingRepoFallback, isIgnored, sortTabs, triageEntry, underlyingFindingsShown } from './group.js'
+import { findingRepoTarget, isIgnored, sortTabs, triageEntry, underlyingFindingsShown } from './group.js'
 import { writeMarkdown } from '../../report/index.js'
 
 // The bucket's groups the selection in force lets through, in on-screen
@@ -52,8 +52,8 @@ const HOOKS = {
       ignored,
     }
   },
-  location: (f) => findingUrl(f, findingRepoFallback(f)),
-  evidence: (row, f, i) => evidenceUrl(row, f, findingRepoFallback(f), i),
+  location: (f) => findingUrl(f, findingRepoTarget(f)),
+  evidence: (row, f, i) => evidenceUrl(row, f, findingRepoTarget(f), i),
   commit: (f) => commitUrl(f.repo?.github, f.commitHash),
   report: (f) => f._reportName ?? null,
 }

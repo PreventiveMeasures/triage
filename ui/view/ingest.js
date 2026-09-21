@@ -12,7 +12,7 @@ import { configureReportRevalidation, render } from './render.js'
 import { renderSidebar } from './sidebar.js'
 import { cleanupGraph2, graph2 } from './graph/state.js'
 import { openBundle, prefetchBundleHashes, selectBundle } from './bundle-load.js'
-import { backfillFindingIds, detectFormat, inheritReportMeta, isAppFinding, parseCodexCsvToScans, readReport, reportEntries, reportRepoGithub } from '../../report/index.js'
+import { backfillFindingIds, detectFormat, inheritReportMeta, isAppFinding, parseCodexCsvToScans, readReport, repoDirectory, reportEntries, reportRepoGithub } from '../../report/index.js'
 import { importWorkspaceFromGzip } from './workspace-import.js'
 import { maybePromptFirstUse } from './first-import-prompt.js'
 import { openPasskeyUnlockDialog } from './dialogs/passkey-unlock-dialog.js'
@@ -1149,6 +1149,13 @@ async function ingestReport(name, content, gen = null, { renderView = true } = {
     // view rather than splitting the same repo across two keys.
     const declaredRepo = reportRepoGithub(data)
     const repoFallback = declaredRepo ?? loadRepoUrlFor(name)
+    // …and the `directory` beside that declaration, stamped alongside
+    // it: where inside the repository the tree this report describes
+    // sits, which the link builders splice in front of every path the
+    // report wrote (group.js findingRepoTarget, format.js fileUrl).
+    // Empty string when the report declares none, the same "nothing
+    // here" the repo stamp uses.
+    const repoDir = repoDirectory(data?.repo)
     // Preserve report boundaries and every original copy. Workspace grouping
     // depends on the App lens, so discarding duplicates here would make it
     // impossible to keep App rows separate and later merge their source rows.
@@ -1166,6 +1173,7 @@ async function ingestReport(name, content, gen = null, { renderView = true } = {
           ...f,
           _id: state.nextFindingId++,
           _repoFallback: repoFallback,
+          _repoDirectory: repoDir,
           _reportName: name,
           _bundleHashes: data.bundleHashes ?? [],
         }

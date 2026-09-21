@@ -1,6 +1,7 @@
 // `ui/view/group.js` — `findingRepoFallback`, the repo a finding's
-// file / line links resolve against, and `findingRepo`, the identifier
-// the handoff block names.
+// file / line links resolve against, `findingRepoTarget`, that repo
+// paired with the `repo.directory` the report declared beside it, and
+// `findingRepo`, the identifier the handoff block names.
 //
 // The chain is per-report stamp → the single-file view's typed URL,
 // and the stamp is `''` (not absent) for a report with no repo of its
@@ -32,7 +33,7 @@ if (!globalThis[slotKey]) {
 }
 
 const { state } = await import('../client/state.ts')
-const { findingRepo, findingRepoFallback } = await import('../ui/view/group.js')
+const { findingRepo, findingRepoFallback, findingRepoTarget } = await import('../ui/view/group.js')
 const { configureRevalidation, findingUrl } = await import('../ui/view/format.js')
 const { applyFilters, applyScopeFilters, repoOfFinding, repositoryFilterValues, resetFilters } = await import('../ui/view/filters.js')
 
@@ -76,6 +77,49 @@ describe('findingRepoFallback', () => {
     assert.equal(findingRepoFallback(finding({ _repoFallback: '' })), '')
     assert.equal(findingRepoFallback(finding()), '', 'missing stamp reads the same as an empty one')
     assert.equal(findingUrl(finding(), findingRepoFallback(finding())), null)
+  })
+})
+
+describe('findingRepoTarget', () => {
+  beforeEach(() => { state.repoUrl = '' })
+
+  it('pairs the resolved repo with the report directory the ingest stamped', () => {
+    // `"repo": { "github": "babel/babel", "directory": "packages/babel-core" }`
+    // at the top of the report: the paths it writes are relative to
+    // that package, so every link resolves under it.
+    const f = finding({ _repoFallback: 'babel/babel', _repoDirectory: 'packages/babel-core' })
+    assert.deepEqual(findingRepoTarget(f), { github: 'babel/babel', directory: 'packages/babel-core' })
+    assert.equal(
+      findingUrl(f, findingRepoTarget(f)),
+      'https://github.com/babel/babel/blob/HEAD/packages/babel-core/src/a.js#L7',
+    )
+  })
+
+  it('qualifies a URL typed later just the same', () => {
+    // The directory is the report's statement about its own paths, so
+    // it holds whichever repo answers — here the chip's, the report
+    // having declared none of its own.
+    const f = finding({ _repoFallback: '', _repoDirectory: 'packages/babel-core' })
+    state.repoUrl = REPO
+    assert.equal(
+      findingUrl(f, findingRepoTarget(f)),
+      `${REPO}/blob/HEAD/packages/babel-core/src/a.js#L7`,
+    )
+  })
+
+  it('leaves a finding naming its own upstream out of it', () => {
+    // A dependency's repo is not the project's monorepo, and the
+    // project's subdirectory is no path inside it.
+    const f = finding({ repo: { github: 'dependency/source' }, _repoFallback: 'owner/app', _repoDirectory: 'packages/app' })
+    assert.equal(findingUrl(f, findingRepoTarget(f)), 'https://github.com/dependency/source/blob/HEAD/src/a.js#L7')
+  })
+
+  it('reads a report with no directory as the repo root', () => {
+    for (const f of [finding({ _repoFallback: 'owner/name' }), finding({ _repoFallback: 'owner/name', _repoDirectory: '' })]) {
+      assert.deepEqual(findingRepoTarget(f), { github: 'owner/name', directory: '' })
+      assert.equal(findingUrl(f, findingRepoTarget(f)), 'https://github.com/owner/name/blob/HEAD/src/a.js#L7')
+    }
+    assert.deepEqual(findingRepoTarget(undefined), { github: '', directory: '' })
   })
 })
 
