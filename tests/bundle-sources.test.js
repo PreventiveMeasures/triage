@@ -167,22 +167,22 @@ describe('bundleSourcesAsMap — the filesystem the terminal is handed', () => {
 
   const terminal = () => createTerminal(bundleSourcesAsMap(details), { mount: '/sources', home: '/', writable: '/tmp/' })
 
-  it('lists the directory once, not once per role', () => {
-    assert.deepEqual(terminal().run('ls').stdout, 'index.js\nlib\n')
+  it('lists the directory once, not once per role', async () => {
+    assert.deepEqual((await terminal().run('ls')).stdout, 'index.js\nlib\n')
   })
 
-  it('lets the directory be listed, which the phantom file prevented', () => {
-    assert.deepEqual(terminal().run('ls lib').stdout, 'util.js\n')
+  it('lets the directory be listed, which the phantom file prevented', async () => {
+    assert.deepEqual((await terminal().run('ls lib')).stdout, 'util.js\n')
   })
 
-  it('reports the path as a directory rather than reading a listing out of it', () => {
-    const r = terminal().run('cat lib')
+  it('reports the path as a directory rather than reading a listing out of it', async () => {
+    const r = await terminal().run('cat lib')
     assert.equal(r.stdout, '')
     assert.match(r.stderr, /Is a directory/u)
   })
 
-  it('walks each path exactly once', () => {
-    const paths = terminal().run('find /sources').stdout.trim().split('\n')
+  it('walks each path exactly once', async () => {
+    const paths = (await terminal().run('find /sources')).stdout.trim().split('\n')
     assert.deepEqual(paths, [...new Set(paths)], 'no path appears twice')
     assert.deepEqual(paths.toSorted(), [
       '/sources', '/sources/index.js', '/sources/lib', '/sources/lib/util.js',
@@ -215,10 +215,11 @@ describe('bundleFilesAsMap — the filesystem, not just the source', () => {
     return { kind: 'stasis', bundle: Bundle.parse(bundle.serialize()) }
   }
 
-  it('hands a base64 resource over as the bytes it encodes', () => {
+  it('hands a base64 resource over still spelt base64, for the terminal to decode', () => {
+    // Undecoded on purpose since 2.0: the terminal decodes on first
+    // read, so a bundle of images costs strings rather than buffers.
     const logo = bundleFilesAsMap(details()).get('logo.png')
-    assert.ok(logo instanceof Uint8Array, 'a Uint8Array, not its base64 text')
-    assert.deepEqual([...logo], [...png])
+    assert.deepEqual(logo, { format: 'base64', data: Buffer.from(png).toString('base64') })
   })
 
   it('leaves a utf8 resource as the text it already is', () => {
@@ -239,14 +240,22 @@ describe('bundleFilesAsMap — the filesystem, not just the source', () => {
     assert.deepEqual([...bundleSourcesAsMap(details()).keys()], ['index.js'])
   })
 
-  it('drops a resource whose base64 is corrupt rather than failing the tree', () => {
+  it('passes a corrupt base64 spelling along for the terminal to report', async () => {
+    // Decoding here could only drop the file silently. Left spelt as it
+    // is, the file exists, and the command that reads it says why it
+    // cannot — on stderr and on the diagnostic channel.
     const broken = { kind: 'stasis', bundle: new Bundle({
       config: { scope: 'full' },
       modules: new Map([['.', { name: 'app', version: '1.0.0', files: { 'index.js': 'x\n', 'bad.png': '!!!not base64!!!' } }]]),
       formats: new Map([['index.js', 'commonjs'], ['bad.png', 'resource:base64']]),
     }) }
     const files = bundleFilesAsMap(broken)
-    assert.deepEqual([...files.keys()], ['index.js'])
+    assert.deepEqual([...files.keys()].toSorted(), ['bad.png', 'index.js'], 'the file is still there')
+    const t = createTerminal(files, { mount: '/sources', home: '/', writable: '/tmp/' })
+    assert.equal((await t.run('ls')).stdout, 'bad.png\nindex.js\n')
+    const r = await t.run('cat bad.png')
+    assert.match(r.stderr, /base64 that does not decode/u)
+    assert.deepEqual(r.unsupported.map((u) => u.detail), ['base64 source'])
   })
 })
 
@@ -262,23 +271,23 @@ describe('bundleFilesAsMap — what the terminal makes of the bytes', () => {
   }) })
   const terminal = () => createTerminal(files(), { mount: '/sources', home: '/', writable: '/tmp/' })
 
-  it('sizes the file by its bytes, not by the base64 that carried it', () => {
+  it('sizes the file by its bytes, not by the base64 that carried it', async () => {
     // 12 bytes; the base64 spelling of them is 16 characters.
-    assert.equal(terminal().run('wc -c logo.png').stdout.trim().split(/\s+/u)[0], String(png.length))
+    assert.equal((await terminal().run('wc -c logo.png')).stdout.trim().split(/\s+/u)[0], String(png.length))
   })
 
-  it('declines to print bytes that spell no text', () => {
-    const r = terminal().run('cat logo.png')
+  it('declines to print bytes that spell no text', async () => {
+    const r = await terminal().run('cat logo.png')
     assert.equal(r.stdout, '')
     assert.match(r.stderr, /bytes that spell no text/u)
   })
 
-  it('round-trips the bytes back out through base64', () => {
-    const out = terminal().run('base64 logo.png').stdout.trim()
+  it('round-trips the bytes back out through base64', async () => {
+    const out = (await terminal().run('base64 logo.png')).stdout.trim()
     assert.deepEqual([...Uint8Array.fromBase64(out)], [...png])
   })
 
-  it('lists it beside the source, as a file like any other', () => {
-    assert.equal(terminal().run('ls').stdout, 'index.js\nlogo.png\n')
+  it('lists it beside the source, as a file like any other', async () => {
+    assert.equal((await terminal().run('ls')).stdout, 'index.js\nlogo.png\n')
   })
 })

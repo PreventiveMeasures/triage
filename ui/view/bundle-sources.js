@@ -72,12 +72,19 @@ export function bundleSourcesAsMap(details) {
 // Stasis picks between them by whether the bytes are valid UTF-8:
 // `resource` is that text, stored verbatim, so it stays a string and a
 // reader sees the SVG or the licence file it is. `resource:base64` is
-// the other case — bytes no string spells — so it is decoded back to
-// the bytes it encodes. @preventive/terminal takes a Uint8Array for
-// exactly that file since 1.13.0, and then knows what it is holding:
-// `ls -l` and `wc -c` report the real byte count rather than the
-// length of the base64, and `cat` declines instead of printing
-// mojibake.
+// the other case — bytes no string spells — and it is handed over
+// still spelt that way, as `{ format: 'base64', data }`. The terminal
+// takes that form since 2.0 and decodes it the first time the file is
+// read, so a bundle carrying a hundred images costs a hundred strings
+// rather than a hundred decoded buffers, and pays for the one that is
+// opened. Either way it knows what it is holding: `ls -l` and `wc -c`
+// report the real byte count rather than the length of the base64, and
+// `cat` declines instead of printing mojibake.
+//
+// Decoding there also puts the diagnostic where the file is named: a
+// spelling that does not decode is reported by the command that read
+// it, under the detail `base64 source`. Decoding here could only drop
+// the file and say nothing.
 //
 // Directory captures stay out. They are the one entry that is not a
 // file in any encoding, and mounting one puts a second `lib` beside
@@ -92,13 +99,7 @@ export function bundleFilesAsMap(details) {
       if (typeof content !== 'string') continue
       const format = formats?.get(file)
       if (format === 'resource') files.set(file, content)
-      else if (format === 'resource:base64') {
-        // Throws on input that is not base64, which a corrupt bundle can
-        // be. One unreadable resource is not worth failing the whole
-        // tree over: leave it out, as the map already leaves out what it
-        // cannot represent.
-        try { files.set(file, Uint8Array.fromBase64(content)) } catch { /* not decodable, so not mountable */ }
-      }
+      else if (format === 'resource:base64') files.set(file, { format: 'base64', data: content })
     }
   }
   if (key) filesCache.set(key, files)

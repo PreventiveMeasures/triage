@@ -253,13 +253,13 @@ class BundleTerminal extends LitElement {
     if (trimmed.length > 0) this.#history = [...this.#history, line]
     this.#histIdx = -1
     this._input = ''
-    // `runAsync` runs the line on the way to returning, so the promise
-    // is already settled and lines still resolve in the order they were
-    // entered. Awaiting is what makes this handler indifferent to that:
-    // a command that one day does take time needs no change here.
+    // `run` is a promise since 2.0, because a command may wait on work
+    // the runtime does rather than the package — `gzip` on a compression
+    // stream. One line runs at a time over the tree, so lines still
+    // resolve in the order they were entered even unawaited.
     let r
     try {
-      r = await this.#term.runAsync(line)
+      r = await this.#term.run(line)
     } catch (err) {
       // What `run` would have thrown, this rejects with — and an async
       // handler turns an exception that used to reach the console into

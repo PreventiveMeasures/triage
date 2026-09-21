@@ -168,8 +168,8 @@ describe('classifyDiff — against the real terminal output', () => {
     ['unified', 'diff -u a.txt b.txt', ['head', 'head', 'hunk'], ['add', 'del']],
     ['context', 'diff -c a.txt b.txt', ['head', 'head', 'hunk', 'hunk'], ['chg']],
   ]) {
-    it(`recognises real \`${line}\` output as ${name}`, () => {
-      const { stdout } = run(line)
+    it(`recognises real \`${line}\` output as ${name}`, async () => {
+      const { stdout } = await run(line)
       assert.notEqual(stdout, '', 'the two files differ, so there is output')
       const labelled = classifyDiff(stdout)
       assert.notEqual(labelled, null, 'output is recognised as a diff')
@@ -182,30 +182,30 @@ describe('classifyDiff — against the real terminal output', () => {
 
   // The `+ ` / `- ` context rules only fire when one side lacks the
   // line outright, which the change-only fixture above never produces.
-  it('labels a context diff\'s one-sided additions and deletions', () => {
+  it('labels a context diff\'s one-sided additions and deletions', async () => {
     const base = 'one\ntwo\nthree\nfour\nfive\nsix\n'
     const terminal = createTerminalWith({
       '/a.txt': base,
       '/added.txt': 'one\ntwo\nthree\nEXTRA\nfour\nfive\nsix\n',
       '/gone.txt': 'one\ntwo\nfour\nfive\nsix\n',
     })
-    const added = classifyDiff(terminal.run('diff -c a.txt added.txt').stdout)
+    const added = classifyDiff((await terminal.run('diff -c a.txt added.txt')).stdout)
     assert.ok(added.some((d) => d.kind === 'add' && d.text === '+ EXTRA'))
-    const gone = classifyDiff(terminal.run('diff -c a.txt gone.txt').stdout)
+    const gone = classifyDiff((await terminal.run('diff -c a.txt gone.txt')).stdout)
     assert.ok(gone.some((d) => d.kind === 'del' && d.text === '- three'))
   })
 
-  it('leaves identical-file output alone (there is none)', () => {
+  it('leaves identical-file output alone (there is none)', async () => {
     const terminal = createTerminalWith({ '/a.txt': a, '/same.txt': a })
-    const { stdout } = terminal.run('diff a.txt same.txt')
+    const { stdout } = await terminal.run('diff a.txt same.txt')
     assert.equal(stdout, '')
     assert.equal(classifyDiff(stdout), null)
   })
 
-  it('colours a patch file read with `cat`, not just `diff` output', () => {
+  it('colours a patch file read with `cat`, not just `diff` output', async () => {
     const patch = '--- a.txt\n+++ b.txt\n@@ -1,2 +1,2 @@\n-old\n+new\n'
     const terminal = createTerminalWith({ '/fix.patch': patch })
-    const { stdout } = terminal.run('cat fix.patch')
+    const { stdout } = await terminal.run('cat fix.patch')
     assert.deepEqual(kinds(stdout), ['head', 'head', 'hunk', 'del', 'add', ''])
   })
 })
