@@ -384,10 +384,14 @@
   padding: .75rem .5rem;
 }
 
-/* Sidebars identify their selected item with a leading edge. Kanban rows
-   stay flush with the column and use the background tint alone. */
+/* Sidebars identify their selected item with a leading edge and a subtle
+   tint. Kanban rows stay flush with the column and keep their normal
+   surface when their detail popover is open. */
 .kanban-card.focus-side-card.active {
   box-shadow: inset 3px 0 var(--accent);
+}
+.focus-side-card.active {
+  background: rgb(from var(--accent) r g b / .14);
 }
 .kanban-card.focus-side-card {
   padding: .25rem .5rem;
@@ -418,11 +422,6 @@
 
   &:hover { background: rgb(from var(--text) r g b / .04); }
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-  /* A flat selected row with a tint. Sidebars add the accent edge below;
-     Kanban itself stays aligned to its column without a leading stripe. */
-  &.active {
-    background: rgb(from var(--accent) r g b / .14);
-  }
   &.dragging { opacity: .45; }
   &.has-conflict { outline: 1px dashed var(--accent); outline-offset: -1px; }
   /* Deep-link arrival ring — stamped by view/finding-link-nav.js after

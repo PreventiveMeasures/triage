@@ -30,6 +30,7 @@ if (!globalThis[slotKey]) {
 }
 
 const { buildGraph, buildPackageGraph } = await import('../ui/view/graph/data.js')
+const { dependencyFilesOn, dependencyNetwork } = await import('../ui/view/graph/package-network.js')
 const { bundlePkgOf } = await import('../ui/view/bundle-pkg-of.js')
 
 function graphFrom(treeData, { ownCounts = new Map(), severitySets = null, colorSets = null, splitOwnDirs = false } = {}) {
@@ -38,6 +39,35 @@ function graphFrom(treeData, { ownCounts = new Map(), severitySets = null, color
     pkgOf: (p) => bundlePkgOf(p, { splitOwnDirs }),
   })
 }
+
+describe('fourth dependency view files/packages switch', () => {
+  it('defaults to files through 100 nodes and always aggregates beyond that', () => {
+    for (const count of [3, 100, 101]) {
+      const graph = graphFrom(Object.fromEntries(Array.from({ length: count }, (_, i) => [`src/file${i}.js`, { imports: [] }])))
+      assert.equal(dependencyFilesOn(graph, false), count <= 100)
+      assert.equal(dependencyNetwork(graph, false).nodes.length, count <= 100 ? count : 1)
+      assert.equal(dependencyNetwork(graph, true).nodes.length, 1)
+      assert.equal(dependencyFilesOn(graph, true), false)
+    }
+  })
+
+  it('retains file identity and internal imports, with independent package aggregation', () => {
+    const graph = graphFrom({
+      'src/index.js': { imports: ['src/helper.js', 'node_modules/dep/index.js'] },
+      'src/helper.js': { imports: [] },
+      'node_modules/dep/index.js': { imports: [] },
+    })
+    const files = dependencyNetwork(graph, false), packages = dependencyNetwork(graph, true)
+    assert.equal(files.nodeByFile.get('src/helper.js'), graph.nodeByFile.get('src/helper.js'))
+    assert.deepEqual(files.directedEdges, [
+      { from: 'src/index.js', to: 'src/helper.js' },
+      { from: 'src/index.js', to: 'node_modules/dep/index.js' },
+    ])
+    assert.deepEqual(packages.directedEdges, [{ from: '__own__', to: 'dep' }])
+    assert.equal(dependencyNetwork(graph, false), files, 'toggling back reuses the file graph')
+    assert.equal(graph.nodes.length, 3, 'the original graph and its package toggle are unchanged')
+  })
+})
 
 describe('buildPackageGraph', () => {
   // src/{a,b} → __own__; x and y under node_modules. Cross imports:

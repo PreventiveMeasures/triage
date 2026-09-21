@@ -70,9 +70,10 @@ export function buildBundleDetails(integrity, entry, { sources = true } = {}) {
 // bundle on the bundles view. Shared by the sidebar bundle-row click,
 // the bundle-only drop branch (ingest.js), the `bundle-swap` listener
 // (events.js) and the boot restore (view.js) — each then persists /
-// repaints / calls `openBundle` on its own. `tab` is the detail tab
-// the bundle opens on ('overview' unless the caller restores one).
-export function selectBundle(integrity, tab = 'overview') {
+// repaints / calls `openBundle` on its own. Keep the active detail tab
+// between bundles; entering from another view starts on Overview. An explicit
+// tab still takes priority for boot restore and Compare's swap action.
+export function selectBundle(integrity, tab = state.currentView === 'bundles' ? state.bundleDetailsTab : 'overview') {
   state.currentView = 'bundles'
   state.selectedBundle = integrity
   state.bundleDetails = null
@@ -84,7 +85,7 @@ export function selectBundle(integrity, tab = 'overview') {
   state.bundleSearchRegex = false
   state.bundleSearchCase = false
   state.bundleSearchContext = true
-  state.bundleDetailsTab = tab
+  state.bundleDetailsTab = tab ?? 'overview'
   graph2.showAll = true
   state.shownTriage = null
 }

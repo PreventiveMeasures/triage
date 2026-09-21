@@ -5,9 +5,14 @@ import { renderSevChips } from './render.js'
 import { buildPackageGraph, pkgLabelOf, pkgRelative } from './data.js'
 import { pkgColor } from './utils.js'
 import { forceLayout } from './force-layout.js'
+import { fitCompactGraph } from './fit.js'
+import { graphZoomMetrics } from './zoom.js'
 import { formatBytes } from '../format.js'
 import { layoutDependencyLayers } from './layered-layout.js'
 import { drawDependencyLayers } from './layered-render.js'
+import { layoutPackageDependencies } from './dependency-layout.js'
+import { drawPackageDependencies } from './dependency-render.js'
+import { dependencyFilesOn, dependencyNetwork } from './package-network.js'
 import { circleOutside, createRenderCache, edgeGradient, edgeOutside, edgePaints, haloGradient, updateRenderCache } from './render-cache.js'
 import { createNodePicker } from './node-picker.js'
 import { outsideDamage, panDamage } from './pan-damage.js'
@@ -184,8 +189,11 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
   // focus drill-in, which is a file-level mode and takes priority
   // (back out of focus and the packages view resumes).
   const layersOn = () => graph.supportsLayers && graph2.bundleLayout === 'layers' && !graph2.focusedPkg
-  const pkgViewOn = () => layersOn() || (graph2.packagesView && (graph.canPackagesView ?? false) && !graph2.focusedPkg)
+  const dependenciesOn = () => graph.supportsLayers && graph2.bundleLayout === 'dependencies' && !graph2.focusedPkg
+  const dependencyPackagesOn = () => dependenciesOn() && !dependencyFilesOn(graph, graph2.dependencyPackagesView)
+  const pkgViewOn = () => layersOn() || (graph2.bundleLayout === 'graph' && graph2.packagesView && (graph.canPackagesView ?? false) && !graph2.focusedPkg)
   let layers = null
+  let dependencyLayout = null
   // Derived once per attach on first use; the file graph is
   // immutable for the attachment's lifetime, so the aggregate is
   // too. Lazy so the findings tab / file views never pay for it.
@@ -205,6 +213,9 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
       }
     }
     return _pkgGraph
+  }
+  function getDependencyGraph() {
+    return dependencyNetwork(graph, graph2.dependencyPackagesView)
   }
 
   const layerLabel = (id) => id === '__own__' ? 'App' : layers?.depth.get(id) === 0 ? `App · ${pkgLabelOf(id)}` : pkgLabelOf(id)
@@ -253,6 +264,14 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
       needsLayout = false
       return
     }
+    if (dependenciesOn()) {
+      const pg = getDependencyGraph()
+      dependencyLayout = layoutPackageDependencies(pg.nodes.map((n) => n.file), pg.importsOf, pg.fileLevel ? [] : graph.layerRoots?.roots ?? [], {
+        width: layoutW, height: layoutH,
+      })
+      needsLayout = false
+      return
+    }
     const cache = graph2.layoutCache
     const focused = graph2.focusedPkg
     const pkgView = pkgViewOn()
@@ -292,13 +311,31 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
   }
 
   // (k, tx, ty) that fits the graph's bounding box into the
-  // viewport with max(20px, 3%) padding, plus one stats line and an 8px gap below.
+  // viewport with max(20px, 3%) padding for large overviews and 4%
+  // safe zones for compact file/focused layouts, plus one stats line.
   // Pure — doesn't mutate viewport or measure DOM in the wheel handler.
   // Used by fitToView() and by the wheel handler to clamp
   // min-zoom and locate "centered" for the pan-to-center fallback.
   // Bounds come from whichever node set is on screen — package
   // aggregates in packages view, files otherwise.
   function computeFit() {
+    if (dependenciesOn() && dependencyLayout) {
+      if (getDependencyGraph().nodes.length <= 100) {
+        let side = 12
+        ctx.save()
+        ctx.font = '11px SFMono-Regular, Consolas, "Liberation Mono", monospace'
+        for (const n of getDependencyGraph().nodes) {
+          const label = n.label.length > 38 ? `${n.label.slice(0, 36)}…` : n.label
+          side = Math.max(side, ctx.measureText(label).width / 2 + 4)
+        }
+        ctx.restore()
+        return fitCompactGraph([...dependencyLayout.nodes.values()], W, H, { statsHeight: statsSafeHeight, left: side, top: 12, bottom: 27 })
+      }
+      const pad = Math.max(20, Math.min(W, H) * 0.04)
+      const rawK = Math.min((W - pad * 2) / dependencyLayout.width, (H - pad * 2 - statsSafeHeight) / dependencyLayout.height, 2.5)
+      const k = Math.max(0.05, rawK)
+      return { k, tx: (W - dependencyLayout.width * k) / 2, ty: (H - statsSafeHeight - dependencyLayout.height * k) / 2 }
+    }
     if (layersOn() && layers) {
       const k = Math.min((W - 24) / (layers.width + 185), (H - 70) / (layers.height + layers.gap), 1.5)
       const scale = Math.max(0.05, k)
@@ -306,6 +343,22 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
         ty: 24 + Math.max(0, (H - 70 - (layers.height + layers.gap) * scale) / 2) }
     }
     const nodes = pkgViewOn() ? getPkgGraph().nodes : graph.nodes
+    if (nodes.length <= 50) {
+      // Include the fixed-size circles, halos, and always-on labels. Fitting
+      // centers alone clips disconnected packages pushed to the layout edges.
+      let bottom = 0, side = 0, top = 0
+      ctx.save()
+      ctx.font = '600 11px ui-monospace, SFMono-Regular, Menlo, Monaco, monospace'
+      for (const n of nodes) {
+        const r = pkgViewOn() ? pkgNodeRadius(n) : (n.isHub ? 6 : 4) * graph2.nodeSize
+        const halo = r * 1.85 + 5
+        side = Math.max(side, halo, ctx.measureText(n.label).width / 2 + 6)
+        top = Math.max(top, halo)
+        bottom = Math.max(bottom, halo, r + 4 + 13 + 4)
+      }
+      ctx.restore()
+      return fitCompactGraph(nodes, W, H, { statsHeight: statsSafeHeight, left: side, top, bottom })
+    }
     if (nodes.length === 0) {
       return { k: 1, tx: W / 2, ty: (H - statsSafeHeight) / 2 }
     }
@@ -323,7 +376,9 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     const w = Math.max(20, maxX - minX)
     const cx = (minX + maxX) / 2
     const cy = (minY + maxY) / 2
-    const pad = Math.max(20, Math.min(W, H) * 0.03)
+    // The large circular overview benefits from the tighter fit. Focused
+    // graphs need room for labels and arrows around their sparse nodes.
+    const pad = Math.max(20, Math.min(W, H) * (graph2.focusedPkg ? 0.04 : 0.03))
     const rawK = Math.min((W - pad * 2) / w, (H - pad * 2 - statsSafeHeight) / h, 4)
     const k = Math.max(0.05, rawK)
     return { k, tx: W / 2 - cx * k, ty: (H - statsSafeHeight) / 2 - cy * k }
@@ -334,6 +389,17 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     viewport.k = fit.k
     viewport.tx = fit.tx
     viewport.ty = fit.ty
+  }
+
+  function updateZoomLabel() {
+    if (!dependenciesOn()) {
+      if (zoomEl) zoomEl.textContent = `${Math.round(viewport.k * 100)}%`
+      return
+    }
+    const metrics = graphZoomMetrics(viewport.k, computeFit().k, true)
+    if (zoomEl) zoomEl.textContent = `${metrics.percent}%`
+    if (zOut) zOut.disabled = viewport.k <= metrics.min * 1.0001
+    if (zIn) zIn.disabled = viewport.k >= metrics.max * .9999
   }
 
   function worldToScreen(x, y) {
@@ -422,7 +488,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     // view it IS the selection (the package card's slot), and the
     // selected-neighbor dimming handles emphasis there — the hard
     // 0.1 filter dim on top would gray the selection's neighbors.
-    if (graph2.solo && n.pkg !== graph2.solo && !pkgViewOn()) return true
+    if (graph2.solo && n.pkg !== graph2.solo && !pkgViewOn() && !dependencyPackagesOn()) return true
     const pathQ = graph2.pathFilter
     if (pathQ) {
       const q = pathQ.toLowerCase()
@@ -528,7 +594,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
       && paintBounds.y0 * viewport.k + viewport.ty > margin
       && paintBounds.x1 * viewport.k + viewport.tx < W - margin
       && paintBounds.y1 * viewport.k + viewport.ty < H - margin
-    const canReuse = contained && viewport.k <= 1.4 && G.nodes.length > 50 && !layersOn()
+    const canReuse = contained && viewport.k <= 1.4 && G.nodes.length > 50 && !layersOn() && !dependenciesOn()
     const next = { tx: viewport.tx, ty: viewport.ty, key: JSON.stringify([
       viewport.k, currentTheme().bg, graph2.nodeSize, graph2.edgeOpacity,
       hovered, graph2.selected, graph2.solo, graph2.focusedPkg, pkgViewOn(),
@@ -569,12 +635,22 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     // both write it). Normalized through the node lookup so a
     // stale key from another bundle can't dim everything against
     // a ghost node.
+    const dependencyView = dependenciesOn()
     const pkgView = pkgViewOn()
-    const G = pkgView ? getPkgGraph() : graph
-    const selKey = pkgView ? graph2.solo : graph2.selected
+    const G = dependencyView ? getDependencyGraph() : pkgView ? getPkgGraph() : graph
+    const selKey = dependencyPackagesOn() || pkgView ? graph2.solo : graph2.selected
     const sel = selKey ? G.nodeByFile.get(selKey) : null
     const selected = sel ? selKey : null
 
+    if (dependencyView) {
+      drawPackageDependencies(ctx, dependencyLayout, G, {
+        theme: T, viewport, width: W, height: H, colorOf: pkgColor,
+        selected, hovered, query: graph2.pathFilter,
+        dimmed: (n) => nodeIsDimmed(n),
+      })
+      updateZoomLabel()
+      return
+    }
     if (layersOn()) {
       ctx.save()
       ctx.translate(viewport.tx, viewport.ty)
@@ -587,7 +663,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
         dimmed: (id) => nodeIsDimmed(G.byPkg.get(id)),
       })
       ctx.restore()
-      if (zoomEl) zoomEl.textContent = `${Math.round(viewport.k * 100)}%`
+      updateZoomLabel()
       return
     }
 
@@ -838,7 +914,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
       ctx.stroke()
     }
 
-    if (zoomEl) zoomEl.textContent = `${Math.round(viewport.k * 100)}%`
+    updateZoomLabel()
   }
 
   function drawGrid(T) {
@@ -1032,7 +1108,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
       ctx.stroke()
     }
 
-    if (zoomEl) zoomEl.textContent = `${Math.round(viewport.k * 100)}%`
+    updateZoomLabel()
   }
 
   // Package-node radius — area tracks file count (sqrt growth,
@@ -1224,7 +1300,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
       ctx.stroke()
     }
 
-    if (zoomEl) zoomEl.textContent = `${Math.round(viewport.k * 100)}%`
+    updateZoomLabel()
   }
 
   // ── Hit test ──────────────────────────────────────────────────
@@ -1234,6 +1310,15 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
   // dot paths draw nodeRadius-sized ones — picking must agree with
   // what's on screen or rim clicks miss.
   function pickNode(sx, sy) {
+    if (dependenciesOn()) {
+      const [x, y] = screenToWorld(sx, sy)
+      let best = null, bestD = Infinity
+      for (const [id, p] of dependencyLayout.nodes) {
+        const d = (p.x - x) ** 2 + (p.y - y) ** 2
+        if (d < bestD && d < (14 / Math.max(viewport.k, 0.1)) ** 2) { bestD = d; best = getDependencyGraph().nodeByFile.get(id) }
+      }
+      return best
+    }
     if (layersOn()) {
       const [x, y] = screenToWorld(sx, sy)
       for (const r of layers.rects.values()) {
@@ -1294,6 +1379,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     const sizeText = formatBytes(p.size)
     render(html`
       <div class="g2-tt-path">${layersOn() ? layerLabel(p.pkg) : p.label}</div>
+      ${dependenciesOn() ? html`<div class="g2-tt-pkg">${getDependencyGraph().importedBy.get(p.pkg).length} importers · ${getDependencyGraph().importsOf.get(p.pkg)?.length ?? 0} dependencies</div>` : null}
       ${layersOn() ? html`<div class="g2-tt-pkg">${layers.depth.has(p.pkg)
         ? `Level ${layers.depth.get(p.pkg)} · shortest import distance from App`
         : 'No known import path from App'}</div>` : null}
@@ -1379,7 +1465,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     hovered = hit?.file ?? null
     canvas.style.cursor = hit ? 'default' : 'grab'
     if (hit) {
-      if (pkgViewOn()) showPkgTooltip(hit, e.clientX, e.clientY)
+      if (pkgViewOn() || dependencyPackagesOn()) showPkgTooltip(hit, e.clientX, e.clientY)
       else showTooltip(hit, e.clientX, e.clientY)
     } else if (prev) hideTooltip()
     if (hovered !== prev) requestDraw()
@@ -1389,7 +1475,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
       const rect = stage.getBoundingClientRect()
       const sx = e.clientX - rect.left, sy = e.clientY - rect.top
       const hit = pickNode(sx, sy)
-      if (pkgViewOn()) {
+      if (pkgViewOn() || dependencyPackagesOn()) {
         // Package click — toggle the selection through graph2.solo,
         // the same slot the right panel's Packages rows write, so
         // the package card, the row highlight, and the canvas ring
@@ -1433,10 +1519,11 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
       requestDraw()
       return
     }
-    // Normal cursor-anchored zoom. Min = fit.k (no zooming
-    // out past it), max = 9.99 (~999% in the readout).
+    // Dependency view reports zoom relative to fit; its upper bound uses
+    // the same reference, so small graphs still get the full zoom range.
     const [wx, wy] = screenToWorld(sx, sy)
-    const nk = Math.max(fit.k, Math.min(9.99, viewport.k * factor))
+    const metrics = graphZoomMetrics(viewport.k, fit.k, dependenciesOn())
+    const nk = Math.max(metrics.min, Math.min(metrics.max, viewport.k * factor))
     viewport.k = nk
     viewport.tx = sx - wx * viewport.k
     viewport.ty = sy - wy * viewport.k
@@ -1451,10 +1538,10 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
 
   // Zoom buttons — each mutation requestDraws so the next
   // animation frame paints with the new viewport. Min = fit
-  // zoom (same floor the wheel handler enforces), max = 9.99.
+  // zoom (same floor and 999% upper bound the wheel handler enforces).
   function zoomTo(nk) {
-    const fitK = computeFit().k
-    nk = Math.max(fitK, Math.min(9.99, nk))
+    const metrics = graphZoomMetrics(viewport.k, computeFit().k, dependenciesOn())
+    nk = Math.max(metrics.min, Math.min(metrics.max, nk))
     const cx = W / 2, cy = H / 2
     const [wx, wy] = screenToWorld(cx, cy)
     viewport.k = nk
