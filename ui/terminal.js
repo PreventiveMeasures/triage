@@ -230,7 +230,7 @@ class BundleTerminal extends LitElement {
     if (out) out.scrollTop = out.scrollHeight
   }
 
-  #onSubmit = (e) => {
+  #onSubmit = async (e) => {
     e.preventDefault()
     if (!this.#term) return
     const line = this._input
@@ -248,7 +248,28 @@ class BundleTerminal extends LitElement {
       return
     }
     const cwdBefore = this._cwd
-    const r = this.#term.run(line)
+    // Taking the line and emptying the prompt before the await, so the
+    // field clears on the keypress rather than a microtask later.
+    if (trimmed.length > 0) this.#history = [...this.#history, line]
+    this.#histIdx = -1
+    this._input = ''
+    // `runAsync` runs the line on the way to returning, so the promise
+    // is already settled and lines still resolve in the order they were
+    // entered. Awaiting is what makes this handler indifferent to that:
+    // a command that one day does take time needs no change here.
+    let r
+    try {
+      r = await this.#term.runAsync(line)
+    } catch (err) {
+      // What `run` would have thrown, this rejects with — and an async
+      // handler turns an exception that used to reach the console into
+      // a rejection nothing is listening for. Put it where the line
+      // that caused it is, rather than nowhere.
+      this._lines = [...this._lines,
+        { kind: 'prompt', cwd: cwdBefore, text: line },
+        { kind: 'stderr', text: `${err?.message ?? err}\n` }]
+      return
+    }
     this._cwd = r.cwd
     const next = [...this._lines, { kind: 'prompt', cwd: cwdBefore, text: line }]
     // Classified here rather than in render(): render reruns on every
@@ -258,9 +279,6 @@ class BundleTerminal extends LitElement {
     if (r.stderr) next.push({ kind: 'stderr', text: r.stderr })
     this._lines = next
     this.#pushHints(r)
-    if (trimmed.length > 0) this.#history = [...this.#history, line]
-    this.#histIdx = -1
-    this._input = ''
   }
 
   #onKeydown = (e) => {

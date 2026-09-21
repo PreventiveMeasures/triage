@@ -30,6 +30,7 @@
 import { Bundle } from '@exodus/stasis-core/bundle'
 
 const sourcesCache = new WeakMap()
+const filesCache = new WeakMap()
 const sizesCache = new WeakMap()
 
 export function bundleSourcesAsMap(details) {
@@ -61,6 +62,47 @@ export function bundleSourcesAsMap(details) {
   }
   if (key) sourcesCache.set(key, result)
   return result
+}
+
+// Every file the bundle carries, for a reader that wants the filesystem
+// rather than the source: what `bundleSourcesAsMap` returns, plus the
+// resources it leaves out, each in the form that is true to it.
+//
+// The two resource formats are not two encodings of the same thing.
+// Stasis picks between them by whether the bytes are valid UTF-8:
+// `resource` is that text, stored verbatim, so it stays a string and a
+// reader sees the SVG or the licence file it is. `resource:base64` is
+// the other case — bytes no string spells — so it is decoded back to
+// the bytes it encodes. @preventive/terminal takes a Uint8Array for
+// exactly that file since 1.13.0, and then knows what it is holding:
+// `ls -l` and `wc -c` report the real byte count rather than the
+// length of the base64, and `cat` declines instead of printing
+// mojibake.
+//
+// Directory captures stay out. They are the one entry that is not a
+// file in any encoding, and mounting one puts a second `lib` beside
+// the directory it names.
+export function bundleFilesAsMap(details) {
+  const key = details?.bundle ?? details?.json
+  if (key && filesCache.has(key)) return filesCache.get(key)
+  const files = new Map(bundleSourcesAsMap(details))
+  if (details?.kind === 'stasis' && details.bundle) {
+    const formats = details.bundle.formats
+    for (const [file, content] of details.bundle.sources) {
+      if (typeof content !== 'string') continue
+      const format = formats?.get(file)
+      if (format === 'resource') files.set(file, content)
+      else if (format === 'resource:base64') {
+        // Throws on input that is not base64, which a corrupt bundle can
+        // be. One unreadable resource is not worth failing the whole
+        // tree over: leave it out, as the map already leaves out what it
+        // cannot represent.
+        try { files.set(file, Uint8Array.fromBase64(content)) } catch { /* not decodable, so not mountable */ }
+      }
+    }
+  }
+  if (key) filesCache.set(key, files)
+  return files
 }
 
 // Metadata views need byte sizes and paths, never the source bodies. The

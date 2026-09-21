@@ -17,7 +17,7 @@
 // disconnect / reconnect. The cache is keyed by bundle integrity,
 // so opening a different bundle discards the previous terminal.
 
-import { bundleSourcesAsMap } from './bundle-sources.js'
+import { bundleFilesAsMap } from './bundle-sources.js'
 import { stripCommonPathPrefix } from './format.js'
 
 let loadPromise = null
@@ -50,8 +50,11 @@ function loadTerminal() {
 // terminal's filesystem matches what the Code tab's tree shows
 // (and so the mount holds the project itself, not a deep deploy
 // path — see MOUNT in terminal.js, where the tree is mounted).
+//
+// Values ride through untouched: this rewrites keys only, so the
+// Uint8Array a binary file arrives as reaches the terminal as one.
 function buildSourcesFromDetails(details) {
-  const raw = bundleSourcesAsMap(details)
+  const raw = bundleFilesAsMap(details)
   if (raw.size === 0) return raw
   const keys = [...raw.keys()]
   const { stripped } = stripCommonPathPrefix(keys)

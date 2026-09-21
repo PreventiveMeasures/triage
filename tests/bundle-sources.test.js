@@ -14,7 +14,7 @@ import { describe, it } from 'node:test'
 
 const { Bundle } = await import('@exodus/stasis-core/bundle')
 const { createTerminal } = await import('@preventive/terminal')
-const { bundlePackageDirs, bundlePackageVersions, bundleSourcesAsMap } = await import('../ui/view/bundle-sources.js')
+const { bundleFilesAsMap, bundlePackageDirs, bundlePackageVersions, bundleSourcesAsMap } = await import('../ui/view/bundle-sources.js')
 
 // A real Bundle, because the point of these cases is what the package
 // actually stores: `Bundle.sources` is the raw content of every entry,
@@ -187,5 +187,98 @@ describe('bundleSourcesAsMap — the filesystem the terminal is handed', () => {
     assert.deepEqual(paths.toSorted(), [
       '/sources', '/sources/index.js', '/sources/lib', '/sources/lib/util.js',
     ])
+  })
+})
+
+describe('bundleFilesAsMap — the filesystem, not just the source', () => {
+  // Stasis stores a resource as text when its bytes are valid UTF-8 and
+  // as base64 when they are not, so the two formats need opposite
+  // treatment. A round trip through the package's own serializer is
+  // what proves which is which.
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff, 0xfe, 0x01])
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg"/>'
+
+  const details = () => {
+    const bundle = new Bundle({
+      config: { scope: 'full' },
+      modules: new Map([['.', { name: 'app', version: '1.0.0', files: {
+        'index.js': 'export const a = 1\n',
+        'logo.png': Buffer.from(png).toString('base64'),
+        'icon.svg': svg,
+        'assets': JSON.stringify(['a.png']),
+      } }]]),
+      formats: new Map([
+        ['index.js', 'commonjs'], ['logo.png', 'resource:base64'],
+        ['icon.svg', 'resource'], ['assets', 'directory'],
+      ]),
+    })
+    return { kind: 'stasis', bundle: Bundle.parse(bundle.serialize()) }
+  }
+
+  it('hands a base64 resource over as the bytes it encodes', () => {
+    const logo = bundleFilesAsMap(details()).get('logo.png')
+    assert.ok(logo instanceof Uint8Array, 'a Uint8Array, not its base64 text')
+    assert.deepEqual([...logo], [...png])
+  })
+
+  it('leaves a utf8 resource as the text it already is', () => {
+    // `resource` is not base64 — decoding it would corrupt a readable file.
+    assert.equal(bundleFilesAsMap(details()).get('icon.svg'), svg)
+  })
+
+  it('still skips directory captures', () => {
+    assert.equal(bundleFilesAsMap(details()).has('assets'), false)
+  })
+
+  it('carries the source entries too', () => {
+    assert.equal(bundleFilesAsMap(details()).get('index.js'), 'export const a = 1\n')
+  })
+
+  it('leaves bundleSourcesAsMap textual, which its readers rely on', () => {
+    // render-bundle.js tells the language bar resources are absent.
+    assert.deepEqual([...bundleSourcesAsMap(details()).keys()], ['index.js'])
+  })
+
+  it('drops a resource whose base64 is corrupt rather than failing the tree', () => {
+    const broken = { kind: 'stasis', bundle: new Bundle({
+      config: { scope: 'full' },
+      modules: new Map([['.', { name: 'app', version: '1.0.0', files: { 'index.js': 'x\n', 'bad.png': '!!!not base64!!!' } }]]),
+      formats: new Map([['index.js', 'commonjs'], ['bad.png', 'resource:base64']]),
+    }) }
+    const files = bundleFilesAsMap(broken)
+    assert.deepEqual([...files.keys()], ['index.js'])
+  })
+})
+
+describe('bundleFilesAsMap — what the terminal makes of the bytes', () => {
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff, 0xfe, 0x01])
+  const files = () => bundleFilesAsMap({ kind: 'stasis', bundle: new Bundle({
+    config: { scope: 'full' },
+    modules: new Map([['.', { name: 'app', version: '1.0.0', files: {
+      'index.js': 'export const a = 1\n',
+      'logo.png': Buffer.from(png).toString('base64'),
+    } }]]),
+    formats: new Map([['index.js', 'commonjs'], ['logo.png', 'resource:base64']]),
+  }) })
+  const terminal = () => createTerminal(files(), { mount: '/sources', home: '/', writable: '/tmp/' })
+
+  it('sizes the file by its bytes, not by the base64 that carried it', () => {
+    // 12 bytes; the base64 spelling of them is 16 characters.
+    assert.equal(terminal().run('wc -c logo.png').stdout.trim().split(/\s+/u)[0], String(png.length))
+  })
+
+  it('declines to print bytes that spell no text', () => {
+    const r = terminal().run('cat logo.png')
+    assert.equal(r.stdout, '')
+    assert.match(r.stderr, /bytes that spell no text/u)
+  })
+
+  it('round-trips the bytes back out through base64', () => {
+    const out = terminal().run('base64 logo.png').stdout.trim()
+    assert.deepEqual([...Uint8Array.fromBase64(out)], [...png])
+  })
+
+  it('lists it beside the source, as a file like any other', () => {
+    assert.equal(terminal().run('ls').stdout, 'index.js\nlogo.png\n')
   })
 })
