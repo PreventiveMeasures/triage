@@ -823,7 +823,14 @@ describe('parseMarkdownFindings — reproduction steps', () => {
   it('leaves a sequence it cannot read alone', () => {
     // Counting down, repeating a number, cut off mid-sequence, or no
     // step at all: each is an enumeration, none is one to take apart.
-    for (const odd of ['1. 3) Later 2) Earlier', '1. 1) A 1) A', '1. 1) A 2)', '1.']) {
+    // With or without an outer marker — where the sequence IS the item,
+    // the number it opens on is a step's, and unwrapping would drop it.
+    for (const odd of [
+      '1. 3) Later 2) Earlier', '3) Later 2) Earlier',
+      '1. 1) A 1) A', '1) A 1) A',
+      '1. 1) A 2)', '1) A 2)',
+      '1.',
+    ]) {
       assert.equal(repro(odd), odd, JSON.stringify(odd))
     }
   })

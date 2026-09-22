@@ -223,10 +223,14 @@ function normalizeStepList(text) {
   const body = item.replace(LIST_MARKER_RE, '')
   if (!body.trim()) return text
   const steps = runInSteps(body) ?? runInSteps(item)
-  // A body that opens on a marker of its own is an enumeration this
-  // can't read — `1. 3) Later 2) Earlier` counts down — and unwrapping
-  // the item would leave that marker leading the section.
-  if (steps === null && LIST_MARKER_RE.test(body)) return text
+  // An enumeration neither reading could take apart stays as it
+  // arrived. Both halves matter: a BODY opening on a marker is the
+  // sequence behind an outer one (`1. 3) Later 2) Earlier`), and
+  // unwrapping would leave that marker leading the section; an ITEM
+  // opening on one is the sequence itself (`3) Later 2) Earlier`),
+  // where the marker shed as the item's own is a step number, and
+  // unwrapping would drop it and leave the rest of the count behind.
+  if (steps === null && (LIST_MARKER_RE.test(body) || RUN_IN_HEAD_RE.test(item))) return text
   const read = steps === null ? [body]
     : steps.length === 1 ? [steps[0].step]
       : steps.map(({ number, step }) => `${number}. ${step}`)
@@ -241,6 +245,8 @@ function normalizeStepList(text) {
 // not a marker, and a marker with NOTHING behind it — a truncated
 // `1) Save 2)` — is a sequence this can't read, not a step of its own.
 const RUN_IN_STEP_RE = /(?:^|[ \t])(\d{1,9})\)(?=[ \t]|$)/gu
+// The same marker, asked of a text's own start.
+const RUN_IN_HEAD_RE = /^\d{1,9}\)(?=[ \t]|$)/u
 
 function runInSteps(text) {
   const marks = [...text.matchAll(RUN_IN_STEP_RE)]
