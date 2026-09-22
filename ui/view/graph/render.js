@@ -124,7 +124,7 @@ export function renderTopBar(graph, options, extraControls = null) {
   ></mode-switch>` : null
 
   const reasonFilter = graph.reasons?.length > 0 ? html`<label class="g2-reason-filter">
-    <select aria-label="Reason" .value=${live(graph2.bundleReason ?? '')} @change=${(e) => e.currentTarget.dispatchEvent(new CustomEvent('bundle-graph-reason-change', {
+    <select aria-label="Filter files" .value=${live(graph2.bundleReason ?? '')} @change=${(e) => e.currentTarget.dispatchEvent(new CustomEvent('bundle-graph-reason-change', {
       detail: { reason: e.currentTarget.value || null }, bubbles: true, composed: true,
     }))}>
       <option value="" ?selected=${graph2.bundleReason === null}>All</option>

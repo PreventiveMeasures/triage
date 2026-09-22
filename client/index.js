@@ -109,6 +109,9 @@ export {
   clampFocusSplit,
   loadRepoUrlFor,
   saveRepoUrlFor,
+  isManagedUiMode,
+  clientModeLabel,
+  setLocalMode,
   state,
 } from './state.ts'
 

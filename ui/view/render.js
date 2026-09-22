@@ -224,7 +224,9 @@ function headerTemplate(mergedGroups, fileNames, repoInputUseful, knownRepo, tre
   const ws = state.currentWorkspace
     ? listWorkspaces().find((w) => w.id === state.currentWorkspace)
     : null
-  const titleText = ws
+  const team = state.currentWorkspace && state.currentManagedTeam
+    ? state.managedTeams.find((t) => t.id === state.currentManagedTeam) : null
+  const titleText = team ? `Team: ${team.name}` : ws
     ? `Workspace: ${ws.name}`
     : (singleSource ? sourceTitle(singleSource) : 'Findings')
 
@@ -1635,14 +1637,17 @@ function ensureReportSlot(id) {
 // (loaded by the sidebar's "Manage users" / "Manage repositories" /
 // "Manage reports" / "Manage bundles" / "Manage teams" entries)
 // defines each <managed-admin-*> element; the element fetches +
-// paints itself. The sidebar gates the entry points to admin|manage
-// roles (users is admin-only).
+// paints itself. The sidebar gates content pages to admin|manage roles
+// and access pages (users, repositories, and teams) to admins.
 const ADMIN_VIEWS = {
+  manage:           { slot: 'manage-slot',          tag: 'managed-admin-home',    title: 'DeepView — manage' },
   'admin-users':    { slot: 'admin-users-slot',    tag: 'managed-admin-users',   title: 'DeepView — users' },
   'manage-repos':   { slot: 'manage-repos-slot',   tag: 'managed-admin-repos',   title: 'DeepView — repositories' },
   'manage-reports': { slot: 'manage-reports-slot', tag: 'managed-admin-reports', title: 'DeepView — reports' },
   'manage-bundles': { slot: 'manage-bundles-slot', tag: 'managed-admin-bundles', title: 'DeepView — bundles' },
+  'manage-history': { slot: 'manage-history-slot', tag: 'managed-admin-history', title: 'DeepView — history' },
   'manage-teams':   { slot: 'manage-teams-slot',   tag: 'managed-admin-teams',   title: 'DeepView — teams' },
+  'manage-scans':   { slot: 'manage-scans-slot',   tag: 'managed-admin-scans',   title: 'DeepView — scans' },
 }
 
 // Alphabetical with the null bucket pinned last — the shape both the
@@ -1901,7 +1906,17 @@ function renderImpl() {
     document.title = adminView.title
     return
   }
-  if (state.reports.length === 0) return
+  if (state.reports.length === 0) {
+    // A mode switch can leave an admin page mounted while the destination
+    // surface has no local report yet. Clear that slot now so the landing
+    // screen replaces Manage immediately instead of waiting for a later
+    // navigation or storage restore to repaint it.
+    report.innerHTML = ''
+    report.classList.remove('active')
+    dropZone.classList.remove('hidden')
+    document.title = 'DeepView'
+    return
+  }
   // Merge across all loaded reports. Every entry is a Finding[] (a dedup
   // group); single findings were wrapped at ingest, so downstream code
   // doesn't branch on shape. The trash-view split happens here, not in

@@ -16,7 +16,7 @@
 // there's no path forward and the button would just be confusing.
 
 import { html, render as litRender } from 'lit'
-import { disableEncryption, isEncryptionEnabled, isPasskeyEnvironmentSupported, isUnlocked, migrateOpfsBundlesDecrypt, migrateOpfsFilesDecrypt, migrateSecureStorageToPlaintext, migrateTriageToPlaintext, onVaultStateChange, state } from '#client/index.js'
+import { disableEncryption, isEncryptionEnabled, isManagedUiMode, isPasskeyEnvironmentSupported, isUnlocked, migrateOpfsBundlesDecrypt, migrateOpfsFilesDecrypt, migrateSecureStorageToPlaintext, migrateTriageToPlaintext, onVaultStateChange } from '#client/index.js'
 import { openPasskeySetupDialog } from './dialogs/passkey-setup-dialog.js'
 import { openPasskeyUnlockDialog } from './dialogs/passkey-unlock-dialog.js'
 
@@ -42,13 +42,11 @@ function render() {
     button.hidden = true
     return
   }
-  const enabled = isEncryptionEnabled()
-  // Managed mode with encryption OFF → hide the toggle entirely (a managed
-  // deployment doesn't surface passkey encryption as an opt-in there).
-  if (!enabled && state.serverMode === 'managed') {
+  if (isManagedUiMode()) {
     button.hidden = true
     return
   }
+  const enabled = isEncryptionEnabled()
   button.hidden = false
   const unlocked = isUnlocked()
   // Three states keyed on (enabled, unlocked). `.encrypted` paints

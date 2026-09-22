@@ -10,7 +10,8 @@
    inside #report's flex column (via these slots), so the whole panel — not just
    the short content area — is a drag&drop upload target. */
 #manage-reports-slot,
-#manage-bundles-slot {
+#manage-bundles-slot,
+#manage-scans-slot {
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;

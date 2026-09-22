@@ -1,5 +1,5 @@
 import { render as litRender, nothing } from 'lit'
-import { adoptRepoUrlFor, analyzeContent, computeLinkHint, deleteBundle, deleteFile, deleteWorkspace, dropBundleFromHashIndex, getSecureItem, listBundles, listFiles, listWorkspaces, loadRepoUrlFor, parseLinkedFindings, pruneOrphanTriage, readFile, readFileBytes, removeCount, removeSecureItem, saveBundle, saveFile, saveRepoUrlFor, setBundleWorkspace, setCount, setReportWorkspace, setSecureItem, state, triageLoadPromise } from '#client/index.js'
+import { adoptRepoUrlFor, analyzeContent, computeLinkHint, deleteBundle, deleteFile, deleteWorkspace, dropBundleFromHashIndex, getSecureItem, isManagedUiMode, listBundles, listFiles, listWorkspaces, loadRepoUrlFor, parseLinkedFindings, pruneOrphanTriage, readFile, readFileBytes, removeCount, removeSecureItem, saveBundle, saveFile, saveRepoUrlFor, setBundleWorkspace, setCount, setReportWorkspace, setSecureItem, state, triageLoadPromise } from '#client/index.js'
 import { closeWorkspace as closePresence, deleteBundleFromRemote, deleteFromRemote as deletePresence, isInRemoteOrCached, openWorkspace as openPresence, putFile, triageSync } from './client-sync.js'
 import { openImportConflictDialog } from './dialogs/import-conflict-dialog.js'
 import { dropZone, report } from './dom.js'
@@ -9,7 +9,7 @@ import { applyOpeningFilters, resetFilters } from './filters.js'
 import { reportWorkspaceFor } from './finding-link.js'
 import { encodeReportLocation } from '../../client/report-location.js'
 import { configureReportRevalidation, render } from './render.js'
-import { renderSidebar } from './sidebar.js'
+import { navigateToAdminPage, renderSidebar } from './sidebar.js'
 import { cleanupGraph2, graph2 } from './graph/state.js'
 import { openBundle, prefetchBundleHashes, selectBundle } from './bundle-load.js'
 import { backfillFindingIds, detectFormat, inheritReportMeta, isAppFinding, parseCodexCsvToScans, readReport, repoDirectory, reportEntries, reportRepoGithub } from '../../report/index.js'
@@ -17,6 +17,8 @@ import { importWorkspaceFromGzip } from './workspace-import.js'
 import { maybePromptFirstUse } from './first-import-prompt.js'
 import { openPasskeyUnlockDialog } from './dialogs/passkey-unlock-dialog.js'
 import { openSyncDownloadDialog } from './dialogs/sync-download-dialog.js'
+import { fetchReport as fetchManagedReport, login as managedLogin } from './client-managed.js'
+import { showToast } from './toast.js'
 
 // localStorage key for the last-viewed file — restored on page load so
 // the user picks back up where they left off. The stored value is the
@@ -331,7 +333,7 @@ async function addFiles(files) {
   // here must NOT write to disk — bail before any of the pipeline runs. This is
   // the single choke point for every entry (document drop, the empty-screen
   // drop-zone, and the file picker).
-  if (state.serverMode === 'managed') return
+  if (isManagedUiMode()) return
   // First-import nudge: ask once whether to enable passkey encryption
   // before this drop's files hit disk, so an accepted enable seals the
   // very first write rather than landing plaintext then re-writing the
@@ -504,6 +506,8 @@ async function addFiles(files) {
 // id, not by the file name a local report may share) can tell.
 export async function switchToFile(name, content, { workspaceId } = {}) {
   const gen = ++loadGen
+  state.currentManagedTeam = null
+  state.currentManagedReport = null
   state.currentReportWorkspace = reportWorkspaceFor(name, workspaceId)
   // Subscribe-on-report-open: a single-file view of a workspace
   // member should still ride the workspace's chain, so the user sees
@@ -666,6 +670,59 @@ export async function switchToFile(name, content, { workspaceId } = {}) {
   return true
 }
 
+// A team is a server-backed workspace. Reuse the workspace grouping and
+// filtering lens, but fetch on demand and never create a local workspace or
+// persist report bytes. Individual reports share this navigation generation
+// so a slow team load cannot overwrite a later report click (or Home).
+export async function switchToManagedTeam(team, reportId = null) {
+  if (!isManagedUiMode() || !team || !Array.isArray(team.reports)) return false
+  const selected = reportId === null ? team.reports : team.reports.filter((r) => r.id === reportId)
+  if (reportId !== null && selected.length === 0) return false
+  const gen = ++loadGen
+  const contents = await Promise.all(selected.map((r) => fetchManagedReport(r.id)))
+  if (isStaleLoad(gen)) return false
+  if (contents.some((content) => content === null)) {
+    showToast('Could not load all team reports. Please try again.')
+    return false
+  }
+  // Validate the whole response set before clearing the prior view, so a
+  // missing/invalid report cannot quietly turn the team into a partial view.
+  if (contents.some((content) => !readReport(content).data)) {
+    showToast('One of the team reports could not be read.')
+    return false
+  }
+  closeSessionsExcept(new Set())
+  state.currentView = 'findings'
+  state.reports = []
+  clearMergedGroups()
+  state.workspaceMerges = []
+  state.revalidateConflicts = new Map()
+  state.currentFile = reportId === null ? null : selected[0].filename
+  // Namespaced, in-memory workspace identity: all existing workspace lens
+  // rules apply, without registering a local workspace or sync subscription.
+  state.currentWorkspace = reportId === null ? `managed-team:${team.id}` : null
+  state.currentManagedTeam = team.id
+  state.currentManagedReport = reportId
+  state.currentReportWorkspace = null
+  state.currentLinks = null
+  state.selectedBundle = null
+  state.repoUrl = ''
+  state.repoEditing = false
+  resetGraph2()
+  for (let i = 0; i < selected.length; i++) {
+    await ingestReport(selected[i].filename, contents[i], gen, { renderView: false })
+    if (isStaleLoad(gen)) return false
+  }
+  if (selected.length === 0) {
+    showEmptyMainPane()
+  } else {
+    applyOpeningFilters(getShownGroups())
+    if (!(await renderAfterAnimationFrame(gen))) return false
+  }
+  await renderSidebar()
+  return true
+}
+
 // Replace the active view with the merged contents of an entire
 // workspace — every assigned report loaded via `ingestReport`,
 // accumulating in `state.reports`. `state.currentFile` is cleared
@@ -676,6 +733,8 @@ export async function switchToFile(name, content, { workspaceId } = {}) {
 // editable header chip is omitted. Reports the workspace references
 // but that no longer exist in OPFS are skipped silently.
 export async function switchToWorkspace(workspaceId) {
+  state.currentManagedTeam = null
+  state.currentManagedReport = null
   const ws = listWorkspaces().find((w) => w.id === workspaceId)
   if (!ws) return
   const gen = ++loadGen
@@ -880,6 +939,8 @@ export async function deleteCurrent({ triage = 'keep', deleteFromRemoteWorkspace
 // concerns (each path has its own ordering constraints with the
 // surrounding OPFS / triage / remote operations).
 function clearActiveView() {
+  state.currentManagedTeam = null
+  state.currentManagedReport = null
   state.currentFile = null
   state.currentWorkspace = null
   state.currentReportWorkspace = null
@@ -887,8 +948,25 @@ function clearActiveView() {
   state.managedReport = null
   state.selectedBundle = null
   state.bundleDetails = null
+  state.bundleDetailsTab = 'overview'
   state.bundleSourceFile = null
   state.bundleSourceFindingIdx = null
+  state.selectedPackage = null
+  state.selectedPackageVersion = null
+  state.packageDetailsTab = 'overview'
+  state.packageSlideTriage = null
+  state.packageSlideTransient = false
+  state.expandedPackages.clear()
+  state.selectedRepository = null
+  state.repositoryDetailsTab = 'overview'
+  state.repositorySlideTriage = null
+  state.repositorySlideTransient = false
+  state.filesSelectedFile = null
+  state.tableSelectedGid = null
+  state.kanbanPopoverGid = null
+  state.kanbanExpandedColumn = null
+  state.focusGid = null
+  state.activeTabByGroup.clear()
   state.reports = []
   clearMergedGroups()
   state.workspaceMerges = []
@@ -901,6 +979,22 @@ function clearActiveView() {
   removeSecureItem(LAST_FILE_KEY)
   showEmptyMainPane()
   document.title = 'DeepView'
+}
+
+// Leave the current surface when the managed server's UI mode changes. This
+// is deliberately one operation rather than a handful of assignments in the
+// sidebar: report and workspace loads are asynchronous, and any one of them
+// can otherwise finish after the mode switch and put the old view back.
+//
+// The generation bump invalidates switchToFile/switchToWorkspace and their
+// ingest pipelines. Closing sessions stops local triage updates from arriving
+// while the landing screen is being painted. clearActiveView also removes the
+// persisted last-view pointer, so entering local mode cannot immediately
+// restore the managed report that was just open.
+export function resetForClientModeTransition() {
+  ++loadGen
+  closeSessionsExcept(new Set())
+  clearActiveView()
 }
 
 // Drop back to the empty drop-zone screen without touching stored
@@ -1312,7 +1406,10 @@ document.addEventListener('drop', (e) => {
   addFiles(e.dataTransfer.files)
 })
 
-dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('hover') })
+dropZone.addEventListener('dragover', (e) => {
+  e.preventDefault()
+  if (!isManagedUiMode()) dropZone.classList.add('hover')
+})
 dropZone.addEventListener('dragleave', () => dropZone.classList.remove('hover'))
 dropZone.addEventListener('drop', (e) => {
   e.preventDefault()
@@ -1334,6 +1431,7 @@ dropZone.addEventListener('drop', (e) => {
 // re-pick the same file (browsers suppress the change event otherwise).
 let filePickerInput = null
 function openFilePicker() {
+  if (isManagedUiMode()) return
   if (!filePickerInput) {
     filePickerInput = document.createElement('input')
     filePickerInput.type = 'file'
@@ -1359,6 +1457,15 @@ function openFilePicker() {
 // Event-delegate via the drop-zone so the listener survives Lit
 // re-renders if the prompt template ever becomes a component.
 dropZone.addEventListener('click', (e) => {
+  const managedPage = e.target.closest('[data-managed-page]')
+  if (managedPage) { void navigateToAdminPage(managedPage.dataset.managedPage); return }
+  if (e.target.closest('[data-managed-login]')) { void managedLogin(state.managed?.loginPath); return }
+  const team = e.target.closest('[data-managed-team]')
+  if (team) {
+    const selected = state.managedTeams.find((candidate) => candidate.id === team.dataset.managedTeam)
+    if (selected) void switchToManagedTeam(selected)
+    return
+  }
   const workspace = e.target.closest('[data-landing-workspace]')
   if (workspace) {
     void switchToWorkspace(workspace.dataset.landingWorkspace)

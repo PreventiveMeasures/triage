@@ -33,8 +33,9 @@ export async function probeSession() {
   }
 }
 
-// GET /api/teams → the signed-in user's teams, each with the reports attached to
-// the team's repos ([{ id, name, reports: [{ id, filename }] }]), or [] when
+// GET /api/teams → the signed-in user's teams, each with the reports and bundles
+// attached to the team's repos ([{ id, name, reports: [{ id, filename }],
+// bundles: [{ id, filename, repoFullName }] }]), or [] when
 // unauthenticated / on any failure. Kept on `state.managedTeams` and shown in the
 // sidebar's per-user Teams section. Never throws, so a probe failure can't break
 // the session refresh.
@@ -51,6 +52,15 @@ export async function probeTeams() {
         ? t.reports
           .filter((r) => r != null && typeof r.id === 'string' && typeof r.filename === 'string')
           .map((r) => ({ id: r.id, filename: r.filename }))
+        : [],
+      bundles: Array.isArray(t.bundles)
+        ? t.bundles
+          .filter((b) => b != null && typeof b.id === 'string' && typeof b.filename === 'string')
+          .map((b) => ({
+            id: b.id,
+            filename: b.filename,
+            repoFullName: typeof b.repoFullName === 'string' ? b.repoFullName : '',
+          }))
         : [],
     }))
 }

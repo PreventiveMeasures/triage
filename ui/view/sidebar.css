@@ -57,8 +57,8 @@
     white-space: nowrap; overflow: hidden;
     user-select: none;
   }
-  /* Only the wordmark is the click target — the `dev` tag is a sibling
-     so the row's whitespace stays non-interactive.
+  /* Only the wordmark and mode tag are click targets — the row's whitespace
+     stays non-interactive.
      `data-action="go-home"` is wired in sidebar.js's click delegate.
      Transparent + no border so it reads as plain text, no hover paint.
      The WCO `app-region: no-drag` opt-out lives in the @media block
@@ -77,9 +77,17 @@
     }
   }
   & .brand-tag {
+    padding: .08rem .25rem;
+    border: 0; border-radius: 4px;
+    background: transparent;
+    font: inherit;
     font-size: .65rem; font-weight: 500;
     color: var(--muted); text-transform: lowercase;
     letter-spacing: .02em;
+
+    &[role='button'] { cursor: pointer; }
+    &[role='button']:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
+    &:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   }
 }
 
@@ -109,6 +117,7 @@
     app-region: drag;
 
     & .brand-button,
+    & .brand-tag,
     & #encryption-toggle {
       -webkit-app-region: no-drag;
       app-region: no-drag;
@@ -157,6 +166,7 @@
     outline-offset: -2px;
   }
 }
+#encryption-toggle[hidden] { display: none !important; }
 
 /* The search row is itself the bordered surface — the leading glyph,
    the transparent input, and any trailing view buttons share the same
@@ -220,6 +230,7 @@
    layout via `display: contents` so the inner button (or nothing, when
    count === 0) participates directly alongside the search input. */
 sidebar-view-button { display: contents; }
+sidebar-view-button[hidden] { display: none !important; }
 
 .sidebar-view-btn {
   position: relative; flex-shrink: 0;
@@ -364,18 +375,25 @@ sidebar-view-button { display: contents; }
    ring + hover background hug the visible chip instead of spilling to
    the row edge. Rounded corners + subtle hover / current background to
    read as a card-like pill. */
-/* Teams — the signed-in user's memberships, listed above Workspaces in managed
-   mode. Static label rows (no team view to navigate to yet), styled to match the
-   workspace file rows minus the hover/click affordances. */
-.file-item.team-item .team-name {
-  display: flex; align-items: center; gap: .5rem;
-  padding: .2rem .3rem .2rem .55rem;
-  color: var(--text); font-size: .78rem;
-}
 .file-item.team-item .team-icon { flex-shrink: 0; color: var(--muted); }
-.file-item.team-item .team-label {
+
+/* Managed bundles shown beneath a team are repository-owned scan inputs. They
+   share the compact report-row rhythm but remain informational until the
+   managed bundle viewer exists. */
+.file-item.team-bundle-item > .file-name {
+  display: flex; align-items: center; gap: .5rem;
+  width: 100%; box-sizing: border-box;
+  padding: .2rem .3rem .2rem 1.3rem;
+  color: var(--muted);
+  font-family: inherit; font-size: .78rem;
+  text-align: left;
+}
+.file-item.team-bundle-item .file-icon { flex-shrink: 0; color: var(--muted); }
+.file-item.team-bundle-item .file-label {
   flex: 1; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .76rem; line-height: 14.5px;
 }
 
 .file-item {
@@ -555,6 +573,7 @@ button:focus-visible {
    of `.sidebar-actions` (alongside `#sync-status`), so flatten the host
    via `display: contents`. */
 sidebar-delete-current { display: contents; }
+sidebar-delete-current[hidden] { display: none !important; }
 sidebar-delete-current button {
   display: inline-flex; align-items: center; gap: .35rem;
 
@@ -653,12 +672,25 @@ sidebar-delete-current button {
 /* Managed-mode auth control + account menu (replaces the offline/online toggle
    in managed mode). Logged out it is a "Log in" button; logged in it is the
    user's avatar, opening the popover account menu below. */
-#auth-status[hidden] { display: none; }
+#auth-status[hidden], #manage-status[hidden] { display: none !important; }
 #auth-status { display: inline-flex; align-items: center; }
 #auth-status[data-authed='1'] {
-  padding: 2px; border-color: transparent; border-radius: 50%;
+  display: inline-flex; align-items: center; gap: .4rem;
+  max-width: 12rem; padding: .2rem .35rem;
+  border-color: transparent; border-radius: 5px;
 }
-#auth-status[data-authed='1']:hover { border-color: var(--accent); }
+#auth-status[data-authed='1']:hover { border-color: transparent; background: rgb(from var(--text) r g b / .07); }
+#manage-status[hidden] { display: none; }
+#manage-status {
+  display: inline-grid; place-items: center;
+  width: 1.8rem; height: 1.8rem; padding: .25rem;
+  border-color: transparent; color: var(--accent);
+}
+#manage-status:hover { border-color: transparent; background: rgb(from var(--text) r g b / .07); }
+.auth-login {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--text); font: inherit; font-size: .72rem; font-weight: 400;
+}
 
 .user-avatar {
   position: relative; flex-shrink: 0;
@@ -712,9 +744,14 @@ sidebar-delete-current button {
   padding: .4rem .5rem;
   font: inherit; font-size: .82rem; color: var(--text);
 }
+.user-menu-row.logout-row {
+  display: inline-flex; align-items: center; gap: .4rem;
+  font-size: .76rem;
+}
+.logout-row svg { flex: 0 0 auto; }
 .user-menu-row:hover { background: rgb(from var(--text) r g b / .08); }
-/* "Manage" group in the account menu — a labelled cluster of the admin/manage
-   pages, separated from the trailing Log out row by a divider. */
+/* Account popover rows. Management is a separate icon beside the account
+   control; the popover only carries the session action. */
 .user-menu-group {
   display: flex; flex-direction: column; gap: .1rem;
   padding-bottom: .2rem; margin-bottom: .2rem;

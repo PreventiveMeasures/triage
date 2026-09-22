@@ -96,7 +96,8 @@ function loadedFindingIds() {
 
 function canPushTriage() {
   const session = state.managedSession
-  return state.serverMode === 'managed' && session != null && roleAtLeast(session.role, 'triage')
+  return state.serverMode === 'managed' && state.localMode !== true
+    && session != null && roleAtLeast(session.role, 'triage')
 }
 
 // A batch the server refused AS SENT (malformed, an id the caller may not
@@ -213,7 +214,7 @@ export function initManagedTriagePush() {
 // which the follow-up push carries up: the user's triage of those findings,
 // never uploaded. Pushes for the report wait for this to finish.
 export async function hydrateManagedReportTriage(reportId) {
-  if (state.serverMode !== 'managed' || state.managedSession == null) return
+  if (state.serverMode !== 'managed' || state.localMode === true || state.managedSession == null) return
   hydratedReport = null
   // Whatever is still pending goes first, and lands before the server copy is
   // read — so an edit made moments ago is what "server wins" then confirms,

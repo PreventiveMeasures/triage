@@ -762,7 +762,7 @@ class BundleTreemap extends LitElement {
         ${this._renderCrumbs()}
         <span class="bundle-treemap-head-right">
           <span class="bundle-treemap-sub">${curFiles} ${curFiles === 1 ? 'file' : 'files'} · ${formatBytes(curBytes)}${prefix ? html` · <span class="mono">${prefix}</span>` : ''}</span>
-          ${this._reasons.size > 0 ? html`<select class="bundle-treemap-reason" aria-label="Reason" @change=${this._changeReason}>
+          ${this._reasons.size > 0 ? html`<select class="bundle-treemap-reason" aria-label="Filter files" @change=${this._changeReason}>
             <option value="" ?selected=${!this._reason}>All</option>
             ${[...this._reasons.keys()].map((reason) => html`<option value=${reason} ?selected=${this._reason === reason}>${reason}</option>`)}
           </select>` : nothing}

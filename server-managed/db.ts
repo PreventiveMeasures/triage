@@ -69,7 +69,8 @@ CREATE TABLE IF NOT EXISTS selected_repo (
   html_url        TEXT NOT NULL,
   added_by        TEXT REFERENCES managed_user(id) ON DELETE SET NULL,
   added_at        INTEGER NOT NULL,
-  updated_at      INTEGER NOT NULL
+  updated_at      INTEGER NOT NULL,
+  active          INTEGER NOT NULL DEFAULT 1
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS selected_repo_full_name_idx ON selected_repo(full_name);
@@ -115,6 +116,10 @@ CREATE TABLE IF NOT EXISTS managed_report (
   -- Durable snapshot of the uploader's login (see managed_bundle).
   uploaded_by_login TEXT,
   repo_id          INTEGER REFERENCES selected_repo(repo_id) ON DELETE SET NULL,
+  repo_directory   TEXT NOT NULL DEFAULT '',
+  repo_embedded    INTEGER NOT NULL DEFAULT 0,
+  analyzer         TEXT,
+  visible          INTEGER NOT NULL DEFAULT 0,
   bundle_id        TEXT REFERENCES managed_bundle(id) ON DELETE SET NULL,
   bundle_integrity TEXT,
   uploaded_at      INTEGER NOT NULL
@@ -239,6 +244,7 @@ export interface AdminUser {
   name: string | null
   role: Role
   createdAt: number
+  lastSeenAt: number
 }
 
 // A user's persisted GitHub user-to-server token. `refreshToken` / `expiresAt`
@@ -272,6 +278,13 @@ export interface SelectedRepo {
   addedAt: number
 }
 
+// The admin repository directory includes inactive connections as well. Their
+// metadata remains available for existing reports/bundles, while only active
+// rows are returned by listSelectedRepos for new scans and attachments.
+export interface ManagedRepo extends SelectedRepo {
+  active: boolean
+}
+
 // What a caller supplies to select (upsert) a repo; the store stamps the
 // timestamps.
 export type SelectedRepoInput = Omit<SelectedRepo, 'addedAt'>
@@ -288,6 +301,11 @@ export interface ReportRecord {
   sha256: string
   uploadedBy: string | null
   uploadedAt: number
+  repoId: number | null
+  repoDirectory: string
+  repoEmbedded: boolean
+  analyzer: string | null
+  visible: boolean
 }
 
 // What the upload handler supplies to record a report; the store stamps
@@ -303,6 +321,10 @@ export interface ReportRecordInput {
   uploadedBy: string | null
   uploadedByLogin: string | null
   repoId: number | null
+  repoDirectory: string
+  repoEmbedded?: boolean
+  analyzer: string | null
+  visible: boolean
   bundleId: string | null
   bundleIntegrity: string | null
 }
@@ -319,10 +341,19 @@ export interface AdminReport {
   uploadedByLogin: string | null
   repoId: number | null
   repoFullName: string | null
+  repoDirectory: string
+  repoEmbedded: boolean
+  analyzer: string | null
+  visible: boolean
   bundleId: string | null
   bundleFilename: string | null
   bundleIntegrity: string | null
   uploadedAt: number
+}
+
+export interface RepoDataItem {
+  id: string
+  filename: string
 }
 
 // A stored per-finding triage row, with the last writer's login resolved like
@@ -416,17 +447,23 @@ export type UserOption = {
   login: string
 }
 
-// A team as shown in a member's own sidebar: the team name plus the reports
-// attached to the team's repos (id + filename, newest first). A report shows
-// under a team when its repo is one of the team's linked repos.
+// A team as shown in a member's own sidebar: the team name plus the reports and
+// bundles attached to the team's repos (id + filename, newest first). An item
+// shows under a team when its repo is one of the team's linked repos.
 export interface UserTeamReport {
   id: string
   filename: string
+}
+export interface UserTeamBundle {
+  id: string
+  filename: string
+  repoFullName: string
 }
 export interface UserTeam {
   id: string
   name: string
   reports: UserTeamReport[]
+  bundles: UserTeamBundle[]
 }
 
 // Backend-agnostic store surface (SQLite + PostgreSQL implementations).
@@ -449,6 +486,15 @@ export interface ManagedDb {
   selectRepo(repo: SelectedRepoInput, now: number): Promise<void>
   deselectRepo(repoId: number): Promise<boolean>
   listSelectedRepos(): Promise<SelectedRepo[]>
+  listAllRepos(): Promise<ManagedRepo[]>
+  deactivateRepo(repoId: number): Promise<boolean>
+  reactivateRepo(repoId: number): Promise<boolean>
+  deleteRepo(repoId: number): Promise<boolean>
+  listReportsForRepo(repoId: number): Promise<RepoDataItem[]>
+  listBundlesForRepo(repoId: number): Promise<RepoDataItem[]>
+  deleteReportsForRepo(repoId: number): Promise<number>
+  deleteBundlesForRepo(repoId: number): Promise<number>
+  deleteTriage(findingIds: readonly string[]): Promise<number>
   // Reports ("Manage reports"). insertReport records an uploaded report's
   // metadata (bytes are written to the blob-store separately); listReports joins
   // the uploader login + repo + linked-bundle filename for the admin list;
@@ -458,9 +504,11 @@ export interface ManagedDb {
   listReports(): Promise<AdminReport[]>
   getReport(id: string): Promise<ReportRecord | null>
   deleteReport(id: string): Promise<boolean>
-  // Attach / detach a report's repo link (repoId null = detach); resolves true
-  // iff the report exists. The caller validates repoId is a selected repo.
-  setReportRepo(id: string, repoId: number | null): Promise<boolean>
+  // Attach / detach a report's repo + directory link (repoId null = detach);
+  // resolves true iff the report exists. The caller validates repoId and the
+  // directory path.
+  setReportRepo(id: string, repoId: number | null, repoDirectory?: string): Promise<boolean>
+  setReportVisible(id: string, visible: boolean): Promise<boolean>
   // Per-finding triage annotations, keyed by finding id alone (shared by every
   // report carrying the finding). listTriage reads the rows for a set of ids —
   // the endpoint passes a viewer's visible findings of one report; a cleared
@@ -506,8 +554,8 @@ export interface ManagedDb {
   getTeam(id: string): Promise<{ id: string; name: string } | null>
   listTeams(): Promise<AdminTeam[]>
   listUserOptions(): Promise<UserOption[]>
-  // The teams a given user belongs to (name-sorted), each with the reports
-  // attached to that team's repos — for that user's own sidebar Teams section.
+  // The teams a given user belongs to (name-sorted), each with reports and
+  // bundles attached to that team's repos — for that user's own sidebar Teams section.
   // Any user; only their own memberships.
   listTeamsForUser(userId: string): Promise<UserTeam[]>
   // Whether `userId` may read `reportId`: true iff the report's repo belongs to
@@ -529,7 +577,7 @@ type SessionRow = {
   uid: string; login: string; name: string | null; avatar: string | null; role: Role
 }
 
-type UserRow = { id: string; login: string; name: string | null; role: Role; created: number }
+type UserRow = { id: string; login: string; name: string | null; role: Role; created: number; lastSeen: number }
 
 // Prepare every statement the store uses, returned as a bag the factory
 // destructures — keeps openSqliteManagedDb itself small (one place per query).
@@ -557,7 +605,7 @@ function prepareStatements(db: DatabaseSync) {
         WHERE s.id = ? AND s.expires_at > ?`,
     ),
     selectUsersStmt: db.prepare(
-      `SELECT id, login, name, role, created_at AS created
+      `SELECT id, login, name, role, created_at AS created, updated_at AS lastSeen
          FROM managed_user ORDER BY created_at ASC, login ASC`,
     ),
     updateRoleStmt: db.prepare(`UPDATE managed_user SET role = ?, updated_at = ? WHERE id = ?`),
@@ -573,23 +621,36 @@ function prepareStatements(db: DatabaseSync) {
     deleteSessionStmt: db.prepare(`DELETE FROM managed_session WHERE id = ?`),
     deleteExpiredStmt: db.prepare(`DELETE FROM managed_session WHERE expires_at <= ?`),
     upsertRepoStmt: db.prepare(
-      `INSERT INTO selected_repo (repo_id, full_name, is_private, installation_id, default_branch, html_url, added_by, added_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO selected_repo (repo_id, full_name, is_private, installation_id, default_branch, html_url, added_by, added_at, updated_at, active)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
        ON CONFLICT(repo_id) DO UPDATE SET
          full_name = excluded.full_name, is_private = excluded.is_private,
          installation_id = excluded.installation_id, default_branch = excluded.default_branch,
-         html_url = excluded.html_url, updated_at = excluded.updated_at`,
+         html_url = excluded.html_url, updated_at = excluded.updated_at, active = 1`,
     ),
     deleteRepoStmt: db.prepare(`DELETE FROM selected_repo WHERE repo_id = ?`),
+    deactivateRepoStmt: db.prepare(`UPDATE selected_repo SET active = 0 WHERE repo_id = ? AND active = 1`),
+    reactivateRepoStmt: db.prepare(`UPDATE selected_repo SET active = 1 WHERE repo_id = ? AND active = 0`),
+    selectReportsForRepoStmt: db.prepare(`SELECT id, filename FROM managed_report WHERE repo_id = ? ORDER BY filename ASC`),
+    selectBundlesForRepoStmt: db.prepare(`SELECT id, filename FROM managed_bundle WHERE repo_id = ? ORDER BY filename ASC`),
+    deleteReportsForRepoStmt: db.prepare(`DELETE FROM managed_report WHERE repo_id = ?`),
+    deleteBundlesForRepoStmt: db.prepare(`DELETE FROM managed_bundle WHERE repo_id = ?`),
+    deleteTriageStmt: db.prepare(`DELETE FROM finding_triage WHERE finding_id IN (SELECT value FROM json_each(?))`),
     selectReposStmt: db.prepare(
       `SELECT repo_id AS repoId, full_name AS fullName, is_private AS priv,
               installation_id AS installId, default_branch AS branch, html_url AS htmlUrl,
-              added_by AS addedBy, added_at AS addedAt
+              added_by AS addedBy, added_at AS addedAt, active AS active
+         FROM selected_repo WHERE active = 1 ORDER BY full_name ASC`,
+    ),
+    selectAllReposStmt: db.prepare(
+      `SELECT repo_id AS repoId, full_name AS fullName, is_private AS priv,
+              installation_id AS installId, default_branch AS branch, html_url AS htmlUrl,
+              added_by AS addedBy, added_at AS addedAt, active AS active
          FROM selected_repo ORDER BY full_name ASC`,
     ),
     insertReportStmt: db.prepare(
-      `INSERT INTO managed_report (id, filename, content_type, byte_size, sha256, uploaded_by, uploaded_by_login, repo_id, bundle_id, bundle_integrity, uploaded_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO managed_report (id, filename, content_type, byte_size, sha256, uploaded_by, uploaded_by_login, repo_id, repo_directory, repo_embedded, analyzer, visible, bundle_id, bundle_integrity, uploaded_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ),
     // LEFT JOINs so a report whose uploader / repo / bundle was removed (the FK
     // nulled) still lists, with null display fields.
@@ -597,6 +658,8 @@ function prepareStatements(db: DatabaseSync) {
       `SELECT r.id AS id, r.filename AS filename, r.content_type AS contentType,
               r.byte_size AS byteSize, r.sha256 AS sha256, COALESCE(u.login, r.uploaded_by_login) AS uploadedByLogin,
               r.repo_id AS repoId, sr.full_name AS repoFullName,
+              r.repo_directory AS repoDirectory, r.repo_embedded AS repoEmbedded,
+              r.analyzer AS analyzer, r.visible AS visible,
               r.bundle_id AS bundleId, b.filename AS bundleFilename, r.bundle_integrity AS bundleIntegrity,
               r.uploaded_at AS uploadedAt
          FROM managed_report r
@@ -607,11 +670,14 @@ function prepareStatements(db: DatabaseSync) {
     ),
     selectReportStmt: db.prepare(
       `SELECT id, filename, content_type AS contentType, byte_size AS byteSize,
-              sha256, uploaded_by AS uploadedBy, uploaded_at AS uploadedAt
+              sha256, uploaded_by AS uploadedBy, uploaded_at AS uploadedAt,
+              repo_id AS repoId, repo_directory AS repoDirectory, repo_embedded AS repoEmbedded,
+              analyzer AS analyzer, visible AS visible
          FROM managed_report WHERE id = ?`,
     ),
     deleteReportStmt: db.prepare(`DELETE FROM managed_report WHERE id = ?`),
-    setReportRepoStmt: db.prepare(`UPDATE managed_report SET repo_id = ? WHERE id = ?`),
+    setReportRepoStmt: db.prepare(`UPDATE managed_report SET repo_id = ?, repo_directory = ? WHERE id = ?`),
+    setReportVisibleStmt: db.prepare(`UPDATE managed_report SET visible = ? WHERE id = ?`),
     upsertTriageStmt: db.prepare(
       `INSERT INTO finding_triage (finding_id, color, triage, comment, fix, flagged, updated_by, updated_by_login, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -705,8 +771,20 @@ function prepareStatements(db: DatabaseSync) {
          FROM team_user tu
          JOIN team_repo tr ON tr.team_id = tu.team_id
          JOIN managed_report r ON r.repo_id = tr.repo_id
-        WHERE tu.user_id = ?
+        WHERE tu.user_id = ? AND r.visible = 1
         ORDER BY r.uploaded_at DESC, r.filename ASC`,
+    ),
+    // Bundles are scoped through the same team -> repository links as reports.
+    // They have no visibility flag: membership in a team that can see the repo
+    // is the visibility decision for the bundle row in the sidebar.
+    selectUserTeamBundlesStmt: db.prepare(
+      `SELECT tr.team_id AS teamId, b.id AS id, b.filename AS filename, sr.full_name AS repoFullName
+         FROM team_user tu
+         JOIN team_repo tr ON tr.team_id = tu.team_id
+         JOIN managed_bundle b ON b.repo_id = tr.repo_id
+         JOIN selected_repo sr ON sr.repo_id = b.repo_id
+        WHERE tu.user_id = ?
+        ORDER BY b.uploaded_at DESC, b.filename ASC`,
     ),
     // A report is readable by a user iff its repo is in one of that user's teams.
     selectReportReadableStmt: db.prepare(
@@ -753,13 +831,20 @@ function prepareStatements(db: DatabaseSync) {
 
 type RepoRow = {
   repoId: number; fullName: string; priv: number; installId: number | null
-  branch: string; htmlUrl: string; addedBy: string | null; addedAt: number
+  branch: string; htmlUrl: string; addedBy: string | null; addedAt: number; active: number
 }
 
 // The repo-selection slice of ManagedDb, split out to keep openSqliteManagedDb
 // within the per-function line budget. Closes over its prepared statements.
 function selectedRepoMethods(stmts: ReturnType<typeof prepareStatements>) {
-  const { upsertRepoStmt, deleteRepoStmt, selectReposStmt } = stmts
+  const { upsertRepoStmt, deleteRepoStmt, deactivateRepoStmt, reactivateRepoStmt, selectReposStmt, selectAllReposStmt,
+    selectReportsForRepoStmt, selectBundlesForRepoStmt, deleteReportsForRepoStmt, deleteBundlesForRepoStmt, deleteTriageStmt } = stmts
+  const readRepo = (r: RepoRow): SelectedRepo => ({
+    repoId: r.repoId, fullName: r.fullName, private: r.priv === 1,
+    installationId: r.installId, defaultBranch: r.branch, htmlUrl: r.htmlUrl,
+    addedBy: r.addedBy, addedAt: r.addedAt,
+  })
+  const readManagedRepo = (r: RepoRow): ManagedRepo => ({ ...readRepo(r), active: r.active === 1 })
   return {
     selectRepo(repo: SelectedRepoInput, now: number): Promise<void> {
       upsertRepoStmt.run(
@@ -773,11 +858,36 @@ function selectedRepoMethods(stmts: ReturnType<typeof prepareStatements>) {
     },
     listSelectedRepos(): Promise<SelectedRepo[]> {
       const rows = selectReposStmt.all() as RepoRow[]
-      return Promise.resolve(rows.map((r) => ({
-        repoId: r.repoId, fullName: r.fullName, private: r.priv === 1,
-        installationId: r.installId, defaultBranch: r.branch, htmlUrl: r.htmlUrl,
-        addedBy: r.addedBy, addedAt: r.addedAt,
-      })))
+      return Promise.resolve(rows.map(readRepo))
+    },
+    listAllRepos(): Promise<ManagedRepo[]> {
+      const rows = selectAllReposStmt.all() as RepoRow[]
+      return Promise.resolve(rows.map(readManagedRepo))
+    },
+    deactivateRepo(repoId: number): Promise<boolean> {
+      return Promise.resolve(Number(deactivateRepoStmt.run(repoId).changes) > 0)
+    },
+    reactivateRepo(repoId: number): Promise<boolean> {
+      return Promise.resolve(Number(reactivateRepoStmt.run(repoId).changes) > 0)
+    },
+    deleteRepo(repoId: number): Promise<boolean> {
+      return Promise.resolve(Number(deleteRepoStmt.run(repoId).changes) > 0)
+    },
+    listReportsForRepo(repoId: number): Promise<RepoDataItem[]> {
+      return Promise.resolve(selectReportsForRepoStmt.all(repoId) as unknown as RepoDataItem[])
+    },
+    listBundlesForRepo(repoId: number): Promise<RepoDataItem[]> {
+      return Promise.resolve(selectBundlesForRepoStmt.all(repoId) as unknown as RepoDataItem[])
+    },
+    deleteReportsForRepo(repoId: number): Promise<number> {
+      return Promise.resolve(Number(deleteReportsForRepoStmt.run(repoId).changes))
+    },
+    deleteBundlesForRepo(repoId: number): Promise<number> {
+      return Promise.resolve(Number(deleteBundlesForRepoStmt.run(repoId).changes))
+    },
+    deleteTriage(findingIds: readonly string[]): Promise<number> {
+      if (findingIds.length === 0) return Promise.resolve(0)
+      return Promise.resolve(Number(deleteTriageStmt.run(JSON.stringify(findingIds)).changes))
     },
   }
 }
@@ -786,24 +896,27 @@ type ReportListRow = {
   id: string; filename: string; contentType: string; byteSize: number
   sha256: string; uploadedByLogin: string | null
   repoId: number | null; repoFullName: string | null
+  repoDirectory: string; repoEmbedded: number; analyzer: string | null; visible: number
   bundleId: string | null; bundleFilename: string | null; bundleIntegrity: string | null
   uploadedAt: number
 }
 type ReportRow = {
   id: string; filename: string; contentType: string; byteSize: number
   sha256: string; uploadedBy: string | null; uploadedAt: number
+  repoId: number | null; repoDirectory: string; repoEmbedded: number; analyzer: string | null; visible: number
 }
 
 // The report slice of ManagedDb, split out (like selectedRepoMethods) to keep
 // openSqliteManagedDb small. Closes over its prepared statements.
 function reportMethods(stmts: ReturnType<typeof prepareStatements>) {
-  const { insertReportStmt, selectReportsStmt, selectReportStmt, deleteReportStmt, setReportRepoStmt } = stmts
+  const { insertReportStmt, selectReportsStmt, selectReportStmt, deleteReportStmt, setReportRepoStmt, setReportVisibleStmt } = stmts
   return {
     insertReport(report: ReportRecordInput, now: number): Promise<void> {
       insertReportStmt.run(
         report.id, report.filename, report.contentType, report.byteSize,
-        report.sha256, report.uploadedBy, report.uploadedByLogin ?? null, report.repoId, report.bundleId,
-        report.bundleIntegrity, now,
+        report.sha256, report.uploadedBy, report.uploadedByLogin ?? null, report.repoId,
+        report.repoDirectory ?? '', report.repoEmbedded ? 1 : 0, report.analyzer ?? null, report.visible == null ? 1 : report.visible ? 1 : 0, report.bundleId ?? null,
+        report.bundleIntegrity ?? null, now,
       )
       return Promise.resolve()
     },
@@ -813,6 +926,7 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>) {
         id: r.id, filename: r.filename, contentType: r.contentType, byteSize: r.byteSize,
         sha256: r.sha256, uploadedByLogin: r.uploadedByLogin,
         repoId: r.repoId, repoFullName: r.repoFullName,
+        repoDirectory: r.repoDirectory, repoEmbedded: r.repoEmbedded === 1, analyzer: r.analyzer, visible: r.visible === 1,
         bundleId: r.bundleId, bundleFilename: r.bundleFilename, bundleIntegrity: r.bundleIntegrity,
         uploadedAt: r.uploadedAt,
       })))
@@ -823,13 +937,17 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>) {
       return Promise.resolve({
         id: row.id, filename: row.filename, contentType: row.contentType, byteSize: row.byteSize,
         sha256: row.sha256, uploadedBy: row.uploadedBy, uploadedAt: row.uploadedAt,
+        repoId: row.repoId, repoDirectory: row.repoDirectory, repoEmbedded: row.repoEmbedded === 1, analyzer: row.analyzer, visible: row.visible === 1,
       })
     },
     deleteReport(id: string): Promise<boolean> {
       return Promise.resolve(Number(deleteReportStmt.run(id).changes) > 0)
     },
-    setReportRepo(id: string, repoId: number | null): Promise<boolean> {
-      return Promise.resolve(Number(setReportRepoStmt.run(repoId, id).changes) > 0)
+    setReportRepo(id: string, repoId: number | null, repoDirectory = ''): Promise<boolean> {
+      return Promise.resolve(Number(setReportRepoStmt.run(repoId, repoId == null ? '' : repoDirectory, id).changes) > 0)
+    },
+    setReportVisible(id: string, visible: boolean): Promise<boolean> {
+      return Promise.resolve(Number(setReportVisibleStmt.run(visible ? 1 : 0, id).changes) > 0)
     },
   }
 }
@@ -985,7 +1103,7 @@ type TeamMemberRow = { teamId: string; userId: string; login: string; viewDepend
 function teamMethods(stmts: ReturnType<typeof prepareStatements>) {
   const {
     insertTeamStmt, selectTeamByNameStmt, renameTeamStmt, deleteTeamStmt, selectTeamStmt,
-    selectTeamsStmt, selectTeamsForUserStmt, selectUserTeamReportsStmt, selectReportReadableStmt,
+    selectTeamsStmt, selectTeamsForUserStmt, selectUserTeamReportsStmt, selectUserTeamBundlesStmt, selectReportReadableStmt,
     selectReportPermsStmt, selectUserOptionsStmt, selectTeamReposStmt, selectTeamMembersStmt,
     upsertTeamRepoStmt, deleteTeamRepoStmt, upsertTeamMemberStmt, deleteTeamMemberStmt,
   } = stmts
@@ -1021,7 +1139,17 @@ function teamMethods(stmts: ReturnType<typeof prepareStatements>) {
         list.push({ id: r.id, filename: r.filename })
         reportsByTeam.set(r.teamId, list)
       }
-      return Promise.resolve(teams.map((t) => ({ id: t.id, name: t.name, reports: reportsByTeam.get(t.id) ?? [] })))
+      const bundlesByTeam = new Map<string, UserTeamBundle[]>()
+      for (const b of selectUserTeamBundlesStmt.all(userId) as { teamId: string; id: string; filename: string; repoFullName: string }[]) {
+        const list = bundlesByTeam.get(b.teamId) ?? []
+        list.push({ id: b.id, filename: b.filename, repoFullName: b.repoFullName })
+        bundlesByTeam.set(b.teamId, list)
+      }
+      return Promise.resolve(teams.map((t) => ({
+        id: t.id, name: t.name,
+        reports: reportsByTeam.get(t.id) ?? [],
+        bundles: bundlesByTeam.get(t.id) ?? [],
+      })))
     },
     userCanReadReport(userId: string, reportId: string): Promise<boolean> {
       return Promise.resolve(selectReportReadableStmt.get(reportId, userId) != null)
@@ -1091,7 +1219,12 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
     // Migrate DBs created before a column existed (CREATE TABLE IF NOT EXISTS
     // never alters an already-present table). Idempotent — skipped on fresh DBs.
     ensureColumn(db, 'managed_report', 'uploaded_by_login', 'TEXT')
+    ensureColumn(db, 'managed_report', 'repo_directory', "TEXT NOT NULL DEFAULT ''")
+    ensureColumn(db, 'managed_report', 'repo_embedded', 'INTEGER NOT NULL DEFAULT 0')
+    ensureColumn(db, 'managed_report', 'analyzer', 'TEXT')
+    ensureColumn(db, 'managed_report', 'visible', 'INTEGER NOT NULL DEFAULT 0')
     ensureColumn(db, 'managed_bundle', 'uploaded_by_login', 'TEXT')
+    ensureColumn(db, 'selected_repo', 'active', 'INTEGER NOT NULL DEFAULT 1')
   } catch (err) {
     try { db.close() } catch {}
     throw err
@@ -1134,7 +1267,7 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
     },
     listUsers() {
       const rows = selectUsersStmt.all() as UserRow[]
-      return Promise.resolve(rows.map((r) => ({ id: r.id, login: r.login, name: r.name, role: r.role, createdAt: r.created })))
+      return Promise.resolve(rows.map((r) => ({ id: r.id, login: r.login, name: r.name, role: r.role, createdAt: r.created, lastSeenAt: r.lastSeen })))
     },
     setUserRole(id, role) {
       return Promise.resolve(Number(updateRoleStmt.run(role, Date.now(), id).changes) > 0)
