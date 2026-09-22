@@ -65,42 +65,61 @@ export const PRODUCER_LABELS = {
   'default': 'DeepView',
 }
 
-// The branded producer a FINDING carries, or null when it has none to
-// show. Its own `_source` marker decides it (ingest.js stamps it per
-// finding, null for the analyzer's own dump), and the answer is a
-// REPORT_LOGOS / PRODUCER_LABELS key.
+// Does this `source` marker name a producer we draw? Answers with the
+// marker itself (a REPORT_LOGOS / PRODUCER_LABELS key) or null.
 //
 // Null covers both "DeepView's own" and "a marker nothing here draws":
-// the surfaces that mark a finding with its producer — the finding
-// tabs' branded segment, the kanban card's corner — are the ones where
-// DeepView is the unmarked default, so they want one question answered
-// ("is there a logo for this?"), not two. `'default'` is excluded
-// explicitly because a report CAN name it as its source, and that
-// spelling of "mine" should read the same as naming nothing.
-export function findingBrand(f) {
-  const analyzer = f._source ?? f.source
-  return analyzer !== 'default' && Object.hasOwn(REPORT_LOGOS, analyzer) ? analyzer : null
+// the surfaces that mark findings with their producer — the finding
+// tabs' branded segment, the kanban card's corner, the workspace
+// header's chips — are the ones where DeepView is the unmarked
+// default, so they want one question answered ("is there a producer to
+// show here?"), not two. `'default'` is excluded explicitly because a
+// report CAN name it as its source, and that spelling of "mine" should
+// read the same as naming nothing.
+function brandOf(marker) {
+  return marker !== 'default' && Object.hasOwn(REPORT_LOGOS, marker) ? marker : null
 }
 
-// …and the distinct branded producers a WHOLE SET of findings carries,
-// which is what the workspace header's chip strip names.
+// The branded producer a FINDING carries. Its own `_source` marker
+// decides it — ingest.js stamps that per finding, from the finding's
+// own marker when it has one and its report's otherwise, so a
+// re-imported export that mixed a product's rows with native runs
+// answers per row.
+export function findingBrand(f) {
+  return brandOf(f._source ?? f.source)
+}
+
+// …and the distinct branded producers a LOADED VIEW carries, which is
+// what the workspace header's chip strip names. Takes the report
+// records (`state.reports`), not their findings, because the two
+// halves answer for each other:
+//
+//   - Each report's OWN `source`, so a product whose pass found
+//     nothing is still named. An empty report is a loaded report — the
+//     header's file chip counts it in its "N reports" — and "the Codex
+//     pass ran and came back clean" is a different thing to know than
+//     "no Codex pass here", which is all the strip could say when this
+//     read findings alone.
+//   - Each finding's own marker, because a report does not have to be
+//     of one product: a re-imported export can carry a product's rows
+//     beside native ones, and `findingBrand` is what knows that.
 //
 // Ordered by the report library's own producer table, not by the order
-// findings happened to be read in: the strip is the same three chips
-// whichever report the sidebar loaded first, and it matches the order
-// the analyzer dropdown lists the same producers in. A key the table
+// the reports were read in: the strip is the same chips whichever
+// report the sidebar loaded first, and it matches the order the
+// analyzer dropdown lists the same producers in. A key the table
 // doesn't name still gets a chip (after the known ones,
 // alphabetically) rather than being dropped — the same call
 // `analyzerLabel` makes for an unrecognized marker.
-//
-// DeepView's own findings contribute nothing, since `findingBrand`
-// answers null for them: it is the unmarked default here exactly as it
-// is on the tabs and the kanban card.
-export function findingBrands(findings) {
+export function loadedBrands(reports) {
   const found = new Set()
-  for (const f of findings) {
-    const brand = findingBrand(f)
-    if (brand !== null) found.add(brand)
+  for (const r of reports) {
+    const declared = brandOf(r.source)
+    if (declared !== null) found.add(declared)
+    for (const f of r.groups.flat()) {
+      const brand = findingBrand(f)
+      if (brand !== null) found.add(brand)
+    }
   }
   const order = Object.keys(SOURCE_LABELS)
   const rank = (k) => {

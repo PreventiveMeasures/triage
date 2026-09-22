@@ -3,7 +3,7 @@ import { classMap } from 'lit/directives/class-map.js'
 import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { FILE_ICONS, PRODUCER_LABELS, REPORT_LOGOS, findingBrand, findingBrands } from './file-display.js'
+import { FILE_ICONS, PRODUCER_LABELS, REPORT_LOGOS, findingBrand, loadedBrands } from './file-display.js'
 import { FOCUS_SPLIT_MAX, FOCUS_SPLIT_MIN, listBundles, listWorkspaces, state } from '#client/index.js'
 import { isBundleInRemote, isInRemote, remoteCount, triageSync } from './client-sync.js'
 import { installShadowTooltipListener } from './tooltip.js'
@@ -272,23 +272,38 @@ function headerTemplate(mergedGroups, fileNames, repoInputUseful, knownRepo, tre
     : COMBO_FIELDS
   const tags = buildAnalyzerTags(findings, tagFields)
 
-  // One branded chip per non-DeepView producer in the load, leading
-  // the tag strip. Workspace only, and for the reason the block above
-  // drops the `analyzer:` tag there: a workspace title says the
-  // workspace's NAME, so unlike every other load it never names a
-  // product, and the run-meta tags can't cover for it either — a
-  // source-marked report stamps no `type` / `model` / `effort`, so the
-  // findings a product contributed leave no trace in the strip at all.
-  // Elsewhere the title already does this job (`Claude Security
-  // findings`) or there is only DeepView to name.
+  // …then one chip per non-DeepView producer in the load, closing the
+  // strip. Workspace only — which is to say whenever more than one
+  // report is in view at all, a workspace being the only load that
+  // merges several. It is also the only title that names neither a
+  // product nor an analyzer, since it says the workspace's own NAME,
+  // and the run-meta tags can't cover for that: a source-marked report
+  // stamps no `type` / `model` / `effort`, so the findings a product
+  // contributed leave no trace in the strip. A single-report load
+  // needs none of this — its title already reads `Claude Security
+  // findings`, or it is a native dump with no producer to name.
   //
-  // Ahead of the run-meta tags because a producer is the coarsest
-  // thing to know about a merged load — which products are in here at
-  // all, before how any one of them was run. DeepView gets no chip of
-  // its own, matching the tabs and the kanban corner mark: it is the
-  // unmarked default, and a chip for it would label the bulk of a
-  // typical workspace.
-  const producers = state.currentWorkspace ? findingBrands(findings) : []
+  // AFTER the run-meta tags, which describe what a workspace is mostly
+  // made of — DeepView's own runs. A product chip says something else
+  // also contributed, which is a footnote to that rather than a
+  // replacement for it, so it reads at the tail instead of displacing
+  // the strip's subject.
+  //
+  // Plain text chips, like every other tag in the row: the producer's
+  // mark already rides each of its findings (the tabs' branded
+  // segment, the kanban card's corner), so a logo here repeats what
+  // the list below will say anyway, and a row of brand fills at the
+  // head of the strip pulls the eye off the count and severity bar
+  // that the row exists for.
+  //
+  // DeepView gets no chip at all — it is the unmarked default, and one
+  // for it would label the bulk of a typical workspace.
+  // Read off the report records rather than `findings` so a product
+  // whose pass found nothing is named too — see `loadedBrands`.
+  const producerTags = state.currentWorkspace
+    ? loadedBrands(state.reports).map((k) => PRODUCER_LABELS[k] ?? k)
+    : []
+  const stripTags = [...tags, ...producerTags]
 
   // Severity status bar — stacked bar sized proportionally to each
   // severity's group count (using the primary tab's severity, so
@@ -348,9 +363,7 @@ function headerTemplate(mergedGroups, fileNames, repoInputUseful, knownRepo, tre
       <div class="meta-row">
         <span>${countLabel}</span>
         ${statusBarTpl}
-        ${producers.length > 0 || tags.length > 0
-          ? html`${sep}${producers.map((k) => html`<span class="tag tag-producer">${unsafeHTML(REPORT_LOGOS[k])}<span>${PRODUCER_LABELS[k] ?? k}</span></span>`)}${tags.map((t) => html`<span class="tag">${t}</span>`)}`
-          : nothing}
+        ${stripTags.length > 0 ? html`${sep}${stripTags.map((t) => html`<span class="tag">${t}</span>`)}` : nothing}
       </div>
     </div>
   </header>`
