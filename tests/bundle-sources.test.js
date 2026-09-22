@@ -278,8 +278,14 @@ describe('bundleFilesAsMap — what the terminal makes of the bytes', () => {
 
   it('declines to print bytes that spell no text', async () => {
     const r = await terminal().run('cat logo.png')
-    assert.equal(r.stdout, '')
-    assert.match(r.stderr, /bytes that spell no text/u)
+    assert.equal(r.stdout, '', 'nothing is printed')
+    assert.notEqual(r.exitCode, 0, 'and the command fails')
+    assert.match(r.stderr, /^cat: /u, 'saying which command refused')
+    // The wording is the package's and has already been rephrased once
+    // between betas, so what is pinned here is that refusing is
+    // *reported* — on stderr and on the diagnostic channel — rather
+    // than the file being printed as mojibake.
+    assert.notEqual(r.unsupported.length, 0, 'and reported as a gap')
   })
 
   it('round-trips the bytes back out through base64', async () => {
