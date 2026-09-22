@@ -82,6 +82,34 @@ export function findingBrand(f) {
   return analyzer !== 'default' && Object.hasOwn(REPORT_LOGOS, analyzer) ? analyzer : null
 }
 
+// …and the distinct branded producers a WHOLE SET of findings carries,
+// which is what the workspace header's chip strip names.
+//
+// Ordered by the report library's own producer table, not by the order
+// findings happened to be read in: the strip is the same three chips
+// whichever report the sidebar loaded first, and it matches the order
+// the analyzer dropdown lists the same producers in. A key the table
+// doesn't name still gets a chip (after the known ones,
+// alphabetically) rather than being dropped — the same call
+// `analyzerLabel` makes for an unrecognized marker.
+//
+// DeepView's own findings contribute nothing, since `findingBrand`
+// answers null for them: it is the unmarked default here exactly as it
+// is on the tabs and the kanban card.
+export function findingBrands(findings) {
+  const found = new Set()
+  for (const f of findings) {
+    const brand = findingBrand(f)
+    if (brand !== null) found.add(brand)
+  }
+  const order = Object.keys(SOURCE_LABELS)
+  const rank = (k) => {
+    const i = order.indexOf(k)
+    return i === -1 ? order.length : i
+  }
+  return [...found].toSorted((a, b) => rank(a) - rank(b) || a.localeCompare(b))
+}
+
 // Resolve the bucket key (default / claude-security / codex-security
 // / deepsec / piolium) for a given OPFS filename. The content's own
 // answer decides it, cached on counts.js: DeepSec, Piolium and Claude

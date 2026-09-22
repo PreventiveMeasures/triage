@@ -183,6 +183,28 @@
       white-space: nowrap;
     }
 
+    /* Producer chip — the same tag shape with the product's brand mark
+       inset at its leading edge, one per non-DeepView analyzer in a
+       workspace load (see headerTemplate). Tighter left padding so the
+       mark sits nearer the border than the label does, the way the
+       sibling `.file-chip` carries its sticker. */
+    & .meta-row .tag.tag-producer {
+      gap: .3rem;
+      padding-left: .1875rem;
+    }
+    /* The shared `.report-logo` is cut for a button's full-height left
+       segment — a 20px track with a separator rule. Here it is a small
+       rounded mark on a chip, so both go. */
+    & .meta-row .tag-producer .report-logo {
+      flex: 0 0 14px;
+      align-self: center;
+      height: 14px;
+      overflow: hidden;
+      border: 0;
+      border-radius: 3px;
+    }
+    & .meta-row .tag-producer svg { display: block; }
+
     /* `<repo-chip>` carries its own shadow-DOM styles for the chip,
        pencil, and edit-mode input — the component is rendered inside
        `.meta-row` directly via render.js's `repoChipHtml`. CSS
