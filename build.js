@@ -11,7 +11,7 @@ import { readFile } from 'node:fs/promises'
 import { resolve as resolvePath, dirname } from 'node:path'
 import { createServer, request as httpRequest } from 'node:http'
 import { connect as netConnect } from 'node:net'
-import { minifyHTMLLiterals } from 'minify-html-literals'
+import { minifyLitSource } from './build-lit-minify.js'
 
 // `minify` is set in prod builds. esbuild's top-level `minify` flag
 // doesn't reach text-loaded contents, so we run a one-shot
@@ -48,7 +48,9 @@ const litCssAsText = ({ minify } = {}) => ({
 // Minify the static parts of `html\`…\`` and `css\`…\`` tagged
 // template literals before esbuild parses the JS source. The same
 // engine the rollup-plugin-minify-html-literals-v3 plugin wraps —
-// we just plug it into esbuild's onLoad. Skipped on node_modules
+// we just plug it into esbuild's onLoad, with the one adjustment
+// `build-lit-minify.js` explains (a style attribute's expression
+// must keep what follows it). Skipped on node_modules
 // (no Lit-tagged literals worth minifying live there) and skipped
 // in serve mode so source maps + readable templates survive in
 // devtools. Library returns null when a file has no literals; we
@@ -60,9 +62,9 @@ const minifyLitTemplates = {
       if (args.path.includes('/node_modules/')) return null
       const source = await readFile(args.path, 'utf8')
       try {
-        const result = minifyHTMLLiterals(source, { fileName: args.path })
-        if (!result) return null
-        return { contents: result.code, loader: 'js' }
+        const code = minifyLitSource(source, args.path)
+        if (code === null) return null
+        return { contents: code, loader: 'js' }
       } catch (err) {
         return {
           contents: source,
