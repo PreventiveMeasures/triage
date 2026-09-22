@@ -3,7 +3,7 @@ import { classMap } from 'lit/directives/class-map.js'
 import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { FILE_ICONS, PRODUCER_LABELS, REPORT_LOGOS, findingBrand } from './file-display.js'
+import { FILE_ICONS, PRODUCER_LABELS, REPORT_LOGOS, findingBrand, findingBrands } from './file-display.js'
 import { FOCUS_SPLIT_MAX, FOCUS_SPLIT_MIN, listBundles, listWorkspaces, state } from '#client/index.js'
 import { isBundleInRemote, isInRemote, remoteCount, triageSync } from './client-sync.js'
 import { installShadowTooltipListener } from './tooltip.js'
@@ -272,6 +272,24 @@ function headerTemplate(mergedGroups, fileNames, repoInputUseful, knownRepo, tre
     : COMBO_FIELDS
   const tags = buildAnalyzerTags(findings, tagFields)
 
+  // One branded chip per non-DeepView producer in the load, leading
+  // the tag strip. Workspace only, and for the reason the block above
+  // drops the `analyzer:` tag there: a workspace title says the
+  // workspace's NAME, so unlike every other load it never names a
+  // product, and the run-meta tags can't cover for it either — a
+  // source-marked report stamps no `type` / `model` / `effort`, so the
+  // findings a product contributed leave no trace in the strip at all.
+  // Elsewhere the title already does this job (`Claude Security
+  // findings`) or there is only DeepView to name.
+  //
+  // Ahead of the run-meta tags because a producer is the coarsest
+  // thing to know about a merged load — which products are in here at
+  // all, before how any one of them was run. DeepView gets no chip of
+  // its own, matching the tabs and the kanban corner mark: it is the
+  // unmarked default, and a chip for it would label the bulk of a
+  // typical workspace.
+  const producers = state.currentWorkspace ? findingBrands(findings) : []
+
   // Severity status bar — stacked bar sized proportionally to each
   // severity's group count (using the primary tab's severity, so
   // each group contributes once and the segments sum to totalCount).
@@ -330,7 +348,9 @@ function headerTemplate(mergedGroups, fileNames, repoInputUseful, knownRepo, tre
       <div class="meta-row">
         <span>${countLabel}</span>
         ${statusBarTpl}
-        ${tags.length > 0 ? html`${sep}${tags.map((t) => html`<span class="tag">${t}</span>`)}` : nothing}
+        ${producers.length > 0 || tags.length > 0
+          ? html`${sep}${producers.map((k) => html`<span class="tag tag-producer">${unsafeHTML(REPORT_LOGOS[k])}<span>${PRODUCER_LABELS[k] ?? k}</span></span>`)}${tags.map((t) => html`<span class="tag">${t}</span>`)}`
+          : nothing}
       </div>
     </div>
   </header>`

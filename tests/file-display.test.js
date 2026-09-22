@@ -26,7 +26,7 @@ function createLocalStorage() {
 globalThis.localStorage ??= createLocalStorage()
 
 const { setCount } = await import('../client/counts.js')
-const { FILE_ICONS, PRODUCER_LABELS, displayName, findingBrand, groupOf } = await import('../ui/view/file-display.js')
+const { FILE_ICONS, PRODUCER_LABELS, REPORT_LOGOS, displayName, findingBrand, findingBrands, groupOf } = await import('../ui/view/file-display.js')
 
 describe('groupOf — the bucket a file lands in', () => {
   beforeEach(() => { globalThis.localStorage.clear() })
@@ -150,6 +150,64 @@ describe('findingBrand — the producer a finding is marked with', () => {
     for (const source of ['claude-security', 'codex-security', 'deepsec', 'piolium']) {
       assert.ok(PRODUCER_LABELS[findingBrand({ _source: source })], `no producer name for ${source}`)
     }
+  })
+})
+
+// The workspace header's chip strip: one chip per product in the load,
+// in a fixed order. The order is the point of most of these — a strip
+// that reshuffled when the sidebar loaded the same reports in another
+// order would read as a change in the data.
+describe('findingBrands — the producers a load carries', () => {
+  it('names each distinct producer once', () => {
+    assert.deepEqual(findingBrands([
+      { _source: 'codex-security' },
+      { _source: 'codex-security' },
+      { _source: 'claude-security' },
+    ]), ['claude-security', 'codex-security'])
+  })
+
+  it('orders by the producer table, not by encounter', () => {
+    const order = ['claude-security', 'codex-security', 'deepsec', 'piolium']
+    const findings = order.map((s) => ({ _source: s }))
+    assert.deepEqual(findingBrands(findings), order)
+    assert.deepEqual(findingBrands(findings.toReversed()), order, 'same strip either way round')
+  })
+
+  it('leaves DeepView out — it is the unmarked default', () => {
+    assert.deepEqual(findingBrands([{ _source: null }, {}, { _source: 'default' }]), [])
+    assert.deepEqual(findingBrands([{ _source: null }, { _source: 'deepsec' }]), ['deepsec'])
+  })
+
+  it('has nothing to say about an empty load', () => {
+    assert.deepEqual(findingBrands([]), [])
+  })
+
+  it('ignores a marker with no artwork, which is no producer at all', () => {
+    assert.deepEqual(findingBrands([{ _source: 'zzz-unnamed' }, { _source: 'piolium' }]), ['piolium'])
+  })
+
+  // `findingBrands` ranks a key the library's table doesn't name after
+  // the ones it does instead of dropping it. Nothing can reach that
+  // branch while the two tables agree — which is the invariant asserted
+  // here, and the one that would break if a brand were added to
+  // REPORT_BRANDS without a SOURCE_LABELS entry to name it. The branch
+  // is what keeps that mistake a mis-sorted chip rather than a missing
+  // one; this test is what says the mistake hasn't been made.
+  it('has every drawable producer named by the library table', () => {
+    const drawable = Object.keys(REPORT_LOGOS).filter((k) => k !== 'default')
+    assert.ok(drawable.length >= 4, 'sanity: the producers with artwork')
+    assert.deepEqual(findingBrands(drawable.map((k) => ({ _source: k }))).toSorted(), drawable.toSorted(),
+      'every brand with a logo is a producer findingBrands reports')
+    for (const k of drawable) assert.ok(PRODUCER_LABELS[k], `no producer name for the ${k} brand`)
+  })
+
+  it('has a producer name for every chip it asks for', () => {
+    const brands = findingBrands([
+      { _source: 'piolium' }, { _source: 'deepsec' },
+      { _source: 'codex-security' }, { _source: 'claude-security' },
+    ])
+    assert.equal(brands.length, 4)
+    for (const b of brands) assert.ok(PRODUCER_LABELS[b], `no producer name for ${b}`)
   })
 })
 
