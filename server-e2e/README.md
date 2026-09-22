@@ -9,6 +9,12 @@ it. It can't read, forge, or re-attribute anything.
 Requires **Node ≥ 24** (built-in `node:sqlite`, WebCrypto Ed25519, and
 native `.ts` execution — no flags).
 
+> This README covers the **end-to-end-encrypted** relay (untrusted server).
+> For the **trusted** managed server — GitHub login, server-decided
+> visibility, and attributed triage — see
+> [`server-managed/README.md`](../server-managed/README.md) and its protocol
+> spec [`MANAGED.md`](../server-managed/MANAGED.md).
+
 ## Quick start
 
 ```sh
