@@ -1,10 +1,10 @@
 import { LitElement, html, render as litRender, nothing, unsafeCSS } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { CONFIG_PATH, LINKS_KIND, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, clientModeLabel, computeLinkHint, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, ensureLinkedFindingsIndexed, getCount, getPackagesIndex, getRepositoriesIndex, isManagedUiMode, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, parseServerInfo, readCachedServerInfo, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, setLocalMode, state, writeCachedServerInfo } from '#client/index.js'
+import { CONFIG_PATH, LINKS_KIND, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, clientModeLabel, computeLinkHint, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, ensureLinkedFindingsIndexed, getCount, getPackagesIndex, getRepositoriesIndex, hydrateSecureStorage, isManagedUiMode, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, parseServerInfo, readCachedServerInfo, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, setLocalMode, state, syncObservedAfterHydrate, writeCachedServerInfo } from '#client/index.js'
 import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, setSyncForceDisabled, triageSync } from './client-sync.js'
 import { fetchReport as fetchManagedReport, login as managedLogin, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams } from './client-managed.js'
-import { hydrateManagedReportTriage, initManagedTriagePush } from './managed-triage.js'
+import { hydrateManagedReportTriage, initManagedTriagePush, resetManagedTriage } from './managed-triage.js'
 import { loadAdminBundle } from './client-admin.js'
 import sidebarCSS from './sidebar.css'
 import fileIconCSS from '../styles/file-icon.css'
@@ -264,6 +264,9 @@ async function openTeamReport(team, r) {
   if (!current || gen !== teamReportGen || modeGen !== clientModeTransition || !isManagedUiMode()) return
   state.currentManagedTeam = team.id
   state.managedReport = { id: r.id, filename: r.filename }
+  state.managedReports = [{ id: r.id, filename: r.filename }]
+  const loaded = state.reports.at(-1)
+  if (loaded) loaded._managedReportId = r.id
   await hydrateManagedReportTriage(r.id)
 }
 
@@ -758,9 +761,15 @@ async function onSidebarClick(e) {
     if (state.serverMode !== 'managed') return
     const enteringLocal = !state.localMode
     ++clientModeTransition
+    resetManagedTriage()
     setLocalMode(enteringLocal)
     setSyncForceDisabled(true)
     resetForClientModeTransition()
+    if (enteringLocal) {
+      await hydrateSecureStorage()
+      syncObservedAfterHydrate()
+    }
+    document.dispatchEvent(new CustomEvent('managed-client-mode-change'))
     renderBrandTag()
     renderSyncStatus(triageSync.status)
     render()

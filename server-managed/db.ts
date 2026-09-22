@@ -245,6 +245,7 @@ export interface AdminUser {
   role: Role
   createdAt: number
   lastSeenAt: number
+  lastActivityAt: number | null
 }
 
 // A user's persisted GitHub user-to-server token. `refreshToken` / `expiresAt`
@@ -577,7 +578,7 @@ type SessionRow = {
   uid: string; login: string; name: string | null; avatar: string | null; role: Role
 }
 
-type UserRow = { id: string; login: string; name: string | null; role: Role; created: number; lastSeen: number }
+type UserRow = { id: string; login: string; name: string | null; role: Role; created: number; lastSeen: number; lastActivity: number | null }
 
 // Prepare every statement the store uses, returned as a bag the factory
 // destructures — keeps openSqliteManagedDb itself small (one place per query).
@@ -605,8 +606,9 @@ function prepareStatements(db: DatabaseSync) {
         WHERE s.id = ? AND s.expires_at > ?`,
     ),
     selectUsersStmt: db.prepare(
-      `SELECT id, login, name, role, created_at AS created, updated_at AS lastSeen
-         FROM managed_user ORDER BY created_at ASC, login ASC`,
+      `SELECT u.id, u.login, u.name, u.role, u.created_at AS created, u.updated_at AS lastSeen,
+              (SELECT MAX(e.at) FROM finding_triage_event e WHERE e.actor_id = u.id) AS lastActivity
+         FROM managed_user u ORDER BY u.created_at ASC, u.login ASC`,
     ),
     updateRoleStmt: db.prepare(`UPDATE managed_user SET role = ?, updated_at = ? WHERE id = ?`),
     updateTokensStmt: db.prepare(
@@ -915,7 +917,7 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>) {
       insertReportStmt.run(
         report.id, report.filename, report.contentType, report.byteSize,
         report.sha256, report.uploadedBy, report.uploadedByLogin ?? null, report.repoId,
-        report.repoDirectory ?? '', report.repoEmbedded ? 1 : 0, report.analyzer ?? null, report.visible == null ? 1 : report.visible ? 1 : 0, report.bundleId ?? null,
+        report.repoDirectory ?? '', report.repoEmbedded ? 1 : 0, report.analyzer ?? null, report.visible == null ? 0 : report.visible ? 1 : 0, report.bundleId ?? null,
         report.bundleIntegrity ?? null, now,
       )
       return Promise.resolve()
@@ -1197,9 +1199,11 @@ function teamMethods(stmts: ReturnType<typeof prepareStatements>) {
 
 // Add `column` to `table` if it's missing (a lightweight migration for DBs that
 // predate the column; `table`/`column` are code constants, never user input).
-function ensureColumn(db: DatabaseSync, table: string, column: string, type: string): void {
+function ensureColumn(db: DatabaseSync, table: string, column: string, type: string): boolean {
   const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
-  if (!cols.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`)
+  if (cols.some((c) => c.name === column)) return false
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`)
+  return true
 }
 
 // `triageHistoryLimit`: events kept per finding in the triage trail; 0 (the
@@ -1222,7 +1226,11 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
     ensureColumn(db, 'managed_report', 'repo_directory', "TEXT NOT NULL DEFAULT ''")
     ensureColumn(db, 'managed_report', 'repo_embedded', 'INTEGER NOT NULL DEFAULT 0')
     ensureColumn(db, 'managed_report', 'analyzer', 'TEXT')
-    ensureColumn(db, 'managed_report', 'visible', 'INTEGER NOT NULL DEFAULT 0')
+    // Existing rows predate publication controls and were already visible.
+    // Backfill only when adding the column; newly inserted rows still use the
+    // hidden default and must be explicitly published.
+    const addedVisible = ensureColumn(db, 'managed_report', 'visible', 'INTEGER NOT NULL DEFAULT 0')
+    if (addedVisible) db.prepare('UPDATE managed_report SET visible = 1 WHERE visible = 0').run()
     ensureColumn(db, 'managed_bundle', 'uploaded_by_login', 'TEXT')
     ensureColumn(db, 'selected_repo', 'active', 'INTEGER NOT NULL DEFAULT 1')
   } catch (err) {
@@ -1267,7 +1275,7 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
     },
     listUsers() {
       const rows = selectUsersStmt.all() as UserRow[]
-      return Promise.resolve(rows.map((r) => ({ id: r.id, login: r.login, name: r.name, role: r.role, createdAt: r.created, lastSeenAt: r.lastSeen })))
+      return Promise.resolve(rows.map((r) => ({ id: r.id, login: r.login, name: r.name, role: r.role, createdAt: r.created, lastSeenAt: r.lastSeen, lastActivityAt: r.lastActivity })))
     },
     setUserRole(id, role) {
       return Promise.resolve(Number(updateRoleStmt.run(role, Date.now(), id).changes) > 0)

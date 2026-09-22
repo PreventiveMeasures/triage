@@ -373,6 +373,13 @@ async function restoreInitialView() {
 // still giving notice.
 let lastSeenEnabled = isManagedUiMode() ? false : isEncryptionEnabled()
 let reloadPending = false
+// A managed → local transition hydrates the secure cache without changing
+// the vault itself. Reset this observer baseline before the next vault event
+// so unlocking a passkey in local mode is not mistaken for a sibling-tab
+// enable that requires a reload.
+document.addEventListener('managed-client-mode-change', () => {
+  lastSeenEnabled = isEncryptionEnabled()
+})
 function scheduleReload(reason) {
   if (reloadPending) return
   reloadPending = true

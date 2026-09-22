@@ -12,6 +12,7 @@
 // the managed landing where users choose reports and bundles shared with their team.
 /* eslint-disable max-lines */
 import { type IncomingMessage, type ServerResponse, createServer } from 'node:http'
+import { DEFAULT_MANAGED_SCAN_MODEL, MANAGED_SCAN_MODELS } from '../common/managed/scan-models.ts'
 
 const host = process.env['MANAGED_TEST_HOST'] ?? '127.0.0.1'
 const port = Number(process.env['MANAGED_TEST_PORT'] ?? 8766)
@@ -20,25 +21,7 @@ const role = process.env['MANAGED_TEST_ROLE'] ?? 'view'
 // The real service will return the model ids and the effort levels it allows
 // for each model. Printable names are intentionally omitted: the client owns
 // the small, stable catalogue used to turn known ids into friendly labels.
-const scanModels = [
-  { id: 'openai/gpt-6-astra-pro', efforts: ['low', 'medium', 'high', 'xhigh', 'max'] },
-  { id: 'openai/gpt-6-astra', efforts: ['low', 'medium', 'high', 'xhigh', 'max'] },
-  { id: 'openai/gpt-5.6-sol', efforts: ['low', 'medium', 'high', 'xhigh', 'max'] },
-  { id: 'openai/gpt-5.6-terra', efforts: ['low', 'medium', 'high', 'xhigh', 'max'] },
-  { id: 'openai/gpt-5.6-luna', efforts: ['low', 'medium', 'high', 'xhigh', 'max'] },
-  { id: 'openai/gpt-5.5', efforts: ['low', 'medium', 'high', 'xhigh'] },
-  { id: 'anthropic/claude-fable-5.1', efforts: ['low', 'medium', 'high', 'xhigh', 'max'] },
-  { id: 'anthropic/claude-opus-5', efforts: ['low', 'medium', 'high', 'xhigh', 'max'] },
-  { id: 'anthropic/claude-sonnet-5', efforts: ['low', 'medium', 'high', 'xhigh', 'max'] },
-  { id: 'anthropic/claude-sonnet-4.6', efforts: ['low', 'medium', 'high', 'xhigh', 'max'] },
-  { id: 'anthropic/claude-haiku-4.5', efforts: [] },
-  { id: 'moonshotai/kimi-k3', efforts: ['low', 'high', 'max'] },
-  { id: 'google/gemini-3.8-flash', efforts: ['low', 'medium', 'high', 'max'] },
-  { id: 'google/gemma-4-31b-it', efforts: ['low', 'medium', 'high', 'max'] },
-  { id: 'qwen/qwen3.6-27b', efforts: ['low', 'medium', 'high', 'max'] },
-  { id: 'nvidia/nemotron-3-super-120b-a12b', efforts: ['low', 'medium', 'high', 'max'] },
-  { id: 'deepseek/deepseek-v4', efforts: ['low', 'medium', 'high', 'max'] },
-]
+const scanModels = MANAGED_SCAN_MODELS
 
 const repositories = [
   {
@@ -64,6 +47,13 @@ const users = [
   { id: 'fixture-alex', login: 'alex-security', name: 'Alex Security', role: 'manage', lastSeenAt: 1_757_997_000_000, lastActivityAt: 1_757_996_000_000 },
   { id: 'fixture-riley', login: 'riley-reviewer', name: 'Riley Reviewer', role: 'triage', lastSeenAt: 1_757_991_000_000, lastActivityAt: 1_757_988_000_000 },
   { id: 'fixture-sam', login: 'sam-observer', name: 'Sam Observer', role: 'view', lastSeenAt: 1_757_950_000_000, lastActivityAt: 1_757_900_000_000 },
+]
+
+const history = [
+  { id: 'history-1', kind: 'triage', actor: 'riley-reviewer', action: 'marked a finding In progress', reportId: 'fixture-report-1', report: 'managed-fixture.json', repo: 'example/managed-fixtures', finding: 'managed-fixture-1', when: 'Today, 10:14' },
+  { id: 'history-2', kind: 'visibility', actor: 'alex-security', action: 'made a report visible', reportId: 'fixture-report-3', report: 'managed-api.json', repo: 'example/managed-fixtures', finding: '', when: 'Today, 09:58' },
+  { id: 'history-3', kind: 'upload', actor: 'alex-security', action: 'uploaded a bundle', reportId: '', report: 'managed-fixtures.stasis', repo: 'example/managed-fixtures', finding: '', when: 'Today, 09:42' },
+  { id: 'history-4', kind: 'triage', actor: 'sam-observer', action: 'added a comment', reportId: 'fixture-report-2', report: 'managed-worker.json', repo: 'example/worker-service', finding: 'managed-fixture-2', when: 'Yesterday, 17:20' },
 ]
 
 const reportFixtures = [
@@ -214,12 +204,22 @@ function adminTeams() {
   }))
 }
 
-function handleAdmin(url: URL, method: string, res: ServerResponse): void {
+function handleAdminCatalog(url: URL, method: string, res: ServerResponse): boolean {
   if (url.pathname === '/api/admin/models') {
-    if (method !== 'GET') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
-    sendJson(res, 200, { models: scanModels, defaultModel: 'anthropic/claude-opus-5' })
-    return
+    if (method !== 'GET') { sendJson(res, 405, { error: 'method-not-allowed' }); return true }
+    sendJson(res, 200, { models: scanModels, defaultModel: DEFAULT_MANAGED_SCAN_MODEL })
+    return true
   }
+  if (url.pathname === '/api/admin/history') {
+    if (method !== 'GET') { sendJson(res, 405, { error: 'method-not-allowed' }); return true }
+    sendJson(res, 200, { history })
+    return true
+  }
+  return false
+}
+
+function handleAdmin(url: URL, method: string, res: ServerResponse): void {
+  if (handleAdminCatalog(url, method, res)) return
   if (url.pathname === '/api/admin/reports/set-visible' && method === 'POST') {
     sendJson(res, 200, { ok: true })
     return

@@ -541,6 +541,7 @@ export async function switchToFile(name, content, { workspaceId } = {}) {
   // Drop the managed open-report slot — openTeamReport re-claims it after its
   // own switchToFile, so any other switch stops the server triage push.
   state.managedReport = null
+  state.managedReports = []
   // Switching to a regular report drops out of the bundles / packages
   // / links view — the user clicked a file row to see its findings.
   // (A links file lands back on 'links' below, once the read confirms
@@ -703,6 +704,8 @@ export async function switchToManagedTeam(team, reportId = null) {
   state.currentWorkspace = reportId === null ? `managed-team:${team.id}` : null
   state.currentManagedTeam = team.id
   state.currentManagedReport = reportId
+  state.managedReports = selected.map((entry) => ({ id: entry.id, filename: entry.filename }))
+  state.managedReport = reportId === null ? null : state.managedReports[0] ?? null
   state.currentReportWorkspace = null
   state.currentLinks = null
   state.selectedBundle = null
@@ -711,6 +714,8 @@ export async function switchToManagedTeam(team, reportId = null) {
   resetGraph2()
   for (let i = 0; i < selected.length; i++) {
     await ingestReport(selected[i].filename, contents[i], gen, { renderView: false })
+    const loaded = state.reports.at(-1)
+    if (loaded) loaded._managedReportId = selected[i].id
     if (isStaleLoad(gen)) return false
   }
   if (selected.length === 0) {
@@ -718,6 +723,17 @@ export async function switchToManagedTeam(team, reportId = null) {
   } else {
     applyOpeningFilters(getShownGroups())
     if (!(await renderAfterAnimationFrame(gen))) return false
+  }
+  // Hydrate every report before the merged view becomes interactive. The
+  // managed triage layer routes later edits by the per-report ids stamped
+  // above, so overlapping findings are sent to a report that actually owns
+  // them instead of silently posting them to the first report only.
+  if (selected.length > 0) {
+    const { hydrateManagedReportTriage } = await import('./managed-triage.js')
+    for (const entry of selected) {
+      await hydrateManagedReportTriage(entry.id)
+      if (isStaleLoad(gen)) return false
+    }
   }
   await renderSidebar()
   return true
@@ -735,6 +751,8 @@ export async function switchToManagedTeam(team, reportId = null) {
 export async function switchToWorkspace(workspaceId) {
   state.currentManagedTeam = null
   state.currentManagedReport = null
+  state.managedReport = null
+  state.managedReports = []
   const ws = listWorkspaces().find((w) => w.id === workspaceId)
   if (!ws) return
   const gen = ++loadGen
@@ -762,7 +780,6 @@ export async function switchToWorkspace(workspaceId) {
   state.currentWorkspace = workspaceId
   state.currentReportWorkspace = null
   state.currentLinks = null
-  state.managedReport = null
   state.repoUrl = ''
   state.repoEditing = false
   resetGraph2()
@@ -946,6 +963,7 @@ function clearActiveView() {
   state.currentReportWorkspace = null
   state.currentLinks = null
   state.managedReport = null
+  state.managedReports = []
   state.selectedBundle = null
   state.bundleDetails = null
   state.bundleDetailsTab = 'overview'

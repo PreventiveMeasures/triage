@@ -51,6 +51,7 @@ import { filterReportContent } from '../common/managed/report-filter.ts'
 import type { TriageEntryPatch } from '../common/managed/triage.ts'
 import { MAX_FINDING_ID, MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_ENTRIES, MAX_TRIAGE_HISTORY, isTriageBucket, parseTriageEntryPatch } from '../common/managed/triage.ts'
 import { loadFindings, readReport, repoDirectory, reportRepoGithub } from '../report/index.js'
+import { DEFAULT_MANAGED_SCAN_MODEL, MANAGED_SCAN_MODELS } from '../common/managed/scan-models.ts'
 import { CONFIG_PATH } from '../common/server-info.ts'
 import { collectRepos, installUrl } from './github-app.ts'
 import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, ensureUserAccessToken, handleCallback } from './github-oauth.ts'
@@ -60,6 +61,7 @@ const SESSION_PATH = '/api/auth/session'
 const AVATAR_PREFIX = '/api/avatar/'
 const LOGOUT_PATH = '/api/auth/logout'
 const ADMIN_USERS_PATH = '/api/admin/users'
+const ADMIN_MODELS_PATH = '/api/admin/models'
 const SET_ROLE_PATH = '/api/admin/set-role'
 const ADMIN_REPOS_PATH = '/api/admin/repositories'
 const SELECT_REPO_PATH = '/api/admin/repositories/select'
@@ -211,6 +213,21 @@ async function readManageSession(res: ServerResponse, deps: ManagedHttpDeps, coo
   return s
 }
 
+async function readAdminSession(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<{ session: ManagedSession; user: StoredUser } | null> {
+  const s = await readSession(deps.config, deps.db, cookie, Date.now())
+  if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return null }
+  if (s.user.role !== 'admin') { sendJson(res, 403, { error: 'forbidden' }); return null }
+  return s
+}
+
+// GET /api/admin/models — the server's canonical scan model ids and effort
+// levels. Names are intentionally absent; the client derives them from ids.
+async function handleListModels(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
+  const s = await readManageSession(res, deps, cookie)
+  if (s == null) return
+  sendJson(res, 200, { models: MANAGED_SCAN_MODELS, defaultModel: DEFAULT_MANAGED_SCAN_MODEL })
+}
+
 // GET /api/admin/repositories — the connected repositories by default. The
 // potentially large GitHub discovery lists are opt-in (`scope=installed` or
 // `scope=public`) and are searched/paged on the server. Visible to admin OR
@@ -330,9 +347,9 @@ async function repositoryFindingIds(deps: ManagedHttpDeps, reports: { id: string
 }
 
 async function repositoryImpact(deps: ManagedHttpDeps, repoId: number) {
-  const reports = (await deps.db.listReports()).filter((report) => report.repoId === repoId)
-  const bundles = await deps.db.listBundlesForRepo(repoId)
   const allReports = await deps.db.listReports()
+  const reports = allReports.filter((report) => report.repoId === repoId)
+  const bundles = await deps.db.listBundlesForRepo(repoId)
   const targetIds = await repositoryFindingIds(deps, reports)
   const otherIds = await repositoryFindingIds(deps, allReports.filter((report) => report.repoId !== repoId))
   const triageIds = [...targetIds].filter((id) => !otherIds.has(id))
@@ -348,7 +365,7 @@ async function repositoryImpact(deps: ManagedHttpDeps, repoId: number) {
 // removal would destroy. This is intentionally separate from the repository
 // list so the normal page stays cheap even with many reports.
 async function handleRepositoryImpact(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
-  const s = await readManageSession(res, deps, cookie)
+  const s = await readAdminSession(res, deps, cookie)
   if (s == null) return
   const repoId = Number(new URL(req.url ?? '/', 'http://localhost').searchParams.get('repoId'))
   if (!Number.isSafeInteger(repoId)) { sendJson(res, 400, { error: 'bad-repo' }); return }
@@ -361,8 +378,9 @@ async function handleRepositoryImpact(req: IncomingMessage, res: ServerResponse,
 // attached reports/bundles. The exact name + explicit acknowledgement are
 // checked server-side too; the UI's dialog is a usability guard, not the policy.
 async function handleRemoveRepository(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
-  const s = await manageMutation(req, res, deps, cookie)
+  const s = await checkMutation(req, res, deps, cookie)
   if (s == null) return
+  if (s.user.role !== 'admin') { sendJson(res, 403, { error: 'forbidden' }); return }
   let body: unknown
   try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
   const repoId = (body as { repoId?: unknown } | null)?.repoId
@@ -380,10 +398,12 @@ async function handleRemoveRepository(req: IncomingMessage, res: ServerResponse,
   const allReports = await deps.db.listReports()
   const targetIds = await repositoryFindingIds(deps, reports)
   const otherIds = await repositoryFindingIds(deps, allReports.filter((report) => report.repoId !== repoId))
-  for (const report of reports) await deps.reportStore.delete(report.id).catch(() => {})
-  for (const bundle of bundles) await deps.bundleStore.delete(bundle.id).catch(() => {})
   const deletedReports = await deps.db.deleteReportsForRepo(repoId)
   const deletedBundles = await deps.db.deleteBundlesForRepo(repoId)
+  // Remove metadata first so a blob-store failure leaves an orphaned blob for
+  // later cleanup, rather than a live row pointing at missing report data.
+  for (const report of reports) await deps.reportStore.delete(report.id).catch(() => {})
+  for (const bundle of bundles) await deps.bundleStore.delete(bundle.id).catch(() => {})
   const triageIds = deleteTriage ? [...targetIds].filter((id) => !otherIds.has(id)) : []
   const deletedTriage = await deps.db.deleteTriage(triageIds)
   await deps.db.deleteRepo(repoId)
@@ -542,7 +562,9 @@ async function handleUploadReport(req: IncomingMessage, res: ServerResponse, dep
   const parsed = readReport(bytes.toString('utf8'))
   const repoGithub = parsed.data == null ? null : reportRepoGithub(parsed.data)
   const repoEmbedded = repoGithub != null
-  const headerDirectory = firstHeader(req.headers['x-repo-directory']) ?? ''
+  const rawHeaderDirectory = firstHeader(req.headers['x-repo-directory']) ?? ''
+  let headerDirectory = rawHeaderDirectory
+  try { headerDirectory = decodeURIComponent(rawHeaderDirectory) } catch { sendJson(res, 400, { error: 'bad-directory' }); return }
   const requestedDirectory = repoEmbedded ? repoDirectory(parsed.data?.repo) : headerDirectory
   const normalizedDirectory = normalizeTeamPath(requestedDirectory)
   if (!normalizedDirectory.ok) { sendJson(res, 400, { error: 'bad-directory' }); return }
@@ -1134,6 +1156,10 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (s.user.role !== 'admin') { sendJson(res, 403, { error: 'forbidden' }); return }
       sendJson(res, 200, { users: await db.listUsers() })
       return
+    }
+    if (path === ADMIN_MODELS_PATH) {
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      await handleListModels(res, deps, cookie); return
     }
     if (path === SET_ROLE_PATH) { await handleSetRole(req, res, deps, cookie); return }
     if (path === REPO_IMPACT_PATH) {

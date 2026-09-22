@@ -35,7 +35,7 @@ export type FocusCodePos = {
 // count / sort preference — never alters report data. See ui/view/format.js
 // (displayedSeverity) and <severity-mode-switch>.
 export type SeverityMode = 'corrected' | 'original'
-export type CurrentView = 'findings' | 'files' | 'bundles' | 'links' | 'manage' | 'admin-users' | 'manage-repos' | 'manage-reports' | 'manage-bundles' | 'manage-teams'
+export type CurrentView = 'findings' | 'files' | 'bundles' | 'links' | 'manage' | 'admin-users' | 'manage-repos' | 'manage-reports' | 'manage-bundles' | 'manage-history' | 'manage-scans' | 'manage-teams'
 
 // The links file the 'links' view is showing: its OPFS name and the
 // links it declares, one `string[]` of finding ids per link (see
@@ -220,6 +220,10 @@ export interface State {
   // server-side triage hydrate/push for that report (ui/view/managed-triage.js).
   // Set by openTeamReport, cleared whenever the view switches away.
   managedReport: { id: string; filename: string } | null
+  // All server report ids in an open merged team view. A merged view has no
+  // single `managedReport`, so triage hydration/push uses this list to route
+  // each finding to a report that contains it.
+  managedReports: { id: string; filename: string }[]
 }
 
 // View mode is deliberately session-local. Older builds persisted the
@@ -939,6 +943,7 @@ export const state: State = store<State>({
   managedTeams: [],
   // The open managed team report; openTeamReport sets it, view switches clear it.
   managedReport: null,
+  managedReports: [],
 })
 
 // The managed protocol and the visible local surface are separate concerns.

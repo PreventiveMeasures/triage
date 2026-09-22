@@ -121,8 +121,31 @@ test('db: first user is admin, later users none; setUserRole + listUsers reflect
   assert.equal((await readSession(config, db, cookiePair(second.setCookie), now)).user.role, 'triage')
   assert.equal(await db.setUserRole('00000000-0000-4000-8000-000000000000', 'view'), false)
 
+  await db.setTriage('activity-finding', { color: 'red' }, bob.id, 'bob', now + 3000)
+
   const users = await db.listUsers()
   assert.deepEqual(users.map((u) => [u.login, u.role]), [['alice2', 'admin'], ['bob', 'triage']])
+  assert.equal(users.find((u) => u.login === 'bob').lastActivityAt, now + 3000)
+  await db.close()
+})
+
+test('GET /api/admin/models: managed users receive server model ids and effort levels', async () => {
+  const db = openSqliteManagedDb(':memory:')
+  const now = Date.now()
+  const adminSess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
+  const manageSess = await createSession(config, db, { githubUserId: 2, login: 'bob', name: null, avatarUrl: null }, now + 1000)
+  const noneSess = await createSession(config, db, { githubUserId: 3, login: 'cy', name: null, avatarUrl: null }, now + 2000)
+  const manage = (await readSession(config, db, cookiePair(manageSess.setCookie), now)).user
+  await db.setUserRole(manage.id, 'manage')
+  const { send } = bundleHarness(db)
+  const modelsPath = '/api/admin/models'
+  assert.equal((await send('GET', modelsPath, cookiePair(noneSess.setCookie))).statusCode, 403)
+  assert.equal((await send('POST', modelsPath, cookiePair(adminSess.setCookie))).statusCode, 405)
+  const response = await send('GET', modelsPath, cookiePair(manageSess.setCookie))
+  assert.equal(response.statusCode, 200)
+  const body = JSON.parse(response.body)
+  assert.equal(body.defaultModel, 'anthropic/claude-opus-5')
+  assert.ok(body.models.some((model) => model.id === 'openai/gpt-6-astra-pro' && model.efforts.includes('max')))
   await db.close()
 })
 
@@ -641,12 +664,16 @@ test('db: reports — insert records metadata + attribution, list joins login, g
   const now = Date.now()
   const uid = await db.upsertUser({ githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
   const id = randomUUID()
-  await db.insertReport({ id, filename: 'scan.json', contentType: 'application/json', byteSize: 42, sha256: 'h4sh', uploadedBy: uid, repoId: null, bundleId: null, bundleIntegrity: null }, now)
+  await db.insertReport({ id, filename: 'scan.json', contentType: 'application/json', byteSize: 42, sha256: 'h4sh', uploadedBy: uid, repoId: null, bundleId: null, bundleIntegrity: null, visible: true }, now)
+  const hiddenId = randomUUID()
+  await db.insertReport({ id: hiddenId, filename: 'hidden.json', contentType: 'application/json', byteSize: 3, sha256: 'hidden', uploadedBy: uid, repoId: null, bundleId: null, bundleIntegrity: null }, now)
 
   const list = await db.listReports()
-  assert.equal(list.length, 1)
+  assert.equal(list.length, 2)
+  assert.equal(list.find((report) => report.id === hiddenId).visible, false)
+  const listedReport = list.find((report) => report.id === id)
   assert.deepEqual(
-    [list[0].id, list[0].filename, list[0].byteSize, list[0].sha256, list[0].uploadedByLogin, list[0].uploadedAt],
+    [listedReport.id, listedReport.filename, listedReport.byteSize, listedReport.sha256, listedReport.uploadedByLogin, listedReport.uploadedAt],
     [id, 'scan.json', 42, 'h4sh', 'alice', now],
   )
 
@@ -656,6 +683,8 @@ test('db: reports — insert records metadata + attribution, list joins login, g
 
   assert.equal(await db.deleteReport(id), true)
   assert.equal(await db.deleteReport(id), false) // already gone → false
+  assert.deepEqual((await db.listReports()).map((report) => report.id), [hiddenId])
+  assert.equal(await db.deleteReport(hiddenId), true)
   assert.deepEqual(await db.listReports(), [])
   await db.close()
 })
@@ -665,10 +694,10 @@ test('db: uploader login is saved durably — the snapshot survives a removed up
   const now = Date.now()
   const uid = await db.upsertUser({ githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
   // Normal upload (uploader present) → the list shows the login.
-  await db.insertReport({ id: randomUUID(), filename: 'r.json', contentType: 'application/json', byteSize: 1, sha256: 'x', uploadedBy: uid, uploadedByLogin: 'alice', repoId: null, bundleId: null, bundleIntegrity: null }, now)
+  await db.insertReport({ id: randomUUID(), filename: 'r.json', contentType: 'application/json', byteSize: 1, sha256: 'x', uploadedBy: uid, uploadedByLogin: 'alice', repoId: null, bundleId: null, bundleIntegrity: null, visible: true }, now)
   // A report whose uploader is already gone (uploaded_by NULL) keeps the durable
   // login snapshot — "who uploaded it" isn't lost.
-  await db.insertReport({ id: randomUUID(), filename: 'g.json', contentType: 'application/json', byteSize: 1, sha256: 'y', uploadedBy: null, uploadedByLogin: 'ghost', repoId: null, bundleId: null, bundleIntegrity: null }, now)
+  await db.insertReport({ id: randomUUID(), filename: 'g.json', contentType: 'application/json', byteSize: 1, sha256: 'y', uploadedBy: null, uploadedByLogin: 'ghost', repoId: null, bundleId: null, bundleIntegrity: null, visible: true }, now)
   assert.deepEqual((await db.listReports()).map((r) => [r.filename, r.uploadedByLogin]), [['g.json', 'ghost'], ['r.json', 'alice']])
   // Bundles snapshot the uploader the same way.
   await db.insertBundle({ id: randomUUID(), integrity: 'sha512-A', filename: 'a.map', kind: 'sourcemap', byteSize: 1, uploadedBy: null, uploadedByLogin: 'ghost', repoId: null }, now)
@@ -810,7 +839,7 @@ test('db: bundles — insert/get/list/delete, integrity dedup-key, report link +
 
   // A report that declared this integrity before the bundle landed → link it now.
   const rId = randomUUID()
-  await db.insertReport({ id: rId, filename: 'r.json', contentType: 'application/json', byteSize: 5, sha256: 'h', uploadedBy: uid, repoId: null, bundleId: null, bundleIntegrity: 'sha512-AAA' }, now)
+  await db.insertReport({ id: rId, filename: 'r.json', contentType: 'application/json', byteSize: 5, sha256: 'h', uploadedBy: uid, repoId: null, bundleId: null, bundleIntegrity: 'sha512-AAA', visible: true }, now)
   await db.linkReportsToBundle('sha512-AAA', bId)
   const [rl] = await db.listReports()
   assert.deepEqual([rl.bundleId, rl.bundleFilename, rl.bundleIntegrity], [bId, 'a.map', 'sha512-AAA'])
@@ -956,7 +985,7 @@ test('reports/bundles set-repo: db attach/detach + endpoint (role, CSRF, validat
   const admin = (await readSession(config, db, cookiePair(adminSess.setCookie), now)).user
   await db.selectRepo({ repoId: 7, fullName: 'o/r', private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: admin.id }, now)
   const reportId = randomUUID()
-  await db.insertReport({ id: reportId, filename: 'r.json', contentType: 'application/json', byteSize: 2, sha256: 'x', uploadedBy: admin.id, repoId: null, bundleId: null, bundleIntegrity: null }, now)
+  await db.insertReport({ id: reportId, filename: 'r.json', contentType: 'application/json', byteSize: 2, sha256: 'x', uploadedBy: admin.id, repoId: null, bundleId: null, bundleIntegrity: null, visible: true }, now)
   const bundleId = randomUUID()
   await db.insertBundle({ id: bundleId, integrity: 'sha512-Z', filename: 'b.map', kind: 'sourcemap', byteSize: 3, uploadedBy: admin.id, repoId: null }, now)
 
@@ -1128,7 +1157,7 @@ test('team reports: read iff admin, OR (>=view role AND in a team holding the re
   const green = randomUUID(); await db.createTeam(green, 'Green', now); await db.setTeamRepo(green, 8, null)
   await db.setTeamMember(green, outsider.id, { dependencies: false, security: false })
   const reportId = randomUUID()
-  await db.insertReport({ id: reportId, filename: 'scan.json', contentType: 'application/json', byteSize: 5, sha256: 'x', uploadedBy: admin.id, repoId: 7, bundleId: null, bundleIntegrity: null }, now)
+  await db.insertReport({ id: reportId, filename: 'scan.json', contentType: 'application/json', byteSize: 5, sha256: 'x', uploadedBy: admin.id, repoId: 7, bundleId: null, bundleIntegrity: null, visible: true }, now)
 
   const reportStore = fakeBlobStore()
   await reportStore.put(reportId, Buffer.from('{"findings":[]}'))
@@ -1228,7 +1257,7 @@ test('GET /api/reports/<id>: server-side content filter by viewer permissions (a
   await db.setTeamRepo(team, 7, null)
   await db.setTeamMember(team, viewer.id, { dependencies: false, security: true }) // may see security, NOT dependencies
   const reportId = randomUUID()
-  await db.insertReport({ id: reportId, filename: 'scan.json', contentType: 'application/json', byteSize: 5, sha256: 'x', uploadedBy: admin.id, repoId: 7, bundleId: null, bundleIntegrity: null }, now)
+  await db.insertReport({ id: reportId, filename: 'scan.json', contentType: 'application/json', byteSize: 5, sha256: 'x', uploadedBy: admin.id, repoId: 7, bundleId: null, bundleIntegrity: null, visible: true }, now)
   const content = JSON.stringify({ source: 'native', findings: [
     { id: 'own', file: 'src/a.js' },
     { id: 'dep', file: 'node_modules/x/y.js' },
@@ -1485,7 +1514,7 @@ async function reportTriageFixture(db, reportStore) {
   await db.setTeamRepo(green, 8, null)
   await db.setTeamMember(green, erin.id, { dependencies: true, security: true })
   const reportId = randomUUID()
-  await db.insertReport({ id: reportId, filename: 'scan.json', contentType: 'application/json', byteSize: 5, sha256: 'x', uploadedBy: admin.id, uploadedByLogin: 'alice', repoId: 7, bundleId: null, bundleIntegrity: null }, now)
+  await db.insertReport({ id: reportId, filename: 'scan.json', contentType: 'application/json', byteSize: 5, sha256: 'x', uploadedBy: admin.id, uploadedByLogin: 'alice', repoId: 7, bundleId: null, bundleIntegrity: null, visible: true }, now)
   await reportStore.put(reportId, Buffer.from(JSON.stringify({ source: 'native', findings: [
     { id: 'own', file: 'src/a.js' },
     { id: 'dep', file: 'node_modules/x/y.js' },
@@ -1553,7 +1582,7 @@ test('GET /api/reports/<id>/triage: view-gated (401/404), entries filtered to th
   // and a cleared entry arrives as null — the tombstone, unlike 'new', which
   // the server has never seen.
   const rescanId = randomUUID()
-  await db.insertReport({ id: rescanId, filename: 'scan2.json', contentType: 'application/json', byteSize: 5, sha256: 'y', uploadedBy: fx.admin.id, uploadedByLogin: 'alice', repoId: 7, bundleId: null, bundleIntegrity: null }, fx.now)
+  await db.insertReport({ id: rescanId, filename: 'scan2.json', contentType: 'application/json', byteSize: 5, sha256: 'y', uploadedBy: fx.admin.id, uploadedByLogin: 'alice', repoId: 7, bundleId: null, bundleIntegrity: null, visible: true }, fx.now)
   await reportStore.put(rescanId, Buffer.from(JSON.stringify({ source: 'native', findings: [{ id: 'own', file: 'src/a.js' }, { id: 'new', file: 'src/c.js' }] })))
   await db.setTriage('sec', null, fx.admin.id, 'alice', fx.now + 1)
   assert.deepEqual(JSON.parse((await send('GET', T(rescanId), cookiePair(fx.bobSess.setCookie))).body), { entries: { own: { color: 'red' } } })
@@ -1562,7 +1591,7 @@ test('GET /api/reports/<id>/triage: view-gated (401/404), entries filtered to th
   // A pre-deduplicated (groups-shaped) dump is filtered for the viewer just the
   // same: bob (no dependencies) must not learn of 'dep' through its entry.
   const groupedId = randomUUID()
-  await db.insertReport({ id: groupedId, filename: 'scan3.json', contentType: 'application/json', byteSize: 5, sha256: 'z', uploadedBy: fx.admin.id, uploadedByLogin: 'alice', repoId: 7, bundleId: null, bundleIntegrity: null }, fx.now)
+  await db.insertReport({ id: groupedId, filename: 'scan3.json', contentType: 'application/json', byteSize: 5, sha256: 'z', uploadedBy: fx.admin.id, uploadedByLogin: 'alice', repoId: 7, bundleId: null, bundleIntegrity: null, visible: true }, fx.now)
   await reportStore.put(groupedId, Buffer.from(JSON.stringify({ source: 'native', groups: [
     [{ id: 'own', file: 'src/a.js' }, { id: 'own2', file: 'src/a2.js' }],
     [{ id: 'dep', file: 'node_modules/x/y.js' }],
@@ -1600,7 +1629,7 @@ test('POST /api/reports/<id>/triage: CSRF + role/membership gating, validation, 
   // groups-shaped dump of the same findings just the same)...
   assert.equal((await post(bCk, fx.bobSess.csrfToken, { entries: { dep: { color: 'red' } } })).statusCode, 404)
   const groupedId = randomUUID()
-  await db.insertReport({ id: groupedId, filename: 'scan3.json', contentType: 'application/json', byteSize: 5, sha256: 'z', uploadedBy: fx.admin.id, uploadedByLogin: 'alice', repoId: 7, bundleId: null, bundleIntegrity: null }, fx.now)
+  await db.insertReport({ id: groupedId, filename: 'scan3.json', contentType: 'application/json', byteSize: 5, sha256: 'z', uploadedBy: fx.admin.id, uploadedByLogin: 'alice', repoId: 7, bundleId: null, bundleIntegrity: null, visible: true }, fx.now)
   await reportStore.put(groupedId, Buffer.from(JSON.stringify({ source: 'native', groups: [[{ id: 'own', file: 'src/a.js' }], [{ id: 'dep', file: 'node_modules/x/y.js' }]] })))
   assert.equal((await upload(`/api/reports/${groupedId}/triage`, bCk, fx.bobSess.csrfToken, JSON.stringify({ entries: { dep: { color: 'red' } } }))).statusCode, 404)
   assert.equal((await upload(`/api/reports/${groupedId}/triage`, bCk, fx.bobSess.csrfToken, JSON.stringify({ entries: { own: { color: 'red' } } }))).statusCode, 200)

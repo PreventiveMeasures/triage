@@ -199,26 +199,12 @@ class ManagedAdminHome extends LitElement {
 }
 customElements.define('managed-admin-home', ManagedAdminHome)
 
-// The managed history endpoint can be added independently of this UI. Until
-// it is available, these rows keep the preview useful and exercise the same
-// role split: admins see every workspace action, while managers see triage
-// changes for reports returned by their team access endpoint.
-const HISTORY_FIXTURES = [
-  { id: 'history-1', kind: 'triage', actor: 'riley-reviewer', action: 'marked a finding In progress', reportId: 'fixture-report-1', report: 'managed-fixture.json', repo: 'example/managed-fixtures', finding: 'managed-fixture-1', when: 'Today, 10:14' },
-  { id: 'history-2', kind: 'visibility', actor: 'alex-security', action: 'made a report visible', reportId: 'fixture-report-3', report: 'managed-api.json', repo: 'example/managed-fixtures', finding: '', when: 'Today, 09:58' },
-  { id: 'history-3', kind: 'upload', actor: 'alex-security', action: 'uploaded a bundle', reportId: '', report: 'managed-fixtures.stasis', repo: 'example/managed-fixtures', finding: '', when: 'Today, 09:42' },
-  { id: 'history-4', kind: 'triage', actor: 'sam-observer', action: 'added a comment', reportId: 'fixture-report-2', report: 'managed-worker.json', repo: 'example/worker-service', finding: 'managed-fixture-2', when: 'Yesterday, 17:20' },
-]
-
 async function fetchHistory() {
-  try {
-    const res = await fetch('/api/admin/history', { credentials: 'same-origin', headers: { accept: 'application/json' } })
-    if (res.ok) {
-      const body = await res.json()
-      if (Array.isArray(body?.history)) return body.history
-    }
-  } catch {}
-  return HISTORY_FIXTURES
+  const res = await fetch('/api/admin/history', { credentials: 'same-origin', headers: { accept: 'application/json' } })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const body = await res.json()
+  if (!Array.isArray(body?.history)) throw new Error('No history returned')
+  return body.history
 }
 
 async function fetchAccessibleReportIds() {
@@ -976,7 +962,15 @@ async function uploadReport(file, csrfToken, repoId = null, directory = '') {
   if (repoId != null) headers['x-repo-id'] = String(repoId)
   if (directory !== '') headers['x-repo-directory'] = encodeURIComponent(directory)
   const res = await fetch('/api/admin/reports', { method: 'POST', credentials: 'same-origin', headers, body: file })
-  if (!res.ok) throw new Error(res.status === 413 ? 'too large' : `HTTP ${res.status}`)
+  if (!res.ok) {
+    if (res.status === 413) throw new Error('too large')
+    let detail = ''
+    try {
+      const body = await res.json()
+      if (body?.error === 'repo-not-connected' && typeof body.repo === 'string') detail = `: ${body.repo} is not connected`
+    } catch {}
+    throw new Error(`HTTP ${res.status}${detail}`)
+  }
   return res.json()
 }
 
