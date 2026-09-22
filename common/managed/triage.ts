@@ -36,10 +36,9 @@ export const MAX_TRIAGE_ENTRIES = 200
 export const MAX_FINDING_ID = 100
 export const MAX_TRIAGE_BODY_BYTES = 262_144
 
-// The trail kept per finding: the newest this many events, which is also the
-// most a history read returns. Older rows are trimmed on insert, so the trail
-// is bounded by findings × this × an entry's size — a writer alternating a
-// value can't grow the store without bound.
+// The most trail events one history read returns (newest first). Retention is
+// the server's: everything is kept unless its TRIAGE_HISTORY_LIMIT says
+// otherwise.
 export const MAX_TRIAGE_HISTORY = 200
 
 export function isTriageBucket(x: unknown): x is TriageBucket {

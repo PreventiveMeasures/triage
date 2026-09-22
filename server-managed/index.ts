@@ -18,7 +18,7 @@ const SESSION_GC_INTERVAL_MS = 3_600_000
 
 export function start(): void {
   const config = loadManagedConfig()
-  const db = openSqliteManagedDb(config.dbPath)
+  const db = openSqliteManagedDb(config.dbPath, { triageHistoryLimit: config.triageHistoryLimit })
   // Avatars cache on disk beside the DB (data/avatars/<uuid>) for now.
   const avatarStore = createDiskAvatarStore(join(dirname(config.dbPath), 'avatars'))
   // Uploaded report + bundle bytes live on disk beside the DB too

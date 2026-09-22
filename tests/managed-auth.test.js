@@ -1405,15 +1405,24 @@ test('db: finding triage trail — one event per change, none for a no-op write,
   assert.equal((await db.listTriageHistory('f1', 10)).length, 3)
   assert.equal((await db.listTriageHistory('f1', 2)).length, 2, 'limit applies')
   assert.deepEqual(await db.listTriageHistory('never', 10), [])
-  // The trail is bounded: a writer alternating a value past MAX_TRIAGE_HISTORY
-  // changes keeps only the newest that many, oldest trimmed first.
+  // Everything is kept by default: a writer changing a value past the read cap
+  // loses nothing — the read cap only pages what one call returns.
   for (let i = 0; i < MAX_TRIAGE_HISTORY + 5; i++) await db.setTriage('f9', { comment: `v${i}` }, bob, 'bob', now + 10 + i)
-  const bounded = await db.listTriageHistory('f9', MAX_TRIAGE_HISTORY + 50)
-  assert.equal(bounded.length, MAX_TRIAGE_HISTORY)
-  assert.equal(bounded[0].comment, `v${MAX_TRIAGE_HISTORY + 4}`)
-  assert.equal(bounded.at(-1).comment, 'v5', 'the five oldest are gone')
-  assert.equal((await db.listTriageHistory('f1', 10)).length, 3, 'other findings untouched')
+  const all = await db.listTriageHistory('f9', MAX_TRIAGE_HISTORY + 50)
+  assert.equal(all.length, MAX_TRIAGE_HISTORY + 5)
+  assert.equal(all.at(-1).comment, 'v0')
+  assert.equal((await db.listTriageHistory('f9', MAX_TRIAGE_HISTORY)).length, MAX_TRIAGE_HISTORY, 'the read cap pages')
   await db.close()
+
+  // An operator-set retention limit keeps only the newest that many per
+  // finding, oldest trimmed first, other findings untouched.
+  const capped = openSqliteManagedDb(':memory:', { triageHistoryLimit: 3 })
+  const cid = await capped.upsertUser({ githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
+  for (let i = 0; i < 5; i++) await capped.setTriage('g', { comment: `v${i}` }, cid, 'alice', now + i)
+  await capped.setTriage('h', { comment: 'once' }, cid, 'alice', now)
+  assert.deepEqual((await capped.listTriageHistory('g', 10)).map((e) => e.comment), ['v4', 'v3', 'v2'])
+  assert.equal((await capped.listTriageHistory('h', 10)).length, 1)
+  await capped.close()
 })
 
 test('parseTriageEntryPatch: full/partial/null round-trip; malformed values are invalid', () => {

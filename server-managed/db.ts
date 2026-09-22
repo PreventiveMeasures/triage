@@ -22,7 +22,6 @@ import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import type { Role } from '../common/managed/roles.ts'
 import type { TeamUserPermissions } from '../common/managed/permissions.ts'
-import { MAX_TRIAGE_HISTORY } from '../common/managed/triage.ts'
 import type { TriageEntryPatch } from '../common/managed/triage.ts'
 
 const SQLITE_SCHEMA = `
@@ -157,10 +156,10 @@ CREATE TABLE IF NOT EXISTS finding_triage (
 -- against the previous row for the same id, computed on read. batch_id groups
 -- the rows of one request. seq is the rowid: a total order that breaks ties
 -- on at. actor_id / actor_login follow the uploaded_by / uploaded_by_login
--- convention (live account, durable login snapshot). Only the newest
--- MAX_TRIAGE_HISTORY rows per finding are kept (the most a read returns) —
--- trimmed on insert, so a writer alternating a value can't grow the store
--- without bound; an id no report carries any more is the tombstone GC's
+-- convention (live account, durable login snapshot). Everything is kept by
+-- default — the trail is the record; an operator may bound it per finding
+-- (TRIAGE_HISTORY_LIMIT), in which case a finding's older events are trimmed
+-- as new ones land. An id no report carries any more is the tombstone GC's
 -- concern.
 CREATE TABLE IF NOT EXISTS finding_triage_event (
   seq          INTEGER PRIMARY KEY,
@@ -628,7 +627,7 @@ function prepareStatements(db: DatabaseSync) {
       `INSERT INTO finding_triage_event (finding_id, batch_id, color, triage, comment, fix, flagged, actor_id, actor_login, at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ),
-    // Keep the newest MAX_TRIAGE_HISTORY events of a finding; the rest go.
+    // With a retention limit set: keep the newest N events of a finding.
     trimTriageEventsStmt: db.prepare(
       `DELETE FROM finding_triage_event
         WHERE finding_id = ?
@@ -849,8 +848,9 @@ type TriageEventDbRow = TriageStateDbRow & { seq: number; findingId: string; bat
 // stamped — so a later reader learns the entry was cleared rather than never
 // set. Every change is also appended to the trail; a write equal to the
 // current row is skipped altogether, so a client re-pushing what already
-// stands neither re-stamps the writer nor echoes into the trail.
-function triageMethods(db: DatabaseSync, stmts: ReturnType<typeof prepareStatements>) {
+// stands neither re-stamps the writer nor echoes into the trail. `historyLimit`
+// > 0 keeps only that many events per finding; 0 keeps everything.
+function triageMethods(db: DatabaseSync, stmts: ReturnType<typeof prepareStatements>, historyLimit: number) {
   const { upsertTriageStmt, selectTriageStmt, selectTriageStateStmt, insertTriageEventStmt, trimTriageEventsStmt, selectTriageHistoryStmt } = stmts
   function writeEntry(findingId: string, entry: TriageEntryPatch | null, batchId: string, updatedBy: string | null, updatedByLogin: string | null, now: number): void {
     const e = entry ?? {}
@@ -865,7 +865,7 @@ function triageMethods(db: DatabaseSync, stmts: ReturnType<typeof prepareStateme
       && cur.fix === next.fix && cur.flagged === next.flagged) return
     upsertTriageStmt.run(findingId, next.color, next.triage, next.comment, next.fix, next.flagged, updatedBy, updatedByLogin, now)
     insertTriageEventStmt.run(findingId, batchId, next.color, next.triage, next.comment, next.fix, next.flagged, updatedBy, updatedByLogin, now)
-    trimTriageEventsStmt.run(findingId, findingId, MAX_TRIAGE_HISTORY)
+    if (historyLimit > 0) trimTriageEventsStmt.run(findingId, findingId, historyLimit)
   }
   return {
     listTriageHistory(findingId: string, limit: number): Promise<TriageEventRow[]> {
@@ -1074,7 +1074,13 @@ function ensureColumn(db: DatabaseSync, table: string, column: string, type: str
   if (!cols.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`)
 }
 
-export function openSqliteManagedDb(path: string): ManagedDb {
+// `triageHistoryLimit`: events kept per finding in the triage trail; 0 (the
+// default) keeps everything. See ManagedConfig.
+export interface ManagedDbOptions {
+  triageHistoryLimit?: number
+}
+
+export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}): ManagedDb {
   mkdirSync(dirname(path), { recursive: true })
   const db = new DatabaseSync(path)
   try {
@@ -1144,7 +1150,7 @@ export function openSqliteManagedDb(path: string): ManagedDb {
     },
     ...selectedRepoMethods(stmts),
     ...reportMethods(stmts),
-    ...triageMethods(db, stmts),
+    ...triageMethods(db, stmts, options.triageHistoryLimit ?? 0),
     ...bundleMethods(stmts),
     ...teamMethods(stmts),
     close() {
