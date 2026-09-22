@@ -26,7 +26,7 @@ function createLocalStorage() {
 globalThis.localStorage ??= createLocalStorage()
 
 const { setCount } = await import('../client/counts.js')
-const { FILE_ICONS, PRODUCER_LABELS, REPORT_LOGOS, displayName, findingBrand, findingBrands, groupOf } = await import('../ui/view/file-display.js')
+const { FILE_ICONS, PRODUCER_LABELS, REPORT_LOGOS, displayName, findingBrand, groupOf, loadedBrands } = await import('../ui/view/file-display.js')
 
 describe('groupOf — the bucket a file lands in', () => {
   beforeEach(() => { globalThis.localStorage.clear() })
@@ -154,39 +154,70 @@ describe('findingBrand — the producer a finding is marked with', () => {
 })
 
 // The workspace header's chip strip: one chip per product in the load,
-// in a fixed order. The order is the point of most of these — a strip
-// that reshuffled when the sidebar loaded the same reports in another
-// order would read as a change in the data.
-describe('findingBrands — the producers a load carries', () => {
+// in a fixed order. Reads the REPORT records, so the fixtures here are
+// report-shaped (`{ source, groups }`) — `groups` is the nested
+// dedup-group list ingest.js builds, hence the extra array level.
+const rep = (source, ...findings) => ({ source, groups: findings.map((f) => [f]) })
+
+describe('loadedBrands — the producers a load carries', () => {
   it('names each distinct producer once', () => {
-    assert.deepEqual(findingBrands([
-      { _source: 'codex-security' },
-      { _source: 'codex-security' },
-      { _source: 'claude-security' },
+    assert.deepEqual(loadedBrands([
+      rep('codex-security', { _source: 'codex-security' }, { _source: 'codex-security' }),
+      rep('claude-security', { _source: 'claude-security' }),
     ]), ['claude-security', 'codex-security'])
   })
 
-  it('orders by the producer table, not by encounter', () => {
+  // The order is the point: a strip that reshuffled when the sidebar
+  // loaded the same reports in another order would read as a change in
+  // the data.
+  it('orders by the producer table, not by the order reports loaded', () => {
     const order = ['claude-security', 'codex-security', 'deepsec', 'piolium']
-    const findings = order.map((s) => ({ _source: s }))
-    assert.deepEqual(findingBrands(findings), order)
-    assert.deepEqual(findingBrands(findings.toReversed()), order, 'same strip either way round')
+    const reports = order.map((s) => rep(s, { _source: s }))
+    assert.deepEqual(loadedBrands(reports), order)
+    assert.deepEqual(loadedBrands(reports.toReversed()), order, 'same strip either way round')
+  })
+
+  // The review finding on #323. A report that parsed but found nothing
+  // is a loaded report — the header's file chip counts it — and its
+  // `source` survives on the record even with no finding to carry it.
+  // Reading findings alone said "no Codex pass here" about a Codex pass
+  // that ran and came back clean.
+  it('names a product whose pass found nothing', () => {
+    assert.deepEqual(loadedBrands([rep('codex-security')]), ['codex-security'])
+    assert.deepEqual(loadedBrands([
+      rep(null, { _source: null }, { _source: null }),
+      rep('piolium'),
+    ]), ['piolium'], 'beside a native dump that did find things')
+  })
+
+  // …and the converse: a report does not have to be of one product. A
+  // re-imported export carries a product's rows beside native ones,
+  // each stamped with its own marker, and the strip names both.
+  it('names a producer only its findings carry', () => {
+    assert.deepEqual(loadedBrands([
+      rep(null, { _source: 'deepsec' }, { _source: null }),
+    ]), ['deepsec'])
   })
 
   it('leaves DeepView out — it is the unmarked default', () => {
-    assert.deepEqual(findingBrands([{ _source: null }, {}, { _source: 'default' }]), [])
-    assert.deepEqual(findingBrands([{ _source: null }, { _source: 'deepsec' }]), ['deepsec'])
+    assert.deepEqual(loadedBrands([rep(null, { _source: null }, {}, { _source: 'default' })]), [])
+    assert.deepEqual(loadedBrands([rep('default'), rep(undefined)]), [], 'declared either way round')
+    assert.deepEqual(loadedBrands([rep(null, { _source: null }, { _source: 'deepsec' })]), ['deepsec'])
   })
 
   it('has nothing to say about an empty load', () => {
-    assert.deepEqual(findingBrands([]), [])
+    assert.deepEqual(loadedBrands([]), [])
+    assert.deepEqual(loadedBrands([rep(null)]), [], 'nor about an empty native dump')
   })
 
   it('ignores a marker with no artwork, which is no producer at all', () => {
-    assert.deepEqual(findingBrands([{ _source: 'zzz-unnamed' }, { _source: 'piolium' }]), ['piolium'])
+    assert.deepEqual(loadedBrands([
+      rep('zzz-unnamed', { _source: 'zzz-unnamed' }),
+      rep('piolium', { _source: 'piolium' }),
+    ]), ['piolium'])
   })
 
-  // `findingBrands` ranks a key the library's table doesn't name after
+  // `loadedBrands` ranks a key the library's table doesn't name after
   // the ones it does instead of dropping it. Nothing can reach that
   // branch while the two tables agree — which is the invariant asserted
   // here, and the one that would break if a brand were added to
@@ -196,15 +227,15 @@ describe('findingBrands — the producers a load carries', () => {
   it('has every drawable producer named by the library table', () => {
     const drawable = Object.keys(REPORT_LOGOS).filter((k) => k !== 'default')
     assert.ok(drawable.length >= 4, 'sanity: the producers with artwork')
-    assert.deepEqual(findingBrands(drawable.map((k) => ({ _source: k }))).toSorted(), drawable.toSorted(),
-      'every brand with a logo is a producer findingBrands reports')
+    assert.deepEqual(loadedBrands(drawable.map((k) => rep(k))).toSorted(), drawable.toSorted(),
+      'every brand with a logo is a producer loadedBrands reports')
     for (const k of drawable) assert.ok(PRODUCER_LABELS[k], `no producer name for the ${k} brand`)
   })
 
   it('has a producer name for every chip it asks for', () => {
-    const brands = findingBrands([
-      { _source: 'piolium' }, { _source: 'deepsec' },
-      { _source: 'codex-security' }, { _source: 'claude-security' },
+    const brands = loadedBrands([
+      rep('piolium'), rep('deepsec'),
+      rep('codex-security'), rep('claude-security'),
     ])
     assert.equal(brands.length, 4)
     for (const b of brands) assert.ok(PRODUCER_LABELS[b], `no producer name for ${b}`)
