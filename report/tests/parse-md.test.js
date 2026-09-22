@@ -765,3 +765,77 @@ describe('findMdLink — a malformed line is read once, not per bracket', () => 
     under(1000, text)
   })
 })
+
+// `## Reproduction steps` as a reader can follow it. Claude Security
+// sometimes writes a whole sequence as ONE list item with `N)` markers
+// run into its text, and a single step as a one-item list — neither of
+// which reads as a list, and neither of which is what the card should
+// print (parse-md.js normalizeStepList).
+describe('parseMarkdownFindings — reproduction steps', () => {
+  const repro = (section) => parseMarkdownFindings(
+    `# T\n\n## Details\nD.\n\n## Reproduction steps\n${section}\n\n---\n**Severity:** medium\n`,
+  ).findings[0].reproduction
+
+  it('splits a run-in enumeration into a step per line', () => {
+    assert.equal(
+      repro('1. 1) Save a payload 2) Restart the worker 3) Watch the log 4) Read the flag 6) Clean up'),
+      ['1. Save a payload', '2. Restart the worker', '3. Watch the log', '4. Read the flag', '6. Clean up'].join('\n'),
+    )
+  })
+
+  it('keeps the numbers the report gave the steps, gaps and all', () => {
+    // A `9)` behind a `4)` is the report's own count, and this text is
+    // printed as written — renumbering it would invent a sequence.
+    assert.equal(repro('1. 1) A 2) B 4) C 9) D'), '1. A\n2. B\n4. C\n9. D')
+  })
+
+  it('reads the enumeration whether or not an outer marker wraps it', () => {
+    for (const outer of ['1. ', '2. ', '- ', '* ', '']) {
+      assert.equal(repro(`${outer}1) A 2) B`), '1. A\n2. B', JSON.stringify(outer))
+    }
+  })
+
+  it('leaves a single step as prose, its marker gone', () => {
+    for (const one of ['1. Only step', '- Only step', '7. Only step', '1. 1) Only step', '1) Only step']) {
+      assert.equal(repro(one), 'Only step', one)
+    }
+  })
+
+  it('keeps prose, and a list that is already one', () => {
+    for (const kept of [
+      'Feed it a crafted file.',
+      '1. Do X.\n2. Watch Y.',
+      '- Do X.\n- Watch Y.',
+      '```\n1) A 2) B\n```',
+      '1. 1) Save 2) Restart\n\n2. 1) Again 2) More',
+    ]) {
+      assert.equal(repro(kept), kept, JSON.stringify(kept))
+    }
+  })
+
+  it('reads a number in parens as prose, not a marker', () => {
+    assert.equal(
+      repro('1. 1) Run `curl(1)` twice 2) Check (2) results 3) Done'),
+      '1. Run `curl(1)` twice\n2. Check (2) results\n3. Done',
+    )
+  })
+
+  it('leaves a sequence it cannot read alone', () => {
+    // Counting down, repeating a number, cut off mid-sequence, or no
+    // step at all: each is an enumeration, none is one to take apart.
+    // With or without an outer marker — where the sequence IS the item,
+    // the number it opens on is a step's, and unwrapping would drop it.
+    for (const odd of [
+      '1. 3) Later 2) Earlier', '3) Later 2) Earlier',
+      '1. 1) A 1) A', '1) A 1) A',
+      '1. 1) A 2)', '1) A 2)',
+      '1.',
+    ]) {
+      assert.equal(repro(odd), odd, JSON.stringify(odd))
+    }
+  })
+
+  it('keeps the lines under the item it rewrote', () => {
+    assert.equal(repro('1. 1) A 2) B\nTrailing prose.'), '1. A\n2. B\nTrailing prose.')
+  })
+})

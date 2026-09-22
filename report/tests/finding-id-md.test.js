@@ -289,3 +289,65 @@ describe('markdown finding ids — a path with brackets and parens', () => {
     assert.match(evidenced.evidence[0].url, /^https:\/\/github\.com\/org\/repo\/blob\//u)
   })
 })
+
+// The reproduction shapes the parser now reads, pinned by id.
+//
+// A report that writes its whole sequence as one run-in item, and one
+// that writes a single step as a one-item list, both reach the card as
+// steps a reader can follow. The uuids below were captured from the
+// parser BEFORE that reading existed, and the triage they key stays
+// where it is — which is not luck: the fingerprint is parse-md-id.js's
+// own parse of the raw block, and it reads `Reproduction:` exactly as
+// the report wrote it.
+describe('markdown finding ids — a run-in reproduction list', () => {
+  const REPORT = [
+    '# Worker restart replays the queue',
+    '',
+    '## Details',
+    'The queue is drained before the lock is taken.',
+    '',
+    '## Location',
+    '[src/queue.ts:88](https://github.com/o/r/blob/abc/src/queue.ts#L88)',
+    '',
+    '## Reproduction steps',
+    '1. 1) Enqueue a job 2) Restart the worker 3) Watch it run twice',
+    '',
+    '## Recommended fix',
+    'Take the lock first.',
+    '',
+    '---',
+    '**Severity:** high',
+    '**Repository:** o/r',
+    '',
+    '# Single step, written as a list',
+    '',
+    '## Details',
+    'One step is enough to see it.',
+    '',
+    '## Reproduction steps',
+    '1. Open the report with no session cookie.',
+    '',
+    '---',
+    '**Severity:** medium',
+  ].join('\n')
+
+  const BEFORE_THE_READING = [
+    '57da92f9-a851-46a5-a0bb-922e95fbb74e',
+    'ebe8f781-f1ca-4ccd-b256-7f9f9663812f',
+  ]
+
+  it('derives the golden ids', async () => {
+    assert.deepEqual(await idsOf(REPORT), BEFORE_THE_READING)
+  })
+
+  it('keys off the section as the report wrote it, not as the card reads it', () => {
+    const [runIn, single] = parseMarkdownFindings(REPORT).findings
+    assert.equal(runIn.reproduction, '1. Enqueue a job\n2. Restart the worker\n3. Watch it run twice')
+    assert.match(
+      runIn._idBasis.description,
+      /Reproduction: 1\. 1\) Enqueue a job 2\) Restart the worker 3\) Watch it run twice$/u,
+    )
+    assert.equal(single.reproduction, 'Open the report with no session cookie.')
+    assert.match(single._idBasis.description, /Reproduction: 1\. Open the report with no session cookie\.$/u)
+  })
+})
