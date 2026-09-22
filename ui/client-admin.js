@@ -917,6 +917,9 @@ class ManagedAdminRepos extends LitElement {
       await selectRepository(repo.id, active, this._csrf)
       if (!this.isConnected) return
       if (this._detail?.id === repo.id) this._detail = { ...this._detail, active }
+      if (this._data) {
+        this._data = { ...this._data, repositories: this._data.repositories.map((entry) => entry.id === repo.id ? { ...entry, active } : entry) }
+      }
       if (this._scope !== 'connected') await this._load()
     } catch (err) {
       const verb = active ? (repo.active === false ? 'reactivate' : 'add') : 'deactivate'

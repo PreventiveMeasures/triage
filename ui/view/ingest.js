@@ -718,12 +718,6 @@ export async function switchToManagedTeam(team, reportId = null) {
     if (loaded) loaded._managedReportId = selected[i].id
     if (isStaleLoad(gen)) return false
   }
-  if (selected.length === 0) {
-    showEmptyMainPane()
-  } else {
-    applyOpeningFilters(getShownGroups())
-    if (!(await renderAfterAnimationFrame(gen))) return false
-  }
   // Hydrate every report before the merged view becomes interactive. The
   // managed triage layer routes later edits by the per-report ids stamped
   // above, so overlapping findings are sent to a report that actually owns
@@ -731,9 +725,15 @@ export async function switchToManagedTeam(team, reportId = null) {
   if (selected.length > 0) {
     const { hydrateManagedReportTriage } = await import('./managed-triage.js')
     for (const entry of selected) {
-      await hydrateManagedReportTriage(entry.id)
+      await hydrateManagedReportTriage(entry.id, { renderView: false })
       if (isStaleLoad(gen)) return false
     }
+  }
+  if (selected.length === 0) {
+    showEmptyMainPane()
+  } else {
+    applyOpeningFilters(getShownGroups())
+    if (!(await renderAfterAnimationFrame(gen))) return false
   }
   await renderSidebar()
   return true

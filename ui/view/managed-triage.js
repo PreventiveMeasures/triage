@@ -259,7 +259,7 @@ export function resetManagedTriage() {
 // applyTriageEntries). Ids the server has never seen keep their local entry,
 // which the follow-up push carries up: the user's triage of those findings,
 // never uploaded. Pushes for the report wait for this to finish.
-export async function hydrateManagedReportTriage(reportId) {
+export async function hydrateManagedReportTriage(reportId, { renderView = true } = {}) {
   if (state.serverMode !== 'managed' || state.localMode === true || state.managedSession == null) return
   if (!activeManagedReports().some((report) => report.id === reportId)) return
   hydratedReports.delete(reportId)
@@ -290,8 +290,9 @@ export async function hydrateManagedReportTriage(reportId) {
     // surfaces (kanban, toolbar counts) that don't observe state.triage; the
     // save's notifier then pushes what the server hasn't seen.
     await saveTriage()
-    render()
-  } else {
-    scheduleTriagePush()
+    if (renderView) render()
   }
+  // Catch edits made while GET was pending even when no server entries
+  // changed. Team loading defers paint until every report has hydrated.
+  scheduleTriagePush()
 }

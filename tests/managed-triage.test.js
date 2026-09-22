@@ -11,6 +11,7 @@ const state = {
   serverMode: 'managed',
   managedSession: { role: 'triage', csrfToken: 'tok' },
   managedReport: null,
+  managedReports: [],
   reports: [],
   triage: new Map(),
 }
@@ -39,7 +40,7 @@ mock.module('../ui/view/client-managed.js', { namedExports: {
 } })
 mock.module('../ui/view/render.js', { namedExports: { render: () => { renders++ } } })
 mock.method(console, 'warn', () => {})
-const { hydrateManagedReportTriage, initManagedTriagePush } = await import('../ui/view/managed-triage.js')
+const { hydrateManagedReportTriage, initManagedTriagePush, resetManagedTriage } = await import('../ui/view/managed-triage.js')
 const { saveTriage } = await import('../client/index.js')
 
 mock.timers.enable({ apis: ['setTimeout'] })
@@ -65,7 +66,8 @@ const push = (id, entries) => ({ id, entries, csrfToken: 'tok' })
 
 beforeEach(async () => {
   await drain()
-  state.triage.clear(); state.reports = []; state.managedReport = null
+  resetManagedTriage()
+  state.triage.clear(); state.reports = []; state.managedReport = null; state.managedReports = []
   state.managedSession = { role: 'triage', csrfToken: 'tok' }
   saves = 0; renders = 0; calls = []; pushStatus = 200; serverEntries = {}
   initManagedTriagePush()
@@ -161,6 +163,53 @@ test('pushes wait for the report\'s GET; an edit made meanwhile goes up once it 
   await hydrating
   await drain()
   assert.deepEqual(pushes(), [push('B', { y: { color: 'red' } })])
+})
+
+test('merged team hydration can defer painting and routes edits to each report', async () => {
+  state.managedReports = [{ id: 'A' }, { id: 'B' }]
+  state.reports = [
+    { _managedReportId: 'A', groups: [[{ id: 'x' }]] },
+    { _managedReportId: 'B', groups: [[{ id: 'y' }]] },
+  ]
+  serverEntries = { A: { x: { triage: 'fixed' } }, B: { y: { color: 'red' } } }
+  await hydrateManagedReportTriage('A', { renderView: false })
+  await hydrateManagedReportTriage('B', { renderView: false })
+  assert.equal(renders, 0, 'no partially hydrated team is painted')
+  assert.equal(state.triage.get('x').triage, 'fixed')
+  assert.equal(state.triage.get('y').color, 'red')
+  await drain()
+  assert.deepEqual(pushes(), [], 'adopted entries are not echoed back')
+  await edit('x', { comment: 'first report' })
+  await edit('y', { comment: 'second report' })
+  await drain()
+  assert.deepEqual(pushes(), [
+    push('A', { x: { triage: 'fixed', comment: 'first report' } }),
+    push('B', { y: { color: 'red', comment: 'second report' } }),
+  ])
+})
+
+const hydrationCases = [false, true]
+hydrationCases.forEach((changed) => {
+  test(`a delayed team report queues edits after hydration (${changed ? 'changed' : 'unchanged'} server entries)`, async () => {
+    state.managedReports = [{ id: 'A' }, { id: 'B' }]
+    state.reports = [
+      { _managedReportId: 'A', groups: [[{ id: 'x' }]] },
+      { _managedReportId: 'B', groups: [[{ id: 'y' }, { id: 'z' }]] },
+    ]
+    await hydrateManagedReportTriage('A', { renderView: false })
+    let answer
+    serverEntries = () => new Promise((resolve) => { answer = resolve })
+    const hydrating = hydrateManagedReportTriage('B', { renderView: false })
+    await settle()
+    await edit('y', { color: 'red' })
+    await drain()
+    assert.deepEqual(pushes(), [], 'the second report waits for its own GET')
+    answer(changed ? { z: { triage: 'fixed' } } : {})
+    await hydrating
+    await drain()
+    assert.deepEqual(pushes(), [push('B', { y: { color: 'red' } })], 'no extra save is needed')
+    assert.equal(renders, 0)
+  })
 })
 
 test('a transient failure is retried with the next flush; a landed batch is not re-sent', async () => {
