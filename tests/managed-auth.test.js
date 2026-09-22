@@ -14,7 +14,7 @@ import { OAuthError, buildLoginRedirect, ensureUserAccessToken, handleCallback, 
 import { appJwt, collectRepos, githubAppConfigured, installUrl, listInstalledRepos, listUserRepos, mergeRepos, repoAccessToken } from '../server-managed/github-app.ts'
 import { bundleIntegrity } from '../server-managed/bundle.ts'
 import { filterReportContent } from '../common/managed/report-filter.ts'
-import { parseTriageEntryPatch } from '../common/managed/triage.ts'
+import { MAX_TRIAGE_HISTORY, parseTriageEntryPatch } from '../common/managed/triage.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 
 const config = {
@@ -1376,6 +1376,55 @@ test('db: finding triage — set/list by id, whole-entry upsert, null/empty tomb
   await db.close()
 })
 
+test('db: finding triage trail — one event per change, none for a no-op write, batches grouped, newest first', async () => {
+  const db = openSqliteManagedDb(':memory:')
+  const now = Date.now()
+  const alice = await db.upsertUser({ githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
+  const bob = await db.upsertUser({ githubUserId: 2, login: 'bob', name: null, avatarUrl: null }, now)
+
+  await db.setTriage('f1', { color: 'red' }, alice, 'alice', now)
+  // The same entry again is a no-op: no event, and the row keeps its writer + time.
+  await db.setTriage('f1', { color: 'red' }, bob, 'bob', now + 1)
+  assert.deepEqual((await db.listTriage(['f1'])).map((r) => [r.updatedByLogin, r.updatedAt]), [['alice', now]])
+  await db.setTriage('f1', { color: 'red', triage: 'fixed', flagged: false }, bob, 'bob', now + 2)
+  await db.setTriage('f1', null, alice, 'alice', now + 3)
+  const trail = await db.listTriageHistory('f1', 10)
+  assert.deepEqual(trail.map((e) => [e.actorLogin, e.at, e.color, e.triage, e.flagged]), [
+    ['alice', now + 3, null, null, null],
+    ['bob', now + 2, 'red', 'fixed', false],
+    ['alice', now, 'red', null, null],
+  ])
+  assert.ok(trail[0].seq > trail[1].seq && trail[1].seq > trail[2].seq, 'seq orders the trail')
+  assert.equal(new Set(trail.map((e) => e.batchId)).size, 3, 'single writes are their own batches')
+  // A batch shares one batch id across its changed entries; an unchanged one
+  // (f1 is already cleared) adds nothing.
+  await db.setTriageEntries([['f2', { fix: 'PR-1' }], ['f3', { comment: 'c' }], ['f1', null]], bob, 'bob', now + 4)
+  const [e2] = await db.listTriageHistory('f2', 10)
+  const [e3] = await db.listTriageHistory('f3', 10)
+  assert.equal(e2.batchId, e3.batchId)
+  assert.equal((await db.listTriageHistory('f1', 10)).length, 3)
+  assert.equal((await db.listTriageHistory('f1', 2)).length, 2, 'limit applies')
+  assert.deepEqual(await db.listTriageHistory('never', 10), [])
+  // Everything is kept by default: a writer changing a value past the read cap
+  // loses nothing — the read cap only pages what one call returns.
+  for (let i = 0; i < MAX_TRIAGE_HISTORY + 5; i++) await db.setTriage('f9', { comment: `v${i}` }, bob, 'bob', now + 10 + i)
+  const all = await db.listTriageHistory('f9', MAX_TRIAGE_HISTORY + 50)
+  assert.equal(all.length, MAX_TRIAGE_HISTORY + 5)
+  assert.equal(all.at(-1).comment, 'v0')
+  assert.equal((await db.listTriageHistory('f9', MAX_TRIAGE_HISTORY)).length, MAX_TRIAGE_HISTORY, 'the read cap pages')
+  await db.close()
+
+  // An operator-set retention limit keeps only the newest that many per
+  // finding, oldest trimmed first, other findings untouched.
+  const capped = openSqliteManagedDb(':memory:', { triageHistoryLimit: 3 })
+  const cid = await capped.upsertUser({ githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
+  for (let i = 0; i < 5; i++) await capped.setTriage('g', { comment: `v${i}` }, cid, 'alice', now + i)
+  await capped.setTriage('h', { comment: 'once' }, cid, 'alice', now)
+  assert.deepEqual((await capped.listTriageHistory('g', 10)).map((e) => e.comment), ['v4', 'v3', 'v2'])
+  assert.equal((await capped.listTriageHistory('h', 10)).length, 1)
+  await capped.close()
+})
+
 test('parseTriageEntryPatch: full/partial/null round-trip; malformed values are invalid', () => {
   // Full + partial patches pass through; empty strings count as absent.
   assert.deepEqual(parseTriageEntryPatch({ color: 'red', triage: 'fixed', comment: 'c', fix: 'PR-1', flagged: true }),
@@ -1586,5 +1635,26 @@ test('POST /api/reports/<id>/triage: CSRF + role/membership gating, validation, 
   // reader adopts the clear rather than mistaking it for never-set.
   assert.equal((await post(bCk, fx.bobSess.csrfToken, { entries: { own: null } })).statusCode, 200)
   assert.equal((await bobView()).own, null)
+
+  // The trail behind it: GET …/triage/history?finding=<id> is gated like the
+  // entries (401; 404 for a non-member; a stripped finding 404s; 400 without a
+  // finding) and lists bob's writes on 'own' newest first, attributed to him.
+  const H = (id, finding) => `/api/reports/${id}/triage/history${finding == null ? '' : `?finding=${encodeURIComponent(finding)}`}`
+  assert.equal((await send('GET', H(fx.reportId, 'own'), null)).statusCode, 401)
+  assert.equal((await send('GET', H(fx.reportId, 'own'), cookiePair(fx.erinSess.setCookie))).statusCode, 404)
+  assert.equal((await send('GET', H(fx.reportId, 'dep'), bCk)).statusCode, 404)
+  assert.equal((await send('GET', H(fx.reportId), bCk)).statusCode, 400)
+  assert.equal((await send('POST', H(fx.reportId, 'own'), bCk)).statusCode, 405)
+  const history = JSON.parse((await send('GET', H(fx.reportId, 'own'), bCk)).body)
+  assert.equal(history.finding, 'own')
+  assert.deepEqual(history.events.map((e) => [e.actorLogin, e.entry]), [
+    ['bob', null],
+    ['bob', { color: 'red', flagged: false }],
+    ['bob', { color: 'red' }], // the grouped-report write above
+  ])
+  assert.ok(history.events[0].seq > history.events[1].seq)
+  // The admin's write on 'dep' is in dep's trail — readable by the admin, not bob.
+  const depHistory = JSON.parse((await send('GET', H(fx.reportId, 'dep'), cookiePair(fx.adminSess.setCookie))).body)
+  assert.deepEqual(depHistory.events.map((e) => [e.actorLogin, e.entry]), [['alice', { color: 'gray' }]])
   await db.close()
 })

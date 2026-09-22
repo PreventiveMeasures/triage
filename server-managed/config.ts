@@ -43,6 +43,11 @@ export interface ManagedConfig {
   // archive). Bundles run larger than reports, so a higher cap (default 100 MiB,
   // matching the e2e objstore per-upload cap).
   maxBundleBytes: number
+  // How many triage-trail events to keep per finding (finding_triage_event):
+  // 0, the default, keeps everything — the trail is the record. An operator
+  // who would rather bound the store sets a positive count; older events of a
+  // finding are then trimmed as new ones land.
+  triageHistoryLimit: number
 }
 
 function fail(msg: string): never {
@@ -101,6 +106,7 @@ export function loadManagedConfig(): ManagedConfig {
     githubAppSlug: env['GITHUB_APP_SLUG'] ?? null,
     maxReportBytes: intEnv('MAX_REPORT_BYTES', 10_485_760, 1, 104_857_600),
     maxBundleBytes: intEnv('MAX_BUNDLE_BYTES', 104_857_600, 1, 1_073_741_824),
+    triageHistoryLimit: intEnv('TRIAGE_HISTORY_LIMIT', 0, 0, 1_000_000_000),
   }
 }
 

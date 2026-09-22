@@ -36,6 +36,11 @@ export const MAX_TRIAGE_ENTRIES = 200
 export const MAX_FINDING_ID = 100
 export const MAX_TRIAGE_BODY_BYTES = 262_144
 
+// The most trail events one history read returns (newest first). Retention is
+// the server's: everything is kept unless its TRIAGE_HISTORY_LIMIT says
+// otherwise.
+export const MAX_TRIAGE_HISTORY = 200
+
 export function isTriageBucket(x: unknown): x is TriageBucket {
   return typeof x === 'string' && (TRIAGE_BUCKETS as readonly string[]).includes(x)
 }
