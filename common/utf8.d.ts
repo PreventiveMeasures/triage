@@ -11,3 +11,6 @@
 // narrower declaration is safe.
 export function encodeUtf8(str: string): Uint8Array<ArrayBuffer>
 export function decodeUtf8(bytes: Uint8Array | ArrayBuffer | ArrayBufferView): string
+// Bytes `str` takes in UTF-8, measured without encoding when no character
+// is past \xFF. A lone surrogate counts as the U+FFFD it encodes to.
+export function utf8ByteLength(str: string): number

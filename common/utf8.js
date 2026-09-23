@@ -43,6 +43,28 @@ export function encodeUtf8(str) {
   return encoder.encode(str)
 }
 
+// The number of bytes `str` takes in UTF-8, without encoding it where
+// that can be helped. A string with no character past \xFF is Latin-1:
+// ASCII takes a byte and \x80-\xFF two, so its size is its length plus
+// its high characters. An engine stores such a string a byte per
+// character, where no character past \xFF can be, so the first test is
+// answered without reading it. Counting the high characters is a scan,
+// but a native one, and for ASCII it finds nothing. Only a string with a
+// wider character is encoded to be measured.
+//
+// This sizes text for display, so unlike `encodeUtf8` it does not refuse
+// a lone surrogate: it counts the U+FFFD that TextEncoder writes for one.
+export function utf8ByteLength(str) {
+  if (typeof str !== 'string') {
+    throw new TypeError(`utf8ByteLength expects a string, got ${typeof str}`)
+  }
+  // Code units, not code points: a `u` regexp reads a two-byte string by
+  // code point, several times slower, and a surrogate is past \xFF either way.
+  // eslint-disable-next-line require-unicode-regexp
+  if (!/[\u0100-\uFFFF]/.test(str)) return str.length + (str.match(/[\u0080-\u00FF]/gu)?.length ?? 0)
+  return encoder.encode(str).byteLength
+}
+
 export function decodeUtf8(bytes) {
   // Reject non-BufferSource so a missed destructure / optional field /
   // misnamed property surfaces here instead of silently defaulting to

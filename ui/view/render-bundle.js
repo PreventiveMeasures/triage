@@ -21,6 +21,7 @@ import { FILE_ICONS, REPORT_LOGOS, displayName, groupOf } from './file-display.j
 import { BUNDLE_ICON_SVG } from './icons.js'
 import { findingsForFileHash, indexedHashFindingCount, reportsForFinding, reportsForFindingByPackage, reportsForFindingByRepo, state } from '#client/index.js'
 import { SEVERITIES, SEVERITY_ORDER, formatBytes, formatRunMeta, stripCommonPathPrefix, titledDescription } from './format.js'
+import { utf8ByteLength } from '../../common/utf8.js'
 import { bundleFileKinds, bundleFileSizes, bundlePackageDirs, bundleSourceSizes, bundleSourcesAsMap } from './bundle-sources.js'
 import { bundleNeedsSources, bundleSourceLineCount, computeBundleFileHashes } from './bundle-metadata.js'
 import { bundleHasSbomComponents } from './sbom.js'
@@ -1367,7 +1368,7 @@ function renderBundleCodeView(details) {
 // the per-file findings.
 function renderBundleCodeMain(details, path, content, fileFindings, lineFindings) {
   const lineCount = typeof content === 'string' ? content.split('\n').length : 0
-  const byteSize = typeof content === 'string' ? new TextEncoder().encode(content).byteLength : 0
+  const byteSize = typeof content === 'string' ? utf8ByteLength(content) : 0
   const issueOrder = fileFindings
     .map((f, idx) => ({ idx, line: parseInt(f.line, 10) || 0 }))
     .toSorted((a, b) => a.line - b.line || a.idx - b.idx)
@@ -2367,7 +2368,7 @@ function renderBundleDetails(entry, details) {
     const sizeMap = bundleFileSizes(details)
     const sizes = details.sourceSizes ?? (sizeMap.size === sources.length
       ? sources.map((path) => sizeMap.get(path) ?? null)
-      : sources.map((_, i) => typeof json.sourcesContent?.[i] === 'string' ? new TextEncoder().encode(json.sourcesContent[i]).byteLength : null))
+      : sources.map((_, i) => typeof json.sourcesContent?.[i] === 'string' ? utf8ByteLength(json.sourcesContent[i]) : null))
     const extras = html`
       <dt>Version</dt><dd>${String(json.version ?? '?')}</dd>
       ${json.file ? html`<dt>Output</dt><dd class="mono">${json.file}</dd>` : nothing}

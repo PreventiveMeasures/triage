@@ -28,6 +28,7 @@
 // a new bundle kind or field handled here is visible to both.
 
 import { Bundle } from '@exodus/stasis-core/bundle'
+import { utf8ByteLength } from '../../common/utf8.js'
 
 const sourcesCache = new WeakMap()
 const filesCache = new WeakMap()
@@ -131,6 +132,16 @@ function base64ByteLength(text) {
   return Math.floor(data.length * 3 / 4)
 }
 
+// The byte size of one entry of `bundleFilesAsMap`, as `wc -c` reports it
+// in the terminal: text weighs the UTF-8 it encodes to, and a base64
+// declaration the bytes it decodes to — null when it decodes to none.
+// Anything else is no file, and null too. The Compare tab sizes both
+// bundles' files by this, so its totals are the Overview's.
+export function bundleFileByteLength(content) {
+  if (typeof content === 'string') return utf8ByteLength(content)
+  return content?.format === 'base64' ? base64ByteLength(content.data) : null
+}
+
 // Every path the bundle records, keyed to the byte size of the file it
 // holds — the size `wc -c` reports for it in the terminal, which is to
 // say the size of the entry in `bundleFilesAsMap`: a source or `resource`
@@ -151,14 +162,9 @@ export function bundleFileSizes(details) {
   const key = details?.bundle ?? details?.json
   if (key && sizesCache.has(key)) return sizesCache.get(key)
   const sizes = new Map()
-  const encoder = new TextEncoder()
   const files = bundleFilesAsMap(details)
   const paths = details?.kind === 'stasis' ? details.bundle?.sources.keys() : details?.json?.sources
-  for (const path of paths ?? []) {
-    const content = files.get(path)
-    sizes.set(path, typeof content === 'string' ? encoder.encode(content).byteLength
-      : content?.format === 'base64' ? base64ByteLength(content.data) : null)
-  }
+  for (const path of paths ?? []) sizes.set(path, bundleFileByteLength(files.get(path)))
   if (key) sizesCache.set(key, sizes)
   return sizes
 }

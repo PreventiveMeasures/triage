@@ -1,5 +1,6 @@
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { computeFileHash } from '../../report/index.js'
+import { utf8ByteLength } from '../../common/utf8.js'
 import { bundleFileSizes, bundleSourcesAsMap, bundleUnsizedFiles } from './bundle-sources.js'
 
 // Version 2 sizes every file by its bytes, resources included. A version 1
@@ -69,8 +70,7 @@ export async function createBundleMetadata(details) {
     result.json = { version, file, sourceRoot, sources }
     // Sourcemaps can repeat a path with different/absent content. Keep the
     // Overview's positional inventory, alongside the path-keyed graph index.
-    const encoder = new TextEncoder()
-    result.sourceSizes = sources.map((_, i) => typeof sourcesContent[i] === 'string' ? encoder.encode(sourcesContent[i]).byteLength : null)
+    result.sourceSizes = sources.map((_, i) => typeof sourcesContent[i] === 'string' ? utf8ByteLength(sourcesContent[i]) : null)
     result.namesCount = names?.length ?? null
   } else {
     const b = details.bundle
