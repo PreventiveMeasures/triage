@@ -199,7 +199,8 @@ export interface State {
   serverMode: ServerMode | 'standalone'
   // A managed server can be viewed in local mode for offline work. This is a
   // UI-only override: the server protocol remains managed, while the local
-  // report/workspace surfaces become available with sync kept off.
+  // report/workspace surfaces become available with sync kept off. Also marks
+  // the offline local fallback while the server protocol is unknown.
   localMode: boolean
   // Managed-mode entry points (login path + cookie name) when managed; null
   // for e2e.
@@ -958,6 +959,7 @@ export function setLocalMode(enabled: boolean): void {
 }
 
 export function clientModeLabel(): 'managed' | 'local' | 'e2e' | 'standalone' {
+  if (state.serverMode === 'standalone' && state.localMode) return 'local'
   if (state.serverMode !== 'managed') return state.serverMode
   return state.localMode ? 'local' : 'managed'
 }

@@ -4,7 +4,7 @@ import { test } from 'node:test'
 
 test('the vault overlay waits for mode detection, follows mode changes, and cancels local unlocks on exit', async (t) => {
   let decideMode
-  let modeReady = new Promise((resolve) => { decideMode = resolve })
+  const modeReady = new Promise((resolve) => { decideMode = resolve })
   let enabled = true, local = true, unlocked = false
   let onVaultChange
   let metadataReads = 0, wipes = 0
@@ -21,7 +21,7 @@ test('the vault overlay waits for mode detection, follows mode changes, and canc
     },
     wipeAllVaultData: () => { wipes++; return Promise.resolve() },
   } })
-  t.mock.module('../ui/view/sidebar.js', { namedExports: { ensureServerMode: () => modeReady } })
+  t.mock.module('../ui/view/sidebar.js', { namedExports: { ensureClientMode: () => modeReady } })
   // Minimal DOM event targets; exercise the real controller and handlers.
   // Chromium regressions separately check the painted overlay and navigation.
   class Element extends EventTarget {
@@ -48,16 +48,16 @@ test('the vault overlay waits for mode detection, follows mode changes, and canc
   await setImmediate()
   assert.equal(mounted, false, 'an unresolved mode never prompts for a local vault')
   assert.equal(metadataReads, 0)
-  decideMode(false)
+  decideMode()
   await setImmediate()
-  assert.equal(mounted, false, 'an inconclusive mode never prompts for the local vault')
-  assert.equal(metadataReads, 0)
+  assert.equal(mounted, true, 'offline local fallback still offers passkey unlock')
+  assert.equal(overlay.hidden, false)
+  const readsBeforeManaged = metadataReads
   local = false
-  modeReady = Promise.resolve(true)
   await onVaultChange()
   await setImmediate()
-  assert.equal(mounted, false, 'managed mode is usable with an enabled, locked local vault')
-  assert.equal(metadataReads, 0, 'managed mode never even consults local vault metadata')
+  assert.equal(overlay.hidden, true, 'managed mode is usable with an enabled, locked local vault')
+  assert.equal(metadataReads, readsBeforeManaged, 'managed mode never consults local vault metadata')
 
   const switchMode = async (isLocal) => {
     local = isLocal
@@ -67,7 +67,7 @@ test('the vault overlay waits for mode detection, follows mode changes, and canc
   await switchMode(true)
   assert.equal(mounted, true)
   assert.equal(overlay.hidden, false)
-  assert.equal(button.focusCount, 1)
+  assert.equal(button.focusCount, 2)
   button.dispatchEvent(new Event('click'))
   assert.equal(unlockSignal.aborted, false)
   await switchMode(false)

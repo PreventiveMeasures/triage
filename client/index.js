@@ -123,6 +123,7 @@ export {
   probeServerInfo,
   readCachedServerInfo,
   rememberStandaloneProbe,
+  waitForServerInfo,
   writeCachedServerInfo,
 } from './sync/server-mode.ts'
 

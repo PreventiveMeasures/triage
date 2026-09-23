@@ -19,7 +19,7 @@ import { html, render as litRender } from 'lit'
 import { disableEncryption, isEncryptionEnabled, isManagedUiMode, isPasskeyEnvironmentSupported, isUnlocked, migrateOpfsBundlesDecrypt, migrateOpfsFilesDecrypt, migrateSecureStorageToPlaintext, migrateTriageToPlaintext, onVaultStateChange } from '#client/index.js'
 import { openPasskeySetupDialog } from './dialogs/passkey-setup-dialog.js'
 import { openPasskeyUnlockDialog } from './dialogs/passkey-unlock-dialog.js'
-import { ensureServerMode } from './sidebar.js'
+import { ensureClientMode } from './sidebar.js'
 
 // Two lock glyphs, 16×16 viewbox at 13×13 render, stroke-width 1.4
 // (matching the hamburger). Follow Lucide's lock/unlock convention.
@@ -39,7 +39,8 @@ let button = null
 
 async function render() {
   if (!button) return
-  if (!await ensureServerMode() || isManagedUiMode()) {
+  await ensureClientMode()
+  if (isManagedUiMode()) {
     button.hidden = true
     return
   }
@@ -148,7 +149,8 @@ export function initEncryptionToggle(el) {
   // the right UX.
   let handlingClick = false
   button.addEventListener('click', async () => {
-    if (!await ensureServerMode() || isManagedUiMode()) return
+    await ensureClientMode()
+    if (isManagedUiMode()) return
     if (handlingClick) return
     handlingClick = true
     try {

@@ -1,7 +1,7 @@
 import { LitElement, html, render as litRender, nothing, unsafeCSS } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { LINKS_KIND, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, clientModeLabel, computeLinkHint, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, ensureLinkedFindingsIndexed, getCount, getPackagesIndex, getRepositoriesIndex, hasStandaloneProbeHint, hydrateSecureStorage, isManagedUiMode, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, probeServerInfo, readCachedServerInfo, reloadTriageFromStorage, rememberStandaloneProbe, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, setLocalMode, state, syncObservedAfterHydrate, writeCachedServerInfo } from '#client/index.js'
+import { LINKS_KIND, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, clientModeLabel, computeLinkHint, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, ensureLinkedFindingsIndexed, getCount, getPackagesIndex, getRepositoriesIndex, hasStandaloneProbeHint, hydrateSecureStorage, isManagedUiMode, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, probeServerInfo, readCachedServerInfo, reloadTriageFromStorage, rememberStandaloneProbe, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, setLocalMode, state, syncObservedAfterHydrate, waitForServerInfo, writeCachedServerInfo } from '#client/index.js'
 import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, setSyncForceDisabled, triageSync } from './client-sync.js'
 import { login as managedLogin, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams } from './client-managed.js'
 import { initManagedTriagePush, resetManagedTriage } from './managed-triage.js'
@@ -26,8 +26,8 @@ let root = null
 let fileList = null
 
 // A first visit has no cached protocol yet. Keep the welcome surface hidden
-// while /api/config resolves so a managed server never flashes the local
-// drop zone before it can paint its team landing page.
+// during the bounded startup probe so a prompt managed response paints its
+// team landing directly. An unavailable server releases the local surface.
 function setLandingModePending(pending) {
   const landing = document.querySelector('#drop-zone')
   if (!landing) return
@@ -431,7 +431,7 @@ const byReportName = (a, b) => displayName(a).localeCompare(displayName(b))
 // after every state transition that could change the file list, the
 // current selection, or the search query.
 export async function renderSidebar() {
-  if (!await ensureServerMode()) return
+  await ensureClientMode()
   const modeAtStart = clientModeLabel()
   updateManagedLanding({ serverMode: modeAtStart, session: state.managedSession, teams: state.managedTeams })
   if (isManagedUiMode()) {
@@ -749,7 +749,7 @@ async function onSidebarClick(e) {
       await hydrateSecureStorage()
       await reloadTriageFromStorage()
       syncObservedAfterHydrate()
-    }
+    } else void refreshManagedSession()
     document.dispatchEvent(new CustomEvent('managed-client-mode-change'))
     renderBrandTag()
     renderSyncStatus(triageSync.status)
@@ -1753,15 +1753,26 @@ function applyServerInfo(info) {
   // Clear any stale lock from a prior mismatch this session.
   triageSync.setProtocolLocked(false)
   const changed = state.serverMode !== info.mode
-  // A user can open a local report while a slow first probe is pending.
-  // Invalidate that load as well as clearing an already-rendered report.
-  if (changed && info.mode === 'managed') resetForClientModeTransition({ forgetLastView: false })
+  // After an offline fallback, a late managed response must keep the user in
+  // their local view. They can explicitly switch to managed via the mode tag.
+  if (changed && info.mode === 'managed' && !state.localMode) resetForClientModeTransition({ forgetLastView: false })
   state.serverMode = info.mode
   state.managed = info.managed
+  if (info.mode === 'e2e') setLocalMode(false)
+  setSyncForceDisabled(info.mode !== 'e2e')
   writeCachedServerInfo(info)
   renderSyncStatus(triageSync.status)
+  if (changed && info.mode === 'e2e' && syncButtonVisible() && triageSync.isEnabled()) {
+    // Report navigation during the offline fallback queued triage sessions,
+    // but skipped remote-presence opens. Resume those alongside triage once
+    // the protocol is known, without reloading or replacing the current view.
+    void loadSync().then((sync) => {
+      for (const session of sync.triageSync.openSessions) sync.openWorkspace(session.workspaceId)
+      return undefined
+    }).catch((err) => console.warn('sync: resume failed', err))
+  }
   if (changed) renderSidebar()
-  if (info.mode === 'managed') void refreshManagedSession()
+  if (isManagedUiMode()) void refreshManagedSession()
 }
 
 // Probe the managed server for the current session (lazy client/managed chunk)
@@ -1837,21 +1848,11 @@ document.addEventListener('managed-admin-navigate', (event) => {
 // tell us — so GET /api/config to learn it up front and feed the same
 // applyServerInfo path. Skipped once the mode is known (cached); the WS connect
 // frame (kept) then catches any later change.
-let serverModeDetection
-// Resolves true only with confirmed protocol information. Every boot consumer
-// must honor false: the provisional state.serverMode is not a local-data grant.
-export function ensureServerMode() {
-  return serverModeDetection ??= detectServerModeIfUnknown().then((confirmed) => {
-    document.querySelector('app-sidebar')?.toggleAttribute('inert', !confirmed)
-    if (!confirmed) {
-      const landing = document.querySelector('#drop-zone')
-      if (landing) {
-        landing.dataset.serverModeError = 'true'
-        landing.hidden = false
-      }
-    }
-    return confirmed
-  })
+let clientModeReady
+// Wait only until startup selects a usable surface: a confirmed server mode,
+// or offline local mode. Server availability never grants access to local data.
+export function ensureClientMode() {
+  return clientModeReady ??= detectServerModeIfUnknown().then(() => document.querySelector('app-sidebar')?.removeAttribute('inert'))
 }
 
 async function detectServerModeIfUnknown() {
@@ -1860,47 +1861,40 @@ async function detectServerModeIfUnknown() {
     // Another tab may have confirmed the mode since state.ts was evaluated.
     state.serverMode = cached.mode
     state.managed = cached.managed
-    return true
+    return
   }
   setLandingModePending(!hasStandaloneProbeHint())
-  // Reveal the landing after a while, but let the probe finish: e2e sync only
-  // loads once the mode is cached, so aborting a slow first probe would leave
-  // sync off for the whole session.
-  const revealLanding = () => {
-    setLandingModePending(false)
-    // Boot is waiting for the protocol before reading saved local state.
-    // Reveal only the empty landing while the request remains in flight.
-    const landing = document.querySelector('#drop-zone')
-    if (landing) landing.hidden = false
-  }
-  if (hasStandaloneProbeHint()) revealLanding()
-  const reveal = setTimeout(revealLanding, 3000)
-  let info
-  try {
-    info = await probeServerInfo()
-  }
-  finally { clearTimeout(reveal) }
+  const probe = probeServerInfo()
+  const info = await waitForServerInfo(probe, hasStandaloneProbeHint() ? 0 : 3000)
   // A sync frame or another tab may have confirmed the mode while pending.
   // Adopt it into state as well: the initial e2e default is not confirmation.
   const confirmed = readCachedServerInfo()
-  if (confirmed) { applyServerInfo(confirmed); return !state.serverModeMismatch }
-  if (info === 'standalone') {
-    rememberStandaloneProbe()
-    setLandingModePending(false)
-    // No /api/config → a backend-less (standalone) deployment: purely local, no
-    // sync. Runtime-only — deliberately NOT cached (a static host could gain a
-    // backend later) — and the e2e sync chunk is hard-disabled.
-    state.serverMode = 'standalone'
-    setSyncForceDisabled(true)
-    renderSyncStatus(triageSync.status)
-    renderSidebar()
-    return true
-  }
-  if (info) { applyServerInfo(info); return !state.serverModeMismatch }
-  // Failure to detect a protocol must not turn a managed deployment into a
-  // local one. Keep storage, vault prompts, and imports stopped; show a retry.
+  if (confirmed) { applyServerInfo(confirmed); return }
+  if (info && info !== 'standalone') { applyServerInfo(info); return }
+  // Unknown or unavailable server: open local data with synchronization off.
+  // Do not cache a guessed protocol or modify any saved sync preferences.
+  if (info === 'standalone') rememberStandaloneProbe()
+  state.serverMode = 'standalone'
+  setLocalMode(info === null)
+  setSyncForceDisabled(true)
   setLandingModePending(false)
-  return false
+  renderSyncStatus(triageSync.status)
+  renderSidebar()
+  // Keep a slow request alive. Learning the server's protocol later may enable
+  // e2e sync, but must not evict a local report or import it into managed mode.
+  if (info === null) {
+    void probe.then((lateInfo) => {
+      const latest = readCachedServerInfo() ?? lateInfo
+      if (latest === 'standalone') {
+        rememberStandaloneProbe()
+        setLocalMode(false)
+        renderSyncStatus(triageSync.status)
+        return renderSidebar()
+      }
+      if (latest) return applyServerInfo(latest)
+      return undefined
+    }).catch((err) => console.warn('server mode probe:', err))
+  }
 }
 
 // The account menu is a native popover (top layer); position it just above the
@@ -1950,7 +1944,7 @@ function mount(host) {
   triageSync.onServerInfo(applyServerInfo)
   // Cold start (mode not yet cached): probe GET /api/config so we detect a
   // managed server, which has no WS connect frame to announce itself.
-  void ensureServerMode()
+  void ensureClientMode()
   // If the cached mode is already managed, probe the session now so the auth
   // control paints logged-in/out without waiting for a connect frame.
   if (state.serverMode === 'managed') void refreshManagedSession()

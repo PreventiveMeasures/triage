@@ -13,7 +13,7 @@ import './view/frontend-install.js'
 import { dropZone, sidebar } from './view/dom.js'
 import { attachSharedWorkspace, extractFindingRef, extractShareEncoded, getSecureItem, hydrateSecureStorage, isDisablingInThisTab, isEncryptionEnabled, isManagedUiMode, isUnlocked, listFiles, listWorkspaces, onVaultStateChange, setTriageReloadNotifier, state, syncObservedAfterHydrate } from '#client/index.js'
 import { onAutoDownloaded, onBundleAutoDownloaded, onChange as onPresenceChange, setRedraw, triageSync } from './view/client-sync.js'
-import { ensureServerMode, renderSidebar } from './view/sidebar.js'
+import { ensureClientMode, renderSidebar } from './view/sidebar.js'
 import { BUNDLE_TABS, LAST_FILE_KEY, switchToFile, switchToWorkspace } from './view/ingest.js'
 import { openBundle, selectBundle } from './view/bundle-load.js'
 import { revealFinding } from './view/finding-link-nav.js'
@@ -259,7 +259,7 @@ async function handleFindingHashIfPresent() {
 let bootContinuationRan = false
 
 async function continueBoot() {
-  if (!await ensureServerMode()) return
+  await ensureClientMode()
   if (bootContinuationRan) return
   if (!isManagedUiMode() && isEncryptionEnabled() && !isUnlocked()) return
   bootContinuationRan = true
@@ -395,7 +395,7 @@ function scheduleReload(reason) {
   })
 }
 onVaultStateChange(async () => {
-  if (!await ensureServerMode()) return
+  await ensureClientMode()
   if (isManagedUiMode()) {
     render()
     return
@@ -463,7 +463,7 @@ window.addEventListener('hashchange', () => {
   // so a `true` return short-circuits the file-restore below — running
   // it would re-touch OPFS / state.* in a tab about to unload.
   if (await runLegacyOriginCheck()) return
-  if (!await ensureServerMode()) return
+  await ensureClientMode()
   lastSeenEnabled = !isManagedUiMode() && isEncryptionEnabled()
   try {
     // In WCO mode the sidebar header is the surface the OS controls

@@ -20,7 +20,7 @@ export { CONFIG_PATH }
 // (not per-URL): the cache reflects the protocol the local data set is bound
 // to, which is exactly what a future e2e↔managed migration would convert.
 export const SERVER_MODE_KEY = 'deepview.sync.serverInfo'
-// A landing-paint hint only: unlike ServerInfo it never binds a protocol or
+// A local-startup hint only: unlike ServerInfo it never binds a protocol or
 // skips the next probe, so a static deployment can gain a backend later.
 const STANDALONE_PROBE_KEY = 'deepview.sync.standaloneProbe'
 
@@ -58,6 +58,19 @@ export async function probeServerInfo(): Promise<ServerInfo | 'standalone' | nul
     if (res.status === 404) return 'standalone'
     return res.ok ? parseServerInfo(await res.json()) : null
   } catch { return null }
+}
+
+// Local data must remain available even if the server never answers. Bound
+// startup's wait without aborting the probe: a late answer can restore sync.
+export async function waitForServerInfo(probe: ReturnType<typeof probeServerInfo>, waitMs = 3000): ReturnType<typeof probeServerInfo> {
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      probe,
+      new Promise<null>((resolve) => { timeout = setTimeout(() => resolve(null), waitMs) }),
+    ])
+  } catch { return null }
+  finally { clearTimeout(timeout) }
 }
 
 export function readCachedServerInfo(): ServerInfo | null {

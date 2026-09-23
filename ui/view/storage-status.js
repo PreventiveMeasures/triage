@@ -31,7 +31,7 @@
 // rather than pretending the click can help.
 
 import { getStorageInfo, hasAnyBundles, isManagedUiMode, listFiles, onFileMutated, requestPersistentStorage } from '#client/index.js'
-import { ensureServerMode } from './sidebar.js'
+import { ensureClientMode } from './sidebar.js'
 import { openStoragePersistDialog, persistGrantFlavor } from './dialogs/storage-persist-dialog.js'
 
 // Set by `initStorageStatus(el)` once the sidebar has rendered the
@@ -128,7 +128,7 @@ function logRequestOutcome(granted, viaGesture) {
 }
 
 async function refreshStorageStatus() {
-  if (!await ensureServerMode()) return
+  await ensureClientMode()
   if (!button || isManagedUiMode()) { paint(); return }
   // Both halves of the paint predicate refresh together so the
   // banner can't show a stale combination (e.g. warn after the last

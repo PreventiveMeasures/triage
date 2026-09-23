@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import './_polyfills.js'
 
-import { SERVER_MODE_KEY, classifyServerMode, hasStandaloneProbeHint, parseServerInfo, probeServerInfo, readCachedServerInfo, rememberStandaloneProbe, writeCachedServerInfo } from '../client/sync/server-mode.ts'
+import { SERVER_MODE_KEY, classifyServerMode, hasStandaloneProbeHint, parseServerInfo, probeServerInfo, readCachedServerInfo, rememberStandaloneProbe, waitForServerInfo, writeCachedServerInfo } from '../client/sync/server-mode.ts'
 import { clientModeLabel, state } from '../client/state.ts'
 
 test('mode labels distinguish standalone, e2e, and both managed surfaces', (t) => {
@@ -12,7 +12,7 @@ test('mode labels distinguish standalone, e2e, and both managed surfaces', (t) =
   for (const local of [false, true]) {
     state.localMode = local
     state.serverMode = 'standalone'
-    assert.equal(clientModeLabel(), 'standalone')
+    assert.equal(clientModeLabel(), local ? 'local' : 'standalone')
     state.serverMode = 'e2e'
     assert.equal(clientModeLabel(), 'e2e')
     state.serverMode = 'managed'
@@ -89,6 +89,25 @@ test('mode probing distinguishes confirmed protocols and standalone from inconcl
       assert.equal(fetch.mock.callCount(), 1)
     })
   }
+})
+
+test('startup falls back locally after its wait budget without cancelling a late server response', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  let answer
+  const probe = new Promise((resolve) => { answer = resolve })
+  const startup = waitForServerInfo(probe)
+  t.mock.timers.tick(3000)
+  assert.equal(await startup, null, 'a hung server must release local startup')
+  answer({ mode: 'managed', managed: null })
+  assert.deepEqual(await probe, { mode: 'managed', managed: null }, 'the caller can still learn the protocol later')
+})
+
+test('startup uses prompt server answers and treats probe failures as a local fallback', async () => {
+  const managed = { mode: 'managed', managed: null }
+  assert.deepEqual(await waitForServerInfo(Promise.resolve(managed)), managed)
+  assert.equal(await waitForServerInfo(Promise.resolve('standalone')), 'standalone')
+  assert.equal(await waitForServerInfo(Promise.resolve(null)), null)
+  assert.equal(await waitForServerInfo(Promise.reject(new Error('unavailable'))), null)
 })
 
 test('classifyServerMode: first / match / mismatch', () => {

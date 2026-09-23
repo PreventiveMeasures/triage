@@ -7,7 +7,7 @@
 // unlock prompt.
 
 import { isEncryptionEnabled, isManagedUiMode, isPasskeyEnvironmentSupported, isUnlocked, onVaultStateChange, unlockEncryption, wipeAllVaultData } from '#client/index.js'
-import { ensureServerMode } from './sidebar.js'
+import { ensureClientMode } from './sidebar.js'
 
 let overlayEl = null
 let busy = false
@@ -153,8 +153,8 @@ function shouldShow() {
 async function render() {
   // On an uncached visit the default mode is e2e until detection completes.
   // Do not flash an unlock/wipe prompt over a managed landing in that window.
-  const confirmed = await ensureServerMode()
-  if (confirmed && shouldShow()) {
+  await ensureClientMode()
+  if (shouldShow()) {
     const el = ensureOverlay()
     el.hidden = false
     // Move focus to the unlock button so Enter triggers it. Done

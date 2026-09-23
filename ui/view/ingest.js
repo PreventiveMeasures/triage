@@ -8,7 +8,7 @@ import { applyOpeningFilters, resetFilters } from './filters.js'
 import { reportWorkspaceFor } from './finding-link.js'
 import { encodeReportLocation } from '../../client/report-location.js'
 import { configureReportRevalidation, render } from './render.js'
-import { ensureServerMode, navigateToAdminPage, renderSidebar } from './sidebar.js'
+import { ensureClientMode, navigateToAdminPage, renderSidebar } from './sidebar.js'
 import { cleanupGraph2, graph2 } from './graph/state.js'
 import { openBundle, prefetchBundleHashes, selectBundle } from './bundle-load.js'
 import { backfillFindingIds, detectFormat, inheritReportMeta, isAppFinding, parseCodexCsvToScans, readReport, repoDirectory, reportEntries, reportRepoGithub } from '../../report/index.js'
@@ -330,8 +330,8 @@ async function addFiles(files) {
   files = [...files]
   if (files.length === 0) return
   // The landing can appear while a slow /api/config request is still pending.
-  // Its timeout is only a display fallback, never permission to ingest locally.
-  if (!await ensureServerMode()) return
+  // Once startup selects managed or local mode, follow that mode's import path.
+  await ensureClientMode()
   // On a managed server the local (OPFS / "local storage") ingest path is
   // disabled: uploads belong server-side, via the admin "Manage reports" /
   // "Manage bundles" pages. So a drop / file-pick anywhere in the app chrome
@@ -1494,7 +1494,6 @@ function openFilePicker() {
 // Event-delegate via the drop-zone so the listener survives Lit
 // re-renders if the prompt template ever becomes a component.
 dropZone.addEventListener('click', (e) => {
-  if (e.target.closest('[data-retry-server-mode]')) { location.reload(); return }
   const managedPage = e.target.closest('[data-managed-page]')
   if (managedPage) { void navigateToAdminPage(managedPage.dataset.managedPage); return }
   if (e.target.closest('[data-managed-login]')) { void managedLogin(state.managed?.loginPath); return }

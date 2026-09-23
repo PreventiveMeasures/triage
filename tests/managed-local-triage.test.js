@@ -38,4 +38,8 @@ test('local triage waits for a local consumer and cannot hydrate a managed surfa
   state.localMode = false
   await pending
   assert.equal(state.triage.size, 0, 'a local read finishing after a mode switch cannot populate managed triage')
+  state.serverMode = 'standalone'
+  state.localMode = true
+  await triage.reloadTriageFromStorage()
+  assert.equal(state.triage.get('local-only').color, 'red', 'offline fallback restores annotations without a confirmed server protocol')
 })
