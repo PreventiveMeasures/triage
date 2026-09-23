@@ -305,3 +305,20 @@ it('balances a large file cycle without a dense matrix or quadratic ordering', (
   assert.ok(model.visibleCells.filter((cell) => cell.row < cell.col).length > count * 2.99, 'nearly all forward-flow imports should be above the diagonal')
   console.log(`Matrix ordering: 26k-file cyclic group ${Math.round(performance.now() - start)} ms`)
 })
+
+it('labels a vendored package by name, but keeps it apart from an npm package of that name', () => {
+  const model = buildDependencyMatrix({
+    nodes: [
+      { file: 'node_modules/log/index.js', pkg: 'log', size: 1 },
+      { file: 'vendor/log/src/lib.rs', pkg: 'vendor/log', size: 2 },
+      { file: 'vendor/console_log/src/lib.rs', pkg: 'vendor/console_log', size: 3 },
+    ],
+    importsOf: new Map([['vendor/console_log/src/lib.rs', ['vendor/log/src/lib.rs']]]),
+  })
+  const byPkg = new Map(model.rows.map((r) => [r.pkg, r]))
+  assert.equal(byPkg.get('vendor/console_log').label, 'console_log')
+  assert.equal(byPkg.get('vendor/log').label, 'log')
+  assert.equal(byPkg.get('log').label, 'log')
+  assert.equal(byPkg.get('vendor/log').size, 2, 'the two `log`s are separate rows')
+  assert.equal(byPkg.get('log').size, 1)
+})

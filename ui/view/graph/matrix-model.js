@@ -1,6 +1,7 @@
 // Sparse dependency matrix: O(files + imports) storage, never an N × N array.
 // Rows import columns. Expanded packages retain their external connections.
 import { orderCyclicGroup } from './matrix-order.js'
+import { pkgLabel } from '../bundle-pkg-of.js'
 
 export function stronglyConnected(ids, links) {
   const known = new Set(ids), reverse = new Map(ids.map((id) => [id, []]))
@@ -45,7 +46,7 @@ export function buildDependencyMatrix(graph, { expanded = new Set(), order = 'st
     const id = `${isFile ? 'f' : 'p'}:${isFile ? file.file : file.pkg}`
     if (!byId.has(id)) {
       byId.set(id, { id, pkg: file.pkg, file: isFile ? file.file : null,
-        label: isFile ? file.file : file.pkg === '__own__' ? 'own source' : file.pkg,
+        label: isFile ? file.file : pkgLabel(file.pkg),
         files: [], size: 0, issues: 0, incoming: 0, outgoing: 0 })
     }
     const row = byId.get(id)
