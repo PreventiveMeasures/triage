@@ -45,12 +45,17 @@ const TERMINAL_OPTIONS = {
 // The `cat ... | head -n 20` example uses the shortest path from
 // the bundle so it Just Works without the user having to invent a
 // real file name; skipped entirely when the bundle has no files.
+//
+// Both read text files only. A binary arrives as `{ format: 'base64',
+// data }`, which has no text to search — and no `.includes` to call —
+// and which `cat` declines to print.
 function bannerCommands(sources) {
   const symbol = pickSearchSymbol(sources)
   const cmds = ['ls', 'find /', `grep -r ${symbol} .`]
   if (!sources || sources.size === 0) return cmds
   let shortest = null
-  for (const key of sources.keys()) {
+  for (const [key, content] of sources) {
+    if (typeof content !== 'string') continue
     const p = stripLeading(key)
     if (shortest === null || p.length < shortest.length) shortest = p
   }
@@ -70,7 +75,7 @@ function pickSearchSymbol(sources) {
   if (!sources || sources.size === 0) return SEARCH_SYMBOLS[0]
   for (const symbol of SEARCH_SYMBOLS) {
     for (const content of sources.values()) {
-      if (content.includes(symbol)) return symbol
+      if (typeof content === 'string' && content.includes(symbol)) return symbol
     }
   }
   return SEARCH_SYMBOLS[0]
