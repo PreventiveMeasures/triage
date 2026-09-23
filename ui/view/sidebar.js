@@ -1837,11 +1837,16 @@ async function detectServerModeIfUnknown() {
   setLandingModePending(!hasStandaloneProbeHint())
   let status = 0
   let info = null
+  // Reveal the landing after a while, but let the probe finish: e2e sync only
+  // loads once the mode is cached, so aborting a slow first probe would leave
+  // sync off for the whole session.
+  const reveal = setTimeout(() => setLandingModePending(false), 3000)
   try {
-    const res = await fetch(CONFIG_PATH, { credentials: 'same-origin', headers: { accept: 'application/json' }, signal: AbortSignal.timeout(3000) })
+    const res = await fetch(CONFIG_PATH, { credentials: 'same-origin', headers: { accept: 'application/json' } })
     status = res.status
     if (res.ok) info = parseServerInfo(await res.json())
   } catch { /* offline / unreachable — stay on the default until a frame arrives */ }
+  finally { clearTimeout(reveal) }
   // A sync frame may have confirmed the mode while this probe was pending.
   if (readCachedServerInfo()) { setLandingModePending(false); return }
   if (info) { applyServerInfo(info); return }
