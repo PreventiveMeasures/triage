@@ -4474,6 +4474,8 @@ async function startFakeRelay(onConnection) {
   }
 }
 
+const PUSH_REMOTE_MAX_ATTEMPTS = 5
+
 async function pushRemoteChange(url, workspaceTag, seedB64, changeset) {
   // Open a fresh socket; we'll subscribe + save + close. Attach
   // the message listener BEFORE waiting for 'open' so the server's
@@ -4507,16 +4509,38 @@ async function pushRemoteChange(url, workspaceTag, seedB64, changeset) {
   ws.send(JSON.stringify({ type: 'workspace-subscribe', workspaceTag, from: null, signature: subSig }))
   await waitFor(() => buffered.some((m) => m.type === 'workspace-state'), 'remote subscribe chain')
 
-  // Use the latest revision id as `base` so the save lands cleanly.
-  const states = buffered.filter((m) => m.type === 'workspace-state')
-  const lastChain = states.flatMap((s) => s.revisions)
-  const base = lastChain.length > 0 ? lastChain.at(-1).id : null
+  // The save can lose a race: the session under test may land its own
+  // revision between our subscribe snapshot and our save. The server
+  // then answers `workspace-state` (the catch-up past our base) followed
+  // by `workspace-save-error{stale-base}` instead of an ack, so re-read
+  // the tip and save again, a bounded number of times. Any other error
+  // is thrown with the server's reason rather than left to time out.
+  try {
+    for (let attempt = 1; ; attempt++) {
+      // Use the latest revision id as `base` so the save lands cleanly:
+      // the subscribe snapshot, plus any broadcast or catch-up since.
+      const states = buffered.filter((m) => m.type === 'workspace-state')
+      const lastChain = states.flatMap((s) => s.revisions)
+      const base = lastChain.length > 0 ? lastChain.at(-1).id : null
 
-  const aad = cryptoMod.buildAad(workspaceTag, base)
-  const { nonce, ciphertext } = await cryptoMod.encryptJson(key, changeset, aad)
-  const payload = { publicKeyB64: workspaceTag, base, nonceB64: nonce, ciphertextB64: ciphertext }
-  const signature = await cryptoMod.signSavePayload(signingKey, payload)
-  ws.send(JSON.stringify({ type: 'workspace-save', workspaceTag, base, nonce, ciphertext, signature }))
-  await waitFor(() => buffered.some((m) => m.type === 'workspace-save-ack'), 'remote save ack')
-  ws.close()
+      const aad = cryptoMod.buildAad(workspaceTag, base)
+      const { nonce, ciphertext } = await cryptoMod.encryptJson(key, changeset, aad)
+      const payload = { publicKeyB64: workspaceTag, base, nonceB64: nonce, ciphertextB64: ciphertext }
+      const signature = await cryptoMod.signSavePayload(signingKey, payload)
+      const sentAt = buffered.length
+      ws.send(JSON.stringify({ type: 'workspace-save', workspaceTag, base, nonce, ciphertext, signature }))
+      const isOutcome = (m) => m.type === 'workspace-save-ack' || m.type === 'workspace-save-error'
+      await waitFor(() => buffered.slice(sentAt).some(isOutcome), 'remote save ack or error')
+      const outcome = buffered.slice(sentAt).find(isOutcome)
+      if (outcome.type === 'workspace-save-ack') break
+      if (outcome.reason !== 'stale-base') {
+        throw new Error(`pushRemoteChange: server rejected the save (reason: ${outcome.reason})`)
+      }
+      if (attempt === PUSH_REMOTE_MAX_ATTEMPTS) {
+        throw new Error(`pushRemoteChange: save still stale-base after ${attempt} attempts`)
+      }
+    }
+  } finally {
+    ws.close()
+  }
 }
