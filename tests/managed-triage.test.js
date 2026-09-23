@@ -68,6 +68,7 @@ beforeEach(async () => {
   await drain()
   resetManagedTriage()
   state.triage.clear(); state.reports = []; state.managedReport = null; state.managedReports = []
+  state.localMode = false
   state.managedSession = { role: 'triage', csrfToken: 'tok' }
   saves = 0; renders = 0; calls = []; pushStatus = 200; serverEntries = {}
   initManagedTriagePush()
@@ -210,6 +211,52 @@ hydrationCases.forEach((changed) => {
     assert.deepEqual(pushes(), [push('B', { y: { color: 'red' } })], 'no extra save is needed')
     assert.equal(renders, 0)
   })
+})
+
+test('a failed team hydration reports failure and a retry enables its edits', async () => {
+  state.managedReports = [{ id: 'A' }, { id: 'B' }]
+  state.reports = [
+    { _managedReportId: 'A', groups: [[{ id: 'x' }]] },
+    { _managedReportId: 'B', groups: [[{ id: 'y' }]] },
+  ]
+  assert.equal(await hydrateManagedReportTriage('A', { renderView: false }), true)
+  serverEntries = null
+  assert.equal(await hydrateManagedReportTriage('B', { renderView: false }), false)
+  await edit('y', { color: 'red' })
+  await drain()
+  assert.deepEqual(pushes(), [])
+  assert.equal(renders, 0)
+  serverEntries = {}
+  assert.equal(await hydrateManagedReportTriage('B', { renderView: false }), true)
+  await drain()
+  assert.deepEqual(pushes(), [push('B', { y: { color: 'red' } })])
+})
+
+test('a delayed triage response cannot hydrate a later visit to the same report', async () => {
+  let answer
+  serverEntries = () => new Promise((resolve) => { answer = resolve })
+  load('B', ['y'])
+  const hydrating = hydrateManagedReportTriage('B')
+  await settle()
+  resetManagedTriage()
+  load('B', ['y'])
+  answer({ y: { color: 'red' } })
+  assert.equal(await hydrating, false)
+  assert.equal(state.triage.size, 0)
+  assert.equal(renders, 0)
+})
+
+test('a triage response arriving in local mode is rejected', async () => {
+  let answer
+  serverEntries = () => new Promise((resolve) => { answer = resolve })
+  load('B', ['y'])
+  const hydrating = hydrateManagedReportTriage('B')
+  await settle()
+  state.localMode = true
+  answer({ y: { color: 'red' } })
+  assert.equal(await hydrating, false)
+  assert.equal(state.triage.size, 0)
+  assert.equal(renders, 0)
 })
 
 test('a transient failure is retried with the next flush; a landed batch is not re-sent', async () => {

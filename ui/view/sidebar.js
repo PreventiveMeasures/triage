@@ -3,8 +3,8 @@ import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { CONFIG_PATH, LINKS_KIND, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, clientModeLabel, computeLinkHint, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, ensureLinkedFindingsIndexed, getCount, getPackagesIndex, getRepositoriesIndex, hydrateSecureStorage, isManagedUiMode, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, parseServerInfo, readCachedServerInfo, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, setLocalMode, state, syncObservedAfterHydrate, writeCachedServerInfo } from '#client/index.js'
 import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, setSyncForceDisabled, triageSync } from './client-sync.js'
-import { fetchReport as fetchManagedReport, login as managedLogin, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams } from './client-managed.js'
-import { hydrateManagedReportTriage, initManagedTriagePush, resetManagedTriage } from './managed-triage.js'
+import { login as managedLogin, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams } from './client-managed.js'
+import { initManagedTriagePush, resetManagedTriage } from './managed-triage.js'
 import { loadAdminBundle } from './client-admin.js'
 import sidebarCSS from './sidebar.css'
 import fileIconCSS from '../styles/file-icon.css'
@@ -160,11 +160,6 @@ const GROUP_ORDER = ['default', 'claude-security', 'codex-security', 'deepsec', 
 // losing their search.
 let searchQuery = ''
 
-// Managed report fetches are server-backed and can finish after the user has
-// switched to the local surface. Increment this alongside the central view
-// reset so a late response cannot reopen a report from the previous mode.
-let clientModeTransition = 0
-
 function fileItemTemplate(n, opts = {}) {
   // Suppress the `current` highlight when the user is browsing the
   // bundles view — there's no active report in that mode, so
@@ -250,24 +245,9 @@ function teamReportTemplate(team, r) {
   </li>`
 }
 
-// Fetch a managed team report's content and render it in place via switchToFile
-// (which, given content, reads/writes no OPFS — the report is never cached).
-// Then claim the open-report slot + hydrate the server-side triage entries.
-let teamReportGen = 0
-async function openTeamReport(team, r) {
-  const gen = ++teamReportGen
-  const modeGen = clientModeTransition
-  const content = await fetchManagedReport(r.id)
-  if (gen !== teamReportGen || modeGen !== clientModeTransition || !isManagedUiMode()) return
-  if (content == null) { console.warn('managed: could not load team report', r.id); return }
-  const current = await switchToFile(r.filename, content)
-  if (!current || gen !== teamReportGen || modeGen !== clientModeTransition || !isManagedUiMode()) return
-  state.currentManagedTeam = team.id
-  state.managedReport = { id: r.id, filename: r.filename }
-  state.managedReports = [{ id: r.id, filename: r.filename }]
-  const loaded = state.reports.at(-1)
-  if (loaded) loaded._managedReportId = r.id
-  await hydrateManagedReportTriage(r.id)
+// Single and merged team reports share the same guarded load and triage gate.
+function openTeamReport(team, r) {
+  return switchToManagedTeam(team, r.id)
 }
 
 // Bundles are repository-owned scan inputs. A team member can see the bundle
@@ -760,7 +740,6 @@ async function onSidebarClick(e) {
     // exposes the e2e surface with sync forced off.
     if (state.serverMode !== 'managed') return
     const enteringLocal = !state.localMode
-    ++clientModeTransition
     resetManagedTriage()
     setLocalMode(enteringLocal)
     setSyncForceDisabled(true)

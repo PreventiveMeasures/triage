@@ -580,6 +580,13 @@ type SessionRow = {
 
 type UserRow = { id: string; login: string; name: string | null; role: Role; created: number; lastSeen: number; lastActivity: number | null }
 
+// Shared by listing, access checks, and permission aggregation. A team sees
+// reports rooted at its path or below it. Literal substring comparison keeps
+// separators, case, and SQL wildcard characters significant.
+const REPORT_IN_TEAM_PATH_SQL = `(tr.path IS NULL OR tr.path = ''
+  OR r.repo_directory = tr.path
+  OR substr(r.repo_directory, 1, length(tr.path) + 1) = tr.path || '/')`
+
 // Prepare every statement the store uses, returned as a bag the factory
 // destructures — keeps openSqliteManagedDb itself small (one place per query).
 function prepareStatements(db: DatabaseSync) {
@@ -772,7 +779,7 @@ function prepareStatements(db: DatabaseSync) {
       `SELECT tr.team_id AS teamId, r.id AS id, r.filename AS filename
          FROM team_user tu
          JOIN team_repo tr ON tr.team_id = tu.team_id
-         JOIN managed_report r ON r.repo_id = tr.repo_id
+         JOIN managed_report r ON r.repo_id = tr.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}
         WHERE tu.user_id = ? AND r.visible = 1
         ORDER BY r.uploaded_at DESC, r.filename ASC`,
     ),
@@ -788,20 +795,20 @@ function prepareStatements(db: DatabaseSync) {
         WHERE tu.user_id = ?
         ORDER BY b.uploaded_at DESC, b.filename ASC`,
     ),
-    // A report is readable by a user iff its repo is in one of that user's teams.
+    // A report is readable iff one of the user's team scopes contains it.
     selectReportReadableStmt: db.prepare(
       `SELECT 1 FROM managed_report r
-         JOIN team_repo tr ON tr.repo_id = r.repo_id
+         JOIN team_repo tr ON tr.repo_id = r.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}
          JOIN team_user tu ON tu.team_id = tr.team_id
         WHERE r.id = ? AND tu.user_id = ? LIMIT 1`,
     ),
     // The viewer's effective visibility permissions for a report: OR'd (MAX over
-    // 0/1) across the memberships of teams that hold the report's repo. NULLs
+    // 0/1) across memberships whose repository path contains the report. NULLs
     // (no such membership) read as 0 = no permission.
     selectReportPermsStmt: db.prepare(
       `SELECT MAX(tu.view_dependencies) AS dependencies, MAX(tu.view_security) AS security
          FROM managed_report r
-         JOIN team_repo tr ON tr.repo_id = r.repo_id
+         JOIN team_repo tr ON tr.repo_id = r.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}
          JOIN team_user tu ON tu.team_id = tr.team_id AND tu.user_id = ?
         WHERE r.id = ?`,
     ),

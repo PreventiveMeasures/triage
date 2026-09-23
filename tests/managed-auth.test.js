@@ -1210,6 +1210,68 @@ test('team reports: read iff admin, OR (>=view role AND in a team holding the re
   await db.close()
 })
 
+test('team paths gate report listings, reads, triage, and permission aggregation', async (t) => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const now = Date.now()
+  const adminSess = await createSession(config, db, { githubUserId: 1, login: 'admin', name: null, avatarUrl: null }, now)
+  const memberSess = await createSession(config, db, { githubUserId: 2, login: 'member', name: null, avatarUrl: null }, now)
+  const admin = (await readSession(config, db, cookiePair(adminSess.setCookie), now)).user
+  const member = (await readSession(config, db, cookiePair(memberSess.setCookie), now)).user
+  await db.setUserRole(member.id, 'triage')
+  await db.selectRepo({ repoId: 7, fullName: 'o/r', private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: admin.id }, now)
+  const team = randomUUID()
+  await db.createTeam(team, 'Scoped team', now)
+  await db.setTeamRepo(team, 7, 'packages/a')
+  await db.setTeamMember(team, member.id, { dependencies: false, security: false })
+  const reportStore = fakeBlobStore()
+  const directories = ['packages/a', 'packages/a/sub', 'packages/ab', 'packages/b', 'packages/A', 'packages', '', null, 'pkg/%_/child', 'pkg/xx/child']
+  const reportIds = []
+  for (const repoDirectory of directories) {
+    const id = randomUUID()
+    reportIds.push(id)
+    const content = Buffer.from(JSON.stringify({ source: 'native', findings: [{ id: 'own', file: 'src/a.js' }] }))
+    await db.insertReport({ id, filename: `${reportIds.length}.json`, contentType: 'application/json', byteSize: content.length, sha256: id, uploadedBy: admin.id, repoId: 7, repoDirectory, bundleId: null, bundleIntegrity: null, visible: true }, now)
+    await reportStore.put(id, content)
+  }
+  const { send, upload } = bundleHarness(db, config, reportStore)
+  const cookie = cookiePair(memberSess.setCookie)
+  const list = JSON.parse((await send('GET', '/api/teams', cookie)).body).teams
+  assert.deepEqual(list[0].reports.map((r) => r.id).toSorted(), reportIds.slice(0, 2).toSorted())
+  for (const [index, id] of reportIds.entries()) {
+    const allowed = index < 2
+    assert.equal(await db.userCanReadReport(member.id, id), allowed, `scope: ${directories[index]}`)
+    for (const suffix of ['', '/triage', '/triage/history?finding=own']) {
+      assert.equal((await send('GET', `/api/reports/${id}${suffix}`, cookie)).statusCode, allowed ? 200 : 404, `${directories[index]}${suffix}`)
+    }
+    const edit = await upload(`/api/reports/${id}/triage`, cookie, memberSess.csrfToken, JSON.stringify({ entries: { own: { comment: 'checked' } } }))
+    assert.equal(edit.statusCode, allowed ? 200 : 404)
+    assert.equal((await send('GET', `/api/reports/${id}`, cookiePair(adminSess.setCookie))).statusCode, 200, 'admins retain full access')
+  }
+  // A second team's wider permissions must not bleed into a sibling path.
+  const other = randomUUID()
+  await db.createTeam(other, 'Sibling team', now)
+  await db.setTeamRepo(other, 7, 'packages/b')
+  await db.setTeamMember(other, member.id, { dependencies: true, security: true })
+  assert.deepEqual(await db.reportPermissionsFor(member.id, reportIds[0]), { dependencies: false, security: false })
+  assert.deepEqual(await db.reportPermissionsFor(member.id, reportIds[3]), { dependencies: true, security: true })
+  await db.setTeamRepo(other, 7, 'packages/a/sub')
+  assert.deepEqual(await db.reportPermissionsFor(member.id, reportIds[0]), { dependencies: false, security: false })
+  assert.deepEqual(await db.reportPermissionsFor(member.id, reportIds[1]), { dependencies: true, security: true })
+  // Paths are literal and case-sensitive, including SQL wildcard characters.
+  await db.setTeamRepo(team, 7, 'pkg/%_')
+  const scoped = (await db.listTeamsForUser(member.id)).find((entry) => entry.id === team)
+  assert.deepEqual(scoped.reports.map((r) => r.id), [reportIds[8]])
+  assert.equal(await db.userCanReadReport(member.id, reportIds[9]), false)
+  await db.removeTeamRepo(other, 7)
+  // Both representations of a whole-repository scope include root reports.
+  for (const path of [null, '']) {
+    await db.setTeamRepo(team, 7, path)
+    assert.equal((await db.listTeamsForUser(member.id))[0].reports.length, directories.length)
+    for (const id of reportIds) assert.equal(await db.userCanReadReport(member.id, id), true)
+  }
+})
+
 test('filterReportContent: strips dependency + security findings per the viewer permissions', () => {
   const report = JSON.stringify({
     source: 'native',

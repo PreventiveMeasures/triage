@@ -2,7 +2,7 @@
 //
 // This deliberately does not implement managed auth, persistence, OAuth, or
 // report administration. It only advertises `mode: managed` and answers the
-// read requests the existing UI makes with deterministic fixture data. Run it
+// requests the UI makes with deterministic fixture data and in-memory triage. Run it
 // beside `node build.js serve`:
 //
 //   node server-managed/test-server.ts
@@ -13,6 +13,7 @@
 /* eslint-disable max-lines */
 import { type IncomingMessage, type ServerResponse, createServer } from 'node:http'
 import { DEFAULT_MANAGED_SCAN_MODEL, MANAGED_SCAN_MODELS } from '../common/managed/scan-models.ts'
+import { MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_ENTRIES, type TriageEntryPatch, parseTriageEntryPatch } from '../common/managed/triage.ts'
 
 const host = process.env['MANAGED_TEST_HOST'] ?? '127.0.0.1'
 const port = Number(process.env['MANAGED_TEST_PORT'] ?? 8766)
@@ -313,6 +314,46 @@ function sendText(res: ServerResponse, status: number, text: string): void {
   res.end(text)
 }
 
+const triage = new Map<string, TriageEntryPatch | null>()
+
+async function handleTriage(req: IncomingMessage, res: ServerResponse, id: string): Promise<void> {
+  const fixture = reportFixtures.find((report) => report.id === id)
+  if (!fixture) { sendJson(res, 404, { error: 'not-found' }); return }
+  const ids = new Set<string>(JSON.parse(fixture.content).findings.map((finding: { id: string }) => finding.id))
+  if (req.method === 'GET') {
+    sendJson(res, 200, { entries: Object.fromEntries([...triage].filter(([key]) => ids.has(key))) })
+    return
+  }
+  if (req.method !== 'POST') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
+  if (!['admin', 'manage', 'triage'].includes(role) || req.headers['x-csrf-token'] !== 'fixture-csrf-token') {
+    sendJson(res, 403, { error: 'forbidden' }); return
+  }
+  const chunks: Buffer[] = []
+  let bytes = 0
+  let entries: unknown
+  try {
+    for await (const chunk of req) {
+      const buffer = Buffer.from(chunk)
+      bytes += buffer.length
+      if (bytes > MAX_TRIAGE_BODY_BYTES) { sendJson(res, 413, { error: 'too-large' }); return }
+      chunks.push(buffer)
+    }
+    entries = JSON.parse(Buffer.concat(chunks).toString()).entries
+  } catch { sendJson(res, 400, { error: 'bad-body' }); return }
+  if (!entries || typeof entries !== 'object' || Array.isArray(entries) || Object.keys(entries).length > MAX_TRIAGE_ENTRIES) {
+    sendJson(res, 400, { error: 'bad-entries' }); return
+  }
+  const parsed = new Map<string, TriageEntryPatch | null>()
+  for (const [key, value] of Object.entries(entries)) {
+    if (!ids.has(key)) { sendJson(res, 404, { error: 'no-finding' }); return }
+    const entry = parseTriageEntryPatch(value)
+    if (entry === 'invalid') { sendJson(res, 400, { error: 'bad-entry' }); return }
+    parsed.set(key, entry)
+  }
+  for (const [key, value] of parsed) triage.set(key, value)
+  sendJson(res, 200, { ok: true })
+}
+
 function handle(req: IncomingMessage, res: ServerResponse): void {
   const url = new URL(req.url ?? '/', `http://${host}`)
   const method = req.method ?? 'GET'
@@ -342,6 +383,13 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
     return
   }
   if (url.pathname.startsWith('/api/reports/')) {
+    if (url.pathname.endsWith('/triage')) {
+      const id = decodeURIComponent(url.pathname.slice('/api/reports/'.length, -'/triage'.length))
+      void handleTriage(req, res, id).catch(() => {
+        if (!res.headersSent) sendJson(res, 500, { error: 'triage-failed' })
+      })
+      return
+    }
     if (method !== 'GET') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
     const id = decodeURIComponent(url.pathname.slice('/api/reports/'.length))
     const report = reports.get(id)

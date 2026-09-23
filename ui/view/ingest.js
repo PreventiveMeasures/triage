@@ -1,4 +1,3 @@
-import { render as litRender, nothing } from 'lit'
 import { adoptRepoUrlFor, analyzeContent, computeLinkHint, deleteBundle, deleteFile, deleteWorkspace, dropBundleFromHashIndex, getSecureItem, isManagedUiMode, listBundles, listFiles, listWorkspaces, loadRepoUrlFor, parseLinkedFindings, pruneOrphanTriage, readFile, readFileBytes, removeCount, removeSecureItem, saveBundle, saveFile, saveRepoUrlFor, setBundleWorkspace, setCount, setReportWorkspace, setSecureItem, state, triageLoadPromise } from '#client/index.js'
 import { closeWorkspace as closePresence, deleteBundleFromRemote, deleteFromRemote as deletePresence, isInRemoteOrCached, openWorkspace as openPresence, putFile, triageSync } from './client-sync.js'
 import { openImportConflictDialog } from './dialogs/import-conflict-dialog.js'
@@ -112,13 +111,12 @@ function closeSessionsExcept(keepIds) {
 // user moved. `clearActiveView` below is the bigger hammer (it drops
 // the selection too) and paints through here.
 //
-// Findings go via Lit rather than `report.innerHTML = ''` so the
-// cached parts on `#report` (slot reuse holds them across renders)
-// get cleaned up with the DOM — a bare innerHTML wipe would leave the
-// next render() walking a stale part-cache.
+// render.js owns #report's child containers imperatively and renders Lit
+// inside those containers. Remove the containers themselves so their views
+// disconnect; rendering Lit's `nothing` at #report would leave them mounted.
 function showEmptyMainPane() {
   report.classList.remove('active')
-  litRender(nothing, report)
+  report.replaceChildren()
   dropZone.classList.remove('hidden')
 }
 
@@ -501,9 +499,8 @@ async function addFiles(files) {
 // `content` skips a redundant OPFS read (drop path passes it through).
 // Resolves true when this load is what ended up on screen — every other
 // exit (a newer switch took over, the read failed, a recovery flow
-// re-entered) resolves undefined, so a caller that must act on ITS
-// load (the managed team-report opener claims a slot keyed by report
-// id, not by the file name a local report may share) can tell.
+// re-entered) resolves undefined, so callers can distinguish completion
+// from a cancelled or failed load.
 export async function switchToFile(name, content, { workspaceId } = {}) {
   const gen = ++loadGen
   state.currentManagedTeam = null
@@ -538,8 +535,7 @@ export async function switchToFile(name, content, { workspaceId } = {}) {
   state.currentFile = name
   state.currentWorkspace = null
   state.currentLinks = null
-  // Drop the managed open-report slot — openTeamReport re-claims it after its
-  // own switchToFile, so any other switch stops the server triage push.
+  // Local file navigation leaves the managed report scope.
   state.managedReport = null
   state.managedReports = []
   // Switching to a regular report drops out of the bundles / packages
@@ -693,6 +689,14 @@ export async function switchToManagedTeam(team, reportId = null) {
     return false
   }
   closeSessionsExcept(new Set())
+  // Replace the previous report's controls while the new view is loading.
+  // No partially hydrated findings may remain interactive during the awaits.
+  const loading = document.createElement('p')
+  loading.setAttribute('role', 'status')
+  loading.textContent = 'Loading report triage…'
+  report.replaceChildren(loading)
+  report.classList.add('active')
+  dropZone.classList.add('hidden')
   state.currentView = 'findings'
   state.reports = []
   clearMergedGroups()
@@ -724,9 +728,15 @@ export async function switchToManagedTeam(team, reportId = null) {
   // them instead of silently posting them to the first report only.
   if (selected.length > 0) {
     const { hydrateManagedReportTriage } = await import('./managed-triage.js')
+    if (isStaleLoad(gen)) return false
     for (const entry of selected) {
-      await hydrateManagedReportTriage(entry.id, { renderView: false })
+      const hydrated = await hydrateManagedReportTriage(entry.id, { renderView: false })
       if (isStaleLoad(gen)) return false
+      if (!hydrated) {
+        await goHome()
+        showToast('Could not load report triage. Open the team or report again to retry.')
+        return false
+      }
     }
   }
   if (selected.length === 0) {

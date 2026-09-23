@@ -258,19 +258,24 @@ export function resetManagedTriage() {
 // carries a triage bucket (the triage⊻ignore mutex, mirroring
 // applyTriageEntries). Ids the server has never seen keep their local entry,
 // which the follow-up push carries up: the user's triage of those findings,
-// never uploaded. Pushes for the report wait for this to finish.
+// never uploaded. Pushes for the report wait for this to finish. Returns true
+// only when the server state was adopted and this is still the active view.
 export async function hydrateManagedReportTriage(reportId, { renderView = true } = {}) {
-  if (state.serverMode !== 'managed' || state.localMode === true || state.managedSession == null) return
-  if (!activeManagedReports().some((report) => report.id === reportId)) return
+  const reports = state.reports
+  const isCurrent = () => state.serverMode === 'managed' && state.localMode !== true
+    && state.managedSession != null && state.reports === reports
+    && activeManagedReports().some((report) => report.id === reportId)
+  if (!isCurrent()) return false
   hydratedReports.delete(reportId)
   // Whatever is still pending goes first, and lands before the server copy is
   // read — so an edit made moments ago is what "server wins" then confirms,
   // not what it reverts.
   flushPending()
   await flushChain
+  if (!isCurrent()) return false
   const entries = await fetchReportTriage(reportId)
   // Bail when the fetch failed or the user already navigated elsewhere.
-  if (entries == null || !activeManagedReports().some((report) => report.id === reportId)) return
+  if (entries == null || !isCurrent()) return false
   let changed = false
   const reportFindingIds = findingIdsForManagedReport(reportId)
   for (const id of reportFindingIds) {
@@ -290,9 +295,11 @@ export async function hydrateManagedReportTriage(reportId, { renderView = true }
     // surfaces (kanban, toolbar counts) that don't observe state.triage; the
     // save's notifier then pushes what the server hasn't seen.
     await saveTriage()
+    if (!isCurrent()) return false
     if (renderView) render()
   }
   // Catch edits made while GET was pending even when no server entries
   // changed. Team loading defers paint until every report has hydrated.
   scheduleTriagePush()
+  return true
 }

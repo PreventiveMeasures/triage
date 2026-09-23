@@ -10,6 +10,7 @@ import { attachedBundle, bundleSource, focusCodePosition } from './focus-code.js
 import { samePos } from './focus-code-history.js'
 import { FILE_ICONS, PRODUCER_LABELS, REPORT_LOGOS, displayName, findingBrand, groupOf } from './file-display.js'
 import { CLAUDE_MARK_PATH } from './icons.js'
+import { findingLinkFor } from './finding-link.js'
 
 // All `<finding-row>` / `<finding-card>` shadow-DOM markup is built
 // here as Lit `html` template results (no `unsafeHTML`). Lit
@@ -938,7 +939,6 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = 
   // workspace's surrounding row context, so reserve the chip for the
   // larger card/details surfaces.
   const reportChip = context === 'table' ? nothing : reportChipTemplate(activeTab)
-  const activeKey = tabKey(activeTab)
   const activeEntry = triageEntry(activeTab)
   const disabled = !canTriageFinding(activeTab)
   const activeColor = activeEntry?.color ?? null
@@ -962,10 +962,9 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = 
   // THIS finding (handler in events.js; resolution in
   // view/finding-link.js). Suppressed for a session-local numeric id:
   // those are handed out by an in-memory counter and re-assigned on the
-  // next load, so the link would point somewhere else — better no
-  // affordance than one that quietly rots. Sits next to Copy, the other
-  // "take this with you" action.
-  const linkBtn = isLinkableFindingId(activeKey)
+  // next load. Managed reports also wait for a server-aware link resolver.
+  // Sits next to Copy, the other "take this with you" action.
+  const linkBtn = findingLinkFor(activeTab)
     ? html`<button type="button" class="mark-link" data-tooltip="Copy a link to this finding" aria-label="Copy a link to this finding">${LINK_ICON}${showActionLabels ? html`<span class="mark-btn-label">Link</span>` : nothing}</button>`
     : nothing
   // GitHub-issue link — a plain anchor (no JS handoff) to GitHub's

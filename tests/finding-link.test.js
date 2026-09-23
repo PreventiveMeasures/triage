@@ -360,6 +360,8 @@ function makeFinding(id, extra = {}) {
 // Every filter neutralised (the `matchesFilters` pass-through state)
 // plus the view/selection fields `unhideFinding` writes.
 function reset(groups = []) {
+  state.serverMode = 'e2e'
+  state.localMode = false
   state.reports = [{ fileName: 'security.json', groups }]
   state.workspaceMerges = []
   state.currentFile = 'security.json'
@@ -397,6 +399,17 @@ function reset(groups = []) {
 
 describe('finding deep links — building a link for a finding', () => {
   beforeEach(() => reset())
+
+  it('suppresses managed links while preserving links in the local surface', () => {
+    const finding = makeFinding(UUID_A)
+    state.serverMode = 'managed'
+    state.currentWorkspace = 'managed-team:example'
+    assert.equal(findingLinkFor(finding), null)
+    state.currentWorkspace = null
+    assert.equal(findingLinkFor(finding), null, 'single managed reports also lack a server link resolver')
+    state.localMode = true
+    assert.equal(extractFindingRef(findingLinkFor(finding)).id, UUID_A)
+  })
 
   it('carries the hint for the finding\'s own report', async () => {
     const reportName = uniqueName('linked')
