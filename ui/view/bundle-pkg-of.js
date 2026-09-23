@@ -28,14 +28,21 @@
 // (from `bundlePackageDirs` in bundle-sources.js), when one is known.
 // It takes precedence over path heuristics: a module can contain its own
 // `dependencies/` directory without those files becoming new packages.
-// Recorded `node_modules/<pkg>` directories use the bare package name;
-// other named module directories stay separate, and `.` uses own-source
-// bucketing. Only bundles without this metadata use the path heuristic.
+// Recorded `node_modules/<pkg>` directories use the bare package name.
+// So do vendored ones, named by the path after the (last) `vendor/`:
+// `cargo vendor` puts a crate at `vendor/<crate>`, Composer a package at
+// `vendor/<vendor>/<pkg>`, Go a module at `vendor/<module path>`, and in
+// each the rest of the path is what the package is called. Other named
+// module directories stay separate under their full dir, and `.` uses
+// own-source bucketing. Only bundles without this metadata use the path
+// heuristic.
 export function bundlePkgOf(path, { splitOwnDirs = true, packageDir = null } = {}) {
   if (packageDir) {
     if (packageDir !== '.') {
       const npm = packageDir.match(/(?:^|\/)node_modules\/(@[^/]+\/[^/]+|[^/]+)$/u)
-      return npm && npm[1] !== '.pnpm' ? npm[1] : packageDir
+      if (npm && npm[1] !== '.pnpm') return npm[1]
+      const vendored = packageDir.match(/^(?:.*\/)?vendor\/(.+)$/u)
+      return vendored ? vendored[1] : packageDir
     }
   } else {
     const re = /(?:^|\/)(?:node_modules|dependencies)\/(@[^/]+\/[^/]+|[^/]+)/gu

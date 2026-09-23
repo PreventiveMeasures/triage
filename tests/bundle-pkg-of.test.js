@@ -71,17 +71,36 @@ describe('bundlePkgOf', () => {
   })
 
   describe('stasis packageDir (workspace packages)', () => {
-    it('buckets a workspace-package file by its package dir', () => {
+    it('buckets a vendored package by its package dir, named as its ecosystem names it', () => {
       // PHP `vendor/<vendor>/<pkg>` — the heuristic alone would
-      // collapse both under the shared `vendor` top-level dir.
+      // collapse both under the shared `vendor` top-level dir. The
+      // bucket is Composer's own name for each, not the dir.
       assert.equal(
         bundlePkgOf('vendor/aws/aws-sdk-php/src/S3/S3Client.php', { packageDir: 'vendor/aws/aws-sdk-php' }),
-        'vendor/aws/aws-sdk-php',
+        'aws/aws-sdk-php',
       )
       assert.equal(
         bundlePkgOf('vendor/aws/aws-crt-php/src/AWS.php', { packageDir: 'vendor/aws/aws-crt-php' }),
-        'vendor/aws/aws-crt-php',
+        'aws/aws-crt-php',
       )
+    })
+
+    it('names a `cargo vendor` crate by the crate, not by `vendor/<crate>`', () => {
+      assert.equal(bundlePkgOf('vendor/console_log/src/lib.rs', { packageDir: 'vendor/console_log' }), 'console_log')
+      assert.equal(bundlePkgOf('vendor/solana-program/src/lib.rs', { packageDir: 'vendor/solana-program' }), 'solana-program')
+      // A second version of a crate is vendored beside the first under a
+      // versioned dir; it stays its own package.
+      assert.equal(bundlePkgOf('vendor/syn-1.0.109/src/lib.rs', { packageDir: 'vendor/syn-1.0.109' }), 'syn-1.0.109')
+    })
+
+    it('names a Go vendored module by its module path, and a nested one by the innermost', () => {
+      assert.equal(bundlePkgOf('vendor/github.com/pkg/errors/errors.go', { packageDir: 'vendor/github.com/pkg/errors' }), 'github.com/pkg/errors')
+      assert.equal(bundlePkgOf('app/vendor/x/vendor/y/y.go', { packageDir: 'app/vendor/x/vendor/y' }), 'y')
+    })
+
+    it('takes `vendor` only as a whole segment with a package under it', () => {
+      assert.equal(bundlePkgOf('crates/vendor-tools/src/lib.rs', { packageDir: 'crates/vendor-tools' }), 'crates/vendor-tools')
+      assert.equal(bundlePkgOf('vendor/lib.rs', { packageDir: 'vendor' }), 'vendor')
     })
 
     it('keeps sibling workspace packages under a shared parent separate', () => {
