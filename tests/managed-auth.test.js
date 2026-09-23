@@ -1502,10 +1502,77 @@ test('repository removal skips report parsing when keeping triage and preserves 
   assert.equal(JSON.parse(kept.body).deletedTriage, 0)
   assert.deepEqual(reads, [], 'keeping triage never reads report blobs')
   assert.equal((await db.listTriage([shared, exclusive])).length, 2)
+  assert.equal((await db.listTriageHistory(shared, 10)).length, 1, 'keeping triage also keeps history')
+  assert.equal((await db.listTriageHistory(exclusive, 10)).length, 1)
   const deleted = await remove(8, true)
   assert.equal(deleted.statusCode, 200)
   assert.equal(JSON.parse(deleted.body).deletedTriage, 1)
   assert.deepEqual((await db.listTriage([shared, exclusive])).map((entry) => entry.findingId), [exclusive])
+  assert.deepEqual(await db.listTriageHistory(shared, 10), [], 'permanent deletion removes the trail')
+  assert.equal((await db.listTriageHistory(exclusive, 10)).length, 1, 'unrelated history remains')
+})
+
+test('repository paths: overlong team scopes, embedded headers, upload headers, and location edits are rejected', async (t) => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const now = Date.now()
+  const session = await createSession(config, db, { githubUserId: 1, login: 'admin', name: null, avatarUrl: null }, now)
+  await db.selectRepo({ repoId: 7, fullName: 'o/r', private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: session.userId }, now)
+  const teamId = randomUUID()
+  await db.createTeam(teamId, 'Scoped', now)
+  const { upload } = bundleHarness(db)
+  const cookie = cookiePair(session.setCookie)
+  const post = (path, body, headers) => upload(path, cookie, session.csrfToken, JSON.stringify(body), headers)
+  const boundary = 'a/'.repeat(249) + 'aa'
+  assert.equal((await post('/api/admin/teams/set-repo', { teamId, repoId: 7, path: boundary })).statusCode, 200)
+  const created = await post('/api/admin/reports', { findings: [] }, { 'x-repo-id': '7', 'x-repo-directory': boundary })
+  assert.equal(created.statusCode, 201)
+  const reportId = JSON.parse(created.body).id
+  for (const directory of [boundary + 'x', boundary + 'y']) {
+    assert.equal((await post('/api/admin/teams/set-repo', { teamId, repoId: 7, path: directory })).statusCode, 400)
+    assert.equal((await post('/api/admin/reports', { repo: { github: 'o/r', directory }, findings: [] })).statusCode, 400)
+    assert.equal((await post('/api/admin/reports', { findings: [] }, { 'x-repo-id': '7', 'x-repo-directory': directory })).statusCode, 400)
+    assert.equal((await post('/api/admin/reports/set-repo', { reportId, repoId: 7, directory })).statusCode, 400)
+  }
+  assert.equal((await db.listReports()).length, 1, 'invalid uploads create no report rows')
+  assert.equal((await db.getReport(reportId)).repoDirectory, boundary, 'invalid edits preserve the original location')
+  assert.equal((await db.listTeams())[0].repos[0].path, boundary, 'invalid scope edits preserve the original team scope')
+})
+
+test('repository removal deletes exclusive triage history and keeps shared history across rescans', async (t) => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const now = Date.now()
+  const session = await createSession(config, db, { githubUserId: 1, login: 'admin', name: null, avatarUrl: null }, now)
+  const repo = (repoId) => ({ repoId, fullName: `o/r${repoId}`, private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: session.userId })
+  for (const repoId of [7, 8]) await db.selectRepo(repo(repoId), now)
+  const { send, upload } = bundleHarness(db)
+  const cookie = cookiePair(session.setCookie)
+  const exclusive = randomUUID(), shared = randomUUID()
+  const uploadReport = (repoId, ids) => upload('/api/admin/reports', cookie, session.csrfToken,
+    JSON.stringify({ findings: ids.map((id) => ({ id, file: 'a.js', description: 'Finding' })) }), { 'x-repo-id': String(repoId) })
+  await uploadReport(7, [exclusive, shared])
+  const retained = JSON.parse((await uploadReport(8, [shared])).body).id
+  for (const id of [exclusive, shared]) {
+    await db.setTriage(id, { comment: 'Private discussion', fix: 'PR-1' }, session.userId, 'admin', now)
+    await db.setTriage(id, null, session.userId, 'admin', now + 1)
+  }
+  const response = await upload('/api/admin/repositories/remove', cookie, session.csrfToken,
+    JSON.stringify({ repoId: 7, fullName: 'o/r7', acknowledge: true, deleteTriage: true }))
+  assert.equal(response.statusCode, 200)
+  assert.equal(JSON.parse(response.body).deletedTriage, 1)
+  assert.deepEqual(await db.listTriageHistory(exclusive, 10), [], 'history is deleted even if the latest annotation was cleared')
+  const history = async (reportId, finding) => {
+    const result = await send('GET', `/api/reports/${reportId}/triage/history?finding=${finding}`, cookie)
+    assert.equal(result.statusCode, 200)
+    return JSON.parse(result.body).events
+  }
+  const sharedHistory = await history(retained, shared)
+  assert.equal(sharedHistory.length, 2, 'retained reports keep their shared history')
+  await db.selectRepo(repo(7), now + 2)
+  const rescan = JSON.parse((await uploadReport(7, [exclusive, shared])).body).id
+  assert.deepEqual(await history(rescan, exclusive), [], 'a future report cannot expose deleted comments or actors')
+  assert.deepEqual(await history(rescan, shared), sharedHistory)
 })
 
 test('teams API: admin gating, create (409 dup), repo/member links + perms, CSRF', async () => {
@@ -1661,6 +1728,33 @@ test('db: finding triage trail — one event per change, none for a no-op write,
   assert.deepEqual((await capped.listTriageHistory('g', 10)).map((e) => e.comment), ['v4', 'v3', 'v2'])
   assert.equal((await capped.listTriageHistory('h', 10)).length, 1)
   await capped.close()
+})
+
+test('db: permanent triage deletion rolls back current rows if history deletion fails', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'managed-triage-delete-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const path = join(dir, 'managed.sqlite')
+  const db = openSqliteManagedDb(path)
+  t.after(() => db.close())
+  await db.setTriage('deleted', { comment: 'Must be atomic' }, null, 'writer', 100)
+  await db.setTriage('retained', { fix: 'Keep this' }, null, 'writer', 101)
+  await db.setTriage('history-only', { comment: 'Legacy history' }, null, 'writer', 102)
+  const raw = new DatabaseSync(path)
+  t.after(() => raw.close())
+  // Reproduce a legacy orphan and inject a failure in the second DELETE.
+  raw.exec("DELETE FROM finding_triage WHERE finding_id = 'history-only'")
+  raw.exec(`CREATE TRIGGER fail_history_delete BEFORE DELETE ON finding_triage_event
+    BEGIN SELECT RAISE(ABORT, 'test history deletion failure'); END`)
+  assert.throws(() => db.deleteTriage(['deleted']), /test history deletion failure/u)
+  assert.equal((await db.listTriage(['deleted'])).length, 1, 'the first DELETE is rolled back')
+  assert.equal((await db.listTriageHistory('deleted', 10)).length, 1)
+  raw.exec('DROP TRIGGER fail_history_delete')
+  assert.equal(await db.deleteTriage(['deleted', 'deleted', 'history-only']), 1, 'the count describes current annotations, not event rows')
+  assert.deepEqual(await db.listTriageHistory('deleted', 10), [])
+  assert.deepEqual(await db.listTriageHistory('history-only', 10), [])
+  assert.equal((await db.listTriage(['retained'])).length, 1)
+  assert.equal((await db.listTriageHistory('retained', 10)).length, 1)
+  assert.equal(await db.deleteTriage([]), 0)
 })
 
 test('parseTriageEntryPatch: full/partial/null round-trip; malformed values are invalid', () => {

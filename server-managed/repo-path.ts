@@ -4,8 +4,8 @@ const MAX_TEAM_PATH = 500
 // repo: trim, drop control chars, fold both separators, drop empty + '.'
 // segments, and REJECT any '..' segment so the subpath can't escape the repo
 // subtree once the (later) data plane reads from it. `{ ok:false }` = traversal
-// (the handler 400s); `{ path:null }` = the whole repo. Result is '/'-joined and
-// length-capped.
+// or an oversized normalized path (the handler 400s); `{ path:null }` = the
+// whole repo. Never truncate paths used for authorization comparisons.
 export function normalizeTeamPath(raw: unknown): { ok: true; path: string | null } | { ok: false } {
   if (typeof raw !== 'string') return { ok: true, path: null }
   let cleaned = ''
@@ -20,7 +20,7 @@ export function normalizeTeamPath(raw: unknown): { ok: true; path: string | null
     if (seg === '..') return { ok: false }
     segments.push(seg)
   }
-  const path = segments.join('/').slice(0, MAX_TEAM_PATH)
+  const path = segments.join('/')
+  if (path.length > MAX_TEAM_PATH) return { ok: false }
   return { ok: true, path: path === '' ? null : path }
 }
-

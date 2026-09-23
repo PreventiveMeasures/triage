@@ -55,12 +55,13 @@ test('legacy report migration preserves scoped access from blob headers without 
   assert.equal((await db.getReport(ids[0])).repoDirectory, 'new/location', 'reopening never overwrites already-migrated metadata')
 })
 
-for (const failure of ['missing', 'malformed']) {
+for (const failure of ['missing', 'malformed', 'oversized directory']) {
   test(`legacy report migration rolls back and retries after a ${failure} blob is repaired`, async (t) => {
     const { path, store, userId, ids } = await legacyDatabase(t)
     const bytes = await store.get(ids[1])
     if (failure === 'missing') await store.delete(ids[1])
-    else await store.put(ids[1], Buffer.from('not a report'))
+    else if (failure === 'malformed') await store.put(ids[1], Buffer.from('not a report'))
+    else await store.put(ids[1], Buffer.from(JSON.stringify({ repo: { github: 'o/r', directory: 'a/'.repeat(249) + 'aaa' }, findings: [] })))
     assert.throws(() => openSqliteManagedDb(path))
     const raw = new DatabaseSync(path)
     assert.ok(!raw.prepare('PRAGMA table_info(managed_report)').all().some((c) => c.name === 'repo_directory'), 'failed migration must not be mistaken for a completed upgrade')

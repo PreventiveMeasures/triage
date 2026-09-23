@@ -499,6 +499,8 @@ export interface ManagedDb {
   listBundlesForRepo(repoId: number): Promise<RepoDataItem[]>
   deleteReportsForRepo(repoId: number): Promise<number>
   deleteBundlesForRepo(repoId: number): Promise<number>
+  // Permanently delete current annotations AND their history atomically.
+  // Returns the number of current rows removed (not the number of events).
   deleteTriage(findingIds: readonly string[]): Promise<number>
   // Reports ("Manage reports"). insertReport records an uploaded report's
   // metadata (bytes are written to the blob-store separately); listReports joins
@@ -652,6 +654,7 @@ function prepareStatements(db: DatabaseSync) {
     deleteReportsForRepoStmt: db.prepare(`DELETE FROM managed_report WHERE repo_id = ?`),
     deleteBundlesForRepoStmt: db.prepare(`DELETE FROM managed_bundle WHERE repo_id = ?`),
     deleteTriageStmt: db.prepare(`DELETE FROM finding_triage WHERE finding_id IN (SELECT value FROM json_each(?))`),
+    deleteTriageHistoryStmt: db.prepare(`DELETE FROM finding_triage_event WHERE finding_id IN (SELECT value FROM json_each(?))`),
     selectReposStmt: db.prepare(
       `SELECT repo_id AS repoId, full_name AS fullName, is_private AS priv,
               installation_id AS installId, default_branch AS branch, html_url AS htmlUrl,
@@ -854,7 +857,7 @@ type RepoRow = {
 // within the per-function line budget. Closes over its prepared statements.
 function selectedRepoMethods(stmts: ReturnType<typeof prepareStatements>) {
   const { upsertRepoStmt, deleteRepoStmt, deactivateRepoStmt, reactivateRepoStmt, selectReposStmt, selectAllReposStmt,
-    selectReportsForRepoStmt, selectBundlesForRepoStmt, deleteReportsForRepoStmt, deleteBundlesForRepoStmt, deleteTriageStmt } = stmts
+    selectReportsForRepoStmt, selectBundlesForRepoStmt, deleteReportsForRepoStmt, deleteBundlesForRepoStmt } = stmts
   const readRepo = (r: RepoRow): SelectedRepo => ({
     repoId: r.repoId, fullName: r.fullName, private: r.priv === 1,
     installationId: r.installId, defaultBranch: r.branch, htmlUrl: r.htmlUrl,
@@ -900,10 +903,6 @@ function selectedRepoMethods(stmts: ReturnType<typeof prepareStatements>) {
     },
     deleteBundlesForRepo(repoId: number): Promise<number> {
       return Promise.resolve(Number(deleteBundlesForRepoStmt.run(repoId).changes))
-    },
-    deleteTriage(findingIds: readonly string[]): Promise<number> {
-      if (findingIds.length === 0) return Promise.resolve(0)
-      return Promise.resolve(Number(deleteTriageStmt.run(JSON.stringify(findingIds)).changes))
     },
   }
 }
@@ -985,7 +984,8 @@ type TriageEventDbRow = TriageStateDbRow & { seq: number; findingId: string; bat
 // stands neither re-stamps the writer nor echoes into the trail. `historyLimit`
 // > 0 keeps only that many events per finding; 0 keeps everything.
 function triageMethods(db: DatabaseSync, stmts: ReturnType<typeof prepareStatements>, historyLimit: number) {
-  const { upsertTriageStmt, selectTriageStmt, selectTriageStateStmt, insertTriageEventStmt, trimTriageEventsStmt, selectTriageHistoryStmt } = stmts
+  const { upsertTriageStmt, selectTriageStmt, selectTriageStateStmt, insertTriageEventStmt, trimTriageEventsStmt, selectTriageHistoryStmt,
+    deleteTriageStmt, deleteTriageHistoryStmt } = stmts
   function writeEntry(findingId: string, entry: TriageEntryPatch | null, batchId: string, updatedBy: string | null, updatedByLogin: string | null, now: number): void {
     const e = entry ?? {}
     // `flagged: false` is a real value (the explicit un-flag tombstone), so it
@@ -1002,6 +1002,20 @@ function triageMethods(db: DatabaseSync, stmts: ReturnType<typeof prepareStateme
     if (historyLimit > 0) trimTriageEventsStmt.run(findingId, findingId, historyLimit)
   }
   return {
+    deleteTriage(findingIds: readonly string[]): Promise<number> {
+      if (findingIds.length === 0) return Promise.resolve(0)
+      const ids = JSON.stringify(findingIds)
+      db.exec('BEGIN')
+      try {
+        const deleted = Number(deleteTriageStmt.run(ids).changes)
+        deleteTriageHistoryStmt.run(ids)
+        db.exec('COMMIT')
+        return Promise.resolve(deleted)
+      } catch (err) {
+        try { db.exec('ROLLBACK') } catch {}
+        throw err
+      }
+    },
     listTriageHistory(findingId: string, limit: number): Promise<TriageEventRow[]> {
       const rows = selectTriageHistoryStmt.all(findingId, limit) as TriageEventDbRow[]
       return Promise.resolve(rows.map((r) => ({
