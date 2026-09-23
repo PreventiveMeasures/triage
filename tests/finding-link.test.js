@@ -59,7 +59,7 @@ const { saveFile } = await import('../client/storage.js')
 const { upsertWorkspace } = await import('../client/workspaces.js')
 const { decodeReportLocation, encodeReportLocation } = await import('../client/report-location.js')
 const { getItem: getSecureItem, setItem: setSecureItem, hydrate: hydrateSecureStorage } = await import('../client/secure-storage.js')
-const { locateLinkedFinding } = await import('../ui/view/finding-link-route.js')
+const { locateLinkedFinding, locateReportFinding } = await import('../ui/view/finding-link-route.js')
 const { deriveFindingId } = await import('../report/index.js')
 const { findGroupById, getMergedGroups, groupKey, sortTabs } = await import('../ui/view/group.js')
 const { configureRevalidation } = await import('../ui/view/format.js')
@@ -366,6 +366,9 @@ function reset(groups = []) {
   state.workspaceMerges = []
   state.currentFile = 'security.json'
   state.currentWorkspace = null
+  state.currentManagedTeam = null
+  state.currentManagedReport = null
+  state.managedTeams = []
   state.currentReportWorkspace = null
   state.currentView = 'findings'
   state.viewMode = 'table'
@@ -396,6 +399,76 @@ function reset(groups = []) {
   state.upstreamOnly = false
   configureRevalidation(true)
 }
+
+describe('finding report chips — managed navigation', () => {
+  const name = 'same-name.json'
+  const team = { id: 'team', reports: [{ id: 'first', filename: name }, { id: 'second', filename: name }] }
+  const noLocal = () => assert.fail('managed report chips must not open local storage')
+  beforeEach(() => {
+    reset([[makeFinding(UUID_A)]])
+    state.serverMode = 'managed'
+    state.currentManagedTeam = team.id
+    state.currentWorkspace = `managed-team:${team.id}`
+    state.managedTeams = [team]
+  })
+
+  it('opens the exact server report even when filenames and finding IDs overlap', async () => {
+    await saveFile(name, JSON.stringify({ findings: [makeFinding(UUID_A, { description: 'Unrelated local report' })] }))
+    const hit = await locateReportFinding(UUID_A, name, 'second', {
+      openReport: noLocal,
+      openManagedReport: (selectedTeam, reportId) => {
+        assert.equal(selectedTeam.id, team.id)
+        assert.equal(reportId, 'second')
+        state.currentWorkspace = null
+        state.currentManagedReport = reportId
+        state.currentFile = name
+        state.reports = [{ fileName: name, _managedReportId: reportId,
+          groups: [[makeFinding(UUID_A, { description: 'Managed second report' })]] }]
+        return true
+      },
+    })
+    assert.equal(hit.finding.description, 'Managed second report')
+  })
+
+  it('does not fall back to a loaded or local copy on missing identity, lost access, or failed hydration', async () => {
+    for (const reportId of [null, 'removed', 'second']) {
+      assert.equal(await locateReportFinding(UUID_A, name, reportId, {
+        openReport: noLocal,
+        openManagedReport: () => false,
+      }), null)
+    }
+  })
+
+  it('ignores navigation superseded by a mode or report change', async () => {
+    for (const destination of ['local', 'other-report']) {
+      state.localMode = false
+      state.currentManagedReport = null
+      state.currentWorkspace = `managed-team:${team.id}`
+      assert.equal(await locateReportFinding(UUID_A, name, 'second', {
+        openReport: noLocal,
+        openManagedReport: () => {
+          state.currentWorkspace = null
+          state.currentManagedReport = destination === 'local' ? 'second' : 'first'
+          state.localMode = destination === 'local'
+          return true
+        },
+      }), null)
+    }
+  })
+
+  it('rejects a stale managed chip in local mode and preserves local report navigation', async () => {
+    state.localMode = true
+    assert.equal(await locateReportFinding(UUID_A, name, 'second', { openReport: noLocal }), null)
+    const hit = await locateReportFinding(UUID_A, name, null, {
+      openReport: (reportName) => {
+        assert.equal(reportName, name)
+        state.currentWorkspace = null
+        state.currentFile = reportName
+      },
+    })
+    assert.equal(hit.finding.id, UUID_A)
+  })
+})
 
 describe('finding deep links — building a link for a finding', () => {
   beforeEach(() => reset())

@@ -2,7 +2,7 @@ import { html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { bundleFilePath, bundlesForFileHash, duplicatesOf, encodeFindingRef, isLinkableFindingId, isPlaceholderNpmPackage, reportsForFindingId, state } from '#client/index.js'
+import { bundleFilePath, bundlesForFileHash, duplicatesOf, encodeFindingRef, isLinkableFindingId, isManagedUiMode, isPlaceholderNpmPackage, reportsForFindingId, state } from '#client/index.js'
 import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayFindingId, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, githubRefLabel, hasSeverityCorrection, isHttpUrl, lineRange, listSegments, locationLabel, markdownLinkToken, parseCommentRefs, revalidateStamp, revalidationShown, shortFindingId, snippetWindow, splitDescription, stripExportMarker } from './format.js'
 import { activeTabFor, canTriageFinding, findingRepo, findingRepoTarget, groupKey, groupState, groupTabsByLevel, scopedTriage, sortTabs, tabKey, tabTriage, triageEntry, triageScope, triageTabs } from './group.js'
 import { highlightedCode } from './code-highlight.js'
@@ -920,9 +920,11 @@ function reportChipTemplate(finding) {
   if (!state.currentWorkspace) return nothing
   const reportName = finding._reportName
   if (!reportName) return nothing
+  if (isManagedUiMode() && !finding._managedReportId) return nothing
   const logo = REPORT_LOGOS[groupOf(reportName)] ?? REPORT_LOGOS.default
   return html`<button type="button" class="report-chip report-button"
     data-links-report=${reportName} data-links-finding=${tabKey(finding)}
+    data-managed-report=${isManagedUiMode() ? finding._managedReportId : nothing}
   >${unsafeHTML(logo)}<span class="report-chip-label report-button-label">${displayName(reportName)}</span></button>`
 }
 

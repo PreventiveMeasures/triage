@@ -6,6 +6,10 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Readable } from 'node:stream'
 import { createVerify, generateKeyPairSync, randomUUID } from 'node:crypto'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 
 import { hashToken, randomToken, safeEqual } from '../server-managed/crypto.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
@@ -77,6 +81,61 @@ test('crypto: random tokens are unique 43-char base64url; hashing is determinist
   assert.ok(safeEqual('abc', 'abc'))
   assert.ok(!safeEqual('abc', 'abd'))
   assert.ok(!safeEqual('abc', 'ab'))
+})
+
+test('last seen: session activity is independent of identity, role, and token updates', async (t) => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const now = 1_000_000
+  const user = { githubUserId: 42, login: 'octocat', name: null, avatarUrl: null }
+  const userId = await db.upsertUser(user, now)
+  const lastSeen = async () => (await db.listUsers()).find((u) => u.id === userId).lastSeenAt
+  assert.equal(await lastSeen(), null, 'creating an identity alone is not evidence of a session')
+  const { setCookie } = await createSession(config, db, user, now + 100)
+  const cookie = cookiePair(setCookie)
+  assert.equal(await lastSeen(), now + 100)
+  await db.setUserRole(userId, 'triage')
+  await db.setUserTokens(userId, { accessToken: 'background-refresh', refreshToken: null, expiresAt: null })
+  await db.upsertUser({ ...user, name: 'Updated name' }, now + 200)
+  assert.equal(await lastSeen(), now + 100, 'user mutations do not imply presence')
+  assert.ok(await readSession(config, db, cookie, now + 300))
+  assert.equal(await lastSeen(), now + 300, 'authenticated reads advance presence')
+  await readSession(config, db, cookie, now + 250)
+  assert.equal(await lastSeen(), now + 300, 'an older request cannot move presence backwards')
+  assert.equal(await readSession(config, db, 'dvsid=missing', now + 400), null)
+  assert.equal(await readSession(config, db, cookie, now + config.sessionTtlMs + 200), null)
+  assert.equal(await lastSeen(), now + 300, 'invalid and expired sessions do not count')
+  await endSession(config, db, cookie)
+  assert.equal(await readSession(config, db, cookie, now + 500), null)
+  assert.equal(await lastSeen(), now + 300, 'revoked sessions do not count')
+  assert.equal((await db.listUsers())[0].lastActivityAt, null, 'reads do not create write activity')
+})
+
+test('last seen migration: only known session creation is backfilled, and reopening preserves presence', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'managed-last-seen-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const path = join(dir, 'managed.sqlite')
+  let db = openSqliteManagedDb(path)
+  const known = await db.upsertUser({ githubUserId: 1, login: 'known', name: null, avatarUrl: null }, 100)
+  const unknown = await db.upsertUser({ githubUserId: 2, login: 'unknown', name: null, avatarUrl: null }, 100)
+  await db.createSession({ id: 'known-session', userId: known, csrfToken: 'csrf', expiresAt: 1000 }, 200)
+  await db.createSession({ id: 'earlier-session', userId: known, csrfToken: 'csrf', expiresAt: 1000 }, 150)
+  await db.setUserRole(unknown, 'view')
+  await db.close()
+  // Reproduce the pre-migration schema while retaining actual session data.
+  const legacy = new DatabaseSync(path)
+  legacy.exec('ALTER TABLE managed_user DROP COLUMN last_seen_at')
+  legacy.close()
+  db = openSqliteManagedDb(path)
+  const users = await db.listUsers()
+  assert.equal(users.find((u) => u.id === known).lastSeenAt, 200)
+  assert.equal(users.find((u) => u.id === unknown).lastSeenAt, null)
+  await db.sessionWithUser('known-session', 300)
+  await db.deleteExpiredSessions(2000)
+  await db.close()
+  db = openSqliteManagedDb(path)
+  t.after(() => db.close())
+  assert.equal((await db.listUsers()).find((u) => u.id === known).lastSeenAt, 300)
 })
 
 test('session: create → read → expire → end', async () => {

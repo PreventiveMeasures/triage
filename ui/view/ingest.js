@@ -717,9 +717,7 @@ export async function switchToManagedTeam(team, reportId = null) {
   state.repoEditing = false
   resetGraph2()
   for (let i = 0; i < selected.length; i++) {
-    await ingestReport(selected[i].filename, contents[i], gen, { renderView: false })
-    const loaded = state.reports.at(-1)
-    if (loaded) loaded._managedReportId = selected[i].id
+    await ingestReport(selected[i].filename, contents[i], gen, { renderView: false, managedReportId: selected[i].id })
     if (isStaleLoad(gen)) return false
   }
   // Hydrate every report before the merged view becomes interactive. The
@@ -1206,7 +1204,7 @@ export async function leaveWorkspace(workspaceId, mode = 'detach', { triage = 'k
 // push. The headless `window.__loadFile` path passes nothing, staying
 // unguarded so it keeps accumulating across calls (the print pipeline
 // relies on that).
-async function ingestReport(name, content, gen = null, { renderView = true } = {}) {
+async function ingestReport(name, content, gen = null, { renderView = true, managedReportId = null } = {}) {
   const stale = () => gen !== null && isStaleLoad(gen)
   try {
     // Finish both hints before rendering the Link button. Copy remains
@@ -1308,6 +1306,7 @@ async function ingestReport(name, content, gen = null, { renderView = true } = {
           _repoFallback: repoFallback,
           _repoDirectory: repoDir,
           _reportName: name,
+          _managedReportId: managedReportId,
           _bundleHashes: data.bundleHashes ?? [],
         }
         inheritReportMeta(filled, data)
@@ -1351,6 +1350,7 @@ async function ingestReport(name, content, gen = null, { renderView = true } = {
       // title for an all-MD report.
       source: data.source ?? null,
       fileName: name,
+      _managedReportId: managedReportId,
       groups,
       // Report-level repo declaration, normalised to an `owner/name`
       // slug (null when the dump names none). The header prefers it

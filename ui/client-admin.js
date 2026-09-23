@@ -321,6 +321,7 @@ async function fetchUsers() {
 }
 
 function userTime(value) {
+  if (value == null || value === '') return html`<span>Unknown</span>`
   const timestamp = typeof value === 'number' ? value : Number(value)
   if (!Number.isFinite(timestamp)) return html`<span>Unknown</span>`
   const date = new Date(timestamp)
@@ -329,6 +330,7 @@ function userTime(value) {
 }
 
 function userTimeLabel(value) {
+  if (value == null || value === '') return 'Unknown'
   const timestamp = typeof value === 'number' ? value : Number(value)
   return Number.isFinite(timestamp) && !Number.isNaN(new Date(timestamp).getTime()) ? `Last seen ${new Date(timestamp).toLocaleString()}` : 'Unknown'
 }

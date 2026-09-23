@@ -39,7 +39,10 @@ CREATE TABLE IF NOT EXISTS managed_user (
   gh_refresh_token     TEXT,
   gh_token_expires_at  INTEGER,
   created_at     INTEGER NOT NULL,
-  updated_at     INTEGER NOT NULL
+  updated_at     INTEGER NOT NULL,
+  -- Presence is independent of admin edits and background token refreshes.
+  -- NULL for legacy accounts until a known session authenticates them.
+  last_seen_at   INTEGER
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS managed_session (
@@ -244,7 +247,7 @@ export interface AdminUser {
   name: string | null
   role: Role
   createdAt: number
-  lastSeenAt: number
+  lastSeenAt: number | null
   lastActivityAt: number | null
 }
 
@@ -578,7 +581,7 @@ type SessionRow = {
   uid: string; login: string; name: string | null; avatar: string | null; role: Role
 }
 
-type UserRow = { id: string; login: string; name: string | null; role: Role; created: number; lastSeen: number; lastActivity: number | null }
+type UserRow = { id: string; login: string; name: string | null; role: Role; created: number; lastSeen: number | null; lastActivity: number | null }
 
 // Shared by listing, access checks, and permission aggregation. A team sees
 // reports rooted at its path or below it. Literal substring comparison keeps
@@ -613,9 +616,12 @@ function prepareStatements(db: DatabaseSync) {
         WHERE s.id = ? AND s.expires_at > ?`,
     ),
     selectUsersStmt: db.prepare(
-      `SELECT u.id, u.login, u.name, u.role, u.created_at AS created, u.updated_at AS lastSeen,
+      `SELECT u.id, u.login, u.name, u.role, u.created_at AS created, u.last_seen_at AS lastSeen,
               (SELECT MAX(e.at) FROM finding_triage_event e WHERE e.actor_id = u.id) AS lastActivity
          FROM managed_user u ORDER BY u.created_at ASC, u.login ASC`,
+    ),
+    touchUserSeenStmt: db.prepare(
+      `UPDATE managed_user SET last_seen_at = ? WHERE id = ? AND (last_seen_at IS NULL OR last_seen_at < ?)`,
     ),
     updateRoleStmt: db.prepare(`UPDATE managed_user SET role = ?, updated_at = ? WHERE id = ?`),
     updateTokensStmt: db.prepare(
@@ -1229,6 +1235,14 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
     db.exec(SQLITE_SCHEMA)
     // Migrate DBs created before a column existed (CREATE TABLE IF NOT EXISTS
     // never alters an already-present table). Idempotent — skipped on fresh DBs.
+    const addedLastSeen = ensureColumn(db, 'managed_user', 'last_seen_at', 'INTEGER')
+    if (addedLastSeen) {
+      // Session creation is known authentication activity. updated_at is not:
+      // role changes and token refreshes also wrote it. Keep unknowns NULL.
+      db.exec(`UPDATE managed_user SET last_seen_at = (
+        SELECT MAX(s.created_at) FROM managed_session s WHERE s.user_id = managed_user.id
+      )`)
+    }
     ensureColumn(db, 'managed_report', 'uploaded_by_login', 'TEXT')
     ensureColumn(db, 'managed_report', 'repo_directory', "TEXT NOT NULL DEFAULT ''")
     ensureColumn(db, 'managed_report', 'repo_embedded', 'INTEGER NOT NULL DEFAULT 0')
@@ -1248,7 +1262,7 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
   const stmts = prepareStatements(db)
   const {
     upsertUserStmt, selectUserIdStmt, insertSessionStmt, selectSessionStmt, selectUsersStmt,
-    updateRoleStmt, updateTokensStmt, selectTokensStmt, deleteSessionStmt, deleteExpiredStmt,
+    touchUserSeenStmt, updateRoleStmt, updateTokensStmt, selectTokensStmt, deleteSessionStmt, deleteExpiredStmt,
   } = stmts
 
   // The driver is synchronous; each method returns a resolved promise so a
@@ -1263,11 +1277,13 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
     },
     createSession(session, now) {
       insertSessionStmt.run(session.id, session.userId, session.csrfToken, now, session.expiresAt)
+      touchUserSeenStmt.run(now, session.userId, now)
       return Promise.resolve()
     },
     sessionWithUser(id, now) {
       const row = selectSessionStmt.get(id, now) as SessionRow | undefined
       if (row == null) return Promise.resolve(null)
+      touchUserSeenStmt.run(now, row.uid, now)
       return Promise.resolve({
         session: { id: row.id, userId: row.uid, csrfToken: row.csrf, expiresAt: row.exp },
         user: { id: row.uid, login: row.login, name: row.name, avatarUrl: row.avatar, role: row.role },
