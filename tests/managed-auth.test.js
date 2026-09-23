@@ -1512,7 +1512,7 @@ test('repository removal skips report parsing when keeping triage and preserves 
   assert.equal((await db.listTriageHistory(exclusive, 10)).length, 1, 'unrelated history remains')
 })
 
-test('repository paths: overlong team scopes, embedded headers, upload headers, and location edits are rejected', async (t) => {
+test('repository paths: invalid team scopes, embedded headers, upload headers, and location edits are rejected', async (t) => {
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())
   const now = Date.now()
@@ -1528,10 +1528,10 @@ test('repository paths: overlong team scopes, embedded headers, upload headers, 
   const created = await post('/api/admin/reports', { findings: [] }, { 'x-repo-id': '7', 'x-repo-directory': boundary })
   assert.equal(created.statusCode, 201)
   const reportId = JSON.parse(created.body).id
-  for (const directory of [boundary + 'x', boundary + 'y']) {
+  for (const directory of [boundary + 'x', boundary + 'y', 'packages/au\tth', '\tpackages/auth', 'packages/auth\n', 'packages/au\u0000th', 'packages/auth\u007F', '\u0085packages/auth']) {
     assert.equal((await post('/api/admin/teams/set-repo', { teamId, repoId: 7, path: directory })).statusCode, 400)
     assert.equal((await post('/api/admin/reports', { repo: { github: 'o/r', directory }, findings: [] })).statusCode, 400)
-    assert.equal((await post('/api/admin/reports', { findings: [] }, { 'x-repo-id': '7', 'x-repo-directory': directory })).statusCode, 400)
+    assert.equal((await post('/api/admin/reports', { findings: [] }, { 'x-repo-id': '7', 'x-repo-directory': encodeURIComponent(directory) })).statusCode, 400)
     assert.equal((await post('/api/admin/reports/set-repo', { reportId, repoId: 7, directory })).statusCode, 400)
   }
   assert.equal((await db.listReports()).length, 1, 'invalid uploads create no report rows')

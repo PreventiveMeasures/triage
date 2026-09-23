@@ -4,7 +4,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
-import { readReport, repoDirectory, reportRepoGithub } from '../report/index.js'
+import { readReport, reportRepoGithub } from '../report/index.js'
 import { normalizeTeamPath } from './repo-path.ts'
 
 export function migrateReportLocations(db: DatabaseSync, reportDir: string): void {
@@ -22,7 +22,7 @@ export function migrateReportLocations(db: DatabaseSync, reportDir: string): voi
       const { data } = readReport(readFileSync(join(reportDir, id), 'utf8'))
       if (data == null) throw new Error(`Cannot migrate location of unreadable report ${id}`)
       const embedded = reportRepoGithub(data) != null
-      const directory = normalizeTeamPath(repoDirectory(data.repo))
+      const directory = normalizeTeamPath(data.repo?.directory)
       if (!directory.ok) throw new Error(`Cannot migrate invalid directory of report ${id}`)
       update.run(directory.path ?? '', embedded ? 1 : 0, id)
     }

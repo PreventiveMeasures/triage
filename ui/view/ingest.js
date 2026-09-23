@@ -8,7 +8,7 @@ import { applyOpeningFilters, resetFilters } from './filters.js'
 import { reportWorkspaceFor } from './finding-link.js'
 import { encodeReportLocation } from '../../client/report-location.js'
 import { configureReportRevalidation, render } from './render.js'
-import { navigateToAdminPage, renderSidebar } from './sidebar.js'
+import { ensureServerMode, navigateToAdminPage, renderSidebar } from './sidebar.js'
 import { cleanupGraph2, graph2 } from './graph/state.js'
 import { openBundle, prefetchBundleHashes, selectBundle } from './bundle-load.js'
 import { backfillFindingIds, detectFormat, inheritReportMeta, isAppFinding, parseCodexCsvToScans, readReport, repoDirectory, reportEntries, reportRepoGithub } from '../../report/index.js'
@@ -325,6 +325,13 @@ async function uploadReportToWorkspaces(name, workspaces) {
 }
 
 async function addFiles(files) {
+  // FileList is only readable during the drop event (or until the picker is
+  // reset). Keep the File objects before waiting, without reading their bytes.
+  files = [...files]
+  if (files.length === 0) return
+  // The landing can appear while a slow /api/config request is still pending.
+  // Its timeout is only a display fallback, never permission to ingest locally.
+  await ensureServerMode()
   // On a managed server the local (OPFS / "local storage") ingest path is
   // disabled: uploads belong server-side, via the admin "Manage reports" /
   // "Manage bundles" pages. So a drop / file-pick anywhere in the app chrome
@@ -338,6 +345,7 @@ async function addFiles(files) {
   // migration. Skipped silently when the vault is already enabled, the
   // browser lacks WebAuthn, or the user already chose.
   await maybePromptFirstUse()
+  if (isManagedUiMode()) return
   let last = null
   let lastBundleIntegrity = null
   // Track newly-saved bundle integrities so we can prefetch their

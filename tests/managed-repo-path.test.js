@@ -14,3 +14,13 @@ test('repository scopes preserve complete paths and reject oversized normalized 
   assert.deepEqual(normalizeTeamPath('pkg/a/../b'), { ok: false })
   assert.deepEqual(normalizeTeamPath('/./'), { ok: true, path: null })
 })
+
+test('repository scopes reject control characters before normalization can alias another directory', () => {
+  assert.deepEqual(normalizeTeamPath('packages/auth'), { ok: true, path: 'packages/auth' })
+  for (const code of [...Array.from({ length: 32 }, (_, i) => i), ...Array.from({ length: 33 }, (_, i) => i + 127)]) {
+    const char = String.fromCodePoint(code)
+    for (const path of [`packages/au${char}th`, `${char}packages/auth`, `packages/auth${char}`, char]) {
+      assert.deepEqual(normalizeTeamPath(path), { ok: false }, `reject ${JSON.stringify(path)} without changing its identity`)
+    }
+  }
+})

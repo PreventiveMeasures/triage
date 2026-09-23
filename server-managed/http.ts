@@ -50,7 +50,7 @@ import { VISIBILITY_PERMISSIONS, parseTeamUserPermissions } from '../common/mana
 import { filterReportContent } from '../common/managed/report-filter.ts'
 import type { TriageEntryPatch } from '../common/managed/triage.ts'
 import { MAX_FINDING_ID, MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_ENTRIES, MAX_TRIAGE_HISTORY, isTriageBucket, parseTriageEntryPatch } from '../common/managed/triage.ts'
-import { loadFindings, readReport, repoDirectory, reportRepoGithub } from '../report/index.js'
+import { loadFindings, readReport, reportRepoGithub } from '../report/index.js'
 import { normalizeTeamPath } from './repo-path.ts'
 import { DEFAULT_MANAGED_SCAN_MODEL, MANAGED_SCAN_MODELS } from '../common/managed/scan-models.ts'
 import { CONFIG_PATH } from '../common/server-info.ts'
@@ -573,7 +573,9 @@ async function handleUploadReport(req: IncomingMessage, res: ServerResponse, dep
   const rawHeaderDirectory = firstHeader(req.headers['x-repo-directory']) ?? ''
   let headerDirectory = rawHeaderDirectory
   try { headerDirectory = decodeURIComponent(rawHeaderDirectory) } catch { sendJson(res, 400, { error: 'bad-directory' }); return }
-  const requestedDirectory = repoEmbedded ? repoDirectory(parsed.data?.repo) : headerDirectory
+  // Validate the raw header, not repoDirectory()'s display/link normalization,
+  // which trims characters and turns invalid paths into the repository root.
+  const requestedDirectory = repoEmbedded ? parsed.data?.repo?.directory : headerDirectory
   const normalizedDirectory = normalizeTeamPath(requestedDirectory)
   if (!normalizedDirectory.ok) { sendJson(res, 400, { error: 'bad-directory' }); return }
   const directory = normalizedDirectory.path ?? ''
