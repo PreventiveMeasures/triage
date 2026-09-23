@@ -55,7 +55,7 @@ test('legacy report migration preserves scoped access from blob headers without 
   assert.equal((await db.getReport(ids[0])).repoDirectory, 'new/location', 'reopening never overwrites already-migrated metadata')
 })
 
-for (const failure of ['missing', 'malformed', 'oversized directory', 'internal control character', 'leading control character', 'trailing control character']) {
+for (const failure of ['missing', 'malformed', 'oversized directory', 'internal control character', 'leading control character', 'trailing control character', 'leading space', 'trailing space', 'backslash']) {
   test(`legacy report migration rolls back and retries after a ${failure} blob is repaired`, async (t) => {
     const { path, store, userId, ids } = await legacyDatabase(t)
     const bytes = await store.get(ids[1])
@@ -67,6 +67,9 @@ for (const failure of ['missing', 'malformed', 'oversized directory', 'internal 
         'internal control character': 'packages/a\t/sub',
         'leading control character': '\tpackages/a/sub',
         'trailing control character': 'packages/a/sub\n',
+        'leading space': ' packages/a/sub',
+        'trailing space': 'packages/a/sub ',
+        'backslash': 'packages\\a/sub',
       }[failure]
       await store.put(ids[1], Buffer.from(JSON.stringify({ repo: { github: 'o/r', directory }, findings: [] })))
     }

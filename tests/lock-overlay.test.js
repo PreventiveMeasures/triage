@@ -4,8 +4,8 @@ import { test } from 'node:test'
 
 test('the vault overlay waits for mode detection, follows mode changes, and cancels local unlocks on exit', async (t) => {
   let decideMode
-  const modeReady = new Promise((resolve) => { decideMode = resolve })
-  let enabled = true, local = false, unlocked = false
+  let modeReady = new Promise((resolve) => { decideMode = resolve })
+  let enabled = true, local = true, unlocked = false
   let onVaultChange
   let metadataReads = 0, wipes = 0
   let unlockSignal
@@ -48,7 +48,13 @@ test('the vault overlay waits for mode detection, follows mode changes, and canc
   await setImmediate()
   assert.equal(mounted, false, 'an unresolved mode never prompts for a local vault')
   assert.equal(metadataReads, 0)
-  decideMode()
+  decideMode(false)
+  await setImmediate()
+  assert.equal(mounted, false, 'an inconclusive mode never prompts for the local vault')
+  assert.equal(metadataReads, 0)
+  local = false
+  modeReady = Promise.resolve(true)
+  await onVaultChange()
   await setImmediate()
   assert.equal(mounted, false, 'managed mode is usable with an enabled, locked local vault')
   assert.equal(metadataReads, 0, 'managed mode never even consults local vault metadata')

@@ -25,6 +25,15 @@
 
 :host(.collapsed) { width: 32px; }
 
+/* An unconfirmed protocol has no usable navigation or truthful mode label. */
+:host([inert]) .brand-tag,
+:host([inert]) .sidebar-search,
+:host([inert]) .sidebar-actions,
+:host([inert]) #file-list,
+:host([inert]) #sidebar-toggle,
+:host([inert]) #encryption-toggle,
+:host([inert]) #storage-status { visibility: hidden; }
+
 :host(.collapsed) .brand,
 :host(.collapsed) .sidebar-search,
 :host(.collapsed) #encryption-toggle,

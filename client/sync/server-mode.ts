@@ -6,8 +6,8 @@
 // built yet), so until then a mismatch fails closed rather than silently
 // reinterpreting local data under the wrong protocol.
 //
-// PURE + dependency-free (no `state`, no DOM beyond `localStorage`), so the
-// precedence/caching rules are unit-testable. The `ServerInfo` shape is the
+// No `state` or UI dependencies, so probing and cache rules are testable.
+// The `ServerInfo` shape is the
 // single source in common/server-info.ts (shared with the server); re-exported
 // here so the client's import surface stays put and a shape change is a
 // compile error on both sides.
@@ -48,6 +48,16 @@ export function parseServerInfo(body: unknown): ServerInfo | null {
     }
   }
   return { mode, managed }
+}
+
+// Only an explicit 404 confirms a backend-less deployment. Network errors,
+// other HTTP errors, and invalid configuration leave the protocol unknown.
+export async function probeServerInfo(): Promise<ServerInfo | 'standalone' | null> {
+  try {
+    const res = await fetch(CONFIG_PATH, { credentials: 'same-origin', headers: { accept: 'application/json' } })
+    if (res.status === 404) return 'standalone'
+    return res.ok ? parseServerInfo(await res.json()) : null
+  } catch { return null }
 }
 
 export function readCachedServerInfo(): ServerInfo | null {

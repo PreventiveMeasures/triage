@@ -1,7 +1,7 @@
 import { LitElement, html, render as litRender, nothing, unsafeCSS } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { CONFIG_PATH, LINKS_KIND, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, clientModeLabel, computeLinkHint, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, ensureLinkedFindingsIndexed, getCount, getPackagesIndex, getRepositoriesIndex, hasStandaloneProbeHint, hydrateSecureStorage, isManagedUiMode, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, parseServerInfo, readCachedServerInfo, reloadTriageFromStorage, rememberStandaloneProbe, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, setLocalMode, state, syncObservedAfterHydrate, writeCachedServerInfo } from '#client/index.js'
+import { LINKS_KIND, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, clientModeLabel, computeLinkHint, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, ensureLinkedFindingsIndexed, getCount, getPackagesIndex, getRepositoriesIndex, hasStandaloneProbeHint, hydrateSecureStorage, isManagedUiMode, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, probeServerInfo, readCachedServerInfo, reloadTriageFromStorage, rememberStandaloneProbe, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, setLocalMode, state, syncObservedAfterHydrate, writeCachedServerInfo } from '#client/index.js'
 import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, setSyncForceDisabled, triageSync } from './client-sync.js'
 import { login as managedLogin, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams } from './client-managed.js'
 import { initManagedTriagePush, resetManagedTriage } from './managed-triage.js'
@@ -431,7 +431,7 @@ const byReportName = (a, b) => displayName(a).localeCompare(displayName(b))
 // after every state transition that could change the file list, the
 // current selection, or the search query.
 export async function renderSidebar() {
-  await ensureServerMode()
+  if (!await ensureServerMode()) return
   const modeAtStart = clientModeLabel()
   updateManagedLanding({ serverMode: modeAtStart, session: state.managedSession, teams: state.managedTeams })
   if (isManagedUiMode()) {
@@ -1838,15 +1838,31 @@ document.addEventListener('managed-admin-navigate', (event) => {
 // applyServerInfo path. Skipped once the mode is known (cached); the WS connect
 // frame (kept) then catches any later change.
 let serverModeDetection
+// Resolves true only with confirmed protocol information. Every boot consumer
+// must honor false: the provisional state.serverMode is not a local-data grant.
 export function ensureServerMode() {
-  return serverModeDetection ??= detectServerModeIfUnknown()
+  return serverModeDetection ??= detectServerModeIfUnknown().then((confirmed) => {
+    document.querySelector('app-sidebar')?.toggleAttribute('inert', !confirmed)
+    if (!confirmed) {
+      const landing = document.querySelector('#drop-zone')
+      if (landing) {
+        landing.dataset.serverModeError = 'true'
+        landing.hidden = false
+      }
+    }
+    return confirmed
+  })
 }
 
 async function detectServerModeIfUnknown() {
-  if (readCachedServerInfo()) return
+  const cached = readCachedServerInfo()
+  if (cached) {
+    // Another tab may have confirmed the mode since state.ts was evaluated.
+    state.serverMode = cached.mode
+    state.managed = cached.managed
+    return true
+  }
   setLandingModePending(!hasStandaloneProbeHint())
-  let status = 0
-  let info = null
   // Reveal the landing after a while, but let the probe finish: e2e sync only
   // loads once the mode is cached, so aborting a slow first probe would leave
   // sync off for the whole session.
@@ -1859,16 +1875,16 @@ async function detectServerModeIfUnknown() {
   }
   if (hasStandaloneProbeHint()) revealLanding()
   const reveal = setTimeout(revealLanding, 3000)
+  let info
   try {
-    const res = await fetch(CONFIG_PATH, { credentials: 'same-origin', headers: { accept: 'application/json' } })
-    status = res.status
-    if (res.ok) info = parseServerInfo(await res.json())
-  } catch { /* offline / unreachable — stay on the default until a frame arrives */ }
+    info = await probeServerInfo()
+  }
   finally { clearTimeout(reveal) }
-  // A sync frame may have confirmed the mode while this probe was pending.
-  if (readCachedServerInfo()) { setLandingModePending(false); return }
-  if (info) { applyServerInfo(info); return }
-  if (status === 404) {
+  // A sync frame or another tab may have confirmed the mode while pending.
+  // Adopt it into state as well: the initial e2e default is not confirmation.
+  const confirmed = readCachedServerInfo()
+  if (confirmed) { applyServerInfo(confirmed); return !state.serverModeMismatch }
+  if (info === 'standalone') {
     rememberStandaloneProbe()
     setLandingModePending(false)
     // No /api/config → a backend-less (standalone) deployment: purely local, no
@@ -1878,12 +1894,13 @@ async function detectServerModeIfUnknown() {
     setSyncForceDisabled(true)
     renderSyncStatus(triageSync.status)
     renderSidebar()
-    return
+    return true
   }
-  // A transient network failure should leave the local landing usable rather
-  // than keeping it hidden forever. The next boot can probe again.
+  if (info) { applyServerInfo(info); return !state.serverModeMismatch }
+  // Failure to detect a protocol must not turn a managed deployment into a
+  // local one. Keep storage, vault prompts, and imports stopped; show a retry.
   setLandingModePending(false)
-  renderSidebar()
+  return false
 }
 
 // The account menu is a native popover (top layer); position it just above the

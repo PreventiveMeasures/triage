@@ -128,7 +128,7 @@ function logRequestOutcome(granted, viaGesture) {
 }
 
 async function refreshStorageStatus() {
-  await ensureServerMode()
+  if (!await ensureServerMode()) return
   if (!button || isManagedUiMode()) { paint(); return }
   // Both halves of the paint predicate refresh together so the
   // banner can't show a stale combination (e.g. warn after the last

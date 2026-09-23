@@ -120,6 +120,7 @@ export {
   classifyServerMode,
   hasStandaloneProbeHint,
   parseServerInfo,
+  probeServerInfo,
   readCachedServerInfo,
   rememberStandaloneProbe,
   writeCachedServerInfo,

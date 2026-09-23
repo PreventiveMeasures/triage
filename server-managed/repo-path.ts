@@ -1,20 +1,18 @@
 const MAX_TEAM_PATH = 500
 
-// Normalise an optional team-repo subpath into a clean RELATIVE path inside the
-// repo: trim, reject control chars, fold both separators, drop empty + '.'
-// segments, and REJECT any '..' segment so the subpath can't escape the repo
-// subtree once the (later) data plane reads from it. `{ ok:false }` = traversal,
-// invalid characters, or an oversized normalized path (the handler 400s).
-// `{ path:null }` = the whole repo. Never truncate authorization paths.
+// Canonicalize only equivalent Git paths: '/' separates components and empty
+// or '.' components do not change the directory. Reject ambiguous input rather
+// than deleting characters from directory names used for authorization.
+// `{ ok:false }` makes the handler 400; `{ path:null }` means the whole repo.
 export function normalizeTeamPath(raw: unknown): { ok: true; path: string | null } | { ok: false } {
   if (typeof raw !== 'string') return { ok: true, path: null }
-  // Validate before trimming: deleting even an edge tab/newline can merge
-  // distinct Git paths into the same authorization scope.
-  if (/\p{Cc}/u.test(raw)) return { ok: false }
+  // Spaces and backslashes can be literal parts of Git directory names.
+  // Neither trimming nor treating '\\' as a separator preserves that identity.
+  if (/\p{Cc}/u.test(raw) || raw.includes('\\') || raw !== raw.trim()) return { ok: false }
   const segments: string[] = []
-  for (const seg of raw.trim().replaceAll('\\', '/').split('/')) {
+  for (const seg of raw.split('/')) {
     if (seg === '' || seg === '.') continue
-    if (seg === '..') return { ok: false }
+    if (seg === '..' || seg !== seg.trim()) return { ok: false }
     segments.push(seg)
   }
   const path = segments.join('/')

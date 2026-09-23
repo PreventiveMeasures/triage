@@ -40,6 +40,18 @@
 
 #drop-zone[data-server-mode-pending] { display: none; }
 
+.server-mode-error {
+  display: none;
+  max-width: 30rem;
+  color: var(--muted);
+
+  & h1 { color: var(--text); font-size: 1.5rem; margin: 0 0 .75rem; }
+  & p { line-height: 1.6; margin: 0 0 1.5rem; }
+}
+
+#drop-zone[data-server-mode-error] > :not(.server-mode-error) { display: none; }
+#drop-zone[data-server-mode-error] > .server-mode-error { display: block; }
+
 #drop-zone[data-server-mode='managed'] {
   align-items: stretch; justify-content: flex-start;
   overflow-y: auto;

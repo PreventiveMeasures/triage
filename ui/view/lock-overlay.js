@@ -153,8 +153,8 @@ function shouldShow() {
 async function render() {
   // On an uncached visit the default mode is e2e until detection completes.
   // Do not flash an unlock/wipe prompt over a managed landing in that window.
-  await ensureServerMode()
-  if (shouldShow()) {
+  const confirmed = await ensureServerMode()
+  if (confirmed && shouldShow()) {
     const el = ensureOverlay()
     el.hidden = false
     // Move focus to the unlock button so Enter triggers it. Done

@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import './_polyfills.js'
 
-import { SERVER_MODE_KEY, classifyServerMode, hasStandaloneProbeHint, parseServerInfo, readCachedServerInfo, rememberStandaloneProbe, writeCachedServerInfo } from '../client/sync/server-mode.ts'
+import { SERVER_MODE_KEY, classifyServerMode, hasStandaloneProbeHint, parseServerInfo, probeServerInfo, readCachedServerInfo, rememberStandaloneProbe, writeCachedServerInfo } from '../client/sync/server-mode.ts'
 import { clientModeLabel, state } from '../client/state.ts'
 
 test('mode labels distinguish standalone, e2e, and both managed surfaces', (t) => {
@@ -64,6 +64,31 @@ test('parseServerInfo: rejects non-objects and unknown modes', () => {
   assert.equal(parseServerInfo({}), null)
   assert.equal(parseServerInfo({ mode: 'other' }), null)
   assert.equal(parseServerInfo({ mode: '' }), null)
+})
+
+test('mode probing distinguishes confirmed protocols and standalone from inconclusive failures', async (t) => {
+  for (const [name, response, expected] of [
+    ['e2e', () => Response.json({ mode: 'e2e' }), { mode: 'e2e', managed: null }],
+    ['managed', () => Response.json({ mode: 'managed' }), { mode: 'managed', managed: null }],
+    ['standalone', () => new Response('Not found', { status: 404 }), 'standalone'],
+    ['server error', () => Response.json({ mode: 'e2e' }, { status: 500 }), null],
+    ['unauthorized', () => new Response('', { status: 401 }), null],
+    ['invalid JSON', () => new Response('not JSON'), null],
+    ['HTML fallback', () => new Response('<html>Static host</html>'), null],
+    ['missing mode', () => Response.json({}), null],
+    ['unknown mode', () => Response.json({ mode: 'something-else' }), null],
+    ['rejected fetch', () => { throw new Error('network failed') }, null],
+  ]) {
+    await t.test(name, async (subtest) => {
+      const fetch = subtest.mock.method(globalThis, 'fetch', (url, options) => {
+        assert.equal(url, '/api/config')
+        assert.deepEqual(options, { credentials: 'same-origin', headers: { accept: 'application/json' } })
+        return Promise.resolve().then(response)
+      })
+      assert.deepEqual(await probeServerInfo(), expected)
+      assert.equal(fetch.mock.callCount(), 1)
+    })
+  }
 })
 
 test('classifyServerMode: first / match / mismatch', () => {

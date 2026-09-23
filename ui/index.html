@@ -33,10 +33,15 @@
      `goHome` via the sidebar's own click delegate; in WCO PWA
      mode the same brand is what the OS controls strip overlays
      onto (no light-DOM duplicate needed). -->
-<app-sidebar role="complementary" aria-label="Reports and workspaces"></app-sidebar>
+<app-sidebar role="complementary" aria-label="Reports and workspaces" inert></app-sidebar>
 
 <main id="main-content">
   <div id="drop-zone" aria-label="Drop reports here" hidden>
+    <section class="server-mode-error" role="alert">
+      <h1>Unable to open DeepView</h1>
+      <p>The server configuration could not be loaded. Check your connection and try again.</p>
+      <button type="button" class="drop-prompt-action" data-retry-server-mode>Try again</button>
+    </section>
     <div id="landing-workspaces"></div>
     <div class="managed-landing"></div>
     <div class="drop-prompt">

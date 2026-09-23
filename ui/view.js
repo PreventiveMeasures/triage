@@ -259,7 +259,7 @@ async function handleFindingHashIfPresent() {
 let bootContinuationRan = false
 
 async function continueBoot() {
-  await ensureServerMode()
+  if (!await ensureServerMode()) return
   if (bootContinuationRan) return
   if (!isManagedUiMode() && isEncryptionEnabled() && !isUnlocked()) return
   bootContinuationRan = true
@@ -373,14 +373,15 @@ async function restoreInitialView() {
 // backdrop covers everything, so the user can't usefully "stash unsaved
 // work" after declining. Acknowledgement-only avoids that trap while
 // still giving notice.
-let lastSeenEnabled = isManagedUiMode() ? false : isEncryptionEnabled()
+// Initialize this baseline only after a confirmed mode permits local reads.
+let lastSeenEnabled = false
 let reloadPending = false
 // A managed → local transition hydrates the secure cache without changing
 // the vault itself. Reset this observer baseline before the next vault event
 // so unlocking a passkey in local mode is not mistaken for a sibling-tab
 // enable that requires a reload.
 document.addEventListener('managed-client-mode-change', () => {
-  lastSeenEnabled = isEncryptionEnabled()
+  lastSeenEnabled = !isManagedUiMode() && isEncryptionEnabled()
 })
 function scheduleReload(reason) {
   if (reloadPending) return
@@ -393,7 +394,8 @@ function scheduleReload(reason) {
     location.reload()
   })
 }
-onVaultStateChange(() => {
+onVaultStateChange(async () => {
+  if (!await ensureServerMode()) return
   if (isManagedUiMode()) {
     render()
     return
@@ -461,7 +463,8 @@ window.addEventListener('hashchange', () => {
   // so a `true` return short-circuits the file-restore below — running
   // it would re-touch OPFS / state.* in a tab about to unload.
   if (await runLegacyOriginCheck()) return
-  await ensureServerMode()
+  if (!await ensureServerMode()) return
+  lastSeenEnabled = !isManagedUiMode() && isEncryptionEnabled()
   try {
     // In WCO mode the sidebar header is the surface the OS controls
     // overlay onto; collapsing it would strand close / min / max over a

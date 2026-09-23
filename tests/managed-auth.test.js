@@ -1528,7 +1528,10 @@ test('repository paths: invalid team scopes, embedded headers, upload headers, a
   const created = await post('/api/admin/reports', { findings: [] }, { 'x-repo-id': '7', 'x-repo-directory': boundary })
   assert.equal(created.statusCode, 201)
   const reportId = JSON.parse(created.body).id
-  for (const directory of [boundary + 'x', boundary + 'y', 'packages/au\tth', '\tpackages/auth', 'packages/auth\n', 'packages/au\u0000th', 'packages/auth\u007F', '\u0085packages/auth']) {
+  for (const directory of [
+    boundary + 'x', boundary + 'y', 'packages/au\tth', '\tpackages/auth', 'packages/auth\n', 'packages/au\u0000th', 'packages/auth\u007F', '\u0085packages/auth',
+    ' packages/auth', 'packages/auth ', '\u00A0packages/auth', 'packages/auth\uFEFF', './ packages/auth/', 'packages/auth /sub', 'packages\\auth',
+  ]) {
     assert.equal((await post('/api/admin/teams/set-repo', { teamId, repoId: 7, path: directory })).statusCode, 400)
     assert.equal((await post('/api/admin/reports', { repo: { github: 'o/r', directory }, findings: [] })).statusCode, 400)
     assert.equal((await post('/api/admin/reports', { findings: [] }, { 'x-repo-id': '7', 'x-repo-directory': encodeURIComponent(directory) })).statusCode, 400)
