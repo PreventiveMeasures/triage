@@ -1,7 +1,8 @@
 // `<bundle-compare>` — the Compare slide in the bundles view. Picks a
 // second bundle and diffs it against the currently-open one: which
-// source files were added / removed / changed, the per-package size
-// shifts, and the net byte/file delta. The headline use case is two
+// files — source and resources alike, the files the Overview lists —
+// were added / removed / changed, the per-package size shifts, and the
+// net byte/file delta. The headline use case is two
 // builds of the same artifact ("what did this dependency bump pull
 // in?"), but it works on any two bundles the user has on disk.
 //
@@ -12,7 +13,8 @@
 // Only files present in the OPEN bundle carry that hook (removed /
 // changed rows); "added" rows live only in the other bundle, whose
 // bytes aren't loaded into `state.bundleDetails`, so they render
-// static.
+// static. So does a resource's row (an image, a font): it has no
+// source for the viewer to show.
 //
 // The comparison is framed git-style: the open bundle is the "base"
 // (before), the picked bundle is "other" (after), and added / removed
@@ -34,7 +36,7 @@ import { state } from '#client/index.js'
 import { formatBytes, stripCommonPathPrefix } from './format.js'
 import { pkgColor } from './graph/utils.js'
 import { bundlePkgOf, pkgLabel } from './bundle-pkg-of.js'
-import { bundlePackageDirs, bundlePackageVersions, bundleSourcesAsMap } from './bundle-sources.js'
+import { bundleFileKinds, bundleFilesAsMap, bundlePackageDirs, bundlePackageVersions } from './bundle-sources.js'
 import { buildBundleDetails } from './bundle-load.js'
 import { computeBundleDiff, computeVersionUpdates } from './bundle-compare-diff.js'
 
@@ -214,10 +216,11 @@ class BundleCompare extends LitElement {
 
   // A row for one file. `clickable` rows (present in the open bundle)
   // get the source-viewer hook; "added" rows (only in the other
-  // bundle) render static since their bytes aren't loaded here.
+  // bundle) render static since their bytes aren't loaded here, and so
+  // do resources, which have no source to view.
   _fileRow(path, label, clickable, sizeTpl) {
     const inner = html`<span class="bundle-compare-row-path mono">${label}</span>${sizeTpl}`
-    return clickable
+    return clickable && bundleFileKinds(this.details).get(path) !== 'resource'
       ? html`<li><button
           type="button"
           class="bundle-compare-row bundle-compare-row-link"
@@ -340,8 +343,11 @@ class BundleCompare extends LitElement {
   _diffFor() {
     const key = `${this.integrity}|${this._targetIntegrity}`
     if (this._diffKey !== key || !this._diff) {
-      const baseSources = bundleSourcesAsMap(this.details)
-      const otherSources = bundleSourcesAsMap(this._otherDetails)
+      // Every file each side mounts, resources included: a diff of
+      // source alone would call two bundles identical when only their
+      // images differ, and total less than the Overview does.
+      const baseSources = bundleFilesAsMap(this.details)
+      const otherSources = bundleFilesAsMap(this._otherDetails)
       // Bucket packages on prefix-stripped paths so own-source files
       // land under the same name the Overview / Treemap / Graph tabs
       // show — those strip the shared build-output root before
@@ -531,7 +537,7 @@ class BundleCompare extends LitElement {
       </div>
       ${this._renderVersionUpdates(diff.versionUpdates, baseName, otherName)}
       ${diff.totals.identical
-        ? html`<div class="bundle-compare-identical">These two bundles carry identical sources (${diff.totals.unchangedFiles.toLocaleString()} ${diff.totals.unchangedFiles === 1 ? 'file' : 'files'}).</div>`
+        ? html`<div class="bundle-compare-identical">These two bundles carry identical files (${diff.totals.unchangedFiles.toLocaleString()} ${diff.totals.unchangedFiles === 1 ? 'file' : 'files'}).</div>`
         : html`
           ${hasPkgChanges ? html`<section class="bundle-compare-section">
             <h3 class="bundle-compare-section-head">Packages</h3>
