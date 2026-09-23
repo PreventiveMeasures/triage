@@ -360,8 +360,11 @@ async function repositoryExclusiveTriageIds(deps: ManagedHttpDeps, reports: { id
   const targetIds = await repositoryFindingIds(deps, reports)
   const triage = await deps.db.listTriage([...targetIds])
   if (triage.length === 0) return []
-  // Only annotated findings need an overlap check. A durable per-report
-  // finding index can replace these blob reads when this preview is scaled.
+  // Only annotated findings need an overlap check.
+  // TODO(managed): Persist finding IDs per report at upload time and maintain
+  // the index on report deletion. Use it for repository impact and triage
+  // cleanup so overlap checks do not fetch and parse every other report blob.
+  // Deferred for production; the preview still performs the blob scan below.
   const otherIds = await repositoryFindingIds(deps, otherReports)
   return triage.map((entry) => entry.findingId).filter((id) => !otherIds.has(id))
 }
