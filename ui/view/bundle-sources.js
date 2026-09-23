@@ -164,17 +164,21 @@ export function bundleFileSizes(details) {
 
 // What each recorded path holds, for a view that lists files: 'source', or
 // 'resource' for an image, font or other asset — a file, sized like any
-// other, but none the source viewer can show. A path that holds no file (a
-// directory capture) is absent. It reads formats, not bodies, so it answers
-// for a metadata-only open as it does for a parsed one.
+// other, but none the source viewer can show. A path that holds no file is
+// absent: a directory capture, or a source with no body to mount (a
+// sourcemap entry whose `sourcesContent` was left out), which its null
+// size says. A resource stays even without a size — a base64 spelling that
+// does not decode is still a file the terminal lists, and says why it
+// cannot read. It reads formats and sizes, not bodies, so it answers for a
+// metadata-only open as it does for a parsed one.
 export function bundleFileKinds(details) {
   const sizes = bundleFileSizes(details)
   if (kindsCache.has(sizes)) return kindsCache.get(sizes)
   const formats = details?.kind === 'stasis' ? details.bundle?.formats : null
   const kinds = new Map()
-  for (const path of sizes.keys()) {
+  for (const [path, size] of sizes) {
     const format = formats?.get(path)
-    if (!Bundle.isResourceFormat(format)) kinds.set(path, 'source')
+    if (!Bundle.isResourceFormat(format)) { if (size !== null) kinds.set(path, 'source') }
     else if (format === 'resource' || format === 'resource:base64') kinds.set(path, 'resource')
   }
   kindsCache.set(sizes, kinds)

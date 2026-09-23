@@ -32,6 +32,9 @@ it('round-trips hashes, UTF-8 byte sizes, package identity, imports, reasons, an
   assert.equal(cached.fileSizes.get('src/main.js'), Buffer.byteLength('private source €😀'))
   assert.equal(cached.fileSizes.get('src/empty.js'), 0)
   assert.equal(cached.fileSizes.get('icon.png'), null)
+  // An entry with no body to mount is no file to list, whichever way it is opened.
+  assert.equal(bundleFileKinds(full).has('icon.png'), false)
+  assert.deepEqual(bundleFileKinds(cached), bundleFileKinds(full))
   assert.equal(cached.lineCounts.get('src/main.js'), 1)
   assert.equal(cached.lineCounts.get('src/empty.js'), 0)
   assert.equal(cached.lineCounts.has('icon.png'), false)

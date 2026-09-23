@@ -441,7 +441,16 @@ describe('bundleFileKinds — what the Overview lists, and which rows open a sou
       version: 0, config: { scope: 'node_modules' }, formats: {}, imports: {}, sources: { 'node_modules/dep/a.js': 'abc' },
     })) }
     assert.deepEqual(bundleFileKinds(v0), new Map([['node_modules/dep/a.js', 'source']]))
+  })
+
+  it('leaves out a source with no body to mount, which the terminal does not list either', () => {
+    // A sourcemap entry whose content was left out, and a stasis entry whose
+    // body is no string under no resource format: neither is a file.
     const map = { kind: 'sourcemap', json: { sources: ['a.js', 'b.js'], sourcesContent: ['a', null] } }
-    assert.deepEqual(bundleFileKinds(map), new Map([['a.js', 'source'], ['b.js', 'source']]))
+    assert.deepEqual(bundleFileKinds(map), new Map([['a.js', 'source']]))
+    assert.deepEqual([...bundleFileKinds(map).keys()], [...bundleFilesAsMap(map).keys()])
+    const odd = bundleWith({ 'a.js': 'x', 'odd.png': { base64: 'x' } }, { 'a.js': 'module' })
+    assert.deepEqual(bundleFileKinds(odd), new Map([['a.js', 'source']]))
+    assert.deepEqual([...bundleFileKinds(odd).keys()], [...bundleFilesAsMap(odd).keys()])
   })
 })
