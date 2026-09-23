@@ -1,6 +1,6 @@
 // `ui/view/bundle-compare-diff.js` — the pure diff behind the Compare
 // slide in the bundles view (view/bundle-compare.js). It takes two
-// `Map<path, content>` source maps plus a `pkgOf` bucketing function
+// `Map<path, content>` file maps plus a `pkgOf` bucketing function
 // and returns per-file (onlyBase / onlyOther / changed) + per-package
 // deltas plus roll-up totals. This module has no Lit / DOM / `state`
 // dependency, so the test imports it straight — no `@rray/frontend`
@@ -151,9 +151,9 @@ describe('computeBundleDiff', () => {
     assert.equal(diff.totals.otherBytes, 0)
   })
 
-  it('counts non-string content as zero bytes', () => {
-    // A stasis resource (base64) entry surfaces as non-string content;
-    // it should contribute a file but no bytes.
+  it('counts content with no size to give as zero bytes', () => {
+    // An entry that is neither text nor a base64 declaration has no
+    // size; it still contributes a file.
     const base = m({ 'a/x.js': 'aaaa' })
     const other = new Map([['a/x.js', 'aaaa'], ['a/blob.bin', null]])
     const diff = computeBundleDiff(base, other, firstSeg)
@@ -171,6 +171,53 @@ describe('computeBundleDiff', () => {
     assert.deepEqual(diff.files.changed, [
       { path: 'a/x.js', baseBytes: 1, otherBytes: 3, delta: 2 },
     ])
+  })
+})
+
+// Resources, as the Compare tab receives them from `bundleFilesAsMap`: a
+// `resource` as the text it is, a `resource:base64` as a fresh
+// `{ format: 'base64', data }` per side, just as each bundle's parse
+// hands it over.
+describe('computeBundleDiff — resources', () => {
+  const b64 = (bytes) => ({ format: 'base64', data: Buffer.from(bytes).toString('base64') })
+
+  it('sees a change to an image, which a diff of source alone reported as identical', () => {
+    const base = new Map([['a/x.js', 'x'], ['a/logo.png', b64([0x89, 1, 2])]])
+    const other = new Map([['a/x.js', 'x'], ['a/logo.png', b64(Buffer.alloc(5000, 0xff))]])
+    const diff = computeBundleDiff(base, other, firstSeg)
+    assert.equal(diff.totals.identical, false)
+    assert.deepEqual(diff.files.changed, [{ path: 'a/logo.png', baseBytes: 3, otherBytes: 5000, delta: 4997 }])
+    assert.equal(diff.totals.baseBytes, 1 + 3)
+    assert.equal(diff.totals.otherBytes, 1 + 5000)
+  })
+
+  it('compares a base64 resource by its spelling, not by the object carrying it', () => {
+    // Each side's parse builds its own wrapper; identity would call every
+    // image in the bundle changed.
+    const base = new Map([['a/logo.png', b64([1, 2, 3])]])
+    const other = new Map([['a/logo.png', b64([1, 2, 3])]])
+    const diff = computeBundleDiff(base, other, firstSeg)
+    assert.equal(diff.totals.identical, true)
+    assert.equal(diff.totals.unchangedFiles, 1)
+  })
+
+  it('sizes a resource as the Overview does: base64 by the bytes it decodes to, text by its UTF-8', () => {
+    const base = new Map()
+    const other = new Map([['a/logo.png', b64(Buffer.alloc(1000, 7))], ['a/icon.svg', '<svg>€</svg>'], ['a/bad.png', { format: 'base64', data: '!!!' }]])
+    const diff = computeBundleDiff(base, other, firstSeg)
+    assert.deepEqual(diff.files.onlyOther, [
+      { path: 'a/logo.png', bytes: 1000 },
+      { path: 'a/icon.svg', bytes: Buffer.byteLength('<svg>€</svg>') },
+      // A spelling that does not decode has no size, but is still a file
+      // that was added.
+      { path: 'a/bad.png', bytes: 0 },
+    ])
+  })
+
+  it('calls a file changed when it turns from text into base64', () => {
+    const base = new Map([['a/data.bin', 'AAAA']])
+    const other = new Map([['a/data.bin', { format: 'base64', data: 'AAAA' }]])
+    assert.equal(computeBundleDiff(base, other, firstSeg).totals.changedFiles, 1)
   })
 })
 

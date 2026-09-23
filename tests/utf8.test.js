@@ -8,7 +8,7 @@
 
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { decodeUtf8, encodeUtf8 } from '../common/utf8.js'
+import { decodeUtf8, encodeUtf8, utf8ByteLength } from '../common/utf8.js'
 
 describe('encodeUtf8', () => {
   it('round-trips ASCII', () => {
@@ -138,5 +138,52 @@ describe('decodeUtf8', () => {
     // it alone too — pinned here for completeness.
     const text = decodeUtf8(new Uint8Array([0x68, 0xef, 0xbb, 0xbf, 0x69]))
     assert.equal(text, 'h﻿i')
+  })
+})
+
+describe('utf8ByteLength', () => {
+  const enc = new TextEncoder()
+
+  it('agrees with TextEncoder on ASCII, Latin-1, wide, astral and malformed text', () => {
+    // Latin-1 past \x7F is the case a width check alone gets wrong: it is
+    // no wider than a byte per character to store, but two to encode.
+    const cases = [
+      '', 'hello', 'a\0b', '\u0080', '\u00FF', 'aé\u00FFb', 'x'.repeat(1000) + '©',
+      '\u0100', '\u00FF\u0100', '—', '€', '中文', '\uFEFFbom',
+      '😀', 'é😀', '\u{10FFFF}',
+      // Lone and reversed surrogates count as the U+FFFD they encode to.
+      '\uD83D', '\uDE00', '\uDE00\uD83D', 'a\uD83Db',
+    ]
+    for (const str of cases) assert.equal(utf8ByteLength(str), enc.encode(str).byteLength, JSON.stringify(str))
+  })
+
+  it('reads a string the same whichever way the engine stores it', () => {
+    // A slice of a two-byte string can hold only Latin-1 while stored two
+    // bytes per character; its size must not depend on that.
+    const latin = `${'é'.repeat(100)}—`.slice(0, 100)
+    assert.equal(utf8ByteLength(latin), 200)
+    const ascii = `${'a'.repeat(100)}—`.slice(0, 100)
+    assert.equal(utf8ByteLength(ascii), 100)
+  })
+
+  it('counts high characters wherever they fall, however many there are', () => {
+    // First, last and only character; dense and sparse Latin-1. The count
+    // starts at the first one the scan finds.
+    // Gaps either side of the run of ASCII after which the count hands back
+    // to the scan, so both the loop and the jump land on every one.
+    const gaps = [0, 1, 2, 3, 4, 31, 32, 33, 100].map((n) => `${'a'.repeat(n)}é`.repeat(50))
+    for (const str of ['é', 'éabc', 'abcé', `é${'a'.repeat(1000)}ü`, 'é'.repeat(100_000), 'aé'.repeat(50_000), `${'a'.repeat(1000)}\u00A0`, ...gaps, gaps.join('')]) {
+      assert.equal(utf8ByteLength(str), enc.encode(str).byteLength, `${str.length} chars from ${JSON.stringify(str.slice(0, 8))}`)
+    }
+  })
+
+  it('is the length of a string that is all ASCII', () => {
+    const src = 'export const a = 1 // plain\n'.repeat(1000)
+    assert.equal(utf8ByteLength(src), src.length)
+  })
+
+  it('rejects a non-string', () => {
+    assert.throws(() => utf8ByteLength(null), /utf8ByteLength expects a string/u)
+    assert.throws(() => utf8ByteLength(new Uint8Array(1)), /utf8ByteLength expects a string/u)
   })
 })

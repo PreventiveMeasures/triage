@@ -1,15 +1,17 @@
 // Pure bundle comparison — no Lit, no DOM, no `state`. Given two
-// `Map<path, content>` source maps (the shape `bundleSourcesAsMap`
-// returns for either a sourcemap or a stasis bundle) plus a
+// `Map<path, content>` file maps (the shape `bundleFilesAsMap` returns
+// for either a sourcemap or a stasis bundle: every file the terminal
+// mounts, source or resource, with no directory captures) plus a
 // `pkgOf(path)` bucketing function, it computes a structural diff:
-// which source files exist only in one side, which exist in both but
-// changed, per-package size deltas, and the roll-up totals.
+// which files exist only in one side, which exist in both but changed,
+// per-package size deltas, and the roll-up totals.
 //
-// Kept dependency-free on purpose so `<bundle-compare>` (the Compare
-// slide in the bundles view) and its unit test can both consume the
-// same logic — the test exercises this module directly without
-// standing up Lit or the OPFS parse pipeline. The component is a thin
-// rendering shell around `computeBundleDiff`.
+// Kept free of Lit, the DOM and the OPFS parse pipeline on purpose, so
+// `<bundle-compare>` (the Compare slide in the bundles view) and its
+// unit test can both consume the same logic — the test exercises this
+// module directly. Its one import is the file sizer the Overview uses,
+// itself pure. The component is a thin rendering shell around
+// `computeBundleDiff`.
 //
 // `base` is the currently-open bundle (the tab you're viewing);
 // `other` is the bundle picked to compare against. The result names
@@ -17,14 +19,23 @@
 // so the UI can label them with each bundle's actual name — "added"
 // is ambiguous without knowing which side is newer.
 
-const enc = new TextEncoder()
+import { bundleFileByteLength } from './bundle-sources.js'
 
-// UTF-8 byte length of a source string. Non-strings (a stasis
-// resource entry that slipped through, or a missing sourcemap
-// `sourcesContent[i]`) count as zero bytes — the same convention the
-// treemap + size-distribution use.
+// A file's size, by the measure the Overview and Treemap use: text by the
+// UTF-8 it encodes to, a base64 resource by the bytes it decodes to. A
+// file with no size to give (a base64 spelling that does not decode)
+// counts as zero bytes, but is still compared.
 function byteLen(content) {
-  return typeof content === 'string' ? enc.encode(content).byteLength : 0
+  return bundleFileByteLength(content) ?? 0
+}
+
+// Whether two sides hold the same file. Text compares as text; a base64
+// resource arrives as a fresh `{ format: 'base64', data }` on each side,
+// so it compares by its spelling — identity would call every image
+// changed. A file that is text on one side and base64 on the other has
+// changed.
+function sameContent(a, b) {
+  return a === b || (a?.format === 'base64' && b?.format === 'base64' && a.data === b.data)
 }
 
 // Comparator: largest absolute delta first, then path/label ascending
@@ -84,7 +95,7 @@ function emptyPkgAcc() {
 //
 // `delta` is always `other − base` (positive = the compared bundle is
 // larger). `identical` is true when the two bundles carry the exact
-// same set of paths with byte-identical content.
+// same set of paths with byte-identical content, resources included.
 export function computeBundleDiff(base, other, pkgOf) {
   const onlyBase = []
   const onlyOther = []
@@ -111,15 +122,16 @@ export function computeBundleDiff(base, other, pkgOf) {
     if (inBase && inOther) {
       const bC = base.get(path)
       const oC = other.get(path)
+      const same = sameContent(bC, oC)
       const bB = byteLen(bC)
       // Identical content shares the byte count, so only measure the
-      // other side when the strings actually differ.
-      const oB = bC === oC ? bB : byteLen(oC)
+      // other side when the files actually differ.
+      const oB = same ? bB : byteLen(oC)
       baseBytes += bB
       otherBytes += oB
       acc.baseBytes += bB
       acc.otherBytes += oB
-      if (bC === oC) {
+      if (same) {
         unchangedFiles++
       } else {
         const delta = oB - bB
