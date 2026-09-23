@@ -159,7 +159,8 @@ export {
 } from './triage-gc.js'
 
 export {
-  loadPromise as triageLoadPromise,
+  ensureTriageLoaded,
+  reloadTriageFromStorage,
   migrateTriageToEncrypted,
   migrateTriageToPlaintext,
   saveTriage,

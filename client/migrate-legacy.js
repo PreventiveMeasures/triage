@@ -17,7 +17,7 @@ import { deleteFile, listFiles, readFile, saveFile } from './storage.js'
 import { analyzeContent, getCount, removeCount, setCount } from './counts.js'
 import { addReportToWorkspace, listWorkspaces, removeReportFromWorkspace } from './workspaces.js'
 import { loadRepoUrlFor, saveRepoUrlFor, state } from './state.ts'
-import { saveTriage, loadPromise as triageLoadPromise } from './triage.js'
+import { ensureTriageLoaded, saveTriage } from './triage.js'
 import { getItem as getSecureItem, setItem as setSecureItem } from './secure-storage.js'
 import { setReportIgnored } from './triage-entry.ts'
 import { decodeReportLocation, encodeReportLocation } from './report-location.js'
@@ -50,9 +50,9 @@ async function run() {
   // path treats as "newly attached" — `hydrateStateFromBaseState`
   // would gap-fill from chain baseState BEFORE state.* loaded the
   // user's persisted local triage, silently overriding it on the
-  // local-wins resolution. Awaiting `triageLoadPromise` here closes
+  // local-wins resolution. Awaiting `ensureTriageLoaded` here closes
   // that boot-time race. Audit round-8 H4.
-  try { await triageLoadPromise } catch {}
+  try { await ensureTriageLoaded() } catch {}
   // Don't catch a `listFiles()` failure here — let it reject so the
   // wrapper's memo-clear (above) lets the next call retry. Catching
   // would memoize a "successful" no-op and strand the user with

@@ -18,11 +18,12 @@
 // tables, `CREATE TABLE IF NOT EXISTS` at open.
 import { randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import type { Role } from '../common/managed/roles.ts'
 import type { TeamUserPermissions } from '../common/managed/permissions.ts'
 import type { TriageEntryPatch } from '../common/managed/triage.ts'
+import { migrateReportLocations } from './report-migration.ts'
 
 const SQLITE_SCHEMA = `
 CREATE TABLE IF NOT EXISTS managed_user (
@@ -1244,8 +1245,8 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
       )`)
     }
     ensureColumn(db, 'managed_report', 'uploaded_by_login', 'TEXT')
-    ensureColumn(db, 'managed_report', 'repo_directory', "TEXT NOT NULL DEFAULT ''")
     ensureColumn(db, 'managed_report', 'repo_embedded', 'INTEGER NOT NULL DEFAULT 0')
+    migrateReportLocations(db, join(dirname(path), 'reports'))
     ensureColumn(db, 'managed_report', 'analyzer', 'TEXT')
     // Existing rows predate publication controls and were already visible.
     // Backfill only when adding the column; newly inserted rows still use the

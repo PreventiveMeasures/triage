@@ -1,7 +1,7 @@
 // Load the requested finding's report row for an in-place Links preview. Keep the
 // Links file and loaded reports unchanged; the card uses the usual ID-keyed
 // triage store and the original report's source/bundle metadata.
-import { computeLinkHint, loadRepoUrlFor, readFile, state, triageLoadPromise, workspacesHoldingReport } from '#client/index.js'
+import { computeLinkHint, ensureTriageLoaded, loadRepoUrlFor, readFile, state, workspacesHoldingReport } from '#client/index.js'
 import { store } from '@rray/frontend/state-management'
 import { inheritReportMeta, isAppFinding, loadFindings, repoDirectory, reportEntries, reportRepoGithub } from '../../report/index.js'
 
@@ -55,7 +55,7 @@ export async function openLinksPreview(id, reportName, rowIndex) {
     })
     // Prime the same hints as report navigation for the card's Copy link.
     await Promise.all([
-      triageLoadPromise,
+      ensureTriageLoaded(),
       computeLinkHint('report', reportName),
       ...workspacesHoldingReport(reportName).map((w) => computeLinkHint('workspace', w.id)),
     ])

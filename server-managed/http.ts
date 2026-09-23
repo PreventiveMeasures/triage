@@ -51,6 +51,7 @@ import { filterReportContent } from '../common/managed/report-filter.ts'
 import type { TriageEntryPatch } from '../common/managed/triage.ts'
 import { MAX_FINDING_ID, MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_ENTRIES, MAX_TRIAGE_HISTORY, isTriageBucket, parseTriageEntryPatch } from '../common/managed/triage.ts'
 import { loadFindings, readReport, repoDirectory, reportRepoGithub } from '../report/index.js'
+import { normalizeTeamPath } from './repo-path.ts'
 import { DEFAULT_MANAGED_SCAN_MODEL, MANAGED_SCAN_MODELS } from '../common/managed/scan-models.ts'
 import { CONFIG_PATH } from '../common/server-info.ts'
 import { collectRepos, installUrl } from './github-app.ts'
@@ -86,7 +87,6 @@ const TEAM_REMOVE_REPO_PATH = '/api/admin/teams/remove-repo'
 const TEAM_SET_MEMBER_PATH = '/api/admin/teams/set-member'
 const TEAM_REMOVE_MEMBER_PATH = '/api/admin/teams/remove-member'
 const MAX_TEAM_NAME = 100
-const MAX_TEAM_PATH = 500
 
 export interface ManagedHttpDeps {
   config: ManagedConfig
@@ -334,9 +334,10 @@ async function repositoryFindingIds(deps: ManagedHttpDeps, reports: { id: string
   const ids = new Set<string>()
   for (const report of reports) {
     const bytes = await deps.reportStore.get(report.id)
-    if (bytes == null) continue
+    if (bytes == null) throw new Error(`Cannot establish repository triage overlap: report ${report.id} is unavailable`)
     const parsed = await loadFindings(bytes.toString('utf8'))
-    for (const finding of parsed?.findings ?? []) {
+    if (parsed == null) throw new Error(`Cannot establish repository triage overlap: report ${report.id} is unreadable`)
+    for (const finding of parsed.findings) {
       const id = (finding as { id?: unknown })?.id
       if (typeof id === 'string' && id !== '') ids.add(id)
     }
@@ -760,30 +761,6 @@ async function adminMutation(req: IncomingMessage, res: ServerResponse, deps: Ma
   if (s == null) return null
   if (s.user.role !== 'admin') { sendJson(res, 403, { error: 'forbidden' }); return null }
   return s
-}
-
-// Normalise an optional team-repo subpath into a clean RELATIVE path inside the
-// repo: trim, drop control chars, fold both separators, drop empty + '.'
-// segments, and REJECT any '..' segment so the subpath can't escape the repo
-// subtree once the (later) data plane reads from it. `{ ok:false }` = traversal
-// (the handler 400s); `{ path:null }` = the whole repo. Result is '/'-joined and
-// length-capped.
-function normalizeTeamPath(raw: unknown): { ok: true; path: string | null } | { ok: false } {
-  if (typeof raw !== 'string') return { ok: true, path: null }
-  let cleaned = ''
-  for (const ch of raw.trim()) {
-    const code = ch.codePointAt(0) ?? 0
-    if (code < 0x20 || code === 0x7f) continue
-    cleaned += ch
-  }
-  const segments: string[] = []
-  for (const seg of cleaned.replaceAll('\\', '/').split('/')) {
-    if (seg === '' || seg === '.') continue
-    if (seg === '..') return { ok: false }
-    segments.push(seg)
-  }
-  const path = segments.join('/').slice(0, MAX_TEAM_PATH)
-  return { ok: true, path: path === '' ? null : path }
 }
 
 // GET /api/teams — the CURRENT user's teams, each with the reports and bundles

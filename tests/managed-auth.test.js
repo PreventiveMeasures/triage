@@ -1482,6 +1482,21 @@ test('repository removal skips report parsing when keeping triage and preserves 
   reads.length = 0
   const remove = (repoId, deleteTriage) => upload('/api/admin/repositories/remove', cookie, session.csrfToken,
     JSON.stringify({ repoId, fullName: `o/r${repoId}`, acknowledge: true, deleteTriage }))
+  for (const id of reports) {
+    const bytes = await get(id)
+    for (const unavailable of [null, Buffer.from('not a report')]) {
+      store.map.set(id, unavailable)
+      assert.equal((await send('GET', '/api/admin/repositories/impact?repoId=7', cookie)).statusCode, 500)
+      assert.equal((await remove(7, true)).statusCode, 500)
+      assert.equal((await db.listReports()).length, 2, 'failed overlap checks preserve report rows')
+      assert.equal((await db.listAllRepos()).length, 2, 'failed overlap checks preserve repositories')
+      assert.equal((await db.listTriage([shared, exclusive])).length, 2, 'failed overlap checks preserve all annotations')
+      assert.equal(store.map.size, 2, 'no blobs are deleted before overlap is established')
+    }
+    store.map.set(id, bytes)
+  }
+  assert.equal(JSON.parse((await send('GET', '/api/admin/repositories/impact?repoId=7', cookie)).body).triageCount, 1, 'repairing the blobs allows retry')
+  reads.length = 0
   const kept = await remove(7, false)
   assert.equal(kept.statusCode, 200)
   assert.equal(JSON.parse(kept.body).deletedTriage, 0)

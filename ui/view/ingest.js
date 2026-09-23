@@ -1,4 +1,4 @@
-import { adoptRepoUrlFor, analyzeContent, computeLinkHint, deleteBundle, deleteFile, deleteWorkspace, dropBundleFromHashIndex, getSecureItem, isManagedUiMode, listBundles, listFiles, listWorkspaces, loadRepoUrlFor, parseLinkedFindings, pruneOrphanTriage, readFile, readFileBytes, removeCount, removeSecureItem, saveBundle, saveFile, saveRepoUrlFor, setBundleWorkspace, setCount, setReportWorkspace, setSecureItem, state, triageLoadPromise } from '#client/index.js'
+import { adoptRepoUrlFor, analyzeContent, computeLinkHint, deleteBundle, deleteFile, deleteWorkspace, dropBundleFromHashIndex, ensureTriageLoaded, getSecureItem, isManagedUiMode, listBundles, listFiles, listWorkspaces, loadRepoUrlFor, parseLinkedFindings, pruneOrphanTriage, readFile, readFileBytes, removeCount, removeSecureItem, saveBundle, saveFile, saveRepoUrlFor, setBundleWorkspace, setCount, setReportWorkspace, setSecureItem, state } from '#client/index.js'
 import { closeWorkspace as closePresence, deleteBundleFromRemote, deleteFromRemote as deletePresence, isInRemoteOrCached, openWorkspace as openPresence, putFile, triageSync } from './client-sync.js'
 import { openImportConflictDialog } from './dialogs/import-conflict-dialog.js'
 import { dropZone, report } from './dom.js'
@@ -963,7 +963,7 @@ export async function deleteCurrent({ triage = 'keep', deleteFromRemoteWorkspace
 // Does NOT bump `loadGen` or close sync sessions — those are caller
 // concerns (each path has its own ordering constraints with the
 // surrounding OPFS / triage / remote operations).
-function clearActiveView() {
+function clearActiveView({ forgetLastView = true } = {}) {
   state.currentManagedTeam = null
   state.currentManagedReport = null
   state.currentFile = null
@@ -1002,7 +1002,7 @@ function clearActiveView() {
   state.shownTriage = null
   state.currentView = 'findings'
   resetGraph2()
-  removeSecureItem(LAST_FILE_KEY)
+  if (forgetLastView) removeSecureItem(LAST_FILE_KEY)
   showEmptyMainPane()
   document.title = 'DeepView'
 }
@@ -1016,11 +1016,12 @@ function clearActiveView() {
 // ingest pipelines. Closing sessions stops local triage updates from arriving
 // while the landing screen is being painted. clearActiveView also removes the
 // persisted last-view pointer, so entering local mode cannot immediately
-// restore the managed report that was just open.
-export function resetForClientModeTransition() {
+// restore the managed report that was just open. Cold-start protocol detection
+// passes forgetLastView:false to leave local storage untouched.
+export function resetForClientModeTransition(options) {
   ++loadGen
   closeSessionsExcept(new Set())
-  clearActiveView()
+  clearActiveView(options)
 }
 
 // Drop back to the empty drop-zone screen without touching stored
@@ -1215,9 +1216,9 @@ async function ingestReport(name, content, gen = null, { renderView = true, mana
     ])
     if (stale()) return
     // Persistent triage (markers/deletedIds keyed by uuid) loads once
-    // at module init; await it before rendering so the first drop
+    // on local navigation; await it before rendering so the first drop
     // already shows stored marks/deletions for matching findings.
-    await triageLoadPromise
+    await ensureTriageLoaded()
     if (stale()) return
     // Format dispatch lives in the report library (report/index.js),
     // which also words the failure — usually a malformed dump rather
