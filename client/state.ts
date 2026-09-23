@@ -957,8 +957,8 @@ export function setLocalMode(enabled: boolean): void {
   state.localMode = Boolean(enabled)
 }
 
-export function clientModeLabel(): 'managed' | 'local' | 'e2e' {
-  if (state.serverMode !== 'managed') return 'e2e'
+export function clientModeLabel(): 'managed' | 'local' | 'e2e' | 'standalone' {
+  if (state.serverMode !== 'managed') return state.serverMode
   return state.localMode ? 'local' : 'managed'
 }
 

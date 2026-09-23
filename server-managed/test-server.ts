@@ -216,10 +216,31 @@ function handleAdminCatalog(url: URL, method: string, res: ServerResponse): bool
     sendJson(res, 200, { history })
     return true
   }
+  if (url.pathname === '/api/admin/repositories/impact') {
+    if (method !== 'GET') { sendJson(res, 405, { error: 'method-not-allowed' }); return true }
+    const repoId = Number(url.searchParams.get('repoId'))
+    const repo = repoById(repoId)
+    if (!repo) { sendJson(res, 404, { error: 'no-repo' }); return true }
+    const attached = reportFixtures.filter((report) => report.repoId === repoId)
+    const ids = (items: typeof reportFixtures) => items.flatMap((report) =>
+      (JSON.parse(report.content) as { findings: { id: string }[] }).findings.map((finding) => finding.id))
+    const otherIds = new Set(ids(reportFixtures.filter((report) => report.repoId !== repoId)))
+    sendJson(res, 200, {
+      repoId, fullName: repo.fullName,
+      reports: attached.map((report) => ({ id: report.id, filename: report.filename, repoDirectory: report.repoDirectory })),
+      bundles: bundles.filter((bundle) => bundle.repoId === repoId),
+      triageCount: [...new Set(ids(attached))].filter((id) => triage.has(id) && !otherIds.has(id)).length,
+    })
+    return true
+  }
   return false
 }
 
 function handleAdmin(url: URL, method: string, res: ServerResponse): void {
+  const adminOnly = /^\/api\/admin\/(?:users|set-role|repositories|teams)(?:\/|$)/u.test(url.pathname)
+  if (!['admin', 'manage'].includes(role) || (adminOnly && role !== 'admin')) {
+    sendJson(res, 403, { error: 'forbidden' }); return
+  }
   if (handleAdminCatalog(url, method, res)) return
   if (url.pathname === '/api/admin/reports/set-visible' && method === 'POST') {
     sendJson(res, 200, { ok: true })

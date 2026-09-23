@@ -22,12 +22,20 @@ test('managed preview triage persists in memory and stays scoped to the requeste
   const base = `http://127.0.0.1:${server.address().port}/api/reports`
   const first = `${base}/fixture-report-1/triage`
   const second = `${base}/fixture-report-2/triage`
+  const impactUrl = new URL('/api/admin/repositories/impact?repoId=101', base)
+  const impact = await (await fetch(impactUrl)).json()
+  assert.equal(impact.repoId, 101)
+  assert.equal(impact.reports.length, 2)
+  assert.equal(impact.bundles.length, 2)
+  assert.equal(impact.triageCount, 0)
+  assert.equal((await fetch(new URL('/api/admin/repositories/impact?repoId=999', base))).status, 404)
   const post = (url, entries, token = 'fixture-csrf-token') => fetch(url, {
     method: 'POST', headers: { 'content-type': 'application/json', 'x-csrf-token': token }, body: JSON.stringify({ entries }),
   })
   assert.deepEqual(await (await fetch(first)).json(), { entries: {} })
   assert.equal((await post(first, { 'managed-fixture-1': { triage: 'fixed' } }, 'bad-token')).status, 403)
   assert.equal((await post(first, { 'managed-fixture-1': { triage: 'fixed' } })).status, 200)
+  assert.equal((await (await fetch(impactUrl)).json()).triageCount, 1)
   assert.deepEqual(await (await fetch(first)).json(), { entries: { 'managed-fixture-1': { triage: 'fixed' } } })
   assert.deepEqual(await (await fetch(second)).json(), { entries: {} })
   assert.equal((await post(first, { 'managed-fixture-1': { color: 'red' }, foreign: null })).status, 404)

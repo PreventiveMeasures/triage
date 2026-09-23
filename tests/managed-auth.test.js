@@ -606,7 +606,7 @@ test('handleCallback: persists the user token for later repo listing', async () 
   await db.close()
 })
 
-test('GET /api/admin/repositories: admin|manage only; no stored token → tokenMissing', async () => {
+test('GET /api/admin/repositories: admin only; no stored token → tokenMissing', async () => {
   const db = openSqliteManagedDb(':memory:')
   const now = Date.now()
   const adminSess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
@@ -639,14 +639,15 @@ test('GET /api/admin/repositories: admin|manage only; no stored token → tokenM
   assert.equal((await get(null)).statusCode, 401)
   assert.equal((await get(cookiePair(noneSess.setCookie))).statusCode, 403) // 'none' role
   const asManage = await get(cookiePair(manageSess.setCookie))
-  assert.equal(asManage.statusCode, 200)
+  assert.equal(asManage.statusCode, 403)
   // No slug + no token persisted for this user → the tokenMissing response.
-  assert.deepEqual(JSON.parse(asManage.body), { installUrl: null, repositories: [], tokenMissing: true })
-  assert.equal((await get(cookiePair(adminSess.setCookie))).statusCode, 200)
+  const asAdmin = await get(cookiePair(adminSess.setCookie))
+  assert.equal(asAdmin.statusCode, 200)
+  assert.deepEqual(JSON.parse(asAdmin.body), { installUrl: null, repositories: [], tokenMissing: true })
   await db.close()
 })
 
-test('POST /api/admin/repositories/select: admin|manage + CSRF; verifies access, persists, marks, deselects', async () => {
+test('POST /api/admin/repositories/select: admin + CSRF; verifies access, persists, marks, deselects', async () => {
   const db = openSqliteManagedDb(':memory:')
   const now = Date.now()
   const adminSess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
@@ -1420,7 +1421,79 @@ test('GET /api/reports/<id>: server-side content filter by viewer permissions (a
   await db.close()
 })
 
-test('teams API: admin|manage gating, create (409 dup), repo/member links + perms, CSRF', async () => {
+test('managers cannot bypass admin-only repository and team routes with direct requests', async (t) => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const session = await createSession(config, db, { githubUserId: 1, login: 'manager', name: null, avatarUrl: null }, Date.now())
+  await db.setUserRole(session.userId, 'manage')
+  const { upload, send } = bundleHarness(db)
+  const cookie = cookiePair(session.setCookie)
+  for (const path of ['/api/admin/repositories', '/api/admin/repositories?scope=installed', '/api/admin/repositories?scope=public', '/api/admin/repositories/impact?repoId=7', '/api/admin/teams']) {
+    assert.equal((await send('GET', path, cookie)).statusCode, 403, path)
+  }
+  const mutations = [
+    ['/api/admin/repositories/select', { repoId: 7, selected: true }],
+    ['/api/admin/repositories/select', { repoId: 7, selected: false }],
+    ['/api/admin/repositories/remove', { repoId: 7, fullName: 'o/r', acknowledge: true, deleteTriage: true }],
+    ['/api/admin/teams', { name: 'Unauthorized' }],
+    ['/api/admin/teams/rename', { teamId: 'team', name: 'Unauthorized' }],
+    ['/api/admin/teams/delete', { teamId: 'team' }],
+    ['/api/admin/teams/set-repo', { teamId: 'team', repoId: 7 }],
+    ['/api/admin/teams/remove-repo', { teamId: 'team', repoId: 7 }],
+    ['/api/admin/teams/set-member', { teamId: 'team', userId: session.userId, dependencies: true, security: true }],
+    ['/api/admin/teams/remove-member', { teamId: 'team', userId: session.userId }],
+  ]
+  for (const [path, body] of mutations) {
+    assert.equal((await upload(path, cookie, session.csrfToken, JSON.stringify(body))).statusCode, 403, path)
+  }
+  for (const path of ['/api/admin/reports', '/api/admin/bundles', '/api/admin/models', '/api/teams']) {
+    assert.equal((await send('GET', path, cookie)).statusCode, 200, `content management remains available: ${path}`)
+  }
+})
+
+test('repository removal skips report parsing when keeping triage and preserves shared annotations', async (t) => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const now = Date.now()
+  const session = await createSession(config, db, { githubUserId: 1, login: 'admin', name: null, avatarUrl: null }, now)
+  for (const repoId of [7, 8]) await db.selectRepo({ repoId, fullName: `o/r${repoId}`, private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: session.userId }, now)
+  const store = fakeBlobStore()
+  const reads = []
+  const get = store.get
+  store.get = (id) => { reads.push(id); return get(id) }
+  const { upload, send } = bundleHarness(db, config, store)
+  const cookie = cookiePair(session.setCookie)
+  const exclusive = randomUUID(), shared = randomUUID()
+  const finding = (id) => ({ id, severity: 'high', file: 'index.js', description: 'Test finding' })
+  const reports = []
+  for (const [repoId, ids] of [[7, [shared, exclusive]], [8, [shared]]]) {
+    const response = await upload('/api/admin/reports', cookie, session.csrfToken,
+      JSON.stringify({ findings: ids.map(finding) }), { 'x-repo-id': String(repoId) })
+    assert.equal(response.statusCode, 201)
+    reports.push(JSON.parse(response.body).id)
+  }
+  reads.length = 0
+  const empty = await send('GET', '/api/admin/repositories/impact?repoId=7', cookie)
+  assert.equal(JSON.parse(empty.body).triageCount, 0)
+  assert.deepEqual(reads, [reports[0]], 'unannotated findings need no other-report overlap scan')
+  for (const id of [shared, exclusive]) await db.setTriage(id, { color: 'red' }, session.userId, 'admin', now)
+  const impact = await send('GET', '/api/admin/repositories/impact?repoId=7', cookie)
+  assert.equal(JSON.parse(impact.body).triageCount, 1, 'a shared annotation is not exclusive')
+  reads.length = 0
+  const remove = (repoId, deleteTriage) => upload('/api/admin/repositories/remove', cookie, session.csrfToken,
+    JSON.stringify({ repoId, fullName: `o/r${repoId}`, acknowledge: true, deleteTriage }))
+  const kept = await remove(7, false)
+  assert.equal(kept.statusCode, 200)
+  assert.equal(JSON.parse(kept.body).deletedTriage, 0)
+  assert.deepEqual(reads, [], 'keeping triage never reads report blobs')
+  assert.equal((await db.listTriage([shared, exclusive])).length, 2)
+  const deleted = await remove(8, true)
+  assert.equal(deleted.statusCode, 200)
+  assert.equal(JSON.parse(deleted.body).deletedTriage, 1)
+  assert.deepEqual((await db.listTriage([shared, exclusive])).map((entry) => entry.findingId), [exclusive])
+})
+
+test('teams API: admin gating, create (409 dup), repo/member links + perms, CSRF', async () => {
   const db = openSqliteManagedDb(':memory:')
   const now = Date.now()
   const adminSess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)

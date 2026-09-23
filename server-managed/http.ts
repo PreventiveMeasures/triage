@@ -15,10 +15,10 @@
 //   GET  /api/avatar/<id>        → cached avatar bytes by user id | 401/404
 //   GET  /api/admin/users        → admin-only user list | 401/403
 //   POST /api/admin/set-role     → admin sets another user's role | 401/403/404
-//   GET  /api/admin/repositories → admin|manage repo list (each flagged selected) | 401/403
-//   POST /api/admin/repositories/select → admin|manage selects/deactivates a repo | 401/403
-//   GET /api/admin/repositories/impact → admin|manage attached data summary
-//   POST /api/admin/repositories/remove → admin|manage permanently removes a repo
+//   GET  /api/admin/repositories → admin repo list (each flagged selected) | 401/403
+//   POST /api/admin/repositories/select → admin selects/deactivates a repo | 401/403
+//   GET /api/admin/repositories/impact → admin attached data summary
+//   POST /api/admin/repositories/remove → admin permanently removes a repo
 //   GET  /api/admin/reports      → admin|manage list of uploaded reports | 401/403
 //   POST /api/admin/reports      → admin|manage uploads a report (raw body) | 401/403/413
 //   GET  /api/admin/reports/<id> → admin|manage downloads a stored report | 401/403/404
@@ -29,12 +29,12 @@
 //   GET  /api/admin/bundles/<id> → admin|manage downloads a stored bundle | 401/403/404
 //   DELETE /api/admin/bundles/<id> → admin|manage deletes a bundle | 401/403/404
 //   POST /api/admin/bundles/set-repo → admin|manage attaches/detaches a bundle's repo | 401/403/404
-//   GET  /api/admin/teams        → admin|manage teams (+ members/repos) + pickers | 401/403
-//   POST /api/admin/teams        → admin|manage creates a team | 401/403/409
-//   POST /api/admin/teams/rename → admin|manage renames a team | 401/403/404/409
-//   POST /api/admin/teams/delete → admin|manage deletes a team | 401/403/404
-//   POST /api/admin/teams/{set,remove}-repo   → admin|manage links/unlinks a repo (+path) | 401/403/404
-//   POST /api/admin/teams/{set,remove}-member → admin|manage links/unlinks a user (+perms) | 401/403/404
+//   GET  /api/admin/teams        → admin teams (+ members/repos) + pickers | 401/403
+//   POST /api/admin/teams        → admin creates a team | 401/403/409
+//   POST /api/admin/teams/rename → admin renames a team | 401/403/404/409
+//   POST /api/admin/teams/delete → admin deletes a team | 401/403/404
+//   POST /api/admin/teams/{set,remove}-repo   → admin links/unlinks a repo (+path) | 401/403/404
+//   POST /api/admin/teams/{set,remove}-member → admin links/unlinks a user (+perms) | 401/403/404
 //   POST /api/auth/logout        → same-origin + CSRF, drops the session
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Buffer } from 'node:buffer'
@@ -230,11 +230,10 @@ async function handleListModels(res: ServerResponse, deps: ManagedHttpDeps, cook
 
 // GET /api/admin/repositories — the connected repositories by default. The
 // potentially large GitHub discovery lists are opt-in (`scope=installed` or
-// `scope=public`) and are searched/paged on the server. Visible to admin OR
-// manage. Read-only (no CSRF).
+// `scope=public`) and are searched/paged on the server. Admin-only. No CSRF.
 async function handleListRepositories(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   if ((req.method ?? 'GET') !== 'GET') { send405(res, 'GET'); return }
-  const s = await readManageSession(res, deps, cookie)
+  const s = await readAdminSession(res, deps, cookie)
   if (s == null) return
   const url = new URL(req.url ?? '/', 'http://localhost')
   // Keep the original unparameterized response shape for older clients. The
@@ -312,15 +311,14 @@ async function selectRepository(res: ServerResponse, deps: ManagedHttpDeps, user
   sendJson(res, 200, { ok: true, selected: true })
 }
 
-// POST /api/admin/repositories/select — admin|manage toggles whether a repo is
+// POST /api/admin/repositories/select — an admin toggles whether a repo is
 // active in the operate-on set. Mutation: same-origin + CSRF. Body { repoId,
 // selected }. selected:true verifies + records the read context; selected:false
 // deactivates the row while retaining its reports, bundles, and metadata.
 async function handleSelectRepository(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   if ((req.method ?? 'GET') !== 'POST') { send405(res, 'POST'); return }
-  const s = await checkMutation(req, res, deps, cookie)
+  const s = await adminMutation(req, res, deps, cookie)
   if (s == null) return
-  if (!requireManageRole(res, s.user)) return
   let body: unknown
   try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
   const repoId = (body as { repoId?: unknown } | null)?.repoId
@@ -350,15 +348,22 @@ async function repositoryImpact(deps: ManagedHttpDeps, repoId: number) {
   const allReports = await deps.db.listReports()
   const reports = allReports.filter((report) => report.repoId === repoId)
   const bundles = await deps.db.listBundlesForRepo(repoId)
-  const targetIds = await repositoryFindingIds(deps, reports)
-  const otherIds = await repositoryFindingIds(deps, allReports.filter((report) => report.repoId !== repoId))
-  const triageIds = [...targetIds].filter((id) => !otherIds.has(id))
-  const triage = await deps.db.listTriage(triageIds)
+  const triageIds = await repositoryExclusiveTriageIds(deps, reports, allReports.filter((report) => report.repoId !== repoId))
   return {
     reports: reports.map((report) => ({ id: report.id, filename: report.filename, repoDirectory: report.repoDirectory })),
     bundles,
-    triageCount: triage.length,
+    triageCount: triageIds.length,
   }
+}
+
+async function repositoryExclusiveTriageIds(deps: ManagedHttpDeps, reports: { id: string }[], otherReports: { id: string }[]): Promise<string[]> {
+  const targetIds = await repositoryFindingIds(deps, reports)
+  const triage = await deps.db.listTriage([...targetIds])
+  if (triage.length === 0) return []
+  // Only annotated findings need an overlap check. A durable per-report
+  // finding index can replace these blob reads when this preview is scaled.
+  const otherIds = await repositoryFindingIds(deps, otherReports)
+  return triage.map((entry) => entry.findingId).filter((id) => !otherIds.has(id))
 }
 
 // GET /api/admin/repositories/impact — show the data a permanent repository
@@ -395,16 +400,15 @@ async function handleRemoveRepository(req: IncomingMessage, res: ServerResponse,
   if (repo.fullName !== fullName) { sendJson(res, 400, { error: 'repo-name-mismatch' }); return }
   const reports = await deps.db.listReportsForRepo(repoId)
   const bundles = await deps.db.listBundlesForRepo(repoId)
-  const allReports = await deps.db.listReports()
-  const targetIds = await repositoryFindingIds(deps, reports)
-  const otherIds = await repositoryFindingIds(deps, allReports.filter((report) => report.repoId !== repoId))
+  const triageIds = deleteTriage
+    ? await repositoryExclusiveTriageIds(deps, reports, (await deps.db.listReports()).filter((report) => report.repoId !== repoId))
+    : []
   const deletedReports = await deps.db.deleteReportsForRepo(repoId)
   const deletedBundles = await deps.db.deleteBundlesForRepo(repoId)
   // Remove metadata first so a blob-store failure leaves an orphaned blob for
   // later cleanup, rather than a live row pointing at missing report data.
   for (const report of reports) await deps.reportStore.delete(report.id).catch(() => {})
   for (const bundle of bundles) await deps.bundleStore.delete(bundle.id).catch(() => {})
-  const triageIds = deleteTriage ? [...targetIds].filter((id) => !otherIds.has(id)) : []
   const deletedTriage = await deps.db.deleteTriage(triageIds)
   await deps.db.deleteRepo(repoId)
   sendJson(res, 200, { ok: true, deletedReports, deletedBundles, deletedTriage })
@@ -746,6 +750,15 @@ async function manageMutation(req: IncomingMessage, res: ServerResponse, deps: M
   return s
 }
 
+// Workspace access and repository connections are administered separately
+// from content management. Managers cannot change their own access via teams.
+async function adminMutation(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<{ session: ManagedSession; user: StoredUser } | null> {
+  const s = await checkMutation(req, res, deps, cookie)
+  if (s == null) return null
+  if (s.user.role !== 'admin') { sendJson(res, 403, { error: 'forbidden' }); return null }
+  return s
+}
+
 // Normalise an optional team-repo subpath into a clean RELATIVE path inside the
 // repo: trim, drop control chars, fold both separators, drop empty + '.'
 // segments, and REJECT any '..' segment so the subpath can't escape the repo
@@ -974,9 +987,9 @@ async function handleSetReportTriage(req: IncomingMessage, res: ServerResponse, 
 
 // GET /api/admin/teams — every team (members + repos inlined) plus the pickers
 // the page needs: all users (member dropdown), selected repos (repo dropdown),
-// and the visibility-permission keys. admin|manage, read-only (no CSRF).
+// and the visibility-permission keys. admin, read-only (no CSRF).
 async function handleListTeams(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
-  const s = await readManageSession(res, deps, cookie)
+  const s = await readAdminSession(res, deps, cookie)
   if (s == null) return
   sendJson(res, 200, {
     teams: await deps.db.listTeams(),
@@ -988,7 +1001,7 @@ async function handleListTeams(res: ServerResponse, deps: ManagedHttpDeps, cooki
 
 // POST /api/admin/teams — create a team. Body { name }. 409 if the name's taken.
 async function handleCreateTeam(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
-  const s = await manageMutation(req, res, deps, cookie)
+  const s = await adminMutation(req, res, deps, cookie)
   if (s == null) return
   let body: unknown
   try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
@@ -1003,7 +1016,7 @@ async function handleCreateTeam(req: IncomingMessage, res: ServerResponse, deps:
 // POST /api/admin/teams/rename — rename a team. Body { teamId, name }. 404 if no
 // such team; 409 if the new name is already taken by another team.
 async function handleRenameTeam(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
-  const s = await manageMutation(req, res, deps, cookie)
+  const s = await adminMutation(req, res, deps, cookie)
   if (s == null) return
   let body: unknown
   try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
@@ -1019,7 +1032,7 @@ async function handleRenameTeam(req: IncomingMessage, res: ServerResponse, deps:
 
 // POST /api/admin/teams/delete — drop a team (its links cascade). Body { teamId }.
 async function handleDeleteTeam(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
-  const s = await manageMutation(req, res, deps, cookie)
+  const s = await adminMutation(req, res, deps, cookie)
   if (s == null) return
   let body: unknown
   try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
@@ -1032,7 +1045,7 @@ async function handleDeleteTeam(req: IncomingMessage, res: ServerResponse, deps:
 // POST /api/admin/teams/set-repo — link a repo to a team (upsert + optional
 // subpath). Body { teamId, repoId, path? }. Repo must be in the selected set.
 async function handleSetTeamRepo(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
-  const s = await manageMutation(req, res, deps, cookie)
+  const s = await adminMutation(req, res, deps, cookie)
   if (s == null) return
   let body: unknown
   try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
@@ -1051,7 +1064,7 @@ async function handleSetTeamRepo(req: IncomingMessage, res: ServerResponse, deps
 
 // POST /api/admin/teams/remove-repo — unlink a repo. Body { teamId, repoId }.
 async function handleRemoveTeamRepo(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
-  const s = await manageMutation(req, res, deps, cookie)
+  const s = await adminMutation(req, res, deps, cookie)
   if (s == null) return
   let body: unknown
   try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
@@ -1065,7 +1078,7 @@ async function handleRemoveTeamRepo(req: IncomingMessage, res: ServerResponse, d
 // POST /api/admin/teams/set-member — add/update a member + their visibility
 // permissions. Body { teamId, userId, dependencies?, security? }.
 async function handleSetTeamMember(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
-  const s = await manageMutation(req, res, deps, cookie)
+  const s = await adminMutation(req, res, deps, cookie)
   if (s == null) return
   let body: unknown
   try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
@@ -1080,7 +1093,7 @@ async function handleSetTeamMember(req: IncomingMessage, res: ServerResponse, de
 
 // POST /api/admin/teams/remove-member — remove a membership. Body { teamId, userId }.
 async function handleRemoveTeamMember(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
-  const s = await manageMutation(req, res, deps, cookie)
+  const s = await adminMutation(req, res, deps, cookie)
   if (s == null) return
   let body: unknown
   try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }

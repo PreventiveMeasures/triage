@@ -118,8 +118,10 @@ export {
 export {
   CONFIG_PATH,
   classifyServerMode,
+  hasStandaloneProbeHint,
   parseServerInfo,
   readCachedServerInfo,
+  rememberStandaloneProbe,
   writeCachedServerInfo,
 } from './sync/server-mode.ts'
 

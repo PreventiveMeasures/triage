@@ -20,6 +20,17 @@ export { CONFIG_PATH }
 // (not per-URL): the cache reflects the protocol the local data set is bound
 // to, which is exactly what a future e2e↔managed migration would convert.
 export const SERVER_MODE_KEY = 'deepview.sync.serverInfo'
+// A landing-paint hint only: unlike ServerInfo it never binds a protocol or
+// skips the next probe, so a static deployment can gain a backend later.
+const STANDALONE_PROBE_KEY = 'deepview.sync.standaloneProbe'
+
+export function hasStandaloneProbeHint(): boolean {
+  try { return localStorage.getItem(STANDALONE_PROBE_KEY) === '1' } catch { return false }
+}
+
+export function rememberStandaloneProbe(): void {
+  try { localStorage.setItem(STANDALONE_PROBE_KEY, '1') } catch {}
+}
 
 // Validate an untrusted `server-info` frame (or cached blob) into a ServerInfo
 // (or null). Extra fields — e.g. the frame's `type` — are ignored.
@@ -48,7 +59,10 @@ export function readCachedServerInfo(): ServerInfo | null {
 }
 
 export function writeCachedServerInfo(info: ServerInfo): void {
-  try { localStorage.setItem(SERVER_MODE_KEY, JSON.stringify(info)) } catch {}
+  try {
+    localStorage.setItem(SERVER_MODE_KEY, JSON.stringify(info))
+    localStorage.removeItem(STANDALONE_PROBE_KEY)
+  } catch {}
 }
 
 // Compare a freshly-detected mode against the cached one:

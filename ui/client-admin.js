@@ -523,7 +523,10 @@ async function fetchRepositoryImpact(repoId, signal) {
     credentials: 'same-origin', headers: { accept: 'application/json' }, signal,
   })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  return res.json()
+  const impact = await res.json()
+  if (impact?.repoId !== repoId || !Array.isArray(impact.reports) || !Array.isArray(impact.bundles)
+      || !Number.isSafeInteger(impact.triageCount) || impact.triageCount < 0) throw new Error('Invalid repository data')
+  return impact
 }
 
 async function removeRepository(repoId, fullName, deleteTriage, csrfToken) {
@@ -747,6 +750,7 @@ class ManagedAdminRepos extends LitElement {
 
   _openDetail(repo) {
     this._detail = repo
+    this._actionError = null
     this._impact = null
     this._removeOpen = false
     this._acknowledge = false
@@ -757,7 +761,7 @@ class ManagedAdminRepos extends LitElement {
     const request = new AbortController()
     this._impactRequest = request
     void fetchRepositoryImpact(repo.id, request.signal).then((impact) => {
-      if (!request.signal.aborted) this._impact = impact
+      if (!request.signal.aborted && this._impactRequest === request) this._impact = impact
       return impact
     }).catch((err) => {
       if (!request.signal.aborted) this._actionError = `Couldn't load repository data: ${err?.message ?? err}`
@@ -871,7 +875,8 @@ class ManagedAdminRepos extends LitElement {
       </section>
       <section class="data-section" aria-label="Stored repository data">
         <h2>Stored data</h2>
-        ${this._impactLoading ? html`<p class="data-empty">Loading attached reports and bundles…</p>` : html`
+        ${this._impactLoading ? html`<p class="data-empty">Loading attached reports and bundles…</p>` : this._impact == null
+          ? html`<p class="data-empty">Attached data could not be loaded.</p><button type="button" class="btn" @click=${() => this._openDetail(repo)}>Try again</button>` : html`
           <div class="dialog-data">
             <section><h3>Reports (${reports.length})</h3>${reports.length > 0 ? html`<ul>${reports.map((report) => html`<li>${report.filename}${report.repoDirectory ? ` · ${report.repoDirectory}` : nothing}</li>`)}</ul>` : html`<p class="data-empty">No reports attached.</p>`}</section>
             <section><h3>Bundles (${bundles.length})</h3>${bundles.length > 0 ? html`<ul>${bundles.map((bundle) => html`<li>${bundle.filename}</li>`)}</ul>` : html`<p class="data-empty">No bundles attached.</p>`}</section>
@@ -880,17 +885,16 @@ class ManagedAdminRepos extends LitElement {
       <section class="section" aria-label="Permanent repository removal">
         <h2>Permanent removal</h2>
         <div class="settings-row"><div class="settings-copy"><strong>Delete repository and stored data</strong><p>Deactivation is reversible. Permanent removal deletes this repository’s attached reports and bundles; it cannot be undone.</p></div>
-          <button type="button" class="btn danger" ?disabled=${this._busy != null || this._impactLoading} @click=${() => { this._removeOpen = true; this._acknowledge = false; this._deleteTriage = false; this._confirmName = '' }}>Remove permanently</button>
+          <button type="button" class="btn danger" ?disabled=${this._busy != null || this._impactLoading || this._impact == null} @click=${() => { this._removeOpen = true; this._acknowledge = false; this._deleteTriage = false; this._confirmName = '' }}>Remove permanently</button>
         </div>
       </section>
-      ${this._removeOpen ? this._removeDialog(repo, reports, bundles) : nothing}
+      ${this._removeOpen && this._impact != null && !this._impactLoading ? this._removeDialog(repo, reports, bundles) : nothing}
     </div>`
   }
 
   _removeDialog(repo, reports, bundles) {
     const hasAttached = reports.length > 0 || bundles.length > 0
-    const nameMatches = !hasAttached || this._confirmName === repo.fullName
-    const ready = this._acknowledge && nameMatches && this._busy == null
+    const ready = this._canRemove(repo)
     return html`<div class="dialog-backdrop" role="presentation" @click=${(event) => { if (event.target === event.currentTarget) this._removeOpen = false }}>
       <section class=${`dialog ${hasAttached ? '' : 'small'}`} role="dialog" aria-modal="true" aria-labelledby="remove-repo-title">
         <h2 id="remove-repo-title">Remove ${repo.fullName} permanently?</h2>
@@ -931,8 +935,14 @@ class ManagedAdminRepos extends LitElement {
     }
   }
 
+  _canRemove(repo) {
+    if (this._busy != null || this._impactLoading || this._impact?.repoId !== repo.id || !this._acknowledge) return false
+    const hasAttached = this._impact.reports.length > 0 || this._impact.bundles.length > 0
+    return !hasAttached || this._confirmName === repo.fullName
+  }
+
   async _remove(repo) {
-    if (this._busy != null) return
+    if (!this._canRemove(repo)) return
     this._busy = repo.id
     this._actionError = null
     try {
@@ -1182,6 +1192,7 @@ class ManagedAdminReports extends LitElement {
     this._dragOver = false
     this._preview = null
     this._previewLoading = null
+    this._previewRequest = null
     this._locationReport = null
     this._locationRepo = null
     this._locationDirectory = ''
@@ -1201,9 +1212,11 @@ class ManagedAdminReports extends LitElement {
   disconnectedCallback() {
     super.disconnectedCallback()
     this._teardownDrop?.()
+    this._cancelPreview()
   }
 
   async _load() {
+    this._cancelPreview()
     this._error = null
     this._data = null
     try {
@@ -1274,17 +1287,30 @@ class ManagedAdminReports extends LitElement {
     finally { this._locationBusy = false }
   }
 
+  _cancelPreview() {
+    this._previewRequest?.abort()
+    this._previewRequest = null
+    this._preview = null
+    this._previewLoading = null
+    this._previewText = ''
+  }
+
   async _togglePreview(report) {
-    if (this._preview === report.id) { this._preview = null; return }
+    const wasOpen = this._preview === report.id
+    this._cancelPreview()
+    if (wasOpen) return
+    const request = new AbortController()
+    this._previewRequest = request
+    const isCurrent = () => this._previewRequest === request && !request.signal.aborted
     this._preview = report.id
     this._previewLoading = report.id
     try {
-      const res = await fetch(`/api/admin/reports/${encodeURIComponent(report.id)}`, { credentials: 'same-origin' })
+      const res = await fetch(`/api/admin/reports/${encodeURIComponent(report.id)}`, { credentials: 'same-origin', signal: request.signal })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const text = await res.text()
-      this._previewText = text.slice(0, 4000) + (text.length > 4000 ? '\n…' : '')
-    } catch (err) { this._previewText = `Preview unavailable: ${err?.message ?? err}` }
-    finally { if (this._preview === report.id) this._previewLoading = null }
+      if (isCurrent()) this._previewText = text.slice(0, 4000) + (text.length > 4000 ? '\n…' : '')
+    } catch (err) { if (isCurrent()) this._previewText = `Preview unavailable: ${err?.message ?? err}` }
+    finally { if (isCurrent()) this._previewLoading = null }
   }
 
   async _setVisible(report, visible) {

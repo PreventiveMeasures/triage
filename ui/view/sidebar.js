@@ -1,7 +1,7 @@
 import { LitElement, html, render as litRender, nothing, unsafeCSS } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { CONFIG_PATH, LINKS_KIND, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, clientModeLabel, computeLinkHint, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, ensureLinkedFindingsIndexed, getCount, getPackagesIndex, getRepositoriesIndex, hydrateSecureStorage, isManagedUiMode, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, parseServerInfo, readCachedServerInfo, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, setLocalMode, state, syncObservedAfterHydrate, writeCachedServerInfo } from '#client/index.js'
+import { CONFIG_PATH, LINKS_KIND, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, clientModeLabel, computeLinkHint, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, ensureLinkedFindingsIndexed, getCount, getPackagesIndex, getRepositoriesIndex, hasStandaloneProbeHint, hydrateSecureStorage, isManagedUiMode, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, parseServerInfo, readCachedServerInfo, rememberStandaloneProbe, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, setLocalMode, state, syncObservedAfterHydrate, writeCachedServerInfo } from '#client/index.js'
 import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, setSyncForceDisabled, triageSync } from './client-sync.js'
 import { login as managedLogin, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams } from './client-managed.js'
 import { initManagedTriagePush, resetManagedTriage } from './managed-triage.js'
@@ -1834,16 +1834,19 @@ document.addEventListener('managed-admin-navigate', (event) => {
 // frame (kept) then catches any later change.
 async function detectServerModeIfUnknown() {
   if (readCachedServerInfo()) return
-  setLandingModePending(true)
+  setLandingModePending(!hasStandaloneProbeHint())
   let status = 0
   let info = null
   try {
-    const res = await fetch(CONFIG_PATH, { credentials: 'same-origin', headers: { accept: 'application/json' } })
+    const res = await fetch(CONFIG_PATH, { credentials: 'same-origin', headers: { accept: 'application/json' }, signal: AbortSignal.timeout(3000) })
     status = res.status
     if (res.ok) info = parseServerInfo(await res.json())
   } catch { /* offline / unreachable — stay on the default until a frame arrives */ }
+  // A sync frame may have confirmed the mode while this probe was pending.
+  if (readCachedServerInfo()) { setLandingModePending(false); return }
   if (info) { applyServerInfo(info); return }
   if (status === 404) {
+    rememberStandaloneProbe()
     setLandingModePending(false)
     // No /api/config → a backend-less (standalone) deployment: purely local, no
     // sync. Runtime-only — deliberately NOT cached (a static host could gain a
@@ -1899,7 +1902,7 @@ function mount(host) {
   root.querySelector('#sidebar-search-input')?.addEventListener('input', onSearchInput)
   positionUserMenuOnOpen()
   renderSyncStatus(triageSync.status)
-  if (!readCachedServerInfo()) setLandingModePending(true)
+  if (!readCachedServerInfo()) setLandingModePending(!hasStandaloneProbeHint())
   renderSidebar()
   // Learn the server's protocol from its `server-info` connect frame (refuses
   // a cross-mode switch); state.serverMode is meanwhile seeded from the
@@ -1937,7 +1940,7 @@ class AppSidebar extends LitElement {
             <img class="brand-icon" src="./icon.svg" width="18" height="18" alt="">
             <span class="brand-name">DeepView</span>
           </button>
-          <span class="brand-tag" data-action="toggle-client-mode">e2e</span>
+          <span class="brand-tag" data-action="toggle-client-mode">${clientModeLabel()}</span>
         </h2>
         <button id="encryption-toggle" type="button" hidden></button>
         <button id="sidebar-toggle" type="button" aria-label="toggle sidebar">

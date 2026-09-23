@@ -1,7 +1,37 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import './_polyfills.js'
 
-import { classifyServerMode, parseServerInfo } from '../client/sync/server-mode.ts'
+import { SERVER_MODE_KEY, classifyServerMode, hasStandaloneProbeHint, parseServerInfo, readCachedServerInfo, rememberStandaloneProbe, writeCachedServerInfo } from '../client/sync/server-mode.ts'
+import { clientModeLabel, state } from '../client/state.ts'
+
+test('mode labels distinguish standalone, e2e, and both managed surfaces', (t) => {
+  const oldMode = state.serverMode
+  const oldLocal = state.localMode
+  t.after(() => { state.serverMode = oldMode; state.localMode = oldLocal })
+  for (const local of [false, true]) {
+    state.localMode = local
+    state.serverMode = 'standalone'
+    assert.equal(clientModeLabel(), 'standalone')
+    state.serverMode = 'e2e'
+    assert.equal(clientModeLabel(), 'e2e')
+    state.serverMode = 'managed'
+    assert.equal(clientModeLabel(), local ? 'local' : 'managed')
+  }
+})
+
+test('standalone paint hints never bind a protocol or suppress future detection', () => {
+  localStorage.removeItem(SERVER_MODE_KEY)
+  rememberStandaloneProbe()
+  assert.equal(hasStandaloneProbeHint(), true)
+  assert.equal(readCachedServerInfo(), null)
+  const info = { mode: 'managed', managed: null }
+  assert.equal(classifyServerMode(readCachedServerInfo()?.mode ?? null, info.mode), 'first')
+  writeCachedServerInfo(info)
+  assert.deepEqual(readCachedServerInfo(), info)
+  assert.equal(hasStandaloneProbeHint(), false, 'a detected backend clears the paint hint')
+  localStorage.removeItem(SERVER_MODE_KEY)
+})
 
 test('parseServerInfo: valid e2e (managed absent or null both normalize to null)', () => {
   assert.deepEqual(parseServerInfo({ mode: 'e2e' }), { mode: 'e2e', managed: null })

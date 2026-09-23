@@ -1906,17 +1906,10 @@ function renderImpl() {
     document.title = adminView.title
     return
   }
-  if (state.reports.length === 0) {
-    // A mode switch can leave an admin page mounted while the destination
-    // surface has no local report yet. Clear that slot now so the landing
-    // screen replaces Manage immediately instead of waiting for a later
-    // navigation or storage restore to repaint it.
-    report.innerHTML = ''
-    report.classList.remove('active')
-    dropZone.classList.remove('hidden')
-    document.title = 'DeepView'
-    return
-  }
+  // Sync/presence notifications can render between clearing the report state
+  // and finishing a navigation load. Keep the current surface until navigation
+  // replaces it; Home and mode transitions explicitly clear the active view.
+  if (state.reports.length === 0) return
   // Merge across all loaded reports. Every entry is a Finding[] (a dedup
   // group); single findings were wrapped at ingest, so downstream code
   // doesn't branch on shape. The trash-view split happens here, not in
