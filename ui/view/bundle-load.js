@@ -42,20 +42,22 @@ export function buildBundleDetails(integrity, entry, { sources = true } = {}) {
   const job = (async () => {
     if (!sources) {
       const cached = await cachedMetadata(integrity)
-      if (cached?.kind === kind && !cached.needsLineCounts) return cached
+      if (cached?.kind === kind && !cached.stale) return cached
       return buildBundleDetails(integrity, entry)
     }
     const [details, cached] = await Promise.all([readBundleDetails(integrity, entry), cachedMetadata(integrity)])
     if (!details.error) {
-      if (cached?.kind === details.kind) {
+      const current = cached?.kind === details.kind && !cached.stale
+      if (current) {
         details.fileHashes = cached.fileHashes
         details.fileSizes = cached.fileSizes
-        if (!cached.needsLineCounts) details.lineCounts = cached.lineCounts
+        details.lineCounts = cached.lineCounts
       }
-      // Existing indexes predate the per-file line-count stamp. Refresh them
-      // after an explicit bundle open so later metadata-only opens can render
-      // the language bar without source bodies. Persistence is best-effort.
-      if (!cached || cached.kind !== details.kind || cached.needsLineCounts) {
+      // A stale index (an older version: see bundle-metadata.js) lends the
+      // parsed bundle nothing — its sizes are what the Overview and Treemap
+      // got wrong — and is rewritten after this explicit open, so later
+      // metadata-only opens read the current one. Persistence is best-effort.
+      if (!current) {
         createBundleMetadata(details).then((index) => saveBundleIndex(integrity, index)).catch(() => {})
       }
     }

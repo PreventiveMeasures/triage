@@ -14,7 +14,7 @@ import { describe, it } from 'node:test'
 
 const { Bundle } = await import('@exodus/stasis-core/bundle')
 const { createTerminal } = await import('@preventive/terminal')
-const { bundleFilesAsMap, bundlePackageDirs, bundlePackageVersions, bundleSourcesAsMap } = await import('../ui/view/bundle-sources.js')
+const { bundleFileSizes, bundleFilesAsMap, bundlePackageDirs, bundlePackageVersions, bundleSourceSizes, bundleSourcesAsMap } = await import('../ui/view/bundle-sources.js')
 
 // A real Bundle, because the point of these cases is what the package
 // actually stores: `Bundle.sources` is the raw content of every entry,
@@ -295,5 +295,81 @@ describe('bundleFilesAsMap — what the terminal makes of the bytes', () => {
 
   it('lists it beside the source, as a file like any other', async () => {
     assert.equal((await terminal().run('ls')).stdout, 'index.js\nlogo.png\n')
+  })
+})
+
+describe('bundleFileSizes — what the Overview and Treemap weigh', () => {
+  // The shape that split two near-identical bundles 5 MB / 219 MB for the
+  // same directory: a directory capture at `a/b/c` over the real files
+  // under it, most of them images. The terminal is the reference — `du`
+  // and `wc -c` there are what the views have to agree with.
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff, 0xfe, 0x01, 0x02])
+  const details = () => {
+    const bundle = new Bundle({
+      config: { scope: 'full' },
+      modules: new Map([['.', { name: 'app', version: '1.0.0', files: {
+        'index.js': 'export const a = "€"\n',
+        'a/b/c': JSON.stringify(['icon.svg', 'logo.png', 'util.js']),
+        'a/b/c/icon.svg': '<svg>€</svg>',
+        'a/b/c/logo.png': Buffer.from(png).toString('base64'),
+        'a/b/c/util.js': 'module.exports = 1\n',
+      } }]]),
+      formats: new Map([
+        ['index.js', 'module'], ['a/b/c', 'directory'], ['a/b/c/icon.svg', 'resource'],
+        ['a/b/c/logo.png', 'resource:base64'], ['a/b/c/util.js', 'commonjs'],
+      ]),
+    })
+    return { kind: 'stasis', bundle: Bundle.parse(bundle.serialize()) }
+  }
+  const terminal = (d) => createTerminal(bundleFilesAsMap(d), { mount: '/sources', home: '/', writable: '/tmp/' })
+
+  it('weighs every file by the bytes `wc -c` reports for it', async () => {
+    const d = details()
+    const sizes = bundleFileSizes(d)
+    const t = terminal(d)
+    for (const path of bundleFilesAsMap(d).keys()) {
+      const wc = (await t.run(`wc -c ${path}`)).stdout.trim().split(/\s+/u)[0]
+      assert.equal(sizes.get(path), Number(wc), path)
+    }
+  })
+
+  it('weighs a base64 resource by its bytes, not by its base64 or not at all', () => {
+    const logo = bundleFileSizes(details()).get('a/b/c/logo.png')
+    assert.equal(logo, png.length)
+    assert.notEqual(logo, Buffer.from(png).toString('base64').length)
+  })
+
+  it('weighs a utf8 resource by the UTF-8 it encodes to', () => {
+    assert.equal(bundleFileSizes(details()).get('a/b/c/icon.svg'), Buffer.byteLength('<svg>€</svg>'))
+  })
+
+  it('gives a directory capture no size, so it cannot pass for a file over its own directory', () => {
+    const sizes = bundleFileSizes(details())
+    assert.equal(sizes.has('a/b/c'), true, 'the inventory still records it')
+    assert.equal(sizes.get('a/b/c'), null)
+  })
+
+  it('adds up to the files the terminal holds, and only those', async () => {
+    const d = details()
+    const files = [...bundleFileSizes(d)].filter(([, size]) => size !== null)
+    const found = (await terminal(d).run('find /sources -type f')).stdout.trim().split('\n')
+    assert.deepEqual(files.map(([path]) => `/sources/${path}`).toSorted(), found.toSorted())
+    const total = files.reduce((sum, [, size]) => sum + size, 0)
+    const wc = (await terminal(d).run(`wc -c ${found.join(' ')}`)).stdout.trim().split('\n').at(-1)
+    assert.equal(total, Number(wc.trim().split(/\s+/u)[0]))
+  })
+
+  it('narrows to source for the import graph, which draws no images', () => {
+    const sizes = bundleSourceSizes(details())
+    assert.deepEqual([...sizes].filter(([, size]) => size !== null).map(([path]) => path).toSorted(), ['a/b/c/util.js', 'index.js'])
+    assert.deepEqual([...sizes.keys()], [...bundleFileSizes(details()).keys()], 'over the same inventory')
+  })
+
+  it('keeps every entry of a bundle that records no formats (v0)', () => {
+    const v0 = { kind: 'stasis', bundle: Bundle.parse(JSON.stringify({
+      version: 0, config: { scope: 'node_modules' }, formats: {}, imports: {}, sources: { 'node_modules/dep/a.js': 'abc' },
+    })) }
+    assert.deepEqual(bundleFileSizes(v0), new Map([['node_modules/dep/a.js', 3]]))
+    assert.deepEqual(bundleSourceSizes(v0), bundleFileSizes(v0))
   })
 })

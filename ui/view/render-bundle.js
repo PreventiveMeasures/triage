@@ -21,7 +21,7 @@ import { FILE_ICONS, REPORT_LOGOS, displayName, groupOf } from './file-display.j
 import { BUNDLE_ICON_SVG } from './icons.js'
 import { findingsForFileHash, indexedHashFindingCount, reportsForFinding, reportsForFindingByPackage, reportsForFindingByRepo, state } from '#client/index.js'
 import { SEVERITIES, SEVERITY_ORDER, formatBytes, formatRunMeta, stripCommonPathPrefix, titledDescription } from './format.js'
-import { bundlePackageDirs, bundleSourceSizes, bundleSourcesAsMap } from './bundle-sources.js'
+import { bundleFileSizes, bundlePackageDirs, bundleSourceSizes, bundleSourcesAsMap } from './bundle-sources.js'
 import { bundleNeedsSources, bundleSourceLineCount, computeBundleFileHashes } from './bundle-metadata.js'
 import { bundleHasSbomComponents } from './sbom.js'
 import { buildSearchMatcher, runBundleSearch } from './bundle-search-scan.js'
@@ -2358,7 +2358,7 @@ function renderBundleDetails(entry, details) {
   if (details.kind === 'sourcemap' && details.json) {
     const json = details.json
     const sources = json.sources ?? []
-    const sizeMap = bundleSourceSizes(details)
+    const sizeMap = bundleFileSizes(details)
     const sizes = details.sourceSizes ?? (sizeMap.size === sources.length
       ? sources.map((path) => sizeMap.get(path) ?? null)
       : sources.map((_, i) => typeof json.sourcesContent?.[i] === 'string' ? new TextEncoder().encode(json.sourcesContent[i]).byteLength : null))
@@ -2374,8 +2374,12 @@ function renderBundleDetails(entry, details) {
   }
   if (details.kind === 'stasis' && details.bundle) {
     const bundle = details.bundle
-    const sizeMap = bundleSourceSizes(details)
-    const sourceNames = [...sizeMap.keys()]
+    // Every file, weighed by its bytes — images and fonts included, so the
+    // Packages column adds up to what `du` says of the mounted tree. A
+    // directory capture is recorded at a path its real directory also
+    // holds and is no file: listed, it would sit among the files as one.
+    const sizeMap = bundleFileSizes(details)
+    const sourceNames = [...sizeMap.keys()].filter((path) => sizeMap.get(path) !== null)
     // Each `bundle.imports` key is either `*` or a `, `-joined
     // condition set (see `State#conditionsKey` in @exodus/stasis-core);
     // a bundle commonly carries several keys whose underlying

@@ -1,5 +1,6 @@
 // `<bundle-treemap>` — a classic squarified treemap of a bundle's
-// source files, sized by UTF-8 byte length. Lays out the actual PATH
+// files, each sized by its bytes (`bundleFileSizes`: images and fonts
+// included, directory captures left out). Lays out the actual PATH
 // hierarchy as nested rectangles (a directory's box contains its
 // children, a file's area is its share of the bundle), unlike flat
 // per-package strips which aren't real treemaps and degrade badly on
@@ -50,7 +51,7 @@
 import { LitElement, html, render as litRender, nothing, svg } from 'lit'
 import { styleMap } from 'lit/directives/style-map.js'
 import { classMap } from 'lit/directives/class-map.js'
-import { bundlePackageDirs, bundleSourceSizes } from './bundle-sources.js'
+import { bundleFileSizes, bundlePackageDirs } from './bundle-sources.js'
 import { bundleGraphReasons } from './bundle-graph-inputs.js'
 import { formatBytes, stripCommonPathPrefix } from './format.js'
 import { pkgColor } from './graph/utils.js'
@@ -406,7 +407,7 @@ class BundleTreemap extends LitElement {
     this._meta = { total: 0, prefix: '' }
     this._hideTooltip()
     if (!this.details) { this._status = 'loading'; return }
-    const sizes = bundleSourceSizes(this.details)
+    const sizes = bundleFileSizes(this.details)
     const origPaths = [...sizes.keys()].filter((path) => sizes.get(path) !== null)
     if (origPaths.length === 0) { this._status = 'empty'; return }
     this._reasons = bundleGraphReasons(this.details, origPaths)

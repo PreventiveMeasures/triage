@@ -1,7 +1,14 @@
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { computeFileHash } from '../../report/index.js'
-import { bundleSourceSizes, bundleSourcesAsMap } from './bundle-sources.js'
+import { bundleFileSizes, bundleSourcesAsMap } from './bundle-sources.js'
 
+// Version 2 sizes every file by its bytes, resources included. A version 1
+// index sized by what the source map held when it was written: before the
+// map asked each entry's format, that took a directory capture for a file
+// and a base64 resource for its spelling; after, it left every resource
+// out. Either way its sizes are not file sizes, so it is read for its
+// hashes alone and rebuilt on open.
+const INDEX_VERSION = 2
 const hashJobs = new WeakMap()
 const SOURCE_TABS = new Set(['terminal', 'code', 'search', 'compare'])
 
@@ -44,12 +51,14 @@ function mapObject(value) {
 
 // A private, versioned derivative of the bundle, not a Stasis lock. Source
 // bodies are omitted; file sizes and hashes keep metadata views self-contained.
+// A row is `[path, bytes, hash, lines]`: a resource has bytes but no hash or
+// lines, since it is no source; a directory capture has none of the three.
 export async function createBundleMetadata(details) {
   const hashes = await computeBundleFileHashes(details)
-  const sizes = bundleSourceSizes(details)
+  const sizes = bundleFileSizes(details)
   const sourceLines = details.lineCounts ??= new Map([...bundleSourcesAsMap(details)]
     .map(([path, content]) => [path, bundleSourceLineCount(content)]))
-  const result = { version: 1, integrity: details.integrity, kind: details.kind, size: details.size,
+  const result = { version: INDEX_VERSION, integrity: details.integrity, kind: details.kind, size: details.size,
     files: [...sizes].map(([path, size]) => [path, size, hashes.get(path) ?? null, sourceLines.get(path) ?? null]) }
   if (details.kind === 'sourcemap') {
     const { version, file, sourceRoot, names, sources = [], sourcesContent = [] } = details.json
@@ -81,32 +90,43 @@ export async function createBundleMetadata(details) {
   return result
 }
 
+// `stale` marks an index this version did not write: its hashes still
+// answer report lookups, but its sizes and line counts are not trusted,
+// and an open rebuilds it.
 export function parseBundleMetadata(data, integrity) {
-  if (data?.version !== 1 || data.integrity !== integrity || !['stasis', 'sourcemap'].includes(data.kind)
+  if ((data?.version !== 1 && data?.version !== INDEX_VERSION) || data.integrity !== integrity || !['stasis', 'sourcemap'].includes(data.kind)
       || !Number.isSafeInteger(data.size) || data.size < 0 || !Array.isArray(data.files)) throw new Error('Invalid bundle metadata')
+  const stale = data.version !== INDEX_VERSION
   const fileHashes = new Map(), fileSizes = new Map(), lineCounts = new Map()
-  let needsLineCounts = false
   for (const row of data.files) {
-    if (!Array.isArray(row) || (row.length !== 3 && row.length !== 4)) throw new Error('Invalid bundle metadata file')
+    // Version 1 rows predate the line count, and gave every sized entry a hash.
+    if (!Array.isArray(row) || (row.length !== 4 && !(stale && row.length === 3))) throw new Error('Invalid bundle metadata file')
     const [path, size, hash, lines] = row
-    if (row.length === 3) needsLineCounts = true
     if (typeof path !== 'string' || fileSizes.has(path) || (size !== null && (!Number.isSafeInteger(size) || size < 0))
-        || (size === null ? hash !== null : typeof hash !== 'string' || !/^sha512-[A-Za-z0-9+/]{86}==$/u.test(hash))
+        || (hash !== null && (typeof hash !== 'string' || !/^sha512-[A-Za-z0-9+/]{86}==$/u.test(hash)))
+        || (size === null && hash !== null) || (stale && size !== null && hash === null)
         || (lines !== undefined && lines !== null && (!Number.isSafeInteger(lines) || lines < 0))) throw new Error('Invalid bundle metadata file')
     fileSizes.set(path, size)
     if (hash !== null) fileHashes.set(path, hash)
     if (lines !== undefined && lines !== null) lineCounts.set(path, lines)
   }
-  const details = { integrity, kind: data.kind, size: data.size, metadataOnly: true, fileSizes, fileHashes, lineCounts, needsLineCounts }
+  const details = { integrity, kind: data.kind, size: data.size, metadataOnly: true, fileSizes, fileHashes, lineCounts, stale }
   if (data.kind === 'stasis') {
     details.bundle = Bundle.parse(JSON.stringify(data.bundle))
     const paths = details.bundle.sources
     if (paths.size !== fileSizes.size || [...paths.keys()].some((path) => !fileSizes.has(path))) throw new Error('Invalid bundle metadata inventory')
+    // A file is hashed exactly when it is source: a resource has bytes and
+    // no hash. Checked against the formats, which only the bundle carries.
+    const formats = details.bundle.formats
+    if (!stale && [...fileSizes].some(([path, size]) => fileHashes.has(path) !== (size !== null && !Bundle.isResourceFormat(formats.get(path))))) {
+      throw new Error('Invalid bundle metadata inventory')
+    }
   } else {
     if (!data.json || typeof data.json !== 'object' || ![null, undefined].includes(data.namesCount) && (!Number.isSafeInteger(data.namesCount) || data.namesCount < 0)) throw new Error('Invalid sourcemap metadata')
     if (!Array.isArray(data.json.sources) || data.json.sources.some((path) => !fileSizes.has(path))
         || !Array.isArray(data.sourceSizes) || data.sourceSizes.length !== data.json.sources.length
-        || data.sourceSizes.some((size) => size !== null && (!Number.isSafeInteger(size) || size < 0))) throw new Error('Invalid sourcemap inventory')
+        || data.sourceSizes.some((size) => size !== null && (!Number.isSafeInteger(size) || size < 0))
+        || [...fileSizes].some(([path, size]) => fileHashes.has(path) !== (size !== null))) throw new Error('Invalid sourcemap inventory')
     details.json = data.json
     details.sourceSizes = data.sourceSizes
     details.namesCount = data.namesCount

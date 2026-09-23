@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { it } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { bundleNeedsSources, computeBundleFileHashes, createBundleMetadata, parseBundleMetadata } from '../ui/view/bundle-metadata.js'
-import { bundlePackageDirs, bundleSourceSizes, bundleSourcesAsMap } from '../ui/view/bundle-sources.js'
+import { bundleFileSizes, bundlePackageDirs, bundleSourceSizes, bundleSourcesAsMap } from '../ui/view/bundle-sources.js'
 import { bundleGraphReasons, bundleImportsAsMap } from '../ui/view/bundle-graph-inputs.js'
 import { computeFileHash } from '../report/index.js'
 
@@ -26,7 +26,9 @@ it('round-trips hashes, UTF-8 byte sizes, package identity, imports, reasons, an
   assert.ok(!serialized.includes('private'))
   const cached = parseBundleMetadata(JSON.parse(serialized), full.integrity)
   assert.equal(cached.metadataOnly, true)
+  assert.deepEqual(bundleFileSizes(cached), bundleFileSizes(full))
   assert.deepEqual(bundleSourceSizes(cached), bundleSourceSizes(full))
+  assert.equal(cached.stale, false)
   assert.equal(cached.fileSizes.get('src/main.js'), Buffer.byteLength('private source €😀'))
   assert.equal(cached.fileSizes.get('src/empty.js'), 0)
   assert.equal(cached.fileSizes.get('icon.png'), null)
@@ -67,7 +69,8 @@ it('supports legacy Stasis bundles and sourcemaps with absent source content', a
 it('rejects wrong integrities, versions, invalid sizes/hashes and mismatched inventories', async () => {
   const data = await createBundleMetadata(details())
   for (const corrupt of [
-    { ...data, integrity: 'other' }, { ...data, version: 2 },
+    { ...data, integrity: 'other' }, { ...data, version: 3 },
+    { ...data, files: data.files.map((row) => row.slice(0, 3)) },
     { ...data, files: [['src/main.js', -1, 'bad']] },
     { ...data, files: [['src/main.js', 12, 'bad']] },
     { ...data, files: [...data.files, data.files[0]] }, { ...data, files: data.files.slice(1) },
@@ -87,4 +90,61 @@ it('shares in-flight hashing and reuses precomputed hashes for source-consuming 
     assert.equal(bundleNeedsSources(tab), false)
     assert.equal(bundleNeedsSources(tab, 'src/main.js'), true)
   }
+})
+
+// The bundle a stale index hid: a directory capture over the directory it
+// lists, with a base64 image and a utf8 resource beside the source.
+function withResources() {
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, 0xfe])
+  return { integrity: 'sha512-resources', kind: 'stasis', size: 999, bundle: Bundle.parse(new Bundle({
+    modules: new Map([['.', { name: 'app', version: '1', files: {
+      'src/main.js': 'export default 1\n',
+      'assets': JSON.stringify(['icon.svg', 'logo.png']),
+      'assets/icon.svg': '<svg/>',
+      'assets/logo.png': png.toString('base64'),
+    } }]]),
+    formats: new Map([['src/main.js', 'module'], ['assets', 'directory'], ['assets/icon.svg', 'resource'], ['assets/logo.png', 'resource:base64']]),
+    entries: new Set(['src/main.js']),
+  }).serialize()) }
+}
+
+it('keeps a resource\'s byte size, and no hash or line count, since it is no source', async () => {
+  const full = withResources()
+  const data = await createBundleMetadata(full)
+  assert.equal(data.version, 2)
+  const rows = new Map(data.files.map(([path, ...rest]) => [path, rest]))
+  assert.deepEqual(rows.get('assets/logo.png'), [7, null, null])
+  assert.deepEqual(rows.get('assets/icon.svg'), [6, null, null])
+  assert.deepEqual(rows.get('assets'), [null, null, null])
+  assert.equal(rows.get('src/main.js')[0], 17)
+  const cached = parseBundleMetadata(JSON.parse(JSON.stringify(data)), full.integrity)
+  assert.equal(cached.stale, false)
+  assert.deepEqual(bundleFileSizes(cached), bundleFileSizes(full))
+  assert.deepEqual([...cached.fileHashes.keys()], ['src/main.js'])
+})
+
+it('rejects a current index whose hashes disagree with what is source', async () => {
+  const data = await createBundleMetadata(withResources())
+  const hash = data.files.find(([path]) => path === 'src/main.js')[2]
+  const edit = (path, change) => ({ ...data, files: data.files.map((row) => row[0] === path ? change(row) : row) })
+  for (const corrupt of [
+    edit('assets/logo.png', ([path, size, , lines]) => [path, size, hash, lines]),
+    edit('src/main.js', ([path, size, , lines]) => [path, size, null, lines]),
+    edit('assets', ([path, , , lines]) => [path, null, hash, lines]),
+  ]) assert.throws(() => parseBundleMetadata(corrupt, data.integrity))
+})
+
+it('reads a version 1 index for its hashes, but marks it stale', async () => {
+  // What the code before #313 wrote for this bundle: the directory
+  // capture a file, the image its base64 text, each with a hash.
+  const full = withResources()
+  const hashOf = (content) => computeFileHash(content)
+  const v1 = { version: 1, integrity: full.integrity, kind: 'stasis', size: full.size, bundle: (await createBundleMetadata(full)).bundle, files: [] }
+  for (const [path, content] of full.bundle.sources) v1.files.push([path, Buffer.byteLength(content), await hashOf(content), 1])
+  const cached = parseBundleMetadata(v1, full.integrity)
+  assert.equal(cached.stale, true)
+  assert.equal(cached.fileHashes.get('src/main.js'), await hashOf('export default 1\n'), 'hashes still serve report lookups')
+  assert.notDeepEqual(cached.fileSizes, bundleFileSizes(full), 'its sizes are the ones that were wrong')
+  // Three-column rows are version 1 only, and still read.
+  assert.equal(parseBundleMetadata({ ...v1, files: v1.files.map((row) => row.slice(0, 3)) }, full.integrity).stale, true)
 })

@@ -32,6 +32,7 @@ import { Bundle } from '@exodus/stasis-core/bundle'
 const sourcesCache = new WeakMap()
 const filesCache = new WeakMap()
 const sizesCache = new WeakMap()
+const sourceSizesCache = new WeakMap()
 
 export function bundleSourcesAsMap(details) {
   if (details?.metadataOnly) return new Map()
@@ -106,23 +107,57 @@ export function bundleFilesAsMap(details) {
   return files
 }
 
-// Metadata views need byte sizes and paths, never the source bodies. The
+// The length of the bytes a base64 spelling decodes to — three for every
+// four characters, less what the padding stands for. The terminal's own
+// arithmetic, so `ls -l` and `wc -c` there agree with the views here.
+function base64ByteLength(text) {
+  const padding = text.endsWith('==') ? 2 : text.endsWith('=') ? 1 : 0
+  return Math.floor((text.length - padding) * 3 / 4)
+}
+
+// Every path the bundle records, keyed to the byte size of the file it
+// holds — the size `wc -c` reports for it in the terminal, which is to
+// say the size of the entry in `bundleFilesAsMap`: a source or `resource`
+// weighs the UTF-8 its text encodes to, a `resource:base64` the bytes its
+// base64 decodes to. Null is a path that is no file: a directory capture,
+// or a sourcemap source whose body was left out.
+//
+// The Overview and the Treemap weigh a bundle by this, so what they show
+// adds up to what `du` does. Neither the source-only view nor the base64
+// text will do: the first drops every image and font, the second
+// inflates them by a third.
+//
+// Metadata views need byte sizes and paths, never the bodies. The
 // persistent index supplies this map directly; full parses compute it once.
-// Null distinguishes a resource / absent sourcemap body from an empty source.
-export function bundleSourceSizes(details) {
+export function bundleFileSizes(details) {
   if (details?.fileSizes) return details.fileSizes
   const key = details?.bundle ?? details?.json
   if (key && sizesCache.has(key)) return sizesCache.get(key)
   const sizes = new Map()
   const encoder = new TextEncoder()
-  const sources = bundleSourcesAsMap(details)
+  const files = bundleFilesAsMap(details)
   const paths = details?.kind === 'stasis' ? details.bundle?.sources.keys() : details?.json?.sources
   for (const path of paths ?? []) {
-    const content = sources.get(path)
-    sizes.set(path, typeof content === 'string' ? encoder.encode(content).byteLength : null)
+    const content = files.get(path)
+    sizes.set(path, typeof content === 'string' ? encoder.encode(content).byteLength
+      : content?.format === 'base64' ? base64ByteLength(content.data) : null)
   }
   if (key) sizesCache.set(key, sizes)
   return sizes
+}
+
+// `bundleFileSizes` narrowed to source: a resource's size is nulled, as a
+// directory capture's already is. The import graph draws this, and stays
+// source-only: an image or a font imports nothing and carries no finding.
+export function bundleSourceSizes(details) {
+  const sizes = bundleFileSizes(details)
+  const formats = details?.kind === 'stasis' ? details.bundle?.formats : null
+  if (!formats || formats.size === 0) return sizes
+  if (sourceSizesCache.has(sizes)) return sourceSizesCache.get(sizes)
+  const result = new Map()
+  for (const [path, size] of sizes) result.set(path, Bundle.isResourceFormat(formats.get(path)) ? null : size)
+  sourceSizesCache.set(sizes, result)
+  return result
 }
 
 // Map each stasis bundle source path to the package directory that
