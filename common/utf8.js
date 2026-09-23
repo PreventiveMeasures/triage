@@ -48,9 +48,12 @@ export function encodeUtf8(str) {
 // ASCII takes a byte and \x80-\xFF two, so its size is its length plus
 // its high characters. An engine stores such a string a byte per
 // character, where no character past \xFF can be, so the first test is
-// answered without reading it. Counting the high characters is a scan,
-// but a native one, and for ASCII it finds nothing. Only a string with a
-// wider character is encoded to be measured.
+// answered without reading it. Finding the first high character is a
+// native scan, and for ASCII it finds none. From there they are counted in
+// a loop that holds nothing: collecting them as matches would take an
+// array entry apiece, which for Latin-1-heavy text outweighs the encoding
+// this avoids. Only a string with a wider character is encoded to be
+// measured.
 //
 // This sizes text for display, so unlike `encodeUtf8` it does not refuse
 // a lone surrogate: it counts the U+FFFD that TextEncoder writes for one.
@@ -61,8 +64,12 @@ export function utf8ByteLength(str) {
   // Code units, not code points: a `u` regexp reads a two-byte string by
   // code point, several times slower, and a surrogate is past \xFF either way.
   // eslint-disable-next-line require-unicode-regexp
-  if (!/[\u0100-\uFFFF]/.test(str)) return str.length + (str.match(/[\u0080-\u00FF]/gu)?.length ?? 0)
-  return encoder.encode(str).byteLength
+  if (/[\u0100-\uFFFF]/.test(str)) return encoder.encode(str).byteLength
+  const high = /[\u0080-\u00FF]/gu
+  if (!high.test(str)) return str.length
+  let bytes = str.length
+  for (let i = high.lastIndex - 1; i < str.length; i++) if (str.codePointAt(i) > 0x7F) bytes++
+  return bytes
 }
 
 export function decodeUtf8(bytes) {

@@ -166,6 +166,14 @@ describe('utf8ByteLength', () => {
     assert.equal(utf8ByteLength(ascii), 100)
   })
 
+  it('counts high characters wherever they fall, however many there are', () => {
+    // First, last and only character; dense and sparse Latin-1. The count
+    // starts at the first one the scan finds.
+    for (const str of ['é', 'éabc', 'abcé', `é${'a'.repeat(1000)}ü`, 'é'.repeat(100_000), 'aé'.repeat(50_000), `${'a'.repeat(1000)}\u00A0`]) {
+      assert.equal(utf8ByteLength(str), enc.encode(str).byteLength, `${str.length} chars from ${JSON.stringify(str.slice(0, 8))}`)
+    }
+  })
+
   it('is the length of a string that is all ASCII', () => {
     const src = 'export const a = 1 // plain\n'.repeat(1000)
     assert.equal(utf8ByteLength(src), src.length)
