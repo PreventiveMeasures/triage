@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { it } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { bundleNeedsSources, computeBundleFileHashes, createBundleMetadata, parseBundleMetadata } from '../ui/view/bundle-metadata.js'
-import { bundleFileKinds, bundleFileSizes, bundlePackageDirs, bundleSourceSizes, bundleSourcesAsMap } from '../ui/view/bundle-sources.js'
+import { bundleFileKinds, bundleFileSizes, bundleFilesAsMap, bundlePackageDirs, bundleSourceSizes, bundleSourcesAsMap } from '../ui/view/bundle-sources.js'
 import { bundleGraphReasons, bundleImportsAsMap } from '../ui/view/bundle-graph-inputs.js'
 import { computeFileHash } from '../report/index.js'
 
@@ -162,4 +162,47 @@ it('reads a version 1 index for its hashes, but marks it stale', async () => {
   assert.notDeepEqual(cached.fileSizes, bundleFileSizes(full), 'its sizes are the ones that were wrong')
   // Three-column rows are version 1 only, and still read.
   assert.equal(parseBundleMetadata({ ...v1, files: v1.files.map((row) => row.slice(0, 3)) }, full.integrity).stale, true)
+})
+
+it('lists exactly the files the terminal mounts, for every entry shape, on a full and a metadata-only open', async () => {
+  // Every shape a parsed bundle can carry: `Bundle.parse` does not check a
+  // body's type, so a malformed bundle can hold a non-string body under any
+  // format.
+  const files = {
+    'src/a.js': 'export default 1\n',
+    'src/odd.js': 42,
+    'res/icon.svg': '<svg/>',
+    'res/blob.bin': Buffer.from([1, 2, 3]),
+    'res/logo.png': Buffer.from([0x89, 0xff]).toString('base64'),
+    'res/broken.png': '!!!not base64!!!',
+    'res/null.png': null,
+    'res': JSON.stringify(['blob.bin', 'broken.png', 'icon.svg', 'logo.png', 'null.png']),
+  }
+  const formats = new Map([
+    ['src/a.js', 'module'], ['src/odd.js', 'module'], ['res/icon.svg', 'resource'], ['res/blob.bin', 'resource'],
+    ['res/logo.png', 'resource:base64'], ['res/broken.png', 'resource:base64'], ['res/null.png', 'resource:base64'], ['res', 'directory'],
+  ])
+  const full = { integrity: 'sha512-shapes', kind: 'stasis', size: 1, bundle: new Bundle({
+    modules: new Map([['.', { name: 'app', version: '1', files }]]), formats, entries: new Set(['src/a.js']),
+  }) }
+  const mounted = [...bundleFilesAsMap(full).keys()].toSorted()
+  assert.deepEqual(mounted, ['res/broken.png', 'res/icon.svg', 'res/logo.png', 'src/a.js'])
+  assert.deepEqual([...bundleFileKinds(full).keys()].toSorted(), mounted)
+  const data = await createBundleMetadata(full)
+  assert.deepEqual(data.unsized, ['res/broken.png'])
+  const cached = parseBundleMetadata(JSON.parse(JSON.stringify(data)), full.integrity)
+  assert.deepEqual(bundleFileKinds(cached), bundleFileKinds(full))
+  assert.deepEqual(bundleFileKinds(full), new Map([
+    ['src/a.js', 'source'], ['res/icon.svg', 'resource'], ['res/logo.png', 'resource'], ['res/broken.png', 'resource'],
+  ]))
+})
+
+it('rejects an `unsized` list that names a sized file, a non-base64 path, or a path twice', async () => {
+  const full = withResources()
+  full.bundle.modules.get('.').files['assets/logo.png'] = '!!!not base64!!!'
+  const data = await createBundleMetadata(full)
+  assert.doesNotThrow(() => parseBundleMetadata(data, data.integrity))
+  for (const unsized of [['src/main.js'], ['assets'], ['assets/logo.png', 'assets/logo.png'], 'assets/logo.png', ['nowhere.png']]) {
+    assert.throws(() => parseBundleMetadata({ ...data, unsized }, data.integrity), JSON.stringify(unsized))
+  }
 })

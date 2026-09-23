@@ -453,4 +453,13 @@ describe('bundleFileKinds — what the Overview lists, and which rows open a sou
     assert.deepEqual(bundleFileKinds(odd), new Map([['a.js', 'source']]))
     assert.deepEqual([...bundleFileKinds(odd).keys()], [...bundleFilesAsMap(odd).keys()])
   })
+
+  it('leaves out a resource whose body is no string, under either resource format', () => {
+    const odd = bundleWith(
+      { 'a.js': 'x', 'blob.bin': Buffer.from([1, 2, 3]), 'raw.png': 7, 'bad.png': '!!!' },
+      { 'a.js': 'module', 'blob.bin': 'resource', 'raw.png': 'resource:base64', 'bad.png': 'resource:base64' },
+    )
+    assert.deepEqual(bundleFileKinds(odd), new Map([['a.js', 'source'], ['bad.png', 'resource']]))
+    assert.deepEqual([...bundleFileKinds(odd).keys()], [...bundleFilesAsMap(odd).keys()])
+  })
 })

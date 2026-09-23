@@ -34,6 +34,7 @@ const filesCache = new WeakMap()
 const sizesCache = new WeakMap()
 const sourceSizesCache = new WeakMap()
 const kindsCache = new WeakMap()
+const unsizedCache = new WeakMap()
 
 export function bundleSourcesAsMap(details) {
   if (details?.metadataOnly) return new Map()
@@ -162,24 +163,40 @@ export function bundleFileSizes(details) {
   return sizes
 }
 
-// What each recorded path holds, for a view that lists files: 'source', or
-// 'resource' for an image, font or other asset — a file, sized like any
-// other, but none the source viewer can show. A path that holds no file is
-// absent: a directory capture, or a source with no body to mount (a
-// sourcemap entry whose `sourcesContent` was left out), which its null
-// size says. A resource stays even without a size — a base64 spelling that
-// does not decode is still a file the terminal lists, and says why it
-// cannot read. It reads formats and sizes, not bodies, so it answers for a
-// metadata-only open as it does for a parsed one.
+// The files the terminal mounts that have no size: a `resource:base64`
+// whose spelling does not decode. The terminal lists such a file, and says
+// why it cannot read it when asked, so the views list it too — but a null
+// size alone cannot tell it from an entry that is no file at all, so it is
+// named here. A metadata-only open reads the set from the index, which is
+// the one thing a size and a format cannot say about a path.
+export function bundleUnsizedFiles(details) {
+  if (details?.metadataOnly) return details.unsizedFiles ?? new Set()
+  const sizes = bundleFileSizes(details)
+  if (unsizedCache.has(sizes)) return unsizedCache.get(sizes)
+  const unsized = new Set()
+  for (const path of bundleFilesAsMap(details).keys()) if (sizes.get(path) === null) unsized.add(path)
+  unsizedCache.set(sizes, unsized)
+  return unsized
+}
+
+// What each file the terminal mounts is, for a view that lists files:
+// 'source', or 'resource' for an image, font or other asset — a file, sized
+// like any other, but none the source viewer can show. Its keys are
+// `bundleFilesAsMap`'s, and nothing else: a directory capture, or an entry
+// with no body to mount (a sourcemap source whose `sourcesContent` was left
+// out, a body that is no string), is no file and is absent. It reads sizes
+// and formats, not bodies, so it answers for a metadata-only open as it
+// does for a parsed one: a sized path is a mounted file, and so is one
+// `bundleUnsizedFiles` names.
 export function bundleFileKinds(details) {
   const sizes = bundleFileSizes(details)
   if (kindsCache.has(sizes)) return kindsCache.get(sizes)
+  const unsized = bundleUnsizedFiles(details)
   const formats = details?.kind === 'stasis' ? details.bundle?.formats : null
   const kinds = new Map()
   for (const [path, size] of sizes) {
-    const format = formats?.get(path)
-    if (!Bundle.isResourceFormat(format)) { if (size !== null) kinds.set(path, 'source') }
-    else if (format === 'resource' || format === 'resource:base64') kinds.set(path, 'resource')
+    if (size === null && !unsized.has(path)) continue
+    kinds.set(path, Bundle.isResourceFormat(formats?.get(path)) ? 'resource' : 'source')
   }
   kindsCache.set(sizes, kinds)
   return kinds
