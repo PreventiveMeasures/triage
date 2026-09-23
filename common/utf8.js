@@ -43,17 +43,24 @@ export function encodeUtf8(str) {
   return encoder.encode(str)
 }
 
+// ASCII characters in a row after which the count hands back to the
+// native scan. Shorter gaps are cheaper to step over than to rescan.
+const ASCII_RUN = 32
+
 // The number of bytes `str` takes in UTF-8, without encoding it where
 // that can be helped. A string with no character past \xFF is Latin-1:
 // ASCII takes a byte and \x80-\xFF two, so its size is its length plus
 // its high characters. An engine stores such a string a byte per
 // character, where no character past \xFF can be, so the first test is
-// answered without reading it. Finding the first high character is a
-// native scan, and for ASCII it finds none. From there they are counted in
-// a loop that holds nothing: collecting them as matches would take an
-// array entry apiece, which for Latin-1-heavy text outweighs the encoding
-// this avoids. Only a string with a wider character is encoded to be
-// measured.
+// answered without reading it. Only a string with a wider character is
+// encoded to be measured.
+//
+// The high characters are counted without collecting them: a match array
+// takes an entry apiece, which for Latin-1-heavy text outweighs the
+// encoding this avoids. A native scan jumps to the next one — for ASCII
+// it finds none — and a loop counts on from there while they keep coming,
+// handing back to the scan after a run of ASCII. Sparse text is read
+// natively, dense text by the loop, and neither allocates.
 //
 // This sizes text for display, so unlike `encodeUtf8` it does not refuse
 // a lone surrogate: it counts the U+FFFD that TextEncoder writes for one.
@@ -66,9 +73,14 @@ export function utf8ByteLength(str) {
   // eslint-disable-next-line require-unicode-regexp
   if (/[\u0100-\uFFFF]/.test(str)) return encoder.encode(str).byteLength
   const high = /[\u0080-\u00FF]/gu
-  if (!high.test(str)) return str.length
   let bytes = str.length
-  for (let i = high.lastIndex - 1; i < str.length; i++) if (str.codePointAt(i) > 0x7F) bytes++
+  while (high.test(str)) {
+    let i = high.lastIndex - 1
+    for (let ascii = 0; i < str.length && ascii < ASCII_RUN; i++) {
+      if (str.codePointAt(i) > 0x7F) { bytes++; ascii = 0 } else ascii++
+    }
+    high.lastIndex = i
+  }
   return bytes
 }
 

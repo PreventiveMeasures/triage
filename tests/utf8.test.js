@@ -169,7 +169,10 @@ describe('utf8ByteLength', () => {
   it('counts high characters wherever they fall, however many there are', () => {
     // First, last and only character; dense and sparse Latin-1. The count
     // starts at the first one the scan finds.
-    for (const str of ['é', 'éabc', 'abcé', `é${'a'.repeat(1000)}ü`, 'é'.repeat(100_000), 'aé'.repeat(50_000), `${'a'.repeat(1000)}\u00A0`]) {
+    // Gaps either side of the run of ASCII after which the count hands back
+    // to the scan, so both the loop and the jump land on every one.
+    const gaps = [0, 1, 30, 31, 32, 33, 34, 100].map((n) => `${'a'.repeat(n)}é`.repeat(50))
+    for (const str of ['é', 'éabc', 'abcé', `é${'a'.repeat(1000)}ü`, 'é'.repeat(100_000), 'aé'.repeat(50_000), `${'a'.repeat(1000)}\u00A0`, ...gaps, gaps.join('')]) {
       assert.equal(utf8ByteLength(str), enc.encode(str).byteLength, `${str.length} chars from ${JSON.stringify(str.slice(0, 8))}`)
     }
   })
