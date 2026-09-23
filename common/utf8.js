@@ -44,8 +44,12 @@ export function encodeUtf8(str) {
 }
 
 // ASCII characters in a row after which the count hands back to the
-// native scan. Shorter gaps are cheaper to step over than to rescan.
-const ASCII_RUN = 32
+// native scan. A jump costs a call and a step does not, so it pays only
+// across a real gap: at 1, alternating text (`aéaé…`) takes a jump per
+// character, and past 2, text with an accent every few words steps
+// through ASCII the scan crosses faster. Measured on 50 MB of each, 2 was
+// never more than 1.5x the best of the thresholds tried, 1 to 32.
+const ASCII_RUN = 2
 
 // The number of bytes `str` takes in UTF-8, without encoding it where
 // that can be helped. A string with no character past \xFF is Latin-1:
