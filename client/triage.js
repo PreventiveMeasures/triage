@@ -1,4 +1,4 @@
-import { state } from './state.ts'
+import { isManagedUiMode, state } from './state.ts'
 import { decodeUtf8, encodeUtf8 } from '../common/utf8.js'
 import { bucketOf, normalizeEntry, patchEntry, setReportIgnored } from './triage-entry.ts'
 import {
@@ -385,8 +385,10 @@ function applyTriageEntries(entries, { replace = false } = {}) {
 }
 
 async function loadTriage() {
+  if (isManagedUiMode()) return
   try {
     const entries = await readTriageBlob()
+    if (isManagedUiMode()) return
     applyTriageEntries(entries)
   } catch (err) {
     console.warn('Failed to load triage:', err)
@@ -400,8 +402,10 @@ async function loadTriage() {
 // is offline). `replace: true` is what handles a sibling clearing
 // a marker — without it, a delete in tab A wouldn't land here.
 export async function reloadTriageFromStorage() {
+  if (isManagedUiMode()) return
   try {
     const entries = await readTriageBlob()
+    if (isManagedUiMode()) return
     applyTriageEntries(entries, { replace: true })
     // Repaint the imperatively-rendered surfaces (kanban board, toolbar
     // counts, bucket filtering) that don't observe `state.triage` on
@@ -431,10 +435,14 @@ if (typeof window !== 'undefined') {
   })
 }
 
-// Triage loads asynchronously at module init. `ingestReport` awaits
-// this before rendering so the first drop already shows stored marks
-// and deletions for matching findings.
-export const loadPromise = loadTriage()
+// Local triage starts only when a local surface asks for it. Importing the
+// client on an uncached managed visit must not read local annotations before
+// the server mode is known. Concurrent local consumers share the first load.
+let loadPromise
+export function ensureTriageLoaded() {
+  if (isManagedUiMode()) return Promise.resolve()
+  return loadPromise ??= loadTriage()
+}
 
 // Re-trigger a load whenever the vault state changes (unlock, lock,
 // remote enable). On unlock the freshly-derived session key lets us
@@ -459,6 +467,7 @@ onVaultStateChange(() => { reloadTriageFromStorage() })
 // in-memory state (populated from pending on boot), compresses,
 // seals, and clears pending — closing the window.
 onVaultStateChange(() => {
+  if (isManagedUiMode()) return
   if (getSessionKey() && localStorage.getItem(TRIAGE_PENDING_KEY)) {
     saveTriage()
   }
@@ -513,4 +522,3 @@ export async function migrateTriageToPlaintext({ open }) {
 // already import from triage.js for other reasons; this saves them
 // a second import).
 export { isEncryptionEnabled }
-

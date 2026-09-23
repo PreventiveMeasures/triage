@@ -30,7 +30,8 @@
 // Dock installs are. The not-persisted tooltip says so on WebKit
 // rather than pretending the click can help.
 
-import { getStorageInfo, hasAnyBundles, listFiles, onFileMutated, requestPersistentStorage } from '#client/index.js'
+import { getStorageInfo, hasAnyBundles, isManagedUiMode, listFiles, onFileMutated, requestPersistentStorage } from '#client/index.js'
+import { ensureClientMode } from './sidebar.js'
 import { openStoragePersistDialog, persistGrantFlavor } from './dialogs/storage-persist-dialog.js'
 
 // Set by `initStorageStatus(el)` once the sidebar has rendered the
@@ -78,7 +79,7 @@ function paint() {
   // granted, an unknowable, and an unsupported state all hide the
   // banner — no "everything is fine" ornament, no warning about
   // data that doesn't exist.
-  if (!info || info.persisted !== false || !hasLocalData) {
+  if (isManagedUiMode() || !info || info.persisted !== false || !hasLocalData) {
     button.hidden = true
     return
   }
@@ -127,7 +128,8 @@ function logRequestOutcome(granted, viaGesture) {
 }
 
 async function refreshStorageStatus() {
-  if (!button) return
+  await ensureClientMode()
+  if (!button || isManagedUiMode()) { paint(); return }
   // Both halves of the paint predicate refresh together so the
   // banner can't show a stale combination (e.g. warn after the last
   // report was deleted). An enumeration failure reads as "no data"
@@ -160,7 +162,7 @@ export function scheduleStorageStatusRefresh() {
 async function maybeAutoRequest() {
   if (autoRequested) return
   await refreshStorageStatus()
-  if (info?.persisted !== false || !hasLocalData || autoRequested) return
+  if (isManagedUiMode() || info?.persisted !== false || !hasLocalData || autoRequested) return
   autoRequested = true
   const granted = await requestPersistentStorage()
   // Breadcrumb either way — an operator debugging "reports vanished"

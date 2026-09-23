@@ -6,8 +6,8 @@
 // built yet), so until then a mismatch fails closed rather than silently
 // reinterpreting local data under the wrong protocol.
 //
-// PURE + dependency-free (no `state`, no DOM beyond `localStorage`), so the
-// precedence/caching rules are unit-testable. The `ServerInfo` shape is the
+// No `state` or UI dependencies, so probing and cache rules are testable.
+// The `ServerInfo` shape is the
 // single source in common/server-info.ts (shared with the server); re-exported
 // here so the client's import surface stays put and a shape change is a
 // compile error on both sides.
@@ -20,6 +20,17 @@ export { CONFIG_PATH }
 // (not per-URL): the cache reflects the protocol the local data set is bound
 // to, which is exactly what a future e2e↔managed migration would convert.
 export const SERVER_MODE_KEY = 'deepview.sync.serverInfo'
+// A local-startup hint only: unlike ServerInfo it never binds a protocol or
+// skips the next probe, so a static deployment can gain a backend later.
+const STANDALONE_PROBE_KEY = 'deepview.sync.standaloneProbe'
+
+export function hasStandaloneProbeHint(): boolean {
+  try { return localStorage.getItem(STANDALONE_PROBE_KEY) === '1' } catch { return false }
+}
+
+export function rememberStandaloneProbe(): void {
+  try { localStorage.setItem(STANDALONE_PROBE_KEY, '1') } catch {}
+}
 
 // Validate an untrusted `server-info` frame (or cached blob) into a ServerInfo
 // (or null). Extra fields — e.g. the frame's `type` — are ignored.
@@ -39,6 +50,29 @@ export function parseServerInfo(body: unknown): ServerInfo | null {
   return { mode, managed }
 }
 
+// Only an explicit 404 confirms a backend-less deployment. Network errors,
+// other HTTP errors, and invalid configuration leave the protocol unknown.
+export async function probeServerInfo(): Promise<ServerInfo | 'standalone' | null> {
+  try {
+    const res = await fetch(CONFIG_PATH, { credentials: 'same-origin', headers: { accept: 'application/json' } })
+    if (res.status === 404) return 'standalone'
+    return res.ok ? parseServerInfo(await res.json()) : null
+  } catch { return null }
+}
+
+// Local data must remain available even if the server never answers. Bound
+// startup's wait without aborting the probe: a late answer can restore sync.
+export async function waitForServerInfo(probe: ReturnType<typeof probeServerInfo>, waitMs = 3000): ReturnType<typeof probeServerInfo> {
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      probe,
+      new Promise<null>((resolve) => { timeout = setTimeout(() => resolve(null), waitMs) }),
+    ])
+  } catch { return null }
+  finally { clearTimeout(timeout) }
+}
+
 export function readCachedServerInfo(): ServerInfo | null {
   try {
     const raw = localStorage.getItem(SERVER_MODE_KEY)
@@ -48,7 +82,10 @@ export function readCachedServerInfo(): ServerInfo | null {
 }
 
 export function writeCachedServerInfo(info: ServerInfo): void {
-  try { localStorage.setItem(SERVER_MODE_KEY, JSON.stringify(info)) } catch {}
+  try {
+    localStorage.setItem(SERVER_MODE_KEY, JSON.stringify(info))
+    localStorage.removeItem(STANDALONE_PROBE_KEY)
+  } catch {}
 }
 
 // Compare a freshly-detected mode against the cached one:

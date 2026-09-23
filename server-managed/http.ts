@@ -7,7 +7,7 @@
 //   GET  /api/oauth/github/login → 302 to GitHub (+ state cookie)
 //   GET  /api/oauth/github/callback → the OAuth hook (see github-oauth.ts)
 //   GET  /api/auth/session       → { user, csrfToken } | 401
-//   GET  /api/teams              → the current user's teams + their reports | 401
+//   GET  /api/teams              → the current user's teams + their reports and bundles | 401
 //   GET  /api/reports/<id>       → view a report: admin, or ≥view role + team membership | 401/404
 //   GET  /api/reports/<id>/triage → triage entries (by finding id, shared across reports) for a viewable report's findings | 401/404
 //   POST /api/reports/<id>/triage → write triage entries: admin, or ≥triage role + membership | 401/403/404
@@ -15,8 +15,10 @@
 //   GET  /api/avatar/<id>        → cached avatar bytes by user id | 401/404
 //   GET  /api/admin/users        → admin-only user list | 401/403
 //   POST /api/admin/set-role     → admin sets another user's role | 401/403/404
-//   GET  /api/admin/repositories → admin|manage repo list (each flagged selected) | 401/403
-//   POST /api/admin/repositories/select → admin|manage selects/deselects a repo | 401/403
+//   GET  /api/admin/repositories → admin repo list (each flagged selected) | 401/403
+//   POST /api/admin/repositories/select → admin selects/deactivates a repo | 401/403
+//   GET /api/admin/repositories/impact → admin attached data summary
+//   POST /api/admin/repositories/remove → admin permanently removes a repo
 //   GET  /api/admin/reports      → admin|manage list of uploaded reports | 401/403
 //   POST /api/admin/reports      → admin|manage uploads a report (raw body) | 401/403/413
 //   GET  /api/admin/reports/<id> → admin|manage downloads a stored report | 401/403/404
@@ -27,12 +29,12 @@
 //   GET  /api/admin/bundles/<id> → admin|manage downloads a stored bundle | 401/403/404
 //   DELETE /api/admin/bundles/<id> → admin|manage deletes a bundle | 401/403/404
 //   POST /api/admin/bundles/set-repo → admin|manage attaches/detaches a bundle's repo | 401/403/404
-//   GET  /api/admin/teams        → admin|manage teams (+ members/repos) + pickers | 401/403
-//   POST /api/admin/teams        → admin|manage creates a team | 401/403/409
-//   POST /api/admin/teams/rename → admin|manage renames a team | 401/403/404/409
-//   POST /api/admin/teams/delete → admin|manage deletes a team | 401/403/404
-//   POST /api/admin/teams/{set,remove}-repo   → admin|manage links/unlinks a repo (+path) | 401/403/404
-//   POST /api/admin/teams/{set,remove}-member → admin|manage links/unlinks a user (+perms) | 401/403/404
+//   GET  /api/admin/teams        → admin teams (+ members/repos) + pickers | 401/403
+//   POST /api/admin/teams        → admin creates a team | 401/403/409
+//   POST /api/admin/teams/rename → admin renames a team | 401/403/404/409
+//   POST /api/admin/teams/delete → admin deletes a team | 401/403/404
+//   POST /api/admin/teams/{set,remove}-repo   → admin links/unlinks a repo (+path) | 401/403/404
+//   POST /api/admin/teams/{set,remove}-member → admin links/unlinks a user (+perms) | 401/403/404
 //   POST /api/auth/logout        → same-origin + CSRF, drops the session
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Buffer } from 'node:buffer'
@@ -48,7 +50,9 @@ import { VISIBILITY_PERMISSIONS, parseTeamUserPermissions } from '../common/mana
 import { filterReportContent } from '../common/managed/report-filter.ts'
 import type { TriageEntryPatch } from '../common/managed/triage.ts'
 import { MAX_FINDING_ID, MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_ENTRIES, MAX_TRIAGE_HISTORY, isTriageBucket, parseTriageEntryPatch } from '../common/managed/triage.ts'
-import { loadFindings } from '../report/index.js'
+import { loadFindings, readReport, reportRepoGithub } from '../report/index.js'
+import { normalizeTeamPath } from './repo-path.ts'
+import { DEFAULT_MANAGED_SCAN_MODEL, MANAGED_SCAN_MODELS } from '../common/managed/scan-models.ts'
 import { CONFIG_PATH } from '../common/server-info.ts'
 import { collectRepos, installUrl } from './github-app.ts'
 import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, ensureUserAccessToken, handleCallback } from './github-oauth.ts'
@@ -58,11 +62,15 @@ const SESSION_PATH = '/api/auth/session'
 const AVATAR_PREFIX = '/api/avatar/'
 const LOGOUT_PATH = '/api/auth/logout'
 const ADMIN_USERS_PATH = '/api/admin/users'
+const ADMIN_MODELS_PATH = '/api/admin/models'
 const SET_ROLE_PATH = '/api/admin/set-role'
 const ADMIN_REPOS_PATH = '/api/admin/repositories'
 const SELECT_REPO_PATH = '/api/admin/repositories/select'
+const REPO_IMPACT_PATH = '/api/admin/repositories/impact'
+const REMOVE_REPO_PATH = '/api/admin/repositories/remove'
 const ADMIN_REPORTS_PATH = '/api/admin/reports'
 const REPORT_SET_REPO_PATH = '/api/admin/reports/set-repo'
+const REPORT_SET_VISIBLE_PATH = '/api/admin/reports/set-visible'
 const REPORT_PREFIX = '/api/admin/reports/'
 const ADMIN_BUNDLES_PATH = '/api/admin/bundles'
 const BUNDLE_SET_REPO_PATH = '/api/admin/bundles/set-repo'
@@ -79,7 +87,6 @@ const TEAM_REMOVE_REPO_PATH = '/api/admin/teams/remove-repo'
 const TEAM_SET_MEMBER_PATH = '/api/admin/teams/set-member'
 const TEAM_REMOVE_MEMBER_PATH = '/api/admin/teams/remove-member'
 const MAX_TEAM_NAME = 100
-const MAX_TEAM_PATH = 500
 
 export interface ManagedHttpDeps {
   config: ManagedConfig
@@ -206,27 +213,82 @@ async function readManageSession(res: ServerResponse, deps: ManagedHttpDeps, coo
   return s
 }
 
-// GET /api/admin/repositories — the user's repositories for the "Manage
-// repositories" page, each flagged `selected` (whether it's in the operate-on
-// set). Visible to admin OR manage. Read-only (no mutation), so no CSRF, like
-// /api/admin/users. Merges PUBLIC (the user's login token, refreshed on demand)
-// + PRIVATE (the App's installation tokens). `installUrl` is the App-install
-// link; `tokenMissing:true` tells the page to ask the user to log in again.
-async function handleListRepositories(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
-  if ((req.method ?? 'GET') !== 'GET') { send405(res, 'GET'); return }
+async function readAdminSession(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<{ session: ManagedSession; user: StoredUser } | null> {
+  const s = await readSession(deps.config, deps.db, cookie, Date.now())
+  if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return null }
+  if (s.user.role !== 'admin') { sendJson(res, 403, { error: 'forbidden' }); return null }
+  return s
+}
+
+// GET /api/admin/models — the server's canonical scan model ids and effort
+// levels. Names are intentionally absent; the client derives them from ids.
+async function handleListModels(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   const s = await readManageSession(res, deps, cookie)
   if (s == null) return
-  const token = await ensureUserAccessToken(deps.config, deps.db, s.user.id, Date.now())
-  const { repositories, tokenMissing } = await collectRepos(deps.config, token)
-  const selected = new Set((await deps.db.listSelectedRepos()).map((r) => r.repoId))
+  sendJson(res, 200, { models: MANAGED_SCAN_MODELS, defaultModel: DEFAULT_MANAGED_SCAN_MODEL })
+}
+
+// GET /api/admin/repositories — the connected repositories by default. The
+// potentially large GitHub discovery lists are opt-in (`scope=installed` or
+// `scope=public`) and are searched/paged on the server. Admin-only. No CSRF.
+async function handleListRepositories(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
+  if ((req.method ?? 'GET') !== 'GET') { send405(res, 'GET'); return }
+  const s = await readAdminSession(res, deps, cookie)
+  if (s == null) return
+  const url = new URL(req.url ?? '/', 'http://localhost')
+  // Keep the original unparameterized response shape for older clients. The
+  // admin UI always sends an explicit scope, which opts into the connected-first
+  // and paged discovery flow below.
+  if ([...url.searchParams.keys()].length === 0) {
+    const token = await ensureUserAccessToken(deps.config, deps.db, s.user.id, Date.now())
+    const listing = await collectRepos(deps.config, token)
+    const selected = new Set((await deps.db.listSelectedRepos()).map((repo) => repo.repoId))
+    sendJson(res, 200, {
+      installUrl: installUrl(deps.config),
+      repositories: listing.repositories.map((repo) => ({
+        id: repo.id, fullName: repo.fullName, private: repo.private, htmlUrl: repo.htmlUrl,
+        installed: repo.installationId != null, selected: selected.has(repo.id),
+      })),
+      tokenMissing: listing.tokenMissing,
+    })
+    return
+  }
+  const scope = url.searchParams.get('scope') ?? 'connected'
+  if (scope !== 'connected' && scope !== 'installed' && scope !== 'public') { sendJson(res, 400, { error: 'bad-scope' }); return }
+  const query = (url.searchParams.get('q') ?? '').trim().toLocaleLowerCase()
+  const page = Math.max(1, Number.parseInt(url.searchParams.get('page') ?? '1', 10) || 1)
+  const limit = Math.min(50, Math.max(1, Number.parseInt(url.searchParams.get('limit') ?? '20', 10) || 20))
+  const selectedRows = await deps.db.listSelectedRepos()
+  const allRows = scope === 'connected' ? await deps.db.listAllRepos() : []
+  const selected = new Set(selectedRows.map((r) => r.repoId))
+  let tokenMissing = false
+  let repositories
+  if (scope === 'connected') {
+    repositories = allRows.map((r) => ({
+      id: r.repoId, fullName: r.fullName, private: r.private, htmlUrl: r.htmlUrl,
+      installed: r.installationId != null, selected: r.active, active: r.active,
+    }))
+  } else {
+    const token = await ensureUserAccessToken(deps.config, deps.db, s.user.id, Date.now())
+    const listing = await collectRepos(deps.config, token)
+    tokenMissing = listing.tokenMissing
+    repositories = listing.repositories
+      .filter((r) => scope === 'installed' ? r.installationId != null : (!r.private && r.installationId == null))
+      .map((r) => ({
+        id: r.id, fullName: r.fullName, private: r.private, htmlUrl: r.htmlUrl,
+        installed: r.installationId != null, selected: selected.has(r.id),
+      }))
+  }
+  if (query) repositories = repositories.filter((r) => r.fullName.toLocaleLowerCase().includes(query))
+  repositories.sort((a, b) => a.fullName.localeCompare(b.fullName))
+  const total = repositories.length
+  const start = (page - 1) * limit
   sendJson(res, 200, {
     installUrl: installUrl(deps.config),
-    repositories: repositories.map((r) => ({
-      id: r.id, fullName: r.fullName, private: r.private, htmlUrl: r.htmlUrl,
-      // `installed` = reached through the App (readable) — the default tab lists
-      // only these; `selected` = in the operate-on set.
-      installed: r.installationId != null, selected: selected.has(r.id),
-    })),
+    repositories: repositories.slice(start, start + limit),
+    connectedCount: selectedRows.length,
+    inactiveCount: allRows.filter((r) => !r.active).length,
+    total, page, limit,
     tokenMissing,
   })
 }
@@ -249,14 +311,14 @@ async function selectRepository(res: ServerResponse, deps: ManagedHttpDeps, user
   sendJson(res, 200, { ok: true, selected: true })
 }
 
-// POST /api/admin/repositories/select — admin|manage toggles whether a repo is
-// in the operate-on set. Mutation: same-origin + CSRF. Body { repoId, selected }.
-// selected:true verifies + records the read context; selected:false drops the row.
+// POST /api/admin/repositories/select — an admin toggles whether a repo is
+// active in the operate-on set. Mutation: same-origin + CSRF. Body { repoId,
+// selected }. selected:true verifies + records the read context; selected:false
+// deactivates the row while retaining its reports, bundles, and metadata.
 async function handleSelectRepository(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   if ((req.method ?? 'GET') !== 'POST') { send405(res, 'POST'); return }
-  const s = await checkMutation(req, res, deps, cookie)
+  const s = await adminMutation(req, res, deps, cookie)
   if (s == null) return
-  if (!requireManageRole(res, s.user)) return
   let body: unknown
   try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
   const repoId = (body as { repoId?: unknown } | null)?.repoId
@@ -264,8 +326,96 @@ async function handleSelectRepository(req: IncomingMessage, res: ServerResponse,
   if (typeof repoId !== 'number' || !Number.isSafeInteger(repoId) || typeof selected !== 'boolean') {
     sendJson(res, 400, { error: 'bad-request' }); return
   }
-  if (!selected) { await deps.db.deselectRepo(repoId); sendJson(res, 200, { ok: true, selected: false }); return }
+  if (!selected) { await deps.db.deactivateRepo(repoId); sendJson(res, 200, { ok: true, selected: false }); return }
   await selectRepository(res, deps, s.user.id, repoId)
+}
+
+async function repositoryFindingIds(deps: ManagedHttpDeps, reports: { id: string }[]): Promise<Set<string>> {
+  const ids = new Set<string>()
+  for (const report of reports) {
+    const bytes = await deps.reportStore.get(report.id)
+    if (bytes == null) throw new Error(`Cannot establish repository triage overlap: report ${report.id} is unavailable`)
+    const parsed = await loadFindings(bytes.toString('utf8'))
+    if (parsed == null) throw new Error(`Cannot establish repository triage overlap: report ${report.id} is unreadable`)
+    for (const finding of parsed.findings) {
+      const id = (finding as { id?: unknown })?.id
+      if (typeof id === 'string' && id !== '') ids.add(id)
+    }
+  }
+  return ids
+}
+
+async function repositoryImpact(deps: ManagedHttpDeps, repoId: number) {
+  const allReports = await deps.db.listReports()
+  const reports = allReports.filter((report) => report.repoId === repoId)
+  const bundles = await deps.db.listBundlesForRepo(repoId)
+  const triageIds = await repositoryExclusiveTriageIds(deps, reports, allReports.filter((report) => report.repoId !== repoId))
+  return {
+    reports: reports.map((report) => ({ id: report.id, filename: report.filename, repoDirectory: report.repoDirectory })),
+    bundles,
+    triageCount: triageIds.length,
+  }
+}
+
+async function repositoryExclusiveTriageIds(deps: ManagedHttpDeps, reports: { id: string }[], otherReports: { id: string }[]): Promise<string[]> {
+  const targetIds = await repositoryFindingIds(deps, reports)
+  const triage = await deps.db.listTriage([...targetIds])
+  if (triage.length === 0) return []
+  // Only annotated findings need an overlap check.
+  // TODO(managed): Persist finding IDs per report at upload time and maintain
+  // the index on report deletion. Use it for repository impact and triage
+  // cleanup so overlap checks do not fetch and parse every other report blob.
+  // Deferred for production; the preview still performs the blob scan below.
+  const otherIds = await repositoryFindingIds(deps, otherReports)
+  return triage.map((entry) => entry.findingId).filter((id) => !otherIds.has(id))
+}
+
+// GET /api/admin/repositories/impact — show the data a permanent repository
+// removal would destroy. This is intentionally separate from the repository
+// list so the normal page stays cheap even with many reports.
+async function handleRepositoryImpact(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
+  const s = await readAdminSession(res, deps, cookie)
+  if (s == null) return
+  const repoId = Number(new URL(req.url ?? '/', 'http://localhost').searchParams.get('repoId'))
+  if (!Number.isSafeInteger(repoId)) { sendJson(res, 400, { error: 'bad-repo' }); return }
+  const repo = (await deps.db.listAllRepos()).find((candidate) => candidate.repoId === repoId)
+  if (repo == null) { sendJson(res, 404, { error: 'no-repo' }); return }
+  sendJson(res, 200, { repoId, fullName: repo.fullName, ...await repositoryImpact(deps, repoId) })
+}
+
+// POST /api/admin/repositories/remove — permanently remove a repository and
+// attached reports/bundles. The exact name + explicit acknowledgement are
+// checked server-side too; the UI's dialog is a usability guard, not the policy.
+async function handleRemoveRepository(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
+  const s = await checkMutation(req, res, deps, cookie)
+  if (s == null) return
+  if (s.user.role !== 'admin') { sendJson(res, 403, { error: 'forbidden' }); return }
+  let body: unknown
+  try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
+  const repoId = (body as { repoId?: unknown } | null)?.repoId
+  const fullName = (body as { fullName?: unknown } | null)?.fullName
+  const acknowledge = (body as { acknowledge?: unknown } | null)?.acknowledge
+  const deleteTriage = (body as { deleteTriage?: unknown } | null)?.deleteTriage
+  if (typeof repoId !== 'number' || !Number.isSafeInteger(repoId) || typeof fullName !== 'string' || acknowledge !== true || typeof deleteTriage !== 'boolean') {
+    sendJson(res, 400, { error: 'confirmation-required' }); return
+  }
+  const repo = (await deps.db.listAllRepos()).find((candidate) => candidate.repoId === repoId)
+  if (repo == null) { sendJson(res, 404, { error: 'no-repo' }); return }
+  if (repo.fullName !== fullName) { sendJson(res, 400, { error: 'repo-name-mismatch' }); return }
+  const reports = await deps.db.listReportsForRepo(repoId)
+  const bundles = await deps.db.listBundlesForRepo(repoId)
+  const triageIds = deleteTriage
+    ? await repositoryExclusiveTriageIds(deps, reports, (await deps.db.listReports()).filter((report) => report.repoId !== repoId))
+    : []
+  const deletedReports = await deps.db.deleteReportsForRepo(repoId)
+  const deletedBundles = await deps.db.deleteBundlesForRepo(repoId)
+  // Remove metadata first so a blob-store failure leaves an orphaned blob for
+  // later cleanup, rather than a live row pointing at missing report data.
+  for (const report of reports) await deps.reportStore.delete(report.id).catch(() => {})
+  for (const bundle of bundles) await deps.bundleStore.delete(bundle.id).catch(() => {})
+  const deletedTriage = await deps.db.deleteTriage(triageIds)
+  await deps.db.deleteRepo(repoId)
+  sendJson(res, 200, { ok: true, deletedReports, deletedBundles, deletedTriage })
 }
 
 // Strip a client-supplied upload filename to a safe display string. The bytes
@@ -316,8 +466,9 @@ async function repoIdAllowed(deps: ManagedHttpDeps, repoId: unknown): Promise<bo
 }
 
 // POST /api/admin/reports/set-repo — attach / detach a stored report's repo
-// link. Mutation: same-origin + CSRF, admin|manage. Body { reportId, repoId }
-// where repoId is null (detach) or a currently-selected repo id.
+// + directory link. Mutation: same-origin + CSRF, admin|manage. Body
+// { reportId, repoId, directory }, where repoId is null (detach) or a
+// currently-selected repo id. Directory is relative to the repository root.
 async function handleSetReportRepo(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   const s = await manageMutation(req, res, deps, cookie)
   if (s == null) return
@@ -325,10 +476,30 @@ async function handleSetReportRepo(req: IncomingMessage, res: ServerResponse, de
   try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
   const reportId = (body as { reportId?: unknown } | null)?.reportId
   const repoId = (body as { repoId?: unknown } | null)?.repoId ?? null
+  const directory = (body as { directory?: unknown } | null)?.directory ?? ''
   if (typeof reportId !== 'string') { sendJson(res, 400, { error: 'bad-request' }); return }
+  const report = await deps.db.getReport(reportId)
+  if (report == null) { sendJson(res, 404, { error: 'no-report' }); return }
+  if (report.repoEmbedded) { sendJson(res, 409, { error: 'repo-in-report' }); return }
   if (!(await repoIdAllowed(deps, repoId))) { sendJson(res, 400, { error: 'bad-repo' }); return }
-  if (!(await deps.db.setReportRepo(reportId, repoId as number | null))) { sendJson(res, 404, { error: 'no-report' }); return }
-  sendJson(res, 200, { ok: true })
+  const normalized = normalizeTeamPath(directory)
+  if (!normalized.ok) { sendJson(res, 400, { error: 'bad-directory' }); return }
+  if (!(await deps.db.setReportRepo(reportId, repoId as number | null, normalized.path ?? ''))) { sendJson(res, 404, { error: 'no-report' }); return }
+  sendJson(res, 200, { ok: true, repoId, repoDirectory: normalized.path ?? '' })
+}
+
+// POST /api/admin/reports/set-visible — publish or hide a stored report. New
+// reports start hidden so an admin can inspect the parsed metadata first.
+async function handleSetReportVisible(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
+  const s = await manageMutation(req, res, deps, cookie)
+  if (s == null) return
+  let body: unknown
+  try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
+  const reportId = (body as { reportId?: unknown } | null)?.reportId
+  const visible = (body as { visible?: unknown } | null)?.visible
+  if (typeof reportId !== 'string' || typeof visible !== 'boolean') { sendJson(res, 400, { error: 'bad-request' }); return }
+  if (!(await deps.db.setReportVisible(reportId, visible))) { sendJson(res, 404, { error: 'no-report' }); return }
+  sendJson(res, 200, { ok: true, visible })
 }
 
 // POST /api/admin/bundles/set-repo — attach / detach a stored bundle's repo link
@@ -376,10 +547,13 @@ async function resolveReportBundle(deps: ManagedHttpDeps, bytes: Buffer): Promis
 // POST /api/admin/reports — upload a report. Mutation: same-origin + CSRF,
 // admin|manage. The body is the raw report bytes (any findings format — JSON /
 // markdown / CSV — archived as-is, like the e2e objstore; the server parses them
-// downstream). Display name rides X-Report-Filename; an optional X-Repo-Id links
-// it to a selected repo; the bundle link is auto-resolved from the report's
-// bundleHashes. Bytes are written first (keyed by a fresh uuid) then the metadata
-// row — a failed insert drops the orphan blob. 413 over the cap, 400 on empty.
+// downstream). Display name rides X-Report-Filename; the repository and
+// directory come from the report header, or from optional repository/directory
+// headers when the report has no repository metadata. The bundle link is
+// auto-resolved from the report's bundleHashes. New reports start hidden until
+// published. Bytes
+// are written first (keyed by a fresh uuid) then the metadata row — a failed
+// insert drops the orphan blob. 413 over the cap, 400 on empty.
 async function handleUploadReport(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   const s = await checkMutation(req, res, deps, cookie)
   if (s == null) return
@@ -393,8 +567,29 @@ async function handleUploadReport(req: IncomingMessage, res: ServerResponse, dep
     return
   }
   if (bytes.length === 0) { sendJson(res, 400, { error: 'empty' }); return }
-  const repo = await resolveUploadRepoId(req, res, deps)
-  if (!repo.ok) return
+  const parsed = readReport(bytes.toString('utf8'))
+  const repoGithub = parsed.data == null ? null : reportRepoGithub(parsed.data)
+  const repoEmbedded = repoGithub != null
+  const rawHeaderDirectory = firstHeader(req.headers['x-repo-directory']) ?? ''
+  let headerDirectory = rawHeaderDirectory
+  try { headerDirectory = decodeURIComponent(rawHeaderDirectory) } catch { sendJson(res, 400, { error: 'bad-directory' }); return }
+  // Validate the raw header, not repoDirectory()'s display/link normalization,
+  // which trims characters and turns invalid paths into the repository root.
+  const requestedDirectory = repoEmbedded ? parsed.data?.repo?.directory : headerDirectory
+  const normalizedDirectory = normalizeTeamPath(requestedDirectory)
+  if (!normalizedDirectory.ok) { sendJson(res, 400, { error: 'bad-directory' }); return }
+  const directory = normalizedDirectory.path ?? ''
+  const analyzer = parsed.data != null && typeof parsed.data.source === 'string' ? parsed.data.source : null
+  const selected = await deps.db.listSelectedRepos()
+  let matchedRepo = repoGithub == null ? null : selected.find((repo) => repo.fullName.toLocaleLowerCase() === repoGithub.toLocaleLowerCase())
+  if (repoGithub != null && matchedRepo == null) { sendJson(res, 400, { error: 'repo-not-connected', repo: repoGithub }); return }
+  // When the report has no repository header, X-Repo-Id lets the managed uploader
+  // assign it at upload time. Clients may omit it and attach the report later.
+  if (repoGithub == null) {
+    const legacyRepo = await resolveUploadRepoId(req, res, deps)
+    if (!legacyRepo.ok) return
+    matchedRepo = legacyRepo.repoId == null ? null : selected.find((repo) => repo.repoId === legacyRepo.repoId) ?? null
+  }
   const id = randomUUID()
   const filename = sanitizeFilename(firstHeader(req.headers['x-report-filename']), 'report.json')
   const contentType = (firstHeader(req.headers['content-type']) ?? '').split(';', 1)[0]!.trim() || 'application/json'
@@ -404,13 +599,14 @@ async function handleUploadReport(req: IncomingMessage, res: ServerResponse, dep
   try {
     await deps.db.insertReport({
       id, filename, contentType, byteSize: bytes.length, sha256,
-      uploadedBy: s.user.id, uploadedByLogin: s.user.login, repoId: repo.repoId, bundleId, bundleIntegrity: integrity,
+      uploadedBy: s.user.id, uploadedByLogin: s.user.login, repoId: matchedRepo?.repoId ?? null,
+      repoDirectory: directory, repoEmbedded, analyzer, visible: false, bundleId, bundleIntegrity: integrity,
     }, Date.now())
   } catch (err) {
     await deps.reportStore.delete(id).catch(() => {})
     throw err
   }
-  sendJson(res, 201, { id, filename, byteSize: bytes.length, sha256, repoId: repo.repoId, bundleId })
+  sendJson(res, 201, { id, filename, byteSize: bytes.length, sha256, repoId: matchedRepo?.repoId ?? null, repoDirectory: directory, repoEmbedded, analyzer, visible: false, bundleId })
 }
 
 // GET /api/admin/reports/<id> — download a stored report (admin|manage). Serves
@@ -560,32 +756,17 @@ async function manageMutation(req: IncomingMessage, res: ServerResponse, deps: M
   return s
 }
 
-// Normalise an optional team-repo subpath into a clean RELATIVE path inside the
-// repo: trim, drop control chars, fold both separators, drop empty + '.'
-// segments, and REJECT any '..' segment so the subpath can't escape the repo
-// subtree once the (later) data plane reads from it. `{ ok:false }` = traversal
-// (the handler 400s); `{ path:null }` = the whole repo. Result is '/'-joined and
-// length-capped.
-function normalizeTeamPath(raw: unknown): { ok: true; path: string | null } | { ok: false } {
-  if (typeof raw !== 'string') return { ok: true, path: null }
-  let cleaned = ''
-  for (const ch of raw.trim()) {
-    const code = ch.codePointAt(0) ?? 0
-    if (code < 0x20 || code === 0x7f) continue
-    cleaned += ch
-  }
-  const segments: string[] = []
-  for (const seg of cleaned.replaceAll('\\', '/').split('/')) {
-    if (seg === '' || seg === '.') continue
-    if (seg === '..') return { ok: false }
-    segments.push(seg)
-  }
-  const path = segments.join('/').slice(0, MAX_TEAM_PATH)
-  return { ok: true, path: path === '' ? null : path }
+// Workspace access and repository connections are administered separately
+// from content management. Managers cannot change their own access via teams.
+async function adminMutation(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<{ session: ManagedSession; user: StoredUser } | null> {
+  const s = await checkMutation(req, res, deps, cookie)
+  if (s == null) return null
+  if (s.user.role !== 'admin') { sendJson(res, 403, { error: 'forbidden' }); return null }
+  return s
 }
 
-// GET /api/teams — the CURRENT user's teams, each with the reports attached to
-// the team's repos, for the sidebar's per-user Teams section. Any authenticated
+// GET /api/teams — the CURRENT user's teams, each with the reports and bundles
+// attached to the team's repos, for the sidebar's per-user Teams section. Any authenticated
 // user (not just admin|manage); a user only ever sees their own teams.
 async function handleMyTeams(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   const s = await readSession(deps.config, deps.db, cookie, Date.now())
@@ -593,7 +774,7 @@ async function handleMyTeams(res: ServerResponse, deps: ManagedHttpDeps, cookie:
   const teams = await deps.db.listTeamsForUser(s.user.id)
   // Report rows need at least a 'view' role (matches canViewReport) — a 'none'
   // member sees the team but no openable reports, so strip them.
-  const gated = roleAtLeast(s.user.role, 'view') ? teams : teams.map((t) => ({ ...t, reports: [] }))
+  const gated = roleAtLeast(s.user.role, 'view') ? teams : teams.map((t) => ({ ...t, reports: [], bundles: [] }))
   sendJson(res, 200, { teams: gated })
 }
 
@@ -604,7 +785,10 @@ async function handleMyTeams(res: ServerResponse, deps: ManagedHttpDeps, cookie:
 // /api/teams listing, so the sidebar never shows a report the user can't open.
 async function canViewReport(deps: ManagedHttpDeps, user: StoredUser, reportId: string): Promise<boolean> {
   if (!roleAtLeast(user.role, 'view')) return false
-  if (user.role === 'admin') return (await deps.db.getReport(reportId)) != null
+  const report = await deps.db.getReport(reportId)
+  if (report == null) return false
+  if (user.role === 'admin') return true
+  if (!report.visible) return false
   return deps.db.userCanReadReport(user.id, reportId)
 }
 
@@ -651,7 +835,10 @@ async function viewerReportBytes(deps: ManagedHttpDeps, user: StoredUser, report
 // the same "neither existence nor denial is probeable" rule as canViewReport.
 async function canTriageReport(deps: ManagedHttpDeps, user: StoredUser, reportId: string): Promise<boolean> {
   if (!roleAtLeast(user.role, 'triage')) return false
-  if (user.role === 'admin') return (await deps.db.getReport(reportId)) != null
+  const report = await deps.db.getReport(reportId)
+  if (report == null) return false
+  if (user.role === 'admin') return true
+  if (!report.visible) return false
   return deps.db.userCanReadReport(user.id, reportId)
 }
 
@@ -782,9 +969,9 @@ async function handleSetReportTriage(req: IncomingMessage, res: ServerResponse, 
 
 // GET /api/admin/teams — every team (members + repos inlined) plus the pickers
 // the page needs: all users (member dropdown), selected repos (repo dropdown),
-// and the visibility-permission keys. admin|manage, read-only (no CSRF).
+// and the visibility-permission keys. admin, read-only (no CSRF).
 async function handleListTeams(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
-  const s = await readManageSession(res, deps, cookie)
+  const s = await readAdminSession(res, deps, cookie)
   if (s == null) return
   sendJson(res, 200, {
     teams: await deps.db.listTeams(),
@@ -796,7 +983,7 @@ async function handleListTeams(res: ServerResponse, deps: ManagedHttpDeps, cooki
 
 // POST /api/admin/teams — create a team. Body { name }. 409 if the name's taken.
 async function handleCreateTeam(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
-  const s = await manageMutation(req, res, deps, cookie)
+  const s = await adminMutation(req, res, deps, cookie)
   if (s == null) return
   let body: unknown
   try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
@@ -811,7 +998,7 @@ async function handleCreateTeam(req: IncomingMessage, res: ServerResponse, deps:
 // POST /api/admin/teams/rename — rename a team. Body { teamId, name }. 404 if no
 // such team; 409 if the new name is already taken by another team.
 async function handleRenameTeam(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
-  const s = await manageMutation(req, res, deps, cookie)
+  const s = await adminMutation(req, res, deps, cookie)
   if (s == null) return
   let body: unknown
   try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
@@ -827,7 +1014,7 @@ async function handleRenameTeam(req: IncomingMessage, res: ServerResponse, deps:
 
 // POST /api/admin/teams/delete — drop a team (its links cascade). Body { teamId }.
 async function handleDeleteTeam(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
-  const s = await manageMutation(req, res, deps, cookie)
+  const s = await adminMutation(req, res, deps, cookie)
   if (s == null) return
   let body: unknown
   try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
@@ -840,7 +1027,7 @@ async function handleDeleteTeam(req: IncomingMessage, res: ServerResponse, deps:
 // POST /api/admin/teams/set-repo — link a repo to a team (upsert + optional
 // subpath). Body { teamId, repoId, path? }. Repo must be in the selected set.
 async function handleSetTeamRepo(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
-  const s = await manageMutation(req, res, deps, cookie)
+  const s = await adminMutation(req, res, deps, cookie)
   if (s == null) return
   let body: unknown
   try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
@@ -859,7 +1046,7 @@ async function handleSetTeamRepo(req: IncomingMessage, res: ServerResponse, deps
 
 // POST /api/admin/teams/remove-repo — unlink a repo. Body { teamId, repoId }.
 async function handleRemoveTeamRepo(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
-  const s = await manageMutation(req, res, deps, cookie)
+  const s = await adminMutation(req, res, deps, cookie)
   if (s == null) return
   let body: unknown
   try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
@@ -873,7 +1060,7 @@ async function handleRemoveTeamRepo(req: IncomingMessage, res: ServerResponse, d
 // POST /api/admin/teams/set-member — add/update a member + their visibility
 // permissions. Body { teamId, userId, dependencies?, security? }.
 async function handleSetTeamMember(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
-  const s = await manageMutation(req, res, deps, cookie)
+  const s = await adminMutation(req, res, deps, cookie)
   if (s == null) return
   let body: unknown
   try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
@@ -888,7 +1075,7 @@ async function handleSetTeamMember(req: IncomingMessage, res: ServerResponse, de
 
 // POST /api/admin/teams/remove-member — remove a membership. Body { teamId, userId }.
 async function handleRemoveTeamMember(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
-  const s = await manageMutation(req, res, deps, cookie)
+  const s = await adminMutation(req, res, deps, cookie)
   if (s == null) return
   let body: unknown
   try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
@@ -965,7 +1152,19 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       sendJson(res, 200, { users: await db.listUsers() })
       return
     }
+    if (path === ADMIN_MODELS_PATH) {
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      await handleListModels(res, deps, cookie); return
+    }
     if (path === SET_ROLE_PATH) { await handleSetRole(req, res, deps, cookie); return }
+    if (path === REPO_IMPACT_PATH) {
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      await handleRepositoryImpact(req, res, deps, cookie); return
+    }
+    if (path === REMOVE_REPO_PATH) {
+      if (method !== 'POST') { send405(res, 'POST'); return }
+      await handleRemoveRepository(req, res, deps, cookie); return
+    }
     if (path === ADMIN_REPOS_PATH) { await handleListRepositories(req, res, deps, cookie); return }
     if (path === SELECT_REPO_PATH) { await handleSelectRepository(req, res, deps, cookie); return }
     // Reports: list / upload on the exact path, download / delete per-id on the
@@ -980,6 +1179,10 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (path === REPORT_SET_REPO_PATH) {
       if (method !== 'POST') { send405(res, 'POST'); return }
       await handleSetReportRepo(req, res, deps, cookie); return
+    }
+    if (path === REPORT_SET_VISIBLE_PATH) {
+      if (method !== 'POST') { send405(res, 'POST'); return }
+      await handleSetReportVisible(req, res, deps, cookie); return
     }
     if (path.startsWith(REPORT_PREFIX)) {
       const id = path.slice(REPORT_PREFIX.length)

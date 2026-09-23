@@ -109,14 +109,21 @@ export {
   clampFocusSplit,
   loadRepoUrlFor,
   saveRepoUrlFor,
+  isManagedUiMode,
+  clientModeLabel,
+  setLocalMode,
   state,
 } from './state.ts'
 
 export {
   CONFIG_PATH,
   classifyServerMode,
+  hasStandaloneProbeHint,
   parseServerInfo,
+  probeServerInfo,
   readCachedServerInfo,
+  rememberStandaloneProbe,
+  waitForServerInfo,
   writeCachedServerInfo,
 } from './sync/server-mode.ts'
 
@@ -154,7 +161,8 @@ export {
 } from './triage-gc.js'
 
 export {
-  loadPromise as triageLoadPromise,
+  ensureTriageLoaded,
+  reloadTriageFromStorage,
   migrateTriageToEncrypted,
   migrateTriageToPlaintext,
   saveTriage,

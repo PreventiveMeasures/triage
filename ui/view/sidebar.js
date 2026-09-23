@@ -1,10 +1,10 @@
 import { LitElement, html, render as litRender, nothing, unsafeCSS } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { CONFIG_PATH, LINKS_KIND, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, computeLinkHint, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, ensureLinkedFindingsIndexed, getCount, getPackagesIndex, getRepositoriesIndex, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, parseServerInfo, readCachedServerInfo, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, state, writeCachedServerInfo } from '#client/index.js'
+import { LINKS_KIND, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, clientModeLabel, computeLinkHint, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, ensureLinkedFindingsIndexed, getCount, getPackagesIndex, getRepositoriesIndex, hasStandaloneProbeHint, hydrateSecureStorage, isManagedUiMode, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, probeServerInfo, readCachedServerInfo, reloadTriageFromStorage, rememberStandaloneProbe, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, setLocalMode, state, syncObservedAfterHydrate, waitForServerInfo, writeCachedServerInfo } from '#client/index.js'
 import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, setSyncForceDisabled, triageSync } from './client-sync.js'
-import { fetchReport as fetchManagedReport, login as managedLogin, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams } from './client-managed.js'
-import { hydrateManagedReportTriage, initManagedTriagePush } from './managed-triage.js'
+import { login as managedLogin, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams } from './client-managed.js'
+import { initManagedTriagePush, resetManagedTriage } from './managed-triage.js'
 import { loadAdminBundle } from './client-admin.js'
 import sidebarCSS from './sidebar.css'
 import fileIconCSS from '../styles/file-icon.css'
@@ -12,6 +12,7 @@ import { initEncryptionToggle, refreshEncryptionToggle } from './encryption-togg
 import { initStorageStatus, scheduleStorageStatusRefresh } from './storage-status.js'
 import { render } from './render.js'
 import { renderLandingWorkspaces } from './landing-workspaces.js'
+import { updateManagedLanding } from './landing-managed.js'
 
 // Set on mount (`<app-sidebar>` firstUpdated). `hostEl` is the
 // custom-element host (light DOM — the `.classList` collapse
@@ -23,7 +24,17 @@ import { renderLandingWorkspaces } from './landing-workspaces.js'
 let hostEl = null
 let root = null
 let fileList = null
-import { deleteCurrent, deleteCurrentBundle, goHome, leaveWorkspace, persistLastBundle, switchToFile, switchToWorkspace } from './ingest.js'
+
+// A first visit has no cached protocol yet. Keep the welcome surface hidden
+// during the bounded startup probe so a prompt managed response paints its
+// team landing directly. An unavailable server releases the local surface.
+function setLandingModePending(pending) {
+  const landing = document.querySelector('#drop-zone')
+  if (!landing) return
+  if (pending) landing.dataset.serverModePending = 'true'
+  else delete landing.dataset.serverModePending
+}
+import { deleteCurrent, deleteCurrentBundle, goHome, leaveWorkspace, persistLastBundle, resetForClientModeTransition, switchToFile, switchToManagedTeam, switchToWorkspace } from './ingest.js'
 import { reportWorkspaceFor } from './finding-link.js'
 import { exportWorkspace } from './workspace-export.js'
 import { maybePromptFirstUse } from './first-import-prompt.js'
@@ -37,7 +48,7 @@ import { openDetachReportDialog } from './dialogs/detach-report-dialog.js'
 import { openPersistenceDegradedDialog } from './dialogs/persistence-degraded-dialog.js'
 import { openProxyAuthDialog } from './dialogs/proxy-auth-dialog.js'
 import { FILE_ICONS, displayName, groupOf, isLinksFile } from './file-display.js'
-import { BUNDLE_ICON_SVG, WORKSPACE_ICON_SVG } from './icons.js'
+import { BUNDLE_ICON_SVG, MANAGE_ICON_SVG, WORKSPACE_ICON_SVG } from './icons.js'
 import { openBundle, selectBundle } from './bundle-load.js'
 import { installGlobalTooltipListener, installShadowTooltipListener } from './tooltip.js'
 
@@ -194,60 +205,62 @@ function groupHeaderTemplate(label, opts = {}) {
 // dispatches on; the chip's title gives the affordance a tooltip
 // mirroring the "Delete current" button below.
 const WORKSPACE_PLUS_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9"/></svg>`
+const LOGOUT_ICON = html`<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.5H3.5v11H8M10 5l3 3-3 3M13 8H6"/></svg>`
 function workspaceHeaderTemplate() {
   // Managed mode has no client-side workspace creation — a different management
   // surface is coming — so drop the "+" affordance there.
-  const actions = state.serverMode === 'managed'
+  const actions = isManagedUiMode()
     ? nothing
     : html`<span class="workspace-header-actions"><button type="button" class="workspace-add" data-action="new-workspace" aria-label="Create a new workspace">${WORKSPACE_PLUS_ICON}</button></span>`
   return html`<li class="file-group-header workspace-header"><span class="group-label">Workspaces</span>${actions}</li>`
 }
 
 // The signed-in user's team memberships (managed mode), rendered ABOVE the
-// Workspaces section. Static label rows for now — teams have no dedicated view
-// yet. Renders nothing outside managed mode or when the user is in no teams.
+// Workspaces section. Opening a team combines its reports in a workspace view;
+// repository-owned bundles are listed alongside those reports.
 function teamsSectionTemplate() {
-  if (state.serverMode !== 'managed') return nothing
+  if (!isManagedUiMode()) return nothing
   const teams = Array.isArray(state.managedTeams) ? state.managedTeams : []
   if (teams.length === 0) return nothing
   return html`
     ${groupHeaderTemplate('Teams')}
     ${repeat(teams, (t) => t.id, (t) => html`
-      <li class="file-item team-item"><span class="team-name">${TEAM_ICON}<span class="team-label">${t.name}</span></span></li>
-      ${repeat(Array.isArray(t.reports) ? t.reports : [], (r) => r.id, (r) => teamReportTemplate(r))}`)}`
+      <li class=${`file-item team-item${state.currentManagedTeam === t.id && state.currentWorkspace && state.currentView === 'findings' ? ' current' : ''}`}>
+        <button type="button" class="file-name" @click=${() => void switchToManagedTeam(t)}>${TEAM_ICON}<span class="file-label">${t.name}</span></button>
+      </li>
+      ${repeat(t.reports, (r) => r.id, (r) => teamReportTemplate(t, r))}
+      ${repeat(t.bundles ?? [], (b) => b.id, (b) => teamBundleTemplate(b))}`)}`
 }
 
 // A clickable report row under its team (managed mode). Reuses the indented
 // file-row chrome but carries no `data-file`, so the file-click delegate ignores
 // it — opening is handled by its own @click, which renders the report from the
 // server WITHOUT caching it to OPFS.
-function teamReportTemplate(r) {
-  return html`<li class="file-item indented team-report-item">
-    <button type="button" class="file-name" data-tooltip=${r.filename} @click=${() => void openTeamReport(r)}>
+function teamReportTemplate(team, r) {
+  const current = state.currentManagedTeam === team.id && state.currentManagedReport === r.id && state.currentView === 'findings'
+  return html`<li class=${`file-item indented team-report-item${current ? ' current' : ''}`}>
+    <button type="button" class="file-name" data-tooltip=${r.filename} @click=${() => void openTeamReport(team, r)}>
       ${unsafeHTML(FILE_ICONS.default)}<span class="file-label">${r.filename}</span>
     </button>
   </li>`
 }
 
-// Fetch a managed team report's content and render it in place via switchToFile
-// (which, given content, reads/writes no OPFS — the report is never cached).
-// Then claim the open-report slot + hydrate the server-side triage entries.
-//
-// `teamReportGen` counts opens: a slower earlier open must not render over a
-// later one. The slot is claimed only when switchToFile says THIS load is what
-// ended up on screen — any other switch in between (a later team report, a
-// local report that may share the filename, a workspace) supersedes it, and a
-// file name is no identity for a slot keyed by report id.
-let teamReportGen = 0
-async function openTeamReport(r) {
-  const gen = ++teamReportGen
-  const content = await fetchManagedReport(r.id)
-  if (gen !== teamReportGen) return
-  if (content == null) { console.warn('managed: could not load team report', r.id); return }
-  const current = await switchToFile(r.filename, content)
-  if (!current || gen !== teamReportGen) return
-  state.managedReport = { id: r.id, filename: r.filename }
-  await hydrateManagedReportTriage(r.id)
+// Single and merged team reports share the same guarded load and triage gate.
+function openTeamReport(team, r) {
+  return switchToManagedTeam(team, r.id)
+}
+
+// Bundles are repository-owned scan inputs. A team member can see the bundle
+// when their team can see its repository, but bundles do not open as findings
+// views, so keep this row informational and expose the repository in its
+// tooltip for similarly-named bundles from different repos.
+function teamBundleTemplate(bundle) {
+  const repo = typeof bundle.repoFullName === 'string' && bundle.repoFullName !== '' ? bundle.repoFullName : 'Repository'
+  return html`<li class="file-item indented team-bundle-item">
+    <span class="file-name" data-tooltip=${`${bundle.filename}\n${repo}`}>
+      ${BUNDLE_ICON}<span class="file-label">${bundle.filename}</span>
+    </span>
+  </li>`
 }
 
 // Packages + Repositories navigation buttons live as
@@ -418,11 +431,32 @@ const byReportName = (a, b) => displayName(a).localeCompare(displayName(b))
 // after every state transition that could change the file list, the
 // current selection, or the search query.
 export async function renderSidebar() {
+  await ensureClientMode()
+  const modeAtStart = clientModeLabel()
+  updateManagedLanding({ serverMode: modeAtStart, session: state.managedSession, teams: state.managedTeams })
+  if (isManagedUiMode()) {
+    state.bundles = []
+    state.storedFiles = []
+    renderLandingWorkspaces([])
+    if (!root) return
+    litRender(html`${teamsSectionTemplate()}`, fileList)
+    root.querySelector('sidebar-view-button[kind="packages"]')?.setAttribute('hidden', '')
+    root.querySelector('sidebar-view-button[kind="repositories"]')?.setAttribute('hidden', '')
+    root.querySelector('#storage-status')?.setAttribute('hidden', '')
+    renderSyncStatus()
+    return
+  }
+  root?.querySelector('sidebar-view-button[kind="packages"]')?.removeAttribute('hidden')
+  root?.querySelector('sidebar-view-button[kind="repositories"]')?.removeAttribute('hidden')
   // One-shot migration of `.deepseek` OPFS entries back to `.md`
   // (relic of an earlier build). Cached after the first call so
   // subsequent renders are a no-op; awaiting before listFiles makes
   // sure the listing reflects the post-rename state.
   await migrateLegacyFilenames()
+  if (modeAtStart !== clientModeLabel()) {
+    await renderSidebar()
+    return
+  }
   // Kick the OPFS-wide finding index so the Packages count + page
   // populate in the background without needing the user to open a
   // bundle first. Idempotent — concurrent calls share the same
@@ -435,6 +469,10 @@ export async function renderSidebar() {
   // files, so the index has to be filling before the user opens one.
   ensureLinkedFindingsIndexed().catch(() => {})
   const names = await listFiles()
+  if (modeAtStart !== clientModeLabel()) {
+    await renderSidebar()
+    return
+  }
   const workspaces = listWorkspaces()
   renderLandingWorkspaces(workspaces)
   // A report may be moved into a new workspace without being reopened.
@@ -443,6 +481,10 @@ export async function renderSidebar() {
     listBundles(),
     ...workspaces.map((w) => computeLinkHint('workspace', w.id)),
   ])
+  if (modeAtStart !== clientModeLabel()) {
+    await renderSidebar()
+    return
+  }
   // Stash the bundles list on state so the main view's bundles
   // branch (in render.js) can paint synchronously without redoing
   // the OPFS scan. Updated on every sidebar render — drops, deletes,
@@ -554,7 +596,7 @@ export async function renderSidebar() {
   )
   litRender(html`
     ${teamsSectionTemplate()}
-    ${state.serverMode === 'managed' && workspaces.length === 0 ? nothing : workspaceHeaderTemplate()}
+    ${isManagedUiMode() && workspaces.length === 0 ? nothing : workspaceHeaderTemplate()}
     ${repeat(visibleWorkspaces, (w) => w.id, (w) => {
       // Reports split into present vs missing, mirroring the bundle
       // split below:
@@ -692,6 +734,29 @@ onVaultStateChange(() => { renderSidebar() })
 // no `data-file` — but the add button still bubbles to the same
 // listener.
 async function onSidebarClick(e) {
+  if (e.target.closest('[data-action="toggle-client-mode"]')) {
+    // Only a managed server exposes this escape hatch. An e2e server is
+    // already the local surface and its mode label is intentionally fixed.
+    // Managed ⇄ local keeps the server protocol unchanged while local mode
+    // exposes the e2e surface with sync forced off.
+    if (state.serverMode !== 'managed') return
+    const enteringLocal = !state.localMode
+    resetManagedTriage()
+    setLocalMode(enteringLocal)
+    setSyncForceDisabled(true)
+    resetForClientModeTransition()
+    if (enteringLocal) {
+      await hydrateSecureStorage()
+      await reloadTriageFromStorage()
+      syncObservedAfterHydrate()
+    } else void refreshManagedSession()
+    document.dispatchEvent(new CustomEvent('managed-client-mode-change'))
+    renderBrandTag()
+    renderSyncStatus(triageSync.status)
+    render()
+    renderSidebar().catch((err) => console.warn('client mode switch:', err))
+    return
+  }
   // DeepView brand → drop back to the empty welcome screen so the
   // user can re-read the supported-formats list (or just start
   // over). Non-destructive — `goHome` only clears in-memory
@@ -741,7 +806,7 @@ async function onSidebarClick(e) {
     return
   }
   if (e.target.closest('[data-action="new-workspace"]')) {
-    if (state.serverMode === 'managed') return
+    if (isManagedUiMode()) return
     const name = await openNewWorkspaceDialog()
     if (name) {
       // First-use prompt fires here too (not just on file drop) so
@@ -1010,7 +1075,7 @@ async function onSidebarClick(e) {
     return
   }
   if (e.target.closest('#sidebar-toggle')) {
-    if (state.serverMode === 'managed') return
+    if (isManagedUiMode()) return
     hostEl.classList.toggle('collapsed')
     try { localStorage.setItem('deepview.sidebarCollapsed', hostEl.classList.contains('collapsed') ? '1' : '0') } catch {}
   }
@@ -1103,10 +1168,12 @@ function syncButtonVisible() {
 function renderAuthStatus() {
   const authBtn = root?.querySelector('#auth-status')
   if (!authBtn) return
+  const manageBtn = root?.querySelector('#manage-status')
   authBtn.hidden = false
   const menu = root?.querySelector('#user-menu')
   const session = state.managedSession
   if (session == null) {
+    if (manageBtn) manageBtn.hidden = true
     authBtn.dataset.authed = '0'
     authBtn.removeAttribute('popovertarget')
     authBtn.setAttribute('aria-label', 'Log in')
@@ -1114,12 +1181,20 @@ function renderAuthStatus() {
     if (menu) litRender(nothing, menu)
     return
   }
-  // Logged in: the button becomes the avatar, opening the account popover menu.
+  // Logged in: the button keeps the avatar on the left and shows the username
+  // beside it, while still opening the account popover.
   const initial = (session.login[0] ?? '?').toUpperCase()
+  const accountLabel = typeof session.name === 'string' && /\s/u.test(session.name.trim())
+    ? session.name.trim()
+    : `@${session.login}`
   authBtn.dataset.authed = '1'
   authBtn.setAttribute('popovertarget', 'user-menu')
   authBtn.setAttribute('aria-label', `Account: ${session.login}`)
-  litRender(avatarTemplate(initial, session.id), authBtn)
+  litRender(html`${avatarTemplate(initial, session.id)}<span class="auth-login">${accountLabel}</span>`, authBtn)
+  if (manageBtn) {
+    const canManage = isManagedUiMode() && (session.role === 'admin' || session.role === 'manage')
+    manageBtn.hidden = !canManage
+  }
   if (menu) {
     litRender(html`
       <div class="user-card">
@@ -1129,16 +1204,7 @@ function renderAuthStatus() {
           ${session.name ? html`<span class="user-name">${session.name}</span>` : nothing}
         </span>
       </div>
-      ${session.role === 'admin' || session.role === 'manage' ? html`
-        <div class="user-menu-group" role="group" aria-label="Manage">
-          <div class="user-menu-group-label">Manage</div>
-          ${session.role === 'admin' ? html`<button type="button" class="user-menu-row" data-action="admin-users">Users</button>` : nothing}
-          <button type="button" class="user-menu-row" data-action="manage-repos">Repositories</button>
-          <button type="button" class="user-menu-row" data-action="manage-reports">Reports</button>
-          <button type="button" class="user-menu-row" data-action="manage-bundles">Bundles</button>
-          <button type="button" class="user-menu-row" data-action="manage-teams">Teams</button>
-        </div>` : nothing}
-      <button type="button" class="user-menu-row" data-action="managed-logout">Log out</button>
+      <button type="button" class="user-menu-row logout-row" data-action="managed-logout">${LOGOUT_ICON}<span>Log out</span></button>
     `, menu)
   }
 }
@@ -1164,17 +1230,42 @@ function onAvatarError(e) {
 // the old build label.
 function renderBrandTag() {
   const tag = root?.querySelector('.brand-tag')
-  if (tag) tag.textContent = state.serverMode
+  if (tag) {
+    const switchable = state.serverMode === 'managed'
+    tag.textContent = clientModeLabel()
+    if (switchable) {
+      tag.setAttribute('role', 'button')
+      tag.setAttribute('tabindex', '0')
+      tag.setAttribute('aria-label', `Switch from ${clientModeLabel()} mode`)
+    } else {
+      tag.removeAttribute('role')
+      tag.removeAttribute('tabindex')
+      tag.removeAttribute('aria-label')
+    }
+  }
 }
 
 // Managed mode pins the sidebar open — no collapse affordance (a fuller
 // management surface lives here). The mode is mirrored onto the host so CSS can
 // hide the collapse toggle.
 function applyCollapsibility() {
-  if (hostEl) hostEl.dataset.mode = state.serverMode
-  if (state.serverMode === 'managed') hostEl?.classList.remove('collapsed')
-  // Mode also drives the encryption toggle's visibility (hidden when managed +
-  // encryption off); refresh it here since mode isn't a vault-state event.
+  if (hostEl) hostEl.dataset.mode = clientModeLabel()
+  if (isManagedUiMode()) {
+    hostEl?.classList.remove('collapsed')
+    // Managed workspaces do not own local artifacts or passkey encryption.
+    // Keep the nodes mounted so switching to local can restore the full e2e
+    // surface without rebuilding the sidebar component.
+    root?.querySelector('sidebar-delete-current')?.setAttribute('hidden', '')
+    root?.querySelector('#encryption-toggle')?.setAttribute('hidden', '')
+    root?.querySelector('#auth-status')?.removeAttribute('hidden')
+  } else {
+    root?.querySelector('sidebar-delete-current')?.removeAttribute('hidden')
+    root?.querySelector('#encryption-toggle')?.removeAttribute('hidden')
+    root?.querySelector('#manage-status')?.setAttribute('hidden', '')
+    root?.querySelector('#auth-status')?.setAttribute('hidden', '')
+  }
+  // Mode also drives the encryption toggle's visibility (managed data is
+  // server-owned); refresh it here since mode isn't a vault-state event.
   refreshEncryptionToggle()
 }
 
@@ -1198,10 +1289,17 @@ function renderSyncStatus(status) {
     if (mismatchLabel) mismatchLabel.textContent = 'Sync paused'
     return
   }
+  if (state.serverMode === 'managed' && state.localMode) {
+    btn.hidden = true
+    triageSync.setForcedOff(true)
+    const localAuthBtn = root?.querySelector('#auth-status')
+    if (localAuthBtn) localAuthBtn.hidden = true
+    return
+  }
   // Managed mode replaces the offline/online toggle with login/logout (sync
   // is session-based there, not a user-toggled WS): hide the sync button,
   // pause the e2e sync layer, and paint the auth control instead.
-  if (state.serverMode === 'managed') {
+  if (isManagedUiMode()) {
     btn.hidden = true
     triageSync.setForcedOff(true)
     renderAuthStatus()
@@ -1638,6 +1736,7 @@ async function onSidebarDrop(e) {
 // the sync badge) and keep sync paused, rather than silently reinterpreting
 // local data under the other protocol.
 function applyServerInfo(info) {
+  setLandingModePending(false)
   const cached = readCachedServerInfo()
   const cls = classifyServerMode(cached ? cached.mode : null, info.mode)
   if (cls === 'mismatch') {
@@ -1654,12 +1753,26 @@ function applyServerInfo(info) {
   // Clear any stale lock from a prior mismatch this session.
   triageSync.setProtocolLocked(false)
   const changed = state.serverMode !== info.mode
+  // After an offline fallback, a late managed response must keep the user in
+  // their local view. They can explicitly switch to managed via the mode tag.
+  if (changed && info.mode === 'managed' && !state.localMode) resetForClientModeTransition({ forgetLastView: false })
   state.serverMode = info.mode
   state.managed = info.managed
+  if (info.mode === 'e2e') setLocalMode(false)
+  setSyncForceDisabled(info.mode !== 'e2e')
   writeCachedServerInfo(info)
   renderSyncStatus(triageSync.status)
+  if (changed && info.mode === 'e2e' && syncButtonVisible() && triageSync.isEnabled()) {
+    // Report navigation during the offline fallback queued triage sessions,
+    // but skipped remote-presence opens. Resume those alongside triage once
+    // the protocol is known, without reloading or replacing the current view.
+    void loadSync().then((sync) => {
+      for (const session of sync.triageSync.openSessions) sync.openWorkspace(session.workspaceId)
+      return undefined
+    }).catch((err) => console.warn('sync: resume failed', err))
+  }
   if (changed) renderSidebar()
-  if (info.mode === 'managed') void refreshManagedSession()
+  if (isManagedUiMode()) void refreshManagedSession()
 }
 
 // Probe the managed server for the current session (lazy client/managed chunk)
@@ -1667,6 +1780,10 @@ function applyServerInfo(info) {
 async function refreshManagedSession() {
   try {
     state.managedSession = await managedProbeSession()
+    if (state.managedSession?.role !== 'admin' && ADMIN_ONLY_PAGES.has(state.currentView)) {
+      state.currentView = 'manage'
+      render()
+    }
     renderAuthStatus()
     // Claim the triage change-notifier for the server push — a no-op unless
     // the session's role can write triage (reads still hydrate without it).
@@ -1683,51 +1800,100 @@ async function refreshManagedSession() {
 // Admin / manage pages reachable from the account menu. Keys double
 // as the `data-action` value AND the `state.currentView` name (each
 // painted by render() as its `<managed-admin-*>` element); the value
-// is the console prefix on a failed bundle load. Users is admin-only;
-// the rest are reachable by admin and manage roles (the account menu
-// gates the entry points).
+// is the console prefix on a failed bundle load. Users, repositories,
+// and teams are admin-only; reports and bundles are also reachable by
+// managers (the account menu gates the entry points).
 const ADMIN_PAGES = {
+  manage: 'admin: bundle load failed:',
   'admin-users': 'admin: bundle load failed:',
   'manage-repos': 'admin: repos bundle load failed:',
   'manage-reports': 'admin: reports bundle load failed:',
   'manage-bundles': 'admin: bundles bundle load failed:',
+  'manage-history': 'admin: history bundle load failed:',
   'manage-teams': 'admin: teams bundle load failed:',
+  'manage-scans': 'admin: scans bundle load failed:',
 }
+const ADMIN_ONLY_PAGES = new Set(['admin-users', 'manage-repos', 'manage-teams'])
 
 // Navigate to one of the admin / manage pages: load the admin bundle
 // (which defines the element render() paints for `view`), then switch
 // the view + repaint.
-async function navigateToAdminPage(view) {
+export async function navigateToAdminPage(view, options = {}) {
+  if (!(view in ADMIN_PAGES) || !isManagedUiMode()
+      || !['admin', 'manage'].includes(state.managedSession?.role)
+      || (ADMIN_ONLY_PAGES.has(view) && state.managedSession.role !== 'admin')) return
   try { await loadAdminBundle() }
   catch (err) { console.warn(ADMIN_PAGES[view], err); return }
   state.currentView = view
   render()
   renderSidebar()
+  if (view === 'manage-history' && typeof options.actor === 'string' && options.actor.length > 0) {
+    document.dispatchEvent(new CustomEvent('managed-history-filter', {
+      detail: { actor: options.actor }, bubbles: true, composed: true,
+    }))
+  }
 }
+
+// Admin pages live in a separate lazy-loaded bundle, so the shared back button
+// and management hub communicate through a composed event instead of importing
+// the sidebar module into that bundle (which would duplicate application state).
+document.addEventListener('managed-admin-navigate', (event) => {
+  const view = event.detail?.view
+  const actor = event.detail?.actor
+  if (typeof view === 'string') void navigateToAdminPage(view, { actor })
+})
 
 // Cold-start mode detection. With nothing cached we don't yet know the server's
 // protocol — and a managed server has no WS plane whose connect frame would
 // tell us — so GET /api/config to learn it up front and feed the same
 // applyServerInfo path. Skipped once the mode is known (cached); the WS connect
 // frame (kept) then catches any later change.
+let clientModeReady
+// Wait only until startup selects a usable surface: a confirmed server mode,
+// or offline local mode. Server availability never grants access to local data.
+export function ensureClientMode() {
+  return clientModeReady ??= detectServerModeIfUnknown().then(() => document.querySelector('app-sidebar')?.removeAttribute('inert'))
+}
+
 async function detectServerModeIfUnknown() {
-  if (readCachedServerInfo()) return
-  let status = 0
-  let info = null
-  try {
-    const res = await fetch(CONFIG_PATH, { credentials: 'same-origin', headers: { accept: 'application/json' } })
-    status = res.status
-    if (res.ok) info = parseServerInfo(await res.json())
-  } catch { /* offline / unreachable — stay on the default until a frame arrives */ }
-  if (info) { applyServerInfo(info); return }
-  if (status === 404) {
-    // No /api/config → a backend-less (standalone) deployment: purely local, no
-    // sync. Runtime-only — deliberately NOT cached (a static host could gain a
-    // backend later) — and the e2e sync chunk is hard-disabled.
-    state.serverMode = 'standalone'
-    setSyncForceDisabled(true)
-    renderSyncStatus(triageSync.status)
-    renderSidebar()
+  const cached = readCachedServerInfo()
+  if (cached) {
+    // Another tab may have confirmed the mode since state.ts was evaluated.
+    state.serverMode = cached.mode
+    state.managed = cached.managed
+    return
+  }
+  setLandingModePending(!hasStandaloneProbeHint())
+  const probe = probeServerInfo()
+  const info = await waitForServerInfo(probe, hasStandaloneProbeHint() ? 0 : 3000)
+  // A sync frame or another tab may have confirmed the mode while pending.
+  // Adopt it into state as well: the initial e2e default is not confirmation.
+  const confirmed = readCachedServerInfo()
+  if (confirmed) { applyServerInfo(confirmed); return }
+  if (info && info !== 'standalone') { applyServerInfo(info); return }
+  // Unknown or unavailable server: open local data with synchronization off.
+  // Do not cache a guessed protocol or modify any saved sync preferences.
+  if (info === 'standalone') rememberStandaloneProbe()
+  state.serverMode = 'standalone'
+  setLocalMode(info === null)
+  setSyncForceDisabled(true)
+  setLandingModePending(false)
+  renderSyncStatus(triageSync.status)
+  renderSidebar()
+  // Keep a slow request alive. Learning the server's protocol later may enable
+  // e2e sync, but must not evict a local report or import it into managed mode.
+  if (info === null) {
+    void probe.then((lateInfo) => {
+      const latest = readCachedServerInfo() ?? lateInfo
+      if (latest === 'standalone') {
+        rememberStandaloneProbe()
+        setLocalMode(false)
+        renderSyncStatus(triageSync.status)
+        return renderSidebar()
+      }
+      if (latest) return applyServerInfo(latest)
+      return undefined
+    }).catch((err) => console.warn('server mode probe:', err))
   }
 }
 
@@ -1754,6 +1920,12 @@ function mount(host) {
   initEncryptionToggle(root.querySelector('#encryption-toggle'))
   initStorageStatus(root.querySelector('#storage-status'))
   root.addEventListener('click', onSidebarClick)
+  root.addEventListener('keydown', (e) => {
+    if ((e.key === 'Enter' || e.key === ' ') && e.target.closest?.('[data-action="toggle-client-mode"]')) {
+      e.preventDefault()
+      void onSidebarClick(e)
+    }
+  })
   root.addEventListener('dblclick', onSidebarDblclick)
   root.addEventListener('dragstart', onSidebarDragstart)
   root.addEventListener('dragend', onSidebarDragend)
@@ -1764,6 +1936,7 @@ function mount(host) {
   root.querySelector('#sidebar-search-input')?.addEventListener('input', onSearchInput)
   positionUserMenuOnOpen()
   renderSyncStatus(triageSync.status)
+  if (!readCachedServerInfo()) setLandingModePending(!hasStandaloneProbeHint())
   renderSidebar()
   // Learn the server's protocol from its `server-info` connect frame (refuses
   // a cross-mode switch); state.serverMode is meanwhile seeded from the
@@ -1771,7 +1944,7 @@ function mount(host) {
   triageSync.onServerInfo(applyServerInfo)
   // Cold start (mode not yet cached): probe GET /api/config so we detect a
   // managed server, which has no WS connect frame to announce itself.
-  void detectServerModeIfUnknown()
+  void ensureClientMode()
   // If the cached mode is already managed, probe the session now so the auth
   // control paints logged-in/out without waiting for a connect frame.
   if (state.serverMode === 'managed') void refreshManagedSession()
@@ -1801,7 +1974,7 @@ class AppSidebar extends LitElement {
             <img class="brand-icon" src="./icon.svg" width="18" height="18" alt="">
             <span class="brand-name">DeepView</span>
           </button>
-          <span class="brand-tag">dev</span>
+          <span class="brand-tag" data-action="toggle-client-mode">${clientModeLabel()}</span>
         </h2>
         <button id="encryption-toggle" type="button" hidden></button>
         <button id="sidebar-toggle" type="button" aria-label="toggle sidebar">
@@ -1831,6 +2004,7 @@ class AppSidebar extends LitElement {
           <span class="sync-label">Sync off</span>
         </button>
         <button id="auth-status" type="button" hidden></button>
+        <button id="manage-status" type="button" hidden data-action="manage" aria-label="Manage">${unsafeHTML(MANAGE_ICON_SVG)}</button>
       </div>
       <div id="user-menu" popover class="user-menu"></div>
     `

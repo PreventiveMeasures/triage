@@ -9,3 +9,6 @@
 // one call. `findings` are the parser's own objects; null when nothing
 // recognises the text.
 export function loadFindings(content: string): Promise<{ format: string, data: unknown, findings: unknown[] } | null>
+export function readReport(content: string): { data: any, format: string | null, reason: string | null }
+export function reportRepoGithub(data: any): string | null
+export function repoDirectory(repo: any): string

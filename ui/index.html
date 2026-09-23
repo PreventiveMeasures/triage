@@ -33,11 +33,12 @@
      `goHome` via the sidebar's own click delegate; in WCO PWA
      mode the same brand is what the OS controls strip overlays
      onto (no light-DOM duplicate needed). -->
-<app-sidebar role="complementary" aria-label="Reports and workspaces"></app-sidebar>
+<app-sidebar role="complementary" aria-label="Reports and workspaces" inert></app-sidebar>
 
 <main id="main-content">
   <div id="drop-zone" aria-label="Drop reports here" hidden>
     <div id="landing-workspaces"></div>
+    <div class="managed-landing"></div>
     <div class="drop-prompt">
       <div class="drop-heading">
         <p class="drop-eyebrow">Your security workspace</p>
@@ -105,7 +106,7 @@
           <rect x="2" y="2.5" width="12" height="8" rx="1.5"/>
           <path d="M5 13.5h6M8 10.5v3" stroke-linecap="round"/>
         </svg>
-        Review locally in your browser. Sync across devices when you need it.
+        <span class="drop-local-copy">Review locally in your browser. Sync across devices when you need it.</span>
       </p>
     </div>
   </div>

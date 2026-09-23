@@ -6,7 +6,8 @@
 // DIRECTLY (no intermediate dialog): the overlay itself IS the
 // unlock prompt.
 
-import { isEncryptionEnabled, isPasskeyEnvironmentSupported, isUnlocked, onVaultStateChange, unlockEncryption, wipeAllVaultData } from '#client/index.js'
+import { isEncryptionEnabled, isManagedUiMode, isPasskeyEnvironmentSupported, isUnlocked, onVaultStateChange, unlockEncryption, wipeAllVaultData } from '#client/index.js'
+import { ensureClientMode } from './sidebar.js'
 
 let overlayEl = null
 let busy = false
@@ -74,7 +75,7 @@ function ensureOverlay() {
   const btn = overlayEl.querySelector('button')
   const errEl = overlayEl.querySelector('.lock-overlay-error')
   btn.addEventListener('click', async () => {
-    if (busy) return
+    if (busy || !shouldShow()) return
     busy = true
     errEl.hidden = true
     errEl.textContent = ''
@@ -106,7 +107,7 @@ function ensureOverlay() {
     // user clicks wipe — both paths would otherwise mutate vault
     // state concurrently (the unlock can succeed while wipe is
     // mid-clear, producing a session key bound to nothing).
-    if (busy) return
+    if (busy || !shouldShow()) return
     // Two-step confirm — losing a passkey is one thing, but losing
     // ALL the encrypted local data is the kind of irreversible step
     // that deserves explicit acknowledgement.
@@ -143,11 +144,16 @@ function ensureOverlay() {
 }
 
 function shouldShow() {
+  // Server-owned reports never depend on this origin's local vault.
+  if (isManagedUiMode()) return false
   if (!isPasskeyEnvironmentSupported()) return false
   return isEncryptionEnabled() && !isUnlocked()
 }
 
-function render() {
+async function render() {
+  // On an uncached visit the default mode is e2e until detection completes.
+  // Do not flash an unlock/wipe prompt over a managed landing in that window.
+  await ensureClientMode()
   if (shouldShow()) {
     const el = ensureOverlay()
     el.hidden = false
@@ -168,4 +174,5 @@ function render() {
 }
 
 onVaultStateChange(render)
-render()
+document.addEventListener('managed-client-mode-change', render)
+void render()

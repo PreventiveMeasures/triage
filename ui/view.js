@@ -11,9 +11,9 @@
 // `Symbol.for('@rray/frontend')`.
 import './view/frontend-install.js'
 import { dropZone, sidebar } from './view/dom.js'
-import { attachSharedWorkspace, extractFindingRef, extractShareEncoded, getSecureItem, hydrateSecureStorage, isDisablingInThisTab, isEncryptionEnabled, isUnlocked, listFiles, listWorkspaces, onVaultStateChange, setTriageReloadNotifier, state, syncObservedAfterHydrate } from '#client/index.js'
+import { attachSharedWorkspace, extractFindingRef, extractShareEncoded, getSecureItem, hydrateSecureStorage, isDisablingInThisTab, isEncryptionEnabled, isManagedUiMode, isUnlocked, listFiles, listWorkspaces, onVaultStateChange, setTriageReloadNotifier, state, syncObservedAfterHydrate } from '#client/index.js'
 import { onAutoDownloaded, onBundleAutoDownloaded, onChange as onPresenceChange, setRedraw, triageSync } from './view/client-sync.js'
-import { renderSidebar } from './view/sidebar.js'
+import { ensureClientMode, renderSidebar } from './view/sidebar.js'
 import { BUNDLE_TABS, LAST_FILE_KEY, switchToFile, switchToWorkspace } from './view/ingest.js'
 import { openBundle, selectBundle } from './view/bundle-load.js'
 import { revealFinding } from './view/finding-link-nav.js'
@@ -259,7 +259,9 @@ async function handleFindingHashIfPresent() {
 let bootContinuationRan = false
 
 async function continueBoot() {
+  await ensureClientMode()
   if (bootContinuationRan) return
+  if (!isManagedUiMode() && isEncryptionEnabled() && !isUnlocked()) return
   bootContinuationRan = true
   try {
     await restoreInitialView()
@@ -272,6 +274,13 @@ async function continueBoot() {
 }
 
 async function restoreInitialView() {
+  // Managed mode owns its reports on the server. Do not touch the local
+  // encrypted cache, OPFS listing, or local triage until the user explicitly
+  // switches that managed server into its local/offline surface.
+  if (isManagedUiMode()) {
+    await renderSidebar()
+    return
+  }
   // Hydrate the encrypted-localStorage cache (workspaces, sync
   // sessions, repoUrls, fileCounts, lastFile). MUST run BEFORE
   // renderSidebar / restore-last-file — those paths read the cache
@@ -364,8 +373,16 @@ async function restoreInitialView() {
 // backdrop covers everything, so the user can't usefully "stash unsaved
 // work" after declining. Acknowledgement-only avoids that trap while
 // still giving notice.
-let lastSeenEnabled = isEncryptionEnabled()
+// Initialize this baseline only after a confirmed mode permits local reads.
+let lastSeenEnabled = false
 let reloadPending = false
+// A managed → local transition hydrates the secure cache without changing
+// the vault itself. Reset this observer baseline before the next vault event
+// so unlocking a passkey in local mode is not mistaken for a sibling-tab
+// enable that requires a reload.
+document.addEventListener('managed-client-mode-change', () => {
+  lastSeenEnabled = !isManagedUiMode() && isEncryptionEnabled()
+})
 function scheduleReload(reason) {
   if (reloadPending) return
   reloadPending = true
@@ -377,7 +394,12 @@ function scheduleReload(reason) {
     location.reload()
   })
 }
-onVaultStateChange(() => {
+onVaultStateChange(async () => {
+  await ensureClientMode()
+  if (isManagedUiMode()) {
+    render()
+    return
+  }
   const wasEnabled = lastSeenEnabled
   const isEnabled = isEncryptionEnabled()
   lastSeenEnabled = isEnabled
@@ -441,12 +463,14 @@ window.addEventListener('hashchange', () => {
   // so a `true` return short-circuits the file-restore below — running
   // it would re-touch OPFS / state.* in a tab about to unload.
   if (await runLegacyOriginCheck()) return
+  await ensureClientMode()
+  lastSeenEnabled = !isManagedUiMode() && isEncryptionEnabled()
   try {
     // In WCO mode the sidebar header is the surface the OS controls
     // overlay onto; collapsing it would strand close / min / max over a
     // 32px strip, so ignore the persisted flag and pin the sidebar open.
     const isAppHeader = window.matchMedia?.('(display-mode: window-controls-overlay)').matches
-    if (!isAppHeader && state.serverMode !== 'managed' && localStorage.getItem('deepview.sidebarCollapsed') === '1') sidebar.classList.add('collapsed')
+    if (!isAppHeader && !isManagedUiMode() && localStorage.getItem('deepview.sidebarCollapsed') === '1') sidebar.classList.add('collapsed')
     // Installed-PWA modes (standalone OR window-controls-overlay) —
     // launched as a standalone app, not a browser tab, so app-level
     // page zoom (ctrl/cmd+wheel, ctrl/cmd+ +/-/0, touch-pinch) should be
@@ -475,6 +499,6 @@ window.addEventListener('hashchange', () => {
   // render, no auto-download. The dialog appears only on user intent
   // (not auto-opened) so it doesn't stack two unlock surfaces over the
   // overlay.
-  if (isEncryptionEnabled() && !isUnlocked()) return
+  if (!isManagedUiMode() && isEncryptionEnabled() && !isUnlocked()) return
   await continueBoot()
 })()

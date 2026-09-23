@@ -132,6 +132,7 @@
     "serve": "node build.js serve",
     "server": "node server-e2e/index.ts",
     "server-managed": "node server-managed/index.ts",
+    "server-managed-test": "node server-managed/test-server.ts",
     "test": "node --js-base-64 --experimental-test-module-mocks --test-timeout=120000 --test ./tests/*.test.js ./report/tests/*.test.js"
   },
   "devDependencies": {

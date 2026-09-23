@@ -1,8 +1,27 @@
 // Resolve location before looking in loaded findings: the same id can
 // be visible in a workspace and in each of its reports. A loaded copy
 // must not override the report/workspace named by the link.
-import { findReportWithFinding, reportForHint, state, workspaceForHint } from '#client/index.js'
+import { findReportWithFinding, isManagedUiMode, reportForHint, state, workspaceForHint } from '#client/index.js'
 import { findLoadedFinding, reportWorkspaceFor } from './finding-link.js'
+
+// Report chips carry their server identity separately from the display name.
+// Never fall back to local storage for a managed report (or a stale managed
+// chip after switching to local), even if a local filename happens to match.
+export async function locateReportFinding(id, reportName, managedReportId, { openReport, openManagedReport }) {
+  if (isManagedUiMode()) {
+    const team = state.managedTeams.find((t) => t.id === state.currentManagedTeam)
+    if (!managedReportId || !team?.reports.some((r) => r.id === managedReportId)) return null
+    if ((state.currentManagedReport !== managedReportId || state.currentWorkspace)
+        && !await openManagedReport(team, managedReportId)) return null
+    if (!isManagedUiMode() || state.currentManagedTeam !== team.id
+        || state.currentManagedReport !== managedReportId || state.currentWorkspace) return null
+  } else {
+    if (managedReportId) return null
+    if (state.currentFile !== reportName || state.currentWorkspace) await openReport(reportName)
+    if (isManagedUiMode() || state.currentFile !== reportName || state.currentWorkspace) return null
+  }
+  return findLoadedFinding(id)
+}
 
 // Navigation is supplied by the DOM layer so these rules can be tested
 // against real stored reports without constructing the whole page.

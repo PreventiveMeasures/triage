@@ -6,6 +6,10 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Readable } from 'node:stream'
 import { createVerify, generateKeyPairSync, randomUUID } from 'node:crypto'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 
 import { hashToken, randomToken, safeEqual } from '../server-managed/crypto.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
@@ -79,6 +83,61 @@ test('crypto: random tokens are unique 43-char base64url; hashing is determinist
   assert.ok(!safeEqual('abc', 'ab'))
 })
 
+test('last seen: session activity is independent of identity, role, and token updates', async (t) => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const now = 1_000_000
+  const user = { githubUserId: 42, login: 'octocat', name: null, avatarUrl: null }
+  const userId = await db.upsertUser(user, now)
+  const lastSeen = async () => (await db.listUsers()).find((u) => u.id === userId).lastSeenAt
+  assert.equal(await lastSeen(), null, 'creating an identity alone is not evidence of a session')
+  const { setCookie } = await createSession(config, db, user, now + 100)
+  const cookie = cookiePair(setCookie)
+  assert.equal(await lastSeen(), now + 100)
+  await db.setUserRole(userId, 'triage')
+  await db.setUserTokens(userId, { accessToken: 'background-refresh', refreshToken: null, expiresAt: null })
+  await db.upsertUser({ ...user, name: 'Updated name' }, now + 200)
+  assert.equal(await lastSeen(), now + 100, 'user mutations do not imply presence')
+  assert.ok(await readSession(config, db, cookie, now + 300))
+  assert.equal(await lastSeen(), now + 300, 'authenticated reads advance presence')
+  await readSession(config, db, cookie, now + 250)
+  assert.equal(await lastSeen(), now + 300, 'an older request cannot move presence backwards')
+  assert.equal(await readSession(config, db, 'dvsid=missing', now + 400), null)
+  assert.equal(await readSession(config, db, cookie, now + config.sessionTtlMs + 200), null)
+  assert.equal(await lastSeen(), now + 300, 'invalid and expired sessions do not count')
+  await endSession(config, db, cookie)
+  assert.equal(await readSession(config, db, cookie, now + 500), null)
+  assert.equal(await lastSeen(), now + 300, 'revoked sessions do not count')
+  assert.equal((await db.listUsers())[0].lastActivityAt, null, 'reads do not create write activity')
+})
+
+test('last seen migration: only known session creation is backfilled, and reopening preserves presence', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'managed-last-seen-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const path = join(dir, 'managed.sqlite')
+  let db = openSqliteManagedDb(path)
+  const known = await db.upsertUser({ githubUserId: 1, login: 'known', name: null, avatarUrl: null }, 100)
+  const unknown = await db.upsertUser({ githubUserId: 2, login: 'unknown', name: null, avatarUrl: null }, 100)
+  await db.createSession({ id: 'known-session', userId: known, csrfToken: 'csrf', expiresAt: 1000 }, 200)
+  await db.createSession({ id: 'earlier-session', userId: known, csrfToken: 'csrf', expiresAt: 1000 }, 150)
+  await db.setUserRole(unknown, 'view')
+  await db.close()
+  // Reproduce the pre-migration schema while retaining actual session data.
+  const legacy = new DatabaseSync(path)
+  legacy.exec('ALTER TABLE managed_user DROP COLUMN last_seen_at')
+  legacy.close()
+  db = openSqliteManagedDb(path)
+  const users = await db.listUsers()
+  assert.equal(users.find((u) => u.id === known).lastSeenAt, 200)
+  assert.equal(users.find((u) => u.id === unknown).lastSeenAt, null)
+  await db.sessionWithUser('known-session', 300)
+  await db.deleteExpiredSessions(2000)
+  await db.close()
+  db = openSqliteManagedDb(path)
+  t.after(() => db.close())
+  assert.equal((await db.listUsers()).find((u) => u.id === known).lastSeenAt, 300)
+})
+
 test('session: create → read → expire → end', async () => {
   const db = openSqliteManagedDb(':memory:')
   const now = Date.now()
@@ -121,8 +180,31 @@ test('db: first user is admin, later users none; setUserRole + listUsers reflect
   assert.equal((await readSession(config, db, cookiePair(second.setCookie), now)).user.role, 'triage')
   assert.equal(await db.setUserRole('00000000-0000-4000-8000-000000000000', 'view'), false)
 
+  await db.setTriage('activity-finding', { color: 'red' }, bob.id, 'bob', now + 3000)
+
   const users = await db.listUsers()
   assert.deepEqual(users.map((u) => [u.login, u.role]), [['alice2', 'admin'], ['bob', 'triage']])
+  assert.equal(users.find((u) => u.login === 'bob').lastActivityAt, now + 3000)
+  await db.close()
+})
+
+test('GET /api/admin/models: managed users receive server model ids and effort levels', async () => {
+  const db = openSqliteManagedDb(':memory:')
+  const now = Date.now()
+  const adminSess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
+  const manageSess = await createSession(config, db, { githubUserId: 2, login: 'bob', name: null, avatarUrl: null }, now + 1000)
+  const noneSess = await createSession(config, db, { githubUserId: 3, login: 'cy', name: null, avatarUrl: null }, now + 2000)
+  const manage = (await readSession(config, db, cookiePair(manageSess.setCookie), now)).user
+  await db.setUserRole(manage.id, 'manage')
+  const { send } = bundleHarness(db)
+  const modelsPath = '/api/admin/models'
+  assert.equal((await send('GET', modelsPath, cookiePair(noneSess.setCookie))).statusCode, 403)
+  assert.equal((await send('POST', modelsPath, cookiePair(adminSess.setCookie))).statusCode, 405)
+  const response = await send('GET', modelsPath, cookiePair(manageSess.setCookie))
+  assert.equal(response.statusCode, 200)
+  const body = JSON.parse(response.body)
+  assert.equal(body.defaultModel, 'anthropic/claude-opus-5')
+  assert.ok(body.models.some((model) => model.id === 'openai/gpt-6-astra-pro' && model.efforts.includes('max')))
   await db.close()
 })
 
@@ -524,7 +606,7 @@ test('handleCallback: persists the user token for later repo listing', async () 
   await db.close()
 })
 
-test('GET /api/admin/repositories: admin|manage only; no stored token → tokenMissing', async () => {
+test('GET /api/admin/repositories: admin only; no stored token → tokenMissing', async () => {
   const db = openSqliteManagedDb(':memory:')
   const now = Date.now()
   const adminSess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
@@ -557,14 +639,15 @@ test('GET /api/admin/repositories: admin|manage only; no stored token → tokenM
   assert.equal((await get(null)).statusCode, 401)
   assert.equal((await get(cookiePair(noneSess.setCookie))).statusCode, 403) // 'none' role
   const asManage = await get(cookiePair(manageSess.setCookie))
-  assert.equal(asManage.statusCode, 200)
+  assert.equal(asManage.statusCode, 403)
   // No slug + no token persisted for this user → the tokenMissing response.
-  assert.deepEqual(JSON.parse(asManage.body), { installUrl: null, repositories: [], tokenMissing: true })
-  assert.equal((await get(cookiePair(adminSess.setCookie))).statusCode, 200)
+  const asAdmin = await get(cookiePair(adminSess.setCookie))
+  assert.equal(asAdmin.statusCode, 200)
+  assert.deepEqual(JSON.parse(asAdmin.body), { installUrl: null, repositories: [], tokenMissing: true })
   await db.close()
 })
 
-test('POST /api/admin/repositories/select: admin|manage + CSRF; verifies access, persists, marks, deselects', async () => {
+test('POST /api/admin/repositories/select: admin + CSRF; verifies access, persists, marks, deselects', async () => {
   const db = openSqliteManagedDb(':memory:')
   const now = Date.now()
   const adminSess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
@@ -641,12 +724,16 @@ test('db: reports — insert records metadata + attribution, list joins login, g
   const now = Date.now()
   const uid = await db.upsertUser({ githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
   const id = randomUUID()
-  await db.insertReport({ id, filename: 'scan.json', contentType: 'application/json', byteSize: 42, sha256: 'h4sh', uploadedBy: uid, repoId: null, bundleId: null, bundleIntegrity: null }, now)
+  await db.insertReport({ id, filename: 'scan.json', contentType: 'application/json', byteSize: 42, sha256: 'h4sh', uploadedBy: uid, repoId: null, bundleId: null, bundleIntegrity: null, visible: true }, now)
+  const hiddenId = randomUUID()
+  await db.insertReport({ id: hiddenId, filename: 'hidden.json', contentType: 'application/json', byteSize: 3, sha256: 'hidden', uploadedBy: uid, repoId: null, bundleId: null, bundleIntegrity: null }, now)
 
   const list = await db.listReports()
-  assert.equal(list.length, 1)
+  assert.equal(list.length, 2)
+  assert.equal(list.find((report) => report.id === hiddenId).visible, false)
+  const listedReport = list.find((report) => report.id === id)
   assert.deepEqual(
-    [list[0].id, list[0].filename, list[0].byteSize, list[0].sha256, list[0].uploadedByLogin, list[0].uploadedAt],
+    [listedReport.id, listedReport.filename, listedReport.byteSize, listedReport.sha256, listedReport.uploadedByLogin, listedReport.uploadedAt],
     [id, 'scan.json', 42, 'h4sh', 'alice', now],
   )
 
@@ -656,6 +743,8 @@ test('db: reports — insert records metadata + attribution, list joins login, g
 
   assert.equal(await db.deleteReport(id), true)
   assert.equal(await db.deleteReport(id), false) // already gone → false
+  assert.deepEqual((await db.listReports()).map((report) => report.id), [hiddenId])
+  assert.equal(await db.deleteReport(hiddenId), true)
   assert.deepEqual(await db.listReports(), [])
   await db.close()
 })
@@ -665,10 +754,10 @@ test('db: uploader login is saved durably — the snapshot survives a removed up
   const now = Date.now()
   const uid = await db.upsertUser({ githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
   // Normal upload (uploader present) → the list shows the login.
-  await db.insertReport({ id: randomUUID(), filename: 'r.json', contentType: 'application/json', byteSize: 1, sha256: 'x', uploadedBy: uid, uploadedByLogin: 'alice', repoId: null, bundleId: null, bundleIntegrity: null }, now)
+  await db.insertReport({ id: randomUUID(), filename: 'r.json', contentType: 'application/json', byteSize: 1, sha256: 'x', uploadedBy: uid, uploadedByLogin: 'alice', repoId: null, bundleId: null, bundleIntegrity: null, visible: true }, now)
   // A report whose uploader is already gone (uploaded_by NULL) keeps the durable
   // login snapshot — "who uploaded it" isn't lost.
-  await db.insertReport({ id: randomUUID(), filename: 'g.json', contentType: 'application/json', byteSize: 1, sha256: 'y', uploadedBy: null, uploadedByLogin: 'ghost', repoId: null, bundleId: null, bundleIntegrity: null }, now)
+  await db.insertReport({ id: randomUUID(), filename: 'g.json', contentType: 'application/json', byteSize: 1, sha256: 'y', uploadedBy: null, uploadedByLogin: 'ghost', repoId: null, bundleId: null, bundleIntegrity: null, visible: true }, now)
   assert.deepEqual((await db.listReports()).map((r) => [r.filename, r.uploadedByLogin]), [['g.json', 'ghost'], ['r.json', 'alice']])
   // Bundles snapshot the uploader the same way.
   await db.insertBundle({ id: randomUUID(), integrity: 'sha512-A', filename: 'a.map', kind: 'sourcemap', byteSize: 1, uploadedBy: null, uploadedByLogin: 'ghost', repoId: null }, now)
@@ -810,7 +899,7 @@ test('db: bundles — insert/get/list/delete, integrity dedup-key, report link +
 
   // A report that declared this integrity before the bundle landed → link it now.
   const rId = randomUUID()
-  await db.insertReport({ id: rId, filename: 'r.json', contentType: 'application/json', byteSize: 5, sha256: 'h', uploadedBy: uid, repoId: null, bundleId: null, bundleIntegrity: 'sha512-AAA' }, now)
+  await db.insertReport({ id: rId, filename: 'r.json', contentType: 'application/json', byteSize: 5, sha256: 'h', uploadedBy: uid, repoId: null, bundleId: null, bundleIntegrity: 'sha512-AAA', visible: true }, now)
   await db.linkReportsToBundle('sha512-AAA', bId)
   const [rl] = await db.listReports()
   assert.deepEqual([rl.bundleId, rl.bundleFilename, rl.bundleIntegrity], [bId, 'a.map', 'sha512-AAA'])
@@ -956,7 +1045,7 @@ test('reports/bundles set-repo: db attach/detach + endpoint (role, CSRF, validat
   const admin = (await readSession(config, db, cookiePair(adminSess.setCookie), now)).user
   await db.selectRepo({ repoId: 7, fullName: 'o/r', private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: admin.id }, now)
   const reportId = randomUUID()
-  await db.insertReport({ id: reportId, filename: 'r.json', contentType: 'application/json', byteSize: 2, sha256: 'x', uploadedBy: admin.id, repoId: null, bundleId: null, bundleIntegrity: null }, now)
+  await db.insertReport({ id: reportId, filename: 'r.json', contentType: 'application/json', byteSize: 2, sha256: 'x', uploadedBy: admin.id, repoId: null, bundleId: null, bundleIntegrity: null, visible: true }, now)
   const bundleId = randomUUID()
   await db.insertBundle({ id: bundleId, integrity: 'sha512-Z', filename: 'b.map', kind: 'sourcemap', byteSize: 3, uploadedBy: admin.id, repoId: null }, now)
 
@@ -1128,7 +1217,7 @@ test('team reports: read iff admin, OR (>=view role AND in a team holding the re
   const green = randomUUID(); await db.createTeam(green, 'Green', now); await db.setTeamRepo(green, 8, null)
   await db.setTeamMember(green, outsider.id, { dependencies: false, security: false })
   const reportId = randomUUID()
-  await db.insertReport({ id: reportId, filename: 'scan.json', contentType: 'application/json', byteSize: 5, sha256: 'x', uploadedBy: admin.id, repoId: 7, bundleId: null, bundleIntegrity: null }, now)
+  await db.insertReport({ id: reportId, filename: 'scan.json', contentType: 'application/json', byteSize: 5, sha256: 'x', uploadedBy: admin.id, repoId: 7, bundleId: null, bundleIntegrity: null, visible: true }, now)
 
   const reportStore = fakeBlobStore()
   await reportStore.put(reportId, Buffer.from('{"findings":[]}'))
@@ -1181,6 +1270,68 @@ test('team reports: read iff admin, OR (>=view role AND in a team holding the re
   await db.close()
 })
 
+test('team paths gate report listings, reads, triage, and permission aggregation', async (t) => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const now = Date.now()
+  const adminSess = await createSession(config, db, { githubUserId: 1, login: 'admin', name: null, avatarUrl: null }, now)
+  const memberSess = await createSession(config, db, { githubUserId: 2, login: 'member', name: null, avatarUrl: null }, now)
+  const admin = (await readSession(config, db, cookiePair(adminSess.setCookie), now)).user
+  const member = (await readSession(config, db, cookiePair(memberSess.setCookie), now)).user
+  await db.setUserRole(member.id, 'triage')
+  await db.selectRepo({ repoId: 7, fullName: 'o/r', private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: admin.id }, now)
+  const team = randomUUID()
+  await db.createTeam(team, 'Scoped team', now)
+  await db.setTeamRepo(team, 7, 'packages/a')
+  await db.setTeamMember(team, member.id, { dependencies: false, security: false })
+  const reportStore = fakeBlobStore()
+  const directories = ['packages/a', 'packages/a/sub', 'packages/ab', 'packages/b', 'packages/A', 'packages', '', null, 'pkg/%_/child', 'pkg/xx/child']
+  const reportIds = []
+  for (const repoDirectory of directories) {
+    const id = randomUUID()
+    reportIds.push(id)
+    const content = Buffer.from(JSON.stringify({ source: 'native', findings: [{ id: 'own', file: 'src/a.js' }] }))
+    await db.insertReport({ id, filename: `${reportIds.length}.json`, contentType: 'application/json', byteSize: content.length, sha256: id, uploadedBy: admin.id, repoId: 7, repoDirectory, bundleId: null, bundleIntegrity: null, visible: true }, now)
+    await reportStore.put(id, content)
+  }
+  const { send, upload } = bundleHarness(db, config, reportStore)
+  const cookie = cookiePair(memberSess.setCookie)
+  const list = JSON.parse((await send('GET', '/api/teams', cookie)).body).teams
+  assert.deepEqual(list[0].reports.map((r) => r.id).toSorted(), reportIds.slice(0, 2).toSorted())
+  for (const [index, id] of reportIds.entries()) {
+    const allowed = index < 2
+    assert.equal(await db.userCanReadReport(member.id, id), allowed, `scope: ${directories[index]}`)
+    for (const suffix of ['', '/triage', '/triage/history?finding=own']) {
+      assert.equal((await send('GET', `/api/reports/${id}${suffix}`, cookie)).statusCode, allowed ? 200 : 404, `${directories[index]}${suffix}`)
+    }
+    const edit = await upload(`/api/reports/${id}/triage`, cookie, memberSess.csrfToken, JSON.stringify({ entries: { own: { comment: 'checked' } } }))
+    assert.equal(edit.statusCode, allowed ? 200 : 404)
+    assert.equal((await send('GET', `/api/reports/${id}`, cookiePair(adminSess.setCookie))).statusCode, 200, 'admins retain full access')
+  }
+  // A second team's wider permissions must not bleed into a sibling path.
+  const other = randomUUID()
+  await db.createTeam(other, 'Sibling team', now)
+  await db.setTeamRepo(other, 7, 'packages/b')
+  await db.setTeamMember(other, member.id, { dependencies: true, security: true })
+  assert.deepEqual(await db.reportPermissionsFor(member.id, reportIds[0]), { dependencies: false, security: false })
+  assert.deepEqual(await db.reportPermissionsFor(member.id, reportIds[3]), { dependencies: true, security: true })
+  await db.setTeamRepo(other, 7, 'packages/a/sub')
+  assert.deepEqual(await db.reportPermissionsFor(member.id, reportIds[0]), { dependencies: false, security: false })
+  assert.deepEqual(await db.reportPermissionsFor(member.id, reportIds[1]), { dependencies: true, security: true })
+  // Paths are literal and case-sensitive, including SQL wildcard characters.
+  await db.setTeamRepo(team, 7, 'pkg/%_')
+  const scoped = (await db.listTeamsForUser(member.id)).find((entry) => entry.id === team)
+  assert.deepEqual(scoped.reports.map((r) => r.id), [reportIds[8]])
+  assert.equal(await db.userCanReadReport(member.id, reportIds[9]), false)
+  await db.removeTeamRepo(other, 7)
+  // Both representations of a whole-repository scope include root reports.
+  for (const path of [null, '']) {
+    await db.setTeamRepo(team, 7, path)
+    assert.equal((await db.listTeamsForUser(member.id))[0].reports.length, directories.length)
+    for (const id of reportIds) assert.equal(await db.userCanReadReport(member.id, id), true)
+  }
+})
+
 test('filterReportContent: strips dependency + security findings per the viewer permissions', () => {
   const report = JSON.stringify({
     source: 'native',
@@ -1228,7 +1379,7 @@ test('GET /api/reports/<id>: server-side content filter by viewer permissions (a
   await db.setTeamRepo(team, 7, null)
   await db.setTeamMember(team, viewer.id, { dependencies: false, security: true }) // may see security, NOT dependencies
   const reportId = randomUUID()
-  await db.insertReport({ id: reportId, filename: 'scan.json', contentType: 'application/json', byteSize: 5, sha256: 'x', uploadedBy: admin.id, repoId: 7, bundleId: null, bundleIntegrity: null }, now)
+  await db.insertReport({ id: reportId, filename: 'scan.json', contentType: 'application/json', byteSize: 5, sha256: 'x', uploadedBy: admin.id, repoId: 7, bundleId: null, bundleIntegrity: null, visible: true }, now)
   const content = JSON.stringify({ source: 'native', findings: [
     { id: 'own', file: 'src/a.js' },
     { id: 'dep', file: 'node_modules/x/y.js' },
@@ -1270,7 +1421,164 @@ test('GET /api/reports/<id>: server-side content filter by viewer permissions (a
   await db.close()
 })
 
-test('teams API: admin|manage gating, create (409 dup), repo/member links + perms, CSRF', async () => {
+test('managers cannot bypass admin-only repository and team routes with direct requests', async (t) => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const session = await createSession(config, db, { githubUserId: 1, login: 'manager', name: null, avatarUrl: null }, Date.now())
+  await db.setUserRole(session.userId, 'manage')
+  const { upload, send } = bundleHarness(db)
+  const cookie = cookiePair(session.setCookie)
+  for (const path of ['/api/admin/repositories', '/api/admin/repositories?scope=installed', '/api/admin/repositories?scope=public', '/api/admin/repositories/impact?repoId=7', '/api/admin/teams']) {
+    assert.equal((await send('GET', path, cookie)).statusCode, 403, path)
+  }
+  const mutations = [
+    ['/api/admin/repositories/select', { repoId: 7, selected: true }],
+    ['/api/admin/repositories/select', { repoId: 7, selected: false }],
+    ['/api/admin/repositories/remove', { repoId: 7, fullName: 'o/r', acknowledge: true, deleteTriage: true }],
+    ['/api/admin/teams', { name: 'Unauthorized' }],
+    ['/api/admin/teams/rename', { teamId: 'team', name: 'Unauthorized' }],
+    ['/api/admin/teams/delete', { teamId: 'team' }],
+    ['/api/admin/teams/set-repo', { teamId: 'team', repoId: 7 }],
+    ['/api/admin/teams/remove-repo', { teamId: 'team', repoId: 7 }],
+    ['/api/admin/teams/set-member', { teamId: 'team', userId: session.userId, dependencies: true, security: true }],
+    ['/api/admin/teams/remove-member', { teamId: 'team', userId: session.userId }],
+  ]
+  for (const [path, body] of mutations) {
+    assert.equal((await upload(path, cookie, session.csrfToken, JSON.stringify(body))).statusCode, 403, path)
+  }
+  for (const path of ['/api/admin/reports', '/api/admin/bundles', '/api/admin/models', '/api/teams']) {
+    assert.equal((await send('GET', path, cookie)).statusCode, 200, `content management remains available: ${path}`)
+  }
+})
+
+test('repository removal skips report parsing when keeping triage and preserves shared annotations', async (t) => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const now = Date.now()
+  const session = await createSession(config, db, { githubUserId: 1, login: 'admin', name: null, avatarUrl: null }, now)
+  for (const repoId of [7, 8]) await db.selectRepo({ repoId, fullName: `o/r${repoId}`, private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: session.userId }, now)
+  const store = fakeBlobStore()
+  const reads = []
+  const get = store.get
+  store.get = (id) => { reads.push(id); return get(id) }
+  const { upload, send } = bundleHarness(db, config, store)
+  const cookie = cookiePair(session.setCookie)
+  const exclusive = randomUUID(), shared = randomUUID()
+  const finding = (id) => ({ id, severity: 'high', file: 'index.js', description: 'Test finding' })
+  const reports = []
+  for (const [repoId, ids] of [[7, [shared, exclusive]], [8, [shared]]]) {
+    const response = await upload('/api/admin/reports', cookie, session.csrfToken,
+      JSON.stringify({ findings: ids.map(finding) }), { 'x-repo-id': String(repoId) })
+    assert.equal(response.statusCode, 201)
+    reports.push(JSON.parse(response.body).id)
+  }
+  reads.length = 0
+  const empty = await send('GET', '/api/admin/repositories/impact?repoId=7', cookie)
+  assert.equal(JSON.parse(empty.body).triageCount, 0)
+  assert.deepEqual(reads, [reports[0]], 'unannotated findings need no other-report overlap scan')
+  for (const id of [shared, exclusive]) await db.setTriage(id, { color: 'red' }, session.userId, 'admin', now)
+  const impact = await send('GET', '/api/admin/repositories/impact?repoId=7', cookie)
+  assert.equal(JSON.parse(impact.body).triageCount, 1, 'a shared annotation is not exclusive')
+  reads.length = 0
+  const remove = (repoId, deleteTriage) => upload('/api/admin/repositories/remove', cookie, session.csrfToken,
+    JSON.stringify({ repoId, fullName: `o/r${repoId}`, acknowledge: true, deleteTriage }))
+  for (const id of reports) {
+    const bytes = await get(id)
+    for (const unavailable of [null, Buffer.from('not a report')]) {
+      store.map.set(id, unavailable)
+      assert.equal((await send('GET', '/api/admin/repositories/impact?repoId=7', cookie)).statusCode, 500)
+      assert.equal((await remove(7, true)).statusCode, 500)
+      assert.equal((await db.listReports()).length, 2, 'failed overlap checks preserve report rows')
+      assert.equal((await db.listAllRepos()).length, 2, 'failed overlap checks preserve repositories')
+      assert.equal((await db.listTriage([shared, exclusive])).length, 2, 'failed overlap checks preserve all annotations')
+      assert.equal(store.map.size, 2, 'no blobs are deleted before overlap is established')
+    }
+    store.map.set(id, bytes)
+  }
+  assert.equal(JSON.parse((await send('GET', '/api/admin/repositories/impact?repoId=7', cookie)).body).triageCount, 1, 'repairing the blobs allows retry')
+  reads.length = 0
+  const kept = await remove(7, false)
+  assert.equal(kept.statusCode, 200)
+  assert.equal(JSON.parse(kept.body).deletedTriage, 0)
+  assert.deepEqual(reads, [], 'keeping triage never reads report blobs')
+  assert.equal((await db.listTriage([shared, exclusive])).length, 2)
+  assert.equal((await db.listTriageHistory(shared, 10)).length, 1, 'keeping triage also keeps history')
+  assert.equal((await db.listTriageHistory(exclusive, 10)).length, 1)
+  const deleted = await remove(8, true)
+  assert.equal(deleted.statusCode, 200)
+  assert.equal(JSON.parse(deleted.body).deletedTriage, 1)
+  assert.deepEqual((await db.listTriage([shared, exclusive])).map((entry) => entry.findingId), [exclusive])
+  assert.deepEqual(await db.listTriageHistory(shared, 10), [], 'permanent deletion removes the trail')
+  assert.equal((await db.listTriageHistory(exclusive, 10)).length, 1, 'unrelated history remains')
+})
+
+test('repository paths: invalid team scopes, embedded headers, upload headers, and location edits are rejected', async (t) => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const now = Date.now()
+  const session = await createSession(config, db, { githubUserId: 1, login: 'admin', name: null, avatarUrl: null }, now)
+  await db.selectRepo({ repoId: 7, fullName: 'o/r', private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: session.userId }, now)
+  const teamId = randomUUID()
+  await db.createTeam(teamId, 'Scoped', now)
+  const { upload } = bundleHarness(db)
+  const cookie = cookiePair(session.setCookie)
+  const post = (path, body, headers) => upload(path, cookie, session.csrfToken, JSON.stringify(body), headers)
+  const boundary = 'a/'.repeat(249) + 'aa'
+  assert.equal((await post('/api/admin/teams/set-repo', { teamId, repoId: 7, path: boundary })).statusCode, 200)
+  const created = await post('/api/admin/reports', { findings: [] }, { 'x-repo-id': '7', 'x-repo-directory': boundary })
+  assert.equal(created.statusCode, 201)
+  const reportId = JSON.parse(created.body).id
+  for (const directory of [
+    boundary + 'x', boundary + 'y', 'packages/au\tth', '\tpackages/auth', 'packages/auth\n', 'packages/au\u0000th', 'packages/auth\u007F', '\u0085packages/auth',
+    ' packages/auth', 'packages/auth ', '\u00A0packages/auth', 'packages/auth\uFEFF', './ packages/auth/', 'packages/auth /sub', 'packages\\auth',
+  ]) {
+    assert.equal((await post('/api/admin/teams/set-repo', { teamId, repoId: 7, path: directory })).statusCode, 400)
+    assert.equal((await post('/api/admin/reports', { repo: { github: 'o/r', directory }, findings: [] })).statusCode, 400)
+    assert.equal((await post('/api/admin/reports', { findings: [] }, { 'x-repo-id': '7', 'x-repo-directory': encodeURIComponent(directory) })).statusCode, 400)
+    assert.equal((await post('/api/admin/reports/set-repo', { reportId, repoId: 7, directory })).statusCode, 400)
+  }
+  assert.equal((await db.listReports()).length, 1, 'invalid uploads create no report rows')
+  assert.equal((await db.getReport(reportId)).repoDirectory, boundary, 'invalid edits preserve the original location')
+  assert.equal((await db.listTeams())[0].repos[0].path, boundary, 'invalid scope edits preserve the original team scope')
+})
+
+test('repository removal deletes exclusive triage history and keeps shared history across rescans', async (t) => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const now = Date.now()
+  const session = await createSession(config, db, { githubUserId: 1, login: 'admin', name: null, avatarUrl: null }, now)
+  const repo = (repoId) => ({ repoId, fullName: `o/r${repoId}`, private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: session.userId })
+  for (const repoId of [7, 8]) await db.selectRepo(repo(repoId), now)
+  const { send, upload } = bundleHarness(db)
+  const cookie = cookiePair(session.setCookie)
+  const exclusive = randomUUID(), shared = randomUUID()
+  const uploadReport = (repoId, ids) => upload('/api/admin/reports', cookie, session.csrfToken,
+    JSON.stringify({ findings: ids.map((id) => ({ id, file: 'a.js', description: 'Finding' })) }), { 'x-repo-id': String(repoId) })
+  await uploadReport(7, [exclusive, shared])
+  const retained = JSON.parse((await uploadReport(8, [shared])).body).id
+  for (const id of [exclusive, shared]) {
+    await db.setTriage(id, { comment: 'Private discussion', fix: 'PR-1' }, session.userId, 'admin', now)
+    await db.setTriage(id, null, session.userId, 'admin', now + 1)
+  }
+  const response = await upload('/api/admin/repositories/remove', cookie, session.csrfToken,
+    JSON.stringify({ repoId: 7, fullName: 'o/r7', acknowledge: true, deleteTriage: true }))
+  assert.equal(response.statusCode, 200)
+  assert.equal(JSON.parse(response.body).deletedTriage, 1)
+  assert.deepEqual(await db.listTriageHistory(exclusive, 10), [], 'history is deleted even if the latest annotation was cleared')
+  const history = async (reportId, finding) => {
+    const result = await send('GET', `/api/reports/${reportId}/triage/history?finding=${finding}`, cookie)
+    assert.equal(result.statusCode, 200)
+    return JSON.parse(result.body).events
+  }
+  const sharedHistory = await history(retained, shared)
+  assert.equal(sharedHistory.length, 2, 'retained reports keep their shared history')
+  await db.selectRepo(repo(7), now + 2)
+  const rescan = JSON.parse((await uploadReport(7, [exclusive, shared])).body).id
+  assert.deepEqual(await history(rescan, exclusive), [], 'a future report cannot expose deleted comments or actors')
+  assert.deepEqual(await history(rescan, shared), sharedHistory)
+})
+
+test('teams API: admin gating, create (409 dup), repo/member links + perms, CSRF', async () => {
   const db = openSqliteManagedDb(':memory:')
   const now = Date.now()
   const adminSess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
@@ -1425,6 +1733,33 @@ test('db: finding triage trail — one event per change, none for a no-op write,
   await capped.close()
 })
 
+test('db: permanent triage deletion rolls back current rows if history deletion fails', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'managed-triage-delete-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const path = join(dir, 'managed.sqlite')
+  const db = openSqliteManagedDb(path)
+  t.after(() => db.close())
+  await db.setTriage('deleted', { comment: 'Must be atomic' }, null, 'writer', 100)
+  await db.setTriage('retained', { fix: 'Keep this' }, null, 'writer', 101)
+  await db.setTriage('history-only', { comment: 'Legacy history' }, null, 'writer', 102)
+  const raw = new DatabaseSync(path)
+  t.after(() => raw.close())
+  // Reproduce a legacy orphan and inject a failure in the second DELETE.
+  raw.exec("DELETE FROM finding_triage WHERE finding_id = 'history-only'")
+  raw.exec(`CREATE TRIGGER fail_history_delete BEFORE DELETE ON finding_triage_event
+    BEGIN SELECT RAISE(ABORT, 'test history deletion failure'); END`)
+  assert.throws(() => db.deleteTriage(['deleted']), /test history deletion failure/u)
+  assert.equal((await db.listTriage(['deleted'])).length, 1, 'the first DELETE is rolled back')
+  assert.equal((await db.listTriageHistory('deleted', 10)).length, 1)
+  raw.exec('DROP TRIGGER fail_history_delete')
+  assert.equal(await db.deleteTriage(['deleted', 'deleted', 'history-only']), 1, 'the count describes current annotations, not event rows')
+  assert.deepEqual(await db.listTriageHistory('deleted', 10), [])
+  assert.deepEqual(await db.listTriageHistory('history-only', 10), [])
+  assert.equal((await db.listTriage(['retained'])).length, 1)
+  assert.equal((await db.listTriageHistory('retained', 10)).length, 1)
+  assert.equal(await db.deleteTriage([]), 0)
+})
+
 test('parseTriageEntryPatch: full/partial/null round-trip; malformed values are invalid', () => {
   // Full + partial patches pass through; empty strings count as absent.
   assert.deepEqual(parseTriageEntryPatch({ color: 'red', triage: 'fixed', comment: 'c', fix: 'PR-1', flagged: true }),
@@ -1485,7 +1820,7 @@ async function reportTriageFixture(db, reportStore) {
   await db.setTeamRepo(green, 8, null)
   await db.setTeamMember(green, erin.id, { dependencies: true, security: true })
   const reportId = randomUUID()
-  await db.insertReport({ id: reportId, filename: 'scan.json', contentType: 'application/json', byteSize: 5, sha256: 'x', uploadedBy: admin.id, uploadedByLogin: 'alice', repoId: 7, bundleId: null, bundleIntegrity: null }, now)
+  await db.insertReport({ id: reportId, filename: 'scan.json', contentType: 'application/json', byteSize: 5, sha256: 'x', uploadedBy: admin.id, uploadedByLogin: 'alice', repoId: 7, bundleId: null, bundleIntegrity: null, visible: true }, now)
   await reportStore.put(reportId, Buffer.from(JSON.stringify({ source: 'native', findings: [
     { id: 'own', file: 'src/a.js' },
     { id: 'dep', file: 'node_modules/x/y.js' },
@@ -1553,7 +1888,7 @@ test('GET /api/reports/<id>/triage: view-gated (401/404), entries filtered to th
   // and a cleared entry arrives as null — the tombstone, unlike 'new', which
   // the server has never seen.
   const rescanId = randomUUID()
-  await db.insertReport({ id: rescanId, filename: 'scan2.json', contentType: 'application/json', byteSize: 5, sha256: 'y', uploadedBy: fx.admin.id, uploadedByLogin: 'alice', repoId: 7, bundleId: null, bundleIntegrity: null }, fx.now)
+  await db.insertReport({ id: rescanId, filename: 'scan2.json', contentType: 'application/json', byteSize: 5, sha256: 'y', uploadedBy: fx.admin.id, uploadedByLogin: 'alice', repoId: 7, bundleId: null, bundleIntegrity: null, visible: true }, fx.now)
   await reportStore.put(rescanId, Buffer.from(JSON.stringify({ source: 'native', findings: [{ id: 'own', file: 'src/a.js' }, { id: 'new', file: 'src/c.js' }] })))
   await db.setTriage('sec', null, fx.admin.id, 'alice', fx.now + 1)
   assert.deepEqual(JSON.parse((await send('GET', T(rescanId), cookiePair(fx.bobSess.setCookie))).body), { entries: { own: { color: 'red' } } })
@@ -1562,7 +1897,7 @@ test('GET /api/reports/<id>/triage: view-gated (401/404), entries filtered to th
   // A pre-deduplicated (groups-shaped) dump is filtered for the viewer just the
   // same: bob (no dependencies) must not learn of 'dep' through its entry.
   const groupedId = randomUUID()
-  await db.insertReport({ id: groupedId, filename: 'scan3.json', contentType: 'application/json', byteSize: 5, sha256: 'z', uploadedBy: fx.admin.id, uploadedByLogin: 'alice', repoId: 7, bundleId: null, bundleIntegrity: null }, fx.now)
+  await db.insertReport({ id: groupedId, filename: 'scan3.json', contentType: 'application/json', byteSize: 5, sha256: 'z', uploadedBy: fx.admin.id, uploadedByLogin: 'alice', repoId: 7, bundleId: null, bundleIntegrity: null, visible: true }, fx.now)
   await reportStore.put(groupedId, Buffer.from(JSON.stringify({ source: 'native', groups: [
     [{ id: 'own', file: 'src/a.js' }, { id: 'own2', file: 'src/a2.js' }],
     [{ id: 'dep', file: 'node_modules/x/y.js' }],
@@ -1600,7 +1935,7 @@ test('POST /api/reports/<id>/triage: CSRF + role/membership gating, validation, 
   // groups-shaped dump of the same findings just the same)...
   assert.equal((await post(bCk, fx.bobSess.csrfToken, { entries: { dep: { color: 'red' } } })).statusCode, 404)
   const groupedId = randomUUID()
-  await db.insertReport({ id: groupedId, filename: 'scan3.json', contentType: 'application/json', byteSize: 5, sha256: 'z', uploadedBy: fx.admin.id, uploadedByLogin: 'alice', repoId: 7, bundleId: null, bundleIntegrity: null }, fx.now)
+  await db.insertReport({ id: groupedId, filename: 'scan3.json', contentType: 'application/json', byteSize: 5, sha256: 'z', uploadedBy: fx.admin.id, uploadedByLogin: 'alice', repoId: 7, bundleId: null, bundleIntegrity: null, visible: true }, fx.now)
   await reportStore.put(groupedId, Buffer.from(JSON.stringify({ source: 'native', groups: [[{ id: 'own', file: 'src/a.js' }], [{ id: 'dep', file: 'node_modules/x/y.js' }]] })))
   assert.equal((await upload(`/api/reports/${groupedId}/triage`, bCk, fx.bobSess.csrfToken, JSON.stringify({ entries: { dep: { color: 'red' } } }))).statusCode, 404)
   assert.equal((await upload(`/api/reports/${groupedId}/triage`, bCk, fx.bobSess.csrfToken, JSON.stringify({ entries: { own: { color: 'red' } } }))).statusCode, 200)

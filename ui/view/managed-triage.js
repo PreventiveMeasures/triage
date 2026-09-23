@@ -65,9 +65,9 @@ const utf8Length = (s) => new TextEncoder().encode(s).length
 // here is one the server has never been seen to hold.
 const baseline = new Map()
 
-// The report whose GET has been adopted — pushes for a report wait for its
+// Reports whose GET has been adopted — pushes for a report wait for its
 // hydrate, so nothing goes up before the server's copy has been read.
-let hydratedReport = null
+const hydratedReports = new Set()
 
 // The edits captured since they last landed, per report id: the report they
 // were made in (the endpoint they go to) and the wire entries (null = clear)
@@ -94,9 +94,42 @@ function loadedFindingIds() {
   return ids
 }
 
+function activeManagedReports() {
+  if (Array.isArray(state.managedReports) && state.managedReports.length > 0) return state.managedReports
+  return state.managedReport == null ? [] : [state.managedReport]
+}
+
+function findingIdsForManagedReport(reportId) {
+  const ids = new Set()
+  let matched = false
+  for (const report of state.reports) {
+    if (report._managedReportId !== reportId) continue
+    matched = true
+    for (const group of report.groups ?? []) {
+      for (const finding of group) if (typeof finding.id === 'string' && finding.id) ids.add(finding.id)
+    }
+  }
+  // A single-report open predates the source-id stamp; its loaded findings
+  // are the complete scope for the active report.
+  return matched || state.reports.length === 0 ? ids : new Set(loadedFindingIds())
+}
+
+function reportForFinding(id) {
+  const active = activeManagedReports()
+  for (const report of state.reports) {
+    if (report._managedReportId == null) continue
+    if ((report.groups ?? []).some((group) => group.some((finding) => finding.id === id))) {
+      const match = active.find((candidate) => candidate.id === report._managedReportId)
+      if (match) return match
+    }
+  }
+  return active[0] ?? null
+}
+
 function canPushTriage() {
   const session = state.managedSession
-  return state.serverMode === 'managed' && session != null && roleAtLeast(session.role, 'triage')
+  return state.serverMode === 'managed' && state.localMode !== true
+    && session != null && roleAtLeast(session.role, 'triage')
 }
 
 // A batch the server refused AS SENT (malformed, an id the caller may not
@@ -119,6 +152,7 @@ function requeue(p, ids) {
 }
 
 async function flush(p) {
+  if (!canPushTriage()) return
   const ids = [...p.changes.keys()]
   let i = 0
   while (i < ids.length) {
@@ -167,9 +201,8 @@ function flushPending() {
 // debounce the send, so a burst (kanban drag, comment typing) collapses into
 // one POST.
 function scheduleTriagePush() {
-  const open = state.managedReport
-  if (open == null || open.id !== hydratedReport || !canPushTriage()) return
-  let q = pending.get(open.id)
+  const active = activeManagedReports()
+  if (active.length === 0 || !canPushTriage() || hydratedReports.size === 0) return
   for (const id of loadedFindingIds()) {
     const wire = wireEntryOf(state.triage.get(id))
     const key = wireKey(wire)
@@ -182,9 +215,12 @@ function scheduleTriagePush() {
       baseline.set(id, key)
       continue
     }
+    const report = reportForFinding(id)
+    if (report == null || !hydratedReports.has(report.id)) continue
+    let q = pending.get(report.id)
     if (q == null) {
-      q = { report: open, changes: new Map() }
-      pending.set(open.id, q)
+      q = { report, changes: new Map() }
+      pending.set(report.id, q)
     }
     q.changes.set(id, wire)
   }
@@ -204,6 +240,17 @@ export function initManagedTriagePush() {
   setTriageChangeNotifier(scheduleTriagePush)
 }
 
+// A managed → local transition invalidates the open server scope. Drop the
+// debounce queue and hydration baseline immediately so a timer from the old
+// report cannot write after the local surface takes over, and a later managed
+// visit starts from fresh server state.
+export function resetManagedTriage() {
+  if (pushTimer != null) { clearTimeout(pushTimer); pushTimer = null }
+  pending.clear()
+  hydratedReports.clear()
+  baseline.clear()
+}
+
 // Merge the server's entries for a just-opened team report's findings into
 // `state.triage`. The trusted server wins wholesale per id it knows — a value,
 // or null for a cleared entry (its tombstone), which clears the local one —
@@ -211,20 +258,27 @@ export function initManagedTriagePush() {
 // carries a triage bucket (the triage⊻ignore mutex, mirroring
 // applyTriageEntries). Ids the server has never seen keep their local entry,
 // which the follow-up push carries up: the user's triage of those findings,
-// never uploaded. Pushes for the report wait for this to finish.
-export async function hydrateManagedReportTriage(reportId) {
-  if (state.serverMode !== 'managed' || state.managedSession == null) return
-  hydratedReport = null
+// never uploaded. Pushes for the report wait for this to finish. Returns true
+// only when the server state was adopted and this is still the active view.
+export async function hydrateManagedReportTriage(reportId, { renderView = true } = {}) {
+  const reports = state.reports
+  const isCurrent = () => state.serverMode === 'managed' && state.localMode !== true
+    && state.managedSession != null && state.reports === reports
+    && activeManagedReports().some((report) => report.id === reportId)
+  if (!isCurrent()) return false
+  hydratedReports.delete(reportId)
   // Whatever is still pending goes first, and lands before the server copy is
   // read — so an edit made moments ago is what "server wins" then confirms,
   // not what it reverts.
   flushPending()
   await flushChain
+  if (!isCurrent()) return false
   const entries = await fetchReportTriage(reportId)
   // Bail when the fetch failed or the user already navigated elsewhere.
-  if (entries == null || state.managedReport?.id !== reportId) return
+  if (entries == null || !isCurrent()) return false
   let changed = false
-  for (const id of loadedFindingIds()) {
+  const reportFindingIds = findingIdsForManagedReport(reportId)
+  for (const id of reportFindingIds) {
     if (!Object.hasOwn(entries, id)) {
       // Never seen by the server: whatever the baseline remembered is stale.
       baseline.delete(id)
@@ -235,14 +289,17 @@ export async function hydrateManagedReportTriage(reportId) {
     const ignoredReports = wire?.triage == null ? state.triage.get(id)?.ignoredReports : undefined
     if (setEntry(state.triage, id, { ...wire, ignoredReports })) changed = true
   }
-  hydratedReport = reportId
+  hydratedReports.add(reportId)
   if (changed) {
     // Persist the adopted entries and repaint the imperatively-rendered
     // surfaces (kanban, toolbar counts) that don't observe state.triage; the
     // save's notifier then pushes what the server hasn't seen.
     await saveTriage()
-    render()
-  } else {
-    scheduleTriagePush()
+    if (!isCurrent()) return false
+    if (renderView) render()
   }
+  // Catch edits made while GET was pending even when no server entries
+  // changed. Team loading defers paint until every report has hydrated.
+  scheduleTriagePush()
+  return true
 }

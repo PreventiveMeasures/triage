@@ -35,7 +35,7 @@ export type FocusCodePos = {
 // count / sort preference — never alters report data. See ui/view/format.js
 // (displayedSeverity) and <severity-mode-switch>.
 export type SeverityMode = 'corrected' | 'original'
-export type CurrentView = 'findings' | 'files' | 'bundles' | 'links' | 'admin-users' | 'manage-repos' | 'manage-reports' | 'manage-bundles' | 'manage-teams'
+export type CurrentView = 'findings' | 'files' | 'bundles' | 'links' | 'manage' | 'admin-users' | 'manage-repos' | 'manage-reports' | 'manage-bundles' | 'manage-history' | 'manage-scans' | 'manage-teams'
 
 // The links file the 'links' view is showing: its OPFS name and the
 // links it declares, one `string[]` of finding ids per link (see
@@ -103,6 +103,8 @@ export interface State {
   workspaceMerges: Array<Set<string>>
   currentFile: string | null
   currentWorkspace: string | null
+  currentManagedTeam: string | null
+  currentManagedReport: string | null
   currentReportWorkspace: string | null
   currentView: CurrentView
   currentLinks: OpenLinksFile | null
@@ -195,6 +197,11 @@ export interface State {
   // correct, then confirmed by the `server-info` connect frame (see sidebar
   // `applyServerInfo`).
   serverMode: ServerMode | 'standalone'
+  // A managed server can be viewed in local mode for offline work. This is a
+  // UI-only override: the server protocol remains managed, while the local
+  // report/workspace surfaces become available with sync kept off. Also marks
+  // the offline local fallback while the server protocol is unknown.
+  localMode: boolean
   // Managed-mode entry points (login path + cookie name) when managed; null
   // for e2e.
   managed: ManagedServerInfo | null
@@ -205,15 +212,19 @@ export interface State {
   // The logged-in managed user (null when logged out / e2e / standalone),
   // populated by the managed session probe (client/managed/session.js).
   managedSession: { id: string; login: string; name: string | null; avatarUrl: string | null; role: string; csrfToken: string | null } | null
-  // The managed user's teams (each with the reports attached to the team's
-  // repos), shown in the sidebar above Workspaces. Populated alongside the
+  // The managed user's teams (each with reports and bundles attached to the
+  // team's repos), shown in the sidebar above Workspaces. Populated alongside the
   // session probe; empty when logged out / e2e.
-  managedTeams: { id: string; name: string; reports: { id: string; filename: string }[] }[]
+  managedTeams: { id: string; name: string; reports: { id: string; filename: string }[]; bundles: { id: string; filename: string; repoFullName: string }[] }[]
   // The open managed team report (server id + filename) when the active view
   // came from the sidebar's Teams section; null otherwise. Keys the
   // server-side triage hydrate/push for that report (ui/view/managed-triage.js).
   // Set by openTeamReport, cleared whenever the view switches away.
   managedReport: { id: string; filename: string } | null
+  // All server report ids in an open merged team view. A merged view has no
+  // single `managedReport`, so triage hydration/push uses this list to route
+  // each finding to a report that contains it.
+  managedReports: { id: string; filename: string }[]
 }
 
 // View mode is deliberately session-local. Older builds persisted the
@@ -478,6 +489,8 @@ export const state: State = store<State>({
   // workspace. Persists via the same LAST_FILE_KEY entry, prefixed
   // with `ws:` when set.
   currentWorkspace: null,
+  currentManagedTeam: null,
+  currentManagedReport: null,
   // Parent of the selected report row, without enabling merged mode.
   currentReportWorkspace: null,
   // Top-level view — 'findings' (default; table / list / grouped /
@@ -919,6 +932,7 @@ export const state: State = store<State>({
   // localStorage cache so mode-aware UI is correct on first paint; the live
   // `server-info` connect frame confirms / updates it.
   serverMode: INITIAL_SERVER_INFO?.mode ?? 'e2e',
+  localMode: false,
   managed: INITIAL_SERVER_INFO?.managed ?? null,
   // Set when the server reports a different protocol than the cached one; the
   // switch is refused (migration is future work) and sync stays paused.
@@ -930,7 +944,25 @@ export const state: State = store<State>({
   managedTeams: [],
   // The open managed team report; openTeamReport sets it, view switches clear it.
   managedReport: null,
+  managedReports: [],
 })
+
+// The managed protocol and the visible local surface are separate concerns.
+// `serverMode` stays managed so authenticated server calls remain safe, while
+// this predicate lets the UI expose the local, offline surface on demand.
+export function isManagedUiMode(): boolean {
+  return state.serverMode === 'managed' && !state.localMode
+}
+
+export function setLocalMode(enabled: boolean): void {
+  state.localMode = Boolean(enabled)
+}
+
+export function clientModeLabel(): 'managed' | 'local' | 'e2e' | 'standalone' {
+  if (state.serverMode === 'standalone' && state.localMode) return 'local'
+  if (state.serverMode !== 'managed') return state.serverMode
+  return state.localMode ? 'local' : 'managed'
+}
 
 // Cross-tab propagation: a sibling tab's `saveRepoUrlFor` writes
 // through secure-storage, which fires an after-hydrate listener once

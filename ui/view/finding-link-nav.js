@@ -9,19 +9,17 @@
 // the workspace. Missing or stale hints fall back to locally held data.
 // The viewer's display mode is preserved throughout.
 //
-// Nothing here fetches from the network: the finding must already be in
-// local storage. A link is a pointer into the recipient's own data, not
-// a transfer — that's what the workspace share link and the export
-// bundle are for.
+// Shared deep links resolve locally. In-app report chips also support managed
+// reports: their explicit server ID routes through the managed loading path.
 //
 // The state rules (which bucket, which filters, which member of a dedup
 // group) live in `finding-link.js`; this module is navigation + paint.
 import { saveTriage, state } from '#client/index.js'
 import { report } from './dom.js'
-import { findLoadedFinding, unhideFinding } from './finding-link.js'
-import { locateLinkedFinding } from './finding-link-route.js'
+import { unhideFinding } from './finding-link.js'
+import { locateLinkedFinding, locateReportFinding } from './finding-link-route.js'
 import { findGroupById, groupKey, syncGroupTriage } from './group.js'
-import { switchToFile, switchToWorkspace } from './ingest.js'
+import { switchToFile, switchToManagedTeam, switchToWorkspace } from './ingest.js'
 import { scrollRootOf } from './lazy-render.js'
 import { render } from './render.js'
 
@@ -230,14 +228,17 @@ export async function revealFinding(ref) {
 // The Links view names a specific report's copy, even when a workspace
 // holds several reports with that id. Open it directly so the selected
 // copy retains that report's severity, corrections, and annotations.
-export async function revealFindingInReport(id, reportName) {
+export async function revealFindingInReport(id, reportName, managedReportId = null) {
   if (!id || !reportName) return { ok: false, reason: 'Missing finding id or report name.' }
-  if (state.currentFile !== reportName || state.currentWorkspace) await switchToFile(reportName)
-  const hit = findLoadedFinding(id)
+  const hit = await locateReportFinding(id, reportName, managedReportId, {
+    openReport: switchToFile,
+    openManagedReport: switchToManagedTeam,
+  })
   if (!hit) {
     return {
       ok: false,
-      reason: `Couldn't find that finding in "${reportName}". `
+      reason: managedReportId ? `Could not open that finding in "${reportName}". Open the team and try again.`
+        : `Couldn't find that finding in "${reportName}". `
         + 'It may have been re-imported since this links file was written.',
     }
   }

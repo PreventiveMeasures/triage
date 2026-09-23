@@ -4,4 +4,4 @@
 
 export function saveTriage(): Promise<void>
 export function reloadTriageFromStorage(): Promise<void>
-export const loadPromise: Promise<void>
+export function ensureTriageLoaded(): Promise<void>

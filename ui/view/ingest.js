@@ -1,5 +1,4 @@
-import { render as litRender, nothing } from 'lit'
-import { adoptRepoUrlFor, analyzeContent, computeLinkHint, deleteBundle, deleteFile, deleteWorkspace, dropBundleFromHashIndex, getSecureItem, listBundles, listFiles, listWorkspaces, loadRepoUrlFor, parseLinkedFindings, pruneOrphanTriage, readFile, readFileBytes, removeCount, removeSecureItem, saveBundle, saveFile, saveRepoUrlFor, setBundleWorkspace, setCount, setReportWorkspace, setSecureItem, state, triageLoadPromise } from '#client/index.js'
+import { adoptRepoUrlFor, analyzeContent, computeLinkHint, deleteBundle, deleteFile, deleteWorkspace, dropBundleFromHashIndex, ensureTriageLoaded, getSecureItem, isManagedUiMode, listBundles, listFiles, listWorkspaces, loadRepoUrlFor, parseLinkedFindings, pruneOrphanTriage, readFile, readFileBytes, removeCount, removeSecureItem, saveBundle, saveFile, saveRepoUrlFor, setBundleWorkspace, setCount, setReportWorkspace, setSecureItem, state } from '#client/index.js'
 import { closeWorkspace as closePresence, deleteBundleFromRemote, deleteFromRemote as deletePresence, isInRemoteOrCached, openWorkspace as openPresence, putFile, triageSync } from './client-sync.js'
 import { openImportConflictDialog } from './dialogs/import-conflict-dialog.js'
 import { dropZone, report } from './dom.js'
@@ -9,7 +8,7 @@ import { applyOpeningFilters, resetFilters } from './filters.js'
 import { reportWorkspaceFor } from './finding-link.js'
 import { encodeReportLocation } from '../../client/report-location.js'
 import { configureReportRevalidation, render } from './render.js'
-import { renderSidebar } from './sidebar.js'
+import { ensureClientMode, navigateToAdminPage, renderSidebar } from './sidebar.js'
 import { cleanupGraph2, graph2 } from './graph/state.js'
 import { openBundle, prefetchBundleHashes, selectBundle } from './bundle-load.js'
 import { backfillFindingIds, detectFormat, inheritReportMeta, isAppFinding, parseCodexCsvToScans, readReport, repoDirectory, reportEntries, reportRepoGithub } from '../../report/index.js'
@@ -17,6 +16,8 @@ import { importWorkspaceFromGzip } from './workspace-import.js'
 import { maybePromptFirstUse } from './first-import-prompt.js'
 import { openPasskeyUnlockDialog } from './dialogs/passkey-unlock-dialog.js'
 import { openSyncDownloadDialog } from './dialogs/sync-download-dialog.js'
+import { fetchReport as fetchManagedReport, login as managedLogin } from './client-managed.js'
+import { showToast } from './toast.js'
 
 // localStorage key for the last-viewed file — restored on page load so
 // the user picks back up where they left off. The stored value is the
@@ -110,13 +111,12 @@ function closeSessionsExcept(keepIds) {
 // user moved. `clearActiveView` below is the bigger hammer (it drops
 // the selection too) and paints through here.
 //
-// Findings go via Lit rather than `report.innerHTML = ''` so the
-// cached parts on `#report` (slot reuse holds them across renders)
-// get cleaned up with the DOM — a bare innerHTML wipe would leave the
-// next render() walking a stale part-cache.
+// render.js owns #report's child containers imperatively and renders Lit
+// inside those containers. Remove the containers themselves so their views
+// disconnect; rendering Lit's `nothing` at #report would leave them mounted.
 function showEmptyMainPane() {
   report.classList.remove('active')
-  litRender(nothing, report)
+  report.replaceChildren()
   dropZone.classList.remove('hidden')
 }
 
@@ -325,19 +325,27 @@ async function uploadReportToWorkspaces(name, workspaces) {
 }
 
 async function addFiles(files) {
+  // FileList is only readable during the drop event (or until the picker is
+  // reset). Keep the File objects before waiting, without reading their bytes.
+  files = [...files]
+  if (files.length === 0) return
+  // The landing can appear while a slow /api/config request is still pending.
+  // Once startup selects managed or local mode, follow that mode's import path.
+  await ensureClientMode()
   // On a managed server the local (OPFS / "local storage") ingest path is
   // disabled: uploads belong server-side, via the admin "Manage reports" /
   // "Manage bundles" pages. So a drop / file-pick anywhere in the app chrome
   // here must NOT write to disk — bail before any of the pipeline runs. This is
   // the single choke point for every entry (document drop, the empty-screen
   // drop-zone, and the file picker).
-  if (state.serverMode === 'managed') return
+  if (isManagedUiMode()) return
   // First-import nudge: ask once whether to enable passkey encryption
   // before this drop's files hit disk, so an accepted enable seals the
   // very first write rather than landing plaintext then re-writing the
   // migration. Skipped silently when the vault is already enabled, the
   // browser lacks WebAuthn, or the user already chose.
   await maybePromptFirstUse()
+  if (isManagedUiMode()) return
   let last = null
   let lastBundleIntegrity = null
   // Track newly-saved bundle integrities so we can prefetch their
@@ -499,11 +507,12 @@ async function addFiles(files) {
 // `content` skips a redundant OPFS read (drop path passes it through).
 // Resolves true when this load is what ended up on screen — every other
 // exit (a newer switch took over, the read failed, a recovery flow
-// re-entered) resolves undefined, so a caller that must act on ITS
-// load (the managed team-report opener claims a slot keyed by report
-// id, not by the file name a local report may share) can tell.
+// re-entered) resolves undefined, so callers can distinguish completion
+// from a cancelled or failed load.
 export async function switchToFile(name, content, { workspaceId } = {}) {
   const gen = ++loadGen
+  state.currentManagedTeam = null
+  state.currentManagedReport = null
   state.currentReportWorkspace = reportWorkspaceFor(name, workspaceId)
   // Subscribe-on-report-open: a single-file view of a workspace
   // member should still ride the workspace's chain, so the user sees
@@ -534,9 +543,9 @@ export async function switchToFile(name, content, { workspaceId } = {}) {
   state.currentFile = name
   state.currentWorkspace = null
   state.currentLinks = null
-  // Drop the managed open-report slot — openTeamReport re-claims it after its
-  // own switchToFile, so any other switch stops the server triage push.
+  // Local file navigation leaves the managed report scope.
   state.managedReport = null
+  state.managedReports = []
   // Switching to a regular report drops out of the bundles / packages
   // / links view — the user clicked a file row to see its findings.
   // (A links file lands back on 'links' below, once the read confirms
@@ -666,6 +675,86 @@ export async function switchToFile(name, content, { workspaceId } = {}) {
   return true
 }
 
+// A team is a server-backed workspace. Reuse the workspace grouping and
+// filtering lens, but fetch on demand and never create a local workspace or
+// persist report bytes. Individual reports share this navigation generation
+// so a slow team load cannot overwrite a later report click (or Home).
+export async function switchToManagedTeam(team, reportId = null) {
+  if (!isManagedUiMode() || !team || !Array.isArray(team.reports)) return false
+  const selected = reportId === null ? team.reports : team.reports.filter((r) => r.id === reportId)
+  if (reportId !== null && selected.length === 0) return false
+  const gen = ++loadGen
+  const contents = await Promise.all(selected.map((r) => fetchManagedReport(r.id)))
+  if (isStaleLoad(gen)) return false
+  if (contents.some((content) => content === null)) {
+    showToast('Could not load all team reports. Please try again.')
+    return false
+  }
+  // Validate the whole response set before clearing the prior view, so a
+  // missing/invalid report cannot quietly turn the team into a partial view.
+  if (contents.some((content) => !readReport(content).data)) {
+    showToast('One of the team reports could not be read.')
+    return false
+  }
+  closeSessionsExcept(new Set())
+  // Replace the previous report's controls while the new view is loading.
+  // No partially hydrated findings may remain interactive during the awaits.
+  const loading = document.createElement('p')
+  loading.setAttribute('role', 'status')
+  loading.textContent = 'Loading report triage…'
+  report.replaceChildren(loading)
+  report.classList.add('active')
+  dropZone.classList.add('hidden')
+  state.currentView = 'findings'
+  state.reports = []
+  clearMergedGroups()
+  state.workspaceMerges = []
+  state.revalidateConflicts = new Map()
+  state.currentFile = reportId === null ? null : selected[0].filename
+  // Namespaced, in-memory workspace identity: all existing workspace lens
+  // rules apply, without registering a local workspace or sync subscription.
+  state.currentWorkspace = reportId === null ? `managed-team:${team.id}` : null
+  state.currentManagedTeam = team.id
+  state.currentManagedReport = reportId
+  state.managedReports = selected.map((entry) => ({ id: entry.id, filename: entry.filename }))
+  state.managedReport = reportId === null ? null : state.managedReports[0] ?? null
+  state.currentReportWorkspace = null
+  state.currentLinks = null
+  state.selectedBundle = null
+  state.repoUrl = ''
+  state.repoEditing = false
+  resetGraph2()
+  for (let i = 0; i < selected.length; i++) {
+    await ingestReport(selected[i].filename, contents[i], gen, { renderView: false, managedReportId: selected[i].id })
+    if (isStaleLoad(gen)) return false
+  }
+  // Hydrate every report before the merged view becomes interactive. The
+  // managed triage layer routes later edits by the per-report ids stamped
+  // above, so overlapping findings are sent to a report that actually owns
+  // them instead of silently posting them to the first report only.
+  if (selected.length > 0) {
+    const { hydrateManagedReportTriage } = await import('./managed-triage.js')
+    if (isStaleLoad(gen)) return false
+    for (const entry of selected) {
+      const hydrated = await hydrateManagedReportTriage(entry.id, { renderView: false })
+      if (isStaleLoad(gen)) return false
+      if (!hydrated) {
+        await goHome()
+        showToast('Could not load report triage. Open the team or report again to retry.')
+        return false
+      }
+    }
+  }
+  if (selected.length === 0) {
+    showEmptyMainPane()
+  } else {
+    applyOpeningFilters(getShownGroups())
+    if (!(await renderAfterAnimationFrame(gen))) return false
+  }
+  await renderSidebar()
+  return true
+}
+
 // Replace the active view with the merged contents of an entire
 // workspace — every assigned report loaded via `ingestReport`,
 // accumulating in `state.reports`. `state.currentFile` is cleared
@@ -676,6 +765,10 @@ export async function switchToFile(name, content, { workspaceId } = {}) {
 // editable header chip is omitted. Reports the workspace references
 // but that no longer exist in OPFS are skipped silently.
 export async function switchToWorkspace(workspaceId) {
+  state.currentManagedTeam = null
+  state.currentManagedReport = null
+  state.managedReport = null
+  state.managedReports = []
   const ws = listWorkspaces().find((w) => w.id === workspaceId)
   if (!ws) return
   const gen = ++loadGen
@@ -703,7 +796,6 @@ export async function switchToWorkspace(workspaceId) {
   state.currentWorkspace = workspaceId
   state.currentReportWorkspace = null
   state.currentLinks = null
-  state.managedReport = null
   state.repoUrl = ''
   state.repoEditing = false
   resetGraph2()
@@ -879,16 +971,36 @@ export async function deleteCurrent({ triage = 'keep', deleteFromRemoteWorkspace
 // Does NOT bump `loadGen` or close sync sessions — those are caller
 // concerns (each path has its own ordering constraints with the
 // surrounding OPFS / triage / remote operations).
-function clearActiveView() {
+function clearActiveView({ forgetLastView = true } = {}) {
+  state.currentManagedTeam = null
+  state.currentManagedReport = null
   state.currentFile = null
   state.currentWorkspace = null
   state.currentReportWorkspace = null
   state.currentLinks = null
   state.managedReport = null
+  state.managedReports = []
   state.selectedBundle = null
   state.bundleDetails = null
+  state.bundleDetailsTab = 'overview'
   state.bundleSourceFile = null
   state.bundleSourceFindingIdx = null
+  state.selectedPackage = null
+  state.selectedPackageVersion = null
+  state.packageDetailsTab = 'overview'
+  state.packageSlideTriage = null
+  state.packageSlideTransient = false
+  state.expandedPackages.clear()
+  state.selectedRepository = null
+  state.repositoryDetailsTab = 'overview'
+  state.repositorySlideTriage = null
+  state.repositorySlideTransient = false
+  state.filesSelectedFile = null
+  state.tableSelectedGid = null
+  state.kanbanPopoverGid = null
+  state.kanbanExpandedColumn = null
+  state.focusGid = null
+  state.activeTabByGroup.clear()
   state.reports = []
   clearMergedGroups()
   state.workspaceMerges = []
@@ -898,9 +1010,26 @@ function clearActiveView() {
   state.shownTriage = null
   state.currentView = 'findings'
   resetGraph2()
-  removeSecureItem(LAST_FILE_KEY)
+  if (forgetLastView) removeSecureItem(LAST_FILE_KEY)
   showEmptyMainPane()
   document.title = 'DeepView'
+}
+
+// Leave the current surface when the managed server's UI mode changes. This
+// is deliberately one operation rather than a handful of assignments in the
+// sidebar: report and workspace loads are asynchronous, and any one of them
+// can otherwise finish after the mode switch and put the old view back.
+//
+// The generation bump invalidates switchToFile/switchToWorkspace and their
+// ingest pipelines. Closing sessions stops local triage updates from arriving
+// while the landing screen is being painted. clearActiveView also removes the
+// persisted last-view pointer, so entering local mode cannot immediately
+// restore the managed report that was just open. Cold-start protocol detection
+// passes forgetLastView:false to leave local storage untouched.
+export function resetForClientModeTransition(options) {
+  ++loadGen
+  closeSessionsExcept(new Set())
+  clearActiveView(options)
 }
 
 // Drop back to the empty drop-zone screen without touching stored
@@ -1084,7 +1213,7 @@ export async function leaveWorkspace(workspaceId, mode = 'detach', { triage = 'k
 // push. The headless `window.__loadFile` path passes nothing, staying
 // unguarded so it keeps accumulating across calls (the print pipeline
 // relies on that).
-async function ingestReport(name, content, gen = null, { renderView = true } = {}) {
+async function ingestReport(name, content, gen = null, { renderView = true, managedReportId = null } = {}) {
   const stale = () => gen !== null && isStaleLoad(gen)
   try {
     // Finish both hints before rendering the Link button. Copy remains
@@ -1095,9 +1224,9 @@ async function ingestReport(name, content, gen = null, { renderView = true } = {
     ])
     if (stale()) return
     // Persistent triage (markers/deletedIds keyed by uuid) loads once
-    // at module init; await it before rendering so the first drop
+    // on local navigation; await it before rendering so the first drop
     // already shows stored marks/deletions for matching findings.
-    await triageLoadPromise
+    await ensureTriageLoaded()
     if (stale()) return
     // Format dispatch lives in the report library (report/index.js),
     // which also words the failure — usually a malformed dump rather
@@ -1186,6 +1315,7 @@ async function ingestReport(name, content, gen = null, { renderView = true } = {
           _repoFallback: repoFallback,
           _repoDirectory: repoDir,
           _reportName: name,
+          _managedReportId: managedReportId,
           _bundleHashes: data.bundleHashes ?? [],
         }
         inheritReportMeta(filled, data)
@@ -1229,6 +1359,7 @@ async function ingestReport(name, content, gen = null, { renderView = true } = {
       // title for an all-MD report.
       source: data.source ?? null,
       fileName: name,
+      _managedReportId: managedReportId,
       groups,
       // Report-level repo declaration, normalised to an `owner/name`
       // slug (null when the dump names none). The header prefers it
@@ -1312,7 +1443,10 @@ document.addEventListener('drop', (e) => {
   addFiles(e.dataTransfer.files)
 })
 
-dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('hover') })
+dropZone.addEventListener('dragover', (e) => {
+  e.preventDefault()
+  if (!isManagedUiMode()) dropZone.classList.add('hover')
+})
 dropZone.addEventListener('dragleave', () => dropZone.classList.remove('hover'))
 dropZone.addEventListener('drop', (e) => {
   e.preventDefault()
@@ -1334,6 +1468,7 @@ dropZone.addEventListener('drop', (e) => {
 // re-pick the same file (browsers suppress the change event otherwise).
 let filePickerInput = null
 function openFilePicker() {
+  if (isManagedUiMode()) return
   if (!filePickerInput) {
     filePickerInput = document.createElement('input')
     filePickerInput.type = 'file'
@@ -1359,6 +1494,15 @@ function openFilePicker() {
 // Event-delegate via the drop-zone so the listener survives Lit
 // re-renders if the prompt template ever becomes a component.
 dropZone.addEventListener('click', (e) => {
+  const managedPage = e.target.closest('[data-managed-page]')
+  if (managedPage) { void navigateToAdminPage(managedPage.dataset.managedPage); return }
+  if (e.target.closest('[data-managed-login]')) { void managedLogin(state.managed?.loginPath); return }
+  const team = e.target.closest('[data-managed-team]')
+  if (team) {
+    const selected = state.managedTeams.find((candidate) => candidate.id === team.dataset.managedTeam)
+    if (selected) void switchToManagedTeam(selected)
+    return
+  }
   const workspace = e.target.closest('[data-landing-workspace]')
   if (workspace) {
     void switchToWorkspace(workspace.dataset.landingWorkspace)

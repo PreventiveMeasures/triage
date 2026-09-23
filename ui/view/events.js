@@ -511,10 +511,10 @@ report.addEventListener('click', (e) => {
   const linksReport = pathClosest(e, '[data-links-report][data-links-finding]')
   if (linksReport) {
     e.preventDefault()
-    const { linksReport: name, linksFinding: id } = linksReport.dataset
+    const { linksReport: name, linksFinding: id, managedReport: managedReportId } = linksReport.dataset
     if (name && id) {
       void (async () => {
-        const result = await revealFindingInReport(id, name)
+        const result = await revealFindingInReport(id, name, managedReportId)
         if (!result.ok) alert(result.reason)
       })().catch((err) => console.warn('links: reveal in report failed:', err))
     }

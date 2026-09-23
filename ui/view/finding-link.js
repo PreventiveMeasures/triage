@@ -12,7 +12,7 @@
 // storage. A link is a pointer into the recipient's own data, not a
 // transfer — that's what the workspace share link and the export bundle
 // are for.
-import { buildFindingUrl, isLinkableFindingId, knownLinkHint, state, workspacesHoldingReport } from '#client/index.js'
+import { buildFindingUrl, isLinkableFindingId, isManagedUiMode, knownLinkHint, state, workspacesHoldingReport } from '#client/index.js'
 import { applyFilters, matchesConfirmed, resetFilters, shouldLockConfirmed } from './filters.js'
 import { getMergedGroups, getShownGroups, groupKey, groupState, linkableGroups, sortTabs, tabKey } from './group.js'
 import { configureRevalidation, isRuledOut } from './format.js'
@@ -36,7 +36,9 @@ import { cleanupGraph2 } from './graph/state.js'
 // — in which case the hint is simply omitted and the receiver's scan
 // picks up the slack.
 export function findingLinkFor(finding) {
-  if (!finding) return null
+  // The current resolver only knows local reports/workspaces. Managed links
+  // need a server-aware route before they can be offered to another reader.
+  if (!finding || isManagedUiMode()) return null
   const id = tabKey(finding)
   if (!isLinkableFindingId(id)) return null
   const reportName = finding._reportName || state.currentFile || ''
