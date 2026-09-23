@@ -89,7 +89,22 @@ it('a corrupt index falls back to parsing and regenerates a valid index after th
   assert.equal(reads, 1)
   // Let the asynchronous hash and best-effort persistence finish.
   await saved.promise
-  assert.equal(stored.get(entry.integrity).version, 1)
+  assert.equal(stored.get(entry.integrity).version, 2)
+  const metadata = await buildBundleDetails(entry.integrity, entry, { sources: false })
+  assert.equal(metadata.metadataOnly, true)
+  assert.equal(reads, 1)
+})
+
+it('an index from an older version is not served, lends nothing to the parse, and is rewritten on open', async () => {
+  // A version 1 index whose sizes are wrong, as one written before #313 was.
+  stored.set(entry.integrity, { ...index, version: 1, files: index.files.map(([path, , hash]) => [path, 999, hash]) })
+  const full = await buildBundleDetails(entry.integrity, entry, { sources: false })
+  assert.equal(full.metadataOnly, undefined, 'a stale index is not rendered')
+  assert.equal(reads, 1)
+  assert.equal(full.fileSizes, undefined, 'its sizes are not copied onto the parse')
+  await saved.promise
+  assert.equal(stored.get(entry.integrity).version, 2)
+  assert.deepEqual(stored.get(entry.integrity).files, index.files)
   const metadata = await buildBundleDetails(entry.integrity, entry, { sources: false })
   assert.equal(metadata.metadataOnly, true)
   assert.equal(reads, 1)

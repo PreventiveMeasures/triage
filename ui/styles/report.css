@@ -1829,6 +1829,11 @@ bundle-search {
     & .bundles-source-row:hover {
       background: var(--surface);
     }
+    /* A resource row (image, font) opens nothing, so it takes no
+       hover tint to say it would. */
+    & .bundles-source-row.is-resource:hover {
+      background: transparent;
+    }
     & .bundles-source-path {
       flex: 1; min-width: 0;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

@@ -14,7 +14,7 @@ import { describe, it } from 'node:test'
 
 const { Bundle } = await import('@exodus/stasis-core/bundle')
 const { createTerminal } = await import('@preventive/terminal')
-const { bundleFilesAsMap, bundlePackageDirs, bundlePackageVersions, bundleSourcesAsMap } = await import('../ui/view/bundle-sources.js')
+const { bundleFileKinds, bundleFileSizes, bundleFilesAsMap, bundlePackageDirs, bundlePackageVersions, bundleSourceSizes, bundleSourcesAsMap } = await import('../ui/view/bundle-sources.js')
 
 // A real Bundle, because the point of these cases is what the package
 // actually stores: `Bundle.sources` is the raw content of every entry,
@@ -295,5 +295,171 @@ describe('bundleFilesAsMap — what the terminal makes of the bytes', () => {
 
   it('lists it beside the source, as a file like any other', async () => {
     assert.equal((await terminal().run('ls')).stdout, 'index.js\nlogo.png\n')
+  })
+})
+
+describe('bundleFileSizes — what the Overview and Treemap weigh', () => {
+  // The shape that split two near-identical bundles 5 MB / 219 MB for the
+  // same directory: a directory capture at `a/b/c` over the real files
+  // under it, most of them images. The terminal is the reference — `du`
+  // and `wc -c` there are what the views have to agree with.
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff, 0xfe, 0x01, 0x02])
+  const details = () => {
+    const bundle = new Bundle({
+      config: { scope: 'full' },
+      modules: new Map([['.', { name: 'app', version: '1.0.0', files: {
+        'index.js': 'export const a = "€"\n',
+        'a/b/c': JSON.stringify(['icon.svg', 'logo.png', 'util.js']),
+        'a/b/c/icon.svg': '<svg>€</svg>',
+        'a/b/c/logo.png': Buffer.from(png).toString('base64'),
+        'a/b/c/util.js': 'module.exports = 1\n',
+      } }]]),
+      formats: new Map([
+        ['index.js', 'module'], ['a/b/c', 'directory'], ['a/b/c/icon.svg', 'resource'],
+        ['a/b/c/logo.png', 'resource:base64'], ['a/b/c/util.js', 'commonjs'],
+      ]),
+    })
+    return { kind: 'stasis', bundle: Bundle.parse(bundle.serialize()) }
+  }
+  const terminal = (d) => createTerminal(bundleFilesAsMap(d), { mount: '/sources', home: '/', writable: '/tmp/' })
+
+  it('weighs every file by the bytes `wc -c` reports for it', async () => {
+    const d = details()
+    const sizes = bundleFileSizes(d)
+    const t = terminal(d)
+    for (const path of bundleFilesAsMap(d).keys()) {
+      const wc = (await t.run(`wc -c ${path}`)).stdout.trim().split(/\s+/u)[0]
+      assert.equal(sizes.get(path), Number(wc), path)
+    }
+  })
+
+  it('weighs a base64 resource by its bytes, not by its base64 or not at all', () => {
+    const logo = bundleFileSizes(details()).get('a/b/c/logo.png')
+    assert.equal(logo, png.length)
+    assert.notEqual(logo, Buffer.from(png).toString('base64').length)
+  })
+
+  it('weighs a utf8 resource by the UTF-8 it encodes to', () => {
+    assert.equal(bundleFileSizes(details()).get('a/b/c/icon.svg'), Buffer.byteLength('<svg>€</svg>'))
+  })
+
+  it('gives a directory capture no size, so it cannot pass for a file over its own directory', () => {
+    const sizes = bundleFileSizes(details())
+    assert.equal(sizes.has('a/b/c'), true, 'the inventory still records it')
+    assert.equal(sizes.get('a/b/c'), null)
+  })
+
+  it('adds up to the files the terminal holds, and only those', async () => {
+    const d = details()
+    const files = [...bundleFileSizes(d)].filter(([, size]) => size !== null)
+    const found = (await terminal(d).run('find /sources -type f')).stdout.trim().split('\n')
+    assert.deepEqual(files.map(([path]) => `/sources/${path}`).toSorted(), found.toSorted())
+    const total = files.reduce((sum, [, size]) => sum + size, 0)
+    const wc = (await terminal(d).run(`wc -c ${found.join(' ')}`)).stdout.trim().split('\n').at(-1)
+    assert.equal(total, Number(wc.trim().split(/\s+/u)[0]))
+  })
+
+  it('narrows to source for the import graph, which draws no images', () => {
+    const sizes = bundleSourceSizes(details())
+    assert.deepEqual([...sizes].filter(([, size]) => size !== null).map(([path]) => path).toSorted(), ['a/b/c/util.js', 'index.js'])
+    assert.deepEqual([...sizes.keys()], [...bundleFileSizes(details()).keys()], 'over the same inventory')
+  })
+
+  it('keeps every entry of a bundle that records no formats (v0)', () => {
+    const v0 = { kind: 'stasis', bundle: Bundle.parse(JSON.stringify({
+      version: 0, config: { scope: 'node_modules' }, formats: {}, imports: {}, sources: { 'node_modules/dep/a.js': 'abc' },
+    })) }
+    assert.deepEqual(bundleFileSizes(v0), new Map([['node_modules/dep/a.js', 3]]))
+    assert.deepEqual(bundleSourceSizes(v0), bundleFileSizes(v0))
+  })
+})
+
+describe('bundleFileSizes — a base64 spelling the terminal cannot read has no size', () => {
+  // Every spelling here is checked against the terminal itself: where
+  // `wc -c` reads the file, the size is what it says; where it refuses
+  // the spelling, there is no size to report rather than an invented one.
+  const spellings = {
+    'padded.bin': Buffer.from([1, 2, 3, 4]).toString('base64'),
+    'unpadded.bin': Buffer.from([1, 2, 3, 4]).toString('base64').replace(/=+$/u, ''),
+    'two-bytes.bin': Buffer.from([0xff, 0xfe]).toString('base64'),
+    'empty.bin': '',
+    'bad-char.bin': '!!!not base64!!!',
+    'space.bin': 'AQID BA==',
+    'stray-bits.bin': 'QR==',
+    'stray-bits-2.bin': 'QUJ=',
+    'triple-pad.bin': 'Q===',
+    'short.bin': 'QUJDR',
+    'misplaced-pad.bin': 'QQ==QUJD',
+  }
+  const details = () => ({ kind: 'stasis', bundle: new Bundle({
+    config: { scope: 'full' },
+    modules: new Map([['.', { name: 'app', version: '1.0.0', files: spellings }]]),
+    formats: new Map(Object.keys(spellings).map((path) => [path, 'resource:base64'])),
+  }) })
+
+  it('agrees with `wc -c` wherever the terminal reads the file, and gives no size where it cannot', async () => {
+    const sizes = bundleFileSizes(details())
+    const t = createTerminal(bundleFilesAsMap(details()), { mount: '/sources', home: '/', writable: '/tmp/' })
+    for (const path of Object.keys(spellings)) {
+      const r = await t.run(`wc -c ${path}`)
+      const expected = r.exitCode === 0 ? Number(r.stdout.trim().split(/\s+/u)[0]) : null
+      assert.equal(sizes.get(path), expected, `${path} (${JSON.stringify(spellings[path])})`)
+    }
+    // And the cases are not all one kind.
+    assert.deepEqual([...sizes].filter(([, size]) => size !== null).map(([path]) => path).toSorted(),
+      ['empty.bin', 'padded.bin', 'two-bytes.bin', 'unpadded.bin'])
+  })
+
+  it('still lists the file, as the terminal does', () => {
+    assert.equal(bundleFileKinds(details()).get('bad-char.bin'), 'resource')
+  })
+})
+
+describe('bundleFileKinds — what the Overview lists, and which rows open a source', () => {
+  const details = () => bundleWith(
+    {
+      'index.js': 'x\n',
+      'lib': JSON.stringify(['logo.png', 'icon.svg']),
+      'lib/logo.png': Buffer.from([0x89, 0xff]).toString('base64'),
+      'lib/icon.svg': '<svg/>',
+    },
+    { 'index.js': 'commonjs', 'lib': 'directory', 'lib/logo.png': 'resource:base64', 'lib/icon.svg': 'resource' },
+  )
+
+  it('tells source from resource, and leaves the directory capture out', () => {
+    assert.deepEqual(bundleFileKinds(details()), new Map([
+      ['index.js', 'source'], ['lib/logo.png', 'resource'], ['lib/icon.svg', 'resource'],
+    ]))
+  })
+
+  it('lists exactly the files the terminal mounts', () => {
+    assert.deepEqual([...bundleFileKinds(details()).keys()].toSorted(), [...bundleFilesAsMap(details()).keys()].toSorted())
+  })
+
+  it('calls everything source where no format says otherwise (v0, sourcemaps)', () => {
+    const v0 = { kind: 'stasis', bundle: Bundle.parse(JSON.stringify({
+      version: 0, config: { scope: 'node_modules' }, formats: {}, imports: {}, sources: { 'node_modules/dep/a.js': 'abc' },
+    })) }
+    assert.deepEqual(bundleFileKinds(v0), new Map([['node_modules/dep/a.js', 'source']]))
+  })
+
+  it('leaves out a source with no body to mount, which the terminal does not list either', () => {
+    // A sourcemap entry whose content was left out, and a stasis entry whose
+    // body is no string under no resource format: neither is a file.
+    const map = { kind: 'sourcemap', json: { sources: ['a.js', 'b.js'], sourcesContent: ['a', null] } }
+    assert.deepEqual(bundleFileKinds(map), new Map([['a.js', 'source']]))
+    assert.deepEqual([...bundleFileKinds(map).keys()], [...bundleFilesAsMap(map).keys()])
+    const odd = bundleWith({ 'a.js': 'x', 'odd.png': { base64: 'x' } }, { 'a.js': 'module' })
+    assert.deepEqual(bundleFileKinds(odd), new Map([['a.js', 'source']]))
+    assert.deepEqual([...bundleFileKinds(odd).keys()], [...bundleFilesAsMap(odd).keys()])
+  })
+
+  it('leaves out a resource whose body is no string, under either resource format', () => {
+    const odd = bundleWith(
+      { 'a.js': 'x', 'blob.bin': Buffer.from([1, 2, 3]), 'raw.png': 7, 'bad.png': '!!!' },
+      { 'a.js': 'module', 'blob.bin': 'resource', 'raw.png': 'resource:base64', 'bad.png': 'resource:base64' },
+    )
+    assert.deepEqual(bundleFileKinds(odd), new Map([['a.js', 'source'], ['bad.png', 'resource']]))
+    assert.deepEqual([...bundleFileKinds(odd).keys()], [...bundleFilesAsMap(odd).keys()])
   })
 })

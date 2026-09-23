@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { it } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { bundleNeedsSources, computeBundleFileHashes, createBundleMetadata, parseBundleMetadata } from '../ui/view/bundle-metadata.js'
-import { bundlePackageDirs, bundleSourceSizes, bundleSourcesAsMap } from '../ui/view/bundle-sources.js'
+import { bundleFileKinds, bundleFileSizes, bundleFilesAsMap, bundlePackageDirs, bundleSourceSizes, bundleSourcesAsMap } from '../ui/view/bundle-sources.js'
 import { bundleGraphReasons, bundleImportsAsMap } from '../ui/view/bundle-graph-inputs.js'
 import { computeFileHash } from '../report/index.js'
 
@@ -26,10 +26,15 @@ it('round-trips hashes, UTF-8 byte sizes, package identity, imports, reasons, an
   assert.ok(!serialized.includes('private'))
   const cached = parseBundleMetadata(JSON.parse(serialized), full.integrity)
   assert.equal(cached.metadataOnly, true)
+  assert.deepEqual(bundleFileSizes(cached), bundleFileSizes(full))
   assert.deepEqual(bundleSourceSizes(cached), bundleSourceSizes(full))
+  assert.equal(cached.stale, false)
   assert.equal(cached.fileSizes.get('src/main.js'), Buffer.byteLength('private source €😀'))
   assert.equal(cached.fileSizes.get('src/empty.js'), 0)
   assert.equal(cached.fileSizes.get('icon.png'), null)
+  // An entry with no body to mount is no file to list, whichever way it is opened.
+  assert.equal(bundleFileKinds(full).has('icon.png'), false)
+  assert.deepEqual(bundleFileKinds(cached), bundleFileKinds(full))
   assert.equal(cached.lineCounts.get('src/main.js'), 1)
   assert.equal(cached.lineCounts.get('src/empty.js'), 0)
   assert.equal(cached.lineCounts.has('icon.png'), false)
@@ -67,7 +72,8 @@ it('supports legacy Stasis bundles and sourcemaps with absent source content', a
 it('rejects wrong integrities, versions, invalid sizes/hashes and mismatched inventories', async () => {
   const data = await createBundleMetadata(details())
   for (const corrupt of [
-    { ...data, integrity: 'other' }, { ...data, version: 2 },
+    { ...data, integrity: 'other' }, { ...data, version: 3 },
+    { ...data, files: data.files.map((row) => row.slice(0, 3)) },
     { ...data, files: [['src/main.js', -1, 'bad']] },
     { ...data, files: [['src/main.js', 12, 'bad']] },
     { ...data, files: [...data.files, data.files[0]] }, { ...data, files: data.files.slice(1) },
@@ -86,5 +92,117 @@ it('shares in-flight hashing and reuses precomputed hashes for source-consuming 
   for (const tab of ['overview', 'graph', 'treemap', 'issues', 'advisories']) {
     assert.equal(bundleNeedsSources(tab), false)
     assert.equal(bundleNeedsSources(tab, 'src/main.js'), true)
+  }
+})
+
+// The bundle a stale index hid: a directory capture over the directory it
+// lists, with a base64 image and a utf8 resource beside the source.
+function withResources() {
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, 0xfe])
+  return { integrity: 'sha512-resources', kind: 'stasis', size: 999, bundle: Bundle.parse(new Bundle({
+    modules: new Map([['.', { name: 'app', version: '1', files: {
+      'src/main.js': 'export default 1\n',
+      'assets': JSON.stringify(['icon.svg', 'logo.png']),
+      'assets/icon.svg': '<svg/>',
+      'assets/logo.png': png.toString('base64'),
+    } }]]),
+    formats: new Map([['src/main.js', 'module'], ['assets', 'directory'], ['assets/icon.svg', 'resource'], ['assets/logo.png', 'resource:base64']]),
+    entries: new Set(['src/main.js']),
+  }).serialize()) }
+}
+
+it('keeps a resource\'s byte size, and no hash or line count, since it is no source', async () => {
+  const full = withResources()
+  const data = await createBundleMetadata(full)
+  assert.equal(data.version, 2)
+  const rows = new Map(data.files.map(([path, ...rest]) => [path, rest]))
+  assert.deepEqual(rows.get('assets/logo.png'), [7, null, null])
+  assert.deepEqual(rows.get('assets/icon.svg'), [6, null, null])
+  assert.deepEqual(rows.get('assets'), [null, null, null])
+  assert.equal(rows.get('src/main.js')[0], 17)
+  const cached = parseBundleMetadata(JSON.parse(JSON.stringify(data)), full.integrity)
+  assert.equal(cached.stale, false)
+  assert.deepEqual(bundleFileSizes(cached), bundleFileSizes(full))
+  assert.deepEqual(bundleFileKinds(cached), bundleFileKinds(full), 'a metadata-only open tells resources apart too')
+  assert.deepEqual([...cached.fileHashes.keys()], ['src/main.js'])
+})
+
+it('records a base64 resource that does not decode without a size, and reads it back', async () => {
+  const full = withResources()
+  full.bundle = Bundle.parse(JSON.stringify({ ...JSON.parse(full.bundle.serialize()) }))
+  full.bundle.modules.get('.').files['assets/logo.png'] = '!!!not base64!!!'
+  const data = await createBundleMetadata(full)
+  assert.deepEqual(data.files.find(([path]) => path === 'assets/logo.png'), ['assets/logo.png', null, null, null])
+  const cached = parseBundleMetadata(JSON.parse(JSON.stringify(data)), full.integrity)
+  assert.equal(cached.fileSizes.get('assets/logo.png'), null)
+  assert.equal(bundleFileKinds(cached).get('assets/logo.png'), 'resource', 'still a file to list')
+})
+
+it('rejects a current index whose hashes disagree with what is source', async () => {
+  const data = await createBundleMetadata(withResources())
+  const hash = data.files.find(([path]) => path === 'src/main.js')[2]
+  const edit = (path, change) => ({ ...data, files: data.files.map((row) => row[0] === path ? change(row) : row) })
+  for (const corrupt of [
+    edit('assets/logo.png', ([path, size, , lines]) => [path, size, hash, lines]),
+    edit('src/main.js', ([path, size, , lines]) => [path, size, null, lines]),
+    edit('assets', ([path, , , lines]) => [path, null, hash, lines]),
+  ]) assert.throws(() => parseBundleMetadata(corrupt, data.integrity))
+})
+
+it('reads a version 1 index for its hashes, but marks it stale', async () => {
+  // What the code before #313 wrote for this bundle: the directory
+  // capture a file, the image its base64 text, each with a hash.
+  const full = withResources()
+  const hashOf = (content) => computeFileHash(content)
+  const v1 = { version: 1, integrity: full.integrity, kind: 'stasis', size: full.size, bundle: (await createBundleMetadata(full)).bundle, files: [] }
+  for (const [path, content] of full.bundle.sources) v1.files.push([path, Buffer.byteLength(content), await hashOf(content), 1])
+  const cached = parseBundleMetadata(v1, full.integrity)
+  assert.equal(cached.stale, true)
+  assert.equal(cached.fileHashes.get('src/main.js'), await hashOf('export default 1\n'), 'hashes still serve report lookups')
+  assert.notDeepEqual(cached.fileSizes, bundleFileSizes(full), 'its sizes are the ones that were wrong')
+  // Three-column rows are version 1 only, and still read.
+  assert.equal(parseBundleMetadata({ ...v1, files: v1.files.map((row) => row.slice(0, 3)) }, full.integrity).stale, true)
+})
+
+it('lists exactly the files the terminal mounts, for every entry shape, on a full and a metadata-only open', async () => {
+  // Every shape a parsed bundle can carry: `Bundle.parse` does not check a
+  // body's type, so a malformed bundle can hold a non-string body under any
+  // format.
+  const files = {
+    'src/a.js': 'export default 1\n',
+    'src/odd.js': 42,
+    'res/icon.svg': '<svg/>',
+    'res/blob.bin': Buffer.from([1, 2, 3]),
+    'res/logo.png': Buffer.from([0x89, 0xff]).toString('base64'),
+    'res/broken.png': '!!!not base64!!!',
+    'res/null.png': null,
+    'res': JSON.stringify(['blob.bin', 'broken.png', 'icon.svg', 'logo.png', 'null.png']),
+  }
+  const formats = new Map([
+    ['src/a.js', 'module'], ['src/odd.js', 'module'], ['res/icon.svg', 'resource'], ['res/blob.bin', 'resource'],
+    ['res/logo.png', 'resource:base64'], ['res/broken.png', 'resource:base64'], ['res/null.png', 'resource:base64'], ['res', 'directory'],
+  ])
+  const full = { integrity: 'sha512-shapes', kind: 'stasis', size: 1, bundle: new Bundle({
+    modules: new Map([['.', { name: 'app', version: '1', files }]]), formats, entries: new Set(['src/a.js']),
+  }) }
+  const mounted = [...bundleFilesAsMap(full).keys()].toSorted()
+  assert.deepEqual(mounted, ['res/broken.png', 'res/icon.svg', 'res/logo.png', 'src/a.js'])
+  assert.deepEqual([...bundleFileKinds(full).keys()].toSorted(), mounted)
+  const data = await createBundleMetadata(full)
+  assert.deepEqual(data.unsized, ['res/broken.png'])
+  const cached = parseBundleMetadata(JSON.parse(JSON.stringify(data)), full.integrity)
+  assert.deepEqual(bundleFileKinds(cached), bundleFileKinds(full))
+  assert.deepEqual(bundleFileKinds(full), new Map([
+    ['src/a.js', 'source'], ['res/icon.svg', 'resource'], ['res/logo.png', 'resource'], ['res/broken.png', 'resource'],
+  ]))
+})
+
+it('rejects an `unsized` list that names a sized file, a non-base64 path, or a path twice', async () => {
+  const full = withResources()
+  full.bundle.modules.get('.').files['assets/logo.png'] = '!!!not base64!!!'
+  const data = await createBundleMetadata(full)
+  assert.doesNotThrow(() => parseBundleMetadata(data, data.integrity))
+  for (const unsized of [['src/main.js'], ['assets'], ['assets/logo.png', 'assets/logo.png'], 'assets/logo.png', ['nowhere.png']]) {
+    assert.throws(() => parseBundleMetadata({ ...data, unsized }, data.integrity), JSON.stringify(unsized))
   }
 })
