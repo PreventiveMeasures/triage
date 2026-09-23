@@ -26,7 +26,7 @@ import { bundleFileKinds, bundleFileSizes, bundlePackageDirs, bundleSourceSizes,
 import { bundleNeedsSources, bundleSourceLineCount, computeBundleFileHashes } from './bundle-metadata.js'
 import { bundleHasSbomComponents } from './sbom.js'
 import { buildSearchMatcher, runBundleSearch } from './bundle-search-scan.js'
-import { bundlePkgOf, ownSourceSplittable } from './bundle-pkg-of.js'
+import { bundlePkgOf, ownSourceSplittable, pkgLabel } from './bundle-pkg-of.js'
 import { bundleGraphPackageOf, bundleGraphReasons, bundleImportsAsMap, bundleLayerRoots, filterBundleGraphReason } from './bundle-graph-inputs.js'
 import { tabKey } from './group.js'
 import { langForPath, highlight as prismHighlight } from './prism-highlight.js'
@@ -375,7 +375,9 @@ function renderBundleSizeDistribution(items) {
     <ul class="bundles-dist-list">
       ${repeat(sorted, ([pkg]) => pkg, ([pkg, size]) => {
         const pct = (size / total * 100).toFixed(1)
-        const label = pkg === '__own__' ? 'own source' : pkg
+        // Shown by name; the tooltip keeps the full key, which tells two
+        // packages of one name (npm `log`, Cargo `vendor/log`) apart.
+        const label = pkgLabel(pkg)
         const c = pkgColor(pkg)
         return html`<li>
           <span class="bundles-dist-dot" style=${styleMap({ background: c })}></span>

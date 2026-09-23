@@ -1,4 +1,5 @@
 import { packageOf } from './utils.js'
+import { pkgLabel } from '../bundle-pkg-of.js'
 import { totalFindings } from '../file-counts.js'
 import { SEVERITIES, depsDirName } from '../format.js'
 
@@ -316,9 +317,10 @@ export function buildPackageGraph(graph) {
 }
 
 // Display name for a package key — the synthetic `__own__` bucket
-// reads as "own source"; every real package is shown by name.
+// reads as "own source"; every real package is shown by name, a
+// vendored one without its `vendor/` dir (see `pkgLabel`).
 export function pkgLabelOf(pkg) {
-  return pkg === '__own__' ? 'own source' : pkg
+  return pkgLabel(pkg)
 }
 
 // Strip a file path's package anchor so callers can show

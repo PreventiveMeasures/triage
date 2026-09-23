@@ -15,7 +15,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-const { bundlePkgOf, ownSourceSplittable } = await import('../ui/view/bundle-pkg-of.js')
+const { bundlePkgOf, ownSourceSplittable, pkgLabel } = await import('../ui/view/bundle-pkg-of.js')
 
 describe('bundlePkgOf', () => {
   it('buckets node_modules files by package name', () => {
@@ -71,36 +71,27 @@ describe('bundlePkgOf', () => {
   })
 
   describe('stasis packageDir (workspace packages)', () => {
-    it('buckets a vendored package by its package dir, named as its ecosystem names it', () => {
+    it('buckets a vendored package by its package dir', () => {
       // PHP `vendor/<vendor>/<pkg>` — the heuristic alone would
-      // collapse both under the shared `vendor` top-level dir. The
-      // bucket is Composer's own name for each, not the dir.
+      // collapse both under the shared `vendor` top-level dir.
       assert.equal(
         bundlePkgOf('vendor/aws/aws-sdk-php/src/S3/S3Client.php', { packageDir: 'vendor/aws/aws-sdk-php' }),
-        'aws/aws-sdk-php',
+        'vendor/aws/aws-sdk-php',
       )
       assert.equal(
         bundlePkgOf('vendor/aws/aws-crt-php/src/AWS.php', { packageDir: 'vendor/aws/aws-crt-php' }),
-        'aws/aws-crt-php',
+        'vendor/aws/aws-crt-php',
       )
     })
 
-    it('names a `cargo vendor` crate by the crate, not by `vendor/<crate>`', () => {
-      assert.equal(bundlePkgOf('vendor/console_log/src/lib.rs', { packageDir: 'vendor/console_log' }), 'console_log')
-      assert.equal(bundlePkgOf('vendor/solana-program/src/lib.rs', { packageDir: 'vendor/solana-program' }), 'solana-program')
-      // A second version of a crate is vendored beside the first under a
-      // versioned dir; it stays its own package.
-      assert.equal(bundlePkgOf('vendor/syn-1.0.109/src/lib.rs', { packageDir: 'vendor/syn-1.0.109' }), 'syn-1.0.109')
-    })
-
-    it('names a Go vendored module by its module path, and a nested one by the innermost', () => {
-      assert.equal(bundlePkgOf('vendor/github.com/pkg/errors/errors.go', { packageDir: 'vendor/github.com/pkg/errors' }), 'github.com/pkg/errors')
-      assert.equal(bundlePkgOf('app/vendor/x/vendor/y/y.go', { packageDir: 'app/vendor/x/vendor/y' }), 'y')
-    })
-
-    it('takes `vendor` only as a whole segment with a package under it', () => {
-      assert.equal(bundlePkgOf('crates/vendor-tools/src/lib.rs', { packageDir: 'crates/vendor-tools' }), 'crates/vendor-tools')
-      assert.equal(bundlePkgOf('vendor/lib.rs', { packageDir: 'vendor' }), 'vendor')
+    it('keeps a vendored package apart from an npm package of the same name', () => {
+      // One bundle can carry both — a Rust program with a JS client — and
+      // the bucket is what sizes, edges and colors are grouped by.
+      const npm = bundlePkgOf('node_modules/log/index.js', { packageDir: 'node_modules/log' })
+      const cargo = bundlePkgOf('vendor/log/src/lib.rs', { packageDir: 'vendor/log' })
+      assert.equal(npm, 'log')
+      assert.equal(cargo, 'vendor/log')
+      assert.notEqual(npm, cargo)
     })
 
     it('keeps sibling workspace packages under a shared parent separate', () => {
@@ -207,5 +198,42 @@ describe('ownSourceSplittable', () => {
       const withDirs = new Map([...dirs, ['src/a.php', '.'], ['lib/c.php', '.']])
       assert.equal(ownSourceSplittable(paths, (p) => withDirs.get(p)), true)
     })
+  })
+})
+
+describe('pkgLabel', () => {
+  it('spells out own source', () => {
+    assert.equal(pkgLabel('__own__'), 'own source')
+  })
+
+  it('names a `cargo vendor` crate by the crate, not by `vendor/<crate>`', () => {
+    assert.equal(pkgLabel('vendor/console_log'), 'console_log')
+    assert.equal(pkgLabel('vendor/solana-program'), 'solana-program')
+    // A second version of a crate is vendored beside the first under a
+    // versioned dir, and is shown as that dir.
+    assert.equal(pkgLabel('vendor/syn-1.0.109'), 'syn-1.0.109')
+  })
+
+  it('names a Composer package and a Go module as their ecosystems do', () => {
+    assert.equal(pkgLabel('vendor/aws/aws-sdk-php'), 'aws/aws-sdk-php')
+    assert.equal(pkgLabel('vendor/github.com/pkg/errors'), 'github.com/pkg/errors')
+    // A nested vendor dir names the innermost package.
+    assert.equal(pkgLabel('app/vendor/x/vendor/y'), 'y')
+  })
+
+  it('takes `vendor` only as a whole segment with a package under it', () => {
+    assert.equal(pkgLabel('crates/vendor-tools'), 'crates/vendor-tools')
+    assert.equal(pkgLabel('vendor'), 'vendor')
+  })
+
+  it('passes anything but a package key through, as the graph asks with none focused', () => {
+    assert.equal(pkgLabel(null), null)
+    assert.equal(pkgLabel(undefined), undefined)
+  })
+
+  it('leaves npm names, scoped ones included, and workspace dirs as they are', () => {
+    assert.equal(pkgLabel('log'), 'log')
+    assert.equal(pkgLabel('@scope/pkg'), '@scope/pkg')
+    assert.equal(pkgLabel('packages/common'), 'packages/common')
   })
 })

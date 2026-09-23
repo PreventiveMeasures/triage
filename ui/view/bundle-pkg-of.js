@@ -28,21 +28,20 @@
 // (from `bundlePackageDirs` in bundle-sources.js), when one is known.
 // It takes precedence over path heuristics: a module can contain its own
 // `dependencies/` directory without those files becoming new packages.
-// Recorded `node_modules/<pkg>` directories use the bare package name.
-// So do vendored ones, named by the path after the (last) `vendor/`:
-// `cargo vendor` puts a crate at `vendor/<crate>`, Composer a package at
-// `vendor/<vendor>/<pkg>`, Go a module at `vendor/<module path>`, and in
-// each the rest of the path is what the package is called. Other named
-// module directories stay separate under their full dir, and `.` uses
-// own-source bucketing. Only bundles without this metadata use the path
-// heuristic.
+// Recorded `node_modules/<pkg>` directories use the bare package name;
+// other named module directories stay separate under their full dir, and
+// `.` uses own-source bucketing. Only bundles without this metadata use
+// the path heuristic.
+//
+// The result is the package's identity — what files, sizes and edges are
+// grouped by — so a vendored package keeps its dir here: Cargo's
+// `vendor/log` is not npm's `log`, and one bundle can carry both. It is
+// `pkgLabel` that shows it by name.
 export function bundlePkgOf(path, { splitOwnDirs = true, packageDir = null } = {}) {
   if (packageDir) {
     if (packageDir !== '.') {
       const npm = packageDir.match(/(?:^|\/)node_modules\/(@[^/]+\/[^/]+|[^/]+)$/u)
-      if (npm && npm[1] !== '.pnpm') return npm[1]
-      const vendored = packageDir.match(/^(?:.*\/)?vendor\/(.+)$/u)
-      return vendored ? vendored[1] : packageDir
+      return npm && npm[1] !== '.pnpm' ? npm[1] : packageDir
     }
   } else {
     const re = /(?:^|\/)(?:node_modules|dependencies)\/(@[^/]+\/[^/]+|[^/]+)/gu
@@ -88,6 +87,16 @@ export function ownSourceSplittable(paths, packageDirOf = null) {
 // Display label for a package bucket: `__own__` is the sentinel for
 // own-source (non-dependency) files, spelled out as "own source" in
 // package lists and tooltips.
+//
+// A vendored package is shown by the path after the (last) `vendor/`,
+// which in each vendoring layout is what the package is called: `cargo
+// vendor` puts a crate at `vendor/<crate>`, Composer a package at
+// `vendor/<vendor>/<pkg>`, Go a module at `vendor/<module path>`. Only
+// the label is shortened; the bucket keeps the dir (see `bundlePkgOf`).
+// Anything but a package key (the graph asks with no package focused)
+// passes through as it came.
 export function pkgLabel(pkg) {
-  return pkg === '__own__' ? 'own source' : pkg
+  if (pkg === '__own__') return 'own source'
+  if (typeof pkg !== 'string') return pkg
+  return pkg.match(/^(?:.*\/)?vendor\/(.+)$/u)?.[1] ?? pkg
 }
