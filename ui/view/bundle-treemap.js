@@ -30,7 +30,8 @@
 // its contents. A breadcrumb trail in the header walks back up
 // (each ancestor is a button; the home crumb returns to the whole
 // bundle). File cells keep their existing behavior — a click opens
-// the source viewer via the `[data-bundle-view-source]` delegate.
+// the source viewer via the `[data-bundle-view-source]` delegate —
+// save a resource's (image, font), which has no source to open.
 //
 // A header switch (top right, mirroring the Search tab's Context
 // pill) swaps the squarified projection for a sunburst over the same
@@ -51,7 +52,7 @@
 import { LitElement, html, render as litRender, nothing, svg } from 'lit'
 import { styleMap } from 'lit/directives/style-map.js'
 import { classMap } from 'lit/directives/class-map.js'
-import { bundleFileSizes, bundlePackageDirs } from './bundle-sources.js'
+import { bundleFileKinds, bundleFileSizes, bundlePackageDirs } from './bundle-sources.js'
 import { bundleGraphReasons } from './bundle-graph-inputs.js'
 import { formatBytes, stripCommonPathPrefix } from './format.js'
 import { pkgColor } from './graph/utils.js'
@@ -422,6 +423,9 @@ class BundleTreemap extends LitElement {
     // dir. Null for sourcemap bundles; leaves then bucket via the path
     // heuristic alone.
     const packageDirs = bundlePackageDirs(this.details)
+    // Resources (images, fonts) are cells like any file, but have no source
+    // for the viewer to open, so their cells carry no viewer link.
+    const kinds = bundleFileKinds(this.details)
     const { prefix, stripped } = stripCommonPathPrefix(origPaths)
     const root = { name: '', children: new Map(), value: 0, isFile: false }
     let total = 0
@@ -457,7 +461,7 @@ class BundleTreemap extends LitElement {
         // file labels) but resolve the stasis package dir from the
         // original path (the map is keyed pre-strip).
         const pkg = bundlePkgOf(stripped[i], { packageDir: packageDirs?.get(origPaths[i]) })
-        leaf = { name: base, isFile: true, value: 0, origPath: origPaths[i], pkg }
+        leaf = { name: base, isFile: true, value: 0, origPath: origPaths[i], pkg, resource: kinds.get(origPaths[i]) === 'resource' }
         node.children.set(base, leaf)
       }
       leaf.value += size
@@ -636,7 +640,7 @@ class BundleTreemap extends LitElement {
     return html`<div
       class="bundle-treemap-node bundle-treemap-leaf bundle-treemap-file"
       style=${style}
-      data-bundle-view-source=${c.node.origPath}
+      data-bundle-view-source=${c.node.resource ? nothing : c.node.origPath}
       data-tt-path=${c.node.path}
       data-tt-pkg=${ttPkg}
       data-tt-color=${color}
@@ -662,7 +666,7 @@ class BundleTreemap extends LitElement {
         class="bundle-treemap-node bundle-treemap-arc"
         d=${d}
         fill=${color}
-        data-bundle-view-source=${node.origPath}
+        data-bundle-view-source=${node.resource ? nothing : node.origPath}
         data-tt-path=${node.path}
         data-tt-pkg=${ttPkg}
         data-tt-color=${color}

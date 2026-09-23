@@ -21,7 +21,7 @@ import { FILE_ICONS, REPORT_LOGOS, displayName, groupOf } from './file-display.j
 import { BUNDLE_ICON_SVG } from './icons.js'
 import { findingsForFileHash, indexedHashFindingCount, reportsForFinding, reportsForFindingByPackage, reportsForFindingByRepo, state } from '#client/index.js'
 import { SEVERITIES, SEVERITY_ORDER, formatBytes, formatRunMeta, stripCommonPathPrefix, titledDescription } from './format.js'
-import { bundleFileSizes, bundlePackageDirs, bundleSourceSizes, bundleSourcesAsMap } from './bundle-sources.js'
+import { bundleFileKinds, bundleFileSizes, bundlePackageDirs, bundleSourceSizes, bundleSourcesAsMap } from './bundle-sources.js'
 import { bundleNeedsSources, bundleSourceLineCount, computeBundleFileHashes } from './bundle-metadata.js'
 import { bundleHasSbomComponents } from './sbom.js'
 import { buildSearchMatcher, runBundleSearch } from './bundle-search-scan.js'
@@ -405,7 +405,13 @@ function renderBundleSizeDistribution(items) {
 // built once by the caller (`renderBundleDetails`) so it rides every
 // Overview branch — parsed or not — from a single source. It renders
 // as the third column of `.bundles-detail-meta-row`.
-function renderBundleSourcesPanel(meta, extras, sources, sizes, packageDirs, exportsCol) {
+//
+// `resources` is the set of `sources` entries that are assets (images,
+// fonts) rather than source — a stasis notion, null for sourcemaps. They
+// weigh in the Packages column and list among the Files like any other
+// file, but are counted apart from Sources and open no source viewer:
+// there is no source to show.
+function renderBundleSourcesPanel(meta, extras, sources, sizes, packageDirs, exportsCol, resources = null) {
   const { prefix, stripped } = stripCommonPathPrefix(sources)
   // Compute packages from the STRIPPED paths so the visualization
   // reflects what differs between files (a shared `dist/src/...`
@@ -472,23 +478,22 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes, packageDirs, exp
   const issueChips = SEVERITIES
     .filter((s) => issueSummary[s] > 0)
     .map((s) => html`<span class=${`tree-count-chip ${s}`}>${issueSummary[s]} ${s.replaceAll('_', ' ')}</span>`)
-  // Each row is a button so the whole strip is a click target +
+  // Each source row is a button so the whole strip is a click target +
   // keyboard-focusable; data-bundle-view-source carries the full
-  // (un-stripped) path for the source viewer modal. Rows render
+  // (un-stripped) path for the source viewer modal. Source rows render
   // as buttons regardless of whether the bundle carries content
   // (the click handler checks bundleSourcesAsMap and shows an
-  // empty placeholder when content is missing).
+  // empty placeholder when content is missing). A resource has no
+  // source to view at all, so its row is plain text.
   const filesTpl = sources.length > 0 ? html`<ul class="bundles-sources-list">
     ${order.map((i) => {
       const src = sources[i]
-      const bareSrc = stripped[i]
       const size = sizes[i]
-      return html`<li>
-        <button type="button" class="bundles-source-row" data-bundle-view-source=${src} data-tooltip=${src}>
-          <span class="bundles-source-path">${bareSrc}</span>
-          ${size == null ? nothing : html`<span class="bundles-source-size">${formatBytes(size)}</span>`}
-        </button>
-      </li>`
+      const row = html`<span class="bundles-source-path">${stripped[i]}</span>
+        ${size == null ? nothing : html`<span class="bundles-source-size">${formatBytes(size)}</span>`}`
+      return html`<li>${resources?.has(src)
+        ? html`<div class="bundles-source-row is-resource" data-tooltip=${src}>${row}</div>`
+        : html`<button type="button" class="bundles-source-row" data-bundle-view-source=${src} data-tooltip=${src}>${row}</button>`}</li>`
     })}
   </ul>` : html`<p class="bundles-overview-col-empty">No source files in this bundle.</p>`
   // Reports list — same brand-sticker chip the Issues tab uses on
@@ -527,7 +532,8 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes, packageDirs, exp
         ${meta}
         <dl class="bundles-detail-meta">
           ${extras}
-          <dt>Sources</dt><dd>${sources.length}</dd>
+          <dt>Sources</dt><dd>${sources.length - (resources?.size ?? 0)}</dd>
+          ${resources?.size ? html`<dt>Resources</dt><dd>${resources.size}</dd>` : nothing}
           ${prefix ? html`<dt>Prefix</dt><dd class="mono">${prefix}</dd>` : nothing}
         </dl>
         ${exportsCol ?? nothing}
@@ -2379,7 +2385,9 @@ function renderBundleDetails(entry, details) {
     // directory capture is recorded at a path its real directory also
     // holds and is no file: listed, it would sit among the files as one.
     const sizeMap = bundleFileSizes(details)
-    const sourceNames = [...sizeMap.keys()].filter((path) => sizeMap.get(path) !== null)
+    const kinds = bundleFileKinds(details)
+    const sourceNames = [...kinds.keys()]
+    const resources = new Set(sourceNames.filter((path) => kinds.get(path) === 'resource'))
     // Each `bundle.imports` key is either `*` or a `, `-joined
     // condition set (see `State#conditionsKey` in @exodus/stasis-core);
     // a bundle commonly carries several keys whose underlying
@@ -2404,7 +2412,7 @@ function renderBundleDetails(entry, details) {
     `
     // Stasis records authoritative package boundaries — feed them in so
     // workspace packages bucket apart from their shared parent dir.
-    return renderBundleSourcesPanel(meta, extras, sourceNames, sizes, bundlePackageDirs(details), exportsCol)
+    return renderBundleSourcesPanel(meta, extras, sourceNames, sizes, bundlePackageDirs(details), exportsCol, resources)
   }
   // Stasis without a parsed bundle — likely a brotli decompression
   // that failed silently (no error path filled in). Fall back to

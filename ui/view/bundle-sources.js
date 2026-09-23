@@ -33,6 +33,7 @@ const sourcesCache = new WeakMap()
 const filesCache = new WeakMap()
 const sizesCache = new WeakMap()
 const sourceSizesCache = new WeakMap()
+const kindsCache = new WeakMap()
 
 export function bundleSourcesAsMap(details) {
   if (details?.metadataOnly) return new Map()
@@ -107,20 +108,35 @@ export function bundleFilesAsMap(details) {
   return files
 }
 
+const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+
 // The length of the bytes a base64 spelling decodes to — three for every
-// four characters, less what the padding stands for. The terminal's own
-// arithmetic, so `ls -l` and `wc -c` there agree with the views here.
+// four characters, less what the padding stands for — or null when it
+// decodes to none. The terminal decodes strictly (`@exodus/bytes`): RFC
+// 4648's alphabet, no whitespace, padding present or left off but never
+// wrong, and no stray bits in the last character. A spelling it refuses is
+// a file `wc -c` cannot read, so it gets no size here rather than an
+// invented one. Checked without decoding: a bundle's images are not worth
+// a buffer each just to be weighed.
 function base64ByteLength(text) {
-  const padding = text.endsWith('==') ? 2 : text.endsWith('=') ? 1 : 0
-  return Math.floor((text.length - padding) * 3 / 4)
+  const padded = text.endsWith('=')
+  if (padded ? text.length % 4 !== 0 || text.at(-3) === '=' : text.length % 4 === 1) return null
+  const data = padded ? text.slice(0, text.endsWith('==') ? -2 : -1) : text
+  if (/[^A-Za-z0-9+/]/u.test(data)) return null
+  // A trailing group of 2 or 3 characters spells 1 or 2 bytes; the bits of
+  // its last character past those bytes must be zero.
+  const tail = data.length % 4
+  if (tail > 1 && BASE64_ALPHABET.indexOf(data.at(-1)) & (tail === 2 ? 0x0f : 0x03)) return null
+  return Math.floor(data.length * 3 / 4)
 }
 
 // Every path the bundle records, keyed to the byte size of the file it
 // holds — the size `wc -c` reports for it in the terminal, which is to
 // say the size of the entry in `bundleFilesAsMap`: a source or `resource`
 // weighs the UTF-8 its text encodes to, a `resource:base64` the bytes its
-// base64 decodes to. Null is a path that is no file: a directory capture,
-// or a sourcemap source whose body was left out.
+// base64 decodes to. Null is a path with no size to give: a directory
+// capture, which is no file; a sourcemap source whose body was left out;
+// or a `resource:base64` whose spelling does not decode.
 //
 // The Overview and the Treemap weigh a bundle by this, so what they show
 // adds up to what `du` does. Neither the source-only view nor the base64
@@ -144,6 +160,25 @@ export function bundleFileSizes(details) {
   }
   if (key) sizesCache.set(key, sizes)
   return sizes
+}
+
+// What each recorded path holds, for a view that lists files: 'source', or
+// 'resource' for an image, font or other asset — a file, sized like any
+// other, but none the source viewer can show. A path that holds no file (a
+// directory capture) is absent. It reads formats, not bodies, so it answers
+// for a metadata-only open as it does for a parsed one.
+export function bundleFileKinds(details) {
+  const sizes = bundleFileSizes(details)
+  if (kindsCache.has(sizes)) return kindsCache.get(sizes)
+  const formats = details?.kind === 'stasis' ? details.bundle?.formats : null
+  const kinds = new Map()
+  for (const path of sizes.keys()) {
+    const format = formats?.get(path)
+    if (!Bundle.isResourceFormat(format)) kinds.set(path, 'source')
+    else if (format === 'resource' || format === 'resource:base64') kinds.set(path, 'resource')
+  }
+  kindsCache.set(sizes, kinds)
+  return kinds
 }
 
 // `bundleFileSizes` narrowed to source: a resource's size is nulled, as a

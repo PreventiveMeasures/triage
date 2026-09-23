@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { it } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { bundleNeedsSources, computeBundleFileHashes, createBundleMetadata, parseBundleMetadata } from '../ui/view/bundle-metadata.js'
-import { bundleFileSizes, bundlePackageDirs, bundleSourceSizes, bundleSourcesAsMap } from '../ui/view/bundle-sources.js'
+import { bundleFileKinds, bundleFileSizes, bundlePackageDirs, bundleSourceSizes, bundleSourcesAsMap } from '../ui/view/bundle-sources.js'
 import { bundleGraphReasons, bundleImportsAsMap } from '../ui/view/bundle-graph-inputs.js'
 import { computeFileHash } from '../report/index.js'
 
@@ -120,7 +120,19 @@ it('keeps a resource\'s byte size, and no hash or line count, since it is no sou
   const cached = parseBundleMetadata(JSON.parse(JSON.stringify(data)), full.integrity)
   assert.equal(cached.stale, false)
   assert.deepEqual(bundleFileSizes(cached), bundleFileSizes(full))
+  assert.deepEqual(bundleFileKinds(cached), bundleFileKinds(full), 'a metadata-only open tells resources apart too')
   assert.deepEqual([...cached.fileHashes.keys()], ['src/main.js'])
+})
+
+it('records a base64 resource that does not decode without a size, and reads it back', async () => {
+  const full = withResources()
+  full.bundle = Bundle.parse(JSON.stringify({ ...JSON.parse(full.bundle.serialize()) }))
+  full.bundle.modules.get('.').files['assets/logo.png'] = '!!!not base64!!!'
+  const data = await createBundleMetadata(full)
+  assert.deepEqual(data.files.find(([path]) => path === 'assets/logo.png'), ['assets/logo.png', null, null, null])
+  const cached = parseBundleMetadata(JSON.parse(JSON.stringify(data)), full.integrity)
+  assert.equal(cached.fileSizes.get('assets/logo.png'), null)
+  assert.equal(bundleFileKinds(cached).get('assets/logo.png'), 'resource', 'still a file to list')
 })
 
 it('rejects a current index whose hashes disagree with what is source', async () => {
