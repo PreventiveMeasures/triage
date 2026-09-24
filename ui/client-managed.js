@@ -3,3 +3,4 @@
 // view.js. It loads when a managed session or page is first requested.
 import './managed/pages.js'
 export * from '../client/managed/session.js'
+export { getPreviewRole, setPreviewRole } from '../client/managed/request.js'

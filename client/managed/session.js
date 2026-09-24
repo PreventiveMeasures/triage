@@ -1,3 +1,4 @@
+import { managedFetch } from './request.js'
 // Managed-mode client auth. Loaded lazily (see ui/view/client-managed.js) so
 // this managed-only code stays out of the main view bundle, mirroring
 // client/sync. For now it covers the session lifecycle against the managed
@@ -9,7 +10,7 @@
 async function getJson(url) {
   let res
   try {
-    res = await fetch(url, { credentials: 'same-origin', headers: { accept: 'application/json' } })
+    res = await managedFetch(url, { credentials: 'same-origin', headers: { accept: 'application/json' } })
   } catch { return null }
   if (!res.ok) return null
   try { return await res.json() } catch { return null }
@@ -70,7 +71,7 @@ export async function probeTeams() {
 export async function fetchReport(id) {
   let res
   try {
-    res = await fetch(`/api/reports/${encodeURIComponent(id)}`, { credentials: 'same-origin' })
+    res = await managedFetch(`/api/reports/${encodeURIComponent(id)}`, { credentials: 'same-origin' })
   } catch { return null }
   if (!res.ok) return null
   try { return await res.text() } catch { return null }
@@ -96,7 +97,7 @@ export async function fetchReportTriage(id) {
 // the server refused as sent (4xx) from one that may land on a retry.
 export async function pushReportTriage(id, entries, csrfToken) {
   try {
-    const res = await fetch(`/api/reports/${encodeURIComponent(id)}/triage`, {
+    const res = await managedFetch(`/api/reports/${encodeURIComponent(id)}/triage`, {
       method: 'POST',
       credentials: 'same-origin',
       headers: {
@@ -120,7 +121,7 @@ export function login(loginPath) {
 // repaints logged-out.
 export async function logout(csrfToken) {
   try {
-    await fetch('/api/auth/logout', {
+    await managedFetch('/api/auth/logout', {
       method: 'POST',
       credentials: 'same-origin',
       headers: csrfToken ? { 'x-csrf-token': csrfToken } : {},

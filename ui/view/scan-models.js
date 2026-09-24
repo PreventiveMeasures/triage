@@ -1,3 +1,4 @@
+import { managedFetch } from '../../client/managed/request.js'
 // Presentation belongs to the client. The service supplies canonical ids and
 // allowed effort values, using ai/src/models.js's `efforts` vocabulary.
 const MODEL_NAMES = new Map([
@@ -61,7 +62,7 @@ export function defaultEffort(model) {
 }
 
 export async function fetchScanModels(signal) {
-  const res = await fetch('/api/admin/models', { credentials: 'same-origin', headers: { accept: 'application/json' }, signal })
+  const res = await managedFetch('/api/admin/models', { credentials: 'same-origin', headers: { accept: 'application/json' }, signal })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   const body = await res.json()
   if (!Array.isArray(body?.models)) throw new Error('No model catalogue returned')

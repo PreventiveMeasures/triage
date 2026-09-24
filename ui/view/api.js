@@ -147,8 +147,9 @@ window.DeepView = {
 
   triage,
 
-  // Temporary managed surface on any server. Clicking the managed tag restores
-  // the previous mode; refresh returns to normal server detection.
+  // Temporary managed surface on any server. Pass 'admin', 'manage', 'triage',
+  // 'view', or 'none' for a fake @role / Role account without a backend.
+  // Clicking managed restores the previous mode; refresh resets the override.
   forceManagedMode,
 
   // Theme switcher. The `<theme-toggle>` chrome button only ever
