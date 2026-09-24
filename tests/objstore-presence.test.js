@@ -2609,4 +2609,52 @@ describe('client/sync/objstore-presence', () => {
       await deleteFile(fileName).catch(() => {})
     }
   })
+
+  it('a re-check fetch made before an "Upload mine" commits is not acted on stale (review r4099376963)', async () => {
+    // The re-check fetches outside the report's lock and reconciles
+    // inside it. An "Upload mine" holding the lock meanwhile commits v2;
+    // the re-check must not then judge the old v1 it fetched — that
+    // marked the now-matching copies "differs" and pinned an old
+    // unsynced marker over the new synced baseline.
+    const fileName = 'recheck-vs-upload.json'
+    const localText = reportJson('local')
+    const { ws } = await openDifferingCopies('presence-recheck-vs-upload', fileName, localText, reportJson('cloud'))
+    const e = __test__.getEntry(ws.id)
+    const [tag] = e.baselines.keys()
+    const realPut = e.session.put.bind(e.session)
+    const realFetchByTag = e.session.fetchByTag.bind(e.session)
+    let releasePut
+    const putGate = new Promise((resolve) => { releasePut = resolve })
+    let recheckFetched
+    const fetched = new Promise((resolve) => { recheckFetched = resolve })
+    try {
+      const first = (await recheckRemoteStorage(ws.id)).items[0]
+      assert.equal(first.status, 'differs')
+      e.session.put = async (opts) => { await putGate; return realPut(opts) }
+      const resolving = resolveReportDifference(ws.id, fileName, 'local', first.compared)
+      e.session.fetchByTag = async (t) => {
+        const r = await realFetchByTag(t)
+        e.session.fetchByTag = realFetchByTag
+        recheckFetched()
+        return r
+      }
+      const rechecking = recheckRemoteStorage(ws.id)
+      await fetched  // the re-check now holds the pre-upload (v1) copy
+      releasePut()
+      assert.deepEqual(await resolving, { status: 'uploaded' })
+      const row = (await rechecking).items[0]
+      assert.equal(row.status, 'good', `row: ${JSON.stringify(row)}`)
+      const baseline = e.baselines.get(tag)
+      assert.equal(baseline.synced, true)
+      assert.equal(baseline.version, 2)
+      assert.deepEqual(differingReports(ws.id), [])
+    } finally {
+      releasePut()
+      e.session.put = realPut
+      e.session.fetchByTag = realFetchByTag
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+      await deleteFile(fileName).catch(() => {})
+    }
+  })
 })

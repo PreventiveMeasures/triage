@@ -2307,14 +2307,31 @@ async function classifyAndRecover(entry, workspaceId, row, deletedDuringRecheck)
 // (`resolveReportDifference`) rather than overwrite either copy on a
 // guess. Returns 'good' | 'updated' | 'uploaded' | 'differs' | 'failed'
 // | 'missing'.
-async function reconcileRecheckedReport(entry, workspaceId, row, got, deletedDuringRecheck) {
+async function reconcileRecheckedReport(entry, workspaceId, row, fetched, deletedDuringRecheck) {
   const ws = listWorkspaces().find((w) => w.id === workspaceId)
-  if (!ws || !Array.isArray(ws.reports) || !ws.reports.includes(got.fileName)) return 'good'
+  if (!ws || !Array.isArray(ws.reports) || !ws.reports.includes(fetched.fileName)) return 'good'
   const tag = row.resourceTag
   // Never resurrect or overwrite around an object deleted mid-recheck.
   // (Not gated on `entry.remoteTags` — see `recheckRemoteStorage`.)
   const stillWanted = () => !entry.disposed && !deletedDuringRecheck.has(tag)
   return await withTagLock(entry, tag, async () => {
+    // The fetch ran before we held the lock; a writer holding it
+    // meanwhile (an "Upload mine", a replace-refetch) may have moved the
+    // report past that copy (review r4099376963). Judging the stale copy
+    // would call matching copies "differs" and pin an old unsynced marker
+    // over the new synced baseline — fetch the current one instead.
+    let got = fetched
+    if (olderThanKnown(entry, tag, got)) {
+      let fresh
+      try { fresh = await entry.session.fetchByTag(tag) }
+      catch (err) {
+        row.detail = `verification fetch failed: ${err?.message ?? String(err)}`
+        return 'check-failed'
+      }
+      if (!fresh || !stillWanted()) return 'missing'
+      if (fresh.kind !== 'report') return 'good'
+      got = fresh
+    }
     const { same, hash } = await compareLocal(got.fileName, got.content)
     if (!stillWanted()) return 'missing'
     const baseline = entry.baselines.get(tag)
@@ -2358,6 +2375,14 @@ async function reconcileRecheckedReport(entry, workspaceId, row, got, deletedDur
     row.compared = { version: got.version, incarnation: got.incarnation }
     return 'differs'
   })
+}
+
+// Is a fetched cloud copy older than a state we already know for `tag` —
+// the baseline or the latest broadcast, in the same incarnation at a
+// higher version? (Across incarnations there's no order to compare.)
+function olderThanKnown(entry, tag, got) {
+  return [entry.baselines.get(tag), entry.remoteMeta.get(tag)]
+    .some((known) => known && known.incarnation === got.incarnation && known.version > got.version)
 }
 
 // Upload the local copy of `fileName` over the cloud state `prev`. The

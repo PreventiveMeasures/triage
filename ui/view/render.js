@@ -28,7 +28,7 @@ import { renderPackagesView } from './render-packages.js'
 import { renderRepositoriesView } from './render-repositories.js'
 import { renderLinksView } from './render-links.js'
 import { closeLinksPreview, getLinksPreview } from './links-preview.js'
-import { resolveWorkspaceContext } from './sync-scope.js'
+import { resolveWorkspaceContext, syncableMembers } from './sync-scope.js'
 import {
   buildBundleGraphData,
   countBundleTriageBuckets,
@@ -417,12 +417,31 @@ function syncBadgeTemplate() {
   const wsContext = resolveWorkspaceContext()
   if (!wsContext) return nothing
   const { workspaceId, fileNames, mode } = wsContext
+  // Reports whose local and cloud copies may differ in a way sync can't
+  // settle by itself (changed here since they were in sync, or found
+  // different with nothing showing which is newer). Without saying so
+  // they'd read as plain "cloud" and nobody would know to re-check —
+  // in either view (review r4099376951). Say it out loud once, too: a
+  // dialog offering to sync (see sync-suggest.js for when it opens and
+  // when it stays closed).
+  const differing = differingReports(workspaceId)
+  if (differing.length > 0) {
+    suggestSync(workspaceId, differing, { onSync: () => openRecheckFor(workspaceId, mode, fileNames), retry: render })
+  }
   if (mode === 'single') {
     // Single-file view: chip reflects just the active report's
     // status. Bundles aren't represented here — they live in the
     // workspace context, which the user can navigate to via the
     // sidebar to see the combined badge.
     const name = fileNames[0]
+    if (differing.includes(name)) {
+      return badgeChipButton({
+        status: 'differ',
+        label: 'differs',
+        title: `Your copy of "${name}" doesn't match its cloud copy. Click to re-check and bring them in line.`,
+        onClick: () => openRecheckFor(workspaceId, mode, fileNames),
+      })
+    }
     const status = isInRemote(workspaceId, name) ? 'cloud' : 'local'
     return badgeChipButton({
       status,
@@ -482,15 +501,6 @@ function syncBadgeTemplate() {
     ...localOnlyReports.map((n) => ({ kind: 'report', identifier: n })),
     ...localOnlyBundles.map((i) => ({ kind: 'bundle', identifier: i })),
   ]
-  // Reports whose local and cloud copies may differ in a way sync can't
-  // settle by itself (changed here since they were in sync, or found
-  // different with nothing showing which is newer). Without this chunk
-  // they'd read as plain "cloud" and nobody would know to re-check.
-  const differing = differingReports(workspaceId)
-  const openRecheck = () => openObjstoreRecoveryDialog({ workspaceId, cloudCount, localFileNames: fileNames, localBundles, autoRun: true })
-  // And say it out loud once: a dialog offering to sync (see
-  // sync-suggest.js for when it opens and when it stays closed).
-  if (differing.length > 0) suggestSync(workspaceId, differing, { onSync: openRecheck, retry: render })
   if (cloudCount === 0 && localOnly.length === 0) return nothing
   // The "cloud" chunk is clickable whenever there's remote state: it
   // opens the recovery dialog to re-check the remote objstore (re-fetch
@@ -513,7 +523,7 @@ function syncBadgeTemplate() {
         class="sync-badge-chunk differ"
         data-tooltip=${differTip}
         aria-label=${`${differing.length} report${differing.length === 1 ? '' : 's'} differ from the cloud — re-check`}
-        @click=${(e) => { e.stopPropagation(); openRecheck() }}
+        @click=${(e) => { e.stopPropagation(); openRecheckFor(workspaceId, mode, fileNames) }}
       >${differIconTpl()}<span>${differing.length} differ</span></button>`
   const cloudChunk = cloudCount === 0 ? nothing
     : html`<button
@@ -539,8 +549,21 @@ function syncBadgeTemplate() {
   >${chunks.map((c, i) => (i === 0 ? c : html`${divider}${c}`))}</div>`
 }
 
+// The re-check the "differ(s)" signals open — already running, since the
+// user asked for it. Given the workspace's members on this device: the
+// dialog offers to download remote reports NOT in that list, so the
+// single-file view's one-name list would wrongly offer all the others.
+function openRecheckFor(workspaceId, mode, fileNames) {
+  const ws = listWorkspaces().find((w) => w.id === workspaceId)
+  const localFileNames = mode === 'single'
+    ? syncableMembers(ws?.reports ?? [], state.storedFiles ?? [], fileNames)
+    : fileNames
+  const localBundles = ws && Array.isArray(ws.bundles) ? ws.bundles : []
+  return openObjstoreRecoveryDialog({ workspaceId, cloudCount: remoteCount(workspaceId), localFileNames, localBundles, autoRun: true })
+}
+
 function badgeChipButton({ status, label, title, onClick }) {
-  const icon = status === 'cloud' ? cloudIconTpl() : localIconTpl()
+  const icon = status === 'cloud' ? cloudIconTpl() : status === 'differ' ? differIconTpl() : localIconTpl()
   const labelTpl = html`<span class="sync-badge-label">${label}</span>`
   if (typeof onClick !== 'function') {
     // Informational chip — render as a `<span>` so it doesn't pick

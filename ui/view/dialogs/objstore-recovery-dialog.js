@@ -148,7 +148,10 @@ class ObjstoreRecoveryDialog extends AppDialog {
   _differingRows() { return this._rows.filter((r) => r.status === 'differs') }
 
   _onRecheck = async () => {
-    if (this._running || this._bulk) return
+    // Not while a row's "Use cloud copy" / "Upload mine" is in flight: a
+    // re-check started then would judge copies mid-change (review
+    // r4099376963; presence also re-fetches a copy that went stale).
+    if (this._running || this._bulk || this._resolving.size > 0) return
     this._running = true
     this._error = null
     this._rows = []
@@ -288,7 +291,7 @@ class ObjstoreRecoveryDialog extends AppDialog {
         ${useCloud ? nothing : html`<button type="button" data-role="cancel" @click=${this._onCancel} ?disabled=${this._running}>
           ${this._ran ? 'Close' : 'Cancel'}
         </button>`}
-        <button type="button" data-role="recheck" @click=${this._onRecheck} ?disabled=${this._running || this._bulk}>
+        <button type="button" data-role="recheck" @click=${this._onRecheck} ?disabled=${this._running || this._bulk || this._resolving.size > 0}>
           ${this._running ? 'Re-checking…' : (this._ran ? 'Re-check again' : 'Re-check')}
         </button>
       </footer>
