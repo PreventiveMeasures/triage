@@ -1,6 +1,7 @@
 import { patchEntry, saveTriage, state } from '#client/index.js'
 import { triageSync } from './client-sync.js'
 import { render } from './render.js'
+import { forceManagedMode } from './sidebar.js'
 import { openTriageExportDialog } from './dialogs/triage-export-dialog.js'
 import { getMergedGroups } from './group.js'
 import { getTheme, setTheme, themes } from './theme.js'
@@ -145,6 +146,10 @@ window.DeepView = {
   get currentWorkspace() { return state.currentWorkspace },
 
   triage,
+
+  // Temporary managed surface on any server. Clicking the managed tag restores
+  // the previous mode; refresh returns to normal server detection.
+  forceManagedMode,
 
   // Theme switcher. The `<theme-toggle>` chrome button only ever
   // cycles between 'dark' and 'light'; the full `themes` list also

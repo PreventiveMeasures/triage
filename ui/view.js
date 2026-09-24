@@ -14,7 +14,7 @@ import { dropZone, sidebar } from './view/dom.js'
 import { attachSharedWorkspace, extractFindingRef, extractShareEncoded, getSecureItem, hydrateSecureStorage, isDisablingInThisTab, isEncryptionEnabled, isManagedUiMode, isUnlocked, listFiles, listWorkspaces, onVaultStateChange, setTriageReloadNotifier, state, syncObservedAfterHydrate } from '#client/index.js'
 import { onAutoDownloaded, onBundleAutoDownloaded, onChange as onPresenceChange, setRedraw, triageSync } from './view/client-sync.js'
 import { ensureClientMode, renderSidebar } from './view/sidebar.js'
-import { BUNDLE_TABS, LAST_FILE_KEY, switchToFile, switchToWorkspace } from './view/ingest.js'
+import { BUNDLE_TABS, LAST_FILE_KEY, currentViewGeneration, switchToFile, switchToWorkspace } from './view/ingest.js'
 import { openBundle, selectBundle } from './view/bundle-load.js'
 import { revealFinding } from './view/finding-link-nav.js'
 import { decodeReportLocation } from '../client/report-location.js'
@@ -274,6 +274,8 @@ async function continueBoot() {
 }
 
 async function restoreInitialView() {
+  const generation = currentViewGeneration()
+  const isCurrent = () => generation === currentViewGeneration() && !isManagedUiMode()
   // Managed mode owns its reports on the server. Do not touch the local
   // encrypted cache, OPFS listing, or local triage until the user explicitly
   // switches that managed server into its local/offline surface.
@@ -287,6 +289,7 @@ async function restoreInitialView() {
   // synchronously via getItem(). No-op fast path when the vault is
   // disabled (everything was plaintext on disk, cached verbatim).
   await hydrateSecureStorage()
+  if (!isCurrent()) return
   // Snapshot the now-decrypted workspaces as "already observed" so the
   // first sibling-tab storage event doesn't fire phantom
   // workspace-created listeners for entries present in storage at boot.
@@ -297,17 +300,18 @@ async function restoreInitialView() {
   // and the user hasn't opted out. Boot does NOT pre-load — a user with
   // no workspaces never downloads the sync payload.
   await renderSidebar()
+  if (!isCurrent()) return
   // Share-link hash takes precedence over the last-file restore so
   // the user lands on the freshly-attached workspace, not whatever
   // they were looking at last time.
   const attached = await handleShareHashIfPresent()
-  if (attached) return
+  if (attached || !isCurrent()) return
   // Finding deep link — same precedence over the last-file restore, and
   // for the same reason: land the user on what the LINK names, not on
   // whatever they had open last time. Falls through on a miss (see the
   // handler) so the restore below still runs.
   const revealed = await handleFindingHashIfPresent()
-  if (revealed) return
+  if (revealed || !isCurrent()) return
   const last = getSecureItem(LAST_FILE_KEY)
   if (last) {
     if (last.startsWith('ws:')) {
@@ -336,6 +340,7 @@ async function restoreInitialView() {
       }
     } else {
       const names = await listFiles()
+      if (!isCurrent()) return
       const savedReport = decodeReportLocation(last)
       if (savedReport && names.includes(savedReport.name)) {
         await switchToFile(savedReport.name, undefined, { workspaceId: savedReport.workspaceId })

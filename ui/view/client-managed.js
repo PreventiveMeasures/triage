@@ -1,10 +1,10 @@
-// Lazy proxy for the managed-mode client (auth now; managed features later).
+// Lazy proxy for managed API calls and Manage custom elements.
 // Mirrors view/client-sync.js: the heavy module is dynamically imported via a
 // variable path so esbuild keeps it — and any future managed payload — out of
 // the main view bundle. The browser resolves the path against the page URL.
 let loadPromise = null
 
-function loadManagedOnce() {
+export function loadManagedBundle() {
   if (loadPromise) return loadPromise
   loadPromise = (async () => {
     const path = './client-managed.js'
@@ -21,29 +21,29 @@ function loadManagedOnce() {
 }
 
 export async function probeSession() {
-  return (await loadManagedOnce()).probeSession()
+  return (await loadManagedBundle()).probeSession()
 }
 
 export async function probeTeams() {
-  return (await loadManagedOnce()).probeTeams()
+  return (await loadManagedBundle()).probeTeams()
 }
 
 export async function fetchReport(id) {
-  return (await loadManagedOnce()).fetchReport(id)
+  return (await loadManagedBundle()).fetchReport(id)
 }
 
 export async function fetchReportTriage(id) {
-  return (await loadManagedOnce()).fetchReportTriage(id)
+  return (await loadManagedBundle()).fetchReportTriage(id)
 }
 
 export async function pushReportTriage(id, entries, csrfToken) {
-  return (await loadManagedOnce()).pushReportTriage(id, entries, csrfToken)
+  return (await loadManagedBundle()).pushReportTriage(id, entries, csrfToken)
 }
 
 export async function login(loginPath) {
-  return (await loadManagedOnce()).login(loginPath)
+  return (await loadManagedBundle()).login(loginPath)
 }
 
 export async function logout(csrfToken) {
-  return (await loadManagedOnce()).logout(csrfToken)
+  return (await loadManagedBundle()).logout(csrfToken)
 }

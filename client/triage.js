@@ -25,6 +25,14 @@ export function setTriageChangeNotifier(fn) {
   triageChangeNotifier = typeof fn === 'function' ? fn : () => {}
 }
 
+// Managed edits belong to the server, never the local triage blob. Keep the
+// two callbacks independent so loading either client cannot steal the other's
+// notifier when a developer temporarily switches protocols in this tab.
+let managedTriageChangeNotifier = () => {}
+export function setManagedTriageChangeNotifier(fn) {
+  managedTriageChangeNotifier = typeof fn === 'function' ? fn : () => {}
+}
+
 // UI redraw hook for cross-tab reloads. A sibling tab's saveTriage
 // fires a `storage` event here; `reloadTriageFromStorage` then writes
 // the sibling's blob straight into the reactive `state.triage`. The
@@ -121,6 +129,10 @@ export function buildPersistedTriageEntries() {
 }
 
 export function saveTriage() {
+  if (isManagedUiMode()) {
+    managedTriageChangeNotifier()
+    return Promise.resolve()
+  }
   const gen = ++saveGen
   // Build entries synchronously so the M3 round-5 pending-key write
   // reflects the user's mutation BEFORE any await.

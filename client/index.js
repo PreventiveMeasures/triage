@@ -166,6 +166,7 @@ export {
   migrateTriageToEncrypted,
   migrateTriageToPlaintext,
   saveTriage,
+  setManagedTriageChangeNotifier,
   setTriageChangeNotifier,
   setTriageReloadNotifier,
 } from './triage.js'

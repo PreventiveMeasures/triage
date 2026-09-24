@@ -1,9 +1,7 @@
 // Server-side triage for managed team reports. When a team report is open
 // (`state.managedReport`), the server's per-finding entries hydrate the local
 // triage map, and local edits push back debounced through the triage
-// change-notifier slot — the managed counterpart of the e2e sync fan-out
-// (which claims the same slot, but only when its client loads, and never in
-// managed mode). The wire carries color / triage / comment / fix / flagged;
+// managed change-notifier — independent of the e2e sync fan-out. The wire carries color / triage / comment / fix / flagged;
 // `ignoredReports` stays client-local and `deleted` folds into the bucket.
 //
 // Both sides are keyed by finding id alone. `state.triage` is one map across
@@ -15,7 +13,7 @@
 // its findings: an id the server knows (a value, or the tombstone of a cleared
 // entry) is adopted wholesale, and one it has never seen carries whatever is
 // local up.
-import { bucketOf, saveTriage, setEntry, setTriageChangeNotifier, state } from '#client/index.js'
+import { bucketOf, saveTriage, setEntry, setManagedTriageChangeNotifier, state } from '#client/index.js'
 import { roleAtLeast } from '../../common/managed/roles.ts'
 import { MAX_FINDING_ID, MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_COLOR, MAX_TRIAGE_ENTRIES, MAX_TRIAGE_TEXT } from '../../common/managed/triage.ts'
 import { fetchReportTriage, pushReportTriage } from './client-managed.js'
@@ -229,15 +227,15 @@ function scheduleTriagePush() {
   pushTimer = setTimeout(flushPending, PUSH_DEBOUNCE_MS)
 }
 
-// Claim the triage change-notifier for the managed push. Called after the
+// Register the managed triage change-notifier. Called after the
 // session probe; skipped for roles below 'triage' (their reads still hydrate,
 // they just have nothing to fan out) and outside managed mode, where the slot
-// belongs to the e2e sync client.
+// local notifier belongs to the e2e sync client.
 let registered = false
 export function initManagedTriagePush() {
   if (registered || !canPushTriage()) return
   registered = true
-  setTriageChangeNotifier(scheduleTriagePush)
+  setManagedTriageChangeNotifier(scheduleTriagePush)
 }
 
 // A managed → local transition invalidates the open server scope. Drop the
@@ -291,7 +289,7 @@ export async function hydrateManagedReportTriage(reportId, { renderView = true }
   }
   hydratedReports.add(reportId)
   if (changed) {
-    // Persist the adopted entries and repaint the imperatively-rendered
+    // Notify the managed push and repaint the imperatively-rendered
     // surfaces (kanban, toolbar counts) that don't observe state.triage; the
     // save's notifier then pushes what the server hasn't seen.
     await saveTriage()

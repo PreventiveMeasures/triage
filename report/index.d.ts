@@ -12,3 +12,5 @@ export function loadFindings(content: string): Promise<{ format: string, data: u
 export function readReport(content: string): { data: any, format: string | null, reason: string | null }
 export function reportRepoGithub(data: any): string | null
 export function repoDirectory(repo: any): string
+export function detectFormat(content: string, filename?: string): string | null
+export function parseCodexCsvToScans(content: string): { displayName: string, data: { type: string, source: string, findings: unknown[] } }[]

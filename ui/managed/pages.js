@@ -1,23 +1,13 @@
-// Managed admin UI bundle — its own esbuild entry (out/client-admin.js), loaded
-// lazily and ONLY when an admin/manage user opens one of its pages (the sidebar
-// account menu rows). None of this ships in the main view bundle, nor to
-// unprivileged / e2e / standalone sessions. Each page is a full-view custom
-// element created by render.js:
-//   <managed-admin-users>  — the users list with per-user role pickers
-//                            (currentView 'admin-users', admin only)
-//   <managed-admin-repos>  — the connected GitHub repositories list
-//                            (currentView 'manage-repos', admin only)
-//
-// This is a SEPARATE chunk, so importing the main bundle's `state` would get a
-// duplicated (empty) copy — the current user (for the CSRF token + self-disable)
-// is fetched here from /api/auth/session instead.
+// Manage custom elements, registered by the lazy client-managed.js entry.
+// Keep application state in the main view bundle; these pages use authenticated
+// API requests and composed events to communicate with their host.
 import { LitElement, css, html, nothing } from 'lit'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { ROLES } from '../common/managed/roles.ts'
-import { VISIBILITY_PERMISSION_LABELS } from '../common/managed/permissions.ts'
-import { REPORT_LOGOS } from './view/file-display.js'
-import { BUNDLE_ICON_SVG } from './view/icons.js'
-import './view/scan-model-picker.js'
+import { ROLES } from '../../common/managed/roles.ts'
+import { VISIBILITY_PERMISSION_LABELS } from '../../common/managed/permissions.ts'
+import { REPORT_LOGOS } from '../view/report-logos.js'
+import { BUNDLE_ICON_SVG } from '../view/icons.js'
+import '../view/scan-model-picker.js'
 
 async function fetchSession() {
   const res = await fetch('/api/auth/session', { credentials: 'same-origin', headers: { accept: 'application/json' } })

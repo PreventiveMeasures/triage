@@ -27,7 +27,7 @@ const pushes = () => calls.filter((c) => c.fetch === undefined)
 
 mock.module('../client/index.js', { namedExports: {
   state, bucketOf, setEntry,
-  setTriageChangeNotifier: (fn) => { notifier = fn },
+  setManagedTriageChangeNotifier: (fn) => { notifier = fn },
   saveTriage: () => { saves++; notifier(); return Promise.resolve() },
 } })
 mock.module('../ui/view/client-managed.js', { namedExports: {

@@ -54,7 +54,7 @@ export function parseServerInfo(body: unknown): ServerInfo | null {
 // other HTTP errors, and invalid configuration leave the protocol unknown.
 export async function probeServerInfo(): Promise<ServerInfo | 'standalone' | null> {
   try {
-    const res = await fetch(CONFIG_PATH, { credentials: 'same-origin', headers: { accept: 'application/json' } })
+    const res = await fetch(CONFIG_PATH, { credentials: 'same-origin', cache: 'no-store', headers: { accept: 'application/json' } })
     if (res.status === 404) return 'standalone'
     return res.ok ? parseServerInfo(await res.json()) : null
   } catch { return null }

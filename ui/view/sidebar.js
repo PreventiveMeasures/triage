@@ -3,9 +3,8 @@ import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { LINKS_KIND, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, clientModeLabel, computeLinkHint, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, ensureLinkedFindingsIndexed, getCount, getPackagesIndex, getRepositoriesIndex, hasStandaloneProbeHint, hydrateSecureStorage, isManagedUiMode, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, probeServerInfo, readCachedServerInfo, reloadTriageFromStorage, rememberStandaloneProbe, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, setLocalMode, state, syncObservedAfterHydrate, waitForServerInfo, writeCachedServerInfo } from '#client/index.js'
 import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, setSyncForceDisabled, triageSync } from './client-sync.js'
-import { login as managedLogin, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams } from './client-managed.js'
+import { loadManagedBundle, login as managedLogin, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams } from './client-managed.js'
 import { initManagedTriagePush, resetManagedTriage } from './managed-triage.js'
-import { loadAdminBundle } from './client-admin.js'
 import sidebarCSS from './sidebar.css'
 import fileIconCSS from '../styles/file-icon.css'
 import { initEncryptionToggle, refreshEncryptionToggle } from './encryption-toggle.js'
@@ -735,26 +734,11 @@ onVaultStateChange(() => { renderSidebar() })
 // listener.
 async function onSidebarClick(e) {
   if (e.target.closest('[data-action="toggle-client-mode"]')) {
-    // Only a managed server exposes this escape hatch. An e2e server is
-    // already the local surface and its mode label is intentionally fixed.
-    // Managed ⇄ local keeps the server protocol unchanged while local mode
-    // exposes the e2e surface with sync forced off.
-    if (state.serverMode !== 'managed') return
-    const enteringLocal = !state.localMode
-    resetManagedTriage()
-    setLocalMode(enteringLocal)
-    setSyncForceDisabled(true)
-    resetForClientModeTransition()
-    if (enteringLocal) {
-      await hydrateSecureStorage()
-      await reloadTriageFromStorage()
-      syncObservedAfterHydrate()
-    } else void refreshManagedSession()
-    document.dispatchEvent(new CustomEvent('managed-client-mode-change'))
-    renderBrandTag()
-    renderSyncStatus(triageSync.status)
-    render()
-    renderSidebar().catch((err) => console.warn('client mode switch:', err))
+    if (forcedManagedReturn) await restoreForcedManagedMode()
+    else if (state.serverMode === 'managed') {
+      setLocalMode(!state.localMode)
+      await finishClientModeTransition()
+    }
     return
   }
   // DeepView brand → drop back to the empty welcome screen so the
@@ -1722,12 +1706,69 @@ async function onSidebarDrop(e) {
   else renderSidebar()
 }
 
-// Wire the event delegates onto the shadow root + the search input,
-// hand the encryption-toggle button to its module, then paint. All
-// delegates sit on the shadow root (or the in-shadow `#file-list`),
-// so an event fired inside the tree reaches them with `e.target`
-// un-retargeted — `e.target.closest(...)` matches shadow elements
-// directly, exactly as it did against the light-DOM `#sidebar`.
+// The developer override is intentionally module-local: it never changes the
+// saved protocol binding or sync preference, and a reload discards it.
+let forcedManagedReturn = null
+let deferredServerInfo = null
+let clientModeGeneration = 0
+let managedSessionRequest = 0
+
+async function finishClientModeTransition({ forgetLastView = true } = {}) {
+  const generation = ++clientModeGeneration
+  resetManagedTriage()
+  setSyncForceDisabled(state.serverMode !== 'e2e')
+  triageSync.setForcedOff(true)
+  triageSync.setProtocolLocked(Boolean(forcedManagedReturn) || state.serverModeMismatch)
+  resetForClientModeTransition({ forgetLastView })
+  // Only server annotations may enter a managed report. Local annotations are
+  // restored from storage on the return trip, without saving this clear.
+  state.triage.clear()
+  if (isManagedUiMode()) void refreshManagedSession()
+  else {
+    state.managedSession = null
+    state.managedTeams = []
+    await hydrateSecureStorage()
+    if (generation !== clientModeGeneration) return
+    await reloadTriageFromStorage()
+    if (generation !== clientModeGeneration) return
+    syncObservedAfterHydrate()
+  }
+  document.dispatchEvent(new CustomEvent('managed-client-mode-change'))
+  renderBrandTag()
+  renderSyncStatus(triageSync.status)
+  render()
+  await renderSidebar()
+}
+
+// Console: await DeepView.forceManagedMode(). This changes the client surface,
+// not server capabilities or permissions. Click the managed tag to undo it.
+export async function forceManagedMode() {
+  await ensureClientMode()
+  if (forcedManagedReturn || isManagedUiMode()) return
+  forcedManagedReturn = {
+    serverMode: state.serverMode,
+    localMode: state.localMode,
+    managed: state.managed,
+    serverModeMismatch: state.serverModeMismatch,
+  }
+  state.serverMode = 'managed'
+  setLocalMode(false)
+  state.serverModeMismatch = false
+  await finishClientModeTransition({ forgetLastView: false })
+}
+
+async function restoreForcedManagedMode() {
+  const previous = forcedManagedReturn
+  const pendingInfo = deferredServerInfo
+  forcedManagedReturn = null
+  deferredServerInfo = null
+  Object.assign(state, previous)
+  await finishClientModeTransition({ forgetLastView: false })
+  // A real configuration response may have arrived during the override. Apply
+  // it through the normal protocol checks once the original surface is back.
+  if (pendingInfo) applyServerInfo(pendingInfo)
+}
+
 // Apply the server's advertised mode — delivered by its `server-info` connect
 // frame via `triageSync.onServerInfo` — to `state`, refusing a cross-mode
 // switch (managed↔e2e) until an explicit migration exists. `state.serverMode`
@@ -1736,6 +1777,7 @@ async function onSidebarDrop(e) {
 // the sync badge) and keep sync paused, rather than silently reinterpreting
 // local data under the other protocol.
 function applyServerInfo(info) {
+  if (forcedManagedReturn) { deferredServerInfo = info; return }
   setLandingModePending(false)
   const cached = readCachedServerInfo()
   const cls = classifyServerMode(cached ? cached.mode : null, info.mode)
@@ -1778,8 +1820,13 @@ function applyServerInfo(info) {
 // Probe the managed server for the current session (lazy client/managed chunk)
 // and repaint the auth control. Only reached in managed mode.
 async function refreshManagedSession() {
+  const generation = clientModeGeneration
+  const request = ++managedSessionRequest
+  const isCurrent = () => generation === clientModeGeneration && request === managedSessionRequest && isManagedUiMode()
   try {
-    state.managedSession = await managedProbeSession()
+    const session = await managedProbeSession()
+    if (!isCurrent()) return
+    state.managedSession = session
     if (state.managedSession?.role !== 'admin' && ADMIN_ONLY_PAGES.has(state.currentView)) {
       state.currentView = 'manage'
       render()
@@ -1790,7 +1837,9 @@ async function refreshManagedSession() {
     initManagedTriagePush()
     // The user's teams (sidebar Teams section). probeTeams never throws; empty
     // when logged out. Repaint the sidebar so the section reflects the result.
-    state.managedTeams = state.managedSession == null ? [] : await managedProbeTeams()
+    const teams = session == null ? [] : await managedProbeTeams()
+    if (!isCurrent()) return
+    state.managedTeams = teams
     renderSidebar()
   } catch (err) {
     console.warn('managed: session probe failed:', err)
@@ -1822,8 +1871,10 @@ export async function navigateToAdminPage(view, options = {}) {
   if (!(view in ADMIN_PAGES) || !isManagedUiMode()
       || !['admin', 'manage'].includes(state.managedSession?.role)
       || (ADMIN_ONLY_PAGES.has(view) && state.managedSession.role !== 'admin')) return
-  try { await loadAdminBundle() }
+  const generation = clientModeGeneration
+  try { await loadManagedBundle() }
   catch (err) { console.warn(ADMIN_PAGES[view], err); return }
+  if (generation !== clientModeGeneration || !isManagedUiMode()) return
   state.currentView = view
   render()
   renderSidebar()
@@ -1846,8 +1897,8 @@ document.addEventListener('managed-admin-navigate', (event) => {
 // Cold-start mode detection. With nothing cached we don't yet know the server's
 // protocol — and a managed server has no WS plane whose connect frame would
 // tell us — so GET /api/config to learn it up front and feed the same
-// applyServerInfo path. Skipped once the mode is known (cached); the WS connect
-// frame (kept) then catches any later change.
+// applyServerInfo path. A cached binding releases startup immediately, while
+// the HTTP probe still checks it in the background (managed has no WS frame).
 let clientModeReady
 // Wait only until startup selects a usable surface: a confirmed server mode,
 // or offline local mode. Server availability never grants access to local data.
@@ -1861,6 +1912,12 @@ async function detectServerModeIfUnknown() {
     // Another tab may have confirmed the mode since state.ts was evaluated.
     state.serverMode = cached.mode
     state.managed = cached.managed
+    // The cache binds the protocol, but says nothing about today's server.
+    // Failure/404 keeps that binding and never delays or disables local access.
+    void probeServerInfo().then((info) => {
+      if (info && info !== 'standalone') return applyServerInfo(info)
+      return undefined
+    }).catch((err) => console.warn('server mode revalidation:', err))
     return
   }
   setLandingModePending(!hasStandaloneProbeHint())
@@ -1887,6 +1944,11 @@ async function detectServerModeIfUnknown() {
       const latest = readCachedServerInfo() ?? lateInfo
       if (latest === 'standalone') {
         rememberStandaloneProbe()
+        if (forcedManagedReturn) {
+          forcedManagedReturn.serverMode = 'standalone'
+          forcedManagedReturn.localMode = false
+          return undefined
+        }
         setLocalMode(false)
         renderSyncStatus(triageSync.status)
         return renderSidebar()
@@ -1913,6 +1975,12 @@ function positionUserMenuOnOpen() {
   })
 }
 
+// Wire the event delegates onto the shadow root + the search input,
+// hand the encryption-toggle button to its module, then paint. All
+// delegates sit on the shadow root (or the in-shadow `#file-list`),
+// so an event fired inside the tree reaches them with `e.target`
+// un-retargeted — `e.target.closest(...)` matches shadow elements
+// directly, exactly as it did against the light-DOM `#sidebar`.
 function mount(host) {
   hostEl = host
   root = host.renderRoot
