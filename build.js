@@ -12,6 +12,7 @@ import { resolve as resolvePath, dirname } from 'node:path'
 import { createServer, request as httpRequest } from 'node:http'
 import { connect as netConnect } from 'node:net'
 import { minifyLitSource } from './build-lit-minify.js'
+import { litSvgAsHtml } from './build-lit-svg.js'
 import { DEFAULT_SCAN_SERVER } from './common/scan-server.ts'
 import { configuredScanServer, scanServerHtml } from './server-common/scan-config.ts'
 
@@ -82,8 +83,8 @@ const mode = process.argv[2] ?? 'build'
 if (mode === 'build') {
   await esbuild.build({
     bundle: true,
-    plugins: [minifyLitTemplates, litCssAsText({ minify: true })],
-    entryPoints: ['ui/*.js', 'ui/*.css', 'ui/*.html', 'ui/*.svg', 'ui/*.webmanifest', 'ui/provider-icons/*.svg'],
+    plugins: [minifyLitTemplates, litCssAsText({ minify: true }), litSvgAsHtml],
+    entryPoints: ['ui/*.js', 'ui/*.css', 'ui/*.html', 'ui/*.svg', 'ui/*.webmanifest'],
     loader: { '.html': 'copy', '.svg': 'copy', '.webmanifest': 'copy' },
     outdir: 'out',
     minify: true,
@@ -109,7 +110,7 @@ if (mode === 'build') {
   // would try to write over the source.
   const ctx = await esbuild.context({
     bundle: true,
-    plugins: [litCssAsText()],
+    plugins: [litCssAsText(), litSvgAsHtml],
     entryPoints: ['ui/*.js', 'ui/*.css'],
     outdir: 'ui',
     // The CLI's --serve flag implies both write:false and tolerating

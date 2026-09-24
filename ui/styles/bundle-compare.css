@@ -29,7 +29,7 @@
   border-bottom: 1px solid var(--border);
 }
 
-/* Picker row — open bundle name → comparison <select>. */
+/* Picker row — open bundle name → shared searchable bundle selector. */
 .bundle-compare-picker {
   display: flex;
   align-items: center;
@@ -51,6 +51,7 @@
   display: inline-flex;
   align-items: center;
   gap: .35rem;
+  flex: 1 1 18rem; min-width: 0;
 }
 .bundle-compare-select-hint {
   font-size: .64rem;
@@ -58,16 +59,18 @@
   letter-spacing: .04em;
   color: var(--muted);
 }
-.bundle-compare-select {
-  max-width: 32ch;
-  padding: .2rem .4rem;
+.bundle-compare-select-wrap bundle-selector { flex: 1; min-width: 0; max-width: 32rem; }
+.bundle-compare-clear {
+  flex-shrink: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
   font: inherit;
-  font-size: .78rem;
-  color: var(--text);
-  background: var(--surface-active);
-  border: 1px solid var(--border);
-  border-radius: 5px;
-}
+  font-size: 1.1rem;
+  padding: .1rem .35rem;
+  }
+.bundle-compare-clear:hover { background: var(--surface-active); color: var(--text); }
 /* Swap button — pinned to the top-right of the picker row (margin-left:
    auto). Trades A and B and navigates to the other bundle. */
 .bundle-compare-swap {
@@ -246,7 +249,6 @@
   border: 0;
   border-radius: 4px;
 }
-button.bundle-compare-row-link { cursor: pointer; }
 button.bundle-compare-row-link:hover { background: var(--surface-active); }
 .bundle-compare-row-path {
   flex: 1;

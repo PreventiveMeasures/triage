@@ -1,7 +1,7 @@
 import { LitElement, html, render as litRender, nothing, unsafeCSS } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { LINKS_KIND, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, clientModeLabel, computeLinkHint, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, ensureLinkedFindingsIndexed, getCount, getPackagesIndex, getRepositoriesIndex, hasStandaloneProbeHint, hydrateSecureStorage, isManagedUiMode, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, probeServerInfo, readCachedServerInfo, reloadTriageFromStorage, rememberStandaloneProbe, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, setLocalMode, state, syncObservedAfterHydrate, waitForServerInfo, writeCachedServerInfo } from '#client/index.js'
+import { LINKS_KIND, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, clientModeLabel, computeLinkHint, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, ensureLinkedFindingsIndexed, getCount, getKind, getPackagesIndex, getRepositoriesIndex, getWorkspaceAppMetadata, hasStandaloneProbeHint, hydrateSecureStorage, isManagedUiMode, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, onWorkspaceAppMetadataChanged, probeServerInfo, readCachedServerInfo, reloadTriageFromStorage, rememberStandaloneProbe, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, setLocalMode, state, syncObservedAfterHydrate, waitForServerInfo, writeCachedServerInfo } from '#client/index.js'
 import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, setSyncForceDisabled, triageSync } from './client-sync.js'
 import { clearPreviewRole, getPreviewRole, loadManagedBundle, login as managedLogin, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams } from './client-managed.js'
 import { ROLES, isRole } from '../../common/managed/roles.ts'
@@ -160,6 +160,10 @@ const GROUP_ORDER = ['default', 'claude-security', 'codex-security', 'deepsec', 
 // starts from this same value), so users can switch files without
 // losing their search.
 let searchQuery = ''
+let searchActive = false
+// App workspaces start compact. Search temporarily reveals matching children
+// without changing the user's independent report/bundle expansion choices.
+const expandedWorkspaceSections = new Map()
 
 function fileItemTemplate(n, opts = {}) {
   // Suppress the `current` highlight when the user is browsing the
@@ -386,7 +390,7 @@ const WORKSPACE_LEAVE_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11
 // (export) and the door-arrow (leave). Sized to match the other
 // hover-revealed action buttons in the workspace row.
 const WORKSPACE_SHARE_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 9.5L9 7.5"/><path d="M9.5 5.5L10.5 4.5a2.1 2.1 0 1 1 3 3l-1 1"/><path d="M6.5 11.5L5.5 12.5a2.1 2.1 0 1 1-3-3l1-1"/></svg>`
-function workspaceItemTemplate(w) {
+function workspaceItemTemplate(w, { app, reports, bundles, showReports, showBundles }) {
   const isCurrent = state.currentWorkspace === w.id
     && (state.currentView === 'findings' || state.currentView === 'files')
   const cls = `file-item workspace-item${isCurrent ? ' current' : ''}`
@@ -399,8 +403,9 @@ function workspaceItemTemplate(w) {
   // interpolation emits Lit marker comments around the text; clearing
   // textContent wipes them, and the next renderSidebar (always runs on
   // rename commit/cancel) then crashes inside Lit's `_commitText`. The
-  // property binding leaves no markers inside the span, so the inline
-  // mutation is a plain overwrite the next render reapplies.
+  // property binding leaves no markers inside the span. The rename
+  // handler restores the label explicitly: Lit skips an unchanged
+  // property value when the edit is cancelled or the name is rejected.
   // Hover-revealed actions, in row order: Share by link, Export
   // (download .gz bundle), then Leave (drop the workspace from THIS
   // browser — entry, OPFS reports, persisted triage base — without
@@ -408,7 +413,21 @@ function workspaceItemTemplate(w) {
   // their copy). No placeholder trash icon for the eventual
   // server-side "delete the chain too" (TBD): it would misread as
   // "Delete is the same action as Leave, just greyed out".
-  return html`<li class=${cls} data-workspace-id=${w.id}><button type="button" class="file-name">${WORKSPACE_ICON}<span class="file-label" .textContent=${w.name}></span></button><button type="button" class="workspace-share" data-action="share-workspace" data-tooltip="Share by link" aria-label="Share workspace by link">${WORKSPACE_SHARE_ICON}</button><button type="button" class="workspace-export" data-action="export-workspace" data-tooltip="Export workspace" aria-label="Export workspace">${WORKSPACE_EXPORT_ICON}</button><button type="button" class="workspace-leave" data-action="leave-workspace" data-tooltip="Leave workspace" aria-label="Leave workspace">${WORKSPACE_LEAVE_ICON}</button></li>`
+  return html`<li class=${cls} data-workspace-id=${w.id}>
+    <div class="workspace-heading">
+      <button type="button" class="file-name">${WORKSPACE_ICON}<span class="file-label" .textContent=${w.name}></span></button>
+      <button type="button" class="workspace-share" data-action="share-workspace" data-tooltip="Share by link" aria-label="Share workspace by link">${WORKSPACE_SHARE_ICON}</button>
+      <button type="button" class="workspace-export" data-action="export-workspace" data-tooltip="Export workspace" aria-label="Export workspace">${WORKSPACE_EXPORT_ICON}</button>
+      <button type="button" class="workspace-leave" data-action="leave-workspace" data-tooltip="Leave workspace" aria-label="Leave workspace">${WORKSPACE_LEAVE_ICON}</button>
+    </div>
+    ${app?.appMode ? html`<div class="workspace-meta">
+      <span class="workspace-findings">${app.appFindings.toLocaleString()} finding${app.appFindings === 1 ? '' : 's'}</span>
+      <span class="workspace-sections" role="group" aria-label="Workspace files">
+        <button type="button" data-workspace-section="reports" aria-expanded=${String(showReports)} ?disabled=${searchActive}>${reports.toLocaleString()} report${reports === 1 ? '' : 's'}</button>
+        ${bundles > 0 ? html`<button type="button" data-workspace-section="bundles" aria-expanded=${String(showBundles)} ?disabled=${searchActive}>${bundles.toLocaleString()} bundle${bundles === 1 ? '' : 's'}</button>` : nothing}
+      </span>
+    </div>` : nothing}
+  </li>`
 }
 
 function matchesSearch(name) {
@@ -641,12 +660,19 @@ export async function renderSidebar() {
           missingBundles.push(integ)
         }
       }
+      const app = getWorkspaceAppMetadata(w)
+      const sections = expandedWorkspaceSections.get(w.id)
+      const showReports = !app?.appMode || searchActive || sections?.has('reports') === true
+      const showBundles = !app?.appMode || searchActive || sections?.has('bundles') === true
+      // Link files remain in the Reports section but do not count as reports.
+      // The arrays above already apply the sidebar query, so search counts
+      // describe exactly the matching children, including missing reports.
+      const reports = [...presentReports, ...missingReports].filter(name => getKind(name) !== LINKS_KIND).length
+      const bundles = presentBundles.length + missingBundles.length
       return html`
-        ${workspaceItemTemplate(w)}
-        ${presentReports.map((r) => fileItemTemplate(r, { indented: true, workspaceId: w.id }))}
-        ${missingReports.map((r) => missingReportItemTemplate(r, w.id))}
-        ${presentBundles.map((b) => bundleItemTemplate(b, { workspaceId: w.id }))}
-        ${missingBundles.map((integ) => missingBundleItemTemplate(integ, w.id))}
+        ${workspaceItemTemplate(w, { app, reports, bundles, showReports, showBundles })}
+        ${showReports ? html`${presentReports.map((r) => fileItemTemplate(r, { indented: true, workspaceId: w.id }))}${missingReports.map((r) => missingReportItemTemplate(r, w.id))}` : nothing}
+        ${showBundles ? html`${presentBundles.map((b) => bundleItemTemplate(b, { workspaceId: w.id }))}${missingBundles.map((integ) => missingBundleItemTemplate(integ, w.id))}` : nothing}
       `
     })}
     ${GROUP_ORDER.map((g) => {
@@ -728,6 +754,7 @@ function scheduleCountsRepaint() {
 // invokes the main `render()` on vault changes — this hook covers
 // the sidebar's own template too.
 onVaultStateChange(() => { renderSidebar() })
+onWorkspaceAppMetadataChanged(scheduleCountsRepaint)
 
 // Sidebar event delegation: file-list click switches; Delete removes
 // the current file; toggle collapses / expands; search filters on
@@ -736,6 +763,19 @@ onVaultStateChange(() => { renderSidebar() })
 // no `data-file` — but the add button still bubbles to the same
 // listener.
 async function onSidebarClick(e) {
+  const sectionButton = e.target.closest('[data-workspace-section]')
+  if (sectionButton) {
+    if (searchActive || sectionButton.disabled) return
+    const id = sectionButton.closest('[data-workspace-id]')?.dataset.workspaceId
+    if (!id) return
+    const section = sectionButton.dataset.workspaceSection
+    const expanded = expandedWorkspaceSections.get(id) ?? new Set()
+    if (expanded.has(section)) expanded.delete(section)
+    else expanded.add(section)
+    expandedWorkspaceSections.set(id, expanded)
+    await renderSidebar()
+    return
+  }
   if (e.target.closest('[data-action="toggle-client-mode"]')) {
     if (forcedManagedReturn) await restoreForcedManagedMode()
     else if (state.serverMode === 'managed') {
@@ -1104,6 +1144,7 @@ const SIDEBAR_TOOLTIP_OPTIONS = {
 }
 
 function onSearchInput(e) {
+  searchActive = e.target.value.length > 0
   searchQuery = e.target.value.trim().toLowerCase()
   renderSidebar()
 }
@@ -1445,6 +1486,7 @@ triageSync.onProxyAuthRequired((required) => {
 // fresh chrome anyway. Imperative DOM swap rather than a state flag
 // because the edit is a one-off, scoped to a single row.
 function onSidebarDblclick(e) {
+  if (e.target.closest('[data-workspace-section], [data-action]')) return
   const wsRow = e.target.closest('.file-item.workspace-item')
   if (!wsRow) return
   const labelSpan = wsRow.querySelector('.file-label')
@@ -1465,8 +1507,14 @@ function onSidebarDblclick(e) {
   const finish = async (commit) => {
     if (done) return
     done = true
-    if (commit) await renameWorkspace(id, input.value)
-    renderSidebar()
+    try {
+      if (commit) await renameWorkspace(id, input.value)
+    } catch (err) {
+      alert(`Failed to rename workspace: ${err.message}`)
+    } finally {
+      if (labelSpan.contains(input)) labelSpan.textContent = listWorkspaces().find((w) => w.id === id)?.name ?? ws.name
+      renderSidebar()
+    }
   }
   input.addEventListener('keydown', (ev) => {
     if (ev.key === 'Enter') { ev.preventDefault(); finish(true) }

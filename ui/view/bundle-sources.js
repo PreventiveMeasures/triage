@@ -267,10 +267,13 @@ export function bundlePackageDirs(details) {
 // pairs) and the Compare slide (the dependency version-update diff).
 // Returns an empty Map for sourcemaps and v0 stasis bundles — neither
 // carries per-module version metadata.
-export function bundlePackageVersions(details) {
+export function bundlePackageVersions(details, paths = null) {
   const versions = new Map()
   if (details?.kind !== 'stasis' || !details.bundle?.modules) return versions
+  const packageDirs = paths === null ? null : bundlePackageDirs(details)
+  const selectedDirs = paths === null ? null : new Set([...paths].map(path => packageDirs?.get(path)))
   for (const [dir, info] of details.bundle.modules) {
+    if (selectedDirs && !selectedDirs.has(dir)) continue
     if (!dir.includes('node_modules')) continue
     if (!info?.name || typeof info.version !== 'string' || !info.version) continue
     let set = versions.get(info.name)

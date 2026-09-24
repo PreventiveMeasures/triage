@@ -253,9 +253,10 @@ class ObjstoreRecoveryDialog extends AppDialog {
 
   render() {
     const plural = this.cloudCount === 1 ? '' : 's'
+    const objects = this.cloudCount > 0 ? html`the <strong>${this.cloudCount}</strong> remote` : 'remote'
     const intro = this._ran
       ? nothing
-      : html`<p class="lwd-body">Re-check ${this.cloudCount > 0 ? html`the <strong>${this.cloudCount}</strong> ` : nothing}remote object${plural} for this workspace. Each is re-fetched from the relay and compared with your copy. When one copy is provably newer, the other is updated to match; when it isn't clear, you choose which to keep. Any whose bytes are missing are re-uploaded from a matching local copy.</p>`
+      : html`<p class="lwd-body">Re-check ${objects} object${plural} for this workspace. Each is re-fetched from the relay and compared with your copy. When one copy is provably newer, the other is updated to match; when it isn't clear, you choose which to keep. Any whose bytes are missing are re-uploaded from a matching local copy.</p>`
     const empty = this._ran && this._rows.length === 0 && !this._error
       ? html`<p class="lwd-empty">No remote objects to check.</p>`
       : nothing

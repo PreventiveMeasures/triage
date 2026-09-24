@@ -814,6 +814,7 @@ export async function wipeAllVaultData({ refuseIfEnabled = false } = {}) {
         'deepview.sync.userEnabled',
         'deepview.repoUrls',
         'deepview.fileCounts',
+        'deepview.workspaceApp',
         'deepview.lastFile',
         'deepview.scan.access',
         'deepview.triage',

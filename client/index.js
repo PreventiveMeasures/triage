@@ -216,3 +216,5 @@ export {
   setReportWorkspace,
   syncObservedAfterHydrate,
 } from './workspaces.js'
+
+export { cacheWorkspaceAppMetadata, getWorkspaceAppMetadata, onWorkspaceAppMetadataChanged, workspaceAppCacheToken } from './workspace-app-cache.js'

@@ -1,4 +1,4 @@
-import { adoptRepoUrlFor, analyzeContent, computeLinkHint, deleteBundle, deleteFile, deleteWorkspace, dropBundleFromHashIndex, ensureTriageLoaded, getSecureItem, isManagedUiMode, listBundles, listFiles, listWorkspaces, loadRepoUrlFor, parseLinkedFindings, pruneOrphanTriage, readFile, readFileBytes, removeCount, removeSecureItem, saveBundle, saveFile, saveRepoUrlFor, setBundleWorkspace, setCount, setReportWorkspace, setSecureItem, state } from '#client/index.js'
+import { adoptRepoUrlFor, analyzeContent, cacheWorkspaceAppMetadata, computeLinkHint, deleteBundle, deleteFile, deleteWorkspace, dropBundleFromHashIndex, duplicatesOf, ensureCounts, ensureLinkedFindingsIndexed, ensureTriageLoaded, getSecureItem, isManagedUiMode, listBundles, listFiles, listWorkspaces, loadRepoUrlFor, parseLinkedFindings, pruneOrphanTriage, readFile, readFileBytes, removeCount, removeSecureItem, saveBundle, saveFile, saveRepoUrlFor, setBundleWorkspace, setCount, setReportWorkspace, setSecureItem, state, workspaceAppCacheToken } from '#client/index.js'
 import { closeWorkspace as closePresence, deleteBundleFromRemote, deleteFromRemote as deletePresence, holdLocalChangeChecks, isInRemoteOrCached, openWorkspace as openPresence, putFile, triageSync } from './client-sync.js'
 import { openImportConflictDialog } from './dialogs/import-conflict-dialog.js'
 import { dropZone, report } from './dom.js'
@@ -19,6 +19,7 @@ import { openPasskeyUnlockDialog } from './dialogs/passkey-unlock-dialog.js'
 import { openSyncDownloadDialog } from './dialogs/sync-download-dialog.js'
 import { fetchReport as fetchManagedReport, login as managedLogin } from './client-managed.js'
 import { showToast } from './toast.js'
+import { workspaceAppMetadata } from './workspace-app.js'
 
 // localStorage key for the last-viewed file — restored on page load so
 // the user picks back up where they left off. The stored value is the
@@ -120,6 +121,7 @@ function showEmptyMainPane() {
   report.classList.remove('active')
   report.replaceChildren()
   dropZone.classList.remove('hidden')
+  document.title = 'DeepView'
 }
 
 // OPFS `NotFoundError` (from `getFileHandle`) or the storage.js
@@ -565,13 +567,12 @@ export async function switchToFile(name, content, { workspaceId } = {}) {
   // Local file navigation leaves the managed report scope.
   state.managedReport = null
   state.managedReports = []
-  // Switching to a regular report drops out of the bundles / packages
-  // / links view — the user clicked a file row to see its findings.
+  // A report opens its findings from every non-report surface, including
+  // Scans. Preserve the Files lens when moving between reports.
   // (A links file lands back on 'links' below, once the read confirms
   // that's what it is; going through 'findings' first means a report
   // never inherits the previous file's view.)
-  if (state.currentView === 'bundles' || state.currentView === 'packages'
-      || state.currentView === 'repositories' || state.currentView === 'links') {
+  if (state.currentView !== 'findings' && state.currentView !== 'files') {
     state.currentView = 'findings'
   }
   // Per-report repo URL (see state.js / saveRepoUrlFor): the user's
@@ -799,10 +800,9 @@ export async function switchToWorkspace(workspaceId) {
   // presence session in lockstep — presence must never outlive its
   // sync subscription (rides `workspace-subscribe`), so presence ⊆ sync.
   closeSessionsExcept(new Set([workspaceId]))
-  // Same drop-out as switchToFile — opening a workspace lands in
-  // findings, not the bundles / packages / links list.
-  if (state.currentView === 'bundles' || state.currentView === 'packages'
-      || state.currentView === 'repositories' || state.currentView === 'links') {
+  // Match report navigation: leave non-report surfaces, preserving the
+  // Files lens when moving between workspaces.
+  if (state.currentView !== 'findings' && state.currentView !== 'files') {
     state.currentView = 'findings'
   }
   // Same fire-and-forget prime as ingestReport, for the workspace half
@@ -837,12 +837,20 @@ export async function switchToWorkspace(workspaceId) {
   // order is preserved because the awaits walk the promise array in
   // workspace.reports order. Per-read failures resolve to `null`
   // (caught at the promise) so one bad file doesn't reject the batch.
+  // Classify links before taking the snapshot: linking can merge App rows even
+  // when its file lives outside this workspace. These walks share sidebar work.
+  await ensureCounts(await listFiles())
+  await ensureLinkedFindingsIndexed()
+  if (isStaleLoad(gen)) return
+  const appToken = await workspaceAppCacheToken()
+  if (isStaleLoad(gen)) return
+  let complete = true
   const reads = ws.reports.map((name) => readFile(name).catch(() => null))
   let ingested = 0
   for (let i = 0; i < ws.reports.length; i++) {
     const content = await reads[i]
     if (isStaleLoad(gen)) return
-    if (content === null) continue
+    if (content === null) { complete = false; continue }
     // A workspace holds whatever the user dragged into it, and a links
     // file is a member like any other — but it carries no findings, so
     // there is nothing to merge into the view and `ingestReport` would
@@ -852,8 +860,8 @@ export async function switchToWorkspace(workspaceId) {
     // Workspace loads accumulate all reports before painting. Rendering
     // here would force one expensive graph/list pass per report and block
     // the next report's ingest on the main thread.
-    await ingestReport(ws.reports[i], content, gen, { renderView: false })
-    ingested++
+    if (await ingestReport(ws.reports[i], content, gen, { renderView: false })) ingested++
+    else complete = false
     if (isStaleLoad(gen)) return
   }
   // Nothing painted the main pane: every member was a links file, or
@@ -870,6 +878,15 @@ export async function switchToWorkspace(workspaceId) {
   // has touched the filters since that first member's resetFilters,
   // so this is still what a fresh load would set, not a user's
   // selection being overwritten. Paint the complete workspace once.
+  const metadata = complete ? workspaceAppMetadata(state.reports, duplicatesOf) : { appMode: false }
+  const cached = await cacheWorkspaceAppMetadata(ws, metadata, appToken).catch(() => false)
+  if (isStaleLoad(gen)) return
+  if (cached && metadata.appMode) {
+    state.showRevalidation = true
+    state.upstreamOnly = false
+    state.revalidationDetailed = false
+    configureReportRevalidation()
+  }
   if (ingested > 0) {
     applyOpeningFilters(getShownGroups())
     if (!(await renderAfterAnimationFrame(gen))) return
@@ -1032,7 +1049,6 @@ function clearActiveView({ forgetLastView = true } = {}) {
   resetGraph2()
   if (forgetLastView) removeSecureItem(LAST_FILE_KEY)
   showEmptyMainPane()
-  document.title = 'DeepView'
 }
 
 // Leave the current surface when the managed server's UI mode changes. This
@@ -1423,6 +1439,7 @@ async function ingestReport(name, content, gen = null, { renderView = true, mana
       applyOpeningFilters(getShownGroups())
     }
     if (renderView) await renderAfterAnimationFrame(gen)
+    return true
   } catch (err) {
     alert(`Failed to parse ${name}: ${err.message}`)
   }

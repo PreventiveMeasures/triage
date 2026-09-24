@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { build } from 'esbuild'
+import { litSvgAsHtml } from '../build-lit-svg.js'
 
 test('Manage pages belong only to the lazy client-managed bundle, without duplicating local client state', async () => {
   const { metafile } = await build({
     entryPoints: ['ui/view.js', 'ui/client-managed.js'],
     bundle: true, format: 'esm', write: false, outdir: 'out',
-    loader: { '.css': 'text' }, metafile: true,
+    loader: { '.css': 'text' }, plugins: [litSvgAsHtml], metafile: true,
   })
   const main = metafile.outputs['out/view.js'].inputs
   const managed = metafile.outputs['out/client-managed.js'].inputs

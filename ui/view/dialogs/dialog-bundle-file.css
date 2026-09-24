@@ -1,0 +1,54 @@
+dialog {
+  width: min(96vw, 90rem); max-width: none; max-height: 90dvh;
+  margin: auto; padding: 0; overflow: hidden;
+}
+dialog[open] { display: flex; flex-direction: column; }
+header { padding: .8rem 1rem; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.file-heading { display: flex; align-items: center; gap: 1rem; }
+.file-heading h3 {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .85rem;
+}
+.file-heading button {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 1.8rem;
+  height: 1.8rem;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  color: var(--muted);
+  background: transparent;
+}
+.file-heading button svg { display: block; }
+.file-heading button:hover { color: var(--text); background: var(--surface-active); }
+.file-details { display: flex; flex-wrap: wrap; align-items: baseline; gap: .35rem 1.2rem; margin-top: .35rem; }
+.file-context, .file-legend { margin: 0; color: var(--muted); font-size: .72rem; overflow-wrap: anywhere; }
+.file-context { flex: 1; min-width: min(100%, 16rem); }
+.file-legend { display: flex; flex-wrap: wrap; gap: .8rem; margin-left: auto; font-variant-numeric: tabular-nums; }
+.file-legend span { white-space: nowrap; }
+.removed { color: var(--critical); }
+.added { color: var(--green); }
+.file-code {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  margin: 0;
+  padding: .8rem 0;
+  background: var(--bg);
+  tab-size: 2;
+  font: .76rem/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.file-code code { display: block; min-width: 100%; width: max-content; padding-inline: 1rem; font: inherit; }
+.diff-line { display: block; min-height: 1.55em; }
+.diff-line.add { color: var(--green); background: rgb(from var(--green) r g b / .08); }
+.diff-line.del { color: var(--critical); background: rgb(from var(--critical) r g b / .08); }
+.diff-line.hunk { color: var(--accent); background: rgb(from var(--accent) r g b / .06); }
+.diff-line.meta { color: var(--muted); }
+.file-message { padding: 2rem 1rem; color: var(--muted); font-size: .8rem; }
+button:focus-visible, pre:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }

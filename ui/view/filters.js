@@ -256,9 +256,9 @@ export function rangeApplies(groups) {
     && groups.some((g) => g.some(scoresItself))
 }
 
-function showsAtConfidence(g, min) {
+function showsAtConfidence(g, min, kindOf = revalidateKind) {
   return g.some((f) => {
-    const conf = voidsConfidence(f) ? 0 : confidenceOnScale(f)
+    const conf = ['refuted', 'unreachable'].includes(kindOf(f)) ? 0 : confidenceOnScale(f)
     return conf === undefined ? min === 0 : conf >= min
   })
 }
@@ -282,12 +282,12 @@ function showsAtConfidence(g, min) {
 // on a first load and again by the App switch (events.js), which
 // reshapes the set and so has to ask again rather than keep an answer
 // that was about a different one.
-export function defaultConfidenceFloor(groups) {
+export function defaultConfidenceFloor(groups, tabs = drawnTabs) {
   // App mode folds the source tabs a revalidation pass already answered
   // under its App tab. Those hidden copies must not lower the opening floor
   // for a workspace that otherwise has the same visible rows as its App
   // report. Keep source-only rows intact; they are real rows in the App view.
-  const visible = groups.map(drawnTabs).filter((g) => g.length > 0)
+  const visible = groups.map(tabs).filter((g) => g.length > 0)
   if (!visible.some((g) => g.some((f) => confidenceOnScale(f) !== undefined))) return 0
   const countAtMin = (min) => visible.reduce((n, g) =>
     n + (g.some((f) => (confidenceOnScale(f) ?? -1) >= min) ? 1 : 0), 0)
@@ -410,7 +410,7 @@ function effectiveFloor(groups, confMin) {
 // Both the opening default and the dropdown lock use the same coverage:
 // findings represented by Confirmed rows, plus findings explicitly ruled out.
 // Read the original groups before drawnTabs folds away their source members.
-function confirmedCoverage(groups) {
+function confirmedCoverage(groups, tabs = drawnTabs, kindOf = revalidateKind) {
   // A workspace may carry an un-stamped source copy from report A while
   // report B explicitly ruled out the same id. The ruled-out copy is
   // removed before workspace rows are merged, so it cannot vouch for its
@@ -420,12 +420,13 @@ function confirmedCoverage(groups) {
   // `revalidateInputs` list of its own.
   const covered = new Set(groups.ruledOutIds ?? [])
   for (const raw of groups) {
-    for (const f of raw) if (isRuledOut(f)) covered.add(tabKey(f))
+    for (const f of raw) if (['refuted', 'unreachable'].includes(kindOf(f))) covered.add(tabKey(f))
   }
   for (const raw of groups) {
-    const g = drawnTabs(raw)
+    const g = tabs(raw)
     if (g.length === 0) continue
-    if (!matchesConfirmed(g)) continue
+    if (!g.some((f) => activeRevalidateKinds('confirmed', '').includes(
+      kindOf(f) || (f._source && !f._sourcePass ? 'revalidation' : '')))) continue
     // A folded source copy is not a cost of Confirmed, but its id is still
     // represented by the App row. Keep all raw members in the coverage set
     // so a duplicate source-only row from another report is recognized as
@@ -445,12 +446,12 @@ function confirmedCoverage(groups) {
   return covered
 }
 
-function confirmedIsDefault(visible, confMin, covered) {
+function confirmedIsDefault(visible, confMin, covered, kindOf = revalidateKind) {
   const floor = effectiveFloor(visible, confMin)
-  const shown = visible.filter((g) => showsAtConfidence(g, floor))
+  const shown = visible.filter((g) => showsAtConfidence(g, floor, kindOf))
   if (shown.length === 0) return false
   const kinds = new Set(activeRevalidateKinds('confirmed', ''))
-  if (!visible.some((g) => g.some((f) => kinds.has(revalidateKind(f))))) return false
+  if (!visible.some((g) => g.some((f) => kinds.has(kindOf(f))))) return false
   return shown.every((g) => g.every((f) => covered.has(tabKey(f))))
 }
 
@@ -467,12 +468,18 @@ export function defaultRevalidateFilter(groups, confMin) {
 // reader's default view even though they sit in the broader 6–10 band.
 export function shouldLockConfirmed(groups) {
   if (state.showRevalidation === false || state.upstreamOnly || underlyingFindingsShown()) return false
-  const visible = groups.map(drawnTabs).filter((g) => g.length > 0)
-  const covered = confirmedCoverage(groups)
-  if (!confirmedIsDefault(visible, defaultConfidenceFloor(groups), covered)) return false
+  return canLockConfirmed(groups)
+}
+
+// The same coverage test can evaluate a workspace's basic App view without
+// changing the reader's current lens or the format module's revalidation flag.
+export function canLockConfirmed(groups, { tabs = drawnTabs, kindOf = revalidateKind, severityMode = state.severityMode } = {}) {
+  const visible = groups.map(tabs).filter((g) => g.length > 0)
+  const covered = confirmedCoverage(groups, tabs, kindOf)
+  if (!confirmedIsDefault(visible, defaultConfidenceFloor(groups, tabs), covered, kindOf)) return false
   const floor = effectiveFloor(visible, 6)
-  return visible.every((g) => !showsAtConfidence(g, floor)
-    || !g.some((f) => displayedSeverity(f, state.severityMode) !== 'low')
+  return visible.every((g) => !showsAtConfidence(g, floor, kindOf)
+    || !g.some((f) => displayedSeverity(f, severityMode) !== 'low')
     || g.every((f) => covered.has(tabKey(f))))
 }
 
