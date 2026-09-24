@@ -1712,7 +1712,7 @@ const MANAGED_SCAN_STYLES = css`
   .pane-head { display: flex; align-items: baseline; justify-content: space-between; gap: .5rem; padding: .55rem .75rem; border-bottom: 1px solid var(--border); }
   .pane-head strong { font-size: .72rem; font-weight: 600; }
   .pane-head span { color: var(--muted); font-size: .65rem; font-variant-numeric: tabular-nums; }
-  .package-list { max-height: 22rem; overflow: auto; }
+  .package-list { max-height: 22rem; overflow: auto; overscroll-behavior: none; }
   .package-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: .45rem; width: 100%; padding: .42rem .7rem; border: 0; border-bottom: 1px solid var(--border); color: var(--text); background: transparent; text-align: left; }
   .package-row:hover { background: var(--surface-active); }
   .package-row input, .file input { width: .85rem; height: .85rem; accent-color: var(--accent); }
@@ -1721,7 +1721,7 @@ const MANAGED_SCAN_STYLES = css`
   .package-size { color: var(--muted); font-size: .64rem; font-variant-numeric: tabular-nums; }
   .package-row.excluded .package-name { color: var(--muted); text-decoration: line-through; }
   .file-panel { min-width: 0; }
-  .file-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); max-height: 22rem; overflow: auto; }
+  .file-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); max-height: 22rem; overflow: auto; overscroll-behavior: none; }
   .file { display: flex; align-items: center; gap: .45rem; min-width: 0; padding: .5rem .75rem; border-bottom: 1px solid var(--border); }
   .file:nth-child(odd) { border-right: 1px solid var(--border); }
   .file input { flex: 0 0 auto; }
