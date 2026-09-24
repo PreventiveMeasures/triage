@@ -280,7 +280,7 @@ class ObjstoreRecoveryDialog extends AppDialog {
         ${useCloud ? html`<button type="button" data-role="use-cloud-all"
           data-tooltip="Replace your copy of every report that differs with its cloud copy"
           @click=${this._onUseCloudForAll} ?disabled=${this._running || this._bulk}>
-          ${this._bulk ? 'Using cloud copies…' : `Use cloud for all ${this._differingRows().length}`}
+          ${this._bulk ? 'Using cloud copies…' : `Use cloud for all ${this._differingRows().length} conflicts`}
         </button>` : nothing}
         ${!useCloud && downloadable > 0 ? html`<button type="button" data-role="download" @click=${this._onDownload} ?disabled=${this._running}>
           Download ${downloadable} not stored locally
