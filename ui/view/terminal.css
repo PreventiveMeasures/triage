@@ -28,9 +28,12 @@
   cursor: text;
 }
 
+/* The banner is guidance, not output: kept out of a selection, so
+   copying the transcript starts at the first command. */
 .banner {
   color: var(--muted, #8b949e);
   margin-bottom: 8px;
+  user-select: none;
 }
 
 /* Clickable command suggestions in the banner — plain accent text,
