@@ -4,11 +4,13 @@ import { getPreviewRole, managedFetch } from '../../client/managed/request.js'
 // API requests and composed events to communicate with their host.
 import { LitElement, css, html, nothing } from 'lit'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
+import { live } from 'lit/directives/live.js'
 import { ROLES } from '../../common/managed/roles.ts'
 import { VISIBILITY_PERMISSION_LABELS } from '../../common/managed/permissions.ts'
 import { REPORT_LOGOS } from '../view/report-logos.js'
 import { BUNDLE_ICON_SVG } from '../view/icons.js'
 import '../view/scan-model-picker.js'
+import './scan-repo-picker.js'
 
 async function fetchSession() {
   const res = await managedFetch('/api/auth/session', { credentials: 'same-origin', headers: { accept: 'application/json' } })
@@ -1660,10 +1662,11 @@ const MANAGED_SCAN_STYLES = css`
   .field { display: grid; gap: .3rem; min-width: 0; }
   .field label, .scope-field > span { color: var(--muted); font-size: .68rem; }
   select { min-width: 0; height: 2rem; padding: .28rem .5rem; border: 1px solid var(--border); border-radius: 5px; color: var(--text); background: var(--bg); font-size: .76rem; }
-  .bundle-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .5rem; }
-  .metric { min-width: 0; padding: .45rem .55rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
-  .metric strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .78rem; font-variant-numeric: tabular-nums; }
-  .metric span { display: block; margin-top: .12rem; color: var(--muted); font-size: .63rem; }
+  .bundle-stats { display: flex; flex-wrap: wrap; align-items: center; gap: .45rem 1.1rem; }
+  .metric { display: inline-flex; align-items: center; gap: .3rem; min-width: 0; white-space: nowrap; }
+  .metric svg { flex: 0 0 auto; width: .85rem; height: .85rem; margin-right: .1rem; color: var(--muted); }
+  .metric strong { font-size: .72rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .metric span { color: var(--muted); font-size: .7rem; }
   .mode-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .45rem; padding: .7rem .9rem .85rem; }
     .mode-option { display: grid; gap: .25rem; min-width: 0; padding: .55rem .6rem; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); background: var(--bg); text-align: left; }
     .mode-title { display: flex; align-items: center; gap: .35rem; min-width: 0; }
@@ -1729,7 +1732,8 @@ const MANAGED_SCAN_STYLES = css`
   .file-foot { display: flex; justify-content: space-between; gap: .6rem; padding: .6rem .8rem; color: var(--muted); font-size: .7rem; }
   .options { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 1rem; position: relative; z-index: 2; overflow: visible; padding: .85rem .9rem 1rem; }
   .options-grid { display: grid; grid-column: 1 / -1; gap: .7rem; min-width: 0; }
-  .checks { display: flex; flex-wrap: wrap; grid-column: 2; grid-row: 3; align-items: center; justify-content: flex-end; gap: .8rem 1.1rem; margin-top: 1rem; }
+  .checks { position: relative; display: grid; grid-column: 2; grid-row: 3; align-content: center; justify-items: end; margin-top: 1rem; }
+  .offline-help { position: absolute; top: calc(50% + .75rem); right: 0; color: var(--muted); font-size: .66rem; line-height: 1.4; white-space: nowrap; }
   .check { display: inline-flex; align-items: center; gap: .4rem; color: var(--text); font-size: .75rem; }
   .check input { width: .85rem; height: .85rem; accent-color: var(--accent); }
   .switch { display: inline-flex; align-items: center; gap: .45rem; color: var(--text); font-size: .74rem; cursor: default; }
@@ -1738,6 +1742,8 @@ const MANAGED_SCAN_STYLES = css`
   .switch-track::after { content: ''; position: absolute; top: .15rem; left: .15rem; width: .8rem; height: .8rem; border-radius: 50%; background: var(--muted); transition: transform .12s, background .12s; }
   .switch input:checked + .switch-track { background: rgb(from var(--accent) r g b / .4); }
   .switch input:checked + .switch-track::after { transform: translateX(.9rem); background: var(--accent); }
+  .checks .switch input:checked + .switch-track { background: rgb(from var(--critical, #e5534b) r g b / .3); }
+  .checks .switch input:checked + .switch-track::after { background: var(--critical, #e5534b); }
   .switch input:focus-visible + .switch-track { outline: 2px solid var(--accent); outline-offset: 2px; }
   .effort-switch { display: grid; grid-template-columns: auto auto auto; align-items: center; column-gap: .85rem; row-gap: .35rem; width: fit-content; max-width: 100%; margin-top: 1rem; color: var(--muted); font-size: .74rem; }
   .effort-switch-label { color: var(--text); font-weight: 600; line-height: 1.2; }
@@ -1772,7 +1778,7 @@ const MANAGED_SCAN_STYLES = css`
   .action:hover { border-color: var(--muted); background: var(--surface-active); }
   .empty { margin: 0; padding: 1.2rem; color: var(--muted); font-size: .8rem; }
   @media (max-width: 48rem) { .bundle-choice, .source-choice { grid-template-columns: 1fr; gap: .7rem; } .source-choice .bundle-stats { grid-column: auto; } .scope-grid { grid-template-columns: 1fr; } .scope-pane + .scope-pane { border-top: 1px solid var(--border); border-left: 0; } .agentic-fields { grid-template-columns: 1fr; } }
-  @media (max-width: 42rem) { .options { display: block; } .checks { justify-content: flex-start; margin-top: .8rem; } .options-footer { margin-top: .8rem; } }
+  @media (max-width: 42rem) { .options { display: block; padding-bottom: 3rem; } .checks { justify-items: start; margin-top: .8rem; } .offline-help { right: auto; left: 0; max-width: 100%; white-space: normal; } .options-footer { margin-top: .8rem; } }
   @media (max-width: 34rem) { .mode-grid, .report-list { grid-template-columns: 1fr 1fr; } .scope-toolbar { flex-direction: column; } .scope-field { flex-basis: auto; } .file-list { grid-template-columns: 1fr; } .file:nth-child(odd) { border-right: 0; } .scan-row { grid-template-columns: 1fr; gap: .55rem; } .scan-actions { justify-content: flex-start; } .head-tabs { margin-left: 0; } }
 `
 
@@ -1823,11 +1829,11 @@ class ManagedAdminScans extends LitElement {
     this._timers.clear()
   }
 
-  get _repo() { return this._repositories.find((repo) => repo.id === this._selectedRepoId) ?? this._repositories[0] }
+  get _repo() { return this._repositories.find((repo) => repo.id === this._selectedRepoId) }
 
   get _repoBundles() { return this._bundles.filter((bundle) => bundle.repoId === this._selectedRepoId) }
 
-  get _bundle() { return this._bundles.find((bundle) => bundle.id === this._selectedBundleId) ?? this._repoBundles[0] }
+  get _bundle() { return this._repoBundles.find((bundle) => bundle.id === this._selectedBundleId) }
 
   get _reasonData() { return this._bundle?.reasons.find((reason) => reason.id === this._reason) ?? this._bundle?.reasons[0] }
 
@@ -1876,22 +1882,24 @@ class ManagedAdminScans extends LitElement {
         <div class="mode-grid" role="tablist" aria-label="Scan mode">
           ${[['dependencies', 'Dependency alerts', 'Revalidate incoming alerts against actual code'], ['code', 'Code', 'Run a full scan of the codebase'], ['agentic', 'Agentic', 'Free-form analysis with your instructions'], ['report', 'Report', 'Refine and deduplicate existing reports']].map(([id, label, text]) => html`<button type="button" role="tab" aria-selected=${mode === id} class=${`mode-option ${mode === id ? 'active' : ''}`} @click=${() => this._changeMode(id)}><span class="mode-title">${SCAN_MODE_ICONS[id]}<strong>${label}</strong></span><span>${text}</span></button>`)}
         </div>
-        ${mode === 'code' ? html`<div class="subtype-wrap"><div class="subtype-options" role="radiogroup" aria-label="Code subtype">${[['security', 'Security', 'Security findings only.'], ['generic', 'Generic', 'Free-form code scan: wide-scoped, most results.'], ['correctness', 'Correctness', 'Guided correctness scan.']].map(([id, label, text]) => html`<button type="button" role="radio" aria-checked=${this._options.analyzer === id} class=${`subtype-option ${this._options.analyzer === id ? 'active' : ''}`} @click=${() => this._setOption('analyzer', id)}><strong>${label}</strong><span>${text}</span></button>`)}</div><p class="subtype-help">Focusing controls how effort is spent: while Generic can also find security issues, a focused Security scan is likely to find more.</p></div>` : nothing}
+        ${mode === 'code' ? html`<div class="subtype-wrap"><div class="subtype-options" role="radiogroup" aria-label="Code subtype">${[['security', 'Security', 'Security findings only'], ['generic', 'Generic', 'Free-form code scan: wide-scoped, most results'], ['correctness', 'Correctness', 'Guided correctness scan']].map(([id, label, text]) => html`<button type="button" role="radio" aria-checked=${this._options.analyzer === id} class=${`subtype-option ${this._options.analyzer === id ? 'active' : ''}`} @click=${() => this._setOption('analyzer', id)}><strong>${label}</strong><span>${text}</span></button>`)}</div><p class="subtype-help">Focusing controls how effort is spent: while Generic can also find security issues, a focused Security scan is likely to find more.</p></div>` : nothing}
       </section>
       ${mode === 'report' ? this._reportInputPanel(selectedReports) : this._sourcePanel(bundle, files)}
       ${mode === 'code' ? html`<section class="panel scope-panel">
         <div class="scope-head"><h2>Code scope</h2><p>${included.length} of ${files.length} files · ${includedPackages} of ${modules.length} packages included</p></div>
-        <div class="scope-toolbar"><label class="scope-field"><span>Scope</span><select id="scan-reason" aria-label="Choose scan scope" .value=${this._reason === 'all' ? '' : this._reason} @change=${(e) => this._changeReason(e)}><option value="">All files</option>${(bundle?.reasons ?? []).filter((reason) => reason.id !== 'all').map((reason) => html`<option value=${reason.id}>${reason.label ?? reason.id}</option>`)}</select></label><div class="scope-field scope-summary-field"><span>Selection</span><div class="scope-selection"><strong>${included.length}</strong><span>files ready to scan</span></div></div></div>
+        <div class="scope-toolbar"><label class="scope-field"><span>Scope</span><select id="scan-reason" aria-label="Choose scan scope" @change=${(e) => this._changeReason(e)}><option value="" .selected=${live(!this._reason || this._reason === 'all')}>All files</option>${(bundle?.reasons ?? []).filter((reason) => reason.id !== 'all').map((reason) => html`<option value=${reason.id} .selected=${live(reason.id === this._reason)}>${reason.label ?? reason.id}</option>`)}</select></label><div class="scope-field scope-summary-field"><span>Selection</span><div class="scope-selection"><strong>${included.length}</strong><span>files ready to scan</span></div></div></div>
         <div class="scope-grid"><section class="scope-pane package-pane" aria-label="Packages in bundle"><div class="pane-head"><strong>Packages</strong><span>${modules.length} total · sorted by size</span></div><div class="package-list">${modules.map((module) => { const count = moduleCounts.get(module) ?? 0; const includedCount = files.filter((file) => file.module === module && !excluded.has(file.path)).length; const isIncluded = !excludedModules.has(module); return html`<label class=${`package-row ${isIncluded ? '' : 'excluded'}`} title=${`${count} files · ${formatBytes(moduleSizes.get(module) ?? 0)}`}><input type="checkbox" .checked=${isIncluded} @change=${(_event) => this._toggleModule(module)}><span class="package-name">${this._packageLabel(module)}</span><span class="package-size">${formatBytes(moduleSizes.get(module) ?? 0)} · ${includedCount}/${count}</span></label>` })}</div></section><section class="scope-pane file-panel" aria-label="Largest files in bundle"><div class="pane-head"><strong>Largest files</strong><span>showing ${previewFiles.length} of ${files.length}</span></div>${files.length === 0 ? html`<p class="empty">The server did not return files for this selection.</p>` : html`<div class="file-list">${previewFiles.map((file) => { const isIncluded = !excluded.has(file.path) && !excludedModules.has(file.module); return html`<label class=${`file ${isIncluded ? '' : 'excluded'}`}><input type="checkbox" .checked=${isIncluded} @change=${(e) => this._toggleFile(file, e.target.checked)}><span class="file-copy"><span class="file-path" title=${file.path}>${file.path}</span><span class="file-meta">${file.size} · ${this._packageLabel(file.module)}</span></span></label>` })}</div>`}</section></div>
       </section>` : nothing}
-      ${mode === 'agentic' ? html`<section class="panel agentic-panel"><div class="panel-head"><h2>Agentic scope</h2><p>The selected scope chooses the graphs the server will use</p></div><div class="agentic-fields"><label class="field"><span>Scope</span><select id="scan-agentic-scope" aria-label="Choose agentic scope" .value=${this._reason === 'all' ? '' : this._reason} @change=${(e) => this._changeReason(e)}><option value="">All graphs</option>${(bundle?.reasons ?? []).filter((reason) => reason.id !== 'all').map((reason) => html`<option value=${reason.id}>${reason.label ?? reason.id}</option>`)}</select></label><label class="field prompt-field"><span>Prompt</span><textarea rows="3" placeholder="What should the agent focus on?" .value=${this._prompt} @input=${(e) => { this._prompt = e.target.value }}></textarea></label></div></section>` : nothing}
+      ${mode === 'agentic' ? html`<section class="panel agentic-panel"><div class="panel-head"><h2>Agentic scope</h2><p>The selected scope chooses the graphs the server will use</p></div><div class="agentic-fields"><label class="field"><span>Scope</span><select id="scan-agentic-scope" aria-label="Choose agentic scope" @change=${(e) => this._changeReason(e)}><option value="" .selected=${live(!this._reason || this._reason === 'all')}>All graphs</option>${(bundle?.reasons ?? []).filter((reason) => reason.id !== 'all').map((reason) => html`<option value=${reason.id} .selected=${live(reason.id === this._reason)}>${reason.label ?? reason.id}</option>`)}</select></label><label class="field prompt-field"><span>Prompt</span><textarea rows="3" placeholder="What should the agent focus on?" .value=${this._prompt} @input=${(e) => { this._prompt = e.target.value }}></textarea></label></div></section>` : nothing}
       ${this._optionsPanel(mode, bundle, mode === 'report' ? selectedReports.length : included.length)}
     </div>`
   }
 
   _sourcePanel(bundle, files) {
+    // Select dynamic options after their values update. Setting select.value
+    // first clears the browser selection when switching to another repository.
     const bundles = this._repoBundles
-    return html`<section class="panel source-panel"><div class="panel-head"><h2>Source</h2><p>${this._repo?.label ?? 'Repository'} · ${bundles.length} ${bundles.length === 1 ? 'bundle' : 'bundles'}</p></div><div class="source-choice"><label class="field"><span>Repository</span><select aria-label="Choose repository" .value=${this._selectedRepoId ?? ''} @change=${(e) => this._selectRepoById(e.target.value)}>${this._repositories.map((repo) => html`<option value=${repo.id}>${repo.label}</option>`)}</select></label><label class="field"><span>Bundle</span>${bundles.length > 0 ? html`<select aria-label="Choose bundle" .value=${bundle?.id ?? ''} @change=${(e) => this._selectBundleById(e.target.value)}>${bundles.map((item) => html`<option value=${item.id}>${item.filename} · ${item.size} · ${item.files.length} files</option>`)}</select>` : html`<div class="choice-empty">No stored bundles for this repository.</div>`}</label><div class="bundle-stats" aria-label="Bundle statistics"><div class="metric"><strong>${bundle?.size ?? '—'}</strong><span>bundle size</span></div><div class="metric"><strong>${files.length}</strong><span>files</span></div><div class="metric"><strong>${new Set(files.map((file) => file.module)).size}</strong><span>packages</span></div></div></div></section>`
+    return html`<section class="panel source-panel"><div class="panel-head"><h2>Source</h2><p>${this._repo?.label ?? 'Repository'} · ${bundles.length} ${bundles.length === 1 ? 'bundle' : 'bundles'}</p></div><div class="source-choice"><div class="field"><span>Repository</span><scan-repo-picker .repositories=${this._repositories} .bundles=${this._bundles} .value=${this._selectedRepoId} @repository-change=${(e) => this._selectRepoById(e.detail.id)}></scan-repo-picker></div><label class="field"><span>Bundle</span>${bundles.length > 0 ? html`<select aria-label="Choose bundle" @change=${(e) => this._selectBundleById(e.target.value)}>${bundle ? nothing : html`<option value="" disabled .selected=${live(true)}>Choose bundle</option>`}${bundles.map((item) => html`<option value=${item.id} .selected=${live(item.id === bundle?.id)}>${item.filename} · ${item.size} · ${item.files.length} files</option>`)}</select>` : html`<div class="choice-empty">No stored bundles for this repository.</div>`}</label><div class="bundle-stats" aria-label="Bundle statistics"><div class="metric"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="8" cy="4" rx="5" ry="2"/><path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/></svg><strong>${bundle?.size ?? '—'}</strong><span>bundle size</span></div><div class="metric">${SCAN_MODE_ICONS.report}<strong>${files.length}</strong><span>files</span></div><div class="metric">${unsafeHTML(BUNDLE_ICON_SVG)}<strong>${new Set(files.map((file) => file.module)).size}</strong><span>packages</span></div></div></div></section>`
   }
 
   _reportInputPanel(selectedReports) {
@@ -1901,7 +1909,7 @@ class ManagedAdminScans extends LitElement {
   _optionsPanel(mode, bundle, count) {
     const summary = mode === 'report' ? `${count} reports selected` : `${bundle?.filename ?? 'No bundle selected'} · ${count} files will be analyzed`
     const disabled = mode === 'report' ? count === 0 : bundle == null || count === 0
-    return html`<section class="panel options"><div class="options-grid"><scan-model-picker ?has-extra=${mode === 'code'} .value=${this._options.model} .effort=${this._options.effort} @model-change=${(event) => { this._options = { ...this._options, model: event.detail.model, effort: event.detail.effort } }}>${mode === 'code' ? html`<label slot="effort-extra" class="effort-switch"><span class="effort-switch-label">List</span><span class="effort-switch-control"><input type="checkbox" .checked=${this._options.isolate} @change=${(e) => this._setOption('isolate', e.target.checked)}><span class="switch-track" aria-hidden="true"></span></span><span class="effort-switch-label">Isolate</span><small>deeper search at ~10x the tokens spent</small></label>` : nothing}</scan-model-picker></div><div class="options-footer"><button type="button" class="run" ?disabled=${disabled} @click=${() => this._runScan()}>Run scan</button><span class="summary">${summary}</span></div><div class="checks"><label class="switch"><input type="checkbox" .checked=${this._options.cached} @change=${(e) => this._setOption('cached', e.target.checked)}><span class="switch-track" aria-hidden="true"></span><span>Offline mode</span></label></div></section>`
+    return html`<section class="panel options"><div class="options-grid"><scan-model-picker ?has-extra=${mode === 'code'} .value=${this._options.model} .effort=${this._options.effort} @model-change=${(event) => { this._options = { ...this._options, model: event.detail.model, effort: event.detail.effort } }}>${mode === 'code' ? html`<label slot="effort-extra" class="effort-switch"><span class="effort-switch-label">List</span><span class="effort-switch-control"><input type="checkbox" .checked=${this._options.isolate} @change=${(e) => this._setOption('isolate', e.target.checked)}><span class="switch-track" aria-hidden="true"></span></span><span class="effort-switch-label">Isolate</span><small>deeper search at ~10x the tokens spent</small></label>` : nothing}</scan-model-picker></div><div class="options-footer"><button type="button" class="run" ?disabled=${disabled} @click=${() => this._runScan()}>Run scan</button><span class="summary">${summary}</span></div><div class="checks"><label class="switch"><input type="checkbox" aria-describedby=${this._options.cached ? 'offline-help' : nothing} .checked=${this._options.cached} @change=${(e) => this._setOption('cached', e.target.checked)}><span class="switch-track" aria-hidden="true"></span><span>Offline</span></label>${this._options.cached ? html`<small class="offline-help" id="offline-help">Cache only, no new model requests</small>` : nothing}</div></section>`
   }
 
   _history() {
@@ -1925,11 +1933,12 @@ class ManagedAdminScans extends LitElement {
   }
 
   _selectBundleById(id) {
-    const bundle = this._bundles.find((candidate) => candidate.id === id)
+    const bundle = this._repoBundles.find((candidate) => candidate.id === id)
     if (bundle != null) this._selectBundle(bundle)
   }
 
   _selectRepoById(id) {
+    if (id === this._selectedRepoId || !this._repositories.some(repo => repo.id === id)) return
     this._selectedRepoId = id
     const bundle = this._bundles.find((candidate) => candidate.repoId === id)
     this._selectedBundleId = bundle?.id ?? null
@@ -2018,13 +2027,11 @@ class ManagedAdminScans extends LitElement {
       this._notice = 'New report scan settings restored from the stopped run.'
       return
     }
-    this._selectedBundleId = scan.bundleId
-    const bundle = this._bundle
+    const bundle = this._bundles.find(candidate => candidate.id === scan.bundleId)
+    if (!bundle) return
+    this._selectBundle(bundle)
     this._mode = scan.mode ?? 'dependencies'
-    this._selectedRepoId = bundle?.repoId ?? this._selectedRepoId
-    this._reason = bundle?.reasons.find((reason) => reason.label === scan.reason)?.id ?? bundle?.reasons[0]?.id ?? ''
-    this._excluded = new Set()
-    this._excludedModules = new Set()
+    this._reason = bundle.reasons.find((reason) => reason.label === scan.reason)?.id ?? bundle.reasons[0]?.id ?? ''
     this._tab = 'new'
     this._notice = 'New scan settings restored from the stopped run.'
   }
