@@ -49,7 +49,8 @@
 }
 
 .cwd { color: var(--accent, #58a6ff); }
-.sigil { color: var(--muted, #8b949e); margin: 0 6px 0 4px; }
+/* A transcript line spaces its sigil with real spaces, which copy. */
+.sigil { color: var(--muted, #8b949e); }
 
 .stdout,
 .stderr {
@@ -118,7 +119,11 @@
   white-space: nowrap;
   user-select: none;
 }
-.form .sigil { flex: 0 0 auto; user-select: none; }
+/* The prompt row is a flex row, where a space between items takes no
+   room, so it spaces its sigil with margins instead: a space each side
+   in the monospace font, as on a transcript line, so a command starts
+   in the same column before and after Enter. */
+.form .sigil { flex: 0 0 auto; user-select: none; margin: 0 1ch; }
 
 /* Wraps the real <input> + ghost-suggestion overlay so the overlay
    can absolute-position against the input's box without competing for

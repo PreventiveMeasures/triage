@@ -569,8 +569,11 @@ class BundleTerminal extends LitElement {
     if (l.kind === 'banner') {
       return html`<div class="banner">Virtual shell over the bundle source tree. Try ${l.commands.map((cmd, i) => html`${i > 0 ? ', ' : ''}\`<span class="cmd" @click=${() => this.#runExample(cmd)}>${cmd}</span>\``)}. ↑/↓ for history, Tab to complete.</div>`
     }
+    // Real spaces around the sigil, not margins, so a copied line reads
+    // `/sources $ ls` as it looks. Bound as expressions: the build's HTML
+    // minifier may drop a bare space between tags.
     if (l.kind === 'prompt') {
-      return html`<div class="line"><span class="cwd">${l.cwd}</span><span class="sigil">$</span>${l.text}</div>`
+      return html`<div class="line"><span class="cwd">${l.cwd}</span>${' '}<span class="sigil">$</span>${' '}${l.text}</div>`
     }
     if (l.kind === 'stdout') return this.#renderStdout(l)
     if (l.kind === 'stderr') return html`<pre class="stderr">${l.text}</pre>`
