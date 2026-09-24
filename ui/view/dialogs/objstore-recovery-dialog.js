@@ -13,7 +13,8 @@
 //      and, when they differ, brings the stale one in line if it's
 //      provably older ("local updated" / "cloud updated"), or else
 //      marks the row "differs" with a "Use cloud copy" / "Upload mine"
-//      choice (`resolveReportDifference`), and
+//      choice (`resolveReportDifference`) — "Use cloud for all" in the
+//      footer takes the cloud copy for every such row at once — and
 //   5. reports a per-object status:
 //      available / local updated / cloud updated / differs /
 //      re-uploaded / failed / check failed / missing
@@ -77,6 +78,7 @@ class ObjstoreRecoveryDialog extends AppDialog {
     _error: { state: true },
     _settled: { state: true },
     _resolving: { state: true },
+    _bulk: { state: true },
   }
 
   constructor() {
@@ -94,6 +96,8 @@ class ObjstoreRecoveryDialog extends AppDialog {
     // resourceTags of `differs` rows whose "Use cloud copy" / "Upload
     // mine" choice is in flight.
     this._resolving = new Set()
+    // True while "Use cloud for all" works through the `differs` rows.
+    this._bulk = false
   }
 
   focusInitial() {
@@ -128,8 +132,22 @@ class ObjstoreRecoveryDialog extends AppDialog {
     this._resolving = rest
   }
 
+  // "Use cloud for all": the "Use cloud copy" choice for every row still
+  // waiting on one, one after another.
+  _onUseCloudForAll = async () => {
+    if (this._bulk || this._running) return
+    this._bulk = true
+    try {
+      for (const row of this._differingRows()) await this._onResolve(row, 'cloud')
+    } finally {
+      this._bulk = false
+    }
+  }
+
+  _differingRows() { return this._rows.filter((r) => r.status === 'differs') }
+
   _onRecheck = async () => {
-    if (this._running) return
+    if (this._running || this._bulk) return
     this._running = true
     this._error = null
     this._rows = []
@@ -189,7 +207,7 @@ class ObjstoreRecoveryDialog extends AppDialog {
 
   _choice(r) {
     if (r.status !== 'differs') return nothing
-    const busy = this._running || this._resolving.has(r.resourceTag)
+    const busy = this._running || this._bulk || this._resolving.has(r.resourceTag)
     return html`<span class="rec-choice">
       <button type="button" data-role="keep-cloud" data-tooltip="Replace your copy with the cloud copy"
         @click=${() => this._onResolve(r, 'cloud')} ?disabled=${busy}>Use cloud copy</button>
@@ -238,6 +256,9 @@ class ObjstoreRecoveryDialog extends AppDialog {
       ? html`<p class="lwd-empty">No remote objects to check.</p>`
       : nothing
     const downloadable = this._ran ? this._downloadableItems().length : 0
+    // Offered from two differing rows up — for one, the row's own
+    // "Use cloud copy" is the same action.
+    const differing = this._differingRows().length
     return html`<dialog @close=${this._onClose}>
       <header><h3>Re-check cloud storage</h3></header>
       ${intro}
@@ -247,13 +268,18 @@ class ObjstoreRecoveryDialog extends AppDialog {
       ${this._error ? html`<p class="rec-error" role="alert">${this._error}</p>` : nothing}
       <footer class="nwd-actions">
         <span class="nwd-spacer"></span>
+        ${differing > 1 || this._bulk ? html`<button type="button" data-role="use-cloud-all"
+          data-tooltip="Replace your copy of every report that differs with its cloud copy"
+          @click=${this._onUseCloudForAll} ?disabled=${this._running || this._bulk}>
+          ${this._bulk ? 'Using cloud copies…' : `Use cloud for all ${differing}`}
+        </button>` : nothing}
         ${downloadable > 0 ? html`<button type="button" data-role="download" @click=${this._onDownload} ?disabled=${this._running}>
           Download ${downloadable} not stored locally
         </button>` : nothing}
-        <button type="button" data-role="cancel" @click=${this._onCancel} ?disabled=${this._running}>
+        <button type="button" data-role="cancel" @click=${this._onCancel} ?disabled=${this._running || this._bulk}>
           ${this._ran ? 'Close' : 'Cancel'}
         </button>
-        <button type="button" data-role="recheck" @click=${this._onRecheck} ?disabled=${this._running}>
+        <button type="button" data-role="recheck" @click=${this._onRecheck} ?disabled=${this._running || this._bulk}>
           ${this._running ? 'Re-checking…' : (this._ran ? 'Re-check again' : 'Re-check')}
         </button>
       </footer>
