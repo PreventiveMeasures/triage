@@ -195,14 +195,14 @@ CREATE TABLE IF NOT EXISTS managed_team (
 ) STRICT;
 
 -- Team <-> repo, many-many, with an OPTIONAL path (a subpath of the repo the
--- team is scoped to; NULL = the whole repo). Keyed by (team, repo) so a team
--- links a given repo once; CASCADE so the link dies with either side. repo_id
+-- team is scoped to; empty path = the whole repo). Distinct paths can coexist;
+-- adding the whole repo replaces them. CASCADE removes links with either side. repo_id
 -- references the selected (operate-on) repos.
 CREATE TABLE IF NOT EXISTS team_repo (
   team_id  TEXT NOT NULL REFERENCES managed_team(id) ON DELETE CASCADE,
   repo_id  INTEGER NOT NULL REFERENCES selected_repo(repo_id) ON DELETE CASCADE,
-  path     TEXT,
-  PRIMARY KEY (team_id, repo_id)
+  path     TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (team_id, repo_id, path)
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS team_repo_repo_idx ON team_repo(repo_id);
@@ -450,6 +450,7 @@ export interface AdminTeam {
 export type UserOption = {
   id: string
   login: string
+  name: string | null
 }
 
 // A team as shown in a member's own sidebar: the team name plus the reports and
@@ -550,9 +551,9 @@ export interface ManagedDb {
   // taken); renameTeam changes a team's name ('name-taken' iff another team
   // already has it, 'not-found' iff no such team, 'ok' otherwise — same name is
   // idempotent); deleteTeam drops it (cascading its links); listTeams returns
-  // every team with its repos + members inlined; listUserOptions is the id+login
+  // every team with its repos + members inlined; listUserOptions is the id+login+name
   // set for the member picker. The set*/remove* pairs maintain the link tables:
-  // setTeamRepo upserts a repo link + its optional path, setTeamMember upserts a
+  // setTeamRepo adds a path (whole repo replaces paths); setTeamMember upserts a
   // membership + its visibility permissions (each resolves true iff a row was
   // written / removed; the caller validates the team/repo/user exist first).
   createTeam(id: string, name: string, now: number): Promise<boolean>
@@ -573,7 +574,7 @@ export interface ManagedDb {
   // filter (a viewer without a permission has those findings stripped).
   reportPermissionsFor(userId: string, reportId: string): Promise<TeamUserPermissions>
   setTeamRepo(teamId: string, repoId: number, path: string | null): Promise<void>
-  removeTeamRepo(teamId: string, repoId: number): Promise<boolean>
+  removeTeamRepo(teamId: string, repoId: number, path?: string | null): Promise<boolean>
   setTeamMember(teamId: string, userId: string, perms: TeamUserPermissions): Promise<void>
   removeTeamMember(teamId: string, userId: string): Promise<boolean>
   close(): Promise<void>
@@ -786,7 +787,7 @@ function prepareStatements(db: DatabaseSync) {
     // Reports attached to the repos of the user's teams, tagged by team (a report
     // shows under every team whose repo it's attached to). Newest first.
     selectUserTeamReportsStmt: db.prepare(
-      `SELECT tr.team_id AS teamId, r.id AS id, r.filename AS filename
+      `SELECT DISTINCT tr.team_id AS teamId, r.id AS id, r.filename AS filename
          FROM team_user tu
          JOIN team_repo tr ON tr.team_id = tu.team_id
          JOIN managed_report r ON r.repo_id = tr.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}
@@ -797,7 +798,7 @@ function prepareStatements(db: DatabaseSync) {
     // They have no visibility flag: membership in a team that can see the repo
     // is the visibility decision for the bundle row in the sidebar.
     selectUserTeamBundlesStmt: db.prepare(
-      `SELECT tr.team_id AS teamId, b.id AS id, b.filename AS filename, sr.full_name AS repoFullName
+      `SELECT DISTINCT tr.team_id AS teamId, b.id AS id, b.filename AS filename, sr.full_name AS repoFullName
          FROM team_user tu
          JOIN team_repo tr ON tr.team_id = tu.team_id
          JOIN managed_bundle b ON b.repo_id = tr.repo_id
@@ -822,11 +823,11 @@ function prepareStatements(db: DatabaseSync) {
          JOIN team_user tu ON tu.team_id = tr.team_id AND tu.user_id = ?
         WHERE r.id = ?`,
     ),
-    selectUserOptionsStmt: db.prepare(`SELECT id, login FROM managed_user ORDER BY login ASC`),
+    selectUserOptionsStmt: db.prepare(`SELECT id, login, name FROM managed_user ORDER BY login ASC`),
     selectTeamReposStmt: db.prepare(
-      `SELECT tr.team_id AS teamId, tr.repo_id AS repoId, sr.full_name AS fullName, tr.path AS path
+      `SELECT tr.team_id AS teamId, tr.repo_id AS repoId, sr.full_name AS fullName, NULLIF(tr.path, '') AS path
          FROM team_repo tr JOIN selected_repo sr ON sr.repo_id = tr.repo_id
-        ORDER BY sr.full_name ASC`,
+        ORDER BY sr.full_name ASC, tr.path ASC`,
     ),
     selectTeamMembersStmt: db.prepare(
       `SELECT tu.team_id AS teamId, tu.user_id AS userId, u.login AS login,
@@ -835,10 +836,11 @@ function prepareStatements(db: DatabaseSync) {
         ORDER BY u.login ASC`,
     ),
     upsertTeamRepoStmt: db.prepare(
-      `INSERT INTO team_repo (team_id, repo_id, path) VALUES (?, ?, ?)
-       ON CONFLICT(team_id, repo_id) DO UPDATE SET path = excluded.path`,
+      `INSERT OR IGNORE INTO team_repo (team_id, repo_id, path)
+       SELECT ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM team_repo WHERE team_id = ? AND repo_id = ? AND path = '')`,
     ),
     deleteTeamRepoStmt: db.prepare(`DELETE FROM team_repo WHERE team_id = ? AND repo_id = ?`),
+    deleteTeamRepoPathStmt: db.prepare(`DELETE FROM team_repo WHERE team_id = ? AND repo_id = ? AND path = ?`),
     upsertTeamMemberStmt: db.prepare(
       `INSERT INTO team_user (team_id, user_id, view_dependencies, view_security) VALUES (?, ?, ?, ?)
        ON CONFLICT(team_id, user_id) DO UPDATE SET
@@ -1130,12 +1132,12 @@ type TeamMemberRow = { teamId: string; userId: string; login: string; viewDepend
 // The team slice of ManagedDb. listTeams reads the three tables in full and
 // groups in JS (3 queries, not N+1) — fine for the handful of teams a managed
 // workspace has.
-function teamMethods(stmts: ReturnType<typeof prepareStatements>) {
+function teamMethods(db: DatabaseSync, stmts: ReturnType<typeof prepareStatements>) {
   const {
     insertTeamStmt, selectTeamByNameStmt, renameTeamStmt, deleteTeamStmt, selectTeamStmt,
     selectTeamsStmt, selectTeamsForUserStmt, selectUserTeamReportsStmt, selectUserTeamBundlesStmt, selectReportReadableStmt,
     selectReportPermsStmt, selectUserOptionsStmt, selectTeamReposStmt, selectTeamMembersStmt,
-    upsertTeamRepoStmt, deleteTeamRepoStmt, upsertTeamMemberStmt, deleteTeamMemberStmt,
+    upsertTeamRepoStmt, deleteTeamRepoStmt, deleteTeamRepoPathStmt, upsertTeamMemberStmt, deleteTeamMemberStmt,
   } = stmts
   return {
     createTeam(id: string, name: string, now: number): Promise<boolean> {
@@ -1159,7 +1161,7 @@ function teamMethods(stmts: ReturnType<typeof prepareStatements>) {
       return Promise.resolve(row == null ? null : { id: row.id, name: row.name })
     },
     listUserOptions(): Promise<UserOption[]> {
-      return Promise.resolve((selectUserOptionsStmt.all() as UserOption[]).map((u) => ({ id: u.id, login: u.login })))
+      return Promise.resolve((selectUserOptionsStmt.all() as UserOption[]).map((u) => ({ id: u.id, login: u.login, name: u.name })))
     },
     listTeamsForUser(userId: string): Promise<UserTeam[]> {
       const teams = selectTeamsForUserStmt.all(userId) as { id: string; name: string }[]
@@ -1209,11 +1211,19 @@ function teamMethods(stmts: ReturnType<typeof prepareStatements>) {
       })))
     },
     setTeamRepo(teamId: string, repoId: number, path: string | null): Promise<void> {
-      upsertTeamRepoStmt.run(teamId, repoId, path)
+      // A whole-repository grant supersedes all its path grants atomically.
+      // Adding a redundant path to an existing whole-repo grant is a no-op.
+      db.exec('BEGIN IMMEDIATE')
+      try {
+        if (path == null || path === '') deleteTeamRepoStmt.run(teamId, repoId)
+        upsertTeamRepoStmt.run(teamId, repoId, path ?? '', teamId, repoId)
+        db.exec('COMMIT')
+      } catch (err) { db.exec('ROLLBACK'); throw err }
       return Promise.resolve()
     },
-    removeTeamRepo(teamId: string, repoId: number): Promise<boolean> {
-      return Promise.resolve(Number(deleteTeamRepoStmt.run(teamId, repoId).changes) > 0)
+    removeTeamRepo(teamId: string, repoId: number, path?: string | null): Promise<boolean> {
+      const result = path === undefined ? deleteTeamRepoStmt.run(teamId, repoId) : deleteTeamRepoPathStmt.run(teamId, repoId, path ?? '')
+      return Promise.resolve(Number(result.changes) > 0)
     },
     setTeamMember(teamId: string, userId: string, perms: TeamUserPermissions): Promise<void> {
       upsertTeamMemberStmt.run(teamId, userId, perms.dependencies ? 1 : 0, perms.security ? 1 : 0)
@@ -1223,6 +1233,25 @@ function teamMethods(stmts: ReturnType<typeof prepareStatements>) {
       return Promise.resolve(Number(deleteTeamMemberStmt.run(teamId, userId).changes) > 0)
     },
   }
+}
+
+// Preserve the legacy single-path links while adding path to their identity.
+function migrateTeamRepoPaths(db: DatabaseSync): void {
+  const columns = db.prepare('PRAGMA table_info(team_repo)').all() as { name: string; pk: number }[]
+  if (columns.some(column => column.name === 'path' && column.pk === 3)) return
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    db.exec(`CREATE TABLE team_repo_paths (
+      team_id TEXT NOT NULL REFERENCES managed_team(id) ON DELETE CASCADE,
+      repo_id INTEGER NOT NULL REFERENCES selected_repo(repo_id) ON DELETE CASCADE,
+      path TEXT NOT NULL DEFAULT '', PRIMARY KEY (team_id, repo_id, path)
+    ) STRICT;
+    INSERT INTO team_repo_paths SELECT team_id, repo_id, COALESCE(path, '') FROM team_repo;
+    DROP TABLE team_repo;
+    ALTER TABLE team_repo_paths RENAME TO team_repo;
+    CREATE INDEX team_repo_repo_idx ON team_repo(repo_id);`)
+    db.exec('COMMIT')
+  } catch (err) { db.exec('ROLLBACK'); throw err }
 }
 
 // Add `column` to `table` if it's missing (a lightweight migration for DBs that
@@ -1248,6 +1277,7 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
     db.exec('PRAGMA synchronous = FULL;')
     db.exec('PRAGMA foreign_keys = ON;')
     db.exec(SQLITE_SCHEMA)
+    migrateTeamRepoPaths(db)
     // Migrate DBs created before a column existed (CREATE TABLE IF NOT EXISTS
     // never alters an already-present table). Idempotent — skipped on fresh DBs.
     const addedLastSeen = ensureColumn(db, 'managed_user', 'last_seen_at', 'INTEGER')
@@ -1331,7 +1361,7 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
     ...reportMethods(stmts),
     ...triageMethods(db, stmts, options.triageHistoryLimit ?? 0),
     ...bundleMethods(stmts),
-    ...teamMethods(stmts),
+    ...teamMethods(db, stmts),
     close() {
       db.close()
       return Promise.resolve()

@@ -1040,8 +1040,9 @@ async function handleDeleteTeam(req: IncomingMessage, res: ServerResponse, deps:
   sendJson(res, 200, { ok: true })
 }
 
-// POST /api/admin/teams/set-repo — link a repo to a team (upsert + optional
-// subpath). Body { teamId, repoId, path? }. Repo must be in the selected set.
+// POST /api/admin/teams/set-repo — add a repo path. Empty path replaces all
+// path links with the whole repository. Body { teamId, repoId, path? }.
+// Repo must be in the selected set.
 async function handleSetTeamRepo(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   const s = await adminMutation(req, res, deps, cookie)
   if (s == null) return
@@ -1060,7 +1061,8 @@ async function handleSetTeamRepo(req: IncomingMessage, res: ServerResponse, deps
   sendJson(res, 200, { ok: true })
 }
 
-// POST /api/admin/teams/remove-repo — unlink a repo. Body { teamId, repoId }.
+// POST /api/admin/teams/remove-repo — unlink one path. Omitting path retains
+// the legacy remove-all behavior. Body { teamId, repoId, path? }.
 async function handleRemoveTeamRepo(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   const s = await adminMutation(req, res, deps, cookie)
   if (s == null) return
@@ -1068,8 +1070,12 @@ async function handleRemoveTeamRepo(req: IncomingMessage, res: ServerResponse, d
   try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
   const teamId = (body as { teamId?: unknown } | null)?.teamId
   const repoId = (body as { repoId?: unknown } | null)?.repoId
-  if (typeof teamId !== 'string' || typeof repoId !== 'number') { sendJson(res, 400, { error: 'bad-request' }); return }
-  if (!(await deps.db.removeTeamRepo(teamId, repoId))) { sendJson(res, 404, { error: 'not-linked' }); return }
+  if (typeof teamId !== 'string' || typeof repoId !== 'number' || !Number.isSafeInteger(repoId)) { sendJson(res, 400, { error: 'bad-request' }); return }
+  const rawPath = (body as { path?: unknown }).path
+  if (rawPath !== undefined && rawPath !== null && typeof rawPath !== 'string') { sendJson(res, 400, { error: 'bad-path' }); return }
+  const path = normalizeTeamPath(rawPath)
+  if (!path.ok) { sendJson(res, 400, { error: 'bad-path' }); return }
+  if (!(await deps.db.removeTeamRepo(teamId, repoId, rawPath === undefined ? undefined : path.path))) { sendJson(res, 404, { error: 'not-linked' }); return }
   sendJson(res, 200, { ok: true })
 }
 

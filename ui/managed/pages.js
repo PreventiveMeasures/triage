@@ -10,7 +10,8 @@ import { VISIBILITY_PERMISSION_LABELS } from '../../common/managed/permissions.t
 import { REPORT_LOGOS } from '../view/report-logos.js'
 import { BUNDLE_ICON_SVG } from '../view/icons.js'
 import '../view/scan-model-picker.js'
-import './scan-repo-picker.js'
+import '../view/repository-selector.js'
+import '../view/user-selector.js'
 
 async function fetchSession() {
   const res = await managedFetch('/api/auth/session', { credentials: 'same-origin', headers: { accept: 'application/json' } })
@@ -1019,36 +1020,24 @@ function formatBytes(n) {
   return `${(n / 1_048_576).toFixed(1)} MB`
 }
 
-// A repo <select>'s options: "No repository" + each selected repo, with
-// `current` (a repo id, or null/'' for none) preselected. Shared by the upload
-// picker and the per-row attach control.
-function repoOptions(repos, current) {
-  return html`
-    <option value="" ?selected=${current == null || current === ''}>No repository</option>
-    ${repos.map((r) => html`<option value=${r.repoId} ?selected=${Number(current) === r.repoId}>${r.fullName}</option>`)}`
+// Keep managed numeric repository IDs and null (unattached) intact.
+function repoOptions(repos) {
+  return [{ value: null, label: 'No repository', special: true }, ...repos.map(repo => ({ value: repo.repoId, label: repo.fullName }))]
 }
 
-// Bundle upload picker: a labelled dropdown setting which repository a new
-// bundle attaches to. Bundles have no repository header of their own, so this
-// explicit choice is intentionally separate from report upload.
 function repoPickerTemplate(repos, selected, onChange, label = 'Repository for new bundles') {
   if (!Array.isArray(repos) || repos.length === 0) return nothing
-  return html`<label class="repo-picker">
-    <span class="repo-picker-label">${label}</span>
-    <select class="repo-select" @change=${(e) => onChange(e.target.value === '' ? null : Number(e.target.value))}>
-      ${repoOptions(repos, selected)}
-    </select>
-  </label>`
+  return html`<div class="repo-picker"><span class="repo-picker-label">${label}</span>
+    <repository-selector class="repo-select" .options=${repoOptions(repos)} .value=${selected} label=${label}
+      @repository-change=${event => onChange(event.detail.value)}></repository-selector>
+  </div>`
 }
 
-// Per-row attach control: change which repo an already-stored report / bundle is
-// attached to (or none). `onPick` gets the repo id, or null to detach.
 function repoRowSelect(repos, current, onPick) {
   if (!Array.isArray(repos) || repos.length === 0) return nothing
-  return html`<select class="repo-attach" aria-label="Attach to a repository"
-    @change=${(e) => onPick(e.target.value === '' ? null : Number(e.target.value))}>
-    ${repoOptions(repos, current)}
-  </select>`
+  return html`<repository-selector class="repo-attach" label="Attach to a repository"
+    .options=${repoOptions(repos)} .value=${current ?? null}
+    @repository-change=${event => onPick(event.detail.value)}></repository-selector>`
 }
 
 // Open a file picker (hidden input, created on demand) and hand the chosen files
@@ -1266,7 +1255,7 @@ class ManagedAdminReports extends LitElement {
 
   _locationEditor(report) {
     const repos = Array.isArray(this._data?.repos) ? this._data.repos : []
-    return html`<div class="location-editor"><div class="location-field"><label for=${`report-repo-${report.id}`}>Repository</label><select id=${`report-repo-${report.id}`} .value=${this._locationRepo == null ? '' : String(this._locationRepo)} @change=${(e) => { this._locationRepo = e.target.value === '' ? null : Number(e.target.value) }}>${repoOptions(repos, this._locationRepo)}</select></div><div class="location-field"><label for=${`report-dir-${report.id}`}>Directory (optional)</label><input id=${`report-dir-${report.id}`} type="text" placeholder="Repository root" .value=${this._locationDirectory} @input=${(e) => { this._locationDirectory = e.target.value }}></div><div class="location-actions"><button type="button" class="action" @click=${() => { this._locationReport = null }}>Cancel</button><button type="button" class="action" ?disabled=${this._locationBusy || this._locationRepo == null} @click=${() => void this._saveLocation(report)}>Save</button></div></div>`
+    return html`<div class="location-editor"><div class="location-field"><span>Repository</span><repository-selector label="Repository for report" .options=${repoOptions(repos)} .value=${this._locationRepo} ?disabled=${this._locationBusy} @repository-change=${event => { this._locationRepo = event.detail.value }}></repository-selector></div><div class="location-field"><label for=${`report-dir-${report.id}`}>Directory (optional)</label><input id=${`report-dir-${report.id}`} type="text" placeholder="Repository root" .value=${this._locationDirectory} @input=${(e) => { this._locationDirectory = e.target.value }}></div><div class="location-actions"><button type="button" class="action" @click=${() => { this._locationReport = null }}>Cancel</button><button type="button" class="action" ?disabled=${this._locationBusy || this._locationRepo == null} @click=${() => void this._saveLocation(report)}>Save</button></div></div>`
   }
 
   async _saveLocation(report) {
@@ -1382,6 +1371,7 @@ const BUNDLE_ICON = html`<svg class="report-icon" viewBox="0 0 16 16" width="16"
 class ManagedAdminBundles extends LitElement {
   static properties = {
     _data: { state: true },
+    _repoId: { state: true },
     _error: { state: true },
     _busy: { state: true },
     _dragOver: { state: true },
@@ -1404,7 +1394,7 @@ class ManagedAdminBundles extends LitElement {
     .upload-controls { display: flex; align-items: end; gap: .65rem; }
     .repo-picker { display: grid; gap: .3rem; min-width: 0; }
     .repo-picker-label { color: var(--muted); font-size: .67rem; }
-    .repo-select, .repo-attach { min-width: 0; width: 100%; height: 2rem; padding: .25rem .5rem; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 5px; font-size: .74rem; }
+    .repo-select, .repo-attach { min-width: 0; width: 100%; }
     .repo-select { max-width: 18rem; }
     .drop-browse { height: 2rem; flex-shrink: 0; padding: .3rem .75rem; border: 1px solid var(--accent); border-radius: 5px; color: var(--bg); background: var(--accent); font-size: .74rem; font-weight: 600; }
     .drop-browse:hover:not(:disabled) { filter: brightness(1.08); }
@@ -1899,7 +1889,10 @@ class ManagedAdminScans extends LitElement {
     // Select dynamic options after their values update. Setting select.value
     // first clears the browser selection when switching to another repository.
     const bundles = this._repoBundles
-    return html`<section class="panel source-panel"><div class="panel-head"><h2>Source</h2><p>${this._repo?.label ?? 'Repository'} · ${bundles.length} ${bundles.length === 1 ? 'bundle' : 'bundles'}</p></div><div class="source-choice"><div class="field"><span>Repository</span><scan-repo-picker .repositories=${this._repositories} .bundles=${this._bundles} .value=${this._selectedRepoId} @repository-change=${(e) => this._selectRepoById(e.detail.id)}></scan-repo-picker></div><label class="field"><span>Bundle</span>${bundles.length > 0 ? html`<select aria-label="Choose bundle" @change=${(e) => this._selectBundleById(e.target.value)}>${bundle ? nothing : html`<option value="" disabled .selected=${live(true)}>Choose bundle</option>`}${bundles.map((item) => html`<option value=${item.id} .selected=${live(item.id === bundle?.id)}>${item.filename} · ${item.size} · ${item.files.length} files</option>`)}</select>` : html`<div class="choice-empty">No stored bundles for this repository.</div>`}</label><div class="bundle-stats" aria-label="Bundle statistics"><div class="metric"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="8" cy="4" rx="5" ry="2"/><path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/></svg><strong>${bundle?.size ?? '—'}</strong><span>bundle size</span></div><div class="metric">${SCAN_MODE_ICONS.report}<strong>${files.length}</strong><span>files</span></div><div class="metric">${unsafeHTML(BUNDLE_ICON_SVG)}<strong>${new Set(files.map((file) => file.module)).size}</strong><span>packages</span></div></div></div></section>`
+    const counts = new Map()
+    for (const item of this._bundles) counts.set(item.repoId, (counts.get(item.repoId) ?? 0) + 1)
+    const repositories = this._repositories.map(repo => { const count = counts.get(repo.id) ?? 0; return { value: repo.id, label: repo.label, detail: `${count} ${count === 1 ? 'bundle' : 'bundles'}`, special: repo.id === 'unattached' } })
+    return html`<section class="panel source-panel"><div class="panel-head"><h2>Source</h2><p>${this._repo?.label ?? 'Repository'} · ${bundles.length} ${bundles.length === 1 ? 'bundle' : 'bundles'}</p></div><div class="source-choice"><div class="field"><span>Repository</span><repository-selector .options=${repositories} .value=${this._selectedRepoId} @repository-change=${(e) => this._selectRepoById(e.detail.value)}></repository-selector></div><label class="field"><span>Bundle</span>${bundles.length > 0 ? html`<select aria-label="Choose bundle" @change=${(e) => this._selectBundleById(e.target.value)}>${bundle ? nothing : html`<option value="" disabled .selected=${live(true)}>Choose bundle</option>`}${bundles.map((item) => html`<option value=${item.id} .selected=${live(item.id === bundle?.id)}>${item.filename} · ${item.size} · ${item.files.length} files</option>`)}</select>` : html`<div class="choice-empty">No stored bundles for this repository.</div>`}</label><div class="bundle-stats" aria-label="Bundle statistics"><div class="metric"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="8" cy="4" rx="5" ry="2"/><path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/></svg><strong>${bundle?.size ?? '—'}</strong><span>bundle size</span></div><div class="metric">${SCAN_MODE_ICONS.report}<strong>${files.length}</strong><span>files</span></div><div class="metric">${unsafeHTML(BUNDLE_ICON_SVG)}<strong>${new Set(files.map((file) => file.module)).size}</strong><span>packages</span></div></div></div></section>`
   }
 
   _reportInputPanel(selectedReports) {
@@ -2075,6 +2068,8 @@ class ManagedAdminTeams extends LitElement {
     _error: { state: true },
     _busy: { state: true },
     _renamingId: { state: true },
+    _repoChoices: { state: true },
+    _memberChoices: { state: true },
   }
 
   static styles = [ADMIN_PAGE_HEADER_STYLES, ADMIN_PEOPLE_STYLES, css`
@@ -2110,7 +2105,7 @@ class ManagedAdminTeams extends LitElement {
     .perm:has(:checked) { color: var(--text); background: rgb(from var(--accent) r g b / .07); border-color: rgb(from var(--accent) r g b / .2); }
     .perm:has(:disabled) { opacity: .5; }
     .add-row { display: flex; align-items: center; gap: .4rem; padding-top: .55rem; }
-    .add-row select { flex: 1; width: 0; }
+    .add-row select, .add-row repository-selector, .add-row user-selector { flex: 1; width: 0; }
     .add-repo-path { flex: .75; width: 0; }
     .add-row .btn { flex: 0 0 auto; }
     .muted { color: var(--muted); font-size: .78rem; margin: .75rem 0; }
@@ -2140,6 +2135,8 @@ class ManagedAdminTeams extends LitElement {
     this._csrf = null
     this._busy = false
     this._renamingId = null
+    this._repoChoices = new Map()
+    this._memberChoices = new Map()
   }
 
   connectedCallback() {
@@ -2233,21 +2230,19 @@ class ManagedAdminTeams extends LitElement {
     return html`<li class="repo-row">
       ${REPO_ICON}
       <span class="repo-copy"><span class="ln">${r.fullName}</span>${r.path ? html`<span class="path">/${r.path.replace(/^\/+/u, '')}</span>` : nothing}</span>
-      <button class="icon-btn danger" aria-label=${`Remove ${r.fullName} from ${team.name}`} ?disabled=${this._busy} @click=${() => this._do(() => postTeam('/api/admin/teams/remove-repo', this._csrf, { teamId: team.id, repoId: r.repoId }))}>${ADMIN_REMOVE_ICON}</button>
+      <button class="icon-btn danger" aria-label=${`Remove ${r.fullName}${r.path ? `/${r.path}` : ''} from ${team.name}`} ?disabled=${this._busy} @click=${() => this._do(() => postTeam('/api/admin/teams/remove-repo', this._csrf, { teamId: team.id, repoId: r.repoId, path: r.path ?? null }))}>${ADMIN_REMOVE_ICON}</button>
     </li>`
   }
 
   _addRepoRow(team) {
     const repos = Array.isArray(this._data.repos) ? this._data.repos : []
     if (repos.length === 0) return html`<p class="muted">No selected repositories to link — pick some on “Manage repositories”.</p>`
-    const linked = new Set(team.repos.map((r) => r.repoId))
     return html`<div class="add-row">
-      <select class="add-repo-sel" aria-label=${`Repository to add to ${team.name}`} ?disabled=${this._busy}>
-        <option value="">Add repository…</option>
-        ${repos.map((r) => html`<option value=${r.repoId}>${r.fullName}${linked.has(r.repoId) ? ' — update path' : ''}</option>`)}
-      </select>
+      <repository-selector class="add-repo-sel" label=${`Repository to add to ${team.name}`} placeholder="Add repository…" ?disabled=${this._busy}
+        .options=${repos.map(repo => ({ value: repo.repoId, label: repo.fullName }))} .value=${this._repoChoices.get(team.id) ?? null}
+        @repository-change=${event => { this._repoChoices = new Map(this._repoChoices).set(team.id, event.detail.value) }}></repository-selector>
       <input class="add-repo-path" type="text" placeholder="Path (optional)" aria-label=${`Repository path in ${team.name} (optional)`} maxlength="500" ?disabled=${this._busy}>
-      <button class="btn" aria-label=${`Add repository to ${team.name}`} ?disabled=${this._busy} @click=${(e) => this._addRepo(team, e)}>${ADMIN_PLUS_ICON} Add</button>
+      <button class="btn" aria-label=${`Add repository to ${team.name}`} ?disabled=${this._busy || !this._repoChoices.has(team.id)} @click=${(e) => this._addRepo(team, e)}>${ADMIN_PLUS_ICON} Add</button>
     </div>`
   }
 
@@ -2271,11 +2266,10 @@ class ManagedAdminTeams extends LitElement {
     const users = Array.isArray(this._data.users) ? this._data.users : []
     const member = new Set(team.members.map((m) => m.userId))
     return html`<div class="add-row">
-      <select class="add-member-sel" aria-label=${`Member to add to ${team.name}`} ?disabled=${this._busy}>
-        <option value="">Add member…</option>
-        ${users.map((u) => html`<option value=${u.id} ?disabled=${member.has(u.id)}>${u.login}${member.has(u.id) ? ' (member)' : ''}</option>`)}
-      </select>
-      <button class="btn" aria-label=${`Add member to ${team.name}`} ?disabled=${this._busy} @click=${(e) => this._addMember(team, e)}>${ADMIN_PLUS_ICON} Add</button>
+      <user-selector class="add-member-sel" label=${`Member to add to ${team.name}`} placeholder="Add member…" ?disabled=${this._busy}
+        .users=${users.map(user => ({ ...user, disabled: member.has(user.id), detail: member.has(user.id) ? 'Member' : '' }))} .value=${this._memberChoices.get(team.id) ?? null}
+        @user-change=${event => { this._memberChoices = new Map(this._memberChoices).set(team.id, event.detail.value) }}></user-selector>
+      <button class="btn" aria-label=${`Add member to ${team.name}`} ?disabled=${this._busy || !this._memberChoices.has(team.id) || member.has(this._memberChoices.get(team.id))} @click=${() => this._addMember(team)}>${ADMIN_PLUS_ICON} Add</button>
     </div>`
   }
 
@@ -2308,16 +2302,28 @@ class ManagedAdminTeams extends LitElement {
 
   _addRepo(team, e) {
     const row = e.target.closest('.add-row')
-    const repoId = Number(row?.querySelector('.add-repo-sel')?.value)
+    const repoId = this._repoChoices.get(team.id)
     if (!Number.isSafeInteger(repoId) || repoId <= 0) return
     const path = row?.querySelector('.add-repo-path')?.value ?? ''
-    void this._do(() => postTeam('/api/admin/teams/set-repo', this._csrf, { teamId: team.id, repoId, path }))
+    void this._do(async () => {
+      await postTeam('/api/admin/teams/set-repo', this._csrf, { teamId: team.id, repoId, path })
+      const next = new Map(this._repoChoices)
+      next.delete(team.id)
+      this._repoChoices = next
+      const input = row?.querySelector('.add-repo-path')
+      if (input) input.value = ''
+    })
   }
 
-  _addMember(team, e) {
-    const userId = e.target.closest('.add-row')?.querySelector('.add-member-sel')?.value
-    if (!userId) return
-    void this._do(() => postTeam('/api/admin/teams/set-member', this._csrf, { teamId: team.id, userId }))
+  _addMember(team) {
+    const userId = this._memberChoices.get(team.id)
+    if (!userId || team.members.some(member => member.userId === userId)) return
+    void this._do(async () => {
+      await postTeam('/api/admin/teams/set-member', this._csrf, { teamId: team.id, userId })
+      const next = new Map(this._memberChoices)
+      next.delete(team.id)
+      this._memberChoices = next
+    })
   }
 
   _togglePerm(team, m, perm, checked) {

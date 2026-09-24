@@ -1,8 +1,6 @@
 // `<revalidate-filter>` — toolbar dropdown that narrows the findings to
 // one outcome of the revalidation pass, sitting right of the Confidence
-// range. Native single-select in the `<repo-filter>` mould (that
-// component is the reference for this pattern), with an implicit "no
-// filter" entry.
+// range. Native single-select with an implicit "no filter" entry.
 //
 // The option list is DATA-DRIVEN and reachable-only: the parent scans
 // the loaded set for the `revalidate` values present and hands down the

@@ -735,10 +735,8 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
       <!-- Repo dropdown — only meaningful in workspace view (single-
            file mode usually has one repo). Hidden when the loaded
            reports involve a single repo (no choice to make).
-           Component owns its select + the prettyRepoLabel shortening;
-           reads state.filterRepo via StateElement and uses live() so
-           a stale-filter clear in the parent (workspace switch) lands
-           on the actual select.value. -->
+           The adapter supplies filter state to the shared selector;
+           workspace changes also update the displayed selection. -->
       ${showRepo && repoOptions.length > 1 ? html`<repo-filter .options=${repoOptions}></repo-filter>` : nothing}
       ${triageFilterTemplate(colorCounts)}
       <!-- Search field + result count grouped into a single flex item
