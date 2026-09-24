@@ -22,7 +22,7 @@ import listCSS from './dialog-list.css'
 import suggestCSS from './dialog-sync-suggest.css'
 
 // Past this many names the list stops and says how many more.
-const MAX_LISTED = 5
+const MAX_LISTED = 10
 
 class SyncSuggestDialog extends AppDialog {
   static styles = [...AppDialog.styles, unsafeCSS(detailActionCSS), unsafeCSS(listCSS), unsafeCSS(suggestCSS)]
