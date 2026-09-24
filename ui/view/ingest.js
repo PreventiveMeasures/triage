@@ -1,5 +1,5 @@
 import { adoptRepoUrlFor, analyzeContent, computeLinkHint, deleteBundle, deleteFile, deleteWorkspace, dropBundleFromHashIndex, ensureTriageLoaded, getSecureItem, isManagedUiMode, listBundles, listFiles, listWorkspaces, loadRepoUrlFor, parseLinkedFindings, pruneOrphanTriage, readFile, readFileBytes, removeCount, removeSecureItem, saveBundle, saveFile, saveRepoUrlFor, setBundleWorkspace, setCount, setReportWorkspace, setSecureItem, state } from '#client/index.js'
-import { closeWorkspace as closePresence, deleteBundleFromRemote, deleteFromRemote as deletePresence, isInRemoteOrCached, openWorkspace as openPresence, putFile, triageSync } from './client-sync.js'
+import { closeWorkspace as closePresence, deleteBundleFromRemote, deleteFromRemote as deletePresence, holdLocalChangeChecks, isInRemoteOrCached, openWorkspace as openPresence, putFile, triageSync } from './client-sync.js'
 import { openImportConflictDialog } from './dialogs/import-conflict-dialog.js'
 import { dropZone, report } from './dom.js'
 import { clearMergedGroups, getRevalidationConflicts, getShownGroups, toGroup } from './group.js'
@@ -250,9 +250,25 @@ async function importReportContent({ name, content, existingNames }) {
   // handles the optimistic-concurrency dance. Sync is best-effort —
   // the local replace already happened, so a transient network failure
   // (logged) shouldn't undo it.
-  await saveFile(name, content)
+  //
+  // Announce the save + uploads to sync first: until they're done it must
+  // not read the new local bytes as an un-uploaded change ("N differ",
+  // the "Reports out of sync" dialog). Released however the uploads
+  // went, so one that failed is flagged right then.
+  let release
   if (uploadableWorkspaces.length > 0) {
-    await uploadReportToWorkspaces(name, uploadableWorkspaces)
+    // Best-effort like the uploads: a sync chunk that won't load must not
+    // stop the local replace.
+    try { release = await holdLocalChangeChecks(name) }
+    catch (err) { console.warn(`Import: couldn't announce the replace of "${name}" to sync:`, err) }
+  }
+  try {
+    await saveFile(name, content)
+    if (uploadableWorkspaces.length > 0) {
+      await uploadReportToWorkspaces(name, uploadableWorkspaces)
+    }
+  } finally {
+    if (typeof release === 'function') release()
   }
   return { name, content }
 }
@@ -612,7 +628,7 @@ export async function switchToFile(name, content, { workspaceId } = {}) {
         )
         if (cloudWs) {
           try {
-            // The dialog's fetchFile needs an open presence session;
+            // The dialog's download needs an open presence session;
             // lazy-open mirrors uploadReportToWorkspaces (the user may
             // not have visited this workspace this session).
             await openPresence(cloudWs.id)

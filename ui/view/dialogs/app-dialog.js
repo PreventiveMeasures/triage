@@ -21,8 +21,21 @@
 //     resolves on the `resolve` event (see openAppDialog below).
 //   - override `focusInitial()` / `_onClose` when the defaults
 //     (focus first field, Esc → resolve null) don't fit.
+//
+// Stacking. `showModal()` does NOT refuse while another modal is open —
+// it stacks the new one on top — so by default a dialog opened over
+// another stacks. That is what nested and in-flow dialogs need: the
+// re-check dialog opening the download dialog, the relay password
+// prompt raised mid-upload, a passkey prompt. A dialog opened with
+// `exclusive = true` refuses instead: if any modal is open it never
+// shows and dispatches `modal-conflict` (see firstUpdated). Only open
+// helpers that settle on `modal-conflict` may set it (a plain
+// `openAppDialog` only hears `resolve`, so it would hang). Set by the
+// dialogs that open unprompted and retry later (persistence-degraded,
+// proxy-auth, the sync suggestion) and by `openAppDialogOrReject`.
 import { LitElement, unsafeCSS } from 'lit'
 import { makeStackedModalError } from '../dom.js'
+import { hasOpenModal } from '../open-modal.js'
 import { installShadowTooltipListener } from '../tooltip.js'
 import dialogBaseCSS from './dialog-base.css'
 
@@ -30,6 +43,10 @@ export class AppDialog extends LitElement {
   // Array so subclasses extend it: `static styles = [...AppDialog.styles,
   // unsafeCSS(extraCSS)]`.
   static styles = [unsafeCSS(dialogBaseCSS)]
+
+  // Refuse to stack over an open modal (see the header). Set by the open
+  // helper before the element is attached.
+  exclusive = false
 
   firstUpdated() {
     // Dialog chrome carries `data-tooltip` (the fix-link "Open in a
@@ -40,21 +57,31 @@ export class AppDialog extends LitElement {
     this.beforeOpen()
     const dialog = this.renderRoot.querySelector('dialog')
     if (!dialog) return
+    if (this.exclusive && hasOpenModal()) {
+      this._conflict(new DOMException('Another modal dialog is already open', 'InvalidStateError'))
+      return
+    }
     try {
       dialog.showModal()
     } catch (err) {
-      // Another modal is already open (showModal throws
-      // InvalidStateError). Mark settled so a stray `close` event
-      // can't drive `_finish` after the conflict, then dispatch
-      // `modal-conflict`: open() helpers that listen for it turn it
-      // into a rejection (and wipe any wrapper-set secret in that
-      // listener); the rest stay closed — their open() promise never
-      // resolves, matching the pre-component behavior.
-      this._settled = true
-      this.dispatchEvent(new CustomEvent('modal-conflict', { detail: { cause: err } }))
+      // `showModal()` itself refused — the element isn't connected (the
+      // helper detached it first) or the dialog is already open — not
+      // another modal being up (that stacks; see the header).
+      this._conflict(err)
       return
     }
     this.focusInitial()
+  }
+
+  // Never shown. Mark settled so a stray `close` event can't drive
+  // `_finish`, then dispatch `modal-conflict`: open() helpers that listen
+  // for it settle their promise (reject, cancel, or report `shown: false`
+  // to retry) and wipe any wrapper-set secret; a helper that doesn't
+  // listen never settles, which is why only listening helpers may set
+  // `exclusive`.
+  _conflict(cause) {
+    this._settled = true
+    this.dispatchEvent(new CustomEvent('modal-conflict', { detail: { cause } }))
   }
 
   // Override hook: seed reactive state from properties before the
@@ -105,14 +132,17 @@ export function openAppDialog(tagName, props = {}) {
 // Variant of `openAppDialog` for the dialogs that hold a secret the
 // wrapper set (workspace private key, share-link ciphertext, a
 // file-bytes closure) and must REJECT when another modal is already
-// open so the caller can surface a contextual error: `modal-conflict`
-// runs `wipeOnConflict(el)` (the dialog never opened, so its own
-// `_finish` wipe didn't run), detaches the element, and rejects with
-// the shared stacked-modal error.
+// open so the caller can surface a contextual error — hence `exclusive`
+// (they'd otherwise stack; e.g. a second share link arriving while the
+// unlock dialog is up, which view.js relies on being refused).
+// `modal-conflict` runs `wipeOnConflict(el)` (the dialog never opened,
+// so its own `_finish` wipe didn't run), detaches the element, and
+// rejects with the shared stacked-modal error.
 export function openAppDialogOrReject(tagName, props, wipeOnConflict) {
   return new Promise((resolve, reject) => {
     const el = document.createElement(tagName)
     Object.assign(el, props)
+    el.exclusive = true
     el.addEventListener('resolve', (e) => {
       el.remove()
       resolve(e.detail)

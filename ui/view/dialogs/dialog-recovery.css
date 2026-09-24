@@ -1,6 +1,11 @@
 /* Objstore recovery dialog — per-object status list. Composed on top
    of dialog-base.css + dialog-list.css (reuses .lwd-body, .lwd-kind-tag,
    .nwd-actions); only the recovery-specific `.rec-*` chrome lives here. */
+/* The corner × (`.detail-action` supplies the look). The dialog is in
+   the top layer, so it's the containing block; the header keeps clear
+   of the button. */
+.rec-close { position: absolute; top: 6px; right: 6px; z-index: 1; }
+header { padding-right: 1.5rem; }
 .rec-list {
   margin: .2rem 0 .55rem; padding: 0;
   list-style: none;
@@ -27,15 +32,47 @@
 }
 .rec-status-checking { color: var(--muted); }
 .rec-status-good { color: var(--ok, #16a34a); }
+/* The two directions a re-check can repair in get their own hues:
+   the cloud copy changed (`uploaded`, like `reuploaded`) reads as the
+   accent; YOUR copy changed (`updated` — its bytes were replaced) reads
+   orange, so a local overwrite stands out. */
+.rec-status-uploaded,
 .rec-status-reuploaded { color: var(--accent, #2563eb); }
-/* `failed` (re-UPLOAD errored) and `check-failed` (verification DOWNLOAD
-   errored — transport/session hiccup or decrypt failure, health unknown)
-   are both retryable, so both read amber — distinct from `missing` (no
-   local copy / mismatch), the terminal red. The two amber states are told
-   apart by their label ("re-upload failed" vs "check failed") + the reason
-   on hover, since they call for the same user action (re-check / retry). */
+.rec-status-updated { color: var(--high, #d57422); }
+/* Waiting on the user's choice — the attention amber. */
+.rec-status-differs { color: var(--warning, #d97706); }
+/* The "Use cloud copy" / "Upload mine" pair on a `differs` row: sized
+   down to the row's text so it doesn't dwarf the label beside it. */
+.rec-choice {
+  flex: 0 0 auto;
+  display: flex; gap: .3rem;
+
+  & button {
+    background: transparent; border: 1px solid var(--border);
+    color: var(--text); border-radius: 4px;
+    padding: .1rem .45rem;
+    font: inherit; font-size: .72rem;
+    cursor: pointer;
+
+    &:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+    &:disabled { opacity: .5; cursor: default; }
+  }
+}
+/* `failed` (a re-upload / update / upload errored) and `check-failed`
+   (verification DOWNLOAD errored — transport/session hiccup or decrypt
+   failure, health unknown) are both retryable, so both read amber —
+   distinct from `missing` (no local copy / mismatch), the terminal red.
+   The two amber states are told apart by their label ("failed" vs
+   "check failed") + the reason on hover, since they call for the same
+   user action (re-check / retry). */
 .rec-status-failed,
 .rec-status-check-failed { color: var(--warning, #d97706); }
+/* Statuses that wait on the user (choose, or retry) read as a tinted
+   chip; outcomes stay plain text — so "local updated"'s orange isn't
+   mistaken for a failure's amber. */
+.rec-status-differs,
+.rec-status-failed,
+.rec-status-check-failed { background: rgb(from var(--warning, #d97706) r g b / .14); }
 .rec-status-missing { color: var(--critical, #dc2626); }
 .rec-summary {
   margin: .1rem 0 .2rem;

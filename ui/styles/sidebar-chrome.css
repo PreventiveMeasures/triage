@@ -6,6 +6,12 @@
    with an instant in-app affordance. */
 #styled-tooltip {
   position: fixed;
+  /* It's a popover (see tooltip.js): undo the UA popover box —
+     centered via `inset: 0; margin: auto` — so the inline top / left
+     place it. */
+  inset: auto;
+  margin: 0;
+  overflow: visible;
   background: rgb(28 28 28 / .95);
   backdrop-filter: var(--glass-blur);
   border: 1px solid var(--border);

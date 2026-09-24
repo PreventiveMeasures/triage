@@ -264,14 +264,14 @@ customElements.define('export-confirm-dialog', ExportConfirmDialog)
 // with `{ confirmed, view, fields, mode }` — `mode` being the tab it
 // was confirmed under, which is what decides the export that runs.
 //
-// Custom open helper rather than the shared `openAppDialog`: the Print
-// / Download buttons stay clickable while another modal is up (the
-// toolbar isn't inert behind a dialog), so `AppDialog.firstUpdated`'s
-// showModal() can throw and dispatch `modal-conflict` instead of
-// `resolve`. The shared helper only listens for `resolve`, so it would
+// Custom open helper rather than the shared `openAppDialog`: if
+// `AppDialog.firstUpdated`'s `showModal()` fails outright (the element
+// got detached first), it dispatches `modal-conflict` instead of
+// `resolve`, and the shared helper only listens for `resolve` — it would
 // hang the `await` in events.js forever and leak the element. Settle to
 // `{ confirmed: false }` on BOTH paths — a conflict collapses to a
-// no-op cancel (the user can retry once the blocking modal closes).
+// no-op cancel. (Another modal being up is not a conflict: this dialog
+// isn't `exclusive`, so it stacks — see app-dialog.js.)
 export function openExportConfirmDialog(mode = 'download') {
   const summary = exportSelectionSummary(mode)
   // `focusedOnly` is the one thing the two bases disagree on, and the

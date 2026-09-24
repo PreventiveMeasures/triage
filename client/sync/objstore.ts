@@ -170,6 +170,11 @@ export type FetchByTagResult =
   | { kind: 'report'; fileName: string; content: Uint8Array; version: number; incarnation: string }
   | { kind: 'bundle'; integrity: string; name: string; content: Uint8Array; version: number; incarnation: string }
 
+// `onPut` payload. `incarnation` lets a consumer tell a delete + re-upload
+// (fresh incarnation, version restarting at 1) apart from a stale echo
+// of the lineage it already holds — the version alone can't.
+export type ObjstorePutEvent = { resourceTag: string; version: number; incarnation: string; contentLength: number }
+
 // Per-client deps. The client opens one WebSocket and multiplexes
 // every workspace's session over it. `authResolver` is shared too —
 // the server's `socketAuthorized` flag is per-WebSocket, so a single
@@ -237,7 +242,7 @@ export type ObjstoreSession = {
   // mirrors. Both deliver the wire `resourceTag` (opaque), since
   // the relay doesn't decrypt — callers who need fileNames must
   // `fetchByTag` to surface the inner names.
-  onPut(handler: (event: { resourceTag: string; version: number; contentLength: number }) => void): () => void
+  onPut(handler: (event: ObjstorePutEvent) => void): () => void
   onDeleted(handler: (event: { resourceTag: string; version: number }) => void): () => void
   // Bundle-side put / fetch / delete. Same semantics as the report
   // counterparts but the tag derives from a sha512 integrity and the
@@ -336,7 +341,7 @@ type SessionState = {
   signingKey: CryptoKey
   contentKey: Uint8Array
   tagKey: Uint8Array
-  putHandlers: Set<(event: { resourceTag: string; version: number; contentLength: number }) => void>
+  putHandlers: Set<(event: ObjstorePutEvent) => void>
   deletedHandlers: Set<(event: { resourceTag: string; version: number }) => void>
   // Per-tag rollback watermark, keyed by incarnation — see
   // `noteVersion` / `assertFreshOrLater`. Tracks the highest version
@@ -482,7 +487,7 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
     for (const [resourceTag, current] of state.inventory) {
       const old = previous.get(resourceTag)
       if (old?.version === current.version && old.incarnation === current.incarnation) continue
-      const event = { resourceTag, version: current.version, contentLength: current.contentLength }
+      const event = { resourceTag, version: current.version, incarnation: current.incarnation, contentLength: current.contentLength }
       for (const h of state.putHandlers) { try { h(event) } catch {} }
     }
   }
@@ -576,7 +581,7 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
       noteVersion(state, meta.resourceTag, meta.incarnation, meta.version)
       // Keep the live inventory current so `list()` reflects peer puts.
       state.inventory.set(meta.resourceTag, { version: meta.version, incarnation: meta.incarnation, contentLength: meta.contentLength })
-      const putEvent = { resourceTag: meta.resourceTag, version: meta.version, contentLength: meta.contentLength }
+      const putEvent = { resourceTag: meta.resourceTag, version: meta.version, incarnation: meta.incarnation, contentLength: meta.contentLength }
       for (const h of state.putHandlers) { try { h(putEvent) } catch {} }
       return
     }

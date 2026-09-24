@@ -51,17 +51,19 @@ class PersistenceDegradedDialog extends AppDialog {
 customElements.define('persistence-degraded-dialog', PersistenceDegradedDialog)
 
 // Own open helper rather than the shared `openAppDialog`, so we settle
-// on `modal-conflict` too: if another modal is already open when
-// persistence degrades, `AppDialog.firstUpdated`'s `showModal()` throws
-// and dispatches `modal-conflict` instead of `resolve` — the shared
-// helper only listens for `resolve`, so it would hang forever and leak
-// the element. Resolve `{ shown }` and remove on BOTH paths so the
-// promise always settles and cleans up; `shown: false` (conflict, never
+// on `modal-conflict` too. The notice opens unprompted, so it's
+// `exclusive`: if another modal is already open when persistence
+// degrades, `AppDialog.firstUpdated` refuses to stack it on top and
+// dispatches `modal-conflict` instead of `resolve` — the shared helper
+// only listens for `resolve`, so it would hang forever and leak the
+// element. Resolve `{ shown }` and remove on BOTH paths so the promise
+// always settles and cleans up; `shown: false` (conflict, never
 // displayed) tells the caller to retry while still degraded so the
 // one-shot notice isn't skipped for the whole episode.
 export function openPersistenceDegradedDialog() {
   return new Promise((resolve) => {
     const el = document.createElement('persistence-degraded-dialog')
+    el.exclusive = true
     const settle = (shown) => { el.remove(); resolve({ shown }) }
     el.addEventListener('resolve', () => settle(true))
     el.addEventListener('modal-conflict', () => settle(false))

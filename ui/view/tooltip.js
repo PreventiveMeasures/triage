@@ -28,8 +28,21 @@ function ensureEl() {
   if (tipEl) return tipEl
   tipEl = document.createElement('div')
   tipEl.id = 'styled-tooltip'
+  // A manual popover, so it renders in the top layer: an `AppDialog`
+  // is a modal `<dialog>` (top layer too), which no z-index can beat,
+  // so the tooltip of anything inside one would sit behind it.
+  tipEl.setAttribute('popover', 'manual')
   document.body.append(tipEl)
   return tipEl
+}
+
+// Put the tooltip on top of the top layer. A modal opened after the
+// popover stacks above it, so re-open it on every show — which also
+// makes it displayed before `showTooltip` measures its width.
+function raise(node) {
+  if (typeof node.showPopover !== 'function') return
+  if (node.matches(':popover-open')) node.hidePopover()
+  node.showPopover()
 }
 
 let currentTarget = null
@@ -67,6 +80,7 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
   // re-showing it for every child.
   if (currentTarget === el && node.textContent === text) return
   node.textContent = text
+  raise(node)
   if (placement === 'right') {
     // Anchor to the element's right edge, vertically centered.
     const rect = el.getBoundingClientRect()
@@ -94,7 +108,13 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
 export function hideTooltip() {
   clearTimeout(showTimer)
   showTimer = null
-  if (tipEl) tipEl.classList.remove('visible')
+  if (tipEl) {
+    tipEl.classList.remove('visible')
+    // Close the popover as well: an open-but-invisible one still matches
+    // `:popover-open`, which other code reads as "a popover is up" (the
+    // links preview's Escape in events.js; review r4099015016).
+    if (typeof tipEl.hidePopover === 'function' && tipEl.matches(':popover-open')) tipEl.hidePopover()
+  }
   currentTarget = null
 }
 

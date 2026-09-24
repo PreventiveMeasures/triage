@@ -1881,7 +1881,9 @@ report.addEventListener('change', (e) => {
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return
   if (getLinksPreview()) {
-    if (!e.defaultPrevented && !focusNavBlocked(e) && !document.querySelector(':popover-open')) dismissLinksPreview()
+    // The shared hover tooltip is a popover too (so it shows over modal
+    // dialogs) — never one Escape should defer to.
+    if (!e.defaultPrevented && !focusNavBlocked(e) && !document.querySelector(':popover-open:not(#styled-tooltip)')) dismissLinksPreview()
     return
   }
   if (state.kanbanPopoverGid) {

@@ -212,13 +212,14 @@ customElements.define('import-conflict-dialog', ImportConflictDialog)
 // Custom open helper rather than the shared `openAppDialog`: this
 // dialog can be invoked from `addFiles` while another modal is already
 // showing (e.g. the first-import passkey prompt, or a workspace-import
-// unlock dialog left up by an earlier drag). The shared helper only
-// listens for `resolve`, so a `modal-conflict` from
-// `AppDialog.firstUpdated` would leave the element parked on `<body>`
-// with the promise unresolved — the import flow would hang forever.
-// Listening for `modal-conflict` and collapsing to a cancel result
-// keeps the flow non-blocking; the user can re-drop once the blocking
-// modal is gone.
+// unlock dialog left up by an earlier drag). It isn't `exclusive`, so it
+// stacks on top and the user answers it there (see app-dialog.js). If
+// `showModal()` fails outright, though, `AppDialog.firstUpdated`
+// dispatches `modal-conflict`, and the shared helper only listens for
+// `resolve` — the element would stay parked on `<body>` with the promise
+// unresolved and the import flow would hang forever. Listening for
+// `modal-conflict` and collapsing to a cancel result keeps the flow
+// non-blocking; the user can re-drop.
 export function openImportConflictDialog({ name, workspaceNames, existingNames } = {}) {
   const existing = existingNames instanceof Set ? existingNames : new Set(existingNames ?? [])
   return new Promise((resolve) => {

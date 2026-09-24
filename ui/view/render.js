@@ -5,7 +5,7 @@ import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS, PRODUCER_LABELS, REPORT_LOGOS, findingBrand, loadedBrands } from './file-display.js'
 import { FOCUS_SPLIT_MAX, FOCUS_SPLIT_MIN, listBundles, listWorkspaces, state } from '#client/index.js'
-import { isBundleInRemote, isInRemote, remoteCount, triageSync } from './client-sync.js'
+import { differingReports, isBundleInRemote, isInRemote, remoteCount, triageSync } from './client-sync.js'
 import { installShadowTooltipListener } from './tooltip.js'
 import { dropZone, report } from './dom.js'
 import { SEVERITIES, canDropRevalidation, configureDepsDir, configureRevalidation, displayedSeverity, fileLink, findingDisplayName, findingTitle, formatRunMeta, hasSeverityCorrection, isHttpUrl, isModule, lineLink, lineRangeLabel, reachableRevalidateFilters, revalidateKind, stampUpstreamFindings } from './format.js'
@@ -28,7 +28,7 @@ import { renderPackagesView } from './render-packages.js'
 import { renderRepositoriesView } from './render-repositories.js'
 import { renderLinksView } from './render-links.js'
 import { closeLinksPreview, getLinksPreview } from './links-preview.js'
-import { resolveWorkspaceContext } from './sync-scope.js'
+import { resolveWorkspaceContext, syncableMembers } from './sync-scope.js'
 import {
   buildBundleGraphData,
   countBundleTriageBuckets,
@@ -41,6 +41,8 @@ import {
 import { focusCodeHistory, getFocusCode } from './focus-code.js'
 import { openSyncUploadDialog } from './dialogs/sync-upload-dialog.js'
 import { openObjstoreRecoveryDialog } from './dialogs/objstore-recovery-dialog.js'
+import { openSyncSuggestDialog } from './dialogs/sync-suggest-dialog.js'
+import { createSyncSuggester } from './sync-suggest.js'
 
 // View-mode icons + titles + click handling all live in
 // `<view-mode-buttons>` (see view/view-mode-buttons.js); the host
@@ -371,6 +373,10 @@ function headerTemplate(mergedGroups, fileNames, repoInputUseful, knownRepo, tre
   </header>`
 }
 
+// The "Reports out of sync" dialog the badge auto-opens (once per
+// workspace until reload — see sync-suggest.js).
+const { suggestSync } = createSyncSuggester({ open: (names) => openSyncSuggestDialog({ names }) })
+
 // Views this badge is rendered into. A defence rather than a rule —
 // its two call sites (the findings page header, and the links view's
 // header, which takes it as a template) already decide where it goes;
@@ -411,12 +417,31 @@ function syncBadgeTemplate() {
   const wsContext = resolveWorkspaceContext()
   if (!wsContext) return nothing
   const { workspaceId, fileNames, mode } = wsContext
+  // Reports whose local and cloud copies may differ in a way sync can't
+  // settle by itself (changed here since they were in sync, or found
+  // different with nothing showing which is newer). Without saying so
+  // they'd read as plain "cloud" and nobody would know to re-check —
+  // in either view (review r4099376951). Say it out loud once, too: a
+  // dialog offering to sync (see sync-suggest.js for when it opens and
+  // when it stays closed).
+  const differing = differingReports(workspaceId)
+  if (differing.length > 0) {
+    suggestSync(workspaceId, differing, { onSync: () => openRecheckFor(workspaceId, mode, fileNames), retry: render })
+  }
   if (mode === 'single') {
     // Single-file view: chip reflects just the active report's
     // status. Bundles aren't represented here — they live in the
     // workspace context, which the user can navigate to via the
     // sidebar to see the combined badge.
     const name = fileNames[0]
+    if (differing.includes(name)) {
+      return badgeChipButton({
+        status: 'differ',
+        label: 'differs',
+        title: `Your copy of "${name}" doesn't match its cloud copy. Click to re-check and bring them in line.`,
+        onClick: () => openRecheckFor(workspaceId, mode, fileNames),
+      })
+    }
     const status = isInRemote(workspaceId, name) ? 'cloud' : 'local'
     return badgeChipButton({
       status,
@@ -485,9 +510,21 @@ function syncBadgeTemplate() {
   const wrapperTitle = [
     cloudCount > 0 ? `${cloudCount} in cloud` : null,
     localOnly.length > 0 ? `${localOnly.length} local-only` : null,
+    differing.length > 0 ? `${differing.length} differ from the cloud` : null,
     cloudCount > 0 ? `click "cloud" to re-check storage` : null,
     localOnly.length > 0 ? `click "local" to upload ${localOnly.length}` : null,
   ].filter(Boolean).join(' — ')
+  const differTip = differing.length === 1
+    ? `Your copy of "${differing[0]}" doesn't match its cloud copy. Click to re-check and bring them in line.`
+    : `${differing.length} reports don't match their cloud copies. Click to re-check and bring them in line.`
+  const differChunk = differing.length === 0 ? nothing
+    : html`<button
+        type="button"
+        class="sync-badge-chunk differ"
+        data-tooltip=${differTip}
+        aria-label=${`${differing.length} report${differing.length === 1 ? '' : 's'} differ from the cloud — re-check`}
+        @click=${(e) => { e.stopPropagation(); openRecheckFor(workspaceId, mode, fileNames) }}
+      >${differIconTpl()}<span>${differing.length} differ</span></button>`
   const cloudChunk = cloudCount === 0 ? nothing
     : html`<button
         type="button"
@@ -502,19 +539,31 @@ function syncBadgeTemplate() {
         aria-label=${`${localOnly.length} items not yet uploaded — open upload dialog`}
         @click=${(e) => { e.stopPropagation(); openUploadFromBadge({ workspaceId, items: localOnly }) }}
       >${localIconTpl()}<span>${localOnly.length} local</span></button>`
-  // The divider only shows when BOTH chunks are present.
-  const divider = (cloudCount > 0 && localOnly.length > 0)
-    ? html`<span class="sync-badge-divider" aria-hidden="true"></span>`
-    : nothing
+  // A divider between each pair of chunks present.
+  const divider = html`<span class="sync-badge-divider" aria-hidden="true"></span>`
+  const chunks = [cloudChunk, differChunk, localChunk].filter((c) => c !== nothing)
   return html`<div
     class="report-sync-badge report-sync-badge-clickable"
     data-status="mixed"
-    title=${wrapperTitle}
-  >${cloudChunk}${divider}${localChunk}</div>`
+    data-tooltip=${wrapperTitle}
+  >${chunks.map((c, i) => (i === 0 ? c : html`${divider}${c}`))}</div>`
+}
+
+// The re-check the "differ(s)" signals open — already running, since the
+// user asked for it. Given the workspace's members on this device: the
+// dialog offers to download remote reports NOT in that list, so the
+// single-file view's one-name list would wrongly offer all the others.
+function openRecheckFor(workspaceId, mode, fileNames) {
+  const ws = listWorkspaces().find((w) => w.id === workspaceId)
+  const localFileNames = mode === 'single'
+    ? syncableMembers(ws?.reports ?? [], state.storedFiles ?? [], fileNames)
+    : fileNames
+  const localBundles = ws && Array.isArray(ws.bundles) ? ws.bundles : []
+  return openObjstoreRecoveryDialog({ workspaceId, cloudCount: remoteCount(workspaceId), localFileNames, localBundles, autoRun: true })
 }
 
 function badgeChipButton({ status, label, title, onClick }) {
-  const icon = status === 'cloud' ? cloudIconTpl() : localIconTpl()
+  const icon = status === 'cloud' ? cloudIconTpl() : status === 'differ' ? differIconTpl() : localIconTpl()
   const labelTpl = html`<span class="sync-badge-label">${label}</span>`
   if (typeof onClick !== 'function') {
     // Informational chip — render as a `<span>` so it doesn't pick
@@ -544,6 +593,14 @@ function localIconTpl() {
     <line x1="6" y1="18" x2="6.01" y2="18"/>
     <line x1="10" y1="18" x2="10.01" y2="18"/>
     <path d="M6 14V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v10"/>
+  </svg>`
+}
+
+// Two opposed arrows — the local and cloud copies pulling apart.
+function differIconTpl() {
+  return html`<svg class="sync-badge-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M7 4v14"/><path d="M3 14l4 4 4-4"/>
+    <path d="M17 20V6"/><path d="M13 10l4-4 4 4"/>
   </svg>`
 }
 

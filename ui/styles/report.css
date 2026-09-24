@@ -250,6 +250,12 @@
         border-color: var(--accent);
         color: var(--accent);
       }
+      /* Single-file view of a report whose local and cloud copies
+         differ — same amber as the workspace badge's "differ" chunk. */
+      &[data-status='differ'] {
+        border-color: var(--warning);
+        color: var(--warning);
+      }
       /* Workspace-aggregate variant: two side-by-side chips
          ("N cloud / M local") with a divider between. Either chip
          can be clickable (local opens multi-upload). */
@@ -260,6 +266,9 @@
       }
       & .sync-badge-chunk.cloud { color: var(--accent); }
       & .sync-badge-chunk.local { color: var(--muted); }
+      /* Needs the user: local and cloud copies differ with no way for
+         sync to tell which is newer. */
+      & .sync-badge-chunk.differ { color: var(--warning); }
       & .sync-badge-divider {
         width: 1px; height: 14px; margin: 0 .125rem;
         background: var(--border);

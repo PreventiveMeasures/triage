@@ -10,9 +10,12 @@ export {
   deleteBundleFromRemote,
   deleteFromRemote,
   discoverRemoteBundleIntegrities,
+  differingReports,
   discoverRemoteFileNames,
+  downloadFileFromRemote,
   fetchBundleFromRemote,
   fetchFile,
+  holdLocalChangeChecks,
   isBundleInRemote,
   isInRemote,
   onAutoDownloaded,
@@ -24,6 +27,7 @@ export {
   putFile,
   recheckRemoteStorage,
   remoteBundleName,
+  resolveReportDifference,
   remoteCount,
 } from './sync/objstore-presence.js'
 

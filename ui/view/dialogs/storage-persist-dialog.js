@@ -171,11 +171,11 @@ class StoragePersistDialog extends AppDialog {
 customElements.define('storage-persist-dialog', StoragePersistDialog)
 
 // Own open helper (not the shared `openAppDialog`) so `modal-conflict`
-// settles too — same rationale as persistence-degraded-dialog: if
-// another modal is already up, showModal() throws and only a
-// `modal-conflict` listener keeps this promise from hanging and the
-// element from leaking. Resolves 'granted' when the in-dialog retry
-// succeeded, null otherwise.
+// settles too: if `showModal()` fails outright, only a `modal-conflict`
+// listener keeps this promise from hanging and the element from
+// leaking. (It's opened from a click, so it isn't `exclusive` — over
+// another modal it stacks; see app-dialog.js.) Resolves 'granted' when
+// the in-dialog retry succeeded, null otherwise.
 export function openStoragePersistDialog() {
   return new Promise((resolve) => {
     const el = document.createElement('storage-persist-dialog')

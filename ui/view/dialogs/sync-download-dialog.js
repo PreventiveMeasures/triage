@@ -3,7 +3,8 @@
 // single "N cloud" chunk covering peer-uploaded reports + bundles.
 // Each item carries its kind so the dialog dispatches per-item to
 // the right session method
-// (`fetchFile` → save + attach for reports;
+// (`downloadFileFromRemote` for reports, which validates, saves,
+// attaches, and records the sync baseline;
 // `fetchBundleFromRemote` for bundles, which already saves + fires
 // the bundle auto-download listener so the UI refreshes).
 //
@@ -14,9 +15,8 @@
 //   → Promise<{ downloaded, failed }>
 
 import { html, nothing, unsafeCSS } from 'lit'
-import { decodeUtf8 } from '../../../common/utf8.js'
-import { addBundleToWorkspace, addReportToWorkspace, analyzeContent, gunzipBytes, saveFileBytes, setCount, state } from '#client/index.js'
-import { fetchBundleFromRemote, fetchFile } from '../client-sync.js'
+import { addBundleToWorkspace, state } from '#client/index.js'
+import { downloadFileFromRemote, fetchBundleFromRemote } from '../client-sync.js'
 import { switchToWorkspace } from '../ingest.js'
 import { AppDialog, openAppDialog } from './app-dialog.js'
 import listCSS from './dialog-list.css'
@@ -83,26 +83,15 @@ class SyncDownloadDialog extends AppDialog {
           downloaded.push({ kind: 'bundle', identifier: item.identifier })
           continue
         }
-        // Report path.
-        const got = await fetchFile(this.workspaceId, item.identifier)
-        if (!got) {
-          this._fail(failed, item, 'report', 'not found in remote')
+        // Report path. Goes through presence (not a bare fetch + save)
+        // so the downloaded copy gets a sync baseline — without one, a
+        // Replace that lands while this client is offline is never
+        // picked up and the copy silently stays on the old report.
+        const r = await downloadFileFromRemote(this.workspaceId, item.identifier)
+        if (!r || !r.ok) {
+          this._fail(failed, item, 'report', r?.reason ?? 'sync is not available')
           continue
         }
-        let text
-        try { text = decodeUtf8(await gunzipBytes(got.content)) }
-        catch {
-          this._fail(failed, item, 'report', 'remote payload is not gzipped UTF-8')
-          continue
-        }
-        const result = analyzeContent(text)
-        if (!result.recognized) {
-          this._fail(failed, item, 'report', 'remote payload is not a recognized report format')
-          continue
-        }
-        await saveFileBytes(item.identifier, got.content)
-        setCount(item.identifier, result.count, result.source)
-        await addReportToWorkspace(item.identifier, this.workspaceId)
         downloaded.push({ kind: 'report', identifier: item.identifier })
       } catch (err) {
         this._fail(failed, item, item.kind, err?.message ?? String(err))

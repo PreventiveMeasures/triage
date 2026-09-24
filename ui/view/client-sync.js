@@ -179,6 +179,9 @@ export function isBundleInRemoteOrCached(workspaceId, integrity) {
 export function remoteCount(workspaceId) {
   return realModule ? realModule.remoteCount(workspaceId) : 0
 }
+export function differingReports(workspaceId) {
+  return realModule ? realModule.differingReports(workspaceId) : []
+}
 
 // Subscription wrappers — pure queue, no load trigger. The sync
 // module fires these once it lands; in the meantime the UI sees
@@ -237,14 +240,18 @@ async function callIfWanted(method, args) {
 }
 
 export function fetchFile(...args) { return callIfWanted('fetchFile', args) }
+export function downloadFileFromRemote(...args) { return callIfWanted('downloadFileFromRemote', args) }
 export function fetchBundleFromRemote(...args) { return callIfWanted('fetchBundleFromRemote', args) }
 export function putFile(...args) { return callIfWanted('putFile', args) }
+// Resolves to the release function (undefined while sync isn't wanted).
+export function holdLocalChangeChecks(...args) { return callIfWanted('holdLocalChangeChecks', args) }
 export function putBundleToRemote(...args) { return callIfWanted('putBundleToRemote', args) }
 export function deleteFromRemote(...args) { return callIfWanted('deleteFromRemote', args) }
 export function deleteBundleFromRemote(...args) { return callIfWanted('deleteBundleFromRemote', args) }
 export function openWorkspace(...args) { return callIfWanted('openWorkspace', args) }
 export function closeWorkspace(...args) { return callIfWanted('closeWorkspace', args) }
 export function recheckRemoteStorage(...args) { return callIfWanted('recheckRemoteStorage', args) }
+export function resolveReportDifference(...args) { return callIfWanted('resolveReportDifference', args) }
 
 // `triageSync` proxy — mirrors the real object's shape. Methods that
 // represent "online intent" (`setEnabled(true)`) trigger the load;

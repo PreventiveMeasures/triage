@@ -1,0 +1,7 @@
+/* Sync-suggestion dialog. Composed on top of dialog-base.css +
+   dialog-list.css (.lwd-body, .lwd-list, .nwd-note, .nwd-actions) and
+   the shared detail-action.css (the corner ×, as in the re-check
+   dialog); only the corner placement lives here. */
+.ssd-close { position: absolute; top: 6px; right: 6px; z-index: 1; }
+header { padding-right: 1.5rem; }
+.lwd-list { margin: .5rem 0 0; }

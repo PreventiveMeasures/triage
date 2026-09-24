@@ -54,16 +54,17 @@ class ProxyAuthDialog extends AppDialog {
 customElements.define('proxy-auth-dialog', ProxyAuthDialog)
 
 // Own open helper (not the shared `openAppDialog`) so we settle on
-// `modal-conflict` too: if another modal is already open when the proxy
-// redirect is detected, `AppDialog.firstUpdated`'s `showModal()` throws
-// and dispatches `modal-conflict` instead of `resolve`. Resolve
-// `{ shown, reload }` and remove on BOTH paths so the promise always
-// settles and cleans up; `shown: false` (conflict, never displayed)
-// tells the caller to retry while still blocked. Mirrors
-// `openPersistenceDegradedDialog`.
+// `modal-conflict` too. It opens unprompted, so it's `exclusive`: if
+// another modal is already open when the proxy redirect is detected,
+// `AppDialog.firstUpdated` refuses to stack it on top and dispatches
+// `modal-conflict` instead of `resolve`. Resolve `{ shown, reload }` and
+// remove on BOTH paths so the promise always settles and cleans up;
+// `shown: false` (conflict, never displayed) tells the caller to retry
+// while still blocked. Mirrors `openPersistenceDegradedDialog`.
 export function openProxyAuthDialog() {
   return new Promise((resolve) => {
     const el = document.createElement('proxy-auth-dialog')
+    el.exclusive = true
     const settle = (shown, reload) => { el.remove(); resolve({ shown, reload }) }
     el.addEventListener('resolve', (e) => settle(true, e.detail === 'reload'))
     el.addEventListener('modal-conflict', () => settle(false, false))
