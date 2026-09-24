@@ -951,7 +951,10 @@ export function remoteBundleName(workspaceId, integrity) {
 // Record the latest cloud state for `tag`. Within one incarnation keep
 // the highest version (a snapshot must not roll back a newer broadcast
 // that already landed); a different incarnation is a delete +
-// re-upload whose version restarts, so it always replaces.
+// re-upload whose version restarts, so it always replaces — which is
+// only sound because every caller feeds it in wire order (the boot
+// listing, then broadcasts). Never feed it a put result: that arrives
+// out of order (see `recordOwnUpload`).
 function noteRemoteMeta(entry, tag, version, incarnation) {
   const previous = entry.remoteMeta.get(tag)
   if (previous && previous.incarnation === incarnation && previous.version >= version) return
@@ -1821,11 +1824,20 @@ export async function putFile(workspaceId, fileName, content) {
   })
 }
 
-// Advance the cloud state + local baseline to our own successful put,
-// so the matching `onPut` self-echo (the relay broadcasts with
-// `except: null`, see `server-e2e/objstore/handlers.ts:190` /
-// `server-e2e/objstore/rest.ts` — the originator IS included in the
-// fan-out) finds the baseline current and skips the replace-refetch.
+// Advance the local baseline to our own successful put, so the matching
+// `onPut` self-echo (the relay broadcasts with `except: null`, see
+// `server-e2e/objstore/handlers.ts:190` / `server-e2e/objstore/rest.ts`
+// — the originator IS included in the fan-out) finds the baseline
+// current and skips the replace-refetch.
+//
+// It deliberately does NOT write `remoteMeta` (review r4099297281): the
+// put result reaches us out of wire order, so it can be older than
+// broadcasts already applied — a peer's delete + re-upload landing
+// while ours was in flight is a different incarnation, which
+// `noteRemoteMeta` always accepts, so our result would roll the newer
+// state back and the catch-up below would compare our put with itself.
+// `remoteMeta` is fed only by ordered sources (the boot listing and
+// broadcasts, our own echo included, which records this put in order).
 // Without this, every upload would round-trip the just-uploaded bytes
 // back to ourselves through `maybeApplyRemoteReplace` (harmless but
 // wasteful — the fetched content is byte-identical to what we just
@@ -1839,13 +1851,13 @@ async function recordOwnUpload(entry, fileName, tag, meta, content) {
   const hash = await computeContentHash(content)
   if (entry.disposed) return
   entry.fileTags.set(fileName, tag)
-  noteRemoteMeta(entry, tag, meta.version, meta.incarnation)
   setBaseline(entry, tag, meta, true, hash)
   savePresenceCache(entry.workspaceId, entry)
-  // A newer put already reached the cloud (its broadcast arrived while
-  // ours was in flight): our baseline is truthful but behind. Its own
-  // replace-refetch is normally queued behind this lock already; queue
-  // one here too so catching up never depends on that broadcast.
+  // A newer put — or a delete + re-upload — already reached the cloud
+  // (its broadcast arrived while ours was in flight): our baseline is
+  // truthful but behind. Its own reconcile is normally queued behind
+  // this lock already; queue one here too so catching up never depends
+  // on that broadcast.
   if (remoteMovedPast(entry.baselines.get(tag), entry.remoteMeta.get(tag))) {
     maybeApplyRemoteReplace(entry, tag).catch(() => {})
   }
@@ -2358,7 +2370,8 @@ async function uploadLocalCopy(entry, tag, fileName, prev, stillWanted) {
     if (!stillWanted()) return { status: 'missing' }
     const r = await entry.session.put({ fileName, content: bytes, prev: { version: prev.version, incarnation: prev.incarnation } })
     if (r.ok) {
-      noteRemoteMeta(entry, tag, r.meta.version, r.meta.incarnation)
+      // Baseline only — `remoteMeta` comes from the ordered broadcasts
+      // (our echo included); see `recordOwnUpload`.
       setBaseline(entry, tag, r.meta, true, await computeContentHash(bytes))
       savePresenceCache(entry.workspaceId, entry)
       return { status: 'uploaded' }

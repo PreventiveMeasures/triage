@@ -2565,4 +2565,48 @@ describe('client/sync/objstore-presence', () => {
       await deleteFile(fileName).catch(() => {})
     }
   })
+
+  it('a peer delete + re-upload landing while our upload is recorded is not rolled back to our incarnation (review r4099297281)', async () => {
+    // Our put commits incarnation A; before putFile's bookkeeping runs, a
+    // peer deletes the report and re-uploads it as incarnation B. The B
+    // broadcast is the newer cloud state — our put result must not
+    // overwrite it (a different incarnation always "wins" in
+    // noteRemoteMeta), or the catch-up compares A with A and the local
+    // copy can stay on our bytes while the cloud holds B.
+    const fileName = 'upload-vs-recreate.json'
+    const oursText = reportJson('ours-A')
+    const peerText = reportJson('peer-B')
+    const { ws } = await openSyncedReport('presence-upload-vs-recreate', fileName, reportJson('synced'))
+    const peer = await openPeerSession(ws)
+    const e = __test__.getEntry(ws.id)
+    const [tag] = e.baselines.keys()
+    const realPut = e.session.put.bind(e.session)
+    let incarnationB
+    try {
+      const ours = await gzipBytes(encodeUtf8(oursText))
+      await saveFileBytes(fileName, ours)
+      e.session.put = async (opts) => {
+        const r = await realPut(opts)
+        if (!r.ok) return r
+        e.session.put = realPut
+        assert.equal((await peer.delete(fileName, r.meta)).ok, true)
+        const b = await peer.put({ fileName, content: await gzipBytes(encodeUtf8(peerText)), prev: null })
+        assert.equal(b.ok, true)
+        incarnationB = b.meta.incarnation
+        await awaitPresence(() => e.remoteMeta.get(tag)?.incarnation === incarnationB, 'B broadcast seen')
+        return r
+      }
+      assert.equal((await putFile(ws.id, fileName, ours)).ok, true)
+      assert.equal(e.remoteMeta.get(tag)?.incarnation, incarnationB, 'cloud state stays at the newer incarnation')
+      assert.equal(await waitForLocalText(fileName, peerText), peerText, 'the re-upload lands locally')
+      await awaitPresence(() => e.baselines.get(tag)?.incarnation === incarnationB, 'baseline at B')
+      assert.deepEqual(differingReports(ws.id), [])
+    } finally {
+      e.session.put = realPut
+      peer.close()
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+      await deleteFile(fileName).catch(() => {})
+    }
+  })
 })
