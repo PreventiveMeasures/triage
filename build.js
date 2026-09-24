@@ -12,6 +12,8 @@ import { resolve as resolvePath, dirname } from 'node:path'
 import { createServer, request as httpRequest } from 'node:http'
 import { connect as netConnect } from 'node:net'
 import { minifyLitSource } from './build-lit-minify.js'
+import { DEFAULT_SCAN_SERVER } from './common/scan-server.ts'
+import { configuredScanServer, scanServerHtml } from './server-common/scan-config.ts'
 
 // `minify` is set in prod builds. esbuild's top-level `minify` flag
 // doesn't reach text-loaded contents, so we run a one-shot
@@ -98,6 +100,7 @@ if (mode === 'build') {
     format: 'esm',
   })
 } else if (mode === 'serve') {
+  const scanServer = configuredScanServer(process.env['DEEPVIEW_SCAN_SERVER']) ?? DEFAULT_SCAN_SERVER
   // Mirror the previous `--servedir=ui --outdir=ui` setup: esbuild
   // builds js/css in memory and serves them overlaid on the static
   // source tree. HTML is intentionally NOT an entry point — the
@@ -141,6 +144,17 @@ if (mode === 'build') {
   const isApi = (url) => typeof url === 'string' && url.startsWith('/api/')
 
   const proxy = createServer((req, res) => {
+    // HTML is served from source in dev. Apply the same CSP transform as the
+    // E2E static server without writing configuration into source files.
+    const pathname = new URL(req.url ?? '/', 'http://dev.invalid').pathname
+    if (scanServer && ['/', '/index.html'].includes(pathname) && ['GET', 'HEAD'].includes(req.method)) {
+      void readFile('ui/index.html', 'utf8').then(html => {
+        const body = scanServerHtml(html, scanServer, { advertise: true })
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
+        res.end(req.method === 'HEAD' ? undefined : body)
+      }).catch(err => { res.writeHead(500); res.end(String(err)) })
+      return
+    }
     const target = isApi(req.url) ? { host: backendHost, port: backendPort, label: 'backend' } : { host: esb.host, port: esb.port, label: 'esbuild' }
     const upstream = httpRequest({
       host: target.host,
@@ -193,7 +207,7 @@ if (mode === 'build') {
   })
 
   proxy.listen(proxyPort, proxyHost, () => {
-    console.log(`dev proxy: http://${proxyHost}:${proxyPort} → esbuild :${esb.port}, /api/* → ${backendHost}:${backendPort}`)
+    console.log(`dev proxy: http://${proxyHost}:${proxy.address().port} → esbuild :${esb.port}, /api/* → ${backendHost}:${backendPort}`)
   })
 } else {
   console.error(`unknown mode: ${mode}`)

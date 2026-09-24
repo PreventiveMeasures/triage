@@ -119,7 +119,7 @@ export function createHttpServer(deps: HttpServerDeps): Server {
   // `build.js build` output sibling to this file; the loader handles
   // enumeration, pre-compression, and ETag derivation. Plugged in after
   // the `/api/objstore/...` REST branch.
-  const handleStatic = loadStatic(fileURLToPath(new URL('../out', import.meta.url)))
+  const handleStatic = loadStatic(fileURLToPath(new URL('../out', import.meta.url)), serverInfo.deepviewScanServer ?? null)
 
   const httpServer = createServer((req: HttpRequest, res: ServerResponse) => {
     // Static mode probe: GET /api/config → this server's `server-info` as JSON.

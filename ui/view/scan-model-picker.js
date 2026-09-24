@@ -1,6 +1,6 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { defaultEffort, effortName, fetchScanModels, modelDeveloper, modelName } from './scan-models.js'
-import { modelColumns, modelSections } from './scan-model-layout.js'
+import { modelColumns, modelRows, modelSections } from './scan-model-layout.js'
 
 const CHEVRON = html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg>`
 
@@ -17,20 +17,21 @@ function developerIcon(key) {
       <path fill="#EA4335" d="M12 6.08c1.43 0 2.72.49 3.74 1.45l2.8-2.8C16.85 3.14 14.63 2.2 12 2.2a9.8 9.8 0 0 0-8.76 5.42l3.25 2.52C7.27 7.81 9.44 6.08 12 6.08Z"/>
     </svg>`
   }
-  const iconFiles = { openai: 'openai', anthropic: 'claude', moonshotai: 'moonshot', nvidia: 'nvidia', qwen: 'qwen', deepseek: 'deepseek' }
+  const iconFiles = { openai: 'openai', anthropic: 'claude', moonshotai: 'moonshot', nvidia: 'nvidia', qwen: 'qwen', deepseek: 'deepseek', 'x-ai': 'grok', 'z-ai': 'zai' }
   if (iconFiles[key]) return html`<span class="provider-mark" style=${`--provider-icon: url('/provider-icons/${iconFiles[key]}.svg')`} aria-hidden="true"></span>`
   return html`<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="4" y="4" width="12" height="12" rx="3"/><path d="M8 1v3m4-3v3M8 16v3m4-3v3M1 8h3m-3 4h3m12-4h3m-3 4h3"/></svg>`
 }
 
 class ScanModelPicker extends LitElement {
   static properties = {
+    loadModels: { attribute: false },
     value: { attribute: false }, effort: { attribute: false },
     hasExtra: { type: Boolean, attribute: 'has-extra' },
     _models: { state: true }, _error: { state: true }, _menuColumns: { state: true },
   }
 
   static styles = css`
-    :host { display: block; min-width: 0; }
+    :host { display: block; min-width: 0; container: scan-controls / inline-size; }
     * { box-sizing: border-box; }
     .layout { display: grid; grid-template-columns: minmax(13rem, 1fr) minmax(14rem, 1fr); gap: 1.25rem; align-items: start; }
     .layout.with-extra { grid-template-columns: minmax(13rem, .9fr) minmax(14rem, 1.2fr) minmax(14rem, auto); }
@@ -38,14 +39,23 @@ class ScanModelPicker extends LitElement {
     .label { display: flex; justify-content: space-between; align-items: center; margin-bottom: .4rem; color: var(--muted); font-size: .72rem; }
     output { color: var(--text); font-size: .72rem; font-weight: 500; }
     details { position: relative; }
+    .model-control { position: relative; }
     summary { display: flex; align-items: center; gap: .55rem; padding: .5rem .6rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); list-style: none; transition: border-color .12s, background .12s; }
     summary:hover, details[open] summary { border-color: var(--muted); background: var(--surface-active); }
     summary::-webkit-details-marker { display: none; }
     summary, .menu { user-select: none; }
     summary > svg { width: .9rem; height: .9rem; margin-left: auto; color: var(--muted); }
-    .selected-copy { display: grid; gap: .1rem; min-width: 0; }
-    .selected-copy strong { font-size: .8rem; font-weight: 500; }
+    .selected-copy { display: grid; gap: .1rem; flex: 1; min-width: 0; }
+    .selected-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .8rem; font-weight: 500; }
     .selected-copy small { color: var(--muted); font-size: .63rem; }
+    .pro-space { width: 3.65rem; flex: 0 0 3.65rem; }
+    .pro-toggle { position: absolute; right: 2.05rem; top: 50%; transform: translateY(-50%); display: inline-flex; align-items: center; justify-content: center; gap: .3rem; width: 3.65rem; height: 1.65rem; padding: .2rem .3rem; border: 1px solid var(--border); border-radius: 5px; background: var(--bg); color: var(--muted); font: inherit; font-size: .65rem; font-weight: 600; cursor: default; user-select: none; }
+    .pro-toggle:hover { border-color: var(--muted); color: var(--text); }
+    .pro-track { position: relative; flex: 0 0 1.3rem; height: .8rem; border-radius: 999px; background: var(--border); }
+    .pro-track::after { content: ''; position: absolute; top: .15rem; left: .15rem; width: .5rem; height: .5rem; border-radius: 50%; background: var(--muted); transition: transform .12s, background .12s; }
+    .pro-toggle[aria-checked=true] { color: var(--accent); border-color: rgb(from var(--accent) r g b / .45); background: rgb(from var(--accent) r g b / .08); }
+    .pro-toggle[aria-checked=true] .pro-track { background: rgb(from var(--accent) r g b / .25); }
+    .pro-toggle[aria-checked=true] .pro-track::after { transform: translateX(.5rem); background: var(--accent); }
     /* Every provider and model row shares the same visual column.  Keeping a
        real slot (rather than letting each SVG size itself) prevents wide
        marks such as Moonshot and Qwen from shifting the text column. */
@@ -71,7 +81,8 @@ class ScanModelPicker extends LitElement {
     /* The picker lives low in a long scan form. A fixed menu, positioned from
        the summary at open time, keeps it above the viewport edge and outside
        any panel's clipping context. */
-    .menu { position: fixed; z-index: 1000; width: min(46rem, calc(100vw - 1rem)); max-height: calc(100dvh - 1rem); overflow: auto; overscroll-behavior: contain; padding: .65rem; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-active); color: var(--text); box-shadow: 0 .65rem 1.8rem rgb(0 0 0 / .55); }
+    .menu { visibility: hidden; position: fixed; z-index: 1000; width: min(46rem, calc(100vw - 1rem)); max-height: calc(100dvh - 1rem); overflow: auto; overscroll-behavior: contain; padding: .65rem; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-active); color: var(--text); box-shadow: 0 .65rem 1.8rem rgb(0 0 0 / .55); }
+    details[open] .menu[data-positioned] { visibility: visible; }
     /* Each track has an explicit, nonempty list of provider sections. Scroll
        the whole grid vertically when the catalogue exceeds the viewport. */
     .groups { display: grid; grid-template-columns: repeat(var(--model-columns, 1), minmax(0, 1fr)); gap: 1rem; align-items: start; }
@@ -108,12 +119,13 @@ class ScanModelPicker extends LitElement {
     .message { margin: 0; color: var(--muted); font-size: .75rem; }
     .error { color: var(--critical, #e5534b); }
     .retry { margin-left: .5rem; padding: .2rem .4rem; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); font: inherit; }
-    @media (max-width: 60rem) { .layout.with-extra { grid-template-columns: minmax(13rem, 1fr) minmax(14rem, 1fr); } .layout.with-extra .extra { grid-column: 1 / -1; align-self: start; min-height: 0; } }
-    @media (max-width: 45rem) { .layout, .layout.with-extra { grid-template-columns: 1fr; gap: 1rem; } .layout.with-extra .extra { grid-column: auto; } }
+    @container scan-controls (max-width: 50rem) { .layout.with-extra { grid-template-columns: minmax(13rem, 1fr) minmax(14rem, 1fr); } .layout.with-extra .extra { grid-column: 1 / -1; align-self: start; min-height: 0; } }
+    @container scan-controls (max-width: 30rem) { .layout, .layout.with-extra { grid-template-columns: minmax(0, 1fr); gap: 1rem; } .layout.with-extra .extra { grid-column: auto; } }
   `
 
   constructor() {
     super()
+    this.loadModels = fetchScanModels
     this.value = null
     this.effort = null
     this.hasExtra = false
@@ -130,7 +142,15 @@ class ScanModelPicker extends LitElement {
     document.addEventListener('pointerdown', this._onOutside)
     window.addEventListener('resize', this._onViewportChange)
     window.addEventListener('scroll', this._onViewportChange, true)
-    void this._load()
+    if (this.hasUpdated) void this._load()
+  }
+
+  updated(changed) {
+    if (changed.has('loadModels') && this.isConnected) void this._load()
+    if (changed.has('_models') && this.renderRoot.querySelector('details')?.open) {
+      this._resetMenuPosition()
+      void this._positionMenu()
+    }
   }
 
   disconnectedCallback() {
@@ -147,7 +167,7 @@ class ScanModelPicker extends LitElement {
     this._controller = controller
     this._error = null
     try {
-      const data = await fetchScanModels(controller.signal)
+      const data = await this.loadModels(controller.signal)
       if (controller.signal.aborted) return
       this._models = data.models
       const selected = data.models.find((model) => model.id === this.value)
@@ -159,8 +179,24 @@ class ScanModelPicker extends LitElement {
   }
 
   _close() {
+    this._resetMenuPosition()
     const details = this.renderRoot.querySelector('details')
     if (details) details.open = false
+  }
+
+  _resetMenuPosition() {
+    this._positionRequest++
+    const menu = this.renderRoot.querySelector('.menu')
+    if (menu) delete menu.dataset.positioned
+  }
+
+  _toggleMenu(event) {
+    this._resetMenuPosition()
+    if (event.currentTarget.open) void this._positionMenu()
+  }
+
+  get _selectedRow() {
+    return modelRows(this._models).find(model => model.id === this.value || model.pro?.id === this.value)
   }
 
   async _positionMenu() {
@@ -173,7 +209,8 @@ class ScanModelPicker extends LitElement {
     const gap = 6
     const margin = 8
     const sections = modelSections(this._models)
-    const preferredColumns = Math.min(3, sections.length, Math.ceil((this._models.length + sections.length * 1.5) / 9))
+    const rowCount = sections.reduce((sum, section) => sum + section.models.length, 0)
+    const preferredColumns = Math.min(3, sections.length, Math.ceil((rowCount + sections.length * 1.5) / 9))
     // Measure the untruncated labels instead of stretching every group to a
     // fixed wide cell. Bound very long future names, which can still ellipsize.
     const fontSize = parseFloat(getComputedStyle(menu).fontSize)
@@ -203,14 +240,28 @@ class ScanModelPicker extends LitElement {
     const top = below < height && above > below ? rect.top - gap - height : rect.bottom + gap
     menu.style.bottom = 'auto'
     menu.style.top = `${Math.max(margin, Math.min(top, window.innerHeight - height - margin))}px`
+    // Reveal only after both the column render and final positioning finish.
+    // Native details can paint before its asynchronous toggle event arrives.
+    menu.dataset.positioned = ''
   }
 
-  _select(id) {
+  _select(id, { preserveEffort = false, close = true } = {}) {
     const model = this._models.find((entry) => entry.id === id)
     if (!model) return
     this.value = id
-    this._setEffort(defaultEffort(model))
-    this._close()
+    this._setEffort(preserveEffort && model.efforts.includes(this.effort) ? this.effort : defaultEffort(model))
+    if (close) this._close()
+  }
+
+  _selectRow(model) {
+    const usePro = this._selectedRow?.pro?.id === this.value
+    this._select(usePro && model.pro ? model.pro.id : model.id)
+  }
+
+  _togglePro() {
+    const model = this._selectedRow
+    if (!model?.pro) return
+    this._select(this.value === model.pro.id ? model.id : model.pro.id, { preserveEffort: true, close: false })
   }
 
   _setEffort(effort) {
@@ -222,14 +273,15 @@ class ScanModelPicker extends LitElement {
     if (this._error) return html`<p class="message error" role="alert">Couldn’t load models: ${this._error}<button class="retry" @click=${() => void this._load()}>Retry</button></p>`
     const selected = this._models.find((model) => model.id === this.value)
     if (!selected) return html`<p class="message" role="status">Loading models…</p>`
+    const selectedRow = this._selectedRow
     const developer = modelDeveloper(selected.id)
     const columns = modelColumns(modelSections(this._models), this._menuColumns)
     return html`<div class=${`layout ${this.hasExtra ? 'with-extra' : ''}`}>
       <div class="field"><span class="label" id="model-label">Model</span>
-        <details @toggle=${() => requestAnimationFrame(() => this._positionMenu())} @keydown=${(event) => { if (event.key === 'Escape') { this._close(); this.renderRoot.querySelector('summary')?.focus() } }}>
-          <summary aria-labelledby="model-label selected-model"><span class=${`icon ${developer.key}`}>${developerIcon(developer.key)}</span><span class="selected-copy"><strong id="selected-model">${modelName(selected.id)}</strong><small>${developer.name}</small></span>${CHEVRON}</summary>
+        <div class="model-control"><details @toggle=${this._toggleMenu} @keydown=${(event) => { if (event.key === 'Escape') { this._close(); this.renderRoot.querySelector('summary')?.focus() } }}>
+          <summary aria-labelledby="model-label selected-model" @click=${this._resetMenuPosition}><span class=${`icon ${developer.key}`}>${developerIcon(developer.key)}</span><span class="selected-copy"><strong id="selected-model">${modelName(selectedRow.id)}</strong><small>${developer.name}</small></span>${selectedRow.pro ? html`<span class="pro-space" aria-hidden="true"></span>` : nothing}${CHEVRON}</summary>
           <div class="menu"><div class="groups">${columns.map(column => html`<div class="provider-column">${column.map(section => this._modelSection(section))}</div>`)}</div></div>
-        </details>
+        </details>${selectedRow.pro ? html`<button type="button" class="pro-toggle" role="switch" aria-label="Pro model" aria-checked=${selected.id === selectedRow.pro.id} @click=${this._togglePro}><span>Pro</span><span class="pro-track" aria-hidden="true"></span></button>` : nothing}</div>
       </div>
       ${selected.efforts.length > 0 ? this._effortSlider(selected.efforts) : nothing}
       ${this.hasExtra ? html`<div class="extra"><slot name="effort-extra"></slot></div>` : nothing}
@@ -237,7 +289,7 @@ class ScanModelPicker extends LitElement {
   }
 
   _modelSection({ key, models }) {
-    return html`<fieldset><legend><span class=${`icon ${key}`}>${developerIcon(key)}</span>${modelDeveloper(models[0].id).name}</legend>${models.map((model) => html`<label class="choice"><input type="radio" name="scan-model" value=${model.id} .checked=${model.id === this.value} @change=${() => { this._select(model.id); this.renderRoot.querySelector('summary')?.focus() }}><span>${modelName(model.id)}</span></label>`)}</fieldset>`
+    return html`<fieldset><legend><span class=${`icon ${key}`}>${developerIcon(key)}</span>${modelDeveloper(models[0].id).name}</legend>${models.map((model) => html`<label class="choice"><input type="radio" name="scan-model" value=${model.id} .checked=${model.id === this.value || model.pro?.id === this.value} @change=${() => { this._selectRow(model); this.renderRoot.querySelector('summary')?.focus() }}><span>${modelName(model.id)}</span></label>`)}</fieldset>`
   }
 
   _effortSlider(efforts) {
@@ -250,4 +302,4 @@ class ScanModelPicker extends LitElement {
   }
 }
 
-customElements.define('scan-model-picker', ScanModelPicker)
+if (!customElements.get('scan-model-picker')) customElements.define('scan-model-picker', ScanModelPicker)

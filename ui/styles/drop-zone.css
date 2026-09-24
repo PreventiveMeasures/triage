@@ -1,4 +1,5 @@
 #drop-zone {
+  position: relative;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   flex: 1 0 auto;
   padding: 2rem;
@@ -21,6 +22,17 @@
     box-shadow: 0 0 0 3px rgb(from var(--accent) r g b / .1);
   }
 }
+
+#drop-zone:has(.local-scan-button:not([hidden])):not([data-server-mode='managed']) { padding-bottom: 5rem; }
+.local-scan-button {
+  position: absolute; right: 1.5rem; bottom: 1.5rem;
+  padding: .45rem .85rem; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--surface); color: var(--text); font: inherit; font-size: .85rem;
+  cursor: default;
+  &:hover { border-color: var(--muted); }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+}
+#drop-zone[data-server-mode='managed'] > .local-scan-button { display: none; }
 
 @keyframes welcome-reveal {
   0% { opacity: 0; }

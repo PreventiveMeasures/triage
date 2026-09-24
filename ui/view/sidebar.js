@@ -13,6 +13,7 @@ import { initStorageStatus, scheduleStorageStatusRefresh } from './storage-statu
 import { render } from './render.js'
 import { renderLandingWorkspaces } from './landing-workspaces.js'
 import { updateManagedLanding } from './landing-managed.js'
+import { refreshScanNavigation } from './scan-navigation.js'
 
 // Set on mount (`<app-sidebar>` firstUpdated). `hostEl` is the
 // custom-element host (light DOM — the `.classList` collapse
@@ -434,6 +435,7 @@ export async function renderSidebar() {
   await ensureClientMode()
   const modeAtStart = clientModeLabel()
   updateManagedLanding({ serverMode: modeAtStart, session: state.managedSession, teams: state.managedTeams })
+  refreshScanNavigation()
   if (isManagedUiMode()) {
     state.bundles = []
     state.storedFiles = []
@@ -1795,7 +1797,7 @@ async function restoreForcedManagedMode() {
 // connect and updates the cache. A MISMATCH is refused — flag it (surfaced in
 // the sync badge) and keep sync paused, rather than silently reinterpreting
 // local data under the other protocol.
-function applyServerInfo(info) {
+function applyServerInfo(info, { runtime = true } = {}) {
   if (forcedManagedReturn) { deferredServerInfo = info; return }
   setLandingModePending(false)
   const cached = readCachedServerInfo()
@@ -1819,6 +1821,8 @@ function applyServerInfo(info) {
   if (changed && info.mode === 'managed' && !state.localMode) resetForClientModeTransition({ forgetLastView: false })
   state.serverMode = info.mode
   state.managed = info.managed
+  if (runtime) state.deepviewScanServer = info.mode === 'e2e' ? info.deepviewScanServer ?? null : null
+  refreshScanNavigation()
   if (info.mode === 'e2e') setLocalMode(false)
   setSyncForceDisabled(info.mode !== 'e2e')
   writeCachedServerInfo(info)
@@ -1945,7 +1949,11 @@ async function detectServerModeIfUnknown() {
   // A sync frame or another tab may have confirmed the mode while pending.
   // Adopt it into state as well: the initial e2e default is not confirmation.
   const confirmed = readCachedServerInfo()
-  if (confirmed) { applyServerInfo(confirmed); return }
+  if (confirmed) {
+    if (info && info !== 'standalone') applyServerInfo(info)
+    else applyServerInfo(confirmed, { runtime: false })
+    return
+  }
   if (info && info !== 'standalone') { applyServerInfo(info); return }
   // Unknown or unavailable server: open local data with synchronization off.
   // Do not cache a guessed protocol or modify any saved sync preferences.
@@ -1960,7 +1968,8 @@ async function detectServerModeIfUnknown() {
   // e2e sync, but must not evict a local report or import it into managed mode.
   if (info === null) {
     void probe.then((lateInfo) => {
-      const latest = readCachedServerInfo() ?? lateInfo
+      const cachedInfo = readCachedServerInfo()
+      const latest = lateInfo && lateInfo !== 'standalone' ? lateInfo : cachedInfo ?? lateInfo
       if (latest === 'standalone') {
         rememberStandaloneProbe()
         if (forcedManagedReturn) {
@@ -1972,7 +1981,7 @@ async function detectServerModeIfUnknown() {
         renderSyncStatus(triageSync.status)
         return renderSidebar()
       }
-      if (latest) return applyServerInfo(latest)
+      if (latest) return applyServerInfo(latest, { runtime: latest !== cachedInfo })
       return undefined
     }).catch((err) => console.warn('server mode probe:', err))
   }

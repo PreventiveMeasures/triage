@@ -1,4 +1,3 @@
-import { managedFetch } from '../../client/managed/request.js'
 // Presentation belongs to the client. The service supplies canonical ids and
 // allowed effort values, using ai/src/models.js's `efforts` vocabulary.
 const MODEL_NAMES = new Map([
@@ -11,11 +10,16 @@ const MODEL_NAMES = new Map([
   ['anthropic/claude-opus-5', 'Claude Opus 5'],
   ['anthropic/claude-sonnet-5', 'Claude Sonnet 5'],
   ['moonshotai/kimi-k3', 'Kimi K3'],
+  ['z-ai/glm-5.3', 'GLM 5.3'],
+  ['qwen/qwen3.8-max', 'Qwen3.8 Max'],
+  ['deepseek/deepseek-v4.1-flash', 'DeepSeek V4.1 Flash'],
+  ['deepseek/deepseek-v4-pro', 'DeepSeek V4 Pro'],
 ])
 
 const DEVELOPER_NAMES = new Map([
   ['openai', 'OpenAI'], ['anthropic', 'Anthropic'], ['moonshotai', 'Moonshot AI'],
   ['google', 'Google'], ['nvidia', 'NVIDIA'], ['qwen', 'Qwen'], ['deepseek', 'DeepSeek'],
+  ['x-ai', 'xAI'], ['z-ai', 'Z.ai'],
 ])
 
 const WORD_REPLACEMENTS = new Map([
@@ -61,8 +65,8 @@ export function defaultEffort(model) {
   return model.efforts.includes('max') ? 'max' : model.efforts.at(-1) ?? null
 }
 
-export async function fetchScanModels(signal) {
-  const res = await managedFetch('/api/admin/models', { credentials: 'same-origin', headers: { accept: 'application/json' }, signal })
+export async function fetchScanModels(signal, request = fetch) {
+  const res = await request('/api/admin/models', { credentials: 'same-origin', headers: { accept: 'application/json' }, signal })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   const body = await res.json()
   if (!Array.isArray(body?.models)) throw new Error('No model catalogue returned')

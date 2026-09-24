@@ -22,6 +22,7 @@ export interface ManagedServerInfo {
 export interface ServerInfo {
   mode: ServerMode
   managed: ManagedServerInfo | null
+  deepviewScanServer?: string
 }
 
 // The mode-probe route. A client GETs this to learn a server's protocol up

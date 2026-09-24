@@ -1,7 +1,24 @@
 import { modelDeveloper } from './scan-models.js'
 
+// Pair only exact GPT siblings from the same provider. Keep their canonical
+// model records intact so choosing Pro also selects its own effort limits.
+export function modelRows(models) {
+  const byId = new Map(models.map(model => [model.id, model]))
+  const paired = new Set()
+  return models.flatMap(model => {
+    if (paired.has(model.id)) return []
+    const baseId = model.id.endsWith('-pro') ? model.id.slice(0, -4) : model.id
+    const base = byId.get(baseId)
+    const pro = byId.get(`${baseId}-pro`)
+    if (!/(?:^|\/)gpt-.+$/u.test(baseId) || baseId.endsWith('-pro') || !base || !pro) return [model]
+    paired.add(base.id)
+    paired.add(pro.id)
+    return [{ ...base, pro }]
+  })
+}
+
 export function modelSections(models) {
-  const groups = Map.groupBy(models, model => modelDeveloper(model.id).key)
+  const groups = Map.groupBy(modelRows(models), model => modelDeveloper(model.id).key)
   return [...groups].flatMap(([key, entries]) => {
     // Keep normal groups together; let long providers continue across columns
     // with balanced chunks and a heading on each continuation.

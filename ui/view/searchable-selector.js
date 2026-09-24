@@ -1,7 +1,7 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { live } from 'lit/directives/live.js'
 
-// Shared presentation and keyboard behavior for repository and user pickers.
+// Shared presentation and keyboard behavior for repository, user, and bundle pickers.
 // Subclasses provide choices and labels; consumers own data and selection.
 export class SearchableSelector extends LitElement {
   static properties = {
@@ -87,7 +87,7 @@ export class SearchableSelector extends LitElement {
     const enabled = visible.filter(option => !option.disabled)
     const tabValue = enabled.find(option => option.value === this.value)?.value ?? enabled[0]?.value
     return html`<button type="button" class="trigger" popovertarget="selector-menu" aria-label=${this.label} aria-haspopup="dialog" aria-expanded=${this._open} ?disabled=${this.disabled}>
-      <span class="name">${selected?.label ?? this.placeholder}</span>${selected?.detail ? html`<span class="detail">${selected.detail}</span>` : nothing}
+      ${selected ? this.optionIcon(selected) : nothing}<span class="name">${selected?.label ?? this.placeholder}</span>${selected?.detail ? html`<span class="detail">${selected.detail}</span>` : nothing}
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg>
     </button><div class="menu" id="selector-menu" popover="auto" role="dialog" aria-label=${this.label} @beforetoggle=${this._beforeToggle} @toggle=${this._toggle} @keydown=${this._keyDown}>
       <div class="search"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3.5 3.5"/></svg>
@@ -110,9 +110,12 @@ export class SearchableSelector extends LitElement {
     </div>`
   }
 
+  optionIcon(_option) { return nothing }
+  optionTitle(option) { return option.label }
+
   _option(option, grouped, tabValue) {
-    return html`<button type="button" class="option" role="option" ?data-reset=${option.reset} ?disabled=${option.disabled} aria-label=${option.label} title=${option.label} aria-selected=${option.value === this.value} tabindex=${option.value === tabValue ? 0 : -1} @click=${() => this._pick(option.value)}>
-      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m3 8 3 3 7-7"/></svg>${option.initials ? html`<span class="avatar" aria-hidden="true">${option.initials}</span>` : nothing}<span class="option-copy"><span class="name">${option.displayLabel ?? (grouped ? option.name : option.label)}</span>${option.secondary ? html`<span class="secondary">${option.secondary}</span>` : nothing}</span>${option.detail ? html`<span class="detail">${option.detail}</span>` : nothing}
+    return html`<button type="button" class="option" role="option" ?data-reset=${option.reset} ?disabled=${option.disabled} aria-label=${option.label} title=${this.optionTitle(option)} aria-selected=${option.value === this.value} tabindex=${option.value === tabValue ? 0 : -1} @click=${() => this._pick(option.value)}>
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m3 8 3 3 7-7"/></svg>${this.optionIcon(option)}${option.initials ? html`<span class="avatar" aria-hidden="true">${option.initials}</span>` : nothing}<span class="option-copy"><span class="name">${option.displayLabel ?? (grouped ? option.name : option.label)}</span>${option.secondary ? html`<span class="secondary">${option.secondary}</span>` : nothing}</span>${option.detail ? html`<span class="detail">${option.detail}</span>` : nothing}
     </button>`
   }
 

@@ -346,7 +346,7 @@ const { track, isShuttingDown, install: installLifecycle } = createLifecycle()
 // The sync protocol this build advertises — emitted as a `server-info` frame
 // right after the challenge on every connection. This is the e2e boot, so it
 // always advertises e2e.
-const SERVER_INFO: ServerInfo = { mode: 'e2e', managed: null }
+const SERVER_INFO: ServerInfo = { mode: 'e2e', managed: null, ...(config.deepviewScanServer ? { deepviewScanServer: config.deepviewScanServer } : {}) }
 
 // Shared per-connection dispatch surface. Both the WS plane
 // (installWsServer below) and the SSE+POST fallback (installSseServer
@@ -484,4 +484,3 @@ export { httpServer, wss }
 if (import.meta.main) {
   start()
 }
-
