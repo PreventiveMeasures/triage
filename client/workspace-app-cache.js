@@ -31,6 +31,7 @@ function enqueue(update) {
   return task
 }
 function membership(workspace) { return JSON.stringify(workspace.reports.toSorted()) }
+function indexedLinks() { return JSON.stringify(linkFiles().map(({ name, groups }) => ({ name, groups }))) }
 
 export function getWorkspaceAppMetadata(workspace) {
   if (allDirty || dirty.has(workspace.id)) return null
@@ -49,15 +50,19 @@ export async function workspaceAppCacheToken(reportsToken = null) {
   const reportRevision = cache.reportRevision ?? cache.revision
   // A background links walk may finish after the workspace has loaded. Its
   // new links can be applied to those reports, but changed report bytes or
-  // membership require a fresh load. Keep both same-tab and persisted guards.
+  // membership require a fresh load. A sibling tab can also invalidate links
+  // without updating this tab's in-memory index: don't accept that revision
+  // until the indexed links match the persisted snapshot.
   if (reportsToken && (reportsToken.reportEpoch !== reportEpoch
-      || reportsToken.reportRevision !== reportRevision)) return null
+      || reportsToken.reportRevision !== reportRevision
+      || cache.links !== indexedLinks())) return null
   return { epoch, revision: cache.revision, reportEpoch, reportRevision }
 }
 export async function cacheWorkspaceAppMetadata(workspace, metadata, token) {
   let stored = false
   await enqueue((cache) => {
     if (token.epoch !== epoch || token.revision !== cache.revision) return
+    if (cache.links !== indexedLinks()) return
     const current = listWorkspaces().find((w) => w.id === workspace.id)
     if (!current || membership(current) !== membership(workspace)) return
     cache.entries[workspace.id] = { ...metadata, reports: membership(workspace) }
@@ -111,6 +116,6 @@ onFileMutated((name) => {
 subscribeToLinkedFindings(() => {
   // Comparing the actual links preserves cached headers across a reload, when
   // the same index is reconstructed from disk for the first time in this tab.
-  const links = JSON.stringify(linkFiles().map(({ name, groups }) => ({ name, groups })))
+  const links = indexedLinks()
   if (parse().links !== links) invalidateWorkspaceAppMetadata(null, links).catch(() => {})
 })

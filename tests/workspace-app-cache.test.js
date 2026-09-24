@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict'
 import { beforeEach, describe, it } from 'node:test'
+import { gzipSync } from 'node:zlib'
 import './_polyfills.js'
 import { SECURE_KEYS, getItem, hydrate, __test__ as secureTest, setItem } from '../client/secure-storage.js'
 import { addReportToWorkspace, createWorkspace, deleteWorkspace, listWorkspaces, renameWorkspace } from '../client/workspaces.js'
 import { cacheWorkspaceAppMetadata, getWorkspaceAppMetadata, invalidateWorkspaceAppMetadata, workspaceAppCacheToken } from '../client/workspace-app-cache.js'
-import { saveFile } from '../client/storage.js'
+import { deleteFile, saveFile } from '../client/storage.js'
 import { setCount } from '../client/counts.js'
-import { ensureLinkedFindingsIndexed } from '../client/linked-findings-index.js'
+import { duplicatesOf, ensureLinkedFindingsIndexed, linkFiles } from '../client/linked-findings-index.js'
 import { LINKS_KIND } from '../client/linked-findings.js'
 
 const KEY = 'deepview.workspaceApp'
@@ -20,9 +21,17 @@ async function workspace(name = 'App workspace') {
 async function record(ws) {
   return cacheWorkspaceAppMetadata(ws, metadata, await workspaceAppCacheToken())
 }
+const linksContent = (groups) => JSON.stringify(groups.map((group) => group.map((id) => ({ id }))))
+async function seedLinks(groups) {
+  const name = `${crypto.randomUUID()}.links.json`
+  await saveFile(name, linksContent(groups))
+  setCount(name, groups.length, LINKS_KIND)
+  return name
+}
 
 describe('workspace App metadata cache', () => {
   beforeEach(async () => {
+    for (const { name } of linkFiles()) await deleteFile(name)
     await workspaceAppCacheToken()
     secureTest.reset()
     localStorage.clear()
@@ -60,14 +69,55 @@ describe('workspace App metadata cache', () => {
     assert.equal(getWorkspaceAppMetadata(listWorkspaces()[0]), null)
   })
   it('refreshes a report snapshot token after only the background links index changes', async () => {
+    const [a, b] = [crypto.randomUUID(), crypto.randomUUID()]
+    await seedLinks([[a, b]])
     const ws = await workspace()
     const reportsToken = await workspaceAppCacheToken()
-    await invalidateWorkspaceAppMetadata(null, '["new links"]')
+    await ensureLinkedFindingsIndexed()
+    assert.deepEqual(duplicatesOf(a), [b])
     assert.equal(await cacheWorkspaceAppMetadata(ws, metadata, reportsToken), false)
     const indexedToken = await workspaceAppCacheToken(reportsToken)
     assert.ok(indexedToken)
     assert.equal(await cacheWorkspaceAppMetadata(ws, metadata, indexedToken), true)
   })
+  for (const change of ['overwrite', 'delete']) {
+    it(`rejects stale indexed links after a sibling tab's ${change}`, async () => {
+      const [a, b, c] = [crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()]
+      const name = await seedLinks([[a, b]])
+      await ensureLinkedFindingsIndexed()
+      const ws = await workspace()
+      await record(ws)
+      const reportsToken = await workspaceAppCacheToken()
+
+      // Change the shared backing store without this tab's onFileMutated
+      // notification, then hydrate the sibling's links-only invalidation.
+      const cache = JSON.parse(getItem(KEY))
+      cache.revision = crypto.randomUUID()
+      cache.links = JSON.stringify(change === 'delete' ? [] : [{ name, groups: [[a, c]] }])
+      cache.entries = {}
+      if (change === 'delete') localStorage.removeItem(`deepview.report:${name}`)
+      else localStorage.setItem(`deepview.report:${name}`, gzipSync(linksContent([[a, c]])).toString('base64'))
+      localStorage.setItem(KEY, JSON.stringify(cache))
+      await hydrate()
+      await ensureLinkedFindingsIndexed()
+      assert.deepEqual(duplicatesOf(a), [b], 'the idempotent walk still holds the old links')
+      assert.equal(cache.reportRevision, reportsToken.reportRevision, 'the report snapshot is still valid')
+      assert.equal(await workspaceAppCacheToken(reportsToken), null)
+      assert.equal(await record(ws), false, 'a fresh report token must not bypass the links check')
+      assert.equal(getWorkspaceAppMetadata(ws), null)
+      assert.deepEqual(JSON.parse(getItem(KEY)).entries, {}, 'stale metadata must not be republished')
+
+      // Once this tab has indexed the same links, metadata can be cached again.
+      if (change === 'delete') await deleteFile(name)
+      else await saveFile(name, linksContent([[a, c]]))
+      const freshReportsToken = await workspaceAppCacheToken()
+      await ensureLinkedFindingsIndexed()
+      assert.deepEqual(duplicatesOf(a), change === 'delete' ? [] : [c])
+      const indexedToken = await workspaceAppCacheToken(freshReportsToken)
+      assert.ok(indexedToken)
+      assert.equal(await cacheWorkspaceAppMetadata(ws, metadata, indexedToken), true)
+    })
+  }
   it('cannot refresh a report snapshot after report or membership changes, even if links also change', async () => {
     const ws = await workspace()
     for (const change of [
