@@ -243,6 +243,8 @@ export function fetchFile(...args) { return callIfWanted('fetchFile', args) }
 export function downloadFileFromRemote(...args) { return callIfWanted('downloadFileFromRemote', args) }
 export function fetchBundleFromRemote(...args) { return callIfWanted('fetchBundleFromRemote', args) }
 export function putFile(...args) { return callIfWanted('putFile', args) }
+// Resolves to the release function (undefined while sync isn't wanted).
+export function holdLocalChangeChecks(...args) { return callIfWanted('holdLocalChangeChecks', args) }
 export function putBundleToRemote(...args) { return callIfWanted('putBundleToRemote', args) }
 export function deleteFromRemote(...args) { return callIfWanted('deleteFromRemote', args) }
 export function deleteBundleFromRemote(...args) { return callIfWanted('deleteBundleFromRemote', args) }

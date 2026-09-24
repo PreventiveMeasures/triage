@@ -43,10 +43,17 @@ let saveFileBytes
 
 const sessions = new Map()
 
-// How long after a save of a report to check it for a local change.
-// The Replace flow saves, then uploads; checking at once would flag
-// the change ("1 differ") for the length of every successful upload.
+// How long after a save of a report to check it for a local change —
+// for saves nobody announced (`holdLocalChangeChecks`), so an upload
+// that promptly follows one isn't flagged in between.
 const LOCAL_CHANGE_SETTLE_MS = 2_000
+
+// fileName → number of holds (`holdLocalChangeChecks`). While held, a
+// change to the local copy is not flagged anywhere: its upload is on the
+// way (review r4099103896 — the Replace flow saves, then uploads to each
+// workspace in turn, opening sessions as it goes, which easily outlasts
+// any fixed delay).
+const localChangeHolds = new Map()
 const listeners = new Set()
 
 // Persisted tag→name cache, keyed per-workspace in localStorage.
@@ -651,7 +658,8 @@ onSyncHostInstalled((host) => {
         if (entry.localChanged.delete(tag)) notify()
         continue
       }
-      if (entry.selfWrites.has(name)) continue
+      // Presence's own write, or an announced one (its release checks).
+      if (entry.selfWrites.has(name) || localChangeHolds.has(name)) continue
       setTimeout(() => { checkLocalCopy(entry, tag, name).catch(() => {}) }, LOCAL_CHANGE_SETTLE_MS)
     }
   })
@@ -823,6 +831,30 @@ export function remoteFileNames(workspaceId) {
   const entry = sessions.get(workspaceId)
   if (!entry) return []
   return Array.from(entry.remoteNameByTag.values())
+}
+
+// Announce that the local copy of `fileName` is about to change and be
+// uploaded (the UI's Replace: save, then `putFile` to each workspace
+// holding it). Until the returned release is called, nothing flags the
+// change — not the save hook, not a session's open-time scan. Releasing
+// (after the uploads, however they went) re-checks the copy in every
+// open workspace right away, so one whose upload failed is flagged then;
+// successful uploads already moved their baselines to the new bytes.
+// Idempotent release; holds nest.
+export function holdLocalChangeChecks(fileName) {
+  localChangeHolds.set(fileName, (localChangeHolds.get(fileName) ?? 0) + 1)
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    const n = localChangeHolds.get(fileName) - 1
+    if (n > 0) { localChangeHolds.set(fileName, n); return }
+    localChangeHolds.delete(fileName)
+    for (const entry of sessions.values()) {
+      const tag = entry.fileTags.get(fileName)
+      if (tag !== undefined) checkLocalCopy(entry, tag, fileName).catch(() => {})
+    }
+  }
 }
 
 // Reports of this workspace whose local copy and cloud copy may differ
@@ -1010,6 +1042,8 @@ async function saveOwnBytes(entry, fileName, bytes) {
 // writer's new baseline.
 function checkLocalCopy(entry, tag, fileName) {
   return withTagLock(entry, tag, async () => {
+    // An upload of this file is pending: its release re-checks.
+    if (localChangeHolds.has(fileName)) return
     const baseline = entry.baselines.get(tag)
     if (entry.disposed || !baseline?.synced || !baseline.hash) return
     let bytes

@@ -30,7 +30,7 @@ const {
   downloadFileFromRemote, fetchFile, isBundleInRemote, isInRemote,
   onAutoDownloaded, onChange, openWorkspace, putFile, recheckRemoteStorage,
   remoteBundleCount, remoteBundleIntegrities, remoteCount, remoteFileNames,
-  resolveReportDifference, differingReports,
+  resolveReportDifference, differingReports, holdLocalChangeChecks,
 } = await import('../client/sync/objstore-presence.js')
 
 async function createWorkspaceWithReports(name, reports) {
@@ -2489,6 +2489,77 @@ describe('client/sync/objstore-presence', () => {
       release()
       e.session.fetchByTag = realFetchByTag
       peer.close()
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+      await deleteFile(fileName).catch(() => {})
+    }
+  })
+
+  it('a Replace whose upload outlasts the settle delay is not flagged while the upload is pending (review r4099103896)', async () => {
+    // The Replace flow (ingest.js) saves, then uploads to each workspace
+    // in turn — easily longer than the fixed settle delay. Until those
+    // uploads are done the report must not be flagged (the badge's
+    // "differ" and the auto-opened dialog would ask for a needless sync).
+    const fileName = 'slow-replace-upload.json'
+    const { ws } = await openSyncedReport('presence-slow-upload', fileName, reportJson('synced'))
+    let flagged = false
+    const off = onChange(() => { if (differingReports(ws.id).length > 0) flagged = true })
+    try {
+      const bytes = await gzipBytes(encodeUtf8(reportJson('replaced')))
+      const release = typeof holdLocalChangeChecks === 'function' ? holdLocalChangeChecks(fileName) : () => {}
+      await saveFileBytes(fileName, bytes)
+      await new Promise((resolve) => { setTimeout(resolve, 2_600) })
+      assert.equal((await putFile(ws.id, fileName, bytes)).ok, true)
+      release()
+      await new Promise((resolve) => { setTimeout(resolve, 300) })
+      assert.equal(flagged, false, 'never flagged while the upload was on its way')
+      assert.deepEqual(differingReports(ws.id), [])
+    } finally {
+      off()
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+      await deleteFile(fileName).catch(() => {})
+    }
+  })
+
+  it('a Replace whose upload fails is flagged as soon as the upload attempts end', async () => {
+    const fileName = 'failed-replace-upload.json'
+    const { ws } = await openSyncedReport('presence-failed-upload', fileName, reportJson('synced'))
+    try {
+      const release = holdLocalChangeChecks(fileName)
+      await saveFileBytes(fileName, await gzipBytes(encodeUtf8(reportJson('replaced-not-uploaded'))))
+      // The upload failed (nothing reached the cloud); the flow releases.
+      release()
+      await awaitPresence(() => differingReports(ws.id).length === 1, 'flagged right after release', 1_500)
+    } finally {
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+      await deleteFile(fileName).catch(() => {})
+    }
+  })
+
+  it('opening a workspace mid-Replace does not flag the report its upload is about to replace', async () => {
+    // uploadReportToWorkspaces opens each target workspace's session just
+    // before its putFile — the open-time scan must not jump the upload.
+    const fileName = 'open-mid-replace.json'
+    const { ws } = await openSyncedReport('presence-open-mid-replace', fileName, reportJson('synced'))
+    let flagged = false
+    try {
+      closeWorkspace(ws.id)
+      const bytes = await gzipBytes(encodeUtf8(reportJson('replaced')))
+      const release = holdLocalChangeChecks(fileName)
+      await saveFileBytes(fileName, bytes)
+      openWorkspace(ws.id)
+      const off = onChange(() => { if (differingReports(ws.id).length > 0) flagged = true })
+      try {
+        await new Promise((resolve) => { setTimeout(resolve, 500) })
+        assert.equal((await putFile(ws.id, fileName, bytes)).ok, true)
+        release()
+        await new Promise((resolve) => { setTimeout(resolve, 300) })
+      } finally { off() }
+      assert.equal(flagged, false)
+      assert.deepEqual(differingReports(ws.id), [])
+    } finally {
       closeWorkspace(ws.id)
       await deleteWorkspace(ws.id)
       await deleteFile(fileName).catch(() => {})

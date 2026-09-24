@@ -15,6 +15,7 @@ export {
   downloadFileFromRemote,
   fetchBundleFromRemote,
   fetchFile,
+  holdLocalChangeChecks,
   isBundleInRemote,
   isInRemote,
   onAutoDownloaded,
