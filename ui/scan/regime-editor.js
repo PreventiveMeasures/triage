@@ -3,16 +3,24 @@ import { live } from 'lit/directives/live.js'
 import { repeat } from 'lit/directives/repeat.js'
 import '../view/scan-model-picker.js'
 import './depth-toggle.js'
-import { REGIME_MODES, duplicateRegimes, normalizeRegimes } from './regimes.js'
+import { effortName, modelName } from '../view/scan-models.js'
+import { REGIME_MODES, duplicateRegimes, normalizeAppModel, normalizeRegimes, sharedRegimeModel } from './regimes.js'
 
 export class RegimeEditor extends LitElement {
   static properties = {
-    value: { attribute: false }, loadModels: { attribute: false },
+    value: { attribute: false }, loadModels: { attribute: false }, appModel: { attribute: false }, appModelAutomatic: { attribute: false },
     _rows: { state: true }, _loading: { state: true }, _error: { state: true },
+    _resolvedAppModel: { state: true }, _appModelOpen: { state: true },
   }
   constructor() {
     super()
     this.value = []
+    // Follow the shared regime settings until the app picker is edited.
+    this.appModel = null
+    this.appModelAutomatic = true
+    this._resolvedAppModel = null
+    this._appModelOpen = false
+    this._appModelsAgree = true
     this._rows = []
     this._catalogue = { models: [] }
     this._nextId = 0
@@ -25,16 +33,36 @@ export class RegimeEditor extends LitElement {
     if (changed.has('value') && this.value !== this._lastEmitted && !this._loading) {
       this._setRows(this.value)
       this._notify()
-    }
+    } else if ((changed.has('appModel') || changed.has('appModelAutomatic')) && !this._loading) this._notify()
   }
   _setRows(rows) {
     this._rows = normalizeRegimes(rows, this._catalogue).map(row => ({ ...row, id: row.id ?? ++this._nextId }))
   }
   _notify() {
     const value = this._loading && this._rows.length === 0 ? this.value : this._rows.map(({ id: _id, ...row }) => row)
-    const ready = !this._loading && !this._error && value.length > 0 && !duplicateRegimes(value).includes(true)
+    if (!this._loading) this._syncAppModel()
+    const ready = !this._loading && !this._error && this._resolvedAppModel != null && value.length > 0 && !duplicateRegimes(value).includes(true)
     this._lastEmitted = value
-    this.dispatchEvent(new CustomEvent('regimes-change', { detail: { value, ready }, bubbles: true, composed: true }))
+    this.dispatchEvent(new CustomEvent('regimes-change', {
+      detail: { value, ready, appModel: this._resolvedAppModel ?? this.appModel, appModelAutomatic: this.appModelAutomatic }, bubbles: true, composed: true,
+    }))
+  }
+  _syncAppModel() {
+    const shared = sharedRegimeModel(this._rows)
+    const selection = normalizeAppModel((this.appModelAutomatic ? shared : null) ?? this.appModel ?? this._rows[0], this._catalogue)
+    if (this.appModel?.model !== selection?.model || this.appModel?.effort !== selection?.effort) this.appModel = selection
+    this._resolvedAppModel = this.appModel
+    const agree = !!shared && shared.model === selection?.model && shared.effort === selection?.effort
+    // Only an agreement transition changes the default disclosure state.
+    // Ordinary renders must preserve the user's manual expand/collapse choice.
+    if (agree !== this._appModelsAgree) this._appModelOpen = !agree
+    this._appModelsAgree = agree
+  }
+  _changeAppModel(selection) {
+    if (selection.model === this._resolvedAppModel?.model && selection.effort === this._resolvedAppModel?.effort) return
+    this.appModelAutomatic = false
+    this.appModel = { model: selection.model, effort: selection.effort }
+    this._notify()
   }
   async _load() {
     this._controller?.abort()
@@ -81,8 +109,17 @@ export class RegimeEditor extends LitElement {
       ${this._error ? html`<p class="message" role="alert">Couldn’t load models: ${this._error} <button type="button" @click=${() => void this._load()}>Retry</button></p>`
         : this._loading && this._rows.length === 0 ? html`<p class="message" role="status">Loading models…</p>`
           : html`${repeat(this._rows, row => row.id, (row, index) => this._row(row, index, duplicates[index]))}
-            <div class="footer"><button type="button" class="add" ?disabled=${this._rows.length === 0} @click=${this._add}><span aria-hidden="true">＋</span> Add regime</button><span class="message" role="status">${duplicates.includes(true) ? 'Change or remove duplicate regimes to run the scan' : 'Results from these regimes will be merged'}</span></div>`}
+            <div class="footer"><button type="button" class="add" ?disabled=${this._rows.length === 0} @click=${this._add}><span aria-hidden="true">＋</span> Add regime</button><span class="message" role="status">${duplicates.includes(true) ? 'Change or remove duplicate regimes to run the scan' : 'Results from these regimes will be merged'}</span></div>
+            ${this._appModelRow()}`}
     </section>`
+  }
+  _appModelRow() {
+    const selection = this._resolvedAppModel
+    if (!selection) return nothing
+    return html`<details class="app-model" .open=${live(this._appModelOpen)} @toggle=${event => { this._appModelOpen = event.currentTarget.open }}>
+      <summary><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m6 3 5 5-5 5"/></svg><span class="app-model-name">App model: <strong>${modelName(selection.model)}</strong></span><span class="app-model-effort">Effort: <strong>${effortName(selection.effort)}</strong></span></summary>
+      <div class="app-model-controls"><scan-model-picker .loadModels=${this._sharedModels} .value=${live(selection.model)} .effort=${live(selection.effort)} @model-change=${event => { event.stopPropagation(); this._changeAppModel(event.detail) }}></scan-model-picker></div>
+    </details>`
   }
   _row(row, index, duplicate) {
     return html`<div class=${`row${duplicate ? ' duplicate' : ''}`} role="group" aria-label=${`Regime ${index + 1}`} aria-describedby=${duplicate ? `duplicate-${row.id}` : nothing}>
@@ -120,6 +157,17 @@ export class RegimeEditor extends LitElement {
     svg { width: 1rem; height: 1rem; }
     .footer { display: flex; flex-wrap: wrap; align-items: center; gap: .7rem; padding-top: .6rem; border-top: 1px solid var(--border); }
     .add { display: flex; align-items: center; gap: .3rem; }
+    .app-model { margin-top: .7rem; border-top: 1px solid var(--border); }
+    .app-model > summary { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem .8rem; padding: .65rem 0 .1rem; color: var(--muted); font-size: .74rem; list-style: none; cursor: default; user-select: none; }
+    .app-model > summary::-webkit-details-marker { display: none; }
+    .app-model > summary:hover { color: var(--text); }
+    .app-model > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
+    .app-model > summary svg { width: .8rem; height: .8rem; flex: 0 0 .8rem; }
+    .app-model[open] > summary svg { transform: rotate(90deg); }
+    .app-model strong { color: var(--text); font-weight: 500; }
+    .app-model-name { min-width: 0; overflow-wrap: anywhere; }
+    .app-model-effort { white-space: nowrap; }
+    .app-model-controls { padding: .85rem 0 .15rem; }
     .message { margin: 0; color: var(--muted); font-size: .7rem; }
     button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     @container regime-editor (max-width: 54rem) {

@@ -56,6 +56,16 @@ describe('build: minifying Lit templates', () => {
     assert.equal(out, 'css`.a{color:red}`')
   })
 
+  it('keeps responsive rules inside their container instead of applying them globally', () => {
+    const out = minify('css`.bundle-stats { display: grid; grid-template-columns: repeat(4, max-content); } @container scan-page (max-width: 34rem) { .bundle-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } .metric { gap: .5rem; } }`')
+    assert.equal(out, 'css`.bundle-stats{display:grid;grid-template-columns:repeat(4,max-content)}@container scan-page (max-width: 34rem){.bundle-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.metric{gap:.5rem}}`')
+  })
+
+  it('preserves interpolated CSS values and units without inserting placeholder syntax', () => {
+    const source = 'css`.a { width: ${size}rem; color: ${color}; } @container pane (width < 30rem) { .a { width: 100%; } }`'
+    assert.equal(minify(source), source)
+  })
+
   it('passes a file with no templates through untouched', () => {
     assert.equal(minifyLitSource('export const a = 1\n', 'probe.js'), null)
   })
