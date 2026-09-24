@@ -21,6 +21,19 @@ function developerIcon(key) {
   return html`<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="4" y="4" width="12" height="12" rx="3"/><path d="M8 1v3m4-3v3M8 16v3m4-3v3M1 8h3m-3 4h3m12-4h3m-3 4h3"/></svg>`
 }
 
+function modelSections(models) {
+  const groups = Map.groupBy(models, model => modelDeveloper(model.id).key)
+  return [...groups].flatMap(([key, entries]) => {
+    // A long provider can use several columns instead of making one tall
+    // column beside short groups. Repeat its heading at each continuation,
+    // and balance the chunks so the final one is not a single stranded model.
+    const size = Math.ceil(entries.length / Math.ceil(entries.length / 8))
+    const sections = []
+    for (let start = 0; start < entries.length; start += size) sections.push({ key, models: entries.slice(start, start + size) })
+    return sections
+  })
+}
+
 class ScanModelPicker extends LitElement {
   static properties = {
     value: { attribute: false }, effort: { attribute: false },
@@ -37,7 +50,7 @@ class ScanModelPicker extends LitElement {
     .label { display: flex; justify-content: space-between; align-items: center; margin-bottom: .4rem; color: var(--muted); font-size: .72rem; }
     output { color: var(--text); font-size: .72rem; font-weight: 500; }
     details { position: relative; }
-    summary { display: flex; align-items: center; gap: .55rem; padding: .5rem .6rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); cursor: pointer; list-style: none; transition: border-color .12s, background .12s; }
+    summary { display: flex; align-items: center; gap: .55rem; padding: .5rem .6rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); list-style: none; transition: border-color .12s, background .12s; }
     summary:hover, details[open] summary { border-color: var(--muted); background: var(--surface-active); }
     summary::-webkit-details-marker { display: none; }
     summary > svg { width: .9rem; height: .9rem; margin-left: auto; color: var(--muted); }
@@ -69,9 +82,12 @@ class ScanModelPicker extends LitElement {
     /* The picker lives low in a long scan form. A fixed menu, positioned from
        the summary at open time, keeps it above the viewport edge and outside
        any panel's clipping context. */
-    .menu { position: fixed; z-index: 1000; width: min(24rem, calc(100vw - 1rem)); max-height: min(22rem, calc(100vh - 1rem)); overflow: auto; overscroll-behavior: contain; padding: .35rem; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-active); color: var(--text); box-shadow: 0 .65rem 1.8rem rgb(0 0 0 / .55); }
-    fieldset { margin: 0; padding: 0 0 .25rem; border: 0; }
-    fieldset + fieldset { border-top: 1px solid var(--border); padding-top: .25rem; }
+    .menu { position: fixed; z-index: 1000; width: min(46rem, calc(100vw - 1rem)); max-height: calc(100dvh - 1rem); overflow: auto; overscroll-behavior: contain; padding: .65rem; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-active); color: var(--text); box-shadow: 0 .65rem 1.8rem rgb(0 0 0 / .55); }
+    /* Balance whole provider groups down the columns. Keep the unconstrained
+       column container inside the scrollport so short screens scroll down,
+       rather than creating more columns outside the menu. */
+    .groups { column-count: var(--model-columns, 1); column-gap: 1rem; }
+    fieldset { min-width: 0; margin: 0 0 .6rem; padding: 0; border: 0; break-inside: avoid; }
     legend { display: flex; align-items: center; gap: .45rem; width: 100%; min-height: 1.9rem; padding: .35rem .5rem .25rem; border-bottom: 1px solid rgb(from var(--border) r g b / .7); color: var(--muted); font-size: .64rem; font-weight: 700; letter-spacing: .055em; text-transform: uppercase; }
     /* Keep provider names on the same text column as model choices.  The
        radio and provider mark both occupy a fixed slot, while the marks are
@@ -79,8 +95,8 @@ class ScanModelPicker extends LitElement {
     legend .icon { width: .88rem; height: 1.25rem; flex-basis: .88rem; }
     legend .icon svg { width: .88rem; height: .88rem; }
     legend .provider-mark { width: .88rem; height: .88rem; }
-    .choice { display: flex; align-items: center; gap: .5rem; padding: .4rem .5rem; border-radius: 4px; font-size: .76rem; cursor: pointer; }
-    .choice:hover { background: var(--surface-active); }
+    .choice { display: flex; align-items: center; gap: .5rem; padding: .4rem .5rem; border-radius: 4px; font-size: .76rem; }
+    .choice:hover { background: rgb(from var(--text) r g b / .05); }
     .choice:has(:checked) { color: var(--accent); background: rgb(from var(--accent) r g b / .1); }
     .choice input { margin: 0; accent-color: var(--accent); }
     .choice span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -153,23 +169,36 @@ class ScanModelPicker extends LitElement {
     const menu = this.renderRoot.querySelector('.menu')
     if (!details?.open || !summary || !menu) return
     const rect = summary.getBoundingClientRect()
-    const gap = 4
-    const width = Math.min(Math.max(rect.width, 260), 384, window.innerWidth - 16)
-    const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))
-    const below = Math.max(0, window.innerHeight - rect.bottom - gap)
-    const above = Math.max(0, rect.top - gap)
-    const opensAbove = below < 220 && above > below
-    const available = opensAbove ? above : below
+    const gap = 6
+    const margin = 8
+    const sections = modelSections(this._models)
+    const preferredColumns = Math.min(3, sections.length, Math.ceil((this._models.length + sections.length * 1.5) / 9))
+    // Measure the untruncated labels instead of stretching every group to a
+    // fixed wide cell. Bound very long future names, which can still ellipsize.
+    const fontSize = parseFloat(getComputedStyle(menu).fontSize)
+    let contentWidth = 0
+    for (const label of menu.querySelectorAll('.choice span, legend')) {
+      const range = document.createRange()
+      range.selectNodeContents(label)
+      contentWidth = Math.max(contentWidth, range.getBoundingClientRect().width)
+    }
+    const columnWidth = Math.max(11 * fontSize, Math.min(18 * fontSize, contentWidth + 2.5 * fontSize))
+    const padding = 1.3 * fontSize + 2
+    const columns = Math.max(1, Math.min(preferredColumns, Math.floor((window.innerWidth - margin * 2 - padding + fontSize) / (columnWidth + fontSize))))
+    const width = Math.min(columns * columnWidth + (columns - 1) * fontSize + padding, window.innerWidth - margin * 2)
+    const left = Math.max(margin, Math.min(rect.left, window.innerWidth - width - margin))
     menu.style.left = `${left}px`
     menu.style.width = `${width}px`
-    menu.style.maxHeight = `${Math.max(120, Math.min(352, available))}px`
-    if (opensAbove) {
-      menu.style.top = 'auto'
-      menu.style.bottom = `${Math.max(8, window.innerHeight - rect.top + gap)}px`
-    } else {
-      menu.style.bottom = 'auto'
-      menu.style.top = `${Math.min(window.innerHeight - 8, rect.bottom + gap)}px`
-    }
+    menu.style.setProperty('--model-columns', columns)
+    menu.style.maxHeight = `${Math.max(0, window.innerHeight - margin * 2)}px`
+    // Measure after reflow: a wide picker needs much less height. Prefer the
+    // side that fits it, then clamp within the viewport on short screens.
+    const height = menu.getBoundingClientRect().height
+    const below = window.innerHeight - rect.bottom - gap - margin
+    const above = rect.top - gap - margin
+    const top = below < height && above > below ? rect.top - gap - height : rect.bottom + gap
+    menu.style.bottom = 'auto'
+    menu.style.top = `${Math.max(margin, Math.min(top, window.innerHeight - height - margin))}px`
   }
 
   _select(id) {
@@ -190,12 +219,12 @@ class ScanModelPicker extends LitElement {
     const selected = this._models.find((model) => model.id === this.value)
     if (!selected) return html`<p class="message" role="status">Loading models…</p>`
     const developer = modelDeveloper(selected.id)
-    const groups = Map.groupBy(this._models, (model) => modelDeveloper(model.id).key)
+    const sections = modelSections(this._models)
     return html`<div class=${`layout ${this.hasExtra ? 'with-extra' : ''}`}>
       <div class="field"><span class="label" id="model-label">Model</span>
         <details @toggle=${() => requestAnimationFrame(() => this._positionMenu())} @keydown=${(event) => { if (event.key === 'Escape') { this._close(); this.renderRoot.querySelector('summary')?.focus() } }}>
           <summary aria-labelledby="model-label selected-model"><span class=${`icon ${developer.key}`}>${developerIcon(developer.key)}</span><span class="selected-copy"><strong id="selected-model">${modelName(selected.id)}</strong><small>${developer.name}</small></span>${CHEVRON}</summary>
-          <div class="menu">${[...groups].map(([key, models]) => html`<fieldset><legend><span class=${`icon ${key}`}>${developerIcon(key)}</span>${modelDeveloper(models[0].id).name}</legend>${models.map((model) => html`<label class="choice"><input type="radio" name="scan-model" value=${model.id} .checked=${model.id === this.value} @change=${() => { this._select(model.id); this.renderRoot.querySelector('summary')?.focus() }}><span>${modelName(model.id)}</span></label>`)}</fieldset>`)}</div>
+          <div class="menu"><div class="groups">${sections.map(({ key, models }) => html`<fieldset><legend><span class=${`icon ${key}`}>${developerIcon(key)}</span>${modelDeveloper(models[0].id).name}</legend>${models.map((model) => html`<label class="choice"><input type="radio" name="scan-model" value=${model.id} .checked=${model.id === this.value} @change=${() => { this._select(model.id); this.renderRoot.querySelector('summary')?.focus() }}><span>${modelName(model.id)}</span></label>`)}</fieldset>`)}</div></div>
         </details>
       </div>
       ${selected.efforts.length > 0 ? this._effortSlider(selected.efforts) : nothing}
