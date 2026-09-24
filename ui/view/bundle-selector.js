@@ -8,7 +8,7 @@ import { sourceMetrics } from '../scan/metrics.js'
 // .map files are sourcemaps; the other supported bundle format is Stasis.
 export function bundleOptions(bundles) {
   return bundles.map(bundle => {
-    const format = bundle.filename.toLowerCase().endsWith('.map') ? 'sourcemap' : 'stasis'
+    const format = ['sourcemap', 'sourcemaps'].includes(bundle.kind) || bundle.filename.toLowerCase().endsWith('.map') ? 'sourcemap' : 'stasis'
     const detail = format === 'sourcemap' ? 'Sourcemap' : 'Stasis'
     const metadata = []
     if (typeof bundle.size === 'string' && !['', '—'].includes(bundle.size)) metadata.push(bundle.size)

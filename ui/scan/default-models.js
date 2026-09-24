@@ -24,7 +24,8 @@ export function defaultScanModels(provider = null) {
   ]
   // OpenRouter routes all listed providers. Direct-provider credentials only
   // expose that provider's models; no selection leaves the catalogue intact.
-  const models = ids.filter(id => !['anthropic', 'openai', 'moonshotai'].includes(provider) || id.startsWith(`${provider}/`))
+  const prefix = provider === 'moonshot' ? 'moonshotai' : provider
+  const models = ids.filter(id => !['anthropic', 'openai', 'moonshot'].includes(provider) || id.startsWith(`${prefix}/`))
     .map(id => ({ id, efforts: ['low', 'medium', 'high', 'xhigh', 'max'] }))
   return { models, defaultModel: models[0].id }
 }

@@ -19,14 +19,7 @@ export function modelRows(models) {
 
 export function modelSections(models) {
   const groups = Map.groupBy(modelRows(models), model => modelDeveloper(model.id).key)
-  return [...groups].flatMap(([key, entries]) => {
-    // Keep normal groups together; let long providers continue across columns
-    // with balanced chunks and a heading on each continuation.
-    const size = Math.ceil(entries.length / Math.ceil(entries.length / 8))
-    const sections = []
-    for (let start = 0; start < entries.length; start += size) sections.push({ key, models: entries.slice(start, start + size) })
-    return sections
-  })
+  return [...groups].map(([key, entries]) => ({ key, models: entries }))
 }
 
 export function modelColumns(sections, requested) {

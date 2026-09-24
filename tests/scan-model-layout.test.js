@@ -32,15 +32,15 @@ test('unqualified GPT pairs and pairs in separate namespaces keep their own vari
   ])
 })
 
-test('provider sections and columns count visible GPT families without losing canonical models', () => {
+test('long providers remain a single section while GPT families retain every canonical model', () => {
   const models = Array.from({ length: 17 }, (_, index) => [
     { id: `openai/gpt-test-${index}-pro`, efforts: ['max'] },
     { id: `openai/gpt-test-${index}`, efforts: ['high'] },
   ]).flat()
   const sections = modelSections(models)
-  assert.deepEqual(sections.map(section => section.models.length), [6, 6, 5])
+  assert.deepEqual(sections.map(section => section.models.length), [17])
   const columns = modelColumns(sections, 3)
-  assert.equal(columns.length, 3)
+  assert.equal(columns.length, 1)
   const rows = columns.flat().flatMap(section => section.models)
   assert.equal(rows.length, 17)
   assert.deepEqual(rows.flatMap(row => [row.pro.id, row.id]), models.map(model => model.id))

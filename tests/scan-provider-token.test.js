@@ -6,12 +6,12 @@ test('distinctive credential prefixes select the provider, including pasted whit
   for (const [token, provider] of [
     ['sk-ant-', 'anthropic'],
     ['sk-or-v1-', 'openrouter'],
-    ['sk-kimi-', 'moonshotai'],
+    ['sk-kimi-', 'moonshot'],
     ['sk-proj-', 'openai'],
     ['sk-svcacct-', 'openai'],
     ['sk-ant-api03-example_token', 'anthropic'],
     ['sk-or-v1-example123', 'openrouter'],
-    ['sk-kimi-example_token', 'moonshotai'],
+    ['sk-kimi-example_token', 'moonshot'],
     ['sk-proj-example_token', 'openai'],
     ['sk-svcacct-example_token', 'openai'],
   ]) {

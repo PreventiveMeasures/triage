@@ -57,13 +57,6 @@ const SCAN_BUNDLE_FIXTURES = [
   },
 ]
 
-export const SCAN_REPORT_FIXTURES = [
-  { id: 'report-checkout', filename: 'managed-fixture.json', repoId: 'repo-checkout', repo: 'acme/checkout', directory: '', analyzer: 'deepsec', size: '318 KiB' },
-  { id: 'report-worker', filename: 'managed-worker.json', repoId: 'repo-worker', repo: 'acme/worker-service', directory: 'services/worker', analyzer: 'codex-security', size: '342 KiB' },
-  { id: 'report-api', filename: 'managed-api.json', repoId: 'repo-checkout', repo: 'acme/checkout', directory: 'packages/api', analyzer: 'claude-security', size: '356 KiB' },
-  { id: 'report-unattached', filename: 'detached-preview.json', repoId: 'unattached', repo: 'Unattached', directory: '', analyzer: 'deepsec', size: '284 KiB' },
-]
-
 export const SCAN_FIXTURES = [
   { id: 'scan-104', bundleId: 'bundle-checkout', bundleName: 'checkout.stasis', reason: 'app', status: 'completed', createdAt: 'Today, 09:42', duration: '4m 18s', files: 5, reportSaved: true },
   { id: 'scan-103', bundleId: 'bundle-worker', bundleName: 'worker.stasis', reason: 'All', status: 'running', createdAt: 'Today, 09:51', duration: '1m 06s', files: 5, reportSaved: false },

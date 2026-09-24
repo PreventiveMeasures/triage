@@ -45,6 +45,7 @@ function previewResponse(url, options) {
     '/api/admin/bundles': { bundles: [], repos: [], maxBytes: 104_857_600 },
     '/api/admin/history': { history: [] },
     '/api/admin/models': { models: MANAGED_SCAN_MODELS, defaultModel: DEFAULT_MANAGED_SCAN_MODEL },
+    '/api/admin/scan-results': { bundles: [], results: [] },
   }
   return Object.hasOwn(data, path) ? Response.json(data[path]) : Response.json({ error: 'not-found' }, { status: 404 })
 }

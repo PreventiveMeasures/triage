@@ -24,6 +24,7 @@ const DEVELOPER_NAMES = new Map([
 
 const WORD_REPLACEMENTS = new Map([
   ['gpt', 'GPT'], ['gptoss', 'GPT OSS'], ['oss', 'OSS'], ['o', 'O'], ['ai', 'AI'], ['api', 'API'],
+  ['4o', '4o'],
   ['k3', 'K3'], ['k4', 'K4'], ['qwen', 'Qwen'], ['kimi', 'Kimi'], ['gemini', 'Gemini'],
   ['claude', 'Claude'], ['fable', 'Fable'], ['opus', 'Opus'], ['sonnet', 'Sonnet'],
   ['astra', 'Astra'], ['terra', 'Terra'], ['luna', 'Luna'], ['codex', 'Codex'],
@@ -69,6 +70,10 @@ export async function fetchScanModels(signal, request = fetch) {
   const res = await request('/api/admin/models', { credentials: 'same-origin', headers: { accept: 'application/json' }, signal })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   const body = await res.json()
+  return scanModelCatalogue(body)
+}
+
+export function scanModelCatalogue(body) {
   if (!Array.isArray(body?.models)) throw new Error('No model catalogue returned')
   const models = body.models.filter((model) => typeof model?.id === 'string' && model.id.length > 0)
     .map((model) => ({

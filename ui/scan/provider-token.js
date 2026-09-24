@@ -5,7 +5,7 @@ export function detectTokenProvider(value) {
   if (/^sk-ant-[A-Za-z0-9_-]*$/u.test(token)) return 'anthropic'
   if (/^sk-or-v1-[A-Za-z0-9_-]*$/u.test(token)) return 'openrouter'
   // Kimi Code keys identify Moonshot; its platform keys use generic sk-.
-  if (/^sk-kimi-[A-Za-z0-9_-]*$/u.test(token)) return 'moonshotai'
+  if (/^sk-kimi-[A-Za-z0-9_-]*$/u.test(token)) return 'moonshot'
   if (/^sk-(?:proj|svcacct)-[A-Za-z0-9_-]*$/u.test(token)) return 'openai'
   return null
 }

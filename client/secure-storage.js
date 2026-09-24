@@ -11,6 +11,7 @@
 //   - `deepview.repoUrls`          — per-report repo URLs
 //   - `deepview.fileCounts`        — per-report finding counts
 //   - `deepview.lastFile`          — last-viewed file/workspace name
+//   - `deepview.scan.access`       — scan service and provider credentials
 //
 // Not encrypted (intentional):
 //   - `deepview.passkey.v1` / `deepview.passkey.userId` — vault
@@ -53,6 +54,7 @@ export const SECURE_KEYS = Object.freeze([
   'deepview.repoUrls',
   'deepview.fileCounts',
   'deepview.lastFile',
+  'deepview.scan.access',
 ])
 
 const cache = new Map()

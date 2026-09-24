@@ -9,6 +9,16 @@ export const REPORT_BRANDS = {
   'piolium': { className: 'brand-piolium', mark: `<path class="fg" d="M8 6.4 5.6 7.2v2.3c0 1.6 1 2.7 2.4 3.3 1.4-.6 2.4-1.7 2.4-3.3V7.2Z"/>` },
 }
 
+// The same folded-paper sticker is used in the sidebar and scan inputs. Give
+// it presentation attributes as well as theme classes so it also works inside
+// isolated component shadow roots without a second branding stylesheet.
+const BRAND_COLORS = { default: ['#2563eb', '#fff'], 'claude-security': ['#d97757', '#fff'], 'codex-security': ['#fff', '#000'], deepsec: ['#000', '#fff'], piolium: ['#fbb829', '#1c1b19'] }
+export const REPORT_FILE_ICONS = Object.fromEntries(Object.entries(REPORT_BRANDS).map(([key, { className, mark }]) => {
+  const [bg, fg] = BRAND_COLORS[key]
+  const border = key === 'codex-security' || key === 'deepsec' ? ` stroke="${fg}" stroke-width=".5"` : ''
+  return [key, `<svg class="file-icon ${className}" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path class="bg" fill="${bg}"${border} d="M3 2h6l4 4v8H3z"/><path fill="rgba(0,0,0,.18)" d="M9 2v4h4Z"/><g fill="${fg}">${mark}</g></svg>`]
+}))
+
 // Button logos omit the paper silhouette and fill the button's left segment.
 export const REPORT_LOGOS = Object.fromEntries(Object.entries(REPORT_BRANDS).map(([key, { className, mark }]) => [
   key, `<span class="report-logo ${className}" aria-hidden="true"><svg viewBox="${key === 'default' ? '3.5 4 9 9' : '4 5 8 8'}" width="14" height="14">${mark}</svg></span>`,

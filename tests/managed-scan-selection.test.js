@@ -5,11 +5,17 @@ import '../ui/scan/page.js'
 import { SCAN_REPOSITORY_FIXTURES, cloneScanFixtures } from '../ui/scan/fixtures.js'
 
 const Scans = customElements.get('deepview-scan-page')
+test('the host can block scan actions while disconnected even with selected files', () => {
+  const page = createPage()
+  page.canRun = false
+  page._runScan()
+  assert.deepEqual(page._scans, [])
+})
 test('shared scan page has no built-in managed data', () => {
   const page = new Scans()
   assert.deepEqual(page._bundles, [])
   assert.deepEqual(page._repositories, [])
-  assert.deepEqual(page._reports, [])
+  assert.equal(page._reportInput, null)
   assert.deepEqual(page._scans, [])
 })
 function createPage() {

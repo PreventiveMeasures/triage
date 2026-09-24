@@ -13,3 +13,9 @@ export function sourceMetrics(files) {
     lines: total.lines != null && Number.isFinite(file.lines) ? total.lines + file.lines : null,
   }), { bytes: 0, lines: 0 })
 }
+
+// Binary resources and directory captures are bundle entries, not Code scan
+// inputs. Use the recorded format rather than guessing from the path.
+export function codeScanFiles(files) {
+  return (files ?? []).filter(file => !['resource:base64', 'directory'].includes(file.format))
+}

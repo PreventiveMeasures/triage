@@ -77,7 +77,6 @@ class ScanModelPicker extends LitElement {
     .icon.nvidia .provider-mark { transform: scale(.86); }
     .icon.deepseek .provider-mark { transform: scale(.9); }
     .extra { display: flex; min-width: 0; min-height: 4.9rem; align-items: flex-end; align-self: end; padding-bottom: .05rem; }
-    ::slotted(.effort-switch) { margin-top: 0 !important; }
     /* The picker lives low in a long scan form. A fixed menu, positioned from
        the summary at open time, keeps it above the viewport edge and outside
        any panel's clipping context. */

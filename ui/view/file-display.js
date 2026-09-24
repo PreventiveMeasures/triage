@@ -1,5 +1,5 @@
 import { LINKS_KIND, getKind } from '#client/index.js'
-import { REPORT_BRANDS, REPORT_LOGOS } from './report-logos.js'
+import { REPORT_FILE_ICONS, REPORT_LOGOS } from './report-logos.js'
 export { REPORT_LOGOS } from './report-logos.js'
 import { SOURCE_LABELS } from '../../report/index.js'
 import { LINKS_ICON_SVG } from './icons.js'
@@ -9,8 +9,6 @@ import { LINKS_ICON_SVG } from './icons.js'
 // strips bucket-marker suffixes added by ingest. Used by the
 // sidebar's file list and the action-row report chip in
 // workspace-merged views.
-
-const STICKER_BASE = '<path class="bg" d="M3 2h6l4 4v8H3z"/><path fill="rgba(0,0,0,.18)" d="M9 2v4h4Z"/>'
 
 // Inline `<svg>` for the file-row icon. 14px to match the chrome's
 // other icon buttons. Each bucket renders as a filled "sticker":
@@ -28,9 +26,7 @@ const STICKER_BASE = '<path class="bg" d="M3 2h6l4 4v8H3z"/><path fill="rgba(0,0
 // One mark per producer, shared by file stickers and inset button logos.
 
 export const FILE_ICONS = {
-  ...Object.fromEntries(Object.entries(REPORT_BRANDS).map(([key, { className, mark }]) => [
-    key, `<svg class="file-icon ${className}" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">${STICKER_BASE}${mark}</svg>`,
-  ])),
+  ...REPORT_FILE_ICONS,
   [LINKS_KIND]: LINKS_ICON_SVG,
 }
 

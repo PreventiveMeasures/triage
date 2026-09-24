@@ -9,7 +9,8 @@ import { VISIBILITY_PERMISSION_LABELS } from '../../common/managed/permissions.t
 import { REPORT_LOGOS } from '../view/report-logos.js'
 import { BUNDLE_ICON_SVG } from '../view/icons.js'
 import '../scan/page.js'
-import { SCAN_FIXTURES, SCAN_REPORT_FIXTURES, SCAN_REPOSITORY_FIXTURES, cloneScanFixtures } from '../scan/fixtures.js'
+import { SCAN_FIXTURES, SCAN_REPOSITORY_FIXTURES, cloneScanFixtures } from '../scan/fixtures.js'
+import { managedReportSources } from '../scan/report-source.js'
 import { fetchScanModels } from '../view/scan-models.js'
 import '../view/repository-selector.js'
 import '../view/user-selector.js'
@@ -1548,10 +1549,28 @@ class ManagedAdminScans extends LitElement {
   constructor() {
     super()
     this._loadModels = signal => fetchScanModels(signal, managedFetch)
-    this._source = { bundles: cloneScanFixtures(), repositories: SCAN_REPOSITORY_FIXTURES, reports: SCAN_REPORT_FIXTURES, scans: SCAN_FIXTURES.map(scan => ({ ...scan })) }
+    this._source = { bundles: cloneScanFixtures(), repositories: SCAN_REPOSITORY_FIXTURES, scans: SCAN_FIXTURES.map(scan => ({ ...scan })) }
+    this._loadReportSources = async signal => {
+      const [catalogue, results] = await Promise.all([
+        managedFetch('/api/admin/reports', { signal, credentials: 'same-origin' }),
+        managedFetch('/api/admin/scan-results', { signal, credentials: 'same-origin' }),
+      ])
+      if (!catalogue.ok) throw new Error(`Reports: HTTP ${catalogue.status}`)
+      // Scan-server result discovery is not implemented by the real service yet.
+      if (!results.ok && results.status !== 404) throw new Error(`Scan results: HTTP ${results.status}`)
+      const data = await catalogue.json()
+      // Read visible reports to apply the report library's application-layer
+      // filter. The administration catalogue alone does not carry findings.
+      data.reports = await Promise.all((data.reports ?? []).filter(report => report.visible && report.repoId != null).map(async report => {
+        const response = await managedFetch(`/api/admin/reports/${encodeURIComponent(report.id)}`, { signal, credentials: 'same-origin' })
+        if (!response.ok) throw new Error(`Report ${report.filename}: HTTP ${response.status}`)
+        return { ...report, content: await response.text() }
+      }))
+      return managedReportSources(data, results.ok ? await results.json() : { bundles: [], results: [] })
+    }
   }
   render() {
-    return html`<deepview-scan-page .source=${this._source} .loadModels=${this._loadModels}><span slot="navigation">${adminBackButton()}</span></deepview-scan-page>`
+    return html`<deepview-scan-page .source=${this._source} .loadModels=${this._loadModels} .loadReportSources=${this._loadReportSources}><span slot="navigation">${adminBackButton()}</span></deepview-scan-page>`
   }
 }
 customElements.define('managed-admin-scans', ManagedAdminScans)

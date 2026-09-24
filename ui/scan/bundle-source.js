@@ -21,10 +21,11 @@ export function storedScanSource(entries) {
 export function storedScanBundle(entry, details) {
   if (details.error) throw new Error(details.error)
   const packages = bundlePackageDirs(details)
+  const formats = details.kind === 'stasis' ? details.bundle?.formats : null
   const lineCounts = details.lineCounts ?? new Map([...bundleSourcesAsMap(details)]
     .map(([path, content]) => [path, bundleSourceLineCount(content)]))
   const files = [...bundleFileSizes(details)].filter(([, bytes]) => bytes != null)
-    .map(([path, bytes]) => ({ path, bytes, lines: lineCounts.get(path) ?? 0, size: formatBytes(bytes), module: bundlePkgOf(path, { splitOwnDirs: false, packageDir: packages?.get(path) }) }))
+    .map(([path, bytes]) => ({ path, format: formats?.get(path) ?? null, bytes, lines: lineCounts.get(path) ?? 0, size: formatBytes(bytes), module: bundlePkgOf(path, { splitOwnDirs: false, packageDir: packages?.get(path) }) }))
   const reasons = [{ id: 'all', label: 'All', filePaths: null }, ...[...bundleGraphReasons(details, files.map(file => file.path))]
     .map(([reason, paths]) => ({ id: `reason:${reason}`, label: reason, filePaths: [...paths] }))]
   return { ...entry, files, reasons, size: formatBytes(details.size) }
