@@ -1012,16 +1012,27 @@ function localChangedSince(baseline, localHash) {
   return !!baseline && baseline.synced && !!baseline.hash && !!localHash && baseline.hash !== localHash
 }
 
+// Would taking a (different) cloud copy discard something of the
+// user's? Yes when the local copy changed since it was last in sync, and
+// yes when it was already compared with the cloud and found different
+// with nothing showing which is newer (an unsynced baseline). A later
+// cloud Replace doesn't settle that (review r4099451232): the local copy
+// may hold a change that never uploaded, edited again since, perhaps —
+// the difference stays the user's to resolve in a re-check.
+function keepsLocalCopy(baseline, localHash) {
+  return (!!baseline && !baseline.synced) || localChangedSince(baseline, localHash)
+}
+
 // Does this report need the user's attention in a re-check? Either the
 // local copy changed since it was last in sync (a Replace that never
 // uploaded), or it was compared with the cloud copy, found different,
-// and nothing showed which is newer — and the cloud hasn't moved since
-// (a cloud Replace would be taken automatically).
+// and nothing showed which is newer. The latter holds even once the
+// cloud moves on — see `keepsLocalCopy`.
 function needsRecheck(entry, tag) {
   if (!entry.remoteTags.has(tag)) return false
   if (entry.localChanged.has(tag)) return true
   const baseline = entry.baselines.get(tag)
-  return !!baseline && !baseline.synced && !remoteMovedPast(baseline, entry.remoteMeta.get(tag))
+  return !!baseline && !baseline.synced
 }
 
 // Save a report's bytes on this entry's behalf; the file-mutation hook
@@ -1145,8 +1156,9 @@ async function writeRemoteBytes(entry, tag, got, stillWanted) {
 // `keepLocalChanges` (the automatic paths): if the local copy ALSO
 // changed since it was last in sync — a Replace that never uploaded —
 // both sides moved, and taking the cloud copy would silently discard
-// the user's. Leave both alone and record the difference instead, so
-// the badge asks for a re-check where the user chooses.
+// the user's; likewise for a difference already awaiting the user
+// (`keepsLocalCopy`). Leave both alone and record the difference
+// instead, so the badge asks for a re-check where the user chooses.
 async function applyRemoteBytes(entry, tag, got, stillWanted, { keepLocalChanges = true } = {}) {
   const { same, hash } = await compareLocal(got.fileName, got.content)
   if (!stillWanted()) return false
@@ -1155,7 +1167,7 @@ async function applyRemoteBytes(entry, tag, got, stillWanted, { keepLocalChanges
     savePresenceCache(entry.workspaceId, entry)
     return false
   }
-  if (keepLocalChanges && localChangedSince(entry.baselines.get(tag), hash)) {
+  if (keepLocalChanges && same === false && keepsLocalCopy(entry.baselines.get(tag), hash)) {
     setBaseline(entry, tag, got, false)
     savePresenceCache(entry.workspaceId, entry)
     return false
@@ -1527,8 +1539,8 @@ async function reconcileClaimedCopy(entry, tag, got) {
     }
     return
   }
-  if (remoteMovedPast(baseline, got) && !localChangedSince(baseline, hash)) {
-    // The cloud copy moved on since the local one was reconciled — a
+  if (remoteMovedPast(baseline, got) && !keepsLocalCopy(baseline, hash)) {
+    // The cloud copy moved on since the local one was in sync — a
     // Replace, or a delete + re-upload. Take it.
     try { await writeRemoteBytes(entry, tag, got, stillWanted) }
     catch (err) { console.warn(`auto-download: ${err.message}`, err) }
@@ -1538,11 +1550,12 @@ async function reconcileClaimedCopy(entry, tag, got) {
     // No evidence which copy is newer (never reconciled before, or a
     // legacy baseline at this same version — a re-upload that restarted
     // there looks exactly like a local Replace that never uploaded), or
-    // BOTH changed since they were in sync. Keep the local bytes rather
-    // than clobber them on a guess, and record that we compared, so this
-    // doesn't re-fetch on every open. The badge asks for a re-check,
-    // where the user chooses; a later cloud Replace moves past this
-    // marker and is taken like any other.
+    // BOTH changed since they were in sync, or a difference already
+    // awaiting the user that the cloud has since moved on from. Keep
+    // the local bytes rather than clobber them on a guess, and record
+    // that we compared (against the latest cloud state), so this doesn't
+    // re-fetch on every open. The badge asks for a re-check, where the
+    // user chooses.
     setBaseline(entry, tag, got, false)
     savePresenceCache(entry.workspaceId, entry)
     return
@@ -2351,7 +2364,7 @@ async function reconcileRecheckedReport(entry, workspaceId, row, fetched, delete
       row.detail = r.detail
       return r.status
     }
-    if (same === null || (remoteMovedPast(baseline, got) && !localChangedSince(baseline, hash))) {
+    if (same === null || (remoteMovedPast(baseline, got) && !keepsLocalCopy(baseline, hash))) {
       // The local copy is missing (nothing to lose), or the cloud copy
       // moved on since ours was in sync and ours didn't change — a
       // Replace or re-upload the automatic paths haven't applied yet.
@@ -2365,8 +2378,9 @@ async function reconcileRecheckedReport(entry, workspaceId, row, fetched, delete
       }
     }
     // Different, and nothing says which is newer (never reconciled, a
-    // legacy baseline, already compared-and-different, or BOTH copies
-    // changed since they were last in sync). Record that we
+    // legacy baseline, already compared-and-different — even if the
+    // cloud moved on since — or BOTH copies changed since they were
+    // last in sync). Record that we
     // compared, hand the row the cloud state it was compared against —
     // "Upload mine" (`resolveReportDifference`) uploads over exactly that
     // state — and leave the choice to the user.

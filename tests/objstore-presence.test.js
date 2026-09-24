@@ -2098,17 +2098,56 @@ describe('client/sync/objstore-presence', () => {
       let cloud = await peer.fetch(fileName)
       assert.equal(decodeUtf8(await gunzipBytes(cloud.content)), newerText, 'the newer cloud copy survives')
 
-      // Re-check again (the v2 moved past the compare marker, so the
-      // automatic path already took it; put the local change back so
-      // the copies differ with no evidence once more), then upload.
-      await saveFileBytes(fileName, await gzipBytes(encodeUtf8(localText)))
-      __test__.getEntry(ws.id).baselines.clear()
+      // The v2 didn't settle the difference (review r4099451232): the
+      // local copy is kept, and a re-check compares it with v2.
+      assert.equal(await localReportText(fileName), localText, 'the local copy is kept')
       const second = (await recheckRemoteStorage(ws.id)).items[0]
       assert.equal(second.status, 'differs')
+      assert.deepEqual(second.compared, { version: newer.meta.version, incarnation: newer.meta.incarnation })
       assert.deepEqual(await resolveReportDifference(ws.id, fileName, 'local', second.compared), { status: 'uploaded' })
       cloud = await peer.fetch(fileName)
       assert.equal(decodeUtf8(await gunzipBytes(cloud.content)), localText, 'the cloud copy now carries the local copy')
       assert.equal(await localReportText(fileName), localText)
+    } finally {
+      peer.close()
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+      await deleteFile(fileName).catch(() => {})
+    }
+  })
+
+  it('a later cloud Replace does not settle a difference — a local copy edited since is kept (review r4099451232)', async () => {
+    // Regression: an unsynced ("differs") baseline carried no local hash,
+    // so a local edit after the compare went unnoticed and the next cloud
+    // Replace moved past the marker and overwrote the edit. Nothing says
+    // the cloud copy is the newer one — the difference stays the user's.
+    const fileName = 'differs-then-edited.json'
+    const localText = reportJson('local')
+    const cloudText = reportJson('cloud')
+    const editedText = reportJson('local-edited')
+    const newerText = reportJson('cloud-newer')
+    const { ws, put } = await openDifferingCopies('presence-differs-edited', fileName, localText, cloudText)
+    const peer = await openPeerSession(ws)
+    try {
+      const entry = __test__.getEntry(ws.id)
+      const tag = entry.baselines.keys().next().value
+      assert.equal(entry.baselines.get(tag).synced, false, 'recorded as compared-and-different')
+      await saveFileBytes(fileName, await gzipBytes(encodeUtf8(editedText)))
+      const newer = await peer.put({ fileName, content: await gzipBytes(encodeUtf8(newerText)), prev: put.meta })
+      assert.equal(newer.ok, true)
+      // Polled: a marker moving to v2 flips nothing the change listeners
+      // report.
+      for (const until = Date.now() + 5_000; entry.baselines.get(tag)?.version !== newer.meta.version && Date.now() < until;) {
+        await new Promise((resolve) => { setTimeout(resolve, 20) })
+      }
+      assert.equal(entry.baselines.get(tag)?.version, newer.meta.version, 'compared with v2')
+      assert.equal(await localReportText(fileName), editedText, 'the local edit survives the cloud Replace')
+      assert.equal(entry.baselines.get(tag).synced, false, 'still a difference, now against v2')
+      assert.deepEqual(differingReports(ws.id), [fileName], 'still asks for a re-check')
+      const row = (await recheckRemoteStorage(ws.id)).items[0]
+      assert.equal(row.status, 'differs', 'the re-check leaves it to the user too')
+      assert.deepEqual(row.compared, { version: newer.meta.version, incarnation: newer.meta.incarnation })
+      assert.equal(await localReportText(fileName), editedText)
     } finally {
       peer.close()
       closeWorkspace(ws.id)
