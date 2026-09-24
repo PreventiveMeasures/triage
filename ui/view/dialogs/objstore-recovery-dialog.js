@@ -38,6 +38,7 @@ import { html, nothing, unsafeCSS } from 'lit'
 import { recheckRemoteStorage, resolveReportDifference } from '../client-sync.js'
 import { AppDialog, openAppDialog } from './app-dialog.js'
 import { openSyncDownloadDialog } from './sync-download-dialog.js'
+import detailActionCSS from '../../styles/detail-action.css'
 import listCSS from './dialog-list.css'
 import recoveryCSS from './dialog-recovery.css'
 
@@ -64,7 +65,7 @@ function statusCounts(rows) {
 const copies = (n) => (n === 1 ? 'copy' : 'copies')
 
 class ObjstoreRecoveryDialog extends AppDialog {
-  static styles = [...AppDialog.styles, unsafeCSS(listCSS), unsafeCSS(recoveryCSS)]
+  static styles = [...AppDialog.styles, unsafeCSS(detailActionCSS), unsafeCSS(listCSS), unsafeCSS(recoveryCSS)]
 
   static properties = {
     workspaceId: { type: String },
@@ -256,10 +257,18 @@ class ObjstoreRecoveryDialog extends AppDialog {
       ? html`<p class="lwd-empty">No remote objects to check.</p>`
       : nothing
     const downloadable = this._ran ? this._downloadableItems().length : 0
-    // Offered from two differing rows up — for one, the row's own
-    // "Use cloud copy" is the same action.
-    const differing = this._differingRows().length
+    // "Use cloud for all" is offered from two differing rows up — for
+    // one, the row's own "Use cloud copy" is the same action. While it's
+    // offered the footer holds just it and "Re-check again": leaving is
+    // the corner ×, and "Close" returns once the choice is made (the
+    // button goes when no rows differ any more).
+    const useCloud = this._differingRows().length > 1 || this._bulk
+    // The corner × comes FIRST in the source (it's pinned, not laid out
+    // in a row), so a reader tabbing in meets it where the eye finds it
+    // — same as the export dialog's. Styled by the shared `.detail-action`
+    // the finding popups' close uses.
     return html`<dialog @close=${this._onClose}>
+      <button type="button" class="detail-action rec-close" data-role="close" aria-label="Close" @click=${this._onCancel}>×</button>
       <header><h3>Re-check cloud storage</h3></header>
       ${intro}
       ${this._rowsSection()}
@@ -268,17 +277,17 @@ class ObjstoreRecoveryDialog extends AppDialog {
       ${this._error ? html`<p class="rec-error" role="alert">${this._error}</p>` : nothing}
       <footer class="nwd-actions">
         <span class="nwd-spacer"></span>
-        ${differing > 1 || this._bulk ? html`<button type="button" data-role="use-cloud-all"
+        ${useCloud ? html`<button type="button" data-role="use-cloud-all"
           data-tooltip="Replace your copy of every report that differs with its cloud copy"
           @click=${this._onUseCloudForAll} ?disabled=${this._running || this._bulk}>
-          ${this._bulk ? 'Using cloud copies…' : `Use cloud for all ${differing}`}
+          ${this._bulk ? 'Using cloud copies…' : `Use cloud for all ${this._differingRows().length}`}
         </button>` : nothing}
-        ${downloadable > 0 ? html`<button type="button" data-role="download" @click=${this._onDownload} ?disabled=${this._running}>
+        ${!useCloud && downloadable > 0 ? html`<button type="button" data-role="download" @click=${this._onDownload} ?disabled=${this._running}>
           Download ${downloadable} not stored locally
         </button>` : nothing}
-        <button type="button" data-role="cancel" @click=${this._onCancel} ?disabled=${this._running || this._bulk}>
+        ${useCloud ? nothing : html`<button type="button" data-role="cancel" @click=${this._onCancel} ?disabled=${this._running}>
           ${this._ran ? 'Close' : 'Cancel'}
-        </button>
+        </button>`}
         <button type="button" data-role="recheck" @click=${this._onRecheck} ?disabled=${this._running || this._bulk}>
           ${this._running ? 'Re-checking…' : (this._ran ? 'Re-check again' : 'Re-check')}
         </button>

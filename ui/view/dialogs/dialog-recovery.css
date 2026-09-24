@@ -1,6 +1,11 @@
 /* Objstore recovery dialog — per-object status list. Composed on top
    of dialog-base.css + dialog-list.css (reuses .lwd-body, .lwd-kind-tag,
    .nwd-actions); only the recovery-specific `.rec-*` chrome lives here. */
+/* The corner × (`.detail-action` supplies the look). The dialog is in
+   the top layer, so it's the containing block; the header keeps clear
+   of the button. */
+.rec-close { position: absolute; top: 6px; right: 6px; z-index: 1; }
+header { padding-right: 1.5rem; }
 .rec-list {
   margin: .2rem 0 .55rem; padding: 0;
   list-style: none;
