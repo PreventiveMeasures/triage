@@ -12,9 +12,11 @@ test('Manage pages belong only to the lazy client-managed bundle, without duplic
   const managed = metafile.outputs['out/client-managed.js'].inputs
   assert.equal(Object.hasOwn(main, 'ui/managed/pages.js'), false)
   assert.equal(Object.hasOwn(main, 'ui/view/scan-model-picker.js'), false)
+  assert.equal(Object.hasOwn(main, 'client/managed/request.js'), false)
   assert.ok(managed['ui/managed/pages.js'])
   assert.ok(managed['ui/view/scan-model-picker.js'])
   assert.ok(managed['client/managed/session.js'])
+  assert.ok(managed['client/managed/request.js'])
   assert.deepEqual(Object.keys(managed).filter(path => path.startsWith('client/') && !path.startsWith('client/managed/')), [],
     'a shared icon must not pull local storage, state, or sync into the managed chunk')
 })

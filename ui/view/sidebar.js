@@ -3,7 +3,8 @@ import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { LINKS_KIND, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, clientModeLabel, computeLinkHint, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, ensureLinkedFindingsIndexed, getCount, getPackagesIndex, getRepositoriesIndex, hasStandaloneProbeHint, hydrateSecureStorage, isManagedUiMode, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, probeServerInfo, readCachedServerInfo, reloadTriageFromStorage, rememberStandaloneProbe, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, setLocalMode, state, syncObservedAfterHydrate, waitForServerInfo, writeCachedServerInfo } from '#client/index.js'
 import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, setSyncForceDisabled, triageSync } from './client-sync.js'
-import { loadManagedBundle, login as managedLogin, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams } from './client-managed.js'
+import { clearPreviewRole, getPreviewRole, loadManagedBundle, login as managedLogin, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams } from './client-managed.js'
+import { ROLES, isRole } from '../../common/managed/roles.ts'
 import { initManagedTriagePush, resetManagedTriage } from './managed-triage.js'
 import sidebarCSS from './sidebar.css'
 import fileIconCSS from '../styles/file-icon.css'
@@ -1201,7 +1202,7 @@ function avatarTemplate(initial, userId, large = false) {
   const src = `/api/avatar/${encodeURIComponent(userId)}`
   return html`<span class=${large ? 'user-avatar user-avatar-lg' : 'user-avatar'}>
     <span class="user-avatar-fallback">${initial}</span>
-    <img alt="" src=${src} @error=${onAvatarError}>
+    ${getPreviewRole() ? nothing : html`<img alt="" src=${src} @error=${onAvatarError}>`}
   </span>`
 }
 
@@ -1723,7 +1724,15 @@ async function finishClientModeTransition({ forgetLastView = true } = {}) {
   // Only server annotations may enter a managed report. Local annotations are
   // restored from storage on the return trip, without saving this clear.
   state.triage.clear()
-  if (isManagedUiMode()) void refreshManagedSession()
+  if (isManagedUiMode()) {
+    const session = refreshManagedSession()
+    // The console helper resolves with its fake account ready to use. Real
+    // server requests remain non-blocking so an outage cannot stall the UI.
+    if (getPreviewRole()) {
+      await session
+      if (generation !== clientModeGeneration) return
+    }
+  }
   else {
     state.managedSession = null
     state.managedTeams = []
@@ -1740,20 +1749,29 @@ async function finishClientModeTransition({ forgetLastView = true } = {}) {
   await renderSidebar()
 }
 
-// Console: await DeepView.forceManagedMode(). This changes the client surface,
-// not server capabilities or permissions. Click the managed tag to undo it.
-export async function forceManagedMode() {
+// Console: await DeepView.forceManagedMode(), or pass a role such as 'admin'
+// to preview a fake account without a backend. Click the managed tag to undo it.
+export async function forceManagedMode(role) {
+  if (role !== undefined && !isRole(role)) throw new TypeError(`Unknown managed preview role: ${role}. Expected ${ROLES.join(', ')}.`)
   await ensureClientMode()
-  if (forcedManagedReturn || isManagedUiMode()) return
-  forcedManagedReturn = {
+  if (role === undefined && (forcedManagedReturn || isManagedUiMode())) return
+  const generation = clientModeGeneration
+  const managed = role === undefined ? null : await loadManagedBundle()
+  if (generation !== clientModeGeneration) return
+  forcedManagedReturn ??= {
     serverMode: state.serverMode,
     localMode: state.localMode,
     managed: state.managed,
     serverModeMismatch: state.serverModeMismatch,
   }
+  if (managed) managed.setPreviewRole(role)
   state.serverMode = 'managed'
   setLocalMode(false)
   state.serverModeMismatch = false
+  // Remove the previous account immediately, including when changing the fake
+  // role on a real managed deployment. The refreshed session uses the preview.
+  state.managedSession = null
+  state.managedTeams = []
   await finishClientModeTransition({ forgetLastView: false })
 }
 
@@ -1762,6 +1780,7 @@ async function restoreForcedManagedMode() {
   const pendingInfo = deferredServerInfo
   forcedManagedReturn = null
   deferredServerInfo = null
+  clearPreviewRole()
   Object.assign(state, previous)
   await finishClientModeTransition({ forgetLastView: false })
   // A real configuration response may have arrived during the override. Apply

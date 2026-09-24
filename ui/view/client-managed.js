@@ -3,13 +3,19 @@
 // variable path so esbuild keeps it — and any future managed payload — out of
 // the main view bundle. The browser resolves the path against the page URL.
 let loadPromise = null
+let managedModule = null
+
+// Synchronous reads/reset never load the chunk on an E2E or standalone visit.
+export function getPreviewRole() { return managedModule?.getPreviewRole() ?? null }
+export function clearPreviewRole() { managedModule?.setPreviewRole(null) }
 
 export function loadManagedBundle() {
   if (loadPromise) return loadPromise
   loadPromise = (async () => {
     const path = './client-managed.js'
     try {
-      return await import(path)
+      managedModule = await import(path)
+      return managedModule
     } catch (err) {
       // Don't pin a rejected promise — a transient failure would replay
       // forever; reset so the next call retries from scratch.

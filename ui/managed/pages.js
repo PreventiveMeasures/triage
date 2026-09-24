@@ -1,3 +1,4 @@
+import { getPreviewRole, managedFetch } from '../../client/managed/request.js'
 // Manage custom elements, registered by the lazy client-managed.js entry.
 // Keep application state in the main view bundle; these pages use authenticated
 // API requests and composed events to communicate with their host.
@@ -10,7 +11,7 @@ import { BUNDLE_ICON_SVG } from '../view/icons.js'
 import '../view/scan-model-picker.js'
 
 async function fetchSession() {
-  const res = await fetch('/api/auth/session', { credentials: 'same-origin', headers: { accept: 'application/json' } })
+  const res = await managedFetch('/api/auth/session', { credentials: 'same-origin', headers: { accept: 'application/json' } })
   if (!res.ok) return null
   const body = await res.json()
   return {
@@ -85,7 +86,7 @@ const ADMIN_PEOPLE_STYLES = css`
 function adminAvatar(id, login) {
   return html`<span class="avatar" aria-hidden="true">
     <span>${(login?.[0] ?? '?').toUpperCase()}</span>
-    <img alt="" src=${`/api/avatar/${encodeURIComponent(id)}`} @error=${(e) => e.currentTarget.classList.add('broken')}>
+    ${getPreviewRole() ? nothing : html`<img alt="" src=${`/api/avatar/${encodeURIComponent(id)}`} @error=${(e) => e.currentTarget.classList.add('broken')}>`}
   </span>`
 }
 
@@ -190,7 +191,7 @@ class ManagedAdminHome extends LitElement {
 customElements.define('managed-admin-home', ManagedAdminHome)
 
 async function fetchHistory() {
-  const res = await fetch('/api/admin/history', { credentials: 'same-origin', headers: { accept: 'application/json' } })
+  const res = await managedFetch('/api/admin/history', { credentials: 'same-origin', headers: { accept: 'application/json' } })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   const body = await res.json()
   if (!Array.isArray(body?.history)) throw new Error('No history returned')
@@ -199,7 +200,7 @@ async function fetchHistory() {
 
 async function fetchAccessibleReportIds() {
   try {
-    const res = await fetch('/api/teams', { credentials: 'same-origin', headers: { accept: 'application/json' } })
+    const res = await managedFetch('/api/teams', { credentials: 'same-origin', headers: { accept: 'application/json' } })
     if (!res.ok) return new Set()
     const body = await res.json()
     return new Set((Array.isArray(body?.teams) ? body.teams : []).flatMap((team) => Array.isArray(team.reports) ? team.reports.map((report) => report.id) : []))
@@ -304,7 +305,7 @@ function historySearchText(entry) {
 }
 
 async function fetchUsers() {
-  const res = await fetch('/api/admin/users', { credentials: 'same-origin', headers: { accept: 'application/json' } })
+  const res = await managedFetch('/api/admin/users', { credentials: 'same-origin', headers: { accept: 'application/json' } })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   const body = await res.json()
   return Array.isArray(body?.users) ? body.users : []
@@ -332,7 +333,7 @@ function userActivityAt(user) {
 async function setRole(userId, role, csrfToken) {
   const headers = { 'content-type': 'application/json' }
   if (csrfToken) headers['x-csrf-token'] = csrfToken
-  const res = await fetch('/api/admin/set-role', {
+  const res = await managedFetch('/api/admin/set-role', {
     method: 'POST', credentials: 'same-origin', headers, body: JSON.stringify({ userId, role }),
   })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -492,7 +493,7 @@ customElements.define('managed-admin-users', ManagedAdminUsers)
 // for the installed/public pickers. Both responses are searched and paged by the server.
 async function fetchRepositories(scope, query, page, signal) {
   const params = new URLSearchParams({ scope, q: query, page: String(page), limit: '20' })
-  const res = await fetch(`/api/admin/repositories?${params}`, { credentials: 'same-origin', headers: { accept: 'application/json' }, signal })
+  const res = await managedFetch(`/api/admin/repositories?${params}`, { credentials: 'same-origin', headers: { accept: 'application/json' }, signal })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json()
 }
@@ -502,14 +503,14 @@ async function fetchRepositories(scope, query, page, signal) {
 async function selectRepository(repoId, selected, csrfToken) {
   const headers = { 'content-type': 'application/json' }
   if (csrfToken) headers['x-csrf-token'] = csrfToken
-  const res = await fetch('/api/admin/repositories/select', {
+  const res = await managedFetch('/api/admin/repositories/select', {
     method: 'POST', credentials: 'same-origin', headers, body: JSON.stringify({ repoId, selected }),
   })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
 }
 
 async function fetchRepositoryImpact(repoId, signal) {
-  const res = await fetch(`/api/admin/repositories/impact?repoId=${encodeURIComponent(repoId)}`, {
+  const res = await managedFetch(`/api/admin/repositories/impact?repoId=${encodeURIComponent(repoId)}`, {
     credentials: 'same-origin', headers: { accept: 'application/json' }, signal,
   })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -522,7 +523,7 @@ async function fetchRepositoryImpact(repoId, signal) {
 async function removeRepository(repoId, fullName, deleteTriage, csrfToken) {
   const headers = { 'content-type': 'application/json' }
   if (csrfToken) headers['x-csrf-token'] = csrfToken
-  const res = await fetch('/api/admin/repositories/remove', {
+  const res = await managedFetch('/api/admin/repositories/remove', {
     method: 'POST', credentials: 'same-origin', headers,
     body: JSON.stringify({ repoId, fullName, acknowledge: true, deleteTriage }),
   })
@@ -951,7 +952,7 @@ class ManagedAdminRepos extends LitElement {
 customElements.define('managed-admin-repos', ManagedAdminRepos)
 
 async function fetchReports() {
-  const res = await fetch('/api/admin/reports', { credentials: 'same-origin', headers: { accept: 'application/json' } })
+  const res = await managedFetch('/api/admin/reports', { credentials: 'same-origin', headers: { accept: 'application/json' } })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json()
 }
@@ -966,7 +967,7 @@ async function uploadReport(file, csrfToken, repoId = null, directory = '') {
   if (csrfToken) headers['x-csrf-token'] = csrfToken
   if (repoId != null) headers['x-repo-id'] = String(repoId)
   if (directory !== '') headers['x-repo-directory'] = encodeURIComponent(directory)
-  const res = await fetch('/api/admin/reports', { method: 'POST', credentials: 'same-origin', headers, body: file })
+  const res = await managedFetch('/api/admin/reports', { method: 'POST', credentials: 'same-origin', headers, body: file })
   if (!res.ok) {
     if (res.status === 413) throw new Error('too large')
     let detail = ''
@@ -982,7 +983,7 @@ async function uploadReport(file, csrfToken, repoId = null, directory = '') {
 async function setReportVisible(id, visible, csrfToken) {
   const headers = { 'content-type': 'application/json' }
   if (csrfToken) headers['x-csrf-token'] = csrfToken
-  const res = await fetch('/api/admin/reports/set-visible', {
+  const res = await managedFetch('/api/admin/reports/set-visible', {
     method: 'POST', credentials: 'same-origin', headers, body: JSON.stringify({ reportId: id, visible }),
   })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -991,7 +992,7 @@ async function setReportVisible(id, visible, csrfToken) {
 async function setReportRepo(id, repoId, directory, csrfToken) {
   const headers = { 'content-type': 'application/json' }
   if (csrfToken) headers['x-csrf-token'] = csrfToken
-  const res = await fetch('/api/admin/reports/set-repo', {
+  const res = await managedFetch('/api/admin/reports/set-repo', {
     method: 'POST', credentials: 'same-origin', headers,
     body: JSON.stringify({ reportId: id, repoId, directory }),
   })
@@ -1004,7 +1005,7 @@ async function setReportRepo(id, repoId, directory, csrfToken) {
 
 async function deleteReport(id, csrfToken) {
   const headers = csrfToken ? { 'x-csrf-token': csrfToken } : {}
-  const res = await fetch(`/api/admin/reports/${encodeURIComponent(id)}`, { method: 'DELETE', credentials: 'same-origin', headers })
+  const res = await managedFetch(`/api/admin/reports/${encodeURIComponent(id)}`, { method: 'DELETE', credentials: 'same-origin', headers })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
 }
 
@@ -1295,7 +1296,7 @@ class ManagedAdminReports extends LitElement {
     this._preview = report.id
     this._previewLoading = report.id
     try {
-      const res = await fetch(`/api/admin/reports/${encodeURIComponent(report.id)}`, { credentials: 'same-origin', signal: request.signal })
+      const res = await managedFetch(`/api/admin/reports/${encodeURIComponent(report.id)}`, { credentials: 'same-origin', signal: request.signal })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const text = await res.text()
       if (isCurrent()) this._previewText = text.slice(0, 4000) + (text.length > 4000 ? '\n…' : '')
@@ -1333,7 +1334,7 @@ class ManagedAdminReports extends LitElement {
 customElements.define('managed-admin-reports', ManagedAdminReports)
 
 async function fetchBundles() {
-  const res = await fetch('/api/admin/bundles', { credentials: 'same-origin', headers: { accept: 'application/json' } })
+  const res = await managedFetch('/api/admin/bundles', { credentials: 'same-origin', headers: { accept: 'application/json' } })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json()
 }
@@ -1346,14 +1347,14 @@ async function uploadBundle(file, csrfToken, repoId) {
   const headers = { 'content-type': 'application/octet-stream', 'x-bundle-filename': encodeURIComponent(file.name) }
   if (csrfToken) headers['x-csrf-token'] = csrfToken
   if (repoId != null) headers['x-repo-id'] = String(repoId)
-  const res = await fetch('/api/admin/bundles', { method: 'POST', credentials: 'same-origin', headers, body: file })
+  const res = await managedFetch('/api/admin/bundles', { method: 'POST', credentials: 'same-origin', headers, body: file })
   if (!res.ok) throw new Error(res.status === 413 ? 'too large' : `HTTP ${res.status}`)
   return res.json()
 }
 
 async function deleteBundle(id, csrfToken) {
   const headers = csrfToken ? { 'x-csrf-token': csrfToken } : {}
-  const res = await fetch(`/api/admin/bundles/${encodeURIComponent(id)}`, { method: 'DELETE', credentials: 'same-origin', headers })
+  const res = await managedFetch(`/api/admin/bundles/${encodeURIComponent(id)}`, { method: 'DELETE', credentials: 'same-origin', headers })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
 }
 
@@ -1361,7 +1362,7 @@ async function deleteBundle(id, csrfToken) {
 async function setBundleRepo(id, repoId, csrfToken) {
   const headers = { 'content-type': 'application/json' }
   if (csrfToken) headers['x-csrf-token'] = csrfToken
-  const res = await fetch('/api/admin/bundles/set-repo', {
+  const res = await managedFetch('/api/admin/bundles/set-repo', {
     method: 'POST', credentials: 'same-origin', headers, body: JSON.stringify({ bundleId: id, repoId }),
   })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -2043,7 +2044,7 @@ class ManagedAdminScans extends LitElement {
 customElements.define('managed-admin-scans', ManagedAdminScans)
 
 async function fetchTeams() {
-  const res = await fetch('/api/admin/teams', { credentials: 'same-origin', headers: { accept: 'application/json' } })
+  const res = await managedFetch('/api/admin/teams', { credentials: 'same-origin', headers: { accept: 'application/json' } })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json()
 }
@@ -2053,7 +2054,7 @@ async function fetchTeams() {
 async function postTeam(path, csrfToken, body) {
   const headers = { 'content-type': 'application/json' }
   if (csrfToken) headers['x-csrf-token'] = csrfToken
-  const res = await fetch(path, { method: 'POST', credentials: 'same-origin', headers, body: JSON.stringify(body) })
+  const res = await managedFetch(path, { method: 'POST', credentials: 'same-origin', headers, body: JSON.stringify(body) })
   if (!res.ok) throw new Error(res.status === 409 ? 'name already taken' : `HTTP ${res.status}`)
 }
 
