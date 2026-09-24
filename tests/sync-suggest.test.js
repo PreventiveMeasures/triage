@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
 import { createSyncSuggester, hasOpenModal } from '../ui/view/sync-suggest.js'
+import { hasOpenModal as sharedHasOpenModal } from '../ui/view/open-modal.js'
 
 // Deterministic scheduler: queued callbacks run on `flush()`.
 function harness(results, modals = []) {
@@ -100,15 +101,7 @@ describe('sync suggestion (auto-opened "Reports out of sync")', () => {
     assert.deepEqual(h.opened, [['a.json']], 'opened once the other dialog is gone')
   })
 
-  it('hasOpenModal sees modal dialogs inside shadow roots', () => {
-    const el = (shadowRoot = null) => ({ shadowRoot })
-    const root = (modal, children = []) => ({
-      querySelector: (sel) => (sel === ':modal' && modal ? {} : null),
-      querySelectorAll: () => children,
-    })
-    assert.equal(hasOpenModal(root(false, [el(), el(root(false))])), false)
-    assert.equal(hasOpenModal(root(true)), true, 'light-DOM modal')
-    assert.equal(hasOpenModal(root(false, [el(), el(root(true))])), true, 'modal in a dialog component\'s shadow root')
-    assert.equal(hasOpenModal(root(false, [el(root(false, [el(root(true))]))])), true, 'nested shadow roots')
+  it('re-exports the shared hasOpenModal', () => {
+    assert.equal(hasOpenModal, sharedHasOpenModal)
   })
 })

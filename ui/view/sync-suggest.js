@@ -22,18 +22,11 @@
 // this module stays free of the dialog (and its CSS imports) so the
 // policy is testable on its own.
 
-const RETRY_AFTER_CONFLICT_MS = 1500
+import { hasOpenModal } from './open-modal.js'
 
-// Is a modal dialog open anywhere, including inside the (open) shadow
-// roots the app's dialogs render into? `:modal` doesn't see through a
-// shadow boundary, so walk into each one.
-export function hasOpenModal(root = document) {
-  if (root.querySelector(':modal')) return true
-  for (const el of root.querySelectorAll('*')) {
-    if (el.shadowRoot && hasOpenModal(el.shadowRoot)) return true
-  }
-  return false
-}
+export { hasOpenModal }
+
+const RETRY_AFTER_CONFLICT_MS = 1500
 
 // `open(names)` → `{ shown, sync }` (the dialog helper); `later(fn, ms)`
 // schedules; `modalOpen()` says whether another dialog is up. Injectable

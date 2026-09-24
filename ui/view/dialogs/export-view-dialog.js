@@ -267,10 +267,10 @@ customElements.define('export-view-dialog', ExportViewDialog)
 // same text it would hand to the download.
 //
 // Custom open helper rather than the shared `openAppDialog`, for the
-// reason `openExportConfirmDialog` documents: the export buttons stay
-// clickable behind a modal, so `showModal()` can throw and dispatch
-// `modal-conflict` instead of `resolve`, which the shared helper never
-// hears — leaving the await hanging and the element leaked.
+// reason `openExportConfirmDialog` documents: if `showModal()` fails
+// outright it dispatches `modal-conflict` instead of `resolve`, which
+// the shared helper never hears — leaving the await hanging and the
+// element leaked.
 export function openExportViewDialog(markdown) {
   return new Promise((resolve) => {
     const el = document.createElement('export-view-dialog')

@@ -78,10 +78,13 @@ customElements.define('sync-suggest-dialog', SyncSuggestDialog)
 
 // Own open helper (like `openPersistenceDegradedDialog`) so it settles on
 // `modal-conflict` too — this dialog opens unprompted, so another modal
-// being up is expected, not an error.
+// being up is expected, not an error. `exclusive`, so it never stacks on
+// top of one (the suggester also checks before opening; this is the
+// backstop).
 export function openSyncSuggestDialog({ names } = {}) {
   return new Promise((resolve) => {
     const el = document.createElement('sync-suggest-dialog')
+    el.exclusive = true
     el.names = Array.isArray(names) ? [...names] : []
     const settle = (shown, sync) => { el.remove(); resolve({ shown, sync }) }
     el.addEventListener('resolve', (e) => settle(true, e.detail === true))
