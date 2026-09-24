@@ -49,7 +49,7 @@ describe('build: minifying Lit templates', () => {
   })
 
   it('still minifies a `css` tagged template', () => {
-    // These are whole component sheets (ui/client-admin.js), and the
+    // These are whole component sheets (ui/managed/pages.js), and the
     // library minifies them down a different path — one the style
     // attribute fix must not take with it.
     const out = minify('css`.a {  color : red ;  }`')

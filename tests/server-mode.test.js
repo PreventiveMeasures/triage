@@ -82,7 +82,7 @@ test('mode probing distinguishes confirmed protocols and standalone from inconcl
     await t.test(name, async (subtest) => {
       const fetch = subtest.mock.method(globalThis, 'fetch', (url, options) => {
         assert.equal(url, '/api/config')
-        assert.deepEqual(options, { credentials: 'same-origin', headers: { accept: 'application/json' } })
+        assert.deepEqual(options, { credentials: 'same-origin', cache: 'no-store', headers: { accept: 'application/json' } })
         return Promise.resolve().then(response)
       })
       assert.deepEqual(await probeServerInfo(), expected)

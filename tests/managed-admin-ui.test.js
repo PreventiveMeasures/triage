@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { setImmediate } from 'node:timers/promises'
 import { test } from 'node:test'
 import './_polyfills.js'
-import '../ui/client-admin.js'
+import '../ui/client-managed.js'
 
 // Lit's Node implementation lets us exercise the actual async controllers
 // without a document. Browser checks cover the rendered controls separately.

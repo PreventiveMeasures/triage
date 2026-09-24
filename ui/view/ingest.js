@@ -6,6 +6,7 @@ import { clearMergedGroups, getRevalidationConflicts, getShownGroups, toGroup } 
 import { configureDepsDir, hasRevalidateStamp, stampUpstreamFindings } from './format.js'
 import { applyOpeningFilters, resetFilters } from './filters.js'
 import { reportWorkspaceFor } from './finding-link.js'
+import { readManagedReport } from '../../common/managed/report-content.ts'
 import { encodeReportLocation } from '../../client/report-location.js'
 import { configureReportRevalidation, render } from './render.js'
 import { ensureClientMode, navigateToAdminPage, renderSidebar } from './sidebar.js'
@@ -57,6 +58,7 @@ export function persistLastBundle(integrity, tab = 'overview') {
 // repeated-ingest accumulation still works.
 let loadGen = 0
 const isStaleLoad = (captured) => captured !== loadGen
+export function currentViewGeneration() { return loadGen }
 
 // Keep expensive view renders out of the report-ingest call stack. A
 // workspace can contain many reports, and rendering after each parse both
@@ -510,6 +512,7 @@ async function addFiles(files) {
 // re-entered) resolves undefined, so callers can distinguish completion
 // from a cancelled or failed load.
 export async function switchToFile(name, content, { workspaceId } = {}) {
+  if (isManagedUiMode()) return
   const gen = ++loadGen
   state.currentManagedTeam = null
   state.currentManagedReport = null
@@ -692,7 +695,7 @@ export async function switchToManagedTeam(team, reportId = null) {
   }
   // Validate the whole response set before clearing the prior view, so a
   // missing/invalid report cannot quietly turn the team into a partial view.
-  if (contents.some((content) => !readReport(content).data)) {
+  if (contents.some((content, i) => !readManagedReport(content, selected[i].filename).data)) {
     showToast('One of the team reports could not be read.')
     return false
   }
@@ -765,6 +768,7 @@ export async function switchToManagedTeam(team, reportId = null) {
 // editable header chip is omitted. Reports the workspace references
 // but that no longer exist in OPFS are skipped silently.
 export async function switchToWorkspace(workspaceId) {
+  if (isManagedUiMode()) return
   state.currentManagedTeam = null
   state.currentManagedReport = null
   state.managedReport = null
@@ -1231,7 +1235,7 @@ async function ingestReport(name, content, gen = null, { renderView = true, mana
     // Format dispatch lives in the report library (report/index.js),
     // which also words the failure — usually a malformed dump rather
     // than an unknown format.
-    const { data, reason } = readReport(content)
+    const { data, reason } = isManagedUiMode() ? readManagedReport(content, name) : readReport(content)
     if (!data) throw new Error(reason)
     // First report in the current view (state.reports cleared on
     // switchToFile / deleteCurrent, accumulating in the headless print

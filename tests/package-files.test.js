@@ -56,7 +56,7 @@ test('package.json "files" includes every exports target', () => {
 // `server-managed/` (the `triage-managed-server` bin) and the `common/managed/`
 // modules it imports at runtime are held back from the publish allowlist while
 // the managed mode is still being built out. The client half stays in the
-// tarball — `out/client-managed.js` / `out/client-admin.js` are inert without a
+// tarball — `out/client-managed.js` is inert without a
 // server that advertises `mode: 'managed'` (see common/server-info.ts), so they
 // cost a few KB and change nothing for an e2e deployment.
 //

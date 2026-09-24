@@ -15,9 +15,11 @@
 //     duplicates group — is from a security analyzer (an analyzer / type / source
 //     string containing "security") or is stamped `security: true`.
 //
-// Non-JSON reports (markdown / CSV) aren't structurally filterable and pass
-// through unchanged. Filtering is purely subtractive: kept entries keep their
-// exact original shape (single object or array).
+// CSV blobs are converted through the managed reader when a filename is given.
+// Markdown still passes through unchanged. Filtering is purely subtractive:
+// kept entries keep their exact original shape (single object or array).
+
+import { readManagedReport } from './report-content.ts'
 
 export interface ViewerPermissions {
   dependencies: boolean
@@ -73,12 +75,17 @@ function tabIsSecurity(tab: unknown, reportSource: unknown): boolean {
 }
 
 // Filter `content` for a viewer with `perms`. Returns the (possibly rewritten)
-// content string; the original is returned untouched when nothing is stripped or
-// the content isn't a JSON findings dump. The entries are read from `findings`
+// content string; after any CSV conversion, content is unchanged when nothing
+// is stripped or it isn't a JSON findings dump. Entries are read from `findings`
 // or, failing that, `groups` — the same precedence as reportEntries — and
 // written back under the key they came from.
-export function filterReportContent(content: string, perms: ViewerPermissions): string {
+export function filterReportContent(content: string, perms: ViewerPermissions, filename = ''): string {
   if (perms.dependencies && perms.security) return content // sees everything → no work
+  if (/\.csv$/iu.test(filename)) {
+    const parsed = readManagedReport(content, filename)
+    if (parsed.data == null) throw new Error('Cannot filter unreadable CSV report')
+    if (parsed.format === 'codex') content = JSON.stringify(parsed.data)
+  }
   let data: unknown
   try { data = JSON.parse(content) } catch { return content } // not JSON → pass through
   if (data == null || typeof data !== 'object') return content

@@ -1,5 +1,5 @@
-// Esbuild entry point for the managed-mode client surface. Mirrors
-// client-sync.js: this file becomes its own output bundle, dynamically
-// imported by view/client-managed.js on first use so the managed-only code
-// stays out of the main view.js bundle.
+// Lazy managed-client entry: authenticated API calls and Manage custom elements.
+// The runtime import in view/client-managed.js keeps this entire surface out of
+// view.js. It loads when a managed session or page is first requested.
+import './managed/pages.js'
 export * from '../client/managed/session.js'

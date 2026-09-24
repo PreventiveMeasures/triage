@@ -20,6 +20,7 @@ import { bundleIntegrity } from '../server-managed/bundle.ts'
 import { filterReportContent } from '../common/managed/report-filter.ts'
 import { MAX_TRIAGE_HISTORY, parseTriageEntryPatch } from '../common/managed/triage.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
+import { managedCsv, managedCsvIds } from './_managed-csv.js'
 
 const config = {
   port: 8765, host: '127.0.0.1', dbPath: ':memory:', debug: false, trustProxyEnv: undefined,
@@ -954,6 +955,49 @@ function bundleHarness(db, cfg = config, reportStore = fakeBlobStore()) {
   }
   return { upload, send }
 }
+
+test('managed CSV reports support downloads, filtered reads, triage, and repository impact', async (t) => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const now = Date.now()
+  const admin = await createSession(config, db, { githubUserId: 1, login: 'admin', name: null, avatarUrl: null }, now)
+  const member = await createSession(config, db, { githubUserId: 2, login: 'member', name: null, avatarUrl: null }, now)
+  await db.setUserRole(member.userId, 'triage')
+  await db.selectRepo({ repoId: 7, fullName: 'o/r', private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: admin.userId }, now)
+  const team = randomUUID()
+  await db.createTeam(team, 'CSV team', now)
+  await db.setTeamRepo(team, 7, null)
+  await db.setTeamMember(team, member.userId, { dependencies: false, security: true })
+  const { upload, send } = bundleHarness(db)
+  const adminCookie = cookiePair(admin.setCookie), memberCookie = cookiePair(member.setCookie)
+  const created = await upload('/api/admin/reports', adminCookie, admin.csrfToken, managedCsv, {
+    'x-report-filename': 'export.csv', 'content-type': 'text/csv', 'x-repo-id': '7',
+  })
+  assert.equal(created.statusCode, 201)
+  const rec = JSON.parse(created.body)
+  assert.equal(rec.analyzer, 'codex-security')
+  assert.equal(rec.repoEmbedded, false)
+  await db.setReportVisible(rec.id, true)
+  const view = `/api/reports/${rec.id}`
+  const triage = `${view}/triage`
+  assert.equal((await send('GET', `/api/admin/reports/${rec.id}`, adminCookie)).body, managedCsv)
+  assert.equal((await send('GET', view, adminCookie)).body, managedCsv)
+  const own = await send('GET', view, memberCookie)
+  assert.equal(own.statusCode, 200)
+  assert.deepEqual(JSON.parse(own.body).findings.map((finding) => finding.id), managedCsvIds.slice(0, 1))
+  const annotate = (cookie, csrf, id) => upload(triage, cookie, csrf, JSON.stringify({ entries: { [id]: { comment: 'Reviewed' } } }))
+  assert.equal((await annotate(memberCookie, member.csrfToken, managedCsvIds[0])).statusCode, 200)
+  assert.equal((await annotate(memberCookie, member.csrfToken, managedCsvIds[1])).statusCode, 404)
+  assert.equal((await annotate(adminCookie, admin.csrfToken, managedCsvIds[1])).statusCode, 200)
+  assert.deepEqual(Object.keys(JSON.parse((await send('GET', triage, memberCookie)).body).entries), managedCsvIds.slice(0, 1))
+  const impact = await send('GET', '/api/admin/repositories/impact?repoId=7', adminCookie)
+  assert.equal(impact.statusCode, 200)
+  assert.equal(JSON.parse(impact.body).triageCount, 2)
+  await db.setTeamMember(team, member.userId, { dependencies: true, security: false })
+  assert.deepEqual(JSON.parse((await send('GET', view, memberCookie)).body).findings, [])
+  assert.deepEqual(JSON.parse((await send('GET', triage, memberCookie)).body).entries, {})
+  assert.equal((await annotate(memberCookie, member.csrfToken, managedCsvIds[0])).statusCode, 404)
+})
 
 test('bundles upload/download/delete: CSRF + role, sha512 dedup, kind, 413/400/404', async () => {
   const db = openSqliteManagedDb(':memory:')

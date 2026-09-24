@@ -50,7 +50,8 @@ import { VISIBILITY_PERMISSIONS, parseTeamUserPermissions } from '../common/mana
 import { filterReportContent } from '../common/managed/report-filter.ts'
 import type { TriageEntryPatch } from '../common/managed/triage.ts'
 import { MAX_FINDING_ID, MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_ENTRIES, MAX_TRIAGE_HISTORY, isTriageBucket, parseTriageEntryPatch } from '../common/managed/triage.ts'
-import { loadFindings, readReport, reportRepoGithub } from '../report/index.js'
+import { reportRepoGithub } from '../report/index.js'
+import { loadManagedFindings, readManagedReport } from '../common/managed/report-content.ts'
 import { normalizeTeamPath } from './repo-path.ts'
 import { DEFAULT_MANAGED_SCAN_MODEL, MANAGED_SCAN_MODELS } from '../common/managed/scan-models.ts'
 import { CONFIG_PATH } from '../common/server-info.ts'
@@ -330,12 +331,12 @@ async function handleSelectRepository(req: IncomingMessage, res: ServerResponse,
   await selectRepository(res, deps, s.user.id, repoId)
 }
 
-async function repositoryFindingIds(deps: ManagedHttpDeps, reports: { id: string }[]): Promise<Set<string>> {
+async function repositoryFindingIds(deps: ManagedHttpDeps, reports: { id: string, filename: string }[]): Promise<Set<string>> {
   const ids = new Set<string>()
   for (const report of reports) {
     const bytes = await deps.reportStore.get(report.id)
     if (bytes == null) throw new Error(`Cannot establish repository triage overlap: report ${report.id} is unavailable`)
-    const parsed = await loadFindings(bytes.toString('utf8'))
+    const parsed = await loadManagedFindings(bytes.toString('utf8'), report.filename)
     if (parsed == null) throw new Error(`Cannot establish repository triage overlap: report ${report.id} is unreadable`)
     for (const finding of parsed.findings) {
       const id = (finding as { id?: unknown })?.id
@@ -357,7 +358,7 @@ async function repositoryImpact(deps: ManagedHttpDeps, repoId: number) {
   }
 }
 
-async function repositoryExclusiveTriageIds(deps: ManagedHttpDeps, reports: { id: string }[], otherReports: { id: string }[]): Promise<string[]> {
+async function repositoryExclusiveTriageIds(deps: ManagedHttpDeps, reports: { id: string, filename: string }[], otherReports: { id: string, filename: string }[]): Promise<string[]> {
   const targetIds = await repositoryFindingIds(deps, reports)
   const triage = await deps.db.listTriage([...targetIds])
   if (triage.length === 0) return []
@@ -567,7 +568,8 @@ async function handleUploadReport(req: IncomingMessage, res: ServerResponse, dep
     return
   }
   if (bytes.length === 0) { sendJson(res, 400, { error: 'empty' }); return }
-  const parsed = readReport(bytes.toString('utf8'))
+  const filename = sanitizeFilename(firstHeader(req.headers['x-report-filename']), 'report.json')
+  const parsed = readManagedReport(bytes.toString('utf8'), filename)
   const repoGithub = parsed.data == null ? null : reportRepoGithub(parsed.data)
   const repoEmbedded = repoGithub != null
   const rawHeaderDirectory = firstHeader(req.headers['x-repo-directory']) ?? ''
@@ -591,7 +593,6 @@ async function handleUploadReport(req: IncomingMessage, res: ServerResponse, dep
     matchedRepo = legacyRepo.repoId == null ? null : selected.find((repo) => repo.repoId === legacyRepo.repoId) ?? null
   }
   const id = randomUUID()
-  const filename = sanitizeFilename(firstHeader(req.headers['x-report-filename']), 'report.json')
   const contentType = (firstHeader(req.headers['content-type']) ?? '').split(';', 1)[0]!.trim() || 'application/json'
   const sha256 = createHash('sha256').update(bytes).digest('base64url')
   const { bundleId, integrity } = await resolveReportBundle(deps, bytes)
@@ -822,7 +823,8 @@ async function viewerReportBytes(deps: ManagedHttpDeps, user: StoredUser, report
   if (user.role === 'admin' || user.role === 'manage') return bytes
   const perms = await deps.db.reportPermissionsFor(user.id, reportId)
   const text = bytes.toString('utf8')
-  const filtered = filterReportContent(text, perms)
+  const rec = await deps.db.getReport(reportId)
+  const filtered = filterReportContent(text, perms, rec?.filename)
   return filtered === text ? bytes : Buffer.from(filtered, 'utf8')
 }
 
@@ -866,7 +868,9 @@ async function visibleFindingIds(deps: ManagedHttpDeps, user: StoredUser, report
   const bytes = await deps.reportStore.get(reportId)
   if (bytes == null) return ids
   const text = bytes.toString('utf8')
-  const report = await loadFindings(perms == null ? text : filterReportContent(text, perms))
+  const rec = await deps.db.getReport(reportId)
+  if (rec == null) return ids
+  const report = await loadManagedFindings(perms == null ? text : filterReportContent(text, perms, rec.filename), rec.filename)
   if (report == null) return ids
   for (const f of report.findings) {
     const id = (f as { id?: unknown }).id
