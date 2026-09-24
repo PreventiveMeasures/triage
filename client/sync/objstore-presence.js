@@ -2393,7 +2393,11 @@ async function reconcileRecheckedReport(entry, workspaceId, row, fetched, delete
 
 // Is a fetched cloud copy older than a state we already know for `tag` —
 // the baseline or the latest broadcast, in the same incarnation at a
-// higher version? (Across incarnations there's no order to compare.)
+// higher version? Across incarnations there's no order to compare, and
+// no need to: a new incarnation only follows a delete, and every delete
+// reaches the re-check's `deletedDuringRecheck` observer (live, or
+// synthesized from a reconnect snapshot), so a fetch that predates one
+// settles as 'missing' before anything is written (review r4099512379).
 function olderThanKnown(entry, tag, got) {
   return [entry.baselines.get(tag), entry.remoteMeta.get(tag)]
     .some((known) => known && known.incarnation === got.incarnation && known.version > got.version)

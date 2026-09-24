@@ -2696,4 +2696,49 @@ describe('client/sync/objstore-presence', () => {
       await deleteFile(fileName).catch(() => {})
     }
   })
+
+  it('a re-check fetch made before a delete + re-upload is applied never overwrites the re-upload (review r4099512379)', async () => {
+    // The re-check fetches incarnation A; a peer then deletes the report
+    // and re-uploads it as B, which the automatic path applies before the
+    // re-check takes the report's lock. Across incarnations there's no
+    // version order, so the stale A would read as "the cloud moved past
+    // the B baseline". What stops it being written over the B copy is
+    // the re-check's delete observer: every incarnation change comes with
+    // a delete event (live, or synthesized from a reconnect snapshot), so
+    // the row settles without touching either copy.
+    const fileName = 'recheck-vs-recreate.json'
+    const peerText = reportJson('peer-B')
+    const { ws, put } = await openSyncedReport('presence-recheck-vs-recreate', fileName, reportJson('synced-A'))
+    const peer = await openPeerSession(ws)
+    const e = __test__.getEntry(ws.id)
+    const [tag] = e.baselines.keys()
+    const realFetchByTag = e.session.fetchByTag.bind(e.session)
+    let incarnationB
+    try {
+      e.session.fetchByTag = async (t) => {
+        const r = await realFetchByTag(t)
+        e.session.fetchByTag = realFetchByTag
+        assert.equal((await peer.delete(fileName, put.meta)).ok, true)
+        const b = await peer.put({ fileName, content: await gzipBytes(encodeUtf8(peerText)), prev: null })
+        assert.equal(b.ok, true)
+        incarnationB = b.meta.incarnation
+        assert.equal(await waitForLocalText(fileName, peerText), peerText, 'B applied before the re-check reconciles')
+        await awaitPresence(() => e.baselines.get(tag)?.incarnation === incarnationB, 'baseline at B')
+        return r  // incarnation A
+      }
+      const row = (await recheckRemoteStorage(ws.id)).items[0]
+      assert.notEqual(row.status, 'updated', `row: ${JSON.stringify(row)}`)
+      assert.equal(await localReportText(fileName), peerText, 'the re-upload is kept')
+      const baseline = e.baselines.get(tag)
+      assert.equal(baseline.incarnation, incarnationB)
+      assert.equal(baseline.synced, true)
+      assert.deepEqual(differingReports(ws.id), [])
+    } finally {
+      e.session.fetchByTag = realFetchByTag
+      peer.close()
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+      await deleteFile(fileName).catch(() => {})
+    }
+  })
 })
