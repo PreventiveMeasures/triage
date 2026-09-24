@@ -2448,4 +2448,50 @@ describe('client/sync/objstore-presence', () => {
       await deleteFile(fileName).catch(() => {})
     }
   })
+
+  it('"Delete everywhere" waits for an in-flight write of the report, so the local delete lands after it (review r4099015005)', async () => {
+    // An automatic write (here a replace-refetch) holds the report's tag
+    // lock from fetch to save. deleteFromRemote used to run beside it, so
+    // the UI's following deleteFile could interleave with the write's
+    // OPFS save and the report came back. It must queue behind the write.
+    const fileName = 'delete-vs-write.json'
+    const peerText = reportJson('peer-v2')
+    const { ws, put } = await openSyncedReport('presence-delete-vs-write', fileName, reportJson('synced-v1'))
+    const peer = await openPeerSession(ws)
+    const e = __test__.getEntry(ws.id)
+    const realFetchByTag = e.session.fetchByTag.bind(e.session)
+    let release
+    const gate = new Promise((resolve) => { release = resolve })
+    let fetchStarted
+    const started = new Promise((resolve) => { fetchStarted = resolve })
+    try {
+      e.session.fetchByTag = async (tag) => {
+        e.session.fetchByTag = realFetchByTag
+        fetchStarted()
+        await gate
+        return realFetchByTag(tag)
+      }
+      assert.equal((await peer.put({ fileName, content: await gzipBytes(encodeUtf8(peerText)), prev: put.meta })).ok, true)
+      await started
+      let deleted = false
+      const deleting = deleteFromRemote(ws.id, fileName).then((r) => { deleted = true; return r })
+      await new Promise((resolve) => { setTimeout(resolve, 300) })
+      assert.equal(deleted, false, 'the delete waits while the write holds the report')
+      release()
+      assert.equal((await deleting).ok, true)
+      // The UI deletes the local copy after deleteFromRemote returns
+      // (ingest.js deleteCurrent); nothing may write it back afterwards.
+      await deleteFile(fileName)
+      await new Promise((resolve) => { setTimeout(resolve, 300) })
+      assert.ok(!(await listFiles()).includes(fileName), 'the deleted report stays deleted')
+      assert.equal(isInRemote(ws.id, fileName), false)
+    } finally {
+      release()
+      e.session.fetchByTag = realFetchByTag
+      peer.close()
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+      await deleteFile(fileName).catch(() => {})
+    }
+  })
 })

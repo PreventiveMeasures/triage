@@ -108,7 +108,13 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
 export function hideTooltip() {
   clearTimeout(showTimer)
   showTimer = null
-  if (tipEl) tipEl.classList.remove('visible')
+  if (tipEl) {
+    tipEl.classList.remove('visible')
+    // Close the popover as well: an open-but-invisible one still matches
+    // `:popover-open`, which other code reads as "a popover is up" (the
+    // links preview's Escape in events.js; review r4099015016).
+    if (typeof tipEl.hidePopover === 'function' && tipEl.matches(':popover-open')) tipEl.hidePopover()
+  }
   currentTarget = null
 }
 

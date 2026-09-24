@@ -1868,21 +1868,30 @@ export async function deleteFromRemote(workspaceId, fileName) {
       entry.fileTags.set(fileName, await computeResourceTag(entry.keys.tagKey, fileName))
     }
     const tag = entry.fileTags.get(fileName)
-    const result = await retryOnConflict((prev) => entry.session.delete(fileName, prev))
-    if (result.ok) {
-      // Synchronous local drop ahead of the `onDeleted` round-trip —
-      // see the header for why (prevents a race-restore).
-      entry.remoteTags.delete(tag)
-      entry.remoteNameByTag.delete(tag)
-      entry.remoteMeta.delete(tag)
-      // Unlike a peer's delete (see `onDeleted`), our own delete drops
-      // the baseline: the user removed the report from this workspace's
-      // cloud (the delete dialog and drag-out both detach it locally
-      // too), so nothing here should track it any more.
-      entry.baselines.delete(tag)
-      notify()
-    }
-    return result
+    // Under the report's tag lock (review r4099015005): an automatic write
+    // of this report (auto-download, replace-refetch) holds it from fetch
+    // to save, and may already be past its last "still wanted?" check.
+    // Queueing behind it means the write finishes first, and the caller's
+    // local delete (`deleteCurrent` deletes the file after this returns)
+    // can't interleave with that write's OPFS save and bring the report
+    // back. Writers queued after us see the tag gone and bail.
+    return await withTagLock(entry, tag, async () => {
+      const result = await retryOnConflict((prev) => entry.session.delete(fileName, prev))
+      if (result.ok) {
+        // Synchronous local drop ahead of the `onDeleted` round-trip —
+        // see the header for why (prevents a race-restore).
+        entry.remoteTags.delete(tag)
+        entry.remoteNameByTag.delete(tag)
+        entry.remoteMeta.delete(tag)
+        // Unlike a peer's delete (see `onDeleted`), our own delete drops
+        // the baseline: the user removed the report from this workspace's
+        // cloud (the delete dialog and drag-out both detach it locally
+        // too), so nothing here should track it any more.
+        entry.baselines.delete(tag)
+        notify()
+      }
+      return result
+    })
   } finally {
     if (openedHere) closeWorkspace(workspaceId)
   }
