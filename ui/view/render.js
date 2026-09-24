@@ -41,6 +41,8 @@ import {
 import { focusCodeHistory, getFocusCode } from './focus-code.js'
 import { openSyncUploadDialog } from './dialogs/sync-upload-dialog.js'
 import { openObjstoreRecoveryDialog } from './dialogs/objstore-recovery-dialog.js'
+import { openSyncSuggestDialog } from './dialogs/sync-suggest-dialog.js'
+import { createSyncSuggester } from './sync-suggest.js'
 
 // View-mode icons + titles + click handling all live in
 // `<view-mode-buttons>` (see view/view-mode-buttons.js); the host
@@ -371,6 +373,10 @@ function headerTemplate(mergedGroups, fileNames, repoInputUseful, knownRepo, tre
   </header>`
 }
 
+// The "Reports out of sync" dialog the badge auto-opens (once per
+// workspace until reload — see sync-suggest.js).
+const { suggestSync } = createSyncSuggester({ open: (names) => openSyncSuggestDialog({ names }) })
+
 // Views this badge is rendered into. A defence rather than a rule —
 // its two call sites (the findings page header, and the links view's
 // header, which takes it as a template) already decide where it goes;
@@ -481,6 +487,10 @@ function syncBadgeTemplate() {
   // different with nothing showing which is newer). Without this chunk
   // they'd read as plain "cloud" and nobody would know to re-check.
   const differing = differingReports(workspaceId)
+  const openRecheck = () => openObjstoreRecoveryDialog({ workspaceId, cloudCount, localFileNames: fileNames, localBundles, autoRun: true })
+  // And say it out loud once: a dialog offering to sync (see
+  // sync-suggest.js for when it opens and when it stays closed).
+  if (differing.length > 0) suggestSync(workspaceId, differing, { onSync: openRecheck, retry: render })
   if (cloudCount === 0 && localOnly.length === 0) return nothing
   // The "cloud" chunk is clickable whenever there's remote state: it
   // opens the recovery dialog to re-check the remote objstore (re-fetch
@@ -495,15 +505,15 @@ function syncBadgeTemplate() {
     localOnly.length > 0 ? `click "local" to upload ${localOnly.length}` : null,
   ].filter(Boolean).join(' — ')
   const differTip = differing.length === 1
-    ? `"${differing[0]}" differs from its cloud copy, and sync can't tell which is newer. Click to re-check and choose which to keep.`
-    : `${differing.length} reports differ from their cloud copies, and sync can't tell which is newer. Click to re-check and choose which to keep.`
+    ? `Your copy of "${differing[0]}" doesn't match its cloud copy. Click to re-check and bring them in line.`
+    : `${differing.length} reports don't match their cloud copies. Click to re-check and bring them in line.`
   const differChunk = differing.length === 0 ? nothing
     : html`<button
         type="button"
         class="sync-badge-chunk differ"
         data-tooltip=${differTip}
         aria-label=${`${differing.length} report${differing.length === 1 ? '' : 's'} differ from the cloud — re-check`}
-        @click=${(e) => { e.stopPropagation(); openObjstoreRecoveryDialog({ workspaceId, cloudCount, localFileNames: fileNames, localBundles, autoRun: true }) }}
+        @click=${(e) => { e.stopPropagation(); openRecheck() }}
       >${differIconTpl()}<span>${differing.length} differ</span></button>`
   const cloudChunk = cloudCount === 0 ? nothing
     : html`<button
