@@ -96,6 +96,8 @@ export {
   setItem as setSecureItem,
 } from './secure-storage.js'
 
+export { forgetScanAccess, hasSavedScanAccess, onSavedScanAccessChange, readSavedScanAccess, saveScanAccess } from './scan-access.js'
+
 export {
   FOCUS_SPLIT_DEFAULT,
   FOCUS_SPLIT_KEY,

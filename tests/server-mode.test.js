@@ -50,6 +50,20 @@ test('parseServerInfo: valid managed with login entry points', () => {
   )
 })
 
+test('scan discovery is validated, ignored for managed mode, and never persisted', () => {
+  const info = parseServerInfo({ mode: 'e2e', deepviewScanServer: 'https://scan.example/prefix' })
+  assert.equal(info.deepviewScanServer, 'https://scan.example/prefix/')
+  writeCachedServerInfo(info)
+  assert.deepEqual(readCachedServerInfo(), { mode: 'e2e', managed: null })
+  localStorage.setItem(SERVER_MODE_KEY, JSON.stringify(info))
+  assert.deepEqual(readCachedServerInfo(), { mode: 'e2e', managed: null }, 'old cached URLs cannot enable scanning')
+  for (const value of [null, 1, '', 'file:///tmp/scan', 'https://key@scan.example', 'https://scan.example/?key=secret']) {
+    assert.deepEqual(parseServerInfo({ mode: 'e2e', deepviewScanServer: value }), { mode: 'e2e', managed: null })
+  }
+  assert.deepEqual(parseServerInfo({ mode: 'managed', deepviewScanServer: 'https://scan.example' }), { mode: 'managed', managed: null })
+  localStorage.removeItem(SERVER_MODE_KEY)
+})
+
 test('parseServerInfo: managed object with a malformed shape degrades to managed:null', () => {
   assert.deepEqual(parseServerInfo({ mode: 'managed', managed: { loginPath: 5 } }), { mode: 'managed', managed: null })
   assert.deepEqual(parseServerInfo({ mode: 'managed', managed: { loginPath: '/x' } }), { mode: 'managed', managed: null })

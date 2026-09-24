@@ -815,6 +815,7 @@ export async function wipeAllVaultData({ refuseIfEnabled = false } = {}) {
         'deepview.repoUrls',
         'deepview.fileCounts',
         'deepview.lastFile',
+        'deepview.scan.access',
         'deepview.triage',
         'deepview.triage.pending',
         'deepview.passkey.firstImportPrompted',

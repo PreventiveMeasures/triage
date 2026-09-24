@@ -20,6 +20,12 @@ test('managed preview triage persists in memory and stays scoped to the requeste
   t.after(() => new Promise((resolve) => { server.closeAllConnections(); server.close(resolve) }))
   await once(server, 'listening')
   const base = `http://127.0.0.1:${server.address().port}/api/reports`
+  const results = await (await fetch(new URL('/api/admin/scan-results', base))).json()
+  const exported = await (await fetch(new URL('/api/admin/reports', base))).json()
+  assert.equal(results.bundles.length, 2)
+  assert.equal(results.results.length, 5)
+  assert.equal(results.results.every(result => results.bundles.some(bundle => bundle.id === result.bundleId)), true)
+  assert.equal(results.results.some(result => exported.reports.some(report => report.id === result.id)), false)
   const first = `${base}/fixture-report-1/triage`
   const second = `${base}/fixture-report-2/triage`
   const impactUrl = new URL('/api/admin/repositories/impact?repoId=101', base)

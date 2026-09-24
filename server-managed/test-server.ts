@@ -94,7 +94,7 @@ const reportFixtures = [
     uploadedByLogin: 'sam-observer', byteSize: 356, bundleFilename: 'managed-fixtures.stasis',
     bundleIntegrity: 'sha512-fixture-managed-1',
     content: JSON.stringify({
-      source: 'deepview',
+      source: 'claude-security',
       repo: { github: 'https://github.com/example/managed-fixtures' },
       findings: [{
         id: 'managed-fixture-3', severity: 'high', confidence: 9,
@@ -206,6 +206,22 @@ function adminTeams() {
 }
 
 function handleAdminCatalog(url: URL, method: string, res: ServerResponse): boolean {
+  if (url.pathname === '/api/admin/scan-results') {
+    if (method !== 'GET') { sendJson(res, 405, { error: 'method-not-allowed' }); return true }
+    // Scan-server results exist independently of saved/exported reports. These
+    // IDs deliberately do not reference reportMetadata or its visibility flags.
+    sendJson(res, 200, {
+      bundles: bundles.filter(bundle => ['fixture-bundle-1', 'fixture-bundle-2'].includes(bundle.id)),
+      results: [
+        { id: 'result-security-1', bundleId: 'fixture-bundle-1', title: 'Security scan', model: 'anthropic/claude-opus-5', analyzer: 'claude-security', findings: 12, createdAt: 'Today, 09:42' },
+        { id: 'result-generic-1', bundleId: 'fixture-bundle-1', title: 'Generic scan', model: 'openai/gpt-6-astra', analyzer: 'codex-security', findings: 28, createdAt: 'Today, 10:15' },
+        { id: 'result-correctness-1', bundleId: 'fixture-bundle-1', title: 'Correctness scan', model: 'moonshotai/kimi-k3', findings: 7, createdAt: 'Today, 10:38' },
+        { id: 'result-security-2', bundleId: 'fixture-bundle-2', title: 'Security scan', model: 'anthropic/claude-opus-5', analyzer: 'claude-security', findings: 4, createdAt: 'Yesterday, 17:20' },
+        { id: 'result-generic-2', bundleId: 'fixture-bundle-2', title: 'Generic scan', model: 'openai/gpt-6-astra', analyzer: 'codex-security', findings: 9, createdAt: 'Yesterday, 17:55' },
+      ],
+    })
+    return true
+  }
   if (url.pathname === '/api/admin/models') {
     if (method !== 'GET') { sendJson(res, 405, { error: 'method-not-allowed' }); return true }
     sendJson(res, 200, { models: scanModels, defaultModel: DEFAULT_MANAGED_SCAN_MODEL })

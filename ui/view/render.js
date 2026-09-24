@@ -1879,6 +1879,15 @@ function renderImpl() {
     }
     state.currentView = 'findings'
   }
+  // Optional local/E2E scan surface. Its host owns navigation and transport.
+  if (state.currentView === 'scan' && customElements.get('local-scan-page')) {
+    const slot = ensureReportSlot('scan-slot')
+    if (slot && !slot.firstElementChild) slot.append(document.createElement('local-scan-page'))
+    report.classList.add('active')
+    dropZone.classList.add('hidden')
+    document.title = 'DeepView — scans'
+    return
+  }
   // Managed admin full pages — see ADMIN_VIEWS.
   const adminView = ADMIN_VIEWS[state.currentView]
   if (adminView) {

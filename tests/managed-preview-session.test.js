@@ -38,7 +38,7 @@ test('admin preview supplies initial Manage data and models to the actual API co
     assert.equal(res.status, 200)
     assert.deepEqual((await res.json())[field], [])
   }
-  const catalogue = await fetchScanModels()
+  const catalogue = await fetchScanModels(undefined, managedFetch)
   assert.ok(catalogue.models.length >= 10)
   assert.ok(catalogue.models.some(model => model.id === catalogue.defaultModel))
   assert.equal(network.mock.callCount(), 0)

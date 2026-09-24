@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs'
 import { argv, env } from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { configuredScanServer } from '../server-common/scan-config.ts'
 
 export type Config = {
   port: number
@@ -26,6 +27,7 @@ export type Config = {
   tokenSecret: Uint8Array<ArrayBuffer> | null
   password: string | null
   trustProxyEnv: string | undefined
+  deepviewScanServer: string | null
 }
 
 // Parse + range-validate an integer env var, exiting with a clear
@@ -49,6 +51,9 @@ const HELP = `Usage: node server-e2e/index.ts
 Environment:
   PORT                       listen port (default 8765)
   HOST                       bind host (default 127.0.0.1)
+  DEEPVIEW_SCAN_SERVER       optional HTTP(S) scan-service URL; advertised
+                             in /api/config and allowed by the UI CSP.
+                             Unset by default (no external scan service).
   DB_PATH                    sqlite file (default: server-e2e/data/data.db);
                              ignored when DATABASE_URL is set
   DATABASE_URL               Neon Postgres connection string; if set,
@@ -205,5 +210,6 @@ export function loadConfig(): Config {
     port, host, dbPath, objstoreDir, reapIntervalMs, reapDisabled, maxInflightPerSocket,
     debug, neonUrl, blobToken, tokenSecret, password,
     trustProxyEnv: env['TRUST_PROXY'],
+    deepviewScanServer: configuredScanServer(env['DEEPVIEW_SCAN_SERVER']),
   }
 }

@@ -70,6 +70,7 @@ import './view/brotli-decompress.js'
 // Side-effect import — paints the empty drop-zone's supported-formats
 // list with the same SVG glyphs the sidebar uses for its rows.
 import './view/drop-supported-icons.js'
+import './view/scan-navigation.js'
 
 // Wire render() into triage-sync so a remote update repaints the view.
 // The client/ layer doesn't import ui/, so this hook bridges the two.

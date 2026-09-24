@@ -1,6 +1,50 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { modelColumns, modelSections } from '../ui/view/scan-model-layout.js'
+import { modelColumns, modelRows, modelSections } from '../ui/view/scan-model-layout.js'
+
+test('GPT pairs use one row in either catalogue order, retaining each variant’s effort limits', () => {
+  const base = { id: 'openai/gpt-6-astra', efforts: ['low', 'high'] }
+  const pro = { id: 'openai/gpt-6-astra-pro', efforts: ['high', 'max'] }
+  const other = { id: 'anthropic/claude-opus-5', efforts: ['max'] }
+  for (const models of [[base, other, pro], [pro, other, base]]) {
+    assert.deepEqual(modelRows(models), [{ ...base, pro }, other])
+  }
+  assert.deepEqual(base, { id: 'openai/gpt-6-astra', efforts: ['low', 'high'] })
+  assert.deepEqual(pro, { id: 'openai/gpt-6-astra-pro', efforts: ['high', 'max'] })
+})
+
+test('unpaired models and non-GPT Pro names remain independently selectable', () => {
+  const models = [
+    'openai/gpt-6-astra', 'another/gpt-6-astra-pro',
+    'gpt-6-other-pro', 'gpt-6-other-mini',
+    'anthropic/claude-opus-5', 'anthropic/claude-opus-5-pro',
+    'provider/notgpt-test', 'provider/notgpt-test-pro',
+  ].map(id => ({ id, efforts: [] }))
+  assert.deepEqual(modelRows(models), models)
+})
+
+test('unqualified GPT pairs and pairs in separate namespaces keep their own variants', () => {
+  const models = ['gpt-test', 'gpt-test-pro', 'openai/gpt-test', 'openai/gpt-test-pro', 'other/gpt-test-pro', 'other/gpt-test'].map(id => ({ id, efforts: [] }))
+  assert.deepEqual(modelRows(models), [
+    { ...models[0], pro: models[1] },
+    { ...models[2], pro: models[3] },
+    { ...models[5], pro: models[4] },
+  ])
+})
+
+test('long providers remain a single section while GPT families retain every canonical model', () => {
+  const models = Array.from({ length: 17 }, (_, index) => [
+    { id: `openai/gpt-test-${index}-pro`, efforts: ['max'] },
+    { id: `openai/gpt-test-${index}`, efforts: ['high'] },
+  ]).flat()
+  const sections = modelSections(models)
+  assert.deepEqual(sections.map(section => section.models.length), [17])
+  const columns = modelColumns(sections, 3)
+  assert.equal(columns.length, 1)
+  const rows = columns.flat().flatMap(section => section.models)
+  assert.equal(rows.length, 17)
+  assert.deepEqual(rows.flatMap(row => [row.pro.id, row.id]), models.map(model => model.id))
+})
 
 function catalogue(lengths) {
   return lengths.flatMap((length, provider) => Array.from({ length }, (_, model) => ({ id: `provider-${provider}/model-${model}` })))

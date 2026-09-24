@@ -6,8 +6,9 @@
 // `join(staticDir, dirent.name)` from `readdirSync` at boot — the
 // request URL is only used as a Map key, never joined with the
 // filesystem — so the handler has no path-traversal surface at all:
-// `..`, percent-encoded slashes, nested subpaths and absolute-form
-// URIs all just produce a key that isn't in the map and 404.
+// `..`, percent-encoded slashes and absolute-form URIs all just
+// produce a key that isn't in the map and 404. Provider SVGs are
+// the one explicitly allowed asset subdirectory.
 //
 // Compression: every entry whose extension is in COMPRESSIBLE gets
 // pre-computed brotli + gzip at boot. The handler picks brotli over
@@ -38,6 +39,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { brotliCompressSync, gzipSync, constants as zlibConstants } from 'node:zlib'
 import { extname, join } from 'node:path'
+import { scanServerHtml } from '../server-common/scan-config.ts'
 
 // MIME types for extensions the production UI bundle currently
 // emits. Anything else falls through to `application/octet-stream`
@@ -102,8 +104,8 @@ export type StaticHandler = (req: HttpRequest, res: ServerResponse) => boolean
 // caller falls through to its next route. Missing `staticDir`
 // (pre-build case) logs a warning and returns a handler that always
 // answers false; the API/WS planes are unaffected.
-export function loadStatic(staticDir: string): StaticHandler {
-  const files = readStaticFiles(staticDir)
+export function loadStatic(staticDir: string, deepviewScanServer: string | null = null): StaticHandler {
+  const files = readStaticFiles(staticDir, deepviewScanServer)
   return function handleStatic(req: HttpRequest, res: ServerResponse): boolean {
     if (req.method !== 'GET' && req.method !== 'HEAD') return false
     if (typeof req.url !== 'string') return false
@@ -151,7 +153,7 @@ export function loadStatic(staticDir: string): StaticHandler {
   }
 }
 
-function readStaticFiles(staticDir: string): ReadonlyMap<string, StaticEntry> {
+function readStaticFiles(staticDir: string, deepviewScanServer: string | null): ReadonlyMap<string, StaticEntry> {
   const files = new Map<string, StaticEntry>()
   let entries
   try { entries = readdirSync(staticDir, { withFileTypes: true }) } catch (err) {
@@ -165,18 +167,24 @@ function readStaticFiles(staticDir: string): ReadonlyMap<string, StaticEntry> {
     throw err
   }
   for (const entry of entries) {
-    // `isFile()` filters subdirectories, symlinks, FIFOs etc. The
-    // build emits a flat tree; dropping anything else keeps the
-    // surface minimal even if a stray non-file sneaks in.
+    if (entry.isDirectory() && entry.name === 'provider-icons') {
+      for (const icon of readdirSync(join(staticDir, entry.name), { withFileTypes: true })) {
+        if (!icon.isFile() || extname(icon.name) !== '.svg') continue
+        const name = `${entry.name}/${icon.name}`
+        files.set(name, buildEntry(staticDir, name))
+      }
+    }
+    // Exclude other subdirectories, symlinks and non-file entries.
     if (!entry.isFile()) continue
-    files.set(entry.name, buildEntry(staticDir, entry.name))
+    files.set(entry.name, buildEntry(staticDir, entry.name, deepviewScanServer))
   }
   return files
 }
 
-function buildEntry(staticDir: string, name: string): StaticEntry {
+function buildEntry(staticDir: string, name: string, deepviewScanServer: string | null = null): StaticEntry {
   const ext = extname(name)
-  const raw = readFileSync(join(staticDir, name))
+  const source = readFileSync(join(staticDir, name))
+  const raw = name === 'index.html' ? Buffer.from(scanServerHtml(source.toString('utf8'), deepviewScanServer)) : source
   const type = CONTENT_TYPE[ext] ?? 'application/octet-stream'
   // HTML: lift `<link rel="(module)preload" …>` into a Link header and
   // drop the tags from the served body. ETag + compression run against

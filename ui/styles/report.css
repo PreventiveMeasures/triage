@@ -11,7 +11,8 @@
    the short content area — is a drag&drop upload target. */
 #manage-reports-slot,
 #manage-bundles-slot,
-#manage-scans-slot {
+#manage-scans-slot,
+#scan-slot {
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;

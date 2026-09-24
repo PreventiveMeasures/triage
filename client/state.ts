@@ -35,7 +35,7 @@ export type FocusCodePos = {
 // count / sort preference — never alters report data. See ui/view/format.js
 // (displayedSeverity) and <severity-mode-switch>.
 export type SeverityMode = 'corrected' | 'original'
-export type CurrentView = 'findings' | 'files' | 'bundles' | 'links' | 'manage' | 'admin-users' | 'manage-repos' | 'manage-reports' | 'manage-bundles' | 'manage-history' | 'manage-scans' | 'manage-teams'
+export type CurrentView = 'findings' | 'files' | 'bundles' | 'links' | 'scan' | 'manage' | 'admin-users' | 'manage-repos' | 'manage-reports' | 'manage-bundles' | 'manage-history' | 'manage-scans' | 'manage-teams'
 
 // The links file the 'links' view is showing: its OPFS name and the
 // links it declares, one `string[]` of finding ids per link (see
@@ -205,6 +205,8 @@ export interface State {
   // Managed-mode entry points (login path + cookie name) when managed; null
   // for e2e.
   managed: ManagedServerInfo | null
+  // Fresh runtime discovery only; never restored from the protocol cache.
+  deepviewScanServer: string | null
   // True when the server reported a DIFFERENT protocol than the cached one —
   // a cross-mode switch we refuse for now (explicit migration UI is future
   // work); sync stays paused while set.
@@ -932,6 +934,7 @@ export const state: State = store<State>({
   // localStorage cache so mode-aware UI is correct on first paint; the live
   // `server-info` connect frame confirms / updates it.
   serverMode: INITIAL_SERVER_INFO?.mode ?? 'e2e',
+  deepviewScanServer: null,
   localMode: false,
   managed: INITIAL_SERVER_INFO?.managed ?? null,
   // Set when the server reports a different protocol than the cached one; the

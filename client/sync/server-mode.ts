@@ -13,6 +13,7 @@
 // compile error on both sides.
 
 import { CONFIG_PATH, type ManagedServerInfo, type ServerInfo, type ServerMode } from '../../common/server-info.ts'
+import { normalizeScanServer } from '../../common/scan-server.ts'
 export type { ManagedServerInfo, ServerInfo, ServerMode }
 export { CONFIG_PATH }
 
@@ -47,7 +48,8 @@ export function parseServerInfo(body: unknown): ServerInfo | null {
       managed = { loginPath, cookieName }
     }
   }
-  return { mode, managed }
+  const deepviewScanServer = mode === 'e2e' ? normalizeScanServer((body as { deepviewScanServer?: unknown }).deepviewScanServer) : null
+  return { mode, managed, ...(deepviewScanServer ? { deepviewScanServer } : {}) }
 }
 
 // Only an explicit 404 confirms a backend-less deployment. Network errors,
@@ -77,13 +79,14 @@ export function readCachedServerInfo(): ServerInfo | null {
   try {
     const raw = localStorage.getItem(SERVER_MODE_KEY)
     if (raw == null) return null
-    return parseServerInfo(JSON.parse(raw))
+    const info = parseServerInfo(JSON.parse(raw))
+    return info ? { mode: info.mode, managed: info.managed } : null
   } catch { return null }
 }
 
 export function writeCachedServerInfo(info: ServerInfo): void {
   try {
-    localStorage.setItem(SERVER_MODE_KEY, JSON.stringify(info))
+    localStorage.setItem(SERVER_MODE_KEY, JSON.stringify({ mode: info.mode, managed: info.managed }))
     localStorage.removeItem(STANDALONE_PROBE_KEY)
   } catch {}
 }
