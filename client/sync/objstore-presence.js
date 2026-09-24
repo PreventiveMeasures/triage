@@ -18,6 +18,7 @@
 
 import { computeBundleResourceTag, computeResourceTag, deriveObjstoreKeys, objstorePayloadWireLength } from './objstore-content-crypto.ts'
 import { createObjstoreClient } from './objstore.ts'
+import { computeContentHash } from './objstore-crypto.ts'
 import { getSharedTransport } from './sync-transport.ts'
 import { triageSync } from './triage-sync.ts'
 import { decodeUtf8 } from '../../common/utf8.js'
@@ -41,6 +42,11 @@ let saveBundle
 let saveFileBytes
 
 const sessions = new Map()
+
+// How long after a save of a report to check it for a local change.
+// The Replace flow saves, then uploads; checking at once would flag
+// the change ("1 differ") for the length of every successful upload.
+const LOCAL_CHANGE_SETTLE_MS = 2_000
 const listeners = new Set()
 
 // Persisted tag→name cache, keyed per-workspace in localStorage.
@@ -93,14 +99,17 @@ function parseBaselines(raw, legacy) {
   const out = {}
   if (legacy && typeof legacy === 'object') {
     for (const [tag, version] of Object.entries(legacy)) {
-      if (Number.isSafeInteger(version) && version >= 0) out[tag] = { version, incarnation: null, synced: true }
+      if (Number.isSafeInteger(version) && version >= 0) out[tag] = { version, incarnation: null, synced: true, hash: null }
     }
   }
   if (raw && typeof raw === 'object') {
     for (const [tag, b] of Object.entries(raw)) {
       if (!b || typeof b !== 'object' || !Number.isSafeInteger(b.version) || b.version < 0) continue
       if (b.incarnation != null && typeof b.incarnation !== 'string') continue
-      out[tag] = { version: b.version, incarnation: b.incarnation ?? null, synced: b.synced === true }
+      out[tag] = {
+        version: b.version, incarnation: b.incarnation ?? null, synced: b.synced === true,
+        hash: typeof b.hash === 'string' ? b.hash : null,
+      }
     }
   }
   return out
@@ -288,7 +297,7 @@ export function openWorkspace(workspaceId) {
     // a delete + re-upload restarts the version at 1 under a fresh
     // incarnation, which a version-only comparison reads as "older".
     remoteMeta: new Map(),
-    // `resourceTag → { version, incarnation, synced }` — the cloud
+    // `resourceTag → { version, incarnation, synced, hash }` — the cloud
     // state our local copy of the report was last reconciled against.
     // `synced: true` means the local bytes ARE that cloud copy (we
     // downloaded it, uploaded it, or compared and found them equal);
@@ -303,7 +312,19 @@ export function openWorkspace(workspaceId) {
     // new content rather than an echo. Reports with no baseline are
     // never overwritten on a guess — a never-uploaded local file
     // shouldn't get clobbered by a peer's first put with the same name.
+    // `hash` (synced baselines only; null when unknown) is the SHA-256
+    // of the local bytes at that point, so a local change since — a
+    // Replace whose upload never landed — is detectable without a
+    // fetch (`checkLocalCopy`).
     baselines: new Map(),
+    // Tags whose synced baseline no longer matches the local bytes: the
+    // local copy changed since it was last in sync with the cloud.
+    // Maintained by `checkLocalCopy` (at open, and on every save of the
+    // file); cleared whenever a baseline is set.
+    localChanged: new Set(),
+    // fileNames this entry is writing right now — the file-mutation
+    // hook skips them (the writer sets the baseline itself).
+    selfWrites: new Map(),
     // `resourceTag → promise` tail of the per-tag queue that
     // serializes local writes of a report's bytes (`withTagLock`).
     tagLocks: new Map(),
@@ -474,6 +495,9 @@ export function openWorkspace(workspaceId) {
           maybeApplyRemoteReplace(entry, tag).catch(() => {})
         }
       }
+      // Local changes made while this session was closed (see
+      // `scanLocalCopies`) — flags them for the badge's "N differ".
+      scanLocalCopies(entry).catch(() => {})
     } catch (err) {
       entry.err = err
     }
@@ -613,6 +637,24 @@ onSyncHostInstalled((host) => {
   readFileBytes = host.readFileBytes
   saveBundle = host.saveBundle
   saveFileBytes = host.saveFileBytes
+
+  // A save of a report some open workspace tracks may leave its local
+  // copy different from what it was last synced with — a Replace whose
+  // upload fails, or never happens because that workspace's session
+  // wasn't asked to upload. Re-check it once the save has settled; a
+  // delete just drops the flag (no local copy to compare).
+  host.onFileMutated?.((name, kind) => {
+    for (const entry of sessions.values()) {
+      const tag = entry.fileTags.get(name)
+      if (tag === undefined) continue
+      if (kind === 'delete') {
+        if (entry.localChanged.delete(tag)) notify()
+        continue
+      }
+      if (entry.selfWrites.has(name)) continue
+      setTimeout(() => { checkLocalCopy(entry, tag, name).catch(() => {}) }, LOCAL_CHANGE_SETTLE_MS)
+    }
+  })
 
   host.onReportMembershipChanged((workspaceId) => {
     // Open the presence session if not already — without this, a drag
@@ -783,6 +825,21 @@ export function remoteFileNames(workspaceId) {
   return Array.from(entry.remoteNameByTag.values())
 }
 
+// Reports of this workspace whose local copy and cloud copy may differ
+// in a way the automatic sync won't settle on its own — changed locally
+// since they were last in sync, or compared-and-different with nothing
+// showing which is newer. Sync, for the badge's "N differ" chunk: only
+// a re-check (where the user chooses) brings these back in line.
+export function differingReports(workspaceId) {
+  const entry = sessions.get(workspaceId)
+  if (!entry) return []
+  const ws = listWorkspaces().find((w) => w.id === workspaceId)
+  return (ws?.reports ?? []).filter((name) => {
+    const tag = entry.fileTags.get(name)
+    return tag !== undefined && needsRecheck(entry, tag)
+  })
+}
+
 // Total number of remote resources the relay holds for this
 // workspace — sync, used by the badge to pin the cloud-count even
 // while background name-decoding is in flight.
@@ -873,11 +930,24 @@ function noteRemoteMeta(entry, tag, version, incarnation) {
 // reconciled against? A different incarnation is a delete + re-upload
 // (whose version restarts at 1, so comparing versions alone misses
 // it); within an incarnation a higher version is a Replace. Legacy
-// baselines carry no incarnation and compare by version only.
+// baselines carry no incarnation, so any version change counts: a
+// LOWER version than one we once synced can only be a re-upload, since
+// versions never go down within an incarnation. (An equal version is
+// ambiguous for them — discovery fetches legacy baselines once to
+// settle it; see `hasFullBaseline`.)
 function remoteMovedPast(baseline, remote) {
   if (!baseline || !remote) return false
-  if (baseline.incarnation !== null && baseline.incarnation !== remote.incarnation) return true
-  return remote.version > baseline.version
+  if (baseline.incarnation === null) return remote.version !== baseline.version
+  return baseline.incarnation !== remote.incarnation || remote.version > baseline.version
+}
+
+// A baseline that pins a cloud incarnation — i.e. not missing and not
+// migrated from the version-only legacy cache. Only these let discovery
+// skip the fetch: a legacy baseline can't tell a delete + re-upload that
+// restarted at the same version apart from the copy it was synced with.
+function hasFullBaseline(entry, tag) {
+  const baseline = entry.baselines.get(tag)
+  return !!baseline && baseline.incarnation !== null
 }
 
 // Does the baseline pin exactly this cloud state, with the local bytes
@@ -889,8 +959,83 @@ function baselineIs(baseline, remote) {
     && baseline.incarnation === remote.incarnation && baseline.version === remote.version
 }
 
-function setBaseline(entry, tag, meta, synced) {
-  entry.baselines.set(tag, { version: meta.version, incarnation: meta.incarnation, synced })
+// `hash`: SHA-256 of the local bytes this baseline describes (synced
+// ones), or null. Setting a baseline re-describes the local copy, so it
+// also clears a local-change flag; notifies when that flips whether the
+// report needs a re-check (the badge's "differ" count).
+function setBaseline(entry, tag, meta, synced, hash = null) {
+  const before = needsRecheck(entry, tag)
+  entry.baselines.set(tag, { version: meta.version, incarnation: meta.incarnation, synced, hash: synced ? hash : null })
+  entry.localChanged.delete(tag)
+  if (!entry.disposed && needsRecheck(entry, tag) !== before) notify()
+}
+
+// Has the local copy changed since the (synced) baseline was recorded?
+// Only answerable when the baseline carries the hash of the bytes it
+// was synced with.
+function localChangedSince(baseline, localHash) {
+  return !!baseline && baseline.synced && !!baseline.hash && !!localHash && baseline.hash !== localHash
+}
+
+// Does this report need the user's attention in a re-check? Either the
+// local copy changed since it was last in sync (a Replace that never
+// uploaded), or it was compared with the cloud copy, found different,
+// and nothing showed which is newer — and the cloud hasn't moved since
+// (a cloud Replace would be taken automatically).
+function needsRecheck(entry, tag) {
+  if (!entry.remoteTags.has(tag)) return false
+  if (entry.localChanged.has(tag)) return true
+  const baseline = entry.baselines.get(tag)
+  return !!baseline && !baseline.synced && !remoteMovedPast(baseline, entry.remoteMeta.get(tag))
+}
+
+// Save a report's bytes on this entry's behalf; the file-mutation hook
+// skips this entry for the duration (it sets the baseline itself —
+// checking against the not-yet-updated one would flag a false local
+// change). Other workspaces listing the same file ARE checked: their
+// cloud copies don't have these bytes.
+async function saveOwnBytes(entry, fileName, bytes) {
+  entry.selfWrites.set(fileName, (entry.selfWrites.get(fileName) ?? 0) + 1)
+  try { await saveFileBytes(fileName, bytes) }
+  finally {
+    const n = entry.selfWrites.get(fileName) - 1
+    if (n > 0) entry.selfWrites.set(fileName, n)
+    else entry.selfWrites.delete(fileName)
+  }
+}
+
+// Re-hash the local copy of `fileName` against its synced baseline and
+// flag / unflag it as changed. Under the tag lock, so it can't hash
+// bytes a writer is about to replace and then compare them against the
+// writer's new baseline.
+function checkLocalCopy(entry, tag, fileName) {
+  return withTagLock(entry, tag, async () => {
+    const baseline = entry.baselines.get(tag)
+    if (entry.disposed || !baseline?.synced || !baseline.hash) return
+    let bytes
+    try { bytes = await readFileBytes(fileName) } catch { return }
+    const hash = await computeContentHash(bytes)
+    if (entry.disposed || entry.baselines.get(tag) !== baseline) return
+    const changed = baseline.hash !== hash
+    if (changed === entry.localChanged.has(tag)) return
+    if (changed) entry.localChanged.add(tag)
+    else entry.localChanged.delete(tag)
+    notify()
+  })
+}
+
+// At open: check every claimed report with a hashed synced baseline —
+// catches a local change made while this workspace's session was closed
+// (the Replace flow saves before it opens the sessions it uploads to).
+// Sequential: one report's bytes in memory at a time.
+async function scanLocalCopies(entry) {
+  const ws = listWorkspaces().find((w) => w.id === entry.workspaceId)
+  for (const name of ws?.reports ?? []) {
+    if (entry.disposed) return
+    const tag = entry.fileTags.get(name)
+    if (tag === undefined || !entry.baselines.get(tag)?.hash) continue
+    try { await checkLocalCopy(entry, tag, name) } catch {}
+  }
 }
 
 // Serialize the writers of one report's local bytes (auto-download,
@@ -916,15 +1061,18 @@ function bytesEqual(a, b) {
 // bytes? Byte-equal is the common case (our bytes came from, or went
 // to, the relay verbatim); otherwise compare the decompressed report,
 // so two independently-gzipped copies of one report still match.
-// Returns null when there's no readable local copy.
-async function localMatchesRemote(fileName, remoteBytes) {
+// Returns `{ same, hash }` — `same` null when there's no readable local
+// copy; `hash` the SHA-256 of the local bytes (for the baseline, and
+// for `localChangedSince`).
+async function compareLocal(fileName, remoteBytes) {
   let local
-  try { local = await readFileBytes(fileName) } catch { return null }
-  if (bytesEqual(local, remoteBytes)) return true
+  try { local = await readFileBytes(fileName) } catch { return { same: null, hash: null } }
+  const hash = await computeContentHash(local)
+  if (bytesEqual(local, remoteBytes)) return { same: true, hash }
   try {
     const [a, b] = await Promise.all([gunzipBytes(local), gunzipBytes(remoteBytes)])
-    return bytesEqual(a, b)
-  } catch { return false }
+    return { same: bytesEqual(a, b), hash }
+  } catch { return { same: false, hash } }
 }
 
 // Overwrite the local copy of `got.fileName` with the cloud copy `got`,
@@ -942,10 +1090,10 @@ async function writeRemoteBytes(entry, tag, got, stillWanted) {
   if (!result.recognized) {
     throw new Error(`cloud copy of "${got.fileName}" did not analyze as a recognized report — refusing to overwrite local copy`)
   }
-  await saveFileBytes(got.fileName, got.content)
+  await saveOwnBytes(entry, got.fileName, got.content)
   if (entry.disposed) return false
   setCount(got.fileName, result.count, result.source)
-  setBaseline(entry, tag, got, true)
+  setBaseline(entry, tag, got, true, await computeContentHash(got.content))
   savePresenceCache(entry.workspaceId, entry)
   for (const cb of autoDownloadListeners) {
     try { cb(entry.workspaceId, got.fileName) } catch {}
@@ -956,11 +1104,22 @@ async function writeRemoteBytes(entry, tag, got, stillWanted) {
 // Bring the local copy up to the cloud copy `got`: record a synced
 // baseline when they already match (no write, no UI reload), else
 // overwrite. Returns true when the local bytes changed.
-async function applyRemoteBytes(entry, tag, got, stillWanted) {
-  const same = await localMatchesRemote(got.fileName, got.content)
+//
+// `keepLocalChanges` (the automatic paths): if the local copy ALSO
+// changed since it was last in sync — a Replace that never uploaded —
+// both sides moved, and taking the cloud copy would silently discard
+// the user's. Leave both alone and record the difference instead, so
+// the badge asks for a re-check where the user chooses.
+async function applyRemoteBytes(entry, tag, got, stillWanted, { keepLocalChanges = true } = {}) {
+  const { same, hash } = await compareLocal(got.fileName, got.content)
   if (!stillWanted()) return false
   if (same) {
-    setBaseline(entry, tag, got, true)
+    setBaseline(entry, tag, got, true, hash)
+    savePresenceCache(entry.workspaceId, entry)
+    return false
+  }
+  if (keepLocalChanges && localChangedSince(entry.baselines.get(tag), hash)) {
+    setBaseline(entry, tag, got, false)
     savePresenceCache(entry.workspaceId, entry)
     return false
   }
@@ -1001,12 +1160,14 @@ async function ensureRemoteNames(entry) {
     // Skip the discovery `fetchByTag` only when the cached
     // name / integrity is ALSO claimed by the live workspace AND the
     // bytes are present on disk AND (for reports) the local copy has
-    // a baseline. A report without one was never reconciled against
-    // the cloud (attached by drag-drop, imported, downloaded before
-    // baselines were recorded): fetch it once so `maybeAutoDownload`
-    // can compare and record one — otherwise a later Replace that
-    // lands while this client is offline could never be detected. A
-    // cached entry that fails the other clauses means one of:
+    // a full baseline. A report without one was never reconciled
+    // against the cloud (attached by drag-drop, imported, downloaded
+    // before baselines were recorded), or only has a version-only
+    // legacy baseline: fetch it once so `maybeAutoDownload` can
+    // compare and record a full one — otherwise a later Replace, or a
+    // delete + re-upload, that lands while this client is offline
+    // could never be detected. A cached entry that fails the other
+    // clauses means one of:
     //   - the user did a local-only delete (cache pin survived the
     //     OPFS removal; without the membership check the file would
     //     stay invisible forever even with the peer copy still in
@@ -1038,7 +1199,7 @@ async function ensureRemoteNames(entry) {
     if (cachedName !== undefined
         && liveReports.has(cachedName)
         && localReportFiles.has(cachedName)
-        && entry.baselines.has(tag)) continue
+        && hasFullBaseline(entry, tag)) continue
     if (entry.remoteBundleByTag.has(tag)) {
       const integrity = entry.remoteBundleByTag.get(tag)
       if (entry.remoteBundleNameByIntegrity.has(integrity) && liveBundles.has(integrity)) continue
@@ -1233,10 +1394,10 @@ async function autoDownloadLocked(entry, tag, got) {
     // The copy is claimed now; record how it compares with the cloud
     // copy we already hold, so the next open needn't fetch it again.
     if (!entry.baselines.has(tag)) {
-      const same = await localMatchesRemote(fileName, bytes)
+      const { same, hash } = await compareLocal(fileName, bytes)
       if (entry.disposed) return
       if (same !== null) {
-        setBaseline(entry, tag, got, same)
+        setBaseline(entry, tag, got, same, hash)
         savePresenceCache(entry.workspaceId, entry)
       }
     }
@@ -1278,7 +1439,7 @@ async function autoDownloadLocked(entry, tag, got) {
   const result = analyzeContent(text)
   if (!result.recognized) return
   try {
-    await saveFileBytes(fileName, bytes)
+    await saveOwnBytes(entry, fileName, bytes)
     if (entry.disposed || !entry.remoteTags.has(tag)) return
     setCount(fileName, result.count, result.source)
     // Record the baseline: the cloud state these bytes ARE (the
@@ -1288,7 +1449,7 @@ async function autoDownloadLocked(entry, tag, got) {
     // this client was offline (the boot-divergence loop in
     // `openWorkspace`). Persisted to localStorage via the
     // `savePresenceCache` write below so it survives reloads.
-    setBaseline(entry, tag, got, true)
+    setBaseline(entry, tag, got, true, await computeContentHash(bytes))
     // Final re-check before the membership-mutate await — matches
     // the branch-2 guard. setCount is synchronous so the only
     // checkpoint that could race is the addReportToWorkspace lock-
@@ -1319,35 +1480,43 @@ async function autoDownloadLocked(entry, tag, got) {
 // 1) left every existing peer on the old content for good.
 async function reconcileClaimedCopy(entry, tag, got) {
   const stillWanted = () => !entry.disposed && entry.remoteTags.has(tag)
-  const same = await localMatchesRemote(got.fileName, got.content)
+  const { same, hash } = await compareLocal(got.fileName, got.content)
   if (!stillWanted() || same === null) return
   const baseline = entry.baselines.get(tag)
   if (same) {
-    if (!baselineIs(baseline, got)) {
-      setBaseline(entry, tag, got, true)
+    if (!baselineIs(baseline, got) || baseline.hash !== hash) {
+      setBaseline(entry, tag, got, true, hash)
       savePresenceCache(entry.workspaceId, entry)
     }
     return
   }
-  if (remoteMovedPast(baseline, got)) {
+  if (remoteMovedPast(baseline, got) && !localChangedSince(baseline, hash)) {
     // The cloud copy moved on since the local one was reconciled — a
     // Replace, or a delete + re-upload. Take it.
     try { await writeRemoteBytes(entry, tag, got, stillWanted) }
     catch (err) { console.warn(`auto-download: ${err.message}`, err) }
     return
   }
-  if (!baseline) {
-    // No evidence which copy is newer (never reconciled before): keep
-    // the local bytes rather than clobber them on a guess, but record
-    // that we compared, so this doesn't re-fetch on every open. The
-    // re-check resolves it; a later cloud Replace moves past this
+  if (!baseline || baseline.incarnation === null || remoteMovedPast(baseline, got)) {
+    // No evidence which copy is newer (never reconciled before, or a
+    // legacy baseline at this same version — a re-upload that restarted
+    // there looks exactly like a local Replace that never uploaded), or
+    // BOTH changed since they were in sync. Keep the local bytes rather
+    // than clobber them on a guess, and record that we compared, so this
+    // doesn't re-fetch on every open. The badge asks for a re-check,
+    // where the user chooses; a later cloud Replace moves past this
     // marker and is taken like any other.
     setBaseline(entry, tag, got, false)
     savePresenceCache(entry.workspaceId, entry)
+    return
   }
   // Else the baseline pins this very cloud state and the local copy
-  // changed since (a Replace whose upload never landed): keep it — the
-  // re-check uploads it.
+  // changed since (a Replace whose upload never landed): keep it, and
+  // flag it — the badge asks for a re-check, which uploads it.
+  if (localChangedSince(baseline, hash) && !entry.localChanged.has(tag)) {
+    entry.localChanged.add(tag)
+    notify()
+  }
 }
 
 // Fan-out for a peer's Replace under an existing resourceTag.
@@ -1565,11 +1734,11 @@ export async function downloadFileFromRemote(workspaceId, fileName) {
     catch { return { ok: false, reason: 'remote payload is not gzipped UTF-8' } }
     const result = analyzeContent(text)
     if (!result.recognized) return { ok: false, reason: 'remote payload is not a recognized report format' }
-    await saveFileBytes(fileName, got.content)
+    await saveOwnBytes(entry, fileName, got.content)
     setCount(fileName, result.count, result.source)
     if (!entry.disposed) {
       entry.fileTags.set(fileName, tag)
-      setBaseline(entry, tag, got, true)
+      setBaseline(entry, tag, got, true, await computeContentHash(got.content))
       savePresenceCache(workspaceId, entry)
     }
     return { ok: true }
@@ -1603,7 +1772,7 @@ export async function putFile(workspaceId, fileName, content) {
   // r3242197772).
   const result = await retryOnConflict((prev) => entry.session.put({ fileName, content, prev }))
   if (result.ok) {
-    try { await recordOwnUpload(entry, fileName, result.meta) } catch {}
+    try { await recordOwnUpload(entry, fileName, result.meta, content) } catch {}
   }
   return result
 }
@@ -1621,14 +1790,15 @@ export async function putFile(workspaceId, fileName, content) {
 // every reconnect would re-fetch each report we ever uploaded. Callers
 // upload the on-disk bytes (they wrote them via saveFile before
 // calling putFile), so the local copy IS this cloud state.
-async function recordOwnUpload(entry, fileName, meta) {
+async function recordOwnUpload(entry, fileName, meta, content) {
   if (!entry.keys || entry.disposed) return
   const tag = entry.fileTags.get(fileName)
     ?? await computeResourceTag(entry.keys.tagKey, fileName)
+  const hash = await computeContentHash(content)
   if (entry.disposed) return
   entry.fileTags.set(fileName, tag)
   noteRemoteMeta(entry, tag, meta.version, meta.incarnation)
-  setBaseline(entry, tag, meta, true)
+  setBaseline(entry, tag, meta, true, hash)
   savePresenceCache(entry.workspaceId, entry)
 }
 
@@ -1868,18 +2038,22 @@ export async function deleteBundleFromRemote(workspaceId, integrity) {
 //      ciphertext at version+1 (the live row's version-CAS accepts it).
 //   4. If a healthy object is a report this workspace holds, compare the
 //      cloud copy with the local one (`reconcileRecheckedReport`). When
-//      they differ, the cloud copy replaces the local one — unless the
-//      baseline proves the cloud copy is the one this client last synced
-//      and the local copy changed since, in which case the local copy is
-//      uploaded (version-CAS on the fetched state, so a Replace racing the
-//      re-check isn't overwritten).
+//      they differ and the baseline shows which is newer, bring the
+//      other in line: the cloud copy moved on → it replaces the local
+//      one; the cloud copy is the one this client last synced and the
+//      local one changed since → the local copy is uploaded (version-CAS
+//      on the fetched state, so a Replace racing the re-check isn't
+//      overwritten). Without such evidence neither copy is touched: the
+//      row reads 'differs' and the user picks (`resolveReportDifference`).
 //   5. Report a status per object:
-//      'good' | 'updated' | 'uploaded' | 'reuploaded' | 'failed'
-//      | 'check-failed' | 'missing'
+//      'good' | 'updated' | 'uploaded' | 'differs' | 'reuploaded'
+//      | 'failed' | 'check-failed' | 'missing'
 //        - 'updated'      = the local copy was stale and now matches the
 //                           cloud copy.
 //        - 'uploaded'     = the cloud copy was stale and now matches the
 //                           local copy.
+//        - 'differs'      = the copies differ and nothing shows which is
+//                           newer; left for the user to choose.
 //        - 'failed'       = a held copy whose re-UPLOAD attempt errored, or
 //                           a stale copy whose update / upload errored
 //                           (retryable; reason on `detail`).
@@ -1951,7 +2125,7 @@ export async function recheckRemoteStorage(workspaceId, { onList, onItem } = {})
     })
     if (typeof onList === 'function') { try { onList(rows.map(publicRecoveryRow)) } catch {} }
 
-    const counts = { good: 0, updated: 0, uploaded: 0, reuploaded: 0, failed: 0, 'check-failed': 0, missing: 0 }
+    const counts = { good: 0, updated: 0, uploaded: 0, differs: 0, reuploaded: 0, failed: 0, 'check-failed': 0, missing: 0 }
     for (const row of rows) {
       row.status = await classifyAndRecover(entry, workspaceId, row, deletedDuringRecheck)
       counts[row.status] += 1
@@ -2058,8 +2232,11 @@ async function classifyAndRecover(entry, workspaceId, row, deletedDuringRecheck)
 // Step (4): a healthy cloud report — is this workspace's copy of it the
 // same report? Only reports the workspace claims are reconciled; a
 // remote report it doesn't list is left to the dialog's download
-// action. A claimed report missing from local storage is restored.
-// Returns 'good' | 'updated' | 'uploaded' | 'failed' | 'missing'.
+// action. When the copies differ, act only on evidence of which is
+// newer; without it, report 'differs' and let the user choose
+// (`resolveReportDifference`) rather than overwrite either copy on a
+// guess. Returns 'good' | 'updated' | 'uploaded' | 'differs' | 'failed'
+// | 'missing'.
 async function reconcileRecheckedReport(entry, workspaceId, row, got, deletedDuringRecheck) {
   const ws = listWorkspaces().find((w) => w.id === workspaceId)
   if (!ws || !Array.isArray(ws.reports) || !ws.reports.includes(got.fileName)) return 'good'
@@ -2068,12 +2245,12 @@ async function reconcileRecheckedReport(entry, workspaceId, row, got, deletedDur
   // (Not gated on `entry.remoteTags` — see `recheckRemoteStorage`.)
   const stillWanted = () => !entry.disposed && !deletedDuringRecheck.has(tag)
   return await withTagLock(entry, tag, async () => {
-    const same = await localMatchesRemote(got.fileName, got.content)
+    const { same, hash } = await compareLocal(got.fileName, got.content)
     if (!stillWanted()) return 'missing'
     const baseline = entry.baselines.get(tag)
     if (same) {
-      if (!baselineIs(baseline, got)) {
-        setBaseline(entry, tag, got, true)
+      if (!baselineIs(baseline, got) || baseline.hash !== hash) {
+        setBaseline(entry, tag, got, true, hash)
         savePresenceCache(workspaceId, entry)
       }
       return 'good'
@@ -2083,34 +2260,93 @@ async function reconcileRecheckedReport(entry, workspaceId, row, got, deletedDur
       // changed since — a local Replace whose upload never landed.
       // Ours is the newer report: upload it, conditional on the cloud
       // still being at the state we fetched.
+      const r = await uploadLocalCopy(entry, tag, got.fileName, got, stillWanted)
+      row.detail = r.detail
+      return r.status
+    }
+    if (same === null || (remoteMovedPast(baseline, got) && !localChangedSince(baseline, hash))) {
+      // The local copy is missing (nothing to lose), or the cloud copy
+      // moved on since ours was in sync and ours didn't change — a
+      // Replace or re-upload the automatic paths haven't applied yet.
+      // The cloud copy is newer: take it.
       try {
-        const bytes = await readFileBytes(got.fileName)
-        if (!stillWanted()) return 'missing'
-        const r = await entry.session.put({ fileName: got.fileName, content: bytes, prev: { version: got.version, incarnation: got.incarnation } })
-        if (r.ok) {
-          noteRemoteMeta(entry, tag, r.meta.version, r.meta.incarnation)
-          setBaseline(entry, tag, r.meta, true)
-          savePresenceCache(workspaceId, entry)
-          return 'uploaded'
-        }
-        row.detail = r.reason === 'conflict'
-          ? 'the cloud copy changed during the re-check — re-check again'
-          : `upload rejected: ${r.reason ?? 'unknown'}`
-        return 'failed'
+        return (await writeRemoteBytes(entry, tag, got, stillWanted)) ? 'updated' : 'missing'
       } catch (err) {
-        row.detail = `upload error: ${err?.message ?? String(err)}`
-        console.warn(`objstore-recovery: uploading the local copy of "${got.fileName}" failed:`, err)
+        row.detail = `updating your copy failed: ${err?.message ?? String(err)}`
+        console.warn(`objstore-recovery: updating the local copy of "${got.fileName}" failed:`, err)
         return 'failed'
       }
     }
-    // Stale (or missing) local copy: the cloud copy is the report every
-    // other member sees — take it.
+    // Different, and nothing says which is newer (never reconciled, a
+    // legacy baseline, already compared-and-different, or BOTH copies
+    // changed since they were last in sync). Record that we
+    // compared, hand the row the cloud state it was compared against —
+    // "Upload mine" (`resolveReportDifference`) uploads over exactly that
+    // state — and leave the choice to the user.
+    setBaseline(entry, tag, got, false)
+    savePresenceCache(workspaceId, entry)
+    row.compared = { version: got.version, incarnation: got.incarnation }
+    return 'differs'
+  })
+}
+
+// Upload the local copy of `fileName` over the cloud state `prev`. The
+// put is version-CAS'd on `prev`, so a write that landed since fails
+// ('the cloud copy changed') instead of being overwritten unseen.
+// Returns `{ status: 'uploaded' | 'failed' | 'missing', detail? }`.
+async function uploadLocalCopy(entry, tag, fileName, prev, stillWanted) {
+  try {
+    const bytes = await readFileBytes(fileName)
+    if (!stillWanted()) return { status: 'missing' }
+    const r = await entry.session.put({ fileName, content: bytes, prev: { version: prev.version, incarnation: prev.incarnation } })
+    if (r.ok) {
+      noteRemoteMeta(entry, tag, r.meta.version, r.meta.incarnation)
+      setBaseline(entry, tag, r.meta, true, await computeContentHash(bytes))
+      savePresenceCache(entry.workspaceId, entry)
+      return { status: 'uploaded' }
+    }
+    return {
+      status: 'failed',
+      detail: r.reason === 'conflict'
+        ? 'the cloud copy changed since it was compared — re-check again'
+        : `upload rejected: ${r.reason ?? 'unknown'}`,
+    }
+  } catch (err) {
+    console.warn(`objstore-recovery: uploading the local copy of "${fileName}" failed:`, err)
+    return { status: 'failed', detail: `upload error: ${err?.message ?? String(err)}` }
+  }
+}
+
+// Settle a report the re-check found to differ ('differs') the way the
+// user chose:
+//   - keep 'cloud': replace the local copy with the current cloud copy
+//     (same `analyzeContent` gate as every other write);
+//   - keep 'local': upload the local copy, version-CAS'd on `compared` —
+//     the row's cloud state the re-check compared against — so a write
+//     that landed since isn't overwritten unseen.
+// Returns `{ status, detail? }`, status one of 'updated' | 'uploaded' |
+// 'good' (the copies turned out to match) | 'failed' | 'missing'.
+export async function resolveReportDifference(workspaceId, fileName, keep, compared) {
+  if (keep !== 'cloud' && keep !== 'local') throw new TypeError(`resolveReportDifference: keep must be 'cloud' or 'local', got ${String(keep)}`)
+  if (keep === 'local' && (!compared || !Number.isSafeInteger(compared.version) || typeof compared.incarnation !== 'string')) {
+    throw new TypeError('resolveReportDifference: keeping the local copy needs the compared cloud state ({ version, incarnation })')
+  }
+  const entry = sessions.get(workspaceId)
+  if (!entry) throw new Error(`Workspace ${workspaceId} is not open`)
+  await requireConnectedSession(entry)
+  if (!entry.keys) throw new Error('Objstore session keys missing — derivation failed during open')
+  const tag = entry.fileTags.get(fileName) ?? await computeResourceTag(entry.keys.tagKey, fileName)
+  const stillWanted = () => !entry.disposed
+  return await withTagLock(entry, tag, async () => {
+    if (keep === 'local') return await uploadLocalCopy(entry, tag, fileName, compared, stillWanted)
     try {
-      return (await writeRemoteBytes(entry, tag, got, stillWanted)) ? 'updated' : 'missing'
+      const got = await entry.session.fetch(fileName)
+      if (!got) return { status: 'missing', detail: 'the report is no longer in the cloud' }
+      const remote = { fileName, content: got.content, version: got.version, incarnation: got.incarnation }
+      return { status: (await applyRemoteBytes(entry, tag, remote, stillWanted, { keepLocalChanges: false })) ? 'updated' : 'good' }
     } catch (err) {
-      row.detail = `updating the local copy failed: ${err?.message ?? String(err)}`
-      console.warn(`objstore-recovery: updating the local copy of "${got.fileName}" failed:`, err)
-      return 'failed'
+      console.warn(`objstore-recovery: replacing the local copy of "${fileName}" with the cloud copy failed:`, err)
+      return { status: 'failed', detail: `updating your copy failed: ${err?.message ?? String(err)}` }
     }
   })
 }
@@ -2213,8 +2449,11 @@ function pendingLabel(entry, tag, reportName, bundleIntegrity) {
 // crosses to the dialog / a caller.
 function publicRecoveryRow(row) {
   // `detail` is set only for 'failed' / 'check-failed' rows (the surfaced
-  // error), so the dialog can show WHY a row didn't resolve.
-  return { resourceTag: row.resourceTag, kind: row.kind, label: row.label, status: row.status, identifier: row.identifier, detail: row.detail }
+  // error), so the dialog can show WHY a row didn't resolve; `compared`
+  // only for 'differs' rows (what "Upload mine" must upload over).
+  const out = { resourceTag: row.resourceTag, kind: row.kind, label: row.label, status: row.status, identifier: row.identifier, detail: row.detail }
+  if (row.compared) out.compared = row.compared
+  return out
 }
 
 // Resolve/reject with `promise`, but reject after `ms` if it hasn't

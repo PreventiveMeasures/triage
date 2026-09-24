@@ -29,6 +29,7 @@ const {
   downloadFileFromRemote, fetchFile, isBundleInRemote, isInRemote,
   onAutoDownloaded, onChange, openWorkspace, putFile, recheckRemoteStorage,
   remoteBundleCount, remoteBundleIntegrities, remoteCount, remoteFileNames,
+  resolveReportDifference, differingReports,
 } = await import('../client/sync/objstore-presence.js')
 
 async function createWorkspaceWithReports(name, reports) {
@@ -1976,7 +1977,7 @@ describe('client/sync/objstore-presence', () => {
       assert.equal(await localReportText(fileName), v1Text)
       assert.ok(listWorkspaces().find((w) => w.id === ws.id)?.reports?.includes(fileName), 'downloaded report is attached')
       const [baseline] = entry.baselines.values()
-      assert.deepEqual(baseline, { version: 1, incarnation: v1Put.meta.incarnation, synced: true }, 'dialog download records the baseline')
+      assert.deepEqual({ ...baseline, hash: typeof baseline.hash }, { version: 1, incarnation: v1Put.meta.incarnation, synced: true, hash: 'string' }, 'dialog download records the baseline')
       closeWorkspace(ws.id)
       triageSync.closeSession(ws.id)
 
@@ -2016,40 +2017,132 @@ describe('client/sync/objstore-presence', () => {
     }
   })
 
-  it('recheckRemoteStorage updates a stale local copy from the cloud (automatic paths keep it without a baseline)', async () => {
-    // Regression: the re-check only proved each cloud object was
-    // fetchable and reported a stale local copy as "available".
-    const ws = await createWorkspaceWithReports('presence-recheck-stale', [])
-    const fileName = 'recheck-stale.json'
-    const staleText = reportJson('stale-local')
-    const cloudText = reportJson('cloud-current')
-    let fires = 0
-    const unsub = onAutoDownloaded((id, name) => { if (id === ws.id && name === fileName) fires += 1 })
+  // Claimed local copy `localText` against a cloud copy `cloudText`, never
+  // reconciled — so nothing says which is newer. Opens the workspace and
+  // waits for the one-time compare. Returns the workspace + the peer put.
+  async function openDifferingCopies(label, fileName, localText, cloudText) {
+    const ws = await createWorkspaceWithReports(label, [])
+    const peer = await openPeerSession(ws)
+    let put
     try {
-      const peer = await openPeerSession(ws)
-      try {
-        assert.equal((await peer.put({ fileName, content: await gzipBytes(encodeUtf8(cloudText)), prev: null })).ok, true)
-      } finally { peer.close() }
-      await saveFileBytes(fileName, await gzipBytes(encodeUtf8(staleText)))
-      await setReportWorkspace(fileName, ws.id)
-      openWorkspace(ws.id)
-      await awaitPresence(() => (__test__.getEntry(ws.id)?.baselines.size ?? 0) > 0, 'compared on open')
-      // No baseline → no evidence which copy is newer → the automatic
-      // path keeps the local bytes rather than clobber them on a guess.
-      assert.equal(await localReportText(fileName), staleText, 'automatic paths keep an unreconciled local copy')
+      put = await peer.put({ fileName, content: await gzipBytes(encodeUtf8(cloudText)), prev: null })
+      assert.equal(put.ok, true)
+    } finally { peer.close() }
+    await saveFileBytes(fileName, await gzipBytes(encodeUtf8(localText)))
+    await setReportWorkspace(fileName, ws.id)
+    openWorkspace(ws.id)
+    await awaitPresence(() => (__test__.getEntry(ws.id)?.baselines.size ?? 0) > 0, 'compared on open')
+    return { ws, put }
+  }
+
+  it('recheckRemoteStorage leaves a difference with no evidence to the user; "Use cloud copy" takes the cloud copy', async () => {
+    // Regression: the re-check only proved each cloud object was
+    // fetchable and reported a stale local copy as "available". Without
+    // evidence which copy is newer it must not overwrite either — it
+    // reports 'differs' and the user picks.
+    const fileName = 'recheck-differs-cloud.json'
+    const localText = reportJson('local')
+    const cloudText = reportJson('cloud')
+    let fires = 0
+    const unsub = onAutoDownloaded((id, name) => { if (name === fileName) fires += 1 })
+    const { ws } = await openDifferingCopies('presence-recheck-differs-cloud', fileName, localText, cloudText)
+    try {
+      // The automatic path keeps an unreconciled local copy too.
+      assert.equal(await localReportText(fileName), localText, 'automatic paths keep an unreconciled local copy')
       assert.equal(__test__.getEntry(ws.id).baselines.values().next().value.synced, false, 'recorded as compared-and-different')
+      assert.deepEqual(differingReports(ws.id), [fileName], 'surfaced for a re-check without anyone clicking one')
 
       const r = await recheckRemoteStorage(ws.id)
       assert.equal(r.items.length, 1)
-      assert.equal(r.items[0].status, 'updated', `row: ${JSON.stringify(r.items[0])}`)
-      assert.equal(r.counts.updated, 1)
-      assert.equal(await localReportText(fileName), cloudText, 're-check brings the local copy to the cloud copy')
+      assert.equal(r.items[0].status, 'differs', `row: ${JSON.stringify(r.items[0])}`)
+      assert.equal(r.items[0].identifier, fileName)
+      assert.equal(r.counts.differs, 1)
+      assert.equal(await localReportText(fileName), localText, 'the re-check touches neither copy')
+      assert.equal(fires, 0)
+
+      assert.deepEqual(await resolveReportDifference(ws.id, fileName, 'cloud'), { status: 'updated' })
+      assert.equal(await localReportText(fileName), cloudText, 'local copy replaced with the cloud copy')
       assert.equal(fires, 1, 'UI bridge told to reload the updated report')
+      assert.deepEqual(differingReports(ws.id), [], 'resolved')
 
       const again = await recheckRemoteStorage(ws.id)
       assert.equal(again.items[0].status, 'good', 'a second re-check finds the copies in sync')
     } finally {
       unsub()
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+      await deleteFile(fileName).catch(() => {})
+    }
+  })
+
+  it('resolveReportDifference("local") uploads over the compared cloud copy, never over a newer one', async () => {
+    const fileName = 'recheck-differs-local.json'
+    const localText = reportJson('local')
+    const cloudText = reportJson('cloud')
+    const newerText = reportJson('cloud-newer')
+    const { ws, put } = await openDifferingCopies('presence-recheck-differs-local', fileName, localText, cloudText)
+    const peer = await openPeerSession(ws)
+    try {
+      const first = (await recheckRemoteStorage(ws.id)).items[0]
+      assert.equal(first.status, 'differs')
+      assert.deepEqual(first.compared, { version: put.meta.version, incarnation: put.meta.incarnation })
+      // A member replaces the cloud copy after the compare: "Upload mine"
+      // must not silently overwrite what the user never saw.
+      const newer = await peer.put({ fileName, content: await gzipBytes(encodeUtf8(newerText)), prev: put.meta })
+      assert.equal(newer.ok, true)
+      await awaitPresence(() => __test__.getEntry(ws.id)?.remoteMeta.get(__test__.getEntry(ws.id).baselines.keys().next().value)?.version === 2, 'saw v2')
+      const refused = await resolveReportDifference(ws.id, fileName, 'local', first.compared)
+      assert.equal(refused.status, 'failed')
+      assert.match(refused.detail, /changed since it was compared/u)
+      let cloud = await peer.fetch(fileName)
+      assert.equal(decodeUtf8(await gunzipBytes(cloud.content)), newerText, 'the newer cloud copy survives')
+
+      // Re-check again (the v2 moved past the compare marker, so the
+      // automatic path already took it; put the local change back so
+      // the copies differ with no evidence once more), then upload.
+      await saveFileBytes(fileName, await gzipBytes(encodeUtf8(localText)))
+      __test__.getEntry(ws.id).baselines.clear()
+      const second = (await recheckRemoteStorage(ws.id)).items[0]
+      assert.equal(second.status, 'differs')
+      assert.deepEqual(await resolveReportDifference(ws.id, fileName, 'local', second.compared), { status: 'uploaded' })
+      cloud = await peer.fetch(fileName)
+      assert.equal(decodeUtf8(await gunzipBytes(cloud.content)), localText, 'the cloud copy now carries the local copy')
+      assert.equal(await localReportText(fileName), localText)
+    } finally {
+      peer.close()
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+      await deleteFile(fileName).catch(() => {})
+    }
+  })
+
+  it('recheckRemoteStorage takes the cloud copy when it moved past a synced baseline', async () => {
+    // Evidence the cloud copy is newer: the local copy was in sync at an
+    // earlier cloud state. (Normally the automatic paths apply this
+    // first; pin the state directly so the re-check branch is what runs.)
+    const ws = await createWorkspaceWithReports('presence-recheck-moved', [])
+    const fileName = 'recheck-moved.json'
+    const oldText = reportJson('old')
+    const cloudText = reportJson('cloud')
+    try {
+      openWorkspace(ws.id)
+      const peer = await openPeerSession(ws)
+      let put
+      try {
+        put = await peer.put({ fileName, content: await gzipBytes(encodeUtf8(cloudText)), prev: null })
+        assert.equal(put.ok, true)
+      } finally { peer.close() }
+      assert.equal(await waitForLocalText(fileName, cloudText), cloudText)
+      await discoverRemoteFileNames(ws.id)
+      const entry = __test__.getEntry(ws.id)
+      const [tag] = entry.baselines.keys()
+      await saveFileBytes(fileName, await gzipBytes(encodeUtf8(oldText)))
+      entry.baselines.set(tag, { version: 0, incarnation: put.meta.incarnation, synced: true })
+
+      const r = await recheckRemoteStorage(ws.id)
+      assert.equal(r.items[0].status, 'updated', `row: ${JSON.stringify(r.items[0])}`)
+      assert.equal(await localReportText(fileName), cloudText)
+    } finally {
       closeWorkspace(ws.id)
       await deleteWorkspace(ws.id)
       await deleteFile(fileName).catch(() => {})
@@ -2125,6 +2218,184 @@ describe('client/sync/objstore-presence', () => {
       assert.equal(written.baselines[tag].version, 2)
       assert.equal(typeof written.baselines[tag].incarnation, 'string', 'upgraded to a full baseline')
     } finally {
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+      await deleteFile(fileName).catch(() => {})
+    }
+  })
+
+  // Legacy (version-only) baseline for `fileName` in a fresh cache, with
+  // `localText` claimed on disk. Returns the workspace + its tag.
+  async function withLegacyBaseline(label, fileName, localText, version) {
+    const { computeResourceTag } = await import('../client/sync/objstore-content-crypto.ts')
+    const ws = await createWorkspaceWithReports(label, [])
+    const keys = await deriveObjstoreKeys(ws.privateKey, ws.id)
+    const tag = await computeResourceTag(keys.tagKey, fileName)
+    await saveFileBytes(fileName, await gzipBytes(encodeUtf8(localText)))
+    await setReportWorkspace(fileName, ws.id)
+    localStorage.setItem(`deepview.objstore-presence.${ws.id}`, JSON.stringify({ names: { [tag]: fileName }, bundles: {}, bundleNames: {}, localVersions: { [tag]: version } }))
+    return { ws, tag }
+  }
+
+  it('a legacy baseline is fetched once on open and upgraded to a full one (review r4098518958)', async () => {
+    // A version-only baseline used to satisfy discovery's skip, so it was
+    // never fetched and never learned its incarnation.
+    const fileName = 'legacy-upgrade.json'
+    const text = reportJson('same')
+    const { ws, tag } = await withLegacyBaseline('presence-legacy-upgrade', fileName, text, 1)
+    try {
+      const peer = await openPeerSession(ws)
+      let put
+      try {
+        put = await peer.put({ fileName, content: await gzipBytes(encodeUtf8(text)), prev: null })
+        assert.equal(put.ok, true)
+      } finally { peer.close() }
+      openWorkspace(ws.id)
+      await awaitPresence(() => __test__.getEntry(ws.id)?.baselines.get(tag)?.incarnation != null, 'baseline upgraded')
+      const baseline = __test__.getEntry(ws.id).baselines.get(tag)
+      assert.deepEqual({ ...baseline, hash: typeof baseline.hash }, { version: 1, incarnation: put.meta.incarnation, synced: true, hash: 'string' })
+      assert.equal(await localReportText(fileName), text)
+    } finally {
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+      await deleteFile(fileName).catch(() => {})
+    }
+  })
+
+  it('a legacy baseline above the cloud version is a re-upload and is taken automatically', async () => {
+    // Versions never go down within one incarnation, so a cloud copy at
+    // v1 when we once synced v3 can only be a delete + re-upload.
+    const fileName = 'legacy-lower.json'
+    const oldText = reportJson('old')
+    const cloudText = reportJson('re-uploaded')
+    const { ws } = await withLegacyBaseline('presence-legacy-lower', fileName, oldText, 3)
+    try {
+      const peer = await openPeerSession(ws)
+      try { assert.equal((await peer.put({ fileName, content: await gzipBytes(encodeUtf8(cloudText)), prev: null })).ok, true) } finally { peer.close() }
+      openWorkspace(ws.id)
+      assert.equal(await waitForLocalText(fileName, cloudText), cloudText)
+    } finally {
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+      await deleteFile(fileName).catch(() => {})
+    }
+  })
+
+  it('a legacy baseline at the same version with different content is not clobbered — the re-check reports it', async () => {
+    // Ambiguous: a re-upload that restarted at the same version looks
+    // exactly like a local Replace that never uploaded.
+    const fileName = 'legacy-same-version.json'
+    const localText = reportJson('local')
+    const cloudText = reportJson('cloud')
+    const { ws, tag } = await withLegacyBaseline('presence-legacy-same', fileName, localText, 1)
+    try {
+      const peer = await openPeerSession(ws)
+      try { assert.equal((await peer.put({ fileName, content: await gzipBytes(encodeUtf8(cloudText)), prev: null })).ok, true) } finally { peer.close() }
+      openWorkspace(ws.id)
+      await awaitPresence(() => __test__.getEntry(ws.id)?.baselines.get(tag)?.incarnation != null, 'compared on open')
+      assert.equal(__test__.getEntry(ws.id).baselines.get(tag).synced, false)
+      assert.equal(await localReportText(fileName), localText, 'local copy kept')
+      assert.equal((await recheckRemoteStorage(ws.id)).items[0].status, 'differs')
+    } finally {
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+      await deleteFile(fileName).catch(() => {})
+    }
+  })
+
+  // ── Surfacing differences without a re-check ───────────────────────
+
+  // Open a workspace whose report auto-downloads from a peer (synced
+  // baseline with the local bytes' hash). Returns the workspace + put.
+  async function openSyncedReport(label, fileName, text) {
+    const ws = await createWorkspaceWithReports(label, [])
+    openWorkspace(ws.id)
+    const peer = await openPeerSession(ws)
+    let put
+    try {
+      put = await peer.put({ fileName, content: await gzipBytes(encodeUtf8(text)), prev: null })
+      assert.equal(put.ok, true)
+    } finally { peer.close() }
+    assert.equal(await waitForLocalText(fileName, text), text)
+    await discoverRemoteFileNames(ws.id)
+    await awaitPresence(() => typeof __test__.getEntry(ws.id)?.baselines.values().next().value?.hash === 'string', 'synced baseline with hash')
+    return { ws, put }
+  }
+
+  it('a local Replace that never uploaded is flagged for a re-check, which uploads it', async () => {
+    const fileName = 'flag-local-change.json'
+    const cloudText = reportJson('synced')
+    const localText = reportJson('local-replace')
+    const { ws } = await openSyncedReport('presence-flag-local', fileName, cloudText)
+    try {
+      assert.deepEqual(differingReports(ws.id), [])
+      // A Replace whose upload never happened (saveFile without putFile).
+      await saveFileBytes(fileName, await gzipBytes(encodeUtf8(localText)))
+      await awaitPresence(() => differingReports(ws.id).length === 1, 'flagged after the save settles', 8_000)
+      const r = await recheckRemoteStorage(ws.id)
+      assert.equal(r.items[0].status, 'uploaded', `row: ${JSON.stringify(r.items[0])}`)
+      assert.deepEqual(differingReports(ws.id), [], 'cleared once uploaded')
+    } finally {
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+      await deleteFile(fileName).catch(() => {})
+    }
+  })
+
+  it('a Replace that does upload is not flagged', async () => {
+    const fileName = 'flag-uploaded-replace.json'
+    const { ws } = await openSyncedReport('presence-flag-uploaded', fileName, reportJson('synced'))
+    try {
+      const bytes = await gzipBytes(encodeUtf8(reportJson('replaced-and-uploaded')))
+      await saveFileBytes(fileName, bytes)
+      assert.equal((await putFile(ws.id, fileName, bytes)).ok, true)
+      await new Promise((resolve) => { setTimeout(resolve, 2_600) })
+      assert.deepEqual(differingReports(ws.id), [])
+    } finally {
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+      await deleteFile(fileName).catch(() => {})
+    }
+  })
+
+  it('a local change made while the workspace was closed is flagged on open', async () => {
+    const fileName = 'flag-closed-change.json'
+    const localText = reportJson('changed-while-closed')
+    const { ws } = await openSyncedReport('presence-flag-closed', fileName, reportJson('synced'))
+    try {
+      closeWorkspace(ws.id)
+      await saveFileBytes(fileName, await gzipBytes(encodeUtf8(localText)))
+      openWorkspace(ws.id)
+      await awaitPresence(() => differingReports(ws.id).length === 1, 'flagged by the open-time scan')
+      assert.equal(await localReportText(fileName), localText)
+    } finally {
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+      await deleteFile(fileName).catch(() => {})
+    }
+  })
+
+  it('a cloud Replace does not overwrite a local change that never uploaded — both are kept for the user', async () => {
+    // Both copies moved since they were in sync. Taking the cloud copy
+    // (as a plain cloud Replace would) would silently discard the user's.
+    const fileName = 'flag-both-changed.json'
+    const localText = reportJson('local-replace')
+    const peerText = reportJson('peer-replace')
+    const { ws, put } = await openSyncedReport('presence-both-changed', fileName, reportJson('synced'))
+    const peer = await openPeerSession(ws)
+    try {
+      await saveFileBytes(fileName, await gzipBytes(encodeUtf8(localText)))
+      assert.equal((await peer.put({ fileName, content: await gzipBytes(encodeUtf8(peerText)), prev: put.meta })).ok, true)
+      await awaitPresence(() => differingReports(ws.id).length === 1, 'conflict surfaced', 8_000)
+      assert.equal(await localReportText(fileName), localText, 'local change kept')
+      const row = (await recheckRemoteStorage(ws.id)).items[0]
+      assert.equal(row.status, 'differs', `row: ${JSON.stringify(row)}`)
+      assert.deepEqual(await resolveReportDifference(ws.id, fileName, 'local', row.compared), { status: 'uploaded' })
+      const cloud = await peer.fetch(fileName)
+      assert.equal(decodeUtf8(await gunzipBytes(cloud.content)), localText)
+      assert.deepEqual(differingReports(ws.id), [])
+    } finally {
+      peer.close()
       closeWorkspace(ws.id)
       await deleteWorkspace(ws.id)
       await deleteFile(fileName).catch(() => {})

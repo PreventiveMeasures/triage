@@ -5,7 +5,7 @@ import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS, PRODUCER_LABELS, REPORT_LOGOS, findingBrand, loadedBrands } from './file-display.js'
 import { FOCUS_SPLIT_MAX, FOCUS_SPLIT_MIN, listBundles, listWorkspaces, state } from '#client/index.js'
-import { isBundleInRemote, isInRemote, remoteCount, triageSync } from './client-sync.js'
+import { differingReports, isBundleInRemote, isInRemote, remoteCount, triageSync } from './client-sync.js'
 import { installShadowTooltipListener } from './tooltip.js'
 import { dropZone, report } from './dom.js'
 import { SEVERITIES, canDropRevalidation, configureDepsDir, configureRevalidation, displayedSeverity, fileLink, findingDisplayName, findingTitle, formatRunMeta, hasSeverityCorrection, isHttpUrl, isModule, lineLink, lineRangeLabel, reachableRevalidateFilters, revalidateKind, stampUpstreamFindings } from './format.js'
@@ -476,6 +476,11 @@ function syncBadgeTemplate() {
     ...localOnlyReports.map((n) => ({ kind: 'report', identifier: n })),
     ...localOnlyBundles.map((i) => ({ kind: 'bundle', identifier: i })),
   ]
+  // Reports whose local and cloud copies may differ in a way sync can't
+  // settle by itself (changed here since they were in sync, or found
+  // different with nothing showing which is newer). Without this chunk
+  // they'd read as plain "cloud" and nobody would know to re-check.
+  const differing = differingReports(workspaceId)
   if (cloudCount === 0 && localOnly.length === 0) return nothing
   // The "cloud" chunk is clickable whenever there's remote state: it
   // opens the recovery dialog to re-check the remote objstore (re-fetch
@@ -485,9 +490,21 @@ function syncBadgeTemplate() {
   const wrapperTitle = [
     cloudCount > 0 ? `${cloudCount} in cloud` : null,
     localOnly.length > 0 ? `${localOnly.length} local-only` : null,
+    differing.length > 0 ? `${differing.length} differ from the cloud` : null,
     cloudCount > 0 ? `click "cloud" to re-check storage` : null,
     localOnly.length > 0 ? `click "local" to upload ${localOnly.length}` : null,
   ].filter(Boolean).join(' — ')
+  const differTip = differing.length === 1
+    ? `"${differing[0]}" differs from its cloud copy, and sync can't tell which is newer. Click to re-check and choose which to keep.`
+    : `${differing.length} reports differ from their cloud copies, and sync can't tell which is newer. Click to re-check and choose which to keep.`
+  const differChunk = differing.length === 0 ? nothing
+    : html`<button
+        type="button"
+        class="sync-badge-chunk differ"
+        data-tooltip=${differTip}
+        aria-label=${`${differing.length} report${differing.length === 1 ? '' : 's'} differ from the cloud — re-check`}
+        @click=${(e) => { e.stopPropagation(); openObjstoreRecoveryDialog({ workspaceId, cloudCount, localFileNames: fileNames, localBundles, autoRun: true }) }}
+      >${differIconTpl()}<span>${differing.length} differ</span></button>`
   const cloudChunk = cloudCount === 0 ? nothing
     : html`<button
         type="button"
@@ -502,15 +519,14 @@ function syncBadgeTemplate() {
         aria-label=${`${localOnly.length} items not yet uploaded — open upload dialog`}
         @click=${(e) => { e.stopPropagation(); openUploadFromBadge({ workspaceId, items: localOnly }) }}
       >${localIconTpl()}<span>${localOnly.length} local</span></button>`
-  // The divider only shows when BOTH chunks are present.
-  const divider = (cloudCount > 0 && localOnly.length > 0)
-    ? html`<span class="sync-badge-divider" aria-hidden="true"></span>`
-    : nothing
+  // A divider between each pair of chunks present.
+  const divider = html`<span class="sync-badge-divider" aria-hidden="true"></span>`
+  const chunks = [cloudChunk, differChunk, localChunk].filter((c) => c !== nothing)
   return html`<div
     class="report-sync-badge report-sync-badge-clickable"
     data-status="mixed"
-    title=${wrapperTitle}
-  >${cloudChunk}${divider}${localChunk}</div>`
+    data-tooltip=${wrapperTitle}
+  >${chunks.map((c, i) => (i === 0 ? c : html`${divider}${c}`))}</div>`
 }
 
 function badgeChipButton({ status, label, title, onClick }) {
@@ -544,6 +560,14 @@ function localIconTpl() {
     <line x1="6" y1="18" x2="6.01" y2="18"/>
     <line x1="10" y1="18" x2="10.01" y2="18"/>
     <path d="M6 14V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v10"/>
+  </svg>`
+}
+
+// Two opposed arrows — the local and cloud copies pulling apart.
+function differIconTpl() {
+  return html`<svg class="sync-badge-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M7 4v14"/><path d="M3 14l4 4 4-4"/>
+    <path d="M17 20V6"/><path d="M13 10l4-4 4 4"/>
   </svg>`
 }
 

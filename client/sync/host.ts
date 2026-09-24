@@ -68,6 +68,12 @@ export interface SyncHost {
   readBundle(integrity: string): Promise<Uint8Array | null>
   saveBundle(name: string, bytes: Uint8Array): Promise<unknown>
   saveFileBytes(name: string, bytes: Uint8Array): Promise<unknown>
+  // Fires after a stored report is saved / deleted (by anyone — the UI's
+  // Replace, an import, presence itself). Presence re-checks the saved
+  // copy against its sync baseline to spot a local change the cloud
+  // doesn't have. Optional so a host without a storage feed still works
+  // (such changes then surface only in a re-check).
+  onFileMutated?(cb: (name: string, kind: 'save' | 'delete') => void): () => void
 
   // Triage persistence — triage-sync fans state changes from incoming
   // server updates through here so they hit disk on the next save.

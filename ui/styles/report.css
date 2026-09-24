@@ -260,6 +260,9 @@
       }
       & .sync-badge-chunk.cloud { color: var(--accent); }
       & .sync-badge-chunk.local { color: var(--muted); }
+      /* Needs the user: local and cloud copies differ with no way for
+         sync to tell which is newer. */
+      & .sync-badge-chunk.differ { color: var(--warning); }
       & .sync-badge-divider {
         width: 1px; height: 14px; margin: 0 .125rem;
         background: var(--border);
