@@ -11,6 +11,7 @@ import { Buffer } from 'node:buffer'
 import { after, before, describe, it } from 'node:test'
 
 import { deriveObjstoreKeys } from '../client/sync/objstore.ts'
+import { computeContentHash } from '../client/sync/objstore-crypto.ts'
 import { SESSION_RESTART_REASON } from '../client/sync/socket-transport.ts'
 import { createObjstoreSession } from './_objstore-session.js'
 import { gunzipBytes, gzipBytes } from '../common/gzip.js'
@@ -2395,6 +2396,52 @@ describe('client/sync/objstore-presence', () => {
       assert.equal(decodeUtf8(await gunzipBytes(cloud.content)), localText)
       assert.deepEqual(differingReports(ws.id), [])
     } finally {
+      peer.close()
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+      await deleteFile(fileName).catch(() => {})
+    }
+  })
+
+  it('a peer Replace landing while our upload is in flight is not clobbered by the upload\'s baseline (review r4098898714)', async () => {
+    // Our put commits v2; before putFile records it, a peer commits v3.
+    // The v3 broadcast's replace-refetch must not run ahead of putFile's
+    // bookkeeping — otherwise putFile then pins the baseline back to v2
+    // (a synced baseline older than the cloud) with nothing left to
+    // reconcile, and the local copy can stay on v2 unnoticed.
+    const fileName = 'upload-race.json'
+    const oursText = reportJson('ours-v2')
+    const peerText = reportJson('peer-v3')
+    const { ws } = await openSyncedReport('presence-upload-race', fileName, reportJson('synced-v1'))
+    const peer = await openPeerSession(ws)
+    const e = __test__.getEntry(ws.id)
+    const realPut = e.session.put.bind(e.session)
+    try {
+      const ours = await gzipBytes(encodeUtf8(oursText))
+      await saveFileBytes(fileName, ours)
+      e.session.put = async (opts) => {
+        const r = await realPut(opts)
+        // putFile's first attempt (`prev: null`) conflicts with the
+        // existing row; interleave the peer only after the one that lands.
+        if (!r.ok) return r
+        e.session.put = realPut
+        const [tag] = e.baselines.keys()
+        const v3 = await peer.put({ fileName, content: await gzipBytes(encodeUtf8(peerText)), prev: r.meta })
+        assert.equal(v3.ok, true)
+        await awaitPresence(() => e.remoteMeta.get(tag)?.version === 3, 'v3 broadcast seen')
+        // Give an unserialized replace-refetch the chance to run first.
+        await new Promise((resolve) => { setTimeout(resolve, 500) })
+        return r
+      }
+      assert.equal((await putFile(ws.id, fileName, ours)).ok, true)
+      assert.equal(await waitForLocalText(fileName, peerText), peerText, 'the newer peer Replace lands locally')
+      await awaitPresence(() => e.baselines.values().next().value?.version === 3, 'baseline at v3')
+      const final = e.baselines.values().next().value
+      assert.equal(final.synced, true)
+      assert.equal(final.hash, await computeContentHash(await readFileBytes(fileName)), 'baseline describes the local bytes')
+      assert.deepEqual(differingReports(ws.id), [])
+    } finally {
+      e.session.put = realPut
       peer.close()
       closeWorkspace(ws.id)
       await deleteWorkspace(ws.id)

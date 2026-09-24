@@ -1763,18 +1763,28 @@ export async function putFile(workspaceId, fileName, content) {
   const entry = sessions.get(workspaceId)
   if (!entry) throw new Error(`Workspace ${workspaceId} is not open`)
   await requireConnectedSession(entry)
-  // Optimistic first-upload precondition. The objstore session
-  // tracks version monotonically internally (`seenVersions` —
-  // populated by every put/fetch/list/broadcast), so on a conflict
-  // we read the server's current version off the result and retry
-  // with the live `prevVersion` — no per-upload `list()` to compute
-  // prevVersion, which would add a round-trip and a race (cf. review
-  // r3242197772).
-  const result = await retryOnConflict((prev) => entry.session.put({ fileName, content, prev }))
-  if (result.ok) {
-    try { await recordOwnUpload(entry, fileName, result.meta, content) } catch {}
-  }
-  return result
+  if (!entry.keys) throw new Error('Objstore session keys missing — derivation failed during open')
+  const tag = entry.fileTags.get(fileName) ?? await computeResourceTag(entry.keys.tagKey, fileName)
+  // Upload + bookkeeping hold the tag lock (review r4098898714): a
+  // replace-refetch for a peer's put that lands while ours is in flight
+  // waits until our baseline is recorded, then sees the cloud past it
+  // and applies the newer copy. Unserialized, it could run first and
+  // our older result would then overwrite the baseline it recorded —
+  // and overlapping uploads of one report would race the same way.
+  return await withTagLock(entry, tag, async () => {
+    // Optimistic first-upload precondition. The objstore session
+    // tracks version monotonically internally (`seenVersions` —
+    // populated by every put/fetch/list/broadcast), so on a conflict
+    // we read the server's current version off the result and retry
+    // with the live `prevVersion` — no per-upload `list()` to compute
+    // prevVersion, which would add a round-trip and a race (cf. review
+    // r3242197772).
+    const result = await retryOnConflict((prev) => entry.session.put({ fileName, content, prev }))
+    if (result.ok) {
+      try { await recordOwnUpload(entry, fileName, tag, result.meta, content) } catch {}
+    }
+    return result
+  })
 }
 
 // Advance the cloud state + local baseline to our own successful put,
@@ -1789,17 +1799,22 @@ export async function putFile(workspaceId, fileName, content) {
 // boot-divergence loop skip the version we already have — without it,
 // every reconnect would re-fetch each report we ever uploaded. Callers
 // upload the on-disk bytes (they wrote them via saveFile before
-// calling putFile), so the local copy IS this cloud state.
-async function recordOwnUpload(entry, fileName, meta, content) {
-  if (!entry.keys || entry.disposed) return
-  const tag = entry.fileTags.get(fileName)
-    ?? await computeResourceTag(entry.keys.tagKey, fileName)
+// calling putFile), so the local copy IS this cloud state. Runs under
+// the tag lock (see putFile).
+async function recordOwnUpload(entry, fileName, tag, meta, content) {
   const hash = await computeContentHash(content)
   if (entry.disposed) return
   entry.fileTags.set(fileName, tag)
   noteRemoteMeta(entry, tag, meta.version, meta.incarnation)
   setBaseline(entry, tag, meta, true, hash)
   savePresenceCache(entry.workspaceId, entry)
+  // A newer put already reached the cloud (its broadcast arrived while
+  // ours was in flight): our baseline is truthful but behind. Its own
+  // replace-refetch is normally queued behind this lock already; queue
+  // one here too so catching up never depends on that broadcast.
+  if (remoteMovedPast(entry.baselines.get(tag), entry.remoteMeta.get(tag))) {
+    maybeApplyRemoteReplace(entry, tag).catch(() => {})
+  }
 }
 
 // Delete `fileName`'s remote copy. The objstore `delete` is gated
