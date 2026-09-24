@@ -11,6 +11,7 @@ export {
   deleteFromRemote,
   discoverRemoteBundleIntegrities,
   discoverRemoteFileNames,
+  downloadFileFromRemote,
   fetchBundleFromRemote,
   fetchFile,
   isBundleInRemote,

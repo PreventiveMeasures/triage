@@ -183,10 +183,10 @@ for (const newerSource of ['snapshot', 'broadcast']) {
       // An earlier subscription query completes after the newer update.
       snapshot({ ...meta('resource', 3), contentLength: 300 })
       assert.deepEqual(await session.list(), [{ resourceTag: 'resource', version: 5, incarnation: newer.incarnation, contentLength: 500 }])
-      assert.deepEqual(changes, [{ resourceTag: 'resource', version: 5, contentLength: 500 }], 'no stale replacement event')
+      assert.deepEqual(changes, [{ resourceTag: 'resource', version: 5, incarnation: newer.incarnation, contentLength: 500 }], 'no stale replacement event')
       snapshot({ ...meta('resource', 6), contentLength: 600 })
       assert.equal((await session.list())[0].version, 6, 'newer snapshots still advance the inventory')
-      assert.deepEqual(changes.at(-1), { resourceTag: 'resource', version: 6, contentLength: 600 })
+      assert.deepEqual(changes.at(-1), { resourceTag: 'resource', version: 6, incarnation: newer.incarnation, contentLength: 600 })
     } finally { client.close() }
   })
 }

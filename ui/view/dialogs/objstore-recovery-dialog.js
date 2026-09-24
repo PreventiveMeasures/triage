@@ -1,15 +1,20 @@
 // `<objstore-recovery-dialog>` — re-checks the workspace's remote
-// objstore state and repairs missing bytes from local copies. Opened
-// from the page-header sync badge's "N cloud" chunk.
+// objstore state, repairs missing bytes from local copies, and brings
+// stale report copies back in line. Opened from the page-header sync
+// badge's "N cloud" chunk.
 //
 // On "Re-check" it calls `recheckRemoteStorage(workspaceId, …)` which:
 //   1. re-fetches the authoritative remote listing from the server DB,
 //   2. re-fetches each listed object,
 //   3. re-uploads any whose bytes are gone (a persistent 503 — the row
 //      is present but its content-addressed blob is missing) when a
-//      matching local copy is held, and
-//   4. reports a per-object status:
-//      good / re-uploaded / failed / check failed / missing
+//      matching local copy is held,
+//   4. compares each healthy report with this workspace's local copy
+//      and, when they differ, updates the local copy from the cloud
+//      (or uploads the local copy when it's provably the newer one), and
+//   5. reports a per-object status:
+//      available / updated from cloud / cloud updated / re-uploaded /
+//      failed / check failed / missing
 //      ('failed' = a held copy whose re-UPLOAD errored; 'check failed' =
 //      the verification DOWNLOAD errored on a transport/session hiccup or
 //      decrypt failure, so health is unknown — distinct from a confirmed
@@ -29,7 +34,7 @@ import { openSyncDownloadDialog } from './sync-download-dialog.js'
 import listCSS from './dialog-list.css'
 import recoveryCSS from './dialog-recovery.css'
 
-const STATUS_LABEL = { checking: 'checking…', good: 'available', reuploaded: 're-uploaded', failed: 're-upload failed', 'check-failed': 'check failed', missing: 'missing' }
+const STATUS_LABEL = { checking: 'checking…', good: 'available', updated: 'updated from cloud', uploaded: 'cloud updated', reuploaded: 're-uploaded', failed: 'failed', 'check-failed': 'check failed', missing: 'missing' }
 
 class ObjstoreRecoveryDialog extends AppDialog {
   static styles = [...AppDialog.styles, unsafeCSS(listCSS), unsafeCSS(recoveryCSS)]
@@ -71,7 +76,7 @@ class ObjstoreRecoveryDialog extends AppDialog {
   _onCancel = () => this._finish(this._ran ? this._result() : null)
 
   _counts() {
-    const counts = { good: 0, reuploaded: 0, failed: 0, 'check-failed': 0, missing: 0 }
+    const counts = { good: 0, updated: 0, uploaded: 0, reuploaded: 0, failed: 0, 'check-failed': 0, missing: 0 }
     for (const r of this._rows) if (r.status in counts) counts[r.status] += 1
     return counts
   }
@@ -139,6 +144,8 @@ class ObjstoreRecoveryDialog extends AppDialog {
     const c = this._counts()
     const parts = []
     if (c.good) parts.push(`${c.good} available`)
+    if (c.updated) parts.push(`${c.updated} updated from cloud`)
+    if (c.uploaded) parts.push(`${c.uploaded} uploaded to cloud`)
     if (c.reuploaded) parts.push(`${c.reuploaded} re-uploaded`)
     if (c.failed) parts.push(`${c.failed} failed`)
     if (c['check-failed']) parts.push(`${c['check-failed']} check failed`)
@@ -153,7 +160,7 @@ class ObjstoreRecoveryDialog extends AppDialog {
     const plural = this.cloudCount === 1 ? '' : 's'
     const intro = this._ran
       ? nothing
-      : html`<p class="lwd-body">Re-check ${this.cloudCount > 0 ? html`the <strong>${this.cloudCount}</strong> ` : nothing}remote object${plural} for this workspace. Each is re-fetched from the relay; any whose bytes are missing are re-uploaded from a matching local copy.</p>`
+      : html`<p class="lwd-body">Re-check ${this.cloudCount > 0 ? html`the <strong>${this.cloudCount}</strong> ` : nothing}remote object${plural} for this workspace. Each is re-fetched from the relay and compared with your copy: a local report that differs from the cloud copy is updated to match it, and any whose bytes are missing are re-uploaded from a matching local copy.</p>`
     const empty = this._ran && this._rows.length === 0 && !this._error
       ? html`<p class="lwd-empty">No remote objects to check.</p>`
       : nothing

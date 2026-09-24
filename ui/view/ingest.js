@@ -612,7 +612,7 @@ export async function switchToFile(name, content, { workspaceId } = {}) {
         )
         if (cloudWs) {
           try {
-            // The dialog's fetchFile needs an open presence session;
+            // The dialog's download needs an open presence session;
             // lazy-open mirrors uploadReportToWorkspaces (the user may
             // not have visited this workspace this session).
             await openPresence(cloudWs.id)

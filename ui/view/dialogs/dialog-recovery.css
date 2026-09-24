@@ -27,12 +27,16 @@
 }
 .rec-status-checking { color: var(--muted); }
 .rec-status-good { color: var(--ok, #16a34a); }
+/* A stale copy the re-check brought back in line — a repair, like
+   `reuploaded`, so the same accent. */
+.rec-status-updated,
+.rec-status-uploaded,
 .rec-status-reuploaded { color: var(--accent, #2563eb); }
-/* `failed` (re-UPLOAD errored) and `check-failed` (verification DOWNLOAD
+/* `failed` (a re-upload / update / upload errored) and `check-failed` (verification DOWNLOAD
    errored — transport/session hiccup or decrypt failure, health unknown)
    are both retryable, so both read amber — distinct from `missing` (no
    local copy / mismatch), the terminal red. The two amber states are told
-   apart by their label ("re-upload failed" vs "check failed") + the reason
+   apart by their label ("failed" vs "check failed") + the reason
    on hover, since they call for the same user action (re-check / retry). */
 .rec-status-failed,
 .rec-status-check-failed { color: var(--warning, #d97706); }

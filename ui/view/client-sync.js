@@ -237,6 +237,7 @@ async function callIfWanted(method, args) {
 }
 
 export function fetchFile(...args) { return callIfWanted('fetchFile', args) }
+export function downloadFileFromRemote(...args) { return callIfWanted('downloadFileFromRemote', args) }
 export function fetchBundleFromRemote(...args) { return callIfWanted('fetchBundleFromRemote', args) }
 export function putFile(...args) { return callIfWanted('putFile', args) }
 export function putBundleToRemote(...args) { return callIfWanted('putBundleToRemote', args) }
