@@ -38,7 +38,7 @@
     /* Transparent so the glass-shell toolbar shows through — matches
        the sibling `conf-filter` / `source-filter` / `.sev-chip`
        treatment in the same row. Chevron is drawn by the
-       `repo-filter` / `findings-sort` host `::after` below since
+       `revalidate-filter` / `findings-sort` host `::after` below since
        pseudo-elements don't apply to <select>. */
     background: transparent;
   }
@@ -53,7 +53,7 @@
      through to the select. (`analyzer-select` left this list when it
      became a custom dropdown — its trigger is a real <button>, so
      the chevron is an inline svg; see the analyzer-btn rules below.) */
-  & :is(repo-filter, revalidate-filter, findings-sort) {
+  & :is(revalidate-filter, findings-sort) {
     position: relative;
     display: inline-block;
 
@@ -68,6 +68,8 @@
       pointer-events: none;
     }
   }
+
+  & repo-filter { display: inline-block; min-width: 0; max-width: 100%; }
 
   /* Analyzer / model filter — custom dropdown (trigger pill + a
      two-column popover panel, see view/analyzer-select.js). The host

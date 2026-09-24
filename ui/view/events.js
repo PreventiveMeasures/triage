@@ -2346,7 +2346,7 @@ report.addEventListener('analyzer-change', (e) => {
   state.filterModel = e.detail.model
   render()
 })
-// `<repo-filter>` dispatches this on native change. Mirrors
+// `<repo-filter>` forwards the shared repository selector change. Mirrors
 // the analyzer-change branch above — flip state and render the
 // filtered body. Only the toolbar listens for it (the component
 // is workspace-view-only); a stray event from anywhere else is

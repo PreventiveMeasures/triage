@@ -15,6 +15,9 @@ test('Manage pages belong only to the lazy client-managed bundle, without duplic
   assert.equal(Object.hasOwn(main, 'client/managed/request.js'), false)
   assert.ok(managed['ui/managed/pages.js'])
   assert.ok(managed['ui/view/scan-model-picker.js'])
+  assert.ok(main['ui/view/repository-selector.js'])
+  assert.ok(managed['ui/view/repository-selector.js'])
+  assert.ok(managed['ui/view/user-selector.js'])
   assert.ok(managed['client/managed/session.js'])
   assert.ok(managed['client/managed/request.js'])
   assert.deepEqual(Object.keys(managed).filter(path => path.startsWith('client/') && !path.startsWith('client/managed/')), [],

@@ -1191,7 +1191,7 @@ test('db: teams — create/list/delete, repo (+path) & member (+perms) links, FK
   assert.equal(await db.createTeam(tId, 'Blue', now), true)
   assert.equal(await db.createTeam(randomUUID(), 'Blue', now), false) // name taken (UNIQUE)
   assert.deepEqual(await db.getTeam(tId), { id: tId, name: 'Blue' })
-  assert.deepEqual(await db.listUserOptions(), [{ id: uid, login: 'alice' }])
+  assert.deepEqual(await db.listUserOptions(), [{ id: uid, login: 'alice', name: null }])
 
   await db.setTeamRepo(tId, 7, 'src/app')
   await db.setTeamMember(tId, uid, { dependencies: true, security: false })
@@ -1402,7 +1402,11 @@ test('team paths gate report listings, reads, triage, and permission aggregation
   await db.setTeamRepo(other, 7, 'packages/a/sub')
   assert.deepEqual(await db.reportPermissionsFor(member.id, reportIds[0]), { dependencies: false, security: false })
   assert.deepEqual(await db.reportPermissionsFor(member.id, reportIds[1]), { dependencies: true, security: true })
+  await db.setTeamRepo(team, 7, 'packages/a/sub')
+  const overlap = (await db.listTeamsForUser(member.id)).find(entry => entry.id === team)
+  assert.equal(overlap.reports.length, new Set(overlap.reports.map(report => report.id)).size)
   // Paths are literal and case-sensitive, including SQL wildcard characters.
+  await db.removeTeamRepo(team, 7)
   await db.setTeamRepo(team, 7, 'pkg/%_')
   const scoped = (await db.listTeamsForUser(member.id)).find((entry) => entry.id === team)
   assert.deepEqual(scoped.reports.map((r) => r.id), [reportIds[8]])
@@ -1714,6 +1718,28 @@ test('teams API: admin gating, create (409 dup), repo/member links + perms, CSRF
   assert.equal(team.name, 'Indigo') // the rename above stuck
   assert.deepEqual(team.repos, [{ repoId: 7, fullName: 'o/r', path: 'pkg/a' }])
   assert.deepEqual(team.members, [{ userId: bob.id, login: 'bob', dependencies: true, security: false }])
+
+  // Multiple paths coexist; re-adding the same normalized path is idempotent.
+  const links = async () => JSON.parse((await send('GET', T, aCk)).body).teams.find((t) => t.id === teamId).repos
+  const setPath = path => upload('/api/admin/teams/set-repo', aCk, csrf, JSON.stringify({ teamId, repoId: 7, path }))
+  const removePath = path => upload('/api/admin/teams/remove-repo', aCk, csrf, JSON.stringify({ teamId, repoId: 7, path }))
+  assert.equal((await setPath('pkg/b')).statusCode, 200)
+  assert.equal((await setPath('/pkg//a/')).statusCode, 200)
+  assert.deepEqual((await links()).map(link => link.path), ['pkg/a', 'pkg/b'])
+  assert.equal((await removePath('/pkg//a/')).statusCode, 200)
+  assert.deepEqual((await links()).map(link => link.path), ['pkg/b'])
+  assert.equal((await removePath('missing')).statusCode, 404)
+  assert.equal((await removePath('..')).statusCode, 400)
+  assert.equal((await removePath({})).statusCode, 400)
+  assert.deepEqual((await links()).map(link => link.path), ['pkg/b'])
+  assert.equal((await setPath('')).statusCode, 200)
+  assert.deepEqual((await links()).map(link => link.path), [null])
+  assert.equal((await setPath('pkg/c')).statusCode, 200)
+  assert.deepEqual((await links()).map(link => link.path), [null], 'whole-repository access already covers this path')
+  assert.equal((await removePath(null)).statusCode, 200)
+  assert.deepEqual(await links(), [])
+  await setPath('pkg/a')
+  await setPath('pkg/b')
 
   // unlink + delete
   assert.equal((await upload('/api/admin/teams/remove-member', aCk, csrf, JSON.stringify({ teamId, userId: bob.id }))).statusCode, 200)
