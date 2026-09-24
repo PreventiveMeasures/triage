@@ -29,20 +29,27 @@
 // So the HTML path minifies with CSS minification off: whitespace,
 // comments and attribute collapsing still run, style attributes and
 // `<style>` blocks come through as written. `css` tagged templates
-// take a different path inside the library (`strategy.minifyCSS`,
-// chosen from `minifyOptions.minifyCSS`), which this leaves alone —
-// turning the option off at the top would have taken those with it,
-// and they hold whole component sheets.
-import { defaultStrategy, minifyHTMLLiterals } from 'minify-html-literals'
+// take a different path inside the library (`strategy.minifyCSS`). Its
+// bundled clean-css does not understand @container: it drops the wrapper
+// and leaks some of the narrow-layout rules into the global stylesheet.
+// Use esbuild for static CSS templates, just as for imported CSS files.
+// Leave interpolated CSS untouched: the library's semicolon placeholder
+// is not a valid stand-in for arbitrary CSS values, units, or selectors.
+import { transformSync } from 'esbuild'
+import { defaultShouldMinifyCSS, defaultStrategy, minifyHTMLLiterals } from 'minify-html-literals'
 
 const litStrategy = {
   ...defaultStrategy,
   minifyHTML: (html, options = {}) => defaultStrategy.minifyHTML(html, { ...options, minifyCSS: false }),
+  minifyCSS: (css) => transformSync(css, { loader: 'css', minify: true }).code.trim(),
 }
 
 // Returns the minified source, or null when the file holds no
 // tagged templates to minify (the library's own "nothing to do").
 export function minifyLitSource(source, fileName) {
-  const result = minifyHTMLLiterals(source, { fileName, strategy: litStrategy })
+  const result = minifyHTMLLiterals(source, {
+    fileName, strategy: litStrategy,
+    shouldMinifyCSS: (template) => template.parts.length === 1 && defaultShouldMinifyCSS(template),
+  })
   return result ? result.code : null
 }

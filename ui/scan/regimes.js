@@ -3,6 +3,19 @@ import { defaultEffort } from '../view/scan-models.js'
 export const REGIME_MODES = ['security', 'generic', 'correctness']
 export const regimeKey = regime => JSON.stringify([regime.mode, regime.model, regime.effort, regime.isolate])
 
+export function sharedRegimeModel(regimes) {
+  const first = regimes[0]
+  return first?.model && regimes.every(row => row.model === first.model && row.effort === first.effort)
+    ? { model: first.model, effort: first.effort } : null
+}
+
+export function normalizeAppModel(selection, catalogue) {
+  const model = catalogue.models.find(candidate => candidate.id === selection?.model)
+    ?? catalogue.models.find(candidate => candidate.id === catalogue.defaultModel) ?? catalogue.models[0]
+  if (!model) return null
+  return { model: model.id, effort: model.efforts.includes(selection?.effort) ? selection.effort : defaultEffort(model) }
+}
+
 export function normalizeRegimes(regimes, catalogue) {
   const fallback = catalogue.models.find(model => model.id === catalogue.defaultModel) ?? catalogue.models[0]
   if (!fallback) return []

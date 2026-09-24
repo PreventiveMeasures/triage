@@ -26,7 +26,7 @@ test('Add regime copies the last row, labels duplicates, and blocks running with
   let latest
   editor.addEventListener('regimes-change', e => { latest = e.detail })
   await editor._load()
-  assert.deepEqual(latest, { value: [regime], ready: true })
+  assert.deepEqual(latest, { value: [regime], ready: true, appModel: { model: 'model-a', effort: 'high' }, appModelAutomatic: true })
   editor._remove(editor._rows[0].id)
   assert.equal(editor._rows.length, 1)
   editor._add()
@@ -107,4 +107,71 @@ test('Advanced scan records and restores every regime, and reselecting Advanced 
   page._setOption('analyzer', 'advanced')
   page._restartScan(basic)
   assert.equal(page._options.analyzer, 'correctness', 'restarting a basic run leaves Advanced')
+})
+
+test('App model follows agreement, expands on differences, and preserves an independent selection', async () => {
+  const editor = new RegimeEditor()
+  editor.value = [regime, { ...regime, mode: 'security' }]
+  editor.loadModels = () => Promise.resolve(catalogue)
+  await editor._load()
+  assert.deepEqual(editor._resolvedAppModel, { model: 'model-a', effort: 'high' })
+  assert.equal(editor._appModelOpen, false)
+  editor._appModelOpen = true
+  editor._change(editor._rows[1].id, { isolate: true })
+  assert.equal(editor._appModelOpen, true, 'manual expansion survives unrelated edits')
+  editor._appModelOpen = false
+  editor._change(editor._rows[1].id, { effort: 'low' })
+  assert.equal(editor._appModelOpen, true, 'effort disagreement reveals the app controls')
+  assert.deepEqual(editor._resolvedAppModel, { model: 'model-a', effort: 'high' })
+  editor._change(editor._rows[0].id, { effort: 'low' })
+  assert.equal(editor._appModelOpen, false)
+  assert.equal(editor._resolvedAppModel.effort, 'low')
+  editor._changeAppModel({ model: 'model-b', effort: 'max' })
+  assert.equal(editor._appModelOpen, true)
+  assert.deepEqual(editor._rows.map(row => row.model), ['model-a', 'model-a'], 'the app model does not rewrite scan regimes')
+  editor._change(editor._rows[0].id, { effort: 'high' })
+  editor._remove(editor._rows[1].id)
+  assert.deepEqual(editor._resolvedAppModel, { model: 'model-b', effort: 'max' }, 'an explicit app choice survives regime edits')
+  editor.loadModels = () => Promise.resolve({ models: [{ id: 'replacement', efforts: [] }] })
+  await editor._load()
+  assert.deepEqual(editor._resolvedAppModel, { model: 'replacement', effort: null })
+  assert.deepEqual(editor.appModel, editor._resolvedAppModel, 'provider changes revalidate the explicit app choice')
+})
+
+test('Advanced runs snapshot and restore the independent app model and effort', () => {
+  const page = new ScanPage()
+  page.source = { bundles: cloneScanFixtures() }
+  page.willUpdate(new Map([['source', null]]))
+  page._setOption('analyzer', 'advanced')
+  page._regimes = [regime]
+  page._regimesReady = true
+  page._appModel = { model: 'model-b', effort: 'max' }
+  page._appModelAutomatic = false
+  page._runScan()
+  for (const timer of page._timers) clearTimeout(timer)
+  const scan = page._scans[0]
+  assert.deepEqual(scan.appModel, { model: 'model-b', effort: 'max' })
+  assert.notEqual(scan.appModel, page._appModel)
+  assert.equal(scan.appModelAutomatic, false)
+  page._appModel = null
+  page._appModelAutomatic = true
+  page._restartScan(scan)
+  assert.deepEqual(page._appModel, scan.appModel)
+  assert.equal(page._appModelAutomatic, false)
+})
+
+test('restoring a mixed regime list preserves its automatic app choice until the regimes agree again', async () => {
+  const editor = new RegimeEditor()
+  editor.value = [regime, { ...regime, model: 'model-b', effort: 'max' }]
+  editor.appModel = { model: 'model-b', effort: 'max' }
+  editor.loadModels = () => Promise.resolve(catalogue)
+  let latest
+  editor.addEventListener('regimes-change', event => { latest = event.detail })
+  await editor._load()
+  assert.deepEqual(latest.appModel, { model: 'model-b', effort: 'max' })
+  assert.equal(latest.appModelAutomatic, true)
+  assert.equal(editor._appModelOpen, true)
+  editor._remove(editor._rows[1].id)
+  assert.deepEqual(latest.appModel, { model: 'model-a', effort: 'high' })
+  assert.equal(editor._appModelOpen, false)
 })

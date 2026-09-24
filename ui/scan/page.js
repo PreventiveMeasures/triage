@@ -38,6 +38,7 @@ export class ScanPage extends LitElement {
     _excludedModules: { state: true },
     _prompts: { state: true },
     _options: { state: true }, _regimes: { state: true }, _regimesReady: { state: true },
+    _appModel: { state: true }, _appModelAutomatic: { state: true },
     _notice: { state: true },
   }
 
@@ -68,6 +69,8 @@ export class ScanPage extends LitElement {
     this._prompts = [{ id: 1, text: '' }]
     this._options = { analyzer: 'generic', model: null, effort: null, cached: false, isolate: false }
     this._regimes = []
+    this._appModel = null
+    this._appModelAutomatic = true
     this._regimesReady = false
     this._notice = null
     this._timers = new Set()
@@ -216,7 +219,7 @@ export class ScanPage extends LitElement {
     const summary = mode === 'report' ? `${count} ${this._reportMode === 'merge' ? 'scan results' : 'reports'} selected` : `${bundle?.filename ?? 'No bundle selected'} · ${count} files will be analyzed`
     const advanced = mode === 'code' && this._options.analyzer === 'advanced'
     const disabled = !this.canRun || (mode === 'report' ? count === 0 : bundle == null || count === 0 || (advanced && (!this._regimesReady || this._regimes.length === 0)))
-    return html`<section class="panel options"><div class="options-grid">${advanced ? html`<scan-regime-editor .loadModels=${this.loadModels} .value=${this._regimes} @regimes-change=${e => { this._regimesReady = e.detail.ready; this._regimes = e.detail.value }}></scan-regime-editor>` : html`<scan-model-picker .loadModels=${this.loadModels} ?has-extra=${mode === 'code'} .value=${this._options.model} .effort=${this._options.effort} @model-change=${(event) => { this._options = { ...this._options, model: event.detail.model, effort: event.detail.effort } }}>${mode === 'code' ? html`<scan-depth-toggle slot="effort-extra" .isolate=${this._options.isolate} @depth-change=${event => this._setOption('isolate', event.detail.isolate)}></scan-depth-toggle>` : nothing}</scan-model-picker>`}</div><div class="options-footer"><slot name="before-run"></slot><button type="button" class="run" ?disabled=${disabled} @click=${() => this._runScan()}>${mode === 'report' ? this._reportMode === 'merge' ? 'Merge results' : 'Link reports' : 'Run scan'}</button><span class="summary">${summary}</span></div><div class="checks"><label class="switch"><input type="checkbox" aria-describedby=${this._options.cached ? 'offline-help' : nothing} .checked=${this._options.cached} @change=${(e) => this._setOption('cached', e.target.checked)}><span class="switch-track" aria-hidden="true"></span><span>Offline</span></label>${this._options.cached ? html`<small class="offline-help" id="offline-help">Cache only, no new model requests</small>` : nothing}</div></section>`
+    return html`<section class="panel options"><div class="options-grid">${advanced ? html`<scan-regime-editor .loadModels=${this.loadModels} .value=${this._regimes} .appModel=${this._appModel} .appModelAutomatic=${this._appModelAutomatic} @regimes-change=${e => { this._regimesReady = e.detail.ready; this._regimes = e.detail.value; this._appModel = e.detail.appModel; this._appModelAutomatic = e.detail.appModelAutomatic }}></scan-regime-editor>` : html`<scan-model-picker .loadModels=${this.loadModels} ?has-extra=${mode === 'code'} .value=${this._options.model} .effort=${this._options.effort} @model-change=${(event) => { this._options = { ...this._options, model: event.detail.model, effort: event.detail.effort } }}>${mode === 'code' ? html`<scan-depth-toggle slot="effort-extra" .isolate=${this._options.isolate} @depth-change=${event => this._setOption('isolate', event.detail.isolate)}></scan-depth-toggle>` : nothing}</scan-model-picker>`}</div><div class="options-footer"><slot name="before-run"></slot><button type="button" class="run" ?disabled=${disabled} @click=${() => this._runScan()}>${mode === 'report' ? this._reportMode === 'merge' ? 'Merge results' : 'Link reports' : 'Run scan'}</button><span class="summary">${summary}</span></div><div class="checks"><label class="switch"><input type="checkbox" aria-describedby=${this._options.cached ? 'offline-help' : nothing} .checked=${this._options.cached} @change=${(e) => this._setOption('cached', e.target.checked)}><span class="switch-track" aria-hidden="true"></span><span>Offline</span></label>${this._options.cached ? html`<small class="offline-help" id="offline-help">Cache only, no new model requests</small>` : nothing}</div></section>`
   }
 
   _history() {
@@ -333,6 +336,8 @@ export class ScanPage extends LitElement {
     if (mode === 'code') scan.analyzer = this._options.analyzer
     if (advanced) {
       scan.regimes = this._regimes.map(regime => ({ ...regime }))
+      scan.appModel = this._appModel ? { ...this._appModel } : null
+      scan.appModelAutomatic = this._appModelAutomatic
       scan.reason = `Advanced · ${scan.regimes.length} regimes · ${scan.reason}`
       scan.scopeId = this._reason
       scan.model = null
@@ -387,6 +392,8 @@ export class ScanPage extends LitElement {
     if (scan.regimes?.length > 0) {
       this._options = { ...this._options, analyzer: 'advanced' }
       this._regimes = scan.regimes.map(regime => ({ ...regime }))
+      this._appModel = scan.appModel ? { ...scan.appModel } : null
+      this._appModelAutomatic = scan.appModelAutomatic !== false
       this._regimesReady = false
     }
     this._reason = bundle.reasons.find((reason) => reason.label === scan.reason)?.id ?? bundle.reasons[0]?.id ?? ''

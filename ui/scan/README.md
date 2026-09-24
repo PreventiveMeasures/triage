@@ -67,6 +67,12 @@ selector stacked vertically, without a subtitle. The angled
 duplicate badge is positioned outside the row's layout so validation does not
 resize the row. Remove controls sit in each row's top-right corner.
 
+An **App model** disclosure sits below Add regime. It follows the common model
+and effort while all regimes agree and shows both values in its collapsed
+summary. Differences reveal the controls; users can also expand it manually.
+An explicit app-model choice is independent of the scan regimes, remains valid
+against the current catalogue, and is retained when restarting a run.
+
 Agentic accepts multiple prompts. The header's + button adds a new agent prompt
 and focuses it; additional fields can be removed. At least one field remains,
 and restart restores the complete ordered prompt list.
