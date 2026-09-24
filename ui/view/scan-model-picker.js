@@ -1,5 +1,6 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { defaultEffort, effortName, fetchScanModels, modelDeveloper, modelName } from './scan-models.js'
+import { modelColumns, modelSections } from './scan-model-layout.js'
 
 const CHEVRON = html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg>`
 
@@ -21,24 +22,11 @@ function developerIcon(key) {
   return html`<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="4" y="4" width="12" height="12" rx="3"/><path d="M8 1v3m4-3v3M8 16v3m4-3v3M1 8h3m-3 4h3m12-4h3m-3 4h3"/></svg>`
 }
 
-function modelSections(models) {
-  const groups = Map.groupBy(models, model => modelDeveloper(model.id).key)
-  return [...groups].flatMap(([key, entries]) => {
-    // A long provider can use several columns instead of making one tall
-    // column beside short groups. Repeat its heading at each continuation,
-    // and balance the chunks so the final one is not a single stranded model.
-    const size = Math.ceil(entries.length / Math.ceil(entries.length / 8))
-    const sections = []
-    for (let start = 0; start < entries.length; start += size) sections.push({ key, models: entries.slice(start, start + size) })
-    return sections
-  })
-}
-
 class ScanModelPicker extends LitElement {
   static properties = {
     value: { attribute: false }, effort: { attribute: false },
     hasExtra: { type: Boolean, attribute: 'has-extra' },
-    _models: { state: true }, _error: { state: true },
+    _models: { state: true }, _error: { state: true }, _menuColumns: { state: true },
   }
 
   static styles = css`
@@ -53,6 +41,7 @@ class ScanModelPicker extends LitElement {
     summary { display: flex; align-items: center; gap: .55rem; padding: .5rem .6rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); list-style: none; transition: border-color .12s, background .12s; }
     summary:hover, details[open] summary { border-color: var(--muted); background: var(--surface-active); }
     summary::-webkit-details-marker { display: none; }
+    summary, .menu { user-select: none; }
     summary > svg { width: .9rem; height: .9rem; margin-left: auto; color: var(--muted); }
     .selected-copy { display: grid; gap: .1rem; min-width: 0; }
     .selected-copy strong { font-size: .8rem; font-weight: 500; }
@@ -83,11 +72,12 @@ class ScanModelPicker extends LitElement {
        the summary at open time, keeps it above the viewport edge and outside
        any panel's clipping context. */
     .menu { position: fixed; z-index: 1000; width: min(46rem, calc(100vw - 1rem)); max-height: calc(100dvh - 1rem); overflow: auto; overscroll-behavior: contain; padding: .65rem; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-active); color: var(--text); box-shadow: 0 .65rem 1.8rem rgb(0 0 0 / .55); }
-    /* Balance whole provider groups down the columns. Keep the unconstrained
-       column container inside the scrollport so short screens scroll down,
-       rather than creating more columns outside the menu. */
-    .groups { column-count: var(--model-columns, 1); column-gap: 1rem; }
-    fieldset { min-width: 0; margin: 0 0 .6rem; padding: 0; border: 0; break-inside: avoid; }
+    /* Each track has an explicit, nonempty list of provider sections. Scroll
+       the whole grid vertically when the catalogue exceeds the viewport. */
+    .groups { display: grid; grid-template-columns: repeat(var(--model-columns, 1), minmax(0, 1fr)); gap: 1rem; align-items: start; }
+    .provider-column { min-width: 0; }
+    fieldset { min-width: 0; margin: 0 0 .6rem; padding: 0; border: 0; }
+    fieldset:last-child { margin-bottom: 0; }
     legend { display: flex; align-items: center; gap: .45rem; width: 100%; min-height: 1.9rem; padding: .35rem .5rem .25rem; border-bottom: 1px solid rgb(from var(--border) r g b / .7); color: var(--muted); font-size: .64rem; font-weight: 700; letter-spacing: .055em; text-transform: uppercase; }
     /* Keep provider names on the same text column as model choices.  The
        radio and provider mark both occupy a fixed slot, while the marks are
@@ -95,16 +85,24 @@ class ScanModelPicker extends LitElement {
     legend .icon { width: .88rem; height: 1.25rem; flex-basis: .88rem; }
     legend .icon svg { width: .88rem; height: .88rem; }
     legend .provider-mark { width: .88rem; height: .88rem; }
-    .choice { display: flex; align-items: center; gap: .5rem; padding: .4rem .5rem; border-radius: 4px; font-size: .76rem; }
+    .choice { display: flex; align-items: center; gap: .5rem; padding: .35rem .5rem; border-radius: 4px; font-size: .76rem; }
     .choice:hover { background: rgb(from var(--text) r g b / .05); }
     .choice:has(:checked) { color: var(--accent); background: rgb(from var(--accent) r g b / .1); }
     .choice input { margin: 0; accent-color: var(--accent); }
     .choice span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .slider { padding: .15rem .3rem 0; }
-    input[type=range] { display: block; width: 100%; margin: .4rem 0 .5rem; accent-color: var(--accent); }
-    .steps { display: flex; justify-content: space-between; margin: 0 -.3rem; }
-    .step { position: relative; padding: .35rem .3rem 0; border: 0; background: transparent; color: var(--muted); font: inherit; font-size: .62rem; cursor: default; }
-    .step::before { content: ''; position: absolute; top: 0; left: 50%; width: 1px; height: .2rem; background: var(--muted); }
+    .slider { --thumb-size: 1rem; padding: .15rem .6rem 0; }
+    input[type=range] { appearance: none; display: block; width: 100%; height: var(--thumb-size); margin: .4rem 0 .5rem; padding: 0; border: 0; background: transparent; }
+    input[type=range]::-webkit-slider-runnable-track { height: .3rem; border-radius: 999px; background: linear-gradient(to right, var(--accent) var(--effort-fill), var(--surface-active) var(--effort-fill)); }
+    input[type=range]::-moz-range-track { height: .3rem; border-radius: 999px; background: linear-gradient(to right, var(--accent) var(--effort-fill), var(--surface-active) var(--effort-fill)); }
+    input[type=range]::-webkit-slider-thumb { appearance: none; width: var(--thumb-size); height: var(--thumb-size); margin-top: calc((.3rem - var(--thumb-size)) / 2); border: 0; border-radius: 50%; background: var(--accent); }
+    input[type=range]::-moz-range-thumb { width: var(--thumb-size); height: var(--thumb-size); border: 0; border-radius: 50%; background: var(--accent); }
+    input[type=range]:disabled { opacity: .5; }
+    /* A range thumb stops half its width inside either end of the track.
+       Labels use those same endpoints and evenly spaced stops, regardless
+       of their text lengths. */
+    .steps { position: relative; height: 1.3rem; margin: 0 calc(var(--thumb-size) / 2); }
+    .step { position: absolute; top: 0; left: var(--step-position); transform: translateX(-50%); padding: .35rem 0 0; border: 0; background: transparent; color: var(--muted); font: inherit; font-size: .62rem; white-space: nowrap; cursor: default; }
+    .step::before { content: ''; position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 1px; height: .2rem; background: var(--muted); }
     .step.active { color: var(--accent); }
     :is(summary, input, button):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     .message { margin: 0; color: var(--muted); font-size: .75rem; }
@@ -121,6 +119,8 @@ class ScanModelPicker extends LitElement {
     this.hasExtra = false
     this._models = []
     this._error = null
+    this._menuColumns = 1
+    this._positionRequest = 0
     this._onOutside = (event) => { if (!event.composedPath().includes(this)) this._close() }
     this._onViewportChange = () => this._positionMenu()
   }
@@ -163,7 +163,8 @@ class ScanModelPicker extends LitElement {
     if (details) details.open = false
   }
 
-  _positionMenu() {
+  async _positionMenu() {
+    const request = ++this._positionRequest
     const details = this.renderRoot.querySelector('details')
     const summary = this.renderRoot.querySelector('summary')
     const menu = this.renderRoot.querySelector('.menu')
@@ -187,6 +188,9 @@ class ScanModelPicker extends LitElement {
     const columns = Math.max(1, Math.min(preferredColumns, Math.floor((window.innerWidth - margin * 2 - padding + fontSize) / (columnWidth + fontSize))))
     const width = Math.min(columns * columnWidth + (columns - 1) * fontSize + padding, window.innerWidth - margin * 2)
     const left = Math.max(margin, Math.min(rect.left, window.innerWidth - width - margin))
+    this._menuColumns = columns
+    await this.updateComplete
+    if (request !== this._positionRequest || !this.isConnected || !details.open) return
     menu.style.left = `${left}px`
     menu.style.width = `${width}px`
     menu.style.setProperty('--model-columns', columns)
@@ -219,12 +223,12 @@ class ScanModelPicker extends LitElement {
     const selected = this._models.find((model) => model.id === this.value)
     if (!selected) return html`<p class="message" role="status">Loading models…</p>`
     const developer = modelDeveloper(selected.id)
-    const sections = modelSections(this._models)
+    const columns = modelColumns(modelSections(this._models), this._menuColumns)
     return html`<div class=${`layout ${this.hasExtra ? 'with-extra' : ''}`}>
       <div class="field"><span class="label" id="model-label">Model</span>
         <details @toggle=${() => requestAnimationFrame(() => this._positionMenu())} @keydown=${(event) => { if (event.key === 'Escape') { this._close(); this.renderRoot.querySelector('summary')?.focus() } }}>
           <summary aria-labelledby="model-label selected-model"><span class=${`icon ${developer.key}`}>${developerIcon(developer.key)}</span><span class="selected-copy"><strong id="selected-model">${modelName(selected.id)}</strong><small>${developer.name}</small></span>${CHEVRON}</summary>
-          <div class="menu"><div class="groups">${sections.map(({ key, models }) => html`<fieldset><legend><span class=${`icon ${key}`}>${developerIcon(key)}</span>${modelDeveloper(models[0].id).name}</legend>${models.map((model) => html`<label class="choice"><input type="radio" name="scan-model" value=${model.id} .checked=${model.id === this.value} @change=${() => { this._select(model.id); this.renderRoot.querySelector('summary')?.focus() }}><span>${modelName(model.id)}</span></label>`)}</fieldset>`)}</div></div>
+          <div class="menu"><div class="groups">${columns.map(column => html`<div class="provider-column">${column.map(section => this._modelSection(section))}</div>`)}</div></div>
         </details>
       </div>
       ${selected.efforts.length > 0 ? this._effortSlider(selected.efforts) : nothing}
@@ -232,11 +236,16 @@ class ScanModelPicker extends LitElement {
     </div>`
   }
 
+  _modelSection({ key, models }) {
+    return html`<fieldset><legend><span class=${`icon ${key}`}>${developerIcon(key)}</span>${modelDeveloper(models[0].id).name}</legend>${models.map((model) => html`<label class="choice"><input type="radio" name="scan-model" value=${model.id} .checked=${model.id === this.value} @change=${() => { this._select(model.id); this.renderRoot.querySelector('summary')?.focus() }}><span>${modelName(model.id)}</span></label>`)}</fieldset>`
+  }
+
   _effortSlider(efforts) {
     const index = Math.max(0, efforts.indexOf(this.effort))
+    const max = Math.max(1, efforts.length - 1)
     return html`<div class="field"><div class="label"><label for="effort">Effort</label><output for="effort">${effortName(efforts[index])}</output></div>
-      <div class="slider"><input id="effort" type="range" min="0" max=${Math.max(1, efforts.length - 1)} step="1" .value=${String(index)} ?disabled=${efforts.length === 1} aria-valuetext=${effortName(efforts[index])} @input=${(event) => this._setEffort(efforts[Number(event.target.value)])}>
-        <div class="steps">${efforts.map((effort) => html`<button type="button" class=${`step ${effort === this.effort ? 'active' : ''}`} aria-label=${`Set effort to ${effortName(effort)}`} aria-pressed=${effort === this.effort} @click=${() => this._setEffort(effort)}>${effortName(effort)}</button>`)}</div>
+      <div class="slider" style=${`--effort-fill: calc(var(--thumb-size) / 2 + (100% - var(--thumb-size)) * ${index / max})`}><input id="effort" type="range" min="0" max=${max} step="1" .value=${String(index)} ?disabled=${efforts.length === 1} aria-valuetext=${effortName(efforts[index])} @input=${(event) => this._setEffort(efforts[Number(event.target.value)])}>
+        <div class="steps">${efforts.map((effort, step) => html`<button type="button" class=${`step ${effort === this.effort ? 'active' : ''}`} style=${`--step-position: ${step / max * 100}%`} aria-label=${`Set effort to ${effortName(effort)}`} aria-pressed=${effort === this.effort} @click=${() => this._setEffort(effort)}>${effortName(effort)}</button>`)}</div>
       </div></div>`
   }
 }
