@@ -5,7 +5,8 @@ import { onFileMutated } from './storage.js'
 import { linkFiles, subscribeToLinkedFindings } from './linked-findings-index.js'
 
 const KEY = 'deepview.workspaceApp'
-const VERSION = 1
+// v2 uses canonical corrected severity, independent of the active display lens.
+const VERSION = 2
 const listeners = new Set()
 const dirty = new Set()
 let allDirty = 0

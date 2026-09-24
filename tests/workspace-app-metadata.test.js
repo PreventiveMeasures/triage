@@ -47,6 +47,17 @@ describe('workspace App promotion', () => {
     assert.deepEqual(workspaceAppMetadata(reports), { appMode: true, appFindings: 3 })
     assert.deepEqual(workspaceAppMetadata(reports, links(['A', 'B'], ['B', 'C'])), { appMode: true, appFindings: 1 })
   })
+  it('uses corrected severity for promotion regardless of the active severity lens', () => {
+    const reports = [report('app',
+      ...Array.from({ length: 30 }, (_, i) => [app(`A${i}`)]),
+      [source('uncovered', { confidence: 6, correctedSeverity: 'low' })],
+    )]
+    for (const mode of ['original', 'corrected']) {
+      state.severityMode = mode
+      assert.deepEqual(workspaceAppMetadata(reports), { appMode: true, appFindings: 30 }, mode)
+      assert.equal(state.severityMode, mode, 'metadata calculation must not change the selected lens')
+    }
+  })
   it('does not link through folded-away source tabs or count ruled-out App findings', () => {
     const reports = [report('app', [app('A'), source('S', { revalidate: 'confirmed' })], [app('B')], [app('R', { revalidate: 'refuted' })])]
     assert.deepEqual(workspaceAppMetadata(reports, links(['S', 'B'])), { appMode: true, appFindings: 2 })

@@ -39,6 +39,16 @@ describe('workspace App metadata cache', () => {
     await renameWorkspace(ws.id, 'Renamed')
     assert.equal(getWorkspaceAppMetadata(listWorkspaces()[0]).appFindings, 3)
   })
+  it('discards metadata calculated using the previous severity-dependent rules', async () => {
+    const ws = await workspace()
+    await record(ws)
+    const old = JSON.parse(getItem(KEY))
+    old.version = 1
+    await setItem(KEY, JSON.stringify(old))
+    assert.equal(getWorkspaceAppMetadata(ws), null)
+    assert.equal(await record(ws), true)
+    assert.equal(getWorkspaceAppMetadata(ws).appFindings, 3)
+  })
   it('resets on membership changes and rejects a result from the old membership', async () => {
     const ws = await workspace()
     await record(ws)

@@ -164,6 +164,25 @@ let searchActive = false
 // App workspaces start compact. Search temporarily reveals matching children
 // without changing the user's independent report/bundle expansion choices.
 const expandedWorkspaceSections = new Map()
+let lastWorkspaceFocus = ''
+
+function revealFocusedWorkspaceSection(workspaces, force) {
+  const bundle = state.currentView === 'bundles' ? state.selectedBundle : null
+  const report = ['findings', 'files', 'links'].includes(state.currentView) ? state.currentFile : null
+  const section = bundle ? 'bundles' : 'reports'
+  const reportWorkspace = report ? reportWorkspaceFor(report) : null
+  const parents = workspaces.filter((w) => bundle ? w.bundles.includes(bundle) : w.id === reportWorkspace)
+  const focus = JSON.stringify([section, bundle || report, parents.map((w) => w.id)])
+  if (!force && focus === lastWorkspaceFocus) return
+  lastWorkspaceFocus = focus
+  // Reveal on navigation, not every repaint: a user can still collapse the
+  // selected section. Search's temporary expansion does not change this state.
+  for (const w of parents) {
+    const expanded = expandedWorkspaceSections.get(w.id) ?? new Set()
+    expanded.add(section)
+    expandedWorkspaceSections.set(w.id, expanded)
+  }
+}
 
 function fileItemTemplate(n, opts = {}) {
   // Suppress the `current` highlight when the user is browsing the
@@ -450,7 +469,7 @@ const byReportName = (a, b) => displayName(a).localeCompare(displayName(b))
 // vocabulary stays consistent across mixed-format collections. Called
 // after every state transition that could change the file list, the
 // current selection, or the search query.
-export async function renderSidebar() {
+export async function renderSidebar({ revealSelection = false } = {}) {
   await ensureClientMode()
   const modeAtStart = clientModeLabel()
   updateManagedLanding({ serverMode: modeAtStart, session: state.managedSession, teams: state.managedTeams })
@@ -495,6 +514,7 @@ export async function renderSidebar() {
     return
   }
   const workspaces = listWorkspaces()
+  revealFocusedWorkspaceSection(workspaces, revealSelection)
   renderLandingWorkspaces(workspaces)
   // A report may be moved into a new workspace without being reopened.
   // Prime parent hints here too, so its next copied link is complete.

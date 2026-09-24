@@ -15,7 +15,7 @@ export function workspaceAppMetadata(reports, duplicatesOf = () => []) {
   const { groups, conflicts } = mergeReportGroups(reports, { hideRuledOut: true })
   if (conflicts.size > 0) return { appMode: false }
   const linked = mergeLinkedWorkspaceGroups(groups, duplicatesOf, appTabs)
-  if (!canLockConfirmed(linked, { tabs: appTabs, kindOf: revalidateKindOf })) return { appMode: false }
+  if (!canLockConfirmed(linked, { tabs: appTabs, kindOf: revalidateKindOf, severityMode: 'corrected' })) return { appMode: false }
   return {
     appMode: true,
     appFindings: linked.filter((group) => appTabs(group).some((f) => f.isApp)).length,
