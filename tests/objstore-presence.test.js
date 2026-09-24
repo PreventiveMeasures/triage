@@ -17,6 +17,7 @@ import { createObjstoreSession } from './_objstore-session.js'
 import { gunzipBytes, gzipBytes } from '../common/gzip.js'
 import { decodeUtf8, encodeUtf8 } from '../common/utf8.js'
 import { deleteFile, listFiles, readFile, readFileBytes, saveFileBytes } from '../client/storage.js'
+import { VAULT_LOCK } from '../client/passkey-vault.js'
 import { triageSync } from '../client/sync/triage-sync.ts'
 import { createWorkspace, deleteWorkspace, listWorkspaces, setBundleWorkspace, setReportWorkspace } from '../client/workspaces.js'
 import { bootServer } from './_helpers.js'
@@ -2693,6 +2694,65 @@ describe('client/sync/objstore-presence', () => {
       e.session.fetchByTag = realFetchByTag
       closeWorkspace(ws.id)
       await deleteWorkspace(ws.id)
+      await deleteFile(fileName).catch(() => {})
+    }
+  })
+
+  it('two workspaces writing a shared report at once still check each other\'s write (review r4099568472)', async () => {
+    // One report in two open workspaces; both clouds get a Replace and
+    // both writes are in flight together. The file-mutation hook skipped
+    // an entry for ANY save while that entry had a write of its own in
+    // flight, so each skipped the other's save: both recorded their own
+    // cloud copy as in sync while the file holds only the last write.
+    const fileName = 'shared-concurrent-writes.json'
+    const text = reportJson('synced')
+    const { ws: ws1, put: put1 } = await openSyncedReport('presence-shared-writes-1', fileName, text)
+    const ws2 = await createWorkspaceWithReports('presence-shared-writes-2', [])
+    const peer1 = await openPeerSession(ws1)
+    const peer2 = await openPeerSession(ws2)
+    let releaseVault = () => {}
+    try {
+      openWorkspace(ws2.id)
+      const put2 = await peer2.put({ fileName, content: await gzipBytes(encodeUtf8(text)), prev: null })
+      assert.equal(put2.ok, true)
+      await awaitPresence(() => typeof __test__.getEntry(ws2.id)?.baselines.values().next().value?.hash === 'string', 'second workspace in sync')
+      const e1 = __test__.getEntry(ws1.id)
+      const e2 = __test__.getEntry(ws2.id)
+      // Hold every save mid-write (saves take the vault lock shared).
+      await new Promise((held) => {
+        navigator.locks.request(VAULT_LOCK, { mode: 'exclusive' }, () => {
+          held()
+          return new Promise((resolve) => { releaseVault = resolve })
+        })
+      })
+      const text1 = reportJson('cloud-1')
+      const text2 = reportJson('cloud-2')
+      assert.equal((await peer1.put({ fileName, content: await gzipBytes(encodeUtf8(text1)), prev: put1.meta })).ok, true)
+      assert.equal((await peer2.put({ fileName, content: await gzipBytes(encodeUtf8(text2)), prev: put2.meta })).ok, true)
+      for (const until = Date.now() + 5_000; !(e1.selfWrites.has(fileName) && e2.selfWrites.has(fileName)) && Date.now() < until;) {
+        await new Promise((resolve) => { setTimeout(resolve, 20) })
+      }
+      assert.ok(e1.selfWrites.has(fileName) && e2.selfWrites.has(fileName), 'both writes in flight')
+      releaseVault()
+      for (const until = Date.now() + 5_000; !([...e1.baselines.values()][0]?.version === 2 && [...e2.baselines.values()][0]?.version === 2) && Date.now() < until;) {
+        await new Promise((resolve) => { setTimeout(resolve, 20) })
+      }
+      // Past the settle delay of any check a save scheduled.
+      await new Promise((resolve) => { setTimeout(resolve, 2_600) })
+      const onDisk = await localReportText(fileName)
+      assert.ok(onDisk === text1 || onDisk === text2, 'one of the two writes is on disk')
+      for (const [ws, cloud] of [[ws1, text1], [ws2, text2]]) {
+        assert.deepEqual(differingReports(ws.id), onDisk === cloud ? [] : [fileName],
+          `workspace whose cloud copy ${onDisk === cloud ? 'is' : 'is NOT'} on disk`)
+      }
+    } finally {
+      releaseVault()
+      peer1.close()
+      peer2.close()
+      closeWorkspace(ws1.id)
+      closeWorkspace(ws2.id)
+      await deleteWorkspace(ws1.id)
+      await deleteWorkspace(ws2.id)
       await deleteFile(fileName).catch(() => {})
     }
   })

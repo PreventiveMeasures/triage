@@ -332,6 +332,10 @@ export function openWorkspace(workspaceId) {
     // fileNames this entry is writing right now — the file-mutation
     // hook skips them (the writer sets the baseline itself).
     selfWrites: new Map(),
+    // Per fileName: saves announced while this entry had a write of it
+    // in flight, less the entry's own — other writers' saves the hook
+    // skipped (`saveOwnBytes` checks for them when its write ends).
+    selfWriteNotices: new Map(),
     // `resourceTag → promise` tail of the per-tag queue that
     // serializes local writes of a report's bytes (`withTagLock`).
     tagLocks: new Map(),
@@ -658,9 +662,17 @@ onSyncHostInstalled((host) => {
         if (entry.localChanged.delete(tag)) notify()
         continue
       }
-      // Presence's own write, or an announced one (its release checks).
-      if (entry.selfWrites.has(name) || localChangeHolds.has(name)) continue
-      setTimeout(() => { checkLocalCopy(entry, tag, name).catch(() => {}) }, LOCAL_CHANGE_SETTLE_MS)
+      // While this entry writes the file, a save may be its own or
+      // another writer's (another workspace listing the file, applying
+      // ITS cloud copy) — count it; `saveOwnBytes` tells them apart when
+      // its write ends (review r4099568472).
+      if (entry.selfWrites.has(name)) {
+        entry.selfWriteNotices.set(name, (entry.selfWriteNotices.get(name) ?? 0) + 1)
+        continue
+      }
+      // An announced save: its release checks.
+      if (localChangeHolds.has(name)) continue
+      scheduleLocalCheck(entry, tag, name)
     }
   })
 
@@ -1040,14 +1052,37 @@ function needsRecheck(entry, tag) {
 // checking against the not-yet-updated one would flag a false local
 // change). Other workspaces listing the same file ARE checked: their
 // cloud copies don't have these bytes.
+//
+// The hook can't tell this entry's save from another writer's landing
+// meanwhile — two workspaces applying their cloud copies of one file at
+// once each skipped the other's, and both then called the file in sync
+// with their own copy, whichever write came last (review r4099568472).
+// So it counts them: storage announces a save synchronously, before it
+// resolves, so a successful save here accounts for exactly one; any
+// left when the last of our writes ends were someone else's, and get
+// the check the hook would have scheduled.
 async function saveOwnBytes(entry, fileName, bytes) {
   entry.selfWrites.set(fileName, (entry.selfWrites.get(fileName) ?? 0) + 1)
-  try { await saveFileBytes(fileName, bytes) }
-  finally {
+  try {
+    await saveFileBytes(fileName, bytes)
+    entry.selfWriteNotices.set(fileName, (entry.selfWriteNotices.get(fileName) ?? 0) - 1)
+  } finally {
     const n = entry.selfWrites.get(fileName) - 1
     if (n > 0) entry.selfWrites.set(fileName, n)
-    else entry.selfWrites.delete(fileName)
+    else {
+      entry.selfWrites.delete(fileName)
+      const others = entry.selfWriteNotices.get(fileName) ?? 0
+      entry.selfWriteNotices.delete(fileName)
+      const tag = entry.fileTags.get(fileName)
+      if (others > 0 && tag !== undefined && !entry.disposed) scheduleLocalCheck(entry, tag, fileName)
+    }
   }
+}
+
+// Re-check a report's local copy once a save has settled — long enough
+// for the writer (an upload recording its baseline, say) to finish.
+function scheduleLocalCheck(entry, tag, fileName) {
+  setTimeout(() => { checkLocalCopy(entry, tag, fileName).catch(() => {}) }, LOCAL_CHANGE_SETTLE_MS)
 }
 
 // Re-hash the local copy of `fileName` against its synced baseline and
