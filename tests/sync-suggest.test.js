@@ -1,18 +1,20 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { createSyncSuggester } from '../ui/view/sync-suggest.js'
+import { createSyncSuggester, hasOpenModal } from '../ui/view/sync-suggest.js'
 
 // Deterministic scheduler: queued callbacks run on `flush()`.
-function harness(results) {
+function harness(results, modals = []) {
   const queue = []
   const opened = []
+  // Answers for successive `modalOpen()` checks; none left → no modal.
+  const modalOpen = () => modals.shift() ?? false
   const later = (fn, ms) => { queue.push({ fn, ms }) }
   const open = (names) => { opened.push(names); return Promise.resolve(results.shift() ?? { shown: true, sync: false }) }
   const flush = async () => {
     while (queue.length > 0) await queue.shift().fn()
   }
-  return { queue, opened, flush, suggester: createSyncSuggester({ open, later }) }
+  return { queue, opened, flush, suggester: createSyncSuggester({ open, later, modalOpen }) }
 }
 
 describe('sync suggestion (auto-opened "Reports out of sync")', () => {
@@ -80,5 +82,33 @@ describe('sync suggestion (auto-opened "Reports out of sync")', () => {
     h.suggester.suggestSync('', ['a.json'])
     await h.flush()
     assert.equal(h.opened.length, 0)
+  })
+
+  it('another dialog already open: does not open on top of it, retries (review r4099184485)', async () => {
+    // showModal() stacks a second modal instead of throwing, so the
+    // conflict has to be seen up front, not via modal-conflict.
+    const h = harness([{ shown: true, sync: false }], [true])
+    let retries = 0
+    const retry = () => { retries += 1; h.suggester.suggestSync('ws1', ['a.json'], { retry }) }
+    h.suggester.suggestSync('ws1', ['a.json'], { retry })
+    await h.queue.shift().fn()
+    assert.equal(h.opened.length, 0, 'not opened over the other dialog')
+    assert.equal(h.suggester.isClosedFor('ws1'), false)
+    assert.equal(h.queue.at(-1).ms, 1500)
+    await h.flush()
+    assert.equal(retries, 1)
+    assert.deepEqual(h.opened, [['a.json']], 'opened once the other dialog is gone')
+  })
+
+  it('hasOpenModal sees modal dialogs inside shadow roots', () => {
+    const el = (shadowRoot = null) => ({ shadowRoot })
+    const root = (modal, children = []) => ({
+      querySelector: (sel) => (sel === ':modal' && modal ? {} : null),
+      querySelectorAll: () => children,
+    })
+    assert.equal(hasOpenModal(root(false, [el(), el(root(false))])), false)
+    assert.equal(hasOpenModal(root(true)), true, 'light-DOM modal')
+    assert.equal(hasOpenModal(root(false, [el(), el(root(true))])), true, 'modal in a dialog component\'s shadow root')
+    assert.equal(hasOpenModal(root(false, [el(root(false, [el(root(true))]))])), true, 'nested shadow roots')
   })
 })
