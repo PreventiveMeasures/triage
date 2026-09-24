@@ -64,14 +64,16 @@ Local/E2E shows a built-in model catalogue before connecting, with Claude Opus
 5.5 selected by default. GPT-6 Astra, Sol, and Luna each include a Pro variant,
 shown as one family row with a Pro toggle in the selected model box.
 No provider is selected initially. Selecting Anthropic limits the catalogue to
-Claude models, OpenAI to GPT models, and OpenRouter shows the full catalogue.
+Claude models, OpenAI to GPT models, Moonshot to Kimi models, and OpenRouter
+shows the full catalogue.
 The current model is preserved when available; otherwise the picker selects
 the first model in the filtered catalogue.
 The effort controls are preview values, not negotiated
 service capabilities. Managed Scans continues to use its own model transport.
 
 The local/E2E Access group contains a DeepView API Key and Connect button, plus
-a separate provider/token row with icon segments for Anthropic, OpenAI, or OpenRouter. Connect
+a separate provider/token row with icon segments for Anthropic, OpenAI, Moonshot,
+or OpenRouter. The segments form two rows on narrow screens. Connect
 currently reports that connections are unavailable; entering credentials does
 not make requests. Both credentials remain in page memory and clear on leaving
 the page, refreshing, or changing the discovered service. Changing provider
@@ -80,11 +82,16 @@ future connection work; it omits cookies, rejects redirects, and never uses
 the managed preview identity.
 
 Typing or pasting a provider token automatically selects Anthropic for
-`sk-ant-`, OpenRouter for `sk-or-v1-`, or OpenAI for `sk-proj-` / `sk-svcacct-`.
+`sk-ant-`, OpenRouter for `sk-or-v1-`, Moonshot for `sk-kimi-`, or OpenAI for
+`sk-proj-` / `sk-svcacct-`.
 Detection starts as soon as a complete identifying prefix is entered, preserves
 the token, and ignores surrounding whitespace. Incomplete or unrecognized
 prefixes and generic `sk-` tokens leave the selection alone;
 prefix detection does not validate credentials or make network requests.
+Moonshot platform keys use the ambiguous `sk-` prefix and require manual
+selection. The distinctive `sk-kimi-` prefix belongs to Kimi Code credentials;
+future connection support must route those to the Kimi Code endpoint, not the
+Moonshot platform endpoint ([Kimi's credential documentation](https://www.kimi.com/code/docs/en/third-party-tools/hermes.html)).
 
 Scan execution and report saving retain the existing UI prototype behavior;
 they do not yet submit jobs or upload bundle contents to the service.

@@ -14,13 +14,14 @@ test('unselected and OpenRouter providers expose every default model with Opus 5
 
 test('direct-provider defaults contain only their own models and keep GPT Pro pairs', () => {
   const full = defaultScanModels()
-  for (const provider of ['anthropic', 'openai']) {
+  for (const provider of ['anthropic', 'openai', 'moonshotai']) {
     const filtered = defaultScanModels(provider)
     const expected = full.models.filter(model => model.id.startsWith(`${provider}/`))
     assert.deepEqual(filtered.models, expected)
     assert.equal(filtered.defaultModel, expected[0].id)
   }
   assert.equal(defaultScanModels('openai').defaultModel, 'openai/gpt-6-astra')
+  assert.equal(defaultScanModels('moonshotai').defaultModel, 'moonshotai/kimi-k3')
   assert.deepEqual(modelRows(defaultScanModels('openai').models).map(model => [model.id, model.pro?.id]), [
     ['openai/gpt-6-astra', 'openai/gpt-6-astra-pro'],
     ['openai/gpt-6-sol', 'openai/gpt-6-sol-pro'],

@@ -111,10 +111,16 @@ class LocalScanPage extends LitElement {
     .provider-icon { display: block; width: 1rem; height: 1rem; flex: 0 0 1rem; background: currentColor; -webkit-mask: var(--provider-icon) center / contain no-repeat; mask: var(--provider-icon) center / contain no-repeat; }
     .provider-icon.anthropic { --provider-icon: url('/provider-icons/claude.svg'); color: #d97757; }
     .provider-icon.openai { --provider-icon: url('/provider-icons/openai.svg'); color: #10a37f; }
+    .provider-icon.moonshotai { --provider-icon: url('/provider-icons/moonshot.svg'); color: #8068d9; -webkit-mask-size: 80%; mask-size: 80%; }
     .provider-icon.openrouter { --provider-icon: url('/provider-icons/openrouter.svg'); color: var(--text); }
     .connect { justify-content: center; height: 2rem; padding: .35rem .8rem; color: var(--text); background: var(--surface-active); }
     button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     @container scan-access (max-width: 38rem) { .provider-row { grid-template-columns: minmax(0, 1fr); } }
+    @container scan-access (max-width: 28rem) {
+      .provider-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
+      .provider-choice:nth-child(odd) { border-left: 0; }
+      .provider-choice:nth-child(n+3) { border-top: 1px solid var(--border); }
+    }
     @container scan-access (max-width: 23rem) { .access .provider-choice { gap: .25rem; padding-inline: .4rem; font-size: .7rem; } }
   `
   _accessPanel() {
@@ -126,7 +132,7 @@ class LocalScanPage extends LitElement {
           <button type="submit" class="connect">Connect</button>
         </form>
         <div class="provider-row">
-          <fieldset class="provider-field"><legend>Provider</legend><div class="provider-options">${[['anthropic', 'Anthropic'], ['openai', 'OpenAI'], ['openrouter', 'OpenRouter']].map(([id, name]) => html`<label class="provider-choice"><input type="radio" name="scan-provider" value=${id} .checked=${this._provider === id} @change=${() => this._setProvider(id)}><span class=${`provider-icon ${id}`} aria-hidden="true"></span><span>${name}</span></label>`)}</div></fieldset>
+          <fieldset class="provider-field"><legend>Provider</legend><div class="provider-options">${[['anthropic', 'Anthropic'], ['openai', 'OpenAI'], ['moonshotai', 'Moonshot'], ['openrouter', 'OpenRouter']].map(([id, name]) => html`<label class="provider-choice"><input type="radio" name="scan-provider" value=${id} .checked=${this._provider === id} @change=${() => this._setProvider(id)}><span class=${`provider-icon ${id}`} aria-hidden="true"></span><span>${name}</span></label>`)}</div></fieldset>
           <label>Token<input type="password" name="provider-token" placeholder="Enter provider token" autocomplete="off" spellcheck="false" .value=${this._providerToken} @input=${event => this._setProviderToken(event.target.value)}></label>
         </div>
       </div>
