@@ -59,6 +59,36 @@ describe('workspace App metadata cache', () => {
     await workspaceAppCacheToken()
     assert.equal(getWorkspaceAppMetadata(listWorkspaces()[0]), null)
   })
+  it('refreshes a report snapshot token after only the background links index changes', async () => {
+    const ws = await workspace()
+    const reportsToken = await workspaceAppCacheToken()
+    await invalidateWorkspaceAppMetadata(null, '["new links"]')
+    assert.equal(await cacheWorkspaceAppMetadata(ws, metadata, reportsToken), false)
+    const indexedToken = await workspaceAppCacheToken(reportsToken)
+    assert.ok(indexedToken)
+    assert.equal(await cacheWorkspaceAppMetadata(ws, metadata, indexedToken), true)
+  })
+  it('cannot refresh a report snapshot after report or membership changes, even if links also change', async () => {
+    const ws = await workspace()
+    for (const change of [
+      () => saveFile(ws.reports[0], '{"findings":[]}'),
+      () => addReportToWorkspace('another.json', ws.id),
+    ]) {
+      const reportsToken = await workspaceAppCacheToken()
+      await change()
+      await invalidateWorkspaceAppMetadata(null, '["new links"]')
+      assert.equal(await workspaceAppCacheToken(reportsToken), null)
+    }
+  })
+  it('cannot refresh a report snapshot invalidated by a sibling tab', async () => {
+    await workspace()
+    const reportsToken = await workspaceAppCacheToken()
+    const cache = JSON.parse(getItem(KEY))
+    cache.reportRevision = cache.revision = crypto.randomUUID()
+    cache.entries = {}
+    await setItem(KEY, JSON.stringify(cache))
+    assert.equal(await workspaceAppCacheToken(reportsToken), null)
+  })
   it('resets only affected workspaces when a known report is overwritten', async () => {
     const other = await workspace('Other'), ws = await workspace()
     await record(ws)

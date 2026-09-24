@@ -11,6 +11,7 @@ const listeners = new Set()
 const dirty = new Set()
 let allDirty = 0
 let epoch = 0
+let reportEpoch = 0
 let pending = Promise.resolve()
 let observed = null
 
@@ -41,10 +42,17 @@ export function getWorkspaceAppMetadata(workspace) {
 
 // Capture before reading reports; both same-tab and sibling-tab mutations can
 // invalidate a calculation while its OPFS reads are still in flight.
-export async function workspaceAppCacheToken() {
+export async function workspaceAppCacheToken(reportsToken = null) {
   let drained
   do { drained = pending; await drained } while (drained !== pending)
-  return { epoch, revision: parse().revision }
+  const cache = parse()
+  const reportRevision = cache.reportRevision ?? cache.revision
+  // A background links walk may finish after the workspace has loaded. Its
+  // new links can be applied to those reports, but changed report bytes or
+  // membership require a fresh load. Keep both same-tab and persisted guards.
+  if (reportsToken && (reportsToken.reportEpoch !== reportEpoch
+      || reportsToken.reportRevision !== reportRevision)) return null
+  return { epoch, revision: cache.revision, reportEpoch, reportRevision }
 }
 export async function cacheWorkspaceAppMetadata(workspace, metadata, token) {
   let stored = false
@@ -64,11 +72,14 @@ export async function cacheWorkspaceAppMetadata(workspace, metadata, token) {
 // sidebar renders cannot show a stale count while the secure write is queued.
 export function invalidateWorkspaceAppMetadata(ids = null, links) {
   epoch++
+  if (links === undefined) reportEpoch++
   if (ids === null) allDirty++
   else for (const id of ids) dirty.add(id)
   notify()
   return enqueue((cache) => {
+    cache.reportRevision ??= cache.revision
     cache.revision = crypto.randomUUID()
+    if (links === undefined) cache.reportRevision = cache.revision
     if (ids === null) cache.entries = {}
     else for (const id of ids) delete cache.entries[id]
     if (links !== undefined) cache.links = links

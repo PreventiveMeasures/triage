@@ -1,4 +1,4 @@
-import { adoptRepoUrlFor, analyzeContent, cacheWorkspaceAppMetadata, computeLinkHint, deleteBundle, deleteFile, deleteWorkspace, dropBundleFromHashIndex, duplicatesOf, ensureCounts, ensureLinkedFindingsIndexed, ensureTriageLoaded, getSecureItem, isManagedUiMode, listBundles, listFiles, listWorkspaces, loadRepoUrlFor, parseLinkedFindings, pruneOrphanTriage, readFile, readFileBytes, removeCount, removeSecureItem, saveBundle, saveFile, saveRepoUrlFor, setBundleWorkspace, setCount, setReportWorkspace, setSecureItem, state, workspaceAppCacheToken } from '#client/index.js'
+import { adoptRepoUrlFor, analyzeContent, computeLinkHint, deleteBundle, deleteFile, deleteWorkspace, dropBundleFromHashIndex, ensureTriageLoaded, getSecureItem, getWorkspaceAppMetadata, isManagedUiMode, listBundles, listFiles, listWorkspaces, loadRepoUrlFor, parseLinkedFindings, pruneOrphanTriage, readFile, readFileBytes, removeCount, removeSecureItem, saveBundle, saveFile, saveRepoUrlFor, setBundleWorkspace, setCount, setReportWorkspace, setSecureItem, state, workspaceAppCacheToken } from '#client/index.js'
 import { closeWorkspace as closePresence, deleteBundleFromRemote, deleteFromRemote as deletePresence, holdLocalChangeChecks, isInRemoteOrCached, openWorkspace as openPresence, putFile, triageSync } from './client-sync.js'
 import { openImportConflictDialog } from './dialogs/import-conflict-dialog.js'
 import { dropZone, report } from './dom.js'
@@ -19,7 +19,7 @@ import { openPasskeyUnlockDialog } from './dialogs/passkey-unlock-dialog.js'
 import { openSyncDownloadDialog } from './dialogs/sync-download-dialog.js'
 import { fetchReport as fetchManagedReport, login as managedLogin } from './client-managed.js'
 import { showToast } from './toast.js'
-import { workspaceAppMetadata } from './workspace-app.js'
+import { updateWorkspaceAppMetadata } from './workspace-app-load.js'
 
 // localStorage key for the last-viewed file — restored on page load so
 // the user picks back up where they left off. The stored value is the
@@ -837,11 +837,6 @@ export async function switchToWorkspace(workspaceId) {
   // order is preserved because the awaits walk the promise array in
   // workspace.reports order. Per-read failures resolve to `null`
   // (caught at the promise) so one bad file doesn't reject the batch.
-  // Classify links before taking the snapshot: linking can merge App rows even
-  // when its file lives outside this workspace. These walks share sidebar work.
-  await ensureCounts(await listFiles())
-  await ensureLinkedFindingsIndexed()
-  if (isStaleLoad(gen)) return
   const appToken = await workspaceAppCacheToken()
   if (isStaleLoad(gen)) return
   let complete = true
@@ -878,10 +873,7 @@ export async function switchToWorkspace(workspaceId) {
   // has touched the filters since that first member's resetFilters,
   // so this is still what a fresh load would set, not a user's
   // selection being overwritten. Paint the complete workspace once.
-  const metadata = complete ? workspaceAppMetadata(state.reports, duplicatesOf) : { appMode: false }
-  const cached = await cacheWorkspaceAppMetadata(ws, metadata, appToken).catch(() => false)
-  if (isStaleLoad(gen)) return
-  if (cached && metadata.appMode) {
+  if (complete && getWorkspaceAppMetadata(ws)?.appMode) {
     state.showRevalidation = true
     state.upstreamOnly = false
     state.revalidationDetailed = false
@@ -891,6 +883,27 @@ export async function switchToWorkspace(workspaceId) {
     applyOpeningFilters(getShownGroups())
     if (!(await renderAfterAnimationFrame(gen))) return
   }
+  // Discover global links and derive metadata in the background. A cold
+  // counts cache must never delay opening this workspace or a finding link.
+  // Late promotion can update the opening defaults only while the user has
+  // left them alone; metadata still updates if they choose a different lens.
+  const openingFields = ['showRevalidation', 'upstreamOnly', 'revalidationDetailed', 'filterConfMin', 'filterConfMax', 'filterRevalidate', 'filterPartial', 'sortBy', 'severityMode']
+  const opening = openingFields.map((key) => state[key])
+  void updateWorkspaceAppMetadata(ws, state.reports.slice(), appToken, {
+    complete,
+    isCurrent: () => !isStaleLoad(gen),
+    onReady: async (metadata) => {
+      if (!metadata.appMode || state.currentWorkspace !== workspaceId
+          || !['findings', 'files'].includes(state.currentView)
+          || openingFields.some((key, i) => state[key] !== opening[i])) return
+      state.showRevalidation = true
+      state.upstreamOnly = false
+      state.revalidationDetailed = false
+      configureReportRevalidation()
+      applyOpeningFilters(getShownGroups())
+      await renderAfterAnimationFrame(gen)
+    },
+  }).catch((err) => console.warn('workspace App metadata:', err))
   // Open the per-workspace sync session AFTER every report is ingested
   // — it needs a complete view of state.reports to build its
   // workspace-id set. No-op when sync is disabled (no server URL).
