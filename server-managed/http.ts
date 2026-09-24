@@ -420,8 +420,9 @@ async function handleRemoveRepository(req: IncomingMessage, res: ServerResponse,
 }
 
 // Strip a client-supplied upload filename to a safe display string. The bytes
-// are keyed by a server uuid, so this is for display + Content-Disposition only:
-// URL-decoded if encoded, control chars + path separators removed, length-capped.
+// are keyed by a server uuid. This name is used for display, Content-Disposition,
+// and format detection: decode URLs, remove controls/paths, and cap the basename
+// without discarding the extension that the report reader needs.
 // Falls back to `fallback` when nothing usable remains.
 function sanitizeFilename(raw: string | null, fallback: string): string {
   if (raw == null || raw === '') return fallback
@@ -435,7 +436,14 @@ function sanitizeFilename(raw: string | null, fallback: string): string {
     if (code < 0x20 || code === 0x7f) continue
     cleaned += ch === '/' || ch === '\\' ? '_' : ch
   }
-  return cleaned.trim().slice(0, 200) || fallback
+  cleaned = cleaned.trim()
+  if (cleaned.length <= 200) return cleaned || fallback
+  const dot = cleaned.lastIndexOf('.')
+  const suffix = dot > 0 ? cleaned.slice(dot) : ''
+  // An extension that alone exceeds the cap cannot fit; ordinary extensions
+  // (including case-sensitive display names such as .CSV) remain unchanged.
+  const extension = suffix.length < 200 ? suffix : ''
+  return cleaned.slice(0, 200 - extension.length) + extension
 }
 
 // The selected repos a report / bundle can be linked to, for the upload UI's
@@ -806,6 +814,7 @@ async function handleViewReport(res: ServerResponse, deps: ManagedHttpDeps, cook
   const bytes = await deps.reportStore.get(id)
   if (bytes == null) { sendJson(res, 503, { error: 'unavailable' }); return }
   const out = await viewerReportBytes(deps, s.user, id, bytes)
+  if (out == null) { sendJson(res, 404, { error: 'no-report' }); return }
   res.writeHead(200, {
     'content-type': 'text/plain; charset=utf-8',
     'content-length': String(out.length),
@@ -819,12 +828,15 @@ async function handleViewReport(res: ServerResponse, deps: ManagedHttpDeps, cook
 // manage roles see the report whole; everyone else (triage / view — 'none' can't
 // reach here) has dependency / security findings they lack permission for
 // stripped server-side, per their team memberships. Unchanged → original bytes.
-async function viewerReportBytes(deps: ManagedHttpDeps, user: StoredUser, reportId: string, bytes: Buffer): Promise<Buffer> {
+async function viewerReportBytes(deps: ManagedHttpDeps, user: StoredUser, reportId: string, bytes: Buffer): Promise<Buffer | null> {
+  // Deletion can win while the authorized request is reading the blob. Missing
+  // metadata means unavailable, never a filename-free filtering fallback.
+  const rec = await deps.db.getReport(reportId)
+  if (rec == null) return null
   if (user.role === 'admin' || user.role === 'manage') return bytes
   const perms = await deps.db.reportPermissionsFor(user.id, reportId)
   const text = bytes.toString('utf8')
-  const rec = await deps.db.getReport(reportId)
-  const filtered = filterReportContent(text, perms, rec?.filename)
+  const filtered = filterReportContent(text, perms, rec.filename)
   return filtered === text ? bytes : Buffer.from(filtered, 'utf8')
 }
 
