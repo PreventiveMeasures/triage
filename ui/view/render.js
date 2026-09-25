@@ -1658,16 +1658,18 @@ function mountBundleSourceOverlay() {
 // animated (`prev` is null on first call).
 let prevPaintedView = null
 
-export function render() {
+export function render({ animate = true } = {}) {
   const prev = prevPaintedView
   prevPaintedView = state.currentView
   const viewChanged = prev !== null && prev !== state.currentView
   if (
-    viewChanged &&
+    animate && viewChanged &&
     typeof document.startViewTransition === 'function' &&
     !matchMedia('(prefers-reduced-motion: reduce)').matches
   ) {
-    document.startViewTransition(() => renderImpl())
+    const transition = document.startViewTransition(() => renderImpl())
+    // A newer navigation can skip the animation while its DOM update still runs.
+    transition.ready.catch(() => {})
     return
   }
   renderImpl()

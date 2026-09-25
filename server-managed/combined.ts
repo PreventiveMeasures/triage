@@ -1,6 +1,6 @@
 // Compose the existing HTTP apps on e2e's listener, including its WS/SSE
-// transports and static UI. Managed handles only its routes plus discovery;
-// every other request falls through to the unchanged e2e HTTP handler.
+// transports and static UI. Managed handles its API, discovery and page HTML;
+// assets and other requests fall through to the unchanged e2e HTTP handler.
 import { resolve } from 'node:path'
 import { loadConfig } from '../server-e2e/config.ts'
 import { loadManagedConfig } from './config.ts'

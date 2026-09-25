@@ -99,6 +99,7 @@ export interface ManagedHttpDeps {
   isShuttingDown: () => boolean
   track: (p: Promise<unknown>) => void
   // Combined boot delegates unmatched paths to e2e and overrides discovery.
+  serveStatic?: (req: IncomingMessage, res: ServerResponse) => boolean
   next?: Handler
   serverInfo?: ServerInfo
 }
@@ -1276,6 +1277,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       await handleRemoveTeamMember(req, res, deps, cookie); return
     }
     if (path === LOGOUT_PATH) { await handleLogout(req, res, deps, cookie); return }
+    if (deps.serveStatic?.(req, res)) return
     if (deps.next) { deps.next(req, res); return }
     sendJson(res, 404, { error: 'not-found' }, { connection: 'close' })
   }

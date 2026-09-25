@@ -103,8 +103,10 @@ export type StaticHandler = (req: HttpRequest, res: ServerResponse) => boolean
 // caller falls through to its next route. Missing `staticDir`
 // (pre-build case) logs a warning and returns a handler that always
 // answers false; the API/WS planes are unaffected.
-export function loadStatic(staticDir: string, deepviewScanServer: string | null = null): StaticHandler {
-  const files = readStaticFiles(staticDir, deepviewScanServer)
+type StaticOptions = { transformIndex?: (html: string) => string, indexOnly?: boolean }
+
+export function loadStatic(staticDir: string, deepviewScanServer: string | null = null, options: StaticOptions = {}): StaticHandler {
+  const files = readStaticFiles(staticDir, deepviewScanServer, options)
   return function handleStatic(req: HttpRequest, res: ServerResponse): boolean {
     if (req.method !== 'GET' && req.method !== 'HEAD') return false
     if (typeof req.url !== 'string') return false
@@ -152,7 +154,7 @@ export function loadStatic(staticDir: string, deepviewScanServer: string | null 
   }
 }
 
-function readStaticFiles(staticDir: string, deepviewScanServer: string | null): ReadonlyMap<string, StaticEntry> {
+function readStaticFiles(staticDir: string, deepviewScanServer: string | null, options: StaticOptions): ReadonlyMap<string, StaticEntry> {
   const files = new Map<string, StaticEntry>()
   let entries
   try { entries = readdirSync(staticDir, { withFileTypes: true }) } catch (err) {
@@ -167,16 +169,16 @@ function readStaticFiles(staticDir: string, deepviewScanServer: string | null): 
   }
   for (const entry of entries) {
     // Exclude subdirectories, symlinks and non-file entries.
-    if (!entry.isFile()) continue
-    files.set(entry.name, buildEntry(staticDir, entry.name, deepviewScanServer))
+    if (!entry.isFile() || (options.indexOnly && entry.name !== 'index.html')) continue
+    files.set(entry.name, buildEntry(staticDir, entry.name, deepviewScanServer, options.transformIndex))
   }
   return files
 }
 
-function buildEntry(staticDir: string, name: string, deepviewScanServer: string | null = null): StaticEntry {
+function buildEntry(staticDir: string, name: string, deepviewScanServer: string | null = null, transformIndex: (html: string) => string = html => html): StaticEntry {
   const ext = extname(name)
   const source = readFileSync(join(staticDir, name))
-  const raw = name === 'index.html' ? Buffer.from(scanServerHtml(source.toString('utf8'), deepviewScanServer)) : source
+  const raw = name === 'index.html' ? Buffer.from(transformIndex(scanServerHtml(source.toString('utf8'), deepviewScanServer))) : source
   const type = CONTENT_TYPE[ext] ?? 'application/octet-stream'
   // HTML: lift `<link rel="(module)preload" …>` into a Link header and
   // drop the tags from the served body. ETag + compression run against

@@ -1,4 +1,5 @@
-import { KANBAN_DETAIL_FULLSCREEN_KEY, SEVERITY_MODE_KEY, hasLinkedFindings, isEncryptionEnabled, patchEntry, readBundle, saveRepoUrlFor, saveTriage, setReportIgnored, state, subscribeToBundleFindingIndex, subscribeToBundleHashIndex, subscribeToLinkedFindings } from '#client/index.js'
+import { managedHistory } from './managed-history.js'
+import { KANBAN_DETAIL_FULLSCREEN_KEY, SEVERITY_MODE_KEY, hasLinkedFindings, isEncryptionEnabled, isManagedUiMode, patchEntry, readBundle, saveRepoUrlFor, saveTriage, setReportIgnored, state, subscribeToBundleFindingIndex, subscribeToBundleHashIndex, subscribeToLinkedFindings } from '#client/index.js'
 import { downloadBlob, report } from './dom.js'
 import { commonPrefix, configureRevalidation, handoffBlock, isModule, lineRange } from './format.js'
 import { activeTabFor, canApplyFixToGroup, canTriageFinding, findGroupById, findingRepo, findingReport, fixApplies, getShownGroups, groupState, groupWithPassRows, syncGroupTriage, tabKey, triageActionPlan, triageEntry, triageScope } from './group.js'
@@ -20,6 +21,11 @@ import { closeLinksPreview, getLinksPreview, openLinksPreview } from './links-pr
 import { FOCUS_SPLIT_STEP, nudgeFocusSplit, resetFocusSplit, startFocusSplitDrag } from './focus-splitter.js'
 import { downloadReportsAsMarkdown, reportsToMarkdown } from './markdown-export.js'
 import { bundleToCycloneDx, bundleToSpdx, sbomBaseName } from './sbom.js'
+
+function navigateManagedReportView(view) {
+  if (!isManagedUiMode() || !managedHistory.active || !state.currentManagedTeam) return null
+  return managedHistory.navigate({ view, teamId: state.currentManagedTeam, reportId: state.currentManagedReport })
+}
 
 // When another OPFS report finishes parsing, re-render if the user is
 // viewing a bundle — Issues tab and Graph view both pull from the
@@ -809,6 +815,7 @@ report.addEventListener('click', (e) => {
   // switch.
   const filesToggle = e.target.closest('[data-action="toggle-files"]')
   if (filesToggle) {
+    if (navigateManagedReportView(state.currentView === 'files' ? 'findings' : 'files')) return
     if (state.currentView === 'files') {
       state.currentView = 'findings'
     } else {
@@ -891,19 +898,23 @@ report.addEventListener('click', (e) => {
     // (which has no UI in the graph viewport) is actually visible.
     if (state.viewMode === 'graph') state.viewMode = 'table'
     cleanupGraph2()
+    if (navigateManagedReportView('findings')) return
     render()
     return
   }
   const g2JumpFile = pathClosest(e, '[data-g2-jump-file]')
   if (g2JumpFile) {
     const targetFile = g2JumpFile.dataset.g2JumpFile
-    state.currentView = 'files'
     cleanupGraph2()
-    render()
-    requestAnimationFrame(() => {
+    const revealFile = () => requestAnimationFrame(() => {
       const target = document.querySelector(`#${treeAnchor(targetFile)}`)
       if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' })
     })
+    const navigation = navigateManagedReportView('files')
+    if (navigation) { void navigation.then(ok => ok ? revealFile() : undefined); return }
+    state.currentView = 'files'
+    render()
+    revealFile()
     return
   }
   // Path/package filter clear button — wipe the input value
