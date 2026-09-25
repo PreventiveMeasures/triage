@@ -1,15 +1,50 @@
-.comments { max-height: 45vh; overflow-y: auto; margin: .8rem 0; }
-.comment { padding: .75rem 0; border-bottom: 1px solid var(--border); }
-.byline { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; font-size: .78rem; }
-.byline time, .byline span { color: var(--muted); }
-.byline button {
-  padding: .2rem .45rem;
-  border: 1px solid var(--border); border-radius: 4px;
-  background: transparent; color: var(--text); font: inherit;
+dialog {
+  width: min(94vw, 800px); max-width: 800px; max-height: calc(100dvh - 4rem);
+  margin-block: 2rem; padding: 0;
 }
-.comment-actions { margin-left: auto; display: flex; align-items: center; gap: .4rem; }
-.body { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: .4rem; }
-.body a { color: var(--accent); }
-.error { color: var(--danger, #c44); }
-label { display: block; margin-bottom: .4rem; font-size: .85rem; }
-textarea { min-height: 6rem; }
+dialog[open] { display: flex; flex-direction: column; }
+.discussion-header {
+  display: flex; align-items: start; gap: 1rem;
+  padding: 1rem 1.25rem; border-bottom: 1px solid var(--border);
+}
+.discussion-heading { flex: 1; min-width: 0; }
+header h3 { display: flex; align-items: center; gap: .5rem; margin: 0; }
+.comment-count {
+  padding: .05rem .4rem; border-radius: 1rem;
+  background: rgb(from var(--muted) r g b / .12);
+  color: var(--muted); font-size: .72rem; font-weight: 400;
+}
+.discussion-finding { margin-top: .4rem; font-size: .85rem; overflow-wrap: anywhere; }
+.loc { margin-top: .25rem; color: var(--muted); }
+.header-actions { display: flex; align-items: center; gap: .7rem; }
+.header-actions button,
+.managed-comment-actions button {
+  border: 0; padding: .15rem 0; background: transparent; color: var(--muted); font: inherit; font-size: .72rem;
+  &:hover:not(:disabled) { color: var(--text); }
+  &:disabled { opacity: .5; }
+  &.danger { color: var(--danger, #c44); }
+}
+.header-actions .close { width: 1.5rem; font-size: 1.25rem; line-height: 1; }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
+.discussion-log {
+  min-height: 0; max-height: 50dvh; overflow-y: auto; overscroll-behavior: contain;
+  padding: .4rem 1.25rem; scrollbar-gutter: stable;
+}
+.comments { list-style: none; }
+.comment { padding: .85rem 0; font-size: .84rem; }
+.comment + .comment { border-top: 1px solid rgb(from var(--border) r g b / .6); }
+.comment.editing { background: rgb(from var(--accent) r g b / .06); }
+.empty-discussion { padding: 2.5rem 0; color: var(--muted); text-align: center; font-size: .85rem; }
+.composer { padding: 1rem 1.25rem; border-top: 1px solid var(--border); }
+.composer-label { display: flex; align-items: center; gap: .45rem; margin-bottom: .6rem; font-size: .78rem; }
+.composer-label strong { font-weight: 600; }
+textarea { min-height: 4.5rem; max-height: 25dvh; font-size: .84rem; }
+.nwd-actions { border: 0; padding-top: 0; margin-top: .65rem; }
+.shortcut { color: var(--muted); font-size: .7rem; }
+.error { padding: .65rem 1.25rem; color: var(--danger, #c44); font-size: .8rem; }
+.read-only { padding: 1rem 1.25rem; border-top: 1px solid var(--border); color: var(--muted); font-size: .8rem; }
+@media (width <= 480px) {
+  .discussion-header, .composer { padding: .8rem; }
+  .discussion-log { padding-inline: .8rem; }
+  .shortcut { max-width: 8rem; }
+}

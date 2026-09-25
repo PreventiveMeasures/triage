@@ -1222,6 +1222,7 @@ span.evidence-ref:not([role]) { color: var(--muted); }
   & a.comment-self-ref { text-decoration: underline dotted; text-underline-offset: 2px; }
   & a.comment-self-ref:hover { text-decoration: underline solid; }
 }
+.comment-block:has(.managed-comment) { white-space: normal; }
 .fix-block {
   word-break: break-all;
   & a { color: var(--accent); text-decoration: none; }
