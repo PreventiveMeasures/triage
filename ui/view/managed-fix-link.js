@@ -43,6 +43,14 @@ class ManagedFixLink extends StateElement {
     .preview-ref { min-width: 0; color: var(--muted); font-size: 12px; }
     .preview-title { margin-top: 8px; font-size: 15px; font-weight: 600; line-height: 1.4; }
     .preview .preview-header .status { flex: none; margin: 0; font-size: 12px; line-height: 1.4; }
+    @media print {
+      /* Print uses normal text flow so neither the title/URL nor repo ref is clipped. */
+      :host(:not([compact])) .fix-link { display: block; }
+      .link-title, .ref { white-space: normal; overflow: visible; text-overflow: clip; max-width: none; }
+      .link-icon { display: inline-block; vertical-align: middle; margin-right: .55rem; }
+      .ref, .link-status { margin-left: .55rem; }
+      .preview { display: none; }
+    }
   `
 
   constructor() {
