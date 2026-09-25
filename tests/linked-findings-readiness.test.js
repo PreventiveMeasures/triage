@@ -10,7 +10,8 @@ mock.module('../client/storage.js', { namedExports: {
 } })
 mock.module('../client/counts.js', { namedExports: {
   getKind: (name) => kinds.get(name)?.source,
-  getCount: (name) => kinds.get(name)?.count,
+  setCount: (name, count, source) => kinds.set(name, { count, source }),
+  analyzeContent: () => ({ count: 0 }),
 } })
 const { duplicatesOf, ensureLinkedFindingsIndexed, isLinkedFindingsIndexReady, subscribeToLinkedFindings } = await import('../client/linked-findings-index.js')
 const [a, b, c] = [crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()]
@@ -44,24 +45,22 @@ it('notifies when an empty walk becomes ready without notifying on unchanged rep
   } finally { unsubscribe() }
 })
 
-it('waits for unknown files but accepts counted reports that have no source marker', async () => {
+it('verifies unclassified files and cached reports once, including reports with no source marker', async () => {
   add('unknown.json', content([a, b]))
   add('legacy-report.json', '{"findings":[]}')
   kinds.set('legacy-report.json', { count: 0 })
   const reads = []
   read = (name) => { reads.push(name); return Promise.resolve(files.get(name)) }
   await ensureLinkedFindingsIndexed()
-  assert.equal(isLinkedFindingsIndexReady(), false)
-  assert.deepEqual(reads, [], 'unclassified files and counted ordinary reports are not read by this index')
-  kinds.set('unknown.json', { count: 2, source: 'links' })
-  await ensureLinkedFindingsIndexed()
   assert.equal(isLinkedFindingsIndexReady(), true)
-  assert.deepEqual(reads, ['unknown.json'])
+  assert.deepEqual(reads, ['unknown.json', 'legacy-report.json'])
   assert.deepEqual(duplicatesOf(a), [b])
+  await ensureLinkedFindingsIndexed()
+  assert.deepEqual(reads, ['unknown.json', 'legacy-report.json'], 'repeat walks reuse verified classifications')
 })
 
-it('does not become ready after a failed links read, and recovers on a later walk', async () => {
-  add('locked.json', content([a, b]), 'links')
+async function checkFailedRead(source) {
+  add('locked.json', content([a, b]), source)
   read = () => Promise.reject(new Error('vault locked'))
   await ensureLinkedFindingsIndexed()
   assert.equal(isLinkedFindingsIndexReady(), false)
@@ -70,7 +69,10 @@ it('does not become ready after a failed links read, and recovers on a later wal
   await ensureLinkedFindingsIndexed()
   assert.equal(isLinkedFindingsIndexReady(), true)
   assert.deepEqual(duplicatesOf(a), [b])
-})
+}
+for (const source of ['links', 'deepsec']) {
+  it(`does not trust a cached ${source} classification after a failed read`, () => checkFailedRead(source))
+}
 
 it('withholds readiness during a new links read and retries a mutation made in flight', async () => {
   // A sibling write can first become visible through the listing, without a

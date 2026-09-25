@@ -23,16 +23,13 @@ it('distinguishes an unbuilt or incomplete links index from a verified empty ind
   const name = 'first-links.json'
   localStorage.setItem(`deepview.report:${name}`, gzipSync(JSON.stringify([[{ id: a }, { id: b }]])).toString('base64'))
   await setItem(KEY, JSON.stringify(cache))
-  const reportsToken = await workspaceAppCacheToken()
+  const reportsToken = await workspaceAppCacheToken(workspace)
   assert.deepEqual(linkFiles(), [])
   assert.equal(getWorkspaceAppMetadata(workspace), null, 'an unbuilt empty index is not evidence for the cached snapshot')
-  assert.equal(await workspaceAppCacheToken(reportsToken), null)
+  assert.equal(await workspaceAppCacheToken(workspace, reportsToken), null)
   assert.equal(await cacheWorkspaceAppMetadata(workspace, entry, reportsToken), false)
 
   await ensureLinkedFindingsIndexed()
-  assert.deepEqual(linkFiles(), [], 'unclassified files are left for the counts walk')
-  assert.equal(getWorkspaceAppMetadata(workspace), null, 'a partial walk must not validate the empty snapshot')
-  assert.equal(await workspaceAppCacheToken(reportsToken), null)
   await ensureCounts(await listFiles())
   await ensureLinkedFindingsIndexed()
   await workspaceAppCacheToken()

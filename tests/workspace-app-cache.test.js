@@ -20,7 +20,7 @@ async function workspace(name = 'App workspace') {
 }
 async function record(ws) {
   await indexFiles()
-  return cacheWorkspaceAppMetadata(ws, metadata, await workspaceAppCacheToken())
+  return cacheWorkspaceAppMetadata(ws, metadata, await workspaceAppCacheToken(ws))
 }
 async function indexFiles() {
   await ensureCounts(await listFiles())
@@ -92,7 +92,7 @@ describe('workspace App metadata cache', () => {
   it('resets on membership changes and rejects a result from the old membership', async () => {
     const ws = await workspace()
     await record(ws)
-    const token = await workspaceAppCacheToken()
+    const token = await workspaceAppCacheToken(ws)
     await addReportToWorkspace('second.json', ws.id)
     assert.equal(getWorkspaceAppMetadata(ws), null)
     assert.equal(await cacheWorkspaceAppMetadata(ws, metadata, token), false)
@@ -103,11 +103,11 @@ describe('workspace App metadata cache', () => {
     const [a, b] = [crypto.randomUUID(), crypto.randomUUID()]
     await seedLinks([[a, b]])
     const ws = await workspace()
-    const reportsToken = await workspaceAppCacheToken()
+    const reportsToken = await workspaceAppCacheToken(ws)
     await ensureLinkedFindingsIndexed()
     assert.deepEqual(duplicatesOf(a), [b])
     assert.equal(await cacheWorkspaceAppMetadata(ws, metadata, reportsToken), false)
-    const indexedToken = await workspaceAppCacheToken(reportsToken)
+    const indexedToken = await workspaceAppCacheToken(ws, reportsToken)
     assert.ok(indexedToken)
     assert.equal(await cacheWorkspaceAppMetadata(ws, metadata, indexedToken), true)
   })
@@ -140,7 +140,7 @@ describe('workspace App metadata cache', () => {
       await ensureLinkedFindingsIndexed()
       const ws = await workspace()
       await record(ws)
-      const reportsToken = await workspaceAppCacheToken()
+      const reportsToken = await workspaceAppCacheToken(ws)
 
       // Change the shared backing store without this tab's onFileMutated
       // notification, then hydrate the sibling's links-only invalidation.
@@ -155,7 +155,7 @@ describe('workspace App metadata cache', () => {
       await ensureLinkedFindingsIndexed()
       assert.deepEqual(duplicatesOf(a), [b], 'the idempotent walk still holds the old links')
       assert.equal(cache.reportRevision, reportsToken.reportRevision, 'the report snapshot is still valid')
-      assert.equal(await workspaceAppCacheToken(reportsToken), null)
+      assert.equal(await workspaceAppCacheToken(ws, reportsToken), null)
       assert.equal(await record(ws), false, 'a fresh report token must not bypass the links check')
       assert.equal(getWorkspaceAppMetadata(ws), null)
       assert.deepEqual(JSON.parse(getItem(KEY)).entries, {}, 'stale metadata must not be republished')
@@ -163,10 +163,10 @@ describe('workspace App metadata cache', () => {
       // Once this tab has indexed the same links, metadata can be cached again.
       if (change === 'delete') await deleteFile(name)
       else await saveFile(name, linksContent([[a, c]]))
-      const freshReportsToken = await workspaceAppCacheToken()
+      const freshReportsToken = await workspaceAppCacheToken(ws)
       await ensureLinkedFindingsIndexed()
       assert.deepEqual(duplicatesOf(a), change === 'delete' ? [] : [c])
-      const indexedToken = await workspaceAppCacheToken(freshReportsToken)
+      const indexedToken = await workspaceAppCacheToken(ws, freshReportsToken)
       assert.ok(indexedToken)
       assert.equal(await cacheWorkspaceAppMetadata(ws, metadata, indexedToken), true)
     })
@@ -177,26 +177,26 @@ describe('workspace App metadata cache', () => {
       () => saveFile(ws.reports[0], '{"findings":[]}'),
       () => addReportToWorkspace('another.json', ws.id),
     ]) {
-      const reportsToken = await workspaceAppCacheToken()
+      const reportsToken = await workspaceAppCacheToken(ws)
       await change()
       await invalidateWorkspaceAppMetadata(null, '["new links"]')
-      assert.equal(await workspaceAppCacheToken(reportsToken), null)
+      assert.equal(await workspaceAppCacheToken(ws, reportsToken), null)
     }
   })
   it('cannot refresh a report snapshot invalidated by a sibling tab', async () => {
-    await workspace()
-    const reportsToken = await workspaceAppCacheToken()
+    const ws = await workspace()
+    const reportsToken = await workspaceAppCacheToken(ws)
     const cache = JSON.parse(getItem(KEY))
     cache.reportRevision = cache.revision = crypto.randomUUID()
     cache.entries = {}
     await setItem(KEY, JSON.stringify(cache))
-    assert.equal(await workspaceAppCacheToken(reportsToken), null)
+    assert.equal(await workspaceAppCacheToken(ws, reportsToken), null)
   })
   it('resets only affected workspaces when a known report is overwritten', async () => {
     const other = await workspace('Other'), ws = await workspace()
     await record(ws)
     await record(other)
-    const token = await workspaceAppCacheToken()
+    const token = await workspaceAppCacheToken(ws)
     setCount(ws.reports[0], 1)
     await saveFile(ws.reports[0], '{"findings":[]}')
     assert.equal(getWorkspaceAppMetadata(ws), null)
@@ -210,6 +210,56 @@ describe('workspace App metadata cache', () => {
     await saveFile('new-unattached-report.json', '{"findings":[]}')
     await indexFiles()
     assert.equal(getWorkspaceAppMetadata(ws).appFindings, 3)
+  })
+  for (const attached of [false, true]) {
+    it(`preserves an in-flight calculation when ${attached ? 'another workspace report' : 'an unattached report'} changes`, async () => {
+      const other = await workspace('Other'), ws = await workspace()
+      await record(ws)
+      const token = await workspaceAppCacheToken(ws)
+      const name = attached ? other.reports[0] : 'background-download.json'
+      await saveFile(name, '{"findings":[]}')
+      await indexFiles()
+      assert.ok(await workspaceAppCacheToken(ws, token), 'unrelated bytes do not invalidate the loaded reports')
+      assert.equal(await cacheWorkspaceAppMetadata(ws, metadata, token), true, 'a completed calculation also survives an unrelated write')
+      assert.equal(getWorkspaceAppMetadata(ws).appFindings, 3)
+    })
+  }
+  it('isolates workspace membership revisions while rejecting tokens for another workspace', async () => {
+    const other = await workspace('Other'), ws = await workspace()
+    await record(ws)
+    const otherToken = await workspaceAppCacheToken(other), token = await workspaceAppCacheToken(ws)
+    await addReportToWorkspace('second.json', other.id)
+    assert.ok(await workspaceAppCacheToken(ws, token))
+    assert.equal(await workspaceAppCacheToken(other, otherToken), null)
+    assert.equal(await cacheWorkspaceAppMetadata(other, metadata, token), false)
+    assert.equal(await cacheWorkspaceAppMetadata(ws, metadata, token), true)
+  })
+  for (const affected of [false, true]) {
+    it(`handles a sibling tab's ${affected ? 'matching' : 'unrelated'} workspace revision`, async () => {
+      const other = await workspace('Other'), ws = await workspace()
+      await record(ws)
+      const token = await workspaceAppCacheToken(ws)
+      const cache = JSON.parse(getItem(KEY))
+      const changed = affected ? ws.id : other.id
+      cache.workspaceRevisions[changed] = crypto.randomUUID()
+      delete cache.entries[changed]
+      await setItem(KEY, JSON.stringify(cache))
+      assert.equal(Boolean(await workspaceAppCacheToken(ws, token)), !affected)
+      assert.equal(await cacheWorkspaceAppMetadata(ws, metadata, token), !affected)
+    })
+  }
+  it('invalidates every workspace that contains the changed report', async () => {
+    let other = await workspace('Other')
+    const ws = await workspace()
+    await addReportToWorkspace(ws.reports[0], other.id)
+    other = listWorkspaces().find((w) => w.id === other.id)
+    await record(ws)
+    await record(other)
+    const otherToken = await workspaceAppCacheToken(other), token = await workspaceAppCacheToken(ws)
+    await saveFile(ws.reports[0], '{"findings":[]}')
+    await indexFiles()
+    assert.equal(await workspaceAppCacheToken(ws, token), null)
+    assert.equal(await workspaceAppCacheToken(other, otherToken), null)
   })
   it('invalidates global linked counts when a links file outside the workspace changes', async () => {
     const ws = await workspace()
@@ -227,7 +277,7 @@ describe('workspace App metadata cache', () => {
   })
   it('cannot resurrect metadata invalidated by a sibling tab', async () => {
     const ws = await workspace()
-    const token = await workspaceAppCacheToken()
+    const token = await workspaceAppCacheToken(ws)
     const cache = JSON.parse(getItem(KEY))
     cache.revision = crypto.randomUUID()
     cache.entries = {}
@@ -238,7 +288,7 @@ describe('workspace App metadata cache', () => {
   it('serializes overlapping invalidations and new calculations, and removes deleted workspaces', async () => {
     const ws = await workspace()
     await record(ws)
-    const stale = await workspaceAppCacheToken()
+    const stale = await workspaceAppCacheToken(ws)
     const a = invalidateWorkspaceAppMetadata([ws.id])
     const b = invalidateWorkspaceAppMetadata([ws.id])
     assert.equal(getWorkspaceAppMetadata(ws), null)

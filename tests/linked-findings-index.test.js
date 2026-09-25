@@ -9,9 +9,7 @@
 //     you asked about
 //   - deleting a links file takes its claims with it — a card must
 //     stop saying "duplicates" the moment the file saying so is gone
-//   - the walk reads ONLY what the counts cache calls a links file,
-//     which is what keeps it from re-reading (and JSON-parsing) every
-//     report on disk whenever that cache is cold
+//   - stale counts cannot hide a links file behind an old report classification
 
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
@@ -61,11 +59,8 @@ function uniqueId() {
 const linksContent = (...groups) => JSON.stringify(groups.map((g) => g.map((id) => ({ id }))))
 
 // Save a links file the way the app does: bytes on disk AND the kind
-// stamped in the counts cache. Every path that writes a file runs
-// `analyzeContent` and calls `setCount` with what it found (ingest's
-// drop, the workspace import, the objstore download), and the index
-// reads none of them without that stamp — see the walk-skips-unknown
-// case at the bottom of this file.
+// stamped in the counts cache. Interrupted writes can leave that hint stale;
+// the index must still establish the actual file's type from its bytes.
 async function seedLinks(...groups) {
   const name = uniqueName('links')
   const content = linksContent(...groups)
@@ -148,36 +143,23 @@ describe('linked-findings-index — invalidation', () => {
   })
 })
 
-describe('linked-findings-index — the counts cache decides what is read', () => {
-  // The walk asks `getKind` before reading, and opens nothing the
-  // cache doesn't already call a links file. That is the whole reason
-  // this module costs nothing: a cold cache — a new device, a large
-  // import, a counts-version bump — used to mean this walk read and
-  // JSON-parsed every report on disk, on the thread that has to paint,
-  // alongside the two other passes already doing it.
-  it('skips a file the counts cache has already classified as a report', async () => {
+describe('linked-findings-index — verifies persisted classifications', () => {
+  it('finds links even when the cached classification still describes an old report', async () => {
     const [a, b] = [uniqueId(), uniqueId()]
     const name = uniqueName('mislabelled')
     await saveFile(name, linksContent([a, b]))
     setCount(name, 1, 'deepsec')
     await ensureLinkedFindingsIndexed()
-    assert.ok(!linkFiles().some((f) => f.name === name))
-    assert.deepEqual(duplicatesOf(a), [])
+    assert.ok(linkFiles().some((f) => f.name === name))
+    assert.deepEqual(duplicatesOf(a), [b])
   })
 
-  // And waits — rather than reading — for a file the cache hasn't
-  // reached. `ensureCounts` fills it for every stored file and
-  // repaints the sidebar as it goes, and each of those repaints calls
-  // back in here, so waiting costs a pass, not the answer.
-  it('leaves an unclassified file alone, and takes it once the cache names it', async () => {
+  it('discovers a links file whose classification has not yet been persisted', async () => {
     const [a, b] = [uniqueId(), uniqueId()]
     const name = uniqueName('unclassified')
     await saveFile(name, linksContent([a, b]))
     await ensureLinkedFindingsIndexed()
-    assert.deepEqual(duplicatesOf(a), [], 'nothing has said what this file is yet')
-    assert.ok(!linkFiles().some((f) => f.name === name))
-    setCount(name, 1, LINKS_KIND)
-    await ensureLinkedFindingsIndexed()
-    assert.deepEqual(duplicatesOf(a), [b], 'and now it counts')
+    assert.deepEqual(duplicatesOf(a), [b])
+    assert.ok(linkFiles().some((f) => f.name === name))
   })
 })

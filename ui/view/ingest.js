@@ -837,7 +837,7 @@ export async function switchToWorkspace(workspaceId) {
   // order is preserved because the awaits walk the promise array in
   // workspace.reports order. Per-read failures resolve to `null`
   // (caught at the promise) so one bad file doesn't reject the batch.
-  const appToken = await workspaceAppCacheToken()
+  const appToken = await workspaceAppCacheToken(ws)
   if (isStaleLoad(gen)) return
   let complete = true
   const reads = ws.reports.map((name) => readFile(name).catch(() => null))

@@ -8,7 +8,7 @@ export async function updateWorkspaceAppMetadata(workspace, reports, reportsToke
   if (!isCurrent()) return
   await ensureLinkedFindingsIndexed()
   if (!isCurrent()) return
-  const token = await workspaceAppCacheToken(reportsToken)
+  const token = await workspaceAppCacheToken(workspace, reportsToken)
   if (!token || !isCurrent()) return
   const metadata = complete ? workspaceAppMetadata(reports, duplicatesOf) : { appMode: false }
   if (await cacheWorkspaceAppMetadata(workspace, metadata, token) && isCurrent()) {

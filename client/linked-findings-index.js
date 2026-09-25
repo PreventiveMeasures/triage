@@ -18,25 +18,16 @@
 // changes. Rebuilding is a walk of a handful of Maps; the intricate
 // per-name pruning that index needs would buy nothing here.
 //
-// The walk READS NOTHING. Every answer it needs is already in the
-// counts cache: `analyzeContent` recognises a links file, and every
-// path that puts one on disk stamps the result through `setCount`, so
-// `getKind` names it. A file the cache hasn't classified yet is left
-// alone and picked up by a later pass — `ensureCounts` fills the cache
-// for every stored file and repaints the sidebar as it goes, and each
-// of those repaints calls back in here.
-//
-// That patience is the whole performance story of this module. Reading
-// unclassified files itself meant that whenever the cache was cold —
-// a new device, a large import, a counts-version bump — this walk read
-// and JSON-parsed every report on disk, alongside the two passes
-// (`ensureCounts`, `bundle-finding-index`) already doing exactly that.
-// Three readers racing over the same megabytes, on the thread that has
-// to paint.
+// Counts are persisted separately from file bytes. After an interrupted
+// replacement, an old "report" classification may describe a links file.
+// Verify the bytes once per page load instead of treating that hint as proof.
+// `readFile` shares its cache and in-flight reads with workspace loading and
+// the counts walk. Ordinary reports are rejected by their leading character,
+// without another JSON parse. This background walk never gates report loading.
 
-import { LINKS_KIND, collectDuplicates, parseLinkedFindings } from './linked-findings.js'
+import { LINKS_KIND, collectDuplicates, countLinkedIds, parseLinkedFindings } from './linked-findings.js'
 import { listFiles, onFileMutated, readFile } from './storage.js'
-import { getCount, getKind } from './counts.js'
+import { analyzeContent, getKind, setCount } from './counts.js'
 
 // name → `{ groups, skipped }` for the links files, and name → null for
 // a file that was read and turned out to be something else. Both are
@@ -61,8 +52,8 @@ let activeRun = null
 // flight when the file changed doesn't finish having missed it.
 let needsRescan = false
 // An empty Map is not proof that the library has no links. A complete walk
-// must account for every listed file, including those awaiting classification
-// or a successful read. Mutations make that evidence stale until the next walk.
+// must verify every listed file's bytes. Mutations make that evidence stale
+// until the next walk.
 let ready = false
 
 export function isLinkedFindingsIndexReady() { return ready }
@@ -114,25 +105,12 @@ export function duplicatesOf(id) {
   return set ? [...set] : []
 }
 
-// File one name: parse it when the counts cache says it is a links
-// file, record "not links" when the cache names anything else, and do
-// NOTHING when the cache hasn't looked yet — that name stays
-// unclassified so a later walk, after `ensureCounts` has reached it,
-// decides.
-//
+// File one name from its current contents, not its persisted classification.
 // A read failure also leaves the name unrecorded, so a transient error
 // (a locked vault, a sibling tab's delete landing mid-read) isn't
 // memoised as "not a links file".
 async function indexOne(name) {
   if (byFile.has(name)) return false
-  const kind = getKind(name)
-  // Counts also recognize reports without a producer (and legacy numeric
-  // entries). Only a missing count AND kind means classification is pending.
-  if (kind === undefined && getCount(name) === undefined) return false
-  if (kind !== LINKS_KIND) {
-    byFile.set(name, null)
-    return false
-  }
   const gen = fileGen.get(name) ?? 0
   let content
   try { content = await readFile(name) } catch { return false }
@@ -141,8 +119,15 @@ async function indexOne(name) {
   // the old file. Record nothing (so the name stays unclassified) and
   // ask for another pass.
   if ((fileGen.get(name) ?? 0) !== gen) { needsRescan = true; return false }
-  const parsed = parseLinkedFindings(content)
+  const parsed = /^\s*\[/u.test(content) ? parseLinkedFindings(content) : null
   byFile.set(name, parsed)
+  // Repair stale hints for the sidebar too. The ordinary-report fast path
+  // does not re-analyze reports whose classification is already consistent.
+  if (parsed && getKind(name) !== LINKS_KIND) setCount(name, countLinkedIds(parsed.groups), LINKS_KIND)
+  else if (!parsed && getKind(name) === LINKS_KIND) {
+    const { count, source } = analyzeContent(content)
+    setCount(name, count, source)
+  }
   return parsed !== null
 }
 

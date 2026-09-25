@@ -9,7 +9,11 @@ mock.module('../client/index.js', { namedExports: {
   listFiles: () => Promise.resolve(['unrelated.json', 'app.json', 'links.json']),
   ensureCounts: () => counts.promise,
   ensureLinkedFindingsIndexed: () => { indexed++; links = ['A', 'B']; return Promise.resolve() },
-  workspaceAppCacheToken: (previous) => { assert.equal(previous, originalToken); return Promise.resolve(token) },
+  workspaceAppCacheToken: (ws, previous) => {
+    assert.equal(ws, workspace)
+    assert.equal(previous, originalToken)
+    return Promise.resolve(token)
+  },
   duplicatesOf: () => links,
   cacheWorkspaceAppMetadata: (ws, metadata, captured) => {
     assert.equal(ws, workspace)
