@@ -1,7 +1,7 @@
 import { LitElement, html, render as litRender, nothing, unsafeCSS } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { LINKS_KIND, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, clientModeLabel, computeLinkHint, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, ensureLinkedFindingsIndexed, getCount, getKind, getPackagesIndex, getRepositoriesIndex, getWorkspaceAppMetadata, getWorkspaceAppModeHint, hasStandaloneProbeHint, hydrateSecureStorage, isManagedUiMode, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, onWorkspaceAppMetadataChanged, probeServerInfo, readCachedServerInfo, reloadTriageFromStorage, rememberStandaloneProbe, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, setLocalMode, state, syncObservedAfterHydrate, waitForServerInfo, writeCachedServerInfo } from '#client/index.js'
+import { LINKS_KIND, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, clientModeLabel, computeLinkHint, configureClientMode, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, ensureLinkedFindingsIndexed, getCount, getKind, getPackagesIndex, getRepositoriesIndex, getWorkspaceAppMetadata, getWorkspaceAppModeHint, hasStandaloneProbeHint, hydrateSecureStorage, isCombinedServerMode, isManagedUiMode, listBundles, listFiles, listWorkspaces, mergeSyncServerInfo, migrateLegacyFilenames, onVaultStateChange, onWorkspaceAppMetadataChanged, probeServerInfo, readCachedServerInfo, reloadTriageFromStorage, rememberStandaloneProbe, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, setLocalMode, state, syncObservedAfterHydrate, toggleClientMode, waitForServerInfo, writeCachedServerInfo } from '#client/index.js'
 import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, setSyncForceDisabled, triageSync } from './client-sync.js'
 import { clearPreviewRole, getPreviewRole, loadManagedBundle, login as managedLogin, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams } from './client-managed.js'
 import { ROLES, isRole } from '../../common/managed/roles.ts'
@@ -800,8 +800,7 @@ async function onSidebarClick(e) {
   }
   if (e.target.closest('[data-action="toggle-client-mode"]')) {
     if (forcedManagedReturn) await restoreForcedManagedMode()
-    else if (state.serverMode === 'managed') {
-      setLocalMode(!state.localMode)
+    else if (toggleClientMode()) {
       await finishClientModeTransition()
     }
     return
@@ -1281,7 +1280,7 @@ function onAvatarError(e) {
 function renderBrandTag() {
   const tag = root?.querySelector('.brand-tag')
   if (tag) {
-    const switchable = state.serverMode === 'managed'
+    const switchable = state.serverMode === 'managed' || isCombinedServerMode(state.serverModeConfig)
     tag.textContent = clientModeLabel()
     if (switchable) {
       tag.setAttribute('role', 'button')
@@ -1791,7 +1790,7 @@ async function finishClientModeTransition({ forgetLastView = true } = {}) {
   resetManagedTriage()
   setSyncForceDisabled(state.serverMode !== 'e2e')
   triageSync.setForcedOff(true)
-  triageSync.setProtocolLocked(Boolean(forcedManagedReturn) || state.serverModeMismatch)
+  triageSync.setProtocolLocked(state.serverMode !== 'e2e' || Boolean(forcedManagedReturn) || state.serverModeMismatch)
   resetForClientModeTransition({ forgetLastView })
   // Only server annotations may enter a managed report. Local annotations are
   // restored from storage on the return trip, without saving this clear.
@@ -1815,6 +1814,7 @@ async function finishClientModeTransition({ forgetLastView = true } = {}) {
     syncObservedAfterHydrate()
   }
   document.dispatchEvent(new CustomEvent('managed-client-mode-change'))
+  refreshScanNavigation()
   renderBrandTag()
   renderSyncStatus(triageSync.status)
   render()
@@ -1832,6 +1832,8 @@ export async function forceManagedMode(role) {
   if (generation !== clientModeGeneration) return
   forcedManagedReturn ??= {
     serverMode: state.serverMode,
+    serverModeConfig: state.serverModeConfig,
+    serverModeSelection: state.serverModeSelection,
     localMode: state.localMode,
     managed: state.managed,
     serverModeMismatch: state.serverModeMismatch,
@@ -1860,13 +1862,9 @@ async function restoreForcedManagedMode() {
   if (pendingInfo) applyServerInfo(pendingInfo)
 }
 
-// Apply the server's advertised mode — delivered by its `server-info` connect
-// frame via `triageSync.onServerInfo` — to `state`, refusing a cross-mode
-// switch (managed↔e2e) until an explicit migration exists. `state.serverMode`
-// is seeded from the localStorage cache (see state.ts); this confirms it on
-// connect and updates the cache. A MISMATCH is refused — flag it (surfaced in
-// the sync badge) and keep sync paused, rather than silently reinterpreting
-// local data under the other protocol.
+// Cache the deployment advertisement, then resolve the active protocol using
+// the memory-only selection. A combined mode explicitly permits both isolated
+// surfaces; unrelated single-protocol changes retain the mismatch guard.
 function applyServerInfo(info, { runtime = true } = {}) {
   if (forcedManagedReturn) { deferredServerInfo = info; return }
   setLandingModePending(false)
@@ -1883,21 +1881,26 @@ function applyServerInfo(info, { runtime = true } = {}) {
     return
   }
   state.serverModeMismatch = false
-  // Clear any stale lock from a prior mismatch this session.
-  triageSync.setProtocolLocked(false)
-  const changed = state.serverMode !== info.mode
-  // After an offline fallback, a late managed response must keep the user in
-  // their local view. They can explicitly switch to managed via the mode tag.
-  if (changed && info.mode === 'managed' && !state.localMode) resetForClientModeTransition({ forgetLastView: false })
-  state.serverMode = info.mode
+  const wasManaged = isManagedUiMode()
+  const previousMode = state.serverMode
+  // A late single-mode managed response preserves the offline local fallback;
+  // combined deployments use their selected protocol or advertised default.
+  configureClientMode(info.mode)
+  const changed = previousMode !== state.serverMode
   state.managed = info.managed
-  if (runtime) state.deepviewScanServer = info.mode === 'e2e' ? info.deepviewScanServer ?? null : null
+  if (runtime) state.deepviewScanServer = info.mode === 'managed' ? null : info.deepviewScanServer ?? null
   refreshScanNavigation()
-  if (info.mode === 'e2e') setLocalMode(false)
-  setSyncForceDisabled(info.mode !== 'e2e')
+  setSyncForceDisabled(state.serverMode !== 'e2e')
+  triageSync.setProtocolLocked(state.serverMode !== 'e2e')
   writeCachedServerInfo(info)
+  if (wasManaged !== isManagedUiMode()) {
+    // renderSidebar waits for mode detection. Release startup before awaiting
+    // the transition's final render, or a first managed visit deadlocks.
+    void finishClientModeTransition({ forgetLastView: false }).catch((err) => console.warn('client mode transition:', err))
+    return
+  }
   renderSyncStatus(triageSync.status)
-  if (changed && info.mode === 'e2e' && syncButtonVisible() && triageSync.isEnabled()) {
+  if (changed && state.serverMode === 'e2e' && syncButtonVisible() && triageSync.isEnabled()) {
     // Report navigation during the offline fallback queued triage sessions,
     // but skipped remote-presence opens. Resume those alongside triage once
     // the protocol is known, without reloading or replacing the current view.
@@ -2006,7 +2009,7 @@ async function detectServerModeIfUnknown() {
   const cached = readCachedServerInfo()
   if (cached) {
     // Another tab may have confirmed the mode since state.ts was evaluated.
-    state.serverMode = cached.mode
+    configureClientMode(cached.mode)
     state.managed = cached.managed
     // The cache binds the protocol, but says nothing about today's server.
     // Failure/404 keeps that binding and never delays or disables local access.
@@ -2023,15 +2026,15 @@ async function detectServerModeIfUnknown() {
   // Adopt it into state as well: the initial e2e default is not confirmation.
   const confirmed = readCachedServerInfo()
   if (confirmed) {
-    if (info && info !== 'standalone') applyServerInfo(info)
-    else applyServerInfo(confirmed, { runtime: false })
-    return
+    return info && info !== 'standalone' ? applyServerInfo(info) : applyServerInfo(confirmed, { runtime: false })
   }
-  if (info && info !== 'standalone') { applyServerInfo(info); return }
+  if (info && info !== 'standalone') return applyServerInfo(info)
   // Unknown or unavailable server: open local data with synchronization off.
   // Do not cache a guessed protocol or modify any saved sync preferences.
   if (info === 'standalone') rememberStandaloneProbe()
   state.serverMode = 'standalone'
+  state.serverModeConfig = null
+  state.serverModeSelection = null
   setLocalMode(info === null)
   setSyncForceDisabled(true)
   setLandingModePending(false)
@@ -2047,6 +2050,8 @@ async function detectServerModeIfUnknown() {
         rememberStandaloneProbe()
         if (forcedManagedReturn) {
           forcedManagedReturn.serverMode = 'standalone'
+          forcedManagedReturn.serverModeConfig = null
+          forcedManagedReturn.serverModeSelection = null
           forcedManagedReturn.localMode = false
           return undefined
         }
@@ -2110,7 +2115,11 @@ function mount(host) {
   // Learn the server's protocol from its `server-info` connect frame (refuses
   // a cross-mode switch); state.serverMode is meanwhile seeded from the
   // localStorage cache (see state.ts) so the first paint is mode-correct.
-  triageSync.onServerInfo(applyServerInfo)
+  triageSync.onServerInfo((info) => {
+    const cached = readCachedServerInfo()
+    const configured = cached && { ...cached, ...(state.deepviewScanServer ? { deepviewScanServer: state.deepviewScanServer } : {}) }
+    return applyServerInfo(mergeSyncServerInfo(configured, info))
+  })
   // Cold start (mode not yet cached): probe GET /api/config so we detect a
   // managed server, which has no WS connect frame to announce itself.
   void ensureClientMode()

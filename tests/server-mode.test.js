@@ -2,8 +2,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import './_polyfills.js'
 
-import { SERVER_MODE_KEY, classifyServerMode, hasStandaloneProbeHint, parseServerInfo, probeServerInfo, readCachedServerInfo, rememberStandaloneProbe, waitForServerInfo, writeCachedServerInfo } from '../client/sync/server-mode.ts'
-import { clientModeLabel, state } from '../client/state.ts'
+import { SERVER_MODE_KEY, classifyServerMode, hasStandaloneProbeHint, mergeSyncServerInfo, parseServerInfo, probeServerInfo, readCachedServerInfo, rememberStandaloneProbe, waitForServerInfo, writeCachedServerInfo } from '../client/sync/server-mode.ts'
+import { clientModeLabel, configureClientMode, isManagedUiMode, state, toggleClientMode } from '../client/state.ts'
 
 test('mode labels distinguish standalone, e2e, and both managed surfaces', (t) => {
   const oldMode = state.serverMode
@@ -50,6 +50,86 @@ test('parseServerInfo: valid managed with login entry points', () => {
   )
 })
 
+test('combined advertisements preserve order, managed login, and e2e scan discovery', () => {
+  for (const mode of ['managed+e2e', 'e2e+managed']) {
+    const managed = { loginPath: '/api/auth/github/login', cookieName: '__Host-dvsid' }
+    assert.deepEqual(parseServerInfo({ mode, managed, deepviewScanServer: 'https://scan.example' }), {
+      mode, managed, deepviewScanServer: 'https://scan.example/',
+    })
+    assert.deepEqual(parseServerInfo({ mode, deepviewScanServer: 'file:///tmp/scan' }), { mode, managed: null })
+  }
+  for (const mode of ['managed+local', 'e2e+e2e', 'managed+e2e+managed']) assert.equal(parseServerInfo({ mode }), null)
+})
+
+test('combined clicks stay in memory through revalidation and reload into the advertised default', async (t) => {
+  const previous = { serverMode: state.serverMode, serverModeConfig: state.serverModeConfig, serverModeSelection: state.serverModeSelection, localMode: state.localMode }
+  t.after(() => { Object.assign(state, previous); localStorage.removeItem(SERVER_MODE_KEY) })
+  for (const [mode, initial, alternate] of [['managed+e2e', 'managed', 'e2e'], ['e2e+managed', 'e2e', 'managed']]) {
+    state.serverModeSelection = null
+    configureClientMode(mode)
+    writeCachedServerInfo({ mode, managed: null })
+    const stored = localStorage.getItem(SERVER_MODE_KEY)
+    assert.equal(clientModeLabel(), initial)
+    assert.equal(isManagedUiMode(), initial === 'managed')
+    assert.equal(toggleClientMode(), true)
+    assert.equal(clientModeLabel(), alternate)
+    assert.equal(state.localMode, false, 'combined modes switch protocols, never into offline local mode')
+    assert.equal(isManagedUiMode(), alternate === 'managed')
+    configureClientMode(mode)
+    assert.equal(clientModeLabel(), alternate, 'background discovery must preserve the click')
+    const fresh = await import(`../client/state.ts?reload=${mode}`)
+    assert.equal(fresh.clientModeLabel(), initial, 'a new page uses the advertised default')
+    assert.equal(fresh.state.serverModeSelection, null)
+    assert.equal(toggleClientMode(), true)
+    assert.equal(clientModeLabel(), initial)
+    assert.equal(localStorage.getItem(SERVER_MODE_KEY), stored, 'clicking never persists a mode preference')
+  }
+})
+
+test('single managed deployments retain their local switch and e2e stays unswitchable', (t) => {
+  const previous = { serverMode: state.serverMode, serverModeConfig: state.serverModeConfig, serverModeSelection: state.serverModeSelection, localMode: state.localMode }
+  t.after(() => Object.assign(state, previous))
+  state.serverModeSelection = null
+  state.localMode = false
+  configureClientMode('managed')
+  assert.equal(toggleClientMode(), true)
+  assert.equal(clientModeLabel(), 'local')
+  configureClientMode('managed')
+  assert.equal(clientModeLabel(), 'local', 'revalidation keeps the offline surface open')
+  assert.equal(toggleClientMode(), true)
+  assert.equal(clientModeLabel(), 'managed')
+  configureClientMode('e2e')
+  assert.equal(toggleClientMode(), false)
+  assert.equal(clientModeLabel(), 'e2e')
+})
+
+test('the managed surface of either combined deployment blocks lazy e2e sync', async (t) => {
+  const previous = { serverMode: state.serverMode, serverModeConfig: state.serverModeConfig, serverModeSelection: state.serverModeSelection, localMode: state.localMode }
+  t.after(() => { Object.assign(state, previous); localStorage.removeItem(SERVER_MODE_KEY) })
+  const sync = await import('../ui/view/client-sync.js')
+  for (const mode of ['managed+e2e', 'e2e+managed']) {
+    state.serverModeSelection = null
+    configureClientMode(mode)
+    writeCachedServerInfo({ mode, managed: null })
+    if (!isManagedUiMode()) toggleClientMode()
+    assert.equal(await sync.loadSync(), null, 'a combined advertisement does not activate sync on its managed surface')
+    assert.equal(await sync.openWorkspace('local-workspace'), undefined)
+  }
+})
+
+test('e2e connection frames keep a combined deployment configuration and its default', () => {
+  for (const mode of ['managed+e2e', 'e2e+managed']) {
+    const configured = { mode, managed: { loginPath: '/login', cookieName: 'session' }, deepviewScanServer: 'https://scan.example/' }
+    assert.deepEqual(mergeSyncServerInfo(configured, { mode: 'e2e', managed: null }), configured)
+    assert.deepEqual(mergeSyncServerInfo(configured, { mode: 'e2e', managed: null, deepviewScanServer: 'https://new-scan.example/' }), {
+      ...configured, deepviewScanServer: 'https://new-scan.example/',
+    })
+  }
+  const frame = { mode: 'managed', managed: null }
+  assert.deepEqual(mergeSyncServerInfo({ mode: 'e2e', managed: null }, frame), frame, 'single-protocol mismatches remain visible')
+  assert.deepEqual(mergeSyncServerInfo(null, frame), frame)
+})
+
 test('scan discovery is validated, ignored for managed mode, and never persisted', () => {
   const info = parseServerInfo({ mode: 'e2e', deepviewScanServer: 'https://scan.example/prefix' })
   assert.equal(info.deepviewScanServer, 'https://scan.example/prefix/')
@@ -84,6 +164,8 @@ test('mode probing distinguishes confirmed protocols and standalone from inconcl
   for (const [name, response, expected] of [
     ['e2e', () => Response.json({ mode: 'e2e' }), { mode: 'e2e', managed: null }],
     ['managed', () => Response.json({ mode: 'managed' }), { mode: 'managed', managed: null }],
+    ['managed+e2e', () => Response.json({ mode: 'managed+e2e' }), { mode: 'managed+e2e', managed: null }],
+    ['e2e+managed', () => Response.json({ mode: 'e2e+managed' }), { mode: 'e2e+managed', managed: null }],
     ['standalone', () => new Response('Not found', { status: 404 }), 'standalone'],
     ['server error', () => Response.json({ mode: 'e2e' }, { status: 500 }), null],
     ['unauthorized', () => new Response('', { status: 401 }), null],
@@ -134,4 +216,11 @@ test('classifyServerMode: first / match / mismatch', () => {
   // Cross-mode — refused (both directions).
   assert.equal(classifyServerMode('e2e', 'managed'), 'mismatch')
   assert.equal(classifyServerMode('managed', 'e2e'), 'mismatch')
+  for (const combined of ['managed+e2e', 'e2e+managed']) {
+    assert.equal(classifyServerMode(null, combined), 'first')
+    for (const mode of ['e2e', 'managed', 'managed+e2e', 'e2e+managed']) {
+      assert.equal(classifyServerMode(mode, combined), 'match')
+      assert.equal(classifyServerMode(combined, mode), 'match')
+    }
+  }
 })

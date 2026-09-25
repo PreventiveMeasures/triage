@@ -1,6 +1,6 @@
 import { store } from '@rray/frontend/state-management'
 import { getItem as getSecureItem, mutate as mutateSecureItem, onAfterHydrate, setItem as setSecureItem } from './secure-storage.js'
-import { type ManagedServerInfo, type ServerMode, readCachedServerInfo } from './sync/server-mode.ts'
+import { type ManagedServerInfo, type ServerMode, type ServerProtocol, isCombinedServerMode, readCachedServerInfo, resolveServerMode } from './sync/server-mode.ts'
 
 export const VIEW_MODE_KEY = 'deepview.viewMode'
 export const SEVERITY_MODE_KEY = 'deepview.severityMode'
@@ -191,25 +191,28 @@ export interface State {
   linksTick: number
   findingIndexTick: number
   // ── server protocol (detected from the `server-info` connect frame) ──
-  // Which sync protocol the configured server speaks; drives mode-aware UI
+  // Active server protocol; drives mode-aware UI
   // (managed mode hides workspace export and swaps the offline toggle for
   // login/logout). Seeded from the localStorage cache so the first paint is
   // correct, then confirmed by the `server-info` connect frame (see sidebar
   // `applyServerInfo`).
-  serverMode: ServerMode | 'standalone'
+  serverMode: ServerProtocol | 'standalone'
+  // Advertised modes/default stay separate from the active protocol. The
+  // selection is memory-only and starts empty on every page load.
+  serverModeConfig: ServerMode | null
+  serverModeSelection: ServerProtocol | null
   // A managed server can be viewed in local mode for offline work. This is a
   // UI-only override: the server protocol remains managed, while the local
   // report/workspace surfaces become available with sync kept off. Also marks
   // the offline local fallback while the server protocol is unknown.
   localMode: boolean
-  // Managed-mode entry points (login path + cookie name) when managed; null
-  // for e2e.
+  // Managed entry points are retained while viewing the e2e side of a
+  // combined deployment, so switching back can use the same login route.
   managed: ManagedServerInfo | null
   // Fresh runtime discovery only; never restored from the protocol cache.
   deepviewScanServer: string | null
-  // True when the server reported a DIFFERENT protocol than the cached one —
-  // a cross-mode switch we refuse for now (explicit migration UI is future
-  // work); sync stays paused while set.
+  // True for incompatible single-protocol advertisements. Combined modes
+  // explicitly support switching; unrelated deployments keep sync paused.
   serverModeMismatch: boolean
   // The logged-in managed user (null when logged out / e2e / standalone),
   // populated by the managed session probe (client/managed/session.js).
@@ -930,15 +933,14 @@ export const state: State = store<State>({
   // events.js bumps this only while a links file is loaded — nothing
   // else on the findings surface reads that index per-card.
   findingIndexTick: 0,
-  // Sync protocol of the configured server (e2e vs managed), seeded from the
-  // localStorage cache so mode-aware UI is correct on first paint; the live
-  // `server-info` connect frame confirms / updates it.
-  serverMode: INITIAL_SERVER_INFO?.mode ?? 'e2e',
+  // Use the advertised default on every reload, even after a mode switch.
+  serverMode: resolveServerMode(INITIAL_SERVER_INFO?.mode ?? 'e2e'),
+  serverModeConfig: INITIAL_SERVER_INFO?.mode ?? null,
+  serverModeSelection: null,
   deepviewScanServer: null,
   localMode: false,
   managed: INITIAL_SERVER_INFO?.managed ?? null,
-  // Set when the server reports a different protocol than the cached one; the
-  // switch is refused (migration is future work) and sync stays paused.
+  // Set for incompatible single-protocol advertisements.
   serverModeMismatch: false,
   // Logged-in managed user, or null (e2e / logged out). Future managed
   // session probe populates this.
@@ -959,6 +961,25 @@ export function isManagedUiMode(): boolean {
 
 export function setLocalMode(enabled: boolean): void {
   state.localMode = Boolean(enabled)
+}
+
+export function configureClientMode(mode: ServerMode): void {
+  state.serverModeConfig = mode
+  state.serverMode = resolveServerMode(mode, state.serverModeSelection)
+  if (state.serverModeSelection !== state.serverMode) state.serverModeSelection = null
+  if (state.serverMode === 'e2e' || isCombinedServerMode(mode)) setLocalMode(false)
+}
+
+export function toggleClientMode(): boolean {
+  if (isCombinedServerMode(state.serverModeConfig)) {
+    state.serverModeSelection = state.serverMode === 'managed' ? 'e2e' : 'managed'
+    state.serverMode = state.serverModeSelection
+    setLocalMode(false)
+    return true
+  }
+  if (state.serverMode !== 'managed') return false
+  setLocalMode(!state.localMode)
+  return true
 }
 
 export function clientModeLabel(): 'managed' | 'local' | 'e2e' | 'standalone' {
