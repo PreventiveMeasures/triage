@@ -51,19 +51,28 @@ export class RepositoryDiscovery {
     if (refresh) this.cache.clear()
     const installed = () => this.read('installed', () => listInstalledRepos(this.config, this.fetchImpl))
     if (scope === 'installed' && showAll) return { repositories: await installed(), tokenMissing: false }
-    const publicInstalled = async (): Promise<ConnectedRepo[]> => (await installed()).filter(repo => !repo.private)
+    const publicInstalled = async (): Promise<ConnectedRepo[]> => (await installed()).filter(repo => repo.visibility === 'public')
     if (token == null) return { repositories: scope === 'installed' ? await publicInstalled() : [], tokenMissing: true }
     const credential = createHash('sha256').update(token).digest('hex')
     const key = JSON.stringify([scope, userId, credential])
     try {
-      const repositories = await this.read(key, async () => {
-        if (scope === 'installed') return filterInstalledRepos(this.config, await installed(), token, this.fetchImpl)
-        const [userRepos, installedRepos] = await Promise.all([
-          listUserRepos(token, this.fetchImpl), installed(),
-        ])
-        const installedIds = new Set(installedRepos.map(repo => repo.id))
-        return userRepos.filter(repo => !repo.private && !installedIds.has(repo.id))
-      })
+      if (scope === 'installed') {
+        const repositories = await this.read(key, async () => filterInstalledRepos(this.config, await installed(), token, this.fetchImpl))
+        return { repositories, tokenMissing: false }
+      }
+      // Installations only deduplicate the public picker. Their failure must
+      // not block otherwise readable public repos or look like a stale login.
+      // Cache the two sources separately so failed installation discovery is
+      // retried without caching a degraded combined list for another minute.
+      const [userRepos, installedRepos] = await Promise.all([
+        this.read(key, () => listUserRepos(token, this.fetchImpl)),
+        installed().catch((err: unknown) => {
+          console.warn('managed: installed repo deduplication failed:', err)
+          return []
+        }),
+      ])
+      const installedIds = new Set(installedRepos.map(repo => repo.id))
+      const repositories = userRepos.filter(repo => repo.visibility === 'public' && !installedIds.has(repo.id))
       return { repositories, tokenMissing: false }
     } catch (err) {
       if (!(err instanceof GithubApiError) || err.status !== 401) throw err

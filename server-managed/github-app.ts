@@ -29,6 +29,7 @@ export interface ConnectedRepo {
   id: number
   fullName: string
   private: boolean
+  visibility: 'public' | 'private' | 'internal' | null
   htmlUrl: string
   defaultBranch: string
   installationId: number | null
@@ -103,10 +104,12 @@ function parseRepo(raw: unknown, installationId: number | null): ConnectedRepo |
   if (typeof fullName !== 'string' || fullName === '') return null
   const htmlUrl = (raw as { html_url?: unknown }).html_url
   const branch = (raw as { default_branch?: unknown }).default_branch
+  const visibility = (raw as { visibility?: unknown }).visibility
   return {
     id,
     fullName,
     private: (raw as { private?: unknown }).private === true,
+    visibility: visibility === 'public' || visibility === 'private' || visibility === 'internal' ? visibility : null,
     htmlUrl: typeof htmlUrl === 'string' ? htmlUrl : '',
     defaultBranch: typeof branch === 'string' ? branch : '',
     installationId,
@@ -239,7 +242,9 @@ export async function filterInstalledRepos(config: ManagedConfig, repositories: 
   if (typeof identity?.login !== 'string' || !identity.login || typeof identity.id !== 'number' || !Number.isSafeInteger(identity.id) || identity.id <= 0) throw new GithubApiError(502, 'github-malformed')
   const tokens = new Map<number, Promise<string | null>>()
   const allowed = await mapGithubRequests(repositories, async (repo) => {
-    if (!repo.private) return true // Public repositories are readable by everyone.
+    // Internal repos may have private=false; missing visibility is not proof
+    // of public access either. Only explicitly public repositories skip checks.
+    if (repo.visibility === 'public') return true
     if (repo.installationId == null) return false
     let token = tokens.get(repo.installationId)
     if (!token) {

@@ -10,9 +10,9 @@ const config = {
   githubAppPrivateKey: generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs1', format: 'pem' }),
 }
 const repositories = [
-  { id: 1, full_name: 'Org/Public', private: false },
-  { id: 2, full_name: 'Org/Team', private: true },
-  { id: 3, full_name: 'Org/Other', private: true },
+  { id: 1, full_name: 'Org/Public', private: false, visibility: 'public' },
+  { id: 2, full_name: 'Org/Team', private: true, visibility: 'private' },
+  { id: 3, full_name: 'Org/Other', private: true, visibility: 'private' },
 ]
 
 function fixture() {
@@ -27,7 +27,7 @@ function fixture() {
     if (path === '/app/installations/7/access_tokens') return Response.json({ token: 'installation' })
     if (path === '/installation/repositories') return Response.json({ total_count: 3, repositories })
     if (path === '/user') return Response.json({ id: token === 'Bearer alice' ? 10 : 20, login: token === 'Bearer alice' ? 'alice-renamed' : 'bob' }, { status: state.userStatus })
-    if (path === '/user/repos') return Response.json([{ id: 4, full_name: 'Org/Uninstalled', private: false }, repositories[0]])
+    if (path === '/user/repos') return Response.json([{ id: 4, full_name: 'Org/Uninstalled', private: false, visibility: 'public' }, repositories[0]])
     if (path.includes('/collaborators/')) {
       assert.equal(token, 'Bearer installation')
       const alice = path.includes('/alice-renamed/')
@@ -132,4 +132,87 @@ test('all installation pages are listed with bounded parallel installation work'
   assert.deepEqual(pages, [1, 2])
   assert.equal(repos.length, 101)
   assert.equal(peak, 4)
+})
+
+test('internal and unknown visibility require permission checks even with private=false', async () => {
+  const { fetch, state } = fixture()
+  const extra = [
+    { id: 11, full_name: 'Org/InternalAllowed', private: false, visibility: 'internal' },
+    { id: 12, full_name: 'Org/InternalDenied', private: false, visibility: 'internal' },
+    { id: 13, full_name: 'Org/Unknown', private: false },
+    { id: 14, full_name: 'Org/Unexpected', private: false, visibility: 'unexpected' },
+  ]
+  const checked = []
+  const directory = new RepositoryDiscovery(config, (url, options) => {
+    const path = new URL(url).pathname
+    if (path === '/installation/repositories') return Promise.resolve(Response.json({ total_count: 7, repositories: [...repositories, ...extra] }))
+    if (extra.some(repo => path.startsWith(`/repos/${repo.full_name}/collaborators/`))) {
+      checked.push(path)
+      assert.equal(options.headers.authorization, 'Bearer installation')
+      return Promise.resolve(Response.json({ permission: path.includes('/InternalAllowed/') ? 'read' : 'none', user: { id: 10 } }))
+    }
+    if (path === '/user/repos') return Promise.resolve(Response.json([...extra, { id: 15, full_name: 'Org/UserPublic', private: false, visibility: 'public' }]))
+    return fetch(url, options)
+  })
+  assert.deepEqual(names(await directory.list('installed', 'a', 'alice')), ['Org/InternalAllowed', 'Org/Public', 'Org/Team'])
+  assert.equal(checked.length, 4, 'internal, missing and unrecognized visibility all get checked')
+  assert.deepEqual(names(await directory.list('installed', 'a', null)), ['Org/Public'])
+  state.userStatus = 401
+  assert.deepEqual(names(await directory.list('installed', 'a', 'expired-token')), ['Org/Public'])
+  const all = await directory.list('installed', 'a', null, true)
+  assert.equal(all.repositories.length, 7, 'explicit Show all still includes internal repositories')
+  assert.equal(all.repositories.find(repo => repo.id === 11).visibility, 'internal', 'parsing preserves visibility')
+  assert.equal(all.repositories.find(repo => repo.id === 13).visibility, null)
+  state.userStatus = 200
+  // None of the nonpublic user repos are installed in this fixture response.
+  // Public discovery still requires explicit public visibility.
+  const publicDirectory = new RepositoryDiscovery(config, (url, options) => {
+    if (new URL(url).pathname === '/user/repos') return Promise.resolve(Response.json([...extra, { id: 15, full_name: 'Org/UserPublic', private: false, visibility: 'public' }]))
+    return fetch(url, options)
+  })
+  assert.deepEqual(names(await publicDirectory.list('public', 'a', 'alice')), ['Org/UserPublic'])
+})
+
+for (const failure of [401, 403, 429, 503, 'network', 'malformed']) {
+  test(`public discovery survives installation failure (${failure}) and retries after recovery`, async (t) => {
+    const { fetch, calls } = fixture()
+    t.mock.method(console, 'warn', () => {})
+    let broken = true
+    let installationAttempts = 0
+    const directory = new RepositoryDiscovery(config, (url, options) => {
+      if (new URL(url).pathname === '/app/installations') {
+        installationAttempts++
+        if (broken) {
+          if (failure === 'network') return Promise.reject(new Error('unreachable'))
+          if (failure === 'malformed') return Promise.resolve(Response.json({ invalid: true }))
+          return Promise.resolve(Response.json({ message: 'unavailable' }, { status: failure }))
+        }
+      }
+      return fetch(url, options)
+    })
+    const fallback = await directory.list('public', 'a', 'alice')
+    assert.equal(fallback.tokenMissing, false, 'installation failures do not invalidate the user login')
+    assert.deepEqual(names(fallback), ['Org/Public', 'Org/Uninstalled'])
+    assert.equal(installationAttempts, 1)
+    broken = false
+    const recovered = await directory.list('public', 'a', 'alice')
+    assert.deepEqual(names(recovered), ['Org/Uninstalled'], 'installation deduplication recovers without waiting for cache expiry')
+    assert.equal(installationAttempts, 2)
+    assert.equal(calls.filter(call => call.path === '/user/repos').length, 1, 'healthy user repos stay cached')
+  })
+}
+
+test('public discovery still surfaces user-repository failures independently of installation discovery', async (t) => {
+  const { fetch } = fixture()
+  t.mock.method(console, 'warn', () => {})
+  let userStatus = 403
+  const directory = new RepositoryDiscovery(config, (url, options) => {
+    const path = new URL(url).pathname
+    if (path === '/app/installations') return Promise.resolve(Response.json({}, { status: 503 }))
+    if (path === '/user/repos') return Promise.resolve(Response.json({}, { status: userStatus }))
+    return fetch(url, options)
+  })
+  await assert.rejects(directory.list('public', 'a', 'alice'), /github-status-403/u)
+  userStatus = 401
+  assert.deepEqual(await directory.list('public', 'a', 'alice'), { repositories: [], tokenMissing: true })
 })
