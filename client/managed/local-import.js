@@ -49,9 +49,9 @@ export function createManagedLocalImportSource(deps = defaultDeps) {
     },
     unlock(options) { return deps.unlockEncryption(options) },
     subscribe(callback) {
-      const offVault = deps.onVaultStateChange(callback)
-      const offFiles = deps.onFileMutated(callback)
-      const offBundles = deps.onBundleMutated(callback)
+      const offVault = deps.onVaultStateChange(() => callback())
+      const offFiles = deps.onFileMutated(value => callback({ kind: 'report', value }))
+      const offBundles = deps.onBundleMutated(value => callback({ kind: 'bundle', value }))
       return () => { offVault(); offFiles(); offBundles() }
     },
     async importItem(kind, value, upload, { signal } = {}) {

@@ -178,6 +178,71 @@ function controller(source, upload = () => {}, kind = 'report') {
   return ui
 }
 
+test('unrelated mutations preserve the picker and pending imports through the UI subscription', async () => {
+  for (const kind of ['report', 'bundle']) {
+    const f = fixture()
+    const selected = kind === 'report' ? 'report.md' : 'sha512-test'
+    const label = kind === 'report' ? 'report.md' : 'source.map'
+    const read = Promise.withResolvers()
+    f.deps[kind === 'report' ? 'readFile' : 'readBundle'] = () => read.promise
+    let uploaded
+    const ui = controller(f.source, file => { uploaded = file }, kind)
+    try {
+      ui.toggle()
+      await ui.refresh()
+      ui.value = selected
+      const pending = ui.importSelected()
+      await setImmediate()
+      for (const mutation of ['save', 'delete']) {
+        f.mutateFile('unrelated.md', mutation)
+        f.mutateBundle('sha512-unrelated', mutation)
+        // An identical identifier in the other collection is also unrelated.
+        if (kind === 'report') f.mutateBundle(selected, mutation)
+        else f.mutateFile(selected, mutation)
+        await setImmediate()
+        assert.equal(ui.value, selected)
+        assert.equal(ui.error, '')
+        assert.equal(ui.readAbort.signal.aborted, false)
+      }
+      read.resolve('selected contents')
+      await pending
+      assert.equal(await uploaded.text(), 'selected contents')
+      assert.equal(ui.success, `Imported ${label}.`)
+      assert.equal(ui.busy, false)
+    } finally { ui.hostDisconnected() }
+    assert.equal(f.listeners.size, 0)
+    assert.equal(f.fileListeners.size, 0)
+    assert.equal(f.bundleListeners.size, 0)
+  }
+})
+
+test('unrelated collection updates refresh choices without clearing the current selection', async () => {
+  for (const kind of ['report', 'bundle']) {
+    const f = fixture()
+    const selected = kind === 'report' ? 'report.md' : 'sha512-test'
+    const added = kind === 'report' ? 'added.md' : 'sha512-added'
+    const mutate = kind === 'report' ? f.mutateFile : f.mutateBundle
+    const ui = controller(f.source, undefined, kind)
+    try {
+      ui.toggle()
+      await ui.refresh()
+      ui.value = selected
+      const list = kind === 'report' ? 'listFiles' : 'listBundles'
+      const original = f.deps[list]
+      f.deps[list] = () => [...original(), kind === 'report' ? added : { name: 'added.map', integrity: added }]
+      mutate(added, 'save')
+      await setImmediate()
+      assert.equal(ui.value, selected)
+      assert.deepEqual(ui.options.map(option => option.value), [selected, added])
+      f.deps[list] = original
+      mutate(added, 'delete')
+      await setImmediate()
+      assert.equal(ui.value, selected)
+      assert.deepEqual(ui.options.map(option => option.value), [selected])
+    } finally { ui.hostDisconnected() }
+  }
+})
+
 test('bundle deletion during the choices check prevents reading and uploading its old entry', async () => {
   const f = fixture()
   let finish

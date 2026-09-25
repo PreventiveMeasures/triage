@@ -34,7 +34,16 @@ export class ManagedLocalImport {
     this.success = ''
     this.generation = 0
     this.readAbort = null
-    this.onChange = () => {
+    this.onChange = change => {
+      // Identified mutations only invalidate the selected item. Keep choices
+      // current for other items in this collection without clearing selection.
+      if (change?.kind) {
+        if (change.kind !== this.kind) return
+        if (change.value !== this.value) {
+          void this.refresh()
+          return
+        }
+      }
       // Cross-document changes arrive through focus/storage, outside the
       // storage module's mutation registries. Invalidate the pending read too.
       if (this.readAbort && !this.readAbort.signal.aborted) {
