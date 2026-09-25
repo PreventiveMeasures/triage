@@ -121,14 +121,16 @@ test('cached report hashes share gzip bytes without reparsing; warm responses us
   opened.stream.destroy()
 })
 
-test('report deletion keeps shared hashes, then removes all formats and permissions when the last copy is deleted', async t => {
+test('report deletion keeps shared formats and removes all permissions of each unreferenced format', async t => {
   const h = await setup(t)
   const duplicate = await h.seed(), otherFormat = await h.seed(undefined, h.bundle.id, 'same-report.md')
   const unrelated = await h.seed(JSON.stringify({ findings: findings.slice(1) }))
   await h.db.setTeamMember(h.team, h.users.view.userId, { dependencies: false, security: false })
+  let originalFormat
   for (const report of [h.report, otherFormat]) {
     assert.equal((await h.send(report.id)).status, 200)
     assert.equal((await h.send(report.id, 'view')).status, 200)
+    if (report === h.report) originalFormat = await cachedFiles(h)
   }
   const shared = await cachedFiles(h)
   assert.equal(shared.length, 4)
@@ -141,7 +143,7 @@ test('report deletion keeps shared hashes, then removes all formats and permissi
   assert.equal((await h.send(duplicate.id)).status, 200)
   read.mock.restore()
   assert.equal((await deleteReport(h, duplicate.id)).status, 200)
-  assert.deepEqual(await cachedFiles(h), all)
+  assert.deepEqual(await cachedFiles(h), all.filter(path => !originalFormat.includes(path)))
   assert.equal((await deleteReport(h, otherFormat.id)).status, 200)
   assert.deepEqual(await cachedFiles(h), all.filter(path => !shared.includes(path)))
   assert.ok(await h.db.getBundle(h.bundle.id), 'deleting reports must keep their bundle')
@@ -149,40 +151,73 @@ test('report deletion keeps shared hashes, then removes all formats and permissi
   assert.deepEqual(await cachedFiles(h), [])
 })
 
-test('repository removal cleans report derivatives even when the linked bundle belongs to another repository', async t => {
+test('repeated filename variants cannot accumulate derivatives beside a surviving report', async t => {
   const h = await setup(t)
-  // Removing repo 2 deletes its reports but leaves repo 1 and its bundle alive.
-  await h.db.selectRepo({ repoId: 2, fullName: 'org/other', private: true, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: h.users.admin.userId }, Date.now())
-  await h.db.setReportRepo(h.report.id, 2)
   assert.equal((await h.send()).status, 200)
-  assert.equal((await cachedFiles(h)).length, 1)
-  const removed = await h.send(null, 'admin', 'POST', { path: '/api/admin/repositories/remove', body: { repoId: 2, fullName: 'org/other', acknowledge: true, deleteTriage: false } })
-  assert.equal(removed.status, 200)
-  assert.equal(await h.db.getReport(h.report.id), null)
-  assert.ok(await h.db.getBundle(h.bundle.id))
-  assert.deepEqual(await cachedFiles(h), [])
+  const anchor = await cachedFiles(h)
+  await h.db.setTeamMember(h.team, h.users.view.userId, { dependencies: false, security: false })
+  for (const extension of ['tmp0', 'tmp1', 'tmp2']) {
+    const variant = await h.seed(undefined, h.bundle.id, `report.${extension}`)
+    const duplicate = await h.seed(undefined, h.bundle.id, `copy.${extension.toUpperCase()}`)
+    assert.equal((await h.send(variant.id)).status, 200)
+    assert.equal((await h.send(variant.id, 'view')).status, 200)
+    const all = await cachedFiles(h)
+    assert.equal(all.length, anchor.length + 2)
+    assert.equal((await deleteReport(h, variant.id)).status, 200)
+    assert.deepEqual(await cachedFiles(h), all, 'extension matching is case-insensitive')
+    const read = t.mock.method(h.bundles, 'get', () => { throw new Error('surviving variants should stay warm') })
+    assert.equal((await h.send(duplicate.id)).status, 200)
+    assert.equal((await h.send()).status, 200)
+    read.mock.restore()
+    assert.equal((await deleteReport(h, duplicate.id)).status, 200)
+    assert.deepEqual(await cachedFiles(h), anchor, 'deleting the last owner removes every permission variant')
+  }
 })
 
-test('deletion waits for a cold build and stale requests cannot recreate its cache', async t => {
-  const h = await setup(t)
-  const bundle = await h.db.getBundle(h.bundle.id), bytes = await h.reports.get(h.report.id)
-  const finish = Promise.withResolvers(), reading = Promise.withResolvers(), removed = Promise.withResolvers()
-  const get = h.bundles.get.bind(h.bundles), remove = h.db.deleteReport.bind(h.db)
-  t.mock.method(h.bundles, 'get', async (...args) => { reading.resolve(); await finish.promise; return get(...args) })
-  t.mock.method(h.db, 'deleteReport', async id => { const result = await remove(id); removed.resolve(); return result })
-  const loading = h.cache.open(h.report, bundle, { dependencies: true, security: true })
-  await reading.promise
-  const deleting = deleteReport(h, h.report.id)
-  await removed.promise
-  finish.resolve()
-  assert.equal(await loading, null)
-  assert.equal((await deleting).status, 200)
-  assert.deepEqual(await cachedFiles(h), [])
-  // A delayed request may already hold the report bytes when deletion wins.
-  t.mock.method(h.reports, 'get', () => Promise.resolve(bytes))
-  assert.equal(await h.cache.open(h.report, bundle, { dependencies: true, security: true }), null)
-  assert.deepEqual(await cachedFiles(h), [])
-})
+for (const otherFormatSurvives of [false, true]) {
+  test(`repository removal cleans derivatives across repositories (other format survives: ${otherFormatSurvives})`, async t => {
+    const h = await setup(t)
+    if (otherFormatSurvives) {
+      const survivor = await h.seed(undefined, h.bundle.id, 'same-report.md')
+      assert.equal((await h.send(survivor.id)).status, 200)
+    }
+    const retained = await cachedFiles(h)
+    // Removing repo 2 deletes its reports but leaves repo 1 and its bundle alive.
+    await h.db.selectRepo({ repoId: 2, fullName: 'org/other', private: true, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: h.users.admin.userId }, Date.now())
+    await h.db.setReportRepo(h.report.id, 2)
+    assert.equal((await h.send()).status, 200)
+    assert.equal((await cachedFiles(h)).length, retained.length + 1)
+    const removed = await h.send(null, 'admin', 'POST', { path: '/api/admin/repositories/remove', body: { repoId: 2, fullName: 'org/other', acknowledge: true, deleteTriage: false } })
+    assert.equal(removed.status, 200)
+    assert.equal(await h.db.getReport(h.report.id), null)
+    assert.ok(await h.db.getBundle(h.bundle.id))
+    assert.deepEqual(await cachedFiles(h), retained)
+  })
+}
+
+for (const otherFormatSurvives of [false, true]) {
+  test(`deletion waits for a cold build and stale requests cannot recreate its cache (other format survives: ${otherFormatSurvives})`, async t => {
+    const h = await setup(t)
+    if (otherFormatSurvives) await h.seed(undefined, h.bundle.id, 'same-report.md')
+    const bundle = await h.db.getBundle(h.bundle.id), bytes = await h.reports.get(h.report.id)
+    const finish = Promise.withResolvers(), reading = Promise.withResolvers(), removed = Promise.withResolvers()
+    const get = h.bundles.get.bind(h.bundles), remove = h.db.deleteReport.bind(h.db)
+    t.mock.method(h.bundles, 'get', async (...args) => { reading.resolve(); await finish.promise; return get(...args) })
+    t.mock.method(h.db, 'deleteReport', async id => { const result = await remove(id); removed.resolve(); return result })
+    const loading = h.cache.open(h.report, bundle, { dependencies: true, security: true })
+    await reading.promise
+    const deleting = deleteReport(h, h.report.id)
+    await removed.promise
+    finish.resolve()
+    assert.equal(await loading, null)
+    assert.equal((await deleting).status, 200)
+    assert.deepEqual(await cachedFiles(h), [])
+    // A delayed request may already hold the report bytes when deletion wins.
+    t.mock.method(h.reports, 'get', () => Promise.resolve(bytes))
+    assert.equal(await h.cache.open(h.report, bundle, { dependencies: true, security: true }), null)
+    assert.deepEqual(await cachedFiles(h), [])
+  })
+}
 
 for (const stage of ['before report bytes', 'after report bytes']) {
   test(`a surviving duplicate gets sources when the shared initiator is deleted ${stage}`, async t => {

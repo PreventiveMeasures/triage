@@ -526,7 +526,7 @@ export interface ManagedDb extends ActivityStore, CommentStore {
   insertReport(report: ReportRecordInput, now: number): Promise<void>
   listReports(userId?: string): Promise<AdminReport[]>
   getReport(id: string): Promise<ReportRecord | null>
-  hasReportWithBundleHash(bundleId: string, sha256: string): Promise<boolean>
+  listReportFilenamesWithBundleHash(bundleId: string, sha256: string): Promise<string[]>
   deleteReport(id: string): Promise<boolean>
   // Attach / detach a report's repo + directory link (repoId null = detach);
   // resolves true iff the report exists. The caller validates repoId and the
@@ -732,7 +732,7 @@ function prepareStatements(db: DatabaseSync) {
          FROM managed_report WHERE id = ?`,
     ),
     deleteReportStmt: db.prepare(`DELETE FROM managed_report WHERE id = ?`),
-    hasReportWithBundleHashStmt: db.prepare(`SELECT 1 FROM managed_report WHERE bundle_id = ? AND sha256 = ? LIMIT 1`),
+    reportFilenamesWithBundleHashStmt: db.prepare(`SELECT DISTINCT filename FROM managed_report WHERE bundle_id = ? AND sha256 = ?`),
     setReportRepoStmt: db.prepare(`UPDATE managed_report SET repo_id = ?, repo_directory = ? WHERE id = ?`),
     setReportVisibleStmt: db.prepare(`UPDATE managed_report SET visible = ? WHERE id = ?`),
     upsertTriageStmt: db.prepare(
@@ -1027,8 +1027,9 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>) {
     deleteReport(id: string): Promise<boolean> {
       return Promise.resolve(Number(deleteReportStmt.run(id).changes) > 0)
     },
-    hasReportWithBundleHash(bundleId: string, sha256: string): Promise<boolean> {
-      return Promise.resolve(stmts.hasReportWithBundleHashStmt.get(bundleId, sha256) !== undefined)
+    listReportFilenamesWithBundleHash(bundleId: string, sha256: string): Promise<string[]> {
+      const rows = stmts.reportFilenamesWithBundleHashStmt.all(bundleId, sha256) as { filename: string }[]
+      return Promise.resolve(rows.map(row => row.filename))
     },
     setReportRepo(id: string, repoId: number | null, repoDirectory = ''): Promise<boolean> {
       return Promise.resolve(Number(setReportRepoStmt.run(repoId, repoId == null ? '' : repoDirectory, id).changes) > 0)

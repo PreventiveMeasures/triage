@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer'
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, open, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { extname, join } from 'node:path'
+import { dirname, extname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { gzip } from 'node:zlib'
 import { bundleSourcesAsMap } from '../common/bundle-sources.js'
@@ -13,6 +13,18 @@ import type { BundleStore } from './bundle-store.ts'
 import type { ManagedBundle, ManagedDb, ReportRecord } from './db.ts'
 
 const compress = promisify(gzip)
+const reportFormat = (filename: string) => extname(filename).toLowerCase()
+
+function bundleDirectory(dir: string, id: string) {
+  if (!/^[a-f\d-]{36}$/iu.test(id)) throw new Error('Invalid bundle id')
+  return join(dir, id)
+}
+function reportDirectory(dir: string, bundleId: string, sha256: string) {
+  return join(bundleDirectory(dir, bundleId), `v1-${createHash('sha256').update(sha256).digest('hex')}`)
+}
+function formatDirectory(dir: string, bundleId: string, sha256: string, name: string) {
+  return join(reportDirectory(dir, bundleId, sha256), createHash('sha256').update(reportFormat(name)).digest('hex'))
+}
 
 // Match the report's spelling exactly, then an unambiguous path suffix. Never
 // guess between duplicate basenames or treat a bundle path as a disk pathname.
@@ -47,8 +59,8 @@ function selectSources(findings: unknown[], sources: Map<string, string>) {
 
 // Immutable report hashes share a derivative across duplicate uploads. Bundle
 // identity and visibility are part of the key: a broader viewer's sources must
-// never populate a restricted response. A report-hash directory groups every
-// format/permission variant for cleanup once its last report is deleted.
+// never populate a restricted response. Group derivatives by hash and filename
+// format so each format's permissions can be removed after its last deletion.
 export function createReportSourcesCache(dir: string, db: ManagedDb, reports: BlobStore, bundles: BundleStore) {
   const pending = new Map<string, { reportId: string; job: Promise<boolean> }>()
   let queue = Promise.resolve()
@@ -57,19 +69,11 @@ export function createReportSourcesCache(dir: string, db: ManagedDb, reports: Bl
     queue = job.then(() => undefined, () => undefined)
     return job
   }
-  function directory(id: string) {
-    if (!/^[a-f\d-]{36}$/iu.test(id)) throw new Error('Invalid bundle id')
-    return join(dir, id)
-  }
-  function reportDirectory(bundleId: string, sha256: string) {
-    return join(directory(bundleId), `v1-${createHash('sha256').update(sha256).digest('hex')}`)
-  }
   function filename(report: ReportRecord, bundle: ManagedBundle, permissions: ViewerPermissions) {
     const key = createHash('sha256').update(JSON.stringify([
-      extname(report.filename).toLowerCase(), bundle.integrity, bundle.kind,
-      permissions.dependencies, permissions.security,
+      bundle.integrity, bundle.kind, permissions.dependencies, permissions.security,
     ])).digest('hex')
-    return join(reportDirectory(bundle.id, report.sha256), `${key}.json.gz`)
+    return join(formatDirectory(dir, bundle.id, report.sha256, report.filename), `${key}.json.gz`)
   }
   async function build(target: string, report: ReportRecord, bundle: ManagedBundle, permissions: ViewerPermissions) {
     const bytes = await reports.get(report.id)
@@ -80,10 +84,11 @@ export function createReportSourcesCache(dir: string, db: ManagedDb, reports: Bl
     if (!details) return false
     const selection = selectSources(parsed.findings, bundleSourcesAsMap(details))
     const body = await compress(Buffer.from(JSON.stringify({ integrity: bundle.integrity, ...selection })), { level: 6 })
-    // The derivative belongs to the shared hash, not the row that started
-    // parsing. A surviving duplicate can still use these identical bytes.
-    if (!(await db.hasReportWithBundleHash(bundle.id, report.sha256)) || !(await db.getBundle(bundle.id))) return false
-    await mkdir(reportDirectory(bundle.id, report.sha256), { recursive: true })
+    // A duplicate with the same hash AND format can use these parsed bytes.
+    // Another format must not keep a deleted variant's late build alive.
+    const names = await db.listReportFilenamesWithBundleHash(bundle.id, report.sha256)
+    if (!names.some(name => reportFormat(name) === reportFormat(report.filename)) || !(await db.getBundle(bundle.id))) return false
+    await mkdir(dirname(target), { recursive: true })
     const temp = `${target}.${randomUUID()}.tmp`
     try { await writeFile(temp, body); await rename(temp, target) }
     finally { await rm(temp, { force: true }) }
@@ -120,18 +125,22 @@ export function createReportSourcesCache(dir: string, db: ManagedDb, reports: Bl
       catch (err) { await file.close(); throw err }
     },
     async deleteBundle(id: string) {
-      const prefix = `${directory(id)}/`
+      const prefix = `${bundleDirectory(dir, id)}/`
       await Promise.allSettled([...pending].filter(([key]) => key.startsWith(prefix)).map(([, entry]) => entry.job))
-      await rm(directory(id), { recursive: true, force: true })
+      await rm(bundleDirectory(dir, id), { recursive: true, force: true })
     },
-    async deleteReport(report: Pick<ReportRecord, 'bundleId' | 'sha256'>) {
+    async deleteReport(report: Pick<ReportRecord, 'bundleId' | 'sha256' | 'filename'>) {
       const { bundleId, sha256 } = report
       if (bundleId === null) return
       // Called after metadata deletion. Serialize with builders so a cold
       // request cannot recreate a derivative after its cleanup has finished.
       await enqueue(async () => {
-        if (await db.hasReportWithBundleHash(bundleId, sha256)) return
-        await rm(reportDirectory(bundleId, sha256), { recursive: true, force: true })
+        const names = await db.listReportFilenamesWithBundleHash(bundleId, sha256)
+        if (names.length === 0) {
+          await rm(reportDirectory(dir, bundleId, sha256), { recursive: true, force: true })
+        } else if (!names.some(name => reportFormat(name) === reportFormat(report.filename))) {
+          await rm(formatDirectory(dir, bundleId, sha256, report.filename), { recursive: true, force: true })
+        }
       })
     },
   }
