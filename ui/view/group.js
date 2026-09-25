@@ -79,7 +79,7 @@ export function triageEntry(f) {
   // useful without putting managed comments into the triage/sync write path.
   const comments = state.managedComments?.get(f.id) ?? []
   if (comments.length === 0 && !entry?.comment) return entry
-  return { ...entry, comment: comments.map(comment => `${comment.authorLogin ?? 'Unattributed'}: ${comment.body}`).join('\n\n') }
+  return { ...entry, comment: comments.map(comment => comment.authorLogin ? `${comment.authorLogin}: ${comment.body}` : comment.body).join('\n\n') }
 }
 
 export function isIgnored(f) {

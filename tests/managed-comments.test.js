@@ -115,6 +115,68 @@ test('runtime imports can record their acting admin independently of comment aut
   assert.deepEqual(await db.listComments(['f']), [imported, authored])
 })
 
+test('existing comment tables migrate to nullable dates without changing records or history', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'managed-comment-dates-'))
+  const path = join(dir, 'managed.sqlite')
+  let db = openSqliteManagedDb(path)
+  t.after(async () => { await db?.close(); await rm(dir, { recursive: true, force: true }) })
+  const alice = await db.upsertUser(identity(1, 'alice'), 10)
+  const original = await db.createComment({ findingId: 'f', body: 'Existing note', authorId: alice, authorLogin: 'alice' }, 20)
+  await db.close()
+  db = null
+  const sql = new DatabaseSync(path)
+  sql.exec(`ALTER TABLE finding_comment RENAME TO previous_comments;
+    CREATE TABLE finding_comment (
+      id TEXT PRIMARY KEY, finding_id TEXT NOT NULL, body TEXT NOT NULL,
+      author_id TEXT REFERENCES managed_user(id) ON DELETE SET NULL, author_login TEXT,
+      created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, version INTEGER NOT NULL DEFAULT 1
+    ) STRICT;
+    INSERT INTO finding_comment SELECT * FROM previous_comments;
+    DROP TABLE previous_comments;`)
+  sql.close()
+  db = openSqliteManagedDb(path)
+  assert.deepEqual(await db.getComment(original.id), original)
+  const undated = await db.createComment({ findingId: 'f', body: 'Undated import', authorId: null, authorLogin: null, createdAt: null, actor: { id: alice, login: 'alice' } }, 30)
+  assert.equal(undated.createdAt, null)
+  assert.equal(undated.updatedAt, null)
+  assert.equal((await db.listUsers()).find(user => user.id === alice).lastActivityAt, 30, 'import action has a date even when its text does not')
+  const ownUndated = await db.createComment({ findingId: 'f', body: 'Owned import', authorId: alice, authorLogin: 'alice', createdAt: null, updatedAt: null }, 31)
+  const edited = await db.editComment(ownUndated.id, alice, 'alice', 'Edited import', 1, 'r', 40)
+  assert.equal(edited.createdAt, null)
+  assert.equal(edited.updatedAt, 40)
+  await db.close()
+  db = null
+  db = openSqliteManagedDb(path)
+  assert.deepEqual(await db.getComment(original.id), original)
+  assert.deepEqual(await db.getComment(undated.id), undated)
+  assert.deepEqual(await db.getComment(ownUndated.id), edited)
+  assert.equal((await db.listActivity({ page: 1, limit: 100, kind: 'all', query: '', contexts: null })).total, 4)
+})
+
+test('own comment deletion checks versions and retains body-free history until annotation purge', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const alice = await db.upsertUser(identity(1, 'alice'), 10)
+  const comment = await db.createComment({ findingId: 'f', body: 'Delete this body', authorId: alice, authorLogin: 'alice' }, 20)
+  assert.equal(await db.deleteComment(comment.id, 'other', 'other', 1, 'r', 21), 'forbidden')
+  const edited = await db.editComment(comment.id, alice, 'alice', 'New body', 1, 'r', 30)
+  assert.equal(await db.deleteComment(comment.id, alice, 'alice', 1, 'r', 31), 'conflict')
+  assert.deepEqual(await db.getComment(comment.id), edited)
+  assert.equal(await db.deleteComment(comment.id, alice, 'alice', 2, 'r', 40), 'deleted')
+  assert.equal(await db.deleteComment(comment.id, alice, 'alice', 2, 'r', 41), null)
+  assert.equal(await db.getComment(comment.id), null)
+  assert.deepEqual(await db.listComments(['f']), [])
+  const history = await db.listActivity({ page: 1, limit: 100, kind: 'triage', query: '', contexts: null })
+  assert.equal(history.total, 3)
+  assert.equal(history.history[0].action, 'deleted a comment')
+  assert.doesNotMatch(JSON.stringify(history), /Delete this body|New body/u)
+  assert.equal((await db.listUsers()).find(user => user.id === alice).lastActivityAt, 40)
+  assert.deepEqual(await db.listCommentedFindingIds(['f', 'absent']), ['f'])
+  assert.equal(await db.deleteTriage(['f']), 1, 'explicit purge includes a deleted comment’s retained history')
+  assert.deepEqual(await db.listCommentedFindingIds(['f']), [])
+  assert.equal((await db.listActivity({ page: 1, limit: 100, kind: 'all', query: '', contexts: null })).total, 0)
+})
+
 test('comments have independent IDs, ownership, conflict detection, and body-free activity', async (t) => {
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())
@@ -210,7 +272,7 @@ async function fixture(t) {
     if (body !== undefined) req.push(JSON.stringify(body))
     req.push(null)
     await pending
-    return { status: res.statusCode, ...JSON.parse(res.body) }
+    return { status: res.statusCode, ...(res.body ? JSON.parse(res.body) : {}) }
   }
   return { db, sessions, request, blobs }
 }
@@ -218,7 +280,7 @@ async function fixture(t) {
 test('comment API enforces author identity, team paths, visibility, CSRF, versions and read-only roles', async (t) => {
   const { db, sessions, request } = await fixture(t)
   const path = '/api/reports/r/comments'
-  const payload = { findingId: 'own', body: '  Alice note  ', authorId: sessions.bob.userId, authorLogin: 'spoofed' }
+  const payload = { findingId: 'own', body: '  Alice note  ', authorId: sessions.bob.userId, authorLogin: 'spoofed', createdAt: null, updatedAt: null }
   assert.equal((await request('POST', path, null, payload)).status, 401)
   assert.equal((await request('POST', path, 'alice', payload, false)).status, 403)
   for (const user of ['reader', 'outside']) assert.equal((await request('POST', path, user, payload)).status, 404)
@@ -230,6 +292,7 @@ test('comment API enforces author identity, team paths, visibility, CSRF, versio
   assert.equal(first.comment.body, 'Alice note')
   assert.equal(first.comment.authorId, sessions.alice.userId)
   assert.equal(first.comment.authorLogin, 'alice')
+  assert.equal(typeof first.comment.createdAt, 'number', 'ordinary posts cannot remove their timestamp')
   const second = await request('POST', path, 'bob', { findingId: 'own', body: 'Bob note' })
   assert.equal(second.status, 201)
   await db.createComment({ findingId: 'own', body: 'Legacy note', authorId: null, authorLogin: null }, 20)
@@ -264,7 +327,31 @@ test('comment API enforces author identity, team paths, visibility, CSRF, versio
   assert.equal((await request('GET', '/api/admin/history?kind=triage', 'bob')).history.length, 0)
 })
 
-for (const method of ['GET', 'POST', 'PATCH']) {
+test('comment DELETE requires current ownership, access, CSRF and version', async t => {
+  const { db, sessions, request } = await fixture(t)
+  const path = '/api/reports/r/comments'
+  const first = await request('POST', path, 'alice', { findingId: 'own', body: 'Alice note' })
+  const second = await request('POST', path, 'bob', { findingId: 'own', body: 'Bob note' })
+  const url = `${path}/${first.comment.id}`
+  assert.equal((await request('DELETE', url, null, { version: 1 })).status, 401)
+  assert.equal((await request('DELETE', url, 'alice', { version: 1 }, false)).status, 403)
+  for (const user of ['bob', 'admin']) assert.equal((await request('DELETE', url, user, { version: 1 })).status, 403)
+  for (const user of ['reader', 'outside']) assert.equal((await request('DELETE', url, user, { version: 1 })).status, 404)
+  assert.equal((await request('DELETE', url, 'alice', {})).status, 400)
+  assert.equal((await request('DELETE', url, 'alice', { version: 2 })).status, 409)
+  const anonymous = await db.createComment({ findingId: 'own', body: 'Undated anonymous', authorId: null, authorLogin: null, createdAt: null }, 20)
+  assert.equal((await request('DELETE', `${path}/${anonymous.id}`, 'admin', { version: 1 })).status, 403)
+  const hidden = await db.createComment({ findingId: 'secret', body: 'Hidden note', authorId: sessions.alice.userId, authorLogin: 'alice' }, 20)
+  assert.equal((await request('DELETE', `${path}/${hidden.id}`, 'alice', { version: 1 })).status, 404)
+  assert.equal((await request('DELETE', url, 'alice', { version: 1 })).status, 204)
+  assert.equal((await request('DELETE', url, 'alice', { version: 1 })).status, 404)
+  const remaining = (await request('GET', path, 'reader')).comments
+  assert.deepEqual(new Set(remaining.map(comment => comment.id)), new Set([second.comment.id, anonymous.id]))
+  assert.equal(remaining.find(comment => comment.id === anonymous.id).createdAt, null)
+  assert.equal((await request('GET', '/api/admin/history?kind=triage', 'bob')).history[0].action, 'deleted a comment')
+})
+
+for (const method of ['GET', 'POST', 'PATCH', 'DELETE']) {
   for (const revoke of ['team', 'role', 'security']) {
     test(`comments ${method} rechecks ${revoke} access after a cold report read`, async t => {
       const { db, sessions, request, blobs } = await fixture(t)
@@ -278,7 +365,7 @@ for (const method of ['GET', 'POST', 'PATCH']) {
         if (reads++ === 0) { started.resolve(); await gate.promise }
         return get(id)
       }
-      const path = `/api/reports/r/comments${method === 'PATCH' ? `/${comment.id}` : ''}`
+      const path = `/api/reports/r/comments${method === 'PATCH' || method === 'DELETE' ? `/${comment.id}` : ''}`
       const pending = request(method, path, 'alice', method === 'GET' ? undefined : { findingId: 'secret', body: 'Changed', version: 1 })
       await started.promise
       if (revoke === 'team') await db.removeTeamRepo('team', 1)

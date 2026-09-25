@@ -441,8 +441,8 @@ async function repositoryImpact(deps: ManagedHttpDeps, repoId: number) {
 async function repositoryExclusiveTriageIds(deps: ManagedHttpDeps, reports: { id: string, filename: string }[], otherReports: { id: string, filename: string }[]): Promise<string[]> {
   const targetIds = await repositoryFindingIds(deps, reports)
   const triage = await deps.db.listTriage([...targetIds])
-  const comments = await deps.db.listComments([...targetIds])
-  const annotatedIds = new Set([...triage, ...comments].map(entry => entry.findingId))
+  const commentIds = await deps.db.listCommentedFindingIds([...targetIds])
+  const annotatedIds = new Set([...triage.map(entry => entry.findingId), ...commentIds])
   if (annotatedIds.size === 0) return []
   // Only annotated findings need an overlap check.
   // TODO(managed): Persist finding IDs per report at upload time and maintain
@@ -1207,8 +1207,8 @@ async function handleSetReportTriage(req: IncomingMessage, res: ServerResponse, 
 // shared by finding ID. Author IDs always come from the authenticated session.
 async function handleReportComments(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, reportId: string, commentId: string | null): Promise<void> {
   const method = req.method ?? 'GET'
-  if (commentId == null ? method !== 'GET' && method !== 'POST' : method !== 'PATCH') {
-    send405(res, commentId == null ? 'GET, POST' : 'PATCH'); return
+  if (commentId == null ? method !== 'GET' && method !== 'POST' : method !== 'PATCH' && method !== 'DELETE') {
+    send405(res, commentId == null ? 'GET, POST' : 'PATCH, DELETE'); return
   }
   const s = method === 'GET' ? await readSession(deps.config, deps.db, cookie, Date.now()) : await checkMutation(req, res, deps, cookie)
   if (s == null) { if (method === 'GET') sendJson(res, 401, { error: 'unauthenticated' }); return }
@@ -1231,10 +1231,10 @@ async function handleReportComments(req: IncomingMessage, res: ServerResponse, d
     sendJson(res, 200, { comments: await deps.db.listComments([...visible]) }); return
   }
   const body = parseCommentBody(raw?.body)
-  if (body == null) { sendJson(res, 400, { error: 'bad-comment' }); return }
+  if (body == null && method !== 'DELETE') { sendJson(res, 400, { error: 'bad-comment' }); return }
   if (commentId == null) {
     if (typeof raw?.findingId !== 'string' || !visible.has(raw.findingId)) { sendJson(res, 404, { error: 'no-finding' }); return }
-    const comment = await deps.db.createComment({ findingId: raw.findingId, body, authorId: session.user.id, authorLogin: session.user.login, reportId }, Date.now())
+    const comment = await deps.db.createComment({ findingId: raw.findingId, body: body!, authorId: session.user.id, authorLogin: session.user.login, reportId }, Date.now())
     sendJson(res, 201, { comment }); return
   }
   const current = await deps.db.getComment(commentId)
@@ -1243,10 +1243,13 @@ async function handleReportComments(req: IncomingMessage, res: ServerResponse, d
   if (typeof raw?.version !== 'number' || !Number.isSafeInteger(raw.version) || raw.version < 1) {
     sendJson(res, 400, { error: 'bad-version' }); return
   }
-  const comment = await deps.db.editComment(commentId, session.user.id, session.user.login, body, raw.version, reportId, Date.now())
+  const comment = method === 'DELETE'
+    ? await deps.db.deleteComment(commentId, session.user.id, session.user.login, raw.version, reportId, Date.now())
+    : await deps.db.editComment(commentId, session.user.id, session.user.login, body!, raw.version, reportId, Date.now())
   if (comment === 'conflict') { sendJson(res, 409, { error: 'comment-changed' }); return }
   if (comment === 'forbidden') { sendJson(res, 403, { error: 'not-comment-author' }); return }
   if (comment == null) { sendJson(res, 404, { error: 'no-comment' }); return }
+  if (comment === 'deleted') { res.writeHead(204, { 'cache-control': 'no-store' }); res.end(); return }
   sendJson(res, 200, { comment })
 }
 

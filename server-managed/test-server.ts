@@ -381,7 +381,7 @@ function sendText(res: ServerResponse, status: number, text: string): void {
 const triage = new Map<string, TriageEntryPatch | null>()
 const comments: ManagedComment[] = [{
   id: 'fixture-comment-legacy', findingId: 'managed-fixture-1', body: 'An imported note without an author.',
-  authorId: null, authorLogin: null, createdAt: 1_758_000_000_000, updatedAt: 1_758_000_000_000, version: 1,
+  authorId: null, authorLogin: null, createdAt: null, updatedAt: null, version: 1,
 }]
 
 async function handleComments(req: IncomingMessage, res: ServerResponse, reportId: string, commentId: string | null): Promise<void> {
@@ -391,7 +391,7 @@ async function handleComments(req: IncomingMessage, res: ServerResponse, reportI
   if (req.method === 'GET' && commentId == null) {
     sendJson(res, 200, { comments: comments.filter(comment => ids.has(comment.findingId)) }); return
   }
-  if (commentId == null ? req.method !== 'POST' : req.method !== 'PATCH') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
+  if (commentId == null ? req.method !== 'POST' : req.method !== 'PATCH' && req.method !== 'DELETE') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
   if (!['admin', 'manage', 'triage'].includes(role) || req.headers['x-csrf-token'] !== 'fixture-csrf-token') {
     sendJson(res, 403, { error: 'forbidden' }); return
   }
@@ -406,19 +406,24 @@ async function handleComments(req: IncomingMessage, res: ServerResponse, reportI
   let raw: { body?: unknown; findingId?: string; version?: number }
   try { raw = JSON.parse(Buffer.concat(chunks).toString()) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
   const body = parseCommentBody(raw?.body)
-  if (!body) { sendJson(res, 400, { error: 'bad-comment' }); return }
+  if (!body && req.method !== 'DELETE') { sendJson(res, 400, { error: 'bad-comment' }); return }
   if (commentId == null) {
     if (!raw.findingId || !ids.has(raw.findingId)) { sendJson(res, 404, { error: 'no-finding' }); return }
     const at = Date.now()
-    const comment = { id: randomUUID(), findingId: raw.findingId, body, authorId: 'fixture-user', authorLogin: 'managed-preview', createdAt: at, updatedAt: at, version: 1 }
+    const comment = { id: randomUUID(), findingId: raw.findingId, body: body!, authorId: 'fixture-user', authorLogin: 'managed-preview', createdAt: at, updatedAt: at, version: 1 }
     comments.push(comment)
     sendJson(res, 201, { comment }); return
   }
   const comment = comments.find(entry => entry.id === commentId && ids.has(entry.findingId))
   if (!comment) { sendJson(res, 404, { error: 'no-comment' }); return }
   if (comment.authorId !== 'fixture-user') { sendJson(res, 403, { error: 'not-comment-author' }); return }
+  if (!Number.isSafeInteger(raw.version) || raw.version! < 1) { sendJson(res, 400, { error: 'bad-version' }); return }
   if (comment.version !== raw.version) { sendJson(res, 409, { error: 'comment-changed' }); return }
-  if (comment.body !== body) { comment.body = body; comment.updatedAt = Date.now(); comment.version++ }
+  if (req.method === 'DELETE') {
+    comments.splice(comments.indexOf(comment), 1)
+    res.writeHead(204, { 'cache-control': 'no-store' }); res.end(); return
+  }
+  if (comment.body !== body) { comment.body = body!; comment.updatedAt = Date.now(); comment.version++ }
   sendJson(res, 200, { comment })
 }
 
