@@ -103,7 +103,7 @@ export function attachedBundle(f) {
     void state.focusCodeTick
     const entry = readReportSources(f._managedReportId)
     if (entry?.data === null || entry?.error) return null
-    const bundle = { integrity: entry?.data?.integrity ?? f._bundleHashes[0], reportId: f._managedReportId }
+    const bundle = { integrity: entry?.data?.integrity ?? null, reportId: f._managedReportId }
     const locations = [f, ...(Array.isArray(f.evidence) ? f.evidence : [])]
     for (const location of locations) {
       const file = findingSourcePath(bundle, location?.file)
@@ -209,7 +209,9 @@ export function bundleSource(integrity, file, { kick = true, reportId = null } =
 // lineRange).
 function basePosition(f) {
   const match = attachedBundle(f)
-  if (!match) return null
+  // Managed loading placeholders may fetch/preview sources, but cannot seed
+  // navigation until the endpoint resolves the actual bundle and file paths.
+  if (!match?.integrity) return null
   return { integrity: match.integrity, file: match.file, range: lineRange(match.reportId ? match.line : f.line) }
 }
 
@@ -251,10 +253,13 @@ export function focusCodePosition(f) {
 // answers as bundleSource above, plus the file / integrity / range the
 // panel's header and gutter need.
 export function getFocusCode(focusedGroup) {
+  const finding = focusedGroup && activeTabFor(focusedGroup)
+  const bundle = attachedBundle(finding)
+  if (bundle?.reportId && !bundle.integrity) return managedSource(bundle.reportId, bundle.file, true)
   const history = focusCodeHistory(focusedGroup)
   if (!history) return null
   const { pos } = history
-  const source = bundleSource(pos.integrity, pos.file, { reportId: activeTabFor(focusedGroup)?._managedReportId })
+  const source = bundleSource(pos.integrity, pos.file, { reportId: finding?._managedReportId })
   if (!source || source.loading) return source
   return { ...source, file: pos.file, integrity: pos.integrity, range: pos.range }
 }

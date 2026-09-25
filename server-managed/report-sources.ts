@@ -50,7 +50,7 @@ function selectSources(findings: unknown[], sources: Map<string, string>) {
 // never populate a restricted response. A report-hash directory groups every
 // format/permission variant for cleanup once its last report is deleted.
 export function createReportSourcesCache(dir: string, db: ManagedDb, reports: BlobStore, bundles: BundleStore) {
-  const pending = new Map<string, Promise<boolean>>()
+  const pending = new Map<string, { reportId: string; job: Promise<boolean> }>()
   let queue = Promise.resolve()
   function enqueue<T>(work: () => Promise<T>): Promise<T> {
     const job = queue.then(work)
@@ -80,25 +80,36 @@ export function createReportSourcesCache(dir: string, db: ManagedDb, reports: Bl
     if (!details) return false
     const selection = selectSources(parsed.findings, bundleSourcesAsMap(details))
     const body = await compress(Buffer.from(JSON.stringify({ integrity: bundle.integrity, ...selection })), { level: 6 })
-    const current = await db.getReport(report.id)
-    if (current?.bundleId !== bundle.id || current.sha256 !== report.sha256 || !(await db.getBundle(bundle.id))) return false
+    // The derivative belongs to the shared hash, not the row that started
+    // parsing. A surviving duplicate can still use these identical bytes.
+    if (!(await db.hasReportWithBundleHash(bundle.id, report.sha256)) || !(await db.getBundle(bundle.id))) return false
     await mkdir(reportDirectory(bundle.id, report.sha256), { recursive: true })
     const temp = `${target}.${randomUUID()}.tmp`
     try { await writeFile(temp, body); await rename(temp, target) }
     finally { await rm(temp, { force: true }) }
     return true
   }
-  async function ensure(target: string, report: ReportRecord, bundle: ManagedBundle, permissions: ViewerPermissions) {
+  async function ensure(target: string, report: ReportRecord, bundle: ManagedBundle, permissions: ViewerPermissions): Promise<boolean> {
     const existing = pending.get(target)
-    if (existing) return existing
+    if (existing) {
+      const ready = await existing.job
+      if (ready || existing.reportId === report.id) return ready
+      // Deletion can also win before the initiator reads its blob. Retry with
+      // this request's row instead of caching that other row's miss as 204.
+      const initiator = await db.getReport(existing.reportId)
+      if (initiator?.bundleId === bundle.id && initiator.sha256 === report.sha256) return false
+      if (pending.get(target) === existing) pending.delete(target)
+      return ensure(target, report, bundle, permissions)
+    }
     const job = (async () => {
       try { await stat(target); return true }
       catch (err) { if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err }
       // Serial cold builds bound peak decompression/parsing memory.
       return enqueue(() => build(target, report, bundle, permissions))
     })()
-    pending.set(target, job)
-    try { return await job } finally { if (pending.get(target) === job) pending.delete(target) }
+    const entry = { reportId: report.id, job }
+    pending.set(target, entry)
+    try { return await job } finally { if (pending.get(target) === entry) pending.delete(target) }
   }
   return {
     async open(report: ReportRecord, bundle: ManagedBundle, permissions: ViewerPermissions) {
@@ -110,7 +121,7 @@ export function createReportSourcesCache(dir: string, db: ManagedDb, reports: Bl
     },
     async deleteBundle(id: string) {
       const prefix = `${directory(id)}/`
-      await Promise.allSettled([...pending].filter(([key]) => key.startsWith(prefix)).map(([, job]) => job))
+      await Promise.allSettled([...pending].filter(([key]) => key.startsWith(prefix)).map(([, entry]) => entry.job))
       await rm(directory(id), { recursive: true, force: true })
     },
     async deleteReport(report: Pick<ReportRecord, 'bundleId' | 'sha256'>) {

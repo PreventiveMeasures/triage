@@ -496,7 +496,7 @@ function sectionTemplate(label, body, cls = 'section', { collapsible = false } =
 // different errand, and the mark beside the row is how you still run
 // it.
 function evidencePanelRef(bundle, row, label) {
-  const file = bundle && row?.file ? findingSourcePath(bundle, row.file) : null
+  const file = bundle?.integrity && row?.file ? findingSourcePath(bundle, row.file) : null
   if (!file) return html`<span class="evidence-ref">${label}</span>`
   // A span carrying `role="link"`, not a `<button>`: a button is
   // inline-BLOCK and cannot be talked out of it — Chromium coerces

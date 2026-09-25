@@ -3,6 +3,7 @@ import { beforeEach, mock, test } from 'node:test'
 import { setImmediate } from 'node:timers/promises'
 import { managedAppState } from '../ui/managed/state.js'
 import { clearReportSources, fetchReportSources, readReportSources } from '../ui/managed/report-sources.js'
+import { pushed, stepped } from '../ui/view/focus-code-history.js'
 
 let fullBundleLoads = 0, managed = true
 const state = { focusCodeTick: 0, focusCodeStack: [], focusCodeAt: 0, bundles: [] }
@@ -21,7 +22,7 @@ mock.module('../ui/view/format.js', { namedExports: { lineRange: line => line ? 
 mock.module('../ui/view/render.js', { namedExports: { render: () => {} } })
 mock.module('../ui/view/dom.js', { namedExports: { report: { querySelectorAll: () => [] } } })
 mock.module('../ui/view/prism-highlight.js', { namedExports: { langForPath: () => null, highlight: () => Promise.resolve(null) } })
-const { attachedBundle, bundleSource, findingSourcePath, getFocusCode } = await import('../ui/view/focus-code.js')
+const { attachedBundle, bundleSource, findingSourcePath, focusCodeHistory, focusCodePosition, getFocusCode } = await import('../ui/view/focus-code.js')
 const finding = { _managedReportId: 'report/id', _bundleHashes: ['bundle'], file: 'main.js', line: 1, evidence: [{ file: 'evidence.js' }] }
 const payload = { integrity: 'bundle', files: [['src/main.js', 'main source'], ['src/evidence.js', 'proof source']], paths: [['main.js', 'src/main.js'], ['evidence.js', 'src/evidence.js']] }
 let calls, gate
@@ -53,6 +54,32 @@ test('rendering source controls is lazy; focused/fullscreen panels share one rep
   assert.equal(findingSourcePath(attachedBundle(finding), 'missing.js'), null)
   assert.equal(bundleSource('bundle', 'src/evidence.js', { reportId: finding._managedReportId }).content, 'proof source')
   assert.equal(calls.length, 1); assert.equal(fullBundleLoads, 0)
+})
+
+test('managed navigation waits for the actual bundle and resolved paths, then retains evidence history', async () => {
+  const multiple = { ...finding, _bundleHashes: ['unavailable-bundle', 'bundle'] }
+  gate = Promise.withResolvers()
+  assert.deepEqual(getFocusCode([multiple]), { loading: true })
+  assert.equal(attachedBundle(multiple).integrity, null, 'do not guess the first declared bundle')
+  assert.equal(focusCodeHistory([multiple]), null, 'no history can be seeded by a click during loading')
+  assert.equal(focusCodePosition(multiple), null)
+  gate.resolve(); await setImmediate()
+  const bundle = attachedBundle(multiple)
+  assert.equal(bundle.integrity, 'bundle')
+  const base = focusCodeHistory([multiple]).base
+  assert.equal(base.file, 'src/main.js', 'resolve the source path before seeding history, too')
+  const evidence = { integrity: bundle.integrity, file: findingSourcePath(bundle, 'evidence.js'), range: { start: 2, end: 2 } }
+  const next = pushed(focusCodeHistory([multiple]), evidence)
+  state.focusCodeStack = next.stack; state.focusCodeAt = next.at
+  assert.deepEqual(focusCodePosition(multiple), evidence)
+  assert.equal(getFocusCode([multiple]).content, 'proof source')
+  assert.equal(focusCodeHistory([multiple]).stack.length, 2)
+  state.focusCodeAt = stepped(state.focusCodeStack, state.focusCodeAt, -1)
+  assert.deepEqual(focusCodePosition(multiple), base)
+  assert.equal(getFocusCode([multiple]).content, 'main source')
+  state.focusCodeAt = stepped(state.focusCodeStack, state.focusCodeAt, 1)
+  assert.equal(getFocusCode([multiple]).content, 'proof source')
+  assert.equal(calls.length, 1)
 })
 
 test('opening a code preview loads only its report and retains no whole bundle', async () => {

@@ -184,6 +184,48 @@ test('deletion waits for a cold build and stale requests cannot recreate its cac
   assert.deepEqual(await cachedFiles(h), [])
 })
 
+for (const stage of ['before report bytes', 'after report bytes']) {
+  test(`a surviving duplicate gets sources when the shared initiator is deleted ${stage}`, async t => {
+    const h = await setup(t)
+    const duplicate = await h.seed()
+    const finish = Promise.withResolvers(), joined = Promise.withResolvers(), reading = Promise.withResolvers()
+    const getBundle = h.bundles.get.bind(h.bundles), getReport = h.reports.get.bind(h.reports), open = h.cache.open.bind(h.cache)
+    const reportReads = []
+    t.mock.method(h.reports, 'get', async id => {
+      reportReads.push(id)
+      if (stage === 'before report bytes' && id === h.report.id) { reading.resolve(); await finish.promise }
+      return getReport(id)
+    })
+    const bundleReads = t.mock.method(h.bundles, 'get', async (...args) => {
+      if (stage === 'after report bytes') { reading.resolve(); await finish.promise }
+      return getBundle(...args)
+    })
+    t.mock.method(h.cache, 'open', (...args) => {
+      const job = open(...args)
+      if (args[0].id === duplicate.id) joined.resolve()
+      return job
+    })
+    const first = h.send()
+    await reading.promise
+    const second = h.send(duplicate.id)
+    await joined.promise
+    await h.db.deleteReport(h.report.id)
+    await h.reports.delete(h.report.id)
+    const cleanup = h.cache.deleteReport(h.report)
+    finish.resolve()
+    const [a, b] = await Promise.all([first, second])
+    await cleanup
+    assert.ok([204, 404].includes(a.status), 'the deleted report never discloses sources')
+    assert.equal(b.status, 200, 'the same request for the surviving duplicate succeeds')
+    assert.equal(new Map(b.json().files).get('src/main.js'), files['src/main.js'])
+    assert.equal(bundleReads.mock.callCount(), 1)
+    assert.deepEqual(reportReads, stage === 'before report bytes' ? [h.report.id, duplicate.id] : [h.report.id])
+    assert.equal((await cachedFiles(h)).length, 1)
+    assert.equal((await deleteReport(h, duplicate.id)).status, 200)
+    assert.deepEqual(await cachedFiles(h), [], 'the last deletion still evicts the shared cache')
+  })
+}
+
 test('visibility variants cannot reuse broader cached sources; managers still need team access', async t => {
   const h = await setup(t)
   assert.equal((await h.send()).json().files.length, 5)
