@@ -220,8 +220,11 @@ it('keeps the client on its chain when a subscription buffers more than 256 dupl
   hub.subscribe(socket, tag)
   const release = hub.pauseBroadcasts(socket)
   const revisions = []
+  // End the long catch-up with a signed full snapshot. Otherwise its 258
+  // deltas exceed the keyframe interval, and a no-change flush can emit a
+  // legitimate maintenance save that looks like continuity recovery below.
   for (let i = 0; i < 258; i++) {
-    const revision = await f.revision(revisions.at(-1)?.id ?? null, { A: { comment: `edit ${i}` } })
+    const revision = await f.revision(revisions.at(-1)?.id ?? null, { A: { comment: `edit ${i}` } }, i === 257)
     revisions.push(revision)
     hub.broadcast(tag, { type: 'workspace-state', workspaceTag: tag, revisions: [revision] }, null)
   }
@@ -232,6 +235,8 @@ it('keeps the client on its chain when a subscription buffers more than 256 dupl
   const next = await f.revision(revisions.at(-1).id, { A: { comment: 'live successor' } })
   hub.broadcast(tag, { type: 'workspace-state', workspaceTag: tag, revisions: [next] }, null)
   await waitFor(() => f.info().baseRevision === next.id, 'live successor applied after the buffer flush')
+  triageSync.notify()
+  await waitFor(() => !f.info().encrypting && !f.info().pendingSave, 'post-catch-up flush settled')
   assert.equal(state.triage.get('A')?.comment, 'live successor')
   assert.equal(f.messages.length, before, 'no continuity recovery, resubscribe, or full-state reset')
 })
@@ -244,7 +249,9 @@ it('ignores delayed bus notifications after a large subscription has completely 
   hub.subscribe(socket, tag)
   const release = hub.pauseBroadcasts(socket)
   const revisions = []
-  for (let i = 0; i < 258; i++) revisions.push(await f.revision(revisions.at(-1)?.id ?? null, { A: { comment: `edit ${i}` } }))
+  // Keep more than 256 revision IDs while resetting normal compaction, so
+  // delayed duplicates are the only possible reason for a recovery save.
+  for (let i = 0; i < 258; i++) revisions.push(await f.revision(revisions.at(-1)?.id ?? null, { A: { comment: `edit ${i}` } }, i === 257))
   const onBusMessage = createBusReceiver({
     handle: { revisionById: { get: (_tag, id) => Promise.resolve({ ...revisions.find((rev) => rev.id === id), keyframe: 0 }) } },
     objstoreHandle: {}, broadcastLocalRaw: hub.broadcastLocalRaw, debug: false,
@@ -259,6 +266,10 @@ it('ignores delayed bus notifications after a large subscription has completely 
   const next = await f.revision(revisions.at(-1).id, { A: { comment: 'live successor' } })
   hub.broadcast(tag, { type: 'workspace-state', workspaceTag: tag, revisions: [next] }, null)
   await waitFor(() => f.info().baseRevision === next.id, 'live successor applied after delayed notifications')
+  // Exercise a no-change flush after catch-up, including one deferred while
+  // its persistence finishes. It must not race the final wire assertion.
+  triageSync.notify()
+  await waitFor(() => !f.info().encrypting && !f.info().pendingSave, 'post-catch-up flush settled')
   assert.equal(state.triage.get('A')?.comment, 'live successor')
   assert.equal(f.messages.length, before, 'no recovery subscription or full-state save for delayed duplicates')
 })
