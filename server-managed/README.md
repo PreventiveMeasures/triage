@@ -194,17 +194,31 @@ applies because Last Activity is derived from the retained history.
 format: file inventory, byte sizes, source hashes and line counts, package
 identity, imports, entry points, executable flags and language/code statistics.
 It excludes source bodies and binary resources. `GET /api/bundles/:id/contents`
-returns the original sourcemap JSON or the decompressed Stasis JSON.
-Both endpoints support HEAD and stream cached files with `Content-Encoding:
-gzip`, compressed Content-Length, and `Cache-Control: private, no-store`.
-`GET /api/bundles/:id/download` serves the original uploaded bytes.
+returns the original sourcemap or Stasis JSON after HTTP decoding.
+Both endpoints use `Content-Encoding: br`. Metadata is cached as Brotli;
+contents serve the stored Brotli bytes directly, without waiting for metadata
+or generating another compressed copy. Stasis uploads remain byte-identical.
+Clients are expected to support Brotli; no encoding negotiation is needed.
+Both endpoints support HEAD, compressed Content-Length, and
+`Cache-Control: private, no-store`.
+`GET /api/bundles/:id/download` preserves the uploaded filename and bytes:
+sourcemaps use HTTP Brotli decoding, while Stasis downloads remain .br archives.
+
+Sourcemaps are compressed once to `bundles/:id.map.br`; the uncompressed .map
+is not retained. The DB keeps the original filename, byte size and integrity
+so deduplication and existing report hashes keep working. Legacy sourcemaps
+are converted sequentially in the background at startup and on demand when
+read. Conversion atomically publishes the .map.br file before removing the old
+copy, and resumes cleanup after an interrupted conversion. New sourcemaps and
+metadata use Brotli quality 4 to avoid slow maximum-quality compression.
 
 The cache lives beside the managed database under `cache/bundles/:id/`.
 Uploads schedule a prebuild; reads build missing derivatives on demand. Builds
 are deduplicated and serialized to bound memory, with a 512 MiB decoded limit.
 Files are published atomically and removed on bundle or repository deletion,
 including when a build was already in flight. Invalid/unsupported bundles can
-still be downloaded as uploaded; derivative requests return 422.
+still be downloaded as uploaded; metadata requests return 422. Contents are
+passed through without parsing; metadata generation still validates them.
 
 Admins can read/manage every bundle. Managers can read/manage bundles they own
 or can access through their teams. View/triage users need team access; the none
@@ -216,7 +230,7 @@ Manage lists and repository pickers enforce these rules on the server.
 
 Opening a bundle downloads its metadata into managed app memory. Code,
 Terminal, source search and source comparison request contents when needed;
-the browser handles HTTP gzip decoding. Neither payload enters OPFS, IndexedDB
+the browser handles HTTP Brotli decoding. Neither payload enters OPFS, IndexedDB
 or localStorage. Session/role changes clear managed caches and terminal state.
 
 

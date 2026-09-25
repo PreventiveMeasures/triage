@@ -1,12 +1,14 @@
 // Managed HTTP app and standalone boot. The combined launcher mounts this
 // same app on e2e's listener; storage, routing and cleanup stay here.
 import { createServer } from 'node:http'
+import { readdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createOriginGate } from '../server-common/origin.ts'
 import { createDiskAvatarStore } from './avatar-store.ts'
 import { createDiskBundleCache } from './bundle-cache.ts'
 import { createDiskBlobStore } from './blob-store.ts'
+import { createDiskBundleStore } from './bundle-store.ts'
 import { type ManagedConfig, loadManagedConfig } from './config.ts'
 import { openSqliteManagedDb } from './db.ts'
 import { type ManagedHttpDeps, createManagedRequestHandler } from './http.ts'
@@ -21,10 +23,10 @@ export function createManagedApp(config: ManagedConfig, options: Partial<Pick<Ma
   // Avatars cache on disk beside the DB (data/avatars/<uuid>) for now.
   const avatarStore = createDiskAvatarStore(join(dirname(config.dbPath), 'avatars'))
   // Uploaded report + bundle bytes live on disk beside the DB too
-  // (data/reports/<uuid>, data/bundles/<uuid>).
+  // (data/reports/<uuid>, data/bundles/<uuid>[.map.br]).
   const dataDir = dirname(config.dbPath)
   const reportStore = createDiskBlobStore(join(dataDir, 'reports'))
-  const bundleStore = createDiskBlobStore(join(dataDir, 'bundles'))
+  const bundleStore = createDiskBundleStore(join(dataDir, 'bundles'))
   const bundleCache = createDiskBundleCache(join(dataDir, 'cache', 'bundles'), db, bundleStore)
   const originGate = createOriginGate(config.host, config.trustProxyEnv)
 
@@ -34,6 +36,23 @@ export function createManagedApp(config: ManagedConfig, options: Partial<Pick<Ma
     inFlight.add(p)
     p.finally(() => inFlight.delete(p)).catch(() => {})
   }
+
+  // Convert legacy sourcemaps sequentially without delaying server startup.
+  // Reads also migrate on demand; per-bundle serialization covers races/deletion.
+  track((async () => {
+    const stored = new Set(await readdir(join(dataDir, 'bundles')).catch((err: NodeJS.ErrnoException) => {
+      if (err.code === 'ENOENT') return []
+      throw err
+    }))
+    for (const bundle of await db.listBundles()) {
+      if (shuttingDown) break
+      if (bundle.kind === 'sourcemap' && stored.has(bundle.id)) {
+        await bundleStore.get(bundle.id, bundle.kind).catch(err => {
+          console.warn('managed: sourcemap storage migration failed:', err)
+        })
+      }
+    }
+  })().catch(err => { console.warn('managed: sourcemap storage migration failed:', err) }))
 
   const serveStatic = loadManagedStatic(fileURLToPath(new URL('../out/', import.meta.url)), {
     indexOnly: options.next != null, scanServer: options.serverInfo?.deepviewScanServer ?? null,

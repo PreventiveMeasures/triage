@@ -8,7 +8,8 @@
 // data/bundles/<uuid>); the BlobStore interface is backend-agnostic so an S3 /
 // Vercel Blob backend slots in later without touching callers. Bytes only — the
 // content-type / filename / integrity ride the DB row, so there's no sidecar.
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import type { Buffer } from 'node:buffer'
 
@@ -22,16 +23,18 @@ export interface BlobStore {
 // path separators. Validated anyway so a crafted id can't escape the store dir.
 const ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u
 
-export function createDiskBlobStore(dir: string): BlobStore {
+export function createDiskBlobStore(dir: string, suffix = ''): BlobStore {
   function pathFor(id: string): string {
     if (!ID_RE.test(id)) throw new Error('invalid blob id')
-    return join(dir, id)
+    return join(dir, id + suffix)
   }
   return {
     async put(id, bytes) {
       const p = pathFor(id)
       await mkdir(dirname(p), { recursive: true })
-      await writeFile(p, bytes)
+      const temp = `${p}.${randomUUID()}.tmp`
+      try { await writeFile(temp, bytes); await rename(temp, p) }
+      finally { await rm(temp, { force: true }) }
     },
     async get(id) {
       try {

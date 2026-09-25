@@ -10,6 +10,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { brotliDecompressSync } from 'node:zlib'
 
 import { hashToken, randomToken, safeEqual } from '../server-managed/crypto.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
@@ -17,6 +18,7 @@ import { createSession, endSession, readSession } from '../server-managed/sessio
 import { OAuthError, buildLoginRedirect, ensureUserAccessToken, handleCallback, refreshUserToken } from '../server-managed/github-oauth.ts'
 import { appJwt, collectRepos, githubAppConfigured, installUrl, listInstalledRepos, listUserRepos, mergeRepos, repoAccessToken } from '../server-managed/github-app.ts'
 import { bundleIntegrity } from '../server-managed/bundle.ts'
+import { createBundleStore } from '../server-managed/bundle-store.ts'
 import { filterReportContent } from '../common/managed/report-filter.ts'
 import { MAX_TRIAGE_HISTORY, parseTriageEntryPatch } from '../common/managed/triage.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
@@ -219,7 +221,7 @@ test('GET /api/admin/users: admin-only (401 unauth, 403 non-admin, 200 admin)', 
 
   let pending = Promise.resolve()
   const handler = createManagedRequestHandler({
-    config, db, avatarStore: fakeAvatarStore(), reportStore: fakeBlobStore(), bundleStore: fakeBlobStore(),
+    config, db, avatarStore: fakeAvatarStore(), reportStore: fakeBlobStore(), bundleStore: createBundleStore(fakeBlobStore(), fakeBlobStore()),
     originGate: { trustProxy: false, isOriginAllowed: () => true },
     isShuttingDown: () => false, track: (p) => { pending = p },
   })
@@ -256,7 +258,7 @@ test('POST /api/admin/set-role: admin-only mutation, CSRF, not-self', async () =
 
   let pending = Promise.resolve()
   const handler = createManagedRequestHandler({
-    config, db, avatarStore: fakeAvatarStore(), reportStore: fakeBlobStore(), bundleStore: fakeBlobStore(),
+    config, db, avatarStore: fakeAvatarStore(), reportStore: fakeBlobStore(), bundleStore: createBundleStore(fakeBlobStore(), fakeBlobStore()),
     originGate: { trustProxy: false, isOriginAllowed: () => true },
     isShuttingDown: () => false, track: (p) => { pending = p },
   })
@@ -309,7 +311,7 @@ test('GET /api/avatar/<id>: any session may fetch a user avatar by id (401 unaut
 
   let pending = Promise.resolve()
   const handler = createManagedRequestHandler({
-    config, db, avatarStore, reportStore: fakeBlobStore(), bundleStore: fakeBlobStore(),
+    config, db, avatarStore, reportStore: fakeBlobStore(), bundleStore: createBundleStore(fakeBlobStore(), fakeBlobStore()),
     originGate: { trustProxy: false, isOriginAllowed: () => true },
     isShuttingDown: () => false, track: (p) => { pending = p },
   })
@@ -620,7 +622,7 @@ test('GET /api/admin/repositories: admin only; no stored token → tokenMissing'
 
   let pending = Promise.resolve()
   const handler = createManagedRequestHandler({
-    config, db, avatarStore: fakeAvatarStore(), reportStore: fakeBlobStore(), bundleStore: fakeBlobStore(),
+    config, db, avatarStore: fakeAvatarStore(), reportStore: fakeBlobStore(), bundleStore: createBundleStore(fakeBlobStore(), fakeBlobStore()),
     originGate: { trustProxy: false, isOriginAllowed: () => true },
     isShuttingDown: () => false, track: (p) => { pending = p },
   })
@@ -661,7 +663,7 @@ test('POST /api/admin/repositories/select: admin + CSRF; verifies access, persis
 
   let pending = Promise.resolve()
   const handler = createManagedRequestHandler({
-    config, db, avatarStore: fakeAvatarStore(), reportStore: fakeBlobStore(), bundleStore: fakeBlobStore(),
+    config, db, avatarStore: fakeAvatarStore(), reportStore: fakeBlobStore(), bundleStore: createBundleStore(fakeBlobStore(), fakeBlobStore()),
     originGate: { trustProxy: false, isOriginAllowed: () => true },
     isShuttingDown: () => false, track: (p) => { pending = p },
   })
@@ -778,7 +780,7 @@ test('GET /api/admin/reports: admin|manage only (401 unauth, 403 none, 200 admin
 
   let pending = Promise.resolve()
   const handler = createManagedRequestHandler({
-    config, db, avatarStore: fakeAvatarStore(), reportStore: fakeBlobStore(), bundleStore: fakeBlobStore(),
+    config, db, avatarStore: fakeAvatarStore(), reportStore: fakeBlobStore(), bundleStore: createBundleStore(fakeBlobStore(), fakeBlobStore()),
     originGate: { trustProxy: false, isOriginAllowed: () => true },
     isShuttingDown: () => false, track: (p) => { pending = p },
   })
@@ -817,7 +819,7 @@ test('reports upload/download/delete: CSRF + role, sanitised filename, attributi
 
   let pending = Promise.resolve()
   const handler = createManagedRequestHandler({
-    config: smallCap, db, avatarStore: fakeAvatarStore(), reportStore: fakeBlobStore(), bundleStore: fakeBlobStore(),
+    config: smallCap, db, avatarStore: fakeAvatarStore(), reportStore: fakeBlobStore(), bundleStore: createBundleStore(fakeBlobStore(), fakeBlobStore()),
     originGate: { trustProxy: false, isOriginAllowed: () => true },
     isShuttingDown: () => false, track: (p) => { pending = p },
   })
@@ -923,15 +925,18 @@ test('db: bundles — insert/get/list/delete, integrity dedup-key, report link +
 function bundleHarness(db, cfg = config, reportStore = fakeBlobStore()) {
   let pending = Promise.resolve()
   const handler = createManagedRequestHandler({
-    config: cfg, db, avatarStore: fakeAvatarStore(), reportStore, bundleStore: fakeBlobStore(),
+    config: cfg, db, avatarStore: fakeAvatarStore(), reportStore, bundleStore: createBundleStore(fakeBlobStore(), fakeBlobStore()),
     originGate: { trustProxy: false, isOriginAllowed: () => true },
     isShuttingDown: () => false, track: (p) => { pending = p },
   })
   function mockRes() {
     return {
-      statusCode: 0, headers: {}, body: '', ended: false,
+      statusCode: 0, headers: {}, body: '', bytes: Buffer.alloc(0), ended: false,
       writeHead(c, h) { this.statusCode = c; if (h) this.headers = h; return this },
-      end(b) { if (b != null) this.body += b; this.ended = true; return this },
+      end(b) {
+        if (b != null) { this.body += b; this.bytes = Buffer.concat([this.bytes, Buffer.from(b)]) }
+        this.ended = true; return this
+      },
       get headersSent() { return this.ended },
     }
   }
@@ -1076,7 +1081,8 @@ test('bundles upload/download/delete: CSRF + role, sha512 dedup, kind, 413/400/4
   // Download → octet-stream bytes; delete (CSRF) → gone; repeat → 404.
   const dl = await send('GET', `/api/admin/bundles/${id}`, aCk)
   assert.equal(dl.statusCode, 200)
-  assert.equal(dl.body, body)
+  assert.equal(dl.headers['content-encoding'], 'br')
+  assert.equal(brotliDecompressSync(dl.bytes).toString(), body)
   assert.equal(dl.headers['content-type'], 'application/octet-stream')
   assert.equal(dl.headers['x-content-type-options'], 'nosniff')
   assert.equal((await send('DELETE', `/api/admin/bundles/${id}`, aCk, null)).statusCode, 403) // CSRF missing
@@ -1147,7 +1153,7 @@ test('reports/bundles set-repo: db attach/detach + endpoint (role, CSRF, validat
 
   let pending = Promise.resolve()
   const handler = createManagedRequestHandler({
-    config, db, avatarStore: fakeAvatarStore(), reportStore: fakeBlobStore(), bundleStore: fakeBlobStore(),
+    config, db, avatarStore: fakeAvatarStore(), reportStore: fakeBlobStore(), bundleStore: createBundleStore(fakeBlobStore(), fakeBlobStore()),
     originGate: { trustProxy: false, isOriginAllowed: () => true },
     isShuttingDown: () => false, track: (p) => { pending = p },
   })
@@ -1256,7 +1262,7 @@ test('GET /api/teams + db.listTeamsForUser: a user sees only their own teams', a
 
   let pending = Promise.resolve()
   const handler = createManagedRequestHandler({
-    config, db, avatarStore: fakeAvatarStore(), reportStore: fakeBlobStore(), bundleStore: fakeBlobStore(),
+    config, db, avatarStore: fakeAvatarStore(), reportStore: fakeBlobStore(), bundleStore: createBundleStore(fakeBlobStore(), fakeBlobStore()),
     originGate: { trustProxy: false, isOriginAllowed: () => true },
     isShuttingDown: () => false, track: (p) => { pending = p },
   })
@@ -1312,7 +1318,7 @@ test('team reports: read iff admin, OR (>=view role AND in a team holding the re
   await reportStore.put(reportId, Buffer.from('{"findings":[]}'))
   let pending = Promise.resolve()
   const handler = createManagedRequestHandler({
-    config, db, avatarStore: fakeAvatarStore(), reportStore, bundleStore: fakeBlobStore(),
+    config, db, avatarStore: fakeAvatarStore(), reportStore, bundleStore: createBundleStore(fakeBlobStore(), fakeBlobStore()),
     originGate: { trustProxy: false, isOriginAllowed: () => true },
     isShuttingDown: () => false, track: (p) => { pending = p },
   })
@@ -1487,7 +1493,7 @@ test('GET /api/reports/<id>: filtered content and authoritative repo metadata (a
 
   let pending = Promise.resolve()
   const handler = createManagedRequestHandler({
-    config, db, avatarStore: fakeAvatarStore(), reportStore, bundleStore: fakeBlobStore(),
+    config, db, avatarStore: fakeAvatarStore(), reportStore, bundleStore: createBundleStore(fakeBlobStore(), fakeBlobStore()),
     originGate: { trustProxy: false, isOriginAllowed: () => true },
     isShuttingDown: () => false, track: (p) => { pending = p },
   })
