@@ -54,6 +54,67 @@ test('legacy text migrates once without guessing authors; comments survive triag
   assert.equal((await db.getComment(added.id)).authorLogin, 'alice', 'deleted users retain a durable author label')
 })
 
+test('migration preserves comments written by a legacy server after an earlier migration', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'managed-comments-rollback-'))
+  const path = join(dir, 'managed.sqlite')
+  let db = openSqliteManagedDb(path)
+  t.after(async () => { await db?.close(); await rm(dir, { recursive: true, force: true }) })
+  const alice = await db.upsertUser(identity(1, 'alice'), 10)
+  const attributed = await db.createComment({ findingId: 'f', body: 'Attributed note', authorId: alice, authorLogin: 'alice' }, 20)
+  await db.setTriage('f', { comment: 'Written after rollback', color: 'red' }, alice, 'alice', 30)
+  await db.close()
+  db = null
+  // Model a DB already migrated by the initial deterministic-ID migration.
+  const sql = new DatabaseSync(path)
+  sql.prepare(`INSERT INTO finding_comment (id, finding_id, body, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?)`).run('legacy:f', 'f', 'Previously migrated note', 15, 15)
+  sql.close()
+
+  db = openSqliteManagedDb(path)
+  const first = await db.listComments(['f'])
+  assert.deepEqual(first.map(comment => comment.body), ['Previously migrated note', 'Attributed note', 'Written after rollback'])
+  assert.equal(first[0].id, 'legacy:f', 'preserve existing migrated records')
+  assert.deepEqual(first[1], attributed, 'preserve attributed records')
+  assert.equal(first[2].authorId, null)
+  assert.equal(first[2].authorLogin, null)
+  assert.equal(first[2].createdAt, 30)
+  assert.equal((await db.listTriage(['f']))[0].comment, null)
+  assert.equal((await db.listTriage(['f']))[0].color, 'red')
+
+  // Another old-server write can even reuse the timestamp of the prior one.
+  await db.setTriage('f', { comment: 'Another rollback note' }, alice, 'alice', 30)
+  await db.close()
+  db = null
+  db = openSqliteManagedDb(path)
+  const second = await db.listComments(['f'])
+  assert.equal(second.length, 4)
+  assert.equal(new Set(second.map(comment => comment.id)).size, 4)
+  for (const comment of first) assert.deepEqual(await db.getComment(comment.id), comment)
+  assert.ok(second.some(comment => comment.body === 'Another rollback note' && comment.authorId === null))
+  await db.close()
+  db = null
+  db = openSqliteManagedDb(path)
+  assert.deepEqual(await db.listComments(['f']), second, 'restarts without legacy writes do not duplicate comments')
+})
+
+test('runtime imports can record their acting admin independently of comment authorship', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const alice = await db.upsertUser(identity(1, 'alice'), 10)
+  const imported = await db.createComment({ findingId: 'f', body: 'Imported discussion', authorId: null, authorLogin: null, actor: { id: alice, login: 'alice' } }, 20)
+  assert.equal(imported.authorId, null)
+  assert.equal(imported.authorLogin, null)
+  assert.equal(imported.body, 'Imported discussion')
+  assert.deepEqual(await db.listComments(['f']), [imported])
+  assert.deepEqual(await db.listTriage(['f']), [], 'unattributed creation does not require a legacy triage row')
+  const activity = await db.listActivity({ page: 1, limit: 100, kind: 'triage', query: '', contexts: null })
+  assert.equal(activity.history[0].actor, 'alice', 'audit the import action without attributing its text to the admin')
+  assert.equal((await db.listUsers()).find(user => user.id === alice).lastActivityAt, 20)
+  assert.equal(await db.editComment(imported.id, alice, 'alice', 'Claim imported text', 1, 'r', 30), 'forbidden')
+  const authored = await db.createComment({ findingId: 'f', body: 'Alice follows up', authorId: alice, authorLogin: 'alice' }, 40)
+  assert.deepEqual(await db.listComments(['f']), [imported, authored])
+})
+
 test('comments have independent IDs, ownership, conflict detection, and body-free activity', async (t) => {
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())

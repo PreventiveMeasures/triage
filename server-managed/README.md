@@ -79,8 +79,8 @@ invalidating it on account, team, or mode changes.
 
 Comments live in `finding_comment`, independently of the shared triage row.
 Each has its own ID, finding ID, text, optional author ID/login, creation and
-edit timestamps, and a version. New comments are attributed to the authenticated
-user; the client cannot choose the author. Readers see the discussion; users
+edit timestamps, and a version. Discussion posts are attributed to the
+authenticated user; the client cannot choose the author. Readers see the discussion; users
 with triage access can add comments and edit their own. Edits require the version
 that was read, so stale edits receive 409 instead of overwriting newer text.
 
@@ -90,9 +90,20 @@ accepts `{ body, version }`. Mutations require CSRF and current report/triage
 access. Text is nonempty and limited to 10,000 characters. Comments are shared
 across reports carrying the same finding and stay in browser memory only.
 
-Existing triage-row comment text is migrated once to unattributed records. The
+Unattributed comments are supported during normal operation, independently of
+migration. Future workspace imports started by an admin in the UI can use
+`createComment` with null author ID/login and a separate `actor` containing the
+admin's ID/login. This records the action in history and Last Activity without
+claiming that the admin wrote the imported text. The workspace import UI/API is
+not implemented yet; ordinary comment posts always take their author from the
+authenticated session.
+
+Existing triage-row comment text is migrated to unattributed records. The
 last triage writer is not reliable evidence of authorship, so migration does not
-claim an author. Unattributed comments remain readable; users cannot claim or
+claim an author. Each migrated text gets a fresh ID, preserving subsequent
+legacy-server writes after a rollback without replacing previous comments.
+The old column is cleared in the same transaction to avoid duplicate migration
+on restart. Unattributed comments remain readable; users cannot claim or
 edit them. Legacy triage history is preserved. New shared-field comment writes
 are rejected; e2e/local/sync comment storage and editing are unchanged.
 

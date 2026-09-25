@@ -5,8 +5,13 @@ import type { ManagedComment } from '../common/managed/comments.ts'
 export interface CommentInput {
   findingId: string
   body: string
+  // Runtime imports may omit authorship, including future admin UI imports.
+  // Ordinary comment posts always supply the authenticated user as author.
   authorId: string | null
   authorLogin: string | null
+  // The user performing an import need not be the author of its comments.
+  // Omitted for ordinary posts, where the author is also the acting user.
+  actor?: { id: string; login: string }
   reportId?: string | null
 }
 
@@ -38,11 +43,12 @@ export function commentMethods(db: DatabaseSync): CommentStore {
   `)
   // updated_by belongs to the whole triage row, not necessarily its comment.
   // Preserve legacy text without guessing an author. Clearing the old column
-  // in the same transaction makes the migration safe to restart.
+  // in the same transaction makes the migration safe to restart. Use a fresh
+  // ID so a later legacy-server write cannot collide with an earlier import.
   db.exec('BEGIN')
   try {
     db.exec(`INSERT INTO finding_comment (id, finding_id, body, created_at, updated_at)
-      SELECT 'legacy:' || finding_id, finding_id, comment, updated_at, updated_at
+      SELECT 'legacy:' || lower(hex(randomblob(16))), finding_id, comment, updated_at, updated_at
       FROM finding_triage WHERE comment IS NOT NULL AND comment != '';
       UPDATE finding_triage SET comment = NULL WHERE comment IS NOT NULL;`)
     db.exec('COMMIT')
@@ -75,7 +81,7 @@ export function commentMethods(db: DatabaseSync): CommentStore {
       db.exec('BEGIN')
       try {
         insert.run(id, input.findingId, input.body, input.authorId, input.authorLogin, now, now)
-        event.run(id, input.findingId, input.authorId, input.authorLogin, 'added a comment', now,
+        event.run(id, input.findingId, input.actor?.id ?? input.authorId, input.actor?.login ?? input.authorLogin, 'added a comment', now,
           input.reportId ?? null, input.reportId ?? null, input.reportId ?? null)
         db.exec('COMMIT')
       } catch (err) { db.exec('ROLLBACK'); throw err }
