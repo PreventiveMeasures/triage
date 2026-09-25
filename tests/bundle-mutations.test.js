@@ -58,7 +58,8 @@ beforeEach(() => {
 
 async function pendingImport() {
   const { integrity } = await storage.saveBundle('example.stasis', 'original bytes')
-  const source = createManagedLocalImportSource()
+  // Exercise the mutation guard independently of the cross-document read lock.
+  const source = createManagedLocalImportSource({ ...storage, ...vault, withStoredItem: (_kind, _value, work) => work() })
   heldRead = { name: key(integrity), started: Promise.withResolvers(), resume: Promise.withResolvers() }
   let uploaded
   const promise = source.importItem('bundle', integrity, file => { uploaded = file })

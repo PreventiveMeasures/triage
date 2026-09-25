@@ -38,6 +38,21 @@ const OPFS_DIR = 'deepview-reports'
 const OPFS_BUNDLES_DIR = 'deepview-bundles'
 const LS_REPORT_PREFIX = 'deepview.report:'
 
+function lockStoredItem(kind, value, mode, work) {
+  return navigator.locks.request(`deepview-storage/${kind}/${value}`, { mode }, work)
+}
+
+// Keep import snapshots stable across documents through synchronous upload
+// handoff. Writers take the same per-item lock before VAULT_LOCK; unrelated
+// items remain independent. The callback must not await the network upload.
+export function withStoredItem(kind, value, work) {
+  return lockStoredItem(kind, value, 'shared', work)
+}
+
+function mutateStoredItem(kind, value, work) {
+  return lockStoredItem(kind, value, 'exclusive', () => navigator.locks.request(VAULT_LOCK, { mode: 'shared' }, work))
+}
+
 let opfsWarned = false
 // Open an OPFS directory handle, or null when OPFS is unavailable.
 // `warnOnce` surfaces a one-time console breadcrumb (used by the reports
@@ -358,7 +373,7 @@ export async function saveFile(name, content) {
   // file, leaving a stale-state envelope (or plaintext) at rest
   // that won't match the post-transition vault. Shared mode allows
   // concurrent saves to proceed in parallel.
-  return navigator.locks.request(VAULT_LOCK, { mode: 'shared' }, async () => {
+  return mutateStoredItem('report', name, async () => {
     const dir = await getOpfsDir()
     if (dir) {
     // OPFS reports are gzipped at rest — JSON dumps compress well
@@ -670,7 +685,7 @@ export async function saveFileBytes(name, bytes) {
   cache.delete(name)
   // Shared VAULT_LOCK so concurrent vault transitions wait — same
   // rationale as saveFile.
-  return navigator.locks.request(VAULT_LOCK, { mode: 'shared' }, async () => {
+  return mutateStoredItem('report', name, async () => {
     // Wrap with the passkey envelope when the vault is unlocked — same
     // policy as `saveFile`. Bytes received here are the LOGICAL
     // on-disk form (gzipped report); the envelope sits on top so the
@@ -733,7 +748,7 @@ export async function deleteFile(name) {
   // Particularly bad on disable — a user who deleted a sensitive
   // file specifically to prevent it being decrypted to plaintext
   // would see it reappear on disk as plaintext.
-  return navigator.locks.request(VAULT_LOCK, { mode: 'shared' }, async () => {
+  return mutateStoredItem('report', name, async () => {
     const dir = await getOpfsDir()
     if (dir) {
       // Only swallow the "already gone" case (NotFoundError). Other
@@ -963,7 +978,7 @@ export async function saveBundle(name, content) {
   // finish — mirrors saveFile. Without this, a vault-state flip
   // mid-save would leave bytes on disk under a state the next
   // read can't reverse.
-  return navigator.locks.request(VAULT_LOCK, { mode: 'shared' }, async () => {
+  return mutateStoredItem('bundle', integrity, async () => {
     // Refuse writes when the vault is enabled-but-locked. Same
     // invariant as saveFile / saveTriage: nothing lands plaintext
     // on disk under an enabled vault.
@@ -1008,7 +1023,7 @@ export async function deleteBundle(integrity) {
   // (e.g. meta written plaintext under a vault that's already
   // back to enabled, or sealed under a key the next read can't
   // reverse).
-  return navigator.locks.request(VAULT_LOCK, { mode: 'shared' }, async () => {
+  return mutateStoredItem('bundle', integrity, async () => {
     // Only swallow the "already gone" case. A real OPFS failure
     // (NoModificationAllowedError, InvalidModificationError) must
     // propagate BEFORE the `_meta.json` RMW below drops the index

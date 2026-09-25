@@ -13,6 +13,7 @@ function fixture({ encrypted = false, unlocked = false } = {}) {
   const bundleListeners = new Set()
   const calls = []
   const deps = {
+    withStoredItem: (_kind, _value, work) => work(),
     isEncryptionEnabled: () => encrypted,
     isUnlocked: () => unlocked,
     onVaultStateChange: callback => { listeners.add(callback); return () => listeners.delete(callback) },
