@@ -1,6 +1,6 @@
 import { isManagedUiMode, state } from '#client/index.js'
 import { roleAtLeast } from '../../common/managed/roles.ts'
-import { compareManagedComments } from '../../common/managed/comments.ts'
+import { canDeleteComment, compareManagedComments } from '../../common/managed/comments.ts'
 import { deleteReportComment, fetchReportComments, saveReportComment } from './client-managed.js'
 
 export function managedCommentsFor(finding) {
@@ -9,6 +9,10 @@ export function managedCommentsFor(finding) {
 
 export function canWriteManagedComments() {
   return isManagedUiMode() && state.managedSession != null && roleAtLeast(state.managedSession.role, 'triage')
+}
+
+export function canDeleteManagedComment(comment) {
+  return canWriteManagedComments() && canDeleteComment(comment, state.managedSession)
 }
 
 // Capture both report and account identity. A late load/save must never put
@@ -54,7 +58,7 @@ export async function writeManagedComment(finding, body, original = null) {
 export async function deleteManagedComment(finding, comment) {
   const reportId = finding?._managedReportId
   const current = managedCommentScope(reportId)
-  if (!current() || !canWriteManagedComments() || comment.authorId !== state.managedSession.id) return 403
+  if (!current() || !canDeleteManagedComment(comment)) return 403
   const status = await deleteReportComment(reportId, comment.id, comment.version, state.managedSession.csrfToken)
   if (!current()) return 0
   if (status === 204) {

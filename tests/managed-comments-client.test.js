@@ -11,7 +11,7 @@ mock.module('../ui/view/client-managed.js', { namedExports: {
   saveReportComment: (...args) => { writes.push(args); return Promise.resolve(typeof saveResult === 'function' ? saveResult() : saveResult) },
   deleteReportComment: (...args) => { deletes.push(args); return Promise.resolve(typeof deleteResult === 'function' ? deleteResult() : deleteResult) },
 } })
-const { deleteManagedComment, loadManagedReportComments, managedCommentsFor, writeManagedComment } = await import('../ui/view/managed-comments.js')
+const { canDeleteManagedComment, deleteManagedComment, loadManagedReportComments, managedCommentsFor, writeManagedComment } = await import('../ui/view/managed-comments.js')
 const finding = { id: 'f', _managedReportId: 'r' }
 const comment = { id: 'c', findingId: 'f', body: 'Note', authorId: 'alice', authorLogin: 'alice', createdAt: 10, updatedAt: 10, version: 1 }
 
@@ -60,6 +60,36 @@ test('deletion removes only the owned comment after server confirmation', async 
   assert.equal(await deleteManagedComment(finding, comment), 204)
   assert.deepEqual(deletes[1], ['r', 'c', 1, 'token'])
   assert.deepEqual(managedCommentsFor(finding), [other, anonymous])
+})
+
+test('admins can delete unattributed comments but cannot edit them or delete other authors comments', async () => {
+  const anonymous = { ...comment, id: 'anonymous', authorId: null, authorLogin: 'former-user' }
+  const other = { ...comment, id: 'other', authorId: 'bob' }
+  state.managedComments.set('f', [anonymous, other])
+  for (const role of ['manage', 'triage', 'view', 'none']) {
+    state.managedSession.role = role
+    assert.equal(canDeleteManagedComment(anonymous), false)
+    assert.equal(await deleteManagedComment(finding, anonymous), 403)
+  }
+  assert.equal(deletes.length, 0)
+  state.managedSession.role = 'admin'
+  assert.equal(canDeleteManagedComment(anonymous), true)
+  assert.equal(canDeleteManagedComment(other), false)
+  assert.equal(await deleteManagedComment(finding, other), 403)
+  assert.equal((await writeManagedComment(finding, 'Claim text', anonymous)).status, 403)
+  assert.equal(writes.length, 0)
+  deleteResult = 409
+  assert.equal(await deleteManagedComment(finding, anonymous), 409)
+  assert.deepEqual(managedCommentsFor(finding), [anonymous, other])
+  deleteResult = 204
+  assert.equal(await deleteManagedComment(finding, anonymous), 204)
+  assert.deepEqual(deletes[1], ['r', 'anonymous', 1, 'token'])
+  assert.deepEqual(managedCommentsFor(finding), [other])
+  state.localMode = true
+  assert.equal(canDeleteManagedComment(anonymous), false)
+  state.localMode = false
+  state.managedSession = null
+  assert.equal(canDeleteManagedComment(anonymous), false)
 })
 
 test('stale deletions cannot change another view and read-only users cannot delete', async () => {

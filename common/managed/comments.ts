@@ -13,6 +13,12 @@ export interface ManagedComment {
 
 export const MAX_COMMENT_TEXT = 10_000
 
+// Callers also enforce write access to the report containing the finding.
+// Admins can remove comments with no linked user, but cannot claim authorship.
+export function canDeleteComment(comment: Pick<ManagedComment, 'authorId'>, actor: { id: string; role: string } | null | undefined): boolean {
+  return actor != null && (comment.authorId === actor.id || (comment.authorId == null && actor.role === 'admin'))
+}
+
 export function compareManagedComments(a: ManagedComment, b: ManagedComment): number {
   if (a.createdAt == null && b.createdAt != null) return -1
   if (a.createdAt != null && b.createdAt == null) return 1

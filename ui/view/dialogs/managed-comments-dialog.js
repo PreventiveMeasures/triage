@@ -2,7 +2,7 @@ import { html, nothing, unsafeCSS } from 'lit'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { state } from '#client/index.js'
 import { MAX_COMMENT_TEXT } from '../../../common/managed/comments.ts'
-import { canWriteManagedComments, deleteManagedComment, loadManagedReportComments, managedCommentScope, managedCommentsFor, writeManagedComment } from '../managed-comments.js'
+import { canDeleteManagedComment, canWriteManagedComments, deleteManagedComment, loadManagedReportComments, managedCommentScope, managedCommentsFor, writeManagedComment } from '../managed-comments.js'
 import { renderCommentText } from '../render-finding.js'
 import { managedCommentAvatar, managedCommentTemplate } from '../managed-comment.js'
 import { DELETE_ICON_SVG, EDIT_ICON_SVG } from '../icons.js'
@@ -130,16 +130,18 @@ class ManagedCommentsDialog extends AppDialog {
   }
 
   _commentActions(comment, canWrite) {
-    if (!canWrite || comment.authorId !== state.managedSession?.id) return nothing
-    return html`<button type="button" class="comment-action" aria-label="Edit comment" data-tooltip="Edit comment"
-        aria-pressed=${this._editing?.id === comment.id} ?disabled=${this._busy} @click=${() => this._edit(comment)}>${unsafeHTML(EDIT_ICON_SVG)}</button>
-      <button type="button" class="comment-action danger" aria-label="Delete comment" data-tooltip="Delete comment"
+    const canEdit = canWrite && comment.authorId === state.managedSession?.id
+    const canDelete = canDeleteManagedComment(comment)
+    if (!canEdit && !canDelete) return nothing
+    return html`${canEdit ? html`<button type="button" class="comment-action" aria-label="Edit comment"
+        aria-pressed=${this._editing?.id === comment.id} ?disabled=${this._busy} @click=${() => this._edit(comment)}>${unsafeHTML(EDIT_ICON_SVG)}</button>` : nothing}
+      ${canDelete ? html`<button type="button" class="comment-action danger" aria-label="Delete comment"
         aria-expanded=${this._deleting === comment.id} ?disabled=${this._busy}
-        @click=${() => { this._deleting = this._deleting === comment.id ? null : comment.id }}>${unsafeHTML(DELETE_ICON_SVG)}</button>`
+        @click=${() => { this._deleting = this._deleting === comment.id ? null : comment.id }}>${unsafeHTML(DELETE_ICON_SVG)}</button>` : nothing}`
   }
 
-  _deleteConfirmation(comment, canWrite) {
-    if (this._deleting !== comment.id || !canWrite || comment.authorId !== state.managedSession?.id) return nothing
+  _deleteConfirmation(comment) {
+    if (this._deleting !== comment.id || !canDeleteManagedComment(comment)) return nothing
     return html`<div class="delete-confirm" role="group" aria-label="Confirm comment deletion">
       <span>Delete this comment?</span>
       <button type="button" ?disabled=${this._busy} @click=${() => { this._deleting = null }}>Cancel</button>
@@ -162,7 +164,7 @@ class ManagedCommentsDialog extends AppDialog {
       <section class="discussion-log" role="log" aria-label="Discussion" aria-relevant="additions text" aria-busy=${this._busy}>
         <ol class="comments">${this._comments.map(comment => html`<li class=${`comment${this._editing?.id === comment.id ? ' editing' : ''}`}>
           ${managedCommentTemplate(comment, renderCommentText(comment.body), this._commentActions(comment, canWrite))}
-          ${this._deleteConfirmation(comment, canWrite)}
+          ${this._deleteConfirmation(comment)}
         </li>`)}</ol>
         ${this._comments.length === 0 ? html`<p class="empty-discussion">${this._busy ? 'Loading discussion…' : canWrite ? 'No comments yet. Start the discussion below.' : 'No comments yet.'}</p>` : nothing}
       </section>
