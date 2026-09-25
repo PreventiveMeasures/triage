@@ -37,5 +37,5 @@ export function adminIcon(kind) {
     download: 'M8 2v8M5 7l3 3 3-3M2 11v3h12v-3',
     upload: 'M8 11V2m-3 3 3-3 3 3M2 10v4h12v-4',
   }
-  return html`<svg class=${kind === 'repo' ? 'repo-icon' : nothing} viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d=${paths[kind] ?? paths.repo}/></svg>`
+  return html`<svg class=${kind === 'repo' ? 'repo-icon' : nothing} viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d=${paths[kind] ?? paths.repo}></path></svg>`
 }

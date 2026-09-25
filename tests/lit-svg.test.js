@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { test } from 'node:test'
 import { build } from 'esbuild'
+import { minifyLitSource } from '../build-lit-minify.js'
 import { litSvgAsHtml } from '../build-lit-svg.js'
 
 test('SVG imports are Lit html templates while SVG entry points remain assets', async () => {
@@ -47,3 +48,27 @@ test('provider icons are embedded as templates without external SVG outputs', as
   assert.equal(providerIcon('unknown')._$litType$, 1)
   assert.equal(providerIcon('__proto__'), providerIcon('unknown'))
 })
+
+for (const minify of [false, true]) {
+  test(`Manage SVG path bindings contain only the path value (${minify ? 'production' : 'development'})`, async () => {
+    const source = await readFile('ui/managed/navigation.js', 'utf8')
+    const { outputFiles } = await build({
+      stdin: {
+        contents: minify ? minifyLitSource(source, 'navigation.js') : source,
+        resolveDir: resolve('ui/managed'), loader: 'js',
+      },
+      bundle: true, format: 'esm', platform: 'node', minify, write: false,
+    })
+    const { adminIcon } = await import(`data:text/javascript,${encodeURIComponent(outputFiles[0].text)}`)
+    for (const kind of ['users', 'team', 'repo', 'history', 'arrow', 'show', 'hide', 'download', 'upload']) {
+      const template = adminIcon(kind)
+      // Lit binds the value after parsing the static markup. A slash touching
+      // an unquoted binding is parsed as part of that attribute, not the tag.
+      // Check that boundary with a token, without interpolating path spaces.
+      const markup = template.strings.join('BOUND_VALUE')
+      const attribute = /\bd=(?:"([^"]*)"|'([^']*)'|([^\s>]+))/u.exec(markup)
+      assert.ok(attribute, `${kind}: missing path binding`)
+      assert.equal(attribute[1] ?? attribute[2] ?? attribute[3], 'BOUND_VALUE', kind)
+    }
+  })
+}
