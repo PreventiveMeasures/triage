@@ -18,6 +18,11 @@
   flex: 1 1 auto;
 }
 
+#manage-reports-slot > managed-admin-reports,
+#manage-bundles-slot > managed-admin-bundles {
+  flex: 1 0 auto;
+}
+
 #report {
   display: none; padding: 1rem 1.5rem; width: 100%; box-sizing: border-box;
 
