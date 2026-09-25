@@ -12,7 +12,7 @@ import { MANAGED_PAGES } from '../common/managed/routes.js'
 test('managed page GET/HEAD share HTML; API and missing assets never fall back; E2E unchanged', async t => {
   const dir = await mkdtemp(join(tmpdir(), 'managed-static-'))
   t.after(() => rm(dir, { recursive: true, force: true }))
-  const html = '<!doctype html><html><head><link rel="modulepreload" href="./view.js"><script type="module" src="./view.js"></script></head><body>App</body></html>'
+  const html = '<!doctype html><html><head><base href="/"><link rel="modulepreload" href="./view.js"><script type="module" src="./view.js"></script></head><body>App</body></html>'
   await writeFile(join(dir, 'index.html'), html)
   await writeFile(join(dir, 'view.js'), 'export const app = true')
   const e2e = loadStatic(dir)
@@ -37,8 +37,7 @@ test('managed page GET/HEAD share HTML; API and missing assets never fall back; 
       assert.equal(head.status, 200)
       assert.equal(await head.text(), '')
     }
-    if (label === 'e2e') assert.doesNotMatch(body, /<base/u)
-    else assert.match(body, /<base href="\/">/u)
+    assert.equal(body.match(/<base href="\/">/gu)?.length, 1, 'the server preserves the document base without duplicating it')
     for (const path of ['/api', '/api/config', '/api/sync', '/api/unknown', '/%61pi/unknown', '/missing.js']) assert.equal((await fetch(origin + path)).status, 404, `${label} ${path}`)
     assert.equal(await (await fetch(`${origin}/view.js`)).text(), 'export const app = true')
     assert.equal((await fetch(`${origin}/manage`, { method: 'POST', body: 'x' })).status, 404)
