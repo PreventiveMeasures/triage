@@ -775,6 +775,21 @@ export async function deleteFile(name) {
 const BUNDLE_META_FILE = '_meta.json'
 const BUNDLE_INDEX_SUFFIX = '.index-v1'
 
+// Bundle identity is its integrity, separate from the report filename namespace.
+// A delete notifies as soon as the bytes disappear, then again once metadata
+// settles: readers must invalidate snapshots before a slow index write finishes,
+// while pickers need the final list even when index cleanup fails.
+const bundleChangeListeners = new Set()
+export function onBundleMutated(cb) {
+  bundleChangeListeners.add(cb)
+  return () => bundleChangeListeners.delete(cb)
+}
+function notifyBundleMutated(integrity, kind) {
+  for (const cb of bundleChangeListeners) {
+    try { cb(integrity, kind) } catch (err) { console.warn('storage bundle-change listener:', err) }
+  }
+}
+
 function getOpfsBundlesDir() {
   return openOpfsDir(OPFS_BUNDLES_DIR, { create: true })
 }
@@ -951,9 +966,10 @@ export async function saveBundle(name, content) {
         await writeBundleMeta(dir, meta)
       })
     } catch (err) {
-      try { await dir.removeEntry(opfsKey) } catch {}
+      try { await dir.removeEntry(opfsKey); notifyBundleMutated(integrity, 'delete') } catch {}
       throw err
     }
+    notifyBundleMutated(integrity, 'save')
     return { integrity, name }
   })
 }
@@ -979,23 +995,26 @@ export async function deleteBundle(integrity) {
     catch (err) {
       if (!(err instanceof DOMException) || err.name !== 'NotFoundError') throw err
     }
+    notifyBundleMutated(integrity, 'delete')
     // Per-`_meta.json` RMW lock — independent of VAULT_LOCK, serialises
     // saveBundle vs deleteBundle within the same vault state. Audit
     // round-12 H7.
-    await lockBundleMeta(async () => {
-      try { await dir.removeEntry(integrityToOpfsKey(integrity) + BUNDLE_INDEX_SUFFIX) }
-      catch (err) { if (!(err instanceof DOMException) || err.name !== 'NotFoundError') throw err }
-      const meta = await readBundleMeta(dir)
-      const filtered = meta.filter((e) => e.integrity !== integrity)
-      // No-op short-circuit: deleting a non-existent integrity (or
-      // deleting from an already-empty meta) would otherwise CREATE
-      // `_meta.json` on disk where none existed. That stale file
-      // makes `hasAnyBundles()` return true for an effectively-empty
-      // bundles dir, suppressing the legacy-origin silent redirect
-      // path. Skip the write when nothing actually changed.
-      if (filtered.length === meta.length) return
-      await writeBundleMeta(dir, filtered)
-    })
+    try {
+      await lockBundleMeta(async () => {
+        try { await dir.removeEntry(integrityToOpfsKey(integrity) + BUNDLE_INDEX_SUFFIX) }
+        catch (err) { if (!(err instanceof DOMException) || err.name !== 'NotFoundError') throw err }
+        const meta = await readBundleMeta(dir)
+        const filtered = meta.filter((e) => e.integrity !== integrity)
+        // No-op short-circuit: deleting a non-existent integrity (or
+        // deleting from an already-empty meta) would otherwise CREATE
+        // `_meta.json` on disk where none existed. That stale file
+        // makes `hasAnyBundles()` return true for an effectively-empty
+        // bundles dir, suppressing the legacy-origin silent redirect
+        // path. Skip the write when nothing actually changed.
+        if (filtered.length === meta.length) return
+        await writeBundleMeta(dir, filtered)
+      })
+    } finally { notifyBundleMutated(integrity, 'delete') }
   })
 }
 

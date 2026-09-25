@@ -1,30 +1,31 @@
-import { hasAnyBundles, listBundles, listFiles, onFileMutated, readBundle, readFile } from '../storage.js'
+import { hasAnyBundles, listBundles, listFiles, onBundleMutated, onFileMutated, readBundle, readFile } from '../storage.js'
 import { isEncryptionEnabled, isUnlocked, onVaultStateChange, unlockEncryption } from '../passkey-vault.js'
 
 // Created in the main bundle and injected into the lazy Manage pages. Importing
 // storage/vault from that separate entry would create a second, locked session.
 const defaultDeps = {
-  hasAnyBundles, listBundles, listFiles, onFileMutated, readBundle, readFile,
+  hasAnyBundles, listBundles, listFiles, onBundleMutated, onFileMutated, readBundle, readFile,
   isEncryptionEnabled, isUnlocked, onVaultStateChange, unlockEncryption,
 }
 export function createManagedLocalImportSource(deps = defaultDeps) {
   const locked = () => deps.isEncryptionEnabled() && !deps.isUnlocked()
-  const guard = (signal, reportName) => {
+  const guard = (signal, kind, value) => {
     let changed = false
-    let reportChanged = false
+    let itemChanged = false
     const offVault = deps.onVaultStateChange(() => { changed = true })
-    // readFile can finish with an old snapshot after a save/delete. Watch the
-    // selected report from before listing until its upload is handed off.
-    const offFile = reportName === undefined ? null : deps.onFileMutated(name => {
-      if (name === reportName) reportChanged = true
+    // Both readers can finish with an old snapshot after a mutation. Watch the
+    // selected filename/integrity from before listing until upload handoff.
+    const subscribeItem = kind === 'report' ? deps.onFileMutated : deps.onBundleMutated
+    const offItem = value === undefined ? null : subscribeItem(id => {
+      if (id === value) itemChanged = true
     })
     return {
       check() {
         signal?.throwIfAborted()
         if (locked() || changed) throw new Error('Local data is locked or has changed. Unlock it and select the file again.')
-        if (reportChanged) throw new Error('This local report changed. Select it again before importing.')
+        if (itemChanged) throw new Error(`This local ${kind} changed. Select it again before importing.`)
       },
-      unsubscribe() { offVault(); offFile?.() },
+      unsubscribe() { offVault(); offItem?.() },
     }
   }
   const choices = async (kind) => kind === 'report'
@@ -50,10 +51,11 @@ export function createManagedLocalImportSource(deps = defaultDeps) {
     subscribe(callback) {
       const offVault = deps.onVaultStateChange(callback)
       const offFiles = deps.onFileMutated(callback)
-      return () => { offVault(); offFiles() }
+      const offBundles = deps.onBundleMutated(callback)
+      return () => { offVault(); offFiles(); offBundles() }
     },
     async importItem(kind, value, upload, { signal } = {}) {
-      const access = guard(signal, kind === 'report' ? value : undefined)
+      const access = guard(signal, kind, value)
       try {
         access.check()
         const item = (await choices(kind)).find(option => option.value === value)
