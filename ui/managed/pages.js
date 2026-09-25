@@ -384,8 +384,10 @@ customElements.define('managed-admin-users', ManagedAdminUsers)
 
 // The connected list is served from stored configuration; discovery runs only
 // for the installed/public pickers. Both responses are searched and paged by the server.
-async function fetchRepositories(scope, query, page, signal) {
+async function fetchRepositories(scope, query, page, showAll, refresh, signal) {
   const params = new URLSearchParams({ scope, q: query, page: String(page), limit: '20' })
+  if (scope === 'installed') params.set('showAll', String(showAll))
+  if (refresh) params.set('refresh', 'true')
   const res = await managedFetch(`/api/admin/repositories?${params}`, { credentials: 'same-origin', headers: { accept: 'application/json' }, signal })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json()
@@ -434,6 +436,7 @@ class ManagedAdminRepos extends ManagedPage {
     _error: { state: true },
     _actionError: { state: true },
     _scope: { state: true },
+    _showAll: { state: true },
     _query: { state: true },
     _page: { state: true },
     _loading: { state: true },
@@ -455,6 +458,7 @@ class ManagedAdminRepos extends ManagedPage {
     this._error = null
     this._actionError = null
     this._scope = 'connected'
+    this._showAll = false
     this._query = ''
     this._page = 1
     this._loading = true
@@ -482,17 +486,17 @@ class ManagedAdminRepos extends ManagedPage {
     clearTimeout(this._searchTimer)
   }
 
-  _repositoryKey() { return `repos:${JSON.stringify([this._scope, this._query, this._page])}` }
+  _repositoryKey() { return `repos:${JSON.stringify([this._scope, this._query, this._page, this._showAll])}` }
 
-  async _load() {
+  async _load(refresh = false) {
     this._error = null
-    const { _scope: scope, _query: query, _page: page } = this
-    await this._loadCollection(this._repositoryKey(), 'repositories', signal => fetchRepositories(scope, query, page, signal), data => {
+    const { _scope: scope, _query: query, _page: page, _showAll: showAll } = this
+    await this._loadCollection(this._repositoryKey(), 'repositories', signal => fetchRepositories(scope, query, page, showAll, refresh, signal), data => {
       this._data = data
     })
     // Removing the last item on a page can move the last page backwards.
     const lastPage = Math.max(1, Math.ceil(this._data?.total / 20))
-    if (this._scope === scope && this._query === query && this._page === page && this._page > lastPage) {
+    if (this._scope === scope && this._showAll === showAll && this._query === query && this._page === page && this._page > lastPage) {
       this._page = lastPage
       void this._load()
     }
@@ -502,6 +506,7 @@ class ManagedAdminRepos extends ManagedPage {
     this._impactRequest?.abort()
     clearTimeout(this._searchTimer)
     this._scope = scope
+    this._showAll = false
     this._query = ''
     this._page = 1
     this._detail = null
@@ -512,6 +517,14 @@ class ManagedAdminRepos extends ManagedPage {
     this._confirmName = ''
     this._data = null
     this._actionError = null
+    void this._load()
+  }
+
+  _setShowAll(value) {
+    clearTimeout(this._searchTimer)
+    this._showAll = value
+    this._page = 1
+    this._data = null
     void this._load()
   }
 
@@ -571,7 +584,7 @@ class ManagedAdminRepos extends ManagedPage {
       <div class="page-intro"><p class="intro">${connected
         ? 'Manage connected repositories and their settings.'
         : this._scope === 'installed'
-          ? 'Choose a repository the GitHub App can read. Installed repositories can be public or private.'
+          ? this._showAll ? 'Showing all repositories the GitHub App can read.' : 'Showing installed repositories you can access on GitHub.'
           : 'Choose a public repository your GitHub account is involved with.'}</p>${connected ? html`<span class="result-count">${this._data?.connectedCount ?? '…'} connected</span>` : nothing}</div>
       ${!connected && this._scope === 'installed' ? html`<div class="access-note">
         <p>Installed repositories are readable through the GitHub App. Install it on a repository or organization to make it available here.</p>
@@ -579,10 +592,11 @@ class ManagedAdminRepos extends ManagedPage {
       </div>` : nothing}
       <div class="toolbar">
         <label class="search"><input type="search" aria-label=${connected ? 'Search connected repositories' : `Search ${this._scope} repositories`} placeholder="Search by repository or owner…" .value=${this._query} @input=${(e) => this._search(e.target.value)}></label>
+        ${this._scope === 'installed' ? html`<label class="show-all"><input type="checkbox" role="switch" .checked=${this._showAll} @change=${(event) => this._setShowAll(event.target.checked)}><span>Show all</span></label>` : nothing}
         ${connected ? html`
           <button type="button" class="btn" @click=${() => this._open('installed')}>${this._accessIcon('private')} Add installed repository</button>
           <button type="button" class="btn" @click=${() => this._open('public')}>${this._accessIcon('public')} Add your public repository</button>
-        ` : html`<button type="button" class="btn" ?disabled=${this._loading} @click=${() => { void this._load() }}>Refresh</button>`}
+        ` : html`<button type="button" class="btn" ?disabled=${this._loading} @click=${() => { void this._load(true) }}>Refresh</button>`}
       </div>
       ${this._actionError ? html`<p class="msg error" role="alert">${this._actionError}</p>` : nothing}
       ${this._error ? html`<p class="msg error" role="alert">Couldn't load repositories: ${this._error}</p><button type="button" class="btn" @click=${() => { void this._load() }}>Try again</button>` : nothing}
@@ -595,14 +609,14 @@ class ManagedAdminRepos extends ManagedPage {
     const repos = this._data.repositories ?? []
     const shownPage = this._data.page ?? this._page
     return html`
-      ${this._data.tokenMissing && this._scope === 'public' ? html`<p class="msg">Log out and back in to refresh your GitHub membership access.</p>` : nothing}
+      ${this._data.tokenMissing && !this._showAll && this._scope !== 'connected' ? html`<p class="msg">Log out and back in to refresh your GitHub membership access.</p>` : nothing}
       ${repos.length > 0 ? html`<div class="owners">${this._groupRepos(repos).map(([owner, ownerRepos]) => html`
         <section aria-label=${owner}>
           <h2 class="owner-head"><span class="owner-icon" aria-hidden="true">${owner[0] ?? '?'}</span>${owner}</h2>
           <ul class="repos">${ownerRepos.map((repo) => this._row(repo))}</ul>
         </section>`)}</div>` : html`<div class="empty">
         <strong>${this._query ? 'No matching repositories' : this._scope === 'connected' ? 'No connected repositories yet' : `No ${this._scope} repositories available`}</strong>
-        <p>${this._query ? 'Try a different repository or owner name.' : this._scope === 'connected' ? 'Add an installed or public repository to get started.' : this._scope === 'installed' ? 'Install the GitHub App, then refresh this list.' : 'Public repositories associated with your GitHub account will appear here.'}</p>
+        <p>${this._query ? 'Try a different repository or owner name.' : this._scope === 'connected' ? 'Add an installed or public repository to get started.' : this._scope === 'installed' ? this._showAll ? 'Install the GitHub App, then refresh this list.' : 'No installed repositories match your GitHub access. Turn on Show all to browse every installation.' : 'Public repositories associated with your GitHub account will appear here.'}</p>
       </div>`}
       ${this._data.total > 20 ? html`<nav class="pagination" aria-label="Repository pages">
         <span>${(shownPage - 1) * 20 + 1}–${Math.min(shownPage * 20, this._data.total)} of ${this._data.total}</span>
@@ -694,9 +708,9 @@ class ManagedAdminRepos extends ManagedPage {
           <section><h3>Reports to delete (${reports.length})</h3><ul>${reports.map((report) => html`<li>${report.filename}${report.repoDirectory ? ` · ${report.repoDirectory}` : nothing}</li>`)}</ul></section>
           <section><h3>Bundles to delete (${bundles.length})</h3><ul>${bundles.map((bundle) => html`<li>${bundle.filename}</li>`)}</ul></section>
         </div>` : nothing}
-        <label class="confirm-line"><input type="checkbox" .checked=${this._acknowledge} @change=${(event) => { this._acknowledge = event.target.checked }}>I understand this permanently deletes the repository connection${hasAttached ? ', reports, and bundles' : ''}.</label>
-        ${(this._impact?.triageCount ?? 0) > 0 ? html`<label class="confirm-line"><input type="checkbox" .checked=${this._deleteTriage} @change=${(event) => { this._deleteTriage = event.target.checked }}>Also delete ${this._impact.triageCount} triage entr${this._impact.triageCount === 1 ? 'y' : 'ies'} belonging only to this repository.</label>` : nothing}
-        ${hasAttached ? html`<label class="confirm-line">Type <strong>${repo.fullName}</strong> to confirm.<input class="confirm-name" type="text" autocomplete="off" .value=${this._confirmName} @input=${(event) => { this._confirmName = event.target.value }}></label>` : nothing}
+        <label class="confirm-line"><input type="checkbox" .checked=${this._acknowledge} @change=${(event) => { this._acknowledge = event.target.checked }}><span>I understand this permanently deletes the repository connection${hasAttached ? ', reports, and bundles' : ''}.</span></label>
+        ${(this._impact?.triageCount ?? 0) > 0 ? html`<label class="confirm-line"><input type="checkbox" .checked=${this._deleteTriage} @change=${(event) => { this._deleteTriage = event.target.checked }}><span>Also delete ${this._impact.triageCount} triage entr${this._impact.triageCount === 1 ? 'y' : 'ies'} belonging only to this repository.</span></label>` : nothing}
+        ${hasAttached ? html`<label class="confirm-field"><span>Type <strong>${repo.fullName}</strong> to confirm.</span><input class="confirm-name" type="text" autocomplete="off" .value=${this._confirmName} @input=${(event) => { this._confirmName = event.target.value }}></label>` : nothing}
         <div class="dialog-actions"><button type="button" class="btn" @click=${() => { this._removeOpen = false }}>Cancel</button><button type="button" class="btn danger" ?disabled=${!ready} @click=${() => { void this._remove(repo) }}>${this._busy === repo.id ? 'Removing…' : 'Remove permanently'}</button></div>
       </section>
     </div>`

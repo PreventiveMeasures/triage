@@ -62,7 +62,8 @@ import { loadManagedFindings, readManagedReport } from '../common/managed/report
 import { normalizeTeamPath } from './repo-path.ts'
 import { DEFAULT_MANAGED_SCAN_MODEL, MANAGED_SCAN_MODELS } from '../common/managed/scan-models.ts'
 import { CONFIG_PATH, type ServerInfo } from '../common/server-info.ts'
-import { collectRepos, installUrl } from './github-app.ts'
+import { GithubApiError, collectRepos, installUrl } from './github-app.ts'
+import { RepositoryDiscovery } from './repository-discovery.ts'
 import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, ensureUserAccessToken, handleCallback } from './github-oauth.ts'
 import { clearCookie, endSession, readSession } from './session.ts'
 import type { ActivityContext, ActivityInput } from './activity.ts'
@@ -305,7 +306,7 @@ async function handleListModels(res: ServerResponse, deps: ManagedHttpDeps, cook
 // GET /api/admin/repositories — the connected repositories by default. The
 // potentially large GitHub discovery lists are opt-in (`scope=installed` or
 // `scope=public`) and are searched/paged on the server. Admin-only. No CSRF.
-async function handleListRepositories(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
+async function handleListRepositories(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, discovery: RepositoryDiscovery): Promise<void> {
   if ((req.method ?? 'GET') !== 'GET') { send405(res, 'GET'); return }
   const s = await readAdminSession(res, deps, cookie)
   if (s == null) return
@@ -343,11 +344,18 @@ async function handleListRepositories(req: IncomingMessage, res: ServerResponse,
       installed: r.installationId != null, selected: r.active, active: r.active,
     }))
   } else {
-    const token = await ensureUserAccessToken(deps.config, deps.db, s.user.id, Date.now())
-    const listing = await collectRepos(deps.config, token)
+    const showAll = scope === 'installed' && url.searchParams.get('showAll') === 'true'
+    const token = showAll ? null : await ensureUserAccessToken(deps.config, deps.db, s.user.id, Date.now())
+    let listing
+    try {
+      listing = await discovery.list(scope, s.user.id, token, showAll, url.searchParams.get('refresh') === 'true')
+    } catch (err) {
+      if (!(err instanceof GithubApiError)) throw err
+      sendJson(res, 502, { error: err.message })
+      return
+    }
     tokenMissing = listing.tokenMissing
     repositories = listing.repositories
-      .filter((r) => scope === 'installed' ? r.installationId != null : (!r.private && r.installationId == null))
       .map((r) => ({
         id: r.id, fullName: r.fullName, private: r.private, htmlUrl: r.htmlUrl,
         installed: r.installationId != null, selected: selected.has(r.id),
@@ -1408,6 +1416,7 @@ async function handleRemoveTeamMember(req: IncomingMessage, res: ServerResponse,
 
 export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
   const { config, db, avatarStore, isShuttingDown, track } = deps
+  const repositoryDiscovery = new RepositoryDiscovery(config)
 
   async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url ?? '/', 'http://localhost')
@@ -1502,7 +1511,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (method !== 'POST') { send405(res, 'POST'); return }
       await handleRemoveRepository(req, res, deps, cookie); return
     }
-    if (path === ADMIN_REPOS_PATH) { await handleListRepositories(req, res, deps, cookie); return }
+    if (path === ADMIN_REPOS_PATH) { await handleListRepositories(req, res, deps, cookie, repositoryDiscovery); return }
     if (path === SELECT_REPO_PATH) { await handleSelectRepository(req, res, deps, cookie); return }
     // Reports: list / upload on the exact path, download / delete per-id on the
     // prefix. Method-dispatched here since each path carries two verbs.

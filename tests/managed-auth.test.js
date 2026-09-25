@@ -451,7 +451,7 @@ test('listInstalledRepos: aggregates the separate App\'s installations, skips ar
   const fetchImpl = (url, opts) => {
     const u = String(url)
     calls.push(`${opts?.method ?? 'GET'} ${u}`)
-    if (u.endsWith('/app/installations?per_page=100')) return jsonResponse([{ id: 11 }, { id: 22 }])
+    if (u.endsWith('/app/installations?per_page=100&page=1')) return jsonResponse([{ id: 11 }, { id: 22 }])
     if (u.includes('/app/installations/11/access_tokens')) return jsonResponse({ token: 'tok-11' })
     if (u.includes('/app/installations/22/access_tokens')) return jsonResponse({ token: 'tok-22' })
     if (u.includes('/installation/repositories')) {
@@ -533,7 +533,7 @@ test('collectRepos: merges public + private (install-tagged); tokenMissing witho
   const fetchImpl = (url) => {
     const u = String(url)
     if (u.includes('/user/repos')) return jsonResponse([{ id: 1, full_name: 'o/pub', private: false, default_branch: 'main', html_url: 'h' }])
-    if (u.endsWith('/app/installations?per_page=100')) return jsonResponse([{ id: 9 }])
+    if (u.endsWith('/app/installations?per_page=100&page=1')) return jsonResponse([{ id: 9 }])
     if (u.includes('/access_tokens')) return jsonResponse({ token: 'tok' })
     if (u.includes('/installation/repositories')) return jsonResponse({ total_count: 1, repositories: [{ id: 2, full_name: 'o/priv', private: true, default_branch: 'release', html_url: 'h' }] })
     return jsonResponse({}, 404)
@@ -2640,4 +2640,57 @@ test('team slugs are assigned by the server and cannot be edited through create 
   await db.setTeamMember(team.id, session.userId, { dependencies: false, security: false })
   assert.equal(JSON.parse((await send('GET', '/api/teams', cookie)).body).teams[0].slug, team.slug)
   assert.equal(JSON.parse((await send('GET', '/api/admin/teams', cookie)).body).teams[0].slug, team.slug)
+})
+
+test('installed discovery defaults to acting GH access, Show all stays admin-only, and paging reuses discovery', async (t) => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const cfg = { ...config, githubAppId: '1', githubAppPrivateKey: generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs1', format: 'pem' }) }
+  const alice = await createSession(cfg, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, Date.now())
+  const bob = await createSession(cfg, db, { githubUserId: 2, login: 'bob', name: null, avatarUrl: null }, Date.now())
+  const admin = (await readSession(cfg, db, cookiePair(alice.setCookie), Date.now())).user
+  const manager = (await readSession(cfg, db, cookiePair(bob.setCookie), Date.now())).user
+  await db.setUserRole(manager.id, 'manage')
+  await db.setUserTokens(admin.id, { accessToken: 'alice-token', refreshToken: null, expiresAt: null })
+  const calls = []
+  t.mock.method(globalThis, 'fetch', (url, options) => {
+    const path = new URL(url).pathname
+    calls.push(path)
+    if (path === '/app/installations') return jsonResponse([{ id: 7 }])
+    if (path.endsWith('/access_tokens')) return jsonResponse({ token: 'installation' })
+    if (path === '/installation/repositories') {
+      return jsonResponse({ total_count: 2, repositories: [
+      { id: 10, full_name: 'org/alice-repo', private: true },
+      { id: 20, full_name: 'org/bob-repo', private: true },
+      ] })
+    }
+    if (path === '/user') {
+      assert.equal(options.headers.authorization, 'Bearer alice-token')
+      return jsonResponse({ id: 1, login: 'alice' })
+    }
+    if (path.includes('/collaborators/alice/permission')) return jsonResponse({ permission: path.includes('/alice-repo/') ? 'read' : 'none', user: { id: 1 } })
+    throw new Error(`Unexpected request: ${path}`)
+  })
+  let pending
+  const handler = createManagedRequestHandler({ config: cfg, db, avatarStore: fakeAvatarStore(), reportStore: fakeBlobStore(), bundleStore: createBundleStore(fakeBlobStore(), fakeBlobStore()), originGate: { trustProxy: false, isOriginAllowed: () => true }, isShuttingDown: () => false, track: promise => { pending = promise } })
+  async function get(query = '', cookie = cookiePair(alice.setCookie)) {
+    const res = { statusCode: 0, body: '', writeHead(code) { this.statusCode = code }, end(body) { this.body = body } }
+    handler({ method: 'GET', url: `/api/admin/repositories?scope=installed${query}`, headers: { cookie } }, res)
+    await pending
+    return { status: res.statusCode, ...JSON.parse(res.body) }
+  }
+  assert.equal((await get('&showAll=true', '')).status, 401)
+  assert.equal((await get('&showAll=true', cookiePair(bob.setCookie))).status, 403)
+  assert.equal(calls.length, 0)
+  const filtered = await get()
+  assert.equal(filtered.status, 200)
+  assert.deepEqual(filtered.repositories.map(repo => repo.id), [10])
+  const count = calls.length
+  const all = await get('&showAll=true&limit=1&page=2')
+  assert.equal(all.total, 2)
+  assert.deepEqual(all.repositories.map(repo => repo.id), [20])
+  assert.deepEqual((await get('&q=bob')).repositories, [])
+  assert.equal(calls.length, count, 'toggle, search and paging reuse the catalogue')
+  await get('&refresh=true')
+  assert.equal(calls.length, 2 * count)
 })

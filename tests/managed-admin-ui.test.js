@@ -382,3 +382,33 @@ test('history user and repository filters intersect, reset paging, and keep inde
   finish(8, 'clear')
   await clear
 })
+
+test('installed Show all defaults off, resets pagination, and ignores a late all-repos response', async (t) => {
+  const page = createPage(Repositories)
+  const pending = []
+  t.mock.method(globalThis, 'fetch', (url) => new Promise(resolve => { pending.push({ url: new URL(url, 'http://localhost'), resolve }) }))
+  page._open('installed')
+  assert.equal(page._showAll, false)
+  assert.equal(pending[0].url.searchParams.get('showAll'), 'false')
+  pending[0].resolve(Response.json({ repositories: [repo], total: 1 }))
+  await setImmediate()
+  page._page = 3
+  page._setShowAll(true)
+  assert.equal(page._page, 1)
+  assert.equal(page._data, null)
+  assert.equal(pending[1].url.searchParams.get('showAll'), 'true')
+  page._setShowAll(false)
+  pending[2].resolve(Response.json({ repositories: [repo], total: 1 }))
+  await setImmediate()
+  pending[1].resolve(Response.json({ repositories: [{ id: 999, fullName: 'other/private' }], total: 1 }))
+  await setImmediate()
+  assert.deepEqual(page._data.repositories, [repo])
+  const refresh = page._load(true)
+  assert.equal(pending[3].url.searchParams.get('refresh'), 'true')
+  pending[3].resolve(Response.json({ repositories: [repo], total: 1 }))
+  await refresh
+  page._open('installed')
+  assert.equal(page._showAll, false)
+  pending[4].resolve(Response.json({ repositories: [repo], total: 1 }))
+  await setImmediate()
+})
