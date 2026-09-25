@@ -118,7 +118,7 @@
    while the surrounding strip drags the window. */
 /* stylelint-disable media-feature-name-value-no-unknown, length-zero-no-unit */
 @media (display-mode: window-controls-overlay) {
-  /* The whole sidebar inherits drag from body's WCO baseline in
+  /* The sidebar overlaps the WCO background drag rectangle in
      theme.css — its bg + the row gaps act as a window drag handle.
      Interactive elements (buttons, inputs, etc.) opt back out via the
      central no-drag list, so the container chrome drags but the

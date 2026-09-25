@@ -602,16 +602,18 @@ a { color: var(--accent); text-decoration: none; cursor: default; }
     --wco-right-toolbar: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
   }
 
-  /* Body-wide drag baseline — anything that isn't explicitly
-     listed in the no-drag rules below acts as a window drag
-     handle. The inverse (allow-list of drag chrome) was rejected:
-     it left floating top-right buttons in an inheritance limbo
-     where Chromium's hit-test treated their app-region as
-     ambiguous. The exclusion list covers everything that
-     shouldn't drag (every content container + every interactive
-     element), and body = sidebar + report, so the union of
-     opt-outs already covers the surfaces that matter. */
-  body {
+  /* Keep the page-wide drag rectangle on a childless background,
+     not body: Chromium's window-drag implementation makes app-region
+     inherit. On body, later containers and the halo inherit drag and
+     add rectangles over earlier no-drag controls, regardless of z-index.
+     ::before is collected before the content's no-drag exclusions and
+     cannot pass drag to them. Ignore DOM hit testing so it also leaves
+     ordinary clicks, selection and scrolling to the content beneath. */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
     -webkit-app-region: drag;
     app-region: drag;
   }
@@ -641,7 +643,7 @@ a { color: var(--accent); text-decoration: none; cursor: default; }
   /* Interactive elements + their containers — also opt out so
      clicks land on the element instead of starting a window drag.
      Mostly relevant inside the page-head / .bundles-slide-bar
-     chrome bars that inherit drag from body. */
+     chrome bars that overlap the background drag rectangle. */
   button,
   canvas,
   code,
