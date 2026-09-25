@@ -16,17 +16,26 @@ export function isGithubRepoName(value: string): boolean {
 
 // Only identify the repository and PR number. This never supplies an API URL:
 // the server must match a team repository and use its stored full name.
-export function parseGithubPrUrl(value: unknown): PullRequestRef | null {
+function parseGithubNumberedUrl(value: unknown, path: RegExp): PullRequestRef | null {
   if (typeof value !== 'string' || value.length > MAX_PULL_REQUEST_URL) return null
   let url: URL
   try { url = new URL(value) } catch { return null }
   if (url.href !== value || url.origin !== 'https://github.com' || url.username || url.password) return null
-  const match = /^\/([^/]+)\/([^/]+)\/pull\/(\d+)(?:\/(?:files|commits|checks))?\/?$/u.exec(url.pathname)
+  const match = path.exec(url.pathname)
   if (!match) return null
   const repo = `${match[1]}/${match[2]}`
   const number = Number(match[3])
   if (!isGithubRepoName(repo) || !Number.isSafeInteger(number) || number <= 0) return null
   return { repo, number }
+}
+
+export function parseGithubPrUrl(value: unknown): PullRequestRef | null {
+  return parseGithubNumberedUrl(value, /^\/([^/]+)\/([^/]+)\/pull\/(\d+)(?:\/(?:files|commits|checks))?\/?$/u)
+}
+
+// Used only to identify issue links in the UI; these are not PR lookup inputs.
+export function parseGithubIssueUrl(value: unknown): PullRequestRef | null {
+  return parseGithubNumberedUrl(value, /^\/([^/]+)\/([^/]+)\/issues\/(\d+)\/?$/u)
 }
 
 // Browser-only deduplication key; never used to construct a server API call.

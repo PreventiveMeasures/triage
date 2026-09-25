@@ -21,6 +21,7 @@ import { filterReportContent } from '../common/managed/report-filter.ts'
 import { MAX_TRIAGE_HISTORY, parseTriageEntryPatch } from '../common/managed/triage.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { managedCsv, managedCsvIds } from './_managed-csv.js'
+import { defaultScanModels } from '../ui/scan/default-models.js'
 
 const config = {
   port: 8765, host: '127.0.0.1', dbPath: ':memory:', debug: false, trustProxyEnv: undefined,
@@ -189,7 +190,7 @@ test('db: first user is admin, later users none; setUserRole + listUsers reflect
   await db.close()
 })
 
-test('GET /api/admin/models: managed users receive server model ids and effort levels', async () => {
+test('GET /api/admin/models: managed users receive the same starting catalogue as the UI', async () => {
   const db = openSqliteManagedDb(':memory:')
   const now = Date.now()
   const adminSess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
@@ -204,7 +205,8 @@ test('GET /api/admin/models: managed users receive server model ids and effort l
   const response = await send('GET', modelsPath, cookiePair(manageSess.setCookie))
   assert.equal(response.statusCode, 200)
   const body = JSON.parse(response.body)
-  assert.equal(body.defaultModel, 'anthropic/claude-opus-5')
+  assert.deepEqual(body, defaultScanModels())
+  assert.equal(body.defaultModel, 'anthropic/claude-opus-5.5')
   assert.ok(body.models.some((model) => model.id === 'openai/gpt-6-astra-pro' && model.efforts.includes('max')))
   await db.close()
 })
