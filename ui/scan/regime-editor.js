@@ -70,15 +70,21 @@ export class RegimeEditor extends LitElement {
     this._loading = true
     this._error = null
     this._notify()
-    try {
-      const catalogue = await this.loadModels(controller.signal)
+    let received = false
+    const apply = catalogue => {
       if (controller.signal.aborted) return
+      received = true
       this._catalogue = catalogue
       // One catalogue request per editor, shared by every row's model picker.
       this._sharedModels = () => Promise.resolve(catalogue)
       this._setRows(this._rows.length > 0 ? this._rows : this.value)
+      this._loading = false
+      this._notify()
+    }
+    try {
+      apply(await this.loadModels(controller.signal, apply))
     } catch (err) {
-      if (!controller.signal.aborted) this._error = String(err?.message ?? err)
+      if (!controller.signal.aborted && !received) this._error = String(err?.message ?? err)
     } finally {
       if (!controller.signal.aborted) { this._loading = false; this._notify() }
     }

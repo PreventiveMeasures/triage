@@ -150,15 +150,19 @@ class ScanModelPicker extends LitElement {
     const controller = new AbortController()
     this._controller = controller
     this._error = null
-    try {
-      const data = await this.loadModels(controller.signal)
+    let received = false
+    const apply = data => {
       if (controller.signal.aborted) return
+      received = true
       this._models = data.models
       const selected = data.models.find((model) => model.id === this.value)
       if (!selected) this._select(data.defaultModel)
       else if (!selected.efforts.includes(this.effort)) this._setEffort(defaultEffort(selected))
+    }
+    try {
+      apply(await this.loadModels(controller.signal, apply))
     } catch (err) {
-      if (!controller.signal.aborted) this._error = String(err?.message ?? err)
+      if (!controller.signal.aborted && !received) this._error = String(err?.message ?? err)
     }
   }
 

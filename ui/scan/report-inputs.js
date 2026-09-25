@@ -64,16 +64,25 @@ export class ReportInputs extends LitElement {
     this._loading = true
     this._error = null
     this._notify()
-    try {
-      const sources = this.loadSources ? await this.loadSources(controller.signal) : { merge: { bundles: [], results: [] }, link: { repositories: [], reports: [] } }
+    let received = false
+    const apply = sources => {
       if (controller.signal.aborted) return
+      const initial = !received
+      received = true
       this._sources = sources
-      this._merge = emptySelection('bundle')
-      this._link = emptySelection(Array.isArray(sources.link?.workspaces) ? 'workspace' : 'repository')
+      if (initial) {
+        this._merge = emptySelection('bundle')
+        this._link = emptySelection(Array.isArray(sources.link?.workspaces) ? 'workspace' : 'repository')
+      }
       this._selectOnlySource()
-      this._restore()
+      if (initial) this._restore()
+      this._loading = false
+      this._notify()
+    }
+    try {
+      apply(this.loadSources ? await this.loadSources(controller.signal, apply) : { merge: { bundles: [], results: [] }, link: { repositories: [], reports: [] } })
     } catch (err) {
-      if (!controller.signal.aborted) this._error = String(err?.message ?? err)
+      if (!controller.signal.aborted && !received) this._error = String(err?.message ?? err)
     } finally {
       if (!controller.signal.aborted) { this._loading = false; this._notify() }
     }

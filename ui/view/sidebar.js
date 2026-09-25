@@ -3,7 +3,8 @@ import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { LINKS_KIND, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, clientModeLabel, computeLinkHint, configureClientMode, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, ensureLinkedFindingsIndexed, getCount, getKind, getPackagesIndex, getRepositoriesIndex, getWorkspaceAppMetadata, getWorkspaceAppModeHint, hasStandaloneProbeHint, hydrateSecureStorage, isCombinedServerMode, isManagedUiMode, listBundles, listFiles, listWorkspaces, mergeSyncServerInfo, migrateLegacyFilenames, onVaultStateChange, onWorkspaceAppMetadataChanged, probeServerInfo, readCachedServerInfo, reloadTriageFromStorage, rememberStandaloneProbe, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, setLocalMode, state, syncObservedAfterHydrate, toggleClientMode, waitForServerInfo, writeCachedServerInfo } from '#client/index.js'
 import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, setSyncForceDisabled, triageSync } from './client-sync.js'
-import { clearPreviewRole, getPreviewRole, loadManagedBundle, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams } from './client-managed.js'
+import { clearPreviewRole, getPreviewRole, loadManagedBundle, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams, resetManagedAppState, setManagedAppSession } from './client-managed.js'
+import { showToast } from './toast.js'
 import { managedHistory } from './managed-history.js'
 import { cleanupGraph2 } from './graph/state.js'
 import { MANAGED_PAGES } from '../../common/managed/routes.js'
@@ -1769,6 +1770,7 @@ async function finishClientModeTransition({ forgetLastView = true, resetNavigati
   managedBase?.remove()
   managedBase = null
   const generation = ++clientModeGeneration
+  resetManagedAppState()
   resetManagedTriage()
   setSyncForceDisabled(state.serverMode !== 'e2e')
   triageSync.setForcedOff(true)
@@ -1904,6 +1906,7 @@ async function revalidateManagedSession() {
     const session = await managedProbeSession({ fallback: previous })
     if (!isCurrent()) return
     state.managedSession = session
+    setManagedAppSession(session)
     if (previous && previous.id !== session?.id) {
       state.managedTeams = []
       resetManagedTriage()
@@ -2018,6 +2021,8 @@ export async function navigateToAdminPage(view, options = {}) {
 // Admin pages live in a separate lazy-loaded bundle, so the shared back button
 // and management hub communicate through a composed event instead of importing
 // the sidebar module into that bundle (which would duplicate application state).
+document.addEventListener('managed-notice', event => showToast(event.detail.message, { kind: 'error' }))
+
 document.addEventListener('managed-admin-navigate', (event) => {
   const view = event.detail?.view
   const actor = event.detail?.actor

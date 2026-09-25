@@ -1,7 +1,7 @@
 import { getPreviewRole, managedFetch } from '../../client/managed/request.js'
 // Manage custom elements, registered by the lazy client-managed.js entry.
-// Keep application state in the main view bundle; these pages use authenticated
-// API requests and composed events to communicate with their host.
+// Manage data stays in the lazy bundle; the host supplies session updates and
+// renders composed navigation and notification events.
 import { html, nothing, unsafeCSS } from 'lit'
 import { ManagedPage, loadingRows } from './page.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
@@ -103,12 +103,11 @@ async function fetchHistory(signal) {
 }
 
 async function fetchAccessibleReportIds(signal) {
-  try {
-    const res = await managedFetch('/api/teams', { signal, credentials: 'same-origin', headers: { accept: 'application/json' } })
-    if (!res.ok) return new Set()
-    const body = await res.json()
-    return new Set((Array.isArray(body?.teams) ? body.teams : []).flatMap((team) => Array.isArray(team.reports) ? team.reports.map((report) => report.id) : []))
-  } catch { return new Set() }
+  const res = await managedFetch('/api/teams', { signal, credentials: 'same-origin', headers: { accept: 'application/json' } })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const body = await res.json()
+  if (!Array.isArray(body?.teams)) throw new Error('No teams returned')
+  return new Set(body.teams.flatMap(team => Array.isArray(team.reports) ? team.reports.map(report => report.id) : []))
 }
 
 class ManagedAdminHistory extends ManagedPage {
@@ -146,7 +145,7 @@ class ManagedAdminHistory extends ManagedPage {
 
   async _load() {
     this._error = null
-    await this._loadCollection(signal => Promise.all([fetchHistory(signal), fetchAccessibleReportIds(signal)]), ([history, allowedReports]) => {
+    await this._loadCollection('history', 'history', signal => Promise.all([fetchHistory(signal), fetchAccessibleReportIds(signal)]), ([history, allowedReports]) => {
       this._history = history
       this._allowedReports = allowedReports
     })
@@ -255,7 +254,7 @@ class ManagedAdminUsers extends ManagedPage {
 
   async _load() {
     this._error = null
-    await this._loadCollection(signal => Promise.all([fetchUsers(signal), fetchTeams(signal)]), ([users, teamData]) => {
+    await this._loadCollection('users', 'users', signal => Promise.all([fetchUsers(signal), fetchTeams(signal)]), ([users, teamData]) => {
       this._users = users
       this._teams = Array.isArray(teamData?.teams) ? teamData.teams : []
     })
@@ -318,8 +317,9 @@ class ManagedAdminUsers extends ManagedPage {
     const prev = u.role
     if (role === prev) return
     try {
-      await setRole(u.id, role, this._csrf)
+      await this.appState.mutate(() => setRole(u.id, role, this._csrf), ['users', 'teams', 'history'])
       u.role = role
+      await this._load()
     } catch (err) {
       console.warn('admin: set role failed:', err)
       selectEl.value = prev
@@ -415,11 +415,11 @@ class ManagedAdminRepos extends ManagedPage {
     this._detail = null
     this._impact = null
     this._impactLoading = false
+    this._impactFresh = false
     this._removeOpen = false
     this._acknowledge = false
     this._deleteTriage = false
     this._confirmName = ''
-    this._request = null
     this._impactRequest = null
     this._searchTimer = null
   }
@@ -431,31 +431,23 @@ class ManagedAdminRepos extends ManagedPage {
 
   disconnectedCallback() {
     super.disconnectedCallback()
-    this._request?.abort()
     this._impactRequest?.abort()
     clearTimeout(this._searchTimer)
   }
 
+  _repositoryKey() { return `repos:${JSON.stringify([this._scope, this._query, this._page])}` }
+
   async _load() {
-    this._request?.abort()
-    const request = new AbortController()
-    this._request = request
-    this._loading = true
     this._error = null
-    try {
-      const data = await fetchRepositories(this._scope, this._query, this._page, request.signal)
-      if (request.signal.aborted || this._request !== request) return
+    const { _scope: scope, _query: query, _page: page } = this
+    await this._loadCollection(this._repositoryKey(), 'repositories', signal => fetchRepositories(scope, query, page, signal), data => {
       this._data = data
-      // Removing the last item on a page can move the last page backwards.
-      const lastPage = Math.max(1, Math.ceil(data.total / 20))
-      if (this._page > lastPage) {
-        this._page = lastPage
-        void this._load()
-      }
-    } catch (err) {
-      if (!request.signal.aborted) this._error = String(err?.message ?? err)
-    } finally {
-      if (this._request === request) this._loading = false
+    })
+    // Removing the last item on a page can move the last page backwards.
+    const lastPage = Math.max(1, Math.ceil(this._data?.total / 20))
+    if (this._scope === scope && this._query === query && this._page === page && this._page > lastPage) {
+      this._page = lastPage
+      void this._load()
     }
   }
 
@@ -479,7 +471,7 @@ class ManagedAdminRepos extends ManagedPage {
   _search(value) {
     this._query = value
     this._page = 1
-    this._request?.abort()
+    this._loadRequest?.abort()
     clearTimeout(this._searchTimer)
     this._loading = true
     this._searchTimer = setTimeout(() => { void this._load() }, 200)
@@ -504,7 +496,8 @@ class ManagedAdminRepos extends ManagedPage {
   _openDetail(repo) {
     this._detail = repo
     this._actionError = null
-    this._impact = null
+    this._impact = this.appState.read(`repo-impact:${repo.id}`) ?? null
+    this._impactFresh = false
     this._removeOpen = false
     this._acknowledge = false
     this._deleteTriage = false
@@ -513,11 +506,10 @@ class ManagedAdminRepos extends ManagedPage {
     this._impactRequest?.abort()
     const request = new AbortController()
     this._impactRequest = request
-    void fetchRepositoryImpact(repo.id, request.signal).then((impact) => {
-      if (!request.signal.aborted && this._impactRequest === request) this._impact = impact
-      return impact
-    }).catch((err) => {
-      if (!request.signal.aborted && this._impactRequest === request) this._actionError = `Couldn't load repository data: ${err?.message ?? err}`
+    void this.appState.load(`repo-impact:${repo.id}`, 'repository data', signal => fetchRepositoryImpact(repo.id, signal), {
+      signal: request.signal, apply: impact => { this._impact = impact },
+    }).then(impact => { if (!request.signal.aborted) this._impactFresh = true; return impact }).catch((err) => {
+      if (!request.signal.aborted && err?.name !== 'AbortError' && !this._impact) this._actionError = `Couldn't load repository data: ${err?.message ?? err}`
     }).finally(() => {
       if (this._impactRequest === request) this._impactLoading = false
     })
@@ -628,7 +620,7 @@ class ManagedAdminRepos extends ManagedPage {
         <div class="dialog-data" aria-busy=${this._impactLoading}>
           ${[['Reports', reports], ['Bundles', bundles]].map(([label, items]) => html`<section>
             <h3>${label} (${this._impact == null ? '…' : items.length})</h3>
-            ${this._impactLoading ? html`<p class="data-empty" role="status">Loading ${label.toLowerCase()}…</p>` : this._impact == null
+            ${this._impactLoading && this._impact == null ? html`<p class="data-empty" role="status">Loading ${label.toLowerCase()}…</p>` : this._impact == null
               ? html`<p class="data-empty">Attached data could not be loaded.</p><button type="button" class="btn" @click=${() => this._openDetail(repo)}>Try again</button>`
               : items.length > 0 ? html`<ul>${items.map(item => html`<li>${item.filename}${item.repoDirectory ? ` · ${item.repoDirectory}` : nothing}</li>`)}</ul>` : html`<p class="data-empty">No ${label.toLowerCase()} attached.</p>`}
           </section>`)}
@@ -637,7 +629,7 @@ class ManagedAdminRepos extends ManagedPage {
       <section class="section" aria-label="Permanent repository removal">
         <h2>Permanent removal</h2>
         <div class="settings-row"><div class="settings-copy"><strong>Delete repository and stored data</strong><p>Deactivation is reversible. Permanent removal deletes this repository’s attached reports and bundles; it cannot be undone.</p></div>
-          <button type="button" class="btn danger" ?disabled=${this._busy != null || this._impactLoading || this._impact == null} @click=${() => { this._removeOpen = true; this._acknowledge = false; this._deleteTriage = false; this._confirmName = '' }}>Remove permanently</button>
+          <button type="button" class="btn danger" ?disabled=${this._busy != null || this._impactLoading || !this._impactFresh || this._impact == null} @click=${() => { this._removeOpen = true; this._acknowledge = false; this._deleteTriage = false; this._confirmName = '' }}>Remove permanently</button>
         </div>
       </section>
       ${this._removeOpen && this._impact != null && !this._impactLoading ? this._removeDialog(repo, reports, bundles) : nothing}
@@ -672,13 +664,13 @@ class ManagedAdminRepos extends ManagedPage {
     this._busy = repo.id
     this._actionError = null
     try {
-      await selectRepository(repo.id, active, this._csrf)
+      await this.appState.mutate(() => selectRepository(repo.id, active, this._csrf), ['repos', 'reports', 'bundles', 'teams', 'users', 'history'])
       if (!this.isConnected) return
       if (this._detail?.id === repo.id) this._detail = { ...this._detail, active }
       if (this._data) {
         this._data = { ...this._data, repositories: this._data.repositories.map((entry) => entry.id === repo.id ? { ...entry, active } : entry) }
       }
-      if (this._scope !== 'connected') await this._load()
+      await this._load()
     } catch (err) {
       const verb = active ? (repo.active === false ? 'reactivate' : 'add') : 'deactivate'
       this._actionError = `Couldn't ${verb} ${repo.fullName}: ${err?.message ?? err}`
@@ -688,7 +680,7 @@ class ManagedAdminRepos extends ManagedPage {
   }
 
   _canRemove(repo) {
-    if (this._busy != null || this._impactLoading || this._impact?.repoId !== repo.id || !this._acknowledge) return false
+    if (this._busy != null || this._impactLoading || !this._impactFresh || this._impact?.repoId !== repo.id || !this._acknowledge) return false
     const hasAttached = this._impact.reports.length > 0 || this._impact.bundles.length > 0
     return !hasAttached || this._confirmName === repo.fullName
   }
@@ -698,7 +690,7 @@ class ManagedAdminRepos extends ManagedPage {
     this._busy = repo.id
     this._actionError = null
     try {
-      await removeRepository(repo.id, repo.fullName, this._deleteTriage, this._csrf)
+      await this.appState.mutate(() => removeRepository(repo.id, repo.fullName, this._deleteTriage, this._csrf), ['repos', 'repo-impact', 'reports', 'report-preview', 'bundles', 'teams', 'users', 'history', 'scan-sources'])
       this._removeOpen = false
       this._detail = null
       this._impact = null
@@ -897,7 +889,7 @@ class ManagedAdminReports extends ManagedPage {
 
   async _load({ preserveError = false } = {}) {
     if (!preserveError) this._error = null
-    await this._loadCollection(fetchReports, data => {
+    await this._loadCollection('reports', 'reports', fetchReports, data => {
       this._data = data
       if (this._preview && !data.reports?.some(report => report.id === this._preview)) this._cancelPreview()
     })
@@ -967,7 +959,7 @@ class ManagedAdminReports extends ManagedPage {
     this._locationBusy = true
     this._error = null
     try {
-      await setReportRepo(report.id, this._locationRepo, this._locationDirectory.trim(), this._csrf)
+      await this.appState.mutate(() => setReportRepo(report.id, this._locationRepo, this._locationDirectory.trim(), this._csrf), ['reports', 'repo-impact', 'history', 'scan-sources'])
       this._locationReport = null
       await this._load({ preserveError: true })
     } catch (err) { this._error = `Couldn't set report location: ${String(err?.message ?? err)}` }
@@ -990,22 +982,26 @@ class ManagedAdminReports extends ManagedPage {
     this._previewRequest = request
     const isCurrent = () => this._previewRequest === request && !request.signal.aborted
     this._preview = report.id
-    this._previewLoading = report.id
+    this._previewText = this.appState.read(`report-preview:${report.id}`) ?? ''
+    this._previewLoading = this.appState.read(`report-preview:${report.id}`) === undefined ? report.id : null
     try {
-      const res = await managedFetch(`/api/admin/reports/${encodeURIComponent(report.id)}`, { credentials: 'same-origin', signal: request.signal })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const text = await res.text()
-      if (isCurrent()) this._previewText = text.slice(0, 4000) + (text.length > 4000 ? '\n…' : '')
-    } catch (err) { if (isCurrent()) this._previewText = `Preview unavailable: ${err?.message ?? err}` }
+      await this.appState.load(`report-preview:${report.id}`, 'report preview', async signal => {
+        const res = await managedFetch(`/api/admin/reports/${encodeURIComponent(report.id)}`, { credentials: 'same-origin', signal })
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const text = await res.text()
+        return text.slice(0, 4000) + (text.length > 4000 ? '\n…' : '')
+      }, { signal: request.signal, apply: text => { this._previewText = text } })
+    } catch (err) { if (isCurrent() && err?.name !== 'AbortError' && !this._previewText) this._previewText = `Preview unavailable: ${err?.message ?? err}` }
     finally { if (isCurrent()) this._previewLoading = null }
   }
 
   async _setVisible(report, visible) {
     this._error = null
     try {
-      await setReportVisible(report.id, visible, this._csrf)
+      await this.appState.mutate(() => setReportVisible(report.id, visible, this._csrf), ['reports', 'history', 'scan-sources'])
       report.visible = visible
       this.requestUpdate()
+      await this._load()
     } catch (err) { this._error = `Couldn't change report visibility: ${String(err?.message ?? err)}` }
   }
 
@@ -1016,7 +1012,7 @@ class ManagedAdminReports extends ManagedPage {
     this._busy = true
     this._error = null
     try {
-      while (this._queue.length > 0) await uploadReport(this._queue.shift(), this._csrf, this._repoId, this._repoDirectory.trim())
+      while (this._queue.length > 0) await this.appState.mutate(() => uploadReport(this._queue.shift(), this._csrf, this._repoId, this._repoDirectory.trim()), ['reports', 'repo-impact', 'history', 'scan-sources'])
     } catch (err) { this._queue = []; this._error = `Upload failed: ${String(err?.message ?? err)}` }
     finally { this._busy = false; await this._load({ preserveError: true }) }
   }
@@ -1024,7 +1020,7 @@ class ManagedAdminReports extends ManagedPage {
   async _delete(report) {
     if (!globalThis.confirm?.(`Delete “${report.filename}”? This can't be undone.`)) return
     this._error = null
-    try { await deleteReport(report.id, this._csrf) }
+    try { await this.appState.mutate(() => deleteReport(report.id, this._csrf), ['reports', `report-preview:${report.id}`, 'repo-impact', 'history', 'scan-sources']) }
     catch (err) { this._error = `Delete failed: ${String(err?.message ?? err)}` }
     await this._load({ preserveError: true })
   }
@@ -1112,7 +1108,7 @@ class ManagedAdminBundles extends ManagedPage {
 
   async _load({ preserveError = false } = {}) {
     if (!preserveError) this._error = null
-    await this._loadCollection(fetchBundles, data => {
+    await this._loadCollection('bundles', 'bundles', fetchBundles, data => {
       this._data = data
     })
   }
@@ -1161,7 +1157,7 @@ class ManagedAdminBundles extends ManagedPage {
   async _setRepo(b, repoId) {
     this._error = null
     try {
-      await setBundleRepo(b.id, repoId, this._csrf)
+      await this.appState.mutate(() => setBundleRepo(b.id, repoId, this._csrf), ['bundles', 'repo-impact', 'history', 'scan-sources'])
     } catch (err) {
       this._error = `Couldn't change repo: ${String(err?.message ?? err)}`
     }
@@ -1177,7 +1173,7 @@ class ManagedAdminBundles extends ManagedPage {
     try {
       while (this._queue.length > 0) {
         const file = this._queue.shift()
-        await uploadBundle(file, this._csrf, this._repoId)
+        await this.appState.mutate(() => uploadBundle(file, this._csrf, this._repoId), ['bundles', 'reports', 'repo-impact', 'history', 'scan-sources'])
       }
     } catch (err) {
       this._queue = [] // fail-fast: drop the rest of the batch (matches the old behaviour)
@@ -1192,7 +1188,7 @@ class ManagedAdminBundles extends ManagedPage {
     if (!globalThis.confirm?.(`Delete “${b.filename}”? Linked reports will keep their pending link.`)) return
     this._error = null
     try {
-      await deleteBundle(b.id, this._csrf)
+      await this.appState.mutate(() => deleteBundle(b.id, this._csrf), ['bundles', 'reports', 'repo-impact', 'history', 'scan-sources'])
     } catch (err) {
       this._error = `Delete failed: ${String(err?.message ?? err)}`
     }
@@ -1206,9 +1202,9 @@ class ManagedAdminScans extends ManagedPage {
   static styles = unsafeCSS(commonStyles)
   constructor() {
     super()
-    this._loadModels = signal => fetchScanModels(signal, managedFetch)
+    this._loadModels = (signal, apply) => this.appState.load('models', 'scan models', requestSignal => fetchScanModels(requestSignal, managedFetch), { signal, apply })
     this._source = { bundles: cloneScanFixtures(), repositories: SCAN_REPOSITORY_FIXTURES, scans: SCAN_FIXTURES.map(scan => ({ ...scan })) }
-    this._loadReportSources = async signal => {
+    this._loadReportSources = (consumerSignal, apply) => this.appState.load('scan-sources', 'scan report inputs', async signal => {
       const [catalogue, results] = await Promise.all([
         managedFetch('/api/admin/reports', { signal, credentials: 'same-origin' }),
         managedFetch('/api/admin/scan-results', { signal, credentials: 'same-origin' }),
@@ -1225,7 +1221,7 @@ class ManagedAdminScans extends ManagedPage {
         return { ...report, content: await response.text() }
       }))
       return managedReportSources(data, results.ok ? await results.json() : { bundles: [], results: [] })
-    }
+    }, { signal: consumerSignal, apply })
   }
   render() {
     return html`<div class="wrap">${adminNavigation('manage-scans', this._role)}<deepview-scan-page hide-heading .source=${this._source} .loadModels=${this._loadModels} .loadReportSources=${this._loadReportSources}></deepview-scan-page></div>`
@@ -1281,7 +1277,7 @@ class ManagedAdminTeams extends ManagedPage {
 
   async _load({ preserveError = false } = {}) {
     if (!preserveError) this._error = null
-    await this._loadCollection(fetchTeams, data => {
+    await this._loadCollection('teams', 'teams', fetchTeams, data => {
       this._data = data
     })
   }
@@ -1291,7 +1287,7 @@ class ManagedAdminTeams extends ManagedPage {
     if (this._busy) return
     this._busy = true
     this._error = null
-    try { await fn() } catch (err) { this._error = String(err?.message ?? err) }
+    try { await this.appState.mutate(fn, ['teams', 'users', 'history']) } catch (err) { this._error = String(err?.message ?? err) }
     finally { this._busy = false; await this._load({ preserveError: true }) }
   }
 
