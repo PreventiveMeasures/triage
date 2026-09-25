@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto'
 import { brotliDecompress, gzip } from 'node:zlib'
 import { promisify } from 'node:util'
 import { BUNDLE_METADATA_VERSION, createBundleMetadata, parseBundleContents } from '../common/bundle-metadata.js'
+import { decodeUtf8 } from '../common/utf8.js'
 import type { BlobStore } from './blob-store.ts'
 import type { ManagedBundle, ManagedDb } from './db.ts'
 
@@ -31,7 +32,7 @@ export function createDiskBundleCache(dir: string, db: ManagedDb, store: BlobSto
     if (!bytes) throw new Error('Bundle bytes unavailable')
     const decoded = record.kind === 'stasis' ? await decompress(bytes, { maxOutputLength: MAX_DECODED_BYTES }) : bytes
     if (decoded.length > MAX_DECODED_BYTES) throw new Error('Decoded bundle too large')
-    const details = parseBundleContents(decoded.toString('utf8'), { integrity: record.integrity, kind: record.kind, size: record.byteSize })
+    const details = parseBundleContents(decodeUtf8(decoded), { integrity: record.integrity, kind: record.kind, size: record.byteSize })
     const metadata = { ...await createBundleMetadata(details), id: record.id, filename: record.filename }
     const metadataGzip = await compress(Buffer.from(JSON.stringify(metadata)))
     const contentsGzip = await compress(decoded)

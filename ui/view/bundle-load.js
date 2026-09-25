@@ -111,6 +111,16 @@ export function selectBundle(integrity, tab = state.currentView === 'bundles' ? 
   state.shownTriage = null
 }
 
+// Keep shared downloads alive between source tabs, but stop them when the
+// user returns to metadata or closes its source overlay. Parsed bodies stay
+// available for this bundle; only unfinished requests are cancelled.
+export function selectBundleTab(tab) {
+  if (bundleNeedsSources(state.bundleDetailsTab, state.bundleSourceFile) && !bundleNeedsSources(tab)) beginViewNavigation()
+  state.bundleDetailsTab = tab
+  state.bundleSourceFile = null
+  state.bundleSourceFindingIdx = null
+}
+
 // Read OPFS bytes, classify by entry name (`.map` → sourcemap, else
 // → stasis), and parse into the `details` object the render path
 // consumes. Errors (read fail, JSON parse fail, brotli fail) come
@@ -250,14 +260,16 @@ export async function openBundle(integrity) {
 export function ensureBundleSources(details = state.bundleDetails) {
   if (details?.sourceError) return Promise.resolve(null)
   if (!details?.metadataOnly) return Promise.resolve(details)
-  if (sourceUpgrades.has(details)) return sourceUpgrades.get(details)
+  const signal = details.managedId ? currentViewSignal() : undefined
+  const pending = sourceUpgrades.get(details)
+  if (pending && pending.signal === signal) return pending.job
   const entry = (state.bundles ?? []).find((b) => b.integrity === details.integrity)
   if (!entry) return Promise.resolve(null)
   const job = buildBundleDetails(details.integrity, entry).then((full) => {
+    signal?.throwIfAborted()
     if (state.bundleDetails !== details) return full
     if (full.error && details.managedId) {
       details.sourceError = full.error
-      sourceUpgrades.delete(details)
       render()
       return null
     }
@@ -266,10 +278,10 @@ export function ensureBundleSources(details = state.bundleDetails) {
     render()
     return full
   }).catch(err => {
-    sourceUpgrades.delete(details)
     if (err.name === 'AbortError') return null
     throw err
   })
-  sourceUpgrades.set(details, job)
+  sourceUpgrades.set(details, { job, signal })
+  job.finally(() => { if (sourceUpgrades.get(details)?.job === job) sourceUpgrades.delete(details) }).catch(() => {})
   return job
 }

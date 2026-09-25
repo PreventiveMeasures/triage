@@ -77,8 +77,8 @@ async function setup(t) {
       req.end(body)
     })
   }
-  async function seed({ kind = 'stasis', owner = 'owner', repoId = null } = {}) {
-    const bytes = kind === 'stasis' ? brotliCompressSync(Buffer.from(stasis)) : Buffer.from(map), id = randomUUID()
+  async function seed({ kind = 'stasis', owner = 'owner', repoId = null, bytes: suppliedBytes } = {}) {
+    const bytes = suppliedBytes ?? (kind === 'stasis' ? brotliCompressSync(Buffer.from(stasis)) : Buffer.from(map)), id = randomUUID()
     const record = { id, integrity: bundleIntegrity(bytes), filename: kind === 'stasis' ? 'test.stasis.code.br' : 'test.map', kind, byteSize: bytes.length, uploadedBy: users[owner].userId, uploadedByLogin: owner, repoId }
     await store.put(id, bytes); await db.insertBundle(record, Date.now())
     return await db.getBundle(id)
@@ -87,6 +87,28 @@ async function setup(t) {
 }
 
 for (const kind of ['stasis', 'sourcemap']) {
+  test(`${kind}: invalid UTF-8 cannot generate metadata or cached contents`, async t => {
+    const h = await setup(t)
+    const decoded = Buffer.from(kind === 'stasis' ? stasis : map)
+    const position = decoded.indexOf('€')
+    assert.notEqual(position, -1)
+    decoded[position] = 0xff // Inside a JSON source string: replacement decoding still parses.
+    assert.doesNotThrow(() => JSON.parse(decoded.toString('utf8')))
+    const bytes = kind === 'stasis' ? brotliCompressSync(decoded) : decoded
+    const record = await h.seed({ kind, bytes })
+    await assert.rejects(h.cache.prebuild(record), { name: 'TypeError' })
+    for (const part of ['metadata', 'contents']) {
+      const response = await h.send(`/api/bundles/${record.id}/${part}`, 'owner')
+      assert.equal(response.status, 422)
+      assert.deepEqual(response.json(), { error: 'bundle-unavailable' })
+      assert.equal(response.headers['content-encoding'], undefined)
+    }
+    await assert.rejects(readdir(join(h.cacheDir, record.id)), { code: 'ENOENT' })
+    // A failed cache build must not poison the serialized build queue.
+    const valid = await h.seed({ kind })
+    assert.equal((await h.send(`/api/bundles/${valid.id}/contents`, 'owner')).status, 200)
+  })
+
   test(`${kind}: gzip cache preserves contents and metadata, and reopens without source reads`, async t => {
   const h = await setup(t), record = await h.seed({ kind, repoId: 1 })
   const url = `/api/bundles/${record.id}`

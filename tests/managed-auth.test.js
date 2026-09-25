@@ -1340,7 +1340,7 @@ test('team reports: read iff admin, OR (>=view role AND in a team holding the re
   assert.equal((await view(nonerSess, reportId)).statusCode, 403) // IN the team, but role 'none' → refused
   assert.equal((await view(outsiderSess, reportId)).statusCode, 404) // >=view, but wrong team (no repo 7)
   assert.equal((await view(adminSess, randomUUID())).statusCode, 404) // admin, but the report doesn't exist
-  for (const [session, status] of [[null, 401], [nonerSess, 404], [outsiderSess, 404]]) {
+  for (const [session, status] of [[null, 401], [nonerSess, 403], [outsiderSess, 404]]) {
     assert.equal((await req(`/api/reports/${reportId}`, session && cookiePair(session.setCookie), 'application/json')).statusCode, status, 'metadata follows the same access checks as content')
   }
 
@@ -1959,6 +1959,51 @@ async function reportTriageFixture(db, reportStore) {
     { id: 'sec', file: 'src/b.js', security: true },
   ] })))
   return { now, reportId, admin, adminSess, bobSess, carolSess, daveSess, erinSess, frankSess }
+}
+
+for (const permission of ['dependencies', 'security']) {
+  for (const operation of ['entries', 'history', 'write']) {
+    test(`triage ${operation} rechecks ${permission} visibility after a cold report read`, async t => {
+      const db = openSqliteManagedDb(':memory:')
+      t.after(() => db.close())
+      const store = fakeBlobStore()
+      const fx = await reportTriageFixture(db, store)
+      const userId = fx.bobSess.userId
+      const team = (await db.listTeams()).find(item => item.name === 'Blue')
+      await db.setTeamMember(team.id, userId, { dependencies: true, security: true })
+      const hidden = permission === 'dependencies' ? 'dep' : 'sec'
+      for (const id of ['own', hidden]) await db.setTriage(id, { comment: `before ${id}` }, fx.admin.id, 'alice', fx.now)
+      const before = await db.listTriage(['own', hidden])
+      const beforeHistory = await db.listTriageHistory(hidden, 20)
+      const gate = Promise.withResolvers(), started = Promise.withResolvers()
+      const get = store.get
+      let reads = 0
+      store.get = async id => {
+        if (reads++ === 0) { started.resolve(); await gate.promise }
+        return get(id)
+      }
+      const { send, upload } = bundleHarness(db, config, store)
+      const cookie = cookiePair(fx.bobSess.setCookie), path = `/api/reports/${fx.reportId}/triage`
+      const response = operation === 'write'
+        ? upload(path, cookie, fx.bobSess.csrfToken, JSON.stringify({ entries: { own: { comment: 'must not partially write' }, [hidden]: { comment: 'revoked' } } }))
+        : send('GET', operation === 'history' ? `${path}/history?finding=${hidden}` : path, cookie)
+      await started.promise
+      await db.setTeamMember(team.id, userId, { dependencies: true, security: true, [permission]: false })
+      gate.resolve()
+      const res = await response
+      if (operation === 'entries') {
+        assert.equal(res.statusCode, 200)
+        assert.deepEqual(JSON.parse(res.body), { entries: { own: { comment: 'before own' } } })
+      } else {
+        assert.equal(res.statusCode, 404)
+        assert.deepEqual(JSON.parse(res.body), { error: 'no-finding' })
+      }
+      assert.deepEqual(await db.listTriage(['own', hidden]), before)
+      assert.deepEqual(await db.listTriageHistory(hidden, 20), beforeHistory)
+      // The still-visible finding remains usable, including through the cache.
+      assert.equal((await upload(path, cookie, fx.bobSess.csrfToken, JSON.stringify({ entries: { own: { comment: 'allowed' } } }))).statusCode, 200)
+    })
+  }
 }
 
 test('workspace history enforces roles and current report access before search, totals, and pagination', async (t) => {

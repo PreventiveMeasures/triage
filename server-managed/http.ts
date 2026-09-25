@@ -1049,7 +1049,9 @@ async function canTriageReport(deps: ManagedHttpDeps, user: StoredUser, reportId
 // bytes or an unparseable report yield an empty set (nothing is provably
 // visible). A report is immutable, so the set is memoized per (report, filter)
 // — a bounded map per deps, dropping the oldest entries — rather than
-// re-parsed on every debounced push.
+// re-parsed on every debounced push. Handlers warm this cache before their
+// session/access recheck, then call again with the current user so permissions
+// revoked during the cold read/parse cannot authorize triage reads or writes.
 const VISIBLE_IDS_CACHE_MAX = 256
 const visibleIdsCaches = new WeakMap<ManagedHttpDeps, Map<string, Set<string>>>()
 async function visibleFindingIds(deps: ManagedHttpDeps, user: StoredUser, reportId: string): Promise<Set<string>> {
@@ -1106,9 +1108,10 @@ async function handleGetReportTriage(res: ServerResponse, deps: ManagedHttpDeps,
   const s = await readSession(deps.config, deps.db, cookie, Date.now())
   if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
   if (!(await canViewReport(deps, s.user, id))) { sendJson(res, 404, { error: 'no-report' }); return }
-  const visible = await visibleFindingIds(deps, s.user, id)
+  await visibleFindingIds(deps, s.user, id)
   const current = await readSession(deps.config, deps.db, cookie, Date.now())
   if (!current || !(await canViewReport(deps, current.user, id)) || current.user.role !== s.user.role) { sendJson(res, 404, { error: 'no-report' }); return }
+  const visible = await visibleFindingIds(deps, current.user, id)
   const entries: Record<string, TriageEntryPatch | null> = {}
   for (const row of await deps.db.listTriage([...visible])) entries[row.findingId] = triageWireEntry(row)
   sendJson(res, 200, { entries })
@@ -1126,9 +1129,10 @@ async function handleGetReportTriageHistory(res: ServerResponse, deps: ManagedHt
   if (!(await canViewReport(deps, s.user, id))) { sendJson(res, 404, { error: 'no-report' }); return }
   const finding = query.get('finding') ?? ''
   if (finding === '' || finding.length > MAX_FINDING_ID) { sendJson(res, 400, { error: 'bad-request' }); return }
-  const visible = await visibleFindingIds(deps, s.user, id)
+  await visibleFindingIds(deps, s.user, id)
   const current = await readSession(deps.config, deps.db, cookie, Date.now())
   if (!current || !(await canViewReport(deps, current.user, id)) || current.user.role !== s.user.role) { sendJson(res, 404, { error: 'no-report' }); return }
+  const visible = await visibleFindingIds(deps, current.user, id)
   if (!visible.has(finding)) { sendJson(res, 404, { error: 'no-finding' }); return }
   const events = (await deps.db.listTriageHistory(finding, MAX_TRIAGE_HISTORY)).map((row: TriageEventRow) => ({
     seq: row.seq, at: row.at, actorLogin: row.actorLogin, batchId: row.batchId, entry: triageWireEntry(row),
@@ -1163,9 +1167,10 @@ async function handleSetReportTriage(req: IncomingMessage, res: ServerResponse, 
     }
     parsed.push([findingId, patch])
   }
-  const visible = await visibleFindingIds(deps, s.user, id)
+  await visibleFindingIds(deps, s.user, id)
   const current = await readSession(deps.config, deps.db, cookie, Date.now())
   if (!current || !(await canViewReport(deps, current.user, id)) || current.user.role !== s.user.role) { sendJson(res, 404, { error: 'no-report' }); return }
+  const visible = await visibleFindingIds(deps, current.user, id)
   if (parsed.some(([findingId]) => !visible.has(findingId))) {
     sendJson(res, 404, { error: 'no-finding' }); return
   }

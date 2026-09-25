@@ -208,7 +208,7 @@ function renderSearchNextFrame() {
     render()
   })
 }
-import { ensureBundleSources, openBundle, prefetchBundleHashes, selectBundle } from './bundle-load.js'
+import { ensureBundleSources, openBundle, prefetchBundleHashes, selectBundle, selectBundleTab } from './bundle-load.js'
 import { renderSidebar } from './sidebar.js'
 import { BUNDLE_TABS, persistLastBundle, switchToFile } from './ingest.js'
 import { treeAnchor } from './file-counts.js'
@@ -267,8 +267,7 @@ function handleBundleSourceClick(e) {
   if (e.target.classList?.contains('bundle-source-overlay')
       || e.target.closest('[data-action="bundle-source-close"]')) {
     if (state.bundleSourceFile) {
-      state.bundleSourceFile = null
-      state.bundleSourceFindingIdx = null
+      selectBundleTab(state.bundleDetailsTab)
       render()
     }
     return true
@@ -613,9 +612,7 @@ report.addEventListener('click', (e) => {
       // selection, or modal opened from the Files tab) doesn't
       // re-render the wrong view in the new tab — the modal
       // renders over non-slide tabs whenever the pointer is set.
-      state.bundleDetailsTab = tab
-      state.bundleSourceFile = null
-      state.bundleSourceFindingIdx = null
+      selectBundleTab(tab)
       if (state.selectedBundle) persistLastBundle(state.selectedBundle, tab)
       render()
       // The Code slide auto-opens a default file on entry (see
@@ -886,9 +883,7 @@ report.addEventListener('click', (e) => {
     // this file's findings" inside a bundle.
     if (state.currentView === 'bundles') {
       if (state.bundleDetailsTab === 'graph') cleanupGraph2()
-      state.bundleDetailsTab = 'issues'
-      state.bundleSourceFile = null
-      state.bundleSourceFindingIdx = null
+      selectBundleTab('issues')
       if (state.selectedBundle) persistLastBundle(state.selectedBundle, 'issues')
       render()
       return
@@ -2798,7 +2793,7 @@ document.addEventListener('keydown', (e) => {
     // the "pick a file" placeholder mid-read. The Search sidebar
     // stays Esc-closable: its × button advertises the key.
     if (state.currentView === 'bundles' && state.bundleDetailsTab === 'code') return
-    state.bundleSourceFile = null
+    selectBundleTab(state.bundleDetailsTab)
     render()
   }
 })

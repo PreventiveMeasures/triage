@@ -38,7 +38,7 @@ mock.module('../ui/view/client-managed.js', { namedExports: {
     return JSON.stringify(json)
   },
 } })
-const { buildBundleDetails, ensureBundleSources, openBundle, prefetchBundleHashes, prefetchBundleHashesAfterPaint, selectBundle } = await import('../ui/view/bundle-load.js')
+const { buildBundleDetails, ensureBundleSources, openBundle, prefetchBundleHashes, prefetchBundleHashesAfterPaint, selectBundle, selectBundleTab } = await import('../ui/view/bundle-load.js')
 const index = await createBundleMetadata({ integrity: entry.integrity, kind: 'sourcemap', size: 123, json })
 beforeEach(() => {
   decodes = 0; managed = false
@@ -311,5 +311,78 @@ it('immediately reopening a managed bundle starts a fresh download and still ded
   assert.deepEqual((await reopened).json.sourcesContent, json.sourcesContent)
   assert.equal(contentRequests, 2)
   assert.equal(contentSignals[1].aborted, false)
+  gate.resolve()
+})
+
+it('every source-to-metadata tab transition aborts contents and retains metadata', async () => {
+  state.bundles = [{ ...entry, managedId: 'managed-id', size: 123 }]
+  for (const from of ['code', 'search', 'terminal', 'compare']) {
+    for (const to of ['overview', 'graph', 'treemap', 'issues', 'advisories']) {
+      selectBundle(entry.integrity, 'overview')
+      await openBundle(entry.integrity)
+      const metadata = state.bundleDetails
+      selectBundleTab(from)
+      const gate = Promise.withResolvers(); readGate = gate.promise
+      const loading = ensureBundleSources()
+      selectBundleTab(to)
+      assert.equal(contentSignals.at(-1).aborted, true, `${from} -> ${to}`)
+      assert.equal(await loading, null)
+      assert.equal(state.bundleDetails, metadata)
+      assert.equal(metadata.sourceError, undefined)
+      gate.resolve(); readGate = null
+    }
+  }
+})
+
+it('an immediate source-tab return retries the same metadata and cannot inherit the cancelled upgrade', async () => {
+  state.bundles = [{ ...entry, managedId: 'managed-id', size: 123 }]
+  await openBundle(entry.integrity)
+  selectBundleTab('code')
+  const gate = Promise.withResolvers(); readGate = gate.promise
+  const abandoned = ensureBundleSources()
+  selectBundleTab('overview')
+  selectBundleTab('code')
+  const retry = ensureBundleSources()
+  assert.notEqual(retry, abandoned)
+  assert.equal(await abandoned, null)
+  assert.equal(ensureBundleSources(), retry, 'the old rejection cannot remove the new pending upgrade')
+  assert.equal(contentRequests, 2)
+  gate.resolve()
+  assert.deepEqual((await retry).json.sourcesContent, json.sourcesContent)
+})
+
+it('source tabs share a download and keep completed contents when returning to metadata', async () => {
+  state.bundles = [{ ...entry, managedId: 'managed-id', size: 123 }]
+  await openBundle(entry.integrity)
+  const gate = Promise.withResolvers(); readGate = gate.promise
+  selectBundleTab('code')
+  const loading = ensureBundleSources()
+  for (const tab of ['search', 'terminal', 'compare', 'code']) {
+    selectBundleTab(tab)
+    assert.equal(ensureBundleSources(), loading)
+    assert.equal(contentSignals[0].aborted, false)
+  }
+  gate.resolve()
+  const full = await loading
+  selectBundleTab('overview')
+  selectBundleTab('code')
+  assert.equal(await ensureBundleSources(), full)
+  assert.equal(contentRequests, 1)
+})
+
+it('closing a metadata source overlay aborts its download and clears the source selection', async () => {
+  state.bundles = [{ ...entry, managedId: 'managed-id', size: 123 }]
+  await openBundle(entry.integrity)
+  const metadata = state.bundleDetails
+  state.bundleSourceFile = 'src/main.js'
+  state.bundleSourceFindingIdx = 1
+  const gate = Promise.withResolvers(); readGate = gate.promise
+  const loading = ensureBundleSources()
+  selectBundleTab(state.bundleDetailsTab)
+  assert.equal(contentSignals[0].aborted, true)
+  assert.equal(await loading, null)
+  assert.equal(state.bundleDetails, metadata)
+  assert.equal(state.bundleSourceFile, null)
+  assert.equal(state.bundleSourceFindingIdx, null)
   gate.resolve()
 })
