@@ -880,6 +880,21 @@ function installFileDropZone(host, onFiles, onState) {
   }
 }
 
+// A local import owns exactly one upload result. Drops that arrive meanwhile
+// wait in the regular queue, then run separately so their failures cannot turn
+// a successful import into a retry (and duplicate the managed report).
+async function uploadLocalFile(host, file, upload) {
+  if (host._busy || !host._csrf) throw new Error('Wait for the current operation to finish, then try again.')
+  host._busy = true
+  try { await upload(file) }
+  finally {
+    await host._load()
+    host._busy = false
+    const queued = host._queue.splice(0)
+    if (queued.length > 0) void host._upload(queued)
+  }
+}
+
 // Reports are uploaded with their own repository metadata. New reports remain
 // hidden until an admin previews and publishes them; the list never asks the
 // uploader to repeat a repo or directory already present in the report header.
@@ -924,10 +939,8 @@ class ManagedAdminReports extends LitElement {
     this._repoDirectory = ''
     this._teardownDrop = null
     this._queue = []
-    this._localImport = new ManagedLocalImport(this, 'report', (file) => {
-      if (this._busy || !this._csrf) throw new Error('Wait for the current operation to finish, then try again.')
-      return this._upload([file], true)
-    })
+    this._localImport = new ManagedLocalImport(this, 'report', file => uploadLocalFile(this, file,
+      selected => uploadReport(selected, this._csrf, this._repoId, this._repoDirectory.trim())))
   }
 
   connectedCallback() {
@@ -1061,7 +1074,7 @@ class ManagedAdminReports extends LitElement {
     } catch (err) { this._error = `Couldn't change report visibility: ${String(err?.message ?? err)}` }
   }
 
-  async _upload(files, rethrow = false) {
+  async _upload(files) {
     if (files.length === 0) return
     this._queue.push(...files)
     if (this._busy) return
@@ -1072,7 +1085,6 @@ class ManagedAdminReports extends LitElement {
     } catch (err) {
       this._queue = []
       this._error = `Upload failed: ${String(err?.message ?? err)}`
-      if (rethrow) throw err
     }
     finally { this._busy = false; await this._load() }
   }
@@ -1154,10 +1166,8 @@ class ManagedAdminBundles extends LitElement {
     this._dragOver = false
     this._teardownDrop = null
     this._queue = [] // files awaiting upload; a drop during an in-flight upload joins it
-    this._localImport = new ManagedLocalImport(this, 'bundle', (file) => {
-      if (this._busy || !this._csrf) throw new Error('Wait for the current operation to finish, then try again.')
-      return this._upload([file], true)
-    })
+    this._localImport = new ManagedLocalImport(this, 'bundle', file => uploadLocalFile(this, file,
+      selected => uploadBundle(selected, this._csrf, this._repoId)))
   }
 
   connectedCallback() {
@@ -1236,7 +1246,7 @@ class ManagedAdminBundles extends LitElement {
     await this._load()
   }
 
-  async _upload(files, rethrow = false) {
+  async _upload(files) {
     if (files.length === 0) return
     this._queue.push(...files) // queue first so a drop mid-upload isn't silently lost
     if (this._busy) return // the running drain will pick these up
@@ -1250,7 +1260,6 @@ class ManagedAdminBundles extends LitElement {
     } catch (err) {
       this._queue = [] // fail-fast: drop the rest of the batch (matches the old behaviour)
       this._error = `Upload failed: ${String(err?.message ?? err)}`
-      if (rethrow) throw err
     } finally {
       this._busy = false
       await this._load()

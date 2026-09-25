@@ -1,4 +1,4 @@
-import { hasStoredBundleBytes, listBundles, listFiles, onBundleMutated, onFileMutated, readBundle, readFile } from '../storage.js'
+import { hasStoredBundleBytes, listBundles, listFiles, onBundleMutated, onFileMutated, readBundle, readFileFresh } from '../storage.js'
 import { isEncryptionEnabled, isUnlocked, onVaultStateChange, unlockEncryption } from '../passkey-vault.js'
 import { getFileKinds } from '../counts.js'
 import { LINKS_KIND, parseLinkedFindings } from '../linked-findings.js'
@@ -6,7 +6,7 @@ import { LINKS_KIND, parseLinkedFindings } from '../linked-findings.js'
 // Created in the main bundle and injected into the lazy Manage pages. Importing
 // storage/vault from that separate entry would create a second, locked session.
 const defaultDeps = {
-  getFileKinds, hasStoredBundleBytes, listBundles, listFiles, onBundleMutated, onFileMutated, readBundle, readFile,
+  getFileKinds, hasStoredBundleBytes, listBundles, listFiles, onBundleMutated, onFileMutated, readBundle, readFile: readFileFresh,
   isEncryptionEnabled, isUnlocked, onVaultStateChange, unlockEncryption,
 }
 export function createManagedLocalImportSource(deps = defaultDeps) {

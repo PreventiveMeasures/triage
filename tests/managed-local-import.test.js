@@ -568,3 +568,48 @@ test('both managed pages send selected local files through their authenticated u
     fetch.mock.restore()
   }
 })
+
+test('a local import completes independently of a later dropped file', async (t) => {
+  for (const [kind, success] of [['report', true], ['bundle', true], ['report', false], ['bundle', false]]) {
+    const f = fixture()
+    const Page = customElements.get(`managed-admin-${kind}s`)
+    const page = new Page()
+    page._csrf = 'test-csrf'
+    page.localImportSource = f.source
+    const local = Promise.withResolvers()
+    const dropped = Promise.withResolvers()
+    const requests = []
+    const fetch = t.mock.method(globalThis, 'fetch', (url, options = {}) => {
+      if (options.method === 'POST') {
+        requests.push(options.body.name)
+        return requests.length === 1 ? local.promise : dropped.promise
+      }
+      return Promise.resolve(Response.json(url === '/api/auth/session'
+        ? { user: { role: 'admin' }, csrfToken: 'test-csrf' }
+        : { [`${kind}s`]: [], repos: [] }))
+    })
+    const ui = page._localImport
+    ui.connectSource()
+    try {
+      ui.toggle()
+      await ui.refresh()
+      ui.value = ui.options[0].value
+      const importing = ui.importSelected()
+      await setImmediate()
+      // This is the same upload path used by the page's active drop handler.
+      await page._upload([new File(['later file'], 'later.json')])
+      local.resolve(Response.json(success ? { ok: true } : { error: 'denied' }, { status: success ? 200 : 403 }))
+      await importing
+      const expectedSuccess = success ? `Imported ${kind === 'report' ? 'report.md' : 'source.map'}.` : ''
+      const expectedError = success ? '' : 'HTTP 403'
+      assert.equal(ui.error, expectedError)
+      assert.equal(ui.success, expectedSuccess, 'the local result is available while the later upload is still pending')
+      dropped.resolve(Response.json({ error: 'failed' }, { status: 500 }))
+      await setImmediate()
+      assert.equal(ui.error, expectedError)
+      assert.equal(ui.success, expectedSuccess)
+      assert.equal(ui.value, success ? null : kind === 'report' ? 'report.md' : 'sha512-test', 'only a failed local import should allow retry')
+      assert.deepEqual(requests, [kind === 'report' ? 'report.md' : 'source.map', 'later.json'])
+    } finally { ui.hostDisconnected(); fetch.mock.restore() }
+  }
+})

@@ -632,6 +632,15 @@ export async function readFileBytes(name) {
   return bytes
 }
 
+// Imports need the current stored document even after a sibling tab changed it.
+// The byte reader bypasses both cached text and in-flight text snapshots, and
+// already handles OPFS, the localStorage fallback, and passkey envelopes.
+export async function readFileFresh(name) {
+  const bytes = await readFileBytes(name)
+  const plain = bytes[0] === 0x1f && bytes[1] === 0x8b ? await gunzipBytes(bytes) : bytes
+  return decodeUtf8(plain)
+}
+
 // Write raw bytes to OPFS under `name` without re-compressing — the
 // inverse of `readFileBytes`. Bypasses the in-memory text cache
 // since the caller hands us bytes, not the parsed content. The
