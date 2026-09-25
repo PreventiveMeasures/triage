@@ -66,6 +66,10 @@ const reportFixtures = [
     content: JSON.stringify({
       source: 'deepview',
       repo: { github: 'https://github.com/example/managed-fixtures' },
+      tree: {
+        'src/example.js': { size: 120, imports: ['src/worker.js'] },
+        'src/worker.js': { size: 80, imports: [] },
+      },
       findings: [{
         id: 'managed-fixture-1', severity: 'medium', confidence: 8,
         title: 'Fixture finding', file: 'src/example.js', line: 12,

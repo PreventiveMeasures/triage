@@ -123,7 +123,6 @@ export {
 
 export {
   CONFIG_PATH,
-  classifyServerMode,
   isCombinedServerMode,
   mergeSyncServerInfo,
   hasStandaloneProbeHint,

@@ -54,7 +54,7 @@ import { reportRepoGithub } from '../report/index.js'
 import { loadManagedFindings, readManagedReport } from '../common/managed/report-content.ts'
 import { normalizeTeamPath } from './repo-path.ts'
 import { DEFAULT_MANAGED_SCAN_MODEL, MANAGED_SCAN_MODELS } from '../common/managed/scan-models.ts'
-import { CONFIG_PATH } from '../common/server-info.ts'
+import { CONFIG_PATH, type ServerInfo } from '../common/server-info.ts'
 import { collectRepos, installUrl } from './github-app.ts'
 import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, ensureUserAccessToken, handleCallback } from './github-oauth.ts'
 import { clearCookie, endSession, readSession } from './session.ts'
@@ -98,6 +98,10 @@ export interface ManagedHttpDeps {
   originGate: OriginGate
   isShuttingDown: () => boolean
   track: (p: Promise<unknown>) => void
+  // Combined boot delegates unmatched paths to e2e and overrides discovery.
+  serveStatic?: (req: IncomingMessage, res: ServerResponse) => boolean
+  next?: Handler
+  serverInfo?: ServerInfo
 }
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => void
@@ -124,7 +128,7 @@ async function serveAvatar(res: ServerResponse, avatarStore: AvatarStore, userId
     'content-type': avatar.contentType,
     'content-length': String(avatar.bytes.length),
     'x-content-type-options': 'nosniff',
-    'cache-control': 'private, max-age=600',
+    'cache-control': 'no-store',
   })
   res.end(avatar.bytes)
 }
@@ -1120,7 +1124,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     // Public mode probe — lets a client detect the managed protocol up front.
     if (path === CONFIG_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }
-      sendJson(res, 200, { mode: 'managed', managed: { loginPath: LOGIN_PATH, cookieName: config.sessionCookieName } })
+      sendJson(res, 200, deps.serverInfo ?? { mode: 'managed', managed: { loginPath: LOGIN_PATH, cookieName: config.sessionCookieName } })
       return
     }
     // OAuth: start → redirect to GitHub with the CSRF state cookie.
@@ -1273,6 +1277,8 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       await handleRemoveTeamMember(req, res, deps, cookie); return
     }
     if (path === LOGOUT_PATH) { await handleLogout(req, res, deps, cookie); return }
+    if (deps.serveStatic?.(req, res)) return
+    if (deps.next) { deps.next(req, res); return }
     sendJson(res, 404, { error: 'not-found' }, { connection: 'close' })
   }
 

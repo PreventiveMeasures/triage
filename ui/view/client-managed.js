@@ -8,6 +8,8 @@ let managedModule = null
 // Synchronous reads/reset never load the chunk on an E2E or standalone visit.
 export function getPreviewRole() { return managedModule?.getPreviewRole() ?? null }
 export function clearPreviewRole() { managedModule?.setPreviewRole(null) }
+export function resetManagedAppState() { managedModule?.resetManagedAppState() }
+export function setManagedAppSession(session) { managedModule?.setManagedAppSession(session) }
 
 export function loadManagedBundle() {
   if (loadPromise) return loadPromise
@@ -26,12 +28,12 @@ export function loadManagedBundle() {
   return loadPromise
 }
 
-export async function probeSession() {
-  return (await loadManagedBundle()).probeSession()
+export async function probeSession(options) {
+  return (await loadManagedBundle()).probeSession(options)
 }
 
-export async function probeTeams() {
-  return (await loadManagedBundle()).probeTeams()
+export async function probeTeams(options) {
+  return (await loadManagedBundle()).probeTeams(options)
 }
 
 export async function fetchReport(id) {

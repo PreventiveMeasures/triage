@@ -19,6 +19,7 @@ import { openPasskeyUnlockDialog } from './dialogs/passkey-unlock-dialog.js'
 import { openSyncDownloadDialog } from './dialogs/sync-download-dialog.js'
 import { fetchReport as fetchManagedReport, login as managedLogin } from './client-managed.js'
 import { showToast } from './toast.js'
+import { managedHistory } from './managed-history.js'
 import { setLoadedWorkspaceAppReports, updateWorkspaceAppMetadata } from './workspace-app-load.js'
 
 // localStorage key for the last-viewed file — restored on page load so
@@ -60,6 +61,7 @@ export function persistLastBundle(integrity, tab = 'overview') {
 let loadGen = 0
 const isStaleLoad = (captured) => captured !== loadGen
 export function currentViewGeneration() { return loadGen }
+export function beginViewNavigation() { return ++loadGen }
 
 // Keep expensive view renders out of the report-ingest call stack. A
 // workspace can contain many reports, and rendering after each parse both
@@ -696,8 +698,9 @@ export async function switchToFile(name, content, { workspaceId } = {}) {
 // filtering lens, but fetch on demand and never create a local workspace or
 // persist report bytes. Individual reports share this navigation generation
 // so a slow team load cannot overwrite a later report click (or Home).
-export async function switchToManagedTeam(team, reportId = null) {
+export async function switchToManagedTeam(team, reportId = null, { history = true } = {}) {
   if (!isManagedUiMode() || !team || !Array.isArray(team.reports)) return false
+  if (history && managedHistory.active) return managedHistory.navigate({ view: 'findings', teamId: team.id, reportId })
   const selected = reportId === null ? team.reports : team.reports.filter((r) => r.id === reportId)
   if (reportId !== null && selected.length === 0) return false
   const gen = ++loadGen
@@ -756,7 +759,7 @@ export async function switchToManagedTeam(team, reportId = null) {
       const hydrated = await hydrateManagedReportTriage(entry.id, { renderView: false })
       if (isStaleLoad(gen)) return false
       if (!hydrated) {
-        await goHome()
+        await goHome({ history: false })
         showToast('Could not load report triage. Open the team or report again to retry.')
         return false
       }
@@ -1093,7 +1096,8 @@ export function resetForClientModeTransition(options) {
 // always lands on the supported-formats welcome surface regardless of
 // what's open. Skips OPFS / remote / triage GC — the file the user
 // came from stays as-is for them to pick back up from the sidebar.
-export async function goHome() {
+export async function goHome({ history = true } = {}) {
+  if (history && isManagedUiMode() && managedHistory.active) return managedHistory.navigate({ view: 'home' })
   // Bump the load generation so any in-flight switchTo* / ingestReport
   // bails before pushing into the cleared state. Mirrors the guard in
   // `deleteCurrent` / `leaveWorkspace`.
@@ -1104,8 +1108,9 @@ export async function goHome() {
   // returning home would leave triage-sync echoing edits to a chain no
   // view consumes.
   closeSessionsExcept(new Set())
-  clearActiveView()
+  clearActiveView({ forgetLastView: !isManagedUiMode() })
   await renderSidebar()
+  return true
 }
 
 // Bundle counterpart of `deleteCurrent` — drives the sidebar's
@@ -1343,7 +1348,7 @@ async function ingestReport(name, content, gen = null, { renderView = true, mana
     // with analyzer-stamped `repo.github` values in the Repositories
     // view rather than splitting the same repo across two keys.
     const declaredRepo = reportRepoGithub(data)
-    const repoFallback = declaredRepo ?? loadRepoUrlFor(name)
+    const repoFallback = declaredRepo ?? (managedReportId == null ? loadRepoUrlFor(name) : '')
     // …and the `directory` beside that declaration, stamped alongside
     // it: where inside the repository the tree this report describes
     // sits, which the link builders splice in front of every path the

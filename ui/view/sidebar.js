@@ -1,9 +1,13 @@
 import { LitElement, html, render as litRender, nothing, unsafeCSS } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { LINKS_KIND, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, clientModeLabel, computeLinkHint, configureClientMode, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, ensureLinkedFindingsIndexed, getCount, getKind, getPackagesIndex, getRepositoriesIndex, getWorkspaceAppMetadata, getWorkspaceAppModeHint, hasStandaloneProbeHint, hydrateSecureStorage, isCombinedServerMode, isManagedUiMode, listBundles, listFiles, listWorkspaces, mergeSyncServerInfo, migrateLegacyFilenames, onVaultStateChange, onWorkspaceAppMetadataChanged, probeServerInfo, readCachedServerInfo, reloadTriageFromStorage, rememberStandaloneProbe, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, setLocalMode, state, syncObservedAfterHydrate, toggleClientMode, waitForServerInfo, writeCachedServerInfo } from '#client/index.js'
+import { LINKS_KIND, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, clientModeLabel, computeLinkHint, configureClientMode, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, ensureLinkedFindingsIndexed, getCount, getKind, getPackagesIndex, getRepositoriesIndex, getWorkspaceAppMetadata, getWorkspaceAppModeHint, hasStandaloneProbeHint, hydrateSecureStorage, isCombinedServerMode, isManagedUiMode, listBundles, listFiles, listWorkspaces, mergeSyncServerInfo, migrateLegacyFilenames, onVaultStateChange, onWorkspaceAppMetadataChanged, probeServerInfo, readCachedServerInfo, reloadTriageFromStorage, rememberStandaloneProbe, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, setLocalMode, state, syncObservedAfterHydrate, toggleClientMode, waitForServerInfo, writeCachedServerInfo } from '#client/index.js'
 import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, setSyncForceDisabled, triageSync } from './client-sync.js'
-import { clearPreviewRole, getPreviewRole, loadManagedBundle, login as managedLogin, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams } from './client-managed.js'
+import { clearPreviewRole, getPreviewRole, loadManagedBundle, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams, resetManagedAppState, setManagedAppSession } from './client-managed.js'
+import { showToast } from './toast.js'
+import { managedHistory } from './managed-history.js'
+import { cleanupGraph2 } from './graph/state.js'
+import { MANAGED_PAGES } from '../../common/managed/routes.js'
 import { ROLES, isRole } from '../../common/managed/roles.ts'
 import { initManagedTriagePush, resetManagedTriage } from './managed-triage.js'
 import sidebarCSS from './sidebar.css'
@@ -36,7 +40,7 @@ function setLandingModePending(pending) {
   if (pending) landing.dataset.serverModePending = 'true'
   else delete landing.dataset.serverModePending
 }
-import { deleteCurrent, deleteCurrentBundle, goHome, leaveWorkspace, persistLastBundle, resetForClientModeTransition, switchToFile, switchToManagedTeam, switchToWorkspace } from './ingest.js'
+import { beginViewNavigation, currentViewGeneration, deleteCurrent, deleteCurrentBundle, goHome, leaveWorkspace, persistLastBundle, resetForClientModeTransition, switchToFile, switchToManagedTeam, switchToWorkspace } from './ingest.js'
 import { reportWorkspaceFor } from './finding-link.js'
 import { exportWorkspace } from './workspace-export.js'
 import { maybePromptFirstUse } from './first-import-prompt.js'
@@ -1076,10 +1080,6 @@ async function onSidebarClick(e) {
     return
   }
   if (e.target.closest('#sync-status')) {
-    // Paused on a protocol mismatch: the badge is informational — a click
-    // must not churn the (locked) socket or persist toggles. (Clearing it
-    // needs an explicit migration; TODO.)
-    if (state.serverModeMismatch) return
     // Click toggles the persisted user-enabled flag rather than
     // the URL itself — disable then re-enable should resume against
     // the same endpoint, not lose a console-set URL. If no URL is
@@ -1114,12 +1114,6 @@ async function onSidebarClick(e) {
     // Logout row inside the account menu — clears the server session (with the
     // double-submit CSRF token) then reloads so the app re-probes logged-out.
     void managedLogout(state.managedSession?.csrfToken)
-    return
-  }
-  if (e.target.closest('#auth-status')) {
-    // Logged in → the button is a popovertarget that opens the account menu
-    // (the browser toggles it); logged out → it hands off to the OAuth login.
-    if (state.managedSession == null) managedLogin(state.managed?.loginPath)
     return
   }
   if (e.target.closest('#sidebar-toggle')) {
@@ -1210,23 +1204,22 @@ function syncButtonVisible() {
   return listWorkspaces().length > 0
 }
 
-// Managed-mode auth control — replaces the offline/online toggle. Shows
-// "Log in" (→ the server's OAuth entry) when logged out, "Log out (user)"
-// when a managed session exists. `state.managedSession` is populated by the
-// future managed session probe; until then it stays null (logged out).
+// Managed account control. The landing page owns sign-in; the sidebar only
+// shows the account menu once the managed session probe finds a session.
 function renderAuthStatus() {
   const authBtn = root?.querySelector('#auth-status')
   if (!authBtn) return
   const manageBtn = root?.querySelector('#manage-status')
-  authBtn.hidden = false
   const menu = root?.querySelector('#user-menu')
   const session = state.managedSession
+  hostEl?.toggleAttribute('data-authenticated', session != null)
+  authBtn.hidden = session == null
   if (session == null) {
     if (manageBtn) manageBtn.hidden = true
     authBtn.dataset.authed = '0'
     authBtn.removeAttribute('popovertarget')
-    authBtn.setAttribute('aria-label', 'Log in')
-    litRender(html`Log in`, authBtn)
+    authBtn.removeAttribute('aria-label')
+    litRender(nothing, authBtn)
     if (menu) litRender(nothing, menu)
     return
   }
@@ -1323,21 +1316,6 @@ function renderSyncStatus(status) {
   if (!btn) return
   renderBrandTag()
   applyCollapsibility()
-  // A refused cross-mode switch pins sync OFF and explains why — checked
-  // FIRST so no later render (visibility / status change) can clear the
-  // forced-off and silently reconnect to a wrong-protocol server.
-  if (state.serverModeMismatch) {
-    const mismatchAuthBtn = root?.querySelector('#auth-status')
-    if (mismatchAuthBtn) mismatchAuthBtn.hidden = true
-    triageSync.setForcedOff(true)
-    triageSync.setProtocolLocked(true)
-    btn.hidden = false
-    btn.dataset.status = 'paused'
-    btn.dataset.tooltip = 'This server speaks a different sync protocol than this app is set up for. Switching isn’t supported yet.'
-    const mismatchLabel = btn.querySelector('.sync-label')
-    if (mismatchLabel) mismatchLabel.textContent = 'Sync paused'
-    return
-  }
   if (state.serverMode === 'managed' && state.localMode) {
     btn.hidden = true
     triageSync.setForcedOff(true)
@@ -1784,13 +1762,19 @@ let forcedManagedReturn = null
 let deferredServerInfo = null
 let clientModeGeneration = 0
 let managedSessionRequest = 0
+let managedSessionRefresh = null
+let managedBase = null
 
-async function finishClientModeTransition({ forgetLastView = true } = {}) {
+async function finishClientModeTransition({ forgetLastView = true, resetNavigation = true } = {}) {
+  managedHistory.reset({ force: resetNavigation })
+  managedBase?.remove()
+  managedBase = null
   const generation = ++clientModeGeneration
+  resetManagedAppState()
   resetManagedTriage()
   setSyncForceDisabled(state.serverMode !== 'e2e')
   triageSync.setForcedOff(true)
-  triageSync.setProtocolLocked(state.serverMode !== 'e2e' || Boolean(forcedManagedReturn) || state.serverModeMismatch)
+  triageSync.setProtocolLocked(state.serverMode !== 'e2e' || Boolean(forcedManagedReturn))
   resetForClientModeTransition({ forgetLastView })
   // Only server annotations may enter a managed report. Local annotations are
   // restored from storage on the return trip, without saving this clear.
@@ -1836,12 +1820,10 @@ export async function forceManagedMode(role) {
     serverModeSelection: state.serverModeSelection,
     localMode: state.localMode,
     managed: state.managed,
-    serverModeMismatch: state.serverModeMismatch,
   }
   if (managed) managed.setPreviewRole(role)
   state.serverMode = 'managed'
   setLocalMode(false)
-  state.serverModeMismatch = false
   // Remove the previous account immediately, including when changing the fake
   // role on a real managed deployment. The refreshed session uses the preview.
   state.managedSession = null
@@ -1864,23 +1846,12 @@ async function restoreForcedManagedMode() {
 
 // Cache the deployment advertisement, then resolve the active protocol using
 // the memory-only selection. A combined mode explicitly permits both isolated
-// surfaces; unrelated single-protocol changes retain the mismatch guard.
+// surfaces. Single-mode deployments can also change freely: managed data is
+// server-owned, while existing local data remains available under local/e2e.
 function applyServerInfo(info, { runtime = true } = {}) {
   if (forcedManagedReturn) { deferredServerInfo = info; return }
   setLandingModePending(false)
-  const cached = readCachedServerInfo()
-  const cls = classifyServerMode(cached ? cached.mode : null, info.mode)
-  if (cls === 'mismatch') {
-    state.serverModeMismatch = true
-    // Fail-closed: pause THIS plane AND hard-lock the SHARED socket so the
-    // mode-unaware objstore plane can't keep it open to the wrong server.
-    triageSync.setForcedOff(true)
-    triageSync.setProtocolLocked(true)
-    console.warn(`sync: server is '${info.mode}' but this client is bound to '${cached?.mode}' — refusing to switch (migration not yet supported)`)
-    renderSyncStatus(triageSync.status)
-    return
-  }
-  state.serverModeMismatch = false
+  const hadConfiguration = readCachedServerInfo() != null
   const wasManaged = isManagedUiMode()
   const previousMode = state.serverMode
   // A late single-mode managed response preserves the offline local fallback;
@@ -1896,7 +1867,7 @@ function applyServerInfo(info, { runtime = true } = {}) {
   if (wasManaged !== isManagedUiMode()) {
     // renderSidebar waits for mode detection. Release startup before awaiting
     // the transition's final render, or a first managed visit deadlocks.
-    void finishClientModeTransition({ forgetLastView: false }).catch((err) => console.warn('client mode transition:', err))
+    void finishClientModeTransition({ forgetLastView: false, resetNavigation: hadConfiguration }).catch((err) => console.warn('client mode transition:', err))
     return
   }
   renderSyncStatus(triageSync.status)
@@ -1905,6 +1876,7 @@ function applyServerInfo(info, { runtime = true } = {}) {
     // but skipped remote-presence opens. Resume those alongside triage once
     // the protocol is known, without reloading or replacing the current view.
     void loadSync().then((sync) => {
+      if (!sync || state.serverMode !== 'e2e') return undefined
       for (const session of sync.triageSync.openSessions) sync.openWorkspace(session.workspaceId)
       return undefined
     }).catch((err) => console.warn('sync: resume failed', err))
@@ -1915,17 +1887,33 @@ function applyServerInfo(info, { runtime = true } = {}) {
 
 // Probe the managed server for the current session (lazy client/managed chunk)
 // and repaint the auth control. Only reached in managed mode.
-async function refreshManagedSession() {
+function refreshManagedSession() {
+  if (managedSessionRefresh?.generation === clientModeGeneration) return managedSessionRefresh.promise
+  const refresh = { generation: clientModeGeneration, promise: null }
+  managedSessionRefresh = refresh
+  refresh.promise = revalidateManagedSession().finally(() => {
+    if (managedSessionRefresh === refresh) managedSessionRefresh = null
+  })
+  return refresh.promise
+}
+
+async function revalidateManagedSession() {
   const generation = clientModeGeneration
   const request = ++managedSessionRequest
   const isCurrent = () => generation === clientModeGeneration && request === managedSessionRequest && isManagedUiMode()
   try {
-    const session = await managedProbeSession()
+    const previous = state.managedSession
+    const session = await managedProbeSession({ fallback: previous })
     if (!isCurrent()) return
     state.managedSession = session
-    if (state.managedSession?.role !== 'admin' && ADMIN_ONLY_PAGES.has(state.currentView)) {
-      state.currentView = 'manage'
-      render()
+    setManagedAppSession(session)
+    if (previous && previous.id !== session?.id) {
+      state.managedTeams = []
+      resetManagedTriage()
+      managedHistory.reset()
+      void goHome({ history: false })
+    } else if (state.currentView in ADMIN_PAGES && canAccessManagedPage(state.currentView)) {
+      render({ animate: false })
     }
     renderAuthStatus()
     // Claim the triage change-notifier for the server push — a no-op unless
@@ -1933,10 +1921,18 @@ async function refreshManagedSession() {
     initManagedTriagePush()
     // The user's teams (sidebar Teams section). probeTeams never throws; empty
     // when logged out. Repaint the sidebar so the section reflects the result.
-    const teams = session == null ? [] : await managedProbeTeams()
+    const teams = session == null ? [] : await managedProbeTeams({ fallback: state.managedTeams })
     if (!isCurrent()) return
     state.managedTeams = teams
     renderSidebar()
+    if (!document.querySelector('base')) {
+      managedBase = document.createElement('base')
+      managedBase.href = '/'
+      document.head.prepend(managedBase)
+    }
+    if (managedHistory.active && Object.hasOwn(MANAGED_PAGES, state.currentView) && !canAccessManagedPage(state.currentView)) {
+      await managedHistory.navigate({ view: canAccessManagedPage('manage') ? 'manage' : 'home' }, { replace: true })
+    } else await managedHistory.start(restoreManagedPage)
   } catch (err) {
     console.warn('managed: session probe failed:', err)
   }
@@ -1959,34 +1955,74 @@ const ADMIN_PAGES = {
   'manage-scans': 'admin: scans bundle load failed:',
 }
 const ADMIN_ONLY_PAGES = new Set(['admin-users', 'manage-repos', 'manage-teams'])
+let readyManagedView = null
+
+function canAccessManagedPage(view) {
+  const role = state.managedSession?.role
+  return ['admin', 'manage'].includes(role) && (!ADMIN_ONLY_PAGES.has(view) || role === 'admin')
+}
 
 // Navigate to one of the admin / manage pages: load the admin bundle
 // (which defines the element render() paints for `view`), then switch
 // the view + repaint.
+async function restoreManagedPage(route, isCurrent) {
+  const canReuseReport = readyManagedView === currentViewGeneration()
+    && state.currentManagedTeam === route.teamId && state.currentManagedReport === route.reportId
+  beginViewNavigation()
+  if (!isCurrent() || !isManagedUiMode()) return false
+  if (route.view === 'home') return goHome({ history: false })
+  if (Object.hasOwn(MANAGED_PAGES, route.view)) return navigateToAdminPage(route.view, { ...route, history: false })
+  const team = state.managedTeams.find(candidate => candidate.id === route.teamId)
+  if (!team) return false
+  // Findings/Files are two views of the same hydrated reports. Switching
+  // between them must preserve filters and avoid fetching/parsing again.
+  if (!canReuseReport && !(await switchToManagedTeam(team, route.reportId, { history: false }))) return false
+  if (!isCurrent()) return false
+  if (state.currentView !== route.view) cleanupGraph2()
+  state.currentView = route.view
+  document.body.classList.remove('report-fullscreen')
+  // Commit page restoration synchronously with its URL, including in a
+  // background PWA window where a view transition may wait for a paint.
+  render({ animate: false })
+  readyManagedView = currentViewGeneration()
+  renderSidebar()
+  document.querySelector('#main-content')?.scrollTo({ top: 0 })
+  return { ...route, view: state.currentView }
+}
+
 export async function navigateToAdminPage(view, options = {}) {
-  if (!(view in ADMIN_PAGES) || !isManagedUiMode()
-      || !['admin', 'manage'].includes(state.managedSession?.role)
-      || (ADMIN_ONLY_PAGES.has(view) && state.managedSession.role !== 'admin')) return
+  if (options.history !== false && isManagedUiMode()) {
+    if (!managedHistory.active) await refreshManagedSession()
+    if (managedHistory.active) return managedHistory.navigate({ view, ...(options.actor ? { actor: options.actor } : {}) })
+  }
+  if (!(view in ADMIN_PAGES) || !isManagedUiMode() || !canAccessManagedPage(view)) return false
+  const navigation = beginViewNavigation()
   const generation = clientModeGeneration
   try { await loadManagedBundle() }
-  catch (err) { console.warn(ADMIN_PAGES[view], err); return }
-  if (generation !== clientModeGeneration || !isManagedUiMode()) return
+  catch (err) { console.warn(ADMIN_PAGES[view], err); return false }
+  if (generation !== clientModeGeneration || navigation !== currentViewGeneration() || !isManagedUiMode() || !canAccessManagedPage(view)) return false
   state.currentView = view
-  render()
+  render({ animate: false })
   renderSidebar()
+  // Use the known role and CSRF token immediately; apply session changes when
+  // the background check finishes. Rapid navigation shares the pending check.
+  void refreshManagedSession()
   // Manage pages share the main scroll container. Start each destination at its
   // header instead of carrying a long list's scroll position into the next page.
   document.querySelector('#main-content')?.scrollTo({ top: 0 })
-  if (view === 'manage-history' && typeof options.actor === 'string' && options.actor.length > 0) {
+  if (view === 'manage-history') {
     document.dispatchEvent(new CustomEvent('managed-history-filter', {
-      detail: { actor: options.actor }, bubbles: true, composed: true,
+      detail: { actor: options.actor ?? '' }, bubbles: true, composed: true,
     }))
   }
+  return true
 }
 
 // Admin pages live in a separate lazy-loaded bundle, so the shared back button
 // and management hub communicate through a composed event instead of importing
 // the sidebar module into that bundle (which would duplicate application state).
+document.addEventListener('managed-notice', event => showToast(event.detail.message, { kind: 'error' }))
+
 document.addEventListener('managed-admin-navigate', (event) => {
   const view = event.detail?.view
   const actor = event.detail?.actor
@@ -1996,7 +2032,7 @@ document.addEventListener('managed-admin-navigate', (event) => {
 // Cold-start mode detection. With nothing cached we don't yet know the server's
 // protocol — and a managed server has no WS plane whose connect frame would
 // tell us — so GET /api/config to learn it up front and feed the same
-// applyServerInfo path. A cached binding releases startup immediately, while
+// applyServerInfo path. A cached hint releases startup immediately, while
 // the HTTP probe still checks it in the background (managed has no WS frame).
 let clientModeReady
 // Wait only until startup selects a usable surface: a confirmed server mode,
@@ -2011,8 +2047,8 @@ async function detectServerModeIfUnknown() {
     // Another tab may have confirmed the mode since state.ts was evaluated.
     configureClientMode(cached.mode)
     state.managed = cached.managed
-    // The cache binds the protocol, but says nothing about today's server.
-    // Failure/404 keeps that binding and never delays or disables local access.
+    // The cache is a startup hint, not a permanent protocol binding. Today's
+    // advertisement replaces it; a failed probe still permits local access.
     void probeServerInfo().then((info) => {
       if (info && info !== 'standalone') return applyServerInfo(info)
       return undefined
@@ -2112,10 +2148,10 @@ function mount(host) {
   renderSyncStatus(triageSync.status)
   if (!readCachedServerInfo()) setLandingModePending(!hasStandaloneProbeHint())
   renderSidebar()
-  // Learn the server's protocol from its `server-info` connect frame (refuses
-  // a cross-mode switch); state.serverMode is meanwhile seeded from the
-  // localStorage cache (see state.ts) so the first paint is mode-correct.
+  // An active e2e connection can refresh its advertisement. Ignore frames
+  // arriving after discovery switched to managed and began closing the socket.
   triageSync.onServerInfo((info) => {
+    if (state.serverMode !== 'e2e') return
     const cached = readCachedServerInfo()
     const configured = cached && { ...cached, ...(state.deepviewScanServer ? { deepviewScanServer: state.deepviewScanServer } : {}) }
     return applyServerInfo(mergeSyncServerInfo(configured, info))

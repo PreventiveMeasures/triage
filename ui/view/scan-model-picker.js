@@ -7,7 +7,7 @@ const CHEVRON = html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" 
 
 class ScanModelPicker extends LitElement {
   static properties = {
-    loadModels: { attribute: false },
+    loadModels: { attribute: false }, pending: { type: Boolean },
     value: { attribute: false }, effort: { attribute: false },
     hasExtra: { type: Boolean, attribute: 'has-extra' },
     _models: { state: true }, _error: { state: true }, _menuColumns: { state: true },
@@ -18,7 +18,9 @@ class ScanModelPicker extends LitElement {
     * { box-sizing: border-box; }
     .layout { display: grid; grid-template-columns: minmax(13rem, 1fr) minmax(14rem, 1fr); gap: 1.25rem; align-items: start; }
     .layout.with-extra { grid-template-columns: minmax(13rem, .9fr) minmax(14rem, 1.2fr) minmax(14rem, auto); }
-    .field { min-width: 0; }
+    .field { min-width: 0; min-height: 4.9rem; }
+    .model-placeholder { height: 3.25rem; display: flex; align-items: center; padding: .5rem .6rem; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); background: var(--bg); font-size: .75rem; }
+    .effort-placeholder { height: .3rem; margin: 1rem .6rem; border-radius: 999px; background: var(--surface-active); }
     .label { display: flex; justify-content: space-between; align-items: center; margin-bottom: .4rem; color: var(--muted); font-size: .72rem; }
     output { color: var(--text); font-size: .72rem; font-weight: 500; }
     details { position: relative; }
@@ -106,6 +108,7 @@ class ScanModelPicker extends LitElement {
   constructor() {
     super()
     this.loadModels = fetchScanModels
+    this.pending = false
     this.value = null
     this.effort = null
     this.hasExtra = false
@@ -126,7 +129,7 @@ class ScanModelPicker extends LitElement {
   }
 
   updated(changed) {
-    if (changed.has('loadModels') && this.isConnected) void this._load()
+    if ((changed.has('loadModels') || changed.has('pending')) && this.isConnected) void this._load()
     if (changed.has('_models') && this.renderRoot.querySelector('details')?.open) {
       this._resetMenuPosition()
       void this._positionMenu()
@@ -143,18 +146,23 @@ class ScanModelPicker extends LitElement {
 
   async _load() {
     this._controller?.abort()
+    if (this.pending) return
     const controller = new AbortController()
     this._controller = controller
     this._error = null
-    try {
-      const data = await this.loadModels(controller.signal)
+    let received = false
+    const apply = data => {
       if (controller.signal.aborted) return
+      received = true
       this._models = data.models
       const selected = data.models.find((model) => model.id === this.value)
       if (!selected) this._select(data.defaultModel)
       else if (!selected.efforts.includes(this.effort)) this._setEffort(defaultEffort(selected))
+    }
+    try {
+      apply(await this.loadModels(controller.signal, apply))
     } catch (err) {
-      if (!controller.signal.aborted) this._error = String(err?.message ?? err)
+      if (!controller.signal.aborted && !received) this._error = String(err?.message ?? err)
     }
   }
 
@@ -250,20 +258,25 @@ class ScanModelPicker extends LitElement {
   }
 
   render() {
-    if (this._error) return html`<p class="message error" role="alert">Couldn’t load models: ${this._error}<button class="retry" @click=${() => void this._load()}>Retry</button></p>`
     const selected = this._models.find((model) => model.id === this.value)
-    if (!selected) return html`<p class="message" role="status">Loading models…</p>`
+    if (this.pending || !selected) {
+      return html`<div class=${`layout ${this.hasExtra ? 'with-extra' : ''}`} aria-busy="true">
+      <div class="field"><span class="label">Model</span><div class="model-placeholder" role=${this._error ? 'alert' : 'status'}>${this._error ? html`Couldn’t load models. <button type="button" class="retry" @click=${() => void this._load()}>Retry</button>` : 'Loading models…'}</div></div>
+      <div class="field" aria-hidden="true"><span class="label">Effort</span><div class="effort-placeholder"></div></div>
+      ${this.hasExtra ? html`<div class="extra"><slot name="effort-extra"></slot></div>` : nothing}
+    </div>`
+    }
     const selectedRow = this._selectedRow
     const developer = modelDeveloper(selected.id)
     const columns = modelColumns(modelSections(this._models), this._menuColumns)
-    return html`<div class=${`layout ${this.hasExtra ? 'with-extra' : ''}`}>
+    return html`${this._error ? html`<p class="message error" role="alert">Couldn’t refresh models: ${this._error}<button class="retry" @click=${() => void this._load()}>Retry</button></p>` : nothing}<div class=${`layout ${this.hasExtra ? 'with-extra' : ''}`}>
       <div class="field"><span class="label" id="model-label">Model</span>
         <div class="model-control"><details @toggle=${this._toggleMenu} @keydown=${(event) => { if (event.key === 'Escape') { this._close(); this.renderRoot.querySelector('summary')?.focus() } }}>
           <summary aria-labelledby="model-label selected-model" @click=${this._resetMenuPosition}><span class=${`icon ${developer.key}`} aria-hidden="true">${providerIcon(developer.key)}</span><span class="selected-copy"><strong id="selected-model">${modelName(selectedRow.id)}</strong><small>${developer.name}</small></span>${selectedRow.pro ? html`<span class="pro-space" aria-hidden="true"></span>` : nothing}${CHEVRON}</summary>
           <div class="menu"><div class="groups">${columns.map(column => html`<div class="provider-column">${column.map(section => this._modelSection(section))}</div>`)}</div></div>
         </details>${selectedRow.pro ? html`<button type="button" class="pro-toggle" role="switch" aria-label="Pro model" aria-checked=${selected.id === selectedRow.pro.id} @click=${this._togglePro}><span>Pro</span><span class="pro-track" aria-hidden="true"></span></button>` : nothing}</div>
       </div>
-      ${selected.efforts.length > 0 ? this._effortSlider(selected.efforts) : nothing}
+      ${selected.efforts.length > 0 ? this._effortSlider(selected.efforts) : html`<div class="field" aria-hidden="true"></div>`}
       ${this.hasExtra ? html`<div class="extra"><slot name="effort-extra"></slot></div>` : nothing}
     </div>`
   }

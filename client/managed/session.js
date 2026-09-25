@@ -5,25 +5,35 @@ import { managedFetch } from './request.js'
 // server (server-managed/): probe the current session, hand off to the GitHub
 // OAuth login, and log out. Future managed-client features can grow here.
 
-// One same-origin GET → parsed JSON, or null on any failure (network, non-2xx,
-// or a malformed body). The single place the probes' fetch policy lives.
-async function getJson(url) {
+// Same-origin JSON, clearing revoked access and retaining an optional cached
+// value when a background request fails.
+async function getJson(url, fallback = null) {
   let res
   try {
     res = await managedFetch(url, { credentials: 'same-origin', headers: { accept: 'application/json' } })
-  } catch { return null }
-  if (!res.ok) return null
-  try { return await res.json() } catch { return null }
+  } catch { return fallback }
+  if (res.status === 401 || res.status === 403) return null
+  if (!res.ok) return fallback
+  try { return await res.json() } catch { return fallback }
 }
 
 // GET /api/auth/session → the signed-in user + CSRF token, or null when the
-// request is unauthenticated / fails. The returned shape is what the sidebar
+// request is unauthenticated. A known session can survive transient failures
+// during background revalidation. The returned shape is what the sidebar
 // keeps on `state.managedSession` (renderAuthStatus reads `.login`; logout
 // reads `.csrfToken`).
-export async function probeSession() {
-  const body = await getJson('/api/auth/session')
+export async function probeSession({ fallback = null } = {}) {
+  let body
+  try {
+    const res = await managedFetch('/api/auth/session', { credentials: 'same-origin', headers: { accept: 'application/json' } })
+    if (res.status === 401 || res.status === 403) return null
+    if (!res.ok) return fallback
+    body = await res.json()
+  } catch { return fallback }
   const user = body?.user
-  if (user == null || typeof user.login !== 'string') return null
+  if (user === null) return null
+  if (user === undefined) return fallback
+  if (typeof user.login !== 'string') return fallback
   return {
     id: user.id,
     login: user.login,
@@ -37,13 +47,14 @@ export async function probeSession() {
 // GET /api/teams → the signed-in user's teams, each with the reports and bundles
 // attached to the team's repos ([{ id, name, reports: [{ id, filename }],
 // bundles: [{ id, filename, repoFullName }] }]), or [] when
-// unauthenticated / on any failure. Kept on `state.managedTeams` and shown in the
+// unauthenticated. A failed background refresh keeps the provided fallback.
+// Kept on `state.managedTeams` and shown in the
 // sidebar's per-user Teams section. Never throws, so a probe failure can't break
 // the session refresh.
-export async function probeTeams() {
-  const body = await getJson('/api/teams')
+export async function probeTeams({ fallback = [] } = {}) {
+  const body = await getJson('/api/teams', { teams: fallback })
   const teams = body?.teams
-  if (!Array.isArray(teams)) return []
+  if (!Array.isArray(teams)) return body == null ? [] : fallback
   return teams
     .filter((t) => t != null && typeof t.id === 'string' && typeof t.name === 'string')
     .map((t) => ({

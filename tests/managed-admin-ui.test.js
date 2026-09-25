@@ -3,6 +3,14 @@ import { setImmediate } from 'node:timers/promises'
 import { test } from 'node:test'
 import './_polyfills.js'
 import '../ui/client-managed.js'
+import { ManagedPage } from '../ui/managed/page.js'
+import { ManagedAppState } from '../ui/managed/state.js'
+
+function createPage(Page, appState = new ManagedAppState()) {
+  const page = new Page()
+  page.appState = appState
+  return page
+}
 
 // Lit's Node implementation lets us exercise the actual async controllers
 // without a document. Browser checks cover the rendered controls separately.
@@ -12,7 +20,7 @@ const repo = { id: 7, fullName: 'owner/repo' }
 const impact = { repoId: 7, reports: [{ id: 'r', filename: 'report.json' }], bundles: [], triageCount: 0 }
 
 test('repository removal requires valid impact and confirmation, including after a failed load', async (t) => {
-  const page = new Repositories()
+  const page = createPage(Repositories)
   let response = new Response('unavailable', { status: 503 })
   const fetch = t.mock.method(globalThis, 'fetch', () => Promise.resolve(response))
   page._openDetail(repo)
@@ -45,14 +53,14 @@ test('repository removal requires valid impact and confirmation, including after
 })
 
 test('late report preview success and failure cannot overwrite a newer request, even for the same report', async (t) => {
-  const page = new Reports()
+  const page = createPage(Reports)
   const pending = []
   // Ignore abort deliberately: request identity must also guard body reads
   // and transports that finish after cancellation.
   t.mock.method(globalThis, 'fetch', (_url, { signal }) => new Promise((resolve, reject) => { pending.push({ resolve, reject, signal }) }))
   const a = page._togglePreview({ id: 'a' })
   const b = page._togglePreview({ id: 'b' })
-  assert.equal(pending[0].signal.aborted, true)
+  assert.equal(pending[0].signal.aborted, false, 'navigation keeps shared reads alive')
   pending[1].resolve(new Response('Report B'))
   await b
   pending[0].resolve(new Response('Report A'))
@@ -62,6 +70,7 @@ test('late report preview success and failure cannot overwrite a newer request, 
 
   const oldA = page._togglePreview({ id: 'a' })
   await page._togglePreview({ id: 'a' }) // Close A while it is pending.
+  page.appState.invalidate(['report-preview:a'])
   const newA = page._togglePreview({ id: 'a' })
   pending[2].reject(new Error('Late failure from old A'))
   await oldA
@@ -76,4 +85,178 @@ test('late report preview success and failure cannot overwrite a newer request, 
   await detached
   assert.equal(page._preview, null)
   assert.equal(page._previewText, '')
+})
+
+const adminSession = { id: 'me', login: 'admin', role: 'admin', csrfToken: 'current-token' }
+
+for (const [tag, field, path, payload] of [
+  ['users', '_users', '/api/admin/users', { users: [{ id: 'me', login: 'admin' }] }],
+  ['reports', '_data', '/api/admin/reports', { reports: [{ id: 'r' }], repos: [] }],
+  ['bundles', '_data', '/api/admin/bundles', { bundles: [{ id: 'b' }], repos: [] }],
+  ['teams', '_data', '/api/admin/teams', { teams: [{ id: 't' }] }],
+  ['repos', '_data', '/api/admin/repositories', { repositories: [repo], total: 1 }],
+  ['history', '_history', '/api/admin/history', { history: [{ id: 'h', kind: 'triage', reportId: 'r' }] }],
+]) {
+  test(`${tag} retains loaded content on refresh and failure without probing the session`, async (t) => {
+    const Page = customElements.get(`managed-admin-${tag}`)
+    const notices = []
+    const appState = new ManagedAppState(message => notices.push(message))
+    const page = createPage(Page, appState)
+    page.session = adminSession
+    let complete
+    const network = t.mock.method(globalThis, 'fetch', (url) => {
+      assert.notEqual(url, '/api/auth/session')
+      if (url.startsWith(path)) return new Promise(resolve => { complete = resolve })
+      return Promise.resolve(Response.json({ teams: [] }))
+    })
+    const first = page._load()
+    assert.equal(page._loading, true)
+    assert.equal(page[field], null)
+    complete(Response.json(payload))
+    await first
+    const loaded = page[field]
+    assert.ok(loaded)
+    ManagedPage.prototype.disconnectedCallback.call(page)
+    const next = createPage(Page, appState)
+    next.session = adminSession
+    const refresh = next._load()
+    assert.equal(next._loading, true)
+    assert.equal(next[field], loaded, 'loaded content remains mounted during revalidation')
+    complete(new Response('Unavailable', { status: 503 }))
+    await refresh
+    assert.equal(next[field], loaded, 'a failed refresh keeps the last successful result')
+    assert.equal(next._error, null, 'background failures do not insert an error banner')
+    assert.match(notices[0], /503/u)
+    assert.equal(notices.length, 1)
+    assert.equal(next._loading, false)
+    assert.ok(network.mock.callCount() >= 2)
+  })
+}
+
+test('navigation reuses an in-flight collection request without updating detached pages', async (t) => {
+  const appState = new ManagedAppState()
+  const firstPage = createPage(Reports, appState)
+  let resolve
+  let signal
+  const fetch = t.mock.method(globalThis, 'fetch', (_url, options) => {
+    signal = options.signal
+    return new Promise(done => { resolve = done })
+  })
+  const first = firstPage._load()
+  firstPage.disconnectedCallback()
+  assert.equal(signal.aborted, false)
+  const secondPage = createPage(Reports, appState)
+  const second = secondPage._load()
+  assert.equal(fetch.mock.callCount(), 1)
+  resolve(Response.json({ reports: [{ id: 'current' }] }))
+  await Promise.all([first, second])
+  assert.equal(firstPage._data, null)
+  assert.equal(secondPage._data.reports[0].id, 'current')
+})
+
+test('refreshing reports preserves the open preview until that report is removed', async (t) => {
+  const page = createPage(Reports)
+  page._preview = 'r'
+  page._previewText = 'Existing preview'
+  let payload = { reports: [{ id: 'r' }] }
+  t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json(payload)))
+  await page._load()
+  assert.equal(page._preview, 'r')
+  assert.equal(page._previewText, 'Existing preview')
+  payload = { reports: [] }
+  await page._load()
+  assert.equal(page._preview, null)
+})
+
+test('a failed bundle mutation retains the collection and its error after refresh', async (t) => {
+  const Bundles = customElements.get('managed-admin-bundles')
+  const page = createPage(Bundles)
+  page.session = adminSession
+  const bundle = { id: 'b', repoId: null }
+  page._data = { bundles: [bundle], repos: [] }
+  let token = 'current-token'
+  let status = 403
+  t.mock.method(globalThis, 'fetch', (_url, options) => {
+    if (options.method === 'POST') {
+      assert.equal(options.headers['x-csrf-token'], token)
+      return Promise.resolve(new Response('', { status }))
+    }
+    return Promise.resolve(Response.json({ bundles: [bundle], repos: [] }))
+  })
+  await page._setRepo(bundle, 7)
+  assert.match(page._error, /Couldn't change repo: HTTP 403/u)
+  assert.deepEqual(page._data.bundles, [bundle])
+  status = 200
+  token = 'rotated-token'
+  page.session = { ...adminSession, csrfToken: token }
+  await page._setRepo(bundle, 7)
+  assert.equal(page._error, null, 'a successful retry clears the previous action error')
+})
+
+test('cached repository details remain visible but cannot authorize removal after a failed refresh', async (t) => {
+  const notices = []
+  const appState = new ManagedAppState(message => notices.push(message))
+  await appState.load('repo-impact:7', 'repository data', () => impact)
+  const page = createPage(Repositories, appState)
+  let complete
+  t.mock.method(globalThis, 'fetch', () => new Promise(resolve => { complete = resolve }))
+  page._openDetail(repo)
+  assert.equal(page._impact, impact)
+  page._acknowledge = true
+  page._confirmName = repo.fullName
+  assert.equal(page._canRemove(repo), false)
+  complete(new Response('', { status: 503 }))
+  await setImmediate()
+  assert.equal(page._impact, impact)
+  assert.equal(page._impactLoading, false)
+  assert.equal(page._actionError, null)
+  assert.equal(page._canRemove(repo), false)
+  assert.match(notices[0], /repository data: HTTP 503/u)
+})
+
+test('managed scan model controls reuse the cached catalogue and share a failing background refresh', async (t) => {
+  const appState = new ManagedAppState()
+  const catalogue = { models: [{ id: 'test-model', efforts: ['high'] }], defaultModel: 'test-model' }
+  await appState.load('models', 'models', () => catalogue)
+  const scan = createPage(customElements.get('managed-admin-scans'), appState)
+  let complete
+  const fetch = t.mock.method(globalThis, 'fetch', () => new Promise(resolve => { complete = resolve }))
+  const Picker = customElements.get('scan-model-picker')
+  const Regimes = customElements.get('scan-regime-editor')
+  const picker = new Picker()
+  const regimes = new Regimes()
+  picker.loadModels = regimes.loadModels = scan._loadModels
+  const loads = [picker._load(), regimes._load()]
+  assert.deepEqual(picker._models, catalogue.models)
+  assert.equal(picker.value, 'test-model')
+  assert.equal(regimes._loading, false)
+  assert.equal(regimes._rows[0].model, 'test-model')
+  assert.equal(fetch.mock.callCount(), 1)
+  complete(new Response('', { status: 503 }))
+  await Promise.all(loads)
+  assert.equal(picker._error, null)
+  assert.equal(regimes._error, null)
+  assert.equal(regimes._rows[0].model, 'test-model')
+})
+
+test('managed scan report inputs remain usable while cached sources refresh or fail', async (t) => {
+  const appState = new ManagedAppState()
+  const sources = { merge: { bundles: [{ id: 'b', filename: 'src.zip' }], results: [{ id: 'r', bundleId: 'b' }] }, link: { repositories: [], reports: [] } }
+  await appState.load('scan-sources', 'report inputs', () => sources)
+  const scan = createPage(customElements.get('managed-admin-scans'), appState)
+  const Inputs = customElements.get('scan-report-inputs')
+  const inputs = new Inputs()
+  inputs.mode = 'merge'
+  inputs.loadSources = scan._loadReportSources
+  let complete
+  t.mock.method(globalThis, 'fetch', url => url === '/api/admin/reports'
+    ? new Promise(resolve => { complete = resolve }) : Promise.resolve(Response.json({})))
+  const loading = inputs._load()
+  assert.equal(inputs._loading, false)
+  inputs._selectSource('b')
+  assert.deepEqual(inputs.selection.inputs.map(input => input.id), ['r'])
+  complete(new Response('', { status: 503 }))
+  await loading
+  assert.equal(inputs._error, null)
+  assert.deepEqual(inputs.selection.inputs.map(input => input.id), ['r'])
 })

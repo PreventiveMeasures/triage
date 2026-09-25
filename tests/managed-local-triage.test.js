@@ -1,7 +1,8 @@
 import './_polyfills.js'
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { state } from '../client/state.ts'
+import { loadRepoUrlFor, propagateRepoUrlChangesFromStorage, saveRepoUrlFor, state } from '../client/state.ts'
+import { drainWriteChain } from '../client/secure-storage.js'
 import { reloadTriageFromStorage, saveTriage, setManagedTriageChangeNotifier, setTriageChangeNotifier } from '../client/triage.js'
 
 test('managed edits never persist over local triage and do not replace its sync notifier', async (t) => {
@@ -80,4 +81,26 @@ test('local triage waits for a local consumer and cannot hydrate a managed surfa
   state.localMode = true
   await triage.reloadTriageFromStorage()
   assert.equal(state.triage.get('local-only').color, 'red', 'offline fallback restores annotations without a confirmed server protocol')
+})
+
+test('managed repository edits stay in memory and preserve a same-name local report', async (t) => {
+  const previous = { serverMode: state.serverMode, localMode: state.localMode, currentFile: state.currentFile, repoUrl: state.repoUrl, repoEditing: state.repoEditing }
+  t.after(() => Object.assign(state, previous))
+  state.serverMode = 'e2e'
+  state.localMode = false
+  const filename = 'managed-isolation-report.json'
+  saveRepoUrlFor(filename, 'local/keep-me')
+  await drainWriteChain()
+  const writes = t.mock.method(localStorage, 'setItem')
+  state.serverMode = 'managed'
+  state.currentFile = filename
+  state.repoUrl = 'managed/memory-only'
+  state.repoEditing = false
+  saveRepoUrlFor(filename, state.repoUrl)
+  await drainWriteChain()
+  propagateRepoUrlChangesFromStorage()
+  assert.equal(state.repoUrl, 'managed/memory-only', 'local metadata cannot overwrite the managed view')
+  assert.equal(writes.mock.callCount(), 0, 'managed report metadata is never persisted')
+  state.localMode = true
+  assert.equal(loadRepoUrlFor(filename), 'local/keep-me', 'switching to local retains existing data')
 })

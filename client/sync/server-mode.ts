@@ -6,15 +6,15 @@
 import { CONFIG_PATH, type ManagedServerInfo, type ServerMode as ServerProtocol, type ServerInfo as SingleServerInfo } from '../../common/server-info.ts'
 import { normalizeScanServer } from '../../common/scan-server.ts'
 export type { ManagedServerInfo, ServerProtocol }
-// Accept future combined advertisements without changing what servers emit.
+// Deployment modes are distinct from the active protocol of one connection.
 export type ServerMode = ServerProtocol | 'managed+e2e' | 'e2e+managed'
 export type ServerInfo = Omit<SingleServerInfo, 'mode'> & { mode: ServerMode }
 export { CONFIG_PATH }
 
 // localStorage slot holding the last-confirmed deployment configuration.
 export const SERVER_MODE_KEY = 'deepview.sync.serverInfo'
-// A local-startup hint only: unlike ServerInfo it never binds a protocol or
-// skips the next probe, so a static deployment can gain a backend later.
+// A local-startup hint only. Neither cache skips the next probe, so a static
+// deployment can gain a backend and an existing backend can change modes.
 const STANDALONE_PROBE_KEY = 'deepview.sync.standaloneProbe'
 
 export function hasStandaloneProbeHint(): boolean {
@@ -99,14 +99,4 @@ export function writeCachedServerInfo(info: ServerInfo): void {
     localStorage.setItem(SERVER_MODE_KEY, JSON.stringify({ mode: info.mode, managed: info.managed }))
     localStorage.removeItem(STANDALONE_PROBE_KEY)
   } catch {}
-}
-
-// Compare a freshly-detected mode against the cached one:
-//   'first'    — nothing cached; accept + cache.
-//   'match'    — same protocol or an explicit combined advertisement.
-//   'mismatch' — unrelated single-protocol deployments; refuse the change.
-export type ModeClassification = 'first' | 'match' | 'mismatch'
-export function classifyServerMode(cachedMode: ServerMode | null, detectedMode: ServerMode): ModeClassification {
-  if (cachedMode == null) return 'first'
-  return cachedMode === detectedMode || isCombinedServerMode(cachedMode) || isCombinedServerMode(detectedMode) ? 'match' : 'mismatch'
 }

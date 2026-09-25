@@ -72,6 +72,43 @@
   flex-direction: column;
 }
 
+#drop-zone[data-server-mode='managed'] > .managed-landing:has(.managed-login) {
+  max-width: 360px;
+  margin-block: auto;
+}
+
+.managed-login {
+  padding-block: 2rem;
+
+  & h1 {
+    color: var(--text);
+    font-size: 1.75rem; font-weight: 600; line-height: 1.2; letter-spacing: -.035em;
+    text-wrap: balance;
+  }
+
+  & p {
+    margin-top: .75rem;
+    color: var(--muted);
+    font-size: .9375rem; line-height: 1.6;
+    text-wrap: pretty;
+  }
+}
+
+.managed-login-button {
+  display: flex; align-items: center; justify-content: center; gap: .625rem;
+  width: 100%; min-height: 44px;
+  margin-top: 1.75rem; padding: .75rem 1rem;
+  border: 1px solid transparent; border-radius: 7px;
+  background: var(--text); color: var(--bg);
+  font: inherit; font-size: .875rem; font-weight: 600; line-height: 1.4;
+  cursor: default;
+  transition: background .12s;
+
+  & svg { flex-shrink: 0; }
+  &:hover { background: color-mix(in srgb, var(--text) 88%, var(--bg)); }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+}
+
 .managed-landing-hero {
   margin-bottom: 2rem;
 

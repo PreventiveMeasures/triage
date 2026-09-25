@@ -6,8 +6,8 @@
 // Delivered to the client as the first `server-info` frame on a sync
 // connection (the WS plane and the SSE+POST fallback share one send path).
 // A client uses it to detect whether a deployment speaks the end-to-end
-// (`e2e`, zero-knowledge) protocol or the trusted `managed` protocol, cache
-// the answer, and refuse a cross-mode switch.
+// (`e2e`, zero-knowledge) protocol, the trusted `managed` protocol, or both.
+// Combined discovery modes put the default protocol first.
 
 export type ServerMode = 'e2e' | 'managed'
 
@@ -18,9 +18,9 @@ export interface ManagedServerInfo {
 }
 
 // The `server-info` frame payload (the `type` discriminant is added at the
-// send site). `managed` is null unless `mode === 'managed'`.
+// send site). `managed` is null on e2e-only deployments.
 export interface ServerInfo {
-  mode: ServerMode
+  mode: ServerMode | 'managed+e2e' | 'e2e+managed'
   managed: ManagedServerInfo | null
   deepviewScanServer?: string
 }

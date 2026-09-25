@@ -1658,16 +1658,18 @@ function mountBundleSourceOverlay() {
 // animated (`prev` is null on first call).
 let prevPaintedView = null
 
-export function render() {
+export function render({ animate = true } = {}) {
   const prev = prevPaintedView
   prevPaintedView = state.currentView
   const viewChanged = prev !== null && prev !== state.currentView
   if (
-    viewChanged &&
+    animate && viewChanged &&
     typeof document.startViewTransition === 'function' &&
     !matchMedia('(prefers-reduced-motion: reduce)').matches
   ) {
-    document.startViewTransition(() => renderImpl())
+    const transition = document.startViewTransition(() => renderImpl())
+    // A newer navigation can skip the animation while its DOM update still runs.
+    transition.ready.catch(() => {})
     return
   }
   renderImpl()
@@ -1955,9 +1957,12 @@ function renderImpl() {
   const adminView = ADMIN_VIEWS[state.currentView]
   if (adminView) {
     const slot = ensureReportSlot(adminView.slot)
+    const previous = slot?.firstElementChild?.session
+    if (previous?.id !== state.managedSession?.id || previous?.role !== state.managedSession?.role) slot?.replaceChildren()
     if (slot && !slot.firstElementChild) {
       const el = document.createElement(adminView.tag)
       el.localImportSource = createManagedLocalImportSource()
+      el.session = state.managedSession
       slot.append(el)
       // The admin bundle is its own esbuild entry (no code splitting),
       // so it can't import view/tooltip.js without duplicating the
@@ -1974,6 +1979,7 @@ function renderImpl() {
         })
       })().catch(() => {})
     }
+    if (slot?.firstElementChild) slot.firstElementChild.session = state.managedSession
     report.classList.add('active')
     dropZone.classList.add('hidden')
     document.title = adminView.title

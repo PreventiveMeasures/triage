@@ -5,6 +5,7 @@ import './_polyfills.js'
 import { createManagedLocalImportSource } from '../client/managed/local-import.js'
 import { LINKS_KIND } from '../client/linked-findings.js'
 import { ManagedLocalImport } from '../ui/managed/local-import.js'
+import { ManagedAppState } from '../ui/managed/state.js'
 import '../ui/client-managed.js'
 
 function fixture({ encrypted = false, unlocked = false } = {}) {
@@ -536,7 +537,10 @@ test('both managed pages send selected local files through their authenticated u
     const f = fixture()
     const Page = customElements.get(`managed-admin-${kind}s`)
     const page = new Page()
-    page._csrf = 'test-csrf'
+    page.session = { id: 1, role: 'admin', csrfToken: 'test-csrf' }
+    page.appState = new ManagedAppState()
+    const affected = ['history', 'scan-sources', 'repo-impact:101', ...(kind === 'bundle' ? ['reports'] : [])]
+    for (const key of [...affected, 'users']) await page.appState.load(key, key, () => 'cached')
     page._repoId = 101
     page.localImportSource = f.source
     const posts = []
@@ -565,6 +569,8 @@ test('both managed pages send selected local files through their authenticated u
     assert.equal(options.headers[`x-${kind}-filename`], kind === 'report' ? 'report.md' : 'source.map')
     assert.equal(options.body instanceof File, true)
     assert.equal(page._busy, false)
+    for (const key of affected) assert.equal(page.appState.read(key), undefined, `local imports invalidate ${key}`)
+    assert.equal(page.appState.read('users'), 'cached', 'unrelated managed state stays cached')
     ui.hostDisconnected()
     fetch.mock.restore()
   }
@@ -575,7 +581,8 @@ test('a local import completes independently of a later dropped file', async (t)
     const f = fixture()
     const Page = customElements.get(`managed-admin-${kind}s`)
     const page = new Page()
-    page._csrf = 'test-csrf'
+    page.session = { id: 1, role: 'admin', csrfToken: 'test-csrf' }
+    page.appState = new ManagedAppState()
     page.localImportSource = f.source
     const local = Promise.withResolvers()
     const dropped = Promise.withResolvers()

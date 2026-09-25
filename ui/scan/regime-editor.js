@@ -70,15 +70,21 @@ export class RegimeEditor extends LitElement {
     this._loading = true
     this._error = null
     this._notify()
-    try {
-      const catalogue = await this.loadModels(controller.signal)
+    let received = false
+    const apply = catalogue => {
       if (controller.signal.aborted) return
+      received = true
       this._catalogue = catalogue
       // One catalogue request per editor, shared by every row's model picker.
       this._sharedModels = () => Promise.resolve(catalogue)
       this._setRows(this._rows.length > 0 ? this._rows : this.value)
+      this._loading = false
+      this._notify()
+    }
+    try {
+      apply(await this.loadModels(controller.signal, apply))
     } catch (err) {
-      if (!controller.signal.aborted) this._error = String(err?.message ?? err)
+      if (!controller.signal.aborted && !received) this._error = String(err?.message ?? err)
     } finally {
       if (!controller.signal.aborted) { this._loading = false; this._notify() }
     }
@@ -103,16 +109,18 @@ export class RegimeEditor extends LitElement {
     this._notify()
   }
   render() {
+    const pending = this._loading && this._rows.length === 0
+    const rows = pending ? (this.value.length > 0 ? this.value : [{ mode: 'generic', isolate: false }]).map((row, index) => ({ ...row, id: `pending-${index}` })) : this._rows
     const duplicates = duplicateRegimes(this._rows)
     return html`<section aria-label="Scan regimes" aria-busy=${this._loading}>
-      <div class="heading"><h2>Scan regimes</h2><span>${this._rows.length} ${this._rows.length === 1 ? 'regime' : 'regimes'}</span></div>
-      ${this._error ? html`<p class="message" role="alert">Couldn’t load models: ${this._error} <button type="button" @click=${() => void this._load()}>Retry</button></p>`
-        : this._loading && this._rows.length === 0 ? html`<p class="message" role="status">Loading models…</p>`
-          : html`${repeat(this._rows, row => row.id, (row, index) => this._row(row, index, duplicates[index]))}
-            <div class="footer"><button type="button" class="add" ?disabled=${this._rows.length === 0} @click=${this._add}><span aria-hidden="true">＋</span> Add regime</button><span class="message" role="status">${duplicates.includes(true) ? 'Change or remove duplicate regimes to run the scan' : 'Results from these regimes will be merged'}</span></div>
-            ${this._appModelRow()}`}
+      <div class="heading"><h2>Scan regimes</h2><span>${rows.length} ${rows.length === 1 ? 'regime' : 'regimes'}</span></div>
+      ${this._error ? html`<p class="message" role="alert">Couldn’t load models: ${this._error} <button type="button" @click=${() => void this._load()}>Retry</button></p>` : nothing}
+      ${repeat(rows, row => row.id, (row, index) => this._row(row, index, duplicates[index], pending))}
+      <div class="footer"><button type="button" class="add" ?disabled=${this._loading || this._rows.length === 0} @click=${this._add}><span aria-hidden="true">＋</span> Add regime</button><span class="message" role="status">${duplicates.includes(true) ? 'Change or remove duplicate regimes to run the scan' : 'Results from these regimes will be merged'}</span></div>
+      ${pending ? html`<div class="app-model"><div class="app-model-placeholder">App model: Loading…</div></div>` : this._appModelRow()}
     </section>`
   }
+
   _appModelRow() {
     const selection = this._resolvedAppModel
     if (!selection) return nothing
@@ -121,10 +129,10 @@ export class RegimeEditor extends LitElement {
       <div class="app-model-controls"><scan-model-picker .loadModels=${this._sharedModels} .value=${live(selection.model)} .effort=${live(selection.effort)} @model-change=${event => { event.stopPropagation(); this._changeAppModel(event.detail) }}></scan-model-picker></div>
     </details>`
   }
-  _row(row, index, duplicate) {
-    return html`<div class=${`row${duplicate ? ' duplicate' : ''}`} role="group" aria-label=${`Regime ${index + 1}`} aria-describedby=${duplicate ? `duplicate-${row.id}` : nothing}>
+  _row(row, index, duplicate, pending = false) {
+    return html`<div class=${`row${duplicate ? ' duplicate' : ''}`} ?inert=${pending} role="group" aria-label=${`Regime ${index + 1}`} aria-describedby=${duplicate ? `duplicate-${row.id}` : nothing}>
       <div class="mode" role="radiogroup" aria-label="Scan mode">${REGIME_MODES.map(mode => html`<label class="mode-choice"><input type="radio" name=${`regime-mode-${row.id}`} .checked=${row.mode === mode} @change=${() => this._change(row.id, { mode })}><span>${mode[0].toUpperCase() + mode.slice(1)}</span></label>`)}</div>
-      <scan-model-picker .loadModels=${this._sharedModels} .value=${live(row.model)} .effort=${live(row.effort)} @model-change=${e => { e.stopPropagation(); this._change(row.id, e.detail) }}></scan-model-picker>
+      <scan-model-picker .pending=${pending} .loadModels=${this._sharedModels} .value=${live(row.model)} .effort=${live(row.effort)} @model-change=${e => { e.stopPropagation(); this._change(row.id, e.detail) }}></scan-model-picker>
       <div class="row-actions">
         <scan-depth-toggle vertical .isolate=${row.isolate} @depth-change=${event => { event.stopPropagation(); this._change(row.id, { isolate: event.detail.isolate }) }}></scan-depth-toggle>
         ${duplicate ? html`<span class="duplicate-label" id=${`duplicate-${row.id}`}>Duplicate regime</span>` : nothing}
@@ -158,6 +166,7 @@ export class RegimeEditor extends LitElement {
     .footer { display: flex; flex-wrap: wrap; align-items: center; gap: .7rem; padding-top: .6rem; border-top: 1px solid var(--border); }
     .add { display: flex; align-items: center; gap: .3rem; }
     .app-model { margin-top: .7rem; border-top: 1px solid var(--border); }
+    .app-model-placeholder { padding: .65rem 0 .1rem; color: var(--muted); font-size: .74rem; }
     .app-model > summary { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem .8rem; padding: .65rem 0 .1rem; color: var(--muted); font-size: .74rem; list-style: none; cursor: default; user-select: none; }
     .app-model > summary::-webkit-details-marker { display: none; }
     .app-model > summary:hover { color: var(--text); }

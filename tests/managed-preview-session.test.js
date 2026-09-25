@@ -98,3 +98,45 @@ test('a real response started before a preview transition cannot restore stale d
   resolve(Response.json({ user: { login: 'stale' } }))
   await assert.rejects(request, { name: 'AbortError' })
 })
+
+test('managed requests bypass the browser HTTP cache for all server data', async (t) => {
+  const network = t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({})))
+  for (const path of ['/api/auth/session', '/api/reports/id', '/api/reports/id/triage', '/api/admin/bundles']) {
+    await managedFetch(path, { credentials: 'same-origin', cache: 'force-cache' })
+  }
+  for (const call of network.mock.calls) {
+    assert.equal(call.arguments[1].cache, 'no-store')
+    assert.equal(call.arguments[1].credentials, 'same-origin')
+  }
+})
+
+test('background session refresh retains the known identity on transient failures only', async (t) => {
+  const fallback = { id: 'me', login: 'known', role: 'admin', csrfToken: 'old' }
+  let response
+  t.mock.method(globalThis, 'fetch', () => response instanceof Error ? Promise.reject(response) : Promise.resolve(response))
+  for (const failure of [new Error('offline'), new Response('', { status: 503 }), new Response('invalid json'), Response.json({}), Response.json({ user: {} })]) {
+    response = failure
+    assert.equal(await probeSession({ fallback }), fallback)
+  }
+  for (const signedOut of [new Response('', { status: 401 }), new Response('', { status: 403 }), Response.json({ user: null })]) {
+    response = signedOut
+    assert.equal(await probeSession({ fallback }), null)
+  }
+  response = Response.json({ user: { id: 'me', login: 'known', role: 'view' }, csrfToken: 'new' })
+  const refreshed = await probeSession({ fallback })
+  assert.equal(refreshed.role, 'view')
+  assert.equal(refreshed.csrfToken, 'new')
+  response = new Error('offline cold start')
+  assert.equal(await probeSession(), null)
+})
+
+test('background team refresh preserves the sidebar during an outage and clears revoked access', async (t) => {
+  const fallback = [{ id: 'team', name: 'Known team', reports: [], bundles: [] }]
+  let response = new Response('', { status: 503 })
+  t.mock.method(globalThis, 'fetch', () => Promise.resolve(response))
+  assert.deepEqual(await probeTeams({ fallback }), fallback)
+  response = new Response('', { status: 403 })
+  assert.deepEqual(await probeTeams({ fallback }), [])
+  response = Response.json({ teams: [] })
+  assert.deepEqual(await probeTeams({ fallback }), [])
+})

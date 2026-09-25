@@ -13,6 +13,8 @@ import { createServer, request as httpRequest } from 'node:http'
 import { connect as netConnect } from 'node:net'
 import { minifyLitSource } from './build-lit-minify.js'
 import { litSvgAsHtml } from './build-lit-svg.js'
+import { parseManagedRoute } from './common/managed/routes.js'
+import { managedPageHtml } from './server-managed/static.ts'
 import { DEFAULT_SCAN_SERVER } from './common/scan-server.ts'
 import { configuredScanServer, scanServerHtml } from './server-common/scan-config.ts'
 
@@ -142,15 +144,17 @@ if (mode === 'build') {
   // Same `/api/*` prefix convention `server-e2e/index.ts` enforces for the
   // WS upgrade path + REST routes. Keep this in sync with the server's
   // `WS_UPGRADE_PATH` and `matchRoute` if either ever moves off `/api`.
-  const isApi = (url) => typeof url === 'string' && url.startsWith('/api/')
+  const isApi = (url) => typeof url === 'string' && /^\/api(?:[/?]|$)/u.test(url)
 
   const proxy = createServer((req, res) => {
     // HTML is served from source in dev. Apply the same CSP transform as the
     // E2E static server without writing configuration into source files.
     const pathname = new URL(req.url ?? '/', 'http://dev.invalid').pathname
-    if (scanServer && ['/', '/index.html'].includes(pathname) && ['GET', 'HEAD'].includes(req.method)) {
+    const managedPage = !['/', '/index.html'].includes(pathname) && parseManagedRoute(new URL(req.url, 'http://dev.invalid')) != null
+    if (((scanServer && ['/', '/index.html'].includes(pathname)) || managedPage) && ['GET', 'HEAD'].includes(req.method)) {
       void readFile('ui/index.html', 'utf8').then(html => {
-        const body = scanServerHtml(html, scanServer, { advertise: true })
+        const configuredHtml = scanServerHtml(html, scanServer, { advertise: true })
+        const body = managedPage ? managedPageHtml(configuredHtml) : configuredHtml
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
         res.end(req.method === 'HEAD' ? undefined : body)
       }).catch(err => { res.writeHead(500); res.end(String(err)) })
