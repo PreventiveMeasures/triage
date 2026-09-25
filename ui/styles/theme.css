@@ -514,7 +514,7 @@ textarea {
   caret-color: var(--accent);
 }
 
-a { color: var(--accent); text-decoration: none; }
+a { color: var(--accent); text-decoration: none; cursor: default; }
 
 #app-toast {
   position: fixed;

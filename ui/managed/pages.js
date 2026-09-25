@@ -7,7 +7,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { ROLES } from '../../common/managed/roles.ts'
 import { VISIBILITY_PERMISSION_LABELS } from '../../common/managed/permissions.ts'
 import { REPORT_LOGOS } from '../view/report-logos.js'
-import { BUNDLE_ICON_SVG } from '../view/icons.js'
+import { BUNDLE_ICON_SVG, REPORT_ICON_SVG, SCAN_ICON_SVG } from '../view/icons.js'
 import '../scan/page.js'
 import { SCAN_FIXTURES, SCAN_REPOSITORY_FIXTURES, cloneScanFixtures } from '../scan/fixtures.js'
 import { managedReportSources } from '../scan/report-source.js'
@@ -27,9 +27,10 @@ async function fetchSession() {
 }
 
 const ADMIN_PAGE_HEADER_STYLES = css`
+  a { cursor: default; }
   .head { display: flex; align-items: center; gap: .6rem; min-height: 2.1rem; margin-bottom: .55rem; }
   .breadcrumb { display: inline-flex; align-items: center; gap: .35rem; flex: 0 0 auto; }
-  .breadcrumb-manage { padding: .22rem .35rem; border: 1px solid transparent; border-radius: 5px; color: var(--muted); background: transparent; font: inherit; font-size: .82rem; cursor: pointer; }
+  .breadcrumb-manage { padding: .22rem .35rem; border: 1px solid transparent; border-radius: 5px; color: var(--muted); background: transparent; font: inherit; font-size: .82rem; cursor: default; }
   .breadcrumb-manage:hover { color: var(--text); background: var(--surface-active); border-color: var(--border); }
   .breadcrumb-manage:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .breadcrumb-separator { color: var(--muted); font-size: 1rem; }
@@ -121,16 +122,7 @@ class ManagedAdminHome extends LitElement {
     .page:hover { background: var(--surface-active); border-color: var(--muted); }
     .page:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     .page-icon { display: grid; place-items: center; width: 2rem; height: 2rem; flex: 0 0 auto; color: var(--accent); background: rgb(from var(--accent) r g b / .1); border-radius: 6px; }
-    .page-icon svg { width: 1.05rem; height: 1.05rem; }
-    .page-icon .file-icon { width: 1.15rem; height: 1.15rem; }
-    .page-icon .brand-deepview { --brand-bg: #2563eb; --brand-fg: #fff; }
-    .page-icon .brand-claude { --brand-bg: #d97757; --brand-fg: #fff; }
-    .page-icon .brand-codex { --brand-bg: #fff; --brand-fg: #000; }
-    .page-icon .brand-vercel { --brand-bg: #000; --brand-fg: #fff; }
-    .page-icon .brand-piolium { --brand-bg: #fbb829; --brand-fg: #1c1b19; }
-    .page-icon .file-icon .bg { fill: var(--brand-bg); }
-    .page-icon .file-icon .fg { fill: var(--brand-fg); }
-    .page-icon .file-icon:is(.brand-codex, .brand-vercel) .bg { stroke: var(--brand-fg); stroke-width: .5; }
+    .page-icon svg { display: block; width: 1.15rem; height: 1.15rem; }
     .page-copy { display: flex; min-width: 0; flex-direction: column; gap: .15rem; }
     .page-copy strong { font-size: .9rem; font-weight: 600; }
     .page-copy span { color: var(--muted); font-size: .76rem; }
@@ -175,16 +167,15 @@ class ManagedAdminHome extends LitElement {
 
   _icon(kind) {
     if (kind === 'bundle') return unsafeHTML(BUNDLE_ICON_SVG)
+    if (kind === 'report') return unsafeHTML(REPORT_ICON_SVG)
+    if (kind === 'scan') return unsafeHTML(SCAN_ICON_SVG)
     const paths = {
-      users: 'M3.25 7.25a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Zm9.5 0a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5ZM1 13.25c0-1.8 1.1-3 2.75-3s2.75 1.2 2.75 3M9.5 13.25c0-1.8 1.1-3 2.75-3S15 11.45 15 13.25M8 8.5a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm-3 5c0-2 1.2-3.5 3-3.5s3 1.5 3 3.5',
-      repo: 'M2 3.5A1.5 1.5 0 0 1 3.5 2h9A1.5 1.5 0 0 1 14 3.5v9a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 12.5v-9Zm3 2h6m-6 3h6m-6 3h3',
-      report: 'M4 1.5h5l3 3v10H4v-13Zm5 0v3h3m-6 3h4m-4 2h4m-4 2h3',
-      bundle: 'm8 1 5 2.8v8.4L8 15l-5-2.8V3.8L8 1Zm-5 2.8 5 2.8 5-2.8M8 6.6V15',
-      history: 'M8 2a6 6 0 1 0 6 6M8 4.5V8l2.25 1.5M10.5 2H14v3.5',
-      team: 'M8 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm-4 5c0-2 1.7-3 4-3s4 1 4 3M2 7h2m8 0h2M8 1v2m0 9v2',
-      scan: 'M3 3.5h10v9H3zM5.5 6h5M5.5 8h5M5.5 10h3',
+      users: 'M10.75 4.75a2.75 2.75 0 1 1-5.5 0 2.75 2.75 0 0 1 5.5 0ZM3 14v-1.5A3.5 3.5 0 0 1 6.5 9h3a3.5 3.5 0 0 1 3.5 3.5V14',
+      team: 'M8.5 5a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0ZM1.5 14v-1.5A3.5 3.5 0 0 1 5 9h2a3.5 3.5 0 0 1 3.5 3.5V14M11 2.75a2.5 2.5 0 0 1 0 4.5m1 2a3 3 0 0 1 2.5 3V14',
+      repo: 'M3 2.5v7M5 12a2 2 0 1 1-4 0 2 2 0 0 1 4 0ZM15 4a2 2 0 1 1-4 0 2 2 0 0 1 4 0ZM13 6v1a5 5 0 0 1-5 5H5',
+      history: 'M2 5a6.25 6.25 0 1 1-.25 5M1.5 1.5V5H5M8 4.5V8l3 1.5',
     }
-    return html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"><path d="${paths[kind] ?? paths.report}"/></svg>`
+    return html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d=${paths[kind]}/></svg>`
   }
 }
 customElements.define('managed-admin-home', ManagedAdminHome)

@@ -150,7 +150,6 @@ class AnalyzerSelect extends StateElement {
       class=${classMap({ 'analyzer-btn': true, active: filtering })}
       popovertarget="analyzer-select-menu"
       popovertargetaction="toggle"
-      data-tooltip="Filter by analyzer / model"
       aria-label=${`Filter by analyzer / model: ${summary}`}
     >
       <span class="analyzer-btn-label">${summary}</span>

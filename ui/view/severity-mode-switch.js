@@ -15,6 +15,7 @@
 // events.js sets `state.severityMode`, persists it to localStorage, and
 // full-renders (the mode changes badges, chip counts, sort order, and the
 // header status bar — not just the badges).
+import { nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { StateElement, html } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'
@@ -22,7 +23,7 @@ import { ensureHostAria } from './host-aria.js'
 
 const MODES = [
   ['corrected', 'Corrected', 'Show corrected severities (application-specific re-ratings)'],
-  ['original',  'Original',  'Show the original analyzer severities'],
+  ['original',  'Original',  nothing],
 ]
 
 class SeverityModeSwitch extends StateElement {

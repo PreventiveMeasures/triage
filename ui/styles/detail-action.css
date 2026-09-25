@@ -10,7 +10,7 @@
   border-radius: 4px;
   color: var(--muted);
   font: 500 16px/1 ui-monospace, monospace;
-  cursor: pointer;
+  cursor: default;
 
   &:hover { color: var(--accent); background: var(--surface-active); }
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }

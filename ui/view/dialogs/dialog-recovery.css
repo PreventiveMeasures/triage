@@ -52,7 +52,7 @@ header { padding-right: 1.5rem; }
     color: var(--text); border-radius: 4px;
     padding: .1rem .45rem;
     font: inherit; font-size: .72rem;
-    cursor: pointer;
+    cursor: default;
 
     &:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
     &:disabled { opacity: .5; cursor: default; }

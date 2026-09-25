@@ -75,7 +75,7 @@ header h3 { margin: 0; }
   background: transparent; border: 0; border-radius: 4px;
   color: var(--muted);
   font: 500 16px/1 ui-monospace, monospace;
-  cursor: pointer;
+  cursor: default;
 
   &:hover { color: var(--accent); background: var(--surface-active); }
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -212,7 +212,7 @@ header h3 { margin: 0; }
   background: transparent; color: var(--muted);
   border: 1px solid var(--border); border-radius: 3px;
   font: inherit; font-size: .72rem; font-weight: 500; letter-spacing: .02em;
-  cursor: pointer;
+  cursor: default;
 
   &:hover { color: var(--accent); background: var(--surface-active); }
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }

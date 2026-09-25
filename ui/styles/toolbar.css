@@ -200,7 +200,7 @@
         padding: 0 .95rem 0 .2rem;
         font-size: .72rem;
         color: var(--muted);
-        cursor: pointer;
+        cursor: default;
 
         &:hover { color: var(--text); }
       }
@@ -250,7 +250,7 @@
         font-size: .66rem;
         line-height: 1.4;
         white-space: nowrap;
-        cursor: pointer;
+        cursor: default;
 
         /* Every mode is a state, the default one included: `+ Partial`
            says those rows are in and on screen, which is worth showing
@@ -637,7 +637,7 @@ severity-mode-switch {
     padding: 0 .55rem;
     display: inline-flex; align-items: center;
     transition: background .12s, color .12s;
-    font-family: inherit; font-size: .75rem; cursor: pointer;
+    font-family: inherit; font-size: .75rem; cursor: default;
 
     &:not(:last-child) { border-right: 1px solid var(--border); }
     &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }

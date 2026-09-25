@@ -94,7 +94,7 @@
     color: var(--muted); text-transform: lowercase;
     letter-spacing: .02em;
 
-    &[role='button'] { cursor: pointer; }
+    &[role='button'] { cursor: default; }
     &[role='button']:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
     &:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   }
@@ -695,7 +695,7 @@ sidebar-delete-current button {
   border-radius: 5px;
   color: light-dark(#b25b00, #f0a060);
   font-size: .72rem; font-family: inherit;
-  cursor: pointer; text-align: left;
+  cursor: default; text-align: left;
   /* WCO drag surface opt-out — same rationale as .sidebar-actions. */
   -webkit-app-region: no-drag; app-region: no-drag;
 
