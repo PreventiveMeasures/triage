@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import './_polyfills.js'
 
-import { SERVER_MODE_KEY, classifyServerMode, hasStandaloneProbeHint, mergeSyncServerInfo, parseServerInfo, probeServerInfo, readCachedServerInfo, rememberStandaloneProbe, waitForServerInfo, writeCachedServerInfo } from '../client/sync/server-mode.ts'
+import { SERVER_MODE_KEY, hasStandaloneProbeHint, mergeSyncServerInfo, parseServerInfo, probeServerInfo, readCachedServerInfo, rememberStandaloneProbe, waitForServerInfo, writeCachedServerInfo } from '../client/sync/server-mode.ts'
 import { clientModeLabel, configureClientMode, isManagedUiMode, state, toggleClientMode } from '../client/state.ts'
 
 test('mode labels distinguish standalone, e2e, and both managed surfaces', (t) => {
@@ -26,7 +26,6 @@ test('standalone paint hints never bind a protocol or suppress future detection'
   assert.equal(hasStandaloneProbeHint(), true)
   assert.equal(readCachedServerInfo(), null)
   const info = { mode: 'managed', managed: null }
-  assert.equal(classifyServerMode(readCachedServerInfo()?.mode ?? null, info.mode), 'first')
   writeCachedServerInfo(info)
   assert.deepEqual(readCachedServerInfo(), info)
   assert.equal(hasStandaloneProbeHint(), false, 'a detected backend clears the paint hint')
@@ -126,7 +125,7 @@ test('e2e connection frames keep a combined deployment configuration and its def
     })
   }
   const frame = { mode: 'managed', managed: null }
-  assert.deepEqual(mergeSyncServerInfo({ mode: 'e2e', managed: null }, frame), frame, 'single-protocol mismatches remain visible')
+  assert.deepEqual(mergeSyncServerInfo({ mode: 'e2e', managed: null }, frame), frame, 'single-protocol advertisements can change')
   assert.deepEqual(mergeSyncServerInfo(null, frame), frame)
 })
 
@@ -206,21 +205,21 @@ test('startup uses prompt server answers and treats probe failures as a local fa
   assert.equal(await waitForServerInfo(Promise.reject(new Error('unavailable'))), null)
 })
 
-test('classifyServerMode: first / match / mismatch', () => {
-  // Nothing cached yet — accept whatever the server reports.
-  assert.equal(classifyServerMode(null, 'e2e'), 'first')
-  assert.equal(classifyServerMode(null, 'managed'), 'first')
-  // Same protocol — proceed.
-  assert.equal(classifyServerMode('e2e', 'e2e'), 'match')
-  assert.equal(classifyServerMode('managed', 'managed'), 'match')
-  // Cross-mode — refused (both directions).
-  assert.equal(classifyServerMode('e2e', 'managed'), 'mismatch')
-  assert.equal(classifyServerMode('managed', 'e2e'), 'mismatch')
-  for (const combined of ['managed+e2e', 'e2e+managed']) {
-    assert.equal(classifyServerMode(null, combined), 'first')
-    for (const mode of ['e2e', 'managed', 'managed+e2e', 'e2e+managed']) {
-      assert.equal(classifyServerMode(mode, combined), 'match')
-      assert.equal(classifyServerMode(combined, mode), 'match')
+test('new deployment advertisements replace cached modes in both directions', (t) => {
+  const previous = { serverMode: state.serverMode, serverModeConfig: state.serverModeConfig, serverModeSelection: state.serverModeSelection, localMode: state.localMode }
+  t.after(() => { Object.assign(state, previous); localStorage.removeItem(SERVER_MODE_KEY) })
+  for (const [before, after] of [['managed', 'e2e'], ['e2e', 'managed']]) {
+    state.serverModeSelection = null
+    state.localMode = false
+    configureClientMode(before)
+    writeCachedServerInfo({ mode: before, managed: null })
+    configureClientMode(after)
+    writeCachedServerInfo({ mode: after, managed: null })
+    assert.equal(state.serverMode, after)
+    assert.equal(readCachedServerInfo().mode, after)
+    if (after === 'managed') {
+      assert.equal(toggleClientMode(), true)
+      assert.equal(clientModeLabel(), 'local', 'old local data has an accessible surface')
     }
   }
 })

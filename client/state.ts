@@ -211,9 +211,6 @@ export interface State {
   managed: ManagedServerInfo | null
   // Fresh runtime discovery only; never restored from the protocol cache.
   deepviewScanServer: string | null
-  // True for incompatible single-protocol advertisements. Combined modes
-  // explicitly support switching; unrelated deployments keep sync paused.
-  serverModeMismatch: boolean
   // The logged-in managed user (null when logged out / e2e / standalone),
   // populated by the managed session probe (client/managed/session.js).
   managedSession: { id: string; login: string; name: string | null; avatarUrl: string | null; role: string; csrfToken: string | null } | null
@@ -333,6 +330,8 @@ function notifyRepoUrlChanged(name: string): void {
 }
 
 export function saveRepoUrlFor(name: string | null | undefined, url: string): void {
+  // Managed report metadata belongs to the server; inline edits stay in memory.
+  if (isManagedUiMode()) return
   if (!name) return
   // Two-step write:
   //
@@ -941,7 +940,6 @@ export const state: State = store<State>({
   localMode: false,
   managed: INITIAL_SERVER_INFO?.managed ?? null,
   // Set for incompatible single-protocol advertisements.
-  serverModeMismatch: false,
   // Logged-in managed user, or null (e2e / logged out). Future managed
   // session probe populates this.
   managedSession: null,
@@ -1005,7 +1003,7 @@ export function clientModeLabel(): 'managed' | 'local' | 'e2e' | 'standalone' {
 // call `saveRepoUrlFor` on commit; if they prefer the sibling's
 // value they can re-enter and re-edit. Audit round-9 M2.
 export function propagateRepoUrlChangesFromStorage(): void {
-  if (state.repoEditing) return
+  if (isManagedUiMode() || state.repoEditing) return
   if (state.currentFile) state.repoUrl = loadRepoUrlFor(state.currentFile)
 }
 onAfterHydrate(() => {

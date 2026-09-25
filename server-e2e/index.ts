@@ -437,7 +437,14 @@ void pubsub.start(onBusMessage).catch((err) => {
 
 // App-specific shutdown step (run after the in-flight drain), wired
 // into the lifecycle teardown below.
+const shutdownHooks: Array<() => Promise<void>> = []
+// An app sharing this HTTP listener joins the same graceful shutdown.
+export function onShutdown(close: () => Promise<void>): void { shutdownHooks.push(close) }
+
 const closeDb = async (): Promise<void> => {
+  for (const close of shutdownHooks) {
+    try { await close() } catch (err) { console.warn('Shared app close error:', errMsg(err)) }
+  }
   // Stop the bus first so a publish from a still-draining handler
   // can't fire into a half-closed Client. The in-flight drain runs
   // before this (see lifecycle.ts), so by here all `broadcast` →
@@ -474,7 +481,7 @@ export function start(): void {
   httpServer.listen(PORT, HOST)
 }
 
-export { httpServer, wss }
+export { httpServer, wss, isShuttingDown }
 
 // Library mode: when this module is `import`ed (rather than run as the
 // entry script) skip the auto-start so consumers can own the bind — e.g.

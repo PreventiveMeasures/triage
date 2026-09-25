@@ -1,23 +1,19 @@
-// Managed auth server boot (SYNC_MODE=managed, auth-only — no api/sync yet).
-// Loads config, opens the SQLite store, wires the HTTP router, and installs a
-// graceful SIGINT/SIGTERM shutdown that drains in-flight requests + closes the
-// DB. Runnable directly (`node server-managed/index.ts`) via the
-// `import.meta.main` gate, or through the exported `start()` (see cli.js).
+// Managed HTTP app and standalone boot. The combined launcher mounts this
+// same app on e2e's listener; storage, routing and cleanup stay here.
 import { createServer } from 'node:http'
 import { dirname, join } from 'node:path'
 import { createOriginGate } from '../server-common/origin.ts'
 import { createDiskAvatarStore } from './avatar-store.ts'
 import { createDiskBlobStore } from './blob-store.ts'
-import { loadManagedConfig } from './config.ts'
+import { type ManagedConfig, loadManagedConfig } from './config.ts'
 import { openSqliteManagedDb } from './db.ts'
-import { createManagedRequestHandler } from './http.ts'
+import { type ManagedHttpDeps, createManagedRequestHandler } from './http.ts'
 
 // Expired-session sweep period. Lookups already exclude expired rows
 // (`WHERE expires_at > now`), so this is housekeeping, not a security control.
 const SESSION_GC_INTERVAL_MS = 3_600_000
 
-export function start(): void {
-  const config = loadManagedConfig()
+export function createManagedApp(config: ManagedConfig, options: Partial<Pick<ManagedHttpDeps, 'next' | 'serverInfo' | 'isShuttingDown'>> = {}) {
   const db = openSqliteManagedDb(config.dbPath, { triageHistoryLimit: config.triageHistoryLimit })
   // Avatars cache on disk beside the DB (data/avatars/<uuid>) for now.
   const avatarStore = createDiskAvatarStore(join(dirname(config.dbPath), 'avatars'))
@@ -35,9 +31,10 @@ export function start(): void {
     p.finally(() => inFlight.delete(p)).catch(() => {})
   }
 
-  const server = createServer(createManagedRequestHandler({
-    config, db, avatarStore, reportStore, bundleStore, originGate, isShuttingDown: () => shuttingDown, track,
-  }))
+  const handleRequest = createManagedRequestHandler({
+    ...options, config, db, avatarStore, reportStore, bundleStore, originGate,
+    isShuttingDown: () => shuttingDown || options.isShuttingDown?.() === true, track,
+  })
 
   const gcTimer = setInterval(() => {
     track(db.deleteExpiredSessions(Date.now()).catch((err) => {
@@ -46,21 +43,41 @@ export function start(): void {
     }))
   }, SESSION_GC_INTERVAL_MS)
 
-  async function shutdown(code: number): Promise<void> {
-    if (shuttingDown) return
+  function stop(): void {
     shuttingDown = true
     clearInterval(gcTimer)
-    try { server.closeIdleConnections() } catch {}
-    await new Promise<void>((resolve) => { server.close(() => resolve()) })
+  }
+
+  async function close(): Promise<void> {
+    stop()
     if (inFlight.size > 0) await Promise.allSettled([...inFlight])
     await db.close()
+  }
+  return { handleRequest, stop, close }
+}
+
+export function start(): void {
+  const config = loadManagedConfig()
+  const app = createManagedApp(config)
+  const server = createServer(app.handleRequest)
+  let closing = false
+  async function shutdown(code: number): Promise<void> {
+    if (closing) return
+    closing = true
+    app.stop()
+    try { server.closeIdleConnections() } catch {}
+    if (server.listening) await new Promise<void>((resolve) => { server.close(() => resolve()) })
+    await app.close()
     process.exit(code)
   }
+  server.on('error', (err) => { console.error('Managed server error:', err); void shutdown(1) })
   process.on('SIGINT', () => { void shutdown(0) })
   process.on('SIGTERM', () => { void shutdown(0) })
 
   server.listen(config.port, config.host, () => {
-    console.log(`triage managed server listening on http://${config.host}:${config.port} (mode=managed, auth-only)`)
+    const address = server.address()
+    const port = typeof address === 'object' && address ? address.port : config.port
+    console.log(`triage managed server listening on http://${config.host}:${port} (mode=managed)`)
   })
 }
 

@@ -1,7 +1,7 @@
 import { LitElement, html, render as litRender, nothing, unsafeCSS } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { LINKS_KIND, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, clientModeLabel, computeLinkHint, configureClientMode, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, ensureLinkedFindingsIndexed, getCount, getKind, getPackagesIndex, getRepositoriesIndex, getWorkspaceAppMetadata, getWorkspaceAppModeHint, hasStandaloneProbeHint, hydrateSecureStorage, isCombinedServerMode, isManagedUiMode, listBundles, listFiles, listWorkspaces, mergeSyncServerInfo, migrateLegacyFilenames, onVaultStateChange, onWorkspaceAppMetadataChanged, probeServerInfo, readCachedServerInfo, reloadTriageFromStorage, rememberStandaloneProbe, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, setLocalMode, state, syncObservedAfterHydrate, toggleClientMode, waitForServerInfo, writeCachedServerInfo } from '#client/index.js'
+import { LINKS_KIND, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, clientModeLabel, computeLinkHint, configureClientMode, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, ensureLinkedFindingsIndexed, getCount, getKind, getPackagesIndex, getRepositoriesIndex, getWorkspaceAppMetadata, getWorkspaceAppModeHint, hasStandaloneProbeHint, hydrateSecureStorage, isCombinedServerMode, isManagedUiMode, listBundles, listFiles, listWorkspaces, mergeSyncServerInfo, migrateLegacyFilenames, onVaultStateChange, onWorkspaceAppMetadataChanged, probeServerInfo, readCachedServerInfo, reloadTriageFromStorage, rememberStandaloneProbe, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, setLocalMode, state, syncObservedAfterHydrate, toggleClientMode, waitForServerInfo, writeCachedServerInfo } from '#client/index.js'
 import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, setSyncForceDisabled, triageSync } from './client-sync.js'
 import { clearPreviewRole, getPreviewRole, loadManagedBundle, login as managedLogin, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams } from './client-managed.js'
 import { ROLES, isRole } from '../../common/managed/roles.ts'
@@ -1076,10 +1076,6 @@ async function onSidebarClick(e) {
     return
   }
   if (e.target.closest('#sync-status')) {
-    // Paused on a protocol mismatch: the badge is informational — a click
-    // must not churn the (locked) socket or persist toggles. (Clearing it
-    // needs an explicit migration; TODO.)
-    if (state.serverModeMismatch) return
     // Click toggles the persisted user-enabled flag rather than
     // the URL itself — disable then re-enable should resume against
     // the same endpoint, not lose a console-set URL. If no URL is
@@ -1323,21 +1319,6 @@ function renderSyncStatus(status) {
   if (!btn) return
   renderBrandTag()
   applyCollapsibility()
-  // A refused cross-mode switch pins sync OFF and explains why — checked
-  // FIRST so no later render (visibility / status change) can clear the
-  // forced-off and silently reconnect to a wrong-protocol server.
-  if (state.serverModeMismatch) {
-    const mismatchAuthBtn = root?.querySelector('#auth-status')
-    if (mismatchAuthBtn) mismatchAuthBtn.hidden = true
-    triageSync.setForcedOff(true)
-    triageSync.setProtocolLocked(true)
-    btn.hidden = false
-    btn.dataset.status = 'paused'
-    btn.dataset.tooltip = 'This server speaks a different sync protocol than this app is set up for. Switching isn’t supported yet.'
-    const mismatchLabel = btn.querySelector('.sync-label')
-    if (mismatchLabel) mismatchLabel.textContent = 'Sync paused'
-    return
-  }
   if (state.serverMode === 'managed' && state.localMode) {
     btn.hidden = true
     triageSync.setForcedOff(true)
@@ -1790,7 +1771,7 @@ async function finishClientModeTransition({ forgetLastView = true } = {}) {
   resetManagedTriage()
   setSyncForceDisabled(state.serverMode !== 'e2e')
   triageSync.setForcedOff(true)
-  triageSync.setProtocolLocked(state.serverMode !== 'e2e' || Boolean(forcedManagedReturn) || state.serverModeMismatch)
+  triageSync.setProtocolLocked(state.serverMode !== 'e2e' || Boolean(forcedManagedReturn))
   resetForClientModeTransition({ forgetLastView })
   // Only server annotations may enter a managed report. Local annotations are
   // restored from storage on the return trip, without saving this clear.
@@ -1836,12 +1817,10 @@ export async function forceManagedMode(role) {
     serverModeSelection: state.serverModeSelection,
     localMode: state.localMode,
     managed: state.managed,
-    serverModeMismatch: state.serverModeMismatch,
   }
   if (managed) managed.setPreviewRole(role)
   state.serverMode = 'managed'
   setLocalMode(false)
-  state.serverModeMismatch = false
   // Remove the previous account immediately, including when changing the fake
   // role on a real managed deployment. The refreshed session uses the preview.
   state.managedSession = null
@@ -1864,23 +1843,11 @@ async function restoreForcedManagedMode() {
 
 // Cache the deployment advertisement, then resolve the active protocol using
 // the memory-only selection. A combined mode explicitly permits both isolated
-// surfaces; unrelated single-protocol changes retain the mismatch guard.
+// surfaces. Single-mode deployments can also change freely: managed data is
+// server-owned, while existing local data remains available under local/e2e.
 function applyServerInfo(info, { runtime = true } = {}) {
   if (forcedManagedReturn) { deferredServerInfo = info; return }
   setLandingModePending(false)
-  const cached = readCachedServerInfo()
-  const cls = classifyServerMode(cached ? cached.mode : null, info.mode)
-  if (cls === 'mismatch') {
-    state.serverModeMismatch = true
-    // Fail-closed: pause THIS plane AND hard-lock the SHARED socket so the
-    // mode-unaware objstore plane can't keep it open to the wrong server.
-    triageSync.setForcedOff(true)
-    triageSync.setProtocolLocked(true)
-    console.warn(`sync: server is '${info.mode}' but this client is bound to '${cached?.mode}' — refusing to switch (migration not yet supported)`)
-    renderSyncStatus(triageSync.status)
-    return
-  }
-  state.serverModeMismatch = false
   const wasManaged = isManagedUiMode()
   const previousMode = state.serverMode
   // A late single-mode managed response preserves the offline local fallback;
@@ -1905,6 +1872,7 @@ function applyServerInfo(info, { runtime = true } = {}) {
     // but skipped remote-presence opens. Resume those alongside triage once
     // the protocol is known, without reloading or replacing the current view.
     void loadSync().then((sync) => {
+      if (!sync || state.serverMode !== 'e2e') return undefined
       for (const session of sync.triageSync.openSessions) sync.openWorkspace(session.workspaceId)
       return undefined
     }).catch((err) => console.warn('sync: resume failed', err))
@@ -1996,7 +1964,7 @@ document.addEventListener('managed-admin-navigate', (event) => {
 // Cold-start mode detection. With nothing cached we don't yet know the server's
 // protocol — and a managed server has no WS plane whose connect frame would
 // tell us — so GET /api/config to learn it up front and feed the same
-// applyServerInfo path. A cached binding releases startup immediately, while
+// applyServerInfo path. A cached hint releases startup immediately, while
 // the HTTP probe still checks it in the background (managed has no WS frame).
 let clientModeReady
 // Wait only until startup selects a usable surface: a confirmed server mode,
@@ -2011,8 +1979,8 @@ async function detectServerModeIfUnknown() {
     // Another tab may have confirmed the mode since state.ts was evaluated.
     configureClientMode(cached.mode)
     state.managed = cached.managed
-    // The cache binds the protocol, but says nothing about today's server.
-    // Failure/404 keeps that binding and never delays or disables local access.
+    // The cache is a startup hint, not a permanent protocol binding. Today's
+    // advertisement replaces it; a failed probe still permits local access.
     void probeServerInfo().then((info) => {
       if (info && info !== 'standalone') return applyServerInfo(info)
       return undefined
@@ -2112,10 +2080,10 @@ function mount(host) {
   renderSyncStatus(triageSync.status)
   if (!readCachedServerInfo()) setLandingModePending(!hasStandaloneProbeHint())
   renderSidebar()
-  // Learn the server's protocol from its `server-info` connect frame (refuses
-  // a cross-mode switch); state.serverMode is meanwhile seeded from the
-  // localStorage cache (see state.ts) so the first paint is mode-correct.
+  // An active e2e connection can refresh its advertisement. Ignore frames
+  // arriving after discovery switched to managed and began closing the socket.
   triageSync.onServerInfo((info) => {
+    if (state.serverMode !== 'e2e') return
     const cached = readCachedServerInfo()
     const configured = cached && { ...cached, ...(state.deepviewScanServer ? { deepviewScanServer: state.deepviewScanServer } : {}) }
     return applyServerInfo(mergeSyncServerInfo(configured, info))
