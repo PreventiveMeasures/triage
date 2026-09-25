@@ -15,6 +15,7 @@ import { decodeUtf8 } from '../../common/utf8.js'
 import { brotliDecompress } from './brotli-decompress.js'
 import { graph2 } from './graph/state.js'
 import { render } from './render.js'
+import { beginViewNavigation, currentViewSignal } from './view-navigation.js'
 import { bundleNeedsSources, computeBundleFileHashes, createBundleMetadata, parseBundleContents, parseBundleMetadata } from './bundle-metadata.js'
 
 const sourceLoads = new Map()
@@ -41,12 +42,14 @@ export function buildBundleDetails(integrity, entry, { sources = true } = {}) {
   if (active?.integrity === integrity && active.kind === kind && active.managedId === entry.managedId && !active.error
       && (!sources || !active.metadataOnly)) return Promise.resolve(active)
   const key = `${entry.managedId ?? 'local'}:${integrity}:${kind}`
-  if (loads.has(key)) return loads.get(key)
+  const signal = entry.managedId && sources ? currentViewSignal() : undefined
+  const pending = loads.get(key)
+  if (pending && pending.signal === signal) return pending.job
   const job = (async () => {
     if (entry.managedId) {
       try {
         const details = sources
-          ? parseBundleContents(await fetchBundleContents(entry.managedId), { integrity, kind, size: entry.size })
+          ? parseBundleContents(await fetchBundleContents(entry.managedId, { signal }), { integrity, kind, size: entry.size })
           : parseBundleMetadata(await fetchBundleMetadata(entry.managedId), integrity)
         details.managedId = entry.managedId
         return details
@@ -78,8 +81,8 @@ export function buildBundleDetails(integrity, entry, { sources = true } = {}) {
     }
     return details
   })()
-  loads.set(key, job)
-  job.finally(() => { if (loads.get(key) === job) loads.delete(key) }).catch(() => {})
+  loads.set(key, { job, signal })
+  job.finally(() => { if (loads.get(key)?.job === job) loads.delete(key) }).catch(() => {})
   return job
 }
 
@@ -91,6 +94,7 @@ export function buildBundleDetails(integrity, entry, { sources = true } = {}) {
 // between bundles; entering from another view starts on Overview. An explicit
 // tab still takes priority for boot restore and Compare's swap action.
 export function selectBundle(integrity, tab = state.currentView === 'bundles' ? state.bundleDetailsTab : 'overview') {
+  beginViewNavigation()
   state.currentView = 'bundles'
   state.selectedBundle = integrity
   state.bundleDetails = null

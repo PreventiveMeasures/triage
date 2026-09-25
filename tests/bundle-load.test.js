@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { beforeEach, it, mock } from 'node:test'
 import { createBundleMetadata } from '../ui/view/bundle-metadata.js'
+import { beginViewNavigation } from '../ui/view/view-navigation.js'
 
 const json = { version: 3, sources: ['src/main.js'], sourcesContent: ['export default 1'], names: [] }
 const entry = { integrity: 'sha512-test', name: 'test.map' }
@@ -19,10 +20,23 @@ mock.module('../ui/view/graph/state.js', { namedExports: { graph2: {} } })
 mock.module('../ui/view/brotli-decompress.js', { namedExports: {
   brotliDecompress: () => { decodes++; throw new Error('unexpected local Brotli decode') },
 } })
-let contentFailure = false, contentRequests = 0, metadataRequests = 0
+let contentFailure = false, contentRequests = 0, contentSignals = [], metadataRequests = 0
 mock.module('../ui/view/client-managed.js', { namedExports: {
   fetchBundleMetadata: () => { metadataRequests++; return Promise.resolve(index) },
-  fetchBundleContents: async () => { contentRequests++; if (readGate) await readGate; if (contentFailure) throw new Error('offline'); return JSON.stringify(json) },
+  fetchBundleContents: async (id, { signal }) => {
+    contentRequests++; contentSignals.push(signal)
+    signal.throwIfAborted()
+    if (readGate) {
+      await new Promise((resolve, reject) => {
+        const abort = () => reject(signal.reason)
+        signal.addEventListener('abort', abort, { once: true })
+        readGate.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort))
+      })
+    }
+    signal.throwIfAborted()
+    if (contentFailure) throw new Error('offline')
+    return JSON.stringify(json)
+  },
 } })
 const { buildBundleDetails, ensureBundleSources, openBundle, prefetchBundleHashes, prefetchBundleHashesAfterPaint, selectBundle } = await import('../ui/view/bundle-load.js')
 const index = await createBundleMetadata({ integrity: entry.integrity, kind: 'sourcemap', size: 123, json })
@@ -30,7 +44,7 @@ beforeEach(() => {
   decodes = 0; managed = false
   stored.clear(); recorded.clear(); indexReads = 0; reads = 0; writes = 0; renders = 0; readGate = null
   saved = Promise.withResolvers()
-  metadataRequests = 0; contentRequests = 0; contentFailure = false
+  metadataRequests = 0; contentRequests = 0; contentSignals = []; contentFailure = false
   state.bundles = [entry]; selectBundle(entry.integrity, 'overview')
 })
 
@@ -259,13 +273,43 @@ it('a failed managed contents request keeps metadata and retries only when reque
   assert.equal(contentRequests, 2)
 })
 
-it('an abandoned managed source request cannot replace the next view', async () => {
+it('leaving a managed bundle aborts its source upgrade before the body finishes', async () => {
   state.bundles = [{ ...entry, managedId: 'managed-id', size: 123 }]
   await openBundle(entry.integrity)
   const gate = Promise.withResolvers(); readGate = gate.promise
   const pending = ensureBundleSources()
   selectBundle('another')
-  gate.resolve()
-  await pending
+  assert.equal(contentSignals[0].aborted, true)
+  assert.equal(await pending, null)
   assert.equal(state.bundleDetails, null)
+  gate.resolve()
+})
+
+it('navigation aborts every managed source load, including the comparison target', async () => {
+  const first = { ...entry, managedId: 'first' }, second = { ...entry, integrity: 'second', managedId: 'second' }
+  const gate = Promise.withResolvers(); readGate = gate.promise
+  const jobs = [buildBundleDetails(first.integrity, first), buildBundleDetails(second.integrity, second)]
+  const rejected = jobs.map(job => assert.rejects(job, { name: 'AbortError' }))
+  beginViewNavigation() // Home, Manage, report navigation, Back/Forward and mode transitions share this boundary.
+  assert.ok(contentSignals.every(signal => signal.aborted))
+  await Promise.all(rejected)
+  assert.equal(renders, 0)
+  gate.resolve()
+})
+
+it('immediately reopening a managed bundle starts a fresh download and still deduplicates consumers', async () => {
+  const managedEntry = { ...entry, managedId: 'managed-id' }
+  const gate = Promise.withResolvers(); readGate = gate.promise
+  const abandoned = buildBundleDetails(entry.integrity, managedEntry)
+  const rejected = assert.rejects(abandoned, { name: 'AbortError' })
+  beginViewNavigation()
+  readGate = null
+  const reopened = buildBundleDetails(entry.integrity, managedEntry)
+  assert.notEqual(reopened, abandoned)
+  assert.equal(buildBundleDetails(entry.integrity, managedEntry), reopened)
+  await rejected
+  assert.deepEqual((await reopened).json.sourcesContent, json.sourcesContent)
+  assert.equal(contentRequests, 2)
+  assert.equal(contentSignals[1].aborted, false)
+  gate.resolve()
 })

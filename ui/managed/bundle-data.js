@@ -15,8 +15,9 @@ async function requestBundle(id, part, signal) {
 export function fetchBundleMetadata(id, { signal } = {}) {
   return managedAppState.load(`bundle-metadata:${id}`, 'bundle metadata', requestSignal => requestBundle(id, 'metadata', requestSignal), { signal })
 }
-export async function fetchBundleContents(id) {
-  try { return await requestBundle(id, 'contents') }
+export async function fetchBundleContents(id, { signal } = {}) {
+  signal = signal ? AbortSignal.any([signal, managedAppState.sessionController.signal]) : managedAppState.sessionController.signal
+  try { return await requestBundle(id, 'contents', signal) }
   catch (err) {
     if (err.name !== 'AbortError') managedAppState.notify(`Couldn't load bundle contents: ${err.message}`)
     throw err

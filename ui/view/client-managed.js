@@ -63,6 +63,6 @@ export async function fetchBundleMetadata(id) {
   return (await loadManagedBundle()).fetchBundleMetadata(id)
 }
 
-export async function fetchBundleContents(id) {
-  return (await loadManagedBundle()).fetchBundleContents(id)
+export async function fetchBundleContents(id, options) {
+  return (await loadManagedBundle()).fetchBundleContents(id, options)
 }

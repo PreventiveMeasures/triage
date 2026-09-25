@@ -22,6 +22,8 @@ import { fetchReport as fetchManagedReport, login as managedLogin } from './clie
 import { showToast } from './toast.js'
 import { managedHistory } from './managed-history.js'
 import { setLoadedWorkspaceAppReports, updateWorkspaceAppMetadata } from './workspace-app-load.js'
+import { beginViewNavigation, currentViewGeneration } from './view-navigation.js'
+export { beginViewNavigation, currentViewGeneration } from './view-navigation.js'
 
 // localStorage key for the last-viewed file — restored on page load so
 // the user picks back up where they left off. The stored value is the
@@ -58,12 +60,9 @@ export function persistLastBundle(integrity, tab = 'overview') {
 // Without this, a quick second sidebar click could interleave two
 // concurrent reads' pushes — the array would briefly hold the previous
 // file's data merged with the new. The headless `window.__loadFile`
-// path stays unguarded (doesn't touch loadGen) so the print flow's
+// path stays unguarded (doesn't begin navigation) so the print flow's
 // repeated-ingest accumulation still works.
-let loadGen = 0
-const isStaleLoad = (captured) => captured !== loadGen
-export function currentViewGeneration() { return loadGen }
-export function beginViewNavigation() { return ++loadGen }
+const isStaleLoad = (captured) => captured !== currentViewGeneration()
 
 // Keep expensive view renders out of the report-ingest call stack. A
 // workspace can contain many reports, and rendering after each parse both
@@ -532,7 +531,7 @@ async function addFiles(files) {
 // from a cancelled or failed load.
 export async function switchToFile(name, content, { workspaceId } = {}) {
   if (isManagedUiMode()) return
-  const gen = ++loadGen
+  const gen = beginViewNavigation()
   state.currentManagedTeam = null
   state.currentManagedReport = null
   state.currentReportWorkspace = reportWorkspaceFor(name, workspaceId)
@@ -705,7 +704,7 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   if (history && managedHistory.active) return managedHistory.navigate({ view: 'findings', teamId: team.id, reportId })
   const selected = reportId === null ? team.reports : team.reports.filter((r) => r.id === reportId)
   if (reportId !== null && selected.length === 0) return false
-  const gen = ++loadGen
+  const gen = beginViewNavigation()
   const contents = await Promise.all(selected.map((r) => fetchManagedReport(r.id)))
   if (isStaleLoad(gen)) return false
   if (contents.some((content) => content === null)) {
@@ -796,7 +795,7 @@ export async function switchToWorkspace(workspaceId) {
   state.managedReports = []
   const ws = listWorkspaces().find((w) => w.id === workspaceId)
   if (!ws) return
-  const gen = ++loadGen
+  const gen = beginViewNavigation()
   // Close triage-sync sessions for OTHER workspaces, keeping the
   // target's alive to avoid a close + open + re-subscribe round-trip on
   // every click of the workspace title (the ingest loop's trailing
@@ -971,7 +970,7 @@ export async function deleteCurrent({ triage = 'keep', deleteFromRemoteWorkspace
   // `isStaleLoad(gen)` at every await checkpoint, bail before the state
   // mutations if a newer load superseded us. Concurrency audit
   // `ui/view/ingest.js:366`.
-  const gen = ++loadGen
+  const gen = beginViewNavigation()
   const name = state.currentFile
   // Drop name-scoped cache + localStorage entries up-front, BEFORE any
   // await. removeCount + saveRepoUrlFor are synchronous and scoped to
@@ -1013,7 +1012,7 @@ export async function deleteCurrent({ triage = 'keep', deleteFromRemoteWorkspace
     if (isStaleLoad(gen)) return
   }
   // Final stale-check before the tail mutation block: a switchTo*'s
-  // `++loadGen` is synchronous and can land between any two statements,
+  // `beginViewNavigation()` is synchronous and can land between any two statements,
   // so re-check here even with no await separating them, lest a brand-
   // new view have its `state.reports` cleared / `graph2` torn down out
   // from under it. Audit follow-up: PR-73 cross-module review.
@@ -1031,7 +1030,7 @@ export async function deleteCurrent({ triage = 'keep', deleteFromRemoteWorkspace
 // and `leaveWorkspace`'s active-view branch all route through here so
 // the three paths can't drift.
 //
-// Does NOT bump `loadGen` or close sync sessions — those are caller
+// Does NOT begin navigation or close sync sessions — those are caller
 // concerns (each path has its own ordering constraints with the
 // surrounding OPFS / triage / remote operations).
 function clearActiveView({ forgetLastView = true } = {}) {
@@ -1090,7 +1089,7 @@ function clearActiveView({ forgetLastView = true } = {}) {
 // restore the managed report that was just open. Cold-start protocol detection
 // passes forgetLastView:false to leave local storage untouched.
 export function resetForClientModeTransition(options) {
-  ++loadGen
+  beginViewNavigation()
   closeSessionsExcept(new Set())
   clearActiveView(options)
 }
@@ -1106,7 +1105,7 @@ export async function goHome({ history = true } = {}) {
   // Bump the load generation so any in-flight switchTo* / ingestReport
   // bails before pushing into the cleared state. Mirrors the guard in
   // `deleteCurrent` / `leaveWorkspace`.
-  ++loadGen
+  beginViewNavigation()
   // Close any per-workspace sync sessions tied to the active view —
   // both single-file-member and merged-workspace views open sessions
   // (in switchToFile / switchToWorkspace); without closing them,
@@ -1135,13 +1134,13 @@ export async function goHome({ history = true } = {}) {
 // workspaces' tags half-deleted. Same shape + rationale as
 // `deleteCurrent`.
 //
-// Concurrency: `++loadGen` + `isStaleLoad(gen)` mirrors
+// Concurrency: `beginViewNavigation()` + `isStaleLoad(gen)` mirrors
 // `deleteCurrent` — a switchToWorkspace landing during an await below
 // would otherwise clobber the freshly-built view via the trailing
 // `listBundles()` + `render()`.
 export async function deleteCurrentBundle({ deleteFromRemoteWorkspaceIds = [] } = {}) {
   if (!state.selectedBundle) return
-  const gen = ++loadGen
+  const gen = beginViewNavigation()
   const integrity = state.selectedBundle
   for (const wsId of deleteFromRemoteWorkspaceIds) {
     try {
@@ -1208,7 +1207,7 @@ export async function leaveWorkspace(workspaceId, mode = 'detach', { triage = 'k
   // (e.g. a workspace click that started a merged-view load) bails
   // before pushing into the cleared state.reports — mirrors
   // `deleteCurrent`.
-  ++loadGen
+  beginViewNavigation()
   const reports = Array.isArray(ws.reports) ? [...ws.reports] : []
   // Tear down the live sync session BEFORE touching the workspace
   // entry. `deleteWorkspace`'s listener does the same teardown (and
