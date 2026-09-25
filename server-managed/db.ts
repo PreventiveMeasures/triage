@@ -135,6 +135,7 @@ CREATE TABLE IF NOT EXISTS managed_report (
 
 CREATE INDEX IF NOT EXISTS managed_report_uploaded_at_idx ON managed_report(uploaded_at);
 CREATE INDEX IF NOT EXISTS managed_report_bundle_integrity_idx ON managed_report(bundle_integrity);
+CREATE INDEX IF NOT EXISTS managed_report_bundle_hash_idx ON managed_report(bundle_id, sha256);
 
 -- Per-finding triage annotations — the managed (trusted-plaintext) counterpart
 -- of the client's localStorage triage map, keyed the same way: by finding id
@@ -370,6 +371,8 @@ export interface RepoDataItem {
   filename: string
 }
 
+export type RepoReportItem = Pick<ReportRecord, 'id' | 'filename' | 'sha256' | 'bundleId'>
+
 // A stored per-finding triage row, with the last writer's login resolved like
 // listReports (live login, falling back to the durable snapshot). `flagged`
 // maps the tri-state column: null unset, true/false set. Every field null =
@@ -508,7 +511,7 @@ export interface ManagedDb extends ActivityStore, CommentStore {
   deactivateRepo(repoId: number): Promise<boolean>
   reactivateRepo(repoId: number): Promise<boolean>
   deleteRepo(repoId: number): Promise<boolean>
-  listReportsForRepo(repoId: number): Promise<RepoDataItem[]>
+  listReportsForRepo(repoId: number): Promise<RepoReportItem[]>
   listBundlesForRepo(repoId: number): Promise<RepoDataItem[]>
   deleteReportsForRepo(repoId: number): Promise<number>
   deleteBundlesForRepo(repoId: number): Promise<number>
@@ -523,6 +526,7 @@ export interface ManagedDb extends ActivityStore, CommentStore {
   insertReport(report: ReportRecordInput, now: number): Promise<void>
   listReports(userId?: string): Promise<AdminReport[]>
   getReport(id: string): Promise<ReportRecord | null>
+  hasReportWithBundleHash(bundleId: string, sha256: string): Promise<boolean>
   deleteReport(id: string): Promise<boolean>
   // Attach / detach a report's repo + directory link (repoId null = detach);
   // resolves true iff the report exists. The caller validates repoId and the
@@ -671,7 +675,7 @@ function prepareStatements(db: DatabaseSync) {
     deleteRepoStmt: db.prepare(`DELETE FROM selected_repo WHERE repo_id = ?`),
     deactivateRepoStmt: db.prepare(`UPDATE selected_repo SET active = 0 WHERE repo_id = ? AND active = 1`),
     reactivateRepoStmt: db.prepare(`UPDATE selected_repo SET active = 1 WHERE repo_id = ? AND active = 0`),
-    selectReportsForRepoStmt: db.prepare(`SELECT id, filename FROM managed_report WHERE repo_id = ? ORDER BY filename ASC`),
+    selectReportsForRepoStmt: db.prepare(`SELECT id, filename, sha256, bundle_id AS bundleId FROM managed_report WHERE repo_id = ? ORDER BY filename ASC`),
     selectBundlesForRepoStmt: db.prepare(`SELECT id, filename FROM managed_bundle WHERE repo_id = ? ORDER BY filename ASC`),
     deleteReportsForRepoStmt: db.prepare(`DELETE FROM managed_report WHERE repo_id = ?`),
     deleteBundlesForRepoStmt: db.prepare(`DELETE FROM managed_bundle WHERE repo_id = ?`),
@@ -728,6 +732,7 @@ function prepareStatements(db: DatabaseSync) {
          FROM managed_report WHERE id = ?`,
     ),
     deleteReportStmt: db.prepare(`DELETE FROM managed_report WHERE id = ?`),
+    hasReportWithBundleHashStmt: db.prepare(`SELECT 1 FROM managed_report WHERE bundle_id = ? AND sha256 = ? LIMIT 1`),
     setReportRepoStmt: db.prepare(`UPDATE managed_report SET repo_id = ?, repo_directory = ? WHERE id = ?`),
     setReportVisibleStmt: db.prepare(`UPDATE managed_report SET visible = ? WHERE id = ?`),
     upsertTriageStmt: db.prepare(
@@ -954,8 +959,8 @@ function selectedRepoMethods(stmts: ReturnType<typeof prepareStatements>) {
     deleteRepo(repoId: number): Promise<boolean> {
       return Promise.resolve(Number(deleteRepoStmt.run(repoId).changes) > 0)
     },
-    listReportsForRepo(repoId: number): Promise<RepoDataItem[]> {
-      return Promise.resolve(selectReportsForRepoStmt.all(repoId) as unknown as RepoDataItem[])
+    listReportsForRepo(repoId: number): Promise<RepoReportItem[]> {
+      return Promise.resolve(selectReportsForRepoStmt.all(repoId) as unknown as RepoReportItem[])
     },
     listBundlesForRepo(repoId: number): Promise<RepoDataItem[]> {
       return Promise.resolve(selectBundlesForRepoStmt.all(repoId) as unknown as RepoDataItem[])
@@ -1021,6 +1026,9 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>) {
     },
     deleteReport(id: string): Promise<boolean> {
       return Promise.resolve(Number(deleteReportStmt.run(id).changes) > 0)
+    },
+    hasReportWithBundleHash(bundleId: string, sha256: string): Promise<boolean> {
+      return Promise.resolve(stmts.hasReportWithBundleHashStmt.get(bundleId, sha256) !== undefined)
     },
     setReportRepo(id: string, repoId: number | null, repoDirectory = ''): Promise<boolean> {
       return Promise.resolve(Number(setReportRepoStmt.run(repoId, repoId == null ? '' : repoDirectory, id).changes) > 0)

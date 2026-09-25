@@ -47,21 +47,29 @@ function selectSources(findings: unknown[], sources: Map<string, string>) {
 
 // Immutable report hashes share a derivative across duplicate uploads. Bundle
 // identity and visibility are part of the key: a broader viewer's sources must
-// never populate a restricted response. Files live under their bundle so its
-// deletion also removes derivatives, including any cold build in flight.
+// never populate a restricted response. A report-hash directory groups every
+// format/permission variant for cleanup once its last report is deleted.
 export function createReportSourcesCache(dir: string, db: ManagedDb, reports: BlobStore, bundles: BundleStore) {
   const pending = new Map<string, Promise<boolean>>()
   let queue = Promise.resolve()
+  function enqueue<T>(work: () => Promise<T>): Promise<T> {
+    const job = queue.then(work)
+    queue = job.then(() => undefined, () => undefined)
+    return job
+  }
   function directory(id: string) {
     if (!/^[a-f\d-]{36}$/iu.test(id)) throw new Error('Invalid bundle id')
     return join(dir, id)
   }
+  function reportDirectory(bundleId: string, sha256: string) {
+    return join(directory(bundleId), `v1-${createHash('sha256').update(sha256).digest('hex')}`)
+  }
   function filename(report: ReportRecord, bundle: ManagedBundle, permissions: ViewerPermissions) {
     const key = createHash('sha256').update(JSON.stringify([
-      report.sha256, extname(report.filename).toLowerCase(), bundle.integrity, bundle.kind,
+      extname(report.filename).toLowerCase(), bundle.integrity, bundle.kind,
       permissions.dependencies, permissions.security,
     ])).digest('hex')
-    return join(directory(bundle.id), `v1-${key}.json.gz`)
+    return join(reportDirectory(bundle.id, report.sha256), `${key}.json.gz`)
   }
   async function build(target: string, report: ReportRecord, bundle: ManagedBundle, permissions: ViewerPermissions) {
     const bytes = await reports.get(report.id)
@@ -72,8 +80,9 @@ export function createReportSourcesCache(dir: string, db: ManagedDb, reports: Bl
     if (!details) return false
     const selection = selectSources(parsed.findings, bundleSourcesAsMap(details))
     const body = await compress(Buffer.from(JSON.stringify({ integrity: bundle.integrity, ...selection })), { level: 6 })
-    if (!(await db.getBundle(bundle.id))) return false
-    await mkdir(directory(bundle.id), { recursive: true })
+    const current = await db.getReport(report.id)
+    if (current?.bundleId !== bundle.id || current.sha256 !== report.sha256 || !(await db.getBundle(bundle.id))) return false
+    await mkdir(reportDirectory(bundle.id, report.sha256), { recursive: true })
     const temp = `${target}.${randomUUID()}.tmp`
     try { await writeFile(temp, body); await rename(temp, target) }
     finally { await rm(temp, { force: true }) }
@@ -86,9 +95,7 @@ export function createReportSourcesCache(dir: string, db: ManagedDb, reports: Bl
       try { await stat(target); return true }
       catch (err) { if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err }
       // Serial cold builds bound peak decompression/parsing memory.
-      const work = queue.then(() => build(target, report, bundle, permissions))
-      queue = work.then(() => undefined, () => undefined)
-      return work
+      return enqueue(() => build(target, report, bundle, permissions))
     })()
     pending.set(target, job)
     try { return await job } finally { if (pending.get(target) === job) pending.delete(target) }
@@ -105,6 +112,16 @@ export function createReportSourcesCache(dir: string, db: ManagedDb, reports: Bl
       const prefix = `${directory(id)}/`
       await Promise.allSettled([...pending].filter(([key]) => key.startsWith(prefix)).map(([, job]) => job))
       await rm(directory(id), { recursive: true, force: true })
+    },
+    async deleteReport(report: Pick<ReportRecord, 'bundleId' | 'sha256'>) {
+      const { bundleId, sha256 } = report
+      if (bundleId === null) return
+      // Called after metadata deletion. Serialize with builders so a cold
+      // request cannot recreate a derivative after its cleanup has finished.
+      await enqueue(async () => {
+        if (await db.hasReportWithBundleHash(bundleId, sha256)) return
+        await rm(reportDirectory(bundleId, sha256), { recursive: true, force: true })
+      })
     },
   }
 }

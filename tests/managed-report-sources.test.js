@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { createServer, request } from 'node:http'
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { brotliCompressSync, gunzipSync } from 'node:zlib'
@@ -68,18 +68,25 @@ async function setup(t, kind = 'sourcemap') {
     return db.getReport(id)
   }
   const report = await seed()
-  function send(id = report.id, role = 'admin', method = 'GET') {
+  function send(id = report.id, role = 'admin', method = 'GET', { path, body } = {}) {
     return new Promise((resolve, reject) => {
-      const req = request({ hostname: '127.0.0.1', port: server.address().port, path: `/api/reports/${id}/sources`, method, headers: users[role] ? { cookie: users[role].cookie } : {} }, res => {
+      const req = request({ hostname: '127.0.0.1', port: server.address().port, path: path ?? `/api/reports/${id}/sources`, method, headers: users[role] ? { cookie: users[role].cookie, 'x-csrf-token': users[role].csrfToken } : {} }, res => {
         const chunks = []
         res.on('data', chunk => chunks.push(chunk))
-        res.on('end', () => { const body = Buffer.concat(chunks); resolve({ status: res.statusCode, headers: res.headers, bytes: body, json: () => JSON.parse(gunzipSync(body)) }) })
+        res.on('end', () => { const bytesOut = Buffer.concat(chunks); resolve({ status: res.statusCode, headers: res.headers, bytes: bytesOut, json: () => JSON.parse(res.headers['content-encoding'] === 'gzip' ? gunzipSync(bytesOut) : bytesOut) }) })
       })
-      req.on('error', reject); req.end()
+      req.on('error', reject); req.end(body === undefined ? undefined : JSON.stringify(body))
     })
   }
-  return { db, reports, bundles, cache, bundle, report, seed, send, users, team }
+  return { db, reports, bundles, cache, bundle, report, seed, send, users, team, cacheDir: join(dir, 'cache') }
 }
+
+async function cachedFiles(h) {
+  try { return (await readdir(h.cacheDir, { recursive: true })).filter(path => path.endsWith('.json.gz')).toSorted() }
+  catch (err) { if (err.code === 'ENOENT') return []; throw err }
+}
+
+function deleteReport(h, id) { return h.send(id, 'admin', 'DELETE', { path: `/api/admin/reports/${id}` }) }
 
 for (const kind of ['stasis', 'sourcemap']) {
   test(`${kind}: gzip includes location and evidence files only, with safe suffix matching`, async t => {
@@ -112,6 +119,69 @@ test('cached report hashes share gzip bytes without reparsing; warm responses us
   assert.equal(opened.stream.readableFlowing, null)
   assert.equal(opened.stream.bytesRead, 0)
   opened.stream.destroy()
+})
+
+test('report deletion keeps shared hashes, then removes all formats and permissions when the last copy is deleted', async t => {
+  const h = await setup(t)
+  const duplicate = await h.seed(), otherFormat = await h.seed(undefined, h.bundle.id, 'same-report.md')
+  const unrelated = await h.seed(JSON.stringify({ findings: findings.slice(1) }))
+  await h.db.setTeamMember(h.team, h.users.view.userId, { dependencies: false, security: false })
+  for (const report of [h.report, otherFormat]) {
+    assert.equal((await h.send(report.id)).status, 200)
+    assert.equal((await h.send(report.id, 'view')).status, 200)
+  }
+  const shared = await cachedFiles(h)
+  assert.equal(shared.length, 4)
+  assert.equal((await h.send(unrelated.id)).status, 200)
+  const all = await cachedFiles(h)
+  assert.equal(all.length, 5)
+  assert.equal((await deleteReport(h, h.report.id)).status, 200)
+  assert.deepEqual(await cachedFiles(h), all, 'a duplicate report still owns the hash')
+  const read = t.mock.method(h.bundles, 'get', () => { throw new Error('shared derivative should stay warm') })
+  assert.equal((await h.send(duplicate.id)).status, 200)
+  read.mock.restore()
+  assert.equal((await deleteReport(h, duplicate.id)).status, 200)
+  assert.deepEqual(await cachedFiles(h), all)
+  assert.equal((await deleteReport(h, otherFormat.id)).status, 200)
+  assert.deepEqual(await cachedFiles(h), all.filter(path => !shared.includes(path)))
+  assert.ok(await h.db.getBundle(h.bundle.id), 'deleting reports must keep their bundle')
+  assert.equal((await deleteReport(h, unrelated.id)).status, 200)
+  assert.deepEqual(await cachedFiles(h), [])
+})
+
+test('repository removal cleans report derivatives even when the linked bundle belongs to another repository', async t => {
+  const h = await setup(t)
+  // Removing repo 2 deletes its reports but leaves repo 1 and its bundle alive.
+  await h.db.selectRepo({ repoId: 2, fullName: 'org/other', private: true, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: h.users.admin.userId }, Date.now())
+  await h.db.setReportRepo(h.report.id, 2)
+  assert.equal((await h.send()).status, 200)
+  assert.equal((await cachedFiles(h)).length, 1)
+  const removed = await h.send(null, 'admin', 'POST', { path: '/api/admin/repositories/remove', body: { repoId: 2, fullName: 'org/other', acknowledge: true, deleteTriage: false } })
+  assert.equal(removed.status, 200)
+  assert.equal(await h.db.getReport(h.report.id), null)
+  assert.ok(await h.db.getBundle(h.bundle.id))
+  assert.deepEqual(await cachedFiles(h), [])
+})
+
+test('deletion waits for a cold build and stale requests cannot recreate its cache', async t => {
+  const h = await setup(t)
+  const bundle = await h.db.getBundle(h.bundle.id), bytes = await h.reports.get(h.report.id)
+  const finish = Promise.withResolvers(), reading = Promise.withResolvers(), removed = Promise.withResolvers()
+  const get = h.bundles.get.bind(h.bundles), remove = h.db.deleteReport.bind(h.db)
+  t.mock.method(h.bundles, 'get', async (...args) => { reading.resolve(); await finish.promise; return get(...args) })
+  t.mock.method(h.db, 'deleteReport', async id => { const result = await remove(id); removed.resolve(); return result })
+  const loading = h.cache.open(h.report, bundle, { dependencies: true, security: true })
+  await reading.promise
+  const deleting = deleteReport(h, h.report.id)
+  await removed.promise
+  finish.resolve()
+  assert.equal(await loading, null)
+  assert.equal((await deleting).status, 200)
+  assert.deepEqual(await cachedFiles(h), [])
+  // A delayed request may already hold the report bytes when deletion wins.
+  t.mock.method(h.reports, 'get', () => Promise.resolve(bytes))
+  assert.equal(await h.cache.open(h.report, bundle, { dependencies: true, security: true }), null)
+  assert.deepEqual(await cachedFiles(h), [])
 })
 
 test('visibility variants cannot reuse broader cached sources; managers still need team access', async t => {

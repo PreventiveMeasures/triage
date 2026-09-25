@@ -497,7 +497,10 @@ async function handleRemoveRepository(req: IncomingMessage, res: ServerResponse,
   const deletedBundles = await deps.db.deleteBundlesForRepo(repoId)
   // Remove metadata first so a blob-store failure leaves an orphaned blob for
   // later cleanup, rather than a live row pointing at missing report data.
-  for (const report of reports) await deps.reportStore.delete(report.id).catch(() => {})
+  for (const report of reports) {
+    await deps.reportSourcesCache?.deleteReport(report).catch((err) => { console.warn('managed: report sources delete failed:', err) })
+    await deps.reportStore.delete(report.id).catch(() => {})
+  }
   for (const bundle of bundles) {
     // Cache cleanup must not interrupt triage/repository removal after the
     // report rows needed to reconstruct exclusive finding IDs are gone.
@@ -782,6 +785,7 @@ async function handleDeleteReport(req: IncomingMessage, res: ServerResponse, dep
   const report = await deps.db.getReport(id)
   if (report == null) { sendJson(res, 404, { error: 'no-report' }); return }
   const existed = await deps.db.deleteReport(id)
+  await deps.reportSourcesCache?.deleteReport(report).catch((err) => { console.warn('managed: report sources delete failed:', err) })
   await deps.reportStore.delete(id).catch((err) => { console.warn('managed: report bytes delete failed:', err) })
   if (!existed) { sendJson(res, 404, { error: 'no-report' }); return }
   await activity(deps, s.user, 'delete', 'deleted a report', { repoId: report.repoId, repoDirectory: report.repoDirectory, reportId: id, report: report.filename, repo: await repositoryName(deps, report.repoId) })
