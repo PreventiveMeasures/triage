@@ -4,7 +4,7 @@ export const SCAN_PAGE_STYLES = css`
   /* The containing page owns the outer gutters, in both Manage and local. */
   :host { display: block; box-sizing: border-box; color: var(--text); }
   * { box-sizing: border-box; }
-  .wrap { max-width: 68rem; margin: 0 auto; container: scan-page / inline-size; }
+  .wrap { max-width: 76rem; margin: 0 auto; container: scan-page / inline-size; }
   .head { display: flex; flex-wrap: wrap; align-items: center; gap: .65rem; min-height: 2.1rem; margin-bottom: .45rem; }
   .head-title { display: flex; align-items: center; gap: .65rem; }
   .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
