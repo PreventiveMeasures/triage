@@ -22,6 +22,7 @@ import { openSyncDownloadDialog } from './dialogs/sync-download-dialog.js'
 import { fetchReport as fetchManagedReport, login as managedLogin } from './client-managed.js'
 import { showToast } from './toast.js'
 import { managedHistory } from './managed-history.js'
+import { loadManagedReportComments } from './managed-comments.js'
 import { setLoadedWorkspaceAppReports, updateWorkspaceAppMetadata } from './workspace-app-load.js'
 import { beginViewNavigation, currentViewGeneration } from './view-navigation.js'
 export { beginViewNavigation, currentViewGeneration } from './view-navigation.js'
@@ -568,6 +569,7 @@ export async function switchToFile(name, content, { workspaceId } = {}) {
   // Local file navigation leaves the managed report scope.
   state.managedReport = null
   state.managedReports = []
+  state.managedComments.clear()
   // A report opens its findings from every non-report surface, including
   // Scans. Preserve the Files lens when moving between reports.
   // (A links file lands back on 'links' below, once the read confirms
@@ -739,6 +741,7 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   state.currentManagedTeam = team.id
   state.currentManagedReport = reportId
   state.managedReports = selected.map((entry) => ({ id: entry.id, filename: entry.filename }))
+  state.managedComments.clear()
   state.managedReport = reportId === null ? null : state.managedReports[0] ?? null
   state.currentReportWorkspace = null
   state.currentLinks = null
@@ -760,11 +763,13 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
     const { hydrateManagedReportTriage } = await import('./managed-triage.js')
     if (isStaleLoad(gen)) return false
     for (const entry of selected) {
-      const hydrated = await hydrateManagedReportTriage(entry.id, { renderView: false })
+      const hydrated = (await Promise.all([
+        hydrateManagedReportTriage(entry.id, { renderView: false }), loadManagedReportComments(entry.id),
+      ])).every(Boolean)
       if (isStaleLoad(gen)) return false
       if (!hydrated) {
         await goHome({ history: false })
-        showToast('Could not load report triage. Open the team or report again to retry.')
+        showToast('Could not load report annotations. Open the team or report again to retry.')
         return false
       }
     }
@@ -794,6 +799,7 @@ export async function switchToWorkspace(workspaceId) {
   state.currentManagedReport = null
   state.managedReport = null
   state.managedReports = []
+  state.managedComments.clear()
   const ws = listWorkspaces().find((w) => w.id === workspaceId)
   if (!ws) return
   const gen = beginViewNavigation()
@@ -1044,6 +1050,7 @@ function clearActiveView({ forgetLastView = true } = {}) {
   state.currentLinks = null
   state.managedReport = null
   state.managedReports = []
+  state.managedComments.clear()
   state.selectedBundle = null
   state.bundleDetails = null
   state.bundleDetailsTab = 'overview'

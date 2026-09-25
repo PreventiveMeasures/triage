@@ -15,6 +15,8 @@ import { type IncomingMessage, type ServerResponse, createServer } from 'node:ht
 import { DEFAULT_MANAGED_SCAN_MODEL, MANAGED_SCAN_MODELS } from '../common/managed/scan-models.ts'
 import { MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_ENTRIES, type TriageEntryPatch, parseTriageEntryPatch } from '../common/managed/triage.ts'
 import { acceptsReportMetadata } from './report-response.ts'
+import { type ManagedComment, parseCommentBody } from '../common/managed/comments.ts'
+import { randomUUID } from 'node:crypto'
 
 const host = process.env['MANAGED_TEST_HOST'] ?? '127.0.0.1'
 const port = Number(process.env['MANAGED_TEST_PORT'] ?? 8766)
@@ -264,7 +266,7 @@ function handleAdminCatalog(url: URL, method: string, res: ServerResponse): bool
       repoId, fullName: repo.fullName,
       reports: attached.map((report) => ({ id: report.id, filename: report.filename, repoDirectory: report.repoDirectory })),
       bundles: bundles.filter((bundle) => bundle.repoId === repoId),
-      triageCount: [...new Set(ids(attached))].filter((id) => triage.has(id) && !otherIds.has(id)).length,
+      triageCount: [...new Set(ids(attached))].filter((id) => (triage.has(id) || comments.some(comment => comment.findingId === id)) && !otherIds.has(id)).length,
     })
     return true
   }
@@ -371,6 +373,48 @@ function sendText(res: ServerResponse, status: number, text: string): void {
 }
 
 const triage = new Map<string, TriageEntryPatch | null>()
+const comments: ManagedComment[] = [{
+  id: 'fixture-comment-legacy', findingId: 'managed-fixture-1', body: 'An imported note without an author.',
+  authorId: null, authorLogin: null, createdAt: 1_758_000_000_000, updatedAt: 1_758_000_000_000, version: 1,
+}]
+
+async function handleComments(req: IncomingMessage, res: ServerResponse, reportId: string, commentId: string | null): Promise<void> {
+  const report = reportFixtures.find(item => item.id === reportId)
+  if (!report || !['admin', 'manage', 'triage', 'view'].includes(role)) { sendJson(res, 404, { error: 'no-report' }); return }
+  const ids = new Set((JSON.parse(report.content).findings as { id: string }[]).map(finding => finding.id))
+  if (req.method === 'GET' && commentId == null) {
+    sendJson(res, 200, { comments: comments.filter(comment => ids.has(comment.findingId)) }); return
+  }
+  if (commentId == null ? req.method !== 'POST' : req.method !== 'PATCH') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
+  if (!['admin', 'manage', 'triage'].includes(role) || req.headers['x-csrf-token'] !== 'fixture-csrf-token') {
+    sendJson(res, 403, { error: 'forbidden' }); return
+  }
+  const chunks: Buffer[] = []
+  let size = 0
+  for await (const chunk of req) {
+    const buffer = Buffer.from(chunk)
+    size += buffer.length
+    if (size > MAX_TRIAGE_BODY_BYTES) { sendJson(res, 413, { error: 'too-large' }); return }
+    chunks.push(buffer)
+  }
+  let raw: { body?: unknown; findingId?: string; version?: number }
+  try { raw = JSON.parse(Buffer.concat(chunks).toString()) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
+  const body = parseCommentBody(raw?.body)
+  if (!body) { sendJson(res, 400, { error: 'bad-comment' }); return }
+  if (commentId == null) {
+    if (!raw.findingId || !ids.has(raw.findingId)) { sendJson(res, 404, { error: 'no-finding' }); return }
+    const at = Date.now()
+    const comment = { id: randomUUID(), findingId: raw.findingId, body, authorId: 'fixture-user', authorLogin: 'managed-preview', createdAt: at, updatedAt: at, version: 1 }
+    comments.push(comment)
+    sendJson(res, 201, { comment }); return
+  }
+  const comment = comments.find(entry => entry.id === commentId && ids.has(entry.findingId))
+  if (!comment) { sendJson(res, 404, { error: 'no-comment' }); return }
+  if (comment.authorId !== 'fixture-user') { sendJson(res, 403, { error: 'not-comment-author' }); return }
+  if (comment.version !== raw.version) { sendJson(res, 409, { error: 'comment-changed' }); return }
+  if (comment.body !== body) { comment.body = body; comment.updatedAt = Date.now(); comment.version++ }
+  sendJson(res, 200, { comment })
+}
 
 async function handleTriage(req: IncomingMessage, res: ServerResponse, id: string): Promise<void> {
   const fixture = reportFixtures.find((report) => report.id === id)
@@ -403,6 +447,7 @@ async function handleTriage(req: IncomingMessage, res: ServerResponse, id: strin
   for (const [key, value] of Object.entries(entries)) {
     if (!ids.has(key)) { sendJson(res, 404, { error: 'no-finding' }); return }
     const entry = parseTriageEntryPatch(value)
+    if (value != null && typeof value === 'object' && Object.hasOwn(value, 'comment')) { sendJson(res, 400, { error: 'use-comments-endpoint' }); return }
     if (entry === 'invalid') { sendJson(res, 400, { error: 'bad-entry' }); return }
     parsed.set(key, entry)
   }
@@ -439,6 +484,13 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
     return
   }
   if (url.pathname.startsWith('/api/reports/')) {
+    const route = /^\/api\/reports\/([^/]+)\/comments(?:\/([^/]+))?$/u.exec(url.pathname)
+    if (route) {
+      void handleComments(req, res, route[1]!, route[2] ?? null).catch(() => {
+        if (!res.headersSent) sendJson(res, 500, { error: 'comments-failed' })
+      })
+      return
+    }
     if (url.pathname.endsWith('/triage')) {
       const id = decodeURIComponent(url.pathname.slice('/api/reports/'.length, -'/triage'.length))
       void handleTriage(req, res, id).catch(() => {

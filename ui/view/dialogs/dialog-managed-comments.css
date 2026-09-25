@@ -1,0 +1,14 @@
+.comments { max-height: 45vh; overflow-y: auto; margin: .8rem 0; }
+.comment { padding: .75rem 0; border-bottom: 1px solid var(--border); }
+.byline { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; font-size: .78rem; }
+.byline time, .byline span { color: var(--muted); }
+.byline button {
+  margin-left: auto; padding: .2rem .45rem;
+  border: 1px solid var(--border); border-radius: 4px;
+  background: transparent; color: var(--text); font: inherit;
+}
+.body { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: .4rem; }
+.body a { color: var(--accent); }
+.error { color: var(--danger, #c44); }
+label { display: block; margin-bottom: .4rem; font-size: .85rem; }
+textarea { min-height: 6rem; }

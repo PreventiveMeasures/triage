@@ -68,6 +68,7 @@ import type { ActivityContext, ActivityInput } from './activity.ts'
 import { acceptsReportMetadata } from './report-response.ts'
 import { MAX_PULL_REQUESTS, MAX_PULL_REQUEST_URL } from '../common/github-pr.ts'
 import { lookupPullRequests } from './github-pulls.ts'
+import { parseCommentBody } from '../common/managed/comments.ts'
 
 const SESSION_PATH = '/api/auth/session'
 const AVATAR_PREFIX = '/api/avatar/'
@@ -437,14 +438,16 @@ async function repositoryImpact(deps: ManagedHttpDeps, repoId: number) {
 async function repositoryExclusiveTriageIds(deps: ManagedHttpDeps, reports: { id: string, filename: string }[], otherReports: { id: string, filename: string }[]): Promise<string[]> {
   const targetIds = await repositoryFindingIds(deps, reports)
   const triage = await deps.db.listTriage([...targetIds])
-  if (triage.length === 0) return []
+  const comments = await deps.db.listComments([...targetIds])
+  const annotatedIds = new Set([...triage, ...comments].map(entry => entry.findingId))
+  if (annotatedIds.size === 0) return []
   // Only annotated findings need an overlap check.
   // TODO(managed): Persist finding IDs per report at upload time and maintain
   // the index on report deletion. Use it for repository impact and triage
   // cleanup so overlap checks do not fetch and parse every other report blob.
   // Deferred for production; the preview still performs the blob scan below.
   const otherIds = await repositoryFindingIds(deps, otherReports)
-  return triage.map((entry) => entry.findingId).filter((id) => !otherIds.has(id))
+  return [...annotatedIds].filter((id) => !otherIds.has(id))
 }
 
 // GET /api/admin/repositories/impact — show the data a permanent repository
@@ -1103,11 +1106,11 @@ async function visibleFindingIds(deps: ManagedHttpDeps, user: StoredUser, report
 // set fields present, `false` kept for flagged (the explicit un-flag tombstone
 // must round-trip), and null for the row of a cleared entry (every field
 // null) — the reader adopts the clear.
-function triageWireEntry(row: Pick<TriageRow, 'color' | 'triage' | 'comment' | 'fix' | 'flagged'>): TriageEntryPatch | null {
+function triageWireEntry(row: Pick<TriageRow, 'color' | 'triage' | 'comment' | 'fix' | 'flagged'>, legacyHistory = false): TriageEntryPatch | null {
   const e: TriageEntryPatch = {}
   if (row.color != null) e.color = row.color
   if (isTriageBucket(row.triage)) e.triage = row.triage
-  if (row.comment != null) e.comment = row.comment
+  if (legacyHistory && row.comment != null) e.comment = row.comment
   if (row.fix != null) e.fix = row.fix
   if (row.flagged != null) e.flagged = row.flagged
   return Object.keys(e).length > 0 ? e : null
@@ -1151,7 +1154,7 @@ async function handleGetReportTriageHistory(res: ServerResponse, deps: ManagedHt
   const visible = await visibleFindingIds(deps, current.user, id)
   if (!visible.has(finding)) { sendJson(res, 404, { error: 'no-finding' }); return }
   const events = (await deps.db.listTriageHistory(finding, MAX_TRIAGE_HISTORY)).map((row: TriageEventRow) => ({
-    seq: row.seq, at: row.at, actorLogin: row.actorLogin, batchId: row.batchId, entry: triageWireEntry(row),
+    seq: row.seq, at: row.at, actorLogin: row.actorLogin, batchId: row.batchId, entry: triageWireEntry(row, true),
   }))
   sendJson(res, 200, { finding, events })
 }
@@ -1178,6 +1181,9 @@ async function handleSetReportTriage(req: IncomingMessage, res: ServerResponse, 
   const parsed: [string, TriageEntryPatch | null][] = []
   for (const [findingId, value] of pairs) {
     const patch = parseTriageEntryPatch(value)
+    if (value != null && typeof value === 'object' && Object.hasOwn(value, 'comment')) {
+      sendJson(res, 400, { error: 'use-comments-endpoint' }); return
+    }
     if (patch === 'invalid' || findingId === '' || findingId.length > MAX_FINDING_ID) {
       sendJson(res, 400, { error: 'bad-entry' }); return
     }
@@ -1192,6 +1198,53 @@ async function handleSetReportTriage(req: IncomingMessage, res: ServerResponse, 
   }
   await deps.db.setTriageEntries(parsed, s.user.id, s.user.login, Date.now(), id)
   sendJson(res, 200, { ok: true })
+}
+
+// A report grants access to its visible findings; comments themselves are
+// shared by finding ID. Author IDs always come from the authenticated session.
+async function handleReportComments(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, reportId: string, commentId: string | null): Promise<void> {
+  const method = req.method ?? 'GET'
+  if (commentId == null ? method !== 'GET' && method !== 'POST' : method !== 'PATCH') {
+    send405(res, commentId == null ? 'GET, POST' : 'PATCH'); return
+  }
+  const s = method === 'GET' ? await readSession(deps.config, deps.db, cookie, Date.now()) : await checkMutation(req, res, deps, cookie)
+  if (s == null) { if (method === 'GET') sendJson(res, 401, { error: 'unauthenticated' }); return }
+  const allowed = method === 'GET' ? await canViewReport(deps, s.user, reportId) : await canTriageReport(deps, s.user, reportId)
+  if (!allowed) { sendJson(res, 404, { error: 'no-report' }); return }
+  let raw: { body?: unknown; findingId?: unknown; version?: unknown } | null
+  if (method === 'GET') raw = null
+  else {
+    try { raw = await readJsonBody(req, MAX_TRIAGE_BODY_BYTES) as typeof raw } catch { sendJson(res, 400, { error: 'bad-body' }); return }
+  }
+  // Body delivery and a cold report read can outlive a permission change.
+  // Match triage's recheck before exposing or changing any annotation.
+  await visibleFindingIds(deps, s.user, reportId)
+  const session = await readSession(deps.config, deps.db, cookie, Date.now())
+  if (!session || session.user.role !== s.user.role || !(await canViewReport(deps, session.user, reportId))) {
+    sendJson(res, 404, { error: 'no-report' }); return
+  }
+  const visible = await visibleFindingIds(deps, session.user, reportId)
+  if (method === 'GET') {
+    sendJson(res, 200, { comments: await deps.db.listComments([...visible]) }); return
+  }
+  const body = parseCommentBody(raw?.body)
+  if (body == null) { sendJson(res, 400, { error: 'bad-comment' }); return }
+  if (commentId == null) {
+    if (typeof raw?.findingId !== 'string' || !visible.has(raw.findingId)) { sendJson(res, 404, { error: 'no-finding' }); return }
+    const comment = await deps.db.createComment({ findingId: raw.findingId, body, authorId: session.user.id, authorLogin: session.user.login, reportId }, Date.now())
+    sendJson(res, 201, { comment }); return
+  }
+  const current = await deps.db.getComment(commentId)
+  if (current == null || !visible.has(current.findingId)) { sendJson(res, 404, { error: 'no-comment' }); return }
+  if (current.authorId !== session.user.id) { sendJson(res, 403, { error: 'not-comment-author' }); return }
+  if (typeof raw?.version !== 'number' || !Number.isSafeInteger(raw.version) || raw.version < 1) {
+    sendJson(res, 400, { error: 'bad-version' }); return
+  }
+  const comment = await deps.db.editComment(commentId, session.user.id, session.user.login, body, raw.version, reportId, Date.now())
+  if (comment === 'conflict') { sendJson(res, 409, { error: 'comment-changed' }); return }
+  if (comment === 'forbidden') { sendJson(res, 403, { error: 'not-comment-author' }); return }
+  if (comment == null) { sendJson(res, 404, { error: 'no-comment' }); return }
+  sendJson(res, 200, { comment })
 }
 
 // GET /api/admin/teams — every team (members + repos inlined) plus the pickers
@@ -1484,6 +1537,10 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (method === 'GET') { await handleGetBundle(res, deps, cookie, id); return }
       if (method === 'DELETE') { await handleDeleteBundle(req, res, deps, cookie, id); return }
       send405(res, 'GET, DELETE'); return
+    }
+    const commentsRoute = /^\/api\/reports\/([^/]+)\/comments(?:\/([^/]+))?$/u.exec(path)
+    if (commentsRoute) {
+      await handleReportComments(req, res, deps, cookie, commentsRoute[1]!, commentsRoute[2] ?? null); return
     }
     // Per-finding triage on a viewable report. The '/triage' suffixes are
     // matched before the bare per-id slice below (a report id is a uuid, so it

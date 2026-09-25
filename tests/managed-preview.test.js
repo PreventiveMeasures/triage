@@ -88,7 +88,7 @@ test('managed preview triage persists in memory and stays scoped to the requeste
   assert.equal(impact.repoId, 101)
   assert.equal(impact.reports.length, 2)
   assert.equal(impact.bundles.length, 2)
-  assert.equal(impact.triageCount, 0)
+  assert.equal(impact.triageCount, 1, 'the unattributed fixture comment is part of repository annotations')
   assert.equal((await fetch(new URL('/api/admin/repositories/impact?repoId=999', base))).status, 404)
   const post = (url, entries, token = 'fixture-csrf-token') => fetch(url, {
     method: 'POST', headers: { 'content-type': 'application/json', 'x-csrf-token': token }, body: JSON.stringify({ entries }),

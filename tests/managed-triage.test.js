@@ -101,19 +101,19 @@ test('server entries win per id on hydrate — a tombstone clears — persist + 
   state.triage.set('x', { triage: 'fixed', ignoredReports: ['old.json'] })
   state.triage.set('z', { ignoredReports: ['old.json'] })
   state.triage.set('w', { color: 'red', ignoredReports: ['old.json'] })
-  serverEntries = { B: { x: { triage: 'invalid' }, z: { comment: 'hi', flagged: false }, w: null } }
+  serverEntries = { B: { x: { triage: 'invalid' }, z: { fix: 'hi', flagged: false }, w: null } }
   await open('B', ['x', 'y', 'z', 'w'])
   assert.equal(bucketOf(state.triage.get('x')), 'invalid')
   assert.equal(state.triage.get('x').ignoredReports, undefined, 'a bucket clears the per-report ignore (mutex)')
-  assert.deepEqual(state.triage.get('z'), { comment: 'hi', flagged: false, ignoredReports: ['old.json'] }, 'no bucket keeps it')
+  assert.deepEqual(state.triage.get('z'), { fix: 'hi', flagged: false, ignoredReports: ['old.json'] }, 'no bucket keeps it')
   assert.deepEqual(state.triage.get('w'), { ignoredReports: ['old.json'] }, 'the tombstone clears the entry, keeps the client-local ignore')
   assert.equal(saves, 1)
   assert.equal(renders, 1)
   await drain()
   assert.deepEqual(pushes(), [], 'the adopted entries are the baseline, not edits')
-  await edit('x', { comment: 'mine' })
+  await edit('x', { fix: 'mine' })
   await drain()
-  assert.deepEqual(pushes(), [push('B', { x: { triage: 'invalid', comment: 'mine' } })])
+  assert.deepEqual(pushes(), [push('B', { x: { triage: 'invalid', fix: 'mine' } })])
 })
 
 test('the same id across reports: what landed from one report is not re-sent from the next', async () => {
@@ -129,6 +129,18 @@ test('the same id across reports: what landed from one report is not re-sent fro
   await edit('n', { color: 'red' })
   await drain()
   assert.deepEqual(pushes().at(-1), push('B', { n: { color: 'red' } }))
+})
+
+test('managed triage never hydrates or pushes the legacy shared comment field', async () => {
+  serverEntries = { A: { x: { color: 'blue', comment: 'old shared text' } } }
+  await open('A', ['x'])
+  assert.deepEqual(state.triage.get('x'), { color: 'blue' })
+  await edit('x', { comment: 'a local projection must not be sent' })
+  await drain()
+  assert.deepEqual(pushes(), [])
+  await edit('x', { color: 'red' })
+  await drain()
+  assert.deepEqual(pushes(), [push('A', { x: { color: 'red' } })])
 })
 
 test('a view switch inside the debounce window still flushes the edits to the report they were made in', async () => {
@@ -198,12 +210,12 @@ test('merged team hydration can defer painting and routes edits to each report',
   assert.equal(state.triage.get('y').color, 'red')
   await drain()
   assert.deepEqual(pushes(), [], 'adopted entries are not echoed back')
-  await edit('x', { comment: 'first report' })
-  await edit('y', { comment: 'second report' })
+  await edit('x', { fix: 'first report' })
+  await edit('y', { fix: 'second report' })
   await drain()
   assert.deepEqual(pushes(), [
-    push('A', { x: { triage: 'fixed', comment: 'first report' } }),
-    push('B', { y: { color: 'red', comment: 'second report' } }),
+    push('A', { x: { triage: 'fixed', fix: 'first report' } }),
+    push('B', { y: { color: 'red', fix: 'second report' } }),
   ])
 })
 
@@ -307,11 +319,11 @@ test('a batch the server refuses as sent does not wedge later pushes; an over-ca
   assert.deepEqual(pushes().at(-1), push('B', { y: { color: 'green' } }), 'until it changes')
   // An entry over the server's caps never goes out (it would be refused), and
   // does not hold the others back.
-  await edit('v', { comment: 'x'.repeat(MAX_TRIAGE_TEXT + 1) })
+  await edit('v', { fix: 'x'.repeat(MAX_TRIAGE_TEXT + 1) })
   await edit('w', { fix: '#2' })
   await drain()
   assert.deepEqual(pushes().at(-1), push('B', { w: { color: 'blue', fix: '#2' } }))
-  assert.equal(state.triage.get('v').comment.length, MAX_TRIAGE_TEXT + 1, 'kept locally')
+  assert.equal(state.triage.get('v').fix.length, MAX_TRIAGE_TEXT + 1, 'kept locally')
 })
 
 test('a push is split by entry count and by body size', async () => {
@@ -324,7 +336,7 @@ test('a push is split by entry count and by body size', async () => {
   calls = []
   const big = Array.from({ length: 40 }, (_, i) => `g${i}`)
   state.reports = [{ groups: big.map((f) => [{ id: f }]) }]
-  for (const id of big) patchEntry(state.triage, id, { comment: 'é'.repeat(MAX_TRIAGE_TEXT) })
+  for (const id of big) patchEntry(state.triage, id, { fix: 'é'.repeat(MAX_TRIAGE_TEXT) })
   await saveTriage()
   await drain()
   const sizes = pushes().map((p) => new TextEncoder().encode(JSON.stringify({ entries: p.entries })).length)

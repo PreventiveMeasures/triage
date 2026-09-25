@@ -54,7 +54,11 @@ const triageFields = `'triage:' || e.seq AS id, 'triage' AS kind,
     THEN 'cleared triage' ELSE 'updated triage' END AS action`
 const triage = `SELECT ${triageFields}, e.repo, e.report_id AS reportId, e.report, e.finding_id AS finding, e.at
   FROM finding_triage_event e LEFT JOIN managed_user u ON u.id = e.actor_id`
-const adminSource = `${triage} UNION ALL
+const commentFields = `'comment:' || e.seq AS id, 'triage' AS kind,
+  COALESCE(u.login, e.actor_login) AS actor, e.action`
+const comments = `SELECT ${commentFields}, e.repo, e.report_id AS reportId, e.report, e.finding_id AS finding, e.at
+  FROM finding_comment_event e LEFT JOIN managed_user u ON u.id = e.actor_id`
+const adminSource = `${triage} UNION ALL ${comments} UNION ALL
   SELECT id, kind, actor, action, repo, report_id AS reportId, report, NULL AS finding, at FROM managed_activity`
 // Keep the finite set of accessible findings outside the indexed event
 // lookup. Scanning all events against json_each for every row is quadratic.
@@ -63,6 +67,12 @@ const managerSource = `SELECT ${triageFields},
   json_extract(c.value, '$.report') AS report, e.finding_id AS finding, e.at
   FROM json_each(:contexts) c
   CROSS JOIN finding_triage_event e ON e.finding_id = json_extract(c.value, '$.finding')
+  LEFT JOIN managed_user u ON u.id = e.actor_id
+  UNION ALL SELECT ${commentFields},
+    json_extract(c.value, '$.repo') AS repo, json_extract(c.value, '$.reportId') AS reportId,
+    json_extract(c.value, '$.report') AS report, e.finding_id AS finding, e.at
+  FROM json_each(:contexts) c
+  CROSS JOIN finding_comment_event e ON e.finding_id = json_extract(c.value, '$.finding')
   LEFT JOIN managed_user u ON u.id = e.actor_id
   UNION ALL SELECT a.id, a.kind, a.actor,
     CASE WHEN a.kind = 'repository' THEN 'changed a report repository assignment' ELSE a.action END AS action,
@@ -128,7 +138,7 @@ export function activityMethods(db: DatabaseSync): ActivityStore {
     return {
       count: db.prepare(`SELECT count(*) AS total FROM (${filtered})`),
       rows: db.prepare(`${filtered} ORDER BY at DESC,
-        CASE WHEN kind = 'triage' THEN CAST(substr(id, 8) AS INTEGER) ELSE 0 END DESC,
+        CASE WHEN kind = 'triage' THEN CAST(substr(id, instr(id, ':') + 1) AS INTEGER) ELSE 0 END DESC,
         id DESC LIMIT :limit OFFSET :offset`),
     }
   }

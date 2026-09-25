@@ -1,7 +1,7 @@
 // Server-side triage for managed team reports. When a team report is open
 // (`state.managedReport`), the server's per-finding entries hydrate the local
 // triage map, and local edits push back debounced through the triage
-// managed change-notifier — independent of the e2e sync fan-out. The wire carries color / triage / comment / fix / flagged;
+// managed change-notifier — independent of the e2e sync fan-out. The wire carries color / triage / fix / flagged;
 // `ignoredReports` stays client-local and `deleted` folds into the bucket.
 //
 // Both sides are keyed by finding id alone. `state.triage` is one map across
@@ -23,7 +23,7 @@ const PUSH_DEBOUNCE_MS = 500
 // The request body's fixed part around the entries: `{"entries":{}}`.
 const BODY_OVERHEAD_BYTES = 14
 
-// Wire projection of a triage entry — the five server-persisted fields, empty
+// Wire projection of a triage entry — the four server-persisted fields, empty
 // fields omitted. Returns null when nothing server-relevant remains (which
 // pushes as a clear). Applied to SERVER values too, so a hydrated entry can't
 // smuggle unexpected fields into the local map.
@@ -33,7 +33,6 @@ function wireEntryOf(entry) {
   if (entry.color) out.color = entry.color
   const bucket = bucketOf(entry)
   if (bucket) out.triage = bucket
-  if (typeof entry.comment === 'string' && entry.comment) out.comment = entry.comment
   if (typeof entry.fix === 'string' && entry.fix) out.fix = entry.fix
   if (typeof entry.flagged === 'boolean') out.flagged = entry.flagged
   return Object.keys(out).length > 0 ? out : null
@@ -42,7 +41,7 @@ function wireEntryOf(entry) {
 // Canonical comparison key for a wire entry; '' = no entry, so "unknown to the
 // server" and "cleared" compare equal.
 function wireKey(e) {
-  return e == null ? '' : JSON.stringify([e.color ?? '', e.triage ?? '', e.comment ?? '', e.fix ?? '', e.flagged])
+  return e == null ? '' : JSON.stringify([e.color ?? '', e.triage ?? '', e.fix ?? '', e.flagged])
 }
 
 // Whether the server would accept this entry as sent (its per-entry caps —
@@ -51,7 +50,6 @@ function fitsWire(id, wire) {
   if (id.length > MAX_FINDING_ID) return false
   if (wire == null) return true
   return (wire.color?.length ?? 0) <= MAX_TRIAGE_COLOR
-    && (wire.comment?.length ?? 0) <= MAX_TRIAGE_TEXT
     && (wire.fix?.length ?? 0) <= MAX_TRIAGE_TEXT
 }
 
@@ -243,6 +241,8 @@ export function initManagedTriagePush() {
 // report cannot write after the local surface takes over, and a later managed
 // visit starts from fresh server state.
 export function resetManagedTriage() {
+  state.managedComments?.clear()
+  globalThis.document?.dispatchEvent(new Event('managed-comments-reset'))
   if (pushTimer != null) { clearTimeout(pushTimer); pushTimer = null }
   pending.clear()
   hydratedReports.clear()

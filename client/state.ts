@@ -1,4 +1,5 @@
 import { store } from '@rray/frontend/state-management'
+import type { ManagedComment } from '../common/managed/comments.ts'
 import { getItem as getSecureItem, mutate as mutateSecureItem, onAfterHydrate, setItem as setSecureItem } from './secure-storage.js'
 import { type ManagedServerInfo, type ServerMode, type ServerProtocol, isCombinedServerMode, readCachedServerInfo, resolveServerMode } from './sync/server-mode.ts'
 
@@ -227,6 +228,7 @@ export interface State {
   // single `managedReport`, so triage hydration/push uses this list to route
   // each finding to a report that contains it.
   managedReports: { id: string; filename: string }[]
+  managedComments: Map<string, ManagedComment[]>
 }
 
 // View mode is deliberately session-local. Older builds persisted the
@@ -948,6 +950,7 @@ export const state: State = store<State>({
   // The open managed team report; openTeamReport sets it, view switches clear it.
   managedReport: null,
   managedReports: [],
+  managedComments: new Map(),
 })
 
 // The managed protocol and the visible local surface are separate concerns.

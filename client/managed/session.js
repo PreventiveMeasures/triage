@@ -89,7 +89,7 @@ export async function fetchReport(id) {
 }
 
 // GET /api/reports/<id>/triage → the server's triage entries for a team
-// report's findings, as `{ <findingId>: { color?, triage?, comment?, fix?,
+// report's findings, as `{ <findingId>: { color?, triage?, fix?,
 // flagged? } | null }` — null for an entry cleared server-side (its
 // tombstone), an absent id for one the server has never seen — restricted
 // server-side to the findings this viewer may see; null on any failure / no
@@ -112,6 +112,24 @@ export async function fetchPullRequests(urls, csrfToken, signal) {
     const body = await res.json()
     return Array.isArray(body?.pullRequests) ? body.pullRequests : null
   } catch { return null }
+}
+
+export async function fetchReportComments(id) {
+  const body = await getJson(`/api/reports/${encodeURIComponent(id)}/comments`)
+  return Array.isArray(body?.comments) ? body.comments : null
+}
+
+export async function saveReportComment(reportId, { findingId, body, commentId = null, version }, csrfToken) {
+  const suffix = commentId == null ? '' : `/${encodeURIComponent(commentId)}`
+  try {
+    const res = await managedFetch(`/api/reports/${encodeURIComponent(reportId)}/comments${suffix}`, {
+      method: commentId == null ? 'POST' : 'PATCH',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json', ...(csrfToken ? { 'x-csrf-token': csrfToken } : {}) },
+      body: JSON.stringify(commentId == null ? { findingId, body } : { body, version }),
+    })
+    return { status: res.status, comment: res.ok ? (await res.json()).comment : null }
+  } catch { return { status: 0, comment: null } }
 }
 
 // POST /api/reports/<id>/triage → push locally-changed triage entries
