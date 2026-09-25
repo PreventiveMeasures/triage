@@ -13,7 +13,7 @@ mock.module('../client/counts.js', { namedExports: {
   setCount: (name, count, source) => kinds.set(name, { count, source }),
   analyzeContent: () => ({ count: 0 }),
 } })
-const { duplicatesOf, ensureLinkedFindingsIndexed, isLinkedFindingsIndexReady, subscribeToLinkedFindings } = await import('../client/linked-findings-index.js')
+const { duplicatesOf, ensureKnownLinkedFindingsIndexed, ensureLinkedFindingsIndexed, isLinkedFindingsIndexReady, subscribeToLinkedFindings } = await import('../client/linked-findings-index.js')
 const [a, b, c] = [crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()]
 const content = (ids) => JSON.stringify([ids.map((id) => ({ id }))])
 
@@ -57,6 +57,60 @@ it('verifies unclassified files and cached reports once, including reports with 
   assert.deepEqual(duplicatesOf(a), [b])
   await ensureLinkedFindingsIndexed()
   assert.deepEqual(reads, ['unknown.json', 'legacy-report.json'], 'repeat walks reuse verified classifications')
+})
+
+it('publishes known links before a slow unrelated report and keeps full readiness separate', async () => {
+  add('large-report.json', '{"findings":[]}', 'deepsec')
+  add('last-links.json', content([a, b]), 'links')
+  const release = Promise.withResolvers(), started = Promise.withResolvers()
+  const reads = [], snapshots = []
+  read = async (name) => {
+    reads.push(name)
+    if (name === 'large-report.json') { started.resolve(); await release.promise }
+    return files.get(name)
+  }
+  const unsubscribe = subscribeToLinkedFindings(() => snapshots.push({ ready: isLinkedFindingsIndexReady(), duplicates: duplicatesOf(a) }))
+  const walk = ensureLinkedFindingsIndexed()
+  try {
+    await started.promise
+    assert.deepEqual(reads, ['last-links.json', 'large-report.json'])
+    assert.deepEqual(duplicatesOf(a), [b], 'finding groups can use verified links while unrelated reports still load')
+    assert.equal(isLinkedFindingsIndexReady(), false, 'partial links cannot validate cached App counts')
+    assert.ok(snapshots.some((s) => !s.ready && s.duplicates.includes(b)))
+    await ensureKnownLinkedFindingsIndexed()
+    assert.deepEqual(reads, ['last-links.json', 'large-report.json'], 'initial-view preparation neither waits for nor duplicates the background read')
+  } finally { release.resolve(); await walk; unsubscribe() }
+  assert.equal(isLinkedFindingsIndexReady(), true)
+})
+
+it('shares concurrent known-link loads and reads all known link files together', async () => {
+  add('first-links.json', content([a, b]), 'links')
+  add('second-links.json', content([b, c]), 'links')
+  const release = Promise.withResolvers(), started = Promise.withResolvers()
+  const reads = []
+  read = async (name) => {
+    reads.push(name)
+    if (reads.length === 2) started.resolve()
+    await release.promise
+    return files.get(name)
+  }
+  const known = ensureKnownLinkedFindingsIndexed()
+  assert.equal(ensureKnownLinkedFindingsIndexed(), known)
+  try {
+    await started.promise
+    assert.deepEqual(reads, ['first-links.json', 'second-links.json'])
+    assert.deepEqual(duplicatesOf(b), [], 'do not expose only half of the known links batch')
+  } finally { release.resolve(); await known }
+  assert.deepEqual(duplicatesOf(b).toSorted(), [a, c].toSorted())
+  assert.equal(isLinkedFindingsIndexReady(), false)
+})
+
+it('does not reuse stale links when a cached Link file now contains an ordinary report', async () => {
+  add('former-links.json', '{"findings":[]}', 'links')
+  await ensureKnownLinkedFindingsIndexed()
+  assert.deepEqual(duplicatesOf(a), [])
+  assert.equal(kinds.get('former-links.json').source, undefined)
+  assert.equal(isLinkedFindingsIndexReady(), false)
 })
 
 async function checkFailedRead(source) {

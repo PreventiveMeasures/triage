@@ -21,9 +21,12 @@
 // Counts are persisted separately from file bytes. After an interrupted
 // replacement, an old "report" classification may describe a links file.
 // Verify the bytes once per page load instead of treating that hint as proof.
+// Load known links first so restoring findings need not wait for every report
+// in the library. The background walk still verifies all other files: cached
+// types are a scheduling hint, never proof that a file cannot contain links.
 // `readFile` shares its cache and in-flight reads with workspace loading and
 // the counts walk. Ordinary reports are rejected by their leading character,
-// without another JSON parse. This background walk never gates report loading.
+// without another JSON parse.
 
 import { LINKS_KIND, collectDuplicates, countLinkedIds, parseLinkedFindings } from './linked-findings.js'
 import { listFiles, onFileMutated, readFile } from './storage.js'
@@ -48,6 +51,8 @@ const fileGen = new Map()
 
 const listeners = new Set()
 let activeRun = null
+let knownRun = null
+let mutationEpoch = 0
 // Set when an `onFileMutated` lands mid-walk, so the run that was in
 // flight when the file changed doesn't finish having missed it.
 let needsRescan = false
@@ -131,6 +136,38 @@ async function indexOne(name) {
   return parsed !== null
 }
 
+// The small set already classified as links is needed before the initial
+// findings paint. Read their current bytes concurrently and publish them as
+// soon as they are available, independent of the full verification walk.
+// This does not mark the index ready: unknown or stale report classifications
+// may still hide additional links, so App metadata must wait for the full walk.
+export function ensureKnownLinkedFindingsIndexed() {
+  if (knownRun) return knownRun
+  knownRun = (async () => {
+    try {
+      let names, started
+      do {
+        started = mutationEpoch
+        names = await listFiles()
+        if (ready && names.some((name) => !byFile.has(name))) {
+          ready = false
+          notify()
+        }
+        const known = names.filter((name) => getKind(name) === LINKS_KIND)
+        const added = await Promise.all(known.map((name) => indexOne(name)))
+        if (added.some(Boolean)) { reindex(); notify() }
+      } while (started !== mutationEpoch)
+      return names
+    } catch (err) {
+      if (ready) { ready = false; notify() }
+      throw err
+    } finally {
+      knownRun = null
+    }
+  })()
+  return knownRun
+}
+
 // Walk every OPFS file, indexing the links files among them.
 // Idempotent — a concurrent caller waits on the same in-flight promise,
 // and a later call re-walks the listing so newly-dropped files land
@@ -141,11 +178,7 @@ export function ensureLinkedFindingsIndexed() {
     try {
       do {
         needsRescan = false
-        const names = await listFiles()
-        if (ready && names.some((name) => !byFile.has(name))) {
-          ready = false
-          notify()
-        }
+        const names = await ensureKnownLinkedFindingsIndexed()
         let added = false
         for (const name of names) {
           if (await indexOne(name)) added = true
@@ -174,6 +207,7 @@ export function ensureLinkedFindingsIndexed() {
 onFileMutated((name) => {
   const wasReady = ready
   ready = false
+  mutationEpoch++
   fileGen.set(name, (fileGen.get(name) ?? 0) + 1)
   needsRescan = true
   const wasLinks = byFile.get(name) != null

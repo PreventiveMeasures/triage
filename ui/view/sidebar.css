@@ -348,7 +348,7 @@ sidebar-view-button[hidden] { display: none !important; }
 }
 .workspace-findings { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .workspace-sections {
-  display: inline-flex; flex-shrink: 0;
+  display: inline-flex; flex-shrink: 0; margin-left: auto;
   border: 1px solid var(--border); border-radius: 4px; overflow: hidden;
 }
 .workspace-sections button {

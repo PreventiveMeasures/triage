@@ -4,11 +4,11 @@ import { beforeEach, it, mock } from 'node:test'
 const workspace = { id: 'workspace', reports: ['app.json'] }
 const reports = [{ fileName: 'app.json' }]
 const indexedToken = { revision: 'after' }, originalToken = { revision: 'before' }
-let computed, counts, current, indexed, links, ready, saved, token
+let computed, current, indexed, links, onLinks, ready, reportsCurrent, saved, token, verification
 mock.module('../client/index.js', { namedExports: {
-  listFiles: () => Promise.resolve(['unrelated.json', 'app.json', 'links.json']),
-  ensureCounts: () => counts.promise,
-  ensureLinkedFindingsIndexed: () => { indexed++; links = ['A', 'B']; return Promise.resolve() },
+  ensureLinkedFindingsIndexed: () => { indexed++; return verification.promise },
+  subscribeToLinkedFindings: (cb) => { onLinks = cb },
+  workspaceAppReportsCurrent: () => reportsCurrent,
   workspaceAppCacheToken: (ws, previous) => {
     assert.equal(ws, workspace)
     assert.equal(previous, originalToken)
@@ -25,29 +25,29 @@ mock.module('../client/index.js', { namedExports: {
 mock.module('../ui/view/workspace-app.js', { namedExports: {
   workspaceAppMetadata: (loaded, duplicatesOf) => {
     assert.equal(loaded, reports)
-    assert.deepEqual(duplicatesOf('A'), ['A', 'B'])
+    assert.deepEqual(duplicatesOf('A'), links)
     computed++
-    return { appMode: true, appFindings: 1 }
+    return { appMode: true, appFindings: 3 - links.length }
   },
 } })
-const { updateWorkspaceAppMetadata } = await import('../ui/view/workspace-app-load.js')
+const { getLoadedWorkspaceAppMetadata, setLoadedWorkspaceAppReports, updateWorkspaceAppMetadata } = await import('../ui/view/workspace-app-load.js')
 
 beforeEach(() => {
-  counts = Promise.withResolvers()
-  saved = []; ready = []; links = []; indexed = 0; computed = 0
-  current = true; token = indexedToken
+  verification = Promise.withResolvers()
+  saved = []; ready = []; links = ['A', 'B']; indexed = 0; computed = 0
+  current = true; token = indexedToken; reportsCurrent = true
 })
 const update = (complete = true) => updateWorkspaceAppMetadata(workspace, reports, originalToken, {
   complete, isCurrent: () => current, onReady: (metadata) => { ready.push(metadata) },
 })
 
-it('waits for global classification and linking before caching metadata for the loaded snapshot', async () => {
+it('verifies links directly without waiting for unrelated report counts before persisting metadata', async () => {
   const pending = update()
   await Promise.resolve()
-  assert.equal(indexed, 0)
+  assert.equal(indexed, 1)
   assert.equal(computed, 0)
   assert.deepEqual(saved, [])
-  counts.resolve()
+  verification.resolve()
   await pending
   assert.equal(indexed, 1)
   assert.deepEqual(saved, [{ appMode: true, appFindings: 1 }])
@@ -57,18 +57,18 @@ it('waits for global classification and linking before caching metadata for the 
 it('abandons metadata work when another view replaces the workspace load', async () => {
   const pending = update()
   current = false
-  counts.resolve()
+  verification.resolve()
   await pending
-  assert.equal(indexed, 0)
+  assert.equal(indexed, 1)
   assert.equal(computed, 0)
   assert.deepEqual(saved, [])
   assert.deepEqual(ready, [])
 })
 
-it('does not compute or cache reports invalidated during background classification', async () => {
+it('does not compute or cache reports invalidated during background verification', async () => {
   const pending = update()
   token = null
-  counts.resolve()
+  verification.resolve()
   await pending
   assert.equal(computed, 0)
   assert.deepEqual(saved, [])
@@ -77,8 +77,46 @@ it('does not compute or cache reports invalidated during background classificati
 
 it('records an incomplete workspace as ineligible instead of promoting its partial reports', async () => {
   const pending = update(false)
-  counts.resolve()
+  verification.resolve()
   await pending
   assert.equal(computed, 0)
   assert.deepEqual(saved, [{ appMode: false }])
+})
+
+const load = (complete = true) => setLoadedWorkspaceAppReports(workspace, reports, originalToken, {
+  complete, isCurrent: () => current,
+})
+
+it('shows the completed focused workspace count while unrelated verification remains blocked', async () => {
+  load()
+  const pending = update()
+  assert.deepEqual(getLoadedWorkspaceAppMetadata(workspace), { appMode: true, appFindings: 1 })
+  assert.deepEqual(saved, [], 'the live count is not persisted before full verification')
+  getLoadedWorkspaceAppMetadata(workspace)
+  assert.equal(computed, 1, 'sidebar refreshes reuse the calculation while links are unchanged')
+  links = ['A', 'B', 'C']
+  onLinks()
+  assert.deepEqual(getLoadedWorkspaceAppMetadata(workspace), { appMode: true, appFindings: 0 })
+  assert.equal(computed, 2, 'new links refresh the displayed count')
+  verification.resolve()
+  await pending
+  assert.deepEqual(saved, [{ appMode: true, appFindings: 0 }])
+})
+
+it('withholds live counts for another workspace, changed membership, invalidated reports, or navigation', () => {
+  load()
+  assert.equal(getLoadedWorkspaceAppMetadata({ ...workspace, id: 'other' }), null)
+  assert.equal(getLoadedWorkspaceAppMetadata({ ...workspace, reports: ['new.json'] }), null)
+  reportsCurrent = false
+  assert.equal(getLoadedWorkspaceAppMetadata(workspace), null)
+  reportsCurrent = true
+  current = false
+  assert.equal(getLoadedWorkspaceAppMetadata(workspace), null)
+  assert.equal(computed, 0)
+})
+
+it('does not display an App count from an incomplete workspace load', () => {
+  load(false)
+  assert.deepEqual(getLoadedWorkspaceAppMetadata(workspace), { appMode: false })
+  assert.equal(computed, 0)
 })

@@ -18,6 +18,7 @@ import { bundleNeedsSources, computeBundleFileHashes, createBundleMetadata, pars
 
 const sourceLoads = new Map()
 const metadataLoads = new Map()
+const hashLoads = new Map()
 const sourceUpgrades = new WeakMap()
 
 async function cachedMetadata(integrity) {
@@ -156,16 +157,39 @@ function kickFileHashes(details) {
 
 // Report-driven lookups may read a saved index, but never preload/decompress
 // an unopened source bundle. A cache miss waits for an explicit bundle open.
-export async function prefetchBundleHashes(integrity) {
-  if (hasBundleFileHashes(integrity)) return
+export function prefetchBundleHashes(integrity) {
+  if (hasBundleFileHashes(integrity)) return Promise.resolve()
+  if (hashLoads.has(integrity)) return hashLoads.get(integrity)
   const entry = (state.bundles ?? []).find((b) => b.integrity === integrity)
-  if (!entry) return
-  const details = await cachedMetadata(integrity)
-  if (!details?.json && !details?.bundle) return
-  try {
-    const fileHashes = await computeBundleFileHashes(details)
-    recordBundleFileHashes(integrity, fileHashes)
-  } catch {}
+  if (!entry) return Promise.resolve()
+  const job = (async () => {
+    const details = await cachedMetadata(integrity)
+    if (!details?.json && !details?.bundle) return
+    try {
+      const fileHashes = await computeBundleFileHashes(details)
+      recordBundleFileHashes(integrity, fileHashes)
+    } catch {}
+  })()
+  hashLoads.set(integrity, job)
+  job.finally(() => { if (hashLoads.get(integrity) === job) hashLoads.delete(integrity) }).catch(() => {})
+  return job
+}
+
+// Start only after the caller has rendered the complete view and the browser
+// can paint it. A workspace often references the same bundle in many reports;
+// parse each saved index once, and avoid a burst of concurrent metadata parses.
+export async function prefetchBundleHashesAfterPaint(integrities, isCurrent = () => true) {
+  const unique = new Set(integrities)
+  if (unique.size === 0) return
+  await new Promise((resolve) => {
+    const afterFrame = () => setTimeout(resolve, 0)
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(afterFrame)
+    else afterFrame()
+  })
+  for (const integrity of unique) {
+    if (!isCurrent()) return
+    await prefetchBundleHashes(integrity)
+  }
 }
 
 // Full open-bundle pipeline. Caller owns the pre-load state setup

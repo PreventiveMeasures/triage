@@ -42,13 +42,37 @@ function workspaceUnchanged(cache, workspace, token) {
     && token.workspaceEpoch === (workspaceEpochs.get(workspace?.id) ?? 0)
     && token.workspaceRevision === workspaceRevision(cache, workspace?.id)
 }
+function reportsUnchanged(cache, workspace, token) {
+  return token.reportEpoch === reportEpoch
+    && token.reportRevision === (cache.reportRevision ?? cache.revision)
+    && workspaceUnchanged(cache, workspace, token)
+}
 
-export function getWorkspaceAppMetadata(workspace) {
+// A live view can describe its loaded reports with the current links before
+// the full library is verified. Report and membership revisions still apply.
+export function workspaceAppReportsCurrent(workspace, token) {
+  return reportsUnchanged(parse(), workspace, token)
+}
+
+function cachedEntry(workspace, cache) {
   if (allDirty || dirty.has(workspace.id)) return null
-  const cache = parse()
   const entry = cache.entries[workspace.id]
   if (!entry || entry.reports !== membership(workspace) || typeof entry.appMode !== 'boolean') return null
   if (entry.appMode && (!Number.isSafeInteger(entry.appFindings) || entry.appFindings < 0)) return null
+  return entry
+}
+
+// Layout hint only: keep previously compact workspaces closed while the links
+// index rebuilds on reload. Counts and App opening defaults still require the
+// verified metadata below. Invalidations discard this hint with the entry.
+export function getWorkspaceAppModeHint(workspace) {
+  return cachedEntry(workspace, parse())?.appMode ?? null
+}
+
+export function getWorkspaceAppMetadata(workspace) {
+  const cache = parse()
+  const entry = cachedEntry(workspace, cache)
+  if (!entry) return null
   // Hydrated metadata may be newer than the index this tab uses to group
   // findings. Only expose it once those duplicate relationships agree.
   if (!linksMatch(cache)) return null
@@ -67,9 +91,7 @@ export async function workspaceAppCacheToken(workspace, reportsToken = null) {
   // membership in this workspace require a fresh load. A sibling tab can also
   // invalidate links without updating this tab's in-memory index: don't accept that revision
   // until the indexed links match the persisted snapshot.
-  if (reportsToken && (reportsToken.reportEpoch !== reportEpoch
-      || reportsToken.reportRevision !== reportRevision
-      || !workspaceUnchanged(cache, workspace, reportsToken)
+  if (reportsToken && (!reportsUnchanged(cache, workspace, reportsToken)
       || !linksMatch(cache))) return null
   return {
     epoch, revision: cache.revision, reportEpoch, reportRevision,
