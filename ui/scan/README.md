@@ -8,6 +8,7 @@ fetching a bundle catalogue. Its host supplies:
 - `loadModels(signal)`: model catalogue loader
 - `canRun`: host-controlled access gate (defaults to true for managed Scans)
 - `loadReportSources(signal)`: separate Merge bundle/results and Link scope/report catalogues
+- `hideHeading`: hides the visible page heading when the host already supplies navigation
 - `navigation` slot: the host’s breadcrumb or Home button
 - `access` slot: the host's optional access controls, above the scan options
 - `before-run` slot: extra controls before Run scan

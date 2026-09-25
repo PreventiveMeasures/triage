@@ -1,0 +1,104 @@
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .65rem;
+  margin-bottom: .9rem;
+}
+.toolbar input {
+  flex: 1;
+}
+.toolbar select {
+  min-width: 10rem;
+}
+.history {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--panel);
+}
+.row,
+.history-head {
+  display: grid;
+  grid-template-columns: 4.7rem minmax(16rem, 1fr) minmax(12rem, 1fr) 7.5rem;
+  align-items: center;
+  gap: .85rem;
+  min-width: 47rem;
+  padding: .45rem .85rem;
+}
+.history-head {
+  background: rgb(from var(--text) r g b / .025);
+  color: var(--muted);
+  font-size: .7rem;
+}
+.row {
+  border-top: 1px solid var(--border);
+  min-height: 2.35rem;
+}
+.row:hover {
+  background: var(--panel-hover);
+}
+.kind {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  padding: .05rem .35rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--muted);
+  font-size: .65rem;
+  text-transform: capitalize;
+}
+.kind.triage {
+  color: var(--accent);
+  border-color: rgb(from var(--accent) r g b / .25);
+  background: rgb(from var(--accent) r g b / .06);
+}
+.kind.upload {
+  color: var(--green);
+  border-color: rgb(from var(--green) r g b / .25);
+  background: rgb(from var(--green) r g b / .06);
+}
+.kind.visibility {
+  color: var(--yellow);
+  border-color: rgb(from var(--yellow) r g b / .25);
+  background: rgb(from var(--yellow) r g b / .06);
+}
+.activity-description,
+.detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: .75rem;
+}
+.actor {
+  color: var(--text);
+  font-weight: 500;
+}
+.action,
+.detail {
+  color: var(--muted);
+}
+time {
+  color: var(--muted);
+  font-size: .7rem;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.history .empty {
+  border: 0;
+  margin: 0;
+}
+.pagination {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .65rem;
+  margin-top: 1rem;
+  color: var(--muted);
+  font-size: .75rem;
+}
+.pagination > span:first-child {
+  margin-right: auto;
+}

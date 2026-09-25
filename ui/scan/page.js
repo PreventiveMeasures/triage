@@ -2,7 +2,7 @@ import { LitElement, html, nothing } from 'lit'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { live } from 'lit/directives/live.js'
 import { repeat } from 'lit/directives/repeat.js'
-import { AGENTIC_ICON_SVG, BUNDLE_ICON_SVG, CODE_ICON_SVG, DEPENDENCIES_ICON_SVG, REPORT_ICON_SVG } from '../view/icons.js'
+import { BUNDLE_ICON_SVG, CODE_ICON_SVG, REPORT_ICON_SVG } from '../view/icons.js'
 import { fetchScanModels } from '../view/scan-models.js'
 import '../view/scan-model-picker.js'
 import '../view/repository-selector.js'
@@ -10,19 +10,19 @@ import '../view/bundle-selector.js'
 import './report-inputs.js'
 import './regime-editor.js'
 import './depth-toggle.js'
+import './mode-selector.js'
 import { SCAN_PAGE_STYLES } from './page-styles.js'
 import { codeScanFiles, formatBytes, sourceMetrics } from './metrics.js'
 import '../view/bundle-scope-selector.js'
 
 const SCAN_MODE_ICONS = {
-  dependencies: unsafeHTML(DEPENDENCIES_ICON_SVG),
   code: unsafeHTML(CODE_ICON_SVG),
-  agentic: unsafeHTML(AGENTIC_ICON_SVG),
   report: unsafeHTML(REPORT_ICON_SVG),
 }
 
 export class ScanPage extends LitElement {
   static properties = {
+    hideHeading: { type: Boolean, attribute: 'hide-heading' },
     source: { attribute: false }, loadBundle: { attribute: false }, loadModels: { attribute: false }, loadReportSources: { attribute: false }, canRun: { attribute: false },
     _loadingBundle: { state: true }, _bundleError: { state: true },
     _tab: { state: true },
@@ -48,6 +48,7 @@ export class ScanPage extends LitElement {
     super()
     this.loadModels = fetchScanModels
     this.canRun = true
+    this.hideHeading = false
     this._tab = 'new'
     this._mode = 'code'
     this.source = null
@@ -136,13 +137,14 @@ export class ScanPage extends LitElement {
 
   render() {
     return html`<div class="wrap">
-      <div class="head"><div class="head-title"><slot name="navigation"></slot><h1>Scans</h1></div>
+      ${this.hideHeading ? html`<h1 class="sr-only">Scans</h1>` : html`<div class="head"><div class="head-title"><slot name="navigation"></slot><h1>Scans</h1></div></div>`}
+      <div class="intro-row">
+        <p class="intro">${this._tab === 'history' ? 'Review past scans and save completed results as reports.' : this._mode === 'report' ? 'Choose inputs and start a scan. Save the report when it finishes.' : 'Choose a bundle and start a scan. Save the report when it finishes.'}</p>
         <div class="head-tabs" role="tablist" aria-label="Scan views">
           <button class=${this._tab === 'new' ? 'active' : ''} role="tab" aria-selected=${this._tab === 'new'} @click=${() => { this._tab = 'new' }}>New scan</button>
           <button class=${this._tab === 'history' ? 'active' : ''} role="tab" aria-selected=${this._tab === 'history'} @click=${() => { this._tab = 'history' }}>Scan history</button>
         </div>
       </div>
-      <p class="intro">${this._mode === 'report' ? 'Choose inputs and start a scan. Save the report when it finishes.' : 'Choose a bundle and start a scan. Save the report when it finishes.'}</p>
       ${this._notice ? html`<p class="notice" role="status">${this._notice}</p>` : nothing}
       ${this._bundleError ? html`<p class="notice" role="alert">Couldn’t load bundle: ${this._bundleError}<button @click=${() => void this._loadSelectedBundle()}>Retry</button></p>` : nothing}
       ${this._tab === 'new' ? this._newScan() : this._history()}
@@ -170,18 +172,14 @@ export class ScanPage extends LitElement {
     const includedPackages = modules.filter((module) => !excludedModules.has(module)).length
     const reportInputs = this._reportInput?.mode === this._reportMode ? this._reportInput.inputs : []
     return html`<div class="setup">
-      <section class="panel mode-panel" aria-labelledby="scan-mode-heading">
-        <div class="panel-head"><h2 id="scan-mode-heading">Scan mode</h2><p>Choose what the server should analyze</p></div>
-        <div class="mode-grid" role="tablist" aria-label="Scan mode">
-          ${[['dependencies', 'Dependency alerts', 'Revalidate incoming alerts against actual code'], ['code', 'Code', 'Run a full scan of the codebase'], ['agentic', 'Agentic', 'Free-form analysis with your instructions'], ['report', 'Reports', 'Link saved reports or merge scan results']].map(([id, label, text]) => html`<button type="button" role="tab" aria-selected=${mode === id} class=${`mode-option ${mode === id ? 'active' : ''}`} @click=${() => this._changeMode(id)}><span class="mode-title">${SCAN_MODE_ICONS[id]}<strong>${label}</strong></span><span>${text}</span></button>`)}
-        </div>
-        ${mode === 'code' ? html`<div class="subtype-wrap"><div class="subtype-options" role="radiogroup" aria-label="Code subtype">${[['security', 'Security', 'Security findings only'], ['generic', 'Generic', 'Free-form code scan: wide-scoped, most results'], ['correctness', 'Correctness', 'Guided correctness scan'], ['advanced', 'Advanced', 'Merge multiple regimes']].map(([id, label, text]) => html`<button type="button" role="radio" aria-checked=${this._options.analyzer === id} class=${`subtype-option ${this._options.analyzer === id ? 'active' : ''}`} @click=${() => this._setOption('analyzer', id)}><strong>${label}</strong><span>${text}</span></button>`)}</div><p class="subtype-help">Focusing controls how effort is spent: while Generic can also find security issues, a focused Security scan is likely to find more.</p></div>` : nothing}
-        ${mode === 'report' ? html`<div class="subtype-wrap"><div class="subtype-options report-subtypes" role="radiogroup" aria-label="Reports submode">${[['link', 'Link', 'Link findings across saved reports'], ['merge', 'Merge', 'Combine scan results for one bundle']].map(([id, label, text]) => html`<button type="button" role="radio" aria-checked=${this._reportMode === id} class=${`subtype-option ${this._reportMode === id ? 'active' : ''}`} @click=${() => { this._reportMode = id; this._reportRestore = null }}><strong>${label}</strong><span>${text}</span></button>`)}</div></div>` : nothing}
-      </section>
+      <scan-mode-selector .mode=${mode} .analyzer=${this._options.analyzer} .reportMode=${this._reportMode}
+        @scan-mode-change=${event => this._changeMode(event.detail.mode)}
+        @scan-analyzer-change=${event => this._setOption('analyzer', event.detail.analyzer)}
+        @scan-report-mode-change=${event => { this._reportMode = event.detail.mode; this._reportRestore = null }}></scan-mode-selector>
       ${mode === 'report' ? html`<scan-report-inputs .mode=${this._reportMode} .loadSources=${this.loadReportSources} .restore=${this._reportRestore} @report-inputs-change=${e => { this._reportInput = e.detail }}></scan-report-inputs>` : this._sourcePanel(bundle, files)}
       ${mode === 'code' ? html`<details class="panel scope-panel">
         <summary class="scope-head"><svg class="scope-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 3 5 5-5 5"/></svg><h2>Source filter</h2><p><span>${included.length} of ${files.length} files · ${includedPackages} of ${modules.length} packages</span> <span>${formatBytes(includedMetrics.bytes)} · ${includedMetrics.lines == null ? '—' : includedMetrics.lines.toLocaleString()} LoC</span></p></summary>
-        <div class="scope-grid"><section class="scope-pane package-pane" aria-label="Packages in bundle"><div class="pane-head"><strong>Packages</strong><span>${modules.length} total · sorted by size</span></div><div class="package-list">${modules.map((module) => { const { bytes, count, included: includedCount } = moduleStats.get(module); const isIncluded = !excludedModules.has(module); return html`<label class=${`package-row ${isIncluded ? '' : 'excluded'}`}><input type="checkbox" .checked=${isIncluded} @change=${(_event) => this._toggleModule(module)}><span class="package-name">${this._packageLabel(module)}</span><span class="package-size">${formatBytes(bytes)} · ${includedCount}/${count}</span></label>` })}</div></section><section class="scope-pane file-panel" aria-label="Largest files in bundle"><div class="pane-head"><strong>Largest files</strong><span>showing ${previewFiles.length} of ${files.length}</span></div>${files.length === 0 ? html`<p class="empty">No files in this selection.</p>` : html`<div class="file-list">${previewFiles.map((file) => { const isIncluded = !excluded.has(file.path) && !excludedModules.has(file.module); return html`<label class=${`file ${isIncluded ? '' : 'excluded'}`}><input type="checkbox" .checked=${isIncluded} @change=${(e) => this._toggleFile(file, e.target.checked)}><span class="file-copy"><span class="file-path" title=${file.path}>${file.path}</span><span class="file-meta">${file.size} · ${this._packageLabel(file.module)}</span></span></label>` })}</div>`}</section></div>
+        <div class="scope-grid"><section class="scope-pane package-pane" aria-label="Packages in bundle"><div class="pane-head"><strong>Packages</strong><span>${modules.length} total · sorted by size</span></div><div class="package-list">${modules.map((module) => { const { bytes, count, included: includedCount } = moduleStats.get(module); const isIncluded = !excludedModules.has(module); return html`<label class=${`package-row ${isIncluded ? '' : 'excluded'}`}><input type="checkbox" .checked=${isIncluded} @change=${(_event) => this._toggleModule(module)}><span class="package-name">${this._packageLabel(module)}</span><span class="package-size">${formatBytes(bytes)} · ${includedCount}/${count}</span></label>` })}</div></section><section class="scope-pane file-panel" aria-label="Largest files in bundle"><div class="pane-head"><strong>Largest files</strong><span>showing ${previewFiles.length} of ${files.length}</span></div>${files.length === 0 ? html`<p class="empty">No files in this selection.</p>` : html`<div class="file-list">${previewFiles.map((file) => { const isIncluded = !excluded.has(file.path) && !excludedModules.has(file.module); return html`<label class=${`file ${isIncluded ? '' : 'excluded'}`}><input type="checkbox" .checked=${isIncluded} @change=${(e) => this._toggleFile(file, e.target.checked)}><span class="file-copy"><span class="file-path" data-tooltip-truncated data-tooltip=${file.path}>${file.path}</span><span class="file-meta">${file.size} · ${this._packageLabel(file.module)}</span></span></label>` })}</div>`}</section></div>
       </details>` : nothing}
       ${mode === 'agentic' ? this._agenticPanel() : nothing}
       <slot name="access"></slot>

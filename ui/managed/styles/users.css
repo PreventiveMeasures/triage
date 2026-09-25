@@ -1,0 +1,224 @@
+.icon-btn {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 1.8rem;
+  height: 1.8rem;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: var(--muted);
+  background: transparent;
+}
+.icon-btn:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--surface-active);
+}
+.icon-btn.danger:hover:not(:disabled) {
+  color: var(--critical, #e5534b);
+  background: rgb(from var(--critical, #e5534b) r g b / .1);
+}
+.icon-btn svg,
+.btn svg {
+  width: .9rem;
+  height: .9rem;
+}
+.avatar img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.avatar img.broken {
+  display: none;
+}
+.list-head {
+  color: var(--muted);
+  font-size: .72rem;
+  font-weight: 500;
+  padding-top: .75rem;
+  padding-bottom: .75rem;
+  border-bottom: 1px solid var(--border);
+  background: rgb(from var(--text) r g b / .025);
+}
+.users {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.users li + li {
+  border-top: 1px solid var(--border);
+}
+.who {
+  display: grid;
+  gap: .15rem;
+  min-width: 0;
+}
+.name-text,
+.login {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.login {
+  color: var(--muted);
+  font-size: .75rem;
+}
+.last-seen time,
+.last-activity time {
+  color: var(--text);
+}
+.activity-link {
+  display: block;
+  min-width: 0;
+  padding: .15rem .2rem;
+  border: 0;
+  border-radius: 4px;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+}
+.activity-link:hover {
+  color: var(--accent);
+  background: rgb(from var(--accent) r g b / .08);
+}
+.you {
+  padding: .05rem .35rem;
+  border-radius: 4px;
+  color: var(--accent);
+  background: rgb(from var(--accent) r g b / .1);
+  font-size: .75rem;
+  font-weight: 500;
+}
+.permission-granted {
+  color: var(--accent);
+}
+.permission-denied {
+  color: var(--muted);
+}
+.no-team {
+  color: var(--muted);
+  font-size: .75rem;
+}
+.access {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.role {
+  width: 100%;
+  height: auto;
+  font-size: .78rem;
+}
+.self-note {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  margin: 1rem 0;
+  color: var(--muted);
+  font-size: .75rem;
+}
+.users li:hover {
+  background: var(--panel-hover);
+}
+.avatar {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 1.85rem;
+  height: 1.85rem;
+  border-radius: 50%;
+  overflow: hidden;
+  font-size: .85rem;
+  font-weight: 600;
+}
+.directory {
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  overflow: hidden;
+  background: var(--panel);
+  overflow-x: auto;
+}
+.list-head,
+.users {
+  min-width: 49rem;
+}
+.list-head,
+.users li {
+  display: grid;
+  grid-template-columns: minmax(11rem, 1fr) minmax(14rem, 1.2fr) 6.2rem 6.2rem 6.5rem;
+  gap: .7rem;
+  padding: 1rem 1.25rem;
+  align-items: center;
+  padding-left: .85rem;
+  padding-right: .85rem;
+}
+.users li {
+  padding-top: .6rem;
+  padding-bottom: .6rem;
+  min-height: 3.5rem;
+}
+.person {
+  display: flex;
+  align-items: center;
+  gap: .65rem;
+  min-width: 0;
+}
+.name {
+  display: flex;
+  align-items: center;
+  gap: .4rem;
+  font-size: .8rem;
+  font-weight: 500;
+}
+.last-seen,
+.last-activity {
+  display: grid;
+  gap: .08rem;
+  color: var(--muted);
+  font-size: .68rem;
+  font-variant-numeric: tabular-nums;
+}
+.memberships {
+  display: grid;
+  gap: .1rem;
+  min-width: 0;
+}
+.team-access {
+  display: flex;
+  gap: .2rem .5rem;
+  min-width: 0;
+  font-size: .7rem;
+  line-height: 1.4;
+  align-items: baseline;
+  flex-wrap: nowrap;
+}
+.team-access strong {
+  display: inline-flex;
+  align-items: center;
+  gap: .25rem;
+  color: var(--text);
+  font-weight: 500;
+  min-width: 0;
+  max-width: 8rem;
+}
+.team-access strong svg {
+  width: .8rem;
+  height: .8rem;
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.team-access strong span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.team-perms {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  gap: .45rem;
+  font-size: .65rem;
+  flex-shrink: 0;
+}

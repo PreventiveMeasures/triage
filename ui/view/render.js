@@ -1939,7 +1939,13 @@ function renderImpl() {
   // Optional local/E2E scan surface. Its host owns navigation and transport.
   if (state.currentView === 'scan' && customElements.get('local-scan-page')) {
     const slot = ensureReportSlot('scan-slot')
-    if (slot && !slot.firstElementChild) slot.append(document.createElement('local-scan-page'))
+    if (slot && !slot.firstElementChild) {
+      const el = document.createElement('local-scan-page')
+      slot.append(el)
+      void el.updateComplete.then(() => installShadowTooltipListener(el.renderRoot, {
+        gate: target => !Object.hasOwn(target.dataset, 'tooltipTruncated') || target.scrollWidth > target.clientWidth,
+      }))
+    }
     report.classList.add('active')
     dropZone.classList.add('hidden')
     document.title = 'DeepView — scans'
@@ -1962,7 +1968,9 @@ function renderImpl() {
       void (async () => {
         await customElements.whenDefined(adminView.tag)
         await el.updateComplete
-        installShadowTooltipListener(el.renderRoot)
+        installShadowTooltipListener(el.renderRoot, {
+          gate: target => !Object.hasOwn(target.dataset, 'tooltipTruncated') || target.scrollWidth > target.clientWidth,
+        })
       })().catch(() => {})
     }
     report.classList.add('active')

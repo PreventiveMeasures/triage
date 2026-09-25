@@ -7,8 +7,9 @@ export const SCAN_PAGE_STYLES = css`
   .wrap { max-width: 68rem; margin: 0 auto; container: scan-page / inline-size; }
   .head { display: flex; flex-wrap: wrap; align-items: center; gap: .65rem; min-height: 2.1rem; margin-bottom: .45rem; }
   .head-title { display: flex; align-items: center; gap: .65rem; }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   h1 { margin: 0; font-size: 1.65rem; font-weight: 600; letter-spacing: -.035em; }
-  .head-tabs { display: inline-flex; margin-left: .7rem; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .head-tabs { display: inline-flex; flex-shrink: 0; margin-left: auto; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
   .head-tabs button { border: 0; border-right: 1px solid var(--border); padding: .25rem .6rem; color: var(--muted); background: transparent; font: inherit; font-size: .75rem; }
   .head-tabs button:last-child { border-right: 0; }
   .head-tabs button.active { color: var(--text); background: var(--surface-active); }
@@ -18,7 +19,8 @@ export const SCAN_PAGE_STYLES = css`
   button, select, input { font: inherit; }
   button { cursor: default; }
   button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .intro { margin: 0 0 1.15rem; max-width: 52rem; color: var(--muted); font-size: .82rem; line-height: 1.5; }
+  .intro-row { display: flex; align-items: center; flex-wrap: wrap; gap: .65rem 1rem; margin-bottom: 1.15rem; }
+  .intro { margin: 0; max-width: 52rem; color: var(--muted); font-size: .82rem; line-height: 1.5; }
   .intro span { display: block; }
   .notice { margin: 0 0 1rem; padding: .55rem .7rem; border: 1px solid rgb(from var(--accent) r g b / .35); border-radius: 7px; color: var(--text); background: rgb(from var(--accent) r g b / .08); font-size: .78rem; }
   .setup { display: grid; gap: .85rem; }
@@ -35,23 +37,6 @@ export const SCAN_PAGE_STYLES = css`
   .metric svg { flex: 0 0 auto; width: .85rem; height: .85rem; margin-right: .1rem; color: var(--muted); }
   .metric strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: .72rem; font-weight: 600; font-variant-numeric: tabular-nums; }
   .metric span { color: var(--muted); font-size: .7rem; }
-  .mode-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .45rem; padding: .7rem .9rem .85rem; }
-    .mode-option { display: grid; gap: .25rem; min-width: 0; padding: .55rem .6rem; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); background: var(--bg); text-align: left; }
-    .mode-title { display: flex; align-items: center; gap: .35rem; min-width: 0; }
-    .mode-title svg { width: 1rem; height: 1rem; flex: 0 0 auto; color: var(--muted); }
-    .mode-option strong { color: var(--text); font-size: .75rem; font-weight: 600; }
-  .mode-option span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .63rem; }
-  .mode-option.active { border-color: rgb(from var(--accent) r g b / .55); background: rgb(from var(--accent) r g b / .1); }
-    .mode-option.active strong, .mode-option.active .mode-title svg { color: var(--accent); }
-  .subtype-wrap { border-top: 1px solid var(--border); background: rgb(from var(--accent) r g b / .025); }
-  .subtype-options { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .45rem; padding: .7rem .9rem .45rem; }
-  .report-subtypes { grid-template-columns: repeat(2, minmax(0, 1fr)); padding-bottom: .7rem; }
-  .subtype-option { display: grid; gap: .12rem; padding: .42rem .55rem; border: 1px solid var(--border); border-radius: 5px; color: var(--muted); background: var(--bg); text-align: left; }
-  .subtype-option strong { color: var(--text); font-size: .72rem; font-weight: 500; }
-  .subtype-option span { font-size: .62rem; }
-  .subtype-option.active { border-color: rgb(from var(--accent) r g b / .55); background: rgb(from var(--accent) r g b / .1); }
-  .subtype-option.active strong { color: var(--accent); }
-  .subtype-help { margin: 0; padding: .15rem .9rem .72rem; color: var(--muted); font-size: .68rem; line-height: 1.4; }
   .source-choice { display: grid; grid-template-columns: minmax(12rem, .8fr) minmax(16rem, 1.2fr); gap: .7rem; align-items: end; padding: .85rem .9rem; }
   .source-footer { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: .7rem 1rem; grid-column: 1 / -1; min-width: 0; }
   /* Reserve the scope control's footprint while metadata is being read. */
@@ -138,5 +123,5 @@ export const SCAN_PAGE_STYLES = css`
   .empty { margin: 0; padding: 1.2rem; color: var(--muted); font-size: .8rem; }
   @container scan-page (max-width: 48rem) { .bundle-choice, .source-choice, .source-footer { grid-template-columns: 1fr; gap: .7rem; } .scope-grid { grid-template-columns: 1fr; } .scope-pane + .scope-pane { border-top: 1px solid var(--border); border-left: 0; } }
   @container scan-page (max-width: 42rem) { .options { display: block; padding-bottom: 3rem; } .checks { margin-top: .8rem; } .offline-help { max-width: 100%; white-space: normal; } .options-footer { margin-top: .8rem; } }
-  @container scan-page (max-width: 34rem) { .mode-grid, .subtype-options { grid-template-columns: 1fr 1fr; } .bundle-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .45rem .65rem; } .scope-head { flex-wrap: wrap; } .scope-head p { flex-basis: 100%; justify-content: start; margin-left: 1.4rem; text-align: left; } .scope-head p span { white-space: normal; } .scope-head p span + span { padding-left: 0; border-left: 0; } .scan-row { grid-template-columns: 1fr; gap: .55rem; } .scan-actions { justify-content: flex-start; } .head-tabs { margin-left: 0; } }
+  @container scan-page (max-width: 34rem) { .bundle-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .45rem .65rem; } .scope-head { flex-wrap: wrap; } .scope-head p { flex-basis: 100%; justify-content: start; margin-left: 1.4rem; text-align: left; } .scope-head p span { white-space: normal; } .scope-head p span + span { padding-left: 0; border-left: 0; } .scan-row { grid-template-columns: 1fr; gap: .55rem; } .scan-actions { justify-content: flex-start; } .head-tabs { margin-left: 0; } }
 `

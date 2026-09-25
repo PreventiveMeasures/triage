@@ -1,0 +1,319 @@
+:host {
+  display: block;
+  position: relative;
+  padding: 0 clamp(1rem, 3vw, 3rem) 3rem;
+  color: var(--text);
+  container-type: inline-size;
+  font-family: var(--sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
+  font-size: .875rem;
+  line-height: 1.5;
+  --panel:color-mix(in srgb, var(--bg) 50%, var(--surface));
+  --panel-hover:color-mix(in srgb, var(--text) 3%, var(--panel));
+}
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+.wrap {
+  width: 100%;
+  max-width: 76rem;
+  margin: 0 auto;
+}
+.manage-nav button {
+  flex: 0 0 auto;
+  position: relative;
+  min-height: 3.7rem;
+  padding: .9rem 0;
+  border: 0;
+  border-radius: 0;
+  color: var(--muted);
+  background: none;
+  font-size: .8rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.manage-nav button:hover {
+  color: var(--text);
+}
+.manage-nav button[aria-current=page] {
+  color: var(--text);
+}
+.manage-nav button[aria-current=page]::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  inset-inline: 0;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 2px;
+}
+.manage-nav button:focus-visible {
+  outline-offset: -3px;
+}
+.head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .7rem;
+  margin: 0 0 .5rem;
+}
+h1,
+.head h1 {
+  margin: 0;
+  font-size: 1.9rem;
+  font-weight: 600;
+  letter-spacing: -.045em;
+  line-height: 1.2;
+}
+.count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.6rem;
+  padding: .12rem .5rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  background: var(--surface);
+  font-size: .73rem;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+button,
+input,
+select {
+  font: inherit;
+}
+button,
+select,
+input[type=checkbox] {
+  cursor: default;
+}
+button,
+a,
+input,
+select {
+  -webkit-app-region: no-drag;
+}
+button,
+a {
+  transition:
+    background .15s,
+    color .15s,
+    border-color .15s;
+}
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+button:disabled,
+select:disabled {
+  opacity: .45;
+}
+input:not([type=checkbox]),
+select {
+  min-width: 0;
+  min-height: 2.25rem;
+  padding: .45rem .65rem;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: .8rem;
+}
+input::placeholder {
+  color: var(--muted);
+}
+input[type=checkbox] {
+  accent-color: var(--accent);
+}
+.btn,
+.drop-browse {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .45rem;
+  min-height: 2.25rem;
+  height: auto;
+  padding: .45rem .8rem;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: .8rem;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.btn:hover:not(:disabled),
+.drop-browse:hover:not(:disabled) {
+  background: var(--surface-active);
+  border-color: var(--muted);
+}
+.btn.primary,
+.drop-browse {
+  color: var(--bg);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.btn.primary:hover:not(:disabled),
+.drop-browse:hover:not(:disabled) {
+  background: var(--accent);
+  filter: brightness(1.08);
+}
+.btn svg,
+.icon-btn svg {
+  width: 1rem;
+  height: 1rem;
+}
+.icon-btn {
+  width: 2rem;
+  height: 2rem;
+}
+.avatar {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--border));
+}
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  flex-basis: 100%;
+  gap: .4rem;
+  margin-bottom: .8rem;
+}
+.breadcrumb-manage {
+  padding: .1rem 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: .78rem;
+}
+.breadcrumb-manage:hover {
+  color: var(--text);
+}
+.breadcrumb-separator {
+  color: var(--muted);
+}
+.msg {
+  margin: 1rem 0;
+  padding: 1.1rem 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--muted);
+  font-size: .85rem;
+}
+.msg.error {
+  color: var(--critical);
+  border-color: color-mix(in srgb, var(--critical) 35%, var(--border));
+}
+.empty {
+  padding: 3.5rem 1.5rem;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  color: var(--muted);
+  text-align: center;
+}
+.empty strong {
+  display: block;
+  margin-bottom: .4rem;
+  color: var(--text);
+  font-size: .95rem;
+  font-weight: 500;
+}
+.empty p {
+  margin: 0;
+  font-size: .85rem;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+@container (max-width: 35rem) {
+  .manage-nav {
+    gap: 1.2rem;
+    margin-bottom: 1.75rem;
+  }
+  .manage-nav button {
+    min-height: 3.25rem;
+  }
+  h1,
+  .head h1 {
+    font-size: 1.65rem;
+  }
+  .intro {
+    margin-bottom: 1.5rem;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  button,
+  a {
+    transition: none;
+  }
+}
+.collection-toolbar input {
+  flex: 1;
+  max-width: 26rem;
+  min-width: 10rem;
+}
+.collection-toolbar select {
+  min-width: 10rem;
+}
+.result-count {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: .75rem;
+  font-variant-numeric: tabular-nums;
+}
+@container (max-width: 35rem) {
+  .collection-toolbar input {
+    flex-basis: 100%;
+    max-width: none;
+  }
+}
+.manage-nav {
+  display: flex;
+  gap: 1.35rem;
+  align-items: stretch;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 1.5rem;
+  padding: 0 .1rem;
+}
+.intro {
+  margin: 0 0 1.8rem;
+  max-width: 46rem;
+  color: var(--muted);
+  font-size: .875rem;
+  line-height: 1.65;
+  margin-bottom: 1.25rem;
+}
+.collection-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .75rem;
+  margin-bottom: .85rem;
+}
+.page-intro {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: .5rem 1rem;
+  margin-bottom: 1.25rem;
+}
+.page-intro .intro {
+  margin: 0;
+}
+
+a { cursor: default; }
