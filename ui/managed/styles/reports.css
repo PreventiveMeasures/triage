@@ -233,11 +233,12 @@
   background: rgb(from var(--critical) r g b / .08);
 }
 .preview {
+  height: 20rem;
   border-top: 1px solid var(--border);
   padding: .85rem;
 }
 .preview pre {
-  max-height: 18rem;
+  height: 100%;
   overflow: auto;
   margin: 0;
   padding: .85rem;

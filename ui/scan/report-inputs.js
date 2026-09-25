@@ -117,7 +117,7 @@ export class ReportInputs extends LitElement {
   render() {
     const merge = this.mode === 'merge'
     const inputs = this._inputs
-    const selected = this.selection.inputs.length
+    const selected = inputs.filter(input => this._current.ids.has(input.id)).length
     const hasWorkspaces = Array.isArray(this._sources?.link?.workspaces)
     const empty = this._parent ? (merge ? 'No scan results for this bundle.' : `No saved reports in this ${this._current.kind}.`)
       : merge ? 'Choose a bundle to see its scan results.' : this._parents.length === 0 ? 'No saved reports with app findings.' : `Choose a ${this._current.kind} to see its saved reports.`
@@ -130,17 +130,19 @@ export class ReportInputs extends LitElement {
               : html`<repository-selector .options=${this._scopeOptions} .value=${this._current.sourceId} ?disabled=${this._loading} @repository-change=${e => this._selectSource(e.detail.value)}></repository-selector>`}
         </div>
       </div>
+      <div class="input-results">
       ${this._error ? html`<p class="empty" role="alert">Couldn’t load report inputs: ${this._error} <button type="button" @click=${() => void this._load()}>Retry</button></p>`
-        : this._loading ? html`<p class="empty" role="status">Loading report inputs…</p>`
-          : inputs.length > 0 ? html`<div class="list-head"><label><input type="checkbox" aria-label="Select all" .checked=${selected === inputs.length} .indeterminate=${selected > 0 && selected < inputs.length} @change=${e => this._selectAll(e.target.checked)}><strong>All</strong></label><span>${selected} of ${inputs.length} selected</span></div><div class="list">${inputs.map(input => this._row(input))}</div>`
+        : this._loading && this._sources == null ? html`<p class="empty" role="status">Loading report inputs…</p>`
+          : inputs.length > 0 ? html`<div class="list-head"><label><input type="checkbox" aria-label="Select all" ?disabled=${this._loading} .checked=${selected === inputs.length} .indeterminate=${selected > 0 && selected < inputs.length} @change=${e => this._selectAll(e.target.checked)}><strong>All</strong></label><span>${selected} of ${inputs.length} selected</span></div><div class="list">${inputs.map(input => this._row(input))}</div>`
             : html`<p class="empty">${merge && this._parents.length === 0 ? 'No scan results available.' : empty}</p>`}
+      </div>
     </section>`
   }
   _row(input) {
     const count = this.mode === 'link' ? input.appFindings : input.findings
     const details = [input.model ? modelName(input.model) : null, count == null ? null : `${count} ${this.mode === 'link' ? 'app ' : ''}${count === 1 ? 'finding' : 'findings'}`, input.createdAt,
       input.repo ? `${input.repo}${input.directory ? `/${input.directory}` : ''}` : null].filter(Boolean)
-    return html`<label class="option"><input type="checkbox" .checked=${this._current.ids.has(input.id)} @change=${e => this._toggle(input.id, e.target.checked)}>${unsafeHTML(REPORT_FILE_ICONS[input.analyzer] ?? REPORT_FILE_ICONS.default)}<span class="copy"><strong>${input.title ?? input.filename}</strong><span>${details.join(' · ')}</span></span></label>`
+    return html`<label class="option"><input type="checkbox" ?disabled=${this._loading} .checked=${this._current.ids.has(input.id)} @change=${e => this._toggle(input.id, e.target.checked)}>${unsafeHTML(REPORT_FILE_ICONS[input.analyzer] ?? REPORT_FILE_ICONS.default)}<span class="copy"><strong>${input.title ?? input.filename}</strong><span>${details.join(' · ')}</span></span></label>`
   }
   static styles = css`
     :host { display: block; min-width: 0; }
@@ -154,11 +156,12 @@ export class ReportInputs extends LitElement {
     .kinds button { padding-block: .5rem; border: 0; border-radius: 0; color: var(--muted); }
     .kinds button + button { border-left: 1px solid var(--border); }
     .kinds button[aria-checked=true] { color: var(--text); background: var(--surface-active); }
-    .list-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; padding: .55rem .9rem; border-bottom: 1px solid var(--border); }
+    .list-head { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: .5rem; padding: .55rem .9rem; border-bottom: 1px solid var(--border); }
     .list-head label { display: flex; align-items: center; gap: .55rem; user-select: none; }
     .list-head strong { color: var(--text); font-size: .74rem; font-weight: 600; }
     .list-head > span { color: var(--muted); font-size: .68rem; }
-    .list { max-height: 24rem; overflow: auto; overscroll-behavior: none; }
+    .input-results { height: 16rem; display: flex; flex-direction: column; overflow: auto; }
+    .list { min-height: 0; overflow: auto; overscroll-behavior: none; }
     .option { display: flex; align-items: center; gap: .55rem; min-width: 0; padding: .35rem .9rem; user-select: none; }
     .option + .option { border-top: 1px solid var(--border); }
     .option:hover { background: var(--surface-active); }
