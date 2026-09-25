@@ -61,6 +61,7 @@ export { LINKS_KIND, parseLinkedFindings } from './linked-findings.js'
 
 export {
   duplicatesOf,
+  ensureKnownLinkedFindingsIndexed,
   ensureLinkedFindingsIndexed,
   hasLinkedFindings,
   linkFiles,
@@ -217,4 +218,4 @@ export {
   syncObservedAfterHydrate,
 } from './workspaces.js'
 
-export { cacheWorkspaceAppMetadata, getWorkspaceAppMetadata, onWorkspaceAppMetadataChanged, workspaceAppCacheToken } from './workspace-app-cache.js'
+export { cacheWorkspaceAppMetadata, getWorkspaceAppMetadata, getWorkspaceAppModeHint, onWorkspaceAppMetadataChanged, workspaceAppCacheToken } from './workspace-app-cache.js'

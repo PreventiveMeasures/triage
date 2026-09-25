@@ -112,8 +112,8 @@ subscribeToBundleHashIndex(() => {
 // repaint.
 //
 // Not coalesced the way the hash-index subscriber below is: the index
-// notifies once per walk that added something, and per invalidation,
-// which is a handful of times a session rather than a burst.
+// notifies for the known-links batch, the completed verification walk, and
+// invalidations, rather than for every file it reads.
 subscribeToLinkedFindings(() => {
   state.linksTick++
   render()

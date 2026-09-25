@@ -1,7 +1,7 @@
 import { LitElement, html, render as litRender, nothing, unsafeCSS } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { LINKS_KIND, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, clientModeLabel, computeLinkHint, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, ensureLinkedFindingsIndexed, getCount, getKind, getPackagesIndex, getRepositoriesIndex, getWorkspaceAppMetadata, hasStandaloneProbeHint, hydrateSecureStorage, isManagedUiMode, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, onWorkspaceAppMetadataChanged, probeServerInfo, readCachedServerInfo, reloadTriageFromStorage, rememberStandaloneProbe, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, setLocalMode, state, syncObservedAfterHydrate, waitForServerInfo, writeCachedServerInfo } from '#client/index.js'
+import { LINKS_KIND, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, classifyServerMode, clientModeLabel, computeLinkHint, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, ensureLinkedFindingsIndexed, getCount, getKind, getPackagesIndex, getRepositoriesIndex, getWorkspaceAppMetadata, getWorkspaceAppModeHint, hasStandaloneProbeHint, hydrateSecureStorage, isManagedUiMode, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, onWorkspaceAppMetadataChanged, probeServerInfo, readCachedServerInfo, reloadTriageFromStorage, rememberStandaloneProbe, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, setLocalMode, state, syncObservedAfterHydrate, waitForServerInfo, writeCachedServerInfo } from '#client/index.js'
 import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, setSyncForceDisabled, triageSync } from './client-sync.js'
 import { clearPreviewRole, getPreviewRole, loadManagedBundle, login as managedLogin, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams } from './client-managed.js'
 import { ROLES, isRole } from '../../common/managed/roles.ts'
@@ -409,7 +409,7 @@ const WORKSPACE_LEAVE_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11
 // (export) and the door-arrow (leave). Sized to match the other
 // hover-revealed action buttons in the workspace row.
 const WORKSPACE_SHARE_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 9.5L9 7.5"/><path d="M9.5 5.5L10.5 4.5a2.1 2.1 0 1 1 3 3l-1 1"/><path d="M6.5 11.5L5.5 12.5a2.1 2.1 0 1 1-3-3l1-1"/></svg>`
-function workspaceItemTemplate(w, { app, reports, bundles, showReports, showBundles }) {
+function workspaceItemTemplate(w, { app, compact, reports, bundles, showReports, showBundles }) {
   const isCurrent = state.currentWorkspace === w.id
     && (state.currentView === 'findings' || state.currentView === 'files')
   const cls = `file-item workspace-item${isCurrent ? ' current' : ''}`
@@ -439,8 +439,8 @@ function workspaceItemTemplate(w, { app, reports, bundles, showReports, showBund
       <button type="button" class="workspace-export" data-action="export-workspace" data-tooltip="Export workspace" aria-label="Export workspace">${WORKSPACE_EXPORT_ICON}</button>
       <button type="button" class="workspace-leave" data-action="leave-workspace" data-tooltip="Leave workspace" aria-label="Leave workspace">${WORKSPACE_LEAVE_ICON}</button>
     </div>
-    ${app?.appMode ? html`<div class="workspace-meta">
-      <span class="workspace-findings">${app.appFindings.toLocaleString()} finding${app.appFindings === 1 ? '' : 's'}</span>
+    ${compact ? html`<div class="workspace-meta">
+      ${app?.appMode ? html`<span class="workspace-findings">${app.appFindings.toLocaleString()} finding${app.appFindings === 1 ? '' : 's'}</span>` : nothing}
       <span class="workspace-sections" role="group" aria-label="Workspace files">
         <button type="button" data-workspace-section="reports" aria-expanded=${String(showReports)} ?disabled=${searchActive}>${reports.toLocaleString()} report${reports === 1 ? '' : 's'}</button>
         ${bundles > 0 ? html`<button type="button" data-workspace-section="bundles" aria-expanded=${String(showBundles)} ?disabled=${searchActive}>${bundles.toLocaleString()} bundle${bundles === 1 ? '' : 's'}</button>` : nothing}
@@ -681,16 +681,17 @@ export async function renderSidebar({ revealSelection = false } = {}) {
         }
       }
       const app = getWorkspaceAppMetadata(w)
+      const compact = app?.appMode ?? (getWorkspaceAppModeHint(w) === true)
       const sections = expandedWorkspaceSections.get(w.id)
-      const showReports = !app?.appMode || searchActive || sections?.has('reports') === true
-      const showBundles = !app?.appMode || searchActive || sections?.has('bundles') === true
+      const showReports = !compact || searchActive || sections?.has('reports') === true
+      const showBundles = !compact || searchActive || sections?.has('bundles') === true
       // Link files remain in the Reports section but do not count as reports.
       // The arrays above already apply the sidebar query, so search counts
       // describe exactly the matching children, including missing reports.
       const reports = [...presentReports, ...missingReports].filter(name => getKind(name) !== LINKS_KIND).length
       const bundles = presentBundles.length + missingBundles.length
       return html`
-        ${workspaceItemTemplate(w, { app, reports, bundles, showReports, showBundles })}
+        ${workspaceItemTemplate(w, { app, compact, reports, bundles, showReports, showBundles })}
         ${showReports ? html`${presentReports.map((r) => fileItemTemplate(r, { indented: true, workspaceId: w.id }))}${missingReports.map((r) => missingReportItemTemplate(r, w.id))}` : nothing}
         ${showBundles ? html`${presentBundles.map((b) => bundleItemTemplate(b, { workspaceId: w.id }))}${missingBundles.map((integ) => missingBundleItemTemplate(integ, w.id))}` : nothing}
       `

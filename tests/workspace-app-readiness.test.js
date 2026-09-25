@@ -4,7 +4,7 @@ import { gzipSync } from 'node:zlib'
 import './_polyfills.js'
 import { getItem, hydrate, setItem } from '../client/secure-storage.js'
 import { createWorkspace, listWorkspaces } from '../client/workspaces.js'
-import { cacheWorkspaceAppMetadata, getWorkspaceAppMetadata, onWorkspaceAppMetadataChanged, workspaceAppCacheToken } from '../client/workspace-app-cache.js'
+import { cacheWorkspaceAppMetadata, getWorkspaceAppMetadata, getWorkspaceAppModeHint, onWorkspaceAppMetadataChanged, workspaceAppCacheToken } from '../client/workspace-app-cache.js'
 import { ensureCounts } from '../client/counts.js'
 import { deleteFile, listFiles } from '../client/storage.js'
 import { duplicatesOf, ensureLinkedFindingsIndexed, linkFiles } from '../client/linked-findings-index.js'
@@ -26,6 +26,7 @@ it('distinguishes an unbuilt or incomplete links index from a verified empty ind
   const reportsToken = await workspaceAppCacheToken(workspace)
   assert.deepEqual(linkFiles(), [])
   assert.equal(getWorkspaceAppMetadata(workspace), null, 'an unbuilt empty index is not evidence for the cached snapshot')
+  assert.equal(getWorkspaceAppModeHint(workspace), true, 'the last known App classification can still keep sections closed')
   assert.equal(await workspaceAppCacheToken(workspace, reportsToken), null)
   assert.equal(await cacheWorkspaceAppMetadata(workspace, entry, reportsToken), false)
 
@@ -35,6 +36,7 @@ it('distinguishes an unbuilt or incomplete links index from a verified empty ind
   await workspaceAppCacheToken()
   assert.deepEqual(duplicatesOf(a), [b])
   assert.equal(getWorkspaceAppMetadata(workspace), null, 'discovering the links invalidates the old cache')
+  assert.equal(getWorkspaceAppModeHint(workspace), null, 'changed links discard the old layout hint')
 
   // A completed walk that really finds no links can reuse an empty snapshot.
   await deleteFile(name)

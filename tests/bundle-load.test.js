@@ -5,20 +5,20 @@ import { createBundleMetadata } from '../ui/view/bundle-metadata.js'
 const json = { version: 3, sources: ['src/main.js'], sourcesContent: ['export default 1'], names: [] }
 const entry = { integrity: 'sha512-test', name: 'test.map' }
 const recorded = new Map(), state = { bundles: [entry] }, stored = new Map()
-let readGate = null, reads = 0, renders = 0, saved = Promise.withResolvers(), writes = 0
+let indexReads = 0, readGate = null, reads = 0, renders = 0, saved = Promise.withResolvers(), writes = 0
 mock.module('../client/index.js', { namedExports: {
   state, ensureBundleFindingsIndexed: async () => {}, hasBundleFileHashes: (key) => recorded.has(key),
   readBundle: async () => { reads++; if (readGate) await readGate; return new TextEncoder().encode(JSON.stringify(json)) },
-  readBundleIndex: (key) => Promise.resolve(stored.get(key)),
+  readBundleIndex: (key) => { indexReads++; return Promise.resolve(stored.get(key)) },
   saveBundleIndex: (key, value) => { writes++; stored.set(key, value); saved.resolve(); return Promise.resolve() },
   recordBundleFileHashes: (key, hashes) => recorded.set(key, hashes),
 } })
 mock.module('../ui/view/render.js', { namedExports: { render: () => { renders++ } } })
 mock.module('../ui/view/graph/state.js', { namedExports: { graph2: {} } })
-const { buildBundleDetails, ensureBundleSources, openBundle, prefetchBundleHashes, selectBundle } = await import('../ui/view/bundle-load.js')
+const { buildBundleDetails, ensureBundleSources, openBundle, prefetchBundleHashes, prefetchBundleHashesAfterPaint, selectBundle } = await import('../ui/view/bundle-load.js')
 const index = await createBundleMetadata({ integrity: entry.integrity, kind: 'sourcemap', size: 123, json })
 beforeEach(() => {
-  stored.clear(); recorded.clear(); reads = 0; writes = 0; renders = 0; readGate = null
+  stored.clear(); recorded.clear(); indexReads = 0; reads = 0; writes = 0; renders = 0; readGate = null
   saved = Promise.withResolvers()
   state.bundles = [entry]; selectBundle(entry.integrity, 'overview')
 })
@@ -32,6 +32,43 @@ it('does not preload source bundles for report hash lookups, even on cache misse
   assert.equal(reads, 0)
   assert.equal(recorded.get(entry.integrity).size, 1)
 })
+
+it('shares concurrent hash lookups so reports referencing one bundle parse its metadata once', async () => {
+  stored.set(entry.integrity, index)
+  const first = prefetchBundleHashes(entry.integrity)
+  assert.equal(prefetchBundleHashes(entry.integrity), first)
+  await first
+  await prefetchBundleHashes(entry.integrity)
+  assert.equal(indexReads, 1)
+  assert.equal(reads, 0)
+  assert.equal(recorded.get(entry.integrity).size, 1)
+})
+
+async function checkPrefetchAfterPaint(t, navigateAway) {
+  const originalFrame = globalThis.requestAnimationFrame
+  let frame
+  globalThis.requestAnimationFrame = (cb) => { frame = cb }
+  t.after(() => {
+    if (originalFrame) globalThis.requestAnimationFrame = originalFrame
+    else delete globalThis.requestAnimationFrame
+  })
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  // Even a cache miss must be attempted only once when many reports name
+  // the same bundle; a successful hash cache cannot mask repeated reads.
+  let current = true
+  const job = prefetchBundleHashesAfterPaint([entry.integrity, entry.integrity], () => current)
+  assert.equal(indexReads, 0)
+  assert.equal(recorded.size, 0)
+  frame()
+  assert.equal(indexReads, 0, 'animation-frame callbacks run before paint; wait for the following task too')
+  if (navigateAway) current = false
+  t.mock.timers.tick(0)
+  await job
+  assert.equal(indexReads, navigateAway ? 0 : 1)
+  assert.equal(reads, 0, 'deferred prefetch never loads a source bundle on a metadata miss')
+}
+it('defers and deduplicates report bundle metadata reads until after paint', (t) => checkPrefetchAfterPaint(t, false))
+it('cancels deferred bundle metadata reads for an abandoned view', (t) => checkPrefetchAfterPaint(t, true))
 
 it('opens metadata without reading the bundle, then shares an on-demand full-source upgrade', async () => {
   stored.set(entry.integrity, index)

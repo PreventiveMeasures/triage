@@ -11,7 +11,7 @@
 // `Symbol.for('@rray/frontend')`.
 import './view/frontend-install.js'
 import { dropZone, sidebar } from './view/dom.js'
-import { attachSharedWorkspace, extractFindingRef, extractShareEncoded, getSecureItem, hydrateSecureStorage, isDisablingInThisTab, isEncryptionEnabled, isManagedUiMode, isUnlocked, listFiles, listWorkspaces, onVaultStateChange, setTriageReloadNotifier, state, syncObservedAfterHydrate } from '#client/index.js'
+import { attachSharedWorkspace, ensureKnownLinkedFindingsIndexed, extractFindingRef, extractShareEncoded, getSecureItem, hydrateSecureStorage, isDisablingInThisTab, isEncryptionEnabled, isManagedUiMode, isUnlocked, listFiles, listWorkspaces, onVaultStateChange, setTriageReloadNotifier, state, syncObservedAfterHydrate } from '#client/index.js'
 import { onAutoDownloaded, onBundleAutoDownloaded, onChange as onPresenceChange, setRedraw, triageSync } from './view/client-sync.js'
 import { ensureClientMode, renderSidebar } from './view/sidebar.js'
 import { BUNDLE_TABS, LAST_FILE_KEY, currentViewGeneration, switchToFile, switchToWorkspace } from './view/ingest.js'
@@ -300,7 +300,13 @@ async function restoreInitialView() {
   // only when the status button is visible (usable URL + ≥1 workspace)
   // and the user hasn't opted out. Boot does NOT pre-load — a user with
   // no workspaces never downloads the sync payload.
-  await renderSidebar()
+  // Restore the small, known links set before findings can paint. The sidebar
+  // starts full-library verification in the background; awaiting that instead
+  // would put every unrelated report read on the initial view's critical path.
+  await Promise.all([
+    renderSidebar(),
+    ensureKnownLinkedFindingsIndexed().catch((err) => console.warn('initial linked findings:', err)),
+  ])
   if (!isCurrent()) return
   // Share-link hash takes precedence over the last-file restore so
   // the user lands on the freshly-attached workspace, not whatever

@@ -43,12 +43,25 @@ function workspaceUnchanged(cache, workspace, token) {
     && token.workspaceRevision === workspaceRevision(cache, workspace?.id)
 }
 
-export function getWorkspaceAppMetadata(workspace) {
+function cachedEntry(workspace, cache) {
   if (allDirty || dirty.has(workspace.id)) return null
-  const cache = parse()
   const entry = cache.entries[workspace.id]
   if (!entry || entry.reports !== membership(workspace) || typeof entry.appMode !== 'boolean') return null
   if (entry.appMode && (!Number.isSafeInteger(entry.appFindings) || entry.appFindings < 0)) return null
+  return entry
+}
+
+// Layout hint only: keep previously compact workspaces closed while the links
+// index rebuilds on reload. Counts and App opening defaults still require the
+// verified metadata below. Invalidations discard this hint with the entry.
+export function getWorkspaceAppModeHint(workspace) {
+  return cachedEntry(workspace, parse())?.appMode ?? null
+}
+
+export function getWorkspaceAppMetadata(workspace) {
+  const cache = parse()
+  const entry = cachedEntry(workspace, cache)
+  if (!entry) return null
   // Hydrated metadata may be newer than the index this tab uses to group
   // findings. Only expose it once those duplicate relationships agree.
   if (!linksMatch(cache)) return null

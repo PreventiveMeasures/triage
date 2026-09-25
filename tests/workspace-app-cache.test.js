@@ -4,7 +4,7 @@ import { gzipSync } from 'node:zlib'
 import './_polyfills.js'
 import { SECURE_KEYS, getItem, hydrate, __test__ as secureTest, setItem } from '../client/secure-storage.js'
 import { addReportToWorkspace, createWorkspace, deleteWorkspace, listWorkspaces, renameWorkspace } from '../client/workspaces.js'
-import { cacheWorkspaceAppMetadata, getWorkspaceAppMetadata, invalidateWorkspaceAppMetadata, onWorkspaceAppMetadataChanged, workspaceAppCacheToken } from '../client/workspace-app-cache.js'
+import { cacheWorkspaceAppMetadata, getWorkspaceAppMetadata, getWorkspaceAppModeHint, invalidateWorkspaceAppMetadata, onWorkspaceAppMetadataChanged, workspaceAppCacheToken } from '../client/workspace-app-cache.js'
 import { deleteFile, listFiles, saveFile } from '../client/storage.js'
 import { ensureCounts, setCount } from '../client/counts.js'
 import { duplicatesOf, ensureLinkedFindingsIndexed, linkFiles } from '../client/linked-findings-index.js'
@@ -54,7 +54,7 @@ describe('workspace App metadata cache', () => {
     await renameWorkspace(ws.id, 'Renamed')
     assert.equal(getWorkspaceAppMetadata(listWorkspaces()[0]).appFindings, 3)
   })
-  it('withholds hydrated metadata until the matching links are indexed, then notifies readers', async () => {
+  it('preserves the compact layout hint while withholding hydrated counts until links are indexed', async () => {
     const [a, b] = [crypto.randomUUID(), crypto.randomUUID()]
     const name = await seedLinks([[a, b]])
     const ws = await workspace()
@@ -67,6 +67,7 @@ describe('workspace App metadata cache', () => {
     await hydrate()
     assert.deepEqual(duplicatesOf(a), [])
     assert.equal(getWorkspaceAppMetadata(ws), null)
+    assert.equal(getWorkspaceAppModeHint(ws), true, 'previously seen App workspaces start closed before links are ready')
 
     const updates = []
     const unsubscribe = onWorkspaceAppMetadataChanged(() => updates.push(getWorkspaceAppMetadata(ws)))
@@ -75,9 +76,19 @@ describe('workspace App metadata cache', () => {
       await workspaceAppCacheToken()
       assert.deepEqual(duplicatesOf(a), [b])
       assert.deepEqual(getWorkspaceAppMetadata(ws), entry)
+      assert.equal(getWorkspaceAppModeHint(ws), true, 'the layout stays compact after verification')
       assert.deepEqual(JSON.parse(getItem(KEY)), cache, 'the matching cache is reused without rewriting it')
       assert.ok(updates.some((update) => update?.appFindings === metadata.appFindings), 'readers repaint once cached metadata is usable')
     } finally { unsubscribe() }
+  })
+  it('opens unknown workspaces and drops the compact hint when fresh metadata rules out App mode', async () => {
+    const ws = await workspace()
+    assert.equal(getWorkspaceAppModeHint(ws), null)
+    await record(ws)
+    assert.equal(getWorkspaceAppModeHint(ws), true)
+    assert.equal(await cacheWorkspaceAppMetadata(ws, { appMode: false }, await workspaceAppCacheToken(ws)), true)
+    await hydrate()
+    assert.equal(getWorkspaceAppModeHint(ws), false)
   })
   it('discards metadata calculated using the previous severity-dependent rules', async () => {
     const ws = await workspace()
@@ -86,6 +97,7 @@ describe('workspace App metadata cache', () => {
     old.version = 1
     await setItem(KEY, JSON.stringify(old))
     assert.equal(getWorkspaceAppMetadata(ws), null)
+    assert.equal(getWorkspaceAppModeHint(ws), null)
     assert.equal(await record(ws), true)
     assert.equal(getWorkspaceAppMetadata(ws).appFindings, 3)
   })
@@ -95,6 +107,7 @@ describe('workspace App metadata cache', () => {
     const token = await workspaceAppCacheToken(ws)
     await addReportToWorkspace('second.json', ws.id)
     assert.equal(getWorkspaceAppMetadata(ws), null)
+    assert.equal(getWorkspaceAppModeHint(ws), null, 'changed membership reveals the workspace children')
     assert.equal(await cacheWorkspaceAppMetadata(ws, metadata, token), false)
     await workspaceAppCacheToken()
     assert.equal(getWorkspaceAppMetadata(listWorkspaces()[0]), null)
@@ -200,6 +213,7 @@ describe('workspace App metadata cache', () => {
     setCount(ws.reports[0], 1)
     await saveFile(ws.reports[0], '{"findings":[]}')
     assert.equal(getWorkspaceAppMetadata(ws), null)
+    assert.equal(getWorkspaceAppModeHint(ws), null, 'changed report content discards the layout hint too')
     assert.equal(await cacheWorkspaceAppMetadata(ws, metadata, token), false)
     await indexFiles()
     assert.equal(getWorkspaceAppMetadata(other).appFindings, 3)
@@ -298,6 +312,7 @@ describe('workspace App metadata cache', () => {
     await deleteWorkspace(ws.id)
     await workspaceAppCacheToken()
     assert.equal(getWorkspaceAppMetadata(ws), null)
+    assert.equal(getWorkspaceAppModeHint(ws), null)
     assert.equal(await record(ws), false)
   })
 })

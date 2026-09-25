@@ -11,7 +11,7 @@ import { encodeReportLocation } from '../../client/report-location.js'
 import { configureReportRevalidation, render } from './render.js'
 import { ensureClientMode, navigateToAdminPage, renderSidebar } from './sidebar.js'
 import { cleanupGraph2, graph2 } from './graph/state.js'
-import { openBundle, prefetchBundleHashes, selectBundle } from './bundle-load.js'
+import { openBundle, prefetchBundleHashesAfterPaint, selectBundle } from './bundle-load.js'
 import { backfillFindingIds, detectFormat, inheritReportMeta, isAppFinding, parseCodexCsvToScans, readReport, repoDirectory, reportEntries, reportRepoGithub } from '../../report/index.js'
 import { importWorkspaceFromGzip } from './workspace-import.js'
 import { maybePromptFirstUse } from './first-import-prompt.js'
@@ -78,6 +78,8 @@ async function renderAfterAnimationFrame(gen) {
   await nextAnimationFrame()
   if (gen !== null && isStaleLoad(gen)) return false
   render()
+  void prefetchBundleHashesAfterPaint(state.reports.flatMap((r) => r.bundleHashes ?? []),
+    () => gen === null || !isStaleLoad(gen)).catch(() => {})
   return true
 }
 
@@ -496,14 +498,6 @@ async function addFiles(files) {
   // renderSidebar refreshes state.bundles from OPFS so a just-imported
   // bundle is visible to the bundles view path below.
   await renderSidebar()
-  // state.bundles is now fresh — kick a background hash pre-parse for
-  // every bundle this drop saved. The hash index populates the
-  // cross-bundle map the finding-card's "Code →" button consults, so
-  // existing reports' findings resolve matches without the user
-  // manually opening every bundle.
-  for (const integrity of newBundleIntegrities) {
-    prefetchBundleHashes(integrity).catch(() => {})
-  }
   if (last) {
     // Single-report drop wins over a bundle when both happen in
     // the same drop — the user's primary intent was the report.
@@ -521,6 +515,9 @@ async function addFiles(files) {
     await renderSidebar()
     openBundle(lastBundleIntegrity)
   }
+  // Imported bundles can supply source links even when a report did not name
+  // them. Populate those hashes after the selected report/bundle has rendered.
+  void prefetchBundleHashesAfterPaint(newBundleIntegrities).catch(() => {})
 }
 
 // Replace the active view with the named OPFS file. Pre-fetched
@@ -1426,18 +1423,6 @@ async function ingestReport(name, content, gen = null, { renderView = true, mana
     // Restore/disable the lens before deriving opening filters, including when
     // leaving a conflicted workspace for one of its individual reports.
     configureReportRevalidation()
-    // Pre-parse bundles the analyzer ran against so the finding-card's
-    // "Code →" shortcut resolves without manually opening each bundle.
-    // Only locally-stored bundles are prefetched (mismatched
-    // integrities no-op inside prefetchBundleHashes). Fire-and-forget —
-    // buttons surface progressively as each hash compute completes; no
-    // need to block render.
-    if (Array.isArray(data.bundleHashes) && data.bundleHashes.length > 0) {
-      const stored = new Set((state.bundles ?? []).map((b) => b.integrity))
-      for (const integrity of data.bundleHashes) {
-        if (stored.has(integrity)) prefetchBundleHashes(integrity).catch(() => {})
-      }
-    }
     if (isFirst) {
       resetFilters()
       // What this set opens on: an auto-tuned confidence floor, and
