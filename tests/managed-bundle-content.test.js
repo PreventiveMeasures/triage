@@ -37,11 +37,12 @@ async function setup(t) {
   const dir = await mkdtemp(join(tmpdir(), 'triage-bundle-'))
   const db = openSqliteManagedDb(':memory:')
   const store = createDiskBlobStore(join(dir, 'bundles'))
+  const reportStore = createDiskBlobStore(join(dir, 'reports'))
   const cacheDir = join(dir, 'cache')
   const cache = createDiskBundleCache(cacheDir, db, store)
   const pending = new Set()
   const server = createServer(createManagedRequestHandler({
-    config, db, bundleStore: store, bundleCache: cache, reportStore: createDiskBlobStore(join(dir, 'reports')),
+    config, db, bundleStore: store, bundleCache: cache, reportStore,
     avatarStore: { get: () => Promise.resolve(null) }, originGate: { isOriginAllowed: () => true },
     isShuttingDown: () => false, track: promise => { pending.add(promise); promise.finally(() => pending.delete(promise)).catch(() => {}) },
   }))
@@ -82,7 +83,7 @@ async function setup(t) {
     await store.put(id, bytes); await db.insertBundle(record, Date.now())
     return await db.getBundle(id)
   }
-  return { db, store, cache, cacheDir, users, send, seed, team, pending }
+  return { db, store, reportStore, cache, cacheDir, users, send, seed, team, pending }
 }
 
 for (const kind of ['stasis', 'sourcemap']) {
@@ -210,4 +211,55 @@ test('permanent repository removal deletes bundle derivatives too', async t => {
   assert.equal(removed.json().deletedBundles, 1)
   await assert.rejects(readdir(join(h.cacheDir, record.id)), { code: 'ENOENT' })
   assert.equal(await h.store.get(record.id), null)
+})
+
+test('repository removal completes triage and blob cleanup when a bundle cache deletion fails', async t => {
+  const h = await setup(t)
+  const records = [await h.seed({ repoId: 1 }), await h.seed({ kind: 'sourcemap', repoId: 1 })]
+  for (const record of records) await h.cache.prebuild(record)
+  const findingId = randomUUID()
+  const uploaded = await h.send('/api/admin/reports', 'admin', 'POST', JSON.stringify({
+    findings: [{ id: findingId, file: 'index.js', description: 'Test finding' }],
+  }), { 'x-repo-id': '1', 'x-filename': 'scan.json' })
+  assert.equal(uploaded.status, 201)
+  const reportId = uploaded.json().id
+  await h.db.setTriage(findingId, { comment: 'Private discussion' }, h.users.admin.userId, 'admin', Date.now())
+  const deleteCache = h.cache.delete, deletedCaches = []
+  h.cache.delete = id => {
+    deletedCaches.push(id)
+    if (id === records[0].id) return Promise.reject(new Error('cache filesystem unavailable'))
+    return deleteCache(id)
+  }
+  const warnings = t.mock.method(console, 'warn', () => {})
+  const removed = await h.send('/api/admin/repositories/remove', 'admin', 'POST', JSON.stringify({
+    repoId: 1, fullName: 'org/repo1', acknowledge: true, deleteTriage: true,
+  }))
+  assert.equal(removed.status, 200)
+  assert.deepEqual(removed.json(), { ok: true, deletedReports: 1, deletedBundles: 2, deletedTriage: 1 })
+  assert.deepEqual(new Set(deletedCaches), new Set(records.map(record => record.id)))
+  assert.equal(warnings.mock.callCount(), 1)
+  assert.equal(await h.db.getReport(reportId), null)
+  assert.equal(await h.reportStore.get(reportId), null)
+  for (const record of records) {
+    assert.equal(await h.db.getBundle(record.id), null)
+    assert.equal(await h.store.get(record.id), null)
+    assert.equal((await h.send(`/api/bundles/${record.id}/metadata`)).status, 404, 'orphaned cache cannot be served')
+  }
+  await assert.rejects(readdir(join(h.cacheDir, records[1].id)), { code: 'ENOENT' })
+  assert.deepEqual(await h.db.listTriage([findingId]), [])
+  assert.deepEqual(await h.db.listTriageHistory(findingId, 10), [])
+  assert.deepEqual((await h.db.listAllRepos()).map(repo => repo.repoId), [2])
+})
+
+test('individual bundle removal still deletes source bytes when cache cleanup fails', async t => {
+  const h = await setup(t), record = await h.seed()
+  await h.cache.prebuild(record)
+  h.cache.delete = () => Promise.reject(new Error('cache filesystem unavailable'))
+  const warnings = t.mock.method(console, 'warn', () => {})
+  const removed = await h.send(`/api/admin/bundles/${record.id}`, 'owner', 'DELETE')
+  assert.equal(removed.status, 200)
+  assert.equal(warnings.mock.callCount(), 1)
+  assert.equal(await h.db.getBundle(record.id), null)
+  assert.equal(await h.store.get(record.id), null)
+  assert.equal((await h.send(`/api/bundles/${record.id}/contents`, 'owner')).status, 404)
 })

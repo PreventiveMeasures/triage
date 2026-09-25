@@ -475,7 +475,9 @@ async function handleRemoveRepository(req: IncomingMessage, res: ServerResponse,
   // later cleanup, rather than a live row pointing at missing report data.
   for (const report of reports) await deps.reportStore.delete(report.id).catch(() => {})
   for (const bundle of bundles) {
-    await deps.bundleCache?.delete(bundle.id)
+    // Cache cleanup must not interrupt triage/repository removal after the
+    // report rows needed to reconstruct exclusive finding IDs are gone.
+    await deps.bundleCache?.delete(bundle.id).catch((err) => { console.warn('managed: bundle cache delete failed:', err) })
     await deps.bundleStore.delete(bundle.id).catch(() => {})
   }
   const deletedTriage = await deps.db.deleteTriage(triageIds)
@@ -929,7 +931,7 @@ async function handleDeleteBundle(req: IncomingMessage, res: ServerResponse, dep
   const bundle = await deps.db.getBundle(id)
   if (!(await canChangeBundleRepo(deps, s.user, bundle?.repoId ?? null))) { sendJson(res, 403, { error: 'repo-forbidden' }); return }
   const existed = await deps.db.deleteBundle(id)
-  await deps.bundleCache?.delete(id)
+  await deps.bundleCache?.delete(id).catch((err) => { console.warn('managed: bundle cache delete failed:', err) })
   await deps.bundleStore.delete(id).catch((err) => { console.warn('managed: bundle bytes delete failed:', err) })
   if (!existed) { sendJson(res, 404, { error: 'no-bundle' }); return }
   await activity(deps, s.user, 'delete', 'deleted a bundle', { repoId: bundle.repoId, bundleId: id, report: bundle.filename, repo: await repositoryName(deps, bundle.repoId) })
