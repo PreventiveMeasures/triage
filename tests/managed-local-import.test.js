@@ -19,7 +19,7 @@ function fixture({ encrypted = false, unlocked = false } = {}) {
     onBundleMutated: callback => { bundleListeners.add(callback); return () => bundleListeners.delete(callback) },
     unlockEncryption: () => { calls.push('unlock'); return false },
     listFiles: () => { calls.push('listFiles'); return ['report.md'] },
-    hasAnyBundles: () => { calls.push('hasAnyBundles'); return true },
+    hasStoredBundleBytes: () => { calls.push('hasStoredBundleBytes'); return true },
     listBundles: () => { calls.push('listBundles'); return [{ name: 'source.map', integrity: 'sha512-test' }] },
     readFile: () => { calls.push('readFile'); return '# Report\nOriginal contents 🐈\n' },
     readBundle: () => { calls.push('readBundle'); return new Uint8Array([0, 128, 255, 7]) },
@@ -42,7 +42,7 @@ test('locked local data is discoverable without decrypting metadata or reading c
     await assert.rejects(f.source.list(kind), /locked/u)
     await assert.rejects(f.source.importItem(kind, 'anything', () => assert.fail('must not upload')), /locked/u)
   }
-  assert.deepEqual(f.calls, ['listFiles', 'hasAnyBundles'])
+  assert.deepEqual(f.calls, ['listFiles', 'hasStoredBundleBytes'])
   assert.equal(f.listeners.size, 0)
   assert.equal(f.fileListeners.size, 0)
   assert.equal(f.bundleListeners.size, 0)
@@ -315,6 +315,77 @@ test('leaving the page while reading local data aborts import and detaches liste
   assert.equal(f.listeners.size, 0)
   assert.equal(f.fileListeners.size, 0)
   assert.equal(f.bundleListeners.size, 0)
+})
+
+test('cross-tab refresh signals cancel pending snapshot imports for reports and bundles', async () => {
+  for (const kind of ['report', 'bundle']) {
+    for (const event of ['focus', 'storage']) {
+      const f = fixture()
+      let finish, uploads = 0
+      f.deps[kind === 'report' ? 'readFile' : 'readBundle'] = () => new Promise(resolve => { finish = resolve })
+      const ui = controller(f.source, () => { uploads++ }, kind)
+      try {
+        ui.toggle()
+        await ui.refresh()
+        ui.value = kind === 'report' ? 'report.md' : 'sha512-test'
+        const pending = ui.importSelected()
+        await setImmediate()
+        // A sibling document changes OPFS without firing this realm's registries.
+        globalThis.dispatchEvent(new Event(event))
+        assert.equal(ui.value, null)
+        finish('old snapshot')
+        await pending
+        await setImmediate()
+        assert.equal(uploads, 0)
+        assert.match(ui.error, /Select.*again/u)
+        assert.equal(ui.success, '')
+        assert.equal(ui.busy, false)
+      } finally { ui.hostDisconnected() }
+    }
+  }
+})
+
+test('focus and storage refreshes do not abort an upload already handed to the server', async () => {
+  const f = fixture()
+  const upload = Promise.withResolvers()
+  let uploads = 0
+  const ui = controller(f.source, () => { uploads++; return upload.promise })
+  try {
+    ui.toggle()
+    await ui.refresh()
+    ui.value = 'report.md'
+    const pending = ui.importSelected()
+    await setImmediate()
+    assert.equal(uploads, 1)
+    globalThis.dispatchEvent(new Event('focus'))
+    globalThis.dispatchEvent(new Event('storage'))
+    upload.resolve()
+    await pending
+    await setImmediate()
+    assert.equal(ui.error, '')
+    assert.equal(ui.success, 'Imported report.md.')
+  } finally { ui.hostDisconnected() }
+})
+
+test('passkey unlock survives focus, storage, and vault notifications', async () => {
+  const f = fixture({ encrypted: true })
+  const unlock = Promise.withResolvers()
+  let signal
+  f.deps.unlockEncryption = options => { signal = options.signal; return unlock.promise }
+  const ui = controller(f.source)
+  try {
+    ui.toggle()
+    await ui.refresh()
+    const pending = ui.unlock()
+    globalThis.dispatchEvent(new Event('focus'))
+    globalThis.dispatchEvent(new Event('storage'))
+    f.change(true)
+    assert.equal(signal.aborted, false)
+    unlock.resolve(true)
+    await pending
+    assert.equal(ui.error, '')
+    assert.equal(ui.options[0].value, 'report.md')
+  } finally { ui.hostDisconnected() }
 })
 
 test('both managed pages send selected local files through their authenticated upload routes', async (t) => {

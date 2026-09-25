@@ -896,7 +896,18 @@ export async function listBundles() {
 // Includes `_meta.json` itself in the count when present — its
 // existence already implies bundle activity even if all bundle
 // bytes were independently removed.
-export async function hasAnyBundles() {
+export function hasAnyBundles() {
+  return hasBundleStorageEntry(() => true)
+}
+
+// Import only needs actual bundle files, not the metadata/index artifacts that
+// the migration probe intentionally preserves. Inspect names and handle kinds
+// without reading encrypted metadata or creating a bundles directory.
+export function hasStoredBundleBytes() {
+  return hasBundleStorageEntry((name, handle) => handle.kind === 'file' && /^sha512-[A-Za-z0-9+_]{86}==$/u.test(name))
+}
+
+async function hasBundleStorageEntry(matches) {
   // Probe with `create: false` — the existence check runs
   // pre-redirect from the legacy-origin migration dialog, and a
   // user who has no bundles shouldn't have a `deepview-bundles/`
@@ -906,7 +917,7 @@ export async function hasAnyBundles() {
   const dir = await openOpfsDir(OPFS_BUNDLES_DIR, { create: false })
   if (!dir) return false
   try {
-    for await (const _ of dir.entries()) return true
+    for await (const [name, handle] of dir.entries()) if (matches(name, handle)) return true
   } catch {}
   return false
 }

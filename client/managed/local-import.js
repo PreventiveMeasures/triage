@@ -1,10 +1,10 @@
-import { hasAnyBundles, listBundles, listFiles, onBundleMutated, onFileMutated, readBundle, readFile } from '../storage.js'
+import { hasStoredBundleBytes, listBundles, listFiles, onBundleMutated, onFileMutated, readBundle, readFile } from '../storage.js'
 import { isEncryptionEnabled, isUnlocked, onVaultStateChange, unlockEncryption } from '../passkey-vault.js'
 
 // Created in the main bundle and injected into the lazy Manage pages. Importing
 // storage/vault from that separate entry would create a second, locked session.
 const defaultDeps = {
-  hasAnyBundles, listBundles, listFiles, onBundleMutated, onFileMutated, readBundle, readFile,
+  hasStoredBundleBytes, listBundles, listFiles, onBundleMutated, onFileMutated, readBundle, readFile,
   isEncryptionEnabled, isUnlocked, onVaultStateChange, unlockEncryption,
 }
 export function createManagedLocalImportSource(deps = defaultDeps) {
@@ -36,7 +36,7 @@ export function createManagedLocalImportSource(deps = defaultDeps) {
     async hasData(kind) {
       // Presence probes are safe while locked; don't decrypt bundle metadata.
       if (kind === 'report') return (await deps.listFiles()).length > 0
-      return locked() ? deps.hasAnyBundles() : (await deps.listBundles()).length > 0
+      return locked() ? deps.hasStoredBundleBytes() : (await deps.listBundles()).length > 0
     },
     async list(kind) {
       const access = guard()

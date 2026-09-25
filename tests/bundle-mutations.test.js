@@ -43,7 +43,7 @@ const dir = {
     if (name === failRemove) throw new DOMException('Cannot remove', 'NoModificationAllowedError')
     if (!files.delete(name)) throw missing()
   },
-  *entries() { for (const name of [...files.keys()]) yield [name, null] },
+  *entries() { for (const name of [...files.keys()]) yield [name, { kind: 'file' }] },
 }
 navigator.storage = { getDirectory: () => ({ getDirectoryHandle: () => dir }) }
 const key = integrity => integrity.replaceAll('/', '_')
@@ -114,4 +114,20 @@ test('a rejected bundle deletion that leaves the bytes intact does not cancel im
   heldRead.resume.resolve()
   await current.promise
   assert.equal(await current.uploaded().text(), 'original bytes')
+})
+
+test('a locked vault with only metadata or derived indexes does not offer bundle import', async (t) => {
+  const { integrity } = await storage.saveBundle('example.map', 'original bytes')
+  await storage.deleteBundle(integrity)
+  assert.equal(files.has('_meta.json'), true, 'deleting the last bundle leaves metadata')
+  files.set(key(integrity) + '.index-v1', new Uint8Array([1]))
+  files.set('unrelated-artifact', new Uint8Array([1]))
+  localStorage.setItem('deepview.passkey.v1', JSON.stringify({ enabled: true, credentialId: 'test', prfSalt: 'test', userId: 'test' }))
+  const source = createManagedLocalImportSource()
+  assert.equal(source.locked, true)
+  t.mock.method(dir, 'getFileHandle', () => assert.fail('presence checks must not read or decrypt metadata or content'))
+  assert.equal(await storage.hasAnyBundles(), true, 'origin migration must still protect metadata artifacts')
+  assert.equal(await source.hasData('bundle'), false)
+  files.set(key(integrity), new Uint8Array([1]))
+  assert.equal(await source.hasData('bundle'), true, 'actual bundle bytes are discoverable while locked')
 })

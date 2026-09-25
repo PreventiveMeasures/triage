@@ -33,7 +33,14 @@ export class ManagedLocalImport {
     this.error = ''
     this.success = ''
     this.generation = 0
+    this.readAbort = null
     this.onChange = () => {
+      // Cross-document changes arrive through focus/storage, outside the
+      // storage module's mutation registries. Invalidate the pending read too.
+      if (this.readAbort && !this.readAbort.signal.aborted) {
+        this.readAbort.abort()
+        this.error = `The local ${this.kind} changed or the list was refreshed. Select it again before importing.`
+      }
       this.options = []
       this.value = null
       this.success = ''
@@ -118,16 +125,25 @@ export class ManagedLocalImport {
     this.success = ''
     const label = this.options.find(option => option.value === this.value)?.label
     const abort = this.abort = new AbortController()
+    this.readAbort = abort
     this.host.requestUpdate()
     try {
-      await this.source.importItem(this.kind, this.value, this.upload, { signal: abort.signal })
+      await this.source.importItem(this.kind, this.value, file => {
+        // Refreshes cannot recall an upload once it has been handed off.
+        this.readAbort = null
+        return this.upload(file)
+      }, { signal: abort.signal })
       if (!abort.signal.aborted && !this.source?.locked) {
         this.success = `Imported ${label}.`
         this.value = null
       }
     } catch (err) {
       if (!abort.signal.aborted) this.error = String(err?.message ?? err)
-    } finally { this.busy = false; this.host.requestUpdate() }
+    } finally {
+      if (this.readAbort === abort) this.readAbort = null
+      this.busy = false
+      this.host.requestUpdate()
+    }
   }
 
   renderAction() {
