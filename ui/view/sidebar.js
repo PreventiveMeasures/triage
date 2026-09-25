@@ -3,7 +3,7 @@ import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { LINKS_KIND, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, clientModeLabel, computeLinkHint, configureClientMode, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, ensureLinkedFindingsIndexed, getCount, getKind, getPackagesIndex, getRepositoriesIndex, getWorkspaceAppMetadata, getWorkspaceAppModeHint, hasStandaloneProbeHint, hydrateSecureStorage, isCombinedServerMode, isManagedUiMode, listBundles, listFiles, listWorkspaces, mergeSyncServerInfo, migrateLegacyFilenames, onVaultStateChange, onWorkspaceAppMetadataChanged, probeServerInfo, readCachedServerInfo, reloadTriageFromStorage, rememberStandaloneProbe, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, setLocalMode, state, syncObservedAfterHydrate, toggleClientMode, waitForServerInfo, writeCachedServerInfo } from '#client/index.js'
 import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, setSyncForceDisabled, triageSync } from './client-sync.js'
-import { clearPreviewRole, getPreviewRole, loadManagedBundle, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams, resetManagedAppState, setManagedAppSession } from './client-managed.js'
+import { clearPreviewRole, fetchBundleMetadata, getPreviewRole, loadManagedBundle, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams, resetManagedAppState, setManagedAppSession } from './client-managed.js'
 import { showToast } from './toast.js'
 import { managedHistory } from './managed-history.js'
 import { cleanupGraph2 } from './graph/state.js'
@@ -55,6 +55,7 @@ import { openPersistenceDegradedDialog } from './dialogs/persistence-degraded-di
 import { openProxyAuthDialog } from './dialogs/proxy-auth-dialog.js'
 import { FILE_ICONS, displayName, groupOf, isLinksFile } from './file-display.js'
 import { BUNDLE_ICON_SVG, MANAGE_ICON_SVG, WORKSPACE_ICON_SVG } from './icons.js'
+import { parseBundleMetadata } from './bundle-metadata.js'
 import { openBundle, selectBundle } from './bundle-load.js'
 import { installGlobalTooltipListener, installShadowTooltipListener } from './tooltip.js'
 
@@ -279,16 +280,14 @@ function openTeamReport(team, r) {
   return switchToManagedTeam(team, r.id)
 }
 
-// Bundles are repository-owned scan inputs. A team member can see the bundle
-// when their team can see its repository, but bundles do not open as findings
-// views, so keep this row informational and expose the repository in its
-// tooltip for similarly-named bundles from different repos.
+// Team bundle rows open the server-backed metadata view. The repository
+// tooltip distinguishes similarly named uploads from different repositories.
 function teamBundleTemplate(bundle) {
   const repo = typeof bundle.repoFullName === 'string' && bundle.repoFullName !== '' ? bundle.repoFullName : 'Repository'
   return html`<li class="file-item indented team-bundle-item">
-    <span class="file-name" data-tooltip=${`${bundle.filename}\n${repo}`}>
+    <button type="button" class="file-name" data-managed-bundle=${bundle.id} data-tooltip=${`${bundle.filename}\n${repo}`}>
       ${BUNDLE_ICON}<span class="file-label">${bundle.filename}</span>
-    </span>
+    </button>
   </li>`
 }
 
@@ -480,7 +479,7 @@ export async function renderSidebar({ revealSelection = false } = {}) {
   updateManagedLanding({ serverMode: modeAtStart, session: state.managedSession, teams: state.managedTeams })
   refreshScanNavigation()
   if (isManagedUiMode()) {
-    state.bundles = []
+    state.bundles = (state.bundles ?? []).filter(entry => entry.managedId)
     state.storedFiles = []
     renderLandingWorkspaces([])
     if (!root) return
@@ -824,6 +823,11 @@ async function onSidebarClick(e) {
   // the bundle-only drop branch in ingest.js, and the boot restore in
   // view.js perform (per-row setup must clear the prior load's parsed
   // details and search boxes while keeping the current bundle detail tab).
+  const managedBundle = e.target.closest('[data-managed-bundle]')
+  if (managedBundle) {
+    void managedHistory.navigate({ view: 'bundles', bundleId: managedBundle.dataset.managedBundle })
+    return
+  }
   const bundleEl = e.target.closest('.file-item[data-bundle-integrity]')
   if (bundleEl) {
     // Missing-bundle rows (imported workspace claims an integrity the
@@ -1213,6 +1217,7 @@ function renderAuthStatus() {
   const menu = root?.querySelector('#user-menu')
   const session = state.managedSession
   hostEl?.toggleAttribute('data-authenticated', session != null)
+  hostEl?.toggleAttribute('data-workspace-access', session != null && session.role !== 'none')
   authBtn.hidden = session == null
   if (session == null) {
     if (manageBtn) manageBtn.hidden = true
@@ -1259,7 +1264,7 @@ function avatarTemplate(initial, userId, large = false) {
   const src = `/api/avatar/${encodeURIComponent(userId)}`
   return html`<span class=${large ? 'user-avatar user-avatar-lg' : 'user-avatar'}>
     <span class="user-avatar-fallback">${initial}</span>
-    ${getPreviewRole() ? nothing : html`<img alt="" src=${src} @error=${onAvatarError}>`}
+    ${getPreviewRole() || state.managedSession?.role === 'none' ? nothing : html`<img alt="" src=${src} @error=${onAvatarError}>`}
   </span>`
 }
 
@@ -1907,8 +1912,9 @@ async function revalidateManagedSession() {
     if (!isCurrent()) return
     state.managedSession = session
     setManagedAppSession(session)
-    if (previous && previous.id !== session?.id) {
+    if (previous && (previous.id !== session?.id || previous.role !== session?.role)) {
       state.managedTeams = []
+      state.bundles = []
       resetManagedTriage()
       managedHistory.reset()
       void goHome({ history: false })
@@ -1921,7 +1927,7 @@ async function revalidateManagedSession() {
     initManagedTriagePush()
     // The user's teams (sidebar Teams section). probeTeams never throws; empty
     // when logged out. Repaint the sidebar so the section reflects the result.
-    const teams = session == null ? [] : await managedProbeTeams({ fallback: state.managedTeams })
+    const teams = session == null || session.role === 'none' ? [] : await managedProbeTeams({ fallback: state.managedTeams })
     if (!isCurrent()) return
     state.managedTeams = teams
     renderSidebar()
@@ -1970,6 +1976,7 @@ async function restoreManagedPage(route, isCurrent) {
     && state.currentManagedTeam === route.teamId && state.currentManagedReport === route.reportId
   beginViewNavigation()
   if (!isCurrent() || !isManagedUiMode()) return false
+  if (route.view !== 'home' && (!state.managedSession || state.managedSession.role === 'none')) return false
   if (route.finding) {
     const { revealFinding } = await import('./finding-link-nav.js')
     if (!isCurrent()) return false
@@ -1982,6 +1989,7 @@ async function restoreManagedPage(route, isCurrent) {
     readyManagedView = currentViewGeneration()
     return { view: 'findings', teamId: state.currentManagedTeam, reportId: state.currentManagedReport }
   }
+  if (route.view === 'bundles') return openManagedBundle(route.bundleId, isCurrent, route.bundleTab)
   if (route.view === 'home') return goHome({ history: false })
   if (Object.hasOwn(MANAGED_PAGES, route.view)) return navigateToAdminPage(route.view, { ...route, history: false })
   const team = state.managedTeams.find(candidate => candidate.id === route.teamId)
@@ -2001,6 +2009,39 @@ async function restoreManagedPage(route, isCurrent) {
   document.querySelector('#main-content')?.scrollTo({ top: 0 })
   return { ...route, view: state.currentView }
 }
+
+async function openManagedBundle(id, isCurrent, tab = 'overview') {
+  const generation = currentViewGeneration()
+  let metadata
+  try { metadata = await fetchBundleMetadata(id) } catch { return false } // The managed state reports request errors.
+  try {
+    if (!isCurrent() || generation !== currentViewGeneration() || !isManagedUiMode()) return false
+    const details = parseBundleMetadata(metadata, metadata.integrity)
+    details.managedId = id
+    const entry = { managedId: id, integrity: metadata.integrity, name: metadata.filename, size: metadata.size }
+    state.bundles = [...(state.bundles ?? []).filter(b => b.managedId && b.managedId !== id), entry]
+    cleanupGraph2()
+    selectBundle(entry.integrity, tab)
+    state.bundleDetails = details
+    state.currentManagedTeam = null
+    state.currentManagedReport = null
+    state.reports = []
+    document.body.classList.remove('report-fullscreen')
+    render({ animate: false })
+    renderSidebar()
+    document.querySelector('#main-content')?.scrollTo({ top: 0 })
+    return true
+  } catch (err) {
+    if (isCurrent() && err.name !== 'AbortError') showToast(`Couldn't open bundle: ${err.message}`, { kind: 'error' })
+    return false
+  }
+}
+
+document.addEventListener('managed-bundle-open', event => {
+  if (isManagedUiMode() && typeof event.detail?.id === 'string') {
+    void managedHistory.navigate({ view: 'bundles', bundleId: event.detail.id })
+  }
+})
 
 export async function navigateToAdminPage(view, options = {}) {
   if (options.history !== false && isManagedUiMode()) {

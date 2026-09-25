@@ -9,12 +9,14 @@
 // events.js), the bundle-only drop branch in `ingest.js`, and the
 // boot-time `LAST_FILE_KEY` bundle restore in `view.js`.
 import { Bundle } from '@exodus/stasis-core/bundle'
-import { ensureBundleFindingsIndexed, hasBundleFileHashes, readBundle, readBundleIndex, recordBundleFileHashes, saveBundleIndex, state } from '#client/index.js'
+import { ensureBundleFindingsIndexed, hasBundleFileHashes, isManagedUiMode, readBundle, readBundleIndex, recordBundleFileHashes, saveBundleIndex, state } from '#client/index.js'
+import { fetchBundleContents, fetchBundleMetadata } from './client-managed.js'
 import { decodeUtf8 } from '../../common/utf8.js'
 import { brotliDecompress } from './brotli-decompress.js'
 import { graph2 } from './graph/state.js'
 import { render } from './render.js'
-import { bundleNeedsSources, computeBundleFileHashes, createBundleMetadata, parseBundleMetadata } from './bundle-metadata.js'
+import { beginViewNavigation, currentViewSignal } from './view-navigation.js'
+import { bundleNeedsSources, computeBundleFileHashes, createBundleMetadata, parseBundleContents, parseBundleMetadata } from './bundle-metadata.js'
 
 const sourceLoads = new Map()
 const metadataLoads = new Map()
@@ -31,16 +33,31 @@ async function cachedMetadata(integrity) {
 // In-flight deduplication only: completed source bodies are owned by their
 // active view, never retained in a process-wide preload/cache of bundles.
 export function buildBundleDetails(integrity, entry, { sources = true } = {}) {
+  if (!entry.managedId && isManagedUiMode()) return Promise.reject(new DOMException('Local bundle closed', 'AbortError'))
   const loads = sources ? sourceLoads : metadataLoads
   const kind = entry.name.toLowerCase().endsWith('.map') ? 'sourcemap' : 'stasis'
   const active = state.bundleDetails
   // Share the bundle already owned by the active view with finding source
   // links and comparison/code consumers, without retaining another bundle.
-  if (active?.integrity === integrity && active.kind === kind && !active.error
+  if (active?.integrity === integrity && active.kind === kind && active.managedId === entry.managedId && !active.error
       && (!sources || !active.metadataOnly)) return Promise.resolve(active)
-  const key = `${integrity}:${kind}`
-  if (loads.has(key)) return loads.get(key)
+  const key = `${entry.managedId ?? 'local'}:${integrity}:${kind}`
+  const signal = entry.managedId && sources ? currentViewSignal() : undefined
+  const pending = loads.get(key)
+  if (pending && pending.signal === signal) return pending.job
   const job = (async () => {
+    if (entry.managedId) {
+      try {
+        const details = sources
+          ? parseBundleContents(await fetchBundleContents(entry.managedId, { signal }), { integrity, kind, size: entry.size })
+          : parseBundleMetadata(await fetchBundleMetadata(entry.managedId), integrity)
+        details.managedId = entry.managedId
+        return details
+      } catch (err) {
+        if (err.name === 'AbortError') throw err
+        return { integrity, kind, size: entry.size, managedId: entry.managedId, error: err.message }
+      }
+    }
     if (!sources) {
       const cached = await cachedMetadata(integrity)
       if (cached?.kind === kind && !cached.stale) return cached
@@ -64,8 +81,8 @@ export function buildBundleDetails(integrity, entry, { sources = true } = {}) {
     }
     return details
   })()
-  loads.set(key, job)
-  job.finally(() => { if (loads.get(key) === job) loads.delete(key) }).catch(() => {})
+  loads.set(key, { job, signal })
+  job.finally(() => { if (loads.get(key)?.job === job) loads.delete(key) }).catch(() => {})
   return job
 }
 
@@ -77,6 +94,7 @@ export function buildBundleDetails(integrity, entry, { sources = true } = {}) {
 // between bundles; entering from another view starts on Overview. An explicit
 // tab still takes priority for boot restore and Compare's swap action.
 export function selectBundle(integrity, tab = state.currentView === 'bundles' ? state.bundleDetailsTab : 'overview') {
+  beginViewNavigation()
   state.currentView = 'bundles'
   state.selectedBundle = integrity
   state.bundleDetails = null
@@ -91,6 +109,16 @@ export function selectBundle(integrity, tab = state.currentView === 'bundles' ? 
   state.bundleDetailsTab = tab ?? 'overview'
   graph2.showAll = true
   state.shownTriage = null
+}
+
+// Keep shared downloads alive between source tabs, but stop them when the
+// user returns to metadata or closes its source overlay. Parsed bodies stay
+// available for this bundle; only unfinished requests are cancelled.
+export function selectBundleTab(tab) {
+  if (bundleNeedsSources(state.bundleDetailsTab, state.bundleSourceFile) && !bundleNeedsSources(tab)) beginViewNavigation()
+  state.bundleDetailsTab = tab
+  state.bundleSourceFile = null
+  state.bundleSourceFindingIdx = null
 }
 
 // Read OPFS bytes, classify by entry name (`.map` → sourcemap, else
@@ -109,6 +137,9 @@ export function selectBundle(integrity, tab = state.currentView === 'bundles' ? 
 async function readBundleDetails(integrity, entry) {
   try {
     const bytes = await readBundle(integrity)
+    // Mode discovery/transition can finish while the local read is pending.
+    // Never send those bytes into the Brotli decoder on the managed surface.
+    if (isManagedUiMode()) throw new DOMException('Local bundle closed', 'AbortError')
     const isMap = entry.name.toLowerCase().endsWith('.map')
     const kind = isMap ? 'sourcemap' : 'stasis'
     try {
@@ -121,13 +152,15 @@ async function readBundleDetails(integrity, entry) {
       // view/brotli-decompress.js). Bundle.parse validates the
       // wrapper (version, scope, asserts on tampered shapes) and
       // normalizes both v0 and v1 layouts.
-      const decoded = decodeUtf8(await brotliDecompress(bytes))
+      const decoded = decodeUtf8(await brotliDecompress(bytes, () => !isManagedUiMode()))
       const bundle = Bundle.parse(decoded)
       return { integrity, kind, size: bytes.byteLength, bundle }
     } catch (err) {
+      if (err.name === 'AbortError') throw err
       return { integrity, kind, size: bytes.byteLength, error: err.message }
     }
   } catch (err) {
+    if (err.name === 'AbortError') throw err
     return { integrity, error: err.message, size: 0 }
   }
 }
@@ -139,7 +172,7 @@ async function readBundleDetails(integrity, entry) {
 // once it lands and re-renders. Stale resolves (user clicked another
 // row mid-hash) drop silently.
 function kickFileHashes(details) {
-  if (!details?.json && !details?.bundle) return
+  if (details?.managedId || (!details?.json && !details?.bundle)) return
   if (details.fileHashes) { recordBundleFileHashes(details.integrity, details.fileHashes); return }
   ;(async () => {
     try {
@@ -161,7 +194,7 @@ export function prefetchBundleHashes(integrity) {
   if (hasBundleFileHashes(integrity)) return Promise.resolve()
   if (hashLoads.has(integrity)) return hashLoads.get(integrity)
   const entry = (state.bundles ?? []).find((b) => b.integrity === integrity)
-  if (!entry) return Promise.resolve()
+  if (!entry || entry.managedId) return Promise.resolve()
   const job = (async () => {
     const details = await cachedMetadata(integrity)
     if (!details?.json && !details?.bundle) return
@@ -206,30 +239,49 @@ export async function prefetchBundleHashesAfterPaint(integrities, isCurrent = ()
 export async function openBundle(integrity) {
   const entry = (state.bundles ?? []).find((b) => b.integrity === integrity)
   if (!entry) return
-  const details = await buildBundleDetails(integrity, entry, {
-    sources: bundleNeedsSources(state.bundleDetailsTab, state.bundleSourceFile),
-  })
-  if (state.selectedBundle !== integrity) return
+  let details
+  try {
+    details = await buildBundleDetails(integrity, entry, {
+      sources: bundleNeedsSources(state.bundleDetailsTab, state.bundleSourceFile),
+    })
+  } catch (err) {
+    if (err.name === 'AbortError') return
+    throw err
+  }
+  if (state.selectedBundle !== integrity || (entry.managedId && !state.bundles.includes(entry))) return
   state.bundleDetails = details
   render()
   kickFileHashes(details)
-  ensureBundleFindingsIndexed().catch(() => {})
+  if (!entry.managedId) ensureBundleFindingsIndexed().catch(() => {})
 }
 
 // Upgrade metadata only when a body-consuming view is requested. Hashes and
 // sizes survive the upgrade; rapid tab/source clicks share the same load.
 export function ensureBundleSources(details = state.bundleDetails) {
+  if (details?.sourceError) return Promise.resolve(null)
   if (!details?.metadataOnly) return Promise.resolve(details)
-  if (sourceUpgrades.has(details)) return sourceUpgrades.get(details)
+  const signal = details.managedId ? currentViewSignal() : undefined
+  const pending = sourceUpgrades.get(details)
+  if (pending && pending.signal === signal) return pending.job
   const entry = (state.bundles ?? []).find((b) => b.integrity === details.integrity)
   if (!entry) return Promise.resolve(null)
   const job = buildBundleDetails(details.integrity, entry).then((full) => {
+    signal?.throwIfAborted()
     if (state.bundleDetails !== details) return full
-    if (!full.error) { full.fileHashes = details.fileHashes; full.fileSizes = details.fileSizes }
+    if (full.error && details.managedId) {
+      details.sourceError = full.error
+      render()
+      return null
+    }
+    if (!full.error) { full.fileHashes = details.fileHashes; full.fileSizes = details.fileSizes; full.lineCounts = details.lineCounts; full.codeStats = details.codeStats }
     state.bundleDetails = full
     render()
     return full
+  }).catch(err => {
+    if (err.name === 'AbortError') return null
+    throw err
   })
-  sourceUpgrades.set(details, job)
+  sourceUpgrades.set(details, { job, signal })
+  job.finally(() => { if (sourceUpgrades.get(details)?.job === job) sourceUpgrades.delete(details) }).catch(() => {})
   return job
 }

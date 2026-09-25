@@ -27,8 +27,12 @@ building its file/package counts, source size/LoC estimates, Source filter,
 largest-files list, and scan inputs. This uses format metadata from both fresh
 and cached bundles. The bundle's archive size still describes the stored file.
 
-The managed wrapper supplies the existing development fixtures and managed
-model transport. The local/E2E wrapper lists saved bundles from browser storage,
+The managed wrapper shares the Manage bundle catalogue and model transport.
+Selecting a bundle fetches `/api/bundles/:id/metadata` through the shared
+in-memory cache. File sizes, source-line counts, packages, formats and scopes
+come from server-generated metadata; scan setup does not download source
+contents or decode Brotli in the browser.
+The local/E2E wrapper lists saved bundles from browser storage,
 then uses the existing bundle metadata cache to load the selected bundle’s files,
 sizes, source-line counts, packages, and scopes. LoC uses the same source-line
 counting as the bundle overview and excludes resources. Stored bundles currently have no repository

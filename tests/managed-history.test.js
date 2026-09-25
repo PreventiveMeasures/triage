@@ -6,11 +6,11 @@ import { createManagedHistory } from '../ui/view/managed-history.js'
 import { browserAt } from './_managed-browser.js'
 
 test('all managed pages and team/report Files routes round-trip', () => {
-  const routes = [{ view: 'home' }, ...Object.keys(MANAGED_PAGES).map(view => ({ view })),
+  const routes = [{ view: 'bundles', bundleId: 'bundle-id' }, { view: 'home' }, ...Object.keys(MANAGED_PAGES).map(view => ({ view })),
     { view: 'manage-history', actor: 'user name & repo' }]
   for (const view of ['findings', 'files']) for (const reportId of [null, 'report-id']) routes.push({ view, teamId: 'team-id', reportId })
   for (const route of routes) assert.deepEqual(parseManagedRoute(new URL(managedRoutePath(route), 'https://triage.test')), route)
-  for (const path of ['/api/config', '/api/admin/users', '/manage/missing', '/teams/a/reports', '/teams/%2f', '/teams/%00', '/teams/%ff']) {
+  for (const path of ['/bundles', '/bundles/%2f', '/bundles/../api/config', '/api/config', '/api/admin/users', '/manage/missing', '/teams/a/reports', '/teams/%2f', '/teams/%00', '/teams/%ff']) {
     assert.equal(parseManagedRoute(new URL(path, 'https://triage.test')), null, path)
   }
   assert.equal(managedRoutePath({ view: 'files', teamId: '../api' }), null)

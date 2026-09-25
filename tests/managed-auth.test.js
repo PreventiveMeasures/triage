@@ -1272,7 +1272,9 @@ test('GET /api/teams + db.listTeamsForUser: a user sees only their own teams', a
     return res
   }
   assert.equal((await get(null)).statusCode, 401) // unauthenticated
-  // bob is role 'none' but logged in → still sees his own team (Blue only).
+  // A signed-in 'none' account cannot read even its own team membership.
+  assert.equal((await get(cookiePair(bobSess.setCookie))).statusCode, 403)
+  await db.setUserRole(bobSess.userId, 'view')
   assert.deepEqual(JSON.parse((await get(cookiePair(bobSess.setCookie))).body).teams.map((t) => t.name), ['Blue'])
   await db.close()
 })
@@ -1335,10 +1337,10 @@ test('team reports: read iff admin, OR (>=view role AND in a team holding the re
   assert.equal(okAdmin.headers['content-type'], 'text/plain; charset=utf-8')
   assert.equal(okAdmin.headers['x-content-type-options'], 'nosniff')
   assert.equal((await view(viewerSess, reportId)).statusCode, 200) // >=view + member of the team holding repo 7
-  assert.equal((await view(nonerSess, reportId)).statusCode, 404) // IN the team, but role 'none' → refused
+  assert.equal((await view(nonerSess, reportId)).statusCode, 403) // IN the team, but role 'none' → refused
   assert.equal((await view(outsiderSess, reportId)).statusCode, 404) // >=view, but wrong team (no repo 7)
   assert.equal((await view(adminSess, randomUUID())).statusCode, 404) // admin, but the report doesn't exist
-  for (const [session, status] of [[null, 401], [nonerSess, 404], [outsiderSess, 404]]) {
+  for (const [session, status] of [[null, 401], [nonerSess, 403], [outsiderSess, 404]]) {
     assert.equal((await req(`/api/reports/${reportId}`, session && cookiePair(session.setCookie), 'application/json')).statusCode, status, 'metadata follows the same access checks as content')
   }
 
@@ -1349,11 +1351,10 @@ test('team reports: read iff admin, OR (>=view role AND in a team holding the re
   assert.equal(await db.userCanReadReport(outsider.id, reportId), false)
   assert.equal(await db.userCanReadReport(admin.id, reportId), false) // admin isn't a member
 
-  // GET /api/teams matches the rule: viewer sees the report; noner (role 'none') sees
-  // the team but NO reports (stripped server-side).
+  // No access accounts cannot read the team or any of its content.
   const teamsOf = async (sess) => JSON.parse((await req('/api/teams', cookiePair(sess.setCookie))).body).teams
   assert.deepEqual((await teamsOf(viewerSess)).map((t) => [t.name, t.reports.map((r) => r.filename)]), [['Blue', ['scan.json']]])
-  assert.deepEqual((await teamsOf(nonerSess)).map((t) => [t.name, t.reports.length]), [['Blue', 0]])
+  assert.equal((await req('/api/teams', cookiePair(nonerSess.setCookie))).statusCode, 403)
   await db.close()
 })
 
@@ -1960,6 +1961,51 @@ async function reportTriageFixture(db, reportStore) {
   return { now, reportId, admin, adminSess, bobSess, carolSess, daveSess, erinSess, frankSess }
 }
 
+for (const permission of ['dependencies', 'security']) {
+  for (const operation of ['entries', 'history', 'write']) {
+    test(`triage ${operation} rechecks ${permission} visibility after a cold report read`, async t => {
+      const db = openSqliteManagedDb(':memory:')
+      t.after(() => db.close())
+      const store = fakeBlobStore()
+      const fx = await reportTriageFixture(db, store)
+      const userId = fx.bobSess.userId
+      const team = (await db.listTeams()).find(item => item.name === 'Blue')
+      await db.setTeamMember(team.id, userId, { dependencies: true, security: true })
+      const hidden = permission === 'dependencies' ? 'dep' : 'sec'
+      for (const id of ['own', hidden]) await db.setTriage(id, { comment: `before ${id}` }, fx.admin.id, 'alice', fx.now)
+      const before = await db.listTriage(['own', hidden])
+      const beforeHistory = await db.listTriageHistory(hidden, 20)
+      const gate = Promise.withResolvers(), started = Promise.withResolvers()
+      const get = store.get
+      let reads = 0
+      store.get = async id => {
+        if (reads++ === 0) { started.resolve(); await gate.promise }
+        return get(id)
+      }
+      const { send, upload } = bundleHarness(db, config, store)
+      const cookie = cookiePair(fx.bobSess.setCookie), path = `/api/reports/${fx.reportId}/triage`
+      const response = operation === 'write'
+        ? upload(path, cookie, fx.bobSess.csrfToken, JSON.stringify({ entries: { own: { comment: 'must not partially write' }, [hidden]: { comment: 'revoked' } } }))
+        : send('GET', operation === 'history' ? `${path}/history?finding=${hidden}` : path, cookie)
+      await started.promise
+      await db.setTeamMember(team.id, userId, { dependencies: true, security: true, [permission]: false })
+      gate.resolve()
+      const res = await response
+      if (operation === 'entries') {
+        assert.equal(res.statusCode, 200)
+        assert.deepEqual(JSON.parse(res.body), { entries: { own: { comment: 'before own' } } })
+      } else {
+        assert.equal(res.statusCode, 404)
+        assert.deepEqual(JSON.parse(res.body), { error: 'no-finding' })
+      }
+      assert.deepEqual(await db.listTriage(['own', hidden]), before)
+      assert.deepEqual(await db.listTriageHistory(hidden, 20), beforeHistory)
+      // The still-visible finding remains usable, including through the cache.
+      assert.equal((await upload(path, cookie, fx.bobSess.csrfToken, JSON.stringify({ entries: { own: { comment: 'allowed' } } }))).statusCode, 200)
+    })
+  }
+}
+
 test('workspace history enforces roles and current report access before search, totals, and pagination', async (t) => {
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())
@@ -2113,7 +2159,7 @@ test('GET /api/reports/<id>/triage: view-gated (401/404), entries filtered to th
 
   const T = (id) => `/api/reports/${id}/triage`
   assert.equal((await send('GET', T(fx.reportId), null)).statusCode, 401) // unauthenticated
-  assert.equal((await send('GET', T(fx.reportId), cookiePair(fx.daveSess.setCookie))).statusCode, 404) // role 'none', even in-team
+  assert.equal((await send('GET', T(fx.reportId), cookiePair(fx.daveSess.setCookie))).statusCode, 403) // role 'none', even in-team
   assert.equal((await send('GET', T(fx.reportId), cookiePair(fx.erinSess.setCookie))).statusCode, 404) // wrong team (no repo 7)
   assert.equal((await send('GET', T(fx.reportId), cookiePair(fx.frankSess.setCookie))).statusCode, 404) // manage, but no membership (the admin surface is his read path)
   assert.equal((await send('GET', T(randomUUID()), cookiePair(fx.adminSess.setCookie))).statusCode, 404) // unknown report
@@ -2173,7 +2219,7 @@ test('POST /api/reports/<id>/triage: CSRF + role/membership gating, validation, 
   // and a triage-role NON-member (erin) → 404 — existence and denial both hidden.
   assert.equal((await post(bCk, null, { entries: { own: null } })).statusCode, 403)
   assert.equal((await post(cookiePair(fx.carolSess.setCookie), fx.carolSess.csrfToken, { entries: { own: null } })).statusCode, 404)
-  assert.equal((await post(cookiePair(fx.daveSess.setCookie), fx.daveSess.csrfToken, { entries: { own: null } })).statusCode, 404)
+  assert.equal((await post(cookiePair(fx.daveSess.setCookie), fx.daveSess.csrfToken, { entries: { own: null } })).statusCode, 403)
   assert.equal((await post(cookiePair(fx.erinSess.setCookie), fx.erinSess.csrfToken, { entries: { own: null } })).statusCode, 404)
   // ...and so does a manage-role NON-member: nobody writes triage on a report
   // they can't read through this plane (write ⊆ read).
@@ -2288,7 +2334,7 @@ test('managers manage unpublished reports only inside team repository paths, inc
   for (const path of [`/api/admin/reports/${reportId}`, `/api/reports/${reportId}`, `/api/reports/${reportId}/triage`]) assert.equal((await send('GET', path, cookie)).statusCode, 200, path)
   assert.equal((await f.upload(`/api/reports/${reportId}/triage`, cookie, f.frankSess.csrfToken, JSON.stringify({ entries: { own: { color: 'blue' } } }))).statusCode, 200)
   assert.equal((await post('reports/set-visible', { reportId, visible: true })).statusCode, 200)
-  for (const [repoId, directory] of [[8, 'src'], [null, ''], [7, ''], [7, 'src-other']]) assert.equal((await post('reports/set-repo', { reportId, repoId, directory })).statusCode, 403)
+  for (const [repoId, directory] of [[8, 'src'], [7, ''], [7, 'src-other']]) assert.equal((await post('reports/set-repo', { reportId, repoId, directory })).statusCode, 403)
   assert.equal((await post('reports/set-repo', { reportId, repoId: 7, directory: 'src/new' })).statusCode, 200)
   const admin = JSON.parse((await send('GET', '/api/admin/reports', f.adminCookie)).body)
   assert.equal(admin.reports.length, 5, 'admin still has the entire catalogue')
@@ -2302,13 +2348,14 @@ test('manager uploads enforce embedded and explicit repository paths before stor
   const f = await managerContentFixture(t)
   const upload = (body, headers = {}) => f.upload('/api/admin/reports', f.cookie, f.frankSess.csrfToken, body, headers)
   const before = (await f.db.listReports()).length
-  for (const headers of [{}, { 'x-repo-id': '8', 'x-repo-directory': 'src' }, { 'x-repo-id': '7' }, { 'x-repo-id': '7', 'x-repo-directory': 'src2' }]) {
+  for (const headers of [{ 'x-repo-id': '8', 'x-repo-directory': 'src' }, { 'x-repo-id': '7' }, { 'x-repo-id': '7', 'x-repo-directory': 'src2' }]) {
     assert.equal((await upload('{}', headers)).statusCode, 403)
   }
   assert.equal((await upload(JSON.stringify({ repo: { github: 'o/other', directory: 'src' }, findings: [] }), { 'x-repo-id': '7', 'x-repo-directory': 'src' })).statusCode, 403, 'headers cannot override embedded private metadata')
   assert.equal((await upload(JSON.stringify({ repo: { github: 'o/r', directory: 'src/app' }, findings: [] }))).statusCode, 201)
   assert.equal((await upload('{}', { 'x-repo-id': '7', 'x-repo-directory': 'src' })).statusCode, 201)
-  assert.equal((await f.db.listReports()).length, before + 2)
+  assert.equal((await upload('{}')).statusCode, 201, 'managers can own unattached uploads')
+  assert.equal((await f.db.listReports()).length, before + 3)
   await f.db.removeTeamMember(f.team.id, f.frankSess.userId)
   assert.equal((await upload('{}', { 'x-repo-id': '7', 'x-repo-directory': 'src' })).statusCode, 403)
 })
@@ -2320,7 +2367,9 @@ test('manager bundle access, deduplication and report auto-linking respect team 
   assert.equal(privateUpload.statusCode, 201)
   const privateBundle = JSON.parse(privateUpload.body)
   assert.equal((await uploadBundle('private bytes', 7)).statusCode, 409)
-  assert.equal((await uploadBundle('new bytes', null)).statusCode, 403)
+  const unattached = await uploadBundle('new bytes', null)
+  assert.equal(unattached.statusCode, 201)
+  assert.equal((await f.send('DELETE', `/api/admin/bundles/${JSON.parse(unattached.body).id}`, f.cookie, f.frankSess.csrfToken)).statusCode, 200)
   assert.equal((await uploadBundle('new bytes', 8)).statusCode, 403)
   assert.equal((await f.send('GET', `/api/admin/bundles/${privateBundle.id}`, f.cookie)).statusCode, 404)
   assert.equal((await f.send('DELETE', `/api/admin/bundles/${privateBundle.id}`, f.cookie, f.frankSess.csrfToken)).statusCode, 404)
@@ -2340,7 +2389,9 @@ test('manager bundle access, deduplication and report auto-linking respect team 
   for (const row of (await f.db.listReports()).filter(r => r.id.endsWith('-link'))) assert.equal(row.bundleId, row.id === 'allowed-link' ? allowed.id : null)
   assert.deepEqual((await f.get('/api/admin/bundles')).bundles.map(b => b.id), [allowed.id])
   assert.equal((await f.send('GET', `/api/admin/bundles/${allowed.id}`, f.cookie)).statusCode, 200)
-  for (const repoId of [8, null]) assert.equal((await f.post('bundles/set-repo', { bundleId: allowed.id, repoId })).statusCode, 403)
+  assert.equal((await f.post('bundles/set-repo', { bundleId: allowed.id, repoId: 8 })).statusCode, 403)
+  assert.equal((await f.post('bundles/set-repo', { bundleId: allowed.id, repoId: null })).statusCode, 200)
+  assert.equal((await f.post('bundles/set-repo', { bundleId: allowed.id, repoId: 7 })).statusCode, 200)
   await f.db.setReportRepo('sibling-link', 7, 'src/new')
   assert.equal((await uploadBundle('future bytes', 7)).statusCode, 200)
   assert.equal((await f.db.listReports()).find(r => r.id === 'sibling-link').bundleId, allowed.id, 'dedup reconciles reports that became accessible since the original upload')
@@ -2385,7 +2436,7 @@ test('manager duplicate bundle races do not disclose an inaccessible winner', as
   const f = await managerContentFixture(t)
   const insert = f.db.insertBundle.bind(f.db)
   t.mock.method(f.db, 'insertBundle', async (bundle, now) => {
-    await insert({ ...bundle, id: 'private-winner', filename: 'secret-name.zip', repoId: 8 }, now)
+    await insert({ ...bundle, id: 'private-winner', filename: 'secret-name.zip', repoId: 8, uploadedBy: f.admin.id }, now)
     await insert(bundle, now)
   })
   const res = await f.upload('/api/admin/bundles', f.cookie, f.frankSess.csrfToken, 'racing bytes', { 'x-repo-id': '7' })
@@ -2436,3 +2487,113 @@ test('Users Last Activity reflects successful authenticated changes, not reads, 
   assert.equal((await upload('/api/admin/bundles', cookie, csrf, 'archive')).statusCode, 200)
   assert.equal(await activityAt(), lastUpload, 'a deduplicated upload creates no activity')
 })
+async function reportAccessFixture(t) {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const sessions = {}
+  for (const [index, role] of ['admin', 'manage', 'manage', 'view'].entries()) {
+    const session = await createSession(config, db, { githubUserId: index + 1, login: `access${index}`, name: null, avatarUrl: null }, Date.now())
+    await db.setUserRole(session.userId, role)
+    sessions[['admin', 'owner', 'manager', 'viewer'][index]] = session
+  }
+  for (const repoId of [1, 2]) await db.selectRepo({ repoId, fullName: `org/repo${repoId}`, private: true, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: sessions.admin.userId }, Date.now())
+  const team = randomUUID()
+  await db.createTeam(team, 'Scoped team', Date.now())
+  await db.setTeamRepo(team, 1, 'packages/app')
+  for (const who of ['manager', 'viewer']) await db.setTeamMember(team, sessions[who].userId, { dependencies: true, security: true })
+  const store = fakeBlobStore()
+  const harness = bundleHarness(db, config, store)
+  async function seed({ owner = 'admin', repoId = 1, directory = 'packages/app', visible = true } = {}) {
+    const id = randomUUID(), text = JSON.stringify({ findings: [{ id: 'shared-finding', title: 'Private finding', description: 'Report content', severity: 'high' }] })
+    await db.insertReport({ id, filename: `${id}.json`, contentType: 'application/json', byteSize: text.length, sha256: id, uploadedBy: sessions[owner].userId, uploadedByLogin: owner, repoId, repoDirectory: directory, visible }, Date.now())
+    await store.put(id, Buffer.from(text))
+    return id
+  }
+  function get(path, who = 'manager') { return harness.send('GET', path, cookiePair(sessions[who].setCookie)) }
+  function post(path, body, who = 'manager') { return harness.upload(path, cookiePair(sessions[who].setCookie), sessions[who].csrfToken, JSON.stringify(body)) }
+  return { db, sessions, store, harness, team, seed, get, post }
+}
+
+test('manager report lists, previews, downloads and triage reads share ownership/team path access', async t => {
+  const h = await reportAccessFixture(t)
+  const own = await h.seed({ owner: 'manager', repoId: null, visible: false })
+  const ownedElsewhere = await h.seed({ owner: 'manager', repoId: 2, visible: false })
+  const scoped = await h.seed({ directory: 'packages/app/src' })
+  const draft = await h.seed({ visible: false })
+  const unrelated = await h.seed({ directory: 'packages/application' })
+  const list = JSON.parse((await h.get('/api/admin/reports')).body).reports
+  assert.deepEqual(new Set(list.map(r => r.id)), new Set([own, ownedElsewhere, scoped, draft]))
+  assert.equal(list.find(r => r.id === ownedElsewhere).canChangeRepo, false)
+  assert.equal(JSON.parse((await h.get('/api/admin/reports', 'admin')).body).reports.length, 5)
+  for (const id of [own, ownedElsewhere, scoped, draft]) {
+    for (const path of [`/api/reports/${id}`, `/api/admin/reports/${id}`, `/api/reports/${id}/triage`]) assert.equal((await h.get(path)).statusCode, 200, path)
+  }
+  for (const path of [`/api/reports/${unrelated}`, `/api/admin/reports/${unrelated}`, `/api/reports/${unrelated}/triage`, `/api/reports/${unrelated}/triage/history?finding=shared-finding`]) assert.equal((await h.get(path)).statusCode, 404, path)
+  assert.equal((await h.get(`/api/reports/${draft}`, 'viewer')).statusCode, 404, 'drafts remain hidden from viewers')
+  assert.equal((await h.get(`/api/reports/${scoped}`, 'viewer')).statusCode, 200)
+  await h.db.removeTeamMember(h.team, h.sessions.manager.userId)
+  assert.equal((await h.get(`/api/reports/${scoped}/triage`)).statusCode, 404, 'warm triage cache cannot bypass revoked membership')
+  assert.equal((await h.get(`/api/reports/${own}`)).statusCode, 200)
+  await h.db.setUserRole(h.sessions.manager.userId, 'view')
+  assert.equal((await h.get(`/api/reports/${own}`)).statusCode, 404, 'ownership alone does not grant a viewer access')
+})
+
+test('report mutations cannot bypass scoped access or remove an inaccessible repository link', async t => {
+  const h = await reportAccessFixture(t)
+  const unrelated = await h.seed({ repoId: 2 })
+  const own = await h.seed({ owner: 'manager', repoId: 2 })
+  const scoped = await h.seed()
+  const del = id => h.harness.send('DELETE', `/api/admin/reports/${id}`, cookiePair(h.sessions.manager.setCookie), h.sessions.manager.csrfToken)
+  for (const id of [unrelated, own]) {
+    const status = id === own ? 403 : 404
+    assert.equal((await h.post('/api/admin/reports/set-visible', { reportId: id, visible: false })).statusCode, status)
+    assert.equal((await h.post('/api/admin/reports/set-repo', { reportId: id, repoId: null })).statusCode, status)
+    assert.equal((await del(id)).statusCode, status)
+    assert.ok(await h.db.getReport(id))
+  }
+  assert.equal((await h.post('/api/admin/reports/set-repo', { reportId: scoped, repoId: 1, directory: 'packages/elsewhere' })).statusCode, 403)
+  assert.equal((await h.post('/api/admin/reports/set-repo', { reportId: scoped, repoId: 1, directory: 'packages/app/subdir' })).statusCode, 200)
+  assert.equal((await h.post('/api/admin/reports/set-visible', { reportId: scoped, visible: false })).statusCode, 200)
+  assert.equal((await del(scoped)).statusCode, 200)
+  const unattached = await h.seed({ owner: 'manager', repoId: null })
+  assert.equal((await del(unattached)).statusCode, 200)
+  const upload = directory => h.harness.upload('/api/admin/reports', cookiePair(h.sessions.manager.setCookie), h.sessions.manager.csrfToken, '{}', { 'x-repo-id': '1', 'x-repo-directory': directory })
+  assert.equal((await upload('packages/app')).statusCode, 201)
+  assert.equal((await upload('packages/application')).statusCode, 403)
+})
+
+test('No access overrides report/bundle ownership and teams for every managed data route', async t => {
+  const h = await reportAccessFixture(t)
+  const id = await h.seed({ owner: 'manager' })
+  const bundle = randomUUID()
+  await h.db.insertBundle({ id: bundle, integrity: 'private-integrity', filename: 'private.map', kind: 'sourcemap', byteSize: 2, uploadedBy: h.sessions.manager.userId, repoId: 1 }, Date.now())
+  await h.db.setUserRole(h.sessions.manager.userId, 'none')
+  const reads = [
+    '/api/teams', `/api/avatar/${h.sessions.admin.userId}`, '/api/admin/reports', '/api/admin/bundles',
+    '/api/admin/users', '/api/admin/teams', '/api/admin/repositories', '/api/admin/models',
+    `/api/reports/${id}`, `/api/admin/reports/${id}`, `/api/reports/${id}/triage`, `/api/reports/${id}/triage/history?finding=shared-finding`,
+    `/api/bundles/${bundle}/metadata`, `/api/bundles/${bundle}/contents`, `/api/bundles/${bundle}/download`, `/api/admin/bundles/${bundle}`,
+  ]
+  let bodyReads = 0
+  h.store.get = () => { bodyReads++; throw new Error('Blocked accounts must not read data') }
+  for (const path of reads) {
+    const res = await h.get(path)
+    assert.equal(res.statusCode, 403, path)
+    assert.deepEqual(JSON.parse(res.body), { error: 'forbidden' })
+  }
+  for (const path of ['/api/admin/reports', '/api/admin/bundles', '/api/admin/reports/set-visible', '/api/admin/reports/set-repo', '/api/admin/bundles/set-repo', `/api/reports/${id}/triage`]) assert.equal((await h.post(path, { reportId: id, bundleId: bundle, repoId: null, visible: false })).statusCode, 403, path)
+  for (const path of [`/api/admin/reports/${id}`, `/api/admin/bundles/${bundle}`]) assert.equal((await h.harness.send('DELETE', path, cookiePair(h.sessions.manager.setCookie), h.sessions.manager.csrfToken)).statusCode, 403)
+  assert.equal(bodyReads, 0)
+  assert.ok(await h.db.getReport(id)); assert.ok(await h.db.getBundle(bundle))
+  assert.equal((await h.get('/api/auth/session')).statusCode, 200, 'blocked users can see their own role')
+  assert.equal((await h.post('/api/auth/logout', {})).statusCode, 204, 'blocked users can sign out')
+})
+
+for (const suffix of ['', '/triage']) {
+  test(`report access revoked during blob loading is denied (${suffix || 'body'})`, async t => {
+    const h = await reportAccessFixture(t), id = await h.seed()
+    const original = h.store.get
+    h.store.get = async key => { await h.db.setUserRole(h.sessions.manager.userId, 'none'); return original(key) }
+    assert.equal((await h.get(`/api/reports/${id}${suffix}`)).statusCode, 404)
+  })
+}

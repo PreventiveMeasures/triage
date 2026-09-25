@@ -198,7 +198,9 @@ class BundleCompare extends LitElement {
   async _loadOther(integrity) {
     const entry = (state.bundles ?? []).find((b) => b.integrity === integrity)
     if (!entry) { this._status = 'idle'; this._targetIntegrity = null; return }
-    const details = await buildBundleDetails(integrity, entry)
+    let details
+    try { details = await buildBundleDetails(integrity, entry) }
+    catch (err) { if (err.name === 'AbortError') return; throw err }
     // Drop a stale resolve: the user re-picked (or switched the base
     // bundle, which willUpdate reset to null) while this parse was in
     // flight, so the result is for a selection that no longer stands.

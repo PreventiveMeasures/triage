@@ -511,7 +511,7 @@ export interface ManagedDb extends ActivityStore {
   // getReport reads one row (for download); deleteReport resolves true iff a row
   // was removed.
   insertReport(report: ReportRecordInput, now: number): Promise<void>
-  listReports(): Promise<AdminReport[]>
+  listReports(userId?: string): Promise<AdminReport[]>
   getReport(id: string): Promise<ReportRecord | null>
   deleteReport(id: string): Promise<boolean>
   // Attach / detach a report's repo + directory link (repoId null = detach);
@@ -543,7 +543,10 @@ export interface ManagedDb extends ActivityStore {
   insertBundle(bundle: BundleInput, now: number): Promise<void>
   getBundleByIntegrity(integrity: string): Promise<ManagedBundle | null>
   getBundle(id: string): Promise<ManagedBundle | null>
-  listBundles(): Promise<AdminBundle[]>
+  listBundles(userId?: string): Promise<AdminBundle[]>
+  userCanReadBundle(userId: string, id: string): Promise<boolean>
+  userCanReadRepo(userId: string, repoId: number): Promise<boolean>
+  userCanReadRepoPath(userId: string, repoId: number, directory: string): Promise<boolean>
   deleteBundle(id: string): Promise<boolean>
   // Attach / detach a bundle's repo link (repoId null = detach); resolves true
   // iff the bundle exists. The caller validates repoId is a selected repo.
@@ -693,6 +696,9 @@ function prepareStatements(db: DatabaseSync) {
          LEFT JOIN managed_user u ON u.id = r.uploaded_by
          LEFT JOIN selected_repo sr ON sr.repo_id = r.repo_id
          LEFT JOIN managed_bundle b ON b.id = r.bundle_id
+        WHERE (? IS NULL OR r.uploaded_by = ? OR EXISTS (
+          SELECT 1 FROM team_repo tr JOIN team_user tu ON tu.team_id = tr.team_id
+          WHERE tr.repo_id = r.repo_id AND tu.user_id = ? AND ${REPORT_IN_TEAM_PATH_SQL}))
         ORDER BY r.uploaded_at DESC, r.filename ASC`,
     ),
     selectReportStmt: db.prepare(
@@ -771,7 +777,24 @@ function prepareStatements(db: DatabaseSync) {
          FROM managed_bundle b
          LEFT JOIN managed_user u ON u.id = b.uploaded_by
          LEFT JOIN selected_repo sr ON sr.repo_id = b.repo_id
+        WHERE (? IS NULL OR (b.uploaded_by = ? OR EXISTS (
+          SELECT 1 FROM team_repo tr JOIN team_user tu ON tu.team_id = tr.team_id
+          WHERE tr.repo_id = b.repo_id AND tu.user_id = ?)))
         ORDER BY b.uploaded_at DESC, b.filename ASC`,
+    ),
+    selectBundleReadableStmt: db.prepare(
+      `SELECT 1 FROM managed_bundle b WHERE b.id = ? AND (b.uploaded_by = ? OR EXISTS (
+          SELECT 1 FROM team_repo tr JOIN team_user tu ON tu.team_id = tr.team_id
+          WHERE tr.repo_id = b.repo_id AND tu.user_id = ?))`,
+    ),
+    selectRepoReadableStmt: db.prepare(
+      `SELECT 1 FROM team_repo tr JOIN team_user tu ON tu.team_id = tr.team_id
+        WHERE tr.repo_id = ? AND tu.user_id = ? LIMIT 1`,
+    ),
+    selectRepoPathReadableStmt: db.prepare(
+      `WITH r(repo_directory) AS (VALUES (?))
+        SELECT 1 FROM r JOIN team_repo tr ON tr.repo_id = ? AND ${REPORT_IN_TEAM_PATH_SQL}
+        JOIN team_user tu ON tu.team_id = tr.team_id WHERE tu.user_id = ? LIMIT 1`,
     ),
     deleteBundleStmt: db.prepare(`DELETE FROM managed_bundle WHERE id = ?`),
     setBundleRepoStmt: db.prepare(`UPDATE managed_bundle SET repo_id = ? WHERE id = ?`),
@@ -779,7 +802,7 @@ function prepareStatements(db: DatabaseSync) {
     // but haven't been linked yet (bundle uploaded after the report).
     linkReportsToBundleStmt: db.prepare(
       `UPDATE managed_report AS r SET bundle_id = ? WHERE bundle_integrity = ? AND bundle_id IS NULL
-       AND (? IS NULL OR EXISTS (SELECT 1 FROM team_repo tr JOIN team_user tu ON tu.team_id = tr.team_id
+       AND (? IS NULL OR r.uploaded_by = ? OR EXISTS (SELECT 1 FROM team_repo tr JOIN team_user tu ON tu.team_id = tr.team_id
          WHERE tu.user_id = ? AND tr.repo_id = r.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}))`,
     ),
     // OR IGNORE: a duplicate name (UNIQUE) is the "taken" signal (0 changes); the
@@ -952,8 +975,8 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>) {
       )
       return Promise.resolve()
     },
-    listReports(): Promise<AdminReport[]> {
-      const rows = selectReportsStmt.all() as ReportListRow[]
+    listReports(userId?: string): Promise<AdminReport[]> {
+      const rows = selectReportsStmt.all(userId ?? null, userId ?? null, userId ?? null) as ReportListRow[]
       return Promise.resolve(rows.map((r) => ({
         id: r.id, filename: r.filename, contentType: r.contentType, byteSize: r.byteSize,
         sha256: r.sha256, uploadedByLogin: r.uploadedByLogin,
@@ -1101,7 +1124,7 @@ function mapBundle(r: BundleRow): ManagedBundle {
 function bundleMethods(stmts: ReturnType<typeof prepareStatements>) {
   const {
     insertBundleStmt, selectBundleByIntegrityStmt, selectBundleStmt,
-    selectBundlesStmt, deleteBundleStmt, setBundleRepoStmt, linkReportsToBundleStmt,
+    selectBundlesStmt, deleteBundleStmt, setBundleRepoStmt, linkReportsToBundleStmt, selectBundleReadableStmt, selectRepoReadableStmt, selectRepoPathReadableStmt,
   } = stmts
   return {
     insertBundle(bundle: BundleInput, now: number): Promise<void> {
@@ -1119,13 +1142,22 @@ function bundleMethods(stmts: ReturnType<typeof prepareStatements>) {
       const row = selectBundleStmt.get(id) as BundleRow | undefined
       return Promise.resolve(row == null ? null : mapBundle(row))
     },
-    listBundles(): Promise<AdminBundle[]> {
-      const rows = selectBundlesStmt.all() as BundleListRow[]
+    listBundles(userId?: string): Promise<AdminBundle[]> {
+      const rows = selectBundlesStmt.all(userId ?? null, userId ?? null, userId ?? null) as BundleListRow[]
       return Promise.resolve(rows.map((r) => ({
         id: r.id, integrity: r.integrity, filename: r.filename, kind: r.kind, byteSize: r.byteSize,
         uploadedByLogin: r.uploadedByLogin, repoId: r.repoId, repoFullName: r.repoFullName,
         uploadedAt: r.uploadedAt,
       })))
+    },
+    userCanReadBundle(userId: string, id: string): Promise<boolean> {
+      return Promise.resolve(selectBundleReadableStmt.get(id, userId, userId) != null)
+    },
+    userCanReadRepo(userId: string, repoId: number): Promise<boolean> {
+      return Promise.resolve(selectRepoReadableStmt.get(repoId, userId) != null)
+    },
+    userCanReadRepoPath(userId: string, repoId: number, directory: string): Promise<boolean> {
+      return Promise.resolve(selectRepoPathReadableStmt.get(directory, repoId, userId) != null)
     },
     deleteBundle(id: string): Promise<boolean> {
       return Promise.resolve(Number(deleteBundleStmt.run(id).changes) > 0)
@@ -1134,7 +1166,7 @@ function bundleMethods(stmts: ReturnType<typeof prepareStatements>) {
       return Promise.resolve(Number(setBundleRepoStmt.run(repoId, id).changes) > 0)
     },
     linkReportsToBundle(integrity: string, bundleId: string, userId?: string): Promise<void> {
-      linkReportsToBundleStmt.run(bundleId, integrity, userId ?? null, userId ?? null)
+      linkReportsToBundleStmt.run(bundleId, integrity, userId ?? null, userId ?? null, userId ?? null)
       return Promise.resolve()
     },
   }
