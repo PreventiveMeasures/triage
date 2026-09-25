@@ -8,8 +8,8 @@
 //   node server-managed/test-server.ts
 //   BACKEND_PORT=8766 PROXY_PORT=8016 node build.js serve
 //
-// Set MANAGED_TEST_ROLE=manage (or admin) to preview landing management entry points; default `view` previews
-// the managed landing where users choose reports and bundles shared with their team.
+// Defaults to admin so all management pages are available. Set MANAGED_TEST_ROLE=view
+// to preview the team landing, or manage to exercise the content-management role.
 /* eslint-disable max-lines */
 import { type IncomingMessage, type ServerResponse, createServer } from 'node:http'
 import { DEFAULT_MANAGED_SCAN_MODEL, MANAGED_SCAN_MODELS } from '../common/managed/scan-models.ts'
@@ -17,7 +17,7 @@ import { MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_ENTRIES, type TriageEntryPatch, parse
 
 const host = process.env['MANAGED_TEST_HOST'] ?? '127.0.0.1'
 const port = Number(process.env['MANAGED_TEST_PORT'] ?? 8766)
-const role = process.env['MANAGED_TEST_ROLE'] ?? 'view'
+const role = process.env['MANAGED_TEST_ROLE'] ?? 'admin'
 
 // The real service will return the model ids and the effort levels it allows
 // for each model. Printable names are intentionally omitted: the client owns

@@ -1971,6 +1971,9 @@ export async function navigateToAdminPage(view, options = {}) {
   state.currentView = view
   render()
   renderSidebar()
+  // Manage pages share the main scroll container. Start each destination at its
+  // header instead of carrying a long list's scroll position into the next page.
+  document.querySelector('#main-content')?.scrollTo({ top: 0 })
   if (view === 'manage-history' && typeof options.actor === 'string' && options.actor.length > 0) {
     document.dispatchEvent(new CustomEvent('managed-history-filter', {
       detail: { actor: options.actor }, bubbles: true, composed: true,

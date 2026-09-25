@@ -2,12 +2,20 @@ import { getPreviewRole, managedFetch } from '../../client/managed/request.js'
 // Manage custom elements, registered by the lazy client-managed.js entry.
 // Keep application state in the main view bundle; these pages use authenticated
 // API requests and composed events to communicate with their host.
-import { LitElement, css, html, nothing } from 'lit'
+import { LitElement, html, nothing, unsafeCSS } from 'lit'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { ROLES } from '../../common/managed/roles.ts'
 import { VISIBILITY_PERMISSION_LABELS } from '../../common/managed/permissions.ts'
 import { REPORT_LOGOS } from '../view/report-logos.js'
-import { BUNDLE_ICON_SVG, REPORT_ICON_SVG, SCAN_ICON_SVG } from '../view/icons.js'
+import { adminIcon, adminNavigation } from './navigation.js'
+import commonStyles from './styles/common.css'
+import homeStyles from './styles/home.css'
+import historyStyles from './styles/history.css'
+import usersStyles from './styles/users.css'
+import reposStyles from './styles/repos.css'
+import reportsStyles from './styles/reports.css'
+import bundlesStyles from './styles/bundles.css'
+import teamsStyles from './styles/teams.css'
 import '../scan/page.js'
 import { SCAN_FIXTURES, SCAN_REPOSITORY_FIXTURES, cloneScanFixtures } from '../scan/fixtures.js'
 import { managedReportSources } from '../scan/report-source.js'
@@ -26,62 +34,12 @@ async function fetchSession() {
   }
 }
 
-const ADMIN_PAGE_HEADER_STYLES = css`
-  a { cursor: default; }
-  .head { display: flex; align-items: center; gap: .6rem; min-height: 2.1rem; margin-bottom: .55rem; }
-  .breadcrumb { display: inline-flex; align-items: center; gap: .35rem; flex: 0 0 auto; }
-  .breadcrumb-manage { padding: .22rem .35rem; border: 1px solid transparent; border-radius: 5px; color: var(--muted); background: transparent; font: inherit; font-size: .82rem; cursor: default; }
-  .breadcrumb-manage:hover { color: var(--text); background: var(--surface-active); border-color: var(--border); }
-  .breadcrumb-manage:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .breadcrumb-separator { color: var(--muted); font-size: 1rem; }
-  .head h1 { margin: 0; font-size: 1.65rem; font-weight: 600; letter-spacing: -.035em; }
-`
-
-
-function adminBackButton() {
-  return html`<span class="breadcrumb"><button type="button" class="breadcrumb-manage" @click=${() => {
-    document.dispatchEvent(new CustomEvent('managed-admin-navigate', {
-      detail: { view: 'manage' }, bubbles: true, composed: true,
-    }))
-  }}>Manage</button><span class="breadcrumb-separator" aria-hidden="true">›</span></span>`
-}
 
 function openAdminPage(view) {
   document.dispatchEvent(new CustomEvent('managed-admin-navigate', {
     detail: { view }, bubbles: true, composed: true,
   }))
 }
-
-const ADMIN_PEOPLE_STYLES = css`
-  :host { display: block; padding: clamp(1.5rem, 4vw, 2.5rem) clamp(1rem, 4vw, 2.5rem); color: var(--text); container-type: inline-size; }
-  * { box-sizing: border-box; }
-  .wrap { max-width: 68rem; margin: 0 auto; }
-  .head { gap: .65rem; margin-bottom: .45rem; }
-  h1 { font-size: 1.65rem; font-weight: 600; letter-spacing: -.035em; }
-  .intro { margin: 0 0 1.6rem; color: var(--muted); font-size: .85rem; line-height: 1.5; }
-  .count { display: inline-grid; place-items: center; min-width: 1.45rem; height: 1.45rem; padding: 0 .4rem; border-radius: 5px; background: var(--surface-active); color: var(--muted); font-size: .72rem; font-weight: 500; font-variant-numeric: tabular-nums; }
-  button, input, select { font: inherit; }
-  button, select, input[type="checkbox"] { cursor: default; }
-  button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  input:not([type="checkbox"]), select { min-width: 0; height: 2rem; padding: .3rem .55rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font-size: .8rem; }
-  input::placeholder { color: var(--muted); }
-  input[type="checkbox"] { margin: 0; width: .85rem; height: .85rem; accent-color: var(--accent); }
-  .btn { display: inline-flex; align-items: center; justify-content: center; gap: .35rem; height: 2rem; padding: 0 .7rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font-size: .78rem; font-weight: 500; white-space: nowrap; }
-  .btn:hover:not(:disabled) { background: var(--surface-active); border-color: var(--muted); }
-  .btn.primary { background: var(--accent); color: var(--bg); border-color: var(--accent); }
-  .btn.primary:hover:not(:disabled) { filter: brightness(1.1); }
-  button:disabled, select:disabled { opacity: .5; }
-  .icon-btn { display: inline-grid; place-items: center; flex: 0 0 auto; width: 1.8rem; height: 1.8rem; padding: 0; border: 1px solid transparent; border-radius: 5px; color: var(--muted); background: transparent; }
-  .icon-btn:hover:not(:disabled) { color: var(--text); background: var(--surface-active); }
-  .icon-btn.danger:hover:not(:disabled) { color: var(--critical, #e5534b); background: rgb(from var(--critical, #e5534b) r g b / .1); }
-  .icon-btn svg, .btn svg { width: .9rem; height: .9rem; }
-  .avatar { position: relative; display: inline-grid; place-items: center; flex: 0 0 auto; width: 2rem; height: 2rem; border-radius: 50%; overflow: hidden; background: var(--surface-active); color: var(--muted); font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif; font-size: .8rem; font-weight: 600; user-select: none; }
-  .avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-  .avatar img.broken { display: none; }
-  .msg { margin: 1rem 0; color: var(--muted); font-size: .85rem; line-height: 1.5; }
-  .msg.error { color: var(--critical, #e5534b); }
-  @container (max-width: 32rem) { .intro { margin-left: 0; } }
-`
 
 function adminAvatar(id, login) {
   return html`<span class="avatar" aria-hidden="true">
@@ -106,29 +64,7 @@ const ADMIN_ROLE_DESCRIPTIONS = {
 class ManagedAdminHome extends LitElement {
   static properties = { _role: { state: true } }
 
-  static styles = css`
-    :host { display: block; padding: clamp(1.5rem, 5vw, 3rem) clamp(1rem, 4vw, 2.5rem); color: var(--text); }
-    .wrap { max-width: 68rem; margin: 0 auto; }
-    h1 { margin: 0; font-size: clamp(1.7rem, 4vw, 2.35rem); font-weight: 600; letter-spacing: -.04em; }
-    .intro { max-width: 38rem; margin: .55rem 0 1.7rem; color: var(--muted); line-height: 1.5; }
-    .pages { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .55rem; margin: 0; padding: 0; list-style: none; }
-    .pages li:last-child { grid-column: 1 / -1; }
-    .page {
-      display: flex; align-items: center; gap: .8rem; width: 100%;
-      padding: .85rem 1rem; color: var(--text); background: var(--surface);
-      border: 1px solid var(--border); border-radius: 9px; text-align: left;
-      font: inherit; cursor: default; transition: background .12s, border-color .12s;
-    }
-    .page:hover { background: var(--surface-active); border-color: var(--muted); }
-    .page:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-    .page-icon { display: grid; place-items: center; width: 2rem; height: 2rem; flex: 0 0 auto; color: var(--accent); background: rgb(from var(--accent) r g b / .1); border-radius: 6px; }
-    .page-icon svg { display: block; width: 1.15rem; height: 1.15rem; }
-    .page-copy { display: flex; min-width: 0; flex-direction: column; gap: .15rem; }
-    .page-copy strong { font-size: .9rem; font-weight: 600; }
-    .page-copy span { color: var(--muted); font-size: .76rem; }
-    .arrow { width: 1rem; height: 1rem; margin-left: auto; color: var(--muted); flex: 0 0 auto; }
-    @media (max-width: 42rem) { .pages { grid-template-columns: 1fr; } .pages li:last-child { grid-column: auto; } }
-  `
+  static styles = [unsafeCSS(homeStyles), unsafeCSS(commonStyles)]
 
   constructor() {
     super()
@@ -144,39 +80,42 @@ class ManagedAdminHome extends LitElement {
   }
 
   render() {
-    const makePage = (view, title, text, icon) => ({ view, title, text, icon })
-    const rows = [
-      [this._role === 'admin' ? makePage('admin-users', 'Users', 'Review accounts and assign roles.', 'users') : null, this._role === 'admin' ? makePage('manage-teams', 'Teams', 'Organize repositories, members, and access.', 'team') : null],
-      [this._role === 'admin' ? makePage('manage-repos', 'Repositories', 'Connect and select source repositories.', 'repo') : null, makePage('manage-bundles', 'Bundles', 'Manage source bundles and sourcemaps.', 'bundle')],
-      [['admin', 'manage'].includes(this._role) ? makePage('manage-scans', 'Scans', 'Run and monitor scans from stored bundles.', 'scan') : null, makePage('manage-reports', 'Reports', 'Review reports stored for your teams.', 'report')],
-      [makePage('manage-history', 'History', 'Review workspace activity and triage changes.', 'history')],
+    const content = [
+      ['manage-bundles', 'Bundles', 'Keep source archives and sourcemaps ready for review.', 'bundle'],
+      ['manage-scans', 'Scans', 'Run and monitor scans from stored bundles.', 'scan'],
+      ['manage-reports', 'Reports', 'Review, publish, and organize your team’s findings.', 'report'],
     ]
-    const intro = 'Choose a page.'
-    return html`<div class="wrap">
-      <h1>Manage</h1>
-      <p class="intro">${intro}</p>
-      <nav aria-label="Management pages"><ul class="pages">
-        ${rows.flat().filter(Boolean).map((page) => html`<li><button type="button" class="page" @click=${() => openAdminPage(page.view)}>
-          <span class="page-icon" aria-hidden="true">${this._icon(page.icon)}</span>
-          <span class="page-copy"><strong>${page.title}</strong><span>${page.text}</span></span>
-          <svg class="arrow" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 4 4 4-4 4"/></svg>
-        </button></li>`)}
-      </ul></nav>
+    const workspace = [
+      ['manage-repos', 'Repositories', 'Connect sources and manage repository settings.', 'repo'],
+      ['admin-users', 'Users', 'Manage accounts, roles, and workspace access.', 'users'],
+      ['manage-teams', 'Teams', 'Bring people and repositories together.', 'team'],
+    ]
+    return html`<div class="wrap">${adminNavigation('manage', this._role)}
+      <h1 class="sr-only">Manage</h1>
+      ${this._role == null ? html`<p class="msg" role="status">Loading management pages…</p>` : html`
+        <section class="home-section" aria-labelledby="content-heading">
+          <div class="section-heading"><h2 id="content-heading">Content & activity</h2><span>From source to findings</span></div>
+          <div class="pages">${content.filter(([view]) => view !== 'manage-scans' || ['admin', 'manage'].includes(this._role)).map(page => this._page(page))}</div>
+        </section>
+        ${this._role === 'admin' ? html`<section class="home-section" aria-labelledby="workspace-heading">
+          <div class="section-heading"><h2 id="workspace-heading">Workspace & access</h2><span>Sources, people, and permissions</span></div>
+          <div class="pages workspace-pages">${workspace.map(page => this._page(page))}</div>
+        </section>` : nothing}
+        <button type="button" class="history-link" @click=${() => openAdminPage('manage-history')}>
+          <span class="page-icon" aria-hidden="true">${adminIcon('history')}</span>
+          <span class="page-copy"><strong>Workspace history</strong><span>Follow activity and triage changes across your workspace.</span></span>
+          <span class="history-cta">View history ${adminIcon('arrow')}</span>
+        </button>`}
     </div>`
   }
 
-  _icon(kind) {
-    if (kind === 'bundle') return unsafeHTML(BUNDLE_ICON_SVG)
-    if (kind === 'report') return unsafeHTML(REPORT_ICON_SVG)
-    if (kind === 'scan') return unsafeHTML(SCAN_ICON_SVG)
-    const paths = {
-      users: 'M10.75 4.75a2.75 2.75 0 1 1-5.5 0 2.75 2.75 0 0 1 5.5 0ZM3 14v-1.5A3.5 3.5 0 0 1 6.5 9h3a3.5 3.5 0 0 1 3.5 3.5V14',
-      team: 'M8.5 5a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0ZM1.5 14v-1.5A3.5 3.5 0 0 1 5 9h2a3.5 3.5 0 0 1 3.5 3.5V14M11 2.75a2.5 2.5 0 0 1 0 4.5m1 2a3 3 0 0 1 2.5 3V14',
-      repo: 'M3 2.5v7M5 12a2 2 0 1 1-4 0 2 2 0 0 1 4 0ZM15 4a2 2 0 1 1-4 0 2 2 0 0 1 4 0ZM13 6v1a5 5 0 0 1-5 5H5',
-      history: 'M2 5a6.25 6.25 0 1 1-.25 5M1.5 1.5V5H5M8 4.5V8l3 1.5',
-    }
-    return html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d=${paths[kind]}/></svg>`
+  _page([view, title, description, icon]) {
+    return html`<button type="button" class=${`page page-${icon}`} @click=${() => openAdminPage(view)}>
+      <span class="page-top"><span class="page-icon" aria-hidden="true">${adminIcon(icon)}</span><span class="arrow" aria-hidden="true">${adminIcon('arrow')}</span></span>
+      <span class="page-copy"><strong>${title}</strong><span>${description}</span></span>
+    </button>`
   }
+
 }
 customElements.define('managed-admin-home', ManagedAdminHome)
 
@@ -198,32 +137,9 @@ async function fetchAccessibleReportIds() {
 }
 
 class ManagedAdminHistory extends LitElement {
-  static properties = { _history: { state: true }, _role: { state: true }, _allowedReports: { state: true }, _error: { state: true }, _filter: { state: true }, _query: { state: true } }
+  static properties = { _page: { state: true }, _history: { state: true }, _role: { state: true }, _allowedReports: { state: true }, _error: { state: true }, _filter: { state: true }, _query: { state: true } }
 
-  static styles = [ADMIN_PAGE_HEADER_STYLES, css`
-    :host { display: block; min-height: 100%; padding: clamp(1.5rem, 4vw, 2.5rem) clamp(1rem, 4vw, 2.5rem); color: var(--text); }
-    * { box-sizing: border-box; }
-    .wrap { max-width: 68rem; margin: 0 auto; }
-    .intro { margin: 0 0 1rem; color: var(--muted); font-size: .82rem; line-height: 1.5; }
-    .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: .55rem; margin: 0 0 .8rem; }
-    .toolbar input, .toolbar select { height: 2rem; padding: .28rem .55rem; border: 1px solid var(--border); border-radius: 5px; color: var(--text); background: var(--bg); font: inherit; font-size: .74rem; }
-    .toolbar input { flex: 1 1 20rem; min-width: 12rem; }
-    .toolbar select { flex: 0 1 10rem; min-width: 9rem; }
-    .history { overflow: hidden; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
-    .row { display: grid; grid-template-columns: 4.75rem minmax(8rem, 10rem) minmax(0, 1fr) auto; align-items: center; gap: .7rem; padding: .52rem .8rem; min-height: 2.45rem; }
-    .row + .row { border-top: 1px solid var(--border); }
-    .kind { width: fit-content; padding: .14rem .38rem; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font-size: .62rem; font-weight: 600; text-transform: capitalize; }
-    .kind.triage { color: var(--accent); border-color: rgb(from var(--accent) r g b / .35); background: rgb(from var(--accent) r g b / .08); }
-    .actor { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: .72rem; }
-    .copy { display: grid; grid-template-columns: minmax(9rem, auto) minmax(0, 1fr); min-width: 0; align-items: baseline; gap: .45rem; }
-    .action { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .76rem; }
-    .detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: .67rem; }
-    time { color: var(--muted); font-size: .68rem; white-space: nowrap; }
-    .empty, .msg { margin: 0; padding: 1.2rem; color: var(--muted); font-size: .8rem; line-height: 1.5; }
-    .msg.error { color: var(--critical, #c00); }
-    @media (max-width: 46rem) { .row { grid-template-columns: 4.5rem 8rem minmax(0, 1fr) auto; } .copy { grid-template-columns: minmax(8rem, auto) minmax(0, 1fr); } }
-    @media (max-width: 38rem) { .row { grid-template-columns: auto minmax(0, 1fr) auto; } .row .actor { grid-column: 2; grid-row: 2; } .row .copy { grid-column: 2; grid-row: 1; } time { grid-column: 3; grid-row: 1 / 3; } }
-  `]
+  static styles = [unsafeCSS(historyStyles), unsafeCSS(commonStyles)]
 
   constructor() {
     super()
@@ -231,11 +147,13 @@ class ManagedAdminHistory extends LitElement {
     this._role = null
     this._allowedReports = null
     this._error = null
+    this._page = 1
     this._filter = 'all'
     this._query = ''
     this._onActorFilter = (event) => {
       const actor = event.detail?.actor
       if (typeof actor !== 'string' || actor.length === 0) return
+      this._page = 1
       this._query = actor
       this._filter = 'all'
     }
@@ -271,17 +189,28 @@ class ManagedAdminHistory extends LitElement {
     const query = this._query.trim().toLocaleLowerCase()
     const searched = query.length === 0 ? history : history.filter((entry) => historySearchText(entry).includes(query))
     const filtered = this._filter === 'all' ? searched : searched.filter((entry) => entry.kind === this._filter)
-    return html`<div class="wrap">
-      <div class="head">${adminBackButton()}<h1>History</h1>${this._history ? html`<span class="count">${filtered.length}</span>` : nothing}</div>
+    const page = Math.min(this._page, Math.max(1, Math.ceil(filtered.length / 100)))
+    const start = (page - 1) * 100
+    return html`<div class="wrap">${adminNavigation('manage-history', this._role)}
+      <div class="head"><h1>History</h1>${this._history ? html`<span class="count">${filtered.length}</span>` : nothing}</div>
       <p class="intro">${this._role === 'admin' ? 'All workspace actions, including uploads, access changes, scans, and triage.' : 'Triage history for reports you can access.'}</p>
-      ${this._history == null ? nothing : html`<div class="toolbar" role="search"><input type="search" aria-label="Search history" placeholder="Search actions, users, repositories, reports…" .value=${this._query} @input=${(event) => { this._query = event.target.value }}><select aria-label="Filter history by type" .value=${this._filter} @change=${(event) => { this._filter = event.target.value }}><option value="all">All activity</option><option value="triage">Triage</option><option value="visibility">Visibility</option><option value="upload">Uploads</option><option value="scan">Scans</option></select></div>`}
-      ${this._error ? html`<p class="msg error">Couldn’t load history: ${this._error}</p>` : this._history == null ? html`<p class="msg">Loading…</p>` : filtered.length === 0 ? html`<div class="history"><p class="empty">No history available yet.</p></div>` : html`<div class="history" aria-label="Workspace history">${filtered.map((entry) => this._row(entry))}</div>`}
+      ${this._history == null ? nothing : html`<div class="toolbar" role="search"><input type="search" aria-label="Search history" placeholder="Search actions, users, repositories, reports…" .value=${this._query} @input=${(event) => { this._query = event.target.value; this._page = 1 }}><select aria-label="Filter history by type" .value=${this._filter} @change=${(event) => { this._filter = event.target.value; this._page = 1 }}><option value="all">All activity</option><option value="triage">Triage</option><option value="visibility">Visibility</option><option value="upload">Uploads</option><option value="scan">Scans</option></select></div>`}
+      ${this._error ? html`<p class="msg error">Couldn’t load history: ${this._error}</p>` : this._history == null ? html`<p class="msg">Loading…</p>` : filtered.length === 0 ? html`<div class="history"><p class="empty">${query || this._filter !== 'all' ? 'No activity matches your filters.' : 'No history available yet.'}</p></div>` : html`<div class="history" aria-label="Workspace history"><div class="history-head" aria-hidden="true"><span>Type</span><span>Activity</span><span>Repository / report / finding</span><span>Time</span></div>${filtered.slice(start, start + 100).map((entry) => this._row(entry))}</div>`}
+      ${filtered.length > 100 ? html`<nav class="pagination" aria-label="History pages"><span role="status">${start + 1}–${Math.min(start + 100, filtered.length)} of ${filtered.length} entries</span><button type="button" class="btn" ?disabled=${page === 1} @click=${() => this._changePage(page - 1)}>Previous</button><span>Page ${page} of ${Math.ceil(filtered.length / 100)}</span><button type="button" class="btn" ?disabled=${start + 100 >= filtered.length} @click=${() => this._changePage(page + 1)}>Next</button></nav>` : nothing}
     </div>`
+  }
+
+  async _changePage(page) {
+    this._page = page
+    await this.updateComplete
+    this.renderRoot.querySelector('.history')?.scrollIntoView({ block: 'start' })
   }
 
   _row(entry) {
     const detail = [entry.repo ?? entry.repository, entry.report, entry.finding].filter(Boolean).join(' · ')
-    return html`<div class="row"><span class=${`kind ${entry.kind ?? ''}`}>${entry.kind ?? 'activity'}</span><span class="actor">${entry.actor ?? entry.user ?? 'Unknown user'}</span><span class="copy"><span class="action">${entry.action ?? 'updated workspace data'}</span>${detail ? html`<span class="detail">${detail}</span>` : nothing}</span><time>${entry.when ?? ''}</time></div>`
+    const actor = entry.actor ?? entry.user ?? 'Unknown user'
+    const action = entry.action ?? 'updated workspace data'
+    return html`<div class="row"><span class=${`kind ${entry.kind ?? ''}`}>${entry.kind ?? 'activity'}</span><span class="activity-description" data-tooltip-truncated data-tooltip=${`${actor} ${action}`}><strong class="actor">${actor}</strong> <span class="action">${action}</span></span><span class="detail" data-tooltip-truncated data-tooltip=${detail}>${detail || '—'}</span><time>${entry.when ?? ''}</time></div>`
   }
 }
 customElements.define('managed-admin-history', ManagedAdminHistory)
@@ -331,58 +260,18 @@ async function setRole(userId, role, csrfToken) {
 
 class ManagedAdminUsers extends LitElement {
   static properties = {
+    _query: { state: true },
     _users: { state: true },
     _teams: { state: true },
     _error: { state: true },
   }
 
-  static styles = [ADMIN_PAGE_HEADER_STYLES, ADMIN_PEOPLE_STYLES, css`
-    .wrap { max-width: 68rem; margin: 0 auto; }
-    .intro { margin-bottom: 1rem; font-size: .78rem; }
-    .directory { border: 1px solid var(--border); border-radius: 9px; overflow: hidden; background: var(--surface); }
-    .list-head, .users li { display: grid; grid-template-columns: minmax(12rem, 1fr) minmax(15rem, 1.15fr) 6.4rem 6.8rem 7rem; gap: .75rem; padding: .45rem .7rem; align-items: center; }
-    .list-head { color: var(--muted); font-size: .62rem; font-weight: 500; border-bottom: 1px solid var(--border); }
-    .users { list-style: none; margin: 0; padding: 0; }
-    .users li + li { border-top: 1px solid var(--border); }
-    .person { display: flex; align-items: center; gap: .5rem; min-width: 0; }
-    .avatar { width: 1.65rem; height: 1.65rem; font-size: .65rem; }
-    .who { display: grid; gap: .05rem; min-width: 0; }
-    .name { display: flex; align-items: center; gap: .35rem; font-size: .78rem; font-weight: 500; }
-    .name-text, .login { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .login { color: var(--muted); font-size: .65rem; }
-    .last-seen, .last-activity { display: grid; gap: .08rem; color: var(--muted); font-size: .61rem; font-variant-numeric: tabular-nums; }
-    .last-seen time, .last-activity time { color: var(--text); }
-    .activity-link { display: block; min-width: 0; padding: .15rem .2rem; border: 0; border-radius: 4px; color: inherit; background: transparent; text-align: left; }
-    .activity-link:hover { color: var(--accent); background: rgb(from var(--accent) r g b / .08); }
-    .you { padding: .05rem .35rem; border-radius: 4px; color: var(--accent); background: rgb(from var(--accent) r g b / .1); font-size: .65rem; font-weight: 500; }
-    .memberships { display: grid; gap: .18rem; min-width: 0; }
-    .team-access { display: flex; align-items: center; justify-content: flex-start; gap: .5rem; min-width: 0; color: var(--muted); font-size: .64rem; line-height: 1.35; }
-    .team-access strong { color: var(--text); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .team-perms { display: inline-flex; gap: .3rem; white-space: nowrap; }
-    .permission-granted { color: var(--accent); }
-    .permission-denied { color: var(--critical, #e5534b); }
-    .no-team { color: var(--muted); font-size: .67rem; }
-    .access { display: flex; align-items: center; min-width: 0; }
-    .role { width: 100%; height: 1.7rem; font-size: .72rem; }
-    .self-note { margin: .7rem 0; color: var(--muted); font-size: .73rem; }
-    @container (max-width: 46rem) {
-      .list-head, .users li { grid-template-columns: minmax(10rem, 1fr) minmax(11rem, 1fr) 5.5rem 5.7rem 6.2rem; gap: .45rem; padding-left: .55rem; padding-right: .55rem; }
-      .last-seen, .last-activity { font-size: .57rem; }
-    }
-    @container (max-width: 33rem) {
-      .list-head { display: none; }
-      .users li { grid-template-columns: minmax(0, 1fr) 6.2rem; gap: .3rem .6rem; }
-      .memberships { grid-column: 1 / -1; grid-row: 3; padding-left: 2.15rem; }
-      .last-seen { grid-column: 1; grid-row: 2; padding-left: 2.15rem; display: flex; flex-wrap: wrap; gap: .3rem; }
-      .last-activity { grid-column: 1; grid-row: 4; padding-left: 2.15rem; display: flex; flex-wrap: wrap; gap: .3rem; }
-      .activity-link { grid-column: 1; grid-row: 4; padding-left: 2rem; }
-      .access { grid-column: 2; grid-row: 1 / 3; }
-    }
-  `]
+  static styles = [unsafeCSS(usersStyles), unsafeCSS(commonStyles)]
 
   constructor() {
     super()
     this._users = null
+    this._query = ''
     this._teams = null
     this._error = null
     this._me = null
@@ -401,6 +290,7 @@ class ManagedAdminUsers extends LitElement {
       const [session, users, teamData] = await Promise.all([fetchSession(), fetchUsers(), fetchTeams()])
       this._me = session?.id ?? null
       this._csrf = session?.csrfToken ?? null
+      this._role = session?.role ?? 'none'
       this._users = users
       this._teams = Array.isArray(teamData?.teams) ? teamData.teams : []
     } catch (err) {
@@ -409,9 +299,10 @@ class ManagedAdminUsers extends LitElement {
   }
 
   render() {
-    return html`<div class="wrap">
-      <div class="head">${adminBackButton()}<h1>Users</h1>${this._users ? html`<span class="count">${this._users.length}</span>` : nothing}</div>
+    return html`<div class="wrap">${adminNavigation('admin-users', this._role)}
+      <div class="head"><h1>Users</h1>${this._users ? html`<span class="count">${this._users.length}</span>` : nothing}</div>
       <p class="intro">Manage workspace access and roles.</p>
+      <div class="collection-toolbar" role="search"><input type="search" aria-label="Search users" placeholder="Search by name, username, or team…" .value=${this._query} @input=${e => { this._query = e.target.value }}></div>
       ${this._error == null
         ? (this._users == null ? html`<p class="msg">Loading…</p>` : this._list())
         : html`<p class="msg error">Couldn't load users: ${this._error}</p>`}
@@ -420,9 +311,12 @@ class ManagedAdminUsers extends LitElement {
 
   _list() {
     if (this._users.length === 0) return html`<p class="msg">No users yet.</p>`
+    const query = this._query.trim().toLocaleLowerCase()
+    const users = this._users.filter(user => [user.name, user.login, user.role, ...(this._teams ?? []).filter(team => team.members?.some(member => member.userId === user.id)).map(team => team.name)].filter(Boolean).join(' ').toLocaleLowerCase().includes(query))
+    if (users.length === 0) return html`<div class="empty"><strong>No matching users</strong><p>Try another name, username, or team.</p></div>`
     return html`<div class="directory">
       <div class="list-head" aria-hidden="true"><span>Account</span><span>Team access</span><span>Last seen</span><span>Last activity</span><span>Role</span></div>
-      <ul class="users">${this._users.map((u) => this._row(u))}</ul>
+      <ul class="users">${users.map((u) => this._row(u))}</ul>
     </div>${this._users.some((u) => u.id === this._me) ? html`<p class="self-note">Your own role can only be changed by another admin.</p>` : nothing}`
   }
 
@@ -442,7 +336,7 @@ class ManagedAdminUsers extends LitElement {
       </span>
       <span class="memberships">
         ${memberships.length === 0 ? html`<span class="no-team">No team access</span>` : memberships.map(({ team, member }) => {
-          return html`<span class="team-access"><strong>${team.name}</strong><span class="team-perms">${['dependencies', 'security'].map((permission) => html`<span class=${member[permission] === true ? 'permission-granted' : 'permission-denied'}>${member[permission] === true ? '+' : '−'} ${permission === 'dependencies' ? 'Deps' : 'Security'}</span>`)}</span></span>`
+          return html`<span class="team-access"><strong>${adminIcon('team')}<span>${team.name}</span></strong><span class="team-perms">${['dependencies', 'security'].map((permission) => html`<span class=${member[permission] === true ? 'permission-granted' : 'permission-denied'}>${member[permission] === true ? '+' : '−'} ${permission === 'dependencies' ? 'Deps' : 'Security'}</span>`)}</span></span>`
         })}
       </span>
       <span class="last-seen" aria-label=${userTimeLabel(u.lastSeenAt)}>${userTime(u.lastSeenAt)}</span>
@@ -521,10 +415,7 @@ async function removeRepository(repoId, fullName, deleteTriage, csrfToken) {
   return res.json()
 }
 
-// GitHub repo glyph (book-with-bookmark), tinted via currentColor.
-const REPO_ICON = html`<svg class="repo-icon" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">
-  <path d="M2 2.75A2.75 2.75 0 0 1 4.75 0h7.5a.75.75 0 0 1 .75.75v10.5a.75.75 0 0 1-.75.75H4.5a1 1 0 0 0 0 2h8a.75.75 0 0 1 0 1.5h-8A2.5 2.5 0 0 1 2 13V2.75Zm2.75-.25a1.25 1.25 0 0 0-1.25 1.25v7.32c.317-.114.66-.07 1 .18V2.5h-.5a.25.25 0 0 0 .75 0Zm6.75 0H5.5v8.5h6V2.5Z"/>
-</svg>`
+const REPO_ICON = adminIcon('repo')
 
 // Only the connected set loads on entry. Private/public discovery is opt-in,
 // and each connected repository has its own page for configuration.
@@ -547,84 +438,7 @@ class ManagedAdminRepos extends LitElement {
     _confirmName: { state: true },
   }
 
-  static styles = [ADMIN_PAGE_HEADER_STYLES, ADMIN_PEOPLE_STYLES, css`
-    .wrap { max-width: 68rem; margin: 0 auto; }
-    .head { flex-wrap: wrap; }
-    .head h1 { overflow-wrap: anywhere; }
-    .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin: 1.25rem 0 .85rem; }
-    .search { flex: 1 1 14rem; max-width: 25rem; margin-right: auto; }
-    .search input { width: 100%; }
-    .owners { display: grid; gap: 1rem; }
-    .owner-head { display: flex; align-items: center; gap: .5rem; margin: 0 0 .35rem; padding-left: .7rem; color: var(--muted); font-size: .72rem; font-weight: 500; }
-    .owner-icon { display: grid; place-items: center; width: 1.3rem; height: 1.3rem; border-radius: 4px; background: var(--surface-active); text-transform: uppercase; font-size: .65rem; }
-    .repos { margin: 0; padding: 0; list-style: none; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--surface); }
-    .repos li + li { border-top: 1px solid var(--border); }
-    .repo-row { display: flex; align-items: center; gap: .65rem; width: 100%; min-height: 2.65rem; padding: .38rem .7rem; text-align: left; }
-    button.repo-row { border: 0; background: transparent; color: var(--text); cursor: default; }
-    button.repo-row:hover { background: var(--surface-active); }
-    button.repo-row:focus-visible { outline-offset: -2px; }
-    .repo-icon { width: 1rem; height: 1rem; flex: 0 0 auto; color: var(--muted); }
-    .repo-copy { display: flex; align-items: baseline; gap: .55rem; flex: 1; min-width: 0; }
-    .repo-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .8rem; font-weight: 500; }
-    .repo-meta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: .68rem; }
-    .repo-meta::before { content: '·'; margin-right: .55rem; color: var(--border-strong, var(--muted)); }
-    .arrow { width: 1rem; height: 1rem; flex: 0 0 auto; color: var(--muted); }
-    .connected { display: inline-flex; align-items: center; gap: .25rem; flex: 0 0 auto; color: var(--muted); font-size: .68rem; white-space: nowrap; }
-    .connected svg { width: .85rem; height: .85rem; }
-    .access-note { display: flex; align-items: center; gap: .85rem; padding: .85rem 1rem; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
-    .access-note p { flex: 1; margin: 0; color: var(--muted); font-size: .78rem; line-height: 1.5; }
-    a.btn { color: var(--text); text-decoration: none; cursor: default; }
-    .empty { padding: 2.5rem 1rem; border: 1px solid var(--border); border-radius: 8px; text-align: center; }
-    .empty strong { display: block; margin-bottom: .4rem; font-size: .9rem; font-weight: 500; }
-    .empty p { margin: 0; color: var(--muted); font-size: .8rem; }
-    .loading { min-height: 8rem; display: grid; place-items: center; color: var(--muted); font-size: .8rem; }
-    .pagination { display: flex; align-items: center; gap: .5rem; margin-top: .85rem; }
-    .pagination span { margin-right: auto; color: var(--muted); font-size: .72rem; font-variant-numeric: tabular-nums; }
-    .section { margin-top: 1.5rem; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--surface); }
-    .section h2 { margin: 0; padding: .8rem 1rem; border-bottom: 1px solid var(--border); font-size: .85rem; font-weight: 500; }
-    .settings-row { display: flex; align-items: center; gap: 1rem; padding: 1rem; }
-    .settings-copy { flex: 1; min-width: 0; }
-    .settings-copy strong { font-size: .83rem; font-weight: 500; }
-    .settings-copy p { margin: .25rem 0 0; color: var(--muted); font-size: .76rem; line-height: 1.5; }
-    .settings-row + .settings-row { border-top: 1px solid var(--border); }
-    .btn.danger { color: var(--critical, #e5534b); }
-    .error { color: var(--critical, #e5534b); }
-    .status-line { display: inline-flex; align-items: center; gap: .35rem; color: var(--muted); font-size: .72rem; }
-    .status-line.inactive { color: var(--warning, #d19a24); }
-    .data-section { margin-top: 1.5rem; }
-    .data-section h2 { margin: 0 0 .5rem; font-size: .85rem; font-weight: 500; }
-    .data-list { margin: 0; padding: 0; list-style: none; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-    .data-list li { display: flex; align-items: baseline; gap: .5rem; padding: .5rem .75rem; font-size: .75rem; }
-    .data-list li + li { border-top: 1px solid var(--border); }
-    .data-list strong { min-width: 0; overflow-wrap: anywhere; font-weight: 500; }
-    .data-list span { margin-left: auto; color: var(--muted); font-size: .68rem; white-space: nowrap; }
-    .data-empty { margin: 0; color: var(--muted); font-size: .75rem; }
-    .dialog-backdrop { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 1rem; background: rgb(0 0 0 / .65); }
-    .dialog { width: min(40rem, 100%); max-height: min(42rem, calc(100vh - 2rem)); overflow: auto; padding: 1.25rem; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); box-shadow: 0 1rem 3rem rgb(0 0 0 / .35); }
-    .dialog.small { width: min(28rem, 100%); }
-    .dialog h2 { margin: 0; font-size: 1.05rem; font-weight: 600; }
-    .dialog-copy { margin: .55rem 0 1rem; color: var(--muted); font-size: .78rem; line-height: 1.5; }
-    .dialog-data { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; margin: 0 0 1rem; }
-    .dialog-data section { min-width: 0; padding: .65rem; border: 1px solid var(--border); border-radius: 7px; }
-    .dialog-data h3 { margin: 0 0 .4rem; font-size: .72rem; font-weight: 600; }
-    .dialog-data ul { max-height: 9rem; overflow: auto; margin: 0; padding-left: 1rem; color: var(--muted); font-size: .7rem; }
-    .dialog-data li { margin: .2rem 0; overflow-wrap: anywhere; }
-    .confirm-line { display: flex; align-items: flex-start; gap: .5rem; margin: .7rem 0; color: var(--text); font-size: .76rem; line-height: 1.4; }
-    .confirm-line input { flex: 0 0 auto; margin-top: .15rem; accent-color: var(--accent); }
-    .confirm-name { width: 100%; margin-top: .15rem; padding: .45rem .55rem; border: 1px solid var(--border); border-radius: 5px; background: var(--bg); color: var(--text); font: inherit; font-size: .78rem; }
-    .dialog-actions { display: flex; justify-content: flex-end; gap: .5rem; margin-top: 1rem; }
-    .dialog-actions .danger { color: var(--critical, #e5534b); border-color: rgb(from var(--critical, #e5534b) r g b / .4); }
-    @container (max-width: 35rem) {
-      .intro { margin-left: 0; }
-      .search { flex-basis: 100%; max-width: none; }
-      .access-note, .settings-row { flex-wrap: wrap; }
-      .access-note p, .settings-copy { flex-basis: 100%; }
-      .head h1 { font-size: 1.35rem; }
-      .repo-copy { gap: .35rem; }
-      .repo-meta { max-width: 45%; }
-      .dialog-data { grid-template-columns: 1fr; }
-    }
-  `]
+  static styles = [unsafeCSS(reposStyles), unsafeCSS(commonStyles)]
 
   constructor() {
     super()
@@ -673,7 +487,7 @@ class ManagedAdminRepos extends LitElement {
         fetchRepositories(this._scope, this._query, this._page, request.signal),
       ])
       if (request.signal.aborted) return
-      if (session) this._csrf = session.csrfToken
+      if (session) { this._csrf = session.csrfToken; this._role = session.role }
       this._data = data
       // Removing the last item on a page can move the last page backwards.
       const lastPage = Math.max(1, Math.ceil(data.total / 20))
@@ -755,9 +569,9 @@ class ManagedAdminRepos extends LitElement {
     if (this._detail) return this._detailPage(this._detail)
     const connected = this._scope === 'connected'
     const title = connected ? 'Repositories' : `Add ${this._scope} repository`
-    return html`<div class="wrap">
+    return html`<div class="wrap">${adminNavigation('manage-repos', this._role)}
       <div class="head">
-        ${connected ? adminBackButton() : this._back()}
+        ${connected ? nothing : this._back()}
         <h1>${title}</h1>
         ${connected && this._data ? html`<span class="count">${this._data.connectedCount} connected</span>` : nothing}
       </div>
@@ -840,7 +654,7 @@ class ManagedAdminRepos extends LitElement {
     const active = repo.active !== false
     const reports = this._impact?.reports ?? []
     const bundles = this._impact?.bundles ?? []
-    return html`<div class="wrap">
+    return html`<div class="wrap">${adminNavigation('manage-repos', this._role)}
       <div class="head">${this._back()}<h1>${repo.fullName}</h1></div>
       <p class="intro">Repository settings and stored data.</p>
       ${this._actionError ? html`<p class="msg error" role="alert">${this._actionError}</p>` : nothing}
@@ -1073,6 +887,8 @@ function installFileDropZone(host, onFiles, onState) {
 // uploader to repeat a repo or directory already present in the report header.
 class ManagedAdminReports extends LitElement {
   static properties = {
+    _query: { state: true },
+    _visibility: { state: true },
     _data: { state: true },
     _error: { state: true },
     _busy: { state: true },
@@ -1087,73 +903,12 @@ class ManagedAdminReports extends LitElement {
     _repoDirectory: { state: true },
   }
 
-  static styles = [ADMIN_PAGE_HEADER_STYLES, css`
-    :host { display: block; position: relative; flex: 1 1 auto; padding: clamp(1.5rem, 4vw, 2.5rem) clamp(1rem, 4vw, 2.5rem); color: var(--text); container-type: inline-size; }
-    * { box-sizing: border-box; }
-    .wrap { max-width: 68rem; margin: 0 auto; }
-    .dropzone { position: absolute; inset: .6rem; z-index: 5; display: grid; place-items: center; border: 2px dashed var(--accent); border-radius: 10px; background: rgb(from var(--bg) r g b / .9); color: var(--accent); font-size: 1rem; font-weight: 600; pointer-events: none; }
-    .drop-card { display: flex; align-items: center; flex-wrap: wrap; gap: .7rem; margin: 0 0 1.2rem; padding: .7rem .8rem; border: 1px dashed var(--border); border-radius: 8px; background: rgb(from var(--surface) r g b / .55); }
-    .drop-card strong { display: block; font-size: .78rem; font-weight: 600; }
-    .drop-card .drop-copy > span { display: block; margin-top: .12rem; color: var(--muted); font-size: .7rem; }
-    .drop-icon { display: grid; place-items: center; width: 1.8rem; height: 1.8rem; flex: 0 0 auto; border-radius: 5px; color: var(--accent); background: rgb(from var(--accent) r g b / .1); }
-    .drop-icon svg { width: 1rem; height: 1rem; }
-    .drop-copy { min-width: 0; }
-    .drop-browse { margin-left: auto; flex: 0 0 auto; padding: .3rem .55rem; border: 1px solid var(--border); border-radius: 5px; color: var(--text); background: var(--bg); font: inherit; font-size: .72rem; }
-    .head { display: flex; align-items: center; gap: .65rem; margin: 0 0 .45rem; }
-    h1 { margin: 0; font-size: 1.65rem; font-weight: 600; letter-spacing: -.035em; }
-    .head-actions { display: flex; align-items: center; gap: .5rem; margin-left: auto; }
-    .upload, .action { display: inline-flex; align-items: center; justify-content: center; min-height: 2rem; padding: .3rem .65rem; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font: inherit; font-size: .78rem; font-weight: 500; white-space: nowrap; cursor: default; }
-    .upload { border-color: var(--accent); background: var(--accent); color: var(--bg); font-weight: 600; }
-    .upload:disabled, .action:disabled { opacity: .5; }
-    .upload:hover:not(:disabled), .action:hover:not(:disabled) { background: var(--surface-active); }
-    .upload:hover:not(:disabled) { filter: brightness(1.08); }
-    .intro { max-width: 44rem; margin: 0 0 1.4rem; color: var(--muted); font-size: .85rem; line-height: 1.5; }
-    .hint { margin: 0 0 .7rem; color: var(--muted); font-size: .75rem; }
-    .reports { display: grid; gap: .5rem; margin: 0; padding: 0; list-style: none; }
-    .report { overflow: hidden; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
-    .report-main { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: .55rem; padding: .42rem .6rem; }
-    .report-logo { display: grid; place-items: center; flex: 0 0 auto; width: 1.5rem; height: 1.5rem; border-radius: 5px; overflow: hidden; }
-    .report-logo svg { width: 1.2rem; height: 1.2rem; }
-    .report-logo.brand-deepview { --brand-bg: #2563eb; --brand-fg: #fff; background: var(--brand-bg); }
-    .report-logo.brand-claude { --brand-bg: #d97757; --brand-fg: #fff; background: var(--brand-bg); }
-    .report-logo.brand-codex { --brand-bg: #fff; --brand-fg: #000; background: var(--brand-bg); }
-    .report-logo.brand-vercel { --brand-bg: #000; --brand-fg: #fff; background: var(--brand-bg); }
-    .report-logo.brand-piolium { --brand-bg: #fbb829; --brand-fg: #1c1b19; background: var(--brand-bg); }
-    .report-logo.generic { color: var(--muted); background: var(--surface-active); border: 1px solid var(--border); }
-    .report-logo .fg { fill: var(--brand-fg); }
-    .report-logo .bg { fill: var(--brand-bg); }
-    .report-logo.brand-codex .bg, .report-logo.brand-vercel .bg { stroke: var(--brand-fg); stroke-width: .5; }
-    .report-copy { display: grid; flex: 1; min-width: 0; gap: .08rem; }
-    .report-name { font-size: .78rem; font-weight: 600; overflow-wrap: anywhere; }
-    .report-location { color: var(--muted); font-size: .66rem; overflow-wrap: anywhere; }
-    .report-meta { display: flex; flex-wrap: nowrap; align-items: center; gap: .22rem .4rem; min-width: 0; overflow: hidden; color: var(--muted); font-size: .62rem; line-height: 1.25; }
-    .report-meta > span { min-width: 0; }
-    .report-meta > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .report-meta .report-location { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .status { display: inline-flex; align-items: center; width: fit-content; padding: .1rem .35rem; border: 1px solid var(--border); border-radius: 4px; font-size: .65rem; font-weight: 500; }
-    .status.hidden { color: var(--muted); }
-    .status.visible { color: var(--accent); border-color: rgb(from var(--accent) r g b / .35); background: rgb(from var(--accent) r g b / .08); }
-    .report-actions { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: .25rem; margin-left: auto; }
-    .report-actions .action { min-height: 1.7rem; padding: .2rem .44rem; font-size: .68rem; }
-    .report-actions a { color: var(--accent); text-decoration: none; }
-    .report-actions a:hover { text-decoration: underline; }
-    .preview { border-top: 1px solid var(--border); padding: .7rem .85rem .8rem 3.35rem; }
-    .preview pre { max-height: 16rem; overflow: auto; margin: 0; padding: .65rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--muted); font: .7rem/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
-    .preview-loading { color: var(--muted); font-size: .75rem; }
-    .location-editor { display: grid; grid-template-columns: minmax(0, 1fr) minmax(10rem, .7fr) auto; align-items: end; gap: .5rem; padding: .7rem .85rem .8rem 3.35rem; border-top: 1px solid var(--border); background: rgb(from var(--bg) r g b / .35); }
-    .location-field { display: grid; gap: .25rem; min-width: 0; }
-    .location-field label { color: var(--muted); font-size: .68rem; }
-    .location-field select, .location-field input { width: 100%; min-width: 0; height: 2rem; padding: .3rem .45rem; border: 1px solid var(--border); border-radius: 5px; color: var(--text); background: var(--bg); font: inherit; font-size: .74rem; }
-    .location-actions { display: flex; gap: .35rem; }
-    .empty { padding: 2.5rem 1rem; border: 1px solid var(--border); border-radius: 8px; text-align: center; }
-    .empty strong { display: block; margin-bottom: .4rem; font-size: .9rem; font-weight: 500; }
-    .empty p, .msg { margin: 0; color: var(--muted); font-size: .8rem; line-height: 1.5; }
-    .msg.error { color: var(--critical, #c00); }
-    @container (max-width: 40rem) { .head { flex-wrap: wrap; } .head-actions { width: 100%; margin-left: 0; } .report-main { grid-template-columns: auto minmax(0, 1fr); } .report-actions { grid-column: 2; width: auto; margin-left: 0; justify-content: flex-start; } .report-meta { flex-wrap: wrap; } .preview, .location-editor { padding-left: .85rem; } .location-editor { grid-template-columns: 1fr; align-items: stretch; } }
-  `]
+  static styles = [unsafeCSS(reportsStyles), unsafeCSS(commonStyles)]
 
   constructor() {
     super()
+    this._query = ''
+    this._visibility = 'all'
     this._data = null
     this._error = null
     this._csrf = null
@@ -1191,6 +946,7 @@ class ManagedAdminReports extends LitElement {
     try {
       const [session, data] = await Promise.all([fetchSession(), fetchReports()])
       this._csrf = session?.csrfToken ?? null
+      this._role = session?.role ?? 'none'
       this._data = data
     } catch (err) { this._error = String(err?.message ?? err) }
   }
@@ -1198,10 +954,10 @@ class ManagedAdminReports extends LitElement {
   render() {
     return html`
       ${this._dragOver ? html`<div class="dropzone">Drop reports to upload</div>` : nothing}
-      <div class="wrap">
-        <div class="head">${adminBackButton()}<h1>Reports</h1></div>
+      <div class="wrap">${adminNavigation('manage-reports', this._role)}
+        <div class="head"><h1>Reports</h1></div>
         <p class="intro">Upload reports. New reports stay hidden until you make them visible.</p>
-        <div class="drop-card"><span class="drop-icon" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10V2m0 0L5 5m3-3 3 3M3 9v3.5A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5V9"/></svg></span><span class="drop-copy"><strong>Drop reports here</strong><span>Reports can be dropped anywhere on this page, or selected from your computer.</span></span><button type="button" class="drop-browse" ?disabled=${this._busy} @click=${() => pickFiles((files) => void this._upload(files))}>${this._busy ? 'Uploading…' : 'Browse files'}</button></div>
+        <div class="drop-card"><span class="drop-icon" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10V2m0 0L5 5m3-3 3 3M3 9v3.5A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5V9"/></svg></span><span class="drop-copy"><strong>Upload reports</strong><span>Drop files anywhere on this page, or browse your computer.</span></span><button type="button" class="drop-browse" ?disabled=${this._busy} @click=${() => pickFiles((files) => void this._upload(files))}>${this._busy ? 'Uploading…' : 'Browse files'}</button></div>
         ${this._body()}
       </div>`
   }
@@ -1211,7 +967,11 @@ class ManagedAdminReports extends LitElement {
     if (this._data == null) return html`<p class="msg">Loading…</p>`
     const reports = Array.isArray(this._data.reports) ? this._data.reports : []
     if (reports.length === 0) return html`<div class="empty"><strong>No reports uploaded yet</strong><p>Drop a report here or browse files above.</p></div>`
-    return html`<p class="hint">${reports.length} stored ${reports.length === 1 ? 'report' : 'reports'}</p><ul class="reports">${reports.map((report) => this._row(report))}</ul>`
+    const query = this._query.trim().toLocaleLowerCase()
+    const filtered = reports.filter(report => [report.filename, report.repoFullName, report.repoDirectory, report.uploadedByLogin].filter(Boolean).join(' ').toLocaleLowerCase().includes(query)
+      && (this._visibility === 'all' || Boolean(report.visible) === (this._visibility === 'visible')))
+    return html`<div class="collection-toolbar" role="search"><input type="search" aria-label="Search reports" placeholder="Search reports or repositories…" .value=${this._query} @input=${e => { this._query = e.target.value }}><select aria-label="Report visibility" .value=${this._visibility} @change=${e => { this._visibility = e.target.value }}><option value="all">All reports</option><option value="visible">Visible to teams</option><option value="hidden">Hidden reports</option></select><span class="result-count" role="status">${filtered.length} of ${reports.length} reports</span></div>
+      ${filtered.length > 0 ? html`<div class="report-list"><div class="report-list-head" aria-hidden="true"><span class="report-heading">Report / repository</span><span>Uploaded by</span><span>Visibility</span><span class="actions-heading">Actions</span></div><ul class="reports">${filtered.map(report => this._row(report))}</ul></div>` : html`<div class="empty"><strong>No matching reports</strong><p>Try a different search or visibility filter.</p></div>`}`
   }
 
   _row(report) {
@@ -1220,13 +980,20 @@ class ManagedAdminReports extends LitElement {
     const canAssignLocation = report.repoEmbedded !== true
     const canMakeVisible = report.repoEmbedded === true || report.repoId != null
     const location = report.repoFullName ? `${report.repoFullName}${report.repoDirectory ? `/${report.repoDirectory}` : ''}` : 'No repository assigned'
-    const when = Number.isFinite(report.uploadedAt) ? new Date(report.uploadedAt).toLocaleString() : ''
-    const meta = [report.uploadedByLogin ? `by ${report.uploadedByLogin}` : 'uploader removed', when, formatBytes(report.byteSize)].filter(Boolean).join(' · ')
+    const when = Number.isFinite(report.uploadedAt) ? new Date(report.uploadedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : ''
     return html`<li class="report">
       <div class="report-main">
-        ${unsafeHTML(logo)}
-        <span class="report-copy"><span class="report-name">${report.filename}</span><span class="report-meta"><span class=${`status ${report.visible ? 'visible' : 'hidden'}`}>${report.visible ? 'Visible' : 'Hidden'}</span><span class="report-location">${location}</span><span>${meta}</span></span></span>
-        <span class="report-actions">${canAssignLocation ? html`<button type="button" class="action" @click=${() => this._openLocation(report)}>${report.repoId == null ? 'Set location' : 'Change location'}</button>` : nothing}<button type="button" class="action" @click=${() => void this._togglePreview(report)}>${this._preview === report.id ? 'Hide preview' : 'Preview'}</button>${report.visible ? html`<button type="button" class="action" @click=${() => void this._setVisible(report, false)}>Hide</button>` : html`<button type="button" class="action" ?disabled=${!canMakeVisible} @click=${() => void this._setVisible(report, true)}>Make visible</button>`}<a class="action" href=${`/api/admin/reports/${encodeURIComponent(report.id)}`}>Download</a><button type="button" class="action" @click=${() => this._delete(report)}>Delete</button></span>
+        <span class="report-mark" aria-hidden="true">${unsafeHTML(logo)}</span>
+        <span class="report-copy"><span class="report-name" data-tooltip-truncated data-tooltip=${report.filename}>${report.filename}</span><span class="report-location" data-tooltip-truncated data-tooltip=${location}>${location}</span></span>
+        <span class="report-meta"><span data-tooltip-truncated data-tooltip=${report.uploadedByLogin ?? ''}>${report.uploadedByLogin ?? 'Uploader removed'}</span><span>${when} · ${formatBytes(report.byteSize)}</span></span>
+        <span class=${`status ${report.visible ? 'visible' : 'hidden'}`}>${report.visible ? 'Visible' : 'Hidden'}</span>
+        <span class="report-actions">
+          ${canAssignLocation ? html`<button type="button" class="action" data-tooltip="Set repository location" aria-label=${`Set location for ${report.filename}`} @click=${() => this._openLocation(report)}>${adminIcon('repo')}</button>` : html`<span class="action-spacer"></span>`}
+          <button type="button" class="action" data-tooltip=${this._preview === report.id ? 'Close preview' : 'Preview report'} aria-label=${`Preview ${report.filename}`} aria-expanded=${this._preview === report.id} @click=${() => void this._togglePreview(report)}>${adminIcon('preview')}</button>
+          <button type="button" class="action" data-tooltip=${report.visible ? 'Hide from teams' : canMakeVisible ? 'Make visible to teams' : 'Assign a repository before publishing'} aria-label=${`${report.visible ? 'Hide' : 'Make visible'} ${report.filename}`} ?disabled=${!canMakeVisible && !report.visible} @click=${() => void this._setVisible(report, !report.visible)}>${adminIcon(report.visible ? 'hide' : 'show')}</button>
+          <a class="action" aria-label=${`Download ${report.filename}`} href=${`/api/admin/reports/${encodeURIComponent(report.id)}`}>${adminIcon('download')}</a>
+          <button type="button" class="action danger" aria-label=${`Delete ${report.filename}`} @click=${() => this._delete(report)}>${ADMIN_DELETE_ICON}</button>
+        </span>
       </div>
       ${this._preview === report.id ? html`<div class="preview">${this._previewLoading === report.id ? html`<span class="preview-loading">Loading preview…</span>` : html`<pre>${this._previewText ?? ''}</pre>`}</div>` : nothing}
       ${this._locationReport === report.id ? this._locationEditor(report) : nothing}
@@ -1357,6 +1124,7 @@ const BUNDLE_ICON = html`<svg class="report-icon" viewBox="0 0 16 16" width="16"
 // chunk, fetches its own data; no main-bundle state.
 class ManagedAdminBundles extends LitElement {
   static properties = {
+    _query: { state: true },
     _data: { state: true },
     _repoId: { state: true },
     _error: { state: true },
@@ -1364,62 +1132,11 @@ class ManagedAdminBundles extends LitElement {
     _dragOver: { state: true },
   }
 
-  static styles = [ADMIN_PAGE_HEADER_STYLES, css`
-    :host { display: block; position: relative; padding: clamp(1.5rem, 4vw, 2.5rem) clamp(1rem, 4vw, 2.5rem); color: var(--text); container-type: inline-size; }
-    * { box-sizing: border-box; }
-    .wrap { max-width: 68rem; margin: 0 auto; }
-    .head { margin-bottom: .4rem; }
-    h1 { font-size: 1.65rem; letter-spacing: -.035em; }
-    button, select { font: inherit; cursor: default; }
-    button:focus-visible, a:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-    .intro { margin: 0 0 1rem; color: var(--muted); font-size: .8rem; line-height: 1.45; }
-    .dropzone { position: absolute; inset: .6rem; z-index: 5; display: grid; place-items: center; border: 2px dashed var(--accent); border-radius: 10px; background: rgb(from var(--bg) r g b / .94); color: var(--accent); font-size: 1rem; font-weight: 600; pointer-events: none; }
-    .upload-panel { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: .55rem 1rem; padding: .7rem .8rem; margin-bottom: 1rem; border: 1px dashed color-mix(in srgb, var(--border) 70%, var(--muted)); border-radius: 8px; background: var(--surface); }
-    .upload-copy { display: grid; gap: .25rem; }
-    .upload-copy strong { font-size: .87rem; font-weight: 600; }
-    .upload-copy > span { color: var(--muted); font-size: .72rem; }
-    .upload-controls { display: flex; align-items: end; gap: .65rem; }
-    .repo-picker { display: grid; gap: .3rem; min-width: 0; }
-    .repo-picker-label { color: var(--muted); font-size: .67rem; }
-    .repo-select, .repo-attach { min-width: 0; width: 100%; }
-    .repo-select { max-width: 18rem; }
-    .drop-browse { height: 2rem; flex-shrink: 0; padding: .3rem .75rem; border: 1px solid var(--accent); border-radius: 5px; color: var(--bg); background: var(--accent); font-size: .74rem; font-weight: 600; }
-    .drop-browse:hover:not(:disabled) { filter: brightness(1.08); }
-    .drop-browse:disabled { opacity: .5; }
-    .section-head { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: .5rem; margin-bottom: .6rem; }
-    .section-head h2 { margin: 0; font-size: .85rem; font-weight: 600; }
-    .summary { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; color: var(--muted); font-size: .7rem; font-variant-numeric: tabular-nums; }
-    .unassigned { color: var(--high, #d97732); }
-    .bundles { margin: 0; padding: 0; list-style: none; }
-    .bundle-groups { display: grid; gap: .65rem; }
-    .bundle-group { overflow: hidden; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
-    .bundle-group-head { display: flex; align-items: center; justify-content: space-between; gap: .6rem; padding: .45rem .7rem; border-bottom: 1px solid var(--border); }
-    .bundle-group-head strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .74rem; font-weight: 600; }
-    .bundle-group-head span { color: var(--muted); font-size: .67rem; }
-    .bundle-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(10rem, 15rem) auto; align-items: center; gap: .75rem; padding: .42rem .65rem; }
-    .bundle-row + .bundle-row { border-top: 1px solid var(--border); }
-    .identity { display: flex; align-items: flex-start; min-width: 0; gap: .5rem; }
-    .bundle-icon { display: grid; place-items: center; width: 1.45rem; height: 1.45rem; flex-shrink: 0; color: var(--muted); }
-    .bundle-icon svg { width: 1rem; height: 1rem; }
-    .who { display: grid; min-width: 0; gap: .12rem; }
-    .filename { font-size: .82rem; font-weight: 600; overflow-wrap: anywhere; }
-    .meta { display: flex; flex-wrap: wrap; gap: .2rem .5rem; color: var(--muted); font-size: .62rem; line-height: 1.35; }
-    .kind { color: var(--text); }
-    .bundle-location { display: grid; gap: .18rem; min-width: 0; }
-    .bundle-location-label { color: var(--muted); font-size: .6rem; }
-    .actions { display: flex; gap: .2rem; }
-    .action { display: grid; place-items: center; width: 1.65rem; height: 1.65rem; padding: .35rem; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--muted); text-decoration: none; }
-    .action svg { width: 1rem; height: 1rem; }
-    .action:hover { color: var(--text); border-color: var(--border); background: var(--surface); }
-    .action.danger:hover { color: var(--critical, #e5534b); }
-    .msg { padding: 1rem 0; margin: 0; color: var(--muted); font-size: .8rem; }
-    .msg.error { color: var(--critical, #e5534b); }
-    @container (max-width: 46rem) { .upload-panel { grid-template-columns: 1fr; } .upload-controls { justify-content: space-between; } .repo-picker { flex: 1; } .repo-select { max-width: none; } .bundle-row { grid-template-columns: minmax(0, 1fr) auto; gap: .5rem; } .bundle-location { grid-column: 1; padding-left: 2.4rem; } .actions { grid-column: 2; grid-row: 1 / 3; } }
-    @container (max-width: 24rem) { .upload-controls { flex-wrap: wrap; } .repo-picker { flex-basis: 100%; } }
-  `]
+  static styles = [unsafeCSS(bundlesStyles), unsafeCSS(commonStyles)]
 
   constructor() {
     super()
+    this._query = ''
     this._data = null
     this._error = null
     this._csrf = null
@@ -1447,6 +1164,7 @@ class ManagedAdminBundles extends LitElement {
     try {
       const [session, data] = await Promise.all([fetchSession(), fetchBundles()])
       this._csrf = session?.csrfToken ?? null
+      this._role = session?.role ?? 'none'
       this._data = data
     } catch (err) {
       this._error = String(err?.message ?? err)
@@ -1456,11 +1174,11 @@ class ManagedAdminBundles extends LitElement {
   render() {
     return html`
       ${this._dragOver ? html`<div class="dropzone">Drop bundles to upload</div>` : nothing}
-      <div class="wrap">
-        <div class="head">${adminBackButton()}<h1>Bundles</h1></div>
+      <div class="wrap">${adminNavigation('manage-bundles', this._role)}
+        <div class="head"><h1>Bundles</h1></div>
         <p class="intro">Source bundles and sourcemaps for your repositories.</p>
         <section class="upload-panel" aria-label="Upload bundles">
-          <div class="upload-copy"><strong>Drop bundles here</strong><span>Choose a repository for your uploads.</span></div>
+          <div class="upload-copy"><span class="drop-icon" aria-hidden="true">${adminIcon('upload')}</span><span><strong>Upload source bundles</strong><span class="upload-description">Drop archives or sourcemaps anywhere on this page.</span></span></div>
           <div class="upload-controls">${repoPickerTemplate(this._data?.repos, this._repoId, (v) => { this._repoId = v }, 'Repository')}<button type="button" class="drop-browse" ?disabled=${this._busy} @click=${() => pickFiles((files) => void this._upload(files))}>${this._busy ? 'Uploading…' : 'Browse files'}</button></div>
         </section>
         ${this._body()}
@@ -1473,9 +1191,11 @@ class ManagedAdminBundles extends LitElement {
     const bundles = Array.isArray(this._data.bundles) ? this._data.bundles : []
     const unassigned = bundles.filter((bundle) => bundle.repoId == null).length
     const bytes = bundles.reduce((sum, bundle) => sum + (Number.isFinite(bundle.byteSize) ? bundle.byteSize : 0), 0)
-    const groups = Map.groupBy(bundles, (bundle) => bundle.repoFullName || 'Unattached')
-    return html`<div class="section-head"><h2>Stored bundles</h2><span class="summary"><span>${bundles.length} ${bundles.length === 1 ? 'bundle' : 'bundles'}</span><span>${formatBytes(bytes)}</span>${unassigned ? html`<span class="unassigned">${unassigned} unattached</span>` : nothing}</span></div>
-      ${bundles.length > 0 ? html`<div class="bundle-groups">${[...groups].toSorted(([a], [b]) => a === 'Unattached' ? 1 : b === 'Unattached' ? -1 : a.localeCompare(b)).map(([name, items]) => html`<section class="bundle-group"><div class="bundle-group-head"><strong>${name}</strong><span>${items.length} ${items.length === 1 ? 'bundle' : 'bundles'}</span></div><ul class="bundles">${items.map((b) => this._row(b))}</ul></section>`)}</div>` : html`<p class="msg">No bundles uploaded yet.</p>`}`
+    const query = this._query.trim().toLocaleLowerCase()
+    const filtered = bundles.filter(bundle => [bundle.filename, bundle.repoFullName, bundle.kind, bundle.uploadedByLogin].filter(Boolean).join(' ').toLocaleLowerCase().includes(query))
+    const groups = Map.groupBy(filtered, (bundle) => bundle.repoFullName || 'Unattached')
+    return html`<div class="collection-toolbar" role="search"><input type="search" aria-label="Search bundles" placeholder="Search bundles or repositories…" .value=${this._query} @input=${e => { this._query = e.target.value }}></div><div class="section-head"><h2>Stored bundles</h2><span class="summary"><span>${bundles.length} ${bundles.length === 1 ? 'bundle' : 'bundles'}</span><span>${formatBytes(bytes)}</span>${unassigned ? html`<span class="unassigned">${unassigned} unattached</span>` : nothing}</span></div>
+      ${filtered.length > 0 ? html`<div class="bundle-groups">${[...groups].toSorted(([a], [b]) => a === 'Unattached' ? -1 : b === 'Unattached' ? 1 : a.localeCompare(b)).map(([name, items]) => html`<section class="bundle-group"><div class="bundle-group-head"><strong>${name}</strong><span>${items.length} ${items.length === 1 ? 'bundle' : 'bundles'}</span></div><ul class="bundles">${items.map((b) => this._row(b))}</ul></section>`)}</div>` : html`<div class="empty"><strong>${query ? 'No matching bundles' : 'No bundles uploaded yet'}</strong><p>${query ? 'Try another filename or repository.' : 'Drop source archives here or browse files above.'}</p></div>`}`
   }
 
   _row(b) {
@@ -1488,7 +1208,7 @@ class ManagedAdminBundles extends LitElement {
       <span class="bundle-location">${repoRowSelect(this._data?.repos, b.repoId, (repoId) => this._setRepo(b, repoId))}</span>
       <span class="actions">
         <a class="action" aria-label=${`Download ${b.filename}`} href=${`/api/admin/bundles/${encodeURIComponent(b.id)}`}><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8m-3-3 3 3 3-3M3 11v3h10v-3"/></svg></a>
-        <button type="button" class="action danger" aria-label=${`Delete ${b.filename}`} @click=${() => this._delete(b)}>${ADMIN_REMOVE_ICON}</button>
+        <button type="button" class="action danger" aria-label=${`Delete ${b.filename}`} @click=${() => this._delete(b)}>${ADMIN_DELETE_ICON}</button>
       </span>
     </li>`
   }
@@ -1536,9 +1256,11 @@ customElements.define('managed-admin-bundles', ManagedAdminBundles)
 
 // Manage supplies its own navigation and authenticated model transport.
 class ManagedAdminScans extends LitElement {
-  static styles = [ADMIN_PAGE_HEADER_STYLES, css`:host { display: block; }`]
+  static properties = { _role: { state: true } }
+  static styles = unsafeCSS(commonStyles)
   constructor() {
     super()
+    this._role = null
     this._loadModels = signal => fetchScanModels(signal, managedFetch)
     this._source = { bundles: cloneScanFixtures(), repositories: SCAN_REPOSITORY_FIXTURES, scans: SCAN_FIXTURES.map(scan => ({ ...scan })) }
     this._loadReportSources = async signal => {
@@ -1560,8 +1282,15 @@ class ManagedAdminScans extends LitElement {
       return managedReportSources(data, results.ok ? await results.json() : { bundles: [], results: [] })
     }
   }
+  connectedCallback() {
+    super.connectedCallback()
+    void fetchSession().then(session => {
+      this._role = session?.role ?? 'none'
+      return session
+    })
+  }
   render() {
-    return html`<deepview-scan-page .source=${this._source} .loadModels=${this._loadModels} .loadReportSources=${this._loadReportSources}><span slot="navigation">${adminBackButton()}</span></deepview-scan-page>`
+    return html`<div class="wrap">${adminNavigation('manage-scans', this._role)}<deepview-scan-page hide-heading .source=${this._source} .loadModels=${this._loadModels} .loadReportSources=${this._loadReportSources}></deepview-scan-page></div>`
   }
 }
 customElements.define('managed-admin-scans', ManagedAdminScans)
@@ -1595,61 +1324,7 @@ class ManagedAdminTeams extends LitElement {
     _memberChoices: { state: true },
   }
 
-  static styles = [ADMIN_PAGE_HEADER_STYLES, ADMIN_PEOPLE_STYLES, css`
-    .create-team { display: flex; align-items: center; gap: .5rem; margin-bottom: 1.2rem; }
-    .create-team label { color: var(--muted); font-size: .78rem; margin-right: .25rem; }
-    .new-name { width: 15rem; }
-    .team { border: 1px solid var(--border); border-radius: 9px; margin-bottom: 1rem; background: var(--surface); overflow: hidden; }
-    .team-head { display: flex; align-items: center; gap: .65rem; min-height: 3.6rem; padding: .8rem 1rem; border-bottom: 1px solid var(--border); }
-    .team-icon { display: grid; place-items: center; flex: 0 0 auto; width: 1.9rem; height: 1.9rem; border-radius: 6px; background: rgb(from var(--accent) r g b / .1); color: var(--accent); }
-    .team-icon svg { width: 1.05rem; height: 1.05rem; }
-    .team-name { margin: 0; min-width: 0; font-size: 1rem; font-weight: 600; letter-spacing: -.015em; overflow-wrap: anywhere; }
-    .team-actions { display: flex; gap: .25rem; margin-left: auto; }
-    .rename-input { flex: 1; max-width: 22rem; width: 0; }
-    .team-body { display: grid; grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr); }
-    .sub { min-width: 0; padding: 1rem; }
-    .sub + .sub { border-left: 1px solid var(--border); }
-    .sub-title { display: flex; align-items: center; gap: .45rem; margin: 0; font-size: .82rem; font-weight: 600; }
-    .sub-title .count { height: 1.1rem; min-width: 1.1rem; font-size: .65rem; padding: 0 .3rem; }
-    .sub-description { display: flex; flex-direction: column; gap: .12rem; margin: .35rem 0 .65rem; color: var(--muted); font-size: .72rem; line-height: 1.4; }
-    .links { list-style: none; margin: 0 0 .5rem; padding: 0; }
-    .links li { display: flex; align-items: center; gap: .5rem; min-height: 2.9rem; padding: .5rem 0; }
-    .links li + li { border-top: 1px solid var(--border); }
-    .repo-icon { flex: 0 0 auto; color: var(--muted); width: .95rem; height: .95rem; }
-    .repo-copy { display: flex; min-width: 0; flex-direction: column; gap: .2rem; }
-    .ln { min-width: 0; font-size: .8rem; font-weight: 500; overflow-wrap: anywhere; }
-    .path { color: var(--muted); font-family: var(--mono); font-size: .7rem; overflow-wrap: anywhere; }
-    .repo-row .icon-btn { margin-left: auto; }
-    .links .member-row { display: grid; grid-template-columns: minmax(0, 1fr) auto 1.8rem; gap: .45rem; }
-    .member { display: flex; align-items: center; gap: .45rem; min-width: 0; }
-    .member .avatar { width: 1.6rem; height: 1.6rem; font-size: .65rem; }
-    .perms { display: flex; flex-wrap: wrap; gap: .3rem; }
-    .perm { display: inline-flex; align-items: center; gap: .3rem; padding: .3rem .4rem; border: 1px solid var(--border); border-radius: 5px; font-size: .67rem; color: var(--muted); user-select: none; }
-    .perm:has(:checked) { color: var(--text); background: rgb(from var(--accent) r g b / .07); border-color: rgb(from var(--accent) r g b / .2); }
-    .perm:has(:disabled) { opacity: .5; }
-    .add-row { display: flex; align-items: center; gap: .4rem; padding-top: .55rem; }
-    .add-row select, .add-row repository-selector, .add-row user-selector { flex: 1; width: 0; }
-    .add-repo-path { flex: .75; width: 0; }
-    .add-row .btn { flex: 0 0 auto; }
-    .muted { color: var(--muted); font-size: .78rem; margin: .75rem 0; }
-    @container (max-width: 57rem) {
-      .team-body { grid-template-columns: 1fr; }
-      .sub + .sub { border-left: 0; border-top: 1px solid var(--border); }
-      .add-row { max-width: 36rem; }
-    }
-    @container (max-width: 32rem) {
-      .create-team { flex-wrap: wrap; }
-      .create-team label { flex-basis: 100%; }
-      .new-name { flex: 1; width: 0; }
-      .team-head, .sub { padding-left: .75rem; padding-right: .75rem; }
-      .links .member-row { grid-template-columns: minmax(0, 1fr) 1.8rem; }
-      .perms { grid-row: 2; padding-left: 2.05rem; }
-      .member-row > .icon-btn { grid-column: 2; grid-row: 1; }
-      .add-row { flex-wrap: wrap; }
-      .add-repo-sel { flex-basis: calc(100% - 4rem) !important; }
-      .add-repo-path { order: 1; flex-basis: 100%; }
-    }
-  `]
+  static styles = [unsafeCSS(teamsStyles), unsafeCSS(commonStyles)]
 
   constructor() {
     super()
@@ -1672,6 +1347,7 @@ class ManagedAdminTeams extends LitElement {
     try {
       const [session, data] = await Promise.all([fetchSession(), fetchTeams()])
       this._csrf = session?.csrfToken ?? null
+      this._role = session?.role ?? 'none'
       this._data = data
     } catch (err) {
       this._error = String(err?.message ?? err)
@@ -1688,15 +1364,15 @@ class ManagedAdminTeams extends LitElement {
   }
 
   render() {
-    return html`<div class="wrap">
+    return html`<div class="wrap">${adminNavigation('manage-teams', this._role)}
       <div class="head">
-        ${adminBackButton()}
         <h1>Teams</h1>
         ${this._data?.teams ? html`<span class="count">${this._data.teams.length}</span>` : nothing}
       </div>
       <p class="intro">Group repositories and give members access to the findings they need.</p>
       <div class="create-team">
-        <label for="new-team-name">New team</label>
+        <div class="create-copy"><strong>Create a team</strong><span>Share the right findings with the right people.</span></div>
+        <label class="sr-only" for="new-team-name">New team</label>
         <input id="new-team-name" class="new-name" type="text" placeholder="Team name" maxlength="100" ?disabled=${this._busy}
           @keydown=${(e) => { if (e.key === 'Enter') this._create() }}>
         <button class="btn primary" ?disabled=${this._busy} @click=${() => this._create()}>${ADMIN_PLUS_ICON} Create team</button>
@@ -1740,7 +1416,7 @@ class ManagedAdminTeams extends LitElement {
       </div>
       <div class="sub">
         <h3 class="sub-title">Members <span class="count">${team.members.length}</span></h3>
-        <p class="sub-description"><span>Membership includes the scan’s standard non-security findings.</span><span>Add underlying dependency or security findings per member.</span></p>
+        <p class="sub-description"><span>All members can view standard findings.</span><span>Choose who can also view dependencies and security findings.</span></p>
         ${team.members.length === 0 ? html`<p class="muted">No members.</p>`
           : html`<ul class="links">${team.members.map((m) => this._memberRow(team, m))}</ul>`}
         ${this._addMemberRow(team)}

@@ -1,0 +1,360 @@
+button,
+select {
+  font: inherit;
+  cursor: default;
+}
+button:focus-visible,
+a:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.dropzone {
+  position: absolute;
+  inset: .6rem;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  border: 2px dashed var(--accent);
+  border-radius: 10px;
+  background: rgb(from var(--bg) r g b / .94);
+  color: var(--accent);
+  font-size: 1rem;
+  font-weight: 600;
+  pointer-events: none;
+}
+.upload-copy {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+.upload-copy > span {
+  color: var(--muted);
+  font-size: .75rem;
+}
+.upload-controls {
+  display: flex;
+  align-items: end;
+  gap: .65rem;
+}
+.repo-picker {
+  display: grid;
+  gap: .3rem;
+  min-width: 0;
+}
+.repo-picker-label {
+  color: var(--muted);
+  font-size: .75rem;
+}
+.repo-select,
+.repo-attach {
+  min-width: 0;
+  width: 100%;
+}
+.repo-select {
+  max-width: 18rem;
+}
+.drop-browse {
+  height: 2rem;
+  flex-shrink: 0;
+  padding: .3rem .75rem;
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  color: var(--bg);
+  background: var(--accent);
+  font-size: .75rem;
+  font-weight: 600;
+}
+.drop-browse:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.drop-browse:disabled {
+  opacity: .5;
+}
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: .75rem;
+  margin-bottom: .9rem;
+}
+.section-head h2 {
+  margin: 0;
+  font-size: .85rem;
+  font-weight: 600;
+}
+.summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .75rem;
+  color: var(--muted);
+  font-size: .75rem;
+  font-variant-numeric: tabular-nums;
+}
+.unassigned {
+  color: var(--high, #d97732);
+}
+.bundles {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.bundle-group-head strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: .8rem;
+  font-weight: 500;
+}
+.bundle-group-head span {
+  color: var(--muted);
+  font-size: .75rem;
+}
+.bundle-row + .bundle-row {
+  border-top: 1px solid var(--border);
+}
+.bundle-icon svg {
+  width: 1rem;
+  height: 1rem;
+}
+.kind {
+  color: var(--muted);
+  padding: .05rem .35rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: .65rem;
+}
+.bundle-location-label {
+  color: var(--muted);
+  font-size: .75rem;
+}
+.action {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  padding: .45rem;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  text-decoration: none;
+}
+.action svg {
+  width: 1rem;
+  height: 1rem;
+}
+.action:hover {
+  color: var(--text);
+  border-color: var(--border);
+  background: var(--surface);
+}
+.action.danger:hover {
+  color: var(--critical, #e5534b);
+}
+.msg {
+  padding: 1rem 0;
+  margin: 0;
+  color: var(--muted);
+  font-size: .8rem;
+}
+.msg.error {
+  color: var(--critical, #e5534b);
+}
+@container (max-width: 46rem) {
+  .upload-panel {
+    grid-template-columns: 1fr;
+  }
+  .upload-controls {
+    justify-content: space-between;
+  }
+  .repo-picker {
+    flex: 1;
+  }
+  .repo-select {
+    max-width: none;
+  }
+  .bundle-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: .5rem;
+  }
+  .bundle-location {
+    grid-column: 1;
+    padding-left: 2.4rem;
+  }
+  .actions {
+    grid-column: 2;
+    grid-row: 1 / 3;
+  }
+}
+@container (max-width: 24rem) {
+  .upload-controls {
+    flex-wrap: wrap;
+  }
+  .repo-picker {
+    flex-basis: 100%;
+  }
+}
+.drop-icon svg {
+  width: 1rem;
+  height: 1rem;
+}
+@container (max-width: 55rem) {
+  .upload-panel {
+    grid-template-columns: 1fr;
+  }
+  .upload-controls {
+    justify-content: space-between;
+    padding-left: 3.5rem;
+  }
+  .repo-picker {
+    flex: 1;
+  }
+  .repo-select {
+    max-width: none;
+  }
+  .bundle-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: .75rem;
+  }
+  .bundle-location {
+    grid-column: 1;
+    padding-left: 3.1rem;
+  }
+  .actions {
+    grid-column: 2;
+    grid-row: 1 / 3;
+  }
+}
+@container (max-width: 30rem) {
+  .upload-controls {
+    padding-left: 0;
+    flex-wrap: wrap;
+  }
+  .repo-picker {
+    flex-basis: 100%;
+  }
+}
+.bundle-group {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  overflow-x: auto;
+}
+.bundle-group-head,
+.bundles {
+  min-width: 43rem;
+}
+.bundle-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(10rem, 15rem) auto;
+  align-items: center;
+  gap: .85rem;
+  padding: .55rem .85rem;
+}
+.bundle-location {
+  display: grid;
+  gap: .18rem;
+  min-width: 0;
+  grid-column: auto;
+  padding-left: 0;
+}
+.actions {
+  display: flex;
+  gap: .2rem;
+  grid-column: auto;
+  grid-row: auto;
+}
+.bundle-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+  padding: .5rem .85rem;
+  border-bottom: 1px solid var(--border);
+  background: rgb(from var(--text) r g b / .025);
+}
+.bundle-groups {
+  display: grid;
+  gap: .85rem;
+}
+.identity {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: .65rem;
+}
+.bundle-icon {
+  display: grid;
+  place-items: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  flex-shrink: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+}
+.who {
+  display: grid;
+  min-width: 0;
+  gap: .15rem;
+}
+.filename {
+  font-size: .8rem;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.meta {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: .3rem .6rem;
+  color: var(--muted);
+  font-size: .65rem;
+  line-height: 1.5;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.meta > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.upload-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: .65rem;
+  padding: .7rem .85rem;
+  margin-bottom: 1rem;
+  border: 1px dashed color-mix(in srgb, var(--muted) 45%, var(--border));
+  border-radius: 11px;
+  background: var(--panel);
+}
+.upload-copy strong {
+  display: block;
+  font-size: .8rem;
+  font-weight: 500;
+}
+.upload-description {
+  display: block;
+  margin-top: .3rem;
+  color: var(--muted);
+  font-size: .75rem;
+}
+.drop-icon {
+  display: grid;
+  place-items: center;
+  width: 1.8rem;
+  height: 1.8rem;
+  flex-shrink: 0;
+  border: 0;
+  border-radius: 8px;
+  color: var(--muted);
+  background: transparent;
+}
