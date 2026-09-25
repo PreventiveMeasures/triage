@@ -3,10 +3,11 @@
 .byline { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; font-size: .78rem; }
 .byline time, .byline span { color: var(--muted); }
 .byline button {
-  margin-left: auto; padding: .2rem .45rem;
+  padding: .2rem .45rem;
   border: 1px solid var(--border); border-radius: 4px;
   background: transparent; color: var(--text); font: inherit;
 }
+.comment-actions { margin-left: auto; display: flex; align-items: center; gap: .4rem; }
 .body { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: .4rem; }
 .body a { color: var(--accent); }
 .error { color: var(--danger, #c44); }

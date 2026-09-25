@@ -680,7 +680,8 @@ function prepareStatements(db: DatabaseSync) {
     deleteCommentHistoryStmt: db.prepare(`DELETE FROM finding_comment_event WHERE finding_id IN (SELECT value FROM json_each(?))`),
     countAnnotationsStmt: db.prepare(`SELECT count(*) AS total FROM (
       SELECT finding_id FROM finding_triage WHERE finding_id IN (SELECT value FROM json_each(?))
-      UNION SELECT finding_id FROM finding_comment WHERE finding_id IN (SELECT value FROM json_each(?)))`),
+      UNION SELECT finding_id FROM finding_comment WHERE finding_id IN (SELECT value FROM json_each(?))
+      UNION SELECT finding_id FROM finding_comment_event WHERE finding_id IN (SELECT value FROM json_each(?)))`),
     selectReposStmt: db.prepare(
       `SELECT repo_id AS repoId, full_name AS fullName, is_private AS priv,
               installation_id AS installId, default_branch AS branch, html_url AS htmlUrl,
@@ -1067,7 +1068,7 @@ function triageMethods(db: DatabaseSync, stmts: ReturnType<typeof prepareStateme
       const ids = JSON.stringify(findingIds)
       db.exec('BEGIN')
       try {
-        const { total: deleted } = countAnnotationsStmt.get(ids, ids) as { total: number }
+        const { total: deleted } = countAnnotationsStmt.get(ids, ids, ids) as { total: number }
         deleteTriageStmt.run(ids)
         deleteTriageHistoryStmt.run(ids)
         deleteCommentsStmt.run(ids)

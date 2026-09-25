@@ -132,6 +132,17 @@ export async function saveReportComment(reportId, { findingId, body, commentId =
   } catch { return { status: 0, comment: null } }
 }
 
+export async function deleteReportComment(reportId, commentId, version, csrfToken) {
+  try {
+    const res = await managedFetch(`/api/reports/${encodeURIComponent(reportId)}/comments/${encodeURIComponent(commentId)}`, {
+      method: 'DELETE', credentials: 'same-origin',
+      headers: { 'content-type': 'application/json', ...(csrfToken ? { 'x-csrf-token': csrfToken } : {}) },
+      body: JSON.stringify({ version }),
+    })
+    return res.status
+  } catch { return 0 }
+}
+
 // POST /api/reports/<id>/triage → push locally-changed triage entries
 // (`{ <findingId>: entry | null }`; null clears the server's row), sending the
 // double-submit CSRF token the server requires for mutations. Resolves with

@@ -78,15 +78,17 @@ invalidating it on account, team, or mode changes.
 # Managed comments
 
 Comments live in `finding_comment`, independently of the shared triage row.
-Each has its own ID, finding ID, text, optional author ID/login, creation and
+Each has its own ID, finding ID, text, optional author ID/login, optional creation and
 edit timestamps, and a version. Discussion posts are attributed to the
 authenticated user; the client cannot choose the author. Readers see the discussion; users
-with triage access can add comments and edit their own. Edits require the version
-that was read, so stale edits receive 409 instead of overwriting newer text.
+with triage access can add comments and edit or delete their own. Edits and
+deletions require the version that was read, so stale requests receive 409
+instead of overwriting or deleting newer text.
 
 `GET /api/reports/:id/comments` returns comments for the findings that user can
 see. `POST` accepts `{ findingId, body }`; `PATCH /api/reports/:id/comments/:commentId`
-accepts `{ body, version }`. Mutations require CSRF and current report/triage
+accepts `{ body, version }`; `DELETE` at the same item URL accepts `{ version }`
+and returns 204. Mutations require CSRF and current report/triage
 access. Text is nonempty and limited to 10,000 characters. Comments are shared
 across reports carrying the same finding and stay in browser memory only.
 
@@ -98,16 +100,24 @@ claiming that the admin wrote the imported text. The workspace import UI/API is
 not implemented yet; ordinary comment posts always take their author from the
 authenticated session.
 
+Imports can pass `createdAt: null` and `updatedAt: null` to retain missing dates;
+omitting `createdAt` uses the current time, and omitting `updatedAt` uses the
+creation date. New discussion posts always use the server clock. Existing
+database tables are migrated to permit null dates without rewriting records.
+The UI omits absent authors and dates: an anonymous dated comment shows its
+date and text, and an undated one shows just its text. Audit events still have
+the time of the action even when the imported comment has no known date.
+
 Existing triage-row comment text is migrated to unattributed records. The
 last triage writer is not reliable evidence of authorship, so migration does not
 claim an author. Each migrated text gets a fresh ID, preserving subsequent
 legacy-server writes after a rollback without replacing previous comments.
 The old column is cleared in the same transaction to avoid duplicate migration
 on restart. Unattributed comments remain readable; users cannot claim or
-edit them. Legacy triage history is preserved. New shared-field comment writes
+edit or delete them. Legacy triage history is preserved. New shared-field comment writes
 are rejected; e2e/local/sync comment storage and editing are unchanged.
 
-Comment additions and edits contribute to scoped activity history and user
+Comment additions, edits, and deletions contribute to scoped activity history and user
 Last Activity, without copying their text into the activity feed. Ordinary
 triage updates and clears do not change comments. Explicit repository annotation
 deletion includes comments, while preserving findings shared by other repos.

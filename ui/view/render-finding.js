@@ -1407,7 +1407,11 @@ function tabBodyTemplate(f, isActive, idx, total, context, tabIds) {
       ${hasSeverityCorrection(f) && f.correctedSeverityReason ? html`<div class="severity-reason"><span class="severity-reason-label">Severity correction:</span> ${renderHighlighted(f.correctedSeverityReason)}</div>` : nothing}
       ${duplicatesTemplate(f, tabIds)}
       ${isManagedUiMode() ? managedCommentsFor(f).map(item => html`<div class="comment-block">
-        <span class="comment-label">${item.authorLogin ?? 'Unattributed'} · ${new Date(item.createdAt).toLocaleString()}${item.version > 1 ? ' · edited' : ''}</span>
+        <span class="comment-label">${[
+          item.authorLogin,
+          item.createdAt == null ? '' : new Date(item.createdAt).toLocaleString(),
+          item.version > 1 && item.updatedAt != null ? `edited ${new Date(item.updatedAt).toLocaleString()}` : '',
+        ].filter(Boolean).join(' · ')}</span>
         <div>${renderCommentText(item.body)}</div>
       </div>`) : comment ? html`<div class="comment-block"><span class="comment-label">Comment:</span> ${renderCommentText(comment)}</div>` : nothing}
       ${fix

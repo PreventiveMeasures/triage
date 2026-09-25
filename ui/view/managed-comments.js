@@ -1,6 +1,7 @@
 import { isManagedUiMode, state } from '#client/index.js'
 import { roleAtLeast } from '../../common/managed/roles.ts'
-import { fetchReportComments, saveReportComment } from './client-managed.js'
+import { compareManagedComments } from '../../common/managed/comments.ts'
+import { deleteReportComment, fetchReportComments, saveReportComment } from './client-managed.js'
 
 export function managedCommentsFor(finding) {
   return isManagedUiMode() ? state.managedComments?.get(finding?.id) ?? [] : []
@@ -44,8 +45,21 @@ export async function writeManagedComment(finding, body, original = null) {
     const comments = state.managedComments.get(finding.id) ?? []
     const next = comments.filter(comment => comment.id !== result.comment.id)
     next.push(result.comment)
-    next.sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))
+    next.sort(compareManagedComments)
     state.managedComments.set(finding.id, next)
   }
   return result
+}
+
+export async function deleteManagedComment(finding, comment) {
+  const reportId = finding?._managedReportId
+  const current = managedCommentScope(reportId)
+  if (!current() || !canWriteManagedComments() || comment.authorId !== state.managedSession.id) return 403
+  const status = await deleteReportComment(reportId, comment.id, comment.version, state.managedSession.csrfToken)
+  if (!current()) return 0
+  if (status === 204) {
+    const comments = state.managedComments.get(finding.id) ?? []
+    state.managedComments.set(finding.id, comments.filter(entry => entry.id !== comment.id))
+  }
+  return status
 }

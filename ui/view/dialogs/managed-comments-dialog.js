@@ -1,7 +1,7 @@
 import { html, nothing, unsafeCSS } from 'lit'
 import { state } from '#client/index.js'
 import { MAX_COMMENT_TEXT } from '../../../common/managed/comments.ts'
-import { canWriteManagedComments, loadManagedReportComments, managedCommentScope, managedCommentsFor, writeManagedComment } from '../managed-comments.js'
+import { canWriteManagedComments, deleteManagedComment, loadManagedReportComments, managedCommentScope, managedCommentsFor, writeManagedComment } from '../managed-comments.js'
 import { renderCommentText } from '../render-finding.js'
 import { AppDialog, openAppDialog } from './app-dialog.js'
 import commentCSS from './dialog-comment.css'
@@ -12,7 +12,7 @@ class ManagedCommentsDialog extends AppDialog {
   static properties = {
     finding: { attribute: false }, changed: { attribute: false },
     _comments: { state: true }, _value: { state: true }, _editing: { state: true },
-    _busy: { state: true }, _error: { state: true },
+    _busy: { state: true }, _error: { state: true }, _deleting: { state: true },
   }
 
   constructor() {
@@ -24,6 +24,7 @@ class ManagedCommentsDialog extends AppDialog {
     this._editing = null
     this._busy = false
     this._error = ''
+    this._deleting = null
   }
 
   connectedCallback() {
@@ -53,12 +54,36 @@ class ManagedCommentsDialog extends AppDialog {
     this.changed?.()
   }
   _edit(comment) {
+    this._deleting = null
     this._editing = comment
     this._value = comment.body
     this._error = ''
     void this.updateComplete.then(() => this.renderRoot.querySelector('textarea')?.focus())
   }
   _cancelEdit = () => { this._editing = null; this._value = ''; this._error = '' }
+  _delete = async (comment) => {
+    if (this._busy || !this._current()) return
+    this._busy = true
+    this._error = ''
+    const status = await deleteManagedComment(this.finding, comment)
+    if (!this.isConnected) { if (status === 204 && this._current()) this.changed?.(); return }
+    if (!this._current()) { this._close(); return }
+    this._busy = false
+    this._deleting = null
+    if (status === 409) {
+      await this._refresh()
+      if (this.isConnected) this._error = 'This comment changed elsewhere. Review the latest version before deleting it.'
+      return
+    }
+    if (status !== 204) {
+      this._error = status === 403 || status === 404
+        ? 'This comment is unavailable or you no longer have permission to delete it.' : 'Could not delete the comment. Please retry.'
+      return
+    }
+    this._comments = managedCommentsFor(this.finding)
+    if (this._editing?.id === comment.id) this._cancelEdit()
+    this.changed?.()
+  }
   _save = async () => {
     const body = this._value.trim()
     if (this._busy || !body || body.length > MAX_COMMENT_TEXT || !this._current()) return
@@ -94,11 +119,17 @@ class ManagedCommentsDialog extends AppDialog {
       <header><h3 id="comments-title">Comments</h3><p class="loc">${this.finding?.file ?? ''}</p></header>
       <section class="comments" aria-label="Comments">
         ${this._comments.map(comment => html`<article class="comment">
-          <div class="byline"><strong>${comment.authorLogin ?? 'Unattributed'}</strong>
-            <time datetime=${new Date(comment.createdAt).toISOString()}>${new Date(comment.createdAt).toLocaleString()}</time>
-            ${comment.version > 1 ? html`<span>edited ${new Date(comment.updatedAt).toLocaleString()}</span>` : nothing}
+          <div class="byline">${comment.authorLogin ? html`<strong>${comment.authorLogin}</strong>` : nothing}
+            ${comment.createdAt == null ? nothing : html`<time datetime=${new Date(comment.createdAt).toISOString()}>${new Date(comment.createdAt).toLocaleString()}</time>`}
+            ${comment.version > 1 && comment.updatedAt != null ? html`<span>edited ${new Date(comment.updatedAt).toLocaleString()}</span>` : nothing}
             ${canWrite && comment.authorId === state.managedSession?.id
-              ? html`<button type="button" ?disabled=${this._busy} @click=${() => this._edit(comment)}>Edit</button>` : nothing}
+              ? html`<span class="comment-actions">${this._deleting === comment.id
+                ? html`<span>Delete comment?</span>
+                  <button type="button" ?disabled=${this._busy} @click=${() => { this._deleting = null }}>Cancel</button>
+                  <button type="button" ?disabled=${this._busy} @click=${() => this._delete(comment)}>Delete</button>`
+                : html`<button type="button" ?disabled=${this._busy} @click=${() => this._edit(comment)}>Edit</button>
+                  <button type="button" ?disabled=${this._busy} @click=${() => { this._deleting = comment.id }}>Delete</button>`}
+                </span>` : nothing}
           </div><div class="body">${renderCommentText(comment.body)}</div>
         </article>`)}
         ${this._comments.length === 0 ? html`<p>${this._busy ? 'Loading comments…' : 'No comments yet.'}</p>` : nothing}

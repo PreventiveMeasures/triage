@@ -58,6 +58,10 @@ export async function saveReportComment(reportId, entry, csrfToken) {
   return (await loadManagedBundle()).saveReportComment(reportId, entry, csrfToken)
 }
 
+export async function deleteReportComment(reportId, commentId, version, csrfToken) {
+  return (await loadManagedBundle()).deleteReportComment(reportId, commentId, version, csrfToken)
+}
+
 export async function pushReportTriage(id, entries, csrfToken) {
   return (await loadManagedBundle()).pushReportTriage(id, entries, csrfToken)
 }
