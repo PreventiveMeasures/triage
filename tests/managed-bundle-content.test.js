@@ -127,7 +127,7 @@ test('cached reads and manager inventory require ownership or team access; revoc
   const base = `/api/bundles/${record.id}`
   for (const part of ['metadata', 'contents', 'download']) {
     for (const who of ['admin', 'owner', 'manager', 'viewer']) assert.equal((await h.send(`${base}/${part}`, who)).status, 200, `${who} ${part}`)
-    assert.equal((await h.send(`${base}/${part}`, 'none')).status, 404)
+    assert.equal((await h.send(`${base}/${part}`, 'none')).status, 403)
     assert.equal((await h.send(`${base}/${part}`, 'logged-out')).status, 401)
   }
   const list = await h.send('/api/admin/bundles', 'owner')

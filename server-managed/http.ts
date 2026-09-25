@@ -539,6 +539,12 @@ async function repoIdAllowed(deps: ManagedHttpDeps, repoId: unknown): Promise<bo
   return (await deps.db.listSelectedRepos()).some((r) => r.repoId === repoId)
 }
 
+async function canChangeReportRepo(deps: ManagedHttpDeps, user: StoredUser, reportId: string): Promise<boolean> {
+  if (!roleAtLeast(user.role, 'manage') || !(await canViewReport(deps, user, reportId))) return false
+  const report = await deps.db.getReport(reportId)
+  return report != null && (user.role === 'admin' || report.repoId === null || await deps.db.userCanReadReport(user.id, reportId))
+}
+
 // POST /api/admin/reports/set-repo — attach / detach a stored report's repo
 // + directory link. Mutation: same-origin + CSRF, admin|manage. Body
 // { reportId, repoId, directory }, where repoId is null (detach) or a
@@ -552,14 +558,15 @@ async function handleSetReportRepo(req: IncomingMessage, res: ServerResponse, de
   const repoId = (body as { repoId?: unknown } | null)?.repoId ?? null
   const directory = (body as { directory?: unknown } | null)?.directory ?? ''
   if (typeof reportId !== 'string') { sendJson(res, 400, { error: 'bad-request' }); return }
+  if (!(await canViewReport(deps, s.user, reportId))) { sendJson(res, 404, { error: 'no-report' }); return }
   const report = await deps.db.getReport(reportId)
-  const access = await contentAccess(deps.db, s.user)
-  if (report == null || !access.report(report)) { sendJson(res, 404, { error: 'no-report' }); return }
+  if (report == null) { sendJson(res, 404, { error: 'no-report' }); return }
+  if (!(await canChangeReportRepo(deps, s.user, reportId))) { sendJson(res, 403, { error: 'repo-forbidden' }); return }
   if (report.repoEmbedded) { sendJson(res, 409, { error: 'repo-in-report' }); return }
   if (!(await repoIdAllowed(deps, repoId))) { sendJson(res, 400, { error: 'bad-repo' }); return }
   const normalized = normalizeTeamPath(directory)
   if (!normalized.ok) { sendJson(res, 400, { error: 'bad-directory' }); return }
-  if (!access.report({ repoId: repoId as number | null, repoDirectory: normalized.path ?? '' })) { sendJson(res, 403, { error: 'repository-access-denied' }); return }
+  if (repoId !== null && s.user.role !== 'admin' && !(await deps.db.userCanReadRepoPath(s.user.id, repoId as number, normalized.path ?? ''))) { sendJson(res, 403, { error: 'repo-forbidden' }); return }
   if (!(await deps.db.setReportRepo(reportId, repoId as number | null, normalized.path ?? ''))) { sendJson(res, 404, { error: 'no-report' }); return }
   if (report.repoId !== repoId || report.repoDirectory !== (repoId == null ? '' : normalized.path ?? '')) {
     await activity(deps, s.user, 'repository', repoId == null ? 'detached a report from its repository' : `assigned a report to repository path ${normalized.path || '/'}`, { reportId, report: report.filename, repo: await repositoryName(deps, (repoId as number | null) ?? report.repoId) })
@@ -577,9 +584,8 @@ async function handleSetReportVisible(req: IncomingMessage, res: ServerResponse,
   const reportId = (body as { reportId?: unknown } | null)?.reportId
   const visible = (body as { visible?: unknown } | null)?.visible
   if (typeof reportId !== 'string' || typeof visible !== 'boolean') { sendJson(res, 400, { error: 'bad-request' }); return }
-  const report = await deps.db.getReport(reportId)
-  const access = await contentAccess(deps.db, s.user)
-  if (report == null || !access.report(report)) { sendJson(res, 404, { error: 'no-report' }); return }
+  if (!(await canViewReport(deps, s.user, reportId))) { sendJson(res, 404, { error: 'no-report' }); return }
+  if (!(await canChangeReportRepo(deps, s.user, reportId))) { sendJson(res, 403, { error: 'repo-forbidden' }); return }
   if (!(await deps.db.setReportVisible(reportId, visible))) { sendJson(res, 404, { error: 'no-report' }); return }
   if (report.visible !== visible) await activity(deps, s.user, 'visibility', visible ? 'published a report' : 'hid a report', { reportId, report: report.filename, repo: await repositoryName(deps, report.repoId) })
   sendJson(res, 200, { ok: true, visible })
@@ -619,10 +625,13 @@ async function handleListReports(res: ServerResponse, deps: ManagedHttpDeps, coo
   const reports = (await deps.db.listReports()).filter(access.report).map(report =>
     report.bundleId && !bundles.has(report.bundleId) ? { ...report, bundleId: null, bundleFilename: null } : report)
   sendJson(res, 200, {
-    reports,
+    reports: await Promise.all((await deps.db.listReports(s.user.role === 'admin' ? undefined : s.user.id)).map(async report => {
+      const bundleAllowed = report.bundleId != null && await canAccessBundle(deps, s.user, report.bundleId)
+      return { ...report, canChangeRepo: await canChangeReportRepo(deps, s.user, report.id),
+        bundleId: bundleAllowed ? report.bundleId : null, bundleFilename: bundleAllowed ? report.bundleFilename : null }
+    })),
     maxBytes: deps.config.maxReportBytes,
-    repos: selectableRepos(await deps.db.listSelectedRepos()).filter(access.bundle),
-    repoScopes: access.scopes,
+    repos: selectableRepos(await bundleRepos(deps, s.user)),
   })
 }
 
@@ -630,11 +639,11 @@ async function handleListReports(res: ServerResponse, deps: ManagedHttpDeps, coo
 // declared integrity that has a stored bundle wins (bundleId set). When none is
 // stored yet, keep the first declared integrity so a later bundle upload of it
 // re-links (see linkReportsToBundle). Returns the (bundleId, integrity) to store.
-async function resolveReportBundle(deps: ManagedHttpDeps, bytes: Buffer, access: Awaited<ReturnType<typeof contentAccess>>): Promise<{ bundleId: string | null; integrity: string | null }> {
+async function resolveReportBundle(deps: ManagedHttpDeps, user: StoredUser, bytes: Buffer): Promise<{ bundleId: string | null; integrity: string | null }> {
   const hashes = reportBundleHashes(bytes)
   for (const h of hashes) {
     const b = await deps.db.getBundleByIntegrity(h)
-    if (b != null && access.bundle(b)) return { bundleId: b.id, integrity: h }
+    if (b != null && await canAccessBundle(deps, user, b.id)) return { bundleId: b.id, integrity: h }
   }
   return { bundleId: null, integrity: hashes[0] ?? null }
 }
@@ -686,12 +695,11 @@ async function handleUploadReport(req: IncomingMessage, res: ServerResponse, dep
     if (!legacyRepo.ok) return
     matchedRepo = legacyRepo.repoId == null ? null : selected.find((repo) => repo.repoId === legacyRepo.repoId) ?? null
   }
-  const access = await contentAccess(deps.db, s.user)
-  if (!access.report({ repoId: matchedRepo?.repoId ?? null, repoDirectory: directory })) { sendJson(res, 403, { error: 'repository-access-denied' }); return }
+  if (matchedRepo && s.user.role !== 'admin' && !(await deps.db.userCanReadRepoPath(s.user.id, matchedRepo.repoId, directory))) { sendJson(res, 403, { error: 'repo-forbidden' }); return }
   const id = randomUUID()
   const contentType = (firstHeader(req.headers['content-type']) ?? '').split(';', 1)[0]!.trim() || 'application/json'
   const sha256 = createHash('sha256').update(bytes).digest('base64url')
-  const { bundleId, integrity } = await resolveReportBundle(deps, bytes, access)
+  const { bundleId, integrity } = await resolveReportBundle(deps, s.user, bytes)
   await deps.reportStore.put(id, bytes)
   try {
     await deps.db.insertReport({
@@ -715,10 +723,13 @@ async function handleUploadReport(req: IncomingMessage, res: ServerResponse, dep
 async function handleGetReport(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string): Promise<void> {
   const s = await readManageSession(res, deps, cookie)
   if (s == null) return
+  if (!(await canViewReport(deps, s.user, id))) { sendJson(res, 404, { error: 'no-report' }); return }
   const rec = await deps.db.getReport(id)
   if (rec == null || !(await contentAccess(deps.db, s.user)).report(rec)) { sendJson(res, 404, { error: 'no-report' }); return }
   const bytes = await deps.reportStore.get(id)
   if (bytes == null) { sendJson(res, 503, { error: 'unavailable' }); return }
+  const current = await readSession(deps.config, deps.db, cookie, Date.now())
+  if (!current || !roleAtLeast(current.user.role, 'manage') || !(await canViewReport(deps, current.user, id))) { sendJson(res, 404, { error: 'no-report' }); return }
   // The stored filename is already control-/path-stripped (sanitizeReportFilename
   // at upload); only a double-quote could break the quoted Content-Disposition.
   const dispoName = rec.filename.replaceAll('"', '')
@@ -739,9 +750,8 @@ async function handleDeleteReport(req: IncomingMessage, res: ServerResponse, dep
   const s = await checkMutation(req, res, deps, cookie)
   if (s == null) return
   if (!requireManageRole(res, s.user)) return
-  const report = await deps.db.getReport(id)
-  const access = await contentAccess(deps.db, s.user)
-  if (report == null || !access.report(report)) { sendJson(res, 404, { error: 'no-report' }); return }
+  if (!(await canViewReport(deps, s.user, id))) { sendJson(res, 404, { error: 'no-report' }); return }
+  if (!(await canChangeReportRepo(deps, s.user, id))) { sendJson(res, 403, { error: 'repo-forbidden' }); return }
   const existed = await deps.db.deleteReport(id)
   await deps.reportStore.delete(id).catch((err) => { console.warn('managed: report bytes delete failed:', err) })
   if (!existed) { sendJson(res, 404, { error: 'no-report' }); return }
@@ -951,28 +961,24 @@ async function handleMyTeams(res: ServerResponse, deps: ManagedHttpDeps, cookie:
   const s = await readSession(deps.config, deps.db, cookie, Date.now())
   if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
   const teams = await deps.db.listTeamsForUser(s.user.id)
-  // Report rows need at least a 'view' role (matches canViewReport) — a 'none'
-  // member sees the team but no openable reports, so strip them.
-  const gated = roleAtLeast(s.user.role, 'view') ? teams : teams.map((t) => ({ ...t, reports: [], bundles: [] }))
-  sendJson(res, 200, { teams: gated })
+  sendJson(res, 200, { teams })
 }
 
-// Server-side authorization to view a report through the team endpoint: an admin
-// may read any existing report; everyone else needs AT LEAST a 'view' role AND
-// membership of a team holding the report's repo. (A 'none' member of such a team
-// is refused — team membership alone is not enough.) The same gate filters the
-// /api/teams listing, so the sidebar never shows a report the user can't open.
+// Admins read all reports. Managers read their uploads or reports inside their
+// team repository paths, including drafts they may manage. View/triage users
+// need a published report in their teams; ownership never overrides role none.
 async function canViewReport(deps: ManagedHttpDeps, user: StoredUser, reportId: string): Promise<boolean> {
   if (!roleAtLeast(user.role, 'view')) return false
   const report = await deps.db.getReport(reportId)
   if (report == null) return false
   if (user.role === 'admin') return true
-  if (!report.visible && user.role !== 'manage') return false
+  if (user.role === 'manage') return report.uploadedBy === user.id || deps.db.userCanReadReport(user.id, reportId)
+  if (!report.visible) return false
   return deps.db.userCanReadReport(user.id, reportId)
 }
 
 // GET /api/reports/<id> — view a report the caller is authorized to read (see
-// canViewReport: admin, or ≥view role + team membership for the report's repo).
+// canViewReport: admin, manager ownership, or team access with publication rules).
 // Accept: application/json includes the server's repo assignment alongside the
 // filtered content. Other callers retain the raw text/plain response. The
 // client renders either without caching to OPFS. 404 covers "no such report" AND
@@ -984,7 +990,9 @@ async function handleViewReport(req: IncomingMessage, res: ServerResponse, deps:
   if (!(await canViewReport(deps, s.user, id))) { sendJson(res, 404, { error: 'no-report' }); return }
   const bytes = await deps.reportStore.get(id)
   if (bytes == null) { sendJson(res, 503, { error: 'unavailable' }); return }
-  const out = await viewerReportBytes(deps, s.user, id, bytes)
+  const current = await readSession(deps.config, deps.db, cookie, Date.now())
+  if (!current || !(await canViewReport(deps, current.user, id))) { sendJson(res, 404, { error: 'no-report' }); return }
+  const out = await viewerReportBytes(deps, current.user, id, bytes)
   if (out == null) { sendJson(res, 404, { error: 'no-report' }); return }
   if (acceptsReportMetadata(req.headers.accept)) {
     const report = await deps.db.getReport(id)
@@ -1021,20 +1029,9 @@ async function viewerReportBytes(deps: ManagedHttpDeps, user: StoredUser, report
   return filtered === text ? bytes : Buffer.from(filtered, 'utf8')
 }
 
-// Server-side authorization to WRITE per-finding triage on a report — the shape
-// of canViewReport one rung up the ladder: an admin may annotate any existing
-// report; everyone else needs AT LEAST a 'triage' role AND membership of a team
-// holding the report's repo. That includes 'manage': managing the stored
-// reports is not membership of the teams reading them, and nobody may write
-// triage on a report they can't read. The caller reports any failure as 404 —
-// the same "neither existence nor denial is probeable" rule as canViewReport.
+// Triage requires both a writing role and access to the report itself.
 async function canTriageReport(deps: ManagedHttpDeps, user: StoredUser, reportId: string): Promise<boolean> {
-  if (!roleAtLeast(user.role, 'triage')) return false
-  const report = await deps.db.getReport(reportId)
-  if (report == null) return false
-  if (user.role === 'admin') return true
-  if (!report.visible && user.role !== 'manage') return false
-  return deps.db.userCanReadReport(user.id, reportId)
+  return roleAtLeast(user.role, 'triage') && await canViewReport(deps, user, reportId)
 }
 
 // The finding ids a viewer sees in a report — what the report-scoped triage
@@ -1104,6 +1101,8 @@ async function handleGetReportTriage(res: ServerResponse, deps: ManagedHttpDeps,
   if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
   if (!(await canViewReport(deps, s.user, id))) { sendJson(res, 404, { error: 'no-report' }); return }
   const visible = await visibleFindingIds(deps, s.user, id)
+  const current = await readSession(deps.config, deps.db, cookie, Date.now())
+  if (!current || !(await canViewReport(deps, current.user, id)) || current.user.role !== s.user.role) { sendJson(res, 404, { error: 'no-report' }); return }
   const entries: Record<string, TriageEntryPatch | null> = {}
   for (const row of await deps.db.listTriage([...visible])) entries[row.findingId] = triageWireEntry(row)
   sendJson(res, 200, { entries })
@@ -1122,6 +1121,8 @@ async function handleGetReportTriageHistory(res: ServerResponse, deps: ManagedHt
   const finding = query.get('finding') ?? ''
   if (finding === '' || finding.length > MAX_FINDING_ID) { sendJson(res, 400, { error: 'bad-request' }); return }
   const visible = await visibleFindingIds(deps, s.user, id)
+  const current = await readSession(deps.config, deps.db, cookie, Date.now())
+  if (!current || !(await canViewReport(deps, current.user, id)) || current.user.role !== s.user.role) { sendJson(res, 404, { error: 'no-report' }); return }
   if (!visible.has(finding)) { sendJson(res, 404, { error: 'no-finding' }); return }
   const events = (await deps.db.listTriageHistory(finding, MAX_TRIAGE_HISTORY)).map((row: TriageEventRow) => ({
     seq: row.seq, at: row.at, actorLogin: row.actorLogin, batchId: row.batchId, entry: triageWireEntry(row),
@@ -1157,6 +1158,8 @@ async function handleSetReportTriage(req: IncomingMessage, res: ServerResponse, 
     parsed.push([findingId, patch])
   }
   const visible = await visibleFindingIds(deps, s.user, id)
+  const current = await readSession(deps.config, deps.db, cookie, Date.now())
+  if (!current || !(await canViewReport(deps, current.user, id)) || current.user.role !== s.user.role) { sendJson(res, 404, { error: 'no-report' }); return }
   if (parsed.some(([findingId]) => !visible.has(findingId))) {
     sendJson(res, 404, { error: 'no-finding' }); return
   }
@@ -1356,9 +1359,18 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       })
       return
     }
+    // Authentication is not workspace access. Keep bootstrap/session/logout
+    // available so blocked accounts can see their role and sign out, but deny
+    // every managed data route before reading bodies or looking up resources.
+    const managedDataPath = path.startsWith('/api/admin/') || path.startsWith(MY_REPORT_PREFIX)
+      || path.startsWith('/api/bundles/') || path === MY_TEAMS_PATH || path.startsWith(AVATAR_PREFIX)
+    if (managedDataPath) {
+      const s = await readSession(config, db, cookie, Date.now())
+      if (s && !roleAtLeast(s.user.role, 'view')) { sendJson(res, 403, { error: 'forbidden' }); return }
+    }
     // Cached avatar by user id, served same-origin (the page CSP forbids the
     // github CDN). The id in the path keys the browser cache per user, so a user
-    // switch never serves a stale avatar. Any valid session may fetch one.
+    // switch never serves a stale avatar. Workspace access is required.
     if (path.startsWith(AVATAR_PREFIX)) {
       if (method !== 'GET') { send405(res, 'GET'); return }
       const s = await readSession(config, db, cookie, Date.now())

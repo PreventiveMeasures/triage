@@ -143,3 +143,20 @@ Opening a bundle downloads its metadata into managed app memory. Code,
 Terminal, source search and source comparison request contents when needed;
 the browser handles HTTP gzip decoding. Neither payload enters OPFS, IndexedDB
 or localStorage. Session/role changes clear managed caches and terminal state.
+
+
+# Report access and blocked accounts
+
+Report lists, previews, downloads and triage reads use the same access scope:
+admins can read all reports; managers can read their uploads or reports within
+their team repository paths. Other readers need a published report inside a
+team path. Uploader ownership does not grant access to view/triage/none roles.
+Report repository changes, publication and deletion also require access to the
+current repository path; new links require access to the destination path.
+
+The `none` (No access) role is denied at the managed data API boundary, even
+when the account owns uploads or belongs to teams. This includes team names,
+avatars, report/triage data, bundle caches, and every management endpoint.
+Public bootstrap, the user's own session status and sign-out remain available.
+The client shows a no-access page and clears previously loaded data when the
+role changes.

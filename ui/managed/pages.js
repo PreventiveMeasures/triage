@@ -940,7 +940,7 @@ class ManagedAdminReports extends ManagedPage {
   _row(report) {
     const analyzer = report.analyzer ?? report.source ?? report.producer ?? 'default'
     const logo = REPORT_LOGOS[analyzer] ?? REPORT_LOGOS.default
-    const canAssignLocation = report.repoEmbedded !== true
+    const canAssignLocation = report.repoEmbedded !== true && report.canChangeRepo !== false
     const canMakeVisible = report.repoEmbedded === true || report.repoId != null
     const location = report.repoFullName ? `${report.repoFullName}${report.repoDirectory ? `/${report.repoDirectory}` : ''}` : 'No repository assigned'
     const when = Number.isFinite(report.uploadedAt) ? new Date(report.uploadedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : ''
@@ -953,9 +953,9 @@ class ManagedAdminReports extends ManagedPage {
         <span class="report-actions">
           ${canAssignLocation ? html`<button type="button" class="action" data-tooltip="Set repository location" aria-label=${`Set location for ${report.filename}`} @click=${() => this._openLocation(report)}>${adminIcon('repo')}</button>` : html`<span class="action-spacer"></span>`}
           <button type="button" class="action" data-tooltip=${this._preview === report.id ? 'Close preview' : 'Preview report'} aria-label=${`Preview ${report.filename}`} aria-expanded=${this._preview === report.id} @click=${() => void this._togglePreview(report)}>${adminIcon('preview')}</button>
-          <button type="button" class="action" data-tooltip=${report.visible ? 'Hide from teams' : canMakeVisible ? 'Make visible to teams' : 'Assign a repository before publishing'} aria-label=${`${report.visible ? 'Hide' : 'Make visible'} ${report.filename}`} ?disabled=${!canMakeVisible && !report.visible} @click=${() => void this._setVisible(report, !report.visible)}>${adminIcon(report.visible ? 'hide' : 'show')}</button>
+          <button type="button" class="action" data-tooltip=${report.visible ? 'Hide from teams' : canMakeVisible ? 'Make visible to teams' : 'Assign a repository before publishing'} aria-label=${`${report.visible ? 'Hide' : 'Make visible'} ${report.filename}`} ?disabled=${report.canChangeRepo === false || (!canMakeVisible && !report.visible)} @click=${() => void this._setVisible(report, !report.visible)}>${adminIcon(report.visible ? 'hide' : 'show')}</button>
           <a class="action" aria-label=${`Download ${report.filename}`} href=${`/api/admin/reports/${encodeURIComponent(report.id)}`}>${adminIcon('download')}</a>
-          <button type="button" class="action danger" aria-label=${`Delete ${report.filename}`} @click=${() => this._delete(report)}>${ADMIN_DELETE_ICON}</button>
+          <button type="button" class="action danger" aria-label=${`Delete ${report.filename}`} ?disabled=${report.canChangeRepo === false} @click=${() => this._delete(report)}>${ADMIN_DELETE_ICON}</button>
         </span>
       </div>
       ${this._preview === report.id ? html`<div class="preview">${this._previewLoading === report.id ? html`<span class="preview-loading">Loading preview…</span>` : html`<pre>${this._previewText ?? ''}</pre>`}</div>` : nothing}
@@ -964,6 +964,7 @@ class ManagedAdminReports extends ManagedPage {
   }
 
   _openLocation(report) {
+    if (report.canChangeRepo === false) return
     this._locationReport = report.id
     this._locationRepo = report.repoId ?? null
     this._locationDirectory = report.repoDirectory ?? ''

@@ -1217,6 +1217,7 @@ function renderAuthStatus() {
   const menu = root?.querySelector('#user-menu')
   const session = state.managedSession
   hostEl?.toggleAttribute('data-authenticated', session != null)
+  hostEl?.toggleAttribute('data-workspace-access', session != null && session.role !== 'none')
   authBtn.hidden = session == null
   if (session == null) {
     if (manageBtn) manageBtn.hidden = true
@@ -1263,7 +1264,7 @@ function avatarTemplate(initial, userId, large = false) {
   const src = `/api/avatar/${encodeURIComponent(userId)}`
   return html`<span class=${large ? 'user-avatar user-avatar-lg' : 'user-avatar'}>
     <span class="user-avatar-fallback">${initial}</span>
-    ${getPreviewRole() ? nothing : html`<img alt="" src=${src} @error=${onAvatarError}>`}
+    ${getPreviewRole() || state.managedSession?.role === 'none' ? nothing : html`<img alt="" src=${src} @error=${onAvatarError}>`}
   </span>`
 }
 
@@ -1926,7 +1927,7 @@ async function revalidateManagedSession() {
     initManagedTriagePush()
     // The user's teams (sidebar Teams section). probeTeams never throws; empty
     // when logged out. Repaint the sidebar so the section reflects the result.
-    const teams = session == null ? [] : await managedProbeTeams({ fallback: state.managedTeams })
+    const teams = session == null || session.role === 'none' ? [] : await managedProbeTeams({ fallback: state.managedTeams })
     if (!isCurrent()) return
     state.managedTeams = teams
     renderSidebar()
@@ -1975,6 +1976,7 @@ async function restoreManagedPage(route, isCurrent) {
     && state.currentManagedTeam === route.teamId && state.currentManagedReport === route.reportId
   beginViewNavigation()
   if (!isCurrent() || !isManagedUiMode()) return false
+  if (route.view !== 'home' && (!state.managedSession || state.managedSession.role === 'none')) return false
   if (route.finding) {
     const { revealFinding } = await import('./finding-link-nav.js')
     if (!isCurrent()) return false
