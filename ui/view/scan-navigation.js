@@ -6,6 +6,7 @@ import { render } from './render.js'
 import { ScanAccess } from '../scan/access.js'
 import { detectTokenProvider } from '../scan/provider-token.js'
 import { providerIcon } from './provider-icons.js'
+import { SCAN_ICON_SVG } from './icons.js'
 import '../scan/page.js'
 import { loadLocalReportSources, loadLocalScanBundle, loadLocalScanSource } from './scan-local-source.js'
 import { availableScanServer } from '../scan/availability.js'
@@ -188,7 +189,7 @@ export function refreshScanNavigation() {
     button = document.createElement('button')
     button.type = 'button'
     button.className = 'local-scan-button'
-    button.textContent = 'Scan'
+    button.innerHTML = `${SCAN_ICON_SVG}<span>Scan</span>`
     button.addEventListener('click', async () => {
       await ensureClientMode()
       if (!currentScanServer()) return
