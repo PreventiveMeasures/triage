@@ -13,8 +13,7 @@ class ManagedFixLink extends StateElement {
   static properties = { url: { type: String }, compact: { type: Boolean, reflect: true } }
   static styles = css`
     :host { display: inline; word-break: normal; }
-    a { color: var(--accent); text-decoration: none; overflow-wrap: anywhere; }
-    a:hover { text-decoration: underline; }
+    a { color: var(--accent); text-decoration: none; overflow-wrap: anywhere; cursor: default; }
     .status { display: inline-flex; align-items: center; gap: .3em; vertical-align: text-bottom; margin-right: .35em; font-weight: 600; white-space: nowrap; }
     svg { flex: none; }
     /* GitHub Primer's foreground colors follow the app's color-scheme. */
@@ -32,7 +31,7 @@ class ManagedFixLink extends StateElement {
       width: min(24rem, calc(100vw - 24px)); max-height: calc(100vh - 24px); overflow: auto;
       border: 1px solid var(--border); border-radius: 10px; background: var(--bg); color: var(--text);
       box-shadow: 0 8px 28px rgb(0 0 0 / .25); font: 13px/1.45 system-ui, sans-serif;
-      text-align: left; white-space: normal; overflow-wrap: anywhere; letter-spacing: normal;
+      text-align: left; white-space: normal; overflow-wrap: anywhere; letter-spacing: normal; cursor: default;
     }
     .preview-repo { color: var(--muted); font-size: 12px; }
     .preview-title { margin: 8px 0 12px; font-size: 15px; font-weight: 600; line-height: 1.4; }
