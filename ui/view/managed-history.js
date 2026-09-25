@@ -1,6 +1,8 @@
 import { managedRoutePath, parseManagedRoute } from '../../common/managed/routes.js'
+import { encodeFindingRef, extractFindingRef } from '../../client/finding-link.js'
 
 const KEY = 'deepviewManagedNavigation'
+const LOGIN_FINDING = 'deepviewManagedLoginFinding'
 
 // Browser history contains only a navigation generation, never report data.
 // A mode change invalidates old entries; Back cannot restore the prior mode.
@@ -11,6 +13,32 @@ export function createManagedHistory(browser) {
   let restore = null
   let currentPath = null
   let listening = false
+  let findingUrl = null
+
+  function routeAt(url) {
+    const route = parseManagedRoute(url)
+    const finding = extractFindingRef(url.hash)
+    return route ? { ...route, ...(finding ? { finding } : {}) } : null
+  }
+
+  function takeLoginFinding() {
+    try {
+      const saved = browser.sessionStorage?.getItem(LOGIN_FINDING)
+      browser.sessionStorage?.removeItem(LOGIN_FINDING)
+      if (!saved) return null
+      const url = new URL(saved, browser.location.origin)
+      const route = url.origin === browser.location.origin ? routeAt(url) : null
+      return route?.finding ? route : null
+    } catch { return null }
+  }
+
+  function onHash() {
+    if (!active || !extractFindingRef(browser.location.hash) || findingUrl === browser.location.href) return
+    if (browser.history.state?.[KEY] && browser.history.state[KEY] !== generation) return
+    const url = findingUrl = browser.location.href
+    const route = routeAt(new URL(url))
+    void navigate(route ?? { view: 'home' }, { replace: true }).finally(() => { if (findingUrl === url) findingUrl = null })
+  }
 
   function replace(path) {
     browser.history.replaceState(active ? { [KEY]: generation } : null, '', path)
@@ -51,12 +79,34 @@ export function createManagedHistory(browser) {
       if (event.state?.[KEY]) replace('/')
       return
     }
-    const route = event.state?.[KEY] === generation ? parseManagedRoute(new URL(browser.location.href)) : null
+    if ((!event.state?.[KEY] || event.state[KEY] === generation) && extractFindingRef(browser.location.hash)) { onHash(); return }
+    const route = event.state?.[KEY] === generation ? routeAt(new URL(browser.location.href)) : null
     void navigate(route ?? { view: 'home' }, { pop: true })
+  }
+
+  function onClick(event) {
+    if (!active || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+    // Finding cards live in shadow roots. Intercept ordinary self-link
+    // clicks before a cross-report navigation can unload pending triage.
+    const anchor = event.composedPath().find(node => node.matches?.('a.comment-self-ref[href]'))
+    if (!anchor || anchor.hasAttribute('download') || (anchor.target && anchor.target !== '_self')) return
+    const url = new URL(anchor.href)
+    if (url.origin !== browser.location.origin) return
+    const route = routeAt(url)
+    if (!route?.finding) return
+    event.preventDefault()
+    return navigate(route)
   }
 
   return {
     get active() { return active },
+    rememberFinding() {
+      const route = routeAt(new URL(browser.location.href))
+      if (!route?.finding) return
+      // OAuth returns to `/`. Retain only the destination in this tab until
+      // its authenticated startup; no report contents enter browser storage.
+      try { browser.sessionStorage?.setItem(LOGIN_FINDING, `${managedRoutePath(route)}#${encodeFindingRef(route.finding)}`) } catch {}
+    },
     start(navigateToPage) {
       if (active) return
       active = true
@@ -64,22 +114,27 @@ export function createManagedHistory(browser) {
       generation = typeof browser.history.state?.[KEY] === 'string' ? browser.history.state[KEY] : browser.crypto.randomUUID()
       if (!listening) {
         browser.addEventListener('popstate', onPop)
+        browser.addEventListener('hashchange', onHash)
+        browser.addEventListener('click', onClick)
         browser.launchQueue?.setConsumer(({ targetURL }) => {
           if (!active || !targetURL) return
           const url = new URL(targetURL)
           if (url.origin !== browser.location.origin) return
-          const route = parseManagedRoute(url)
+          const route = routeAt(url)
           if (route) void navigate(route)
         })
         listening = true
       }
-      const route = parseManagedRoute(new URL(browser.location.href)) ?? { view: 'home' }
+      const pending = takeLoginFinding()
+      let route = routeAt(new URL(browser.location.href)) ?? { view: 'home' }
+      if (pending && route.view === 'home' && !route.finding) route = pending
       return navigate(route, { replace: true })
     },
     navigate,
     reset({ force = false } = {}) {
       ++revision
       if (active || force) {
+        try { browser.sessionStorage?.removeItem(LOGIN_FINDING) } catch {}
         active = false
         generation = null
         restore = null

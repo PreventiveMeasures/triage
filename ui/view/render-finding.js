@@ -288,12 +288,12 @@ export function renderHighlighted(text, { paragraphs = true } = {}) {
 // The two token kinds render differently on purpose. An external ref
 // (`owner/repo#123`, `owner/repo@sha`, `GHSA-xxxx-xxxx-xxxx`) opens in a
 // new tab with the full URL in `title`. A self-link carries a
-// fragment-only href and must navigate IN PLACE: `target="_blank"` would
+// finding href and must navigate IN PLACE: `target="_blank"` would
 // boot a second copy of the app just to show a finding the reader is
 // already three inches away from. Its `title` names the action rather
 // than the href, which is an opaque id the reader can't act on.
 function renderCommentText(text) {
-  return parseCommentRefs(text).map((seg) => {
+  return parseCommentRefs(text, { managed: isManagedUiMode() }).map((seg) => {
     if (typeof seg === 'string') return seg
     if (seg.self) {
       return html`<a class="comment-self-ref" href=${seg.url} data-tooltip="Show this finding">${seg.label}</a>`

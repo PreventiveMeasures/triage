@@ -36,6 +36,7 @@
 // a fourth param later doesn't disturb either.
 
 import { encodeUtf8 } from '../common/utf8.js'
+import { managedRoutePath, parseManagedRoute } from '../common/managed/routes.js'
 
 // Session-local finding ids (see `client/triage.js`'s SESSION_ID_RE:
 // purely numeric `_id` fallbacks, handed out by an in-memory counter
@@ -236,10 +237,10 @@ export function encodeFindingRef({ id, report, workspace } = {}) {
 // is there: the target page takes no query params, so dragging the
 // sender's current `?foo=bar` into the recipient's URL would be a
 // surprising leak.
-export function buildFindingUrl(ref) {
+export function buildFindingUrl(ref, pathname) {
   const encoded = encodeFindingRef(ref)
-  if (typeof location === 'undefined') return `#${encoded}`
-  return `${location.origin}${location.pathname}#${encoded}`
+  if (typeof location === 'undefined') return `${pathname ?? ''}#${encoded}`
+  return `${location.origin}${pathname ?? location.pathname}#${encoded}`
 }
 
 // Extract `{ id, report, workspace }` from a hash string (or
@@ -304,22 +305,22 @@ export function extractFindingRef(hash) {
 
 // Recognise a finding deep link pasted into free text — the reverse of
 // `buildFindingUrl`, used to linkify comments (see `parseCommentRefs` in
-// `ui/view/format.js`). Returns `{ id, fragment }` with the fragment
-// re-emitted canonically, or null for anything that isn't one of OUR
-// links.
+// `ui/view/format.js`). Returns `{ id, fragment, path }` with the fragment
+// re-emitted canonically and a managed destination path, or null
+// for anything that isn't one of OUR links.
 //
 // "Ours" means the CURRENT host, scheme included. A finding id resolves
-// only against the reader's own local reports, so a link to some other
+// only against the reader's available reports, so a link to some other
 // deployment couldn't be followed usefully even if it were offered — and
 // a same-name look-alike on another host is exactly what a linkifier
 // must not present as the real thing. Credentials are refused for the
 // same reason (`https://user@triage.space/…` reads as ours but isn't
 // something the app ever emits).
 //
-// The PATH is deliberately not constrained: the caller renders a
-// fragment-only href, so where the click lands doesn't depend on it, and
-// leaving it free keeps `/` and `/index.html` and a subpath deployment
-// all working.
+// Managed team/report paths are preserved to identify the intended copy.
+// Other paths resolve from `/` in managed mode, without inheriting the
+// current report. E2E consumers use just the fragment to stay on their
+// current deployment, including `/index.html` and subpaths.
 //
 // The anti-mutation guard is the one from `githubRefToken`: `new URL`
 // silently rewrites its input (resolving `..`, lower-casing, punycoding
@@ -341,5 +342,7 @@ export function parseFindingUrl(candidate) {
   // Re-emitted rather than passed through, so an unrecognised extra
   // param or a mangled hint can't ride into the href we hand the
   // renderer.
-  return { id: ref.id, fragment: encodeFindingRef(ref) }
+  const route = parseManagedRoute(u)
+  const path = route?.teamId ? managedRoutePath({ ...route, view: 'findings' }) : '/'
+  return { id: ref.id, fragment: encodeFindingRef(ref), path }
 }

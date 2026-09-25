@@ -55,8 +55,8 @@ describe('finding ID display', () => {
 
 // The single link token in a comment whose ONLY non-trivial segment is
 // one URL. Asserts there's exactly one link and returns it.
-function onlyLink(text) {
-  const links = parseCommentRefs(text).filter((s) => typeof s !== 'string')
+function onlyLink(text, options) {
+  const links = parseCommentRefs(text, options).filter((s) => typeof s !== 'string')
   assert.equal(links.length, 1, `expected exactly one link in: ${text}`)
   return links[0]
 }
@@ -385,6 +385,28 @@ describe('parseCommentRefs — self-links to a finding', () => {
   it('preserves a compact workspace finding link', () => {
     const link = onlyLink(`https://triage.space/#finding=${ID}&v=wx_9Z`)
     assert.equal(link.url, `#finding=${ID}&v=wx_9Z`)
+  })
+
+  it('preserves managed team and report destinations in managed mode', () => {
+    for (const path of ['/teams/team-id', '/teams/team-id/reports/report-id']) {
+      const link = onlyLink(`https://triage.space${path}#finding=${ID}`, { managed: true })
+      assert.equal(link.url, `${path}#finding=${ID}`)
+      assert.equal(link.self, true)
+    }
+  })
+
+  it('keeps E2E references rooted when rendered in a managed report', () => {
+    for (const path of ['/', '/index.html', '/triage/view.html']) {
+      const link = onlyLink(`https://triage.space${path}#finding=${ID}&v=aB3-x_9Z`, { managed: true })
+      assert.equal(link.url, `/#finding=${ID}&v=aB3-x_9Z`)
+      assert.equal(new URL(link.url, 'https://triage.space/teams/team/reports/current').pathname, '/')
+    }
+  })
+
+  it('keeps finding links on the current E2E deployment', () => {
+    const link = onlyLink(`https://triage.space/teams/team-id/reports/report-id#finding=${ID}`)
+    assert.equal(link.url, `#finding=${ID}`)
+    assert.equal(new URL(link.url, 'https://triage.space/subpath/index.html').pathname, '/subpath/index.html')
   })
 
   it('labels a non-uuid id without a meaningless prefix', () => {

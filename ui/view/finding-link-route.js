@@ -3,6 +3,7 @@
 // must not override the report/workspace named by the link.
 import { findReportWithFinding, isManagedUiMode, reportForHint, state, workspaceForHint } from '#client/index.js'
 import { findLoadedFinding, reportWorkspaceFor } from './finding-link.js'
+import { locateManagedFinding } from './managed-finding-link.js'
 
 // Report chips carry their server identity separately from the display name.
 // Never fall back to local storage for a managed report (or a stale managed
@@ -25,7 +26,9 @@ export async function locateReportFinding(id, reportName, managedReportId, { ope
 
 // Navigation is supplied by the DOM layer so these rules can be tested
 // against real stored reports without constructing the whole page.
-export async function locateLinkedFinding(ref, { openReport, openWorkspace }) {
+export async function locateLinkedFinding(ref, navigation) {
+  if (isManagedUiMode()) return locateManagedFinding(ref, navigation)
+  const { openReport, openWorkspace } = navigation
   const [name, ws] = await Promise.all([
     reportForHint(ref.report),
     workspaceForHint(ref.workspace),

@@ -9,12 +9,12 @@
 // the workspace. Missing or stale hints fall back to locally held data.
 // The viewer's display mode is preserved throughout.
 //
-// Shared deep links resolve locally. In-app report chips also support managed
-// reports: their explicit server ID routes through the managed loading path.
+// Managed links resolve through the user's teams and the server report loader.
+// E2E links keep their hints and fall back to accessible reports in either mode.
 //
 // The state rules (which bucket, which filters, which member of a dedup
 // group) live in `finding-link.js`; this module is navigation + paint.
-import { saveTriage, state } from '#client/index.js'
+import { isManagedUiMode, saveTriage, state } from '#client/index.js'
 import { report } from './dom.js'
 import { unhideFinding } from './finding-link.js'
 import { locateLinkedFinding, locateReportFinding } from './finding-link-route.js'
@@ -180,7 +180,7 @@ async function findRenderedFinding(gid) {
 // ring it. Shared by both entry points below — everything up to this
 // point is about FINDING the thing, and everything from here is the
 // same regardless of how it was found.
-async function focusFound(hit, id) {
+async function focusFound(hit, id, isCurrent = () => true) {
   const gid = unhideFinding(hit.group, id)
   // A link opens this finding as surely as a click does, so its group
   // gets the same levelling the detail surfaces do (see
@@ -191,7 +191,9 @@ async function focusFound(hit, id) {
   if (shownGroup && syncGroupTriage(shownGroup)) queueMicrotask(saveTriage)
   render()
   await renderSidebar({ revealSelection: true })
+  if (!isCurrent()) return { ok: false }
   const el = await findRenderedFinding(gid)
+  if (!isCurrent()) return { ok: false }
   if (!el) {
     // Nothing painted for this group. `unhideFinding` clears whatever
     // it can reach — the view, the filters, the triage bucket — so
@@ -207,6 +209,7 @@ async function focusFound(hit, id) {
   // scroll lands on its real height and the ring has a body to sit on.
   if (typeof el.ensureRendered === 'function') await el.ensureRendered()
   await scrollToSettled(el)
+  if (!isCurrent()) return { ok: false }
   // Flash after the scroll, not before it: the ring lasts a moment and
   // a long scroll would spend most of that moment on the way.
   flash(el)
@@ -217,14 +220,17 @@ async function focusFound(hit, id) {
 // is on screen, or `{ ok: false, reason }` with a message the caller can
 // show — a link that goes nowhere has to say so, otherwise pasting one
 // into an already-open tab looks like the app ignored the paste.
-export async function revealFinding(ref) {
+export async function revealFinding(ref, { openManagedReport = switchToManagedTeam, isCurrent = () => true } = {}) {
   if (!ref?.id) return { ok: false, reason: 'This link is missing a finding id.' }
   const hit = await locateLinkedFinding(ref, {
     openReport: switchToFile,
     openWorkspace: switchToWorkspace,
+    openManagedReport,
+    isCurrent,
   })
-  if (!hit) return { ok: false, reason: NOT_FOUND }
-  return await focusFound(hit, ref.id)
+  if (!isCurrent()) return { ok: false }
+  if (!hit) return { ok: false, reason: isManagedUiMode() ? "Couldn't find that finding in the team reports you can access." : NOT_FOUND }
+  return await focusFound(hit, ref.id, isCurrent)
 }
 
 // The Links view names a specific report's copy, even when a workspace

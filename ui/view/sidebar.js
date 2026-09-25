@@ -1932,7 +1932,7 @@ async function revalidateManagedSession() {
     }
     if (managedHistory.active && Object.hasOwn(MANAGED_PAGES, state.currentView) && !canAccessManagedPage(state.currentView)) {
       await managedHistory.navigate({ view: canAccessManagedPage('manage') ? 'manage' : 'home' }, { replace: true })
-    } else await managedHistory.start(restoreManagedPage)
+    } else if (session) await managedHistory.start(restoreManagedPage)
   } catch (err) {
     console.warn('managed: session probe failed:', err)
   }
@@ -1970,6 +1970,18 @@ async function restoreManagedPage(route, isCurrent) {
     && state.currentManagedTeam === route.teamId && state.currentManagedReport === route.reportId
   beginViewNavigation()
   if (!isCurrent() || !isManagedUiMode()) return false
+  if (route.finding) {
+    const { revealFinding } = await import('./finding-link-nav.js')
+    if (!isCurrent()) return false
+    const result = await revealFinding({ ...route.finding, teamId: route.teamId, reportId: route.reportId }, {
+      openManagedReport: (team, reportId) => switchToManagedTeam(team, reportId, { history: false }),
+      isCurrent,
+    })
+    if (!isCurrent()) return false
+    if (!result.ok) { if (result.reason) showToast(result.reason); return false }
+    readyManagedView = currentViewGeneration()
+    return { view: 'findings', teamId: state.currentManagedTeam, reportId: state.currentManagedReport }
+  }
   if (route.view === 'home') return goHome({ history: false })
   if (Object.hasOwn(MANAGED_PAGES, route.view)) return navigateToAdminPage(route.view, { ...route, history: false })
   const team = state.managedTeams.find(candidate => candidate.id === route.teamId)
