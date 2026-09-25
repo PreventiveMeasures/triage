@@ -36,7 +36,7 @@
 
 import { LINKS_KIND, collectDuplicates, parseLinkedFindings } from './linked-findings.js'
 import { listFiles, onFileMutated, readFile } from './storage.js'
-import { getKind } from './counts.js'
+import { getCount, getKind } from './counts.js'
 
 // name → `{ groups, skipped }` for the links files, and name → null for
 // a file that was read and turned out to be something else. Both are
@@ -60,6 +60,12 @@ let activeRun = null
 // Set when an `onFileMutated` lands mid-walk, so the run that was in
 // flight when the file changed doesn't finish having missed it.
 let needsRescan = false
+// An empty Map is not proof that the library has no links. A complete walk
+// must account for every listed file, including those awaiting classification
+// or a successful read. Mutations make that evidence stale until the next walk.
+let ready = false
+
+export function isLinkedFindingsIndexReady() { return ready }
 
 export function subscribeToLinkedFindings(callback) {
   listeners.add(callback)
@@ -120,7 +126,9 @@ export function duplicatesOf(id) {
 async function indexOne(name) {
   if (byFile.has(name)) return false
   const kind = getKind(name)
-  if (kind === undefined) return false
+  // Counts also recognize reports without a producer (and legacy numeric
+  // entries). Only a missing count AND kind means classification is pending.
+  if (kind === undefined && getCount(name) === undefined) return false
   if (kind !== LINKS_KIND) {
     byFile.set(name, null)
     return false
@@ -148,12 +156,24 @@ export function ensureLinkedFindingsIndexed() {
     try {
       do {
         needsRescan = false
+        const names = await listFiles()
+        if (ready && names.some((name) => !byFile.has(name))) {
+          ready = false
+          notify()
+        }
         let added = false
-        for (const name of await listFiles()) {
+        for (const name of names) {
           if (await indexOne(name)) added = true
         }
-        if (added) { reindex(); notify() }
+        const nextReady = !needsRescan && names.every((name) => byFile.has(name))
+        const readinessChanged = ready !== nextReady
+        ready = nextReady
+        if (added) reindex()
+        if (added || readinessChanged) notify()
       } while (needsRescan)
+    } catch (err) {
+      if (ready) { ready = false; notify() }
+      throw err
     } finally {
       activeRun = null
     }
@@ -167,11 +187,12 @@ export function ensureLinkedFindingsIndexed() {
 // so a deleted links file's duplicates stop being claimed immediately
 // rather than at the next walk.
 onFileMutated((name) => {
+  const wasReady = ready
+  ready = false
   fileGen.set(name, (fileGen.get(name) ?? 0) + 1)
   needsRescan = true
   const wasLinks = byFile.get(name) != null
   byFile.delete(name)
-  if (!wasLinks) return
-  reindex()
-  notify()
+  if (wasLinks) reindex()
+  if (wasLinks || wasReady) notify()
 })

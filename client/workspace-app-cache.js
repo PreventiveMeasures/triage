@@ -2,7 +2,7 @@ import { getItem, mutate, onAfterHydrate } from './secure-storage.js'
 import { listWorkspaces } from './workspaces.js'
 import { onReportMembershipChanged, onWorkspaceDeleted } from './workspace-listeners.js'
 import { onFileMutated } from './storage.js'
-import { linkFiles, subscribeToLinkedFindings } from './linked-findings-index.js'
+import { isLinkedFindingsIndexReady, linkFiles, subscribeToLinkedFindings } from './linked-findings-index.js'
 
 const KEY = 'deepview.workspaceApp'
 // v2 uses canonical corrected severity, independent of the active display lens.
@@ -32,6 +32,7 @@ function enqueue(update) {
 }
 function membership(workspace) { return JSON.stringify(workspace.reports.toSorted()) }
 function indexedLinks() { return JSON.stringify(linkFiles().map(({ name, groups }) => ({ name, groups }))) }
+function linksMatch(cache) { return isLinkedFindingsIndexReady() && cache.links === indexedLinks() }
 
 export function getWorkspaceAppMetadata(workspace) {
   if (allDirty || dirty.has(workspace.id)) return null
@@ -41,7 +42,7 @@ export function getWorkspaceAppMetadata(workspace) {
   if (entry.appMode && (!Number.isSafeInteger(entry.appFindings) || entry.appFindings < 0)) return null
   // Hydrated metadata may be newer than the index this tab uses to group
   // findings. Only expose it once those duplicate relationships agree.
-  if (cache.links !== indexedLinks()) return null
+  if (!linksMatch(cache)) return null
   return entry
 }
 
@@ -59,14 +60,14 @@ export async function workspaceAppCacheToken(reportsToken = null) {
   // until the indexed links match the persisted snapshot.
   if (reportsToken && (reportsToken.reportEpoch !== reportEpoch
       || reportsToken.reportRevision !== reportRevision
-      || cache.links !== indexedLinks())) return null
+      || !linksMatch(cache))) return null
   return { epoch, revision: cache.revision, reportEpoch, reportRevision }
 }
 export async function cacheWorkspaceAppMetadata(workspace, metadata, token) {
   let stored = false
   await enqueue((cache) => {
     if (token.epoch !== epoch || token.revision !== cache.revision) return
-    if (cache.links !== indexedLinks()) return
+    if (!linksMatch(cache)) return
     const current = listWorkspaces().find((w) => w.id === workspace.id)
     if (!current || membership(current) !== membership(workspace)) return
     cache.entries[workspace.id] = { ...metadata, reports: membership(workspace) }
@@ -118,6 +119,9 @@ onFileMutated((name) => {
   invalidateWorkspaceAppMetadata(ids).catch(() => {})
 })
 subscribeToLinkedFindings(() => {
+  // Never publish a partial walk as the shared snapshot. In particular, an
+  // initially empty index must not replace a verified no-links cache.
+  if (!isLinkedFindingsIndexReady()) { notify(); return }
   // Comparing the actual links preserves cached headers across a reload, when
   // the same index is reconstructed from disk for the first time in this tab.
   const links = indexedLinks()

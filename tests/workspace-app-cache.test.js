@@ -5,8 +5,8 @@ import './_polyfills.js'
 import { SECURE_KEYS, getItem, hydrate, __test__ as secureTest, setItem } from '../client/secure-storage.js'
 import { addReportToWorkspace, createWorkspace, deleteWorkspace, listWorkspaces, renameWorkspace } from '../client/workspaces.js'
 import { cacheWorkspaceAppMetadata, getWorkspaceAppMetadata, invalidateWorkspaceAppMetadata, onWorkspaceAppMetadataChanged, workspaceAppCacheToken } from '../client/workspace-app-cache.js'
-import { deleteFile, saveFile } from '../client/storage.js'
-import { setCount } from '../client/counts.js'
+import { deleteFile, listFiles, saveFile } from '../client/storage.js'
+import { ensureCounts, setCount } from '../client/counts.js'
 import { duplicatesOf, ensureLinkedFindingsIndexed, linkFiles } from '../client/linked-findings-index.js'
 import { LINKS_KIND } from '../client/linked-findings.js'
 
@@ -19,7 +19,13 @@ async function workspace(name = 'App workspace') {
   return listWorkspaces().find((w) => w.id === created.id)
 }
 async function record(ws) {
+  await indexFiles()
   return cacheWorkspaceAppMetadata(ws, metadata, await workspaceAppCacheToken())
+}
+async function indexFiles() {
+  await ensureCounts(await listFiles())
+  await ensureLinkedFindingsIndexed()
+  await workspaceAppCacheToken()
 }
 const linksContent = (groups) => JSON.stringify(groups.map((group) => group.map((id) => ({ id }))))
 async function seedLinks(groups) {
@@ -195,14 +201,14 @@ describe('workspace App metadata cache', () => {
     await saveFile(ws.reports[0], '{"findings":[]}')
     assert.equal(getWorkspaceAppMetadata(ws), null)
     assert.equal(await cacheWorkspaceAppMetadata(ws, metadata, token), false)
-    await workspaceAppCacheToken()
+    await indexFiles()
     assert.equal(getWorkspaceAppMetadata(other).appFindings, 3)
   })
   it('preserves unrelated workspace headers when a new ordinary report is saved', async () => {
     const ws = await workspace()
     await record(ws)
     await saveFile('new-unattached-report.json', '{"findings":[]}')
-    await workspaceAppCacheToken()
+    await indexFiles()
     assert.equal(getWorkspaceAppMetadata(ws).appFindings, 3)
   })
   it('invalidates global linked counts when a links file outside the workspace changes', async () => {
