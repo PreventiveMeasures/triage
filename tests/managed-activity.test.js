@@ -66,6 +66,9 @@ test('activity search and type filters run before pagination; ties, empty pages,
   const contexts = [{ finding: 'shared', reportId: 'visible', report: 'allowed.json', repo: 'allowed/repo' }]
   const manager = await db.listActivity({ ...query, contexts, limit: 5 })
   assert.equal(manager.total, 12)
+  assert.deepEqual(manager.filters, { repos: ['allowed/repo'], reports: [{ id: 'visible', filename: 'allowed.json', repo: 'allowed/repo' }] })
+  assert.equal((await db.listActivity({ ...query, contexts, repo: 'allowed/repo', reportId: 'visible' })).total, 12)
+  assert.equal((await db.listActivity({ ...query, contexts, reportId: 'r' })).total, 0)
   assert.ok(manager.history.every(entry => entry.reportId === 'visible' && entry.report === 'allowed.json' && entry.repo === 'allowed/repo'))
   assert.equal((await db.listActivity({ ...query, contexts, query: 'scan.json' })).total, 0, 'search cannot probe the original private context')
   assert.equal((await db.listActivity({ ...query, contexts, query: 'allowed.json' })).total, 12)
@@ -99,5 +102,39 @@ test('existing activity upgrades bundle identities without trusting filenames, a
     assert.equal(manager.history[0].id, 'bundle-upload:b')
     assert.equal((await db.listActivity(query)).total, 2)
     await db.close()
+  }
+})
+
+
+test('history repository and report filters intersect before counts and paging, retaining deleted report choices', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  for (const [repoId, fullName] of [[7, 'owner/one'], [8, 'owner/two']]) {
+    await db.selectRepo({ repoId, fullName, private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: null }, 1)
+  }
+  await db.insertReport({ ...report, id: 'first', repoId: 7 }, 10)
+  await db.insertReport({ ...report, id: 'second', repoId: 8 }, 20)
+  await db.insertBundle({ id: 'bundle', integrity: 'hash', filename: report.filename, kind: null, byteSize: 1, uploadedBy: null, repoId: 7 }, 30)
+  for (let i = 0; i < 6; i++) await db.setTriageEntries([['shared', { comment: String(i) }]], null, 'alice', 100 + i, 'first')
+  await db.setTriageEntries([['shared', { comment: 'latest' }]], null, 'bob', 200, 'second')
+  await db.deleteReport('second')
+  const filtered = await db.listActivity({ ...query, repo: 'owner/one', reportId: 'first', kind: 'triage', query: 'alice', page: 2, limit: 2 })
+  assert.equal(filtered.total, 6)
+  assert.equal(filtered.page, 2)
+  assert.equal(filtered.history.length, 2)
+  assert.ok(filtered.history.every(entry => entry.repo === 'owner/one' && entry.reportId === 'first' && entry.actor === 'alice'))
+  assert.deepEqual(filtered.filters, {
+    repos: ['owner/one', 'owner/two'],
+    reports: [{ id: 'first', filename: 'scan.json', repo: 'owner/one' }, { id: 'second', filename: 'scan.json', repo: 'owner/two' }],
+  }, 'choices cover the whole authorized history, not just the current page or matching rows')
+  const deleted = await db.listActivity({ ...query, reportId: 'second' })
+  assert.equal(deleted.total, 2, 'same filenames do not merge reports; deleted report snapshots stay filterable')
+  assert.ok(deleted.history.every(entry => entry.reportId === 'second'))
+  assert.equal((await db.listActivity({ ...query, repo: 'owner/one' })).total, 8, 'repository selection also includes bundle activity')
+  for (const filter of [{ reportId: 'scan.json' }, { reportId: 'second', repo: 'owner/one' }, { repo: 'owner/%' }, { repo: 'missing' }]) {
+    const empty = await db.listActivity({ ...query, ...filter, page: 99 })
+    assert.deepEqual(empty.history, [])
+    assert.equal(empty.total, 0)
+    assert.equal(empty.page, 1)
   }
 })

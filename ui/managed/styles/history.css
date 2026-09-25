@@ -11,6 +11,18 @@
 .toolbar select {
   min-width: 10rem;
 }
+.context-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .65rem;
+  margin-bottom: .9rem;
+}
+.context-filters select {
+  flex: 1 1 16rem;
+  min-width: 0;
+  width: 100%;
+  text-overflow: ellipsis;
+}
 .history {
   overflow-x: auto;
   border: 1px solid var(--border);

@@ -30,6 +30,21 @@ test('managed preview triage persists in memory and stays scoped to the requeste
   assert.equal(results.results.length, 5)
   assert.equal(results.results.every(result => results.bundles.some(bundle => bundle.id === result.bundleId)), true)
   assert.equal(results.results.some(result => exported.reports.some(report => report.id === result.id)), false)
+  await t.test('preview history filters repositories and reports before pagination', async () => {
+    const get = async params => (await fetch(new URL(`/api/admin/history?${params}`, base))).json()
+    const first = await get('repo=example%2Fmanaged-fixtures&limit=1&page=2')
+    assert.equal(first.total, 3)
+    assert.equal(first.page, 2)
+    assert.equal(first.history.length, 1)
+    assert.equal(first.filters.repos.length, 2)
+    assert.equal(first.filters.reports.length, 3)
+    assert.equal(first.filters.reports.some(report => report.filename.endsWith('.stasis')), false)
+    const report = await get('repo=example%2Fmanaged-fixtures&reportId=fixture-report-1&kind=triage')
+    assert.equal(report.total, 1)
+    assert.equal(report.history[0].reportId, 'fixture-report-1')
+    assert.equal((await get('reportId=fixture-report-1&repo=example%2Fworker-service')).total, 0)
+    assert.equal((await get('reportId=unknown')).total, 0)
+  })
   await t.test('fixture slugs support managed team and report navigation', async fixtureTest => {
     const networkFetch = globalThis.fetch
     fixtureTest.mock.method(globalThis, 'fetch', (url, options) => networkFetch(new URL(url, base), options))

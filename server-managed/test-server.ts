@@ -246,11 +246,17 @@ function handleAdminCatalog(url: URL, method: string, res: ServerResponse): bool
     if (role !== 'admin' && role !== 'manage') { sendJson(res, 403, { error: 'forbidden' }); return true }
     const query = (url.searchParams.get('q') ?? '').toLowerCase()
     const kind = url.searchParams.get('kind') ?? 'all'
-    const visible = history.filter(entry => (role === 'admin' || (reportMetadata.some(report => report.id === entry.reportId && canManageFixture(report)) || bundles.some(bundle => bundle.id === entry.bundleId && canManageFixture(bundle))))
+    const repo = url.searchParams.get('repo') ?? '', reportId = url.searchParams.get('reportId') ?? ''
+    const accessible = history.filter(entry => role === 'admin' || reportMetadata.some(report => report.id === entry.reportId && canManageFixture(report)) || bundles.some(bundle => bundle.id === entry.bundleId && canManageFixture(bundle)))
+    const filters = {
+      repos: [...new Set(accessible.map(entry => entry.repo).filter(Boolean))].toSorted(),
+      reports: [...new Map(accessible.filter(entry => entry.reportId).map(entry => [entry.reportId, { id: entry.reportId, filename: entry.report, repo: entry.repo }])).values()],
+    }
+    const visible = accessible.filter(entry => (!repo || entry.repo === repo) && (!reportId || entry.reportId === reportId)
       && (kind === 'all' || entry.kind === kind) && [entry.actor, entry.action, entry.repo, entry.report, entry.finding].join(' ').toLowerCase().includes(query))
     const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit')) || 100))
     const page = Math.min(Math.max(1, Number(url.searchParams.get('page')) || 1), Math.max(1, Math.ceil(visible.length / limit)))
-    sendJson(res, 200, { history: visible.slice((page - 1) * limit, page * limit), total: visible.length, page, limit })
+    sendJson(res, 200, { history: visible.slice((page - 1) * limit, page * limit), total: visible.length, page, limit, filters })
     return true
   }
   if (url.pathname === '/api/admin/repositories/impact') {

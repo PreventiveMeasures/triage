@@ -35,6 +35,8 @@ export interface ActivityQuery {
   limit: number
   kind: string
   query: string
+  repo?: string
+  reportId?: string
   // null = admin; [] = no accessible findings. Context is supplied by the
   // server, never by the client. It also replaces potentially private context
   // from an old report carrying the same globally shared finding.
@@ -42,10 +44,15 @@ export interface ActivityQuery {
   userId?: string
 }
 
+export interface ActivityFilters {
+  repos: string[]
+  reports: { id: string; filename: string; repo: string | null }[]
+}
+
 export interface ActivityStore {
   recordActivity(entry: ActivityInput, at: number): Promise<void>
   listActivityReports(userId: string): Promise<Omit<ActivityContext, 'finding'>[]>
-  listActivity(query: ActivityQuery): Promise<{ history: ActivityEntry[]; total: number; page: number; limit: number }>
+  listActivity(query: ActivityQuery): Promise<{ history: ActivityEntry[]; total: number; page: number; limit: number; filters: ActivityFilters }>
 }
 
 const triageFields = `'triage:' || e.seq AS id, 'triage' AS kind,
@@ -130,20 +137,8 @@ export function activityMethods(db: DatabaseSync): ActivityStore {
   }
   const insert = db.prepare(`INSERT INTO managed_activity (id, kind, actor, action, repo, report_id, report, at, bundle_id, repo_id, repo_directory, actor_id)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-  function statements(source: string) {
-    const filtered = `WITH activity AS (${source}) SELECT * FROM activity
-      WHERE (:kind = 'all' OR kind = :kind)
-      AND (:query = '' OR instr(lower(coalesce(actor, '') || ' ' || action || ' ' ||
-        coalesce(repo, '') || ' ' || coalesce(report, '') || ' ' || coalesce(finding, '')), lower(:query)) > 0)`
-    return {
-      count: db.prepare(`SELECT count(*) AS total FROM (${filtered})`),
-      rows: db.prepare(`${filtered} ORDER BY at DESC,
-        CASE WHEN kind = 'triage' THEN CAST(substr(id, instr(id, ':') + 1) AS INTEGER) ELSE 0 END DESC,
-        id DESC LIMIT :limit OFFSET :offset`),
-    }
-  }
-  const admin = statements(adminSource)
-  const manager = statements(managerSource)
+  const admin = activityStatements(db, adminSource)
+  const manager = activityStatements(db, managerSource)
   const reports = db.prepare(`SELECT r.id AS reportId, r.filename AS report, p.full_name AS repo
     FROM managed_report r JOIN selected_repo p ON p.repo_id = r.repo_id
     WHERE EXISTS (SELECT 1 FROM team_repo tr JOIN team_user tu ON tu.team_id = tr.team_id
@@ -158,14 +153,41 @@ export function activityMethods(db: DatabaseSync): ActivityStore {
     listActivityReports(userId) {
       return Promise.resolve(reports.all(userId) as Omit<ActivityContext, 'finding'>[])
     },
-    listActivity({ page, limit, kind, query, contexts, userId }) {
+    listActivity({ page, limit, kind, query, repo = '', reportId = '', contexts, userId }) {
       const stmts = contexts == null ? admin : manager
-      const params = contexts == null ? { kind, query } : { kind, query, contexts: JSON.stringify(contexts), userId: userId ?? '' }
+      const scope = contexts == null ? {} : { contexts: JSON.stringify(contexts), userId: userId ?? '' }
+      const params = { ...scope, kind, query, repo, reportId }
       const { total } = stmts.count.get(params) as { total: number }
       const currentPage = Math.min(page, Math.max(1, Math.ceil(total / limit)))
       const history = stmts.rows.all({ ...params, limit, offset: (currentPage - 1) * limit }) as ActivityEntry[]
-      return Promise.resolve({ history, total, page: currentPage, limit })
+      const filters: ActivityFilters = {
+        repos: (stmts.repos.all(scope) as { repo: string }[]).map(row => row.repo),
+        reports: (stmts.reports.all(scope) as ActivityFilters['reports']).map(row => ({ id: row.id, filename: row.filename, repo: row.repo })),
+      }
+      return Promise.resolve({ history, total, page: currentPage, limit, filters })
     },
+  }
+}
+
+// Both rows and selector choices come from the authorized source. Report IDs
+// distinguish repeated uploads with the same filename, even after deletion.
+function activityStatements(db: DatabaseSync, source: string) {
+  const activity = `WITH activity AS (${source})`
+  const filtered = `${activity} SELECT * FROM activity
+    WHERE (:kind = 'all' OR kind = :kind)
+    AND (:repo = '' OR repo = :repo) AND (:reportId = '' OR reportId = :reportId)
+    AND (:query = '' OR instr(lower(coalesce(actor, '') || ' ' || action || ' ' ||
+      coalesce(repo, '') || ' ' || coalesce(report, '') || ' ' || coalesce(finding, '')), lower(:query)) > 0)`
+  return {
+    count: db.prepare(`SELECT count(*) AS total FROM (${filtered})`),
+    rows: db.prepare(`${filtered} ORDER BY at DESC,
+      CASE WHEN kind = 'triage' THEN CAST(substr(id, instr(id, ':') + 1) AS INTEGER) ELSE 0 END DESC,
+      id DESC LIMIT :limit OFFSET :offset`),
+    repos: db.prepare(`${activity} SELECT DISTINCT repo FROM activity WHERE repo IS NOT NULL AND repo <> '' ORDER BY repo`),
+    reports: db.prepare(`${activity} SELECT reportId AS id, report AS filename, repo FROM (
+      SELECT reportId, report, repo, ROW_NUMBER() OVER (PARTITION BY reportId, repo ORDER BY at DESC, id DESC) AS position
+      FROM activity WHERE reportId IS NOT NULL AND reportId <> '' AND report IS NOT NULL
+    ) WHERE position = 1 ORDER BY report, repo, reportId`),
   }
 }
 
