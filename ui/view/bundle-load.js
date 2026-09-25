@@ -9,7 +9,7 @@
 // events.js), the bundle-only drop branch in `ingest.js`, and the
 // boot-time `LAST_FILE_KEY` bundle restore in `view.js`.
 import { Bundle } from '@exodus/stasis-core/bundle'
-import { ensureBundleFindingsIndexed, hasBundleFileHashes, readBundle, readBundleIndex, recordBundleFileHashes, saveBundleIndex, state } from '#client/index.js'
+import { ensureBundleFindingsIndexed, hasBundleFileHashes, isManagedUiMode, readBundle, readBundleIndex, recordBundleFileHashes, saveBundleIndex, state } from '#client/index.js'
 import { fetchBundleContents, fetchBundleMetadata } from './client-managed.js'
 import { decodeUtf8 } from '../../common/utf8.js'
 import { brotliDecompress } from './brotli-decompress.js'
@@ -32,6 +32,7 @@ async function cachedMetadata(integrity) {
 // In-flight deduplication only: completed source bodies are owned by their
 // active view, never retained in a process-wide preload/cache of bundles.
 export function buildBundleDetails(integrity, entry, { sources = true } = {}) {
+  if (!entry.managedId && isManagedUiMode()) return Promise.reject(new DOMException('Local bundle closed', 'AbortError'))
   const loads = sources ? sourceLoads : metadataLoads
   const kind = entry.name.toLowerCase().endsWith('.map') ? 'sourcemap' : 'stasis'
   const active = state.bundleDetails
@@ -122,6 +123,9 @@ export function selectBundle(integrity, tab = state.currentView === 'bundles' ? 
 async function readBundleDetails(integrity, entry) {
   try {
     const bytes = await readBundle(integrity)
+    // Mode discovery/transition can finish while the local read is pending.
+    // Never send those bytes into the Brotli decoder on the managed surface.
+    if (isManagedUiMode()) throw new DOMException('Local bundle closed', 'AbortError')
     const isMap = entry.name.toLowerCase().endsWith('.map')
     const kind = isMap ? 'sourcemap' : 'stasis'
     try {
@@ -134,13 +138,15 @@ async function readBundleDetails(integrity, entry) {
       // view/brotli-decompress.js). Bundle.parse validates the
       // wrapper (version, scope, asserts on tampered shapes) and
       // normalizes both v0 and v1 layouts.
-      const decoded = decodeUtf8(await brotliDecompress(bytes))
+      const decoded = decodeUtf8(await brotliDecompress(bytes, () => !isManagedUiMode()))
       const bundle = Bundle.parse(decoded)
       return { integrity, kind, size: bytes.byteLength, bundle }
     } catch (err) {
+      if (err.name === 'AbortError') throw err
       return { integrity, kind, size: bytes.byteLength, error: err.message }
     }
   } catch (err) {
+    if (err.name === 'AbortError') throw err
     return { integrity, error: err.message, size: 0 }
   }
 }
@@ -219,9 +225,15 @@ export async function prefetchBundleHashesAfterPaint(integrities, isCurrent = ()
 export async function openBundle(integrity) {
   const entry = (state.bundles ?? []).find((b) => b.integrity === integrity)
   if (!entry) return
-  const details = await buildBundleDetails(integrity, entry, {
-    sources: bundleNeedsSources(state.bundleDetailsTab, state.bundleSourceFile),
-  })
+  let details
+  try {
+    details = await buildBundleDetails(integrity, entry, {
+      sources: bundleNeedsSources(state.bundleDetailsTab, state.bundleSourceFile),
+    })
+  } catch (err) {
+    if (err.name === 'AbortError') return
+    throw err
+  }
   if (state.selectedBundle !== integrity || (entry.managedId && !state.bundles.includes(entry))) return
   state.bundleDetails = details
   render()
@@ -249,6 +261,10 @@ export function ensureBundleSources(details = state.bundleDetails) {
     state.bundleDetails = full
     render()
     return full
+  }).catch(err => {
+    sourceUpgrades.delete(details)
+    if (err.name === 'AbortError') return null
+    throw err
   })
   sourceUpgrades.set(details, job)
   return job

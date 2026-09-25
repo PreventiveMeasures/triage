@@ -64,6 +64,15 @@ const { brotliDecompress } = await import('../ui/view/brotli-decompress.js')
 const decoded = (job) => ({ id: job.id, bytes: new TextEncoder().encode(`decoded:${job.bytes.byteLength}`) })
 const payload = () => new Uint8Array([0x1b, 0x2e, 0x00, 0x00, 0x24])
 
+it('does not load the decoder after its caller stops allowing local bundle reads', async () => {
+  await assert.rejects(brotliDecompress(payload(), () => false), { name: 'AbortError' })
+  let current = true
+  const pending = brotliDecompress(payload(), () => current)
+  current = false
+  await assert.rejects(pending, { name: 'AbortError' })
+  assert.equal(spawned.length, 0)
+})
+
 it('decodes in a worker, and keeps using the same one', async () => {
   answer = decoded
   const bytes = payload()
@@ -98,6 +107,10 @@ it('surfaces a decode failure instead of repeating it on the main thread', async
 })
 
 it('falls back to the main thread when the worker dies', async () => {
+  let current = true
+  answer = () => { current = false; return 'die' }
+  await assert.rejects(brotliDecompress(payload(), () => current), { name: 'AbortError' })
+  assert.equal(spawned[0].terminated, true, 'a cancelled worker failure does not start the main-thread fallback')
   answer = () => 'die'
   // In-flight work is re-run by the main-thread decoder, which imports
   // the chunk as a sibling of the page bundle — a path that only

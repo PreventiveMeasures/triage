@@ -5,8 +5,9 @@ import { createBundleMetadata } from '../ui/view/bundle-metadata.js'
 const json = { version: 3, sources: ['src/main.js'], sourcesContent: ['export default 1'], names: [] }
 const entry = { integrity: 'sha512-test', name: 'test.map' }
 const recorded = new Map(), state = { bundles: [entry] }, stored = new Map()
-let indexReads = 0, readGate = null, reads = 0, renders = 0, saved = Promise.withResolvers(), writes = 0
+let decodes = 0, indexReads = 0, managed = false, readGate = null, reads = 0, renders = 0, saved = Promise.withResolvers(), writes = 0
 mock.module('../client/index.js', { namedExports: {
+  isManagedUiMode: () => managed,
   state, ensureBundleFindingsIndexed: async () => {}, hasBundleFileHashes: (key) => recorded.has(key),
   readBundle: async () => { reads++; if (readGate) await readGate; return new TextEncoder().encode(JSON.stringify(json)) },
   readBundleIndex: (key) => { indexReads++; return Promise.resolve(stored.get(key)) },
@@ -15,6 +16,9 @@ mock.module('../client/index.js', { namedExports: {
 } })
 mock.module('../ui/view/render.js', { namedExports: { render: () => { renders++ } } })
 mock.module('../ui/view/graph/state.js', { namedExports: { graph2: {} } })
+mock.module('../ui/view/brotli-decompress.js', { namedExports: {
+  brotliDecompress: () => { decodes++; throw new Error('unexpected local Brotli decode') },
+} })
 let contentFailure = false, contentRequests = 0, metadataRequests = 0
 mock.module('../ui/view/client-managed.js', { namedExports: {
   fetchBundleMetadata: () => { metadataRequests++; return Promise.resolve(index) },
@@ -23,6 +27,7 @@ mock.module('../ui/view/client-managed.js', { namedExports: {
 const { buildBundleDetails, ensureBundleSources, openBundle, prefetchBundleHashes, prefetchBundleHashesAfterPaint, selectBundle } = await import('../ui/view/bundle-load.js')
 const index = await createBundleMetadata({ integrity: entry.integrity, kind: 'sourcemap', size: 123, json })
 beforeEach(() => {
+  decodes = 0; managed = false
   stored.clear(); recorded.clear(); indexReads = 0; reads = 0; writes = 0; renders = 0; readGate = null
   saved = Promise.withResolvers()
   metadataRequests = 0; contentRequests = 0; contentFailure = false
@@ -184,6 +189,7 @@ it('resets to Overview after a non-bundle view, but honors explicit tab restores
 
 
 it('managed bundle metadata and deferred contents stay in memory without reading or writing local storage', async () => {
+  managed = true
   state.bundles = [{ ...entry, managedId: 'managed-id', size: 123 }]
   await openBundle(entry.integrity)
   const metadata = state.bundleDetails
@@ -201,6 +207,40 @@ it('managed bundle metadata and deferred contents stay in memory without reading
   assert.equal(indexReads, 0); assert.equal(reads, 0); assert.equal(writes, 0)
   await ensureBundleSources()
   assert.equal(contentRequests, 1)
+  assert.equal(decodes, 0)
+})
+
+it('managed mode cannot decode a leftover local bundle entry or reuse its parsed details', async () => {
+  const local = { ...entry, name: 'test.stasis.code.br' }
+  state.bundleDetails = { integrity: entry.integrity, kind: 'stasis', bundle: {} }
+  managed = true
+  for (const sources of [true, false]) {
+    await assert.rejects(buildBundleDetails(entry.integrity, local, { sources }), { name: 'AbortError' })
+  }
+  assert.equal(reads, 0); assert.equal(indexReads, 0); assert.equal(decodes, 0)
+})
+
+it('switching into managed mode during a local bundle read prevents Brotli decoding', async () => {
+  const gate = Promise.withResolvers(); readGate = gate.promise
+  const loading = buildBundleDetails(entry.integrity, { ...entry, name: 'test.stasis.code.br' })
+  managed = true
+  gate.resolve()
+  await assert.rejects(loading, { name: 'AbortError' })
+  assert.equal(reads, 1); assert.equal(decodes, 0); assert.equal(writes, 0)
+})
+
+it('mode changes cancel bundle opens and source upgrades without unhandled rejections', async () => {
+  for (const upgrade of [false, true]) {
+    managed = false
+    selectBundle(entry.integrity, 'code')
+    if (upgrade) state.bundleDetails = { integrity: entry.integrity, metadataOnly: true }
+    const gate = Promise.withResolvers(); readGate = gate.promise
+    const loading = upgrade ? ensureBundleSources() : openBundle(entry.integrity)
+    managed = true
+    gate.resolve()
+    await loading
+  }
+  assert.equal(decodes, 0); assert.equal(renders, 0)
 })
 
 it('a failed managed contents request keeps metadata and retries only when requested', async () => {

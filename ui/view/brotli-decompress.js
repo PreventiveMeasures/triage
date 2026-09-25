@@ -176,13 +176,17 @@ function ensure() {
   return initPromise
 }
 
-export async function brotliDecompress(bytes) {
+export async function brotliDecompress(bytes, isCurrent = () => true) {
+  const check = () => { if (!isCurrent()) throw new DOMException('Bundle decode cancelled', 'AbortError') }
+  check()
   const m = await ensure()
+  check()
   if (m.kind === 'native') return decompressNative(m.format, bytes)
   // Fallback path: run the JS decoder in the worker, which also
   // lazy-loads the bundle on first use — subsequent calls reuse the
   // same worker, so the chunk downloads + parses once per session.
   const decoded = await decompressInWorker(bytes)
+  check()
   if (decoded !== WORKER_UNAVAILABLE) return decoded
   // No worker took it. Decode here and block, sharing one import so
   // the chunk still only downloads once.
