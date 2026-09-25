@@ -24,6 +24,7 @@ import { loadManagedScanBundle, managedScanSource } from './scan-source.js'
 import { managedReportSources } from '../scan/report-source.js'
 import { fetchScanModels } from '../view/scan-models.js'
 import '../view/repository-selector.js'
+import '../view/report-selector.js'
 import '../view/user-selector.js'
 
 function openAdminPage(view) {
@@ -190,19 +191,23 @@ class ManagedAdminHistory extends ManagedPage {
       const duplicate = reports.some(other => other.id !== report.id && other.filename === report.filename && other.repo === report.repo)
       return `${report.filename}${!this._repo && report.repo ? ` · ${report.repo}` : ''}${duplicate ? ` · ${report.id.slice(-12)}` : ''}`
     }
-    return html`<div class="context-filters">
-      <select aria-label="Filter history by repository" .value=${this._repo} @change=${event => void this._setRepo(event.target.value)}>
-        <option value="" ?selected=${!this._repo}>All repositories</option>
-        ${this._repo && !repos.includes(this._repo) ? html`<option value=${this._repo} selected>${this._repo}</option>` : nothing}
-        ${repos.map(repo => html`<option value=${repo} ?selected=${this._repo === repo}>${repo}</option>`)}
-      </select>
-      <select aria-label="Filter history by report" .value=${this._reportId} @change=${event => void this._setReport(event.target.value)}>
-        <option value="" ?selected=${!this._reportId}>All reports</option>
-        ${this._reportId && !reports.some(report => report.id === this._reportId) ? html`<option value=${this._reportId} selected>Selected report</option>` : nothing}
-        ${reports.map(report => html`<option value=${report.id} ?selected=${this._reportId === report.id}>${reportLabel(report)}</option>`)}
-      </select>
+    const repositoryOptions = [
+      { value: '', label: 'All repositories', special: true, reset: true },
+      ...this._repo && !repos.includes(this._repo) ? [{ value: this._repo, label: this._repo }] : [],
+      ...repos.map(repo => ({ value: repo, label: repo })),
+    ]
+    const reportOptions = [
+      { value: '', label: 'All reports', reset: true },
+      ...this._reportId && !reports.some(report => report.id === this._reportId) ? [{ value: this._reportId, label: 'Selected report' }] : [],
+      ...reports.map(report => ({ value: report.id, label: reportLabel(report) })),
+    ]
+    return html`
+      <repository-selector label="Filter history by repository" .options=${repositoryOptions} .value=${this._repo}
+        @repository-change=${event => void this._setRepo(event.detail.value)}></repository-selector>
+      <report-selector label="Filter history by report" .options=${reportOptions} .value=${this._reportId}
+        @report-change=${event => void this._setReport(event.detail.value)}></report-selector>
       <button type="button" class="btn" aria-label="Clear repository and report filters" ?disabled=${!this._repo && !this._reportId} @click=${() => void this._setRepo('')}>Clear selection</button>
-    </div>`
+    `
   }
 
   render() {
@@ -212,8 +217,12 @@ class ManagedAdminHistory extends ManagedPage {
     return html`<div class="wrap">${adminNavigation('manage-history', this._role)}
       <h1 class="sr-only">History</h1>
       <div class="page-intro"><p class="intro">${this._role === 'admin' ? 'Uploads, access changes, repository changes, deletions, and triage.' : 'Bundle, report, and triage history within your team access.'}</p><span class="result-count">${this._history ? this._total : '…'} entries</span></div>
-      <div class="toolbar" role="search"><input type="search" maxlength="500" aria-label="Search history" placeholder="Search actions, users, repositories, reports…" .value=${this._query} @input=${(event) => this._search(event.target.value)}><select aria-label="Filter history by type" .value=${this._filter} @change=${(event) => { this._filter = event.target.value; void this._load() }}><option value="all">All activity</option><option value="triage">Triage</option><option value="visibility">Visibility</option><option value="upload">Uploads</option><option value="repository">${this._role === 'admin' ? 'Repositories' : 'Assignments'}</option>${this._role === 'admin' ? html`<option value="access">Access</option>` : nothing}<option value="delete">Deletions</option></select><button type="button" class="btn" ?disabled=${this._loading} @click=${() => this._load(page)}>Refresh</button></div>
-      ${this._contextFilters()}
+      <div class="toolbar" role="search">
+        <input type="search" maxlength="500" aria-label="Search history" placeholder="Search history…" .value=${this._query} @input=${(event) => this._search(event.target.value)}>
+        <select aria-label="Filter history by type" .value=${this._filter} @change=${(event) => { this._filter = event.target.value; void this._load() }}><option value="all">All activity</option><option value="triage">Triage</option><option value="visibility">Visibility</option><option value="upload">Uploads</option><option value="repository">${this._role === 'admin' ? 'Repositories' : 'Assignments'}</option>${this._role === 'admin' ? html`<option value="access">Access</option>` : nothing}<option value="delete">Deletions</option></select>
+        ${this._contextFilters()}
+        <button type="button" class="btn" ?disabled=${this._loading} @click=${() => this._load(page)}>Refresh</button>
+      </div>
       ${this._error ? html`<p class="msg error" role="alert">Couldn’t load history: ${this._error} <button type="button" class="btn" @click=${() => this._load()}>Retry</button></p>` : nothing}
       <div aria-busy=${this._loading}>${this._history == null ? (this._error ? nothing : loadingRows('Loading history…')) : history.length === 0 ? html`<div class="history"><p class="empty">${this._query.trim() || this._filter !== 'all' || this._repo || this._reportId ? 'No activity matches your filters.' : 'No history available yet.'}</p></div>` : html`<div class="history" aria-label="Workspace history"><div class="history-head" aria-hidden="true"><span>Type</span><span>Activity</span><span>Repository / report / finding</span><span>Time</span></div>${history.map((entry) => this._row(entry))}</div>`}</div>
       ${this._total > 100 ? html`<nav class="pagination" aria-label="History pages"><span role="status">${start + 1}–${Math.min(start + 100, this._total)} of ${this._total} entries</span><button type="button" class="btn" ?disabled=${this._loading || page === 1} @click=${() => this._changePage(page - 1)}>Previous</button><span>Page ${page} of ${Math.ceil(this._total / 100)}</span><button type="button" class="btn" ?disabled=${this._loading || start + 100 >= this._total} @click=${() => this._changePage(page + 1)}>Next</button></nav>` : nothing}
