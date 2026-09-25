@@ -1296,18 +1296,21 @@ async function ensureRemoteNames(entry) {
       // the delete and the re-upload), nothing else would fetch the new
       // incarnation: go again when the cloud state moved on since this
       // fetch started (review r4100261430). Bounded by broadcasts — a
-      // failure with nothing new to fetch isn't retried.
+      // failure with nothing new to fetch isn't retried. The retry is
+      // part of this fetch's chain, so whoever awaits discovery waits for
+      // the new incarnation too (review r4100318902). No cycle: the
+      // retry only joins fetches still in `inFlight`, and a settled fetch
+      // leaves it before running anything that could wait on another.
       const startedAt = entry.remoteMeta.get(tag)
       const retryIfMoved = () => {
-        if (!entry.disposed && entry.remoteTags.has(tag) && entry.remoteMeta.get(tag) !== startedAt) {
-          ensureRemoteNames(entry).catch(() => {})
-        }
+        if (entry.disposed || !entry.remoteTags.has(tag) || entry.remoteMeta.get(tag) === startedAt) return null
+        return ensureRemoteNames(entry).then(() => null, () => null)
       }
       p = entry.session.fetchByTag(tag).then(
         async (got) => {
           entry.inFlight.delete(tag)
           if (entry.disposed) return null
-          if (!got) { retryIfMoved(); return null }
+          if (!got) return retryIfMoved()
           // Re-check the tag is still in the live remote set
           // before mutating local state. A user-initiated delete
           // (deleteFromRemote) that landed between `fetchByTag`
@@ -1346,7 +1349,7 @@ async function ensureRemoteNames(entry) {
           await maybeAutoDownload(entry, tag, got)
           return null
         },
-        () => { entry.inFlight.delete(tag); retryIfMoved(); return null },
+        () => { entry.inFlight.delete(tag); return retryIfMoved() },
       )
       entry.inFlight.set(tag, p)
     }

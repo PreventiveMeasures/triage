@@ -2797,9 +2797,12 @@ describe('client/sync/objstore-presence', () => {
         await reuploadJoined
         return r
       }
-      await discoverRemoteFileNames(ws.id)
-      assert.equal(await waitForLocalText(fileName, peerText), peerText, 'the re-upload lands locally')
-      await awaitPresence(() => e.baselines.get(tag)?.incarnation === incarnationB, 'baseline at B')
+      // Discovery isn't done until the new incarnation is (review
+      // r4100318902): no polling after it resolves.
+      const names = await discoverRemoteFileNames(ws.id)
+      assert.ok(names.includes(fileName), `discovered: ${JSON.stringify(names)}`)
+      assert.equal(await localReportText(fileName), peerText, 'the re-upload landed locally')
+      assert.equal(e.baselines.get(tag)?.incarnation, incarnationB, 'baseline at B')
     } finally {
       e.session.fetchByTag = realFetchByTag
       e.inFlight.get = realInFlightGet
