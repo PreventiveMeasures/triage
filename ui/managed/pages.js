@@ -126,7 +126,7 @@ class ManagedAdminHistory extends ManagedPage {
     this._query = ''
     this._onActorFilter = (event) => {
       const actor = event.detail?.actor
-      if (typeof actor !== 'string' || actor.length === 0) return
+      if (typeof actor !== 'string') return
       this._page = 1
       this._query = actor
       this._filter = 'all'

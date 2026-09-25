@@ -4,6 +4,9 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { LINKS_KIND, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, clientModeLabel, computeLinkHint, configureClientMode, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, ensureLinkedFindingsIndexed, getCount, getKind, getPackagesIndex, getRepositoriesIndex, getWorkspaceAppMetadata, getWorkspaceAppModeHint, hasStandaloneProbeHint, hydrateSecureStorage, isCombinedServerMode, isManagedUiMode, listBundles, listFiles, listWorkspaces, mergeSyncServerInfo, migrateLegacyFilenames, onVaultStateChange, onWorkspaceAppMetadataChanged, probeServerInfo, readCachedServerInfo, reloadTriageFromStorage, rememberStandaloneProbe, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, setLocalMode, state, syncObservedAfterHydrate, toggleClientMode, waitForServerInfo, writeCachedServerInfo } from '#client/index.js'
 import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, setSyncForceDisabled, triageSync } from './client-sync.js'
 import { clearPreviewRole, getPreviewRole, loadManagedBundle, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams } from './client-managed.js'
+import { managedHistory } from './managed-history.js'
+import { cleanupGraph2 } from './graph/state.js'
+import { MANAGED_PAGES } from '../../common/managed/routes.js'
 import { ROLES, isRole } from '../../common/managed/roles.ts'
 import { initManagedTriagePush, resetManagedTriage } from './managed-triage.js'
 import sidebarCSS from './sidebar.css'
@@ -36,7 +39,7 @@ function setLandingModePending(pending) {
   if (pending) landing.dataset.serverModePending = 'true'
   else delete landing.dataset.serverModePending
 }
-import { deleteCurrent, deleteCurrentBundle, goHome, leaveWorkspace, persistLastBundle, resetForClientModeTransition, switchToFile, switchToManagedTeam, switchToWorkspace } from './ingest.js'
+import { beginViewNavigation, currentViewGeneration, deleteCurrent, deleteCurrentBundle, goHome, leaveWorkspace, persistLastBundle, resetForClientModeTransition, switchToFile, switchToManagedTeam, switchToWorkspace } from './ingest.js'
 import { reportWorkspaceFor } from './finding-link.js'
 import { exportWorkspace } from './workspace-export.js'
 import { maybePromptFirstUse } from './first-import-prompt.js'
@@ -1759,8 +1762,12 @@ let deferredServerInfo = null
 let clientModeGeneration = 0
 let managedSessionRequest = 0
 let managedSessionRefresh = null
+let managedBase = null
 
-async function finishClientModeTransition({ forgetLastView = true } = {}) {
+async function finishClientModeTransition({ forgetLastView = true, resetNavigation = true } = {}) {
+  managedHistory.reset({ force: resetNavigation })
+  managedBase?.remove()
+  managedBase = null
   const generation = ++clientModeGeneration
   resetManagedTriage()
   setSyncForceDisabled(state.serverMode !== 'e2e')
@@ -1842,6 +1849,7 @@ async function restoreForcedManagedMode() {
 function applyServerInfo(info, { runtime = true } = {}) {
   if (forcedManagedReturn) { deferredServerInfo = info; return }
   setLandingModePending(false)
+  const hadConfiguration = readCachedServerInfo() != null
   const wasManaged = isManagedUiMode()
   const previousMode = state.serverMode
   // A late single-mode managed response preserves the offline local fallback;
@@ -1857,7 +1865,7 @@ function applyServerInfo(info, { runtime = true } = {}) {
   if (wasManaged !== isManagedUiMode()) {
     // renderSidebar waits for mode detection. Release startup before awaiting
     // the transition's final render, or a first managed visit deadlocks.
-    void finishClientModeTransition({ forgetLastView: false }).catch((err) => console.warn('client mode transition:', err))
+    void finishClientModeTransition({ forgetLastView: false, resetNavigation: hadConfiguration }).catch((err) => console.warn('client mode transition:', err))
     return
   }
   renderSyncStatus(triageSync.status)
@@ -1899,11 +1907,10 @@ async function revalidateManagedSession() {
     if (previous && previous.id !== session?.id) {
       state.managedTeams = []
       resetManagedTriage()
-      void goHome()
-    } else if (state.currentView in ADMIN_PAGES) {
-      if (!['admin', 'manage'].includes(session?.role)) void goHome()
-      else if (session.role !== 'admin' && ADMIN_ONLY_PAGES.has(state.currentView)) state.currentView = 'manage'
-      render()
+      managedHistory.reset()
+      void goHome({ history: false })
+    } else if (state.currentView in ADMIN_PAGES && canAccessManagedPage(state.currentView)) {
+      render({ animate: false })
     }
     renderAuthStatus()
     // Claim the triage change-notifier for the server push — a no-op unless
@@ -1915,6 +1922,14 @@ async function revalidateManagedSession() {
     if (!isCurrent()) return
     state.managedTeams = teams
     renderSidebar()
+    if (!document.querySelector('base')) {
+      managedBase = document.createElement('base')
+      managedBase.href = '/'
+      document.head.prepend(managedBase)
+    }
+    if (managedHistory.active && Object.hasOwn(MANAGED_PAGES, state.currentView) && !canAccessManagedPage(state.currentView)) {
+      await managedHistory.navigate({ view: canAccessManagedPage('manage') ? 'manage' : 'home' }, { replace: true })
+    } else await managedHistory.start(restoreManagedPage)
   } catch (err) {
     console.warn('managed: session probe failed:', err)
   }
@@ -1937,21 +1952,54 @@ const ADMIN_PAGES = {
   'manage-scans': 'admin: scans bundle load failed:',
 }
 const ADMIN_ONLY_PAGES = new Set(['admin-users', 'manage-repos', 'manage-teams'])
+let readyManagedView = null
+
+function canAccessManagedPage(view) {
+  const role = state.managedSession?.role
+  return ['admin', 'manage'].includes(role) && (!ADMIN_ONLY_PAGES.has(view) || role === 'admin')
+}
 
 // Navigate to one of the admin / manage pages: load the admin bundle
 // (which defines the element render() paints for `view`), then switch
 // the view + repaint.
+async function restoreManagedPage(route, isCurrent) {
+  const canReuseReport = readyManagedView === currentViewGeneration()
+    && state.currentManagedTeam === route.teamId && state.currentManagedReport === route.reportId
+  beginViewNavigation()
+  if (!isCurrent() || !isManagedUiMode()) return false
+  if (route.view === 'home') return goHome({ history: false })
+  if (Object.hasOwn(MANAGED_PAGES, route.view)) return navigateToAdminPage(route.view, { ...route, history: false })
+  const team = state.managedTeams.find(candidate => candidate.id === route.teamId)
+  if (!team) return false
+  // Findings/Files are two views of the same hydrated reports. Switching
+  // between them must preserve filters and avoid fetching/parsing again.
+  if (!canReuseReport && !(await switchToManagedTeam(team, route.reportId, { history: false }))) return false
+  if (!isCurrent()) return false
+  if (state.currentView !== route.view) cleanupGraph2()
+  state.currentView = route.view
+  document.body.classList.remove('report-fullscreen')
+  // Commit page restoration synchronously with its URL, including in a
+  // background PWA window where a view transition may wait for a paint.
+  render({ animate: false })
+  readyManagedView = currentViewGeneration()
+  renderSidebar()
+  document.querySelector('#main-content')?.scrollTo({ top: 0 })
+  return { ...route, view: state.currentView }
+}
+
 export async function navigateToAdminPage(view, options = {}) {
-  const canOpen = () => view in ADMIN_PAGES && isManagedUiMode()
-    && ['admin', 'manage'].includes(state.managedSession?.role)
-    && (!ADMIN_ONLY_PAGES.has(view) || state.managedSession.role === 'admin')
-  if (!canOpen()) return
+  if (options.history !== false && isManagedUiMode()) {
+    if (!managedHistory.active) await refreshManagedSession()
+    if (managedHistory.active) return managedHistory.navigate({ view, ...(options.actor ? { actor: options.actor } : {}) })
+  }
+  if (!(view in ADMIN_PAGES) || !isManagedUiMode() || !canAccessManagedPage(view)) return false
+  const navigation = beginViewNavigation()
   const generation = clientModeGeneration
   try { await loadManagedBundle() }
-  catch (err) { console.warn(ADMIN_PAGES[view], err); return }
-  if (generation !== clientModeGeneration || !canOpen()) return
+  catch (err) { console.warn(ADMIN_PAGES[view], err); return false }
+  if (generation !== clientModeGeneration || navigation !== currentViewGeneration() || !isManagedUiMode() || !canAccessManagedPage(view)) return false
   state.currentView = view
-  render()
+  render({ animate: false })
   renderSidebar()
   // Use the known role and CSRF token immediately; apply session changes when
   // the background check finishes. Rapid navigation shares the pending check.
@@ -1959,11 +2007,12 @@ export async function navigateToAdminPage(view, options = {}) {
   // Manage pages share the main scroll container. Start each destination at its
   // header instead of carrying a long list's scroll position into the next page.
   document.querySelector('#main-content')?.scrollTo({ top: 0 })
-  if (view === 'manage-history' && typeof options.actor === 'string' && options.actor.length > 0) {
+  if (view === 'manage-history') {
     document.dispatchEvent(new CustomEvent('managed-history-filter', {
-      detail: { actor: options.actor }, bubbles: true, composed: true,
+      detail: { actor: options.actor ?? '' }, bubbles: true, composed: true,
     }))
   }
+  return true
 }
 
 // Admin pages live in a separate lazy-loaded bundle, so the shared back button

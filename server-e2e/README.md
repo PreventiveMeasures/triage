@@ -45,6 +45,10 @@ they must be different files. Standalone managed still accepts `DB_PATH`,
 with `MANAGED_DB_PATH` taking precedence when set. Managed reports, bundles
 and avatars live beside its database.
 
+Managed and combined servers also serve the built UI with nested page URLs.
+See [managed browser navigation](../server-managed/README.md) for the page list
+and mode-switch behavior. E2E page navigation is unchanged.
+
 ## Storage backends
 
 The e2e server supports **two storage backends**, each pairing a

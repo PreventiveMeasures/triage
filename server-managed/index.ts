@@ -2,12 +2,14 @@
 // same app on e2e's listener; storage, routing and cleanup stay here.
 import { createServer } from 'node:http'
 import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { createOriginGate } from '../server-common/origin.ts'
 import { createDiskAvatarStore } from './avatar-store.ts'
 import { createDiskBlobStore } from './blob-store.ts'
 import { type ManagedConfig, loadManagedConfig } from './config.ts'
 import { openSqliteManagedDb } from './db.ts'
 import { type ManagedHttpDeps, createManagedRequestHandler } from './http.ts'
+import { loadManagedStatic } from './static.ts'
 
 // Expired-session sweep period. Lookups already exclude expired rows
 // (`WHERE expires_at > now`), so this is housekeeping, not a security control.
@@ -31,8 +33,11 @@ export function createManagedApp(config: ManagedConfig, options: Partial<Pick<Ma
     p.finally(() => inFlight.delete(p)).catch(() => {})
   }
 
+  const serveStatic = loadManagedStatic(fileURLToPath(new URL('../out/', import.meta.url)), {
+    indexOnly: options.next != null, scanServer: options.serverInfo?.deepviewScanServer ?? null,
+  })
   const handleRequest = createManagedRequestHandler({
-    ...options, config, db, avatarStore, reportStore, bundleStore, originGate,
+    ...options, config, db, avatarStore, reportStore, bundleStore, originGate, serveStatic,
     isShuttingDown: () => shuttingDown || options.isShuttingDown?.() === true, track,
   })
 
