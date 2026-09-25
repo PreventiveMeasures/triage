@@ -712,7 +712,7 @@ async function handleUploadReport(req: IncomingMessage, res: ServerResponse, dep
     await deps.reportStore.delete(id).catch(() => {})
     throw err
   }
-  sendJson(res, 201, { id, filename, byteSize: bytes.length, sha256, repoId: matchedRepo?.repoId ?? null, repoDirectory: directory, repoEmbedded, analyzer, visible: false, bundleId })
+  sendJson(res, 201, { id, slug: (await deps.db.getReport(id))!.slug, filename, byteSize: bytes.length, sha256, repoId: matchedRepo?.repoId ?? null, repoDirectory: directory, repoEmbedded, analyzer, visible: false, bundleId })
 }
 
 // GET /api/admin/reports/<id> — download a stored report (admin|manage). Serves
@@ -1204,7 +1204,7 @@ async function handleCreateTeam(req: IncomingMessage, res: ServerResponse, deps:
   const id = randomUUID()
   if (!(await deps.db.createTeam(id, name, Date.now()))) { sendJson(res, 409, { error: 'name-taken' }); return }
   await activity(deps, s.user, 'access', `created team ${name}`)
-  sendJson(res, 201, { id, name })
+  sendJson(res, 201, await deps.db.getTeam(id))
 }
 
 // POST /api/admin/teams/rename — rename a team. Body { teamId, name }. 404 if no

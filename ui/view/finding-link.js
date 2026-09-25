@@ -11,7 +11,7 @@
 // Links resolve within the recipient's local reports or accessible managed
 // teams. They carry a finding identity, never report contents or credentials.
 import { buildFindingUrl, isLinkableFindingId, isManagedUiMode, knownLinkHint, state, workspacesHoldingReport } from '#client/index.js'
-import { managedRoutePath } from '../../common/managed/routes.js'
+import { managedRouteForIds, managedRoutePath } from '../../common/managed/routes.js'
 import { applyFilters, matchesConfirmed, resetFilters, shouldLockConfirmed } from './filters.js'
 import { getMergedGroups, getShownGroups, groupKey, groupState, linkableGroups, sortTabs, tabKey } from './group.js'
 import { configureRevalidation, isRuledOut } from './format.js'
@@ -39,7 +39,7 @@ export function findingLinkFor(finding) {
   const id = tabKey(finding)
   if (!isLinkableFindingId(id)) return null
   if (isManagedUiMode()) {
-    const path = managedRoutePath({ view: 'findings', teamId: state.currentManagedTeam, reportId: state.currentManagedReport })
+    const path = managedRoutePath(managedRouteForIds({ view: 'findings', teamId: state.currentManagedTeam, reportId: state.currentManagedReport }, state.managedTeams))
     return path ? buildFindingUrl({ id }, path) : null
   }
   const reportName = finding._reportName || state.currentFile || ''

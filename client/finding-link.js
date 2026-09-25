@@ -343,6 +343,6 @@ export function parseFindingUrl(candidate) {
   // param or a mangled hint can't ride into the href we hand the
   // renderer.
   const route = parseManagedRoute(u)
-  const path = route?.teamId ? managedRoutePath({ ...route, view: 'findings' }) : '/'
+  const path = route?.teamSlug ? managedRoutePath({ ...route, view: 'findings' }) : '/'
   return { id: ref.id, fragment: encodeFindingRef(ref), path }
 }

@@ -7,7 +7,7 @@ import { clearPreviewRole, fetchBundleMetadata, getPreviewRole, loadManagedBundl
 import { showToast } from './toast.js'
 import { managedHistory } from './managed-history.js'
 import { cleanupGraph2 } from './graph/state.js'
-import { MANAGED_PAGES } from '../../common/managed/routes.js'
+import { MANAGED_PAGES, managedRouteForIds, resolveManagedRoute } from '../../common/managed/routes.js'
 import { ROLES, isRole } from '../../common/managed/roles.ts'
 import { initManagedTriagePush, resetManagedTriage } from './managed-triage.js'
 import sidebarCSS from './sidebar.css'
@@ -1972,6 +1972,8 @@ function canAccessManagedPage(view) {
 // (which defines the element render() paints for `view`), then switch
 // the view + repaint.
 async function restoreManagedPage(route, isCurrent) {
+  route = resolveManagedRoute(route, state.managedTeams)
+  if (!route) return false
   const canReuseReport = readyManagedView === currentViewGeneration()
     && state.currentManagedTeam === route.teamId && state.currentManagedReport === route.reportId
   beginViewNavigation()
@@ -1987,7 +1989,7 @@ async function restoreManagedPage(route, isCurrent) {
     if (!isCurrent()) return false
     if (!result.ok) { if (result.reason) showToast(result.reason); return false }
     readyManagedView = currentViewGeneration()
-    return { view: 'findings', teamId: state.currentManagedTeam, reportId: state.currentManagedReport }
+    return managedRouteForIds({ view: 'findings', teamId: state.currentManagedTeam, reportId: state.currentManagedReport }, state.managedTeams)
   }
   if (route.view === 'bundles') return openManagedBundle(route.bundleId, isCurrent, route.bundleTab)
   if (route.view === 'home') return goHome({ history: false })
@@ -2007,7 +2009,7 @@ async function restoreManagedPage(route, isCurrent) {
   readyManagedView = currentViewGeneration()
   renderSidebar()
   document.querySelector('#main-content')?.scrollTo({ top: 0 })
-  return { ...route, view: state.currentView }
+  return managedRouteForIds({ ...route, view: state.currentView }, state.managedTeams)
 }
 
 async function openManagedBundle(id, isCurrent, tab = 'overview') {

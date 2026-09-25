@@ -8,12 +8,12 @@ import { browserAt } from './_managed-browser.js'
 test('all managed pages and team/report Files routes round-trip', () => {
   const routes = [{ view: 'bundles', bundleId: 'bundle-id' }, { view: 'home' }, ...Object.keys(MANAGED_PAGES).map(view => ({ view })),
     { view: 'manage-history', actor: 'user name & repo' }]
-  for (const view of ['findings', 'files']) for (const reportId of [null, 'report-id']) routes.push({ view, teamId: 'team-id', reportId })
+  for (const view of ['findings', 'files']) for (const reportSlug of [null, 'report-id']) routes.push({ view, teamSlug: 'team-id', reportSlug })
   for (const route of routes) assert.deepEqual(parseManagedRoute(new URL(managedRoutePath(route), 'https://triage.test')), route)
   for (const path of ['/bundles', '/bundles/%2f', '/bundles/../api/config', '/api/config', '/api/admin/users', '/manage/missing', '/teams/a/reports', '/teams/%2f', '/teams/%00', '/teams/%ff']) {
     assert.equal(parseManagedRoute(new URL(path, 'https://triage.test')), null, path)
   }
-  assert.equal(managedRoutePath({ view: 'files', teamId: '../api' }), null)
+  assert.equal(managedRoutePath({ view: 'files', teamSlug: '../api' }), null)
 })
 
 test('E2E creates no history entries or navigation listeners', async () => {
@@ -37,11 +37,11 @@ test('deep-link boot replaces; user navigation pushes; Back/Forward and reload r
   await nav.navigate({ view: 'manage-scans' })
   await nav.navigate({ view: 'manage-scans' })
   assert.equal(entries.length, 2, 'the same destination is not duplicated')
-  await nav.navigate({ view: 'findings', teamId: 'a', reportId: 'b' })
+  await nav.navigate({ view: 'findings', teamSlug: 'a', reportSlug: 'b' })
   await browser.move(-1)
   assert.equal(shown.view, 'manage-scans')
   await browser.move(1)
-  assert.equal(shown.reportId, 'b')
+  assert.equal(shown.reportSlug, 'b')
   assert.equal(entries.length, 3, 'popstate never pushes')
   nav = createManagedHistory(browser) // new document, same browser history
   await nav.start(restore)
@@ -84,7 +84,7 @@ test('latest navigation wins; inaccessible deep links fall back to Home', async 
   const pending = Promise.withResolvers()
   let shown
   await nav.start(async (route, current) => {
-    if (route.teamId === 'missing') return false
+    if (route.teamSlug === 'missing') return false
     if (route.view === 'manage-reports') await pending.promise
     if (current()) shown = route.view
     return true
@@ -97,7 +97,7 @@ test('latest navigation wins; inaccessible deep links fall back to Home', async 
   await slow
   assert.equal(shown, 'manage')
   assert.equal(browser.location.pathname, '/manage')
-  await nav.navigate({ view: 'findings', teamId: 'missing' })
+  await nav.navigate({ view: 'findings', teamSlug: 'missing' })
   assert.equal(shown, 'home', 'a failed report click also leaves the URL and view consistent')
   assert.equal(browser.location.pathname, '/')
 })
@@ -114,10 +114,10 @@ test('managed finding links and E2E hints survive boot and resolve to the actual
     const { browser } = browserAt(path)
     const nav = createManagedHistory(browser)
     let restored
-    await nav.start(route => { restored = route; return { view: 'findings', teamId: 'a', reportId: 'b' } })
+    await nav.start(route => { restored = route; return { view: 'findings', teamSlug: 'a', reportSlug: 'b' } })
     assert.equal(restored.finding.id, 'issue-id')
     if (path.startsWith('/#')) assert.deepEqual(restored.finding, { id: 'issue-id', report: 'abcd', workspace: 'efgh' })
-    else assert.equal(restored.reportId, 'b')
+    else assert.equal(restored.reportSlug, 'b')
     assert.equal(browser.location.href, 'https://triage.test/teams/a/reports/b')
   }
 })
@@ -126,7 +126,7 @@ test('finding hash navigation is handled once, supports repeat clicks, and prese
   const { browser } = browserAt('/teams/a')
   const nav = createManagedHistory(browser)
   const findings = []
-  await nav.start(route => { if (route.finding) findings.push(route.finding.id); return { view: 'findings', teamId: 'a', reportId: null } })
+  await nav.start(route => { if (route.finding) findings.push(route.finding.id); return { view: 'findings', teamSlug: 'a', reportSlug: null } })
   await browser.hash('#finding=issue-id')
   await browser.hash('#finding=issue-id')
   assert.deepEqual(findings, ['issue-id', 'issue-id'])
@@ -141,16 +141,16 @@ test('comment finding links navigate in the same document and retain Back/Forwar
   await nav.start(route => { restored = route; return true })
   const href = '/teams/b/reports/second#finding=issue-id'
   assert.equal(await browser.click(href), true, 'cancel native document navigation')
-  assert.deepEqual(restored, { view: 'findings', teamId: 'b', reportId: 'second', finding: { id: 'issue-id', report: null, workspace: null } })
+  assert.deepEqual(restored, { view: 'findings', teamSlug: 'b', reportSlug: 'second', finding: { id: 'issue-id', report: null, workspace: null } })
   assert.equal(browser.location.pathname, '/teams/b/reports/second')
   assert.equal(browser.location.hash, '')
   assert.deepEqual(writes, ['replace', 'push'])
   assert.equal(await browser.click(href), true)
   assert.equal(entries.length, 2, 'repeat clicks reveal the finding without duplicating history')
   await browser.move(-1)
-  assert.equal(restored.reportId, 'first')
+  assert.equal(restored.reportSlug, 'first')
   await browser.move(1)
-  assert.equal(restored.reportId, 'second')
+  assert.equal(restored.reportSlug, 'second')
 })
 
 test('comment routing preserves native link actions and stops intercepting in E2E mode', async () => {
@@ -181,7 +181,7 @@ test('a finding destination survives the OAuth round trip and is consumed once',
   let restored
   await navigation.start(route => { restored = route; return true })
   assert.equal(restored.finding.id, 'issue-id')
-  assert.equal(restored.reportId, 'b')
+  assert.equal(restored.reportSlug, 'b')
   browser.history.replaceState(null, '', '/')
   await createManagedHistory(browser).start(route => { restored = route; return true })
   assert.deepEqual(restored, { view: 'home' })

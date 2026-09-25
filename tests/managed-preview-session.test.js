@@ -131,7 +131,7 @@ test('background session refresh retains the known identity on transient failure
 })
 
 test('background team refresh preserves the sidebar during an outage and clears revoked access', async (t) => {
-  const fallback = [{ id: 'team', name: 'Known team', reports: [], bundles: [] }]
+  const fallback = [{ id: 'team', slug: 'team-slug', name: 'Known team', reports: [], bundles: [] }]
   let response = new Response('', { status: 503 })
   t.mock.method(globalThis, 'fetch', () => Promise.resolve(response))
   assert.deepEqual(await probeTeams({ fallback }), fallback)
@@ -139,4 +139,11 @@ test('background team refresh preserves the sidebar during an outage and clears 
   assert.deepEqual(await probeTeams({ fallback }), [])
   response = Response.json({ teams: [] })
   assert.deepEqual(await probeTeams({ fallback }), [])
+})
+
+
+test('the team catalogue preserves server slugs alongside UUIDs', async t => {
+  const teams = [{ id: 'team-uuid', slug: 'team-slug', name: 'Team', reports: [{ id: 'report-uuid', slug: 'report-slug', filename: 'r.json' }], bundles: [] }]
+  t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({ teams })))
+  assert.deepEqual(await probeTeams(), teams)
 })

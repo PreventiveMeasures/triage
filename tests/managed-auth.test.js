@@ -859,8 +859,9 @@ test('reports upload/download/delete: CSRF + role, sanitised filename, attributi
   // Upload succeeds; the filename header is URL-decoded + path-stripped.
   const up = await upload(aCk, adminSess.csrfToken, '{"findings":[]}', { 'x-report-filename': encodeURIComponent(`sub/dir/scan${String.fromCodePoint(0x7f)}.json`) })
   assert.equal(up.statusCode, 201)
-  const { id } = JSON.parse(up.body)
+  const { id, slug } = JSON.parse(up.body)
   assert.match(id, /^[0-9a-f-]{36}$/u)
+  assert.equal(slug, id.split('-').at(-1))
 
   // It lists with the sanitised filename + uploader attribution.
   const listed = JSON.parse((await send('GET', '/api/admin/reports', aCk)).body).reports
@@ -1190,7 +1191,7 @@ test('db: teams — create/list/delete, repo (+path) & member (+perms) links, FK
   const tId = randomUUID()
   assert.equal(await db.createTeam(tId, 'Blue', now), true)
   assert.equal(await db.createTeam(randomUUID(), 'Blue', now), false) // name taken (UNIQUE)
-  assert.deepEqual(await db.getTeam(tId), { id: tId, name: 'Blue' })
+  assert.deepEqual(await db.getTeam(tId), { id: tId, slug: tId.split('-').at(-1), name: 'Blue' })
   assert.deepEqual(await db.listUserOptions(), [{ id: uid, login: 'alice', name: null }])
 
   await db.setTeamRepo(tId, 7, 'src/app')
@@ -2597,3 +2598,22 @@ for (const suffix of ['', '/triage']) {
     assert.equal((await h.get(`/api/reports/${id}${suffix}`)).statusCode, 404)
   })
 }
+
+
+test('team slugs are assigned by the server and cannot be edited through create or rename', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const session = await createSession(config, db, { githubUserId: 1, login: 'admin', name: null, avatarUrl: null }, Date.now())
+  const cookie = cookiePair(session.setCookie)
+  const { send, upload } = bundleHarness(db)
+  const created = await upload('/api/admin/teams', cookie, session.csrfToken, JSON.stringify({ name: 'Team', slug: 'custom' }))
+  assert.equal(created.statusCode, 201)
+  const team = JSON.parse(created.body)
+  assert.equal(team.slug, team.id.split('-').at(-1))
+  const renamed = await upload('/api/admin/teams/rename', cookie, session.csrfToken, JSON.stringify({ teamId: team.id, name: 'Renamed', slug: 'custom' }))
+  assert.equal(renamed.statusCode, 200)
+  assert.equal((await db.getTeam(team.id)).slug, team.slug)
+  await db.setTeamMember(team.id, session.userId, { dependencies: false, security: false })
+  assert.equal(JSON.parse((await send('GET', '/api/teams', cookie)).body).teams[0].slug, team.slug)
+  assert.equal(JSON.parse((await send('GET', '/api/admin/teams', cookie)).body).teams[0].slug, team.slug)
+})

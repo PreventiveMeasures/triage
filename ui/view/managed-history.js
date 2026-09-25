@@ -47,6 +47,7 @@ export function createManagedHistory(browser) {
 
   async function navigate(route, { replace: replacing = false, pop = false } = {}) {
     if (!active || !restore) return false
+    route ??= { view: 'home' }
     let path = managedRoutePath(route)
     if (path === null) return false
     const request = ++revision
