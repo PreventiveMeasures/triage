@@ -15,7 +15,7 @@ import { type IncomingMessage, type ServerResponse, createServer } from 'node:ht
 import { DEFAULT_MANAGED_SCAN_MODEL, MANAGED_SCAN_MODELS } from '../common/managed/scan-models.ts'
 import { MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_ENTRIES, type TriageEntryPatch, parseTriageEntryPatch } from '../common/managed/triage.ts'
 import { acceptsReportMetadata } from './report-response.ts'
-import { type ManagedComment, parseCommentBody } from '../common/managed/comments.ts'
+import { type ManagedComment, canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
 import { randomUUID } from 'node:crypto'
 
 const host = process.env['MANAGED_TEST_HOST'] ?? '127.0.0.1'
@@ -420,7 +420,8 @@ async function handleComments(req: IncomingMessage, res: ServerResponse, reportI
   }
   const comment = comments.find(entry => entry.id === commentId && ids.has(entry.findingId))
   if (!comment) { sendJson(res, 404, { error: 'no-comment' }); return }
-  if (comment.authorId !== 'fixture-user') { sendJson(res, 403, { error: 'not-comment-author' }); return }
+  const allowed = req.method === 'DELETE' ? canDeleteComment(comment, { id: 'fixture-user', role }) : comment.authorId === 'fixture-user'
+  if (!allowed) { sendJson(res, 403, { error: 'not-comment-author' }); return }
   if (!Number.isSafeInteger(raw.version) || raw.version! < 1) { sendJson(res, 400, { error: 'bad-version' }); return }
   if (comment.version !== raw.version) { sendJson(res, 409, { error: 'comment-changed' }); return }
   if (req.method === 'DELETE') {

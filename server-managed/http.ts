@@ -69,7 +69,7 @@ import type { ActivityContext, ActivityInput } from './activity.ts'
 import { acceptsReportMetadata } from './report-response.ts'
 import { MAX_PULL_REQUESTS, MAX_PULL_REQUEST_URL } from '../common/github-pr.ts'
 import { lookupPullRequests } from './github-pulls.ts'
-import { parseCommentBody } from '../common/managed/comments.ts'
+import { canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
 
 const SESSION_PATH = '/api/auth/session'
 const AVATAR_PREFIX = '/api/avatar/'
@@ -1247,7 +1247,8 @@ async function handleReportComments(req: IncomingMessage, res: ServerResponse, d
   }
   const current = await deps.db.getComment(commentId)
   if (current == null || !visible.has(current.findingId)) { sendJson(res, 404, { error: 'no-comment' }); return }
-  if (current.authorId !== session.user.id) { sendJson(res, 403, { error: 'not-comment-author' }); return }
+  const allowedComment = method === 'DELETE' ? canDeleteComment(current, session.user) : current.authorId === session.user.id
+  if (!allowedComment) { sendJson(res, 403, { error: 'not-comment-author' }); return }
   if (typeof raw?.version !== 'number' || !Number.isSafeInteger(raw.version) || raw.version < 1) {
     sendJson(res, 400, { error: 'bad-version' }); return
   }

@@ -81,7 +81,8 @@ Comments live in `finding_comment`, independently of the shared triage row.
 Each has its own ID, finding ID, text, optional author ID/login, optional creation and
 edit timestamps, and a version. Discussion posts are attributed to the
 authenticated user; the client cannot choose the author. Readers see the discussion; users
-with triage access can add comments and edit or delete their own. Edits and
+with triage access can add comments and edit or delete their own. Admins can also
+delete comments that have no linked author. Edits and
 deletions require the version that was read, so stale requests receive 409
 instead of overwriting or deleting newer text.
 
@@ -114,8 +115,9 @@ claim an author. Each migrated text gets a fresh ID, preserving subsequent
 legacy-server writes after a rollback without replacing previous comments.
 The old column is cleared in the same transaction to avoid duplicate migration
 on restart. Unattributed comments remain readable; users cannot claim or
-edit or delete them. Legacy triage history is preserved. New shared-field comment writes
-are rejected; e2e/local/sync comment storage and editing are unchanged.
+edit them, but admins can delete comments with no linked user. Legacy triage
+history is preserved. New shared-field comment writes are rejected;
+e2e/local/sync comment storage and editing are unchanged.
 
 Comment additions, edits, and deletions contribute to scoped activity history and user
 Last Activity, without copying their text into the activity feed. Ordinary

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
-import type { ManagedComment } from '../common/managed/comments.ts'
+import { type ManagedComment, canDeleteComment } from '../common/managed/comments.ts'
 
 export interface CommentInput {
   findingId: string
@@ -24,7 +24,7 @@ export interface CommentStore {
   getComment(id: string): Promise<ManagedComment | null>
   createComment(input: CommentInput, now: number): Promise<ManagedComment>
   editComment(id: string, authorId: string, authorLogin: string, body: string, version: number, reportId: string, now: number): Promise<ManagedComment | 'conflict' | 'forbidden' | null>
-  deleteComment(id: string, authorId: string, authorLogin: string, version: number, reportId: string, now: number): Promise<'deleted' | 'conflict' | 'forbidden' | null>
+  deleteComment(id: string, actorId: string, actorLogin: string, version: number, reportId: string, now: number): Promise<'deleted' | 'conflict' | 'forbidden' | null>
 }
 
 const COMMENT_COLUMNS = `id TEXT PRIMARY KEY, finding_id TEXT NOT NULL, body TEXT NOT NULL,
@@ -78,7 +78,8 @@ export function commentMethods(db: DatabaseSync): CommentStore {
     (id, finding_id, body, author_id, author_login, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
   const update = db.prepare(`UPDATE finding_comment SET body = ?, updated_at = ?, version = version + 1
     WHERE id = ? AND author_id = ? AND version = ?`)
-  const remove = db.prepare('DELETE FROM finding_comment WHERE id = ? AND author_id = ? AND version = ?')
+  const remove = db.prepare('DELETE FROM finding_comment WHERE id = ? AND author_id IS ? AND version = ?')
+  const userRole = db.prepare('SELECT role FROM managed_user WHERE id = ?')
   // Deleted comments still have audit events which explicit annotation purges
   // must find, including when no current triage/comment record remains.
   const annotated = db.prepare(`SELECT finding_id AS id FROM finding_comment WHERE finding_id IN (SELECT value FROM json_each(?))
@@ -127,17 +128,19 @@ export function commentMethods(db: DatabaseSync): CommentStore {
         return Promise.resolve(read(id)!)
       } catch (err) { db.exec('ROLLBACK'); throw err }
     },
-    deleteComment(id, authorId, authorLogin, version, reportId, now) {
+    deleteComment(id, actorId, actorLogin, version, reportId, now) {
       db.exec('BEGIN')
       try {
         const current = read(id)
-        if (!current || current.authorId !== authorId || current.version !== version) {
+        const role = (userRole.get(actorId) as { role: string } | undefined)?.role ?? 'none'
+        const allowed = current != null && canDeleteComment(current, { id: actorId, role })
+        if (!current || !allowed || current.version !== version) {
           db.exec('COMMIT')
           if (!current) return Promise.resolve(null)
-          return Promise.resolve(current.authorId === authorId ? 'conflict' : 'forbidden')
+          return Promise.resolve(allowed ? 'conflict' : 'forbidden')
         }
-        remove.run(id, authorId, version)
-        event.run(id, current.findingId, authorId, authorLogin, 'deleted a comment', now, reportId, reportId, reportId)
+        remove.run(id, current.authorId, version)
+        event.run(id, current.findingId, actorId, actorLogin, 'deleted a comment', now, reportId, reportId, reportId)
         db.exec('COMMIT')
         return Promise.resolve('deleted')
       } catch (err) { db.exec('ROLLBACK'); throw err }
