@@ -84,18 +84,21 @@ actions, targets, and timestamps, not annotation bodies or credentials.
 
 # Manager content access
 
-Managers manage reports and bundles and oversee triage only in repositories
-assigned to their teams. Report access also requires a matching team directory
-scope; bundles use repository access. These rules apply to catalogues, downloads,
+Managers manage reports and bundles they uploaded or can access through
+repositories assigned to their teams. Access through teams also requires a
+matching directory scope for reports; bundles use repository access. These rules apply to catalogues, downloads,
 uploads, visibility changes, assignment changes, deletion, and triage. Managers
 can review unpublished reports in scope. Viewer and triage roles still require
 publication. Administrators retain unrestricted content access.
 
-Managers cannot create unassigned content, detach content, or move it outside
-their team scopes. Repository pickers contain only allowed repositories. Reports
-without embedded repository metadata can use the repository and directory
+Managers can upload unassigned content and retain access to their own uploads.
+Detaching or deleting attached content requires access to its current repository
+(and report path); assigning it requires access to the destination. Repository
+pickers contain only allowed repositories. Reports without embedded repository
+metadata can use the repository and directory
 controls on the upload page. Bundle deduplication never returns inaccessible
-bundle IDs or names, and manager uploads only auto-link accessible reports.
+bundle IDs or names, and manager uploads only auto-link owned or team-accessible
+reports.
 Repository connections, teams, memberships, and user roles are admin-only.
 
 # User timestamps

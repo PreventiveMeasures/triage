@@ -64,7 +64,6 @@ import { collectRepos, installUrl } from './github-app.ts'
 import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, ensureUserAccessToken, handleCallback } from './github-oauth.ts'
 import { clearCookie, endSession, readSession } from './session.ts'
 import type { ActivityContext, ActivityInput } from './activity.ts'
-import { contentAccess } from './content-access.ts'
 import { acceptsReportMetadata } from './report-response.ts'
 
 const SESSION_PATH = '/api/auth/session'
@@ -588,6 +587,8 @@ async function handleSetReportVisible(req: IncomingMessage, res: ServerResponse,
   if (typeof reportId !== 'string' || typeof visible !== 'boolean') { sendJson(res, 400, { error: 'bad-request' }); return }
   if (!(await canViewReport(deps, s.user, reportId))) { sendJson(res, 404, { error: 'no-report' }); return }
   if (!(await canChangeReportRepo(deps, s.user, reportId))) { sendJson(res, 403, { error: 'repo-forbidden' }); return }
+  const report = await deps.db.getReport(reportId)
+  if (report == null) { sendJson(res, 404, { error: 'no-report' }); return }
   if (!(await deps.db.setReportVisible(reportId, visible))) { sendJson(res, 404, { error: 'no-report' }); return }
   if (report.visible !== visible) await activity(deps, s.user, 'visibility', visible ? 'published a report' : 'hid a report', { reportId, report: report.filename, repo: await repositoryName(deps, report.repoId) })
   sendJson(res, 200, { ok: true, visible })
@@ -605,6 +606,7 @@ async function handleSetBundleRepo(req: IncomingMessage, res: ServerResponse, de
   if (typeof bundleId !== 'string') { sendJson(res, 400, { error: 'bad-request' }); return }
   if (!(await canAccessBundle(deps, s.user, bundleId))) { sendJson(res, 404, { error: 'no-bundle' }); return }
   const bundle = await deps.db.getBundle(bundleId)
+  if (bundle == null) { sendJson(res, 404, { error: 'no-bundle' }); return }
   if (!(await canChangeBundleRepo(deps, s.user, bundle?.repoId ?? null))) { sendJson(res, 403, { error: 'repo-forbidden' }); return }
   if (!(await repoIdAllowed(deps, repoId))) { sendJson(res, 400, { error: 'bad-repo' }); return }
   if (repoId !== null && s.user.role !== 'admin' && !(await deps.db.userCanReadRepo(s.user.id, repoId as number))) {
@@ -622,10 +624,6 @@ async function handleSetBundleRepo(req: IncomingMessage, res: ServerResponse, de
 async function handleListReports(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   const s = await readManageSession(res, deps, cookie)
   if (s == null) return
-  const access = await contentAccess(deps.db, s.user)
-  const bundles = new Set((await deps.db.listBundles()).filter(access.bundle).map(bundle => bundle.id))
-  const reports = (await deps.db.listReports()).filter(access.report).map(report =>
-    report.bundleId && !bundles.has(report.bundleId) ? { ...report, bundleId: null, bundleFilename: null } : report)
   sendJson(res, 200, {
     reports: await Promise.all((await deps.db.listReports(s.user.role === 'admin' ? undefined : s.user.id)).map(async report => {
       const bundleAllowed = report.bundleId != null && await canAccessBundle(deps, s.user, report.bundleId)
@@ -634,6 +632,7 @@ async function handleListReports(res: ServerResponse, deps: ManagedHttpDeps, coo
     })),
     maxBytes: deps.config.maxReportBytes,
     repos: selectableRepos(await bundleRepos(deps, s.user)),
+    repoScopes: s.user.role === 'admin' ? null : await deps.db.listRepoScopesForUser(s.user.id),
   })
 }
 
@@ -727,7 +726,7 @@ async function handleGetReport(res: ServerResponse, deps: ManagedHttpDeps, cooki
   if (s == null) return
   if (!(await canViewReport(deps, s.user, id))) { sendJson(res, 404, { error: 'no-report' }); return }
   const rec = await deps.db.getReport(id)
-  if (rec == null || !(await contentAccess(deps.db, s.user)).report(rec)) { sendJson(res, 404, { error: 'no-report' }); return }
+  if (rec == null) { sendJson(res, 404, { error: 'no-report' }); return }
   const bytes = await deps.reportStore.get(id)
   if (bytes == null) { sendJson(res, 503, { error: 'unavailable' }); return }
   const current = await readSession(deps.config, deps.db, cookie, Date.now())
@@ -754,6 +753,8 @@ async function handleDeleteReport(req: IncomingMessage, res: ServerResponse, dep
   if (!requireManageRole(res, s.user)) return
   if (!(await canViewReport(deps, s.user, id))) { sendJson(res, 404, { error: 'no-report' }); return }
   if (!(await canChangeReportRepo(deps, s.user, id))) { sendJson(res, 403, { error: 'repo-forbidden' }); return }
+  const report = await deps.db.getReport(id)
+  if (report == null) { sendJson(res, 404, { error: 'no-report' }); return }
   const existed = await deps.db.deleteReport(id)
   await deps.reportStore.delete(id).catch((err) => { console.warn('managed: report bytes delete failed:', err) })
   if (!existed) { sendJson(res, 404, { error: 'no-report' }); return }
@@ -825,13 +826,13 @@ async function handleBundleCache(req: IncomingMessage, res: ServerResponse, deps
 async function handleListBundles(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   const s = await readManageSession(res, deps, cookie)
   if (s == null) return
-  const access = await contentAccess(deps.db, s.user)
   sendJson(res, 200, {
     bundles: await Promise.all((await deps.db.listBundles(s.user.role === 'admin' ? undefined : s.user.id)).map(async bundle => ({
       ...bundle, canChangeRepo: await canChangeBundleRepo(deps, s.user, bundle.repoId),
     }))),
     maxBytes: deps.config.maxBundleBytes,
     repos: selectableRepos(await bundleRepos(deps, s.user)),
+    repoScopes: s.user.role === 'admin' ? null : await deps.db.listRepoScopesForUser(s.user.id),
   })
 }
 
@@ -863,10 +864,10 @@ async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, dep
   const filename = sanitizeFilename(firstHeader(req.headers['x-bundle-filename']), 'bundle')
   const existing = await deps.db.getBundleByIntegrity(integrity)
   if (existing != null) {
-    if (!(await canAccessBundle(deps, s.user, existing.id))) { sendJson(res, 409, { error: 'bundle-already-stored' }); return }
+    if (!(await canAccessBundle(deps, s.user, existing.id))) { sendJson(res, 409, { error: 'bundle-conflict' }); return }
     // Reports uploaded while this bundle was inaccessible retain only its
     // integrity. An authorized re-upload repairs those pending links too.
-    await deps.db.linkReportsToBundle(integrity, existing.id)
+    await deps.db.linkReportsToBundle(integrity, existing.id, s.user.role === 'admin' ? undefined : s.user.id)
     prebuildBundle(deps, existing.id)
     sendJson(res, 200, { id: existing.id, integrity, filename: existing.filename, deduped: true })
     return
@@ -885,14 +886,14 @@ async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, dep
     // Any other failure rethrows.
     const raced = await deps.db.getBundleByIntegrity(integrity)
     if (raced != null) {
-      if (!(await canAccessBundle(deps, s.user, raced.id))) { sendJson(res, 409, { error: 'bundle-already-stored' }); return }
-      await deps.db.linkReportsToBundle(integrity, raced.id)
+      if (!(await canAccessBundle(deps, s.user, raced.id))) { sendJson(res, 409, { error: 'bundle-conflict' }); return }
+      await deps.db.linkReportsToBundle(integrity, raced.id, s.user.role === 'admin' ? undefined : s.user.id)
       prebuildBundle(deps, raced.id)
       sendJson(res, 200, { id: raced.id, integrity, filename: raced.filename, deduped: true }); return }
     throw err
   }
   // Auto-link reports that declared this integrity before the bundle existed.
-  await deps.db.linkReportsToBundle(integrity, id)
+  await deps.db.linkReportsToBundle(integrity, id, s.user.role === 'admin' ? undefined : s.user.id)
   prebuildBundle(deps, id)
   sendJson(res, 201, { id, integrity, filename, byteSize: bytes.length, repoId: repo.repoId })
 }
@@ -905,7 +906,7 @@ async function handleGetBundle(res: ServerResponse, deps: ManagedHttpDeps, cooki
   if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
   if (!(await canAccessBundle(deps, s.user, id))) { sendJson(res, 404, { error: 'no-bundle' }); return }
   const rec = await deps.db.getBundle(id)
-  if (rec == null || !(await contentAccess(deps.db, s.user)).bundle(rec)) { sendJson(res, 404, { error: 'no-bundle' }); return }
+  if (rec == null) { sendJson(res, 404, { error: 'no-bundle' }); return }
   const bytes = await deps.bundleStore.get(id)
   if (bytes == null) { sendJson(res, 503, { error: 'unavailable' }); return }
   const current = await readSession(deps.config, deps.db, cookie, Date.now())
@@ -931,6 +932,7 @@ async function handleDeleteBundle(req: IncomingMessage, res: ServerResponse, dep
   if (!requireManageRole(res, s.user)) return
   if (!(await canAccessBundle(deps, s.user, id))) { sendJson(res, 404, { error: 'no-bundle' }); return }
   const bundle = await deps.db.getBundle(id)
+  if (bundle == null) { sendJson(res, 404, { error: 'no-bundle' }); return }
   if (!(await canChangeBundleRepo(deps, s.user, bundle?.repoId ?? null))) { sendJson(res, 403, { error: 'repo-forbidden' }); return }
   const existed = await deps.db.deleteBundle(id)
   await deps.bundleCache?.delete(id).catch((err) => { console.warn('managed: bundle cache delete failed:', err) })

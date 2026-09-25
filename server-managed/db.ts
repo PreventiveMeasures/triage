@@ -802,7 +802,7 @@ function prepareStatements(db: DatabaseSync) {
     // but haven't been linked yet (bundle uploaded after the report).
     linkReportsToBundleStmt: db.prepare(
       `UPDATE managed_report AS r SET bundle_id = ? WHERE bundle_integrity = ? AND bundle_id IS NULL
-       AND (? IS NULL OR EXISTS (SELECT 1 FROM team_repo tr JOIN team_user tu ON tu.team_id = tr.team_id
+       AND (? IS NULL OR r.uploaded_by = ? OR EXISTS (SELECT 1 FROM team_repo tr JOIN team_user tu ON tu.team_id = tr.team_id
          WHERE tu.user_id = ? AND tr.repo_id = r.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}))`,
     ),
     // OR IGNORE: a duplicate name (UNIQUE) is the "taken" signal (0 changes); the
@@ -1166,7 +1166,7 @@ function bundleMethods(stmts: ReturnType<typeof prepareStatements>) {
       return Promise.resolve(Number(setBundleRepoStmt.run(repoId, id).changes) > 0)
     },
     linkReportsToBundle(integrity: string, bundleId: string, userId?: string): Promise<void> {
-      linkReportsToBundleStmt.run(bundleId, integrity, userId ?? null, userId ?? null)
+      linkReportsToBundleStmt.run(bundleId, integrity, userId ?? null, userId ?? null, userId ?? null)
       return Promise.resolve()
     },
   }
