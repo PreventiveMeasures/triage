@@ -46,7 +46,7 @@ const ADMIN_PLUS_ICON = html`<svg viewBox="0 0 16 16" fill="none" stroke="curren
 const ADMIN_ROLE_LABELS = { admin: 'Admin', manage: 'Manager', triage: 'Triage', view: 'Viewer', none: 'No access' }
 const ADMIN_ROLE_DESCRIPTIONS = {
   admin: 'Manage workspace access and teams',
-  manage: 'Manage content and scans',
+  manage: 'Manage content and triage within team access',
   triage: 'Review and triage findings',
   view: 'Read-only access',
   none: 'No workspace access',
@@ -169,8 +169,8 @@ class ManagedAdminHistory extends ManagedPage {
     const start = (page - 1) * 100
     return html`<div class="wrap">${adminNavigation('manage-history', this._role)}
       <h1 class="sr-only">History</h1>
-      <div class="page-intro"><p class="intro">${this._role === 'admin' ? 'Uploads, access changes, repository changes, deletions, and triage.' : 'Triage history for reports you can access.'}</p><span class="result-count">${this._history ? this._total : '…'} entries</span></div>
-      <div class="toolbar" role="search"><input type="search" maxlength="500" aria-label="Search history" placeholder="Search actions, users, repositories, reports…" .value=${this._query} @input=${(event) => this._search(event.target.value)}><select aria-label="Filter history by type" .value=${this._filter} @change=${(event) => { this._filter = event.target.value; void this._load() }}><option value="all">All activity</option><option value="triage">Triage</option>${this._role === 'admin' ? html`<option value="visibility">Visibility</option><option value="upload">Uploads</option><option value="access">Access</option><option value="repository">Repositories</option><option value="delete">Deletions</option>` : nothing}</select><button type="button" class="btn" ?disabled=${this._loading} @click=${() => this._load(page)}>Refresh</button></div>
+      <div class="page-intro"><p class="intro">${this._role === 'admin' ? 'Uploads, access changes, repository changes, deletions, and triage.' : 'Bundle, report, and triage history within your team access.'}</p><span class="result-count">${this._history ? this._total : '…'} entries</span></div>
+      <div class="toolbar" role="search"><input type="search" maxlength="500" aria-label="Search history" placeholder="Search actions, users, repositories, reports…" .value=${this._query} @input=${(event) => this._search(event.target.value)}><select aria-label="Filter history by type" .value=${this._filter} @change=${(event) => { this._filter = event.target.value; void this._load() }}><option value="all">All activity</option><option value="triage">Triage</option><option value="visibility">Visibility</option><option value="upload">Uploads</option><option value="repository">${this._role === 'admin' ? 'Repositories' : 'Assignments'}</option>${this._role === 'admin' ? html`<option value="access">Access</option>` : nothing}<option value="delete">Deletions</option></select><button type="button" class="btn" ?disabled=${this._loading} @click=${() => this._load(page)}>Refresh</button></div>
       ${this._error ? html`<p class="msg error" role="alert">Couldn’t load history: ${this._error} <button type="button" class="btn" @click=${() => this._load()}>Retry</button></p>` : nothing}
       <div aria-busy=${this._loading}>${this._history == null ? (this._error ? nothing : loadingRows('Loading history…')) : history.length === 0 ? html`<div class="history"><p class="empty">${this._query.trim() || this._filter !== 'all' ? 'No activity matches your filters.' : 'No history available yet.'}</p></div>` : html`<div class="history" aria-label="Workspace history"><div class="history-head" aria-hidden="true"><span>Type</span><span>Activity</span><span>Repository / report / finding</span><span>Time</span></div>${history.map((entry) => this._row(entry))}</div>`}</div>
       ${this._total > 100 ? html`<nav class="pagination" aria-label="History pages"><span role="status">${start + 1}–${Math.min(start + 100, this._total)} of ${this._total} entries</span><button type="button" class="btn" ?disabled=${this._loading || page === 1} @click=${() => this._changePage(page - 1)}>Previous</button><span>Page ${page} of ${Math.ceil(this._total / 100)}</span><button type="button" class="btn" ?disabled=${this._loading || start + 100 >= this._total} @click=${() => this._changePage(page + 1)}>Next</button></nav>` : nothing}
@@ -721,6 +721,7 @@ async function uploadReport(file, csrfToken, repoId = null, directory = '') {
   const res = await managedFetch('/api/admin/reports', { method: 'POST', credentials: 'same-origin', headers, body: file })
   if (!res.ok) {
     if (res.status === 413) throw new Error('too large')
+    if (res.status === 403) throw new Error('choose a repository and directory within your team access')
     let detail = ''
     try {
       const body = await res.json()
@@ -749,6 +750,7 @@ async function setReportRepo(id, repoId, directory, csrfToken) {
   })
   if (!res.ok) {
     if (res.status === 409) throw new Error('this report already defines its repository')
+    if (res.status === 403) throw new Error('choose a repository and directory within your team access')
     throw new Error(res.status === 400 ? 'invalid repository or directory' : `HTTP ${res.status}`)
   }
   return res.json()
@@ -769,22 +771,22 @@ function formatBytes(n) {
 }
 
 // Keep managed numeric repository IDs and null (unattached) intact.
-function repoOptions(repos) {
-  return [{ value: null, label: 'No repository', special: true }, ...repos.map(repo => ({ value: repo.repoId, label: repo.fullName }))]
+function repoOptions(repos, allowUnassigned = true) {
+  return [...(allowUnassigned ? [{ value: null, label: 'No repository', special: true }] : []), ...repos.map(repo => ({ value: repo.repoId, label: repo.fullName }))]
 }
 
-function repoPickerTemplate(repos, selected, onChange, label = 'Repository for new bundles') {
+function repoPickerTemplate(repos, selected, onChange, label = 'Repository for new bundles', allowUnassigned = true) {
   const loading = !Array.isArray(repos)
   return html`<div class="repo-picker"><span class="repo-picker-label">${label}</span>
-    <repository-selector class="repo-select" .options=${loading ? [{ value: null, label: 'Loading repositories…' }] : repoOptions(repos)} .value=${selected} label=${label} ?disabled=${loading || repos.length === 0}
+    <repository-selector class="repo-select" .options=${loading ? [{ value: null, label: 'Loading repositories…' }] : repoOptions(repos, allowUnassigned)} .value=${selected} label=${label} ?disabled=${loading || repos.length === 0}
       @repository-change=${event => onChange(event.detail.value)}></repository-selector>
   </div>`
 }
 
-function repoRowSelect(repos, current, onPick) {
+function repoRowSelect(repos, current, onPick, allowUnassigned = true) {
   if (!Array.isArray(repos) || repos.length === 0) return nothing
   return html`<repository-selector class="repo-attach" label="Attach to a repository"
-    .options=${repoOptions(repos)} .value=${current ?? null}
+    .options=${repoOptions(repos, allowUnassigned)} .value=${current ?? null}
     @repository-change=${event => onPick(event.detail.value)}></repository-selector>`
 }
 
@@ -919,6 +921,8 @@ class ManagedAdminReports extends ManagedPage {
         <div class="page-intro"><p class="intro">Upload reports. New reports stay hidden until you make them visible.</p>${this._localImport.renderAction()}</div>
         ${this._localImport.renderPanel(this._busy || !this._csrf)}
         <div class="drop-card"><span class="drop-icon" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10V2m0 0L5 5m3-3 3 3M3 9v3.5A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5V9"/></svg></span><span class="drop-copy"><strong>Upload reports</strong><span>Drop files anywhere on this page, or browse your computer.</span></span><button type="button" class="drop-browse" ?disabled=${this._busy} @click=${() => pickFiles((files) => void this._upload(files))}>${this._busy ? 'Uploading…' : 'Browse files'}</button></div>
+        <div class="location-editor" aria-label="Location for reports without repository metadata"><div class="location-field"><span>Repository (when absent from report)</span><repository-selector label="Repository for new reports" .options=${repoOptions(this._data?.repos ?? [], this._role === 'admin')} .value=${this._repoId} ?disabled=${!this._data?.repos?.length} @repository-change=${event => { this._repoId = event.detail.value }}></repository-selector></div><div class="location-field"><label for="report-upload-directory">Directory</label><input id="report-upload-directory" placeholder="Repository root" .value=${this._repoDirectory} @input=${event => { this._repoDirectory = event.target.value }}></div></div>
+        ${this._data?.repoScopes?.length ? html`<p class="intro">Team paths: ${this._data.repoScopes.map(scope => `${this._data.repos.find(repo => repo.repoId === scope.repoId)?.fullName ?? scope.repoId}/${scope.path ?? ''}`).join(', ')}</p>` : nothing}
         ${this._body()}
       </div>`
   }
@@ -968,7 +972,7 @@ class ManagedAdminReports extends ManagedPage {
 
   _locationEditor(report) {
     const repos = Array.isArray(this._data?.repos) ? this._data.repos : []
-    return html`<div class="location-editor"><div class="location-field"><span>Repository</span><repository-selector label="Repository for report" .options=${repoOptions(repos)} .value=${this._locationRepo} ?disabled=${this._locationBusy} @repository-change=${event => { this._locationRepo = event.detail.value }}></repository-selector></div><div class="location-field"><label for=${`report-dir-${report.id}`}>Directory (optional)</label><input id=${`report-dir-${report.id}`} type="text" placeholder="Repository root" .value=${this._locationDirectory} @input=${(e) => { this._locationDirectory = e.target.value }}></div><div class="location-actions"><button type="button" class="action" @click=${() => { this._locationReport = null }}>Cancel</button><button type="button" class="action" ?disabled=${this._locationBusy || this._locationRepo == null} @click=${() => void this._saveLocation(report)}>Save</button></div></div>`
+    return html`<div class="location-editor"><div class="location-field"><span>Repository</span><repository-selector label="Repository for report" .options=${repoOptions(repos, this._role === 'admin')} .value=${this._locationRepo} ?disabled=${this._locationBusy} @repository-change=${event => { this._locationRepo = event.detail.value }}></repository-selector></div><div class="location-field"><label for=${`report-dir-${report.id}`}>Directory (optional)</label><input id=${`report-dir-${report.id}`} type="text" placeholder="Repository root" .value=${this._locationDirectory} @input=${(e) => { this._locationDirectory = e.target.value }}></div><div class="location-actions"><button type="button" class="action" @click=${() => { this._locationReport = null }}>Cancel</button><button type="button" class="action" ?disabled=${this._locationBusy || this._locationRepo == null} @click=${() => void this._saveLocation(report)}>Save</button></div></div>`
   }
 
   async _saveLocation(report) {
@@ -1059,7 +1063,7 @@ async function uploadBundle(file, csrfToken, repoId) {
   if (csrfToken) headers['x-csrf-token'] = csrfToken
   if (repoId != null) headers['x-repo-id'] = String(repoId)
   const res = await managedFetch('/api/admin/bundles', { method: 'POST', credentials: 'same-origin', headers, body: file })
-  if (!res.ok) throw new Error(res.status === 413 ? 'too large' : `HTTP ${res.status}`)
+  if (!res.ok) throw new Error(res.status === 413 ? 'too large' : res.status === 403 ? 'choose a repository within your team access' : `HTTP ${res.status}`)
   return res.json()
 }
 
@@ -1142,7 +1146,7 @@ class ManagedAdminBundles extends ManagedPage {
         ${this._localImport.renderPanel(this._busy || !this._csrf)}
         <section class="upload-panel" aria-label="Upload bundles">
           <div class="upload-copy"><span class="drop-icon" aria-hidden="true">${adminIcon('upload')}</span><span><strong>Upload source bundles</strong><span class="upload-description">Drop source archives anywhere on this page.</span></span></div>
-          <div class="upload-controls">${repoPickerTemplate(this._data?.repos, this._repoId, (v) => { this._repoId = v }, 'Repository')}<button type="button" class="drop-browse" ?disabled=${this._busy} @click=${() => pickFiles((files) => void this._upload(files))}>${this._busy ? 'Uploading…' : 'Browse files'}</button></div>
+          <div class="upload-controls">${repoPickerTemplate(this._data?.repos, this._repoId, (v) => { this._repoId = v }, 'Repository', this._role === 'admin')}<button type="button" class="drop-browse" ?disabled=${this._busy} @click=${() => pickFiles((files) => void this._upload(files))}>${this._busy ? 'Uploading…' : 'Browse files'}</button></div>
         </section>
         ${this._body()}
       </div>`
@@ -1167,7 +1171,7 @@ class ManagedAdminBundles extends ManagedPage {
         <span class="filename">${b.filename}</span>
         <span class="meta"><span class="kind">${b.kind === 'stasis' ? 'Stasis' : 'Sourcemaps'}</span><span>${formatBytes(b.byteSize)}</span><span>${when}</span>${b.uploadedByLogin ? html`<span>@${b.uploadedByLogin}</span>` : nothing}</span>
       </span></span>
-      <span class="bundle-location">${repoRowSelect(this._data?.repos, b.repoId, (repoId) => this._setRepo(b, repoId))}</span>
+      <span class="bundle-location">${repoRowSelect(this._data?.repos, b.repoId, (repoId) => this._setRepo(b, repoId), this._role === 'admin')}</span>
       <span class="actions">
         <a class="action" aria-label=${`Download ${b.filename}`} href=${`/api/admin/bundles/${encodeURIComponent(b.id)}`}><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8m-3-3 3 3 3-3M3 11v3h10v-3"/></svg></a>
         <button type="button" class="action danger" aria-label=${`Delete ${b.filename}`} @click=${() => this._delete(b)}>${ADMIN_DELETE_ICON}</button>

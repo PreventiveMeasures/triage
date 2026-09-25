@@ -72,3 +72,32 @@ test('activity search and type filters run before pagination; ties, empty pages,
   await db.deleteTriage(['shared'])
   assert.equal((await db.listActivity({ ...query, contexts })).total, 0, 'explicit triage deletion removes its activity too')
 })
+
+test('existing activity upgrades bundle identities without trusting filenames, and repeated migrations preserve scope', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'managed-activity-scope-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const file = join(dir, 'managed.sqlite')
+  let db = openSqliteManagedDb(file)
+  const userId = await db.upsertUser({ githubUserId: 1, login: 'manager', name: null, avatarUrl: null }, 1)
+  await db.selectRepo({ repoId: 7, fullName: 'o/r', private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: userId }, 1)
+  await db.createTeam('t', 'Team', 1)
+  await db.setTeamRepo('t', 7, null)
+  await db.setTeamMember('t', userId, { dependencies: false, security: false })
+  await db.insertBundle({ id: 'b', integrity: 'hash', filename: 'same.zip', kind: null, byteSize: 1, uploadedBy: userId, uploadedByLogin: 'manager', repoId: 7 }, 1)
+  await db.recordActivity({ kind: 'delete', actor: 'admin', action: 'deleted a private bundle', report: 'same.zip' }, 2)
+  await db.close()
+  const legacy = new DatabaseSync(file)
+  legacy.exec(`DROP TRIGGER managed_report_activity; DROP TRIGGER managed_bundle_activity;
+    ALTER TABLE managed_activity DROP COLUMN bundle_id;
+    ALTER TABLE managed_activity DROP COLUMN repo_id;
+    ALTER TABLE managed_activity DROP COLUMN repo_directory;`)
+  legacy.close()
+  for (let i = 0; i < 2; i++) {
+    db = openSqliteManagedDb(file)
+    const manager = await db.listActivity({ ...query, contexts: [], userId: userId })
+    assert.equal(manager.total, 1)
+    assert.equal(manager.history[0].id, 'bundle-upload:b')
+    assert.equal((await db.listActivity(query)).total, 2)
+    await db.close()
+  }
+})

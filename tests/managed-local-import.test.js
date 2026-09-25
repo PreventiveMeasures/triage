@@ -609,7 +609,8 @@ test('a local import completes independently of a later dropped file', async (t)
       local.resolve(Response.json(success ? { ok: true } : { error: 'denied' }, { status: success ? 200 : 403 }))
       await importing
       const expectedSuccess = success ? `Imported ${kind === 'report' ? 'report.md' : 'source.map'}.` : ''
-      const expectedError = success ? '' : 'HTTP 403'
+      const expectedError = success ? '' : kind === 'report'
+        ? 'choose a repository and directory within your team access' : 'choose a repository within your team access'
       assert.equal(ui.error, expectedError)
       assert.equal(ui.success, expectedSuccess, 'the local result is available while the later upload is still pending')
       dropped.resolve(Response.json({ error: 'failed' }, { status: 500 }))

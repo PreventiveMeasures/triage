@@ -547,7 +547,7 @@ export interface ManagedDb extends ActivityStore {
   // Attach / detach a bundle's repo link (repoId null = detach); resolves true
   // iff the bundle exists. The caller validates repoId is a selected repo.
   setBundleRepo(id: string, repoId: number | null): Promise<boolean>
-  linkReportsToBundle(integrity: string, bundleId: string): Promise<void>
+  linkReportsToBundle(integrity: string, bundleId: string, userId?: string): Promise<void>
   // Teams ("Manage teams"). createTeam inserts a team (false iff the name is
   // taken); renameTeam changes a team's name ('name-taken' iff another team
   // already has it, 'not-found' iff no such team, 'ok' otherwise — same name is
@@ -563,6 +563,8 @@ export interface ManagedDb extends ActivityStore {
   getTeam(id: string): Promise<{ id: string; name: string } | null>
   listTeams(): Promise<AdminTeam[]>
   listUserOptions(): Promise<UserOption[]>
+  // Current grants for manager content reads, writes, and repository pickers.
+  listRepoScopesForUser(userId: string): Promise<{ repoId: number; path: string | null }[]>
   // The teams a given user belongs to (name-sorted), each with reports and
   // bundles attached to that team's repos — for that user's own sidebar Teams section.
   // Any user; only their own memberships.
@@ -772,7 +774,9 @@ function prepareStatements(db: DatabaseSync) {
     // Attach a freshly-stored bundle to the reports that declared its integrity
     // but haven't been linked yet (bundle uploaded after the report).
     linkReportsToBundleStmt: db.prepare(
-      `UPDATE managed_report SET bundle_id = ? WHERE bundle_integrity = ? AND bundle_id IS NULL`,
+      `UPDATE managed_report AS r SET bundle_id = ? WHERE bundle_integrity = ? AND bundle_id IS NULL
+       AND (? IS NULL OR EXISTS (SELECT 1 FROM team_repo tr JOIN team_user tu ON tu.team_id = tr.team_id
+         WHERE tu.user_id = ? AND tr.repo_id = r.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}))`,
     ),
     // OR IGNORE: a duplicate name (UNIQUE) is the "taken" signal (0 changes); the
     // uuid PK never collides.
@@ -794,7 +798,7 @@ function prepareStatements(db: DatabaseSync) {
          FROM team_user tu
          JOIN team_repo tr ON tr.team_id = tu.team_id
          JOIN managed_report r ON r.repo_id = tr.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}
-        WHERE tu.user_id = ? AND r.visible = 1
+        WHERE tu.user_id = ? AND (r.visible = 1 OR (SELECT role FROM managed_user WHERE id = tu.user_id) = 'manage')
         ORDER BY r.uploaded_at DESC, r.filename ASC`,
     ),
     // Bundles are scoped through the same team -> repository links as reports.
@@ -808,6 +812,10 @@ function prepareStatements(db: DatabaseSync) {
          JOIN selected_repo sr ON sr.repo_id = b.repo_id
         WHERE tu.user_id = ?
         ORDER BY b.uploaded_at DESC, b.filename ASC`,
+    ),
+    selectUserRepoScopesStmt: db.prepare(
+      `SELECT DISTINCT tr.repo_id AS repoId, NULLIF(tr.path, '') AS path
+         FROM team_repo tr JOIN team_user tu ON tu.team_id = tr.team_id WHERE tu.user_id = ?`,
     ),
     // A report is readable iff one of the user's team scopes contains it.
     selectReportReadableStmt: db.prepare(
@@ -1121,8 +1129,8 @@ function bundleMethods(stmts: ReturnType<typeof prepareStatements>) {
     setBundleRepo(id: string, repoId: number | null): Promise<boolean> {
       return Promise.resolve(Number(setBundleRepoStmt.run(repoId, id).changes) > 0)
     },
-    linkReportsToBundle(integrity: string, bundleId: string): Promise<void> {
-      linkReportsToBundleStmt.run(bundleId, integrity)
+    linkReportsToBundle(integrity: string, bundleId: string, userId?: string): Promise<void> {
+      linkReportsToBundleStmt.run(bundleId, integrity, userId ?? null, userId ?? null)
       return Promise.resolve()
     },
   }
@@ -1138,7 +1146,7 @@ type TeamMemberRow = { teamId: string; userId: string; login: string; viewDepend
 function teamMethods(db: DatabaseSync, stmts: ReturnType<typeof prepareStatements>) {
   const {
     insertTeamStmt, selectTeamByNameStmt, renameTeamStmt, deleteTeamStmt, selectTeamStmt,
-    selectTeamsStmt, selectTeamsForUserStmt, selectUserTeamReportsStmt, selectUserTeamBundlesStmt, selectReportReadableStmt,
+    selectUserRepoScopesStmt, selectTeamsStmt, selectTeamsForUserStmt, selectUserTeamReportsStmt, selectUserTeamBundlesStmt, selectReportReadableStmt,
     selectReportPermsStmt, selectUserOptionsStmt, selectTeamReposStmt, selectTeamMembersStmt,
     upsertTeamRepoStmt, deleteTeamRepoStmt, deleteTeamRepoPathStmt, upsertTeamMemberStmt, deleteTeamMemberStmt,
   } = stmts
@@ -1165,6 +1173,9 @@ function teamMethods(db: DatabaseSync, stmts: ReturnType<typeof prepareStatement
     },
     listUserOptions(): Promise<UserOption[]> {
       return Promise.resolve((selectUserOptionsStmt.all() as UserOption[]).map((u) => ({ id: u.id, login: u.login, name: u.name })))
+    },
+    listRepoScopesForUser(userId: string): Promise<{ repoId: number; path: string | null }[]> {
+      return Promise.resolve(selectUserRepoScopesStmt.all(userId) as { repoId: number; path: string | null }[])
     },
     listTeamsForUser(userId: string): Promise<UserTeam[]> {
       const teams = selectTeamsForUserStmt.all(userId) as { id: string; name: string }[]
