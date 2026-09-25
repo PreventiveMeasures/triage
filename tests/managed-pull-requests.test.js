@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { Readable } from 'node:stream'
 import { test } from 'node:test'
-import { MAX_PULL_REQUESTS, parseGithubPrUrl } from '../common/github-pr.ts'
+import { MAX_PULL_REQUESTS, parseGithubIssueUrl, parseGithubPrUrl } from '../common/github-pr.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { lookupPullRequests } from '../server-managed/github-pulls.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
@@ -41,6 +41,17 @@ test('PR links require an exact GitHub URL and a positive safe integer', () => {
     'https://user@github.com/o/r/pull/1', 'https://github.com:443/o/r/pull/1', 'https://github.com/o/r/../r/pull/1',
     'https://github.com/o/%72/pull/1', 'https://github.com/o/r/issues/1', 'https://github.com/o/r/pull/1/unknown',
     'https://github.com/Kernel/r/pull/1', 'https://github.com/o/r/pull/1\n']) assert.equal(parseGithubPrUrl(url), null, url)
+})
+
+test('issue links are recognized for display without becoming PR lookup inputs', async t => {
+  const url = 'https://github.com/exampleorg/eXamplerEpo/issues/00123#issuecomment-1'
+  assert.deepEqual(parseGithubIssueUrl(url), { repo: 'exampleorg/eXamplerEpo', number: 123 })
+  assert.equal(parseGithubIssueUrl(link(123)), null)
+  for (const invalid of ['https://github.com.evil.test/o/r/issues/1', 'https://user@github.com/o/r/issues/1',
+    'https://github.com/o/r/issues/0', 'https://github.com/o/r/issues/9007199254740992',
+    'https://github.com/o/r/issues/1/files', 'https://github.com/o/r/issues/%31']) assert.equal(parseGithubIssueUrl(invalid), null)
+  const f = await fixture(t)
+  assert.equal((await f.lookup([url], () => assert.fail('issue links must not trigger PR API calls')))[0].error, 'invalid-url')
 })
 
 test('batch reads use the registered repo casing and only the numeric link ID, deduplicate, and return all four statuses', async t => {
