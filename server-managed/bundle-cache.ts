@@ -16,6 +16,14 @@ const decompress = promisify(brotliDecompress)
 const MAX_DECODED_BYTES = 512 * 1024 * 1024
 export type BundleCachePart = 'metadata' | 'contents'
 
+export async function readBundleDetails(record: ManagedBundle, store: BundleStore) {
+  const bytes = await store.get(record.id, record.kind)
+  if (!bytes) return null
+  const decoded = record.kind === 'stasis' || record.kind === 'sourcemap' ? await decompress(bytes, { maxOutputLength: MAX_DECODED_BYTES }) : bytes
+  if (decoded.length > MAX_DECODED_BYTES) throw new Error('Decoded bundle too large')
+  return parseBundleContents(decodeUtf8(decoded), { integrity: record.integrity, kind: record.kind, size: record.byteSize })
+}
+
 export function createDiskBundleCache(dir: string, db: ManagedDb, store: BundleStore) {
   const pending = new Map<string, Promise<void>>()
   // Bound peak memory across simultaneous uploads and cold-cache requests.
@@ -28,11 +36,8 @@ export function createDiskBundleCache(dir: string, db: ManagedDb, store: BundleS
     return join(directory(id), `v${BUNDLE_METADATA_VERSION}-metadata.json.br`)
   }
   async function build(record: ManagedBundle) {
-    const bytes = await store.get(record.id, record.kind)
-    if (!bytes) throw new Error('Bundle bytes unavailable')
-    const decoded = record.kind === 'stasis' || record.kind === 'sourcemap' ? await decompress(bytes, { maxOutputLength: MAX_DECODED_BYTES }) : bytes
-    if (decoded.length > MAX_DECODED_BYTES) throw new Error('Decoded bundle too large')
-    const details = parseBundleContents(decodeUtf8(decoded), { integrity: record.integrity, kind: record.kind, size: record.byteSize })
+    const details = await readBundleDetails(record, store)
+    if (!details) throw new Error('Bundle bytes unavailable')
     const metadata = { ...await createBundleMetadata(details), id: record.id, filename: record.filename }
     const body = await encodeBrotli(Buffer.from(JSON.stringify(metadata)))
     if (!(await db.getBundle(record.id))) throw new Error('Bundle deleted')

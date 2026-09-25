@@ -2,11 +2,11 @@ import { html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { bundleFilePath, bundlesForFileHash, duplicatesOf, encodeFindingRef, isLinkableFindingId, isManagedUiMode, isPlaceholderNpmPackage, reportsForFindingId, state } from '#client/index.js'
+import { bundlesForFileHash, duplicatesOf, encodeFindingRef, isLinkableFindingId, isManagedUiMode, isPlaceholderNpmPackage, reportsForFindingId, state } from '#client/index.js'
 import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayFindingId, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, githubRefLabel, hasSeverityCorrection, isHttpUrl, lineRange, listSegments, locationLabel, markdownLinkToken, parseCommentRefs, revalidateStamp, revalidationShown, shortFindingId, snippetWindow, splitDescription, stripExportMarker } from './format.js'
 import { activeTabFor, canTriageFinding, findingRepo, findingRepoTarget, groupKey, groupState, groupTabsByLevel, scopedTriage, sortTabs, tabKey, tabTriage, triageEntry, triageScope, triageTabs } from './group.js'
 import { highlightedCode } from './code-highlight.js'
-import { attachedBundle, bundleSource, focusCodePosition } from './focus-code.js'
+import { attachedBundle, bundleSource, findingSourcePath, focusCodePosition } from './focus-code.js'
 import { samePos } from './focus-code-history.js'
 import { FILE_ICONS, PRODUCER_LABELS, REPORT_LOGOS, displayName, findingBrand, groupOf } from './file-display.js'
 import { CLAUDE_MARK_PATH, GITHUB_ICON_SVG } from './icons.js'
@@ -496,7 +496,7 @@ function sectionTemplate(label, body, cls = 'section', { collapsible = false } =
 // different errand, and the mark beside the row is how you still run
 // it.
 function evidencePanelRef(bundle, row, label) {
-  const file = bundle && row?.file ? bundleFilePath(bundle.integrity, row.file) : null
+  const file = bundle && row?.file ? findingSourcePath(bundle, row.file) : null
   if (!file) return html`<span class="evidence-ref">${label}</span>`
   // A span carrying `role="link"`, not a `<button>`: a button is
   // inline-BLOCK and cannot be talked out of it — Chromium coerces
@@ -547,7 +547,7 @@ function evidenceTemplate(f, context) {
       const ghRef = githubRef(url)
       const current = toPanel && samePos(shown, {
         integrity: bundle.integrity,
-        file: bundleFilePath(bundle.integrity, row?.file),
+        file: findingSourcePath(bundle, row?.file),
         range: lineRange(row?.line),
       })
       return html`<li class=${classMap({ current })}>
@@ -785,7 +785,7 @@ function codePreview(f, site, bundle, path, line) {
   // reason as the `Code →` branch below.
   void state.bundleHashTick
   if (!bundle || !path) return null
-  const file = bundleFilePath(bundle.integrity, path)
+  const file = findingSourcePath(bundle, path)
   if (!file) return null
   // `line` arrives as the report wrote it, which may be a span
   // (`20-30`); the preview shows all of it (format.js lineRange).
@@ -803,13 +803,13 @@ function codePreview(f, site, bundle, path, line) {
     data-code-preview=${key}
     aria-expanded=${String(open)}
     aria-label=${open ? `Hide the source at ${path}` : `Show the source at ${path}`}
-    @mouseenter=${(e) => { hoverPreview(key, e.currentTarget); bundleSource(bundle.integrity, file) }}
+    @mouseenter=${(e) => { hoverPreview(key, e.currentTarget); bundleSource(bundle.integrity, file, { reportId: bundle.reportId }) }}
     @mouseleave=${(e) => { if (hoveredPreview.key === key) hoverPreview(null, e.currentTarget) }}
-    @focus=${(e) => { hoverPreview(key, e.currentTarget); bundleSource(bundle.integrity, file) }}
+    @focus=${(e) => { hoverPreview(key, e.currentTarget); bundleSource(bundle.integrity, file, { reportId: bundle.reportId }) }}
     @blur=${(e) => { if (hoveredPreview.key === key) hoverPreview(null, e.currentTarget) }}
   >${CODE_ICON}</button>`
   if (open) {
-    const source = bundleSource(bundle.integrity, file)
+    const source = bundleSource(bundle.integrity, file, { reportId: bundle.reportId })
     const body = !source || source.loading
       ? html`<div class="code-preview code-preview-pending">${source ? 'Loading source…' : 'Source unavailable'}</div>`
       : codeSnippetTemplate(source.content, range, file)
@@ -832,7 +832,7 @@ function codePreview(f, site, bundle, path, line) {
   // the kicking (`mouseenter` above) and the settle comes back through
   // the tick.
   if (hoveredPreview.key !== key) return { mark, tip: nothing, body: nothing }
-  const peek = bundleSource(bundle.integrity, file, { kick: false })
+  const peek = bundleSource(bundle.integrity, file, { kick: false, reportId: bundle.reportId })
   const tip = peek && !peek.loading
     ? html`<div class="code-preview-tip" role="tooltip">${codeSnippetTemplate(peek.content, range, file)}</div>`
     : nothing
@@ -1313,7 +1313,11 @@ function tabBodyTemplate(f, isActive, idx, total, context, tabIds) {
   // finding-card — surfacing a second "Code" button in the badge
   // rail would be redundant. The list / grouped / table-details
   // views keep it as their primary path into the bundle viewer.
-  if (context !== 'focus' && f.fileHash && Array.isArray(f._bundleHashes) && f._bundleHashes.length > 0) {
+  if (context !== 'focus' && isManagedUiMode() && linePreview) {
+    codeButton = html`<button type="button" class="finding-code-btn"
+      data-code-preview=${codePreviewKey(f, 'loc', f.file, lineRange(f.line))}
+      aria-label=${`Show the source at ${f.file}`}>Code</button>`
+  } else if (context !== 'focus' && !isManagedUiMode() && f.fileHash && Array.isArray(f._bundleHashes) && f._bundleHashes.length > 0) {
     // The lookup below reads a plain module Map, which this card's
     // autorun can't see change. `bundleHashTick` is the state read
     // that subscribes it to the index filling in (or a bundle being

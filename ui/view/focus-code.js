@@ -1,17 +1,8 @@
-// Lazy, state-free source-code loader for the focus view's inline
-// code panel. Given a focused finding, looks for a bundle whose
-// fileHashes include the finding's file; loads the bundle (parse +
-// brotli decompress) async; caches sources on first success;
-// triggers a re-render when the load completes so the panel paints
-// the code on the second pass.
-//
-// Deliberately does NOT touch `state.bundleDetails` /
-// `state.selectedBundle` — those are owned by the bundles view's
-// selection flow, and clobbering them would yank the user out of
-// whatever bundle panel they had open. Each integrity gets a single
-// in-flight load; calls during the load return `null` (loading)
-// without retriggering.
-import { bundlesForFileHash, state } from '#client/index.js'
+// Lazy source loader for finding panels and previews. Managed views fetch only
+// report-selected files into session memory; local/e2e views retain their
+// existing bundle loader. Neither changes the active bundle view.
+import { bundleFilePath, bundlesForFileHash, isManagedUiMode, state } from '#client/index.js'
+import { fetchReportSources, readReportSources } from './client-managed.js'
 import { activeTabFor } from './group.js'
 import { buildBundleDetails } from './bundle-load.js'
 import { bundleSourcesAsMap } from './bundle-sources.js'
@@ -31,20 +22,23 @@ const sourcesCache = new Map()
 // subsequent calls pick up the cached result.
 const highlightCache = new Map()
 const highlightPending = new Set()
+// Weak ownership gives highlighted managed bodies their response's lifetime.
+const managedHighlights = new WeakMap()
+const managedLoads = new Set()
 
-function kickHighlight(integrity, file, content) {
+function kickHighlight(integrity, file, content, cache = highlightCache, pending = highlightPending) {
   const key = `${integrity}\0${file}`
-  if (highlightCache.has(key) || highlightPending.has(key)) return
+  if (cache.has(key) || pending.has(key)) return
   const lang = langForPath(file)
   if (!lang) {
-    highlightCache.set(key, null)
+    cache.set(key, null)
     return
   }
-  highlightPending.add(key)
+  pending.add(key)
   ;(async () => {
     const html = await prismHighlight(content, lang)
-    highlightCache.set(key, html ?? null)
-    highlightPending.delete(key)
+    cache.set(key, html ?? null)
+    pending.delete(key)
     state.focusCodeTick++
     queueMicrotask(render)
   })()
@@ -93,7 +87,8 @@ export function revealFocusCodeLines() {
   revealCitedLines(rows[0].closest('.focus-code-body'), rows)
 }
 
-// The bundle attached to a finding, as `{ integrity, file }`, or null.
+// The bundle attached to a finding, as `{ integrity, file, reportId? }`, or null.
+// Managed source paths are resolved by the report endpoint without a hash index.
 // "Attached" means the analyzer ran against a bundle (`_bundleHashes`,
 // stamped at ingest) that carries a source with this finding's
 // `fileHash` — so the match is by CONTENT, not by path, and the `file`
@@ -103,6 +98,19 @@ export function revealFocusCodeLines() {
 // asked by the focus view's inline panel, the card's `Code` shortcut,
 // and the source previews beside its links.
 export function attachedBundle(f) {
+  if (isManagedUiMode()) {
+    if (!f?._managedReportId || !Array.isArray(f._bundleHashes) || f._bundleHashes.length === 0) return null
+    void state.focusCodeTick
+    const entry = readReportSources(f._managedReportId)
+    if (entry?.data === null || entry?.error) return null
+    const bundle = { integrity: entry?.data?.integrity ?? f._bundleHashes[0], reportId: f._managedReportId }
+    const locations = [f, ...(Array.isArray(f.evidence) ? f.evidence : [])]
+    for (const location of locations) {
+      const file = findingSourcePath(bundle, location?.file)
+      if (file) return { ...bundle, file, line: location.line }
+    }
+    return null
+  }
   const allowed = f?._bundleHashes
   if (!f?.fileHash || !Array.isArray(allowed) || allowed.length === 0) return null
   // `includes` over a Set: a finding names the one or two bundles the
@@ -110,6 +118,41 @@ export function attachedBundle(f) {
   // list that can be thousands long — building a Set to ask about two
   // strings costs more than the scan it saves.
   return bundlesForFileHash(f.fileHash).find(({ integrity }) => allowed.includes(integrity)) ?? null
+}
+
+export function findingSourcePath(bundle, path) {
+  if (typeof path !== 'string' || !path) return null
+  if (!bundle.reportId) return bundleFilePath(bundle.integrity, path)
+  const entry = readReportSources(bundle.reportId)
+  if (!entry || entry.data === undefined && !entry.error) return path
+  const data = entry.data
+  return data?.paths.get(path) ?? (data?.sources.has(path) ? path : null)
+}
+
+function managedSource(reportId, file, kick) {
+  if (!isManagedUiMode()) return null
+  const entry = readReportSources(reportId)
+  if (!entry || entry.data === undefined && !entry.error) {
+    if (kick && !managedLoads.has(reportId)) {
+      managedLoads.add(reportId)
+      fetchReportSources(reportId).catch(() => {}).finally(() => {
+        managedLoads.delete(reportId)
+        state.focusCodeTick++
+        queueMicrotask(render)
+        queueMicrotask(revealFocusCodeLines)
+      })
+    }
+    return kick ? { loading: true } : null
+  }
+  const data = entry.data
+  if (!data) return null
+  file = data.paths.get(file) ?? file
+  const content = data.sources.get(file)
+  if (typeof content !== 'string') return null
+  let highlights = managedHighlights.get(data)
+  if (!highlights) { highlights = { cache: new Map(), pending: new Set() }; managedHighlights.set(data, highlights) }
+  kickHighlight(data.integrity, file, content, highlights.cache, highlights.pending)
+  return { content, highlighted: highlights.cache.get(`${data.integrity}\0${file}`) ?? null, loading: false }
 }
 
 // One file out of a bundle. Returns:
@@ -130,7 +173,9 @@ export function attachedBundle(f) {
 // a card and would otherwise pull a bundle off disk for every one of
 // them before the reader has asked for any — see render-finding.js,
 // where the hover tooltip peeks and the pointer does the kicking.
-export function bundleSource(integrity, file, { kick = true } = {}) {
+export function bundleSource(integrity, file, { kick = true, reportId = null } = {}) {
+  if (reportId) return managedSource(reportId, file, kick)
+  if (isManagedUiMode()) return null
   const cached = sourcesCache.get(integrity)
   if (!cached) {
     if (!kick) return null
@@ -165,7 +210,7 @@ export function bundleSource(integrity, file, { kick = true } = {}) {
 function basePosition(f) {
   const match = attachedBundle(f)
   if (!match) return null
-  return { integrity: match.integrity, file: match.file, range: lineRange(f.line) }
+  return { integrity: match.integrity, file: match.file, range: lineRange(match.reportId ? match.line : f.line) }
 }
 
 // Where the panel starts for a finding: the active tab's own file.
@@ -209,7 +254,7 @@ export function getFocusCode(focusedGroup) {
   const history = focusCodeHistory(focusedGroup)
   if (!history) return null
   const { pos } = history
-  const source = bundleSource(pos.integrity, pos.file)
+  const source = bundleSource(pos.integrity, pos.file, { reportId: activeTabFor(focusedGroup)?._managedReportId })
   if (!source || source.loading) return source
   return { ...source, file: pos.file, integrity: pos.integrity, range: pos.range }
 }

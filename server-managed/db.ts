@@ -318,6 +318,7 @@ export interface ReportRecord {
   repoEmbedded: boolean
   analyzer: string | null
   visible: boolean
+  bundleId: string | null
 }
 
 // What the upload handler supplies to record a report; the store stamps
@@ -723,7 +724,7 @@ function prepareStatements(db: DatabaseSync) {
       `SELECT id, slug, filename, content_type AS contentType, byte_size AS byteSize,
               sha256, uploaded_by AS uploadedBy, uploaded_at AS uploadedAt,
               repo_id AS repoId, repo_directory AS repoDirectory, repo_embedded AS repoEmbedded,
-              analyzer AS analyzer, visible AS visible
+              analyzer AS analyzer, visible AS visible, bundle_id AS bundleId
          FROM managed_report WHERE id = ?`,
     ),
     deleteReportStmt: db.prepare(`DELETE FROM managed_report WHERE id = ?`),
@@ -980,6 +981,7 @@ type ReportRow = {
   id: string; slug: string; filename: string; contentType: string; byteSize: number
   sha256: string; uploadedBy: string | null; uploadedAt: number
   repoId: number | null; repoDirectory: string; repoEmbedded: number; analyzer: string | null; visible: number
+  bundleId: string | null
 }
 
 // The report slice of ManagedDb, split out (like selectedRepoMethods) to keep
@@ -1014,6 +1016,7 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>) {
         id: row.id, slug: row.slug, filename: row.filename, contentType: row.contentType, byteSize: row.byteSize,
         sha256: row.sha256, uploadedBy: row.uploadedBy, uploadedAt: row.uploadedAt,
         repoId: row.repoId, repoDirectory: row.repoDirectory, repoEmbedded: row.repoEmbedded === 1, analyzer: row.analyzer, visible: row.visible === 1,
+        bundleId: row.bundleId,
       })
     },
     deleteReport(id: string): Promise<boolean> {
