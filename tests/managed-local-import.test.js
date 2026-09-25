@@ -21,6 +21,7 @@ function fixture({ encrypted = false, unlocked = false } = {}) {
     unlockEncryption: () => { calls.push('unlock'); return false },
     listFiles: () => { calls.push('listFiles'); return ['report.md'] },
     getKind: () => undefined,
+    getFileKinds: names => new Map(names.map(name => [name, deps.getKind(name)])),
     hasStoredBundleBytes: () => { calls.push('hasStoredBundleBytes'); return true },
     listBundles: () => { calls.push('listBundles'); return [{ name: 'source.map', integrity: 'sha512-test' }] },
     readFile: () => { calls.push('readFile'); return '# Report\nOriginal contents 🐈\n' },
@@ -449,7 +450,42 @@ test('cross-tab refresh signals cancel pending snapshot imports for reports and 
   }
 })
 
-test('focus and storage refreshes do not abort an upload already handed to the server', async () => {
+test('losing focus cancels pending reads before any refocus or storage event', async () => {
+  const previousDocument = globalThis.document
+  const doc = new EventTarget()
+  globalThis.document = doc
+  try {
+    for (const [kind, event] of [['report', 'blur'], ['report', 'visibilitychange'], ['bundle', 'blur'], ['bundle', 'visibilitychange']]) {
+      doc.visibilityState = 'visible'
+      const f = fixture()
+      const read = Promise.withResolvers()
+      let uploads = 0
+      f.deps[kind === 'report' ? 'readFile' : 'readBundle'] = () => read.promise
+      const ui = controller(f.source, () => { uploads++ }, kind)
+      try {
+        ui.toggle()
+        await ui.refresh()
+        ui.value = kind === 'report' ? 'report.md' : 'sha512-test'
+        const pending = ui.importSelected()
+        await setImmediate()
+        doc.visibilityState = 'hidden'
+        if (event === 'blur') globalThis.dispatchEvent(new Event(event))
+        else doc.dispatchEvent(new Event(event))
+        // The old snapshot finishes while this tab is still in the background.
+        read.resolve('old snapshot')
+        await pending
+        assert.equal(uploads, 0)
+        assert.equal(ui.value, null)
+        assert.match(ui.error, /Select.*again/u)
+      } finally { ui.hostDisconnected() }
+    }
+  } finally {
+    if (previousDocument === undefined) delete globalThis.document
+    else globalThis.document = previousDocument
+  }
+})
+
+test('focus, blur, and storage refreshes do not abort an upload already handed to the server', async () => {
   const f = fixture()
   const upload = Promise.withResolvers()
   let uploads = 0
@@ -461,6 +497,7 @@ test('focus and storage refreshes do not abort an upload already handed to the s
     const pending = ui.importSelected()
     await setImmediate()
     assert.equal(uploads, 1)
+    globalThis.dispatchEvent(new Event('blur'))
     globalThis.dispatchEvent(new Event('focus'))
     globalThis.dispatchEvent(new Event('storage'))
     upload.resolve()
@@ -471,7 +508,7 @@ test('focus and storage refreshes do not abort an upload already handed to the s
   } finally { ui.hostDisconnected() }
 })
 
-test('passkey unlock survives focus, storage, and vault notifications', async () => {
+test('passkey unlock survives blur, focus, storage, and vault notifications', async () => {
   const f = fixture({ encrypted: true })
   const unlock = Promise.withResolvers()
   let signal
@@ -481,6 +518,7 @@ test('passkey unlock survives focus, storage, and vault notifications', async ()
     ui.toggle()
     await ui.refresh()
     const pending = ui.unlock()
+    globalThis.dispatchEvent(new Event('blur'))
     globalThis.dispatchEvent(new Event('focus'))
     globalThis.dispatchEvent(new Event('storage'))
     f.change(true)

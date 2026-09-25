@@ -322,10 +322,24 @@ export async function hydrate() {
   for (const k of [...cache.keys()]) {
     if (!pendingValues.has(k)) cache.delete(k)
   }
+  await hydrateKeys(SECURE_KEYS, true)
+}
+
+// Lazy consumers can load one metadata key without booting local workspaces,
+// sync sessions, or their full-cache hydration listeners in managed mode.
+export async function hydrateKey(key) {
+  if (!SECURE_KEYS.includes(key)) throw new Error(`secure-storage: unknown secure key "${key}"`)
+  if (!pendingValues.has(key)) cache.delete(key)
+  const values = await hydrateKeys([key], false)
+  return values.get(key) ?? null
+}
+
+async function hydrateKeys(keys, notify) {
   const sessionKey = getSessionKey()
   const needsSelfHeal = []
-  for (const key of SECURE_KEYS) {
-    if (pendingValues.has(key)) continue  // optimistic write protected
+  const values = new Map()
+  for (const key of keys) {
+    if (pendingValues.has(key)) { values.set(key, getItem(key)); continue } // optimistic write protected
     const raw = localStorage.getItem(key)
     if (raw === null) continue
     const envelopeBytes = tryDecodeEnvelope(raw)
@@ -338,8 +352,10 @@ export async function hydrate() {
         // cache with the decrypted stale-disk value would clobber that
         // optimistic write — the same re-check migrateKeyAtomic applies
         // after its transform, honoring the in-flight-writes invariant.
-        if (pendingValues.has(key)) continue
-        cache.set(key, decodeUtf8(plain))
+        if (pendingValues.has(key)) { values.set(key, getItem(key)); continue }
+        const value = decodeUtf8(plain)
+        cache.set(key, value)
+        values.set(key, value)
       } catch (err) {
         // AEAD failure — wrong key, tampered ciphertext, or wrong
         // AAD (e.g. backup restored from a different vault that
@@ -349,10 +365,11 @@ export async function hydrate() {
       }
     } else {
       cache.set(key, raw)
+      values.set(key, raw)
       if (sessionKey && isEncryptionEnabled()) needsSelfHeal.push([key, raw])
     }
   }
-  fireAfterHydrate()
+  if (notify) fireAfterHydrate()
   if (needsSelfHeal.length > 0) {
     // Run self-heal AFTER hydrate returns so consumers see the
     // populated cache immediately. Each re-seal goes through
@@ -377,6 +394,7 @@ export async function hydrate() {
       }
     })
   }
+  return values
 }
 
 // Migration helpers — invoked from passkey-vault's

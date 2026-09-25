@@ -9,6 +9,7 @@ export function setItem(key: string, value: string): Promise<void>
 export function removeItem(key: string): Promise<void>
 
 export function hydrate(): Promise<void>
+export function hydrateKey(key: string): Promise<string | null>
 
 export function onAfterHydrate(cb: () => void): () => void
 

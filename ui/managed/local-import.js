@@ -55,12 +55,19 @@ export class ManagedLocalImport {
       this.success = ''
       void this.refresh()
     }
+    // OPFS mutations in another tab do not emit storage events. Stop a pending
+    // read as soon as this tab loses focus, before its snapshot can be uploaded.
+    // Passkey prompts and uploads already handed off have no active read.
+    this.onBlur = () => { if (this.readAbort && !this.readAbort.signal.aborted) this.onChange() }
+    this.onVisibilityChange = () => { if (globalThis.document?.visibilityState === 'hidden') this.onBlur() }
     host.addController(this)
   }
 
   hostConnected() {
     globalThis.addEventListener('focus', this.onChange)
+    globalThis.addEventListener('blur', this.onBlur)
     globalThis.addEventListener('storage', this.onChange)
+    globalThis.document?.addEventListener('visibilitychange', this.onVisibilityChange)
     this.connectSource()
   }
 
@@ -81,7 +88,9 @@ export class ManagedLocalImport {
     this.unsubscribe?.()
     this.source = null
     globalThis.removeEventListener('focus', this.onChange)
+    globalThis.removeEventListener('blur', this.onBlur)
     globalThis.removeEventListener('storage', this.onChange)
+    globalThis.document?.removeEventListener('visibilitychange', this.onVisibilityChange)
   }
 
   async refresh() {

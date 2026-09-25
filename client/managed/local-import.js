@@ -1,12 +1,12 @@
 import { hasStoredBundleBytes, listBundles, listFiles, onBundleMutated, onFileMutated, readBundle, readFile } from '../storage.js'
 import { isEncryptionEnabled, isUnlocked, onVaultStateChange, unlockEncryption } from '../passkey-vault.js'
-import { getKind } from '../counts.js'
+import { getFileKinds } from '../counts.js'
 import { LINKS_KIND, parseLinkedFindings } from '../linked-findings.js'
 
 // Created in the main bundle and injected into the lazy Manage pages. Importing
 // storage/vault from that separate entry would create a second, locked session.
 const defaultDeps = {
-  getKind, hasStoredBundleBytes, listBundles, listFiles, onBundleMutated, onFileMutated, readBundle, readFile,
+  getFileKinds, hasStoredBundleBytes, listBundles, listFiles, onBundleMutated, onFileMutated, readBundle, readFile,
   isEncryptionEnabled, isUnlocked, onVaultStateChange, unlockEncryption,
 }
 export function createManagedLocalImportSource(deps = defaultDeps) {
@@ -30,7 +30,12 @@ export function createManagedLocalImportSource(deps = defaultDeps) {
       unsubscribe() { offVault(); offItem?.() },
     }
   }
-  const reportNames = async () => (await deps.listFiles()).filter(name => deps.getKind(name) !== LINKS_KIND)
+  const reportNames = async () => {
+    const names = await deps.listFiles()
+    if (names.length === 0) return names
+    const kinds = await deps.getFileKinds(names)
+    return names.filter(name => kinds.get(name) !== LINKS_KIND)
+  }
   const choices = async (kind) => kind === 'report'
     ? (await reportNames()).map(name => ({ value: name, label: name }))
     : (await deps.listBundles()).map(bundle => ({ value: bundle.integrity, label: bundle.name, secondary: bundle.integrity }))
