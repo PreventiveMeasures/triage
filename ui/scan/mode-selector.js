@@ -5,7 +5,7 @@ import styles from './mode-selector.css'
 
 const MODES = [
   { id: 'code', label: 'Code', detail: 'Run a full scan of the codebase', icon: CODE_ICON_SVG },
-  { id: 'dependencies', label: 'Dependency alerts', detail: 'Revalidate incoming alerts against actual code', icon: DEPENDENCIES_ICON_SVG },
+  { id: 'dependencies', label: 'Dependency alerts', detail: 'Validate incoming alerts against actual code', icon: DEPENDENCIES_ICON_SVG },
   { id: 'agentic', label: 'Agentic', detail: 'Free-form analysis with your instructions', icon: AGENTIC_ICON_SVG },
   { id: 'report', label: 'Reports', detail: 'Link saved reports or merge scan results', icon: REPORT_ICON_SVG },
 ]
