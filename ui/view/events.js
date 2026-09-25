@@ -15,6 +15,7 @@ import { openDownloadBundleDialog } from './dialogs/download-bundle-dialog.js'
 import { openExportConfirmDialog } from './dialogs/export-confirm-dialog.js'
 import { openExportViewDialog } from './dialogs/export-view-dialog.js'
 import { openFixLinkDialog } from './dialogs/fix-link-dialog.js'
+import { openUpstreamDialog } from './dialogs/upstream-dialog.js'
 import { openRevalidationConflictsDialog } from './dialogs/revalidation-conflicts-dialog.js'
 import { findingLinkFor } from './finding-link.js'
 import { revealFindingInReport } from './finding-link-nav.js'
@@ -1257,6 +1258,33 @@ report.addEventListener('click', (e) => {
       renderPreservingTableScroll()
       // Paint first, persist after — saveTriage's synchronous head
       // serializes the whole triage map (see the kanban drop below).
+      queueMicrotask(saveTriage)
+      return null
+    }).catch(() => {})
+    return
+  }
+  // The cause track's editor. The record is global by id — every app
+  // shipping this dependency reads the same one — so it is written to
+  // the finding's own key with no scoping, and the whole record is
+  // replaced at once: the sentence a reader sees ("fixed in 4.17.21",
+  // with the link) is not three independently-edited fields.
+  const upstreamBtn = pathClosest(e, '.mark-upstream')
+  if (upstreamBtn) {
+    const gid = pathClosest(e, '[data-gid]')?.dataset.gid
+    const group = gid ? findGroupById(gid) : null
+    if (!group) return
+    const activeTab = activeTabFor(group)
+    if (!isModule(activeTab.file) || !canTriageFinding(activeTab)) return
+    const key = tabKey(activeTab)
+    openUpstreamDialog({
+      initial: triageEntry(activeTab)?.upstream ?? null,
+      finding: activeTab,
+    }).then((next) => {
+      if (next === null) return null
+      // `patchEntry` normalizes it and drops the field when the record
+      // came back empty (Clear), so there is no separate delete path.
+      if (!patchEntry(state.triage, key, { upstream: next.value })) return null
+      renderPreservingTableScroll()
       queueMicrotask(saveTriage)
       return null
     }).catch(() => {})

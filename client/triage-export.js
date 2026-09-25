@@ -148,6 +148,13 @@ export async function applyTriageImport(payload, mode) {
     if (typeof v.flagged === 'boolean' && (!keepCurrent || map.get(id)?.flagged === undefined)) {
       patchEntry(map, id, { flagged: v.flagged })
     }
+    // The cause record, adopted whole: the sentence a reader sees
+    // ("fixed in 4.17.21", with the link) can't be reassembled from
+    // three separately-merged fields, so it travels as one value.
+    // `normalizeEntry` sanitizes it on the way in.
+    if (v.upstream && (!keepCurrent || !map.get(id)?.upstream)) {
+      patchEntry(map, id, { upstream: v.upstream })
+    }
     // Per-report ignore: mutex with triage state. Skip the
     // ignoredReports merge when this id ended up with a triage
     // state (same rule the cross-tab apply path enforces).

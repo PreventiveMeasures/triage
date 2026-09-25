@@ -2,7 +2,8 @@
 // (`state.managedReport`), the server's per-finding entries hydrate the local
 // triage map, and local edits push back debounced through the triage
 // managed change-notifier — independent of the e2e sync fan-out. The wire carries color / triage / fix / flagged;
-// `ignoredReports` stays client-local and `deleted` folds into the bucket.
+// `ignoredReports` and `upstream` stay client-local and `deleted` folds into
+// the bucket.
 //
 // Both sides are keyed by finding id alone. `state.triage` is one map across
 // every loaded report — reports mostly repeat one another (a re-scan of the
@@ -252,12 +253,13 @@ export function resetManagedTriage() {
 // Merge the server's entries for a just-opened team report's findings into
 // `state.triage`. The trusted server wins wholesale per id it knows — a value,
 // or null for a cleared entry (its tombstone), which clears the local one —
-// except the client-local `ignoredReports`, preserved unless the server entry
-// carries a triage bucket (the triage⊻ignore mutex, mirroring
-// applyTriageEntries). Ids the server has never seen keep their local entry,
-// which the follow-up push carries up: the user's triage of those findings,
-// never uploaded. Pushes for the report wait for this to finish. Returns true
-// only when the server state was adopted and this is still the active view.
+// except the client-local fields: `ignoredReports`, preserved unless the
+// server entry carries a triage bucket (the triage⊻ignore mutex, mirroring
+// applyTriageEntries), and `upstream`, preserved outright. Ids the server
+// has never seen keep their local entry, which the follow-up push carries
+// up: the user's triage of those findings, never uploaded. Pushes for the
+// report wait for this to finish. Returns true only when the server state
+// was adopted and this is still the active view.
 export async function hydrateManagedReportTriage(reportId, { renderView = true } = {}) {
   const reports = state.reports
   const isCurrent = () => state.serverMode === 'managed' && state.localMode !== true
@@ -284,8 +286,15 @@ export async function hydrateManagedReportTriage(reportId, { renderView = true }
     }
     const wire = wireEntryOf(entries[id])
     baseline.set(id, wireKey(wire))
-    const ignoredReports = wire?.triage == null ? state.triage.get(id)?.ignoredReports : undefined
-    if (setEntry(state.triage, id, { ...wire, ignoredReports })) changed = true
+    const local = state.triage.get(id)
+    const ignoredReports = wire?.triage == null ? local?.ignoredReports : undefined
+    // `upstream` rides no wire either, and unlike the ignore it has no mutex
+    // to lose it to: what a dependency's maintainers did is a fact about that
+    // code, which this report's triage bucket has no opinion about. Carried
+    // across the replace whatever the server says, including a tombstone —
+    // its clear is of the entry the server keeps, not of a record it has
+    // never held.
+    if (setEntry(state.triage, id, { ...wire, ignoredReports, upstream: local?.upstream })) changed = true
   }
   hydratedReports.add(reportId)
   if (changed) {

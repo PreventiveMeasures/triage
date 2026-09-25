@@ -14,7 +14,7 @@
 // and its reports as its cases.
 
 import { correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceNote, findingDisplayName, findingTitle, firstLine, hasSeverityCorrection, locationLabel, revalidateKindOf, runMetaLine, splitDescription, stripExportMarker } from './finding.js'
-import { COLOR_LABELS, SOURCE_LABELS, TRIAGE_LABELS, severityLabel } from './labels.js'
+import { COLOR_LABELS, SOURCE_LABELS, TRIAGE_LABELS, UPSTREAM_LABELS, severityLabel } from './labels.js'
 import { autolink, code, heading, indentUnder, isHttpUrl, joinBlocks, link, plural, prose } from './md-text.js'
 import { isRepoSlug } from './meta.js'
 import { normalizeNewlines } from './md-structure.js'
@@ -128,6 +128,19 @@ function triageText(a) {
   return parts.join(' · ')
 }
 
+// The cause track: what the dependency's own maintainers did. Its own
+// row rather than folded into Triage — it is a fact about the code,
+// true wherever the code is shipped, and a reader deciding whether to
+// upgrade needs the version it names.
+function upstreamText(up) {
+  if (!up) return ''
+  const state = UPSTREAM_LABELS[up.state] ?? ''
+  const head = state && up.state === 'fixed' && up.since ? `${state} in ${code(up.since)}` : state
+  const href = up.link ? autolink(String(up.link).trim()) : ''
+  if (!head) return href
+  return href ? `${head} — ${href}` : head
+}
+
 // Whose revalidation pass a stamp came from, in the words this document
 // spells a producer with; an unknown key prints as itself. Written under
 // the stamp, so it travels with the layer and says nothing where the
@@ -162,6 +175,7 @@ function metaList(f, ctx, annotation) {
   if (kind) add('Revalidated by', sourceText(f.revalidateSource))
   add('Triage', triageText(annotation))
   if (annotation?.fix) add('Fix', autolink(String(annotation.fix).trim()))
+  add('Upstream', upstreamText(annotation?.upstream))
   if (ctx.showReport) add('Report', code(ctx.hooks.report(f) ?? ''))
   const repo = plainValue(f.repo?.github)
   if (repo && repo !== ctx.repo) add('Repository', repoRef(repo))
