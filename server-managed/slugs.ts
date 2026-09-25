@@ -15,7 +15,9 @@ export function migrateSlugs(db: DatabaseSync): void {
       const columns = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
       if (!columns.some(column => column.name === 'slug')) db.exec(`ALTER TABLE ${table} ADD COLUMN slug TEXT`)
       const rows = db.prepare(`SELECT id, slug FROM ${table} ORDER BY id`).all() as { id: string; slug: string | null }[]
-      const used = new Set(rows.flatMap(row => row.slug == null ? [] : [row.slug]))
+      // Reserve every ID up front: a legacy non-UUID row may sort after a
+      // UUID whose suffix matches it, and its full-ID fallback must stay free.
+      const used = new Set(rows.flatMap(row => row.slug == null ? [row.id] : [row.id, row.slug]))
       const update = db.prepare(`UPDATE ${table} SET slug = ? WHERE id = ?`)
       for (const row of rows) {
         if (row.slug != null) continue

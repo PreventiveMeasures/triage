@@ -80,6 +80,36 @@ test('existing teams and reports are backfilled deterministically without changi
   assert.equal((await db.getReport(second)).slug, second)
 })
 
+test('migration reserves legacy IDs before UUIDs can claim their suffixes', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'managed-legacy-slugs-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const path = join(dir, 'managed.sqlite')
+  let db = openSqliteManagedDb(path)
+  await db.close()
+  const ids = ['00000000-0000-4000-8000-123456789abc', short, 'ffffffff-ffff-4fff-8fff-123456789abc']
+  const legacy = new DatabaseSync(path)
+  try {
+    for (const table of ['managed_team', 'managed_report']) {
+      legacy.exec(`DROP INDEX ${table}_slug_idx; ALTER TABLE ${table} DROP COLUMN slug`)
+    }
+    for (const id of ids) {
+      legacy.prepare('INSERT INTO managed_team (id, name, created_at, updated_at) VALUES (?, ?, 100, 100)').run(id, id)
+      legacy.prepare(`INSERT INTO managed_report (id, filename, content_type, byte_size, sha256, uploaded_at)
+        VALUES (?, ?, 'application/json', 1, 'hash', 100)`).run(id, `${id}.json`)
+    }
+  } finally { legacy.close() }
+  db = openSqliteManagedDb(path)
+  t.after(() => db.close())
+  for (const id of ids) {
+    assert.equal((await db.getTeam(id)).slug, id)
+    assert.equal((await db.getReport(id)).slug, id)
+  }
+  await db.close()
+  db = openSqliteManagedDb(path)
+  assert.deepEqual((await db.listTeams()).map(team => team.slug), ids)
+  assert.deepEqual((await db.listReports()).map(report => report.slug), ids)
+})
+
 const teams = [
   { id: first, slug: short, reports: [{ id: first, slug: short }] },
   { id: second, slug: second, reports: [{ id: first, slug: short }, { id: second, slug: second }] },
