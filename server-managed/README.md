@@ -125,9 +125,12 @@ deletion includes comments, while preserving findings shared by other repos.
 # Activity history
 
 `/manage/history` reads `GET /api/admin/history?page=1&limit=100&kind=all&q=`.
-The server returns `{ history, total, page, limit }`, newest first, with at most
-100 entries per page. Type and text filters apply before pagination. Supported
-types are `triage`, `upload`, `visibility`, `access`, `repository`, and `delete`.
+The server returns `{ history, total, page, limit, filters }`, newest first, with at most
+100 entries per page. Type, text, repository (`repo`), and user (`actor`) filters apply before pagination.
+`filters.repos` and `filters.users` contain choices from the authorized history.
+Pass the selected user's opaque `id` as `actor`: stored identities use `user:<id>`;
+older login-only records use `legacy:<login>` and are never attributed to a current user by name.
+Supported types are `triage`, `upload`, `visibility`, `access`, `repository`, and `delete`.
 
 Admins see all workspace activity. Managers see uploads, publication changes,
 assignments, and triage involving reports and bundles within their current team

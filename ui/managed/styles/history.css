@@ -14,7 +14,7 @@
 .toolbar repository-selector {
   flex: 1 1 12rem;
 }
-.toolbar report-selector {
+.toolbar user-selector {
   flex: 1.5 1 16rem;
 }
 .toolbar > * {

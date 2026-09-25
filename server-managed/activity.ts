@@ -36,7 +36,7 @@ export interface ActivityQuery {
   kind: string
   query: string
   repo?: string
-  reportId?: string
+  actor?: string
   // null = admin; [] = no accessible findings. Context is supplied by the
   // server, never by the client. It also replaces potentially private context
   // from an old report carrying the same globally shared finding.
@@ -46,7 +46,7 @@ export interface ActivityQuery {
 
 export interface ActivityFilters {
   repos: string[]
-  reports: { id: string; filename: string; repo: string | null }[]
+  users: { id: string; login: string; detail: string | null }[]
 }
 
 export interface ActivityStore {
@@ -56,17 +56,17 @@ export interface ActivityStore {
 }
 
 const triageFields = `'triage:' || e.seq AS id, 'triage' AS kind,
-  COALESCE(u.login, e.actor_login) AS actor,
+  COALESCE(u.login, e.actor_login) AS actor, e.actor_id AS actorId,
   CASE WHEN e.color IS NULL AND e.triage IS NULL AND e.comment IS NULL AND e.fix IS NULL AND e.flagged IS NULL
     THEN 'cleared triage' ELSE 'updated triage' END AS action`
 const triage = `SELECT ${triageFields}, e.repo, e.report_id AS reportId, e.report, e.finding_id AS finding, e.at
   FROM finding_triage_event e LEFT JOIN managed_user u ON u.id = e.actor_id`
 const commentFields = `'comment:' || e.seq AS id, 'triage' AS kind,
-  COALESCE(u.login, e.actor_login) AS actor, e.action`
+  COALESCE(u.login, e.actor_login) AS actor, e.actor_id AS actorId, e.action`
 const comments = `SELECT ${commentFields}, e.repo, e.report_id AS reportId, e.report, e.finding_id AS finding, e.at
   FROM finding_comment_event e LEFT JOIN managed_user u ON u.id = e.actor_id`
 const adminSource = `${triage} UNION ALL ${comments} UNION ALL
-  SELECT id, kind, actor, action, repo, report_id AS reportId, report, NULL AS finding, at FROM managed_activity`
+  SELECT id, kind, actor, actor_id AS actorId, action, repo, report_id AS reportId, report, NULL AS finding, at FROM managed_activity`
 // Keep the finite set of accessible findings outside the indexed event
 // lookup. Scanning all events against json_each for every row is quadratic.
 const managerSource = `SELECT ${triageFields},
@@ -81,7 +81,7 @@ const managerSource = `SELECT ${triageFields},
   FROM json_each(:contexts) c
   CROSS JOIN finding_comment_event e ON e.finding_id = json_extract(c.value, '$.finding')
   LEFT JOIN managed_user u ON u.id = e.actor_id
-  UNION ALL SELECT a.id, a.kind, a.actor,
+  UNION ALL SELECT a.id, a.kind, a.actor, a.actor_id AS actorId,
     CASE WHEN a.kind = 'repository' THEN 'changed a report repository assignment' ELSE a.action END AS action,
     p.full_name AS repo, r.id AS reportId, r.filename AS report, NULL AS finding, a.at
   FROM managed_activity a JOIN managed_report r ON r.id = a.report_id
@@ -90,7 +90,7 @@ const managerSource = `SELECT ${triageFields},
     SELECT 1 FROM team_repo tr JOIN team_user tu ON tu.team_id = tr.team_id
     WHERE tu.user_id = :userId AND tr.repo_id = r.repo_id AND ${withinTeamPath('r.repo_directory')}
   )
-  UNION ALL SELECT a.id, a.kind, a.actor,
+  UNION ALL SELECT a.id, a.kind, a.actor, a.actor_id AS actorId,
     CASE WHEN a.kind = 'repository' THEN 'changed a bundle repository assignment' ELSE a.action END AS action,
     p.full_name AS repo, NULL AS reportId, b.filename AS report, NULL AS finding, a.at
   FROM managed_activity a JOIN managed_bundle b ON b.id = a.bundle_id
@@ -99,7 +99,7 @@ const managerSource = `SELECT ${triageFields},
     SELECT 1 FROM team_repo tr JOIN team_user tu ON tu.team_id = tr.team_id
     WHERE tu.user_id = :userId AND tr.repo_id = b.repo_id
   )
-  UNION ALL SELECT a.id, a.kind, a.actor, a.action, a.repo, a.report_id AS reportId,
+  UNION ALL SELECT a.id, a.kind, a.actor, a.actor_id AS actorId, a.action, a.repo, a.report_id AS reportId,
     a.report, NULL AS finding, a.at FROM managed_activity a
   WHERE a.kind = 'delete' AND (a.report_id IS NOT NULL OR a.bundle_id IS NOT NULL)
     AND NOT EXISTS (SELECT 1 FROM managed_report WHERE id = a.report_id)
@@ -153,29 +153,31 @@ export function activityMethods(db: DatabaseSync): ActivityStore {
     listActivityReports(userId) {
       return Promise.resolve(reports.all(userId) as Omit<ActivityContext, 'finding'>[])
     },
-    listActivity({ page, limit, kind, query, repo = '', reportId = '', contexts, userId }) {
+    listActivity({ page, limit, kind, query, repo = '', actor = '', contexts, userId }) {
       const stmts = contexts == null ? admin : manager
       const scope = contexts == null ? {} : { contexts: JSON.stringify(contexts), userId: userId ?? '' }
-      const params = { ...scope, kind, query, repo, reportId }
+      const params = { ...scope, kind, query, repo, actor }
       const { total } = stmts.count.get(params) as { total: number }
       const currentPage = Math.min(page, Math.max(1, Math.ceil(total / limit)))
       const history = stmts.rows.all({ ...params, limit, offset: (currentPage - 1) * limit }) as ActivityEntry[]
       const filters: ActivityFilters = {
         repos: (stmts.repos.all(scope) as { repo: string }[]).map(row => row.repo),
-        reports: (stmts.reports.all(scope) as ActivityFilters['reports']).map(row => ({ id: row.id, filename: row.filename, repo: row.repo })),
+        users: (stmts.users.all(scope) as ActivityFilters['users']).map(row => ({ id: row.id, login: row.login, detail: row.detail })),
       }
       return Promise.resolve({ history, total, page: currentPage, limit, filters })
     },
   }
 }
 
-// Both rows and selector choices come from the authorized source. Report IDs
-// distinguish repeated uploads with the same filename, even after deletion.
+// Both rows and selector choices come from the authorized source. Keep legacy
+// login-only actors separate: a historical login is not proof of user identity.
 function activityStatements(db: DatabaseSync, source: string) {
-  const activity = `WITH activity AS (${source})`
-  const filtered = `${activity} SELECT * FROM activity
+  const activity = `WITH events AS (${source}), activity AS (
+    SELECT events.*, COALESCE('user:' || actorId, 'legacy:' || actor) AS actorKey FROM events
+  )`
+  const filtered = `${activity} SELECT id, kind, actor, action, repo, reportId, report, finding, at FROM activity
     WHERE (:kind = 'all' OR kind = :kind)
-    AND (:repo = '' OR repo = :repo) AND (:reportId = '' OR reportId = :reportId)
+    AND (:repo = '' OR repo = :repo) AND (:actor = '' OR actorKey = :actor)
     AND (:query = '' OR instr(lower(coalesce(actor, '') || ' ' || action || ' ' ||
       coalesce(repo, '') || ' ' || coalesce(report, '') || ' ' || coalesce(finding, '')), lower(:query)) > 0)`
   return {
@@ -184,10 +186,11 @@ function activityStatements(db: DatabaseSync, source: string) {
       CASE WHEN kind = 'triage' THEN CAST(substr(id, instr(id, ':') + 1) AS INTEGER) ELSE 0 END DESC,
       id DESC LIMIT :limit OFFSET :offset`),
     repos: db.prepare(`${activity} SELECT DISTINCT repo FROM activity WHERE repo IS NOT NULL AND repo <> '' ORDER BY repo`),
-    reports: db.prepare(`${activity} SELECT reportId AS id, report AS filename, repo FROM (
-      SELECT reportId, report, repo, ROW_NUMBER() OVER (PARTITION BY reportId, repo ORDER BY at DESC, id DESC) AS position
-      FROM activity WHERE reportId IS NOT NULL AND reportId <> '' AND report IS NOT NULL
-    ) WHERE position = 1 ORDER BY report, repo, reportId`),
+    users: db.prepare(`${activity} SELECT a.actorKey AS id, COALESCE(u.login, a.actor, a.actorId) AS login,
+      CASE WHEN a.actorId IS NULL THEN 'Legacy actor' ELSE NULL END AS detail FROM (
+        SELECT actorKey, actorId, actor, ROW_NUMBER() OVER (PARTITION BY actorKey ORDER BY at DESC, id DESC) AS position
+        FROM activity WHERE actorKey IS NOT NULL AND actorKey <> 'legacy:'
+      ) a LEFT JOIN managed_user u ON u.id = a.actorId WHERE a.position = 1 ORDER BY login, a.actorKey`),
   }
 }
 
