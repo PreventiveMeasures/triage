@@ -1,7 +1,9 @@
 import './_polyfills.js'
 import assert from 'node:assert/strict'
 import { beforeEach, test } from 'node:test'
+import { setImmediate } from 'node:timers/promises'
 import { createManagedLocalImportSource } from '../client/managed/local-import.js'
+import { ManagedLocalImport } from '../ui/managed/local-import.js'
 import * as storage from '../client/storage.js'
 import * as vault from '../client/passkey-vault.js'
 
@@ -114,6 +116,61 @@ test('a rejected bundle deletion that leaves the bytes intact does not cancel im
   heldRead.resume.resolve()
   await current.promise
   assert.equal(await current.uploaded().text(), 'original bytes')
+})
+
+test('bundle listings wait for metadata rewrites during saves and deletions', async () => {
+  const selected = await storage.saveBundle('selected.stasis', 'selected bytes')
+  const other = await storage.saveBundle('other.stasis', 'other bytes')
+  for (const operation of ['save', 'delete']) {
+    heldMetadata = { started: Promise.withResolvers(), resume: Promise.withResolvers() }
+    const writing = operation === 'save'
+      ? storage.saveBundle('renamed.stasis', 'other bytes')
+      : storage.deleteBundle(other.integrity)
+    await heldMetadata.started.promise
+    let settled = false
+    const listing = storage.listBundles().then(items => { settled = true; return items })
+    try {
+      await setImmediate()
+      assert.equal(settled, false, 'listing must not observe the temporary empty metadata file')
+    } finally { heldMetadata.resume.resolve(); await writing }
+    assert.deepEqual(await listing, operation === 'save'
+      ? [{ ...other, name: 'renamed.stasis' }, selected]
+      : [selected])
+  }
+})
+
+test('deleting an unrelated bundle preserves the picker and pending snapshot import during metadata cleanup', async () => {
+  const selected = await storage.saveBundle('selected.stasis', 'selected bytes')
+  const other = await storage.saveBundle('other.stasis', 'other bytes')
+  const source = createManagedLocalImportSource()
+  let uploaded
+  const host = { localImportSource: source, addController() {}, requestUpdate() {} }
+  const ui = new ManagedLocalImport(host, 'bundle', file => { uploaded = file })
+  ui.hostConnected()
+  try {
+    ui.toggle()
+    await ui.refresh()
+    ui.value = selected.integrity
+    heldRead = { name: key(selected.integrity), started: Promise.withResolvers(), resume: Promise.withResolvers() }
+    const importing = ui.importSelected()
+    await heldRead.started.promise
+    heldMetadata = { started: Promise.withResolvers(), resume: Promise.withResolvers() }
+    const deleting = storage.deleteBundle(other.integrity)
+    await heldMetadata.started.promise
+    try {
+      await setImmediate()
+      assert.equal(ui.value, selected.integrity)
+      assert.equal(ui.options.some(option => option.value === selected.integrity), true)
+      assert.equal(ui.error, '')
+      heldRead.resume.resolve()
+      await importing
+      assert.equal(await uploaded.text(), 'selected bytes')
+      assert.equal(ui.success, 'Imported selected.stasis.')
+    } finally { heldRead.resume.resolve(); heldMetadata.resume.resolve(); await deleting; await importing }
+    await setImmediate()
+    assert.deepEqual(ui.options.map(option => option.value), [selected.integrity])
+    assert.equal(ui.error, '')
+  } finally { ui.hostDisconnected() }
 })
 
 test('a locked vault with only metadata or derived indexes does not offer bundle import', async (t) => {

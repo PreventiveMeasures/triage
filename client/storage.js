@@ -881,7 +881,10 @@ function lockBundleMeta(work) {
 export async function listBundles() {
   const dir = await getOpfsBundlesDir()
   if (!dir) return []
-  const meta = await readBundleMeta(dir)
+  // Writers remove and recreate _meta.json. Share their lock so a refresh
+  // triggered by byte removal cannot mistake an in-progress rewrite for an
+  // empty collection. Multiple readers can still proceed together.
+  const meta = await navigator.locks.request(BUNDLE_META_LOCK, { mode: 'shared' }, () => readBundleMeta(dir))
   return [...meta].toSorted((a, b) => a.name.localeCompare(b.name))
 }
 
