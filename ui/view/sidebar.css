@@ -797,7 +797,7 @@ sidebar-delete-current button {
 .logout-row svg { flex: 0 0 auto; }
 .user-menu-row:hover { background: rgb(from var(--text) r g b / .08); }
 /* Account popover rows. Management is a separate icon beside the account
-   control; the popover only carries the session action. */
+   control; the popover carries the mode switch and session action. */
 .user-menu-group {
   display: flex; flex-direction: column; gap: .1rem;
   padding-bottom: .2rem; margin-bottom: .2rem;

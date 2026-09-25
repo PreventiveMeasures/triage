@@ -109,6 +109,21 @@
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
 }
 
+.managed-login-alternative {
+  display: flex; align-items: center; justify-content: center; gap: .35rem;
+  margin-top: .875rem;
+  color: var(--muted); font-size: .8125rem;
+
+  & button {
+    padding: .2rem .45rem;
+    border: 1px solid var(--border); border-radius: 4px;
+    background: transparent; color: inherit; font: inherit; cursor: default;
+
+    &:hover { background: var(--surface); color: var(--text); }
+    &:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  }
+}
+
 .managed-landing-hero {
   margin-bottom: 2rem;
 
