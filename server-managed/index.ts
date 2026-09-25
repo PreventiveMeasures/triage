@@ -7,6 +7,7 @@ import { createOriginGate } from '../server-common/origin.ts'
 import { createDiskAvatarStore } from './avatar-store.ts'
 import { createDiskBundleCache } from './bundle-cache.ts'
 import { createDiskBlobStore } from './blob-store.ts'
+import { createDiskBundleStore } from './bundle-store.ts'
 import { type ManagedConfig, loadManagedConfig } from './config.ts'
 import { openSqliteManagedDb } from './db.ts'
 import { type ManagedHttpDeps, createManagedRequestHandler } from './http.ts'
@@ -21,10 +22,10 @@ export function createManagedApp(config: ManagedConfig, options: Partial<Pick<Ma
   // Avatars cache on disk beside the DB (data/avatars/<uuid>) for now.
   const avatarStore = createDiskAvatarStore(join(dirname(config.dbPath), 'avatars'))
   // Uploaded report + bundle bytes live on disk beside the DB too
-  // (data/reports/<uuid>, data/bundles/<uuid>).
+  // (data/reports/<uuid>, data/bundles/<uuid>[.map.br]).
   const dataDir = dirname(config.dbPath)
   const reportStore = createDiskBlobStore(join(dataDir, 'reports'))
-  const bundleStore = createDiskBlobStore(join(dataDir, 'bundles'))
+  const bundleStore = createDiskBundleStore(join(dataDir, 'bundles'))
   const bundleCache = createDiskBundleCache(join(dataDir, 'cache', 'bundles'), db, bundleStore)
   const originGate = createOriginGate(config.host, config.trustProxyEnv)
 

@@ -1,22 +1,22 @@
-// Immutable derivatives of uploaded bundles. Requests stream the already-gzipped
-// files; parsing, source hashing and transcoding happen only on a cache miss.
+// Metadata is cached as Brotli. Contents use the stored Brotli bytes directly:
+// unchanged Stasis uploads or sourcemaps compressed once at upload.
 import { Buffer } from 'node:buffer'
 import { mkdir, open, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { brotliDecompress, gzip } from 'node:zlib'
+import { brotliDecompress } from 'node:zlib'
 import { promisify } from 'node:util'
 import { BUNDLE_METADATA_VERSION, createBundleMetadata, parseBundleContents } from '../common/bundle-metadata.js'
 import { decodeUtf8 } from '../common/utf8.js'
-import type { BlobStore } from './blob-store.ts'
+import type { BundleStore } from './bundle-store.ts'
+import { encodeBrotli } from './brotli.ts'
 import type { ManagedBundle, ManagedDb } from './db.ts'
 
 const decompress = promisify(brotliDecompress)
-const compress = promisify(gzip)
 const MAX_DECODED_BYTES = 512 * 1024 * 1024
 export type BundleCachePart = 'metadata' | 'contents'
 
-export function createDiskBundleCache(dir: string, db: ManagedDb, store: BlobStore) {
+export function createDiskBundleCache(dir: string, db: ManagedDb, store: BundleStore) {
   const pending = new Map<string, Promise<void>>()
   // Bound peak memory across simultaneous uploads and cold-cache requests.
   let queue = Promise.resolve()
@@ -24,33 +24,30 @@ export function createDiskBundleCache(dir: string, db: ManagedDb, store: BlobSto
     if (!/^[a-f\d-]{36}$/iu.test(id)) throw new Error('Invalid bundle id')
     return join(dir, id)
   }
-  function filename(id: string, part: BundleCachePart) {
-    return join(directory(id), `v${BUNDLE_METADATA_VERSION}-${part}.json.gz`)
+  function filename(id: string) {
+    return join(directory(id), `v${BUNDLE_METADATA_VERSION}-metadata.json.br`)
   }
   async function build(record: ManagedBundle) {
-    const bytes = await store.get(record.id)
+    const bytes = await store.get(record.id, record.kind)
     if (!bytes) throw new Error('Bundle bytes unavailable')
-    const decoded = record.kind === 'stasis' ? await decompress(bytes, { maxOutputLength: MAX_DECODED_BYTES }) : bytes
+    const decoded = record.kind === 'stasis' || record.kind === 'sourcemap' ? await decompress(bytes, { maxOutputLength: MAX_DECODED_BYTES }) : bytes
     if (decoded.length > MAX_DECODED_BYTES) throw new Error('Decoded bundle too large')
     const details = parseBundleContents(decodeUtf8(decoded), { integrity: record.integrity, kind: record.kind, size: record.byteSize })
     const metadata = { ...await createBundleMetadata(details), id: record.id, filename: record.filename }
-    const metadataGzip = await compress(Buffer.from(JSON.stringify(metadata)))
-    const contentsGzip = await compress(decoded)
+    const body = await encodeBrotli(Buffer.from(JSON.stringify(metadata)))
     if (!(await db.getBundle(record.id))) throw new Error('Bundle deleted')
     await mkdir(directory(record.id), { recursive: true })
-    for (const [part, body] of [['contents', contentsGzip], ['metadata', metadataGzip]] as const) {
-      const target = filename(record.id, part)
-      const temp = `${target}.${randomUUID()}.tmp`
-      try { await writeFile(temp, body); await rename(temp, target) }
-      finally { await rm(temp, { force: true }) }
-    }
+    const target = filename(record.id)
+    const temp = `${target}.${randomUUID()}.tmp`
+    try { await writeFile(temp, body); await rename(temp, target) }
+    finally { await rm(temp, { force: true }) }
   }
   async function ensure(record: ManagedBundle): Promise<void> {
     const existing = pending.get(record.id)
     if (existing) return existing
     const job = (async () => {
       try {
-        await Promise.all(['metadata', 'contents'].map(part => stat(filename(record.id, part as BundleCachePart))))
+        await stat(filename(record.id))
         return
       } catch (err) { if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err }
       const work = queue.then(() => build(record))
@@ -63,8 +60,14 @@ export function createDiskBundleCache(dir: string, db: ManagedDb, store: BlobSto
   return {
     prebuild: ensure,
     async open(record: ManagedBundle, part: BundleCachePart) {
+      if (part === 'contents') {
+        if (record.kind !== 'stasis' && record.kind !== 'sourcemap') throw new Error('Unsupported bundle')
+        const stored = await store.open(record.id, record.kind)
+        if (!stored) throw new Error('Bundle bytes unavailable')
+        return stored
+      }
       await ensure(record)
-      const file = await open(filename(record.id, part), 'r')
+      const file = await open(filename(record.id), 'r')
       try {
         const info = await file.stat()
         return { size: info.size, stream: file.createReadStream() }

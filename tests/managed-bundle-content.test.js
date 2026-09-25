@@ -2,13 +2,15 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { createServer, request } from 'node:http'
 import { randomUUID } from 'node:crypto'
-import { mkdtemp, readdir, rm } from 'node:fs/promises'
+import { once } from 'node:events'
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { brotliCompressSync, gunzipSync } from 'node:zlib'
+import { brotliCompressSync, brotliDecompressSync } from 'node:zlib'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { createDiskBundleCache } from '../server-managed/bundle-cache.ts'
 import { createDiskBlobStore } from '../server-managed/blob-store.ts'
+import { createDiskBundleStore } from '../server-managed/bundle-store.ts'
 import { bundleIntegrity } from '../server-managed/bundle.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
@@ -36,7 +38,7 @@ const map = JSON.stringify({ version: 3, sources: ['src/main.js', 'missing.js'],
 async function setup(t) {
   const dir = await mkdtemp(join(tmpdir(), 'triage-bundle-'))
   const db = openSqliteManagedDb(':memory:')
-  const store = createDiskBlobStore(join(dir, 'bundles'))
+  const store = createDiskBundleStore(join(dir, 'bundles'))
   const reportStore = createDiskBlobStore(join(dir, 'reports'))
   const cacheDir = join(dir, 'cache')
   const cache = createDiskBundleCache(cacheDir, db, store)
@@ -70,7 +72,7 @@ async function setup(t) {
         res.on('end', () => {
           const bytes = Buffer.concat(chunks)
           resolve({ status: res.statusCode, headers: res.headers, bytes,
-            json: () => JSON.parse((res.headers['content-encoding'] === 'gzip' ? gunzipSync(bytes) : bytes).toString()) })
+            json: () => JSON.parse((res.headers['content-encoding'] === 'br' ? brotliDecompressSync(bytes) : bytes).toString()) })
         })
       })
       req.on('error', reject)
@@ -80,14 +82,14 @@ async function setup(t) {
   async function seed({ kind = 'stasis', owner = 'owner', repoId = null, bytes: suppliedBytes } = {}) {
     const bytes = suppliedBytes ?? (kind === 'stasis' ? brotliCompressSync(Buffer.from(stasis)) : Buffer.from(map)), id = randomUUID()
     const record = { id, integrity: bundleIntegrity(bytes), filename: kind === 'stasis' ? 'test.stasis.code.br' : 'test.map', kind, byteSize: bytes.length, uploadedBy: users[owner].userId, uploadedByLogin: owner, repoId }
-    await store.put(id, bytes); await db.insertBundle(record, Date.now())
+    await store.put(id, bytes, kind); await db.insertBundle(record, Date.now())
     return await db.getBundle(id)
   }
-  return { db, store, reportStore, cache, cacheDir, users, send, seed, team, pending }
+  return { db, store, reportStore, cache, cacheDir, users, send, seed, team, pending, bundleDir: join(dir, 'bundles'), baseUrl: `http://127.0.0.1:${server.address().port}` }
 }
 
 for (const kind of ['stasis', 'sourcemap']) {
-  test(`${kind}: invalid UTF-8 cannot generate metadata or cached contents`, async t => {
+  test(`${kind}: invalid UTF-8 cannot generate derivatives`, async t => {
     const h = await setup(t)
     const decoded = Buffer.from(kind === 'stasis' ? stasis : map)
     const position = decoded.indexOf('€')
@@ -97,25 +99,28 @@ for (const kind of ['stasis', 'sourcemap']) {
     const bytes = kind === 'stasis' ? brotliCompressSync(decoded) : decoded
     const record = await h.seed({ kind, bytes })
     await assert.rejects(h.cache.prebuild(record), { name: 'TypeError' })
-    for (const part of ['metadata', 'contents']) {
-      const response = await h.send(`/api/bundles/${record.id}/${part}`, 'owner')
-      assert.equal(response.status, 422)
-      assert.deepEqual(response.json(), { error: 'bundle-unavailable' })
-      assert.equal(response.headers['content-encoding'], undefined)
-    }
+    const metadata = await h.send(`/api/bundles/${record.id}/metadata`, 'owner')
+    assert.equal(metadata.status, 422)
+    assert.deepEqual(metadata.json(), { error: 'bundle-unavailable' })
+    assert.equal(metadata.headers['content-encoding'], undefined)
+    const contents = await h.send(`/api/bundles/${record.id}/contents`, 'owner')
+    assert.equal(contents.status, 200, 'Contents bypass parsing even when metadata cannot be generated')
+    assert.equal(contents.headers['content-encoding'], 'br')
+    assert.deepEqual(brotliDecompressSync(contents.bytes), decoded)
     await assert.rejects(readdir(join(h.cacheDir, record.id)), { code: 'ENOENT' })
     // A failed cache build must not poison the serialized build queue.
     const valid = await h.seed({ kind })
     assert.equal((await h.send(`/api/bundles/${valid.id}/contents`, 'owner')).status, 200)
   })
 
-  test(`${kind}: gzip cache preserves contents and metadata, and reopens without source reads`, async t => {
+  test(`${kind}: encoded delivery preserves contents, metadata and HEAD headers`, async t => {
   const h = await setup(t), record = await h.seed({ kind, repoId: 1 })
   const url = `/api/bundles/${record.id}`
   const [metadata, contents] = await Promise.all([h.send(`${url}/metadata`, 'viewer'), h.send(`${url}/contents`, 'viewer')])
   assert.equal(metadata.status, 200); assert.equal(contents.status, 200)
+  assert.equal(metadata.headers['content-encoding'], 'br')
+  assert.equal(contents.headers['content-encoding'], 'br')
   for (const res of [metadata, contents]) {
-    assert.equal(res.headers['content-encoding'], 'gzip')
     assert.equal(Number(res.headers['content-length']), res.bytes.length)
     assert.match(res.headers['cache-control'], /no-store/u)
   }
@@ -130,16 +135,79 @@ for (const kind of ['stasis', 'sourcemap']) {
     assert.equal(parsed.bundle.imports.get('node,import').get('src/main.js').get('dep'), 'node_modules/dep/index.js')
     assert.equal(parsed.fileSizes.get('icon.png'), 2)
   }
-  assert.equal(gunzipSync(contents.bytes).toString(), kind === 'stasis' ? stasis : map)
+  assert.equal(brotliDecompressSync(contents.bytes).toString(), kind === 'stasis' ? stasis : map)
+  assert.deepEqual(contents.bytes, await h.store.get(record.id, record.kind), 'serve the stored compressed bytes')
+  const decodedResponse = await fetch(`${h.baseUrl}${url}/contents`, { headers: { cookie: h.users.viewer.cookie } })
+  assert.equal(await decodedResponse.text(), kind === 'stasis' ? stasis : map, 'HTTP fetch decodes the response without client-side codecs')
   const restarted = createDiskBundleCache(h.cacheDir, h.db, { ...h.store, get: () => { throw new Error('must use disk cache') } })
   const cached = await restarted.open(record, 'metadata')
   const chunks = []; for await (const chunk of cached.stream) chunks.push(chunk)
   assert.deepEqual(Buffer.concat(chunks), metadata.bytes)
   const head = await h.send(`${url}/contents`, 'viewer', 'HEAD')
   assert.equal(head.status, 200); assert.equal(head.bytes.length, 0)
+  assert.equal(head.headers['content-encoding'], contents.headers['content-encoding'])
+  assert.equal(head.headers['content-length'], contents.headers['content-length'])
+  const download = await h.send(`${url}/download`, 'viewer')
+  assert.equal(download.headers['content-encoding'], kind === 'sourcemap' ? 'br' : undefined)
+  assert.deepEqual(download.bytes, contents.bytes)
+  const decodedDownload = await fetch(`${h.baseUrl}${url}/download`, { headers: { cookie: h.users.viewer.cookie } })
+  assert.deepEqual(Buffer.from(await decodedDownload.arrayBuffer()), kind === 'sourcemap' ? Buffer.from(map) : contents.bytes)
 })
 
+  test(`${kind}: GET and HEAD stream stored files without buffered reads`, async t => {
+    const h = await setup(t), record = await h.seed({ kind, repoId: 1 })
+    const bytes = await h.store.get(record.id, kind)
+    t.mock.method(h.store, 'get', () => { throw new Error('must not buffer contents or downloads') })
+    const open = h.store.open, streams = []
+    t.mock.method(h.store, 'open', async (...args) => {
+      const stored = await open(...args)
+      streams.push(stored.stream)
+      return stored
+    })
+    for (const part of ['contents', 'download']) {
+      const url = `/api/bundles/${record.id}/${part}`
+      const heads = await Promise.all(Array.from({ length: 4 }, () => h.send(url, 'viewer', 'HEAD')))
+      for (const head of heads) {
+        assert.equal(head.status, 200)
+        assert.equal(Number(head.headers['content-length']), bytes.length)
+        assert.equal(head.bytes.length, 0)
+      }
+      for (const stream of streams.splice(0)) {
+        if (!stream.closed) await once(stream, 'close')
+        assert.equal(stream.bytesRead, 0, 'HEAD closes the file without reading content')
+      }
+      const response = await h.send(url, 'viewer')
+      assert.equal(response.status, 200)
+      assert.deepEqual(response.bytes, bytes)
+      assert.equal(streams.shift().bytesRead, bytes.length)
+    }
+  })
 }
+
+test('Stasis contents bypass a pending metadata build', async t => {
+  const h = await setup(t), record = await h.seed({ repoId: 1 })
+  const bytes = await h.store.get(record.id, record.kind)
+  const gate = Promise.withResolvers(), get = h.store.get, started = Promise.withResolvers()
+  t.after(() => { gate.resolve() })
+  let reads = 0
+  h.store.get = async (id, kind) => {
+    if (++reads === 1) { started.resolve(); await gate.promise }
+    return get(id, kind)
+  }
+  const build = h.cache.prebuild(record)
+  await started.promise
+  const response = await h.send(`/api/bundles/${record.id}/contents`, 'viewer')
+  assert.equal(response.status, 200)
+  assert.equal(response.headers['content-encoding'], 'br')
+  assert.deepEqual(response.bytes, bytes)
+  await assert.rejects(readdir(join(h.cacheDir, record.id)), { code: 'ENOENT' })
+  gate.resolve()
+  await build
+  assert.deepEqual(await readdir(join(h.cacheDir, record.id)), ['v2-metadata.json.br'])
+  assert.deepEqual((await h.send(`/api/bundles/${record.id}/contents`, 'viewer')).bytes, bytes)
+  await h.store.delete(record.id)
+  assert.equal((await h.send(`/api/bundles/${record.id}/contents`, 'viewer')).status, 422, 'missing source bytes are unavailable')
+})
 
 test('cached reads and manager inventory require ownership or team access; revocation applies on cache hits', async t => {
   const h = await setup(t), record = await h.seed({ repoId: 1 })
@@ -192,12 +260,36 @@ test('upload prebuilds, deduplicates and deletes cached files; unauthorized uplo
   assert.equal(uploaded.status, 201)
   await Promise.allSettled([...h.pending])
   const id = uploaded.json().id
-  assert.deepEqual((await readdir(join(h.cacheDir, id))).toSorted(), ['v2-contents.json.gz', 'v2-metadata.json.gz'])
+  assert.deepEqual(await readdir(join(h.cacheDir, id)), ['v2-metadata.json.br'])
   assert.equal((await h.send('/api/admin/bundles', 'manager', 'POST', bytes, headers)).status, 409)
   assert.equal((await h.send('/api/admin/bundles', 'owner', 'POST', bytes, headers)).status, 200)
   assert.equal((await h.send(`/api/admin/bundles/${id}`, 'owner', 'DELETE')).status, 200)
   await assert.rejects(readdir(join(h.cacheDir, id)), { code: 'ENOENT' })
   assert.equal((await h.send(`/api/bundles/${id}/metadata`, 'owner')).status, 404)
+})
+
+test('sourcemap uploads retain their identity while storing and serving only Brotli bytes', async t => {
+  const h = await setup(t)
+  const bytes = Buffer.from(map), headers = { 'x-bundle-filename': 'test.map' }
+  const uploaded = await h.send('/api/admin/bundles', 'owner', 'POST', bytes, headers)
+  assert.equal(uploaded.status, 201)
+  const { id, integrity } = uploaded.json()
+  assert.equal(integrity, bundleIntegrity(bytes))
+  assert.equal(uploaded.json().byteSize, bytes.length)
+  assert.deepEqual(await readdir(h.bundleDir), [`${id}.map.br`])
+  const encoded = await readFile(join(h.bundleDir, `${id}.map.br`))
+  assert.deepEqual(brotliDecompressSync(encoded), bytes)
+  const contents = await h.send(`/api/bundles/${id}/contents`, 'owner')
+  assert.equal(contents.headers['content-encoding'], 'br')
+  assert.deepEqual(contents.bytes, encoded)
+  await Promise.allSettled([...h.pending])
+  assert.deepEqual(await readdir(join(h.cacheDir, id)), ['v2-metadata.json.br'])
+  const duplicate = await h.send('/api/admin/bundles', 'owner', 'POST', bytes, headers)
+  assert.equal(duplicate.status, 200)
+  assert.equal(duplicate.json().id, id)
+  assert.deepEqual(await readFile(join(h.bundleDir, `${id}.map.br`)), encoded)
+  assert.equal((await h.send(`/api/admin/bundles/${id}`, 'owner', 'DELETE')).status, 200)
+  assert.deepEqual(await readdir(h.bundleDir), [])
 })
 
 test('authorized duplicate uploads repair reports uploaded before bundle access was granted', async t => {
@@ -208,7 +300,7 @@ test('authorized duplicate uploads repair reports uploaded before bundle access 
   const report = async () => (await h.db.listReports()).find(item => item.id === reportId)
   assert.equal((await report()).bundleId, null)
   assert.equal((await report()).bundleIntegrity, record.integrity)
-  const bytes = await h.store.get(record.id)
+  const bytes = await h.store.get(record.id, record.kind)
   const upload = () => h.send('/api/admin/bundles', 'owner', 'POST', bytes, { 'x-bundle-filename': record.filename })
   assert.equal((await upload()).status, 409)
   assert.equal((await report()).bundleId, null, 'unauthorized dedup cannot change report links')
@@ -223,7 +315,7 @@ test('authorized duplicate uploads repair reports uploaded before bundle access 
 test('deletion during a cold build cannot leave cache files behind or serve deleted data', async t => {
   const h = await setup(t), record = await h.seed()
   const gate = Promise.withResolvers(), started = Promise.withResolvers()
-  const cache = createDiskBundleCache(h.cacheDir, h.db, { ...h.store, get: async id => { started.resolve(); await gate.promise; return h.store.get(id) } })
+  const cache = createDiskBundleCache(h.cacheDir, h.db, { ...h.store, get: async (id, kind) => { started.resolve(); await gate.promise; return h.store.get(id, kind) } })
   const build = cache.prebuild(record)
   await started.promise
   await h.db.deleteBundle(record.id)
@@ -234,16 +326,19 @@ test('deletion during a cold build cannot leave cache files behind or serve dele
   await assert.rejects(readdir(join(h.cacheDir, record.id)), { code: 'ENOENT' })
 })
 
-test('a membership revoked during generation prevents the response from serving its cache', async t => {
-  const h = await setup(t), record = await h.seed({ repoId: 1 })
-  const gate = Promise.withResolvers(), get = h.store.get, started = Promise.withResolvers()
-  h.store.get = async id => { started.resolve(); await gate.promise; return get(id) }
-  const response = h.send(`/api/bundles/${record.id}/metadata`, 'viewer')
-  await started.promise
-  await h.db.removeTeamMember(h.team, h.users.viewer.userId)
-  gate.resolve()
-  assert.equal((await response).status, 404)
-})
+for (const part of ['metadata', 'contents', 'download']) {
+  test(`a membership revoked while loading ${part} prevents serving it`, async t => {
+    const h = await setup(t), record = await h.seed({ repoId: 1 })
+    const method = part === 'metadata' ? 'get' : 'open'
+    const gate = Promise.withResolvers(), read = h.store[method], started = Promise.withResolvers()
+    h.store[method] = async (id, kind) => { started.resolve(); await gate.promise; return read(id, kind) }
+    const response = h.send(`/api/bundles/${record.id}/${part}`, 'viewer')
+    await started.promise
+    await h.db.removeTeamMember(h.team, h.users.viewer.userId)
+    gate.resolve()
+    assert.equal((await response).status, 404)
+  })
+}
 
 test('permanent repository removal deletes bundle derivatives too', async t => {
   const h = await setup(t), record = await h.seed({ repoId: 1 })
@@ -252,7 +347,7 @@ test('permanent repository removal deletes bundle derivatives too', async t => {
   assert.equal(removed.status, 200)
   assert.equal(removed.json().deletedBundles, 1)
   await assert.rejects(readdir(join(h.cacheDir, record.id)), { code: 'ENOENT' })
-  assert.equal(await h.store.get(record.id), null)
+  assert.equal(await h.store.get(record.id, record.kind), null)
 })
 
 test('repository removal completes triage and blob cleanup when a bundle cache deletion fails', async t => {
@@ -284,7 +379,7 @@ test('repository removal completes triage and blob cleanup when a bundle cache d
   assert.equal(await h.reportStore.get(reportId), null)
   for (const record of records) {
     assert.equal(await h.db.getBundle(record.id), null)
-    assert.equal(await h.store.get(record.id), null)
+    assert.equal(await h.store.get(record.id, record.kind), null)
     assert.equal((await h.send(`/api/bundles/${record.id}/metadata`)).status, 404, 'orphaned cache cannot be served')
   }
   await assert.rejects(readdir(join(h.cacheDir, records[1].id)), { code: 'ENOENT' })
@@ -302,6 +397,6 @@ test('individual bundle removal still deletes source bytes when cache cleanup fa
   assert.equal(removed.status, 200)
   assert.equal(warnings.mock.callCount(), 1)
   assert.equal(await h.db.getBundle(record.id), null)
-  assert.equal(await h.store.get(record.id), null)
+  assert.equal(await h.store.get(record.id, record.kind), null)
   assert.equal((await h.send(`/api/bundles/${record.id}/contents`, 'owner')).status, 404)
 })

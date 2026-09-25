@@ -26,7 +26,7 @@
 //   GET  /api/admin/reports/<id> → admin|manage downloads a stored report | 401/403/404
 //   DELETE /api/admin/reports/<id> → admin|manage deletes a report | 401/403/404
 //   POST /api/admin/reports/set-repo → admin|manage attaches/detaches a report's repo | 401/403/404
-//   GET  /api/bundles/<id>/{metadata,contents} → authorized gzip cache | 401/404/422
+//   GET  /api/bundles/<id>/{metadata,contents} → authorized encoded bytes | 401/404/422
 //   GET  /api/bundles/<id>/download → authorized original upload | 401/404
 //   GET  /api/admin/bundles      → admin all bundles; managers own/team bundles | 401/403
 //   POST /api/admin/bundles      → admin|manage uploads a bundle (raw body) | 401/403/413
@@ -43,6 +43,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { pipeline } from 'node:stream/promises'
 import type { BundleCache, BundleCachePart } from './bundle-cache.ts'
+import type { BundleStore } from './bundle-store.ts'
 import { Buffer } from 'node:buffer'
 import { createHash, randomUUID } from 'node:crypto'
 import type { AvatarStore } from './avatar-store.ts'
@@ -159,7 +160,7 @@ export interface ManagedHttpDeps {
   db: ManagedDb
   avatarStore: AvatarStore
   reportStore: BlobStore
-  bundleStore: BlobStore
+  bundleStore: BundleStore
   bundleCache?: BundleCache
   originGate: OriginGate
   isShuttingDown: () => boolean
@@ -814,7 +815,7 @@ function prebuildBundle(deps: ManagedHttpDeps, id: string) {
   })().catch(err => console.warn('managed: bundle cache build failed:', err)))
 }
 
-// GET /api/bundles/:id/{metadata,contents}. Cached files are already encoded;
+// GET /api/bundles/:id/{metadata,contents}. Source/cache bytes are already encoded;
 // the browser's HTTP stack decompresses them without a Brotli JS dependency.
 async function handleBundleCache(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string, part: BundleCachePart) {
   const s = await readSession(deps.config, deps.db, cookie, Date.now())
@@ -834,7 +835,7 @@ async function handleBundleCache(req: IncomingMessage, res: ServerResponse, deps
     return
   }
   res.writeHead(200, {
-    'content-type': 'application/json', 'content-encoding': 'gzip',
+    'content-type': 'application/json', 'content-encoding': 'br',
     'content-length': String(cached.size), 'cache-control': 'private, no-store',
     'x-content-type-options': 'nosniff',
   })
@@ -895,10 +896,11 @@ async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, dep
     return
   }
   const id = randomUUID()
-  await deps.bundleStore.put(id, bytes)
+  const kind = bundleKind(filename)
+  await deps.bundleStore.put(id, bytes, kind)
   try {
     await deps.db.insertBundle({
-      id, integrity, filename, kind: bundleKind(filename),
+      id, integrity, filename, kind,
       byteSize: bytes.length, uploadedBy: s.user.id, uploadedByLogin: s.user.login, repoId: repo.repoId,
     }, Date.now())
   } catch (err) {
@@ -921,27 +923,33 @@ async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, dep
 }
 
 // GET /api/admin/bundles/<id> — download a stored bundle (admin|manage). Bytes
-// are opaque archives, so served as application/octet-stream. 404 no such
+// are opaque archives, so served as application/octet-stream. Sourcemaps use
+// HTTP Brotli decoding to restore the uploaded .map bytes. 404 no such
 // bundle; 503 row-without-bytes (store desync).
-async function handleGetBundle(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string): Promise<void> {
+async function handleGetBundle(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string): Promise<void> {
   const s = await readSession(deps.config, deps.db, cookie, Date.now())
   if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
   if (!(await canAccessBundle(deps, s.user, id))) { sendJson(res, 404, { error: 'no-bundle' }); return }
   const rec = await deps.db.getBundle(id)
   if (rec == null) { sendJson(res, 404, { error: 'no-bundle' }); return }
-  const bytes = await deps.bundleStore.get(id)
-  if (bytes == null) { sendJson(res, 503, { error: 'unavailable' }); return }
+  const stored = await deps.bundleStore.open(id, rec.kind)
+  if (stored == null) { sendJson(res, 503, { error: 'unavailable' }); return }
   const current = await readSession(deps.config, deps.db, cookie, Date.now())
-  if (!current || !(await canAccessBundle(deps, current.user, id))) { sendJson(res, current ? 404 : 401, { error: 'no-bundle' }); return }
+  if (!current || !(await canAccessBundle(deps, current.user, id))) {
+    stored.stream.destroy()
+    sendJson(res, current ? 404 : 401, { error: 'no-bundle' }); return
+  }
   const dispoName = rec.filename.replaceAll('"', '')
   res.writeHead(200, {
     'content-type': 'application/octet-stream',
-    'content-length': String(bytes.length),
+    ...(rec.kind === 'sourcemap' ? { 'content-encoding': 'br' } : {}),
+    'content-length': String(stored.size),
     'content-disposition': `attachment; filename="${dispoName}"`,
     'x-content-type-options': 'nosniff',
     'cache-control': 'no-store',
   })
-  res.end(bytes)
+  if (req.method === 'HEAD') { stored.stream.destroy(); res.end(); return }
+  try { await pipeline(stored.stream, res) } catch { res.destroy() }
 }
 
 // DELETE /api/admin/bundles/<id> — remove a bundle (admin|manage). Mutation:
@@ -1525,7 +1533,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (bundleRead) {
       if (method !== 'GET' && method !== 'HEAD') { send405(res, 'GET, HEAD'); return }
       const id = bundleRead[1]!
-      if (bundleRead[2] === 'download') await handleGetBundle(res, deps, cookie, id)
+      if (bundleRead[2] === 'download') await handleGetBundle(req, res, deps, cookie, id)
       else await handleBundleCache(req, res, deps, cookie, id, bundleRead[2] as BundleCachePart)
       return
     }
@@ -1540,7 +1548,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     }
     if (path.startsWith(BUNDLE_PREFIX)) {
       const id = path.slice(BUNDLE_PREFIX.length)
-      if (method === 'GET') { await handleGetBundle(res, deps, cookie, id); return }
+      if (method === 'GET') { await handleGetBundle(req, res, deps, cookie, id); return }
       if (method === 'DELETE') { await handleDeleteBundle(req, res, deps, cookie, id); return }
       send405(res, 'GET, DELETE'); return
     }

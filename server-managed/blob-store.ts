@@ -8,13 +8,20 @@
 // data/bundles/<uuid>); the BlobStore interface is backend-agnostic so an S3 /
 // Vercel Blob backend slots in later without touching callers. Bytes only — the
 // content-type / filename / integrity ride the DB row, so there's no sidecar.
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, open, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { Buffer } from 'node:buffer'
+import type { Readable } from 'node:stream'
+
+export interface OpenedBlob {
+  size: number
+  stream: Readable
+}
 
 export interface BlobStore {
   put(id: string, bytes: Buffer): Promise<void>
   get(id: string): Promise<Buffer | null>
+  open(id: string): Promise<OpenedBlob | null>
   delete(id: string): Promise<void>
 }
 
@@ -22,10 +29,10 @@ export interface BlobStore {
 // path separators. Validated anyway so a crafted id can't escape the store dir.
 const ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u
 
-export function createDiskBlobStore(dir: string): BlobStore {
+export function createDiskBlobStore(dir: string, suffix = ''): BlobStore {
   function pathFor(id: string): string {
     if (!ID_RE.test(id)) throw new Error('invalid blob id')
-    return join(dir, id)
+    return join(dir, id + suffix)
   }
   return {
     async put(id, bytes) {
@@ -39,6 +46,16 @@ export function createDiskBlobStore(dir: string): BlobStore {
       } catch {
         return null
       }
+    },
+    async open(id) {
+      let file
+      try { file = await open(pathFor(id), 'r') }
+      catch (err) { if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null; throw err }
+      try {
+        const info = await file.stat()
+        // Remain paused until piped. HEAD can close without reading the body.
+        return { size: info.size, stream: file.createReadStream() }
+      } catch (err) { await file.close(); throw err }
     },
     async delete(id) {
       // `force` so a missing file (already gone) is a no-op, not a throw — the
