@@ -2,7 +2,7 @@ import { LitElement, html, nothing } from 'lit'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { live } from 'lit/directives/live.js'
 import { repeat } from 'lit/directives/repeat.js'
-import { BUNDLE_ICON_SVG } from '../view/icons.js'
+import { AGENTIC_ICON_SVG, BUNDLE_ICON_SVG, CODE_ICON_SVG, DEPENDENCIES_ICON_SVG, REPORT_ICON_SVG } from '../view/icons.js'
 import { fetchScanModels } from '../view/scan-models.js'
 import '../view/scan-model-picker.js'
 import '../view/repository-selector.js'
@@ -15,10 +15,10 @@ import { codeScanFiles, formatBytes, sourceMetrics } from './metrics.js'
 import '../view/bundle-scope-selector.js'
 
 const SCAN_MODE_ICONS = {
-  dependencies: html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="4" cy="8" r="2"/><circle cx="12" cy="4" r="2"/><circle cx="12" cy="12" r="2"/><path d="M6 8h2M10.2 5.3 6 7.3M10.2 10.7 6 8.7"/></svg>`,
-  code: html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5.5 3-3 5 3 5M10.5 3l3 5-3 5M9 2.5 7 13.5"/></svg>`,
-  agentic: html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 1.8.8 4.4L12.5 8l-3.7 1.8L8 14.2l-.8-4.4L3.5 8l3.7-1.8Z"/><path d="m13 2 .25 1.25L14.5 3.5 13.25 3.25 13 2ZM3 11.5l.2 1 .95.2-.95.2-.2 1-.2-1-.95-.2.95-.2Z"/></svg>`,
-  report: html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 1.8h5l3 3V14H4zM9 1.8V5h3M6 8h4M6 10.5h4"/></svg>`,
+  dependencies: unsafeHTML(DEPENDENCIES_ICON_SVG),
+  code: unsafeHTML(CODE_ICON_SVG),
+  agentic: unsafeHTML(AGENTIC_ICON_SVG),
+  report: unsafeHTML(REPORT_ICON_SVG),
 }
 
 export class ScanPage extends LitElement {

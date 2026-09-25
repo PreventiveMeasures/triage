@@ -1,3 +1,6 @@
+/* Links keep the app’s default cursor. */
+a { cursor: default; }
+
 /* Keep the controls together. Flex wrapping lifts the full report name
    above them as soon as the two no longer fit on one line. */
 .finding-actions {

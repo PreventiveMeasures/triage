@@ -8,7 +8,7 @@ button, select {
   background: var(--surface);
   border-radius: 4px;
   padding: 4px 7px;
-  cursor: pointer;
+  cursor: default;
 }
 button:hover, button[aria-pressed='true'] { background: var(--graph-hover-bg); border-color: var(--muted); }
 button:focus-visible, select:focus-visible, canvas:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }

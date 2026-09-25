@@ -1,7 +1,7 @@
 import { html, nothing, render } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { MANAGE_ICON_SVG, WORKSPACE_ICON_SVG } from './icons.js'
+import { MANAGE_ICON_SVG, SCAN_ICON_SVG, WORKSPACE_ICON_SVG } from './icons.js'
 
 export function updateManagedLanding({ serverMode, session, teams = [] }) {
   const landing = document.querySelector('#drop-zone')
@@ -40,6 +40,7 @@ export function updateManagedLanding({ serverMode, session, teams = [] }) {
       <div class="managed-landing-actions">
         <button type="button" class="managed-manage-button" data-managed-page="manage"><span aria-hidden="true">${unsafeHTML(MANAGE_ICON_SVG)}</span><span>Manage</span></button>
       </div>
+      <button type="button" class="managed-scan-button" data-managed-page="manage-scans">${unsafeHTML(SCAN_ICON_SVG)}<span>Scan</span></button>
     ` : session ? nothing : html`<button type="button" class="drop-prompt-action" data-managed-login>Log in</button>`}
   ` : nothing, slot)
 }

@@ -952,8 +952,8 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = 
   const showActionLabels = context === 'focus' && reportChip === nothing
   const commentLabel = activeComment ? 'Edit comment' : 'Comment'
   const fixLabel = activeFix ? 'Edit fix link' : 'Fix link'
-  const commentBtn = html`<button type="button" ?disabled=${disabled} class=${classMap({ 'mark-comment': true, 'has-comment': activeComment })} data-tooltip=${commentTitle} aria-label=${commentTitle}>${COMMENT_ICON}${showActionLabels ? html`<span class="mark-btn-label">${commentLabel}</span>` : nothing}</button>`
-  const fixBtn = html`<button type="button" ?disabled=${disabled} class=${classMap({ 'mark-fix': true, 'has-fix': activeFix })} data-tooltip=${fixTitle} aria-label=${fixTitle}>${FIX_ICON}${showActionLabels ? html`<span class="mark-btn-label">${fixLabel}</span>` : nothing}</button>`
+  const commentBtn = html`<button type="button" ?disabled=${disabled} class=${classMap({ 'mark-comment': true, 'has-comment': activeComment })} data-tooltip=${showActionLabels && !activeComment ? nothing : commentTitle} aria-label=${commentTitle}>${COMMENT_ICON}${showActionLabels ? html`<span class="mark-btn-label">${commentLabel}</span>` : nothing}</button>`
+  const fixBtn = html`<button type="button" ?disabled=${disabled} class=${classMap({ 'mark-fix': true, 'has-fix': activeFix })} data-tooltip=${showActionLabels && !activeFix ? nothing : fixTitle} aria-label=${fixTitle}>${FIX_ICON}${showActionLabels ? html`<span class="mark-btn-label">${fixLabel}</span>` : nothing}</button>`
   // Attention flag — third chip in the comment/fix group.
   const flagBtn = flagButtonTemplate(activeTab, showActionLabels)
   // Copy button — writes a labeled `File / Line / Description /

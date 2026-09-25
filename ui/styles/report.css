@@ -1033,7 +1033,7 @@ bundle-code-search {
   border: 0; border-radius: 4px;
   background: transparent;
   color: var(--muted);
-  cursor: pointer;
+  cursor: default;
 }
 .bundle-code-copy-path:hover { background: var(--bg); color: var(--text); }
 .bundle-code-copy-path.copied { color: var(--green); }
@@ -1059,7 +1059,7 @@ bundle-code-search {
   background: var(--surface);
   color: var(--text);
   font-size: .85rem; line-height: 1;
-  cursor: pointer;
+  cursor: default;
 }
 .bundle-code-issue-step:hover { border-color: var(--accent, #58a6ff); color: var(--accent, #58a6ff); }
 .bundle-code-main-body {
@@ -2696,7 +2696,7 @@ body.report-fullscreen {
     color: var(--muted);
     font: inherit; font-size: .72rem; font-weight: 500;
     white-space: nowrap;
-    cursor: pointer;
+    cursor: default;
     &:hover { border-color: var(--accent); color: var(--accent); }
     & .packages-row-expand-chevron {
       display: inline-block;
@@ -2930,7 +2930,7 @@ body.report-fullscreen {
   background: var(--surface);
   color: var(--text);
   font-size: .72rem;
-  cursor: pointer;
+  cursor: default;
 }
 .bundle-advisories-retry:hover { border-color: var(--accent, #58a6ff); color: var(--accent, #58a6ff); }
 .bundle-advisories-list {
@@ -3063,14 +3063,9 @@ body.report-fullscreen {
 .bundle-advisory-cwes {
   margin-left: 1.25rem;
 }
-/* GHSA chip pinned to the right of the title row. No border (the
-   external-link arrow already marks it as an actionable cross-link
-   to GitHub). `cursor: default` on the chip body overrides the
-   UA's `cursor: pointer` for `<a>` — the arrow icon is the
-   click-affordance signal. The id text inside is selectable so
-   it copies cleanly into a clipboard for filing internal tickets;
-   the icon switches the cursor back to a pointer locally to hint
-   at the clickable target. */
+/* The external-link arrow marks the GHSA chip's link to GitHub.
+   Keep the app's default cursor and selectable id text so the id
+   can be copied into internal tickets. */
 .bundle-advisory-ghsa {
   flex-shrink: 0;
   display: inline-flex;

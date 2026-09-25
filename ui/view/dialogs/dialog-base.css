@@ -1,3 +1,6 @@
+/* Links keep the app’s default cursor. */
+a { cursor: default; }
+
 /* Shared modal-dialog chrome for the `AppDialog` base class
    (app-dialog.js), inherited into each dialog's shadow via `static
    styles`. Targets the bare `dialog` element (exactly one per shadow)

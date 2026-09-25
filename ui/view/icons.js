@@ -51,3 +51,9 @@ export const MANAGE_ICON_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" 
 // (`WORKSPACE_SHARE_ICON` in sidebar.js), which is a small
 // hover-revealed action at 11px: this is a 14px row identity.
 export const LINKS_ICON_SVG = '<svg class="file-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.67 8.67a3.33 3.33 0 0 0 5.03.36l2-2a3.33 3.33 0 0 0-4.71-4.71l-1.15 1.14"/><path d="M9.33 7.33a3.33 3.33 0 0 0-5.03-.36l-2 2a3.33 3.33 0 0 0 4.71 4.71l1.14-1.14"/></svg>'
+
+// Scan and report glyphs shared by setup, management, and landing actions.
+export const SCAN_ICON_SVG = '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 1.5H2.5a1 1 0 0 0-1 1V5m9.5-3.5h2.5a1 1 0 0 1 1 1V5M1.5 11v2.5a1 1 0 0 0 1 1H5m6 0h2.5a1 1 0 0 0 1-1V11"/><circle cx="7.25" cy="7.25" r="2.75"/><path d="m9.25 9.25 2.25 2.25"/></svg>'
+export const REPORT_ICON_SVG = '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 1.5H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5L9 1.5ZM9 1.5v4h4M5.5 8h5m-5 3h3.5"/></svg>'
+export const CODE_ICON_SVG = '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 4.5-3 3.5 3 3.5m7-7 3 3.5-3 3.5M9.5 2l-3 12"/></svg>'
+export const AGENTIC_ICON_SVG = '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6.5 3.5 1.6 3.9L12 9l-3.9 1.6-1.6 3.9-1.6-3.9L1 9l3.9-1.6 1.6-3.9ZM12 1.5v4m-2-2h4"/></svg>'

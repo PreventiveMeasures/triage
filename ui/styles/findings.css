@@ -1005,7 +1005,7 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
     font: inherit;
     text-transform: inherit; letter-spacing: inherit;
     color: inherit;
-    cursor: pointer;
+    cursor: default;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 
     /* No focus ring. Chromium matches `:focus-visible` on a <select>

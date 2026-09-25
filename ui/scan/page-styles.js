@@ -38,7 +38,7 @@ export const SCAN_PAGE_STYLES = css`
   .mode-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .45rem; padding: .7rem .9rem .85rem; }
     .mode-option { display: grid; gap: .25rem; min-width: 0; padding: .55rem .6rem; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); background: var(--bg); text-align: left; }
     .mode-title { display: flex; align-items: center; gap: .35rem; min-width: 0; }
-    .mode-title svg { width: .95rem; height: .95rem; flex: 0 0 auto; color: var(--muted); }
+    .mode-title svg { width: 1rem; height: 1rem; flex: 0 0 auto; color: var(--muted); }
     .mode-option strong { color: var(--text); font-size: .75rem; font-weight: 600; }
   .mode-option span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .63rem; }
   .mode-option.active { border-color: rgb(from var(--accent) r g b / .55); background: rgb(from var(--accent) r g b / .1); }
