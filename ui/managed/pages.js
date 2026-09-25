@@ -921,7 +921,7 @@ class ManagedAdminReports extends ManagedPage {
         <div class="page-intro"><p class="intro">Upload reports. New reports stay hidden until you make them visible.</p>${this._localImport.renderAction()}</div>
         ${this._localImport.renderPanel(this._busy || !this._csrf)}
         <div class="drop-card"><span class="drop-icon" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10V2m0 0L5 5m3-3 3 3M3 9v3.5A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5V9"/></svg></span><span class="drop-copy"><strong>Upload reports</strong><span>Drop files anywhere on this page, or browse your computer.</span></span><button type="button" class="drop-browse" ?disabled=${this._busy} @click=${() => pickFiles((files) => void this._upload(files))}>${this._busy ? 'Uploading…' : 'Browse files'}</button></div>
-        <div class="location-editor" aria-label="Location for reports without repository metadata"><div class="location-field"><span>Repository (when absent from report)</span><repository-selector label="Repository for new reports" .options=${repoOptions(this._data?.repos ?? [], this._role === 'admin')} .value=${this._repoId} ?disabled=${!this._data?.repos?.length} @repository-change=${event => { this._repoId = event.detail.value }}></repository-selector></div><div class="location-field"><label for="report-upload-directory">Directory</label><input id="report-upload-directory" placeholder="Repository root" .value=${this._repoDirectory} @input=${event => { this._repoDirectory = event.target.value }}></div></div>
+        <div class="location-editor" aria-label="Location for reports without repository metadata"><div class="location-field"><span>Repository (when absent from report)</span><repository-selector label="Repository for new reports" .options=${repoOptions(this._data?.repos ?? [])} .value=${this._repoId} ?disabled=${!this._data?.repos?.length} @repository-change=${event => { this._repoId = event.detail.value }}></repository-selector></div><div class="location-field"><label for="report-upload-directory">Directory</label><input id="report-upload-directory" placeholder="Repository root" .value=${this._repoDirectory} @input=${event => { this._repoDirectory = event.target.value }}></div></div>
         ${this._data?.repoScopes?.length ? html`<p class="intro">Team paths: ${this._data.repoScopes.map(scope => `${this._data.repos.find(repo => repo.repoId === scope.repoId)?.fullName ?? scope.repoId}/${scope.path ?? ''}`).join(', ')}</p>` : nothing}
         ${this._body()}
       </div>`
@@ -940,7 +940,7 @@ class ManagedAdminReports extends ManagedPage {
   _row(report) {
     const analyzer = report.analyzer ?? report.source ?? report.producer ?? 'default'
     const logo = REPORT_LOGOS[analyzer] ?? REPORT_LOGOS.default
-    const canAssignLocation = report.repoEmbedded !== true
+    const canAssignLocation = report.repoEmbedded !== true && report.canChangeRepo !== false
     const canMakeVisible = report.repoEmbedded === true || report.repoId != null
     const location = report.repoFullName ? `${report.repoFullName}${report.repoDirectory ? `/${report.repoDirectory}` : ''}` : 'No repository assigned'
     const when = Number.isFinite(report.uploadedAt) ? new Date(report.uploadedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : ''
@@ -953,9 +953,9 @@ class ManagedAdminReports extends ManagedPage {
         <span class="report-actions">
           ${canAssignLocation ? html`<button type="button" class="action" data-tooltip="Set repository location" aria-label=${`Set location for ${report.filename}`} @click=${() => this._openLocation(report)}>${adminIcon('repo')}</button>` : html`<span class="action-spacer"></span>`}
           <button type="button" class="action" data-tooltip=${this._preview === report.id ? 'Close preview' : 'Preview report'} aria-label=${`Preview ${report.filename}`} aria-expanded=${this._preview === report.id} @click=${() => void this._togglePreview(report)}>${adminIcon('preview')}</button>
-          <button type="button" class="action" data-tooltip=${report.visible ? 'Hide from teams' : canMakeVisible ? 'Make visible to teams' : 'Assign a repository before publishing'} aria-label=${`${report.visible ? 'Hide' : 'Make visible'} ${report.filename}`} ?disabled=${!canMakeVisible && !report.visible} @click=${() => void this._setVisible(report, !report.visible)}>${adminIcon(report.visible ? 'hide' : 'show')}</button>
+          <button type="button" class="action" data-tooltip=${report.visible ? 'Hide from teams' : canMakeVisible ? 'Make visible to teams' : 'Assign a repository before publishing'} aria-label=${`${report.visible ? 'Hide' : 'Make visible'} ${report.filename}`} ?disabled=${report.canChangeRepo === false || (!canMakeVisible && !report.visible)} @click=${() => void this._setVisible(report, !report.visible)}>${adminIcon(report.visible ? 'hide' : 'show')}</button>
           <a class="action" aria-label=${`Download ${report.filename}`} href=${`/api/admin/reports/${encodeURIComponent(report.id)}`}>${adminIcon('download')}</a>
-          <button type="button" class="action danger" aria-label=${`Delete ${report.filename}`} @click=${() => this._delete(report)}>${ADMIN_DELETE_ICON}</button>
+          <button type="button" class="action danger" aria-label=${`Delete ${report.filename}`} ?disabled=${report.canChangeRepo === false} @click=${() => this._delete(report)}>${ADMIN_DELETE_ICON}</button>
         </span>
       </div>
       ${this._preview === report.id ? html`<div class="preview">${this._previewLoading === report.id ? html`<span class="preview-loading">Loading preview…</span>` : html`<pre>${this._previewText ?? ''}</pre>`}</div>` : nothing}
@@ -964,6 +964,7 @@ class ManagedAdminReports extends ManagedPage {
   }
 
   _openLocation(report) {
+    if (report.canChangeRepo === false) return
     this._locationReport = report.id
     this._locationRepo = report.repoId ?? null
     this._locationDirectory = report.repoDirectory ?? ''
@@ -972,11 +973,11 @@ class ManagedAdminReports extends ManagedPage {
 
   _locationEditor(report) {
     const repos = Array.isArray(this._data?.repos) ? this._data.repos : []
-    return html`<div class="location-editor"><div class="location-field"><span>Repository</span><repository-selector label="Repository for report" .options=${repoOptions(repos, this._role === 'admin')} .value=${this._locationRepo} ?disabled=${this._locationBusy} @repository-change=${event => { this._locationRepo = event.detail.value }}></repository-selector></div><div class="location-field"><label for=${`report-dir-${report.id}`}>Directory (optional)</label><input id=${`report-dir-${report.id}`} type="text" placeholder="Repository root" .value=${this._locationDirectory} @input=${(e) => { this._locationDirectory = e.target.value }}></div><div class="location-actions"><button type="button" class="action" @click=${() => { this._locationReport = null }}>Cancel</button><button type="button" class="action" ?disabled=${this._locationBusy || this._locationRepo == null} @click=${() => void this._saveLocation(report)}>Save</button></div></div>`
+    return html`<div class="location-editor"><div class="location-field"><span>Repository</span><repository-selector label="Repository for report" .options=${repoOptions(repos)} .value=${this._locationRepo} ?disabled=${this._locationBusy} @repository-change=${event => { this._locationRepo = event.detail.value }}></repository-selector></div><div class="location-field"><label for=${`report-dir-${report.id}`}>Directory (optional)</label><input id=${`report-dir-${report.id}`} type="text" placeholder="Repository root" .value=${this._locationDirectory} @input=${(e) => { this._locationDirectory = e.target.value }}></div><div class="location-actions"><button type="button" class="action" @click=${() => { this._locationReport = null }}>Cancel</button><button type="button" class="action" ?disabled=${this._locationBusy} @click=${() => void this._saveLocation(report)}>Save</button></div></div>`
   }
 
   async _saveLocation(report) {
-    if (this._locationRepo == null || this._locationBusy) return
+    if (this._locationBusy) return
     this._locationBusy = true
     this._error = null
     try {
@@ -1146,7 +1147,7 @@ class ManagedAdminBundles extends ManagedPage {
         ${this._localImport.renderPanel(this._busy || !this._csrf)}
         <section class="upload-panel" aria-label="Upload bundles">
           <div class="upload-copy"><span class="drop-icon" aria-hidden="true">${adminIcon('upload')}</span><span><strong>Upload source bundles</strong><span class="upload-description">Drop source archives anywhere on this page.</span></span></div>
-          <div class="upload-controls">${repoPickerTemplate(this._data?.repos, this._repoId, (v) => { this._repoId = v }, 'Repository', this._role === 'admin')}<button type="button" class="drop-browse" ?disabled=${this._busy} @click=${() => pickFiles((files) => void this._upload(files))}>${this._busy ? 'Uploading…' : 'Browse files'}</button></div>
+          <div class="upload-controls">${repoPickerTemplate(this._data?.repos, this._repoId, (v) => { this._repoId = v }, 'Repository')}<button type="button" class="drop-browse" ?disabled=${this._busy} @click=${() => pickFiles((files) => void this._upload(files))}>${this._busy ? 'Uploading…' : 'Browse files'}</button></div>
         </section>
         ${this._body()}
       </div>`
@@ -1168,13 +1169,13 @@ class ManagedAdminBundles extends ManagedPage {
     const when = Number.isFinite(b.uploadedAt) ? new Date(b.uploadedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : ''
     return html`<li class="bundle-row">
       <span class="identity"><span class="bundle-icon" aria-hidden="true">${BUNDLE_ICON}</span><span class="who">
-        <span class="filename">${b.filename}</span>
+        <button type="button" class="filename bundle-open" @click=${() => this.dispatchEvent(new CustomEvent('managed-bundle-open', { detail: { id: b.id }, bubbles: true, composed: true }))}>${b.filename}</button>
         <span class="meta"><span class="kind">${b.kind === 'stasis' ? 'Stasis' : 'Sourcemaps'}</span><span>${formatBytes(b.byteSize)}</span><span>${when}</span>${b.uploadedByLogin ? html`<span>@${b.uploadedByLogin}</span>` : nothing}</span>
       </span></span>
-      <span class="bundle-location">${repoRowSelect(this._data?.repos, b.repoId, (repoId) => this._setRepo(b, repoId), this._role === 'admin')}</span>
+      <span class="bundle-location">${b.canChangeRepo === false ? html`<span data-tooltip="Your teams do not grant access to change this repository link">${b.repoFullName ?? 'Attached repository'}</span>` : repoRowSelect(this._data?.repos, b.repoId, (repoId) => this._setRepo(b, repoId))}</span>
       <span class="actions">
         <a class="action" aria-label=${`Download ${b.filename}`} href=${`/api/admin/bundles/${encodeURIComponent(b.id)}`}><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8m-3-3 3 3 3-3M3 11v3h10v-3"/></svg></a>
-        <button type="button" class="action danger" aria-label=${`Delete ${b.filename}`} @click=${() => this._delete(b)}>${ADMIN_DELETE_ICON}</button>
+        <button type="button" class="action danger" aria-label=${`Delete ${b.filename}`} ?disabled=${b.canChangeRepo === false} data-tooltip=${b.canChangeRepo === false ? 'Repository access is required to detach or delete this bundle' : 'Delete bundle'} @click=${() => this._delete(b)}>${ADMIN_DELETE_ICON}</button>
       </span>
     </li>`
   }
@@ -1198,7 +1199,7 @@ class ManagedAdminBundles extends ManagedPage {
     try {
       while (this._queue.length > 0) {
         const file = this._queue.shift()
-        await this.appState.mutate(() => uploadBundle(file, this._csrf, this._repoId), ['bundles', 'reports', 'repo-impact', 'history', 'scan-sources'])
+        await this.appState.mutate(() => uploadBundle(file, this._csrf, this._repoId), ['bundles', 'bundle-metadata', 'reports', 'repo-impact', 'history', 'scan-sources'])
       }
     } catch (err) {
       this._queue = [] // fail-fast: drop the rest of the batch (matches the old behaviour)
@@ -1213,7 +1214,7 @@ class ManagedAdminBundles extends ManagedPage {
     if (!globalThis.confirm?.(`Delete “${b.filename}”? Linked reports will keep their pending link.`)) return
     this._error = null
     try {
-      await this.appState.mutate(() => deleteBundle(b.id, this._csrf), ['bundles', 'reports', 'repo-impact', 'history', 'scan-sources'])
+      await this.appState.mutate(() => deleteBundle(b.id, this._csrf), ['bundles', 'bundle-metadata', 'reports', 'repo-impact', 'history', 'scan-sources'])
     } catch (err) {
       this._error = `Delete failed: ${String(err?.message ?? err)}`
     }

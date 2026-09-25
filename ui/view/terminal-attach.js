@@ -23,6 +23,8 @@ import { stripCommonPathPrefix } from './format.js'
 let loadPromise = null
 let cached = null
 
+export function resetBundleTerminal() { cached = null }
+
 function loadTerminal() {
   if (loadPromise) return loadPromise
   loadPromise = (async () => {
@@ -74,8 +76,8 @@ export async function attachTerminal(host, details) {
   // call would race past `cached === null` and create a fresh
   // <bundle-terminal>, wiping the session that another call had
   // already started building.
-  if (!cached || cached.integrity !== tag) {
-    cached = { integrity: tag, promise: createMount(details, tag) }
+  if (!cached || cached.integrity !== tag || ((details?.managedId || cached.managedId) && cached.details !== details)) {
+    cached = { integrity: tag, managedId: details?.managedId, details: details?.managedId ? details : null, promise: createMount(details, tag) }
   }
   try {
     const el = await cached.promise

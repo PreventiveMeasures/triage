@@ -322,3 +322,6 @@ select:focus-visible {
     flex-direction: column;
   }
 }
+
+.bundle-open { padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.bundle-open:hover { color: var(--accent); text-decoration: underline; }

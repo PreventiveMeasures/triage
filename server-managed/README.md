@@ -12,6 +12,7 @@ window also navigate to their managed page URL.
 | `/teams/:teamId/files` | Team files |
 | `/teams/:teamId/reports/:reportId` | Report findings |
 | `/teams/:teamId/reports/:reportId/files` | Report files |
+| `/bundles/:bundleId` | Bundle overview, files and dependency graph |
 | `/manage` | Manage overview |
 | `/manage/bundles` | Bundles |
 | `/manage/scans` | Scans |
@@ -105,18 +106,21 @@ actions, targets, and timestamps, not annotation bodies or credentials.
 
 # Manager content access
 
-Managers manage reports and bundles and oversee triage only in repositories
-assigned to their teams. Report access also requires a matching team directory
-scope; bundles use repository access. These rules apply to catalogues, downloads,
+Managers manage reports and bundles they uploaded or can access through
+repositories assigned to their teams. Access through teams also requires a
+matching directory scope for reports; bundles use repository access. These rules apply to catalogues, downloads,
 uploads, visibility changes, assignment changes, deletion, and triage. Managers
 can review unpublished reports in scope. Viewer and triage roles still require
 publication. Administrators retain unrestricted content access.
 
-Managers cannot create unassigned content, detach content, or move it outside
-their team scopes. Repository pickers contain only allowed repositories. Reports
-without embedded repository metadata can use the repository and directory
+Managers can upload unassigned content and retain access to their own uploads.
+Detaching or deleting attached content requires access to its current repository
+(and report path); assigning it requires access to the destination. Repository
+pickers contain only allowed repositories. Reports without embedded repository
+metadata can use the repository and directory
 controls on the upload page. Bundle deduplication never returns inaccessible
-bundle IDs or names, and manager uploads only auto-link accessible reports.
+bundle IDs or names, and manager uploads only auto-link owned or team-accessible
+reports.
 Repository connections, teams, memberships, and user roles are admin-only.
 
 # User timestamps
@@ -133,3 +137,51 @@ on upgrade. Older management entries recorded only a display login, so they
 cannot be safely assigned to an account after a rename or login reuse. Users
 without attributable history show Unknown. Triage retention/deletion still
 applies because Last Activity is derived from the retained history.
+
+# Bundle metadata and contents
+
+`GET /api/bundles/:id/metadata` returns the shared `common/bundle-metadata.js`
+format: file inventory, byte sizes, source hashes and line counts, package
+identity, imports, entry points, executable flags and language/code statistics.
+It excludes source bodies and binary resources. `GET /api/bundles/:id/contents`
+returns the original sourcemap JSON or the decompressed Stasis JSON.
+Both endpoints support HEAD and stream cached files with `Content-Encoding:
+gzip`, compressed Content-Length, and `Cache-Control: private, no-store`.
+`GET /api/bundles/:id/download` serves the original uploaded bytes.
+
+The cache lives beside the managed database under `cache/bundles/:id/`.
+Uploads schedule a prebuild; reads build missing derivatives on demand. Builds
+are deduplicated and serialized to bound memory, with a 512 MiB decoded limit.
+Files are published atomically and removed on bundle or repository deletion,
+including when a build was already in flight. Invalid/unsupported bundles can
+still be downloaded as uploaded; derivative requests return 422.
+
+Admins can read/manage every bundle. Managers can read/manage bundles they own
+or can access through their teams. View/triage users need team access; the none
+role has no bundle access. Ownership survives repository attachment. Adding a
+repo link requires bundle management access and access to the destination repo;
+removing a link requires access to the current repo. Moving or deleting an
+attached bundle therefore checks the current repo too, even for its owner.
+Manage lists and repository pickers enforce these rules on the server.
+
+Opening a bundle downloads its metadata into managed app memory. Code,
+Terminal, source search and source comparison request contents when needed;
+the browser handles HTTP gzip decoding. Neither payload enters OPFS, IndexedDB
+or localStorage. Session/role changes clear managed caches and terminal state.
+
+
+# Report access and blocked accounts
+
+Report lists, previews, downloads and triage reads use the same access scope:
+admins can read all reports; managers can read their uploads or reports within
+their team repository paths. Other readers need a published report inside a
+team path. Uploader ownership does not grant access to view/triage/none roles.
+Report repository changes, publication and deletion also require access to the
+current repository path; new links require access to the destination path.
+
+The `none` (No access) role is denied at the managed data API boundary, even
+when the account owns uploads or belongs to teams. This includes team names,
+avatars, report/triage data, bundle caches, and every management endpoint.
+Public bootstrap, the user's own session status and sign-out remain available.
+The client shows a no-access page and clears previously loaded data when the
+role changes.

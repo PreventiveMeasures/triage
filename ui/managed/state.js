@@ -5,6 +5,7 @@ export class ManagedAppState {
     this.resources = new Map()
     this.session = null
     this.generation = 0
+    this.sessionController = new AbortController()
     this.notify = notify
   }
 
@@ -15,6 +16,8 @@ export class ManagedAppState {
 
   reset() {
     this.generation++
+    this.sessionController.abort()
+    this.sessionController = new AbortController()
     this.invalidate()
     this.session = null
   }
