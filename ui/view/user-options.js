@@ -10,7 +10,8 @@ export function userOptions(users) {
 
 export function userChoices(options, query) {
   const words = query.normalize('NFKC').toLocaleLowerCase().trim().split(/\s+/u).filter(Boolean)
-  const visible = options.filter(option => words.every(word => option.label.normalize('NFKC').toLocaleLowerCase().includes(word)))
+  const users = options.filter(option => !option.reset)
+  const visible = users.filter(option => words.every(word => option.label.normalize('NFKC').toLocaleLowerCase().includes(word)))
     .toSorted((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base', numeric: true }))
-  return { pinned: [], sections: [{ label: null, options: visible }], facets: [], showFacets: false, count: visible.length, total: options.length }
+  return { pinned: options.filter(option => option.reset), sections: [{ label: null, options: visible }], facets: [], showFacets: false, count: visible.length, total: users.length }
 }

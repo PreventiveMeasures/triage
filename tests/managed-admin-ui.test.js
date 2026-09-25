@@ -212,10 +212,10 @@ test('history search debounces, cancels stale work immediately, and actor naviga
   assert.match(pending[1].url, /q=alice/u)
   page._filter = 'access'
   page._repo = 'owner/one'
-  page._reportId = 'report'
-  page._onActorFilter({ detail: { actor: 'bob' } })
+  page._actor = 'user:previous'
+  page._onActorFilter({ detail: { actor: 'user:bob' } })
   assert.equal(pending[1].signal.aborted, false)
-  assert.match(pending[2].url, /page=1&limit=100&kind=all&q=bob/u)
+  assert.deepEqual(Object.fromEntries(new URL(pending[2].url, 'http://test').searchParams), { page: '1', limit: '100', kind: 'all', q: '', actor: 'user:bob' })
   page._search('cancelled')
   page.disconnectedCallback()
   t.mock.timers.tick(1000)
@@ -330,12 +330,12 @@ test('managed scan report inputs remain usable while cached sources refresh or f
 })
 
 
-test('history context filters use IDs, reset paging, and keep independent cached results', async t => {
+test('history user and repository filters intersect, reset paging, and keep independent cached results', async t => {
   const page = createPage(customElements.get('managed-admin-history'))
   const requests = []
   const filters = {
     repos: ['owner/one', 'owner/two'],
-    reports: [{ id: 'one', filename: 'scan.json', repo: 'owner/one' }, { id: 'two', filename: 'scan.json', repo: 'owner/two' }],
+    users: [{ id: 'user:one', login: 'alice', detail: null }, { id: 'user:two', login: 'bob', detail: null }],
   }
   t.mock.method(globalThis, 'fetch', url => new Promise(resolve => { requests.push({ params: new URL(url, 'http://test').searchParams, resolve }) }))
   const finish = (index, id) => requests[index].resolve(Response.json({ history: [{ id }], total: 201, page: Number(requests[index].params.get('page')), filters }))
@@ -349,31 +349,36 @@ test('history context filters use IDs, reset paging, and keep independent cached
   assert.deepEqual(Object.fromEntries(requests[1].params), { page: '1', limit: '100', kind: 'triage', q: 'alice & bob', repo: 'owner/one' })
   finish(1, 'repo')
   await repoLoad
-  const report = page._setReport('one')
-  assert.equal(requests[2].params.get('reportId'), 'one')
-  assert.equal(requests[2].params.get('repo'), 'owner/one')
-  assert.equal(requests[2].params.get('page'), '1')
-  finish(2, 'report')
-  await report
+  const user = page._setActor('user:one')
+  assert.deepEqual(Object.fromEntries(requests[2].params), { page: '1', limit: '100', kind: 'triage', q: 'alice & bob', repo: 'owner/one', actor: 'user:one' })
+  finish(2, 'user')
+  await user
   const secondPage = page._load(2)
-  assert.equal(requests[3].params.get('reportId'), 'one')
+  assert.equal(requests[3].params.get('actor'), 'user:one')
   assert.equal(requests[3].params.get('page'), '2')
   finish(3, 'second page')
   await secondPage
   const otherRepo = page._setRepo('owner/two')
-  assert.equal(page._reportId, '')
-  assert.equal(requests[4].params.has('reportId'), false)
+  assert.equal(requests[4].params.get('actor'), 'user:one', 'repository changes keep the selected user')
   assert.equal(requests[4].params.get('page'), '1')
   finish(4, 'other repo')
   await otherRepo
   const returnToRepo = page._setRepo('owner/one')
-  assert.equal(page._history[0].id, 'repo', 'a repository cache never returns a report-filtered result')
-  finish(5, 'updated repo')
+  assert.equal(page._history[0].id, 'user', 'each user/repository selection has its own cache')
+  finish(5, 'updated user')
   await returnToRepo
-  const clear = page._setRepo('')
-  assert.equal(requests[6].params.has('repo'), false)
-  assert.equal(requests[6].params.has('reportId'), false)
-  assert.equal(requests[6].params.get('q'), 'alice & bob')
-  finish(6, 'clear')
+  const allUsers = page._setActor('')
+  assert.equal(page._history[0].id, 'repo', 'resetting the user restores the unfiltered repository cache')
+  assert.equal(requests[6].params.has('actor'), false)
+  finish(6, 'updated repo')
+  await allUsers
+  const selected = page._setActor('user:two')
+  finish(7, 'bob')
+  await selected
+  const clear = page._clearContext()
+  assert.equal(requests[8].params.has('repo'), false)
+  assert.equal(requests[8].params.has('actor'), false)
+  assert.equal(requests[8].params.get('q'), 'alice & bob')
+  finish(8, 'clear')
   await clear
 })

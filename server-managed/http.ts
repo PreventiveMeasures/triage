@@ -134,10 +134,10 @@ async function handleHistory(res: ServerResponse, deps: ManagedHttpDeps, cookie:
   const kind = query.get('kind') ?? 'all'
   const search = (query.get('q') ?? '').trim()
   const repo = query.get('repo') ?? ''
-  const reportId = query.get('reportId') ?? ''
+  const actor = query.get('actor') ?? ''
   if (!Number.isSafeInteger(page) || page < 1 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100
     || !['all', 'triage', 'upload', 'visibility', 'access', 'repository', 'delete'].includes(kind) || search.length > 500
-    || repo.length > 500 || reportId.length > 100) {
+    || repo.length > 500 || actor.length > 500) {
     sendJson(res, 400, { error: 'bad-request' }); return
   }
   let contexts: ActivityContext[] | null = null
@@ -151,7 +151,7 @@ async function handleHistory(res: ServerResponse, deps: ManagedHttpDeps, cookie:
     }
     contexts = [...findings.values()]
   }
-  sendJson(res, 200, await deps.db.listActivity({ page, limit, kind, query: search, repo, reportId, contexts, userId: s.user.id }))
+  sendJson(res, 200, await deps.db.listActivity({ page, limit, kind, query: search, repo, actor, contexts, userId: s.user.id }))
 }
 
 export interface ManagedHttpDeps {

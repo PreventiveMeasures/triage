@@ -66,9 +66,9 @@ test('activity search and type filters run before pagination; ties, empty pages,
   const contexts = [{ finding: 'shared', reportId: 'visible', report: 'allowed.json', repo: 'allowed/repo' }]
   const manager = await db.listActivity({ ...query, contexts, limit: 5 })
   assert.equal(manager.total, 12)
-  assert.deepEqual(manager.filters, { repos: ['allowed/repo'], reports: [{ id: 'visible', filename: 'allowed.json', repo: 'allowed/repo' }] })
-  assert.equal((await db.listActivity({ ...query, contexts, repo: 'allowed/repo', reportId: 'visible' })).total, 12)
-  assert.equal((await db.listActivity({ ...query, contexts, reportId: 'r' })).total, 0)
+  assert.deepEqual(manager.filters, { repos: ['allowed/repo'], users: [{ id: 'legacy:alice', login: 'alice', detail: 'Legacy actor' }] })
+  assert.equal((await db.listActivity({ ...query, contexts, repo: 'allowed/repo', actor: 'legacy:alice' })).total, 12)
+  assert.equal((await db.listActivity({ ...query, contexts, actor: 'legacy:bob' })).total, 0)
   assert.ok(manager.history.every(entry => entry.reportId === 'visible' && entry.report === 'allowed.json' && entry.repo === 'allowed/repo'))
   assert.equal((await db.listActivity({ ...query, contexts, query: 'scan.json' })).total, 0, 'search cannot probe the original private context')
   assert.equal((await db.listActivity({ ...query, contexts, query: 'allowed.json' })).total, 12)
@@ -106,33 +106,45 @@ test('existing activity upgrades bundle identities without trusting filenames, a
 })
 
 
-test('history repository and report filters intersect before counts and paging, retaining deleted report choices', async t => {
+test('history repository and user filters intersect before counts and paging without attributing legacy logins', async t => {
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())
+  const identity = (githubUserId, login) => ({ githubUserId, login, name: null, avatarUrl: null })
+  const alice = await db.upsertUser(identity(1, 'alice'), 1)
+  const bob = await db.upsertUser(identity(2, 'alice-helper'), 1)
   for (const [repoId, fullName] of [[7, 'owner/one'], [8, 'owner/two']]) {
     await db.selectRepo({ repoId, fullName, private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: null }, 1)
   }
-  await db.insertReport({ ...report, id: 'first', repoId: 7 }, 10)
-  await db.insertReport({ ...report, id: 'second', repoId: 8 }, 20)
-  await db.insertBundle({ id: 'bundle', integrity: 'hash', filename: report.filename, kind: null, byteSize: 1, uploadedBy: null, repoId: 7 }, 30)
-  for (let i = 0; i < 6; i++) await db.setTriageEntries([['shared', { comment: String(i) }]], null, 'alice', 100 + i, 'first')
-  await db.setTriageEntries([['shared', { comment: 'latest' }]], null, 'bob', 200, 'second')
+  await db.insertReport({ ...report, id: 'first', repoId: 7, uploadedBy: alice }, 10)
+  await db.insertReport({ ...report, id: 'second', repoId: 8, uploadedBy: bob, uploadedByLogin: 'alice-helper' }, 20)
+  await db.insertBundle({ id: 'bundle', integrity: 'hash', filename: report.filename, kind: null, byteSize: 1, uploadedBy: alice, uploadedByLogin: 'alice', repoId: 7 }, 30)
+  for (let i = 0; i < 6; i++) await db.setTriageEntries([['shared', { comment: String(i) }]], alice, 'alice', 100 + i, 'first')
+  await db.setTriageEntries([['shared', { comment: 'latest' }]], bob, 'alice-helper', 200, 'second')
+  await db.recordActivity({ kind: 'delete', actorId: alice, actor: 'alice', action: 'deleted a report', repo: 'owner/two', reportId: 'second', report: 'scan.json' }, 210)
   await db.deleteReport('second')
-  const filtered = await db.listActivity({ ...query, repo: 'owner/one', reportId: 'first', kind: 'triage', query: 'alice', page: 2, limit: 2 })
-  assert.equal(filtered.total, 6)
+  await db.recordActivity({ kind: 'access', actor: 'alice', action: 'legacy record' }, 220)
+  await db.createComment({ findingId: 'shared', body: 'Not in history', authorId: alice, authorLogin: 'alice', reportId: 'first' }, 230)
+  await db.upsertUser(identity(1, 'renamed'), 240)
+  const filtered = await db.listActivity({ ...query, repo: 'owner/one', actor: `user:${alice}`, kind: 'triage', query: 'renamed', page: 2, limit: 2 })
+  assert.equal(filtered.total, 7, 'includes comments and triage by the same user')
   assert.equal(filtered.page, 2)
   assert.equal(filtered.history.length, 2)
-  assert.ok(filtered.history.every(entry => entry.repo === 'owner/one' && entry.reportId === 'first' && entry.actor === 'alice'))
+  assert.ok(filtered.history.every(entry => entry.repo === 'owner/one' && entry.actor === 'renamed'))
   assert.deepEqual(filtered.filters, {
     repos: ['owner/one', 'owner/two'],
-    reports: [{ id: 'first', filename: 'scan.json', repo: 'owner/one' }, { id: 'second', filename: 'scan.json', repo: 'owner/two' }],
-  }, 'choices cover the whole authorized history, not just the current page or matching rows')
-  const deleted = await db.listActivity({ ...query, reportId: 'second' })
-  assert.equal(deleted.total, 2, 'same filenames do not merge reports; deleted report snapshots stay filterable')
-  assert.ok(deleted.history.every(entry => entry.reportId === 'second'))
-  assert.equal((await db.listActivity({ ...query, repo: 'owner/one' })).total, 8, 'repository selection also includes bundle activity')
-  for (const filter of [{ reportId: 'scan.json' }, { reportId: 'second', repo: 'owner/one' }, { repo: 'owner/%' }, { repo: 'missing' }]) {
-    const empty = await db.listActivity({ ...query, ...filter, page: 99 })
+    users: [
+      { id: 'legacy:alice', login: 'alice', detail: 'Legacy actor' },
+      { id: `user:${bob}`, login: 'alice-helper', detail: null },
+      { id: `user:${alice}`, login: 'renamed', detail: null },
+    ],
+  }, 'choices cover all authorized history independently of filters and pagination')
+  const own = await db.listActivity({ ...query, actor: `user:${alice}` })
+  assert.equal(own.total, 10, 'stable identity includes old upload names, comments, and deleted report activity')
+  assert.equal(own.history.some(entry => entry.action === 'legacy record'), false)
+  assert.equal((await db.listActivity({ ...query, actor: 'legacy:alice' })).total, 1, 'legacy logins remain independently selectable')
+  assert.equal((await db.listActivity({ ...query, actor: `user:${bob}` })).total, 2, 'similar names never merge users')
+  for (const actor of ['renamed', 'legacy:renamed', 'user:missing', 'user:%']) {
+    const empty = await db.listActivity({ ...query, actor, page: 99 })
     assert.deepEqual(empty.history, [])
     assert.equal(empty.total, 0)
     assert.equal(empty.page, 1)

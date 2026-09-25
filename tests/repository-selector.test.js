@@ -72,4 +72,9 @@ test('user search matches names and logins while preserving membership and opaqu
   assert.equal(options[0].initials, 'AS')
   assert.equal(options[1].label, '@reviewer')
   assert.equal(userChoices(options, 'unknown').count, 0)
+  const reset = { value: '', label: 'All users', reset: true }
+  const filtered = userChoices([reset, ...options], 'reviewer')
+  assert.deepEqual(filtered.pinned, [reset], 'reset stays available while searching')
+  assert.equal(filtered.count, 1)
+  assert.equal(filtered.total, 2, 'reset is not a user')
 })

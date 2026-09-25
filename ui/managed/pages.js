@@ -24,7 +24,6 @@ import { loadManagedScanBundle, managedScanSource } from './scan-source.js'
 import { managedReportSources } from '../scan/report-source.js'
 import { fetchScanModels } from '../view/scan-models.js'
 import '../view/repository-selector.js'
-import '../view/report-selector.js'
 import '../view/user-selector.js'
 
 function openAdminPage(view) {
@@ -97,10 +96,10 @@ class ManagedAdminHome extends ManagedPage {
 }
 customElements.define('managed-admin-home', ManagedAdminHome)
 
-async function fetchHistory(signal, page, kind, query, repo, reportId) {
+async function fetchHistory(signal, page, kind, query, repo, actor) {
   const params = new URLSearchParams({ page: String(page), limit: '100', kind, q: query.trim() })
   if (repo) params.set('repo', repo)
-  if (reportId) params.set('reportId', reportId)
+  if (actor) params.set('actor', actor)
   const res = await managedFetch(`/api/admin/history?${params}`, { signal, credentials: 'same-origin', headers: { accept: 'application/json' } })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   const body = await res.json()
@@ -110,7 +109,7 @@ async function fetchHistory(signal, page, kind, query, repo, reportId) {
 }
 
 class ManagedAdminHistory extends ManagedPage {
-  static properties = { _page: { state: true }, _history: { state: true }, _total: { state: true }, _error: { state: true }, _filter: { state: true }, _query: { state: true }, _repo: { state: true }, _reportId: { state: true }, _options: { state: true } }
+  static properties = { _page: { state: true }, _history: { state: true }, _total: { state: true }, _error: { state: true }, _filter: { state: true }, _query: { state: true }, _repo: { state: true }, _actor: { state: true }, _options: { state: true } }
 
   static styles = [unsafeCSS(historyStyles), unsafeCSS(commonStyles)]
 
@@ -124,15 +123,16 @@ class ManagedAdminHistory extends ManagedPage {
     this._filter = 'all'
     this._query = ''
     this._repo = ''
-    this._reportId = ''
-    this._options = { repos: [], reports: [] }
+    this._actor = ''
+    this._options = { repos: [], users: [] }
     this._onActorFilter = (event) => {
       const actor = event.detail?.actor
       if (typeof actor !== 'string') return
-      this._query = actor
+      const exact = actor.startsWith('user:') || actor.startsWith('legacy:')
+      this._query = exact ? '' : actor // Keep existing login-based links working.
       this._filter = 'all'
       this._repo = ''
-      this._reportId = ''
+      this._actor = exact ? actor : ''
       void this._load()
     }
   }
@@ -154,13 +154,13 @@ class ManagedAdminHistory extends ManagedPage {
     this._error = null
     const kind = this._filter
     const query = this._query.trim()
-    const repo = this._repo, reportId = this._reportId
-    const key = `history:${JSON.stringify([page, kind, query, repo, reportId])}`
-    await this._loadCollection(key, 'history', signal => fetchHistory(signal, page, kind, query, repo, reportId), (result) => {
+    const actor = this._actor, repo = this._repo
+    const key = `history:${JSON.stringify([page, kind, query, repo, actor])}`
+    await this._loadCollection(key, 'history', signal => fetchHistory(signal, page, kind, query, repo, actor), (result) => {
       this._history = result.history
       this._total = result.total
       this._page = result.page
-      this._options = result.filters ?? { repos: [], reports: [] }
+      this._options = result.filters ?? { repos: [], users: [] }
     })
   }
 
@@ -175,38 +175,34 @@ class ManagedAdminHistory extends ManagedPage {
 
   _setRepo(repo) {
     this._repo = repo
-    this._reportId = ''
     return this._load()
   }
 
-  _setReport(reportId) {
-    this._reportId = reportId
+  _setActor(actor) {
+    this._actor = actor
+    return this._load()
+  }
+
+  _clearContext() {
+    this._repo = ''
+    this._actor = ''
     return this._load()
   }
 
   _contextFilters() {
     const repos = this._options.repos
-    const reports = [...new Map(this._options.reports.filter(report => !this._repo || report.repo === this._repo).map(report => [report.id, report])).values()]
-    const reportLabel = report => {
-      const duplicate = reports.some(other => other.id !== report.id && other.filename === report.filename && other.repo === report.repo)
-      return `${report.filename}${!this._repo && report.repo ? ` · ${report.repo}` : ''}${duplicate ? ` · ${report.id.slice(-12)}` : ''}`
-    }
+    const users = this._options.users ?? []
     const repositoryOptions = [
       { value: '', label: 'All repositories', special: true, reset: true },
       ...this._repo && !repos.includes(this._repo) ? [{ value: this._repo, label: this._repo }] : [],
       ...repos.map(repo => ({ value: repo, label: repo })),
     ]
-    const reportOptions = [
-      { value: '', label: 'All reports', reset: true },
-      ...this._reportId && !reports.some(report => report.id === this._reportId) ? [{ value: this._reportId, label: 'Selected report' }] : [],
-      ...reports.map(report => ({ value: report.id, label: reportLabel(report) })),
-    ]
     return html`
       <repository-selector label="Filter history by repository" .options=${repositoryOptions} .value=${this._repo}
         @repository-change=${event => void this._setRepo(event.detail.value)}></repository-selector>
-      <report-selector label="Filter history by report" .options=${reportOptions} .value=${this._reportId}
-        @report-change=${event => void this._setReport(event.detail.value)}></report-selector>
-      <button type="button" class="btn" aria-label="Clear repository and report filters" ?disabled=${!this._repo && !this._reportId} @click=${() => void this._setRepo('')}>Clear selection</button>
+      <user-selector label="Filter history by user" reset-label="All users" placeholder=${this._actor ? 'Selected user' : 'All users'}
+        .users=${users} .value=${this._actor} @user-change=${event => void this._setActor(event.detail.value)}></user-selector>
+      <button type="button" class="btn" aria-label="Clear repository and user filters" ?disabled=${!this._repo && !this._actor} @click=${() => void this._clearContext()}>Clear selection</button>
     `
   }
 
@@ -224,7 +220,7 @@ class ManagedAdminHistory extends ManagedPage {
         <button type="button" class="btn" ?disabled=${this._loading} @click=${() => this._load(page)}>Refresh</button>
       </div>
       ${this._error ? html`<p class="msg error" role="alert">Couldn’t load history: ${this._error} <button type="button" class="btn" @click=${() => this._load()}>Retry</button></p>` : nothing}
-      <div aria-busy=${this._loading}>${this._history == null ? (this._error ? nothing : loadingRows('Loading history…')) : history.length === 0 ? html`<div class="history"><p class="empty">${this._query.trim() || this._filter !== 'all' || this._repo || this._reportId ? 'No activity matches your filters.' : 'No history available yet.'}</p></div>` : html`<div class="history" aria-label="Workspace history"><div class="history-head" aria-hidden="true"><span>Type</span><span>Activity</span><span>Repository / report / finding</span><span>Time</span></div>${history.map((entry) => this._row(entry))}</div>`}</div>
+      <div aria-busy=${this._loading}>${this._history == null ? (this._error ? nothing : loadingRows('Loading history…')) : history.length === 0 ? html`<div class="history"><p class="empty">${this._query.trim() || this._filter !== 'all' || this._repo || this._actor ? 'No activity matches your filters.' : 'No history available yet.'}</p></div>` : html`<div class="history" aria-label="Workspace history"><div class="history-head" aria-hidden="true"><span>Type</span><span>Activity</span><span>Repository / report / finding</span><span>Time</span></div>${history.map((entry) => this._row(entry))}</div>`}</div>
       ${this._total > 100 ? html`<nav class="pagination" aria-label="History pages"><span role="status">${start + 1}–${Math.min(start + 100, this._total)} of ${this._total} entries</span><button type="button" class="btn" ?disabled=${this._loading || page === 1} @click=${() => this._changePage(page - 1)}>Previous</button><span>Page ${page} of ${Math.ceil(this._total / 100)}</span><button type="button" class="btn" ?disabled=${this._loading || start + 100 >= this._total} @click=${() => this._changePage(page + 1)}>Next</button></nav>` : nothing}
     </div>`
   }
@@ -351,7 +347,7 @@ class ManagedAdminUsers extends ManagedPage {
         })}
       </span>
       <span class="last-seen" aria-label=${userTimeLabel(u.lastSeenAt)}>${userTime(u.lastSeenAt)}</span>
-      <button type="button" class="activity-link" aria-label=${`Show activity by ${u.login}`} @click=${() => this._showActivity(u.login)}><span class="last-activity" aria-label=${`Last activity ${userTimeLabel(userActivityAt(u)).replace(/^Last seen /u, '')}`}>${userTime(userActivityAt(u))}</span></button>
+      <button type="button" class="activity-link" aria-label=${`Show activity by ${u.login}`} @click=${() => this._showActivity(u.id)}><span class="last-activity" aria-label=${`Last activity ${userTimeLabel(userActivityAt(u)).replace(/^Last seen /u, '')}`}>${userTime(userActivityAt(u))}</span></button>
       <span class="access">
       <select class="role" ?disabled=${isSelf}
         aria-label=${`Change ${u.login}’s role`}
@@ -377,9 +373,9 @@ class ManagedAdminUsers extends ManagedPage {
     this.requestUpdate()
   }
 
-  _showActivity(login) {
+  _showActivity(userId) {
     document.dispatchEvent(new CustomEvent('managed-admin-navigate', {
-      detail: { view: 'manage-history', actor: login }, bubbles: true, composed: true,
+      detail: { view: 'manage-history', actor: `user:${userId}` }, bubbles: true, composed: true,
     }))
   }
 }
