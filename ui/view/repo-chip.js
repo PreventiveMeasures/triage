@@ -115,7 +115,7 @@ class RepoChip extends LitElement {
     }
     if (this.url) {
       const cls = this._copied ? 'chip readonly copied' : 'chip readonly'
-      return html`<span class=${cls} title="Repo from findings (read-only)">
+      return html`<span class=${cls}>
         ${GITHUB_ICON}
         ${this._slugLabel(prettyRepoLabel(this.url))}
       </span>`

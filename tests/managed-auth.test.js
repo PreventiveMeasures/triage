@@ -1319,9 +1319,9 @@ test('team reports: read iff admin, OR (>=view role AND in a team holding the re
       get headersSent() { return this.ended },
     }
   }
-  async function req(url, cookie) {
+  async function req(url, cookie, accept) {
     const res = mockRes()
-    handler({ method: 'GET', url, headers: cookie ? { cookie } : {} }, res)
+    handler({ method: 'GET', url, headers: { ...(cookie ? { cookie } : {}), ...(accept ? { accept } : {}) } }, res)
     await pending
     return res
   }
@@ -1338,6 +1338,9 @@ test('team reports: read iff admin, OR (>=view role AND in a team holding the re
   assert.equal((await view(nonerSess, reportId)).statusCode, 404) // IN the team, but role 'none' → refused
   assert.equal((await view(outsiderSess, reportId)).statusCode, 404) // >=view, but wrong team (no repo 7)
   assert.equal((await view(adminSess, randomUUID())).statusCode, 404) // admin, but the report doesn't exist
+  for (const [session, status] of [[null, 401], [nonerSess, 404], [outsiderSess, 404]]) {
+    assert.equal((await req(`/api/reports/${reportId}`, session && cookiePair(session.setCookie), 'application/json')).statusCode, status, 'metadata follows the same access checks as content')
+  }
 
   // The db check is team-only (the role gate lives in the handler): viewer AND noner
   // are both members of Blue, but only viewer's role clears the endpoint above.
@@ -1453,7 +1456,7 @@ test('filterReportContent: report-level security source, non-JSON + no-strip pas
   assert.equal(filterReportContent(noFindings, { dependencies: false, security: false }), noFindings)
 })
 
-test('GET /api/reports/<id>: server-side content filter by viewer permissions (admin/manage exempt)', async () => {
+test('GET /api/reports/<id>: filtered content and authoritative repo metadata (admin/manage exempt)', async () => {
   const db = openSqliteManagedDb(':memory:')
   const now = Date.now()
   const adminSess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
@@ -1468,7 +1471,7 @@ test('GET /api/reports/<id>: server-side content filter by viewer permissions (a
   await db.setTeamMember(team, viewer.id, { dependencies: false, security: true }) // may see security, NOT dependencies
   const reportId = randomUUID()
   await db.insertReport({ id: reportId, filename: 'scan.json', contentType: 'application/json', byteSize: 5, sha256: 'x', uploadedBy: admin.id, repoId: 7, bundleId: null, bundleIntegrity: null, visible: true }, now)
-  const content = JSON.stringify({ source: 'native', findings: [
+  const content = JSON.stringify({ source: 'native', repo: { github: 'wrong/embedded', directory: 'wrong-dir' }, findings: [
     { id: 'own', file: 'src/a.js' },
     { id: 'dep', file: 'node_modules/x/y.js' },
     { id: 'sec', file: 'src/b.js', security: true },
@@ -1492,9 +1495,9 @@ test('GET /api/reports/<id>: server-side content filter by viewer permissions (a
       get headersSent() { return this.ended },
     }
   }
-  async function view(sess, id) {
+  async function view(sess, id, accept) {
     const res = mockRes()
-    handler({ method: 'GET', url: `/api/reports/${id}`, headers: { cookie: cookiePair(sess.setCookie) } }, res)
+    handler({ method: 'GET', url: `/api/reports/${id}`, headers: { cookie: cookiePair(sess.setCookie), ...(accept ? { accept } : {}) } }, res)
     await pending
     return res
   }
@@ -1506,6 +1509,24 @@ test('GET /api/reports/<id>: server-side content filter by viewer permissions (a
   assert.deepEqual(JSON.parse(viewerRes.body).findings.map((f) => f.id), ['own', 'sec'])
   // content-length must match the FILTERED body, not the original.
   assert.equal(Number(viewerRes.headers['content-length']), Buffer.byteLength(viewerRes.body))
+  const metadata = await view(viewerSess, reportId, 'application/json')
+  assert.equal(metadata.statusCode, 200)
+  assert.equal(metadata.headers['cache-control'], 'no-store')
+  assert.equal(metadata.headers.vary, 'Accept')
+  assert.deepEqual(JSON.parse(metadata.body), { content: viewerRes.body, repo: { github: 'o/r', directory: '' } })
+  for (const accept of ['application/json, */*', 'application/json; q=1', 'text/plain, APPLICATION/JSON; q=0.5']) {
+    assert.deepEqual(JSON.parse((await view(viewerSess, reportId, accept)).body), JSON.parse(metadata.body), accept)
+  }
+  for (const accept of ['*/*', 'text/plain', 'application/json; q=0, */*']) {
+    assert.equal((await view(viewerSess, reportId, accept)).body, viewerRes.body, accept)
+  }
+  assert.equal(JSON.parse(JSON.parse(metadata.body).content).repo.github, 'wrong/embedded', 'metadata does not rewrite the report or triage identity')
+  await db.setReportRepo(reportId, 7, 'packages/updated')
+  assert.deepEqual(JSON.parse((await view(adminSess, reportId, 'application/json')).body), {
+    content, repo: { github: 'o/r', directory: 'packages/updated' },
+  }, 'each load includes the current assignment, without a separate catalogue refresh')
+  await db.setReportRepo(reportId, null, '')
+  assert.deepEqual(JSON.parse((await view(adminSess, reportId, 'application/json')).body).repo, { github: null, directory: '' }, 'unassigned is explicit, never inferred from embedded data')
   await db.close()
 })
 

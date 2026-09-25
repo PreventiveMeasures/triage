@@ -2737,10 +2737,12 @@ report.addEventListener('severity-mode-change', (e) => {
 // the rest of the chrome (`fileUrl()` / `commitUrl()` -driven row
 // links, the `prettyRepoLabel` shown on the chip face).
 report.addEventListener('repo-edit-start', () => {
+  if (isManagedUiMode()) return
   state.repoEditing = true
   render()
 })
 report.addEventListener('repo-input', (e) => {
+  if (isManagedUiMode()) return
   // Live-save: every keystroke updates `state.repoUrl` and persists
   // to localStorage per-report, so the value survives a reload even
   // if the user never explicitly commits via Enter / blur.
@@ -2748,12 +2750,14 @@ report.addEventListener('repo-input', (e) => {
   saveRepoUrlFor(state.currentFile, state.repoUrl)
 })
 report.addEventListener('repo-commit', (e) => {
+  if (isManagedUiMode()) return
   state.repoUrl = e.detail.url
   saveRepoUrlFor(state.currentFile, state.repoUrl)
   state.repoEditing = false
   render()
 })
 report.addEventListener('repo-cancel', (e) => {
+  if (isManagedUiMode()) return
   // The component sends back the value the input was opened with;
   // restore it so the rolled-back URL drives the chip's display
   // and the per-report persistence both flip back in step.

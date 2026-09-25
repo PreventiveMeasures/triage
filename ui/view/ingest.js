@@ -712,7 +712,7 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   }
   // Validate the whole response set before clearing the prior view, so a
   // missing/invalid report cannot quietly turn the team into a partial view.
-  if (contents.some((content, i) => !readManagedReport(content, selected[i].filename).data)) {
+  if (contents.some((entry, i) => !readManagedReport(entry.content, selected[i].filename).data)) {
     showToast('One of the team reports could not be read.')
     return false
   }
@@ -745,7 +745,9 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   state.repoEditing = false
   resetGraph2()
   for (let i = 0; i < selected.length; i++) {
-    await ingestReport(selected[i].filename, contents[i], gen, { renderView: false, managedReportId: selected[i].id })
+    await ingestReport(selected[i].filename, contents[i].content, gen, {
+      renderView: false, managedReportId: selected[i].id, managedRepo: contents[i].repo,
+    })
     if (isStaleLoad(gen)) return false
   }
   // Hydrate every report before the merged view becomes interactive. The
@@ -1273,7 +1275,7 @@ export async function leaveWorkspace(workspaceId, mode = 'detach', { triage = 'k
 // push. The headless `window.__loadFile` path passes nothing, staying
 // unguarded so it keeps accumulating across calls (the print pipeline
 // relies on that).
-async function ingestReport(name, content, gen = null, { renderView = true, managedReportId = null } = {}) {
+async function ingestReport(name, content, gen = null, { renderView = true, managedReportId = null, managedRepo = null } = {}) {
   const stale = () => gen !== null && isStaleLoad(gen)
   try {
     // Finish both hints before rendering the Link button. Copy remains
@@ -1347,7 +1349,10 @@ async function ingestReport(name, content, gen = null, { renderView = true, mana
     // slug form: `repoBaseUrl` expands it for links, and it buckets
     // with analyzer-stamped `repo.github` values in the Repositories
     // view rather than splitting the same repo across two keys.
-    const declaredRepo = reportRepoGithub(data)
+    // Managed assignments, including an unassigned repo, override embedded
+    // report metadata. Finding-specific upstream repositories stay intact.
+    const reportRepo = managedRepo ?? data?.repo
+    const declaredRepo = reportRepoGithub({ repo: reportRepo })
     const repoFallback = declaredRepo ?? (managedReportId == null ? loadRepoUrlFor(name) : '')
     // …and the `directory` beside that declaration, stamped alongside
     // it: where inside the repository the tree this report describes
@@ -1355,7 +1360,7 @@ async function ingestReport(name, content, gen = null, { renderView = true, mana
     // report wrote (group.js findingRepoTarget, format.js fileUrl).
     // Empty string when the report declares none, the same "nothing
     // here" the repo stamp uses.
-    const repoDir = repoDirectory(data?.repo)
+    const repoDir = repoDirectory(reportRepo)
     // Preserve report boundaries and every original copy. Workspace grouping
     // depends on the App lens, so discarding duplicates here would make it
     // impossible to keep App rows separate and later merge their source rows.
