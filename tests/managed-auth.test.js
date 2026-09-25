@@ -2372,3 +2372,46 @@ test('manager duplicate bundle races do not disclose an inaccessible winner', as
   assert.deepEqual(JSON.parse(res.body), { error: 'bundle-conflict' })
   assert.deepEqual((await f.get('/api/admin/bundles')).bundles, [])
 })
+
+test('Users Last Activity reflects successful authenticated changes, not reads, rejected requests or no-ops', async (t) => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const reportStore = fakeBlobStore()
+  const f = await reportTriageFixture(db, reportStore)
+  const { send, upload } = bundleHarness(db, config, reportStore)
+  const cookie = cookiePair(f.adminSess.setCookie)
+  const csrf = f.adminSess.csrfToken
+  let now = f.now + 10_000
+  t.mock.method(Date, 'now', () => now)
+  const users = async () => {
+    const res = await send('GET', '/api/admin/users', cookie)
+    assert.equal(res.statusCode, 200)
+    return JSON.parse(res.body).users
+  }
+  const activityAt = async () => (await users()).find(user => user.id === f.admin.id).lastActivityAt
+  const post = (path, body, token = csrf) => upload(`/api/admin/${path}`, cookie, token, JSON.stringify(body))
+  assert.equal(await activityAt(), f.now, 'an authenticated read does not add activity')
+  assert.equal((await post('reports/set-visible', { reportId: f.reportId, visible: false }, null)).statusCode, 403)
+  assert.equal((await post('reports/set-visible', { reportId: 'missing', visible: false })).statusCode, 404)
+  assert.equal((await post('reports/set-visible', { reportId: f.reportId, visible: true })).statusCode, 200)
+  assert.equal(await activityAt(), f.now, 'rejected and unchanged mutations add no activity')
+  assert.equal((await post('reports/set-visible', { reportId: f.reportId, visible: false })).statusCode, 200)
+  assert.equal(await activityAt(), now)
+  now += 1000
+  assert.equal((await post('set-role', { userId: f.bobSess.userId, role: 'view' })).statusCode, 200)
+  assert.equal(await activityAt(), now)
+  assert.equal((await users()).find(user => user.id === f.bobSess.userId).lastActivityAt, null, 'the admin gets activity, not the edited account')
+  now += 1000
+  assert.equal((await post('teams', { name: 'New team' })).statusCode, 201)
+  assert.equal(await activityAt(), now)
+  now += 1000
+  assert.equal((await upload('/api/admin/reports', cookie, csrf, '{}')).statusCode, 201)
+  assert.equal(await activityAt(), now)
+  now += 1000
+  assert.equal((await upload('/api/admin/bundles', cookie, csrf, 'archive')).statusCode, 201)
+  assert.equal(await activityAt(), now)
+  const lastUpload = now
+  now += 1000
+  assert.equal((await upload('/api/admin/bundles', cookie, csrf, 'archive')).statusCode, 200)
+  assert.equal(await activityAt(), lastUpload, 'a deduplicated upload creates no activity')
+})

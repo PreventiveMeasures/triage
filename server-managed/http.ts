@@ -94,7 +94,7 @@ const TEAM_REMOVE_MEMBER_PATH = '/api/admin/teams/remove-member'
 const MAX_TEAM_NAME = 100
 
 function activity(deps: ManagedHttpDeps, user: StoredUser, kind: ActivityInput['kind'], action: string, context: Pick<ActivityInput, 'repo' | 'reportId' | 'bundleId' | 'report' | 'repoId' | 'repoDirectory'> = {}): Promise<void> {
-  return deps.db.recordActivity({ kind, actor: user.login, action, ...context }, Date.now())
+  return deps.db.recordActivity({ kind, actor: user.login, actorId: user.id, action, ...context }, Date.now())
 }
 
 async function repositoryName(deps: ManagedHttpDeps, repoId: number | null | undefined): Promise<string | null> {
