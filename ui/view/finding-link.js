@@ -8,11 +8,10 @@
 // with real edge cases — are unit-testable without a browser, and the
 // nav module stays a thin shell around them.
 //
-// Nothing in either half fetches: the finding must already be in local
-// storage. A link is a pointer into the recipient's own data, not a
-// transfer — that's what the workspace share link and the export bundle
-// are for.
+// Links resolve within the recipient's local reports or accessible managed
+// teams. They carry a finding identity, never report contents or credentials.
 import { buildFindingUrl, isLinkableFindingId, isManagedUiMode, knownLinkHint, state, workspacesHoldingReport } from '#client/index.js'
+import { managedRoutePath } from '../../common/managed/routes.js'
 import { applyFilters, matchesConfirmed, resetFilters, shouldLockConfirmed } from './filters.js'
 import { getMergedGroups, getShownGroups, groupKey, groupState, linkableGroups, sortTabs, tabKey } from './group.js'
 import { configureRevalidation, isRuledOut } from './format.js'
@@ -36,11 +35,13 @@ import { cleanupGraph2 } from './graph/state.js'
 // — in which case the hint is simply omitted and the receiver's scan
 // picks up the slack.
 export function findingLinkFor(finding) {
-  // The current resolver only knows local reports/workspaces. Managed links
-  // need a server-aware route before they can be offered to another reader.
-  if (!finding || isManagedUiMode()) return null
+  if (!finding) return null
   const id = tabKey(finding)
   if (!isLinkableFindingId(id)) return null
+  if (isManagedUiMode()) {
+    const path = managedRoutePath({ view: 'findings', teamId: state.currentManagedTeam, reportId: state.currentManagedReport })
+    return path ? buildFindingUrl({ id }, path) : null
+  }
   const reportName = finding._reportName || state.currentFile || ''
   const workspaceId = state.currentWorkspace || reportWorkspaceFor(reportName)
   return buildFindingUrl({

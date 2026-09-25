@@ -2,6 +2,8 @@
 // Mirrors view/client-sync.js: the heavy module is dynamically imported via a
 // variable path so esbuild keeps it — and any future managed payload — out of
 // the main view bundle. The browser resolves the path against the page URL.
+import { managedHistory } from './managed-history.js'
+
 let loadPromise = null
 let managedModule = null
 
@@ -49,6 +51,7 @@ export async function pushReportTriage(id, entries, csrfToken) {
 }
 
 export async function login(loginPath) {
+  if (loginPath) managedHistory?.rememberFinding()
   return (await loadManagedBundle()).login(loginPath)
 }
 

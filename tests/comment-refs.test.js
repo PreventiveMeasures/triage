@@ -387,6 +387,14 @@ describe('parseCommentRefs — self-links to a finding', () => {
     assert.equal(link.url, `#finding=${ID}&v=wx_9Z`)
   })
 
+  it('preserves managed team and report destinations', () => {
+    for (const path of ['/teams/team-id', '/teams/team-id/reports/report-id']) {
+      const link = onlyLink(`https://triage.space${path}#finding=${ID}`)
+      assert.equal(link.url, `${path}#finding=${ID}`)
+      assert.equal(link.self, true)
+    }
+  })
+
   it('labels a non-uuid id without a meaningless prefix', () => {
     // The codex importer uses the finding URL as the id.
     const id = encodeURIComponent('https://sec.example/f/7')

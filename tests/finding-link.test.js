@@ -369,6 +369,7 @@ function reset(groups = []) {
   state.currentManagedTeam = null
   state.currentManagedReport = null
   state.managedTeams = []
+  state.managedSession = null
   state.currentReportWorkspace = null
   state.currentView = 'findings'
   state.viewMode = 'table'
@@ -473,13 +474,15 @@ describe('finding report chips — managed navigation', () => {
 describe('finding deep links — building a link for a finding', () => {
   beforeEach(() => reset())
 
-  it('suppresses managed links while preserving links in the local surface', () => {
+  it('builds managed team/report links while preserving E2E links in the local surface', () => {
     const finding = makeFinding(UUID_A)
     state.serverMode = 'managed'
     state.currentWorkspace = 'managed-team:example'
-    assert.equal(findingLinkFor(finding), null)
+    state.currentManagedTeam = 'example'
+    assert.equal(findingLinkFor(finding), `/teams/example#finding=${UUID_A}`)
     state.currentWorkspace = null
-    assert.equal(findingLinkFor(finding), null, 'single managed reports also lack a server link resolver')
+    state.currentManagedReport = 'report-id'
+    assert.equal(findingLinkFor(finding), `/teams/example/reports/report-id#finding=${UUID_A}`)
     state.localMode = true
     assert.equal(extractFindingRef(findingLinkFor(finding)).id, UUID_A)
   })
@@ -691,6 +694,100 @@ describe('finding deep links — workspace/report navigation', () => {
       assert.equal(state.viewMode, mode)
       await locateLinkedFinding({ id: UUID_A, report: null, workspace: workspaceHint }, navigation)
       assert.equal(state.viewMode, mode)
+    }
+  })
+})
+
+describe('finding deep links — managed resolution', () => {
+  let calls, navigation, reads
+  const first = { id: 'first', filename: 'first.json' }
+  const second = { id: 'second', filename: 'second.json' }
+  const team = { id: 'team', reports: [first, second] }
+  const content = { first: JSON.stringify({ findings: [makeFinding(UUID_A)] }), second: JSON.stringify({ findings: [makeFinding(UUID_B)] }) }
+
+  beforeEach(() => {
+    reset()
+    state.serverMode = 'managed'
+    state.managedSession = { id: 'viewer', role: 'view' }
+    state.managedTeams = [team, { id: 'shared', reports: [second] }]
+    state.reports = []
+    calls = []; reads = []
+    navigation = {
+      openReport() { assert.fail('managed links must never open local reports') },
+      openWorkspace() { assert.fail('managed links must never open local workspaces') },
+      readReport(id) { reads.push(id); return content[id] ?? null },
+      openManagedReport(target, reportId) {
+        calls.push([target.id, reportId])
+        state.currentManagedTeam = target.id
+        state.currentManagedReport = reportId
+        state.currentWorkspace = reportId == null ? `managed-team:${target.id}` : null
+        state.reports = target.reports.filter(report => reportId == null || report.id === reportId).map(report => ({
+          fileName: report.filename, _managedReportId: report.id,
+          groups: [[makeFinding(report.id === 'first' ? UUID_A : UUID_B, { _reportName: report.filename })]],
+        }))
+        return true
+      },
+    }
+  })
+
+  it('opens explicit managed report and team links in their named context', async () => {
+    await navigation.openManagedReport(team, null)
+    calls.length = 0
+    assert.ok(await locateLinkedFinding({ id: UUID_A, teamId: 'team', reportId: 'first' }, navigation))
+    assert.deepEqual(calls, [['team', 'first']])
+    assert.ok(await locateLinkedFinding({ id: UUID_A, teamId: 'team' }, navigation))
+    assert.deepEqual(calls.at(-1), ['team', null])
+    assert.deepEqual(reads, [], 'explicit routes use the normal managed loader directly')
+  })
+
+  it('resolves E2E report hints using server filenames and accessible report contents', async () => {
+    const report = await computeLinkHint('report', second.filename)
+    const hit = await locateLinkedFinding(extractFindingRef(`#finding=${UUID_B}&v=${report}AAAA`), navigation)
+    assert.equal(hit.finding.id, UUID_B)
+    assert.deepEqual(reads, ['second'])
+    assert.deepEqual(calls, [['team', 'second']])
+  })
+
+  it('falls back from E2E workspace hints or renamed reports without scanning a report twice', async () => {
+    const ref = extractFindingRef(`#finding=${UUID_B}&v=wxxxx`)
+    assert.ok(await locateLinkedFinding(ref, navigation))
+    assert.deepEqual(reads, ['first', 'second'])
+    reads.length = 0
+    const missing = await locateLinkedFinding({ id: UUID_C, report: 'xxxx' }, navigation)
+    assert.equal(missing, null)
+    assert.deepEqual(reads, ['first', 'second'])
+  })
+
+  it('rejects inaccessible explicit routes without using another copy or local storage', async () => {
+    await navigation.openManagedReport(team, 'first')
+    calls.length = 0
+    for (const ref of [{ id: UUID_A, teamId: 'hidden' }, { id: UUID_A, teamId: 'team', reportId: 'hidden' }]) {
+      assert.equal(await locateLinkedFinding(ref, navigation), null)
+    }
+    await saveFile(uniqueName('local-only'), JSON.stringify({ findings: [makeFinding(UUID_C)] }))
+    assert.equal(await locateLinkedFinding({ id: UUID_C }, navigation), null)
+    assert.deepEqual(calls, [])
+  })
+
+  it('ignores failed reads and stops on navigation, session, or mode changes', async () => {
+    navigation.readReport = id => id === 'first' ? null : content[id]
+    assert.ok(await locateLinkedFinding({ id: UUID_B }, navigation))
+    for (const cancel of ['navigation', 'session', 'mode']) {
+      state.localMode = false
+      state.managedSession = { id: 'viewer', role: 'view' }
+      state.reports = []
+      let active = true
+      navigation.isCurrent = () => active
+      calls.length = 0
+      const pending = Promise.withResolvers()
+      navigation.readReport = () => pending.promise
+      const lookup = locateLinkedFinding({ id: UUID_A }, navigation)
+      if (cancel === 'navigation') active = false
+      if (cancel === 'session') state.managedSession = { id: 'other' }
+      if (cancel === 'mode') state.localMode = true
+      pending.resolve(content.first)
+      assert.equal(await lookup, null)
+      assert.deepEqual(calls, [])
     }
   })
 })

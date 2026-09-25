@@ -1382,18 +1382,13 @@ export function displayFindingId(id) {
 // host + scheme, no credentials, canonical round-trip, a fragment that
 // parses as a finding ref.
 //
-// The href is FRAGMENT-ONLY (`#finding=…`), which is the whole point of
-// the `self` flag: a finding id resolves against the reader's own local
-// reports, so the link has to stay on this page. A relative fragment
-// does that with no rewriting, and clicking it fires the `hashchange`
-// the boot handler in `ui/view.js` already listens for. (Repeat clicks
-// work because that handler strips the fragment once it has acted, so
-// the next click is always a real change.)
+// E2E links use a fragment; managed links retain their team/report path so
+// duplicate finding ids resolve in the intended report. Both stay in this tab.
 function selfRefToken(candidate) {
   const found = parseFindingUrl(candidate)
   if (!found) return null
   const short = shortFindingId(found.id)
-  return { url: `#${found.fragment}`, label: short ? `finding ${short}` : 'finding', self: true }
+  return { url: `${found.path ?? ''}#${found.fragment}`, label: short ? `finding ${short}` : 'finding', self: true }
 }
 
 // Candidate-URL scanner: an `http(s)://` run of URL-legal characters.

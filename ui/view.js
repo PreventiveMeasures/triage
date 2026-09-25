@@ -464,7 +464,7 @@ onVaultStateChange(async () => {
 // failed leaves an already-stripped hash the second handler reads as
 // empty.
 window.addEventListener('hashchange', () => {
-  if (!bootContinuationRan) return
+  if (!bootContinuationRan || isManagedUiMode()) return
   ;(async () => {
     if (await handleShareHashIfPresent()) return
     await handleFindingHashIfPresent()
