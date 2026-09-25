@@ -15,11 +15,11 @@ function commentTime(comment) {
   const timestamp = comment.createdAt ?? (edited ? comment.updatedAt : null)
   if (timestamp == null) return nothing
   const date = new Date(timestamp)
-  const title = [
+  const tooltip = [
     comment.createdAt == null ? '' : `Posted ${new Date(comment.createdAt).toLocaleString()}`,
     edited ? `Edited ${new Date(comment.updatedAt).toLocaleString()}` : '',
   ].filter(Boolean).join('\n')
-  return html`<time class="managed-comment-time" datetime=${date.toISOString()} title=${title}>
+  return html`<time class="managed-comment-time" datetime=${date.toISOString()} data-tooltip=${tooltip}>
     ${comment.createdAt == null ? 'edited ' : ''}${date.toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })}${edited && comment.createdAt != null ? ' (edited)' : ''}
   </time>`
 }
@@ -27,13 +27,16 @@ function commentTime(comment) {
 // Shared by finding cards and the discussion dialog. The caller supplies the
 // linkified body and any author-only actions, keeping their event handlers local.
 export function managedCommentTemplate(comment, body, actions = nothing) {
+  const time = commentTime(comment)
   return html`<div class="managed-comment"><div class="managed-comment-row">
     ${comment.authorId || comment.authorLogin ? html`<span class="managed-comment-author">
       ${managedCommentAvatar(comment.authorId, comment.authorLogin)}
-      ${comment.authorLogin ? html`<strong title=${comment.authorLogin}>${comment.authorLogin}</strong>` : nothing}
+      ${comment.authorLogin ? html`<strong data-tooltip=${comment.authorLogin}>${comment.authorLogin}</strong>` : nothing}
     </span>` : nothing}
     <div class="managed-comment-body">${body}</div>
-    ${commentTime(comment)}
-    ${actions === nothing ? nothing : html`<div class="managed-comment-actions">${actions}</div>`}
+    ${time === nothing && actions === nothing ? nothing : html`<div class="managed-comment-meta">
+      ${actions === nothing ? nothing : html`<div class="managed-comment-actions">${actions}</div>`}
+      ${time}
+    </div>`}
   </div></div>`
 }
