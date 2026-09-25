@@ -20,7 +20,7 @@ import reportsStyles from './styles/reports.css'
 import bundlesStyles from './styles/bundles.css'
 import teamsStyles from './styles/teams.css'
 import '../scan/page.js'
-import { SCAN_FIXTURES, SCAN_REPOSITORY_FIXTURES, cloneScanFixtures } from '../scan/fixtures.js'
+import { loadManagedScanBundle, managedScanSource } from './scan-source.js'
 import { managedReportSources } from '../scan/report-source.js'
 import { fetchScanModels } from '../view/scan-models.js'
 import '../view/repository-selector.js'
@@ -1224,11 +1224,13 @@ customElements.define('managed-admin-bundles', ManagedAdminBundles)
 
 // Manage supplies its own navigation and authenticated model transport.
 class ManagedAdminScans extends ManagedPage {
+  static properties = { _source: { state: true }, _error: { state: true } }
   static styles = unsafeCSS(commonStyles)
   constructor() {
     super()
     this._loadModels = (signal, apply) => this.appState.load('models', 'scan models', requestSignal => fetchScanModels(requestSignal, managedFetch), { signal, apply })
-    this._source = { bundles: cloneScanFixtures(), repositories: SCAN_REPOSITORY_FIXTURES, scans: SCAN_FIXTURES.map(scan => ({ ...scan })) }
+    this._source = null
+    this._error = null
     this._loadReportSources = (consumerSignal, apply) => this.appState.load('scan-sources', 'scan report inputs', async signal => {
       const [catalogue, results] = await Promise.all([
         managedFetch('/api/admin/reports', { signal, credentials: 'same-origin' }),
@@ -1248,8 +1250,24 @@ class ManagedAdminScans extends ManagedPage {
       return managedReportSources(data, results.ok ? await results.json() : { bundles: [], results: [] })
     }, { signal: consumerSignal, apply })
   }
+
+  connectedCallback() {
+    super.connectedCallback()
+    void this._load()
+  }
+
+  async _load() {
+    this._error = null
+    await this._loadCollection('bundles', 'bundles', fetchBundles, data => {
+      this._source = managedScanSource(data)
+    })
+  }
+
   render() {
-    return html`<div class="wrap">${adminNavigation('manage-scans', this._role)}<deepview-scan-page hide-heading .source=${this._source} .loadModels=${this._loadModels} .loadReportSources=${this._loadReportSources}></deepview-scan-page></div>`
+    return html`<div class="wrap">${adminNavigation('manage-scans', this._role)}
+      ${this._error ? html`<p class="msg error" role="alert">Couldn’t load scan sources: ${this._error} <button type="button" class="btn" @click=${() => void this._load()}>Retry</button></p>` : nothing}
+      <deepview-scan-page hide-heading .source=${this._source} .sourceLoading=${this._loading && this._source == null} .loadBundle=${loadManagedScanBundle} .loadModels=${this._loadModels} .loadReportSources=${this._loadReportSources}></deepview-scan-page>
+    </div>`
   }
 }
 customElements.define('managed-admin-scans', ManagedAdminScans)

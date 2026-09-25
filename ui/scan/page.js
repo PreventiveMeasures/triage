@@ -23,6 +23,7 @@ const SCAN_MODE_ICONS = {
 export class ScanPage extends LitElement {
   static properties = {
     hideHeading: { type: Boolean, attribute: 'hide-heading' },
+    sourceLoading: { type: Boolean, attribute: false },
     source: { attribute: false }, loadBundle: { attribute: false }, loadModels: { attribute: false }, loadReportSources: { attribute: false }, canRun: { attribute: false },
     _loadingBundle: { state: true }, _bundleError: { state: true },
     _tab: { state: true },
@@ -52,6 +53,7 @@ export class ScanPage extends LitElement {
     this._tab = 'new'
     this._mode = 'code'
     this.source = null
+    this.sourceLoading = false
     this.loadBundle = null
     this._loadingBundle = false
     this._bundleError = null
@@ -61,7 +63,7 @@ export class ScanPage extends LitElement {
     this._reportInput = null
     this._reportRestore = null
     this._scans = []
-    this._selectedRepoId = this._bundles[0]?.repoId ?? 'unattached'
+    this._selectedRepoId = null
     this._selectedBundleId = this._bundles[0]?.id ?? null
     this._reason = this._bundles[0]?.reasons[0]?.id ?? ''
     this._excluded = new Set()
@@ -84,8 +86,10 @@ export class ScanPage extends LitElement {
       this._scans = this.source?.scans ?? []
       this._excluded = new Set()
       this._excludedModules = new Set()
-      const bundle = this._bundles.find(item => item.id === this._selectedBundleId) ?? this._bundles[0]
-      this._selectedRepoId = bundle?.repoId ?? 'unattached'
+      const repo = this._repositories.find(item => item.id === this._selectedRepoId)
+      const bundle = this._bundles.find(item => item.id === this._selectedBundleId)
+        ?? (repo ? this._bundles.find(item => item.repoId === repo.id) : this._bundles[0])
+      this._selectedRepoId = bundle?.repoId ?? repo?.id ?? this._repositories[0]?.id ?? 'unattached'
       this._selectedBundleId = bundle?.id ?? null
       this._reason = bundle?.reasons?.[0]?.id ?? ''
     }
@@ -188,16 +192,17 @@ export class ScanPage extends LitElement {
   }
 
   _sourcePanel(bundle, files) {
+    if (this.sourceLoading) return html`<section class="panel source-panel" aria-busy="true"><div class="panel-head"><h2>Source</h2></div><p class="empty" role="status">Loading scan sources…</p></section>`
     const bundles = this._mode === 'code' ? this._repoBundles.map(item => item.files ? { ...item, files: codeScanFiles(item.files) } : item) : this._repoBundles
     const { lines } = sourceMetrics(bundle?.files ? files : null)
     const counts = new Map()
     for (const item of this._bundles) counts.set(item.repoId, (counts.get(item.repoId) ?? 0) + 1)
-    const showRepositoryPicker = counts.size > 1
+    const showRepositoryPicker = this._repositories.length > 1
     // Sourcemaps have no named graph scopes; Stasis may discover them after loading.
     const reserveScope = ['code', 'agentic'].includes(this._mode) && bundle != null
       && (!bundle.filename.toLowerCase().endsWith('.map') || bundle.reasons?.some(reason => reason.id !== 'all'))
     const repositories = this._repositories.map(repo => { const count = counts.get(repo.id) ?? 0; return { value: repo.id, label: repo.label, detail: `${count} ${count === 1 ? 'bundle' : 'bundles'}`, special: repo.id === 'unattached' } })
-    return html`<section class="panel source-panel" aria-busy=${this._loadingBundle}><div class="panel-head"><h2>Source</h2></div><div class=${`source-choice ${showRepositoryPicker ? '' : 'single-repository'}`}><!-- Repository is implicit when every bundle has the same owner. -->${showRepositoryPicker ? html`<div class="field"><span>Repository</span><repository-selector .options=${repositories} .value=${this._selectedRepoId} @repository-change=${(e) => this._selectRepoById(e.detail.value)}></repository-selector></div>` : nothing}<div class="field">${showRepositoryPicker ? html`<span>Bundle</span>` : nothing}${bundles.length > 0 ? html`<bundle-selector .bundles=${bundles} .value=${bundle?.id ?? null} @bundle-change=${event => this._selectBundleById(event.detail.value)}></bundle-selector>` : html`<div class="choice-empty">${this._bundles.length === 0 ? 'No stored bundles.' : 'No stored bundles for this repository.'}</div>`}</div><div class="source-footer"><div class="bundle-stats" aria-label="Bundle statistics"><div class="metric"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="8" cy="4" rx="5" ry="2"/><path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/></svg><strong>${bundle?.size ?? '—'}</strong><span>bundle size</span></div><div class="metric">${SCAN_MODE_ICONS.report}<strong>${files.length}</strong><span>files</span></div><div class="metric">${SCAN_MODE_ICONS.code}<strong>${lines == null ? '—' : lines.toLocaleString()}</strong><span>LoC</span></div><div class="metric">${unsafeHTML(BUNDLE_ICON_SVG)}<strong>${new Set(files.map((file) => file.module)).size}</strong><span>packages</span></div></div>${reserveScope ? html`<div class="scope-slot">${this._scopeField(bundle)}</div>` : nothing}</div></div></section>`
+    return html`<section class="panel source-panel" aria-busy=${this._loadingBundle}><div class="panel-head"><h2>Source</h2></div><div class=${`source-choice ${showRepositoryPicker ? '' : 'single-repository'}`}><!-- A single repository is implicit. -->${showRepositoryPicker ? html`<div class="field"><span>Repository</span><repository-selector .options=${repositories} .value=${this._selectedRepoId} @repository-change=${(e) => this._selectRepoById(e.detail.value)}></repository-selector></div>` : nothing}<div class="field">${showRepositoryPicker ? html`<span>Bundle</span>` : nothing}${bundles.length > 0 ? html`<bundle-selector .bundles=${bundles} .value=${bundle?.id ?? null} @bundle-change=${event => this._selectBundleById(event.detail.value)}></bundle-selector>` : html`<div class="choice-empty">${this._bundles.length === 0 ? 'No stored bundles.' : 'No stored bundles for this repository.'}</div>`}</div><div class="source-footer"><div class="bundle-stats" aria-label="Bundle statistics"><div class="metric"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="8" cy="4" rx="5" ry="2"/><path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/></svg><strong>${bundle?.size ?? '—'}</strong><span>bundle size</span></div><div class="metric">${SCAN_MODE_ICONS.report}<strong>${files.length}</strong><span>files</span></div><div class="metric">${SCAN_MODE_ICONS.code}<strong>${lines == null ? '—' : lines.toLocaleString()}</strong><span>LoC</span></div><div class="metric">${unsafeHTML(BUNDLE_ICON_SVG)}<strong>${new Set(files.map((file) => file.module)).size}</strong><span>packages</span></div></div>${reserveScope ? html`<div class="scope-slot">${this._scopeField(bundle)}</div>` : nothing}</div></div></section>`
   }
 
   _scopeField(bundle) {
