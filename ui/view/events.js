@@ -1,3 +1,4 @@
+import { managedRouteForIds } from '../../common/managed/routes.js'
 import { managedHistory } from './managed-history.js'
 import { KANBAN_DETAIL_FULLSCREEN_KEY, SEVERITY_MODE_KEY, hasLinkedFindings, isEncryptionEnabled, isManagedUiMode, patchEntry, readBundle, saveRepoUrlFor, saveTriage, setReportIgnored, state, subscribeToBundleFindingIndex, subscribeToBundleHashIndex, subscribeToLinkedFindings } from '#client/index.js'
 import { downloadBlob, report } from './dom.js'
@@ -24,7 +25,7 @@ import { bundleToCycloneDx, bundleToSpdx, sbomBaseName } from './sbom.js'
 
 function navigateManagedReportView(view) {
   if (!isManagedUiMode() || !managedHistory.active || !state.currentManagedTeam) return null
-  return managedHistory.navigate({ view, teamId: state.currentManagedTeam, reportId: state.currentManagedReport })
+  return managedHistory.navigate(managedRouteForIds({ view, teamId: state.currentManagedTeam, reportId: state.currentManagedReport }, state.managedTeams))
 }
 
 // When another OPFS report finishes parsing, re-render if the user is

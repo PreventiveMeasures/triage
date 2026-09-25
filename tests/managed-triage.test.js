@@ -144,7 +144,7 @@ test('a comment link to another team preserves an edit made inside the debounce 
   const { browser } = browserAt('/teams/first/reports/B')
   const nav = createManagedHistory(browser)
   await nav.start(async route => {
-    await open(route.reportId, route.reportId === 'B' ? ['y'] : ['q'])
+    await open(route.reportSlug, route.reportSlug === 'B' ? ['y'] : ['q'])
     return true
   })
   await edit('y', { triage: 'inprogress' })

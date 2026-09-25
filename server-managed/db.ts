@@ -23,6 +23,7 @@ import { DatabaseSync } from 'node:sqlite'
 import type { Role } from '../common/managed/roles.ts'
 import type { TeamUserPermissions } from '../common/managed/permissions.ts'
 import type { TriageEntryPatch } from '../common/managed/triage.ts'
+import { migrateSlugs, preferredSlug } from './slugs.ts'
 import { migrateReportLocations } from './report-migration.ts'
 import { type ActivityStore, activityMethods } from './activity.ts'
 
@@ -113,6 +114,7 @@ CREATE INDEX IF NOT EXISTS managed_bundle_uploaded_at_idx ON managed_bundle(uplo
 -- bundle upload of that integrity can re-link.
 CREATE TABLE IF NOT EXISTS managed_report (
   id               TEXT PRIMARY KEY,
+  slug             TEXT NOT NULL,
   filename         TEXT NOT NULL,
   content_type     TEXT NOT NULL,
   byte_size        INTEGER NOT NULL,
@@ -191,6 +193,7 @@ CREATE INDEX IF NOT EXISTS finding_triage_event_actor_at_idx ON finding_triage_e
 -- the two link tables below carry the many-many relations.
 CREATE TABLE IF NOT EXISTS managed_team (
   id          TEXT PRIMARY KEY,
+  slug        TEXT NOT NULL,
   name        TEXT NOT NULL UNIQUE,
   created_at  INTEGER NOT NULL,
   updated_at  INTEGER NOT NULL
@@ -302,6 +305,7 @@ export type SelectedRepoInput = Omit<SelectedRepo, 'addedAt'>
 // uploader id (null once that user is removed).
 export interface ReportRecord {
   id: string
+  slug: string
   filename: string
   contentType: string
   byteSize: number
@@ -341,6 +345,7 @@ export interface ReportRecordInput {
 // absent / since removed).
 export interface AdminReport {
   id: string
+  slug: string
   filename: string
   contentType: string
   byteSize: number
@@ -441,6 +446,7 @@ export interface TeamMember extends TeamUserPermissions {
 // A team with its links inlined, for the "Manage teams" page.
 export interface AdminTeam {
   id: string
+  slug: string
   name: string
   repos: TeamRepoLink[]
   members: TeamMember[]
@@ -460,6 +466,7 @@ export type UserOption = {
 // shows under a team when its repo is one of the team's linked repos.
 export interface UserTeamReport {
   id: string
+  slug: string
   filename: string
 }
 export interface UserTeamBundle {
@@ -469,6 +476,7 @@ export interface UserTeamBundle {
 }
 export interface UserTeam {
   id: string
+  slug: string
   name: string
   reports: UserTeamReport[]
   bundles: UserTeamBundle[]
@@ -564,7 +572,7 @@ export interface ManagedDb extends ActivityStore {
   createTeam(id: string, name: string, now: number): Promise<boolean>
   renameTeam(id: string, name: string, now: number): Promise<'ok' | 'name-taken' | 'not-found'>
   deleteTeam(id: string): Promise<boolean>
-  getTeam(id: string): Promise<{ id: string; name: string } | null>
+  getTeam(id: string): Promise<{ id: string; slug: string; name: string } | null>
   listTeams(): Promise<AdminTeam[]>
   listUserOptions(): Promise<UserOption[]>
   // Current grants for manager content reads, writes, and repository pickers.
@@ -679,13 +687,15 @@ function prepareStatements(db: DatabaseSync) {
          FROM selected_repo ORDER BY full_name ASC`,
     ),
     insertReportStmt: db.prepare(
-      `INSERT INTO managed_report (id, filename, content_type, byte_size, sha256, uploaded_by, uploaded_by_login, repo_id, repo_directory, repo_embedded, analyzer, visible, bundle_id, bundle_integrity, uploaded_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `WITH candidate(id, slug) AS (VALUES (?, ?))
+       INSERT INTO managed_report (id, slug, filename, content_type, byte_size, sha256, uploaded_by, uploaded_by_login, repo_id, repo_directory, repo_embedded, analyzer, visible, bundle_id, bundle_integrity, uploaded_at)
+       SELECT id, CASE WHEN EXISTS (SELECT 1 FROM managed_report WHERE slug = candidate.slug) THEN id ELSE slug END,
+              ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? FROM candidate`,
     ),
     // LEFT JOINs so a report whose uploader / repo / bundle was removed (the FK
     // nulled) still lists, with null display fields.
     selectReportsStmt: db.prepare(
-      `SELECT r.id AS id, r.filename AS filename, r.content_type AS contentType,
+      `SELECT r.id AS id, r.slug AS slug, r.filename AS filename, r.content_type AS contentType,
               r.byte_size AS byteSize, r.sha256 AS sha256, COALESCE(u.login, r.uploaded_by_login) AS uploadedByLogin,
               r.repo_id AS repoId, sr.full_name AS repoFullName,
               r.repo_directory AS repoDirectory, r.repo_embedded AS repoEmbedded,
@@ -702,7 +712,7 @@ function prepareStatements(db: DatabaseSync) {
         ORDER BY r.uploaded_at DESC, r.filename ASC`,
     ),
     selectReportStmt: db.prepare(
-      `SELECT id, filename, content_type AS contentType, byte_size AS byteSize,
+      `SELECT id, slug, filename, content_type AS contentType, byte_size AS byteSize,
               sha256, uploaded_by AS uploadedBy, uploaded_at AS uploadedAt,
               repo_id AS repoId, repo_directory AS repoDirectory, repo_embedded AS repoEmbedded,
               analyzer AS analyzer, visible AS visible
@@ -807,21 +817,24 @@ function prepareStatements(db: DatabaseSync) {
     ),
     // OR IGNORE: a duplicate name (UNIQUE) is the "taken" signal (0 changes); the
     // uuid PK never collides.
-    insertTeamStmt: db.prepare(`INSERT OR IGNORE INTO managed_team (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)`),
+    insertTeamStmt: db.prepare(`WITH candidate(id, slug) AS (VALUES (?, ?))
+      INSERT OR IGNORE INTO managed_team (id, slug, name, created_at, updated_at)
+      SELECT id, CASE WHEN EXISTS (SELECT 1 FROM managed_team WHERE slug = candidate.slug) THEN id ELSE slug END,
+             ?, ?, ? FROM candidate`),
     deleteTeamStmt: db.prepare(`DELETE FROM managed_team WHERE id = ?`),
-    selectTeamStmt: db.prepare(`SELECT id, name FROM managed_team WHERE id = ?`),
+    selectTeamStmt: db.prepare(`SELECT id, slug, name FROM managed_team WHERE id = ?`),
     selectTeamByNameStmt: db.prepare(`SELECT id FROM managed_team WHERE name = ?`),
     renameTeamStmt: db.prepare(`UPDATE managed_team SET name = ?, updated_at = ? WHERE id = ?`),
-    selectTeamsStmt: db.prepare(`SELECT id, name FROM managed_team ORDER BY name ASC`),
+    selectTeamsStmt: db.prepare(`SELECT id, slug, name FROM managed_team ORDER BY name ASC`),
     selectTeamsForUserStmt: db.prepare(
-      `SELECT t.id AS id, t.name AS name
+      `SELECT t.id AS id, t.slug AS slug, t.name AS name
          FROM team_user tu JOIN managed_team t ON t.id = tu.team_id
         WHERE tu.user_id = ? ORDER BY t.name ASC`,
     ),
     // Reports attached to the repos of the user's teams, tagged by team (a report
     // shows under every team whose repo it's attached to). Newest first.
     selectUserTeamReportsStmt: db.prepare(
-      `SELECT DISTINCT tr.team_id AS teamId, r.id AS id, r.filename AS filename
+      `SELECT DISTINCT tr.team_id AS teamId, r.id AS id, r.slug AS slug, r.filename AS filename
          FROM team_user tu
          JOIN team_repo tr ON tr.team_id = tu.team_id
          JOIN managed_report r ON r.repo_id = tr.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}
@@ -948,7 +961,7 @@ function selectedRepoMethods(stmts: ReturnType<typeof prepareStatements>) {
 }
 
 type ReportListRow = {
-  id: string; filename: string; contentType: string; byteSize: number
+  id: string; slug: string; filename: string; contentType: string; byteSize: number
   sha256: string; uploadedByLogin: string | null
   repoId: number | null; repoFullName: string | null
   repoDirectory: string; repoEmbedded: number; analyzer: string | null; visible: number
@@ -956,7 +969,7 @@ type ReportListRow = {
   uploadedAt: number
 }
 type ReportRow = {
-  id: string; filename: string; contentType: string; byteSize: number
+  id: string; slug: string; filename: string; contentType: string; byteSize: number
   sha256: string; uploadedBy: string | null; uploadedAt: number
   repoId: number | null; repoDirectory: string; repoEmbedded: number; analyzer: string | null; visible: number
 }
@@ -968,7 +981,7 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>) {
   return {
     insertReport(report: ReportRecordInput, now: number): Promise<void> {
       insertReportStmt.run(
-        report.id, report.filename, report.contentType, report.byteSize,
+        report.id, preferredSlug(report.id), report.filename, report.contentType, report.byteSize,
         report.sha256, report.uploadedBy, report.uploadedByLogin ?? null, report.repoId,
         report.repoDirectory ?? '', report.repoEmbedded ? 1 : 0, report.analyzer ?? null, report.visible == null ? 0 : report.visible ? 1 : 0, report.bundleId ?? null,
         report.bundleIntegrity ?? null, now,
@@ -978,7 +991,7 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>) {
     listReports(userId?: string): Promise<AdminReport[]> {
       const rows = selectReportsStmt.all(userId ?? null, userId ?? null, userId ?? null) as ReportListRow[]
       return Promise.resolve(rows.map((r) => ({
-        id: r.id, filename: r.filename, contentType: r.contentType, byteSize: r.byteSize,
+        id: r.id, slug: r.slug, filename: r.filename, contentType: r.contentType, byteSize: r.byteSize,
         sha256: r.sha256, uploadedByLogin: r.uploadedByLogin,
         repoId: r.repoId, repoFullName: r.repoFullName,
         repoDirectory: r.repoDirectory, repoEmbedded: r.repoEmbedded === 1, analyzer: r.analyzer, visible: r.visible === 1,
@@ -990,7 +1003,7 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>) {
       const row = selectReportStmt.get(id) as ReportRow | undefined
       if (row == null) return Promise.resolve(null)
       return Promise.resolve({
-        id: row.id, filename: row.filename, contentType: row.contentType, byteSize: row.byteSize,
+        id: row.id, slug: row.slug, filename: row.filename, contentType: row.contentType, byteSize: row.byteSize,
         sha256: row.sha256, uploadedBy: row.uploadedBy, uploadedAt: row.uploadedAt,
         repoId: row.repoId, repoDirectory: row.repoDirectory, repoEmbedded: row.repoEmbedded === 1, analyzer: row.analyzer, visible: row.visible === 1,
       })
@@ -1172,7 +1185,7 @@ function bundleMethods(stmts: ReturnType<typeof prepareStatements>) {
   }
 }
 
-type TeamRow = { id: string; name: string }
+type TeamRow = { id: string; slug: string; name: string }
 type TeamRepoRow = { teamId: string; repoId: number; fullName: string; path: string | null }
 type TeamMemberRow = { teamId: string; userId: string; login: string; viewDependencies: number; viewSecurity: number }
 
@@ -1188,7 +1201,7 @@ function teamMethods(db: DatabaseSync, stmts: ReturnType<typeof prepareStatement
   } = stmts
   return {
     createTeam(id: string, name: string, now: number): Promise<boolean> {
-      return Promise.resolve(Number(insertTeamStmt.run(id, name, now, now).changes) > 0)
+      return Promise.resolve(Number(insertTeamStmt.run(id, preferredSlug(id), name, now, now).changes) > 0)
     },
     renameTeam(id: string, name: string, now: number): Promise<'ok' | 'name-taken' | 'not-found'> {
       // The driver is synchronous, so these reads + the update run with no await
@@ -1203,9 +1216,9 @@ function teamMethods(db: DatabaseSync, stmts: ReturnType<typeof prepareStatement
     deleteTeam(id: string): Promise<boolean> {
       return Promise.resolve(Number(deleteTeamStmt.run(id).changes) > 0)
     },
-    getTeam(id: string): Promise<{ id: string; name: string } | null> {
+    getTeam(id: string): Promise<{ id: string; slug: string; name: string } | null> {
       const row = selectTeamStmt.get(id) as TeamRow | undefined
-      return Promise.resolve(row == null ? null : { id: row.id, name: row.name })
+      return Promise.resolve(row == null ? null : { id: row.id, slug: row.slug, name: row.name })
     },
     listUserOptions(): Promise<UserOption[]> {
       return Promise.resolve((selectUserOptionsStmt.all() as UserOption[]).map((u) => ({ id: u.id, login: u.login, name: u.name })))
@@ -1214,11 +1227,11 @@ function teamMethods(db: DatabaseSync, stmts: ReturnType<typeof prepareStatement
       return Promise.resolve(selectUserRepoScopesStmt.all(userId) as { repoId: number; path: string | null }[])
     },
     listTeamsForUser(userId: string): Promise<UserTeam[]> {
-      const teams = selectTeamsForUserStmt.all(userId) as { id: string; name: string }[]
+      const teams = selectTeamsForUserStmt.all(userId) as { id: string; slug: string; name: string }[]
       const reportsByTeam = new Map<string, UserTeamReport[]>()
-      for (const r of selectUserTeamReportsStmt.all(userId) as { teamId: string; id: string; filename: string }[]) {
+      for (const r of selectUserTeamReportsStmt.all(userId) as { teamId: string; id: string; slug: string; filename: string }[]) {
         const list = reportsByTeam.get(r.teamId) ?? []
-        list.push({ id: r.id, filename: r.filename })
+        list.push({ id: r.id, slug: r.slug, filename: r.filename })
         reportsByTeam.set(r.teamId, list)
       }
       const bundlesByTeam = new Map<string, UserTeamBundle[]>()
@@ -1228,7 +1241,7 @@ function teamMethods(db: DatabaseSync, stmts: ReturnType<typeof prepareStatement
         bundlesByTeam.set(b.teamId, list)
       }
       return Promise.resolve(teams.map((t) => ({
-        id: t.id, name: t.name,
+        id: t.id, slug: t.slug, name: t.name,
         reports: reportsByTeam.get(t.id) ?? [],
         bundles: bundlesByTeam.get(t.id) ?? [],
       })))
@@ -1255,7 +1268,7 @@ function teamMethods(db: DatabaseSync, stmts: ReturnType<typeof prepareStatement
         membersByTeam.set(m.teamId, list)
       }
       return Promise.resolve(teams.map((t) => ({
-        id: t.id, name: t.name,
+        id: t.id, slug: t.slug, name: t.name,
         repos: reposByTeam.get(t.id) ?? [],
         members: membersByTeam.get(t.id) ?? [],
       })))
@@ -1328,6 +1341,7 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
     db.exec('PRAGMA foreign_keys = ON;')
     db.exec(SQLITE_SCHEMA)
     migrateTeamRepoPaths(db)
+    migrateSlugs(db)
     // Migrate DBs created before a column existed (CREATE TABLE IF NOT EXISTS
     // never alters an already-present table). Idempotent — skipped on fresh DBs.
     const addedLastSeen = ensureColumn(db, 'managed_user', 'last_seen_at', 'INTEGER')

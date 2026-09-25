@@ -481,10 +481,11 @@ describe('finding deep links — building a link for a finding', () => {
     state.serverMode = 'managed'
     state.currentWorkspace = 'managed-team:example'
     state.currentManagedTeam = 'example'
-    assert.equal(findingLinkFor(finding), `/teams/example#finding=${UUID_A}`)
+    state.managedTeams = [{ id: 'example', slug: 'short-team', reports: [{ id: 'report-id', slug: 'short-report' }] }]
+    assert.equal(findingLinkFor(finding), `/teams/short-team#finding=${UUID_A}`)
     state.currentWorkspace = null
     state.currentManagedReport = 'report-id'
-    assert.equal(findingLinkFor(finding), `/teams/example/reports/report-id#finding=${UUID_A}`)
+    assert.equal(findingLinkFor(finding), `/teams/short-team/reports/short-report#finding=${UUID_A}`)
     state.localMode = true
     assert.equal(extractFindingRef(findingLinkFor(finding)).id, UUID_A)
   })
@@ -738,15 +739,15 @@ describe('finding deep links — managed resolution', () => {
     let hit
     await nav.start(async route => {
       if (!route.finding) return navigation.openManagedReport(team, 'first')
-      hit = await locateLinkedFinding({ ...route.finding, teamId: route.teamId, reportId: route.reportId }, navigation)
-      return hit ? { view: 'findings', teamId: state.currentManagedTeam, reportId: state.currentManagedReport } : false
+      hit = await locateLinkedFinding({ ...route.finding, teamId: route.teamSlug, reportId: route.reportSlug }, navigation)
+      return hit ? { view: 'findings', teamSlug: state.currentManagedTeam, reportSlug: state.currentManagedReport } : false
     })
     const previousLocation = globalThis.location
     globalThis.location = browser.location
     try {
       // Both a current hint and a stale hint must search outside the open report.
       for (const report of [await computeLinkHint('report', second.filename), 'abcd']) {
-        await nav.navigate({ view: 'findings', teamId: 'team', reportId: 'first' })
+        await nav.navigate({ view: 'findings', teamSlug: 'team', reportSlug: 'first' })
         const [link] = parseCommentRefs(`https://triage.test/#${encodeFindingRef({ id: UUID_B, report })}`, { managed: true })
         assert.equal(await browser.click(link.url), true)
         assert.equal(hit?.finding.id, UUID_B)

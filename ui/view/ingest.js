@@ -1,3 +1,4 @@
+import { managedRouteForIds } from '../../common/managed/routes.js'
 import { adoptRepoUrlFor, analyzeContent, computeLinkHint, deleteBundle, deleteFile, deleteWorkspace, dropBundleFromHashIndex, ensureTriageLoaded, getSecureItem, getWorkspaceAppMetadata, isManagedUiMode, listBundles, listFiles, listWorkspaces, loadRepoUrlFor, parseLinkedFindings, pruneOrphanTriage, readFile, readFileBytes, removeCount, removeSecureItem, saveBundle, saveFile, saveRepoUrlFor, setBundleWorkspace, setCount, setReportWorkspace, setSecureItem, state, workspaceAppCacheToken } from '#client/index.js'
 import { closeWorkspace as closePresence, deleteBundleFromRemote, deleteFromRemote as deletePresence, holdLocalChangeChecks, isInRemoteOrCached, openWorkspace as openPresence, putFile, triageSync } from './client-sync.js'
 import { openImportConflictDialog } from './dialogs/import-conflict-dialog.js'
@@ -701,7 +702,7 @@ export async function switchToFile(name, content, { workspaceId } = {}) {
 // so a slow team load cannot overwrite a later report click (or Home).
 export async function switchToManagedTeam(team, reportId = null, { history = true } = {}) {
   if (!isManagedUiMode() || !team || !Array.isArray(team.reports)) return false
-  if (history && managedHistory.active) return managedHistory.navigate({ view: 'findings', teamId: team.id, reportId })
+  if (history && managedHistory.active) return managedHistory.navigate(managedRouteForIds({ view: 'findings', teamId: team.id, reportId }, state.managedTeams))
   const selected = reportId === null ? team.reports : team.reports.filter((r) => r.id === reportId)
   if (reportId !== null && selected.length === 0) return false
   const gen = beginViewNavigation()

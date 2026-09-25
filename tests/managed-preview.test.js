@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
 import { test } from 'node:test'
-import { fetchReport } from '../client/managed/session.js'
+import { fetchReport, probeTeams } from '../client/managed/session.js'
+import { managedRouteForIds, managedRoutePath, resolveManagedRoute } from '../common/managed/routes.js'
+import { createManagedHistory } from '../ui/view/managed-history.js'
+import { browserAt } from './_managed-browser.js'
 
 test('managed preview triage persists in memory and stays scoped to the requested report', async (t) => {
   const previousPort = process.env.MANAGED_TEST_PORT
@@ -27,6 +30,36 @@ test('managed preview triage persists in memory and stays scoped to the requeste
   assert.equal(results.results.length, 5)
   assert.equal(results.results.every(result => results.bundles.some(bundle => bundle.id === result.bundleId)), true)
   assert.equal(results.results.some(result => exported.reports.some(report => report.id === result.id)), false)
+  await t.test('fixture slugs support managed team and report navigation', async fixtureTest => {
+    const networkFetch = globalThis.fetch
+    fixtureTest.mock.method(globalThis, 'fetch', (url, options) => networkFetch(new URL(url, base), options))
+    const teams = await probeTeams()
+    const admin = await (await fetch('/api/admin/teams')).json()
+    assert.ok(teams.length > 0)
+    const { browser } = browserAt('/')
+    const nav = createManagedHistory(browser)
+    let shown
+    await nav.start(route => {
+      shown = resolveManagedRoute(route, teams)
+      return shown != null
+    })
+    for (const team of teams) {
+      assert.ok(team.slug, team.id)
+      assert.equal(team.slug, admin.teams.find(entry => entry.id === team.id).slug)
+      for (const report of [null, ...team.reports]) {
+        const internal = { view: 'findings', teamId: team.id, reportId: report?.id ?? null }
+        const route = managedRouteForIds(internal, teams)
+        assert.ok(route, report?.id ?? team.id)
+        assert.equal(await nav.navigate(route), true)
+        assert.equal(browser.location.pathname, managedRoutePath(route))
+        assert.deepEqual(shown, internal)
+        if (report) {
+          assert.equal(report.slug, exported.reports.find(entry => entry.id === report.id).slug)
+          assert.ok(await fetchReport(shown.reportId), 'navigation keeps the report API ID')
+        }
+      }
+    }
+  })
   await t.test('fixture reports support the real managed client and raw downloads', async (fixtureTest) => {
     const networkFetch = globalThis.fetch
     fixtureTest.mock.method(globalThis, 'fetch', (url, options) => networkFetch(new URL(url, base), options))

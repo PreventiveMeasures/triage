@@ -45,7 +45,7 @@ export async function probeSession({ fallback = null } = {}) {
 }
 
 // GET /api/teams → the signed-in user's teams, each with the reports and bundles
-// attached to the team's repos ([{ id, name, reports: [{ id, filename }],
+// attached to the team's repos ([{ id, slug, name, reports: [{ id, slug, filename }],
 // bundles: [{ id, filename, repoFullName }] }]), or [] when
 // unauthenticated. A failed background refresh keeps the provided fallback.
 // Kept on `state.managedTeams` and shown in the
@@ -59,11 +59,12 @@ export async function probeTeams({ fallback = [] } = {}) {
     .filter((t) => t != null && typeof t.id === 'string' && typeof t.name === 'string')
     .map((t) => ({
       id: t.id,
+      slug: t.slug,
       name: t.name,
       reports: Array.isArray(t.reports)
         ? t.reports
           .filter((r) => r != null && typeof r.id === 'string' && typeof r.filename === 'string')
-          .map((r) => ({ id: r.id, filename: r.filename }))
+          .map((r) => ({ id: r.id, slug: r.slug, filename: r.filename }))
         : [],
       bundles: Array.isArray(t.bundles)
         ? t.bundles
