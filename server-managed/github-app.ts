@@ -67,10 +67,10 @@ export function mergeRepos(...lists: ConnectedRepo[][]): ConnectedRepo[] {
   return [...byName.values()].toSorted((a, b) => a.fullName.localeCompare(b.fullName))
 }
 
-// One authenticated GitHub API call returning parsed JSON, Bearer-authed by a
+// One GitHub API call returning parsed JSON, optionally Bearer-authed by a
 // user token, App JWT, or installation token. Network / non-2xx / malformed
 // fold into a GithubApiError (401 passes through for the caller to handle).
-async function githubJson(url: string, token: string, fetchImpl: typeof fetch, method: 'GET' | 'POST' = 'GET'): Promise<unknown> {
+async function githubJson(url: string, token: string | null, fetchImpl: typeof fetch, method: 'GET' | 'POST' = 'GET'): Promise<unknown> {
   let res: Response
   try {
     res = await fetchImpl(url, {
@@ -78,7 +78,7 @@ async function githubJson(url: string, token: string, fetchImpl: typeof fetch, m
       signal: AbortSignal.timeout(10_000),
       redirect: 'error',
       headers: {
-        'authorization': `Bearer ${token}`, 'accept': 'application/vnd.github+json',
+        ...(token == null ? {} : { authorization: `Bearer ${token}` }), 'accept': 'application/vnd.github+json',
         'user-agent': USER_AGENT, 'x-github-api-version': API_VERSION,
       },
     })
@@ -112,6 +112,28 @@ function parseRepo(raw: unknown, installationId: number | null): ConnectedRepo |
     defaultBranch: typeof branch === 'string' ? branch : '',
     installationId,
   }
+}
+
+// Accept an owner/repo or exact GitHub repository URL, never an arbitrary API
+// path. Reject traversal and encoded separators before constructing a fixed URL.
+export function publicRepositoryName(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null
+  const name = raw.trim().replace(/^https:\/\/github\.com\//iu, '').replace(/\/$/u, '')
+  if (!/^[a-z\d](?:[a-z\d-]{0,38})\/[a-z\d_.-]{1,100}$/iu.test(name)) return null
+  if (['.', '..'].includes(name.split('/')[1]!)) return null
+  return name
+}
+
+// Public additions must be readable by the server without the acting user's
+// credentials. Require explicit public visibility and use GitHub's canonical
+// metadata, never client-supplied ids, installation ids, or branches.
+export async function fetchPublicRepository(fullName: string, fetchImpl: typeof fetch = globalThis.fetch): Promise<ConnectedRepo> {
+  if (publicRepositoryName(fullName) !== fullName) throw new GithubApiError(400, 'bad-repository')
+  const path = fullName.split('/').map(encodeURIComponent).join('/')
+  const repo = parseRepo(await githubJson(`${GITHUB_API}/repos/${path}`, null, fetchImpl), null)
+  if (repo == null || repo.private || repo.visibility !== 'public') throw new GithubApiError(409, 'repo-not-public')
+  if (publicRepositoryName(repo.fullName) !== repo.fullName || repo.fullName.toLowerCase() !== fullName.toLowerCase()) throw new GithubApiError(502, 'github-malformed')
+  return { ...repo, htmlUrl: `https://github.com/${repo.fullName}` }
 }
 
 // ── PUBLIC: the user's own repos via their login token ──
@@ -233,6 +255,9 @@ async function mapGithubRequests<T, U>(items: T[], work: (item: T) => Promise<U>
 // The login App and repository App are separate: /user/repos with the login
 // token is not evidence of private-repo access. Ask the repository App for the
 // user's effective GitHub permission (including teams/org/enterprise grants).
+// This endpoint accepts installation tokens with Metadata: read; it does NOT
+// require Administration permission (unlike collaborator mutation endpoints).
+// https://docs.github.com/en/rest/collaborators/collaborators#get-repository-permissions-for-a-user
 // Resolve the current login from /user so renamed handles cannot check someone
 // else's access. All repo paths come from GitHub's installation catalogue.
 export async function filterInstalledRepos(config: ManagedConfig, repositories: ConnectedRepo[], userToken: string, fetchImpl: typeof fetch = globalThis.fetch): Promise<ConnectedRepo[]> {

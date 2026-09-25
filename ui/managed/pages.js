@@ -405,6 +405,23 @@ async function selectRepository(repoId, selected, csrfToken) {
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
 }
 
+async function addPublicRepository(repository, csrfToken) {
+  const res = await managedFetch('/api/admin/repositories/add-public', {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+    body: JSON.stringify({ repository }),
+  })
+  if (!res.ok) {
+    const messages = {
+      400: 'Enter a repository as owner/repo or a GitHub repository URL.',
+      403: 'You do not have permission to add arbitrary public repositories.',
+      404: 'No public repository was found at that address.',
+      409: 'Choose a public, non-archived repository.',
+    }
+    throw new Error(messages[res.status] ?? `GitHub lookup failed (HTTP ${res.status}). Try again.`)
+  }
+}
+
 async function fetchRepositoryImpact(repoId, signal) {
   const res = await managedFetch(`/api/admin/repositories/impact?repoId=${encodeURIComponent(repoId)}`, {
     credentials: 'same-origin', headers: { accept: 'application/json' }, signal,
@@ -433,6 +450,10 @@ const REPO_ICON = adminIcon('repo')
 // and each connected repository has its own page for configuration.
 class ManagedAdminRepos extends ManagedPage {
   static properties = {
+    _publicRepoOpen: { state: true },
+    _publicRepository: { state: true },
+    _publicRepoError: { state: true },
+    _addingPublic: { state: true },
     _data: { state: true },
     _error: { state: true },
     _actionError: { state: true },
@@ -455,6 +476,10 @@ class ManagedAdminRepos extends ManagedPage {
 
   constructor() {
     super()
+    this._publicRepoOpen = false
+    this._publicRepository = ''
+    this._publicRepoError = null
+    this._addingPublic = false
     this._data = null
     this._error = null
     this._actionError = null
@@ -498,6 +523,7 @@ class ManagedAdminRepos extends ManagedPage {
 
   _open(scope) {
     this._impactRequest?.abort()
+    this._publicRepoOpen = false
     this._scope = scope
     this._showAll = false
     this._query = ''
@@ -527,8 +553,8 @@ class ManagedAdminRepos extends ManagedPage {
     return repositoryChoices(options, this._query, this._organization, { includeSingletonOrganizations: true })
   }
 
-  _back() {
-    return html`<span class="breadcrumb">
+  _back(title = null) {
+    return html`<div class="breadcrumb">
       <button type="button" class="breadcrumb-manage" @click=${() => {
         document.dispatchEvent(new CustomEvent('managed-admin-navigate', {
           detail: { view: 'manage' }, bubbles: true, composed: true,
@@ -540,7 +566,8 @@ class ManagedAdminRepos extends ManagedPage {
         else this._open('connected')
       }}>Repositories</button>
       <span class="breadcrumb-separator" aria-hidden="true">›</span>
-    </span>`
+      ${title ? html`<h1 class="breadcrumb-current">${title}</h1>` : nothing}
+    </div>`
   }
 
   _openDetail(repo) {
@@ -571,7 +598,7 @@ class ManagedAdminRepos extends ManagedPage {
     const title = connected ? 'Repositories' : `Add ${this._scope} repository`
     const choices = this._repositoryChoices()
     return html`<div class="wrap">${adminNavigation('manage-repos', this._role)}
-      ${connected ? html`<h1 class="sr-only">${title}</h1>` : html`<div class="head">${this._back()}<h1>${title}</h1></div>`}
+      ${connected ? html`<h1 class="sr-only">${title}</h1>` : this._back(title)}
       <div class="page-intro"><p class="intro">${connected
         ? 'Manage connected repositories and their settings.'
         : this._scope === 'installed'
@@ -587,8 +614,10 @@ class ManagedAdminRepos extends ManagedPage {
         ${connected ? html`
           <button type="button" class="btn" @click=${() => this._open('installed')}>${this._accessIcon('private')} Add installed repository</button>
           <button type="button" class="btn" @click=${() => this._open('public')}>${this._accessIcon('public')} Add your public repository</button>
+          ${this._role === 'admin' && this._data?.canAddAnyPublicRepository ? html`<button type="button" class="btn" aria-expanded=${this._publicRepoOpen} @click=${() => this._openPublicRepository()}>${this._accessIcon('public')} Add a public repository</button>` : nothing}
         ` : html`<button type="button" class="btn" ?disabled=${this._loading} @click=${() => { void this._load(true) }}>Refresh</button>`}
       </div>
+      ${connected && this._publicRepoOpen && this._role === 'admin' && this._data?.canAddAnyPublicRepository ? this._publicRepositoryForm() : nothing}
       ${this._actionError ? html`<p class="msg error" role="alert">${this._actionError}</p>` : nothing}
       ${this._error ? html`<p class="msg error" role="alert">Couldn't load repositories: ${this._error}</p><button type="button" class="btn" @click=${() => { void this._load() }}>Try again</button>` : nothing}
       ${this._data ? html`<p class="repository-count" role="status">${choices.count}${choices.count === choices.total ? '' : ` of ${choices.total}`} ${choices.total === 1 ? 'repository' : 'repositories'}</p>` : nothing}
@@ -619,6 +648,38 @@ class ManagedAdminRepos extends ManagedPage {
     `
   }
 
+  _openPublicRepository() {
+    this._publicRepoOpen = true
+    this._publicRepoError = null
+    void this.updateComplete.then(() => this.renderRoot?.querySelector('#public-repository')?.focus())
+  }
+
+  _publicRepositoryForm() {
+    return html`<form class="public-repository-form" aria-label="Add a public repository" @submit=${event => { event.preventDefault(); void this._addPublicRepository() }}>
+      <label class="confirm-field" for="public-repository"><span>Public GitHub repository</span>
+        <input id="public-repository" class="confirm-name" type="text" placeholder="owner/repo or https://github.com/owner/repo" autocomplete="off" required .value=${this._publicRepository} ?disabled=${this._addingPublic} @input=${event => { this._publicRepository = event.target.value }}>
+      </label>
+      <div class="dialog-actions"><button type="button" class="btn" ?disabled=${this._addingPublic} @click=${() => { this._publicRepoOpen = false }}>Cancel</button><button type="submit" class="btn" ?disabled=${this._addingPublic || !this._publicRepository.trim()}>${this._addingPublic ? 'Adding…' : 'Add repository'}</button></div>
+      ${this._publicRepoError ? html`<p class="msg error" role="alert">${this._publicRepoError}</p>` : nothing}
+    </form>`
+  }
+
+  async _addPublicRepository() {
+    if (this._addingPublic || !this._publicRepository.trim()) return
+    this._addingPublic = true
+    this._publicRepoError = null
+    try {
+      await this.appState.mutate(() => addPublicRepository(this._publicRepository.trim(), this._csrf), ['repos', 'reports', 'bundles', 'teams', 'users', 'history', 'scan-sources'])
+      this._publicRepoOpen = false
+      this._publicRepository = ''
+      await this._load()
+    } catch (err) {
+      this._publicRepoError = err?.message ?? String(err)
+    } finally {
+      this._addingPublic = false
+    }
+  }
+
   _row(repo, label) {
     const access = `${this._accessLabel(repo)}${this._scope === 'connected' && repo.active === false ? ' · Deactivated' : ''}`
     const copy = html`${REPO_ICON}<span class="repo-copy"><span class="repo-name">${label}</span><span class="repo-meta">${access}</span></span>`
@@ -637,7 +698,7 @@ class ManagedAdminRepos extends ManagedPage {
 
   _accessLabel(repo) {
     const visibility = repo.visibility === 'public' ? 'Public' : repo.visibility === 'internal' ? 'Internal' : repo.private ? 'Private' : null
-    const source = repo.installed ? 'GitHub App' : 'GitHub membership'
+    const source = repo.installed ? 'GitHub App' : 'GitHub'
     return visibility ? `${visibility} · ${source}` : source
   }
 

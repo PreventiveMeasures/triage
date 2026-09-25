@@ -451,3 +451,37 @@ test('repository labels do not infer public visibility from the stored private f
   assert.equal(page._accessLabel({ installed: true, private: false }), 'GitHub App', 'stored records with unknown visibility stay neutral')
   assert.equal(page._accessLabel({ installed: true, private: true }), 'Private · GitHub App')
 })
+
+test('public repository form submits with CSRF, retains failures and refreshes the connected catalogue on success', async t => {
+  const page = createPage(Repositories)
+  page.session = adminSession
+  page._publicRepoOpen = true
+  page._publicRepository = ' owner/repo '
+  let status = 403
+  let posts = 0
+  t.mock.method(globalThis, 'fetch', (url, options) => {
+    if (options.method === 'POST') {
+      posts++
+      assert.equal(url, '/api/admin/repositories/add-public')
+      assert.equal(options.headers['x-csrf-token'], adminSession.csrfToken)
+      assert.deepEqual(JSON.parse(options.body), { repository: 'owner/repo' })
+      return Promise.resolve(Response.json({}, { status }))
+    }
+    assert.match(url, /scope=connected/u)
+    return Promise.resolve(Response.json({ repositories: [repo], canAddAnyPublicRepository: true }))
+  })
+  await page._addPublicRepository()
+  assert.equal(page._publicRepoOpen, true)
+  assert.equal(page._publicRepository, ' owner/repo ')
+  assert.match(page._publicRepoError, /permission/u)
+  assert.equal(page._addingPublic, false)
+  status = 200
+  const adding = page._addPublicRepository()
+  await page._addPublicRepository()
+  await adding
+  assert.equal(posts, 2, 'double submission is ignored')
+  assert.equal(page._publicRepoOpen, false)
+  assert.equal(page._publicRepository, '')
+  assert.equal(page._publicRepoError, null)
+  assert.deepEqual(page._data.repositories, [repo])
+})

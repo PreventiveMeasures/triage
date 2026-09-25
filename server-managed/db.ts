@@ -497,6 +497,7 @@ export interface ManagedDb extends ActivityStore, CommentStore {
   // Persist / read a user's GitHub token (for on-demand repo listing).
   setUserTokens(id: string, tokens: UserTokens): Promise<void>
   getUserTokens(id: string): Promise<UserTokens | null>
+  getUserGithubId(id: string): Promise<number | null>
   // Repo selection ("operate on"). selectRepo upserts by repo id, refreshing the
   // mutable context while keeping the original added_by/added_at; deselectRepo
   // resolves true iff a row was removed.
@@ -625,6 +626,7 @@ function prepareStatements(db: DatabaseSync) {
          avatar_url = excluded.avatar_url, updated_at = excluded.updated_at`,
     ),
     selectUserIdStmt: db.prepare(`SELECT id FROM managed_user WHERE github_user_id = ?`),
+    selectGithubIdStmt: db.prepare(`SELECT github_user_id AS githubId FROM managed_user WHERE id = ?`),
     insertSessionStmt: db.prepare(
       `INSERT INTO managed_session (id, user_id, csrf_token, created_at, expires_at) VALUES (?, ?, ?, ?, ?)`,
     ),
@@ -1387,7 +1389,7 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
   const activity = activityMethods(db)
   const stmts = prepareStatements(db)
   const {
-    upsertUserStmt, selectUserIdStmt, insertSessionStmt, selectSessionStmt, selectUsersStmt,
+    upsertUserStmt, selectUserIdStmt, selectGithubIdStmt, insertSessionStmt, selectSessionStmt, selectUsersStmt,
     touchUserSeenStmt, updateRoleStmt, updateTokensStmt, selectTokensStmt, deleteSessionStmt, deleteExpiredStmt,
   } = stmts
 
@@ -1432,6 +1434,10 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
     setUserTokens(id, tokens) {
       updateTokensStmt.run(tokens.accessToken, tokens.refreshToken, tokens.expiresAt, Date.now(), id)
       return Promise.resolve()
+    },
+    getUserGithubId(id) {
+      const row = selectGithubIdStmt.get(id) as { githubId: number } | undefined
+      return Promise.resolve(row?.githubId ?? null)
     },
     getUserTokens(id) {
       const row = selectTokensStmt.get(id) as { access: string | null; refresh: string | null; exp: number | null } | undefined

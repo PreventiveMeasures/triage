@@ -62,7 +62,9 @@ import { loadManagedFindings, readManagedReport } from '../common/managed/report
 import { normalizeTeamPath } from './repo-path.ts'
 import { DEFAULT_MANAGED_SCAN_MODEL, MANAGED_SCAN_MODELS } from '../common/managed/scan-models.ts'
 import { CONFIG_PATH, type ServerInfo } from '../common/server-info.ts'
-import { GithubApiError, collectRepos, installUrl } from './github-app.ts'
+import { GithubApiError, collectRepos, fetchPublicRepository, installUrl, publicRepositoryName } from './github-app.ts'
+import type { ConnectedRepo } from './github-app.ts'
+import { canAddAnyPublicRepository, canAddRepositories, passesPublicRepositorySafeguard } from './repository-policy.ts'
 import { RepositoryDiscovery } from './repository-discovery.ts'
 import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, ensureUserAccessToken, handleCallback } from './github-oauth.ts'
 import { clearCookie, endSession, readSession } from './session.ts'
@@ -81,6 +83,7 @@ const ADMIN_MODELS_PATH = '/api/admin/models'
 const SET_ROLE_PATH = '/api/admin/set-role'
 const ADMIN_REPOS_PATH = '/api/admin/repositories'
 const SELECT_REPO_PATH = '/api/admin/repositories/select'
+const ADD_PUBLIC_REPO_PATH = '/api/admin/repositories/add-public'
 const REPO_IMPACT_PATH = '/api/admin/repositories/impact'
 const REMOVE_REPO_PATH = '/api/admin/repositories/remove'
 const ADMIN_REPORTS_PATH = '/api/admin/reports'
@@ -363,6 +366,7 @@ async function handleListRepositories(req: IncomingMessage, res: ServerResponse,
   const total = repositories.length
   sendJson(res, 200, {
     installUrl: installUrl(deps.config),
+    canAddAnyPublicRepository: canAddAnyPublicRepository(s.user, await deps.db.getUserGithubId(s.user.id)),
     repositories,
     connectedCount: selectedRows.length,
     inactiveCount: allRows.filter((r) => !r.active).length,
@@ -376,20 +380,68 @@ async function handleListRepositories(req: IncomingMessage, res: ServerResponse,
 // context (installation id, default branch). A PRIVATE repo with no installation
 // can't be read server-side → 409. Stores via selectRepo (upsert).
 async function selectRepository(res: ServerResponse, deps: ManagedHttpDeps, user: StoredUser, repoId: number): Promise<void> {
+  if (!canAddRepositories(user)) { sendJson(res, 403, { error: 'forbidden' }); return }
   const userId = user.id
   const token = await ensureUserAccessToken(deps.config, deps.db, userId, Date.now())
   const { repositories } = await collectRepos(deps.config, token)
-  const repo = repositories.find((r) => r.id === repoId)
+  let repo = repositories.find((r) => r.id === repoId)
+  // A WHITEHAT addition may not appear in /user/repos. Revalidate the stored
+  // canonical name when reactivating it, with the same permission gates.
+  if (repo == null && canAddAnyPublicRepository(user, await deps.db.getUserGithubId(userId))) {
+    const stored = (await deps.db.listAllRepos()).find(r => r.repoId === repoId)
+    if (stored && !stored.private && stored.installationId == null) {
+      try { repo = await fetchPublicRepository(stored.fullName) } catch (err) {
+        if (!(err instanceof GithubApiError)) throw err
+        sendJson(res, err.status, { error: err.message }); return
+      }
+      if (repo.id !== repoId) { sendJson(res, 409, { error: 'repo-identity-changed' }); return }
+    }
+  }
   if (repo == null) { sendJson(res, 404, { error: 'repo-not-accessible' }); return }
-  if (repo.private && repo.installationId == null) { sendJson(res, 409, { error: 'repo-not-readable' }); return }
-  const alreadySelected = (await deps.db.listSelectedRepos()).some(row => row.repoId === repoId)
+  // (0) Installed or explicitly public. For (3a), an admin may choose any App
+  // installation; for (3b), /user/repos is the public involvement evidence.
+  if (repo.installationId == null) {
+    if (repo.private || repo.visibility !== 'public') { sendJson(res, 409, { error: 'repo-not-readable' }); return }
+    if (!passesPublicRepositorySafeguard(await deps.db.getUserGithubId(userId), repositories.some(r => r.id === repoId))) {
+      sendJson(res, 403, { error: 'forbidden' }); return
+    }
+  }
+  await connectRepository(res, deps, user, repo)
+}
+
+async function connectRepository(res: ServerResponse, deps: ManagedHttpDeps, user: StoredUser, repo: ConnectedRepo): Promise<void> {
+  const alreadySelected = (await deps.db.listSelectedRepos()).some(row => row.repoId === repo.id)
   await deps.db.selectRepo({
     repoId: repo.id, fullName: repo.fullName, private: repo.private,
     installationId: repo.installationId, defaultBranch: repo.defaultBranch,
-    htmlUrl: repo.htmlUrl, addedBy: userId,
+    htmlUrl: repo.htmlUrl, addedBy: user.id,
   }, Date.now())
   if (!alreadySelected) await activity(deps, user, 'repository', 'connected a repository', { repo: repo.fullName })
   sendJson(res, 200, { ok: true, selected: true })
+}
+
+// Separate from ordinary discovery: WHITEHAT bypasses only public involvement.
+// Authentication, server admin permission, origin and CSRF remain mandatory.
+async function handleAddPublicRepository(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
+  if ((req.method ?? 'GET') !== 'POST') { send405(res, 'POST'); return }
+  const s = await adminMutation(req, res, deps, cookie)
+  if (s == null) return
+  if (!canAddAnyPublicRepository(s.user, await deps.db.getUserGithubId(s.user.id))) { sendJson(res, 403, { error: 'forbidden' }); return }
+  let body: unknown
+  try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
+  const fullName = publicRepositoryName((body as { repository?: unknown } | null)?.repository)
+  if (fullName == null) { sendJson(res, 400, { error: 'bad-repository' }); return }
+  let repo
+  try { repo = await fetchPublicRepository(fullName) } catch (err) {
+    if (!(err instanceof GithubApiError)) throw err
+    sendJson(res, err.status, { error: err.message }); return
+  }
+  // A GitHub lookup can outlive a role change or logout.
+  if (await readAdminSession(res, deps, cookie) == null) return
+  // Preserve existing App read context if this public repo is already connected.
+  const stored = (await deps.db.listAllRepos()).find(r => r.repoId === repo.id)
+  if (stored) repo.installationId = stored.installationId
+  await connectRepository(res, deps, s.user, repo)
 }
 
 // POST /api/admin/repositories/select — an admin toggles whether a repo is
@@ -1509,6 +1561,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     }
     if (path === ADMIN_REPOS_PATH) { await handleListRepositories(req, res, deps, cookie, repositoryDiscovery); return }
     if (path === SELECT_REPO_PATH) { await handleSelectRepository(req, res, deps, cookie); return }
+    if (path === ADD_PUBLIC_REPO_PATH) { await handleAddPublicRepository(req, res, deps, cookie); return }
     // Reports: list / upload on the exact path, download / delete per-id on the
     // prefix. Method-dispatched here since each path carries two verbs.
     if (path === ADMIN_REPORTS_PATH) {
