@@ -60,7 +60,7 @@ const history = [
 
 const reportFixtures = [
   {
-    id: 'fixture-report-1', filename: 'managed-fixture.json', repoId: 101,
+    id: 'fixture-report-1', slug: 'fixture-report-1', filename: 'managed-fixture.json', repoId: 101,
     repoDirectory: '', repoEmbedded: true, analyzer: null, visible: false,
     uploadedByLogin: 'alex-security', byteSize: 318, bundleFilename: 'managed-fixtures.stasis',
     bundleIntegrity: 'sha512-fixture-managed-1',
@@ -79,7 +79,7 @@ const reportFixtures = [
     }),
   },
   {
-    id: 'fixture-report-2', filename: 'managed-worker.json', repoId: 102,
+    id: 'fixture-report-2', slug: 'fixture-report-2', filename: 'managed-worker.json', repoId: 102,
     repoDirectory: 'services/worker', repoEmbedded: true, analyzer: 'codex-security', visible: false,
     uploadedByLogin: 'riley-reviewer', byteSize: 342, bundleFilename: null,
     bundleIntegrity: 'sha512-fixture-managed-2',
@@ -94,7 +94,7 @@ const reportFixtures = [
     }),
   },
   {
-    id: 'fixture-report-3', filename: 'managed-api.json', repoId: 101,
+    id: 'fixture-report-3', slug: 'fixture-report-3', filename: 'managed-api.json', repoId: 101,
     repoDirectory: 'packages/api', repoEmbedded: true, analyzer: 'claude-security', visible: true,
     uploadedByLogin: 'sam-observer', byteSize: 356, bundleFilename: 'managed-fixtures.stasis',
     bundleIntegrity: 'sha512-fixture-managed-1',
@@ -109,7 +109,7 @@ const reportFixtures = [
     }),
   },
   {
-    id: 'fixture-report-4', filename: 'detached-preview.json', repoId: null,
+    id: 'fixture-report-4', slug: 'fixture-report-4', filename: 'detached-preview.json', repoId: null,
     repoDirectory: '', repoEmbedded: false, analyzer: 'deepsec', visible: false,
     uploadedByLogin: 'alex-security', byteSize: 284, bundleFilename: null,
     bundleIntegrity: null,
@@ -156,13 +156,13 @@ const bundles = [
 
 const teamFixtures = [
   {
-    id: 'fixture-team', name: 'Security fixtures',
+    id: 'fixture-team', slug: 'fixture-team', name: 'Security fixtures',
     reportIds: ['fixture-report-1', 'fixture-report-2', 'fixture-report-3'],
     repoLinks: [{ repoId: 101, path: '' }, { repoId: 102, path: 'services/worker' }],
     memberIds: ['fixture-user', 'fixture-alex', 'fixture-riley'],
   },
   {
-    id: 'fixture-team-platform', name: 'Platform review',
+    id: 'fixture-team-platform', slug: 'fixture-team-platform', name: 'Platform review',
     reportIds: ['fixture-report-2'],
     repoLinks: [{ repoId: 102, path: '' }],
     memberIds: ['fixture-user', 'fixture-sam'],
@@ -184,11 +184,12 @@ function teamReportRefs(team: (typeof teamFixtures)[number]) {
   return team.reportIds
     .map((id) => reportMetadata.find((report) => report.id === id))
     .filter((report): report is (typeof reportMetadata)[number] => report != null)
-    .map((report) => ({ id: report.id, filename: report.filename }))
+    .map((report) => ({ id: report.id, slug: report.slug, filename: report.filename }))
 }
 
 const teams = teamFixtures.map((team) => ({
   id: team.id,
+  slug: team.slug,
   name: team.name,
   reports: teamReportRefs(team),
   bundles: bundles.filter((bundle) => team.repoLinks.some((link) => link.repoId === bundle.repoId)).map((bundle) => ({ id: bundle.id, filename: bundle.filename, repoFullName: repoById(bundle.repoId)?.fullName ?? '' })),
@@ -197,6 +198,7 @@ const teams = teamFixtures.map((team) => ({
 function adminTeams() {
   return teamFixtures.map((team) => ({
     id: team.id,
+    slug: team.slug,
     name: team.name,
     repos: team.repoLinks.map((link) => ({
       repoId: link.repoId,
