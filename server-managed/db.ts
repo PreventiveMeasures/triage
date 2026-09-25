@@ -24,6 +24,7 @@ import type { Role } from '../common/managed/roles.ts'
 import type { TeamUserPermissions } from '../common/managed/permissions.ts'
 import type { TriageEntryPatch } from '../common/managed/triage.ts'
 import { migrateReportLocations } from './report-migration.ts'
+import { type ActivityStore, activityMethods } from './activity.ts'
 
 const SQLITE_SCHEMA = `
 CREATE TABLE IF NOT EXISTS managed_user (
@@ -473,7 +474,7 @@ export interface UserTeam {
 }
 
 // Backend-agnostic store surface (SQLite + PostgreSQL implementations).
-export interface ManagedDb {
+export interface ManagedDb extends ActivityStore {
   // Upsert the identity; returns the user's opaque id (stable across logins).
   upsertUser(user: ManagedUser, now: number): Promise<string>
   createSession(session: ManagedSession, now: number): Promise<void>
@@ -529,7 +530,7 @@ export interface ManagedDb {
   // listTriageHistory walks one finding's trail, newest first.
   listTriage(findingIds: readonly string[]): Promise<TriageRow[]>
   setTriage(findingId: string, entry: TriageEntryPatch | null, updatedBy: string | null, updatedByLogin: string | null, now: number): Promise<void>
-  setTriageEntries(entries: readonly (readonly [string, TriageEntryPatch | null])[], updatedBy: string | null, updatedByLogin: string | null, now: number): Promise<void>
+  setTriageEntries(entries: readonly (readonly [string, TriageEntryPatch | null])[], updatedBy: string | null, updatedByLogin: string | null, now: number, reportId?: string): Promise<void>
   listTriageHistory(findingId: string, limit: number): Promise<TriageEventRow[]>
   // Bundles ("Manage bundles"). insertBundle records an uploaded bundle (bytes
   // in the blob-store); getBundleByIntegrity dedupes uploads + resolves a
@@ -546,7 +547,7 @@ export interface ManagedDb {
   // Attach / detach a bundle's repo link (repoId null = detach); resolves true
   // iff the bundle exists. The caller validates repoId is a selected repo.
   setBundleRepo(id: string, repoId: number | null): Promise<boolean>
-  linkReportsToBundle(integrity: string, bundleId: string): Promise<void>
+  linkReportsToBundle(integrity: string, bundleId: string, userId?: string): Promise<void>
   // Teams ("Manage teams"). createTeam inserts a team (false iff the name is
   // taken); renameTeam changes a team's name ('name-taken' iff another team
   // already has it, 'not-found' iff no such team, 'ok' otherwise — same name is
@@ -562,6 +563,8 @@ export interface ManagedDb {
   getTeam(id: string): Promise<{ id: string; name: string } | null>
   listTeams(): Promise<AdminTeam[]>
   listUserOptions(): Promise<UserOption[]>
+  // Current grants for manager content reads, writes, and repository pickers.
+  listRepoScopesForUser(userId: string): Promise<{ repoId: number; path: string | null }[]>
   // The teams a given user belongs to (name-sorted), each with reports and
   // bundles attached to that team's repos — for that user's own sidebar Teams section.
   // Any user; only their own memberships.
@@ -710,8 +713,10 @@ function prepareStatements(db: DatabaseSync) {
       `SELECT color, triage, comment, fix, flagged FROM finding_triage WHERE finding_id = ?`,
     ),
     insertTriageEventStmt: db.prepare(
-      `INSERT INTO finding_triage_event (finding_id, batch_id, color, triage, comment, fix, flagged, actor_id, actor_login, at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO finding_triage_event (finding_id, batch_id, color, triage, comment, fix, flagged, actor_id, actor_login, at, report_id, report, repo)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+         (SELECT filename FROM managed_report WHERE id = ?),
+         (SELECT p.full_name FROM managed_report r JOIN selected_repo p ON p.repo_id = r.repo_id WHERE r.id = ?))`,
     ),
     // With a retention limit set: keep the newest N events of a finding.
     trimTriageEventsStmt: db.prepare(
@@ -769,7 +774,9 @@ function prepareStatements(db: DatabaseSync) {
     // Attach a freshly-stored bundle to the reports that declared its integrity
     // but haven't been linked yet (bundle uploaded after the report).
     linkReportsToBundleStmt: db.prepare(
-      `UPDATE managed_report SET bundle_id = ? WHERE bundle_integrity = ? AND bundle_id IS NULL`,
+      `UPDATE managed_report AS r SET bundle_id = ? WHERE bundle_integrity = ? AND bundle_id IS NULL
+       AND (? IS NULL OR EXISTS (SELECT 1 FROM team_repo tr JOIN team_user tu ON tu.team_id = tr.team_id
+         WHERE tu.user_id = ? AND tr.repo_id = r.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}))`,
     ),
     // OR IGNORE: a duplicate name (UNIQUE) is the "taken" signal (0 changes); the
     // uuid PK never collides.
@@ -791,7 +798,7 @@ function prepareStatements(db: DatabaseSync) {
          FROM team_user tu
          JOIN team_repo tr ON tr.team_id = tu.team_id
          JOIN managed_report r ON r.repo_id = tr.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}
-        WHERE tu.user_id = ? AND r.visible = 1
+        WHERE tu.user_id = ? AND (r.visible = 1 OR (SELECT role FROM managed_user WHERE id = tu.user_id) = 'manage')
         ORDER BY r.uploaded_at DESC, r.filename ASC`,
     ),
     // Bundles are scoped through the same team -> repository links as reports.
@@ -805,6 +812,10 @@ function prepareStatements(db: DatabaseSync) {
          JOIN selected_repo sr ON sr.repo_id = b.repo_id
         WHERE tu.user_id = ?
         ORDER BY b.uploaded_at DESC, b.filename ASC`,
+    ),
+    selectUserRepoScopesStmt: db.prepare(
+      `SELECT DISTINCT tr.repo_id AS repoId, NULLIF(tr.path, '') AS path
+         FROM team_repo tr JOIN team_user tu ON tu.team_id = tr.team_id WHERE tu.user_id = ?`,
     ),
     // A report is readable iff one of the user's team scopes contains it.
     selectReportReadableStmt: db.prepare(
@@ -988,7 +999,7 @@ type TriageEventDbRow = TriageStateDbRow & { seq: number; findingId: string; bat
 function triageMethods(db: DatabaseSync, stmts: ReturnType<typeof prepareStatements>, historyLimit: number) {
   const { upsertTriageStmt, selectTriageStmt, selectTriageStateStmt, insertTriageEventStmt, trimTriageEventsStmt, selectTriageHistoryStmt,
     deleteTriageStmt, deleteTriageHistoryStmt } = stmts
-  function writeEntry(findingId: string, entry: TriageEntryPatch | null, batchId: string, updatedBy: string | null, updatedByLogin: string | null, now: number): void {
+  function writeEntry(findingId: string, entry: TriageEntryPatch | null, batchId: string, updatedBy: string | null, updatedByLogin: string | null, now: number, reportId: string | null = null): void {
     const e = entry ?? {}
     // `flagged: false` is a real value (the explicit un-flag tombstone), so it
     // is 0 here and only null/absent maps to NULL.
@@ -1000,7 +1011,7 @@ function triageMethods(db: DatabaseSync, stmts: ReturnType<typeof prepareStateme
     if (cur != null && cur.color === next.color && cur.triage === next.triage && cur.comment === next.comment
       && cur.fix === next.fix && cur.flagged === next.flagged) return
     upsertTriageStmt.run(findingId, next.color, next.triage, next.comment, next.fix, next.flagged, updatedBy, updatedByLogin, now)
-    insertTriageEventStmt.run(findingId, batchId, next.color, next.triage, next.comment, next.fix, next.flagged, updatedBy, updatedByLogin, now)
+    insertTriageEventStmt.run(findingId, batchId, next.color, next.triage, next.comment, next.fix, next.flagged, updatedBy, updatedByLogin, now, reportId, reportId, reportId)
     if (historyLimit > 0) trimTriageEventsStmt.run(findingId, findingId, historyLimit)
   }
   return {
@@ -1048,14 +1059,14 @@ function triageMethods(db: DatabaseSync, stmts: ReturnType<typeof prepareStateme
       }
       return Promise.resolve()
     },
-    setTriageEntries(entries: readonly (readonly [string, TriageEntryPatch | null])[], updatedBy: string | null, updatedByLogin: string | null, now: number): Promise<void> {
+    setTriageEntries(entries: readonly (readonly [string, TriageEntryPatch | null])[], updatedBy: string | null, updatedByLogin: string | null, now: number, reportId?: string): Promise<void> {
       // One transaction, so a batch is never half-applied by a mid-loop error
       // (and costs one fsync under synchronous = FULL, not one per row); one
       // batch id groups its rows in the trail.
       const batchId = randomUUID()
       db.exec('BEGIN')
       try {
-        for (const [findingId, entry] of entries) writeEntry(findingId, entry, batchId, updatedBy, updatedByLogin, now)
+        for (const [findingId, entry] of entries) writeEntry(findingId, entry, batchId, updatedBy, updatedByLogin, now, reportId)
         db.exec('COMMIT')
       } catch (err) {
         try { db.exec('ROLLBACK') } catch {}
@@ -1118,8 +1129,8 @@ function bundleMethods(stmts: ReturnType<typeof prepareStatements>) {
     setBundleRepo(id: string, repoId: number | null): Promise<boolean> {
       return Promise.resolve(Number(setBundleRepoStmt.run(repoId, id).changes) > 0)
     },
-    linkReportsToBundle(integrity: string, bundleId: string): Promise<void> {
-      linkReportsToBundleStmt.run(bundleId, integrity)
+    linkReportsToBundle(integrity: string, bundleId: string, userId?: string): Promise<void> {
+      linkReportsToBundleStmt.run(bundleId, integrity, userId ?? null, userId ?? null)
       return Promise.resolve()
     },
   }
@@ -1135,7 +1146,7 @@ type TeamMemberRow = { teamId: string; userId: string; login: string; viewDepend
 function teamMethods(db: DatabaseSync, stmts: ReturnType<typeof prepareStatements>) {
   const {
     insertTeamStmt, selectTeamByNameStmt, renameTeamStmt, deleteTeamStmt, selectTeamStmt,
-    selectTeamsStmt, selectTeamsForUserStmt, selectUserTeamReportsStmt, selectUserTeamBundlesStmt, selectReportReadableStmt,
+    selectUserRepoScopesStmt, selectTeamsStmt, selectTeamsForUserStmt, selectUserTeamReportsStmt, selectUserTeamBundlesStmt, selectReportReadableStmt,
     selectReportPermsStmt, selectUserOptionsStmt, selectTeamReposStmt, selectTeamMembersStmt,
     upsertTeamRepoStmt, deleteTeamRepoStmt, deleteTeamRepoPathStmt, upsertTeamMemberStmt, deleteTeamMemberStmt,
   } = stmts
@@ -1162,6 +1173,9 @@ function teamMethods(db: DatabaseSync, stmts: ReturnType<typeof prepareStatement
     },
     listUserOptions(): Promise<UserOption[]> {
       return Promise.resolve((selectUserOptionsStmt.all() as UserOption[]).map((u) => ({ id: u.id, login: u.login, name: u.name })))
+    },
+    listRepoScopesForUser(userId: string): Promise<{ repoId: number; path: string | null }[]> {
+      return Promise.resolve(selectUserRepoScopesStmt.all(userId) as { repoId: number; path: string | null }[])
     },
     listTeamsForUser(userId: string): Promise<UserTeam[]> {
       const teams = selectTeamsForUserStmt.all(userId) as { id: string; name: string }[]
@@ -1299,6 +1313,9 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
     if (addedVisible) db.prepare('UPDATE managed_report SET visible = 1 WHERE visible = 0').run()
     ensureColumn(db, 'managed_bundle', 'uploaded_by_login', 'TEXT')
     ensureColumn(db, 'selected_repo', 'active', 'INTEGER NOT NULL DEFAULT 1')
+    ensureColumn(db, 'finding_triage_event', 'report_id', 'TEXT')
+    ensureColumn(db, 'finding_triage_event', 'report', 'TEXT')
+    ensureColumn(db, 'finding_triage_event', 'repo', 'TEXT')
   } catch (err) {
     try { db.close() } catch {}
     throw err
@@ -1358,6 +1375,7 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
       return Promise.resolve({ accessToken: row.access, refreshToken: row.refresh, expiresAt: row.exp })
     },
     ...selectedRepoMethods(stmts),
+    ...activityMethods(db),
     ...reportMethods(stmts),
     ...triageMethods(db, stmts, options.triageHistoryLimit ?? 0),
     ...bundleMethods(stmts),

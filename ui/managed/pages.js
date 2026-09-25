@@ -46,7 +46,7 @@ const ADMIN_PLUS_ICON = html`<svg viewBox="0 0 16 16" fill="none" stroke="curren
 const ADMIN_ROLE_LABELS = { admin: 'Admin', manage: 'Manager', triage: 'Triage', view: 'Viewer', none: 'No access' }
 const ADMIN_ROLE_DESCRIPTIONS = {
   admin: 'Manage workspace access and teams',
-  manage: 'Manage content and scans',
+  manage: 'Manage content and triage within team access',
   triage: 'Review and triage findings',
   view: 'Read-only access',
   none: 'No workspace access',
@@ -96,31 +96,26 @@ class ManagedAdminHome extends ManagedPage {
 }
 customElements.define('managed-admin-home', ManagedAdminHome)
 
-async function fetchHistory(signal) {
-  const res = await managedFetch('/api/admin/history', { signal, credentials: 'same-origin', headers: { accept: 'application/json' } })
+async function fetchHistory(signal, page, kind, query) {
+  const params = new URLSearchParams({ page: String(page), limit: '100', kind, q: query.trim() })
+  const res = await managedFetch(`/api/admin/history?${params}`, { signal, credentials: 'same-origin', headers: { accept: 'application/json' } })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   const body = await res.json()
-  if (!Array.isArray(body?.history)) throw new Error('No history returned')
-  return body.history
-}
-
-async function fetchAccessibleReportIds(signal) {
-  const res = await managedFetch('/api/teams', { signal, credentials: 'same-origin', headers: { accept: 'application/json' } })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  const body = await res.json()
-  if (!Array.isArray(body?.teams)) throw new Error('No teams returned')
-  return new Set(body.teams.flatMap(team => Array.isArray(team.reports) ? team.reports.map(report => report.id) : []))
+  if (!Array.isArray(body?.history) || !Number.isSafeInteger(body.total) || body.total < 0
+    || !Number.isSafeInteger(body.page) || body.page < 1) throw new Error('No history returned')
+  return body
 }
 
 class ManagedAdminHistory extends ManagedPage {
-  static properties = { _page: { state: true }, _history: { state: true }, _allowedReports: { state: true }, _error: { state: true }, _filter: { state: true }, _query: { state: true } }
+  static properties = { _page: { state: true }, _history: { state: true }, _total: { state: true }, _error: { state: true }, _filter: { state: true }, _query: { state: true } }
 
   static styles = [unsafeCSS(historyStyles), unsafeCSS(commonStyles)]
 
   constructor() {
     super()
     this._history = null
-    this._allowedReports = null
+    this._total = 0
+    this._searchTimer = null
     this._error = null
     this._page = 1
     this._filter = 'all'
@@ -128,9 +123,9 @@ class ManagedAdminHistory extends ManagedPage {
     this._onActorFilter = (event) => {
       const actor = event.detail?.actor
       if (typeof actor !== 'string') return
-      this._page = 1
       this._query = actor
       this._filter = 'all'
+      void this._load()
     }
   }
 
@@ -141,40 +136,49 @@ class ManagedAdminHistory extends ManagedPage {
   }
 
   disconnectedCallback() {
+    clearTimeout(this._searchTimer)
     document.removeEventListener('managed-history-filter', this._onActorFilter)
     super.disconnectedCallback()
   }
 
-  async _load() {
+  async _load(page = 1) {
+    clearTimeout(this._searchTimer)
     this._error = null
-    await this._loadCollection('history', 'history', signal => Promise.all([fetchHistory(signal), fetchAccessibleReportIds(signal)]), ([history, allowedReports]) => {
-      this._history = history
-      this._allowedReports = allowedReports
+    const kind = this._filter
+    const query = this._query.trim()
+    const key = `history:${JSON.stringify([page, kind, query])}`
+    await this._loadCollection(key, 'history', signal => fetchHistory(signal, page, kind, query), (result) => {
+      this._history = result.history
+      this._total = result.total
+      this._page = result.page
     })
   }
 
+  _search(query) {
+    this._query = query
+    clearTimeout(this._searchTimer)
+    this._loadRequest?.abort()
+    this._loadRequest = null
+    this._loading = true
+    this._searchTimer = setTimeout(() => { void this._load() }, 250)
+  }
+
   render() {
-    const all = Array.isArray(this._history) ? this._history : []
-    const history = this._role === 'manage'
-      ? all.filter((entry) => entry.kind === 'triage' && this._allowedReports?.has(entry.reportId))
-      : all
-    const query = this._query.trim().toLocaleLowerCase()
-    const searched = query.length === 0 ? history : history.filter((entry) => historySearchText(entry).includes(query))
-    const filtered = this._filter === 'all' ? searched : searched.filter((entry) => entry.kind === this._filter)
-    const page = Math.min(this._page, Math.max(1, Math.ceil(filtered.length / 100)))
+    const history = this._history ?? []
+    const page = this._page
     const start = (page - 1) * 100
     return html`<div class="wrap">${adminNavigation('manage-history', this._role)}
       <h1 class="sr-only">History</h1>
-      <div class="page-intro"><p class="intro">${this._role === 'admin' ? 'All workspace actions, including uploads, access changes, scans, and triage.' : 'Triage history for reports you can access.'}</p><span class="result-count">${this._history ? filtered.length : '…'} entries</span></div>
-      <div class="toolbar" role="search"><input type="search" aria-label="Search history" placeholder="Search actions, users, repositories, reports…" .value=${this._query} @input=${(event) => { this._query = event.target.value; this._page = 1 }}><select aria-label="Filter history by type" .value=${this._filter} @change=${(event) => { this._filter = event.target.value; this._page = 1 }}><option value="all">All activity</option><option value="triage">Triage</option><option value="visibility">Visibility</option><option value="upload">Uploads</option><option value="scan">Scans</option></select></div>
-      ${this._error ? html`<p class="msg error" role="alert">Couldn’t load history: ${this._error}</p>` : nothing}
-      <div aria-busy=${this._loading}>${this._history == null ? (this._error ? nothing : loadingRows('Loading history…')) : filtered.length === 0 ? html`<div class="history"><p class="empty">${query || this._filter !== 'all' ? 'No activity matches your filters.' : 'No history available yet.'}</p></div>` : html`<div class="history" aria-label="Workspace history"><div class="history-head" aria-hidden="true"><span>Type</span><span>Activity</span><span>Repository / report / finding</span><span>Time</span></div>${filtered.slice(start, start + 100).map((entry) => this._row(entry))}</div>`}</div>
-      ${filtered.length > 100 ? html`<nav class="pagination" aria-label="History pages"><span role="status">${start + 1}–${Math.min(start + 100, filtered.length)} of ${filtered.length} entries</span><button type="button" class="btn" ?disabled=${page === 1} @click=${() => this._changePage(page - 1)}>Previous</button><span>Page ${page} of ${Math.ceil(filtered.length / 100)}</span><button type="button" class="btn" ?disabled=${start + 100 >= filtered.length} @click=${() => this._changePage(page + 1)}>Next</button></nav>` : nothing}
+      <div class="page-intro"><p class="intro">${this._role === 'admin' ? 'Uploads, access changes, repository changes, deletions, and triage.' : 'Bundle, report, and triage history within your team access.'}</p><span class="result-count">${this._history ? this._total : '…'} entries</span></div>
+      <div class="toolbar" role="search"><input type="search" maxlength="500" aria-label="Search history" placeholder="Search actions, users, repositories, reports…" .value=${this._query} @input=${(event) => this._search(event.target.value)}><select aria-label="Filter history by type" .value=${this._filter} @change=${(event) => { this._filter = event.target.value; void this._load() }}><option value="all">All activity</option><option value="triage">Triage</option><option value="visibility">Visibility</option><option value="upload">Uploads</option><option value="repository">${this._role === 'admin' ? 'Repositories' : 'Assignments'}</option>${this._role === 'admin' ? html`<option value="access">Access</option>` : nothing}<option value="delete">Deletions</option></select><button type="button" class="btn" ?disabled=${this._loading} @click=${() => this._load(page)}>Refresh</button></div>
+      ${this._error ? html`<p class="msg error" role="alert">Couldn’t load history: ${this._error} <button type="button" class="btn" @click=${() => this._load()}>Retry</button></p>` : nothing}
+      <div aria-busy=${this._loading}>${this._history == null ? (this._error ? nothing : loadingRows('Loading history…')) : history.length === 0 ? html`<div class="history"><p class="empty">${this._query.trim() || this._filter !== 'all' ? 'No activity matches your filters.' : 'No history available yet.'}</p></div>` : html`<div class="history" aria-label="Workspace history"><div class="history-head" aria-hidden="true"><span>Type</span><span>Activity</span><span>Repository / report / finding</span><span>Time</span></div>${history.map((entry) => this._row(entry))}</div>`}</div>
+      ${this._total > 100 ? html`<nav class="pagination" aria-label="History pages"><span role="status">${start + 1}–${Math.min(start + 100, this._total)} of ${this._total} entries</span><button type="button" class="btn" ?disabled=${this._loading || page === 1} @click=${() => this._changePage(page - 1)}>Previous</button><span>Page ${page} of ${Math.ceil(this._total / 100)}</span><button type="button" class="btn" ?disabled=${this._loading || start + 100 >= this._total} @click=${() => this._changePage(page + 1)}>Next</button></nav>` : nothing}
     </div>`
   }
 
   async _changePage(page) {
-    this._page = page
+    await this._load(page)
     await this.updateComplete
     this.renderRoot.querySelector('.history')?.scrollIntoView({ block: 'start' })
   }
@@ -183,18 +187,10 @@ class ManagedAdminHistory extends ManagedPage {
     const detail = [entry.repo ?? entry.repository, entry.report, entry.finding].filter(Boolean).join(' · ')
     const actor = entry.actor ?? entry.user ?? 'Unknown user'
     const action = entry.action ?? 'updated workspace data'
-    return html`<div class="row"><span class=${`kind ${entry.kind ?? ''}`}>${entry.kind ?? 'activity'}</span><span class="activity-description" data-tooltip-truncated data-tooltip=${`${actor} ${action}`}><strong class="actor">${actor}</strong> <span class="action">${action}</span></span><span class="detail" data-tooltip-truncated data-tooltip=${detail}>${detail || '—'}</span><time>${entry.when ?? ''}</time></div>`
+    return html`<div class="row"><span class=${`kind ${entry.kind ?? ''}`}>${entry.kind ?? 'activity'}</span><span class="activity-description" data-tooltip-truncated data-tooltip=${`${actor} ${action}`}><strong class="actor">${actor}</strong> <span class="action">${action}</span></span><span class="detail" data-tooltip-truncated data-tooltip=${detail}>${detail || '—'}</span><span class="history-time">${userTime(entry.at)}</span></div>`
   }
 }
 customElements.define('managed-admin-history', ManagedAdminHistory)
-
-function historySearchText(entry) {
-  return Object.entries(entry ?? {}).flatMap(([key, value]) => {
-    if (value == null) return []
-    if (typeof value === 'object') return [key, JSON.stringify(value)]
-    return [key, String(value)]
-  }).join(' ').toLocaleLowerCase()
-}
 
 async function fetchUsers(signal) {
   const res = await managedFetch('/api/admin/users', { signal, credentials: 'same-origin', headers: { accept: 'application/json' } })
@@ -725,6 +721,7 @@ async function uploadReport(file, csrfToken, repoId = null, directory = '') {
   const res = await managedFetch('/api/admin/reports', { method: 'POST', credentials: 'same-origin', headers, body: file })
   if (!res.ok) {
     if (res.status === 413) throw new Error('too large')
+    if (res.status === 403) throw new Error('choose a repository and directory within your team access')
     let detail = ''
     try {
       const body = await res.json()
@@ -753,6 +750,7 @@ async function setReportRepo(id, repoId, directory, csrfToken) {
   })
   if (!res.ok) {
     if (res.status === 409) throw new Error('this report already defines its repository')
+    if (res.status === 403) throw new Error('choose a repository and directory within your team access')
     throw new Error(res.status === 400 ? 'invalid repository or directory' : `HTTP ${res.status}`)
   }
   return res.json()
@@ -773,22 +771,22 @@ function formatBytes(n) {
 }
 
 // Keep managed numeric repository IDs and null (unattached) intact.
-function repoOptions(repos) {
-  return [{ value: null, label: 'No repository', special: true }, ...repos.map(repo => ({ value: repo.repoId, label: repo.fullName }))]
+function repoOptions(repos, allowUnassigned = true) {
+  return [...(allowUnassigned ? [{ value: null, label: 'No repository', special: true }] : []), ...repos.map(repo => ({ value: repo.repoId, label: repo.fullName }))]
 }
 
-function repoPickerTemplate(repos, selected, onChange, label = 'Repository for new bundles') {
+function repoPickerTemplate(repos, selected, onChange, label = 'Repository for new bundles', allowUnassigned = true) {
   const loading = !Array.isArray(repos)
   return html`<div class="repo-picker"><span class="repo-picker-label">${label}</span>
-    <repository-selector class="repo-select" .options=${loading ? [{ value: null, label: 'Loading repositories…' }] : repoOptions(repos)} .value=${selected} label=${label} ?disabled=${loading || repos.length === 0}
+    <repository-selector class="repo-select" .options=${loading ? [{ value: null, label: 'Loading repositories…' }] : repoOptions(repos, allowUnassigned)} .value=${selected} label=${label} ?disabled=${loading || repos.length === 0}
       @repository-change=${event => onChange(event.detail.value)}></repository-selector>
   </div>`
 }
 
-function repoRowSelect(repos, current, onPick) {
+function repoRowSelect(repos, current, onPick, allowUnassigned = true) {
   if (!Array.isArray(repos) || repos.length === 0) return nothing
   return html`<repository-selector class="repo-attach" label="Attach to a repository"
-    .options=${repoOptions(repos)} .value=${current ?? null}
+    .options=${repoOptions(repos, allowUnassigned)} .value=${current ?? null}
     @repository-change=${event => onPick(event.detail.value)}></repository-selector>`
 }
 
@@ -923,6 +921,8 @@ class ManagedAdminReports extends ManagedPage {
         <div class="page-intro"><p class="intro">Upload reports. New reports stay hidden until you make them visible.</p>${this._localImport.renderAction()}</div>
         ${this._localImport.renderPanel(this._busy || !this._csrf)}
         <div class="drop-card"><span class="drop-icon" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10V2m0 0L5 5m3-3 3 3M3 9v3.5A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5V9"/></svg></span><span class="drop-copy"><strong>Upload reports</strong><span>Drop files anywhere on this page, or browse your computer.</span></span><button type="button" class="drop-browse" ?disabled=${this._busy} @click=${() => pickFiles((files) => void this._upload(files))}>${this._busy ? 'Uploading…' : 'Browse files'}</button></div>
+        <div class="location-editor" aria-label="Location for reports without repository metadata"><div class="location-field"><span>Repository (when absent from report)</span><repository-selector label="Repository for new reports" .options=${repoOptions(this._data?.repos ?? [], this._role === 'admin')} .value=${this._repoId} ?disabled=${!this._data?.repos?.length} @repository-change=${event => { this._repoId = event.detail.value }}></repository-selector></div><div class="location-field"><label for="report-upload-directory">Directory</label><input id="report-upload-directory" placeholder="Repository root" .value=${this._repoDirectory} @input=${event => { this._repoDirectory = event.target.value }}></div></div>
+        ${this._data?.repoScopes?.length ? html`<p class="intro">Team paths: ${this._data.repoScopes.map(scope => `${this._data.repos.find(repo => repo.repoId === scope.repoId)?.fullName ?? scope.repoId}/${scope.path ?? ''}`).join(', ')}</p>` : nothing}
         ${this._body()}
       </div>`
   }
@@ -972,7 +972,7 @@ class ManagedAdminReports extends ManagedPage {
 
   _locationEditor(report) {
     const repos = Array.isArray(this._data?.repos) ? this._data.repos : []
-    return html`<div class="location-editor"><div class="location-field"><span>Repository</span><repository-selector label="Repository for report" .options=${repoOptions(repos)} .value=${this._locationRepo} ?disabled=${this._locationBusy} @repository-change=${event => { this._locationRepo = event.detail.value }}></repository-selector></div><div class="location-field"><label for=${`report-dir-${report.id}`}>Directory (optional)</label><input id=${`report-dir-${report.id}`} type="text" placeholder="Repository root" .value=${this._locationDirectory} @input=${(e) => { this._locationDirectory = e.target.value }}></div><div class="location-actions"><button type="button" class="action" @click=${() => { this._locationReport = null }}>Cancel</button><button type="button" class="action" ?disabled=${this._locationBusy || this._locationRepo == null} @click=${() => void this._saveLocation(report)}>Save</button></div></div>`
+    return html`<div class="location-editor"><div class="location-field"><span>Repository</span><repository-selector label="Repository for report" .options=${repoOptions(repos, this._role === 'admin')} .value=${this._locationRepo} ?disabled=${this._locationBusy} @repository-change=${event => { this._locationRepo = event.detail.value }}></repository-selector></div><div class="location-field"><label for=${`report-dir-${report.id}`}>Directory (optional)</label><input id=${`report-dir-${report.id}`} type="text" placeholder="Repository root" .value=${this._locationDirectory} @input=${(e) => { this._locationDirectory = e.target.value }}></div><div class="location-actions"><button type="button" class="action" @click=${() => { this._locationReport = null }}>Cancel</button><button type="button" class="action" ?disabled=${this._locationBusy || this._locationRepo == null} @click=${() => void this._saveLocation(report)}>Save</button></div></div>`
   }
 
   async _saveLocation(report) {
@@ -1063,7 +1063,7 @@ async function uploadBundle(file, csrfToken, repoId) {
   if (csrfToken) headers['x-csrf-token'] = csrfToken
   if (repoId != null) headers['x-repo-id'] = String(repoId)
   const res = await managedFetch('/api/admin/bundles', { method: 'POST', credentials: 'same-origin', headers, body: file })
-  if (!res.ok) throw new Error(res.status === 413 ? 'too large' : `HTTP ${res.status}`)
+  if (!res.ok) throw new Error(res.status === 413 ? 'too large' : res.status === 403 ? 'choose a repository within your team access' : `HTTP ${res.status}`)
   return res.json()
 }
 
@@ -1146,7 +1146,7 @@ class ManagedAdminBundles extends ManagedPage {
         ${this._localImport.renderPanel(this._busy || !this._csrf)}
         <section class="upload-panel" aria-label="Upload bundles">
           <div class="upload-copy"><span class="drop-icon" aria-hidden="true">${adminIcon('upload')}</span><span><strong>Upload source bundles</strong><span class="upload-description">Drop source archives anywhere on this page.</span></span></div>
-          <div class="upload-controls">${repoPickerTemplate(this._data?.repos, this._repoId, (v) => { this._repoId = v }, 'Repository')}<button type="button" class="drop-browse" ?disabled=${this._busy} @click=${() => pickFiles((files) => void this._upload(files))}>${this._busy ? 'Uploading…' : 'Browse files'}</button></div>
+          <div class="upload-controls">${repoPickerTemplate(this._data?.repos, this._repoId, (v) => { this._repoId = v }, 'Repository', this._role === 'admin')}<button type="button" class="drop-browse" ?disabled=${this._busy} @click=${() => pickFiles((files) => void this._upload(files))}>${this._busy ? 'Uploading…' : 'Browse files'}</button></div>
         </section>
         ${this._body()}
       </div>`
@@ -1171,7 +1171,7 @@ class ManagedAdminBundles extends ManagedPage {
         <span class="filename">${b.filename}</span>
         <span class="meta"><span class="kind">${b.kind === 'stasis' ? 'Stasis' : 'Sourcemaps'}</span><span>${formatBytes(b.byteSize)}</span><span>${when}</span>${b.uploadedByLogin ? html`<span>@${b.uploadedByLogin}</span>` : nothing}</span>
       </span></span>
-      <span class="bundle-location">${repoRowSelect(this._data?.repos, b.repoId, (repoId) => this._setRepo(b, repoId))}</span>
+      <span class="bundle-location">${repoRowSelect(this._data?.repos, b.repoId, (repoId) => this._setRepo(b, repoId), this._role === 'admin')}</span>
       <span class="actions">
         <a class="action" aria-label=${`Download ${b.filename}`} href=${`/api/admin/bundles/${encodeURIComponent(b.id)}`}><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8m-3-3 3 3 3-3M3 11v3h10v-3"/></svg></a>
         <button type="button" class="action danger" aria-label=${`Delete ${b.filename}`} @click=${() => this._delete(b)}>${ADMIN_DELETE_ICON}</button>

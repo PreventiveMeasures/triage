@@ -14,6 +14,7 @@
 //   GET  /api/reports/<id>/triage/history?finding=<fid> → one visible finding's triage trail, newest first | 400/401/404
 //   GET  /api/avatar/<id>        → cached avatar bytes by user id | 401/404
 //   GET  /api/admin/users        → admin-only user list | 401/403
+//   GET  /api/admin/history      → paginated activity (admin), team content activity (manage) | 401/403
 //   POST /api/admin/set-role     → admin sets another user's role | 401/403/404
 //   GET  /api/admin/repositories → admin repo list (each flagged selected) | 401/403
 //   POST /api/admin/repositories/select → admin selects/deactivates a repo | 401/403
@@ -58,11 +59,14 @@ import { CONFIG_PATH, type ServerInfo } from '../common/server-info.ts'
 import { collectRepos, installUrl } from './github-app.ts'
 import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, ensureUserAccessToken, handleCallback } from './github-oauth.ts'
 import { clearCookie, endSession, readSession } from './session.ts'
+import type { ActivityContext, ActivityInput } from './activity.ts'
+import { contentAccess } from './content-access.ts'
 
 const SESSION_PATH = '/api/auth/session'
 const AVATAR_PREFIX = '/api/avatar/'
 const LOGOUT_PATH = '/api/auth/logout'
 const ADMIN_USERS_PATH = '/api/admin/users'
+const ADMIN_HISTORY_PATH = '/api/admin/history'
 const ADMIN_MODELS_PATH = '/api/admin/models'
 const SET_ROLE_PATH = '/api/admin/set-role'
 const ADMIN_REPOS_PATH = '/api/admin/repositories'
@@ -88,6 +92,43 @@ const TEAM_REMOVE_REPO_PATH = '/api/admin/teams/remove-repo'
 const TEAM_SET_MEMBER_PATH = '/api/admin/teams/set-member'
 const TEAM_REMOVE_MEMBER_PATH = '/api/admin/teams/remove-member'
 const MAX_TEAM_NAME = 100
+
+function activity(deps: ManagedHttpDeps, user: StoredUser, kind: ActivityInput['kind'], action: string, context: Pick<ActivityInput, 'repo' | 'reportId' | 'bundleId' | 'report' | 'repoId' | 'repoDirectory'> = {}): Promise<void> {
+  return deps.db.recordActivity({ kind, actor: user.login, action, ...context }, Date.now())
+}
+
+async function repositoryName(deps: ManagedHttpDeps, repoId: number | null | undefined): Promise<string | null> {
+  if (repoId == null) return null
+  return (await deps.db.listAllRepos()).find(repo => repo.repoId === repoId)?.fullName ?? null
+}
+
+// Workspace history is authorized BEFORE filtering, counting, or paging.
+// Managers get content activity for their currently accessible team content;
+// even the displayed report context must come from those accessible reports.
+async function handleHistory(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
+  const s = await readManageSession(res, deps, cookie)
+  if (s == null) return
+  const page = Number(query.get('page') ?? 1)
+  const limit = Number(query.get('limit') ?? 100)
+  const kind = query.get('kind') ?? 'all'
+  const search = (query.get('q') ?? '').trim()
+  if (!Number.isSafeInteger(page) || page < 1 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100
+    || !['all', 'triage', 'upload', 'visibility', 'access', 'repository', 'delete'].includes(kind) || search.length > 500) {
+    sendJson(res, 400, { error: 'bad-request' }); return
+  }
+  let contexts: ActivityContext[] | null = null
+  if (s.user.role !== 'admin') {
+    const findings = new Map<string, ActivityContext>()
+    const reports = kind === 'all' || kind === 'triage' ? await deps.db.listActivityReports(s.user.id) : []
+    for (const report of reports) {
+      for (const finding of await visibleFindingIds(deps, s.user, report.reportId)) {
+        if (!findings.has(finding)) findings.set(finding, { finding, ...report })
+      }
+    }
+    contexts = [...findings.values()]
+  }
+  sendJson(res, 200, await deps.db.listActivity({ page, limit, kind, query: search, contexts, userId: s.user.id }))
+}
 
 export interface ManagedHttpDeps {
   config: ManagedConfig
@@ -194,8 +235,10 @@ async function handleSetRole(req: IncomingMessage, res: ServerResponse, deps: Ma
   const role = (body as { role?: unknown } | null)?.role
   if (typeof userId !== 'string' || !isRole(role)) { sendJson(res, 400, { error: 'bad-request' }); return }
   if (userId === s.user.id) { sendJson(res, 403, { error: 'cannot-change-own-role' }); return }
+  const target = (await deps.db.listUsers()).find(user => user.id === userId)
   const ok = await deps.db.setUserRole(userId, role)
   if (!ok) { sendJson(res, 404, { error: 'not-found' }); return }
+  if (target?.role !== role) await activity(deps, s.user, 'access', `changed ${target?.login ?? userId}'s role to ${role}`)
   sendJson(res, 200, { ok: true })
 }
 
@@ -302,17 +345,20 @@ async function handleListRepositories(req: IncomingMessage, res: ServerResponse,
 // access (never trust a client-supplied id) and capture the server-derived read
 // context (installation id, default branch). A PRIVATE repo with no installation
 // can't be read server-side → 409. Stores via selectRepo (upsert).
-async function selectRepository(res: ServerResponse, deps: ManagedHttpDeps, userId: string, repoId: number): Promise<void> {
+async function selectRepository(res: ServerResponse, deps: ManagedHttpDeps, user: StoredUser, repoId: number): Promise<void> {
+  const userId = user.id
   const token = await ensureUserAccessToken(deps.config, deps.db, userId, Date.now())
   const { repositories } = await collectRepos(deps.config, token)
   const repo = repositories.find((r) => r.id === repoId)
   if (repo == null) { sendJson(res, 404, { error: 'repo-not-accessible' }); return }
   if (repo.private && repo.installationId == null) { sendJson(res, 409, { error: 'repo-not-readable' }); return }
+  const alreadySelected = (await deps.db.listSelectedRepos()).some(row => row.repoId === repoId)
   await deps.db.selectRepo({
     repoId: repo.id, fullName: repo.fullName, private: repo.private,
     installationId: repo.installationId, defaultBranch: repo.defaultBranch,
     htmlUrl: repo.htmlUrl, addedBy: userId,
   }, Date.now())
+  if (!alreadySelected) await activity(deps, user, 'repository', 'connected a repository', { repo: repo.fullName })
   sendJson(res, 200, { ok: true, selected: true })
 }
 
@@ -331,8 +377,13 @@ async function handleSelectRepository(req: IncomingMessage, res: ServerResponse,
   if (typeof repoId !== 'number' || !Number.isSafeInteger(repoId) || typeof selected !== 'boolean') {
     sendJson(res, 400, { error: 'bad-request' }); return
   }
-  if (!selected) { await deps.db.deactivateRepo(repoId); sendJson(res, 200, { ok: true, selected: false }); return }
-  await selectRepository(res, deps, s.user.id, repoId)
+  if (!selected) {
+    const repo = (await deps.db.listSelectedRepos()).find(row => row.repoId === repoId)
+    await deps.db.deactivateRepo(repoId)
+    if (repo) await activity(deps, s.user, 'repository', 'deactivated a repository', { repo: repo.fullName })
+    sendJson(res, 200, { ok: true, selected: false }); return
+  }
+  await selectRepository(res, deps, s.user, repoId)
 }
 
 async function repositoryFindingIds(deps: ManagedHttpDeps, reports: { id: string, filename: string }[]): Promise<Set<string>> {
@@ -420,6 +471,7 @@ async function handleRemoveRepository(req: IncomingMessage, res: ServerResponse,
   for (const bundle of bundles) await deps.bundleStore.delete(bundle.id).catch(() => {})
   const deletedTriage = await deps.db.deleteTriage(triageIds)
   await deps.db.deleteRepo(repoId)
+  await activity(deps, s.user, 'delete', `removed a repository (${deletedReports} reports, ${deletedBundles} bundles, ${deletedTriage} triage entries)`, { repo: repo.fullName })
   sendJson(res, 200, { ok: true, deletedReports, deletedBundles, deletedTriage })
 }
 
@@ -492,12 +544,17 @@ async function handleSetReportRepo(req: IncomingMessage, res: ServerResponse, de
   const directory = (body as { directory?: unknown } | null)?.directory ?? ''
   if (typeof reportId !== 'string') { sendJson(res, 400, { error: 'bad-request' }); return }
   const report = await deps.db.getReport(reportId)
-  if (report == null) { sendJson(res, 404, { error: 'no-report' }); return }
+  const access = await contentAccess(deps.db, s.user)
+  if (report == null || !access.report(report)) { sendJson(res, 404, { error: 'no-report' }); return }
   if (report.repoEmbedded) { sendJson(res, 409, { error: 'repo-in-report' }); return }
   if (!(await repoIdAllowed(deps, repoId))) { sendJson(res, 400, { error: 'bad-repo' }); return }
   const normalized = normalizeTeamPath(directory)
   if (!normalized.ok) { sendJson(res, 400, { error: 'bad-directory' }); return }
+  if (!access.report({ repoId: repoId as number | null, repoDirectory: normalized.path ?? '' })) { sendJson(res, 403, { error: 'repository-access-denied' }); return }
   if (!(await deps.db.setReportRepo(reportId, repoId as number | null, normalized.path ?? ''))) { sendJson(res, 404, { error: 'no-report' }); return }
+  if (report.repoId !== repoId || report.repoDirectory !== (repoId == null ? '' : normalized.path ?? '')) {
+    await activity(deps, s.user, 'repository', repoId == null ? 'detached a report from its repository' : `assigned a report to repository path ${normalized.path || '/'}`, { reportId, report: report.filename, repo: await repositoryName(deps, (repoId as number | null) ?? report.repoId) })
+  }
   sendJson(res, 200, { ok: true, repoId, repoDirectory: normalized.path ?? '' })
 }
 
@@ -511,7 +568,11 @@ async function handleSetReportVisible(req: IncomingMessage, res: ServerResponse,
   const reportId = (body as { reportId?: unknown } | null)?.reportId
   const visible = (body as { visible?: unknown } | null)?.visible
   if (typeof reportId !== 'string' || typeof visible !== 'boolean') { sendJson(res, 400, { error: 'bad-request' }); return }
+  const report = await deps.db.getReport(reportId)
+  const access = await contentAccess(deps.db, s.user)
+  if (report == null || !access.report(report)) { sendJson(res, 404, { error: 'no-report' }); return }
   if (!(await deps.db.setReportVisible(reportId, visible))) { sendJson(res, 404, { error: 'no-report' }); return }
+  if (report.visible !== visible) await activity(deps, s.user, 'visibility', visible ? 'published a report' : 'hid a report', { reportId, report: report.filename, repo: await repositoryName(deps, report.repoId) })
   sendJson(res, 200, { ok: true, visible })
 }
 
@@ -526,7 +587,12 @@ async function handleSetBundleRepo(req: IncomingMessage, res: ServerResponse, de
   const repoId = (body as { repoId?: unknown } | null)?.repoId ?? null
   if (typeof bundleId !== 'string') { sendJson(res, 400, { error: 'bad-request' }); return }
   if (!(await repoIdAllowed(deps, repoId))) { sendJson(res, 400, { error: 'bad-repo' }); return }
+  const bundle = await deps.db.getBundle(bundleId)
+  const access = await contentAccess(deps.db, s.user)
+  if (bundle == null || !access.bundle(bundle)) { sendJson(res, 404, { error: 'no-bundle' }); return }
+  if (!access.bundle({ repoId: repoId as number | null })) { sendJson(res, 403, { error: 'repository-access-denied' }); return }
   if (!(await deps.db.setBundleRepo(bundleId, repoId as number | null))) { sendJson(res, 404, { error: 'no-bundle' }); return }
+  if (bundle.repoId !== repoId) await activity(deps, s.user, 'repository', repoId == null ? 'detached a bundle from its repository' : 'assigned a bundle to a repository', { bundleId, report: bundle.filename, repo: await repositoryName(deps, (repoId as number | null) ?? bundle.repoId) })
   sendJson(res, 200, { ok: true })
 }
 
@@ -537,10 +603,15 @@ async function handleSetBundleRepo(req: IncomingMessage, res: ServerResponse, de
 async function handleListReports(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   const s = await readManageSession(res, deps, cookie)
   if (s == null) return
+  const access = await contentAccess(deps.db, s.user)
+  const bundles = new Set((await deps.db.listBundles()).filter(access.bundle).map(bundle => bundle.id))
+  const reports = (await deps.db.listReports()).filter(access.report).map(report =>
+    report.bundleId && !bundles.has(report.bundleId) ? { ...report, bundleId: null, bundleFilename: null } : report)
   sendJson(res, 200, {
-    reports: await deps.db.listReports(),
+    reports,
     maxBytes: deps.config.maxReportBytes,
-    repos: selectableRepos(await deps.db.listSelectedRepos()),
+    repos: selectableRepos(await deps.db.listSelectedRepos()).filter(access.bundle),
+    repoScopes: access.scopes,
   })
 }
 
@@ -548,11 +619,11 @@ async function handleListReports(res: ServerResponse, deps: ManagedHttpDeps, coo
 // declared integrity that has a stored bundle wins (bundleId set). When none is
 // stored yet, keep the first declared integrity so a later bundle upload of it
 // re-links (see linkReportsToBundle). Returns the (bundleId, integrity) to store.
-async function resolveReportBundle(deps: ManagedHttpDeps, bytes: Buffer): Promise<{ bundleId: string | null; integrity: string | null }> {
+async function resolveReportBundle(deps: ManagedHttpDeps, bytes: Buffer, access: Awaited<ReturnType<typeof contentAccess>>): Promise<{ bundleId: string | null; integrity: string | null }> {
   const hashes = reportBundleHashes(bytes)
   for (const h of hashes) {
     const b = await deps.db.getBundleByIntegrity(h)
-    if (b != null) return { bundleId: b.id, integrity: h }
+    if (b != null && access.bundle(b)) return { bundleId: b.id, integrity: h }
   }
   return { bundleId: null, integrity: hashes[0] ?? null }
 }
@@ -604,10 +675,12 @@ async function handleUploadReport(req: IncomingMessage, res: ServerResponse, dep
     if (!legacyRepo.ok) return
     matchedRepo = legacyRepo.repoId == null ? null : selected.find((repo) => repo.repoId === legacyRepo.repoId) ?? null
   }
+  const access = await contentAccess(deps.db, s.user)
+  if (!access.report({ repoId: matchedRepo?.repoId ?? null, repoDirectory: directory })) { sendJson(res, 403, { error: 'repository-access-denied' }); return }
   const id = randomUUID()
   const contentType = (firstHeader(req.headers['content-type']) ?? '').split(';', 1)[0]!.trim() || 'application/json'
   const sha256 = createHash('sha256').update(bytes).digest('base64url')
-  const { bundleId, integrity } = await resolveReportBundle(deps, bytes)
+  const { bundleId, integrity } = await resolveReportBundle(deps, bytes, access)
   await deps.reportStore.put(id, bytes)
   try {
     await deps.db.insertReport({
@@ -632,7 +705,7 @@ async function handleGetReport(res: ServerResponse, deps: ManagedHttpDeps, cooki
   const s = await readManageSession(res, deps, cookie)
   if (s == null) return
   const rec = await deps.db.getReport(id)
-  if (rec == null) { sendJson(res, 404, { error: 'no-report' }); return }
+  if (rec == null || !(await contentAccess(deps.db, s.user)).report(rec)) { sendJson(res, 404, { error: 'no-report' }); return }
   const bytes = await deps.reportStore.get(id)
   if (bytes == null) { sendJson(res, 503, { error: 'unavailable' }); return }
   // The stored filename is already control-/path-stripped (sanitizeReportFilename
@@ -655,9 +728,13 @@ async function handleDeleteReport(req: IncomingMessage, res: ServerResponse, dep
   const s = await checkMutation(req, res, deps, cookie)
   if (s == null) return
   if (!requireManageRole(res, s.user)) return
+  const report = await deps.db.getReport(id)
+  const access = await contentAccess(deps.db, s.user)
+  if (report == null || !access.report(report)) { sendJson(res, 404, { error: 'no-report' }); return }
   const existed = await deps.db.deleteReport(id)
   await deps.reportStore.delete(id).catch((err) => { console.warn('managed: report bytes delete failed:', err) })
   if (!existed) { sendJson(res, 404, { error: 'no-report' }); return }
+  await activity(deps, s.user, 'delete', 'deleted a report', { repoId: report.repoId, repoDirectory: report.repoDirectory, reportId: id, report: report.filename, repo: await repositoryName(deps, report.repoId) })
   sendJson(res, 200, { ok: true })
 }
 
@@ -667,10 +744,12 @@ async function handleDeleteReport(req: IncomingMessage, res: ServerResponse, dep
 async function handleListBundles(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   const s = await readManageSession(res, deps, cookie)
   if (s == null) return
+  const access = await contentAccess(deps.db, s.user)
   sendJson(res, 200, {
-    bundles: await deps.db.listBundles(),
+    bundles: (await deps.db.listBundles()).filter(access.bundle),
     maxBytes: deps.config.maxBundleBytes,
-    repos: selectableRepos(await deps.db.listSelectedRepos()),
+    repos: selectableRepos(await deps.db.listSelectedRepos()).filter(access.bundle),
+    repoScopes: access.scopes,
   })
 }
 
@@ -695,12 +774,15 @@ async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, dep
   if (bytes.length === 0) { sendJson(res, 400, { error: 'empty' }); return }
   const repo = await resolveUploadRepoId(req, res, deps)
   if (!repo.ok) return
+  const access = await contentAccess(deps.db, s.user)
+  if (!access.bundle(repo)) { sendJson(res, 403, { error: 'repository-access-denied' }); return }
   const integrity = bundleIntegrity(bytes)
   const filename = sanitizeFilename(firstHeader(req.headers['x-bundle-filename']), 'bundle')
   const existing = await deps.db.getBundleByIntegrity(integrity)
   if (existing != null) {
-    // Same bytes already stored → dedupe; the link to any referencing reports
-    // was already made when this integrity first landed.
+    if (!access.bundle(existing)) { sendJson(res, 409, { error: 'bundle-conflict' }); return }
+    // Reconcile reports newly accessible to this uploader as well.
+    await deps.db.linkReportsToBundle(integrity, existing.id, s.user.role === 'admin' ? undefined : s.user.id)
     sendJson(res, 200, { id: existing.id, integrity, filename: existing.filename, deduped: true })
     return
   }
@@ -717,11 +799,15 @@ async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, dep
     // between our dedup check and this insert — treat that as a dedup, not a 500.
     // Any other failure rethrows.
     const raced = await deps.db.getBundleByIntegrity(integrity)
-    if (raced != null) { sendJson(res, 200, { id: raced.id, integrity, filename: raced.filename, deduped: true }); return }
+    if (raced != null && !access.bundle(raced)) { sendJson(res, 409, { error: 'bundle-conflict' }); return }
+    if (raced != null) {
+      await deps.db.linkReportsToBundle(integrity, raced.id, s.user.role === 'admin' ? undefined : s.user.id)
+      sendJson(res, 200, { id: raced.id, integrity, filename: raced.filename, deduped: true }); return
+    }
     throw err
   }
   // Auto-link reports that declared this integrity before the bundle existed.
-  await deps.db.linkReportsToBundle(integrity, id)
+  await deps.db.linkReportsToBundle(integrity, id, s.user.role === 'admin' ? undefined : s.user.id)
   sendJson(res, 201, { id, integrity, filename, byteSize: bytes.length, repoId: repo.repoId })
 }
 
@@ -732,7 +818,7 @@ async function handleGetBundle(res: ServerResponse, deps: ManagedHttpDeps, cooki
   const s = await readManageSession(res, deps, cookie)
   if (s == null) return
   const rec = await deps.db.getBundle(id)
-  if (rec == null) { sendJson(res, 404, { error: 'no-bundle' }); return }
+  if (rec == null || !(await contentAccess(deps.db, s.user)).bundle(rec)) { sendJson(res, 404, { error: 'no-bundle' }); return }
   const bytes = await deps.bundleStore.get(id)
   if (bytes == null) { sendJson(res, 503, { error: 'unavailable' }); return }
   const dispoName = rec.filename.replaceAll('"', '')
@@ -754,9 +840,13 @@ async function handleDeleteBundle(req: IncomingMessage, res: ServerResponse, dep
   const s = await checkMutation(req, res, deps, cookie)
   if (s == null) return
   if (!requireManageRole(res, s.user)) return
+  const bundle = await deps.db.getBundle(id)
+  const access = await contentAccess(deps.db, s.user)
+  if (bundle == null || !access.bundle(bundle)) { sendJson(res, 404, { error: 'no-bundle' }); return }
   const existed = await deps.db.deleteBundle(id)
   await deps.bundleStore.delete(id).catch((err) => { console.warn('managed: bundle bytes delete failed:', err) })
   if (!existed) { sendJson(res, 404, { error: 'no-bundle' }); return }
+  await activity(deps, s.user, 'delete', 'deleted a bundle', { repoId: bundle.repoId, bundleId: id, report: bundle.filename, repo: await repositoryName(deps, bundle.repoId) })
   sendJson(res, 200, { ok: true })
 }
 
@@ -801,7 +891,7 @@ async function canViewReport(deps: ManagedHttpDeps, user: StoredUser, reportId: 
   const report = await deps.db.getReport(reportId)
   if (report == null) return false
   if (user.role === 'admin') return true
-  if (!report.visible) return false
+  if (!report.visible && user.role !== 'manage') return false
   return deps.db.userCanReadReport(user.id, reportId)
 }
 
@@ -856,7 +946,7 @@ async function canTriageReport(deps: ManagedHttpDeps, user: StoredUser, reportId
   const report = await deps.db.getReport(reportId)
   if (report == null) return false
   if (user.role === 'admin') return true
-  if (!report.visible) return false
+  if (!report.visible && user.role !== 'manage') return false
   return deps.db.userCanReadReport(user.id, reportId)
 }
 
@@ -983,7 +1073,7 @@ async function handleSetReportTriage(req: IncomingMessage, res: ServerResponse, 
   if (parsed.some(([findingId]) => !visible.has(findingId))) {
     sendJson(res, 404, { error: 'no-finding' }); return
   }
-  await deps.db.setTriageEntries(parsed, s.user.id, s.user.login, Date.now())
+  await deps.db.setTriageEntries(parsed, s.user.id, s.user.login, Date.now(), id)
   sendJson(res, 200, { ok: true })
 }
 
@@ -1012,6 +1102,7 @@ async function handleCreateTeam(req: IncomingMessage, res: ServerResponse, deps:
   if (name === '' || name.length > MAX_TEAM_NAME) { sendJson(res, 400, { error: 'bad-name' }); return }
   const id = randomUUID()
   if (!(await deps.db.createTeam(id, name, Date.now()))) { sendJson(res, 409, { error: 'name-taken' }); return }
+  await activity(deps, s.user, 'access', `created team ${name}`)
   sendJson(res, 201, { id, name })
 }
 
@@ -1026,9 +1117,11 @@ async function handleRenameTeam(req: IncomingMessage, res: ServerResponse, deps:
   const rawName = (body as { name?: unknown } | null)?.name
   const name = typeof rawName === 'string' ? rawName.trim() : ''
   if (typeof teamId !== 'string' || name === '' || name.length > MAX_TEAM_NAME) { sendJson(res, 400, { error: 'bad-name' }); return }
+  const team = await deps.db.getTeam(teamId)
   const result = await deps.db.renameTeam(teamId, name, Date.now())
   if (result === 'not-found') { sendJson(res, 404, { error: 'no-team' }); return }
   if (result === 'name-taken') { sendJson(res, 409, { error: 'name-taken' }); return }
+  if (team?.name !== name) await activity(deps, s.user, 'access', `renamed team ${team?.name ?? teamId} to ${name}`)
   sendJson(res, 200, { ok: true, name })
 }
 
@@ -1040,7 +1133,9 @@ async function handleDeleteTeam(req: IncomingMessage, res: ServerResponse, deps:
   try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
   const teamId = (body as { teamId?: unknown } | null)?.teamId
   if (typeof teamId !== 'string') { sendJson(res, 400, { error: 'bad-request' }); return }
+  const team = await deps.db.getTeam(teamId)
   if (!(await deps.db.deleteTeam(teamId))) { sendJson(res, 404, { error: 'no-team' }); return }
+  await activity(deps, s.user, 'access', `deleted team ${team?.name ?? teamId}`)
   sendJson(res, 200, { ok: true })
 }
 
@@ -1059,9 +1154,13 @@ async function handleSetTeamRepo(req: IncomingMessage, res: ServerResponse, deps
   }
   const path = normalizeTeamPath((body as { path?: unknown }).path)
   if (!path.ok) { sendJson(res, 400, { error: 'bad-path' }); return }
-  if ((await deps.db.getTeam(teamId)) == null) { sendJson(res, 404, { error: 'no-team' }); return }
+  const team = (await deps.db.listTeams()).find(row => row.id === teamId)
+  if (team == null) { sendJson(res, 404, { error: 'no-team' }); return }
   if (!(await deps.db.listSelectedRepos()).some((r) => r.repoId === repoId)) { sendJson(res, 400, { error: 'repo-not-selected' }); return }
   await deps.db.setTeamRepo(teamId, repoId, path.path)
+  if (!team.repos.some(repo => repo.repoId === repoId && (!repo.path || repo.path === (path.path ?? '')))) {
+    await activity(deps, s.user, 'access', `granted team ${team.name} access to ${path.path || '/'}`, { repo: await repositoryName(deps, repoId) })
+  }
   sendJson(res, 200, { ok: true })
 }
 
@@ -1080,6 +1179,7 @@ async function handleRemoveTeamRepo(req: IncomingMessage, res: ServerResponse, d
   const path = normalizeTeamPath(rawPath)
   if (!path.ok) { sendJson(res, 400, { error: 'bad-path' }); return }
   if (!(await deps.db.removeTeamRepo(teamId, repoId, rawPath === undefined ? undefined : path.path))) { sendJson(res, 404, { error: 'not-linked' }); return }
+  await activity(deps, s.user, 'access', `removed team ${(await deps.db.getTeam(teamId))?.name ?? teamId}'s access to ${rawPath === undefined ? 'all paths' : path.path || '/'}`, { repo: await repositoryName(deps, repoId) })
   sendJson(res, 200, { ok: true })
 }
 
@@ -1093,9 +1193,16 @@ async function handleSetTeamMember(req: IncomingMessage, res: ServerResponse, de
   const teamId = (body as { teamId?: unknown } | null)?.teamId
   const userId = (body as { userId?: unknown } | null)?.userId
   if (typeof teamId !== 'string' || typeof userId !== 'string') { sendJson(res, 400, { error: 'bad-request' }); return }
-  if ((await deps.db.getTeam(teamId)) == null) { sendJson(res, 404, { error: 'no-team' }); return }
-  if (!(await deps.db.listUserOptions()).some((u) => u.id === userId)) { sendJson(res, 404, { error: 'no-user' }); return }
-  await deps.db.setTeamMember(teamId, userId, parseTeamUserPermissions(body))
+  const team = (await deps.db.listTeams()).find(row => row.id === teamId)
+  if (team == null) { sendJson(res, 404, { error: 'no-team' }); return }
+  const user = (await deps.db.listUserOptions()).find(row => row.id === userId)
+  if (user == null) { sendJson(res, 404, { error: 'no-user' }); return }
+  const permissions = parseTeamUserPermissions(body)
+  const member = team.members.find(row => row.userId === userId)
+  await deps.db.setTeamMember(teamId, userId, permissions)
+  if (!member || member.dependencies !== permissions.dependencies || member.security !== permissions.security) {
+    await activity(deps, s.user, 'access', `set ${user.login}'s membership in ${team.name} (dependencies: ${permissions.dependencies ? 'on' : 'off'}, security: ${permissions.security ? 'on' : 'off'})`)
+  }
   sendJson(res, 200, { ok: true })
 }
 
@@ -1109,6 +1216,9 @@ async function handleRemoveTeamMember(req: IncomingMessage, res: ServerResponse,
   const userId = (body as { userId?: unknown } | null)?.userId
   if (typeof teamId !== 'string' || typeof userId !== 'string') { sendJson(res, 400, { error: 'bad-request' }); return }
   if (!(await deps.db.removeTeamMember(teamId, userId))) { sendJson(res, 404, { error: 'not-member' }); return }
+  const team = await deps.db.getTeam(teamId)
+  const user = (await deps.db.listUserOptions()).find(row => row.id === userId)
+  await activity(deps, s.user, 'access', `removed ${user?.login ?? userId} from team ${team?.name ?? teamId}`)
   sendJson(res, 200, { ok: true })
 }
 
@@ -1170,6 +1280,10 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       return
     }
     // Admin: list users (admin-only).
+    if (path === ADMIN_HISTORY_PATH) {
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      await handleHistory(res, deps, cookie, url.searchParams); return
+    }
     if (path === ADMIN_USERS_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }
       const s = await readSession(config, db, cookie, Date.now())

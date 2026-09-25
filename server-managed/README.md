@@ -35,3 +35,48 @@ E2E and local mode do not use this page router. A mode switch returns to `/`
 and invalidates the old managed history entries, so Back cannot reopen them.
 History contains a navigation generation only, with no report or triage data.
 The server mode's advertised default still applies on reload.
+
+# Activity history
+
+`/manage/history` reads `GET /api/admin/history?page=1&limit=100&kind=all&q=`.
+The server returns `{ history, total, page, limit }`, newest first, with at most
+100 entries per page. Type and text filters apply before pagination. Supported
+types are `triage`, `upload`, `visibility`, `access`, `repository`, and `delete`.
+
+Admins see all workspace activity. Managers see uploads, publication changes,
+assignments, and triage involving reports and bundles within their current team
+access. Reports also obey team directory scopes, including unpublished reports.
+Repository administration, team changes, and role changes remain admin-only.
+Counts, search results, and displayed context obey the same restrictions.
+Deletion events use the content's repository/path at deletion and the manager's
+current grants. Other events for removed content, and legacy bundle events
+without durable target IDs, remain admin-only.
+The client retains history only in memory; responses are never HTTP-cached.
+
+Uploads and triage changes already stored in the database appear automatically.
+New uploads are recorded atomically with their metadata. Report publication,
+repository assignments and connections, content deletion, roles, teams, and
+team access changes are recorded after successful management requests.
+Repeated edits that change nothing, failed requests, and deduplicated uploads
+do not add entries. Upload and management snapshots survive content deletion.
+Triage history follows `TRIAGE_HISTORY_LIMIT` and explicit triage deletion.
+
+Older management actions were not recorded and cannot be reconstructed; older
+triage events may have no originating report name. The feed contains actors,
+actions, targets, and timestamps, not annotation bodies or credentials.
+
+# Manager content access
+
+Managers manage reports and bundles and oversee triage only in repositories
+assigned to their teams. Report access also requires a matching team directory
+scope; bundles use repository access. These rules apply to catalogues, downloads,
+uploads, visibility changes, assignment changes, deletion, and triage. Managers
+can review unpublished reports in scope. Viewer and triage roles still require
+publication. Administrators retain unrestricted content access.
+
+Managers cannot create unassigned content, detach content, or move it outside
+their team scopes. Repository pickers contain only allowed repositories. Reports
+without embedded repository metadata can use the repository and directory
+controls on the upload page. Bundle deduplication never returns inaccessible
+bundle IDs or names, and manager uploads only auto-link accessible reports.
+Repository connections, teams, memberships, and user roles are admin-only.

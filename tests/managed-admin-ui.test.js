@@ -95,7 +95,7 @@ for (const [tag, field, path, payload] of [
   ['bundles', '_data', '/api/admin/bundles', { bundles: [{ id: 'b' }], repos: [] }],
   ['teams', '_data', '/api/admin/teams', { teams: [{ id: 't' }] }],
   ['repos', '_data', '/api/admin/repositories', { repositories: [repo], total: 1 }],
-  ['history', '_history', '/api/admin/history', { history: [{ id: 'h', kind: 'triage', reportId: 'r' }] }],
+  ['history', '_history', '/api/admin/history', { history: [{ id: 'h', kind: 'triage', reportId: 'r' }], total: 1, page: 1, limit: 100 }],
 ]) {
   test(`${tag} retains loaded content on refresh and failure without probing the session`, async (t) => {
     const Page = customElements.get(`managed-admin-${tag}`)
@@ -152,6 +152,72 @@ test('navigation reuses an in-flight collection request without updating detache
   await Promise.all([first, second])
   assert.equal(firstPage._data, null)
   assert.equal(secondPage._data.reports[0].id, 'current')
+})
+
+test('history requests server pages and filters, and an old response cannot replace a newer result', async (t) => {
+  const History = customElements.get('managed-admin-history')
+  const page = createPage(History)
+  page.session = adminSession
+  const pending = []
+  t.mock.method(globalThis, 'fetch', (url, { signal }) => new Promise(resolve => { pending.push({ url: new URL(url, 'http://localhost'), signal, resolve }) }))
+  page._filter = 'access'
+  page._query = 'alice & team'
+  const older = page._load(2)
+  assert.equal(pending[0].url.pathname, '/api/admin/history')
+  assert.deepEqual(Object.fromEntries(pending[0].url.searchParams), { page: '2', limit: '100', kind: 'access', q: 'alice & team' })
+  page._filter = 'triage'
+  const newer = page._load()
+  assert.equal(pending[0].signal.aborted, false, 'shared reads can complete for future navigation')
+  pending[1].resolve(Response.json({ history: [{ id: 'new' }], total: 205, page: 1, limit: 100 }))
+  await newer
+  pending[0].resolve(Response.json({ history: [{ id: 'stale' }], total: 1, page: 2, limit: 100 }))
+  await older
+  assert.equal(page._history[0].id, 'new')
+  assert.equal(page._total, 205)
+  assert.equal(page._page, 1)
+  const next = page._load(3)
+  assert.equal(page._page, 1, 'keep the displayed page until the new request succeeds')
+  pending[2].resolve(Response.json({ history: [{ id: 'last' }], total: 205, page: 3, limit: 100 }))
+  await next
+  assert.equal(page._page, 3)
+  page._query = 'uncached query'
+  const malformed = page._load()
+  pending[3].resolve(Response.json({ history: [] }))
+  await malformed
+  assert.equal(page._history[0].id, 'last')
+  assert.match(page._error, /No history/u)
+})
+
+test('history search debounces, cancels stale work immediately, and actor navigation reloads the first page', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  globalThis.document = { removeEventListener() {} }
+  t.after(() => { delete globalThis.document })
+  const History = customElements.get('managed-admin-history')
+  const page = createPage(History)
+  const pending = []
+  t.mock.method(globalThis, 'fetch', (url, { signal }) => new Promise(resolve => { pending.push({ url, signal, resolve }) }))
+  const initial = page._load(2)
+  const consumer = page._loadRequest
+  page._search('a')
+  assert.equal(consumer.signal.aborted, true)
+  assert.equal(pending[0].signal.aborted, false, 'shared reads survive consumer cancellation')
+  pending[0].resolve(Response.json({ history: [], total: 0, page: 1 }))
+  await initial
+  assert.equal(page._loading, true, 'debounced search remains busy after the aborted request settles')
+  page._search('alice')
+  t.mock.timers.tick(249)
+  assert.equal(pending.length, 1)
+  t.mock.timers.tick(1)
+  assert.equal(pending.length, 2)
+  assert.match(pending[1].url, /q=alice/u)
+  page._filter = 'access'
+  page._onActorFilter({ detail: { actor: 'bob' } })
+  assert.equal(pending[1].signal.aborted, false)
+  assert.match(pending[2].url, /page=1&limit=100&kind=all&q=bob/u)
+  page._search('cancelled')
+  page.disconnectedCallback()
+  t.mock.timers.tick(1000)
+  assert.equal(pending.length, 3, 'leaving the page cancels its scheduled request')
 })
 
 test('refreshing reports preserves the open preview until that report is removed', async (t) => {
