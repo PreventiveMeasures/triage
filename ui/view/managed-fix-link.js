@@ -1,9 +1,11 @@
 import { css, html, nothing } from 'lit'
+import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { StateElement } from '@rray/frontend/state-element'
 import { isHttpUrl } from '../../report/index.js'
 import { parseGithubIssueUrl, parseGithubPrUrl } from '../../common/github-pr.ts'
 import { managedPullRequests, subscribePullRequests } from './managed-pull-requests.js'
 import { hideTooltip, installShadowTooltipListener } from './tooltip.js'
+import { GITHUB_ICON_SVG } from './icons.js'
 
 const labels = { open: 'Open', draft: 'Draft', closed: 'Closed', merged: 'Merged' }
 const prIcon = html`<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="4" cy="3" r="1.75"/><circle cx="4" cy="13" r="1.75"/><circle cx="12" cy="13" r="1.75"/><path d="M4 4.75v6.5M12 11.25V5a2 2 0 0 0-2-2H8m2-2L8 3l2 2"/></svg>`
@@ -40,7 +42,9 @@ class ManagedFixLink extends StateElement {
       text-align: left; white-space: normal; overflow-wrap: anywhere; letter-spacing: normal; cursor: default;
     }
     .preview-header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-    .preview-ref { min-width: 0; color: var(--muted); font-size: 12px; }
+    .preview-ref { display: inline-flex; align-items: baseline; gap: .4rem; min-width: 0; color: var(--muted); font-size: 12px; }
+    .preview-ref svg { align-self: start; margin-top: .2em; }
+    .preview-ref span { min-width: 0; }
     .preview-title { margin-top: 8px; font-size: 15px; font-weight: 600; line-height: 1.4; }
     .preview .preview-header .status { flex: none; margin: 0; font-size: 12px; line-height: 1.4; }
     @media print {
@@ -172,7 +176,7 @@ class ManagedFixLink extends StateElement {
       @focusin=${this._keepPreview} @focusout=${this._leavePreview}
       @click=${event => { event.stopPropagation(); this._hidePreview() }}>
       <div class="preview-header">
-        <span class="preview-ref">${name}</span>
+        <span class="preview-ref">${unsafeHTML(GITHUB_ICON_SVG)}<span>${name}</span></span>
         <span class=${`status ${data?.status ?? 'unknown'}`}>${icon}${data ? labels[data.status] : nothing}</span>
       </div>
       ${data ? html`<div class="preview-title">${data.title}</div>` : nothing}

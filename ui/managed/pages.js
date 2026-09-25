@@ -571,7 +571,7 @@ class ManagedAdminRepos extends ManagedPage {
         ? 'Manage connected repositories and their settings.'
         : this._scope === 'installed'
           ? 'Choose a repository the GitHub App can read. Installed repositories can be public or private.'
-          : 'Choose a public repository your GitHub account is involved with. Random public repositories are not listed.'}</p>${connected ? html`<span class="result-count">${this._data?.connectedCount ?? '…'} connected</span>` : nothing}</div>
+          : 'Choose a public repository your GitHub account is involved with.'}</p>${connected ? html`<span class="result-count">${this._data?.connectedCount ?? '…'} connected</span>` : nothing}</div>
       ${!connected && this._scope === 'installed' ? html`<div class="access-note">
         <p>Installed repositories are readable through the GitHub App. Install it on a repository or organization to make it available here.</p>
         <span class="access-action">${this._data?.installUrl ? html`<a class="btn" href=${this._data.installUrl} target="_blank" rel="noopener noreferrer">Configure GitHub access</a>` : html`<button type="button" class="btn" disabled>Configure GitHub access</button>`}</span>

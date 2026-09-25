@@ -9,9 +9,10 @@ import { highlightedCode } from './code-highlight.js'
 import { attachedBundle, bundleSource, focusCodePosition } from './focus-code.js'
 import { samePos } from './focus-code-history.js'
 import { FILE_ICONS, PRODUCER_LABELS, REPORT_LOGOS, displayName, findingBrand, groupOf } from './file-display.js'
-import { CLAUDE_MARK_PATH } from './icons.js'
+import { CLAUDE_MARK_PATH, GITHUB_ICON_SVG } from './icons.js'
 import { findingLinkFor } from './finding-link.js'
 import { managedCommentsFor } from './managed-comments.js'
+import { managedCommentTemplate } from './managed-comment.js'
 
 // All `<finding-row>` / `<finding-card>` shadow-DOM markup is built
 // here as Lit `html` template results (no `unsafeHTML`). Lit
@@ -641,9 +642,7 @@ const CODE_ICON = html`<svg viewBox="0 0 16 16" width="12" height="12" aria-hidd
 // this says WHERE it goes, which the text can't — `src/proxy.ts:42`
 // is the same string whichever repo it is in, and a card can carry
 // rows from several. The tooltip spells the target out.
-const GITHUB_ICON = html`<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
-  <path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/>
-</svg>`
+const GITHUB_ICON = unsafeHTML(GITHUB_ICON_SVG)
 
 // Just the mark. The reference it spells out rides on `data-tooltip`
 // and is drawn by the shared tooltip (view/tooltip.js) — one fixed
@@ -1407,12 +1406,7 @@ function tabBodyTemplate(f, isActive, idx, total, context, tabIds) {
       ${hasSeverityCorrection(f) && f.correctedSeverityReason ? html`<div class="severity-reason"><span class="severity-reason-label">Severity correction:</span> ${renderHighlighted(f.correctedSeverityReason)}</div>` : nothing}
       ${duplicatesTemplate(f, tabIds)}
       ${isManagedUiMode() ? managedCommentsFor(f).map(item => html`<div class="comment-block">
-        <span class="comment-label">${[
-          item.authorLogin,
-          item.createdAt == null ? '' : new Date(item.createdAt).toLocaleString(),
-          item.version > 1 && item.updatedAt != null ? `edited ${new Date(item.updatedAt).toLocaleString()}` : '',
-        ].filter(Boolean).join(' · ')}</span>
-        <div>${renderCommentText(item.body)}</div>
+        ${managedCommentTemplate(item, renderCommentText(item.body))}
       </div>`) : comment ? html`<div class="comment-block"><span class="comment-label">Comment:</span> ${renderCommentText(comment)}</div>` : nothing}
       ${fix
         ? html`<div class="fix-block"><span class="fix-label">Fix:</span> ${isHttpUrl(fix)
