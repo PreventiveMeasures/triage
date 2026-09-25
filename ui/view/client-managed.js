@@ -50,6 +50,14 @@ export async function fetchPullRequests(urls, csrfToken, signal) {
   return (await loadManagedBundle()).fetchPullRequests(urls, csrfToken, signal)
 }
 
+export async function fetchReportComments(id) {
+  return (await loadManagedBundle()).fetchReportComments(id)
+}
+
+export async function saveReportComment(reportId, entry, csrfToken) {
+  return (await loadManagedBundle()).saveReportComment(reportId, entry, csrfToken)
+}
+
 export async function pushReportTriage(id, entries, csrfToken) {
   return (await loadManagedBundle()).pushReportTriage(id, entries, csrfToken)
 }

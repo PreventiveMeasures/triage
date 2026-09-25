@@ -1125,6 +1125,12 @@ report.addEventListener('click', (e) => {
     if (!group) return
     const activeTab = activeTabFor(group)
     if (!canTriageFinding(activeTab)) return
+    if (isManagedUiMode()) {
+      import('./dialogs/managed-comments-dialog.js')
+        .then(({ openManagedCommentsDialog }) => openManagedCommentsDialog(activeTab, renderPreservingTableScroll))
+        .catch(() => showToast('Could not open comments. Please retry.'))
+      return
+    }
     const activeKey = tabKey(activeTab)
     const current = triageEntry(activeTab)?.comment ?? ''
     openCommentDialog({ initial: current, finding: activeTab }).then((next) => {

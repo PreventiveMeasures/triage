@@ -1,4 +1,4 @@
-import { duplicatesOf, getPackagesIndex, isReportIgnored, patchEntry, state } from '#client/index.js'
+import { duplicatesOf, getPackagesIndex, isManagedUiMode, isReportIgnored, patchEntry, state } from '#client/index.js'
 import { SEVERITY_ORDER, canDropRevalidation, displayedSeverity, isRevalidation, isRuledOut } from './format.js'
 // NOTE: filters.js imports from this module too (primaryTab / tabKey).
 // The cycle is deliberate and benign: both sides only call across
@@ -72,7 +72,14 @@ export function canTriageFinding(f) {
 }
 
 export function triageEntry(f) {
-  return canTriageFinding(f) ? state.triage.get(tabKey(f)) : undefined
+  if (!canTriageFinding(f)) return undefined
+  const entry = state.triage.get(tabKey(f))
+  if (!isManagedUiMode()) return entry
+  // A read-only projection keeps search, annotation filters, and copy helpers
+  // useful without putting managed comments into the triage/sync write path.
+  const comments = state.managedComments?.get(f.id) ?? []
+  if (comments.length === 0 && !entry?.comment) return entry
+  return { ...entry, comment: comments.map(comment => `${comment.authorLogin ?? 'Unattributed'}: ${comment.body}`).join('\n\n') }
 }
 
 export function isIgnored(f) {

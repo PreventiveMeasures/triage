@@ -995,7 +995,7 @@ for (const [label, filename] of [
     const own = await send('GET', view, memberCookie)
     assert.equal(own.statusCode, 200)
     assert.deepEqual(JSON.parse(own.body).findings.map((finding) => finding.id), managedCsvIds.slice(0, 1))
-    const annotate = (cookie, csrf, id) => upload(triage, cookie, csrf, JSON.stringify({ entries: { [id]: { comment: 'Reviewed' } } }))
+    const annotate = (cookie, csrf, id) => upload(triage, cookie, csrf, JSON.stringify({ entries: { [id]: { fix: 'Reviewed' } } }))
     assert.equal((await annotate(memberCookie, member.csrfToken, managedCsvIds[0])).statusCode, 200)
     assert.equal((await annotate(memberCookie, member.csrfToken, managedCsvIds[1])).statusCode, 404)
     assert.equal((await annotate(adminCookie, admin.csrfToken, managedCsvIds[1])).statusCode, 200)
@@ -1395,7 +1395,7 @@ test('team paths gate report listings, reads, triage, and permission aggregation
     for (const suffix of ['', '/triage', '/triage/history?finding=own']) {
       assert.equal((await send('GET', `/api/reports/${id}${suffix}`, cookie)).statusCode, allowed ? 200 : 404, `${directories[index]}${suffix}`)
     }
-    const edit = await upload(`/api/reports/${id}/triage`, cookie, memberSess.csrfToken, JSON.stringify({ entries: { own: { comment: 'checked' } } }))
+    const edit = await upload(`/api/reports/${id}/triage`, cookie, memberSess.csrfToken, JSON.stringify({ entries: { own: { fix: 'checked' } } }))
     assert.equal(edit.statusCode, allowed ? 200 : 404)
     assert.equal((await send('GET', `/api/reports/${id}`, cookiePair(adminSess.setCookie))).statusCode, 200, 'admins retain full access')
   }
@@ -1975,7 +1975,7 @@ for (const permission of ['dependencies', 'security']) {
       const team = (await db.listTeams()).find(item => item.name === 'Blue')
       await db.setTeamMember(team.id, userId, { dependencies: true, security: true })
       const hidden = permission === 'dependencies' ? 'dep' : 'sec'
-      for (const id of ['own', hidden]) await db.setTriage(id, { comment: `before ${id}` }, fx.admin.id, 'alice', fx.now)
+      for (const id of ['own', hidden]) await db.setTriage(id, { fix: `before ${id}` }, fx.admin.id, 'alice', fx.now)
       const before = await db.listTriage(['own', hidden])
       const beforeHistory = await db.listTriageHistory(hidden, 20)
       const gate = Promise.withResolvers(), started = Promise.withResolvers()
@@ -1988,7 +1988,7 @@ for (const permission of ['dependencies', 'security']) {
       const { send, upload } = bundleHarness(db, config, store)
       const cookie = cookiePair(fx.bobSess.setCookie), path = `/api/reports/${fx.reportId}/triage`
       const response = operation === 'write'
-        ? upload(path, cookie, fx.bobSess.csrfToken, JSON.stringify({ entries: { own: { comment: 'must not partially write' }, [hidden]: { comment: 'revoked' } } }))
+        ? upload(path, cookie, fx.bobSess.csrfToken, JSON.stringify({ entries: { own: { fix: 'must not partially write' }, [hidden]: { fix: 'revoked' } } }))
         : send('GET', operation === 'history' ? `${path}/history?finding=${hidden}` : path, cookie)
       await started.promise
       await db.setTeamMember(team.id, userId, { dependencies: true, security: true, [permission]: false })
@@ -1996,7 +1996,7 @@ for (const permission of ['dependencies', 'security']) {
       const res = await response
       if (operation === 'entries') {
         assert.equal(res.statusCode, 200)
-        assert.deepEqual(JSON.parse(res.body), { entries: { own: { comment: 'before own' } } })
+        assert.deepEqual(JSON.parse(res.body), { entries: { own: { fix: 'before own' } } })
       } else {
         assert.equal(res.statusCode, 404)
         assert.deepEqual(JSON.parse(res.body), { error: 'no-finding' })
@@ -2004,7 +2004,7 @@ for (const permission of ['dependencies', 'security']) {
       assert.deepEqual(await db.listTriage(['own', hidden]), before)
       assert.deepEqual(await db.listTriageHistory(hidden, 20), beforeHistory)
       // The still-visible finding remains usable, including through the cache.
-      assert.equal((await upload(path, cookie, fx.bobSess.csrfToken, JSON.stringify({ entries: { own: { comment: 'allowed' } } }))).statusCode, 200)
+      assert.equal((await upload(path, cookie, fx.bobSess.csrfToken, JSON.stringify({ entries: { own: { fix: 'allowed' } } }))).statusCode, 200)
     })
   }
 }
@@ -2052,7 +2052,7 @@ test('workspace history enforces roles and current report access before search, 
   assert.equal((await read(managerCookie, '?kind=upload')).total, 1)
   assert.equal((await read(adminCookie, '?q=confidential&kind=triage')).total, 1)
 
-  const write = await upload(`/api/reports/${fx.reportId}/triage`, adminCookie, fx.adminSess.csrfToken, JSON.stringify({ entries: { dep: { comment: 'private annotation body' } } }))
+  const write = await upload(`/api/reports/${fx.reportId}/triage`, adminCookie, fx.adminSess.csrfToken, JSON.stringify({ entries: { dep: { fix: 'private annotation body' } } }))
   assert.equal(write.statusCode, 200)
   const events = await read(adminCookie, '?kind=triage&q=dep')
   assert.equal(events.history[0].reportId, fx.reportId)
@@ -2155,7 +2155,7 @@ test('GET /api/reports/<id>/triage: view-gated (401/404), entries filtered to th
   // side (gating + per-viewer filtering) is what's under test here.
   await db.setTriage('own', { color: 'red' }, fx.admin.id, 'alice', fx.now)
   await db.setTriage('dep', { triage: 'invalid' }, fx.admin.id, 'alice', fx.now)
-  await db.setTriage('sec', { comment: 'urgent', flagged: false }, fx.admin.id, 'alice', fx.now)
+  await db.setTriage('sec', { fix: 'urgent', flagged: false }, fx.admin.id, 'alice', fx.now)
   // An entry on a finding no report carries, and one the report carries but
   // nobody annotated: neither shows up.
   await db.setTriage('elsewhere', { color: 'blue' }, fx.admin.id, 'alice', fx.now)
@@ -2174,7 +2174,7 @@ test('GET /api/reports/<id>/triage: view-gated (401/404), entries filtered to th
   assert.deepEqual(JSON.parse(adminRes.body), { entries: {
     own: { color: 'red' },
     dep: { triage: 'invalid' },
-    sec: { comment: 'urgent', flagged: false },
+    sec: { fix: 'urgent', flagged: false },
   } })
   // bob (security yes, dependencies no) has the 'dep' entry withheld — an
   // entry on a stripped finding would leak that the finding exists.
@@ -2249,12 +2249,12 @@ test('POST /api/reports/<id>/triage: CSRF + role/membership gating, validation, 
   // bob (triage role) writes two entries; flagged:false lands as false.
   assert.equal((await post(bCk, fx.bobSess.csrfToken, { entries: {
     own: { color: 'red', flagged: false },
-    sec: { triage: 'fixed', comment: 'patched upstream' },
+    sec: { triage: 'fixed', fix: 'patched upstream' },
   } })).statusCode, 200)
   const bobView = async () => JSON.parse((await send('GET', T, bCk)).body).entries
   assert.deepEqual(await bobView(), {
     own: { color: 'red', flagged: false },
-    sec: { triage: 'fixed', comment: 'patched upstream' },
+    sec: { triage: 'fixed', fix: 'patched upstream' },
   })
   // The write is attributed to bob.
   const [ownRow] = await db.listTriage(['own'])
@@ -2266,8 +2266,8 @@ test('POST /api/reports/<id>/triage: CSRF + role/membership gating, validation, 
   assert.deepEqual(carolEntries, { own: { color: 'red', flagged: false }, dep: { color: 'gray' } })
 
   // Whole-entry overwrite drops the fields the replacement doesn't carry.
-  assert.equal((await post(bCk, fx.bobSess.csrfToken, { entries: { sec: { comment: 'still open' } } })).statusCode, 200)
-  assert.deepEqual((await bobView()).sec, { comment: 'still open' })
+  assert.equal((await post(bCk, fx.bobSess.csrfToken, { entries: { sec: { fix: 'still open' } } })).statusCode, 200)
+  assert.deepEqual((await bobView()).sec, { fix: 'still open' })
   // null clears an entry — which reads back as null (the tombstone), so a
   // reader adopts the clear rather than mistaking it for never-set.
   assert.equal((await post(bCk, fx.bobSess.csrfToken, { entries: { own: null } })).statusCode, 200)

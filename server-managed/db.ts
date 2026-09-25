@@ -24,6 +24,7 @@ import type { Role } from '../common/managed/roles.ts'
 import type { TeamUserPermissions } from '../common/managed/permissions.ts'
 import type { TriageEntryPatch } from '../common/managed/triage.ts'
 import { migrateSlugs, preferredSlug } from './slugs.ts'
+import { type CommentStore, commentMethods } from './comments.ts'
 import { migrateReportLocations } from './report-migration.ts'
 import { type ActivityStore, activityMethods } from './activity.ts'
 
@@ -483,7 +484,7 @@ export interface UserTeam {
 }
 
 // Backend-agnostic store surface (SQLite + PostgreSQL implementations).
-export interface ManagedDb extends ActivityStore {
+export interface ManagedDb extends ActivityStore, CommentStore {
   // Upsert the identity; returns the user's opaque id (stable across logins).
   upsertUser(user: ManagedUser, now: number): Promise<string>
   createSession(session: ManagedSession, now: number): Promise<void>
@@ -639,6 +640,7 @@ function prepareStatements(db: DatabaseSync) {
               (SELECT MAX(at) FROM (
                 SELECT MAX(e.at) AS at FROM finding_triage_event e WHERE e.actor_id = u.id
                 UNION ALL SELECT MAX(a.at) AS at FROM managed_activity a WHERE a.actor_id = u.id
+                UNION ALL SELECT MAX(c.at) AS at FROM finding_comment_event c WHERE c.actor_id = u.id
               )) AS lastActivity
          FROM managed_user u ORDER BY u.created_at ASC, u.login ASC`,
     ),
@@ -674,6 +676,11 @@ function prepareStatements(db: DatabaseSync) {
     deleteBundlesForRepoStmt: db.prepare(`DELETE FROM managed_bundle WHERE repo_id = ?`),
     deleteTriageStmt: db.prepare(`DELETE FROM finding_triage WHERE finding_id IN (SELECT value FROM json_each(?))`),
     deleteTriageHistoryStmt: db.prepare(`DELETE FROM finding_triage_event WHERE finding_id IN (SELECT value FROM json_each(?))`),
+    deleteCommentsStmt: db.prepare(`DELETE FROM finding_comment WHERE finding_id IN (SELECT value FROM json_each(?))`),
+    deleteCommentHistoryStmt: db.prepare(`DELETE FROM finding_comment_event WHERE finding_id IN (SELECT value FROM json_each(?))`),
+    countAnnotationsStmt: db.prepare(`SELECT count(*) AS total FROM (
+      SELECT finding_id FROM finding_triage WHERE finding_id IN (SELECT value FROM json_each(?))
+      UNION SELECT finding_id FROM finding_comment WHERE finding_id IN (SELECT value FROM json_each(?)))`),
     selectReposStmt: db.prepare(
       `SELECT repo_id AS repoId, full_name AS fullName, is_private AS priv,
               installation_id AS installId, default_branch AS branch, html_url AS htmlUrl,
@@ -1038,7 +1045,7 @@ type TriageEventDbRow = TriageStateDbRow & { seq: number; findingId: string; bat
 // > 0 keeps only that many events per finding; 0 keeps everything.
 function triageMethods(db: DatabaseSync, stmts: ReturnType<typeof prepareStatements>, historyLimit: number) {
   const { upsertTriageStmt, selectTriageStmt, selectTriageStateStmt, insertTriageEventStmt, trimTriageEventsStmt, selectTriageHistoryStmt,
-    deleteTriageStmt, deleteTriageHistoryStmt } = stmts
+    deleteTriageStmt, deleteTriageHistoryStmt, deleteCommentsStmt, deleteCommentHistoryStmt, countAnnotationsStmt } = stmts
   function writeEntry(findingId: string, entry: TriageEntryPatch | null, batchId: string, updatedBy: string | null, updatedByLogin: string | null, now: number, reportId: string | null = null): void {
     const e = entry ?? {}
     // `flagged: false` is a real value (the explicit un-flag tombstone), so it
@@ -1060,8 +1067,11 @@ function triageMethods(db: DatabaseSync, stmts: ReturnType<typeof prepareStateme
       const ids = JSON.stringify(findingIds)
       db.exec('BEGIN')
       try {
-        const deleted = Number(deleteTriageStmt.run(ids).changes)
+        const { total: deleted } = countAnnotationsStmt.get(ids, ids) as { total: number }
+        deleteTriageStmt.run(ids)
         deleteTriageHistoryStmt.run(ids)
+        deleteCommentsStmt.run(ids)
+        deleteCommentHistoryStmt.run(ids)
         db.exec('COMMIT')
         return Promise.resolve(deleted)
       } catch (err) {
@@ -1372,6 +1382,7 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
   }
 
   // History tables and migrations must exist before preparing the users query.
+  const comments = commentMethods(db)
   const activity = activityMethods(db)
   const stmts = prepareStatements(db)
   const {
@@ -1428,6 +1439,7 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
     },
     ...selectedRepoMethods(stmts),
     ...activity,
+    ...comments,
     ...reportMethods(stmts),
     ...triageMethods(db, stmts, options.triageHistoryLimit ?? 0),
     ...bundleMethods(stmts),

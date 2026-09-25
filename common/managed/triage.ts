@@ -4,7 +4,7 @@
 // (which mirrors entries into its local triage map). Keyed by finding id
 // alone, like that map: reports mostly repeat one another (a re-scan of the
 // same code carries the same finding ids), and a finding's triage is shared by
-// every report that carries it. A wire entry carries the five server-persisted
+// every report that carries it. A wire entry carries the four server-persisted
 // fields below, or is null for a cleared entry (the server's tombstone); the
 // client's `ignoredReports` deliberately does NOT ride this wire — the
 // per-report ignore is a client-local concept keyed by report name.
@@ -19,6 +19,8 @@ export const TRIAGE_BUCKETS: readonly TriageBucket[] = ['inprogress', 'fixed', '
 export type TriageEntryPatch = {
   color?: string
   triage?: TriageBucket
+  // Legacy triage history/migration only. New comments use separate records;
+  // the managed triage write endpoint rejects this field.
   comment?: string
   fix?: string
   flagged?: boolean

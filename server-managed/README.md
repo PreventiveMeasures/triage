@@ -75,6 +75,32 @@ metadata. Installation credentials are never substituted. Responses are not
 HTTP-cached; the UI batches links and keeps metadata in memory for one minute,
 invalidating it on account, team, or mode changes.
 
+# Managed comments
+
+Comments live in `finding_comment`, independently of the shared triage row.
+Each has its own ID, finding ID, text, optional author ID/login, creation and
+edit timestamps, and a version. New comments are attributed to the authenticated
+user; the client cannot choose the author. Readers see the discussion; users
+with triage access can add comments and edit their own. Edits require the version
+that was read, so stale edits receive 409 instead of overwriting newer text.
+
+`GET /api/reports/:id/comments` returns comments for the findings that user can
+see. `POST` accepts `{ findingId, body }`; `PATCH /api/reports/:id/comments/:commentId`
+accepts `{ body, version }`. Mutations require CSRF and current report/triage
+access. Text is nonempty and limited to 10,000 characters. Comments are shared
+across reports carrying the same finding and stay in browser memory only.
+
+Existing triage-row comment text is migrated once to unattributed records. The
+last triage writer is not reliable evidence of authorship, so migration does not
+claim an author. Unattributed comments remain readable; users cannot claim or
+edit them. Legacy triage history is preserved. New shared-field comment writes
+are rejected; e2e/local/sync comment storage and editing are unchanged.
+
+Comment additions and edits contribute to scoped activity history and user
+Last Activity, without copying their text into the activity feed. Ordinary
+triage updates and clears do not change comments. Explicit repository annotation
+deletion includes comments, while preserving findings shared by other repos.
+
 # Activity history
 
 `/manage/history` reads `GET /api/admin/history?page=1&limit=100&kind=all&q=`.

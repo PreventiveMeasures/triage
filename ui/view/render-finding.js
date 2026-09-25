@@ -11,6 +11,7 @@ import { samePos } from './focus-code-history.js'
 import { FILE_ICONS, PRODUCER_LABELS, REPORT_LOGOS, displayName, findingBrand, groupOf } from './file-display.js'
 import { CLAUDE_MARK_PATH } from './icons.js'
 import { findingLinkFor } from './finding-link.js'
+import { managedCommentsFor } from './managed-comments.js'
 
 // All `<finding-row>` / `<finding-card>` shadow-DOM markup is built
 // here as Lit `html` template results (no `unsafeHTML`). Lit
@@ -292,7 +293,7 @@ export function renderHighlighted(text, { paragraphs = true } = {}) {
 // boot a second copy of the app just to show a finding the reader is
 // already three inches away from. Its `title` names the action rather
 // than the href, which is an opaque id the reader can't act on.
-function renderCommentText(text) {
+export function renderCommentText(text) {
   return parseCommentRefs(text, { managed: isManagedUiMode() }).map((seg) => {
     if (typeof seg === 'string') return seg
     if (seg.self) {
@@ -946,11 +947,11 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = 
   const activeColor = activeEntry?.color ?? null
   const activeComment = activeEntry?.comment ?? ''
   const activeFix = activeEntry?.fix ?? ''
-  const commentTitle = activeComment ? `Edit comment: ${activeComment}` : 'Add comment'
+  const commentTitle = isManagedUiMode() ? 'View comments' : activeComment ? `Edit comment: ${activeComment}` : 'Add comment'
   const fixTitle = activeFix ? `Edit fix link: ${activeFix}` : 'Add fix link (PR URL, etc.)'
   // Keep actions compact when the report chip shares their row.
   const showActionLabels = context === 'focus' && reportChip === nothing
-  const commentLabel = activeComment ? 'Edit comment' : 'Comment'
+  const commentLabel = isManagedUiMode() ? 'Comments' : activeComment ? 'Edit comment' : 'Comment'
   const fixLabel = activeFix ? 'Edit fix link' : 'Fix link'
   const commentBtn = html`<button type="button" ?disabled=${disabled} class=${classMap({ 'mark-comment': true, 'has-comment': activeComment })} data-tooltip=${showActionLabels && !activeComment ? nothing : commentTitle} aria-label=${commentTitle}>${COMMENT_ICON}${showActionLabels ? html`<span class="mark-btn-label">${commentLabel}</span>` : nothing}</button>`
   const fixBtn = html`<button type="button" ?disabled=${disabled} class=${classMap({ 'mark-fix': true, 'has-fix': activeFix })} data-tooltip=${showActionLabels && !activeFix ? nothing : fixTitle} aria-label=${fixTitle}>${FIX_ICON}${showActionLabels ? html`<span class="mark-btn-label">${fixLabel}</span>` : nothing}</button>`
@@ -1405,7 +1406,10 @@ function tabBodyTemplate(f, isActive, idx, total, context, tabIds) {
         : nothing}
       ${hasSeverityCorrection(f) && f.correctedSeverityReason ? html`<div class="severity-reason"><span class="severity-reason-label">Severity correction:</span> ${renderHighlighted(f.correctedSeverityReason)}</div>` : nothing}
       ${duplicatesTemplate(f, tabIds)}
-      ${comment ? html`<div class="comment-block"><span class="comment-label">Comment:</span> ${renderCommentText(comment)}</div>` : nothing}
+      ${isManagedUiMode() ? managedCommentsFor(f).map(item => html`<div class="comment-block">
+        <span class="comment-label">${item.authorLogin ?? 'Unattributed'} · ${new Date(item.createdAt).toLocaleString()}${item.version > 1 ? ' · edited' : ''}</span>
+        <div>${renderCommentText(item.body)}</div>
+      </div>`) : comment ? html`<div class="comment-block"><span class="comment-label">Comment:</span> ${renderCommentText(comment)}</div>` : nothing}
       ${fix
         ? html`<div class="fix-block"><span class="fix-label">Fix:</span> ${isHttpUrl(fix)
           ? isManagedUiMode() ? html`<managed-fix-link .url=${fix}></managed-fix-link>`
