@@ -25,7 +25,7 @@
 .page {
   display: flex;
   flex-direction: column;
-  gap: 1.7rem;
+  gap: .85rem;
   padding: 1.35rem;
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -41,7 +41,7 @@
 .page-top {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: .75rem;
   width: 100%;
 }
 .page-icon {
@@ -71,6 +71,8 @@
 }
 .arrow {
   display: flex;
+  margin-left: auto;
+  flex-shrink: 0;
   color: var(--muted);
 }
 .arrow svg {
@@ -84,7 +86,11 @@
   display: grid;
   gap: .45rem;
 }
-.page-copy strong {
+.page > .page-copy {
+  margin-inline-start: 3.25rem;
+}
+.page-copy strong,
+.page-title {
   font-size: 1rem;
   font-weight: 600;
   letter-spacing: -.015em;
@@ -95,7 +101,7 @@
   line-height: 1.65;
 }
 .workspace-pages .page {
-  gap: 1.1rem;
+  gap: .85rem;
   padding: 1.2rem 1.35rem;
 }
 .workspace-pages .page-icon {
@@ -105,8 +111,11 @@
   background: transparent;
   border-color: var(--border);
 }
-.workspace-pages .page-copy strong {
+.workspace-pages .page-title {
   font-size: .9rem;
+}
+.workspace-pages .page-copy {
+  margin-inline-start: 2.75rem;
 }
 .history-link {
   display: flex;
@@ -151,13 +160,8 @@
   }
   .page,
   .workspace-pages .page {
-    flex-direction: row;
-    align-items: center;
-    gap: 1rem;
+    gap: .65rem;
     padding: 1.15rem;
-  }
-  .page-top {
-    width: auto;
   }
   .page-top .arrow {
     display: none;
@@ -166,10 +170,14 @@
     width: 2.5rem;
     height: 2.5rem;
   }
+  .workspace-pages .page-copy {
+    margin-inline-start: 3.25rem;
+  }
   .page-copy {
     gap: .2rem;
   }
-  .page-copy strong {
+  .page-copy strong,
+  .page-title {
     font-size: .95rem;
   }
   .section-heading > span {

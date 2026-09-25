@@ -38,6 +38,21 @@ const OPFS_DIR = 'deepview-reports'
 const OPFS_BUNDLES_DIR = 'deepview-bundles'
 const LS_REPORT_PREFIX = 'deepview.report:'
 
+function lockStoredItem(kind, value, mode, work) {
+  return navigator.locks.request(`deepview-storage/${kind}/${value}`, { mode }, work)
+}
+
+// Keep import snapshots stable across documents through synchronous upload
+// handoff. Writers take the same per-item lock before VAULT_LOCK; unrelated
+// items remain independent. The callback must not await the network upload.
+export function withStoredItem(kind, value, work) {
+  return lockStoredItem(kind, value, 'shared', work)
+}
+
+function mutateStoredItem(kind, value, work) {
+  return lockStoredItem(kind, value, 'exclusive', () => navigator.locks.request(VAULT_LOCK, { mode: 'shared' }, work))
+}
+
 let opfsWarned = false
 // Open an OPFS directory handle, or null when OPFS is unavailable.
 // `warnOnce` surfaces a one-time console breadcrumb (used by the reports
@@ -358,7 +373,7 @@ export async function saveFile(name, content) {
   // file, leaving a stale-state envelope (or plaintext) at rest
   // that won't match the post-transition vault. Shared mode allows
   // concurrent saves to proceed in parallel.
-  return navigator.locks.request(VAULT_LOCK, { mode: 'shared' }, async () => {
+  return mutateStoredItem('report', name, async () => {
     const dir = await getOpfsDir()
     if (dir) {
     // OPFS reports are gzipped at rest — JSON dumps compress well
@@ -632,6 +647,15 @@ export async function readFileBytes(name) {
   return bytes
 }
 
+// Imports need the current stored document even after a sibling tab changed it.
+// The byte reader bypasses both cached text and in-flight text snapshots, and
+// already handles OPFS, the localStorage fallback, and passkey envelopes.
+export async function readFileFresh(name) {
+  const bytes = await readFileBytes(name)
+  const plain = bytes[0] === 0x1f && bytes[1] === 0x8b ? await gunzipBytes(bytes) : bytes
+  return decodeUtf8(plain)
+}
+
 // Write raw bytes to OPFS under `name` without re-compressing — the
 // inverse of `readFileBytes`. Bypasses the in-memory text cache
 // since the caller hands us bytes, not the parsed content. The
@@ -661,7 +685,7 @@ export async function saveFileBytes(name, bytes) {
   cache.delete(name)
   // Shared VAULT_LOCK so concurrent vault transitions wait — same
   // rationale as saveFile.
-  return navigator.locks.request(VAULT_LOCK, { mode: 'shared' }, async () => {
+  return mutateStoredItem('report', name, async () => {
     // Wrap with the passkey envelope when the vault is unlocked — same
     // policy as `saveFile`. Bytes received here are the LOGICAL
     // on-disk form (gzipped report); the envelope sits on top so the
@@ -724,7 +748,7 @@ export async function deleteFile(name) {
   // Particularly bad on disable — a user who deleted a sensitive
   // file specifically to prevent it being decrypted to plaintext
   // would see it reappear on disk as plaintext.
-  return navigator.locks.request(VAULT_LOCK, { mode: 'shared' }, async () => {
+  return mutateStoredItem('report', name, async () => {
     const dir = await getOpfsDir()
     if (dir) {
       // Only swallow the "already gone" case (NotFoundError). Other
@@ -774,6 +798,21 @@ export async function deleteFile(name) {
 // rarely makes sense, and this is a non-essential side feature.
 const BUNDLE_META_FILE = '_meta.json'
 const BUNDLE_INDEX_SUFFIX = '.index-v1'
+
+// Bundle identity is its integrity, separate from the report filename namespace.
+// A delete notifies as soon as the bytes disappear, then again once metadata
+// settles: readers must invalidate snapshots before a slow index write finishes,
+// while pickers need the final list even when index cleanup fails.
+const bundleChangeListeners = new Set()
+export function onBundleMutated(cb) {
+  bundleChangeListeners.add(cb)
+  return () => bundleChangeListeners.delete(cb)
+}
+function notifyBundleMutated(integrity, kind) {
+  for (const cb of bundleChangeListeners) {
+    try { cb(integrity, kind) } catch (err) { console.warn('storage bundle-change listener:', err) }
+  }
+}
 
 function getOpfsBundlesDir() {
   return openOpfsDir(OPFS_BUNDLES_DIR, { create: true })
@@ -866,7 +905,10 @@ function lockBundleMeta(work) {
 export async function listBundles() {
   const dir = await getOpfsBundlesDir()
   if (!dir) return []
-  const meta = await readBundleMeta(dir)
+  // Writers remove and recreate _meta.json. Share their lock so a refresh
+  // triggered by byte removal cannot mistake an in-progress rewrite for an
+  // empty collection. Multiple readers can still proceed together.
+  const meta = await navigator.locks.request(BUNDLE_META_LOCK, { mode: 'shared' }, () => readBundleMeta(dir))
   return [...meta].toSorted((a, b) => a.name.localeCompare(b.name))
 }
 
@@ -881,7 +923,18 @@ export async function listBundles() {
 // Includes `_meta.json` itself in the count when present — its
 // existence already implies bundle activity even if all bundle
 // bytes were independently removed.
-export async function hasAnyBundles() {
+export function hasAnyBundles() {
+  return hasBundleStorageEntry(() => true)
+}
+
+// Import only needs actual bundle files, not the metadata/index artifacts that
+// the migration probe intentionally preserves. Inspect names and handle kinds
+// without reading encrypted metadata or creating a bundles directory.
+export function hasStoredBundleBytes() {
+  return hasBundleStorageEntry((name, handle) => handle.kind === 'file' && /^sha512-[A-Za-z0-9+_]{86}==$/u.test(name))
+}
+
+async function hasBundleStorageEntry(matches) {
   // Probe with `create: false` — the existence check runs
   // pre-redirect from the legacy-origin migration dialog, and a
   // user who has no bundles shouldn't have a `deepview-bundles/`
@@ -891,7 +944,7 @@ export async function hasAnyBundles() {
   const dir = await openOpfsDir(OPFS_BUNDLES_DIR, { create: false })
   if (!dir) return false
   try {
-    for await (const _ of dir.entries()) return true
+    for await (const [name, handle] of dir.entries()) if (matches(name, handle)) return true
   } catch {}
   return false
 }
@@ -925,7 +978,7 @@ export async function saveBundle(name, content) {
   // finish — mirrors saveFile. Without this, a vault-state flip
   // mid-save would leave bytes on disk under a state the next
   // read can't reverse.
-  return navigator.locks.request(VAULT_LOCK, { mode: 'shared' }, async () => {
+  return mutateStoredItem('bundle', integrity, async () => {
     // Refuse writes when the vault is enabled-but-locked. Same
     // invariant as saveFile / saveTriage: nothing lands plaintext
     // on disk under an enabled vault.
@@ -951,9 +1004,10 @@ export async function saveBundle(name, content) {
         await writeBundleMeta(dir, meta)
       })
     } catch (err) {
-      try { await dir.removeEntry(opfsKey) } catch {}
+      try { await dir.removeEntry(opfsKey); notifyBundleMutated(integrity, 'delete') } catch {}
       throw err
     }
+    notifyBundleMutated(integrity, 'save')
     return { integrity, name }
   })
 }
@@ -969,7 +1023,7 @@ export async function deleteBundle(integrity) {
   // (e.g. meta written plaintext under a vault that's already
   // back to enabled, or sealed under a key the next read can't
   // reverse).
-  return navigator.locks.request(VAULT_LOCK, { mode: 'shared' }, async () => {
+  return mutateStoredItem('bundle', integrity, async () => {
     // Only swallow the "already gone" case. A real OPFS failure
     // (NoModificationAllowedError, InvalidModificationError) must
     // propagate BEFORE the `_meta.json` RMW below drops the index
@@ -979,23 +1033,26 @@ export async function deleteBundle(integrity) {
     catch (err) {
       if (!(err instanceof DOMException) || err.name !== 'NotFoundError') throw err
     }
+    notifyBundleMutated(integrity, 'delete')
     // Per-`_meta.json` RMW lock — independent of VAULT_LOCK, serialises
     // saveBundle vs deleteBundle within the same vault state. Audit
     // round-12 H7.
-    await lockBundleMeta(async () => {
-      try { await dir.removeEntry(integrityToOpfsKey(integrity) + BUNDLE_INDEX_SUFFIX) }
-      catch (err) { if (!(err instanceof DOMException) || err.name !== 'NotFoundError') throw err }
-      const meta = await readBundleMeta(dir)
-      const filtered = meta.filter((e) => e.integrity !== integrity)
-      // No-op short-circuit: deleting a non-existent integrity (or
-      // deleting from an already-empty meta) would otherwise CREATE
-      // `_meta.json` on disk where none existed. That stale file
-      // makes `hasAnyBundles()` return true for an effectively-empty
-      // bundles dir, suppressing the legacy-origin silent redirect
-      // path. Skip the write when nothing actually changed.
-      if (filtered.length === meta.length) return
-      await writeBundleMeta(dir, filtered)
-    })
+    try {
+      await lockBundleMeta(async () => {
+        try { await dir.removeEntry(integrityToOpfsKey(integrity) + BUNDLE_INDEX_SUFFIX) }
+        catch (err) { if (!(err instanceof DOMException) || err.name !== 'NotFoundError') throw err }
+        const meta = await readBundleMeta(dir)
+        const filtered = meta.filter((e) => e.integrity !== integrity)
+        // No-op short-circuit: deleting a non-existent integrity (or
+        // deleting from an already-empty meta) would otherwise CREATE
+        // `_meta.json` on disk where none existed. That stale file
+        // makes `hasAnyBundles()` return true for an effectively-empty
+        // bundles dir, suppressing the legacy-origin silent redirect
+        // path. Skip the write when nothing actually changed.
+        if (filtered.length === meta.length) return
+        await writeBundleMeta(dir, filtered)
+      })
+    } finally { notifyBundleMutated(integrity, 'delete') }
   })
 }
 
