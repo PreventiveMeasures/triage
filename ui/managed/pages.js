@@ -58,9 +58,9 @@ class ManagedAdminHome extends ManagedPage {
 
   render() {
     const content = [
-      ['manage-bundles', 'Bundles', 'Keep source archives and sourcemaps ready for review.', 'bundle'],
+      ['manage-bundles', 'Bundles', 'Keep source archives ready for review.', 'bundle'],
       ['manage-scans', 'Scans', 'Run and monitor scans from stored bundles.', 'scan'],
-      ['manage-reports', 'Reports', 'Review, publish, and organize your team’s findings.', 'report'],
+      ['manage-reports', 'Reports', 'Review, publish, and organize findings.', 'report'],
     ]
     const workspace = [
       ['manage-repos', 'Repositories', 'Connect sources and manage repository settings.', 'repo'],
@@ -1142,10 +1142,10 @@ class ManagedAdminBundles extends ManagedPage {
       ${this._dragOver ? html`<div class="dropzone">Drop bundles to upload</div>` : nothing}
       <div class="wrap">${adminNavigation('manage-bundles', this._role)}
         <h1 class="sr-only">Bundles</h1>
-        <div class="page-intro"><p class="intro">Source bundles and sourcemaps for your repositories.</p>${this._localImport.renderAction()}</div>
+        <div class="page-intro"><p class="intro">Source bundles for your repositories.</p>${this._localImport.renderAction()}</div>
         ${this._localImport.renderPanel(this._busy || !this._csrf)}
         <section class="upload-panel" aria-label="Upload bundles">
-          <div class="upload-copy"><span class="drop-icon" aria-hidden="true">${adminIcon('upload')}</span><span><strong>Upload source bundles</strong><span class="upload-description">Drop archives or sourcemaps anywhere on this page.</span></span></div>
+          <div class="upload-copy"><span class="drop-icon" aria-hidden="true">${adminIcon('upload')}</span><span><strong>Upload source bundles</strong><span class="upload-description">Drop source archives anywhere on this page.</span></span></div>
           <div class="upload-controls">${repoPickerTemplate(this._data?.repos, this._repoId, (v) => { this._repoId = v }, 'Repository')}<button type="button" class="drop-browse" ?disabled=${this._busy} @click=${() => pickFiles((files) => void this._upload(files))}>${this._busy ? 'Uploading…' : 'Browse files'}</button></div>
         </section>
         ${this._body()}
