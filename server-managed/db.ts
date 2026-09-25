@@ -24,6 +24,7 @@ import type { Role } from '../common/managed/roles.ts'
 import type { TeamUserPermissions } from '../common/managed/permissions.ts'
 import type { TriageEntryPatch } from '../common/managed/triage.ts'
 import { migrateReportLocations } from './report-migration.ts'
+import { type ActivityStore, activityMethods } from './activity.ts'
 
 const SQLITE_SCHEMA = `
 CREATE TABLE IF NOT EXISTS managed_user (
@@ -473,7 +474,7 @@ export interface UserTeam {
 }
 
 // Backend-agnostic store surface (SQLite + PostgreSQL implementations).
-export interface ManagedDb {
+export interface ManagedDb extends ActivityStore {
   // Upsert the identity; returns the user's opaque id (stable across logins).
   upsertUser(user: ManagedUser, now: number): Promise<string>
   createSession(session: ManagedSession, now: number): Promise<void>
@@ -529,7 +530,7 @@ export interface ManagedDb {
   // listTriageHistory walks one finding's trail, newest first.
   listTriage(findingIds: readonly string[]): Promise<TriageRow[]>
   setTriage(findingId: string, entry: TriageEntryPatch | null, updatedBy: string | null, updatedByLogin: string | null, now: number): Promise<void>
-  setTriageEntries(entries: readonly (readonly [string, TriageEntryPatch | null])[], updatedBy: string | null, updatedByLogin: string | null, now: number): Promise<void>
+  setTriageEntries(entries: readonly (readonly [string, TriageEntryPatch | null])[], updatedBy: string | null, updatedByLogin: string | null, now: number, reportId?: string): Promise<void>
   listTriageHistory(findingId: string, limit: number): Promise<TriageEventRow[]>
   // Bundles ("Manage bundles"). insertBundle records an uploaded bundle (bytes
   // in the blob-store); getBundleByIntegrity dedupes uploads + resolves a
@@ -710,8 +711,10 @@ function prepareStatements(db: DatabaseSync) {
       `SELECT color, triage, comment, fix, flagged FROM finding_triage WHERE finding_id = ?`,
     ),
     insertTriageEventStmt: db.prepare(
-      `INSERT INTO finding_triage_event (finding_id, batch_id, color, triage, comment, fix, flagged, actor_id, actor_login, at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO finding_triage_event (finding_id, batch_id, color, triage, comment, fix, flagged, actor_id, actor_login, at, report_id, report, repo)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+         (SELECT filename FROM managed_report WHERE id = ?),
+         (SELECT p.full_name FROM managed_report r JOIN selected_repo p ON p.repo_id = r.repo_id WHERE r.id = ?))`,
     ),
     // With a retention limit set: keep the newest N events of a finding.
     trimTriageEventsStmt: db.prepare(
@@ -988,7 +991,7 @@ type TriageEventDbRow = TriageStateDbRow & { seq: number; findingId: string; bat
 function triageMethods(db: DatabaseSync, stmts: ReturnType<typeof prepareStatements>, historyLimit: number) {
   const { upsertTriageStmt, selectTriageStmt, selectTriageStateStmt, insertTriageEventStmt, trimTriageEventsStmt, selectTriageHistoryStmt,
     deleteTriageStmt, deleteTriageHistoryStmt } = stmts
-  function writeEntry(findingId: string, entry: TriageEntryPatch | null, batchId: string, updatedBy: string | null, updatedByLogin: string | null, now: number): void {
+  function writeEntry(findingId: string, entry: TriageEntryPatch | null, batchId: string, updatedBy: string | null, updatedByLogin: string | null, now: number, reportId: string | null = null): void {
     const e = entry ?? {}
     // `flagged: false` is a real value (the explicit un-flag tombstone), so it
     // is 0 here and only null/absent maps to NULL.
@@ -1000,7 +1003,7 @@ function triageMethods(db: DatabaseSync, stmts: ReturnType<typeof prepareStateme
     if (cur != null && cur.color === next.color && cur.triage === next.triage && cur.comment === next.comment
       && cur.fix === next.fix && cur.flagged === next.flagged) return
     upsertTriageStmt.run(findingId, next.color, next.triage, next.comment, next.fix, next.flagged, updatedBy, updatedByLogin, now)
-    insertTriageEventStmt.run(findingId, batchId, next.color, next.triage, next.comment, next.fix, next.flagged, updatedBy, updatedByLogin, now)
+    insertTriageEventStmt.run(findingId, batchId, next.color, next.triage, next.comment, next.fix, next.flagged, updatedBy, updatedByLogin, now, reportId, reportId, reportId)
     if (historyLimit > 0) trimTriageEventsStmt.run(findingId, findingId, historyLimit)
   }
   return {
@@ -1048,14 +1051,14 @@ function triageMethods(db: DatabaseSync, stmts: ReturnType<typeof prepareStateme
       }
       return Promise.resolve()
     },
-    setTriageEntries(entries: readonly (readonly [string, TriageEntryPatch | null])[], updatedBy: string | null, updatedByLogin: string | null, now: number): Promise<void> {
+    setTriageEntries(entries: readonly (readonly [string, TriageEntryPatch | null])[], updatedBy: string | null, updatedByLogin: string | null, now: number, reportId?: string): Promise<void> {
       // One transaction, so a batch is never half-applied by a mid-loop error
       // (and costs one fsync under synchronous = FULL, not one per row); one
       // batch id groups its rows in the trail.
       const batchId = randomUUID()
       db.exec('BEGIN')
       try {
-        for (const [findingId, entry] of entries) writeEntry(findingId, entry, batchId, updatedBy, updatedByLogin, now)
+        for (const [findingId, entry] of entries) writeEntry(findingId, entry, batchId, updatedBy, updatedByLogin, now, reportId)
         db.exec('COMMIT')
       } catch (err) {
         try { db.exec('ROLLBACK') } catch {}
@@ -1299,6 +1302,9 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
     if (addedVisible) db.prepare('UPDATE managed_report SET visible = 1 WHERE visible = 0').run()
     ensureColumn(db, 'managed_bundle', 'uploaded_by_login', 'TEXT')
     ensureColumn(db, 'selected_repo', 'active', 'INTEGER NOT NULL DEFAULT 1')
+    ensureColumn(db, 'finding_triage_event', 'report_id', 'TEXT')
+    ensureColumn(db, 'finding_triage_event', 'report', 'TEXT')
+    ensureColumn(db, 'finding_triage_event', 'repo', 'TEXT')
   } catch (err) {
     try { db.close() } catch {}
     throw err
@@ -1358,6 +1364,7 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
       return Promise.resolve({ accessToken: row.access, refreshToken: row.refresh, expiresAt: row.exp })
     },
     ...selectedRepoMethods(stmts),
+    ...activityMethods(db),
     ...reportMethods(stmts),
     ...triageMethods(db, stmts, options.triageHistoryLimit ?? 0),
     ...bundleMethods(stmts),

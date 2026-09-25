@@ -96,31 +96,26 @@ class ManagedAdminHome extends ManagedPage {
 }
 customElements.define('managed-admin-home', ManagedAdminHome)
 
-async function fetchHistory(signal) {
-  const res = await managedFetch('/api/admin/history', { signal, credentials: 'same-origin', headers: { accept: 'application/json' } })
+async function fetchHistory(signal, page, kind, query) {
+  const params = new URLSearchParams({ page: String(page), limit: '100', kind, q: query.trim() })
+  const res = await managedFetch(`/api/admin/history?${params}`, { signal, credentials: 'same-origin', headers: { accept: 'application/json' } })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   const body = await res.json()
-  if (!Array.isArray(body?.history)) throw new Error('No history returned')
-  return body.history
-}
-
-async function fetchAccessibleReportIds(signal) {
-  const res = await managedFetch('/api/teams', { signal, credentials: 'same-origin', headers: { accept: 'application/json' } })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  const body = await res.json()
-  if (!Array.isArray(body?.teams)) throw new Error('No teams returned')
-  return new Set(body.teams.flatMap(team => Array.isArray(team.reports) ? team.reports.map(report => report.id) : []))
+  if (!Array.isArray(body?.history) || !Number.isSafeInteger(body.total) || body.total < 0
+    || !Number.isSafeInteger(body.page) || body.page < 1) throw new Error('No history returned')
+  return body
 }
 
 class ManagedAdminHistory extends ManagedPage {
-  static properties = { _page: { state: true }, _history: { state: true }, _allowedReports: { state: true }, _error: { state: true }, _filter: { state: true }, _query: { state: true } }
+  static properties = { _page: { state: true }, _history: { state: true }, _total: { state: true }, _error: { state: true }, _filter: { state: true }, _query: { state: true } }
 
   static styles = [unsafeCSS(historyStyles), unsafeCSS(commonStyles)]
 
   constructor() {
     super()
     this._history = null
-    this._allowedReports = null
+    this._total = 0
+    this._searchTimer = null
     this._error = null
     this._page = 1
     this._filter = 'all'
@@ -128,9 +123,9 @@ class ManagedAdminHistory extends ManagedPage {
     this._onActorFilter = (event) => {
       const actor = event.detail?.actor
       if (typeof actor !== 'string') return
-      this._page = 1
       this._query = actor
       this._filter = 'all'
+      void this._load()
     }
   }
 
@@ -141,40 +136,49 @@ class ManagedAdminHistory extends ManagedPage {
   }
 
   disconnectedCallback() {
+    clearTimeout(this._searchTimer)
     document.removeEventListener('managed-history-filter', this._onActorFilter)
     super.disconnectedCallback()
   }
 
-  async _load() {
+  async _load(page = 1) {
+    clearTimeout(this._searchTimer)
     this._error = null
-    await this._loadCollection('history', 'history', signal => Promise.all([fetchHistory(signal), fetchAccessibleReportIds(signal)]), ([history, allowedReports]) => {
-      this._history = history
-      this._allowedReports = allowedReports
+    const kind = this._filter
+    const query = this._query.trim()
+    const key = `history:${JSON.stringify([page, kind, query])}`
+    await this._loadCollection(key, 'history', signal => fetchHistory(signal, page, kind, query), (result) => {
+      this._history = result.history
+      this._total = result.total
+      this._page = result.page
     })
   }
 
+  _search(query) {
+    this._query = query
+    clearTimeout(this._searchTimer)
+    this._loadRequest?.abort()
+    this._loadRequest = null
+    this._loading = true
+    this._searchTimer = setTimeout(() => { void this._load() }, 250)
+  }
+
   render() {
-    const all = Array.isArray(this._history) ? this._history : []
-    const history = this._role === 'manage'
-      ? all.filter((entry) => entry.kind === 'triage' && this._allowedReports?.has(entry.reportId))
-      : all
-    const query = this._query.trim().toLocaleLowerCase()
-    const searched = query.length === 0 ? history : history.filter((entry) => historySearchText(entry).includes(query))
-    const filtered = this._filter === 'all' ? searched : searched.filter((entry) => entry.kind === this._filter)
-    const page = Math.min(this._page, Math.max(1, Math.ceil(filtered.length / 100)))
+    const history = this._history ?? []
+    const page = this._page
     const start = (page - 1) * 100
     return html`<div class="wrap">${adminNavigation('manage-history', this._role)}
       <h1 class="sr-only">History</h1>
-      <div class="page-intro"><p class="intro">${this._role === 'admin' ? 'All workspace actions, including uploads, access changes, scans, and triage.' : 'Triage history for reports you can access.'}</p><span class="result-count">${this._history ? filtered.length : '…'} entries</span></div>
-      <div class="toolbar" role="search"><input type="search" aria-label="Search history" placeholder="Search actions, users, repositories, reports…" .value=${this._query} @input=${(event) => { this._query = event.target.value; this._page = 1 }}><select aria-label="Filter history by type" .value=${this._filter} @change=${(event) => { this._filter = event.target.value; this._page = 1 }}><option value="all">All activity</option><option value="triage">Triage</option><option value="visibility">Visibility</option><option value="upload">Uploads</option><option value="scan">Scans</option></select></div>
-      ${this._error ? html`<p class="msg error" role="alert">Couldn’t load history: ${this._error}</p>` : nothing}
-      <div aria-busy=${this._loading}>${this._history == null ? (this._error ? nothing : loadingRows('Loading history…')) : filtered.length === 0 ? html`<div class="history"><p class="empty">${query || this._filter !== 'all' ? 'No activity matches your filters.' : 'No history available yet.'}</p></div>` : html`<div class="history" aria-label="Workspace history"><div class="history-head" aria-hidden="true"><span>Type</span><span>Activity</span><span>Repository / report / finding</span><span>Time</span></div>${filtered.slice(start, start + 100).map((entry) => this._row(entry))}</div>`}</div>
-      ${filtered.length > 100 ? html`<nav class="pagination" aria-label="History pages"><span role="status">${start + 1}–${Math.min(start + 100, filtered.length)} of ${filtered.length} entries</span><button type="button" class="btn" ?disabled=${page === 1} @click=${() => this._changePage(page - 1)}>Previous</button><span>Page ${page} of ${Math.ceil(filtered.length / 100)}</span><button type="button" class="btn" ?disabled=${start + 100 >= filtered.length} @click=${() => this._changePage(page + 1)}>Next</button></nav>` : nothing}
+      <div class="page-intro"><p class="intro">${this._role === 'admin' ? 'Uploads, access changes, repository changes, deletions, and triage.' : 'Triage history for reports you can access.'}</p><span class="result-count">${this._history ? this._total : '…'} entries</span></div>
+      <div class="toolbar" role="search"><input type="search" maxlength="500" aria-label="Search history" placeholder="Search actions, users, repositories, reports…" .value=${this._query} @input=${(event) => this._search(event.target.value)}><select aria-label="Filter history by type" .value=${this._filter} @change=${(event) => { this._filter = event.target.value; void this._load() }}><option value="all">All activity</option><option value="triage">Triage</option>${this._role === 'admin' ? html`<option value="visibility">Visibility</option><option value="upload">Uploads</option><option value="access">Access</option><option value="repository">Repositories</option><option value="delete">Deletions</option>` : nothing}</select><button type="button" class="btn" ?disabled=${this._loading} @click=${() => this._load(page)}>Refresh</button></div>
+      ${this._error ? html`<p class="msg error" role="alert">Couldn’t load history: ${this._error} <button type="button" class="btn" @click=${() => this._load()}>Retry</button></p>` : nothing}
+      <div aria-busy=${this._loading}>${this._history == null ? (this._error ? nothing : loadingRows('Loading history…')) : history.length === 0 ? html`<div class="history"><p class="empty">${this._query.trim() || this._filter !== 'all' ? 'No activity matches your filters.' : 'No history available yet.'}</p></div>` : html`<div class="history" aria-label="Workspace history"><div class="history-head" aria-hidden="true"><span>Type</span><span>Activity</span><span>Repository / report / finding</span><span>Time</span></div>${history.map((entry) => this._row(entry))}</div>`}</div>
+      ${this._total > 100 ? html`<nav class="pagination" aria-label="History pages"><span role="status">${start + 1}–${Math.min(start + 100, this._total)} of ${this._total} entries</span><button type="button" class="btn" ?disabled=${this._loading || page === 1} @click=${() => this._changePage(page - 1)}>Previous</button><span>Page ${page} of ${Math.ceil(this._total / 100)}</span><button type="button" class="btn" ?disabled=${this._loading || start + 100 >= this._total} @click=${() => this._changePage(page + 1)}>Next</button></nav>` : nothing}
     </div>`
   }
 
   async _changePage(page) {
-    this._page = page
+    await this._load(page)
     await this.updateComplete
     this.renderRoot.querySelector('.history')?.scrollIntoView({ block: 'start' })
   }
@@ -183,18 +187,10 @@ class ManagedAdminHistory extends ManagedPage {
     const detail = [entry.repo ?? entry.repository, entry.report, entry.finding].filter(Boolean).join(' · ')
     const actor = entry.actor ?? entry.user ?? 'Unknown user'
     const action = entry.action ?? 'updated workspace data'
-    return html`<div class="row"><span class=${`kind ${entry.kind ?? ''}`}>${entry.kind ?? 'activity'}</span><span class="activity-description" data-tooltip-truncated data-tooltip=${`${actor} ${action}`}><strong class="actor">${actor}</strong> <span class="action">${action}</span></span><span class="detail" data-tooltip-truncated data-tooltip=${detail}>${detail || '—'}</span><time>${entry.when ?? ''}</time></div>`
+    return html`<div class="row"><span class=${`kind ${entry.kind ?? ''}`}>${entry.kind ?? 'activity'}</span><span class="activity-description" data-tooltip-truncated data-tooltip=${`${actor} ${action}`}><strong class="actor">${actor}</strong> <span class="action">${action}</span></span><span class="detail" data-tooltip-truncated data-tooltip=${detail}>${detail || '—'}</span><span class="history-time">${userTime(entry.at)}</span></div>`
   }
 }
 customElements.define('managed-admin-history', ManagedAdminHistory)
-
-function historySearchText(entry) {
-  return Object.entries(entry ?? {}).flatMap(([key, value]) => {
-    if (value == null) return []
-    if (typeof value === 'object') return [key, JSON.stringify(value)]
-    return [key, String(value)]
-  }).join(' ').toLocaleLowerCase()
-}
 
 async function fetchUsers(signal) {
   const res = await managedFetch('/api/admin/users', { signal, credentials: 'same-origin', headers: { accept: 'application/json' } })

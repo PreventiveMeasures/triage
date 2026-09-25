@@ -1939,6 +1939,125 @@ async function reportTriageFixture(db, reportStore) {
   return { now, reportId, admin, adminSess, bobSess, carolSess, daveSess, erinSess, frankSess }
 }
 
+test('workspace history enforces roles and current report access before search, totals, and pagination', async (t) => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const reportStore = fakeBlobStore()
+  const fx = await reportTriageFixture(db, reportStore)
+  const { send, upload } = bundleHarness(db, config, reportStore)
+  const path = '/api/admin/history'
+  const adminCookie = cookiePair(fx.adminSess.setCookie)
+  const managerCookie = cookiePair(fx.frankSess.setCookie)
+  assert.equal((await send('GET', path)).statusCode, 401)
+  for (const session of [fx.bobSess, fx.carolSess, fx.daveSess]) {
+    assert.equal((await send('GET', path, cookiePair(session.setCookie))).statusCode, 403)
+  }
+  assert.equal((await send('POST', path, adminCookie)).statusCode, 405)
+  for (const query of ['page=0', 'page=Infinity', 'limit=0', 'limit=101', 'limit=1.5', 'kind=unknown', `q=${'a'.repeat(501)}`]) {
+    assert.equal((await send('GET', `${path}?${query}`, adminCookie)).statusCode, 400)
+  }
+  await db.setTriage('own', { color: 'red' }, fx.admin.id, 'alice', fx.now)
+  await db.setTriage('foreign', { color: 'blue' }, fx.admin.id, 'alice', fx.now + 1)
+  const read = async (cookie, query = '') => {
+    const res = await send('GET', path + query, cookie)
+    assert.equal(res.statusCode, 200)
+    assert.equal(res.headers['cache-control'], 'no-store')
+    return JSON.parse(res.body)
+  }
+  assert.equal((await read(managerCookie)).total, 0, 'a manager outside any team sees no activity')
+  const team = (await db.listTeams()).find(row => row.name === 'Blue')
+  await db.setTeamMember(team.id, fx.frankSess.userId, { dependencies: false, security: false })
+
+  // A private report carries the same globally shared finding. Its name and
+  // repository must not leak through the event, its search fields, or totals.
+  await db.insertReport({ id: 'private-report', filename: 'confidential.json', contentType: 'application/json', byteSize: 2, sha256: 'secret', uploadedBy: fx.admin.id, repoId: 8, visible: false, bundleId: null, bundleIntegrity: null }, fx.now)
+  await db.setTriageEntries([['own', { triage: 'fixed' }]], fx.admin.id, 'alice', fx.now + 2, 'private-report')
+  const manager = await read(managerCookie, '?limit=1')
+  assert.equal(manager.total, 2)
+  assert.equal(manager.history.length, 1)
+  assert.equal(manager.history[0].reportId, fx.reportId)
+  assert.equal(manager.history[0].repo, 'o/r')
+  assert.doesNotMatch(JSON.stringify(manager), /confidential|private-report|o\/other/u)
+  assert.equal((await read(managerCookie, '?q=confidential')).total, 0)
+  assert.equal((await read(managerCookie, '?kind=upload')).total, 0)
+  assert.equal((await read(adminCookie, '?q=confidential&kind=triage')).total, 1)
+
+  const write = await upload(`/api/reports/${fx.reportId}/triage`, adminCookie, fx.adminSess.csrfToken, JSON.stringify({ entries: { dep: { comment: 'private annotation body' } } }))
+  assert.equal(write.statusCode, 200)
+  const events = await read(adminCookie, '?kind=triage&q=dep')
+  assert.equal(events.history[0].reportId, fx.reportId)
+  assert.equal(events.history[0].report, 'scan.json')
+  assert.doesNotMatch(JSON.stringify(events), /private annotation body/u)
+  await db.setReportVisible(fx.reportId, false)
+  assert.equal((await read(managerCookie)).total, 0, 'hiding a report revokes history visibility')
+  await db.setReportVisible(fx.reportId, true)
+  await db.removeTeamRepo(team.id, 7)
+  await db.setTeamRepo(team.id, 7, 'allowed')
+  assert.equal((await read(managerCookie)).total, 0, 'team repository paths are enforced')
+  await db.setReportRepo(fx.reportId, 7, 'allowed/subdir')
+  assert.equal((await read(managerCookie)).total, 3)
+  await db.removeTeamMember(team.id, fx.frankSess.userId)
+  assert.equal((await read(managerCookie)).total, 0, 'membership revocation applies without restarting')
+})
+
+test('workspace history records successful content and access changes, but not failed or duplicate mutations', async (t) => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const reportStore = fakeBlobStore()
+  const fx = await reportTriageFixture(db, reportStore)
+  const { send, upload } = bundleHarness(db, config, reportStore)
+  const cookie = cookiePair(fx.adminSess.setCookie)
+  const csrf = fx.adminSess.csrfToken
+  const post = (path, body, token = csrf) => upload(`/api/admin/${path}`, cookie, token, JSON.stringify(body))
+  const history = async () => JSON.parse((await send('GET', '/api/admin/history', cookie)).body).history
+  const count = async () => (await history()).length
+  const baseline = await count()
+  assert.equal((await post('reports/set-visible', { reportId: fx.reportId, visible: false }, null)).statusCode, 403)
+  assert.equal((await post('reports/set-visible', { reportId: 'missing', visible: true })).statusCode, 404)
+  assert.equal(await count(), baseline)
+  await post('reports/set-visible', { reportId: fx.reportId, visible: false })
+  await post('reports/set-visible', { reportId: fx.reportId, visible: false })
+  assert.equal(await count(), baseline + 1)
+  await post('reports/set-repo', { reportId: fx.reportId, repoId: 8, directory: 'src' })
+  await post('set-role', { userId: fx.bobSess.userId, role: 'manage' })
+  await post('set-role', { userId: fx.bobSess.userId, role: 'manage' })
+  const team = JSON.parse((await post('teams', { name: 'New team' })).body)
+  await post('teams', { name: 'New team' }) // conflict
+  await post('teams/rename', { teamId: team.id, name: 'Renamed team' })
+  await post('teams/rename', { teamId: team.id, name: 'Renamed team' })
+  await post('teams/set-member', { teamId: team.id, userId: fx.bobSess.userId, security: true })
+  await post('teams/set-member', { teamId: team.id, userId: fx.bobSess.userId, security: true })
+  await post('teams/set-repo', { teamId: team.id, repoId: 7, path: 'src' })
+  await post('teams/set-repo', { teamId: team.id, repoId: 7, path: 'src' })
+  await post('teams/remove-repo', { teamId: team.id, repoId: 7, path: 'src' })
+  await post('teams/remove-member', { teamId: team.id, userId: fx.bobSess.userId })
+  await post('teams/delete', { teamId: team.id })
+  await post('repositories/select', { repoId: 7, selected: false })
+  await post('repositories/select', { repoId: 7, selected: false })
+  const entries = await history()
+  assert.equal(entries.length, baseline + 11, 'repeated edits and rejected changes add no entries')
+  assert.ok(entries.some(entry => entry.kind === 'visibility' && entry.report === 'scan.json'))
+  assert.ok(entries.some(entry => entry.action.includes("bob's role to manage")))
+  assert.ok(entries.some(entry => entry.action.includes('deleted team Renamed team')))
+  assert.ok(entries.every(entry => entry.actor === 'alice'))
+
+  await post('reports/set-repo', { reportId: fx.reportId, repoId: null })
+  const detachedCount = await count()
+  await post('reports/set-repo', { reportId: fx.reportId, repoId: null, directory: 'ignored/when/detached' })
+  assert.equal(await count(), detachedCount, 'detached reports always store an empty directory')
+
+  const bundle = JSON.parse((await upload('/api/admin/bundles', cookie, csrf, Buffer.from('archive'), { 'x-bundle-filename': 'archive.zip' })).body)
+  const afterUpload = await count()
+  await upload('/api/admin/bundles', cookie, csrf, Buffer.from('archive'))
+  assert.equal(await count(), afterUpload, 'deduplicated uploads produce one event')
+  await post('bundles/set-repo', { bundleId: bundle.id, repoId: 8 })
+  assert.equal((await send('DELETE', `/api/admin/bundles/${bundle.id}`, cookie, csrf)).statusCode, 200)
+  assert.equal((await send('DELETE', `/api/admin/reports/${fx.reportId}`, cookie, csrf)).statusCode, 200)
+  const deleted = await history()
+  assert.ok(deleted.some(entry => entry.kind === 'delete' && entry.report === 'scan.json'))
+  assert.equal(deleted.filter(entry => entry.kind === 'upload').length, 2, 'uploads survive deletion')
+})
+
 test('filterReportContent: a groups-shaped dump is filtered the same way, under its own key', () => {
   const grouped = JSON.stringify({ source: 'native', groups: [
     [{ id: 'a', file: 'src/a.js' }],

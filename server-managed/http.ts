@@ -14,6 +14,7 @@
 //   GET  /api/reports/<id>/triage/history?finding=<fid> → one visible finding's triage trail, newest first | 400/401/404
 //   GET  /api/avatar/<id>        → cached avatar bytes by user id | 401/404
 //   GET  /api/admin/users        → admin-only user list | 401/403
+//   GET  /api/admin/history      → paginated activity (admin), accessible triage (manage) | 401/403
 //   POST /api/admin/set-role     → admin sets another user's role | 401/403/404
 //   GET  /api/admin/repositories → admin repo list (each flagged selected) | 401/403
 //   POST /api/admin/repositories/select → admin selects/deactivates a repo | 401/403
@@ -58,11 +59,13 @@ import { CONFIG_PATH, type ServerInfo } from '../common/server-info.ts'
 import { collectRepos, installUrl } from './github-app.ts'
 import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, ensureUserAccessToken, handleCallback } from './github-oauth.ts'
 import { clearCookie, endSession, readSession } from './session.ts'
+import type { ActivityContext, ActivityInput } from './activity.ts'
 
 const SESSION_PATH = '/api/auth/session'
 const AVATAR_PREFIX = '/api/avatar/'
 const LOGOUT_PATH = '/api/auth/logout'
 const ADMIN_USERS_PATH = '/api/admin/users'
+const ADMIN_HISTORY_PATH = '/api/admin/history'
 const ADMIN_MODELS_PATH = '/api/admin/models'
 const SET_ROLE_PATH = '/api/admin/set-role'
 const ADMIN_REPOS_PATH = '/api/admin/repositories'
@@ -88,6 +91,48 @@ const TEAM_REMOVE_REPO_PATH = '/api/admin/teams/remove-repo'
 const TEAM_SET_MEMBER_PATH = '/api/admin/teams/set-member'
 const TEAM_REMOVE_MEMBER_PATH = '/api/admin/teams/remove-member'
 const MAX_TEAM_NAME = 100
+
+function activity(deps: ManagedHttpDeps, user: StoredUser, kind: ActivityInput['kind'], action: string, context: Pick<ActivityInput, 'repo' | 'reportId' | 'report'> = {}): Promise<void> {
+  return deps.db.recordActivity({ kind, actor: user.login, action, ...context }, Date.now())
+}
+
+async function repositoryName(deps: ManagedHttpDeps, repoId: number | null | undefined): Promise<string | null> {
+  if (repoId == null) return null
+  return (await deps.db.listAllRepos()).find(repo => repo.repoId === repoId)?.fullName ?? null
+}
+
+// Workspace history is authorized BEFORE filtering, counting, or paging.
+// Managers get only shared triage for their currently viewable team reports;
+// even the displayed report context must come from those accessible reports.
+async function handleHistory(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
+  const s = await readManageSession(res, deps, cookie)
+  if (s == null) return
+  const page = Number(query.get('page') ?? 1)
+  const limit = Number(query.get('limit') ?? 100)
+  const kind = query.get('kind') ?? 'all'
+  const search = (query.get('q') ?? '').trim()
+  if (!Number.isSafeInteger(page) || page < 1 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100
+    || !['all', 'triage', 'upload', 'visibility', 'access', 'repository', 'delete'].includes(kind) || search.length > 500) {
+    sendJson(res, 400, { error: 'bad-request' }); return
+  }
+  let contexts: ActivityContext[] | null = null
+  if (s.user.role !== 'admin') {
+    const findings = new Map<string, ActivityContext>()
+    const teams = await deps.db.listTeamsForUser(s.user.id)
+    const reports = new Set(teams.flatMap(team => team.reports.map(report => report.id)))
+    const repos = new Map((await deps.db.listAllRepos()).map(repo => [repo.repoId, repo.fullName]))
+    for (const id of reports) {
+      if (!(await canViewReport(deps, s.user, id))) continue
+      const report = await deps.db.getReport(id)
+      if (report == null) continue
+      for (const finding of await visibleFindingIds(deps, s.user, id)) {
+        if (!findings.has(finding)) findings.set(finding, { finding, reportId: id, report: report.filename, repo: report.repoId == null ? null : repos.get(report.repoId) ?? null })
+      }
+    }
+    contexts = [...findings.values()]
+  }
+  sendJson(res, 200, await deps.db.listActivity({ page, limit, kind, query: search, contexts }))
+}
 
 export interface ManagedHttpDeps {
   config: ManagedConfig
@@ -194,8 +239,10 @@ async function handleSetRole(req: IncomingMessage, res: ServerResponse, deps: Ma
   const role = (body as { role?: unknown } | null)?.role
   if (typeof userId !== 'string' || !isRole(role)) { sendJson(res, 400, { error: 'bad-request' }); return }
   if (userId === s.user.id) { sendJson(res, 403, { error: 'cannot-change-own-role' }); return }
+  const target = (await deps.db.listUsers()).find(user => user.id === userId)
   const ok = await deps.db.setUserRole(userId, role)
   if (!ok) { sendJson(res, 404, { error: 'not-found' }); return }
+  if (target?.role !== role) await activity(deps, s.user, 'access', `changed ${target?.login ?? userId}'s role to ${role}`)
   sendJson(res, 200, { ok: true })
 }
 
@@ -302,17 +349,20 @@ async function handleListRepositories(req: IncomingMessage, res: ServerResponse,
 // access (never trust a client-supplied id) and capture the server-derived read
 // context (installation id, default branch). A PRIVATE repo with no installation
 // can't be read server-side → 409. Stores via selectRepo (upsert).
-async function selectRepository(res: ServerResponse, deps: ManagedHttpDeps, userId: string, repoId: number): Promise<void> {
+async function selectRepository(res: ServerResponse, deps: ManagedHttpDeps, user: StoredUser, repoId: number): Promise<void> {
+  const userId = user.id
   const token = await ensureUserAccessToken(deps.config, deps.db, userId, Date.now())
   const { repositories } = await collectRepos(deps.config, token)
   const repo = repositories.find((r) => r.id === repoId)
   if (repo == null) { sendJson(res, 404, { error: 'repo-not-accessible' }); return }
   if (repo.private && repo.installationId == null) { sendJson(res, 409, { error: 'repo-not-readable' }); return }
+  const alreadySelected = (await deps.db.listSelectedRepos()).some(row => row.repoId === repoId)
   await deps.db.selectRepo({
     repoId: repo.id, fullName: repo.fullName, private: repo.private,
     installationId: repo.installationId, defaultBranch: repo.defaultBranch,
     htmlUrl: repo.htmlUrl, addedBy: userId,
   }, Date.now())
+  if (!alreadySelected) await activity(deps, user, 'repository', 'connected a repository', { repo: repo.fullName })
   sendJson(res, 200, { ok: true, selected: true })
 }
 
@@ -331,8 +381,13 @@ async function handleSelectRepository(req: IncomingMessage, res: ServerResponse,
   if (typeof repoId !== 'number' || !Number.isSafeInteger(repoId) || typeof selected !== 'boolean') {
     sendJson(res, 400, { error: 'bad-request' }); return
   }
-  if (!selected) { await deps.db.deactivateRepo(repoId); sendJson(res, 200, { ok: true, selected: false }); return }
-  await selectRepository(res, deps, s.user.id, repoId)
+  if (!selected) {
+    const repo = (await deps.db.listSelectedRepos()).find(row => row.repoId === repoId)
+    await deps.db.deactivateRepo(repoId)
+    if (repo) await activity(deps, s.user, 'repository', 'deactivated a repository', { repo: repo.fullName })
+    sendJson(res, 200, { ok: true, selected: false }); return
+  }
+  await selectRepository(res, deps, s.user, repoId)
 }
 
 async function repositoryFindingIds(deps: ManagedHttpDeps, reports: { id: string, filename: string }[]): Promise<Set<string>> {
@@ -420,6 +475,7 @@ async function handleRemoveRepository(req: IncomingMessage, res: ServerResponse,
   for (const bundle of bundles) await deps.bundleStore.delete(bundle.id).catch(() => {})
   const deletedTriage = await deps.db.deleteTriage(triageIds)
   await deps.db.deleteRepo(repoId)
+  await activity(deps, s.user, 'delete', `removed a repository (${deletedReports} reports, ${deletedBundles} bundles, ${deletedTriage} triage entries)`, { repo: repo.fullName })
   sendJson(res, 200, { ok: true, deletedReports, deletedBundles, deletedTriage })
 }
 
@@ -498,6 +554,9 @@ async function handleSetReportRepo(req: IncomingMessage, res: ServerResponse, de
   const normalized = normalizeTeamPath(directory)
   if (!normalized.ok) { sendJson(res, 400, { error: 'bad-directory' }); return }
   if (!(await deps.db.setReportRepo(reportId, repoId as number | null, normalized.path ?? ''))) { sendJson(res, 404, { error: 'no-report' }); return }
+  if (report.repoId !== repoId || report.repoDirectory !== (repoId == null ? '' : normalized.path ?? '')) {
+    await activity(deps, s.user, 'repository', repoId == null ? 'detached a report from its repository' : `assigned a report to repository path ${normalized.path || '/'}`, { reportId, report: report.filename, repo: await repositoryName(deps, (repoId as number | null) ?? report.repoId) })
+  }
   sendJson(res, 200, { ok: true, repoId, repoDirectory: normalized.path ?? '' })
 }
 
@@ -511,7 +570,9 @@ async function handleSetReportVisible(req: IncomingMessage, res: ServerResponse,
   const reportId = (body as { reportId?: unknown } | null)?.reportId
   const visible = (body as { visible?: unknown } | null)?.visible
   if (typeof reportId !== 'string' || typeof visible !== 'boolean') { sendJson(res, 400, { error: 'bad-request' }); return }
+  const report = await deps.db.getReport(reportId)
   if (!(await deps.db.setReportVisible(reportId, visible))) { sendJson(res, 404, { error: 'no-report' }); return }
+  if (report && report.visible !== visible) await activity(deps, s.user, 'visibility', visible ? 'published a report' : 'hid a report', { reportId, report: report.filename, repo: await repositoryName(deps, report.repoId) })
   sendJson(res, 200, { ok: true, visible })
 }
 
@@ -526,7 +587,9 @@ async function handleSetBundleRepo(req: IncomingMessage, res: ServerResponse, de
   const repoId = (body as { repoId?: unknown } | null)?.repoId ?? null
   if (typeof bundleId !== 'string') { sendJson(res, 400, { error: 'bad-request' }); return }
   if (!(await repoIdAllowed(deps, repoId))) { sendJson(res, 400, { error: 'bad-repo' }); return }
+  const bundle = await deps.db.getBundle(bundleId)
   if (!(await deps.db.setBundleRepo(bundleId, repoId as number | null))) { sendJson(res, 404, { error: 'no-bundle' }); return }
+  if (bundle && bundle.repoId !== repoId) await activity(deps, s.user, 'repository', repoId == null ? 'detached a bundle from its repository' : 'assigned a bundle to a repository', { report: bundle.filename, repo: await repositoryName(deps, (repoId as number | null) ?? bundle.repoId) })
   sendJson(res, 200, { ok: true })
 }
 
@@ -655,9 +718,11 @@ async function handleDeleteReport(req: IncomingMessage, res: ServerResponse, dep
   const s = await checkMutation(req, res, deps, cookie)
   if (s == null) return
   if (!requireManageRole(res, s.user)) return
+  const report = await deps.db.getReport(id)
   const existed = await deps.db.deleteReport(id)
   await deps.reportStore.delete(id).catch((err) => { console.warn('managed: report bytes delete failed:', err) })
   if (!existed) { sendJson(res, 404, { error: 'no-report' }); return }
+  await activity(deps, s.user, 'delete', 'deleted a report', { reportId: id, report: report?.filename ?? null, repo: await repositoryName(deps, report?.repoId) })
   sendJson(res, 200, { ok: true })
 }
 
@@ -754,9 +819,11 @@ async function handleDeleteBundle(req: IncomingMessage, res: ServerResponse, dep
   const s = await checkMutation(req, res, deps, cookie)
   if (s == null) return
   if (!requireManageRole(res, s.user)) return
+  const bundle = await deps.db.getBundle(id)
   const existed = await deps.db.deleteBundle(id)
   await deps.bundleStore.delete(id).catch((err) => { console.warn('managed: bundle bytes delete failed:', err) })
   if (!existed) { sendJson(res, 404, { error: 'no-bundle' }); return }
+  await activity(deps, s.user, 'delete', 'deleted a bundle', { report: bundle?.filename ?? null, repo: await repositoryName(deps, bundle?.repoId) })
   sendJson(res, 200, { ok: true })
 }
 
@@ -983,7 +1050,7 @@ async function handleSetReportTriage(req: IncomingMessage, res: ServerResponse, 
   if (parsed.some(([findingId]) => !visible.has(findingId))) {
     sendJson(res, 404, { error: 'no-finding' }); return
   }
-  await deps.db.setTriageEntries(parsed, s.user.id, s.user.login, Date.now())
+  await deps.db.setTriageEntries(parsed, s.user.id, s.user.login, Date.now(), id)
   sendJson(res, 200, { ok: true })
 }
 
@@ -1012,6 +1079,7 @@ async function handleCreateTeam(req: IncomingMessage, res: ServerResponse, deps:
   if (name === '' || name.length > MAX_TEAM_NAME) { sendJson(res, 400, { error: 'bad-name' }); return }
   const id = randomUUID()
   if (!(await deps.db.createTeam(id, name, Date.now()))) { sendJson(res, 409, { error: 'name-taken' }); return }
+  await activity(deps, s.user, 'access', `created team ${name}`)
   sendJson(res, 201, { id, name })
 }
 
@@ -1026,9 +1094,11 @@ async function handleRenameTeam(req: IncomingMessage, res: ServerResponse, deps:
   const rawName = (body as { name?: unknown } | null)?.name
   const name = typeof rawName === 'string' ? rawName.trim() : ''
   if (typeof teamId !== 'string' || name === '' || name.length > MAX_TEAM_NAME) { sendJson(res, 400, { error: 'bad-name' }); return }
+  const team = await deps.db.getTeam(teamId)
   const result = await deps.db.renameTeam(teamId, name, Date.now())
   if (result === 'not-found') { sendJson(res, 404, { error: 'no-team' }); return }
   if (result === 'name-taken') { sendJson(res, 409, { error: 'name-taken' }); return }
+  if (team?.name !== name) await activity(deps, s.user, 'access', `renamed team ${team?.name ?? teamId} to ${name}`)
   sendJson(res, 200, { ok: true, name })
 }
 
@@ -1040,7 +1110,9 @@ async function handleDeleteTeam(req: IncomingMessage, res: ServerResponse, deps:
   try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
   const teamId = (body as { teamId?: unknown } | null)?.teamId
   if (typeof teamId !== 'string') { sendJson(res, 400, { error: 'bad-request' }); return }
+  const team = await deps.db.getTeam(teamId)
   if (!(await deps.db.deleteTeam(teamId))) { sendJson(res, 404, { error: 'no-team' }); return }
+  await activity(deps, s.user, 'access', `deleted team ${team?.name ?? teamId}`)
   sendJson(res, 200, { ok: true })
 }
 
@@ -1059,9 +1131,13 @@ async function handleSetTeamRepo(req: IncomingMessage, res: ServerResponse, deps
   }
   const path = normalizeTeamPath((body as { path?: unknown }).path)
   if (!path.ok) { sendJson(res, 400, { error: 'bad-path' }); return }
-  if ((await deps.db.getTeam(teamId)) == null) { sendJson(res, 404, { error: 'no-team' }); return }
+  const team = (await deps.db.listTeams()).find(row => row.id === teamId)
+  if (team == null) { sendJson(res, 404, { error: 'no-team' }); return }
   if (!(await deps.db.listSelectedRepos()).some((r) => r.repoId === repoId)) { sendJson(res, 400, { error: 'repo-not-selected' }); return }
   await deps.db.setTeamRepo(teamId, repoId, path.path)
+  if (!team.repos.some(repo => repo.repoId === repoId && (repo.path ?? '') === (path.path ?? ''))) {
+    await activity(deps, s.user, 'access', `granted team ${team.name} access to ${path.path || '/'}`, { repo: await repositoryName(deps, repoId) })
+  }
   sendJson(res, 200, { ok: true })
 }
 
@@ -1080,6 +1156,7 @@ async function handleRemoveTeamRepo(req: IncomingMessage, res: ServerResponse, d
   const path = normalizeTeamPath(rawPath)
   if (!path.ok) { sendJson(res, 400, { error: 'bad-path' }); return }
   if (!(await deps.db.removeTeamRepo(teamId, repoId, rawPath === undefined ? undefined : path.path))) { sendJson(res, 404, { error: 'not-linked' }); return }
+  await activity(deps, s.user, 'access', `removed team ${(await deps.db.getTeam(teamId))?.name ?? teamId}'s access to ${rawPath === undefined ? 'all paths' : path.path || '/'}`, { repo: await repositoryName(deps, repoId) })
   sendJson(res, 200, { ok: true })
 }
 
@@ -1093,9 +1170,16 @@ async function handleSetTeamMember(req: IncomingMessage, res: ServerResponse, de
   const teamId = (body as { teamId?: unknown } | null)?.teamId
   const userId = (body as { userId?: unknown } | null)?.userId
   if (typeof teamId !== 'string' || typeof userId !== 'string') { sendJson(res, 400, { error: 'bad-request' }); return }
-  if ((await deps.db.getTeam(teamId)) == null) { sendJson(res, 404, { error: 'no-team' }); return }
-  if (!(await deps.db.listUserOptions()).some((u) => u.id === userId)) { sendJson(res, 404, { error: 'no-user' }); return }
-  await deps.db.setTeamMember(teamId, userId, parseTeamUserPermissions(body))
+  const team = (await deps.db.listTeams()).find(row => row.id === teamId)
+  if (team == null) { sendJson(res, 404, { error: 'no-team' }); return }
+  const user = (await deps.db.listUserOptions()).find(row => row.id === userId)
+  if (user == null) { sendJson(res, 404, { error: 'no-user' }); return }
+  const permissions = parseTeamUserPermissions(body)
+  const member = team.members.find(row => row.userId === userId)
+  await deps.db.setTeamMember(teamId, userId, permissions)
+  if (!member || member.dependencies !== permissions.dependencies || member.security !== permissions.security) {
+    await activity(deps, s.user, 'access', `set ${user.login}'s membership in ${team.name} (dependencies: ${permissions.dependencies ? 'on' : 'off'}, security: ${permissions.security ? 'on' : 'off'})`)
+  }
   sendJson(res, 200, { ok: true })
 }
 
@@ -1109,6 +1193,9 @@ async function handleRemoveTeamMember(req: IncomingMessage, res: ServerResponse,
   const userId = (body as { userId?: unknown } | null)?.userId
   if (typeof teamId !== 'string' || typeof userId !== 'string') { sendJson(res, 400, { error: 'bad-request' }); return }
   if (!(await deps.db.removeTeamMember(teamId, userId))) { sendJson(res, 404, { error: 'not-member' }); return }
+  const team = await deps.db.getTeam(teamId)
+  const user = (await deps.db.listUserOptions()).find(row => row.id === userId)
+  await activity(deps, s.user, 'access', `removed ${user?.login ?? userId} from team ${team?.name ?? teamId}`)
   sendJson(res, 200, { ok: true })
 }
 
@@ -1170,6 +1257,10 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       return
     }
     // Admin: list users (admin-only).
+    if (path === ADMIN_HISTORY_PATH) {
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      await handleHistory(res, deps, cookie, url.searchParams); return
+    }
     if (path === ADMIN_USERS_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }
       const s = await readSession(config, db, cookie, Date.now())

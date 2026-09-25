@@ -51,10 +51,10 @@ const users = [
 ]
 
 const history = [
-  { id: 'history-1', kind: 'triage', actor: 'riley-reviewer', action: 'marked a finding In progress', reportId: 'fixture-report-1', report: 'managed-fixture.json', repo: 'example/managed-fixtures', finding: 'managed-fixture-1', when: 'Today, 10:14' },
-  { id: 'history-2', kind: 'visibility', actor: 'alex-security', action: 'made a report visible', reportId: 'fixture-report-3', report: 'managed-api.json', repo: 'example/managed-fixtures', finding: '', when: 'Today, 09:58' },
-  { id: 'history-3', kind: 'upload', actor: 'alex-security', action: 'uploaded a bundle', reportId: '', report: 'managed-fixtures.stasis', repo: 'example/managed-fixtures', finding: '', when: 'Today, 09:42' },
-  { id: 'history-4', kind: 'triage', actor: 'sam-observer', action: 'added a comment', reportId: 'fixture-report-2', report: 'managed-worker.json', repo: 'example/worker-service', finding: 'managed-fixture-2', when: 'Yesterday, 17:20' },
+  { id: 'history-1', kind: 'triage', actor: 'riley-reviewer', action: 'marked a finding In progress', reportId: 'fixture-report-1', report: 'managed-fixture.json', repo: 'example/managed-fixtures', finding: 'managed-fixture-1', at: 1_758_000_000_000 },
+  { id: 'history-2', kind: 'visibility', actor: 'alex-security', action: 'made a report visible', reportId: 'fixture-report-3', report: 'managed-api.json', repo: 'example/managed-fixtures', finding: '', at: 1_757_999_000_000 },
+  { id: 'history-3', kind: 'upload', actor: 'alex-security', action: 'uploaded a bundle', reportId: '', report: 'managed-fixtures.stasis', repo: 'example/managed-fixtures', finding: '', at: 1_757_998_000_000 },
+  { id: 'history-4', kind: 'triage', actor: 'sam-observer', action: 'added a comment', reportId: 'fixture-report-2', report: 'managed-worker.json', repo: 'example/worker-service', finding: 'managed-fixture-2', at: 1_757_910_000_000 },
 ]
 
 const reportFixtures = [
@@ -233,7 +233,14 @@ function handleAdminCatalog(url: URL, method: string, res: ServerResponse): bool
   }
   if (url.pathname === '/api/admin/history') {
     if (method !== 'GET') { sendJson(res, 405, { error: 'method-not-allowed' }); return true }
-    sendJson(res, 200, { history })
+    if (role !== 'admin' && role !== 'manage') { sendJson(res, 403, { error: 'forbidden' }); return true }
+    const query = (url.searchParams.get('q') ?? '').toLowerCase()
+    const kind = url.searchParams.get('kind') ?? 'all'
+    const visible = history.filter(entry => (role === 'admin' || (entry.kind === 'triage' && reportMetadata.some(report => report.id === entry.reportId && report.visible)))
+      && (kind === 'all' || entry.kind === kind) && [entry.actor, entry.action, entry.repo, entry.report, entry.finding].join(' ').toLowerCase().includes(query))
+    const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit')) || 100))
+    const page = Math.min(Math.max(1, Number(url.searchParams.get('page')) || 1), Math.max(1, Math.ceil(visible.length / limit)))
+    sendJson(res, 200, { history: visible.slice((page - 1) * limit, page * limit), total: visible.length, page, limit })
     return true
   }
   if (url.pathname === '/api/admin/repositories/impact') {
