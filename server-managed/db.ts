@@ -185,6 +185,7 @@ CREATE TABLE IF NOT EXISTS finding_triage_event (
   at           INTEGER NOT NULL
 ) STRICT;
 CREATE INDEX IF NOT EXISTS finding_triage_event_finding_idx ON finding_triage_event(finding_id, seq);
+CREATE INDEX IF NOT EXISTS finding_triage_event_actor_at_idx ON finding_triage_event(actor_id, at);
 
 -- Teams group users + repos for access scoping. A team has just a name here;
 -- the two link tables below carry the many-many relations.
@@ -624,7 +625,10 @@ function prepareStatements(db: DatabaseSync) {
     ),
     selectUsersStmt: db.prepare(
       `SELECT u.id, u.login, u.name, u.role, u.created_at AS created, u.last_seen_at AS lastSeen,
-              (SELECT MAX(e.at) FROM finding_triage_event e WHERE e.actor_id = u.id) AS lastActivity
+              (SELECT MAX(at) FROM (
+                SELECT MAX(e.at) AS at FROM finding_triage_event e WHERE e.actor_id = u.id
+                UNION ALL SELECT MAX(a.at) AS at FROM managed_activity a WHERE a.actor_id = u.id
+              )) AS lastActivity
          FROM managed_user u ORDER BY u.created_at ASC, u.login ASC`,
     ),
     touchUserSeenStmt: db.prepare(
@@ -1321,6 +1325,8 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
     throw err
   }
 
+  // History tables and migrations must exist before preparing the users query.
+  const activity = activityMethods(db)
   const stmts = prepareStatements(db)
   const {
     upsertUserStmt, selectUserIdStmt, insertSessionStmt, selectSessionStmt, selectUsersStmt,
@@ -1375,7 +1381,7 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
       return Promise.resolve({ accessToken: row.access, refreshToken: row.refresh, expiresAt: row.exp })
     },
     ...selectedRepoMethods(stmts),
-    ...activityMethods(db),
+    ...activity,
     ...reportMethods(stmts),
     ...triageMethods(db, stmts, options.triageHistoryLimit ?? 0),
     ...bundleMethods(stmts),

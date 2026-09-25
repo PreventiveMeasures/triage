@@ -7,6 +7,7 @@ import type { DatabaseSync } from 'node:sqlite'
 export interface ActivityInput {
   kind: 'access' | 'repository' | 'visibility' | 'delete'
   actor: string
+  actorId?: string | null
   action: string
   repo?: string | null
   reportId?: string | null
@@ -95,29 +96,30 @@ export function activityMethods(db: DatabaseSync): ActivityStore {
     CREATE TABLE IF NOT EXISTS managed_activity (
       id TEXT PRIMARY KEY, kind TEXT NOT NULL, actor TEXT, action TEXT NOT NULL,
       repo TEXT, report_id TEXT, report TEXT, at INTEGER NOT NULL,
-      bundle_id TEXT, repo_id INTEGER, repo_directory TEXT
+      bundle_id TEXT, repo_id INTEGER, repo_directory TEXT, actor_id TEXT
     ) STRICT;
     CREATE INDEX IF NOT EXISTS managed_activity_at_idx ON managed_activity(at, id);
     CREATE INDEX IF NOT EXISTS finding_triage_event_at_idx ON finding_triage_event(at, seq);
   `)
   migrateActivityScope(db)
+  db.exec('CREATE INDEX IF NOT EXISTS managed_activity_actor_at_idx ON managed_activity(actor_id, at)')
   // Stable upload IDs make backfill idempotent, including after restarts.
   // Snapshots deliberately have no cascading FKs: deletion is itself activity.
   for (const type of ['report', 'bundle']) {
-    const columns = `id, kind, actor, action, repo, report_id, report, at, bundle_id`
+    const columns = `id, kind, actor, action, repo, report_id, report, at, bundle_id, actor_id`
     const values = (alias: string) => `'${type}-upload:' || ${alias}.id, 'upload',
       COALESCE(${alias}.uploaded_by_login, (SELECT login FROM managed_user WHERE id = ${alias}.uploaded_by)), 'uploaded a ${type}',
       (SELECT full_name FROM selected_repo WHERE repo_id = ${alias}.repo_id),
       ${type === 'report' ? `${alias}.id` : 'NULL'}, ${alias}.filename, ${alias}.uploaded_at,
-      ${type === 'bundle' ? `${alias}.id` : 'NULL'}`
+      ${type === 'bundle' ? `${alias}.id` : 'NULL'}, ${alias}.uploaded_by`
     db.exec(`
       CREATE TRIGGER IF NOT EXISTS managed_${type}_activity AFTER INSERT ON managed_${type}
       BEGIN INSERT INTO managed_activity (${columns}) SELECT ${values('NEW')}; END;
       INSERT OR IGNORE INTO managed_activity (${columns}) SELECT ${values('source')} FROM managed_${type} source;
     `)
   }
-  const insert = db.prepare(`INSERT INTO managed_activity (id, kind, actor, action, repo, report_id, report, at, bundle_id, repo_id, repo_directory)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+  const insert = db.prepare(`INSERT INTO managed_activity (id, kind, actor, action, repo, report_id, report, at, bundle_id, repo_id, repo_directory, actor_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
   function statements(source: string) {
     const filtered = `WITH activity AS (${source}) SELECT * FROM activity
       WHERE (:kind = 'all' OR kind = :kind)
@@ -140,7 +142,7 @@ export function activityMethods(db: DatabaseSync): ActivityStore {
   return {
     recordActivity(entry, at) {
       insert.run(randomUUID(), entry.kind, entry.actor, entry.action, entry.repo ?? null, entry.reportId ?? null, entry.report ?? null, at,
-        entry.bundleId ?? null, entry.repoId ?? null, entry.repoDirectory ?? null)
+        entry.bundleId ?? null, entry.repoId ?? null, entry.repoDirectory ?? null, entry.actorId ?? null)
       return Promise.resolve()
     },
     listActivityReports(userId) {
@@ -164,16 +166,23 @@ function withinTeamPath(path: string): string {
 
 function migrateActivityScope(db: DatabaseSync): void {
   const columns = new Set((db.prepare('PRAGMA table_info(managed_activity)').all() as { name: string }[]).map(column => column.name))
-  const missing = [['bundle_id', 'TEXT'], ['repo_id', 'INTEGER'], ['repo_directory', 'TEXT']].filter(([name]) => !columns.has(name!))
+  const missing = [['bundle_id', 'TEXT'], ['repo_id', 'INTEGER'], ['repo_directory', 'TEXT'], ['actor_id', 'TEXT']].filter(([name]) => !columns.has(name!))
   if (missing.length === 0) return
   db.exec('BEGIN')
   try {
     for (const [name, type] of missing) db.exec(`ALTER TABLE managed_activity ADD COLUMN ${name} ${type}`)
-    if (!columns.has('bundle_id')) {
-      db.exec(`
-      DROP TRIGGER IF EXISTS managed_report_activity;
-      DROP TRIGGER IF EXISTS managed_bundle_activity;
-      UPDATE managed_activity SET bundle_id = substr(id, 15) WHERE id LIKE 'bundle-upload:%';`)
+    if (!columns.has('bundle_id') || !columns.has('actor_id')) {
+      db.exec('DROP TRIGGER IF EXISTS managed_report_activity; DROP TRIGGER IF EXISTS managed_bundle_activity;')
+    }
+    if (!columns.has('bundle_id')) db.exec("UPDATE managed_activity SET bundle_id = substr(id, 15) WHERE id LIKE 'bundle-upload:%'")
+    if (!columns.has('actor_id')) {
+      // Existing upload targets retain a reliable uploader identity. Do not
+      // guess identities from historical logins: names can change or be reused.
+      for (const type of ['report', 'bundle']) {
+        db.exec(`UPDATE managed_activity SET actor_id = (
+          SELECT uploaded_by FROM managed_${type} WHERE id = substr(managed_activity.id, 15)
+        ) WHERE id LIKE '${type}-upload:%'`)
+      }
     }
     // Legacy deletions/assignments without a durable target/scope remain
     // admin-only; neither filenames nor repository names authorize access.

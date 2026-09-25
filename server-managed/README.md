@@ -80,3 +80,18 @@ without embedded repository metadata can use the repository and directory
 controls on the upload page. Bundle deduplication never returns inaccessible
 bundle IDs or names, and manager uploads only auto-link accessible reports.
 Repository connections, teams, memberships, and user roles are admin-only.
+
+# User timestamps
+
+The Users page reads Last Activity from the latest retained triage, upload, or
+management history entry attributed to that user's stable ID. Reading pages,
+failed requests, unchanged edits, and deduplicated uploads do not add activity.
+The user row is not updated for Last Activity; Last seen independently tracks
+session authentication. Upload and management entries retain their actor ID
+when content is deleted or an account is renamed.
+
+Existing triage and uploads whose original metadata remains are attributable
+on upgrade. Older management entries recorded only a display login, so they
+cannot be safely assigned to an account after a rename or login reuse. Users
+without attributable history show Unknown. Triage retention/deletion still
+applies because Last Activity is derived from the retained history.
