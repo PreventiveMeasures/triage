@@ -304,5 +304,16 @@ input[type=checkbox] {
   gap: .75rem;
   margin-bottom: .85rem;
 }
+.page-intro {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: .5rem 1rem;
+  margin-bottom: 1.25rem;
+}
+.page-intro .intro {
+  margin: 0;
+}
 
 a { cursor: default; }

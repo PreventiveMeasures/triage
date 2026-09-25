@@ -192,8 +192,8 @@ class ManagedAdminHistory extends LitElement {
     const page = Math.min(this._page, Math.max(1, Math.ceil(filtered.length / 100)))
     const start = (page - 1) * 100
     return html`<div class="wrap">${adminNavigation('manage-history', this._role)}
-      <div class="head"><h1>History</h1>${this._history ? html`<span class="count">${filtered.length}</span>` : nothing}</div>
-      <p class="intro">${this._role === 'admin' ? 'All workspace actions, including uploads, access changes, scans, and triage.' : 'Triage history for reports you can access.'}</p>
+      <h1 class="sr-only">History</h1>
+      <div class="page-intro"><p class="intro">${this._role === 'admin' ? 'All workspace actions, including uploads, access changes, scans, and triage.' : 'Triage history for reports you can access.'}</p>${this._history ? html`<span class="result-count">${filtered.length} entries</span>` : nothing}</div>
       ${this._history == null ? nothing : html`<div class="toolbar" role="search"><input type="search" aria-label="Search history" placeholder="Search actions, users, repositories, reports…" .value=${this._query} @input=${(event) => { this._query = event.target.value; this._page = 1 }}><select aria-label="Filter history by type" .value=${this._filter} @change=${(event) => { this._filter = event.target.value; this._page = 1 }}><option value="all">All activity</option><option value="triage">Triage</option><option value="visibility">Visibility</option><option value="upload">Uploads</option><option value="scan">Scans</option></select></div>`}
       ${this._error ? html`<p class="msg error">Couldn’t load history: ${this._error}</p>` : this._history == null ? html`<p class="msg">Loading…</p>` : filtered.length === 0 ? html`<div class="history"><p class="empty">${query || this._filter !== 'all' ? 'No activity matches your filters.' : 'No history available yet.'}</p></div>` : html`<div class="history" aria-label="Workspace history"><div class="history-head" aria-hidden="true"><span>Type</span><span>Activity</span><span>Repository / report / finding</span><span>Time</span></div>${filtered.slice(start, start + 100).map((entry) => this._row(entry))}</div>`}
       ${filtered.length > 100 ? html`<nav class="pagination" aria-label="History pages"><span role="status">${start + 1}–${Math.min(start + 100, filtered.length)} of ${filtered.length} entries</span><button type="button" class="btn" ?disabled=${page === 1} @click=${() => this._changePage(page - 1)}>Previous</button><span>Page ${page} of ${Math.ceil(filtered.length / 100)}</span><button type="button" class="btn" ?disabled=${start + 100 >= filtered.length} @click=${() => this._changePage(page + 1)}>Next</button></nav>` : nothing}
@@ -300,8 +300,8 @@ class ManagedAdminUsers extends LitElement {
 
   render() {
     return html`<div class="wrap">${adminNavigation('admin-users', this._role)}
-      <div class="head"><h1>Users</h1>${this._users ? html`<span class="count">${this._users.length}</span>` : nothing}</div>
-      <p class="intro">Manage workspace access and roles.</p>
+      <h1 class="sr-only">Users</h1>
+      <div class="page-intro"><p class="intro">Manage workspace access and roles.</p>${this._users ? html`<span class="result-count">${this._users.length} users</span>` : nothing}</div>
       <div class="collection-toolbar" role="search"><input type="search" aria-label="Search users" placeholder="Search by name, username, or team…" .value=${this._query} @input=${e => { this._query = e.target.value }}></div>
       ${this._error == null
         ? (this._users == null ? html`<p class="msg">Loading…</p>` : this._list())
@@ -570,16 +570,12 @@ class ManagedAdminRepos extends LitElement {
     const connected = this._scope === 'connected'
     const title = connected ? 'Repositories' : `Add ${this._scope} repository`
     return html`<div class="wrap">${adminNavigation('manage-repos', this._role)}
-      <div class="head">
-        ${connected ? nothing : this._back()}
-        <h1>${title}</h1>
-        ${connected && this._data ? html`<span class="count">${this._data.connectedCount} connected</span>` : nothing}
-      </div>
-      <p class="intro">${connected
+      ${connected ? html`<h1 class="sr-only">${title}</h1>` : html`<div class="head">${this._back()}<h1>${title}</h1></div>`}
+      <div class="page-intro"><p class="intro">${connected
         ? 'Manage connected repositories and their settings.'
         : this._scope === 'installed'
           ? 'Choose a repository the GitHub App can read. Installed repositories can be public or private.'
-          : 'Choose a public repository your GitHub account is involved with. Random public repositories are not listed.'}</p>
+          : 'Choose a public repository your GitHub account is involved with. Random public repositories are not listed.'}</p>${connected && this._data ? html`<span class="result-count">${this._data.connectedCount} connected</span>` : nothing}</div>
       ${!connected && this._scope === 'installed' ? html`<div class="access-note">
         <p>Installed repositories are readable through the GitHub App. Install it on a repository or organization to make it available here.</p>
         ${this._data?.installUrl ? html`<a class="btn" href=${this._data.installUrl} target="_blank" rel="noopener noreferrer">Configure GitHub access</a>` : nothing}
@@ -955,7 +951,7 @@ class ManagedAdminReports extends LitElement {
     return html`
       ${this._dragOver ? html`<div class="dropzone">Drop reports to upload</div>` : nothing}
       <div class="wrap">${adminNavigation('manage-reports', this._role)}
-        <div class="head"><h1>Reports</h1></div>
+        <h1 class="sr-only">Reports</h1>
         <p class="intro">Upload reports. New reports stay hidden until you make them visible.</p>
         <div class="drop-card"><span class="drop-icon" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10V2m0 0L5 5m3-3 3 3M3 9v3.5A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5V9"/></svg></span><span class="drop-copy"><strong>Upload reports</strong><span>Drop files anywhere on this page, or browse your computer.</span></span><button type="button" class="drop-browse" ?disabled=${this._busy} @click=${() => pickFiles((files) => void this._upload(files))}>${this._busy ? 'Uploading…' : 'Browse files'}</button></div>
         ${this._body()}
@@ -1175,7 +1171,7 @@ class ManagedAdminBundles extends LitElement {
     return html`
       ${this._dragOver ? html`<div class="dropzone">Drop bundles to upload</div>` : nothing}
       <div class="wrap">${adminNavigation('manage-bundles', this._role)}
-        <div class="head"><h1>Bundles</h1></div>
+        <h1 class="sr-only">Bundles</h1>
         <p class="intro">Source bundles and sourcemaps for your repositories.</p>
         <section class="upload-panel" aria-label="Upload bundles">
           <div class="upload-copy"><span class="drop-icon" aria-hidden="true">${adminIcon('upload')}</span><span><strong>Upload source bundles</strong><span class="upload-description">Drop archives or sourcemaps anywhere on this page.</span></span></div>
@@ -1365,11 +1361,8 @@ class ManagedAdminTeams extends LitElement {
 
   render() {
     return html`<div class="wrap">${adminNavigation('manage-teams', this._role)}
-      <div class="head">
-        <h1>Teams</h1>
-        ${this._data?.teams ? html`<span class="count">${this._data.teams.length}</span>` : nothing}
-      </div>
-      <p class="intro">Group repositories and give members access to the findings they need.</p>
+      <h1 class="sr-only">Teams</h1>
+      <div class="page-intro"><p class="intro">Group repositories and give members access to the findings they need.</p>${this._data?.teams ? html`<span class="result-count">${this._data.teams.length} teams</span>` : nothing}</div>
       <div class="create-team">
         <div class="create-copy"><strong>Create a team</strong><span>Share the right findings with the right people.</span></div>
         <label class="sr-only" for="new-team-name">New team</label>
