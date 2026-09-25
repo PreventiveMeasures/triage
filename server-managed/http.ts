@@ -8,6 +8,7 @@
 //   GET  /api/oauth/github/callback → the OAuth hook (see github-oauth.ts)
 //   GET  /api/auth/session       → { user, csrfToken } | 401
 //   GET  /api/teams              → the current user's teams + their reports and bundles | 401
+//   POST /api/github/pull-requests → batch PR titles/statuses, restricted to the user's team repos
 //   GET  /api/reports/<id>       → view a report: admin, or ≥view role + team membership | 401/404
 //   GET  /api/reports/<id>/triage → triage entries (by finding id, shared across reports) for a viewable report's findings | 401/404
 //   POST /api/reports/<id>/triage → write triage entries: admin, or ≥triage role + membership | 401/403/404
@@ -65,6 +66,8 @@ import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, ensureUserAc
 import { clearCookie, endSession, readSession } from './session.ts'
 import type { ActivityContext, ActivityInput } from './activity.ts'
 import { acceptsReportMetadata } from './report-response.ts'
+import { MAX_PULL_REQUESTS, MAX_PULL_REQUEST_URL } from '../common/github-pr.ts'
+import { lookupPullRequests } from './github-pulls.ts'
 
 const SESSION_PATH = '/api/auth/session'
 const AVATAR_PREFIX = '/api/avatar/'
@@ -96,6 +99,19 @@ const TEAM_REMOVE_REPO_PATH = '/api/admin/teams/remove-repo'
 const TEAM_SET_MEMBER_PATH = '/api/admin/teams/set-member'
 const TEAM_REMOVE_MEMBER_PATH = '/api/admin/teams/remove-member'
 const MAX_TEAM_NAME = 100
+
+async function handlePullRequests(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
+  const s = await checkMutation(req, res, deps, cookie)
+  if (!s) return
+  let body: unknown
+  try { body = await readJsonBody(req, 128 * 1024) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
+  const urls = (body as { urls?: unknown } | null)?.urls
+  if (!Array.isArray(urls) || urls.length > MAX_PULL_REQUESTS
+    || urls.some(url => typeof url !== 'string' || url.length > MAX_PULL_REQUEST_URL)) {
+    sendJson(res, 400, { error: 'bad-urls' }); return
+  }
+  sendJson(res, 200, { pullRequests: await lookupPullRequests(deps.config, deps.db, s.user.id, urls) })
+}
 
 function activity(deps: ManagedHttpDeps, user: StoredUser, kind: ActivityInput['kind'], action: string, context: Pick<ActivityInput, 'repo' | 'reportId' | 'bundleId' | 'report' | 'repoId' | 'repoDirectory'> = {}): Promise<void> {
   return deps.db.recordActivity({ kind, actor: user.login, actorId: user.id, action, ...context }, Date.now())
@@ -1332,6 +1348,10 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     const method = req.method ?? 'GET'
     const cookie = req.headers.cookie
 
+    if (path === '/api/github/pull-requests') {
+      if (method !== 'POST') { send405(res, 'POST'); return }
+      await handlePullRequests(req, res, deps, cookie); return
+    }
     // Public mode probe — lets a client detect the managed protocol up front.
     if (path === CONFIG_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }

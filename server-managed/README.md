@@ -53,6 +53,28 @@ parameters; `q=0` excludes it, and wildcards alone retain raw text. The local
 fixture server uses the same response contract. Responses are never cached or
 stored locally.
 
+# Fix pull requests
+
+`POST /api/github/pull-requests` accepts `{ "urls": ["https://github.com/Owner/Repo/pull/123"] }`
+with at most 50 links. A managed session, same-origin request, and `X-CSRF-Token`
+are required. Results preserve input order in `{ pullRequests: [...] }`, with
+`{ url, title, status }` on success (`open`, `draft`, `closed`, or `merged`), or
+`{ url, error }` (`invalid-url`, `forbidden`, or `unavailable`) per failed item.
+Malformed batches return 400; empty batches return an empty list.
+
+Each link's repository is matched case-insensitively against the repositories
+assigned to the user's teams, including for administrators. A directory grant
+counts as membership in its repository. GitHub requests use that repository's
+stored full name and only the validated positive safe integer from the link;
+other link components never supply the upstream path. Duplicates share a lookup.
+
+Team access is not GitHub access. Requests use only the signed-in user's stored
+GitHub token, refreshing it when possible. Missing credentials, denied GitHub
+access, redirects, and upstream failures leave the Fix link usable without
+metadata. Installation credentials are never substituted. Responses are not
+HTTP-cached; the UI batches links and keeps metadata in memory for one minute,
+invalidating it on account, team, or mode changes.
+
 # Activity history
 
 `/manage/history` reads `GET /api/admin/history?page=1&limit=100&kind=all&q=`.
