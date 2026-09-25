@@ -12,6 +12,9 @@ export function getPreviewRole() { return managedModule?.getPreviewRole() ?? nul
 export function clearPreviewRole() { managedModule?.setPreviewRole(null) }
 export function resetManagedAppState() { managedModule?.resetManagedAppState() }
 export function setManagedAppSession(session) { managedModule?.setManagedAppSession(session) }
+export function readReportSources(id) { return managedModule?.readReportSources(id) }
+export function clearReportSources() { managedModule?.clearReportSources() }
+export async function fetchReportSources(id) { return (await loadManagedBundle()).fetchReportSources(id) }
 
 export function loadManagedBundle() {
   if (loadPromise) return loadPromise

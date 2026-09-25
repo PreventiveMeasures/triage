@@ -135,6 +135,7 @@ CREATE TABLE IF NOT EXISTS managed_report (
 
 CREATE INDEX IF NOT EXISTS managed_report_uploaded_at_idx ON managed_report(uploaded_at);
 CREATE INDEX IF NOT EXISTS managed_report_bundle_integrity_idx ON managed_report(bundle_integrity);
+CREATE INDEX IF NOT EXISTS managed_report_bundle_hash_idx ON managed_report(bundle_id, sha256);
 
 -- Per-finding triage annotations — the managed (trusted-plaintext) counterpart
 -- of the client's localStorage triage map, keyed the same way: by finding id
@@ -318,6 +319,7 @@ export interface ReportRecord {
   repoEmbedded: boolean
   analyzer: string | null
   visible: boolean
+  bundleId: string | null
 }
 
 // What the upload handler supplies to record a report; the store stamps
@@ -368,6 +370,8 @@ export interface RepoDataItem {
   id: string
   filename: string
 }
+
+export type RepoReportItem = Pick<ReportRecord, 'id' | 'filename' | 'sha256' | 'bundleId'>
 
 // A stored per-finding triage row, with the last writer's login resolved like
 // listReports (live login, falling back to the durable snapshot). `flagged`
@@ -507,7 +511,7 @@ export interface ManagedDb extends ActivityStore, CommentStore {
   deactivateRepo(repoId: number): Promise<boolean>
   reactivateRepo(repoId: number): Promise<boolean>
   deleteRepo(repoId: number): Promise<boolean>
-  listReportsForRepo(repoId: number): Promise<RepoDataItem[]>
+  listReportsForRepo(repoId: number): Promise<RepoReportItem[]>
   listBundlesForRepo(repoId: number): Promise<RepoDataItem[]>
   deleteReportsForRepo(repoId: number): Promise<number>
   deleteBundlesForRepo(repoId: number): Promise<number>
@@ -522,6 +526,7 @@ export interface ManagedDb extends ActivityStore, CommentStore {
   insertReport(report: ReportRecordInput, now: number): Promise<void>
   listReports(userId?: string): Promise<AdminReport[]>
   getReport(id: string): Promise<ReportRecord | null>
+  listReportFilenamesWithBundleHash(bundleId: string, sha256: string): Promise<string[]>
   deleteReport(id: string): Promise<boolean>
   // Attach / detach a report's repo + directory link (repoId null = detach);
   // resolves true iff the report exists. The caller validates repoId and the
@@ -670,7 +675,7 @@ function prepareStatements(db: DatabaseSync) {
     deleteRepoStmt: db.prepare(`DELETE FROM selected_repo WHERE repo_id = ?`),
     deactivateRepoStmt: db.prepare(`UPDATE selected_repo SET active = 0 WHERE repo_id = ? AND active = 1`),
     reactivateRepoStmt: db.prepare(`UPDATE selected_repo SET active = 1 WHERE repo_id = ? AND active = 0`),
-    selectReportsForRepoStmt: db.prepare(`SELECT id, filename FROM managed_report WHERE repo_id = ? ORDER BY filename ASC`),
+    selectReportsForRepoStmt: db.prepare(`SELECT id, filename, sha256, bundle_id AS bundleId FROM managed_report WHERE repo_id = ? ORDER BY filename ASC`),
     selectBundlesForRepoStmt: db.prepare(`SELECT id, filename FROM managed_bundle WHERE repo_id = ? ORDER BY filename ASC`),
     deleteReportsForRepoStmt: db.prepare(`DELETE FROM managed_report WHERE repo_id = ?`),
     deleteBundlesForRepoStmt: db.prepare(`DELETE FROM managed_bundle WHERE repo_id = ?`),
@@ -723,10 +728,11 @@ function prepareStatements(db: DatabaseSync) {
       `SELECT id, slug, filename, content_type AS contentType, byte_size AS byteSize,
               sha256, uploaded_by AS uploadedBy, uploaded_at AS uploadedAt,
               repo_id AS repoId, repo_directory AS repoDirectory, repo_embedded AS repoEmbedded,
-              analyzer AS analyzer, visible AS visible
+              analyzer AS analyzer, visible AS visible, bundle_id AS bundleId
          FROM managed_report WHERE id = ?`,
     ),
     deleteReportStmt: db.prepare(`DELETE FROM managed_report WHERE id = ?`),
+    reportFilenamesWithBundleHashStmt: db.prepare(`SELECT DISTINCT filename FROM managed_report WHERE bundle_id = ? AND sha256 = ?`),
     setReportRepoStmt: db.prepare(`UPDATE managed_report SET repo_id = ?, repo_directory = ? WHERE id = ?`),
     setReportVisibleStmt: db.prepare(`UPDATE managed_report SET visible = ? WHERE id = ?`),
     upsertTriageStmt: db.prepare(
@@ -953,8 +959,8 @@ function selectedRepoMethods(stmts: ReturnType<typeof prepareStatements>) {
     deleteRepo(repoId: number): Promise<boolean> {
       return Promise.resolve(Number(deleteRepoStmt.run(repoId).changes) > 0)
     },
-    listReportsForRepo(repoId: number): Promise<RepoDataItem[]> {
-      return Promise.resolve(selectReportsForRepoStmt.all(repoId) as unknown as RepoDataItem[])
+    listReportsForRepo(repoId: number): Promise<RepoReportItem[]> {
+      return Promise.resolve(selectReportsForRepoStmt.all(repoId) as unknown as RepoReportItem[])
     },
     listBundlesForRepo(repoId: number): Promise<RepoDataItem[]> {
       return Promise.resolve(selectBundlesForRepoStmt.all(repoId) as unknown as RepoDataItem[])
@@ -980,6 +986,7 @@ type ReportRow = {
   id: string; slug: string; filename: string; contentType: string; byteSize: number
   sha256: string; uploadedBy: string | null; uploadedAt: number
   repoId: number | null; repoDirectory: string; repoEmbedded: number; analyzer: string | null; visible: number
+  bundleId: string | null
 }
 
 // The report slice of ManagedDb, split out (like selectedRepoMethods) to keep
@@ -1014,10 +1021,15 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>) {
         id: row.id, slug: row.slug, filename: row.filename, contentType: row.contentType, byteSize: row.byteSize,
         sha256: row.sha256, uploadedBy: row.uploadedBy, uploadedAt: row.uploadedAt,
         repoId: row.repoId, repoDirectory: row.repoDirectory, repoEmbedded: row.repoEmbedded === 1, analyzer: row.analyzer, visible: row.visible === 1,
+        bundleId: row.bundleId,
       })
     },
     deleteReport(id: string): Promise<boolean> {
       return Promise.resolve(Number(deleteReportStmt.run(id).changes) > 0)
+    },
+    listReportFilenamesWithBundleHash(bundleId: string, sha256: string): Promise<string[]> {
+      const rows = stmts.reportFilenamesWithBundleHashStmt.all(bundleId, sha256) as { filename: string }[]
+      return Promise.resolve(rows.map(row => row.filename))
     },
     setReportRepo(id: string, repoId: number | null, repoDirectory = ''): Promise<boolean> {
       return Promise.resolve(Number(setReportRepoStmt.run(repoId, repoId == null ? '' : repoDirectory, id).changes) > 0)

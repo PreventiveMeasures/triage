@@ -59,6 +59,7 @@ import type { TriageEntryPatch } from '../common/managed/triage.ts'
 import { MAX_FINDING_ID, MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_ENTRIES, MAX_TRIAGE_HISTORY, isTriageBucket, parseTriageEntryPatch } from '../common/managed/triage.ts'
 import { reportRepoGithub } from '../report/index.js'
 import { loadManagedFindings, readManagedReport } from '../common/managed/report-content.ts'
+import type { ReportSourcesCache } from './report-sources.ts'
 import { normalizeTeamPath } from './repo-path.ts'
 import { DEFAULT_MANAGED_SCAN_MODEL, MANAGED_SCAN_MODELS } from '../common/managed/scan-models.ts'
 import { CONFIG_PATH, type ServerInfo } from '../common/server-info.ts'
@@ -162,6 +163,7 @@ export interface ManagedHttpDeps {
   reportStore: BlobStore
   bundleStore: BundleStore
   bundleCache?: BundleCache
+  reportSourcesCache?: ReportSourcesCache
   originGate: OriginGate
   isShuttingDown: () => boolean
   track: (p: Promise<unknown>) => void
@@ -495,11 +497,15 @@ async function handleRemoveRepository(req: IncomingMessage, res: ServerResponse,
   const deletedBundles = await deps.db.deleteBundlesForRepo(repoId)
   // Remove metadata first so a blob-store failure leaves an orphaned blob for
   // later cleanup, rather than a live row pointing at missing report data.
-  for (const report of reports) await deps.reportStore.delete(report.id).catch(() => {})
+  for (const report of reports) {
+    await deps.reportSourcesCache?.deleteReport(report).catch((err) => { console.warn('managed: report sources delete failed:', err) })
+    await deps.reportStore.delete(report.id).catch(() => {})
+  }
   for (const bundle of bundles) {
     // Cache cleanup must not interrupt triage/repository removal after the
     // report rows needed to reconstruct exclusive finding IDs are gone.
     await deps.bundleCache?.delete(bundle.id).catch((err) => { console.warn('managed: bundle cache delete failed:', err) })
+    await deps.reportSourcesCache?.deleteBundle(bundle.id).catch((err) => { console.warn('managed: report sources delete failed:', err) })
     await deps.bundleStore.delete(bundle.id).catch(() => {})
   }
   const deletedTriage = await deps.db.deleteTriage(triageIds)
@@ -779,6 +785,7 @@ async function handleDeleteReport(req: IncomingMessage, res: ServerResponse, dep
   const report = await deps.db.getReport(id)
   if (report == null) { sendJson(res, 404, { error: 'no-report' }); return }
   const existed = await deps.db.deleteReport(id)
+  await deps.reportSourcesCache?.deleteReport(report).catch((err) => { console.warn('managed: report sources delete failed:', err) })
   await deps.reportStore.delete(id).catch((err) => { console.warn('managed: report bytes delete failed:', err) })
   if (!existed) { sendJson(res, 404, { error: 'no-report' }); return }
   await activity(deps, s.user, 'delete', 'deleted a report', { repoId: report.repoId, repoDirectory: report.repoDirectory, reportId: id, report: report.filename, repo: await repositoryName(deps, report.repoId) })
@@ -966,6 +973,7 @@ async function handleDeleteBundle(req: IncomingMessage, res: ServerResponse, dep
   if (!(await canChangeBundleRepo(deps, s.user, bundle?.repoId ?? null))) { sendJson(res, 403, { error: 'repo-forbidden' }); return }
   const existed = await deps.db.deleteBundle(id)
   await deps.bundleCache?.delete(id).catch((err) => { console.warn('managed: bundle cache delete failed:', err) })
+  await deps.reportSourcesCache?.deleteBundle(id).catch((err) => { console.warn('managed: report sources delete failed:', err) })
   await deps.bundleStore.delete(id).catch((err) => { console.warn('managed: bundle bytes delete failed:', err) })
   if (!existed) { sendJson(res, 404, { error: 'no-bundle' }); return }
   await activity(deps, s.user, 'delete', 'deleted a bundle', { repoId: bundle.repoId, bundleId: id, report: bundle.filename, repo: await repositoryName(deps, bundle.repoId) })
@@ -1011,6 +1019,45 @@ async function canViewReport(deps: ManagedHttpDeps, user: StoredUser, reportId: 
   if (user.role === 'manage') return report.uploadedBy === user.id || deps.db.userCanReadReport(user.id, reportId)
   if (!report.visible) return false
   return deps.db.userCanReadReport(user.id, reportId)
+}
+
+// GET/HEAD /api/reports/:id/sources. Only the linked bundle's files cited by
+// visible findings (location AND evidence) are returned. Missing/unavailable
+// bundles are a quiet no-op; cached gzip bodies stream directly from disk.
+async function handleReportSources(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string) {
+  const s = await readSession(deps.config, deps.db, cookie, Date.now())
+  if (!s) { sendJson(res, 401, { error: 'unauthenticated' }); return }
+  if (!(await canViewReport(deps, s.user, id))) { sendJson(res, 404, { error: 'no-report' }); return }
+  const report = await deps.db.getReport(id)
+  const bundle = report?.bundleId ? await deps.db.getBundle(report.bundleId) : null
+  const empty = () => { res.writeHead(204, { 'cache-control': 'private, no-store' }); res.end() }
+  if (!report || !bundle || !['stasis', 'sourcemap'].includes(bundle.kind ?? '') || !(await canAccessBundle(deps, s.user, bundle.id))) { empty(); return }
+  if (!deps.reportSourcesCache) { sendJson(res, 503, { error: 'unavailable' }); return }
+  const permissions = s.user.role === 'admin' || s.user.role === 'manage'
+    ? { dependencies: true, security: true } : await deps.db.reportPermissionsFor(s.user.id, id)
+  let cached
+  try { cached = await deps.reportSourcesCache.open(report, bundle, permissions) }
+  catch { empty(); return }
+  if (!cached) { empty(); return }
+  // Cold parsing can outlast role/team changes, report deletion, or relinking.
+  const current = await readSession(deps.config, deps.db, cookie, Date.now())
+  const latest = await deps.db.getReport(id)
+  const currentPermissions = current && (current.user.role === 'admin' || current.user.role === 'manage'
+    ? { dependencies: true, security: true } : await deps.db.reportPermissionsFor(current.user.id, id))
+  if (!current || !(await canViewReport(deps, current.user, id)) || !(await canAccessBundle(deps, current.user, bundle.id))
+      || latest?.bundleId !== bundle.id || latest.sha256 !== report.sha256
+      || currentPermissions?.dependencies !== permissions.dependencies || currentPermissions?.security !== permissions.security) {
+    cached.stream.destroy()
+    sendJson(res, current ? 404 : 401, { error: current ? 'no-report' : 'unauthenticated' })
+    return
+  }
+  res.writeHead(200, {
+    'content-type': 'application/json', 'content-encoding': 'gzip',
+    'content-length': String(cached.size), 'cache-control': 'private, no-store',
+    'x-content-type-options': 'nosniff',
+  })
+  if (req.method === 'HEAD') { cached.stream.destroy(); res.end(); return }
+  try { await pipeline(cached.stream, res) } catch { res.destroy() }
 }
 
 // GET /api/reports/<id> — view a report the caller is authorized to read (see
@@ -1551,6 +1598,11 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (method === 'GET') { await handleGetBundle(req, res, deps, cookie, id); return }
       if (method === 'DELETE') { await handleDeleteBundle(req, res, deps, cookie, id); return }
       send405(res, 'GET, DELETE'); return
+    }
+    const sourcesRoute = /^\/api\/reports\/([^/]+)\/sources$/u.exec(path)
+    if (sourcesRoute) {
+      if (method !== 'GET' && method !== 'HEAD') { send405(res, 'GET, HEAD'); return }
+      await handleReportSources(req, res, deps, cookie, sourcesRoute[1]!); return
     }
     const commentsRoute = /^\/api\/reports\/([^/]+)\/comments(?:\/([^/]+))?$/u.exec(path)
     if (commentsRoute) {

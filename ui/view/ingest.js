@@ -19,7 +19,7 @@ import { importWorkspaceFromGzip } from './workspace-import.js'
 import { maybePromptFirstUse } from './first-import-prompt.js'
 import { openPasskeyUnlockDialog } from './dialogs/passkey-unlock-dialog.js'
 import { openSyncDownloadDialog } from './dialogs/sync-download-dialog.js'
-import { fetchReport as fetchManagedReport, login as managedLogin } from './client-managed.js'
+import { clearReportSources, fetchReport as fetchManagedReport, login as managedLogin } from './client-managed.js'
 import { showToast } from './toast.js'
 import { managedHistory } from './managed-history.js'
 import { loadManagedReportComments } from './managed-comments.js'
@@ -710,6 +710,7 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   const gen = beginViewNavigation()
   const contents = await Promise.all(selected.map((r) => fetchManagedReport(r.id)))
   if (isStaleLoad(gen)) return false
+  clearReportSources()
   if (contents.some((content) => content === null)) {
     showToast('Could not load all team reports. Please try again.')
     return false
