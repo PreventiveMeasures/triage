@@ -33,7 +33,7 @@
 // duplicated `client/triage.js` would receive the notifier and the
 // main bundle's `saveTriage` would never fan the change out.
 
-import { getSecureItem, readCachedServerInfo } from '#client/index.js'
+import { getSecureItem, readCachedServerInfo, state } from '#client/index.js'
 import { applyDefaultSyncHost } from '#client/sync-host.js'
 
 let realModule = null
@@ -51,22 +51,16 @@ function userWantsSync() {
   catch { return true }
 }
 
-// The e2e sync chunk must NEVER load against a managed server — managed sync is
-// a separate protocol (and a managed deployment has no /api/sync plane). The
-// detected mode is cached in localStorage (written by the sidebar's
-// /api/config + server-info handling), so the proxy self-gates here with no
-// boot-order coupling: every load trigger — `loadSync`, the data-method
-// wrappers (`openWorkspace` fires on each workspace switch via ingest.js), and
-// `setEnabled(true)` — funnels through this check. Unknown/e2e → allowed.
+// Only the active e2e surface may load or use e2e sync. In a combined
+// deployment the cached advertisement permits both protocols, so the current
+// in-memory mode must also gate loadSync and every data-method wrapper.
 let syncForceDisabled = false
 
-// Runtime hard-disable for the e2e sync chunk — used by standalone mode, whose
-// "no /api/config" result is deliberately never cached, so the cache check
-// below can't see it. The sidebar sets this on detecting standalone.
+// Runtime hard-disable used while transitioning away from the e2e surface.
 export function setSyncForceDisabled(disabled) { syncForceDisabled = Boolean(disabled) }
 
 function syncBlockedByMode() {
-  if (syncForceDisabled) return true
+  if (syncForceDisabled || state.serverMode !== 'e2e') return true
   try { return readCachedServerInfo()?.mode === 'managed' }
   catch { return false }
 }
@@ -236,7 +230,9 @@ export function setHydrationConflictResolver(fn) {
 async function callIfWanted(method, args) {
   if (syncBlockedByMode()) return undefined
   if (!userWantsSync() && !realModule) return undefined
-  return (await loadSync())[method](...args)
+  const mod = await loadSync()
+  if (!mod || syncBlockedByMode()) return undefined
+  return mod[method](...args)
 }
 
 export function fetchFile(...args) { return callIfWanted('fetchFile', args) }
@@ -249,7 +245,11 @@ export function putBundleToRemote(...args) { return callIfWanted('putBundleToRem
 export function deleteFromRemote(...args) { return callIfWanted('deleteFromRemote', args) }
 export function deleteBundleFromRemote(...args) { return callIfWanted('deleteBundleFromRemote', args) }
 export function openWorkspace(...args) { return callIfWanted('openWorkspace', args) }
-export function closeWorkspace(...args) { return callIfWanted('closeWorkspace', args) }
+// Teardown must still run after a switch to managed; it never loads sync.
+export async function closeWorkspace(...args) {
+  const mod = realModule ?? (loadPromise ? await loadPromise : null)
+  return mod?.closeWorkspace(...args)
+}
 export function recheckRemoteStorage(...args) { return callIfWanted('recheckRemoteStorage', args) }
 export function resolveReportDifference(...args) { return callIfWanted('resolveReportDifference', args) }
 

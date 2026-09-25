@@ -114,13 +114,17 @@ export {
   saveRepoUrlFor,
   isManagedUiMode,
   clientModeLabel,
+  configureClientMode,
   setLocalMode,
+  toggleClientMode,
   state,
 } from './state.ts'
 
 export {
   CONFIG_PATH,
   classifyServerMode,
+  isCombinedServerMode,
+  mergeSyncServerInfo,
   hasStandaloneProbeHint,
   parseServerInfo,
   probeServerInfo,
