@@ -1758,6 +1758,7 @@ let forcedManagedReturn = null
 let deferredServerInfo = null
 let clientModeGeneration = 0
 let managedSessionRequest = 0
+let managedSessionRefresh = null
 
 async function finishClientModeTransition({ forgetLastView = true } = {}) {
   const generation = ++clientModeGeneration
@@ -1876,16 +1877,32 @@ function applyServerInfo(info, { runtime = true } = {}) {
 
 // Probe the managed server for the current session (lazy client/managed chunk)
 // and repaint the auth control. Only reached in managed mode.
-async function refreshManagedSession() {
+function refreshManagedSession() {
+  if (managedSessionRefresh?.generation === clientModeGeneration) return managedSessionRefresh.promise
+  const refresh = { generation: clientModeGeneration, promise: null }
+  managedSessionRefresh = refresh
+  refresh.promise = revalidateManagedSession().finally(() => {
+    if (managedSessionRefresh === refresh) managedSessionRefresh = null
+  })
+  return refresh.promise
+}
+
+async function revalidateManagedSession() {
   const generation = clientModeGeneration
   const request = ++managedSessionRequest
   const isCurrent = () => generation === clientModeGeneration && request === managedSessionRequest && isManagedUiMode()
   try {
-    const session = await managedProbeSession()
+    const previous = state.managedSession
+    const session = await managedProbeSession({ fallback: previous })
     if (!isCurrent()) return
     state.managedSession = session
-    if (state.managedSession?.role !== 'admin' && ADMIN_ONLY_PAGES.has(state.currentView)) {
-      state.currentView = 'manage'
+    if (previous && previous.id !== session?.id) {
+      state.managedTeams = []
+      resetManagedTriage()
+      void goHome()
+    } else if (state.currentView in ADMIN_PAGES) {
+      if (!['admin', 'manage'].includes(session?.role)) void goHome()
+      else if (session.role !== 'admin' && ADMIN_ONLY_PAGES.has(state.currentView)) state.currentView = 'manage'
       render()
     }
     renderAuthStatus()
@@ -1894,7 +1911,7 @@ async function refreshManagedSession() {
     initManagedTriagePush()
     // The user's teams (sidebar Teams section). probeTeams never throws; empty
     // when logged out. Repaint the sidebar so the section reflects the result.
-    const teams = session == null ? [] : await managedProbeTeams()
+    const teams = session == null ? [] : await managedProbeTeams({ fallback: state.managedTeams })
     if (!isCurrent()) return
     state.managedTeams = teams
     renderSidebar()
@@ -1925,16 +1942,20 @@ const ADMIN_ONLY_PAGES = new Set(['admin-users', 'manage-repos', 'manage-teams']
 // (which defines the element render() paints for `view`), then switch
 // the view + repaint.
 export async function navigateToAdminPage(view, options = {}) {
-  if (!(view in ADMIN_PAGES) || !isManagedUiMode()
-      || !['admin', 'manage'].includes(state.managedSession?.role)
-      || (ADMIN_ONLY_PAGES.has(view) && state.managedSession.role !== 'admin')) return
+  const canOpen = () => view in ADMIN_PAGES && isManagedUiMode()
+    && ['admin', 'manage'].includes(state.managedSession?.role)
+    && (!ADMIN_ONLY_PAGES.has(view) || state.managedSession.role === 'admin')
+  if (!canOpen()) return
   const generation = clientModeGeneration
   try { await loadManagedBundle() }
   catch (err) { console.warn(ADMIN_PAGES[view], err); return }
-  if (generation !== clientModeGeneration || !isManagedUiMode()) return
+  if (generation !== clientModeGeneration || !canOpen()) return
   state.currentView = view
   render()
   renderSidebar()
+  // Use the known role and CSRF token immediately; apply session changes when
+  // the background check finishes. Rapid navigation shares the pending check.
+  void refreshManagedSession()
   // Manage pages share the main scroll container. Start each destination at its
   // header instead of carrying a long list's scroll position into the next page.
   document.querySelector('#main-content')?.scrollTo({ top: 0 })

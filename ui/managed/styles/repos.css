@@ -470,3 +470,19 @@ a.btn {
     margin-left: 0;
   }
 }
+
+/* Keep removal controls in place as attached data arrives or fails to load. */
+.data-section .dialog-data section {
+  height: 12rem;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.data-section .dialog-data ul {
+  width: 100%;
+  min-height: 0;
+  max-height: none;
+}
+.access-action {
+  flex-shrink: 0;
+}

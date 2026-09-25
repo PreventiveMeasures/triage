@@ -2,7 +2,8 @@ import { getPreviewRole, managedFetch } from '../../client/managed/request.js'
 // Manage custom elements, registered by the lazy client-managed.js entry.
 // Keep application state in the main view bundle; these pages use authenticated
 // API requests and composed events to communicate with their host.
-import { LitElement, html, nothing, unsafeCSS } from 'lit'
+import { html, nothing, unsafeCSS } from 'lit'
+import { ManagedPage, loadingRows } from './page.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { ROLES } from '../../common/managed/roles.ts'
 import { VISIBILITY_PERMISSION_LABELS } from '../../common/managed/permissions.ts'
@@ -22,18 +23,6 @@ import { managedReportSources } from '../scan/report-source.js'
 import { fetchScanModels } from '../view/scan-models.js'
 import '../view/repository-selector.js'
 import '../view/user-selector.js'
-
-async function fetchSession() {
-  const res = await managedFetch('/api/auth/session', { credentials: 'same-origin', headers: { accept: 'application/json' } })
-  if (!res.ok) return null
-  const body = await res.json()
-  return {
-    id: body?.user?.id ?? null,
-    role: typeof body?.user?.role === 'string' ? body.user.role : 'none',
-    csrfToken: typeof body?.csrfToken === 'string' ? body.csrfToken : null,
-  }
-}
-
 
 function openAdminPage(view) {
   document.dispatchEvent(new CustomEvent('managed-admin-navigate', {
@@ -61,23 +50,9 @@ const ADMIN_ROLE_DESCRIPTIONS = {
   none: 'No workspace access',
 }
 
-class ManagedAdminHome extends LitElement {
-  static properties = { _role: { state: true } }
+class ManagedAdminHome extends ManagedPage {
 
   static styles = [unsafeCSS(homeStyles), unsafeCSS(commonStyles)]
-
-  constructor() {
-    super()
-    this._role = null
-  }
-
-  connectedCallback() {
-    super.connectedCallback()
-    void fetchSession().then((session) => {
-      this._role = session?.role ?? 'none'
-      return session
-    })
-  }
 
   render() {
     const content = [
@@ -119,32 +94,31 @@ class ManagedAdminHome extends LitElement {
 }
 customElements.define('managed-admin-home', ManagedAdminHome)
 
-async function fetchHistory() {
-  const res = await managedFetch('/api/admin/history', { credentials: 'same-origin', headers: { accept: 'application/json' } })
+async function fetchHistory(signal) {
+  const res = await managedFetch('/api/admin/history', { signal, credentials: 'same-origin', headers: { accept: 'application/json' } })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   const body = await res.json()
   if (!Array.isArray(body?.history)) throw new Error('No history returned')
   return body.history
 }
 
-async function fetchAccessibleReportIds() {
+async function fetchAccessibleReportIds(signal) {
   try {
-    const res = await managedFetch('/api/teams', { credentials: 'same-origin', headers: { accept: 'application/json' } })
+    const res = await managedFetch('/api/teams', { signal, credentials: 'same-origin', headers: { accept: 'application/json' } })
     if (!res.ok) return new Set()
     const body = await res.json()
     return new Set((Array.isArray(body?.teams) ? body.teams : []).flatMap((team) => Array.isArray(team.reports) ? team.reports.map((report) => report.id) : []))
   } catch { return new Set() }
 }
 
-class ManagedAdminHistory extends LitElement {
-  static properties = { _page: { state: true }, _history: { state: true }, _role: { state: true }, _allowedReports: { state: true }, _error: { state: true }, _filter: { state: true }, _query: { state: true } }
+class ManagedAdminHistory extends ManagedPage {
+  static properties = { _page: { state: true }, _history: { state: true }, _allowedReports: { state: true }, _error: { state: true }, _filter: { state: true }, _query: { state: true } }
 
   static styles = [unsafeCSS(historyStyles), unsafeCSS(commonStyles)]
 
   constructor() {
     super()
     this._history = null
-    this._role = null
     this._allowedReports = null
     this._error = null
     this._page = 1
@@ -171,20 +145,17 @@ class ManagedAdminHistory extends LitElement {
   }
 
   async _load() {
-    try {
-      const session = await fetchSession()
-      this._role = session?.role ?? 'none'
-      this._history = await fetchHistory()
-      this._allowedReports = this._role === 'manage' ? await fetchAccessibleReportIds() : null
-    } catch (err) {
-      this._error = String(err?.message ?? err)
-    }
+    this._error = null
+    await this._loadCollection(signal => Promise.all([fetchHistory(signal), fetchAccessibleReportIds(signal)]), ([history, allowedReports]) => {
+      this._history = history
+      this._allowedReports = allowedReports
+    })
   }
 
   render() {
     const all = Array.isArray(this._history) ? this._history : []
     const history = this._role === 'manage'
-      ? all.filter((entry) => entry.kind === 'triage' && (this._allowedReports == null || this._allowedReports.has(entry.reportId)))
+      ? all.filter((entry) => entry.kind === 'triage' && this._allowedReports?.has(entry.reportId))
       : all
     const query = this._query.trim().toLocaleLowerCase()
     const searched = query.length === 0 ? history : history.filter((entry) => historySearchText(entry).includes(query))
@@ -193,9 +164,10 @@ class ManagedAdminHistory extends LitElement {
     const start = (page - 1) * 100
     return html`<div class="wrap">${adminNavigation('manage-history', this._role)}
       <h1 class="sr-only">History</h1>
-      <div class="page-intro"><p class="intro">${this._role === 'admin' ? 'All workspace actions, including uploads, access changes, scans, and triage.' : 'Triage history for reports you can access.'}</p>${this._history ? html`<span class="result-count">${filtered.length} entries</span>` : nothing}</div>
-      ${this._history == null ? nothing : html`<div class="toolbar" role="search"><input type="search" aria-label="Search history" placeholder="Search actions, users, repositories, reports…" .value=${this._query} @input=${(event) => { this._query = event.target.value; this._page = 1 }}><select aria-label="Filter history by type" .value=${this._filter} @change=${(event) => { this._filter = event.target.value; this._page = 1 }}><option value="all">All activity</option><option value="triage">Triage</option><option value="visibility">Visibility</option><option value="upload">Uploads</option><option value="scan">Scans</option></select></div>`}
-      ${this._error ? html`<p class="msg error">Couldn’t load history: ${this._error}</p>` : this._history == null ? html`<p class="msg">Loading…</p>` : filtered.length === 0 ? html`<div class="history"><p class="empty">${query || this._filter !== 'all' ? 'No activity matches your filters.' : 'No history available yet.'}</p></div>` : html`<div class="history" aria-label="Workspace history"><div class="history-head" aria-hidden="true"><span>Type</span><span>Activity</span><span>Repository / report / finding</span><span>Time</span></div>${filtered.slice(start, start + 100).map((entry) => this._row(entry))}</div>`}
+      <div class="page-intro"><p class="intro">${this._role === 'admin' ? 'All workspace actions, including uploads, access changes, scans, and triage.' : 'Triage history for reports you can access.'}</p><span class="result-count">${this._history ? filtered.length : '…'} entries</span></div>
+      <div class="toolbar" role="search"><input type="search" aria-label="Search history" placeholder="Search actions, users, repositories, reports…" .value=${this._query} @input=${(event) => { this._query = event.target.value; this._page = 1 }}><select aria-label="Filter history by type" .value=${this._filter} @change=${(event) => { this._filter = event.target.value; this._page = 1 }}><option value="all">All activity</option><option value="triage">Triage</option><option value="visibility">Visibility</option><option value="upload">Uploads</option><option value="scan">Scans</option></select></div>
+      ${this._error ? html`<p class="msg error" role="alert">Couldn’t load history: ${this._error}</p>` : nothing}
+      <div aria-busy=${this._loading}>${this._history == null ? (this._error ? nothing : loadingRows('Loading history…')) : filtered.length === 0 ? html`<div class="history"><p class="empty">${query || this._filter !== 'all' ? 'No activity matches your filters.' : 'No history available yet.'}</p></div>` : html`<div class="history" aria-label="Workspace history"><div class="history-head" aria-hidden="true"><span>Type</span><span>Activity</span><span>Repository / report / finding</span><span>Time</span></div>${filtered.slice(start, start + 100).map((entry) => this._row(entry))}</div>`}</div>
       ${filtered.length > 100 ? html`<nav class="pagination" aria-label="History pages"><span role="status">${start + 1}–${Math.min(start + 100, filtered.length)} of ${filtered.length} entries</span><button type="button" class="btn" ?disabled=${page === 1} @click=${() => this._changePage(page - 1)}>Previous</button><span>Page ${page} of ${Math.ceil(filtered.length / 100)}</span><button type="button" class="btn" ?disabled=${start + 100 >= filtered.length} @click=${() => this._changePage(page + 1)}>Next</button></nav>` : nothing}
     </div>`
   }
@@ -223,8 +195,8 @@ function historySearchText(entry) {
   }).join(' ').toLocaleLowerCase()
 }
 
-async function fetchUsers() {
-  const res = await managedFetch('/api/admin/users', { credentials: 'same-origin', headers: { accept: 'application/json' } })
+async function fetchUsers(signal) {
+  const res = await managedFetch('/api/admin/users', { signal, credentials: 'same-origin', headers: { accept: 'application/json' } })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   const body = await res.json()
   return Array.isArray(body?.users) ? body.users : []
@@ -258,7 +230,7 @@ async function setRole(userId, role, csrfToken) {
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
 }
 
-class ManagedAdminUsers extends LitElement {
+class ManagedAdminUsers extends ManagedPage {
   static properties = {
     _query: { state: true },
     _users: { state: true },
@@ -274,8 +246,6 @@ class ManagedAdminUsers extends LitElement {
     this._query = ''
     this._teams = null
     this._error = null
-    this._me = null
-    this._csrf = null
   }
 
   connectedCallback() {
@@ -285,27 +255,19 @@ class ManagedAdminUsers extends LitElement {
 
   async _load() {
     this._error = null
-    this._users = null
-    try {
-      const [session, users, teamData] = await Promise.all([fetchSession(), fetchUsers(), fetchTeams()])
-      this._me = session?.id ?? null
-      this._csrf = session?.csrfToken ?? null
-      this._role = session?.role ?? 'none'
+    await this._loadCollection(signal => Promise.all([fetchUsers(signal), fetchTeams(signal)]), ([users, teamData]) => {
       this._users = users
       this._teams = Array.isArray(teamData?.teams) ? teamData.teams : []
-    } catch (err) {
-      this._error = String(err?.message ?? err)
-    }
+    })
   }
 
   render() {
     return html`<div class="wrap">${adminNavigation('admin-users', this._role)}
       <h1 class="sr-only">Users</h1>
-      <div class="page-intro"><p class="intro">Manage workspace access and roles.</p>${this._users ? html`<span class="result-count">${this._users.length} users</span>` : nothing}</div>
+      <div class="page-intro"><p class="intro">Manage workspace access and roles.</p><span class="result-count">${this._users?.length ?? '…'} users</span></div>
       <div class="collection-toolbar" role="search"><input type="search" aria-label="Search users" placeholder="Search by name, username, or team…" .value=${this._query} @input=${e => { this._query = e.target.value }}></div>
-      ${this._error == null
-        ? (this._users == null ? html`<p class="msg">Loading…</p>` : this._list())
-        : html`<p class="msg error">Couldn't load users: ${this._error}</p>`}
+      ${this._error ? html`<p class="msg error" role="alert">Couldn't load users: ${this._error}</p>` : nothing}
+      <div aria-busy=${this._loading}>${this._users == null ? (this._error ? nothing : loadingRows('Loading users…')) : this._list()}</div>
     </div>`
   }
 
@@ -419,7 +381,7 @@ const REPO_ICON = adminIcon('repo')
 
 // Only the connected set loads on entry. Private/public discovery is opt-in,
 // and each connected repository has its own page for configuration.
-class ManagedAdminRepos extends LitElement {
+class ManagedAdminRepos extends ManagedPage {
   static properties = {
     _data: { state: true },
     _error: { state: true },
@@ -445,7 +407,6 @@ class ManagedAdminRepos extends LitElement {
     this._data = null
     this._error = null
     this._actionError = null
-    this._csrf = null
     this._scope = 'connected'
     this._query = ''
     this._page = 1
@@ -482,12 +443,8 @@ class ManagedAdminRepos extends LitElement {
     this._loading = true
     this._error = null
     try {
-      const [session, data] = await Promise.all([
-        this._csrf ? null : fetchSession(),
-        fetchRepositories(this._scope, this._query, this._page, request.signal),
-      ])
-      if (request.signal.aborted) return
-      if (session) { this._csrf = session.csrfToken; this._role = session.role }
+      const data = await fetchRepositories(this._scope, this._query, this._page, request.signal)
+      if (request.signal.aborted || this._request !== request) return
       this._data = data
       // Removing the last item on a page can move the last page backwards.
       const lastPage = Math.max(1, Math.ceil(data.total / 20))
@@ -503,6 +460,7 @@ class ManagedAdminRepos extends LitElement {
   }
 
   _open(scope) {
+    this._impactRequest?.abort()
     clearTimeout(this._searchTimer)
     this._scope = scope
     this._query = ''
@@ -536,7 +494,7 @@ class ManagedAdminRepos extends LitElement {
       }}>Manage</button>
       <span class="breadcrumb-separator" aria-hidden="true">›</span>
       <button type="button" class="breadcrumb-manage" aria-label="Back to repositories" @click=${() => {
-        if (this._detail) { this._detail = null; this._actionError = null }
+        if (this._detail) { this._impactRequest?.abort(); this._detail = null; this._actionError = null }
         else this._open('connected')
       }}>Repositories</button>
       <span class="breadcrumb-separator" aria-hidden="true">›</span>
@@ -559,7 +517,7 @@ class ManagedAdminRepos extends LitElement {
       if (!request.signal.aborted && this._impactRequest === request) this._impact = impact
       return impact
     }).catch((err) => {
-      if (!request.signal.aborted) this._actionError = `Couldn't load repository data: ${err?.message ?? err}`
+      if (!request.signal.aborted && this._impactRequest === request) this._actionError = `Couldn't load repository data: ${err?.message ?? err}`
     }).finally(() => {
       if (this._impactRequest === request) this._impactLoading = false
     })
@@ -575,10 +533,10 @@ class ManagedAdminRepos extends LitElement {
         ? 'Manage connected repositories and their settings.'
         : this._scope === 'installed'
           ? 'Choose a repository the GitHub App can read. Installed repositories can be public or private.'
-          : 'Choose a public repository your GitHub account is involved with. Random public repositories are not listed.'}</p>${connected && this._data ? html`<span class="result-count">${this._data.connectedCount} connected</span>` : nothing}</div>
+          : 'Choose a public repository your GitHub account is involved with. Random public repositories are not listed.'}</p>${connected ? html`<span class="result-count">${this._data?.connectedCount ?? '…'} connected</span>` : nothing}</div>
       ${!connected && this._scope === 'installed' ? html`<div class="access-note">
         <p>Installed repositories are readable through the GitHub App. Install it on a repository or organization to make it available here.</p>
-        ${this._data?.installUrl ? html`<a class="btn" href=${this._data.installUrl} target="_blank" rel="noopener noreferrer">Configure GitHub access</a>` : nothing}
+        <span class="access-action">${this._data?.installUrl ? html`<a class="btn" href=${this._data.installUrl} target="_blank" rel="noopener noreferrer">Configure GitHub access</a>` : html`<button type="button" class="btn" disabled>Configure GitHub access</button>`}</span>
       </div>` : nothing}
       <div class="toolbar">
         <label class="search"><input type="search" aria-label=${connected ? 'Search connected repositories' : `Search ${this._scope} repositories`} placeholder="Search by repository or owner…" .value=${this._query} @input=${(e) => this._search(e.target.value)}></label>
@@ -588,14 +546,15 @@ class ManagedAdminRepos extends LitElement {
         ` : html`<button type="button" class="btn" ?disabled=${this._loading} @click=${() => { void this._load() }}>Refresh</button>`}
       </div>
       ${this._actionError ? html`<p class="msg error" role="alert">${this._actionError}</p>` : nothing}
+      ${this._error ? html`<p class="msg error" role="alert">Couldn't load repositories: ${this._error}</p><button type="button" class="btn" @click=${() => { void this._load() }}>Try again</button>` : nothing}
       <div aria-busy=${this._loading}>${this._body()}</div>
     </div>`
   }
 
   _body() {
-    if (this._error) return html`<p class="msg error" role="alert">Couldn't load repositories: ${this._error}</p><button type="button" class="btn" @click=${() => { void this._load() }}>Try again</button>`
-    if (this._loading || !this._data) return html`<div class="loading" role="status">Loading repositories…</div>`
+    if (!this._data) return this._error ? nothing : loadingRows('Loading repositories…')
     const repos = this._data.repositories ?? []
+    const shownPage = this._data.page ?? this._page
     return html`
       ${this._data.tokenMissing && this._scope === 'public' ? html`<p class="msg">Log out and back in to refresh your GitHub membership access.</p>` : nothing}
       ${repos.length > 0 ? html`<div class="owners">${this._groupRepos(repos).map(([owner, ownerRepos]) => html`
@@ -607,9 +566,9 @@ class ManagedAdminRepos extends LitElement {
         <p>${this._query ? 'Try a different repository or owner name.' : this._scope === 'connected' ? 'Add an installed or public repository to get started.' : this._scope === 'installed' ? 'Install the GitHub App, then refresh this list.' : 'Public repositories associated with your GitHub account will appear here.'}</p>
       </div>`}
       ${this._data.total > 20 ? html`<nav class="pagination" aria-label="Repository pages">
-        <span>${(this._page - 1) * 20 + 1}–${Math.min(this._page * 20, this._data.total)} of ${this._data.total}</span>
-        <button type="button" class="btn" ?disabled=${this._page === 1} @click=${() => { this._page--; void this._load() }}>Previous</button>
-        <button type="button" class="btn" ?disabled=${this._page * 20 >= this._data.total} @click=${() => { this._page++; void this._load() }}>Next</button>
+        <span>${(shownPage - 1) * 20 + 1}–${Math.min(shownPage * 20, this._data.total)} of ${this._data.total}</span>
+        <button type="button" class="btn" ?disabled=${this._loading || this._page === 1} @click=${() => { this._page--; void this._load() }}>Previous</button>
+        <button type="button" class="btn" ?disabled=${this._loading || this._page * 20 >= this._data.total} @click=${() => { this._page++; void this._load() }}>Next</button>
       </nav>` : nothing}
     `
   }
@@ -666,12 +625,14 @@ class ManagedAdminRepos extends LitElement {
       </section>
       <section class="data-section" aria-label="Stored repository data">
         <h2>Stored data</h2>
-        ${this._impactLoading ? html`<p class="data-empty">Loading attached reports and bundles…</p>` : this._impact == null
-          ? html`<p class="data-empty">Attached data could not be loaded.</p><button type="button" class="btn" @click=${() => this._openDetail(repo)}>Try again</button>` : html`
-          <div class="dialog-data">
-            <section><h3>Reports (${reports.length})</h3>${reports.length > 0 ? html`<ul>${reports.map((report) => html`<li>${report.filename}${report.repoDirectory ? ` · ${report.repoDirectory}` : nothing}</li>`)}</ul>` : html`<p class="data-empty">No reports attached.</p>`}</section>
-            <section><h3>Bundles (${bundles.length})</h3>${bundles.length > 0 ? html`<ul>${bundles.map((bundle) => html`<li>${bundle.filename}</li>`)}</ul>` : html`<p class="data-empty">No bundles attached.</p>`}</section>
-          </div>`}
+        <div class="dialog-data" aria-busy=${this._impactLoading}>
+          ${[['Reports', reports], ['Bundles', bundles]].map(([label, items]) => html`<section>
+            <h3>${label} (${this._impact == null ? '…' : items.length})</h3>
+            ${this._impactLoading ? html`<p class="data-empty" role="status">Loading ${label.toLowerCase()}…</p>` : this._impact == null
+              ? html`<p class="data-empty">Attached data could not be loaded.</p><button type="button" class="btn" @click=${() => this._openDetail(repo)}>Try again</button>`
+              : items.length > 0 ? html`<ul>${items.map(item => html`<li>${item.filename}${item.repoDirectory ? ` · ${item.repoDirectory}` : nothing}</li>`)}</ul>` : html`<p class="data-empty">No ${label.toLowerCase()} attached.</p>`}
+          </section>`)}
+        </div>
       </section>
       <section class="section" aria-label="Permanent repository removal">
         <h2>Permanent removal</h2>
@@ -751,8 +712,8 @@ class ManagedAdminRepos extends LitElement {
 }
 customElements.define('managed-admin-repos', ManagedAdminRepos)
 
-async function fetchReports() {
-  const res = await managedFetch('/api/admin/reports', { credentials: 'same-origin', headers: { accept: 'application/json' } })
+async function fetchReports(signal) {
+  const res = await managedFetch('/api/admin/reports', { signal, credentials: 'same-origin', headers: { accept: 'application/json' } })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json()
 }
@@ -823,9 +784,9 @@ function repoOptions(repos) {
 }
 
 function repoPickerTemplate(repos, selected, onChange, label = 'Repository for new bundles') {
-  if (!Array.isArray(repos) || repos.length === 0) return nothing
+  const loading = !Array.isArray(repos)
   return html`<div class="repo-picker"><span class="repo-picker-label">${label}</span>
-    <repository-selector class="repo-select" .options=${repoOptions(repos)} .value=${selected} label=${label}
+    <repository-selector class="repo-select" .options=${loading ? [{ value: null, label: 'Loading repositories…' }] : repoOptions(repos)} .value=${selected} label=${label} ?disabled=${loading || repos.length === 0}
       @repository-change=${event => onChange(event.detail.value)}></repository-selector>
   </div>`
 }
@@ -881,7 +842,7 @@ function installFileDropZone(host, onFiles, onState) {
 // Reports are uploaded with their own repository metadata. New reports remain
 // hidden until an admin previews and publishes them; the list never asks the
 // uploader to repeat a repo or directory already present in the report header.
-class ManagedAdminReports extends LitElement {
+class ManagedAdminReports extends ManagedPage {
   static properties = {
     _query: { state: true },
     _visibility: { state: true },
@@ -907,7 +868,6 @@ class ManagedAdminReports extends LitElement {
     this._visibility = 'all'
     this._data = null
     this._error = null
-    this._csrf = null
     this._busy = false
     this._dragOver = false
     this._preview = null
@@ -935,16 +895,12 @@ class ManagedAdminReports extends LitElement {
     this._cancelPreview()
   }
 
-  async _load() {
-    this._cancelPreview()
-    this._error = null
-    this._data = null
-    try {
-      const [session, data] = await Promise.all([fetchSession(), fetchReports()])
-      this._csrf = session?.csrfToken ?? null
-      this._role = session?.role ?? 'none'
+  async _load({ preserveError = false } = {}) {
+    if (!preserveError) this._error = null
+    await this._loadCollection(fetchReports, data => {
       this._data = data
-    } catch (err) { this._error = String(err?.message ?? err) }
+      if (this._preview && !data.reports?.some(report => report.id === this._preview)) this._cancelPreview()
+    })
   }
 
   render() {
@@ -959,15 +915,13 @@ class ManagedAdminReports extends LitElement {
   }
 
   _body() {
-    if (this._error != null) return html`<p class="msg error">Couldn't load reports: ${this._error}</p>`
-    if (this._data == null) return html`<p class="msg">Loading…</p>`
-    const reports = Array.isArray(this._data.reports) ? this._data.reports : []
-    if (reports.length === 0) return html`<div class="empty"><strong>No reports uploaded yet</strong><p>Drop a report here or browse files above.</p></div>`
+    const reports = Array.isArray(this._data?.reports) ? this._data.reports : []
     const query = this._query.trim().toLocaleLowerCase()
     const filtered = reports.filter(report => [report.filename, report.repoFullName, report.repoDirectory, report.uploadedByLogin].filter(Boolean).join(' ').toLocaleLowerCase().includes(query)
       && (this._visibility === 'all' || Boolean(report.visible) === (this._visibility === 'visible')))
-    return html`<div class="collection-toolbar" role="search"><input type="search" aria-label="Search reports" placeholder="Search reports or repositories…" .value=${this._query} @input=${e => { this._query = e.target.value }}><select aria-label="Report visibility" .value=${this._visibility} @change=${e => { this._visibility = e.target.value }}><option value="all">All reports</option><option value="visible">Visible to teams</option><option value="hidden">Hidden reports</option></select><span class="result-count" role="status">${filtered.length} of ${reports.length} reports</span></div>
-      ${filtered.length > 0 ? html`<div class="report-list"><div class="report-list-head" aria-hidden="true"><span class="report-heading">Report / repository</span><span>Uploaded by</span><span>Visibility</span><span class="actions-heading">Actions</span></div><ul class="reports">${filtered.map(report => this._row(report))}</ul></div>` : html`<div class="empty"><strong>No matching reports</strong><p>Try a different search or visibility filter.</p></div>`}`
+    return html`<div class="collection-toolbar" role="search"><input type="search" aria-label="Search reports" placeholder="Search reports or repositories…" .value=${this._query} @input=${e => { this._query = e.target.value }}><select aria-label="Report visibility" .value=${this._visibility} @change=${e => { this._visibility = e.target.value }}><option value="all">All reports</option><option value="visible">Visible to teams</option><option value="hidden">Hidden reports</option></select><span class="result-count" role="status">${this._data == null ? '… reports' : `${filtered.length} of ${reports.length} reports`}</span></div>
+      ${this._error ? html`<p class="msg error" role="alert">${this._error}</p>` : nothing}
+      <div aria-busy=${this._loading}>${this._data == null ? (this._error ? nothing : loadingRows('Loading reports…')) : filtered.length > 0 ? html`<div class="report-list"><div class="report-list-head" aria-hidden="true"><span class="report-heading">Report / repository</span><span>Uploaded by</span><span>Visibility</span><span class="actions-heading">Actions</span></div><ul class="reports">${filtered.map(report => this._row(report))}</ul></div>` : html`<div class="empty"><strong>${reports.length === 0 ? 'No reports uploaded yet' : 'No matching reports'}</strong><p>${reports.length === 0 ? 'Drop a report here or browse files above.' : 'Try a different search or visibility filter.'}</p></div>`}</div>`
   }
 
   _row(report) {
@@ -1011,10 +965,11 @@ class ManagedAdminReports extends LitElement {
   async _saveLocation(report) {
     if (this._locationRepo == null || this._locationBusy) return
     this._locationBusy = true
+    this._error = null
     try {
       await setReportRepo(report.id, this._locationRepo, this._locationDirectory.trim(), this._csrf)
       this._locationReport = null
-      await this._load()
+      await this._load({ preserveError: true })
     } catch (err) { this._error = `Couldn't set report location: ${String(err?.message ?? err)}` }
     finally { this._locationBusy = false }
   }
@@ -1046,6 +1001,7 @@ class ManagedAdminReports extends LitElement {
   }
 
   async _setVisible(report, visible) {
+    this._error = null
     try {
       await setReportVisible(report.id, visible, this._csrf)
       report.visible = visible
@@ -1062,20 +1018,21 @@ class ManagedAdminReports extends LitElement {
     try {
       while (this._queue.length > 0) await uploadReport(this._queue.shift(), this._csrf, this._repoId, this._repoDirectory.trim())
     } catch (err) { this._queue = []; this._error = `Upload failed: ${String(err?.message ?? err)}` }
-    finally { this._busy = false; await this._load() }
+    finally { this._busy = false; await this._load({ preserveError: true }) }
   }
 
   async _delete(report) {
     if (!globalThis.confirm?.(`Delete “${report.filename}”? This can't be undone.`)) return
+    this._error = null
     try { await deleteReport(report.id, this._csrf) }
     catch (err) { this._error = `Delete failed: ${String(err?.message ?? err)}` }
-    await this._load()
+    await this._load({ preserveError: true })
   }
 }
 customElements.define('managed-admin-reports', ManagedAdminReports)
 
-async function fetchBundles() {
-  const res = await managedFetch('/api/admin/bundles', { credentials: 'same-origin', headers: { accept: 'application/json' } })
+async function fetchBundles(signal) {
+  const res = await managedFetch('/api/admin/bundles', { signal, credentials: 'same-origin', headers: { accept: 'application/json' } })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json()
 }
@@ -1118,7 +1075,7 @@ const BUNDLE_ICON = html`<svg class="report-icon" viewBox="0 0 16 16" width="16"
 // stasis archive, content-addressed by sha512 so dupes collapse) and lists what's
 // stored, with download + delete, uploader/repo attribution, and the kind. Own
 // chunk, fetches its own data; no main-bundle state.
-class ManagedAdminBundles extends LitElement {
+class ManagedAdminBundles extends ManagedPage {
   static properties = {
     _query: { state: true },
     _data: { state: true },
@@ -1135,7 +1092,6 @@ class ManagedAdminBundles extends LitElement {
     this._query = ''
     this._data = null
     this._error = null
-    this._csrf = null
     this._busy = false
     this._repoId = null // null = no repo link; otherwise a selected repo id (for new uploads)
     this._dragOver = false
@@ -1154,17 +1110,11 @@ class ManagedAdminBundles extends LitElement {
     this._teardownDrop?.()
   }
 
-  async _load() {
-    this._error = null
-    this._data = null
-    try {
-      const [session, data] = await Promise.all([fetchSession(), fetchBundles()])
-      this._csrf = session?.csrfToken ?? null
-      this._role = session?.role ?? 'none'
+  async _load({ preserveError = false } = {}) {
+    if (!preserveError) this._error = null
+    await this._loadCollection(fetchBundles, data => {
       this._data = data
-    } catch (err) {
-      this._error = String(err?.message ?? err)
-    }
+    })
   }
 
   render() {
@@ -1182,16 +1132,15 @@ class ManagedAdminBundles extends LitElement {
   }
 
   _body() {
-    if (this._error != null) return html`<p class="msg error">Couldn't load bundles: ${this._error}</p>`
-    if (this._data == null) return html`<p class="msg">Loading…</p>`
-    const bundles = Array.isArray(this._data.bundles) ? this._data.bundles : []
+    const bundles = Array.isArray(this._data?.bundles) ? this._data.bundles : []
     const unassigned = bundles.filter((bundle) => bundle.repoId == null).length
     const bytes = bundles.reduce((sum, bundle) => sum + (Number.isFinite(bundle.byteSize) ? bundle.byteSize : 0), 0)
     const query = this._query.trim().toLocaleLowerCase()
     const filtered = bundles.filter(bundle => [bundle.filename, bundle.repoFullName, bundle.kind, bundle.uploadedByLogin].filter(Boolean).join(' ').toLocaleLowerCase().includes(query))
     const groups = Map.groupBy(filtered, (bundle) => bundle.repoFullName || 'Unattached')
-    return html`<div class="collection-toolbar" role="search"><input type="search" aria-label="Search bundles" placeholder="Search bundles or repositories…" .value=${this._query} @input=${e => { this._query = e.target.value }}></div><div class="section-head"><h2>Stored bundles</h2><span class="summary"><span>${bundles.length} ${bundles.length === 1 ? 'bundle' : 'bundles'}</span><span>${formatBytes(bytes)}</span>${unassigned ? html`<span class="unassigned">${unassigned} unattached</span>` : nothing}</span></div>
-      ${filtered.length > 0 ? html`<div class="bundle-groups">${[...groups].toSorted(([a], [b]) => a === 'Unattached' ? -1 : b === 'Unattached' ? 1 : a.localeCompare(b)).map(([name, items]) => html`<section class="bundle-group"><div class="bundle-group-head"><strong>${name}</strong><span>${items.length} ${items.length === 1 ? 'bundle' : 'bundles'}</span></div><ul class="bundles">${items.map((b) => this._row(b))}</ul></section>`)}</div>` : html`<div class="empty"><strong>${query ? 'No matching bundles' : 'No bundles uploaded yet'}</strong><p>${query ? 'Try another filename or repository.' : 'Drop source archives here or browse files above.'}</p></div>`}`
+    return html`<div class="collection-toolbar" role="search"><input type="search" aria-label="Search bundles" placeholder="Search bundles or repositories…" .value=${this._query} @input=${e => { this._query = e.target.value }}></div><div class="section-head"><h2>Stored bundles</h2><span class="summary"><span>${this._data == null ? '… bundles' : `${bundles.length} ${bundles.length === 1 ? 'bundle' : 'bundles'}`}</span><span>${this._data == null ? '…' : formatBytes(bytes)}</span><span class="unassigned">${this._data == null ? '… unattached' : unassigned ? `${unassigned} unattached` : ''}</span></span></div>
+      ${this._error ? html`<p class="msg error" role="alert">${this._error}</p>` : nothing}
+      <div aria-busy=${this._loading}>${this._data == null ? (this._error ? nothing : loadingRows('Loading bundles…')) : filtered.length > 0 ? html`<div class="bundle-groups">${[...groups].toSorted(([a], [b]) => a === 'Unattached' ? -1 : b === 'Unattached' ? 1 : a.localeCompare(b)).map(([name, items]) => html`<section class="bundle-group"><div class="bundle-group-head"><strong>${name}</strong><span>${items.length} ${items.length === 1 ? 'bundle' : 'bundles'}</span></div><ul class="bundles">${items.map((b) => this._row(b))}</ul></section>`)}</div>` : html`<div class="empty"><strong>${query ? 'No matching bundles' : 'No bundles uploaded yet'}</strong><p>${query ? 'Try another filename or repository.' : 'Drop source archives here or browse files above.'}</p></div>`}</div>`
   }
 
   _row(b) {
@@ -1210,12 +1159,13 @@ class ManagedAdminBundles extends LitElement {
   }
 
   async _setRepo(b, repoId) {
+    this._error = null
     try {
       await setBundleRepo(b.id, repoId, this._csrf)
     } catch (err) {
       this._error = `Couldn't change repo: ${String(err?.message ?? err)}`
     }
-    await this._load()
+    await this._load({ preserveError: true })
   }
 
   async _upload(files) {
@@ -1234,29 +1184,28 @@ class ManagedAdminBundles extends LitElement {
       this._error = `Upload failed: ${String(err?.message ?? err)}`
     } finally {
       this._busy = false
-      await this._load()
+      await this._load({ preserveError: true })
     }
   }
 
   async _delete(b) {
     if (!globalThis.confirm?.(`Delete “${b.filename}”? Linked reports will keep their pending link.`)) return
+    this._error = null
     try {
       await deleteBundle(b.id, this._csrf)
     } catch (err) {
       this._error = `Delete failed: ${String(err?.message ?? err)}`
     }
-    await this._load()
+    await this._load({ preserveError: true })
   }
 }
 customElements.define('managed-admin-bundles', ManagedAdminBundles)
 
 // Manage supplies its own navigation and authenticated model transport.
-class ManagedAdminScans extends LitElement {
-  static properties = { _role: { state: true } }
+class ManagedAdminScans extends ManagedPage {
   static styles = unsafeCSS(commonStyles)
   constructor() {
     super()
-    this._role = null
     this._loadModels = signal => fetchScanModels(signal, managedFetch)
     this._source = { bundles: cloneScanFixtures(), repositories: SCAN_REPOSITORY_FIXTURES, scans: SCAN_FIXTURES.map(scan => ({ ...scan })) }
     this._loadReportSources = async signal => {
@@ -1278,21 +1227,14 @@ class ManagedAdminScans extends LitElement {
       return managedReportSources(data, results.ok ? await results.json() : { bundles: [], results: [] })
     }
   }
-  connectedCallback() {
-    super.connectedCallback()
-    void fetchSession().then(session => {
-      this._role = session?.role ?? 'none'
-      return session
-    })
-  }
   render() {
     return html`<div class="wrap">${adminNavigation('manage-scans', this._role)}<deepview-scan-page hide-heading .source=${this._source} .loadModels=${this._loadModels} .loadReportSources=${this._loadReportSources}></deepview-scan-page></div>`
   }
 }
 customElements.define('managed-admin-scans', ManagedAdminScans)
 
-async function fetchTeams() {
-  const res = await managedFetch('/api/admin/teams', { credentials: 'same-origin', headers: { accept: 'application/json' } })
+async function fetchTeams(signal) {
+  const res = await managedFetch('/api/admin/teams', { signal, credentials: 'same-origin', headers: { accept: 'application/json' } })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json()
 }
@@ -1309,8 +1251,8 @@ async function postTeam(path, csrfToken, body) {
 // Teams — full-view page for admin/manage. Create teams; per team, link repos
 // (with an optional subpath) and members (with per-member visibility
 // permissions — dependencies / security, both off by default). Own chunk,
-// fetches its own data (session for CSRF + the teams payload).
-class ManagedAdminTeams extends LitElement {
+// fetches its own teams payload; the host supplies the session.
+class ManagedAdminTeams extends ManagedPage {
   static properties = {
     _data: { state: true },
     _error: { state: true },
@@ -1326,7 +1268,6 @@ class ManagedAdminTeams extends LitElement {
     super()
     this._data = null
     this._error = null
-    this._csrf = null
     this._busy = false
     this._renamingId = null
     this._repoChoices = new Map()
@@ -1338,16 +1279,11 @@ class ManagedAdminTeams extends LitElement {
     void this._load()
   }
 
-  async _load() {
-    this._error = null
-    try {
-      const [session, data] = await Promise.all([fetchSession(), fetchTeams()])
-      this._csrf = session?.csrfToken ?? null
-      this._role = session?.role ?? 'none'
+  async _load({ preserveError = false } = {}) {
+    if (!preserveError) this._error = null
+    await this._loadCollection(fetchTeams, data => {
       this._data = data
-    } catch (err) {
-      this._error = String(err?.message ?? err)
-    }
+    })
   }
 
   // Run a mutation then reload; surfaces failures on the page.
@@ -1356,13 +1292,13 @@ class ManagedAdminTeams extends LitElement {
     this._busy = true
     this._error = null
     try { await fn() } catch (err) { this._error = String(err?.message ?? err) }
-    finally { this._busy = false; await this._load() }
+    finally { this._busy = false; await this._load({ preserveError: true }) }
   }
 
   render() {
     return html`<div class="wrap">${adminNavigation('manage-teams', this._role)}
       <h1 class="sr-only">Teams</h1>
-      <div class="page-intro"><p class="intro">Group repositories and give members access to the findings they need.</p>${this._data?.teams ? html`<span class="result-count">${this._data.teams.length} teams</span>` : nothing}</div>
+      <div class="page-intro"><p class="intro">Group repositories and give members access to the findings they need.</p><span class="result-count">${this._data?.teams?.length ?? '…'} teams</span></div>
       <div class="create-team">
         <div class="create-copy"><strong>Create a team</strong><span>Share the right findings with the right people.</span></div>
         <label class="sr-only" for="new-team-name">New team</label>
@@ -1370,13 +1306,13 @@ class ManagedAdminTeams extends LitElement {
           @keydown=${(e) => { if (e.key === 'Enter') this._create() }}>
         <button class="btn primary" ?disabled=${this._busy} @click=${() => this._create()}>${ADMIN_PLUS_ICON} Create team</button>
       </div>
-      ${this._body()}
+      <div aria-busy=${this._loading}>${this._body()}</div>
     </div>`
   }
 
   _body() {
     if (this._error != null && this._data == null) return html`<p class="msg error">Couldn't load teams: ${this._error}</p>`
-    if (this._data == null) return html`<p class="msg">Loading…</p>`
+    if (this._data == null) return loadingRows('Loading teams…')
     const teams = Array.isArray(this._data.teams) ? this._data.teams : []
     return html`
       ${this._error == null ? nothing : html`<p class="msg error">${this._error}</p>`}

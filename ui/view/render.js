@@ -1957,6 +1957,7 @@ function renderImpl() {
     const slot = ensureReportSlot(adminView.slot)
     if (slot && !slot.firstElementChild) {
       const el = document.createElement(adminView.tag)
+      el.session = state.managedSession
       slot.append(el)
       // The admin bundle is its own esbuild entry (no code splitting),
       // so it can't import view/tooltip.js without duplicating the
@@ -1973,6 +1974,7 @@ function renderImpl() {
         })
       })().catch(() => {})
     }
+    if (slot?.firstElementChild) slot.firstElementChild.session = state.managedSession
     report.classList.add('active')
     dropZone.classList.add('hidden')
     document.title = adminView.title

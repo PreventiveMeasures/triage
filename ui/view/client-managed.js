@@ -26,12 +26,12 @@ export function loadManagedBundle() {
   return loadPromise
 }
 
-export async function probeSession() {
-  return (await loadManagedBundle()).probeSession()
+export async function probeSession(options) {
+  return (await loadManagedBundle()).probeSession(options)
 }
 
-export async function probeTeams() {
-  return (await loadManagedBundle()).probeTeams()
+export async function probeTeams(options) {
+  return (await loadManagedBundle()).probeTeams(options)
 }
 
 export async function fetchReport(id) {
