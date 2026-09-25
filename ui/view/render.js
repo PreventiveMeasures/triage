@@ -4,7 +4,7 @@ import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS, PRODUCER_LABELS, REPORT_LOGOS, findingBrand, loadedBrands } from './file-display.js'
-import { FOCUS_SPLIT_MAX, FOCUS_SPLIT_MIN, createManagedLocalImportSource, listBundles, listWorkspaces, state } from '#client/index.js'
+import { FOCUS_SPLIT_MAX, FOCUS_SPLIT_MIN, createManagedLocalImportSource, isManagedUiMode, listBundles, listWorkspaces, state } from '#client/index.js'
 import { differingReports, isBundleInRemote, isInRemote, remoteCount, triageSync } from './client-sync.js'
 import { installShadowTooltipListener } from './tooltip.js'
 import { dropZone, report } from './dom.js'
@@ -197,6 +197,9 @@ function sourceTitle(source) {
 // input would have nothing left to buy.
 function repoChipTemplate(repoInputUseful, knownRepo, declaredRepo) {
   if (declaredRepo) return html`<repo-chip url=${declaredRepo}></repo-chip>`
+  // The server owns managed report assignments. An unassigned or mixed-repo
+  // view must neither infer a repo from findings nor offer a local editor.
+  if (isManagedUiMode()) return nothing
   if (state.currentWorkspace) {
     if (knownRepo) return html`<repo-chip url=${knownRepo}></repo-chip>`
     return nothing

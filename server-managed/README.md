@@ -36,6 +36,22 @@ and invalidates the old managed history entries, so Back cannot reopen them.
 History contains a navigation generation only, with no report or triage data.
 The server mode's advertised default still applies on reload.
 
+# Report repository metadata
+
+Managed report headers use the repository assignment stored on the server,
+including its directory, even when the report embeds a different repository.
+They do not offer the local “Set repo” editor. Findings retain their own upstream
+repository metadata (for example, a dependency's repository); source links that
+need a report fallback use the server assignment.
+
+`GET /api/reports/:id` with `Accept: application/json` returns
+`{ content, repo: { github, directory } }`. Content has the same permission
+filtering as the raw text response, and `github: null` means unassigned. Other
+callers still receive raw text. JSON can appear in a media-range list or carry
+parameters; `q=0` excludes it, and wildcards alone retain raw text. The local
+fixture server uses the same response contract. Responses are never cached or
+stored locally.
+
 # Activity history
 
 `/manage/history` reads `GET /api/admin/history?page=1&limit=100&kind=all&q=`.

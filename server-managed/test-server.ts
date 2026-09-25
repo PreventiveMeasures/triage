@@ -14,6 +14,7 @@
 import { type IncomingMessage, type ServerResponse, createServer } from 'node:http'
 import { DEFAULT_MANAGED_SCAN_MODEL, MANAGED_SCAN_MODELS } from '../common/managed/scan-models.ts'
 import { MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_ENTRIES, type TriageEntryPatch, parseTriageEntryPatch } from '../common/managed/triage.ts'
+import { acceptsReportMetadata } from './report-response.ts'
 
 const host = process.env['MANAGED_TEST_HOST'] ?? '127.0.0.1'
 const port = Number(process.env['MANAGED_TEST_PORT'] ?? 8766)
@@ -360,7 +361,7 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
 
 function sendText(res: ServerResponse, status: number, text: string): void {
   res.writeHead(status, {
-    'content-type': 'application/json; charset=utf-8',
+    'content-type': 'text/plain; charset=utf-8',
     'cache-control': 'no-store',
     'content-length': String(Buffer.byteLength(text)),
   })
@@ -445,9 +446,16 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
     }
     if (method !== 'GET') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
     const id = decodeURIComponent(url.pathname.slice('/api/reports/'.length))
-    const report = reports.get(id)
+    const report = reportFixtures.find((entry) => entry.id === id)
     if (report == null) { sendJson(res, 404, { error: 'not-found' }); return }
-    sendText(res, 200, report)
+    res.setHeader('vary', 'Accept')
+    res.setHeader('x-content-type-options', 'nosniff')
+    if (acceptsReportMetadata(req.headers.accept)) {
+      sendJson(res, 200, {
+        content: report.content,
+        repo: { github: repoById(report.repoId)?.fullName ?? null, directory: report.repoDirectory },
+      })
+    } else sendText(res, 200, report.content)
     return
   }
   if (url.pathname.startsWith('/api/avatar/')) {

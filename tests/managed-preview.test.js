@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
 import { test } from 'node:test'
+import { fetchReport } from '../client/managed/session.js'
 
 test('managed preview triage persists in memory and stays scoped to the requested report', async (t) => {
   const previousPort = process.env.MANAGED_TEST_PORT
@@ -26,6 +27,27 @@ test('managed preview triage persists in memory and stays scoped to the requeste
   assert.equal(results.results.length, 5)
   assert.equal(results.results.every(result => results.bundles.some(bundle => bundle.id === result.bundleId)), true)
   assert.equal(results.results.some(result => exported.reports.some(report => report.id === result.id)), false)
+  await t.test('fixture reports support the real managed client and raw downloads', async (fixtureTest) => {
+    const networkFetch = globalThis.fetch
+    fixtureTest.mock.method(globalThis, 'fetch', (url, options) => networkFetch(new URL(url, base), options))
+    for (const report of exported.reports) {
+      const loaded = await fetchReport(report.id)
+      assert.ok(loaded, report.filename)
+      assert.deepEqual(loaded.repo, { github: report.repoFullName, directory: report.repoDirectory })
+      assert.ok(JSON.parse(loaded.content).findings.length > 0)
+      const raw = await fetch(`${base}/${report.id}`)
+      assert.equal(raw.headers.get('content-type'), 'text/plain; charset=utf-8')
+      assert.equal(raw.headers.get('vary'), 'Accept')
+      assert.equal(await raw.text(), loaded.content)
+      for (const accept of ['application/json, */*', 'application/json; q=1']) {
+        const response = await fetch(`${base}/${report.id}`, { headers: { accept } })
+        assert.equal(response.headers.get('cache-control'), 'no-store')
+        assert.equal(response.headers.get('vary'), 'Accept')
+        assert.deepEqual(await response.json(), loaded, accept)
+      }
+    }
+    assert.equal(await fetchReport('unknown'), null)
+  })
   const first = `${base}/fixture-report-1/triage`
   const second = `${base}/fixture-report-2/triage`
   const impactUrl = new URL('/api/admin/repositories/impact?repoId=101', base)

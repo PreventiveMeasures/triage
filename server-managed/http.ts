@@ -61,6 +61,7 @@ import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, ensureUserAc
 import { clearCookie, endSession, readSession } from './session.ts'
 import type { ActivityContext, ActivityInput } from './activity.ts'
 import { contentAccess } from './content-access.ts'
+import { acceptsReportMetadata } from './report-response.ts'
 
 const SESSION_PATH = '/api/auth/session'
 const AVATAR_PREFIX = '/api/avatar/'
@@ -897,11 +898,12 @@ async function canViewReport(deps: ManagedHttpDeps, user: StoredUser, reportId: 
 
 // GET /api/reports/<id> — view a report the caller is authorized to read (see
 // canViewReport: admin, or ≥view role + team membership for the report's repo).
-// Serves the raw content as text/plain (+ nosniff) for in-app rendering — the
-// client renders it without caching to OPFS. 404 covers "no such report" AND
+// Accept: application/json includes the server's repo assignment alongside the
+// filtered content. Other callers retain the raw text/plain response. The
+// client renders either without caching to OPFS. 404 covers "no such report" AND
 // "not authorized" (so neither existence nor membership is probeable); 503 = row
 // without bytes (store desync).
-async function handleViewReport(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string): Promise<void> {
+async function handleViewReport(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string): Promise<void> {
   const s = await readSession(deps.config, deps.db, cookie, Date.now())
   if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
   if (!(await canViewReport(deps, s.user, id))) { sendJson(res, 404, { error: 'no-report' }); return }
@@ -909,11 +911,21 @@ async function handleViewReport(res: ServerResponse, deps: ManagedHttpDeps, cook
   if (bytes == null) { sendJson(res, 503, { error: 'unavailable' }); return }
   const out = await viewerReportBytes(deps, s.user, id, bytes)
   if (out == null) { sendJson(res, 404, { error: 'no-report' }); return }
+  if (acceptsReportMetadata(req.headers.accept)) {
+    const report = await deps.db.getReport(id)
+    if (report == null) { sendJson(res, 404, { error: 'no-report' }); return }
+    sendJson(res, 200, {
+      content: out.toString('utf8'),
+      repo: { github: await repositoryName(deps, report.repoId), directory: report.repoDirectory },
+    }, { vary: 'Accept', 'x-content-type-options': 'nosniff' })
+    return
+  }
   res.writeHead(200, {
     'content-type': 'text/plain; charset=utf-8',
     'content-length': String(out.length),
     'x-content-type-options': 'nosniff',
     'cache-control': 'no-store',
+    vary: 'Accept',
   })
   res.end(out)
 }
@@ -1366,7 +1378,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     // the report's repo). Distinct prefix from /api/admin/reports/.
     if (path.startsWith(MY_REPORT_PREFIX)) {
       if (method !== 'GET') { send405(res, 'GET'); return }
-      await handleViewReport(res, deps, cookie, path.slice(MY_REPORT_PREFIX.length)); return
+      await handleViewReport(req, res, deps, cookie, path.slice(MY_REPORT_PREFIX.length)); return
     }
     // The signed-in user's own team memberships (any authenticated user).
     if (path === MY_TEAMS_PATH) {

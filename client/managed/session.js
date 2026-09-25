@@ -77,15 +77,14 @@ export async function probeTeams({ fallback = [] } = {}) {
     }))
 }
 
-// GET /api/reports/<id> → a team report's raw text content for in-app viewing.
+// GET /api/reports/<id> → filtered text and the authoritative server repo.
+// Keep them together so viewing does not depend on a stale sidebar catalogue.
 // The caller renders it WITHOUT caching to OPFS. null on failure / no access.
 export async function fetchReport(id) {
-  let res
-  try {
-    res = await managedFetch(`/api/reports/${encodeURIComponent(id)}`, { credentials: 'same-origin' })
-  } catch { return null }
-  if (!res.ok) return null
-  try { return await res.text() } catch { return null }
+  const body = await getJson(`/api/reports/${encodeURIComponent(id)}`)
+  if (typeof body?.content !== 'string' || typeof body.repo?.directory !== 'string') return null
+  if (body.repo.github !== null && typeof body.repo.github !== 'string') return null
+  return { content: body.content, repo: body.repo }
 }
 
 // GET /api/reports/<id>/triage → the server's triage entries for a team
