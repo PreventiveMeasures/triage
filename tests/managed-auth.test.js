@@ -2012,6 +2012,9 @@ test('workspace history records successful content and access changes, but not f
   const history = async () => JSON.parse((await send('GET', '/api/admin/history', cookie)).body).history
   const count = async () => (await history()).length
   const baseline = await count()
+  const wholeRepoTeam = (await db.listTeams()).find(team => team.name === 'Blue')
+  assert.equal((await post('teams/set-repo', { teamId: wholeRepoTeam.id, repoId: 7, path: 'src' })).statusCode, 200)
+  assert.equal(await count(), baseline, 'a whole-repository grant already covers every subpath')
   assert.equal((await post('reports/set-visible', { reportId: fx.reportId, visible: false }, null)).statusCode, 403)
   assert.equal((await post('reports/set-visible', { reportId: 'missing', visible: true })).statusCode, 404)
   assert.equal(await count(), baseline)

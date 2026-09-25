@@ -1135,7 +1135,7 @@ async function handleSetTeamRepo(req: IncomingMessage, res: ServerResponse, deps
   if (team == null) { sendJson(res, 404, { error: 'no-team' }); return }
   if (!(await deps.db.listSelectedRepos()).some((r) => r.repoId === repoId)) { sendJson(res, 400, { error: 'repo-not-selected' }); return }
   await deps.db.setTeamRepo(teamId, repoId, path.path)
-  if (!team.repos.some(repo => repo.repoId === repoId && (repo.path ?? '') === (path.path ?? ''))) {
+  if (!team.repos.some(repo => repo.repoId === repoId && (!repo.path || repo.path === (path.path ?? '')))) {
     await activity(deps, s.user, 'access', `granted team ${team.name} access to ${path.path || '/'}`, { repo: await repositoryName(deps, repoId) })
   }
   sendJson(res, 200, { ok: true })
