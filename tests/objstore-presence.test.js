@@ -2757,6 +2757,62 @@ describe('client/sync/objstore-presence', () => {
     }
   })
 
+  it('a re-upload whose broadcast joins a discovery fetch that comes back empty is still fetched (review r4100261430)', async () => {
+    // Discovery fetches a claimed report with no full baseline (here a
+    // legacy one). A peer deletes it and re-uploads it while that fetch
+    // is in flight: the re-upload's broadcast re-runs discovery, which
+    // joins the in-flight fetch rather than starting another. That fetch
+    // hit the gap between delete and re-upload and came back empty — and
+    // nothing fetched the new incarnation, so the local copy stayed on
+    // the old report.
+    const fileName = 'discovery-vs-recreate.json'
+    const peerText = reportJson('peer-B')
+    const { ws, put } = await openSyncedReport('presence-discovery-vs-recreate', fileName, reportJson('old-A'))
+    const peer = await openPeerSession(ws)
+    const e = __test__.getEntry(ws.id)
+    const [tag] = e.baselines.keys()
+    const realFetchByTag = e.session.fetchByTag.bind(e.session)
+    const realInFlightGet = e.inFlight.get.bind(e.inFlight)
+    let incarnationB
+    let joined
+    const reuploadJoined = new Promise((resolve) => { joined = resolve })
+    try {
+      // A version-only baseline from an older build, at a version the
+      // re-upload won't restart at — so B, once fetched, is taken.
+      e.baselines.set(tag, { version: 3, incarnation: null, synced: true, hash: null })
+      e.inFlight.get = (t) => {
+        const v = realInFlightGet(t)
+        if (t === tag && v && incarnationB !== undefined && e.remoteMeta.get(tag)?.incarnation === incarnationB) joined()
+        return v
+      }
+      e.session.fetchByTag = async (t) => {
+        e.session.fetchByTag = realFetchByTag
+        assert.equal((await peer.delete(fileName, put.meta)).ok, true)
+        await awaitPresence(() => !e.remoteTags.has(tag), 'delete seen')
+        const r = await realFetchByTag(t)
+        assert.equal(r, null, 'the fetch lands between the delete and the re-upload')
+        const b = await peer.put({ fileName, content: await gzipBytes(encodeUtf8(peerText)), prev: null })
+        assert.equal(b.ok, true)
+        incarnationB = b.meta.incarnation
+        await reuploadJoined
+        return r
+      }
+      // Discovery isn't done until the new incarnation is (review
+      // r4100318902): no polling after it resolves.
+      const names = await discoverRemoteFileNames(ws.id)
+      assert.ok(names.includes(fileName), `discovered: ${JSON.stringify(names)}`)
+      assert.equal(await localReportText(fileName), peerText, 'the re-upload landed locally')
+      assert.equal(e.baselines.get(tag)?.incarnation, incarnationB, 'baseline at B')
+    } finally {
+      e.session.fetchByTag = realFetchByTag
+      e.inFlight.get = realInFlightGet
+      peer.close()
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+      await deleteFile(fileName).catch(() => {})
+    }
+  })
+
   it('a re-check fetch made before a delete + re-upload is applied never overwrites the re-upload (review r4099512379)', async () => {
     // The re-check fetches incarnation A; a peer then deletes the report
     // and re-uploads it as B, which the automatic path applies before the
