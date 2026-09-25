@@ -8,6 +8,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { ROLES } from '../../common/managed/roles.ts'
 import { VISIBILITY_PERMISSION_LABELS } from '../../common/managed/permissions.ts'
 import { REPORT_LOGOS } from '../view/report-logos.js'
+import { DELETE_ICON_SVG, EDIT_ICON_SVG } from '../view/icons.js'
 import { adminIcon, adminNavigation } from './navigation.js'
 import { ManagedLocalImport } from './local-import.js'
 import localImportStyles from './styles/local-import.css'
@@ -39,8 +40,8 @@ function adminAvatar(id, login) {
   </span>`
 }
 
-const ADMIN_EDIT_ICON = html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m10 2 4 4-8 8H2v-4l8-8Zm-1 1 4 4"/></svg>`
-const ADMIN_DELETE_ICON = html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 4h12M6 4V2h4v2M4 4l.6 10h6.8L12 4M6.5 7v4m3-4v4"/></svg>`
+const ADMIN_EDIT_ICON = unsafeHTML(EDIT_ICON_SVG)
+const ADMIN_DELETE_ICON = unsafeHTML(DELETE_ICON_SVG)
 const ADMIN_REMOVE_ICON = html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="m4 4 8 8m0-8-8 8"/></svg>`
 const ADMIN_PLUS_ICON = html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>`
 const ADMIN_ROLE_LABELS = { admin: 'Admin', manage: 'Manager', triage: 'Triage', view: 'Viewer', none: 'No access' }
