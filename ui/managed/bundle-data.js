@@ -12,8 +12,8 @@ async function requestBundle(id, part, signal) {
   if (generation !== managedAppState.generation) throw new DOMException('Managed session changed', 'AbortError')
   return data
 }
-export function fetchBundleMetadata(id) {
-  return managedAppState.load(`bundle-metadata:${id}`, 'bundle metadata', signal => requestBundle(id, 'metadata', signal))
+export function fetchBundleMetadata(id, { signal } = {}) {
+  return managedAppState.load(`bundle-metadata:${id}`, 'bundle metadata', requestSignal => requestBundle(id, 'metadata', requestSignal), { signal })
 }
 export async function fetchBundleContents(id) {
   try { return await requestBundle(id, 'contents') }

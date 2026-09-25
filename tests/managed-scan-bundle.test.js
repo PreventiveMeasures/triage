@@ -1,15 +1,21 @@
 import assert from 'node:assert/strict'
-import { test } from 'node:test'
+import { beforeEach, test } from 'node:test'
 import { brotliCompressSync } from 'node:zlib'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import './_polyfills.js'
 import '../ui/client-managed.js'
 import { loadManagedScanBundle, managedScanSource } from '../ui/managed/scan-source.js'
+import { createBundleMetadata } from '../common/bundle-metadata.js'
+import { fetchBundleMetadata } from '../ui/managed/bundle-data.js'
+import { managedAppState } from '../ui/managed/state.js'
 
 const ScanPage = customElements.get('deepview-scan-page')
 const ManagedScans = customElements.get('managed-admin-scans')
 const entry = { id: 'bundle/id', integrity: 'sha512-managed', filename: 'APP.MAP', repoId: 7, repoFullName: 'owner/app' }
 const map = { version: 3, sources: ['src/main.js', 'node_modules/dep/index.js', 'missing.js'], sourcesContent: ['export default 1\n', '€\nnext\n', null] }
+const mapMetadata = await createBundleMetadata({ integrity: entry.integrity, kind: 'sourcemap', size: Buffer.byteLength(JSON.stringify(map)), json: map })
+
+beforeEach(() => { managedAppState.reset() })
 
 function createPage() {
   const host = new ManagedScans()
@@ -26,15 +32,15 @@ function createPage() {
 test('managed sourcemap loading enables each bundle scan mode with real file metadata', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] })
   const network = t.mock.method(globalThis, 'fetch', (url, options) => {
-    assert.equal(url, '/api/admin/bundles/bundle%2Fid')
+    assert.equal(url, '/api/bundles/bundle%2Fid/metadata', 'scan setup never requests source contents')
     assert.equal(options.credentials, 'same-origin')
     assert.equal(options.cache, 'no-store')
     assert.ok(options.signal instanceof AbortSignal)
-    return Promise.resolve(Response.json(map))
+    return Promise.resolve(Response.json(mapMetadata))
   })
   const page = createPage()
   page._runScan()
-  assert.equal(page._scans.length, 0, 'unloaded contents cannot start a scan')
+  assert.equal(page._scans.length, 0, 'unloaded metadata cannot start a scan')
   await page._loadSelectedBundle()
   assert.equal(page._bundleError, null)
   assert.equal(page._loadingBundle, false)
@@ -56,7 +62,7 @@ test('managed sourcemap loading enables each bundle scan mode with real file met
   assert.equal(network.mock.callCount(), 1, 'the selected page retains its loaded inventory')
 })
 
-test('managed Stasis loading decodes compressed v0 and v1 contents and scopes', async (t) => {
+test('managed Stasis v0 and v1 metadata retains file statistics, formats and scopes', async (t) => {
   const sources = { 'src/main.js': 'export default 1\n', 'src/build.js': 'export default 2\n' }
   const reason = { run: ['src/main.js'], build: ['src/build.js'] }
   const snapshots = [
@@ -65,10 +71,13 @@ test('managed Stasis loading decodes compressed v0 and v1 contents and scopes', 
       formats: new Map([['src/main.js', 'module'], ['assets', 'directory'], ['assets/icon.png', 'resource:base64']]),
       entries: new Set(['src/main.js']), reason }).serialize(),
   ]
-  let bytes
-  t.mock.method(globalThis, 'fetch', () => Promise.resolve(new Response(bytes)))
+  let metadata
+  t.mock.method(globalThis, 'fetch', url => {
+    assert.equal(url, '/api/bundles/bundle%2Fid/metadata')
+    return Promise.resolve(Response.json(metadata))
+  })
   for (const snapshot of snapshots) {
-    bytes = brotliCompressSync(snapshot)
+    metadata = await createBundleMetadata({ integrity: entry.integrity, kind: 'stasis', size: brotliCompressSync(snapshot).byteLength, bundle: Bundle.parse(snapshot) })
     const result = await loadManagedScanBundle({ ...entry, filename: 'app.stasis.code.br' })
     assert.equal(result.files.find(file => file.path === 'src/main.js').bytes, 17)
     assert.equal(result.files.find(file => file.path === 'src/main.js').lines, 1)
@@ -83,11 +92,11 @@ test('managed Stasis loading decodes compressed v0 and v1 contents and scopes', 
   }
 })
 
-test('managed bundle download and parse failures stay retryable without enabling scans', async (t) => {
+test('managed metadata request and validation failures stay retryable without enabling scans', async (t) => {
   let response
   t.mock.method(globalThis, 'fetch', () => Promise.resolve(response))
   const page = createPage()
-  for (const failure of [new Response('', { status: 503 }), new Response('invalid JSON')]) {
+  for (const failure of [new Response('', { status: 503 }), new Response('invalid JSON'), Response.json(map), Response.json({ ...mapMetadata, integrity: 'other-bundle' })]) {
     response = failure
     await page._loadSelectedBundle()
     assert.ok(page._bundleError)
@@ -96,20 +105,34 @@ test('managed bundle download and parse failures stay retryable without enabling
     page._runScan()
     assert.equal(page._scans.length, 0)
   }
-  response = Response.json(map)
+  response = Response.json(mapMetadata)
   await page._loadSelectedBundle()
   assert.equal(page._bundleError, null)
   assert.equal(page._bundle.files.length, 2)
 })
 
-test('managed bundle cancellation prevents downloads and rejects late response bodies', async (t) => {
+test('scan cancellation rejects late metadata without cancelling another shared consumer', async (t) => {
   const body = Promise.withResolvers()
-  const network = t.mock.method(globalThis, 'fetch', () => Promise.resolve({ ok: true, arrayBuffer: () => body.promise }))
+  const network = t.mock.method(globalThis, 'fetch', () => Promise.resolve({ ok: true, json: () => body.promise }))
   await assert.rejects(loadManagedScanBundle(entry, AbortSignal.abort()), { name: 'AbortError' })
   assert.equal(network.mock.callCount(), 0)
   const controller = new AbortController()
   const loading = loadManagedScanBundle(entry, controller.signal)
+  const otherConsumer = fetchBundleMetadata(entry.id)
   controller.abort()
-  body.resolve(await Response.json(map).arrayBuffer())
+  body.resolve(mapMetadata)
   await assert.rejects(loading, { name: 'AbortError' })
+  assert.deepEqual(await otherConsumer, mapMetadata)
+  assert.equal(network.mock.callCount(), 1)
+  assert.deepEqual(managedAppState.read(`bundle-metadata:${entry.id}`), mapMetadata)
+})
+
+test('a session change rejects pending scan metadata and clears its shared cache', async (t) => {
+  const body = Promise.withResolvers()
+  t.mock.method(globalThis, 'fetch', () => Promise.resolve({ ok: true, json: () => body.promise }))
+  const loading = loadManagedScanBundle(entry)
+  managedAppState.reset()
+  body.resolve(mapMetadata)
+  await assert.rejects(loading, { name: 'AbortError' })
+  assert.equal(managedAppState.read(`bundle-metadata:${entry.id}`), undefined)
 })
