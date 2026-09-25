@@ -145,6 +145,31 @@ test('comments have independent IDs, ownership, conflict detection, and body-fre
   assert.equal((await db.listActivity({ page: 1, limit: 100, kind: 'all', query: '', contexts: null })).total, 0)
 })
 
+test('same-timestamp comment and triage activity uses numeric ordering across admin and manager pages', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const alice = await db.upsertUser(identity(1, 'alice'), 10)
+  const imported = { findingId: 'f', authorId: null, authorLogin: null, actor: { id: alice, login: 'alice' } }
+  for (let i = 1; i <= 12; i++) {
+    await db.createComment({ ...imported, body: `Imported note ${i}` }, 100)
+    await db.setTriage('f', { fix: `PR-${i}` }, alice, 'alice', 100)
+  }
+  await db.createComment({ ...imported, body: 'Earlier timestamp' }, 90)
+  await db.createComment({ ...imported, body: 'Later timestamp' }, 110)
+  const expected = ['comment:14', ...Array.from({ length: 12 }, (_, i) =>
+    [`triage:${12 - i}`, `comment:${12 - i}`]).flat(), 'comment:13']
+  for (const contexts of [null, [{ finding: 'f', reportId: 'r', report: 'r.json', repo: 'o/r' }]]) {
+    const ids = []
+    for (let page = 1; page <= 4; page++) {
+      const result = await db.listActivity({ page, limit: 7, kind: 'triage', query: '', contexts, userId: alice })
+      assert.equal(result.total, 26)
+      assert.equal(result.page, page)
+      ids.push(...result.history.map(event => event.id))
+    }
+    assert.deepEqual(ids, expected, contexts === null ? 'admin ordering' : 'manager ordering')
+  }
+})
+
 async function fixture(t) {
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())

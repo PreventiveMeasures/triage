@@ -138,7 +138,7 @@ export function activityMethods(db: DatabaseSync): ActivityStore {
     return {
       count: db.prepare(`SELECT count(*) AS total FROM (${filtered})`),
       rows: db.prepare(`${filtered} ORDER BY at DESC,
-        CASE WHEN kind = 'triage' THEN CAST(substr(id, 8) AS INTEGER) ELSE 0 END DESC,
+        CASE WHEN kind = 'triage' THEN CAST(substr(id, instr(id, ':') + 1) AS INTEGER) ELSE 0 END DESC,
         id DESC LIMIT :limit OFFSET :offset`),
     }
   }
