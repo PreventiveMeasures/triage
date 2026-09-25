@@ -25,7 +25,9 @@
 //   GET  /api/admin/reports/<id> → admin|manage downloads a stored report | 401/403/404
 //   DELETE /api/admin/reports/<id> → admin|manage deletes a report | 401/403/404
 //   POST /api/admin/reports/set-repo → admin|manage attaches/detaches a report's repo | 401/403/404
-//   GET  /api/admin/bundles      → admin|manage list of uploaded bundles | 401/403
+//   GET  /api/bundles/<id>/{metadata,contents} → authorized gzip cache | 401/404/422
+//   GET  /api/bundles/<id>/download → authorized original upload | 401/404
+//   GET  /api/admin/bundles      → admin all bundles; managers own/team bundles | 401/403
 //   POST /api/admin/bundles      → admin|manage uploads a bundle (raw body) | 401/403/413
 //   GET  /api/admin/bundles/<id> → admin|manage downloads a stored bundle | 401/403/404
 //   DELETE /api/admin/bundles/<id> → admin|manage deletes a bundle | 401/403/404
@@ -38,6 +40,8 @@
 //   POST /api/admin/teams/{set,remove}-member → admin links/unlinks a user (+perms) | 401/403/404
 //   POST /api/auth/logout        → same-origin + CSRF, drops the session
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { pipeline } from 'node:stream/promises'
+import type { BundleCache, BundleCachePart } from './bundle-cache.ts'
 import { Buffer } from 'node:buffer'
 import { createHash, randomUUID } from 'node:crypto'
 import type { AvatarStore } from './avatar-store.ts'
@@ -137,6 +141,7 @@ export interface ManagedHttpDeps {
   avatarStore: AvatarStore
   reportStore: BlobStore
   bundleStore: BlobStore
+  bundleCache?: BundleCache
   originGate: OriginGate
   isShuttingDown: () => boolean
   track: (p: Promise<unknown>) => void
@@ -469,7 +474,10 @@ async function handleRemoveRepository(req: IncomingMessage, res: ServerResponse,
   // Remove metadata first so a blob-store failure leaves an orphaned blob for
   // later cleanup, rather than a live row pointing at missing report data.
   for (const report of reports) await deps.reportStore.delete(report.id).catch(() => {})
-  for (const bundle of bundles) await deps.bundleStore.delete(bundle.id).catch(() => {})
+  for (const bundle of bundles) {
+    await deps.bundleCache?.delete(bundle.id)
+    await deps.bundleStore.delete(bundle.id).catch(() => {})
+  }
   const deletedTriage = await deps.db.deleteTriage(triageIds)
   await deps.db.deleteRepo(repoId)
   await activity(deps, s.user, 'delete', `removed a repository (${deletedReports} reports, ${deletedBundles} bundles, ${deletedTriage} triage entries)`, { repo: repo.fullName })
@@ -587,11 +595,13 @@ async function handleSetBundleRepo(req: IncomingMessage, res: ServerResponse, de
   const bundleId = (body as { bundleId?: unknown } | null)?.bundleId
   const repoId = (body as { repoId?: unknown } | null)?.repoId ?? null
   if (typeof bundleId !== 'string') { sendJson(res, 400, { error: 'bad-request' }); return }
-  if (!(await repoIdAllowed(deps, repoId))) { sendJson(res, 400, { error: 'bad-repo' }); return }
+  if (!(await canAccessBundle(deps, s.user, bundleId))) { sendJson(res, 404, { error: 'no-bundle' }); return }
   const bundle = await deps.db.getBundle(bundleId)
-  const access = await contentAccess(deps.db, s.user)
-  if (bundle == null || !access.bundle(bundle)) { sendJson(res, 404, { error: 'no-bundle' }); return }
-  if (!access.bundle({ repoId: repoId as number | null })) { sendJson(res, 403, { error: 'repository-access-denied' }); return }
+  if (!(await canChangeBundleRepo(deps, s.user, bundle?.repoId ?? null))) { sendJson(res, 403, { error: 'repo-forbidden' }); return }
+  if (!(await repoIdAllowed(deps, repoId))) { sendJson(res, 400, { error: 'bad-repo' }); return }
+  if (repoId !== null && s.user.role !== 'admin' && !(await deps.db.userCanReadRepo(s.user.id, repoId as number))) {
+    sendJson(res, 403, { error: 'forbidden' }); return
+  }
   if (!(await deps.db.setBundleRepo(bundleId, repoId as number | null))) { sendJson(res, 404, { error: 'no-bundle' }); return }
   if (bundle.repoId !== repoId) await activity(deps, s.user, 'repository', repoId == null ? 'detached a bundle from its repository' : 'assigned a bundle to a repository', { bundleId, report: bundle.filename, repo: await repositoryName(deps, (repoId as number | null) ?? bundle.repoId) })
   sendJson(res, 200, { ok: true })
@@ -739,6 +749,64 @@ async function handleDeleteReport(req: IncomingMessage, res: ServerResponse, dep
   sendJson(res, 200, { ok: true })
 }
 
+// Apply the same access rule to inventory, cached derivatives, raw downloads
+// and mutations. Ownership is a manager exception; lower roles require teams.
+async function canAccessBundle(deps: ManagedHttpDeps, user: StoredUser, id: string): Promise<boolean> {
+  if (!roleAtLeast(user.role, 'view')) return false
+  const rec = await deps.db.getBundle(id)
+  if (!rec) return false
+  if (user.role === 'admin') return true
+  if (user.role === 'manage') return deps.db.userCanReadBundle(user.id, id)
+  return rec.repoId !== null && deps.db.userCanReadRepo(user.id, rec.repoId)
+}
+
+async function canChangeBundleRepo(deps: ManagedHttpDeps, user: StoredUser, repoId: number | null) {
+  return roleAtLeast(user.role, 'manage') && (user.role === 'admin' || repoId === null || await deps.db.userCanReadRepo(user.id, repoId))
+}
+
+async function bundleRepos(deps: ManagedHttpDeps, user: StoredUser) {
+  const repos = await deps.db.listSelectedRepos()
+  if (user.role === 'admin') return repos
+  const allowed = await Promise.all(repos.map(repo => deps.db.userCanReadRepo(user.id, repo.repoId)))
+  return repos.filter((_, index) => allowed[index])
+}
+
+function prebuildBundle(deps: ManagedHttpDeps, id: string) {
+  if (!deps.bundleCache) return
+  deps.track((async () => {
+    const record = await deps.db.getBundle(id)
+    if (record?.kind) await deps.bundleCache!.prebuild(record)
+  })().catch(err => console.warn('managed: bundle cache build failed:', err)))
+}
+
+// GET /api/bundles/:id/{metadata,contents}. Cached files are already encoded;
+// the browser's HTTP stack decompresses them without a Brotli JS dependency.
+async function handleBundleCache(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string, part: BundleCachePart) {
+  const s = await readSession(deps.config, deps.db, cookie, Date.now())
+  if (!s) { sendJson(res, 401, { error: 'unauthenticated' }); return }
+  if (!(await canAccessBundle(deps, s.user, id))) { sendJson(res, 404, { error: 'no-bundle' }); return }
+  const rec = await deps.db.getBundle(id)
+  if (!rec) { sendJson(res, 404, { error: 'no-bundle' }); return }
+  if (!deps.bundleCache) { sendJson(res, 503, { error: 'unavailable' }); return }
+  let cached
+  try { cached = await deps.bundleCache.open(rec, part) }
+  catch { sendJson(res, 422, { error: 'bundle-unavailable' }); return }
+  // A cold build can outlast a session or membership change.
+  const current = await readSession(deps.config, deps.db, cookie, Date.now())
+  if (!current || !(await canAccessBundle(deps, current.user, id))) {
+    cached.stream.destroy()
+    sendJson(res, current ? 404 : 401, { error: current ? 'no-bundle' : 'unauthenticated' })
+    return
+  }
+  res.writeHead(200, {
+    'content-type': 'application/json', 'content-encoding': 'gzip',
+    'content-length': String(cached.size), 'cache-control': 'private, no-store',
+    'x-content-type-options': 'nosniff',
+  })
+  if (req.method === 'HEAD') { cached.stream.destroy(); res.end(); return }
+  try { await pipeline(cached.stream, res) } catch { res.destroy() }
+}
+
 // GET /api/admin/bundles — the uploaded bundles for the "Manage bundles" page.
 // admin|manage, read-only (no CSRF). `maxBytes` is the upload cap; `repos` feeds
 // the upload repo picker.
@@ -747,10 +815,11 @@ async function handleListBundles(res: ServerResponse, deps: ManagedHttpDeps, coo
   if (s == null) return
   const access = await contentAccess(deps.db, s.user)
   sendJson(res, 200, {
-    bundles: (await deps.db.listBundles()).filter(access.bundle),
+    bundles: await Promise.all((await deps.db.listBundles(s.user.role === 'admin' ? undefined : s.user.id)).map(async bundle => ({
+      ...bundle, canChangeRepo: await canChangeBundleRepo(deps, s.user, bundle.repoId),
+    }))),
     maxBytes: deps.config.maxBundleBytes,
-    repos: selectableRepos(await deps.db.listSelectedRepos()).filter(access.bundle),
-    repoScopes: access.scopes,
+    repos: selectableRepos(await bundleRepos(deps, s.user)),
   })
 }
 
@@ -775,15 +844,17 @@ async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, dep
   if (bytes.length === 0) { sendJson(res, 400, { error: 'empty' }); return }
   const repo = await resolveUploadRepoId(req, res, deps)
   if (!repo.ok) return
-  const access = await contentAccess(deps.db, s.user)
-  if (!access.bundle(repo)) { sendJson(res, 403, { error: 'repository-access-denied' }); return }
+  if (repo.repoId !== null && s.user.role !== 'admin' && !(await deps.db.userCanReadRepo(s.user.id, repo.repoId))) {
+    sendJson(res, 403, { error: 'forbidden' }); return
+  }
   const integrity = bundleIntegrity(bytes)
   const filename = sanitizeFilename(firstHeader(req.headers['x-bundle-filename']), 'bundle')
   const existing = await deps.db.getBundleByIntegrity(integrity)
   if (existing != null) {
-    if (!access.bundle(existing)) { sendJson(res, 409, { error: 'bundle-conflict' }); return }
-    // Reconcile reports newly accessible to this uploader as well.
-    await deps.db.linkReportsToBundle(integrity, existing.id, s.user.role === 'admin' ? undefined : s.user.id)
+    if (!(await canAccessBundle(deps, s.user, existing.id))) { sendJson(res, 409, { error: 'bundle-already-stored' }); return }
+    prebuildBundle(deps, existing.id)
+    // Same bytes already stored → dedupe; the link to any referencing reports
+    // was already made when this integrity first landed.
     sendJson(res, 200, { id: existing.id, integrity, filename: existing.filename, deduped: true })
     return
   }
@@ -800,15 +871,15 @@ async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, dep
     // between our dedup check and this insert — treat that as a dedup, not a 500.
     // Any other failure rethrows.
     const raced = await deps.db.getBundleByIntegrity(integrity)
-    if (raced != null && !access.bundle(raced)) { sendJson(res, 409, { error: 'bundle-conflict' }); return }
     if (raced != null) {
-      await deps.db.linkReportsToBundle(integrity, raced.id, s.user.role === 'admin' ? undefined : s.user.id)
-      sendJson(res, 200, { id: raced.id, integrity, filename: raced.filename, deduped: true }); return
-    }
+      if (!(await canAccessBundle(deps, s.user, raced.id))) { sendJson(res, 409, { error: 'bundle-already-stored' }); return }
+      prebuildBundle(deps, raced.id)
+      sendJson(res, 200, { id: raced.id, integrity, filename: raced.filename, deduped: true }); return }
     throw err
   }
   // Auto-link reports that declared this integrity before the bundle existed.
-  await deps.db.linkReportsToBundle(integrity, id, s.user.role === 'admin' ? undefined : s.user.id)
+  await deps.db.linkReportsToBundle(integrity, id)
+  prebuildBundle(deps, id)
   sendJson(res, 201, { id, integrity, filename, byteSize: bytes.length, repoId: repo.repoId })
 }
 
@@ -816,12 +887,15 @@ async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, dep
 // are opaque archives, so served as application/octet-stream. 404 no such
 // bundle; 503 row-without-bytes (store desync).
 async function handleGetBundle(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string): Promise<void> {
-  const s = await readManageSession(res, deps, cookie)
-  if (s == null) return
+  const s = await readSession(deps.config, deps.db, cookie, Date.now())
+  if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
+  if (!(await canAccessBundle(deps, s.user, id))) { sendJson(res, 404, { error: 'no-bundle' }); return }
   const rec = await deps.db.getBundle(id)
   if (rec == null || !(await contentAccess(deps.db, s.user)).bundle(rec)) { sendJson(res, 404, { error: 'no-bundle' }); return }
   const bytes = await deps.bundleStore.get(id)
   if (bytes == null) { sendJson(res, 503, { error: 'unavailable' }); return }
+  const current = await readSession(deps.config, deps.db, cookie, Date.now())
+  if (!current || !(await canAccessBundle(deps, current.user, id))) { sendJson(res, current ? 404 : 401, { error: 'no-bundle' }); return }
   const dispoName = rec.filename.replaceAll('"', '')
   res.writeHead(200, {
     'content-type': 'application/octet-stream',
@@ -841,10 +915,11 @@ async function handleDeleteBundle(req: IncomingMessage, res: ServerResponse, dep
   const s = await checkMutation(req, res, deps, cookie)
   if (s == null) return
   if (!requireManageRole(res, s.user)) return
+  if (!(await canAccessBundle(deps, s.user, id))) { sendJson(res, 404, { error: 'no-bundle' }); return }
   const bundle = await deps.db.getBundle(id)
-  const access = await contentAccess(deps.db, s.user)
-  if (bundle == null || !access.bundle(bundle)) { sendJson(res, 404, { error: 'no-bundle' }); return }
+  if (!(await canChangeBundleRepo(deps, s.user, bundle?.repoId ?? null))) { sendJson(res, 403, { error: 'repo-forbidden' }); return }
   const existed = await deps.db.deleteBundle(id)
+  await deps.bundleCache?.delete(id)
   await deps.bundleStore.delete(id).catch((err) => { console.warn('managed: bundle bytes delete failed:', err) })
   if (!existed) { sendJson(res, 404, { error: 'no-bundle' }); return }
   await activity(deps, s.user, 'delete', 'deleted a bundle', { repoId: bundle.repoId, bundleId: id, report: bundle.filename, repo: await repositoryName(deps, bundle.repoId) })
@@ -1344,6 +1419,14 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     }
     // Bundles: list / upload on the exact path, download / delete per-id on the
     // prefix (same shape as reports).
+    const bundleRead = /^\/api\/bundles\/([a-f\d-]{36})\/(metadata|contents|download)$/iu.exec(path)
+    if (bundleRead) {
+      if (method !== 'GET' && method !== 'HEAD') { send405(res, 'GET, HEAD'); return }
+      const id = bundleRead[1]!
+      if (bundleRead[2] === 'download') await handleGetBundle(res, deps, cookie, id)
+      else await handleBundleCache(req, res, deps, cookie, id, bundleRead[2] as BundleCachePart)
+      return
+    }
     if (path === ADMIN_BUNDLES_PATH) {
       if (method === 'GET') { await handleListBundles(res, deps, cookie); return }
       if (method === 'POST') { await handleUploadBundle(req, res, deps, cookie); return }

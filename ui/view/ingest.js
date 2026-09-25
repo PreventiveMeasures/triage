@@ -10,6 +10,7 @@ import { readManagedReport } from '../../common/managed/report-content.ts'
 import { encodeReportLocation } from '../../client/report-location.js'
 import { configureReportRevalidation, render } from './render.js'
 import { ensureClientMode, navigateToAdminPage, renderSidebar } from './sidebar.js'
+import { resetBundleTerminal } from './terminal-attach.js'
 import { cleanupGraph2, graph2 } from './graph/state.js'
 import { openBundle, prefetchBundleHashesAfterPaint, selectBundle } from './bundle-load.js'
 import { backfillFindingIds, detectFormat, inheritReportMeta, isAppFinding, parseCodexCsvToScans, readReport, repoDirectory, reportEntries, reportRepoGithub } from '../../report/index.js'
@@ -45,6 +46,7 @@ export const BUNDLE_TABS = new Set(['overview', 'graph', 'treemap', 'compare', '
 // The default 'overview' tab is dropped from the suffix so the
 // round-trip lands on a clean `b:<integrity>`.
 export function persistLastBundle(integrity, tab = 'overview') {
+  if (isManagedUiMode()) return
   const suffix = tab && tab !== 'overview' && BUNDLE_TABS.has(tab) ? ` ${tab}` : ''
   setSecureItem(LAST_FILE_KEY, `b:${integrity}${suffix}`).catch(() => {})
 }
@@ -1033,6 +1035,7 @@ export async function deleteCurrent({ triage = 'keep', deleteFromRemoteWorkspace
 // concerns (each path has its own ordering constraints with the
 // surrounding OPFS / triage / remote operations).
 function clearActiveView({ forgetLastView = true } = {}) {
+  resetBundleTerminal()
   state.currentManagedTeam = null
   state.currentManagedReport = null
   state.currentFile = null

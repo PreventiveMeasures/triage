@@ -58,3 +58,11 @@ export async function login(loginPath) {
 export async function logout(csrfToken) {
   return (await loadManagedBundle()).logout(csrfToken)
 }
+
+export async function fetchBundleMetadata(id) {
+  return (await loadManagedBundle()).fetchBundleMetadata(id)
+}
+
+export async function fetchBundleContents(id) {
+  return (await loadManagedBundle()).fetchBundleContents(id)
+}

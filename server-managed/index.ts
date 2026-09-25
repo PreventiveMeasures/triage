@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createOriginGate } from '../server-common/origin.ts'
 import { createDiskAvatarStore } from './avatar-store.ts'
+import { createDiskBundleCache } from './bundle-cache.ts'
 import { createDiskBlobStore } from './blob-store.ts'
 import { type ManagedConfig, loadManagedConfig } from './config.ts'
 import { openSqliteManagedDb } from './db.ts'
@@ -24,6 +25,7 @@ export function createManagedApp(config: ManagedConfig, options: Partial<Pick<Ma
   const dataDir = dirname(config.dbPath)
   const reportStore = createDiskBlobStore(join(dataDir, 'reports'))
   const bundleStore = createDiskBlobStore(join(dataDir, 'bundles'))
+  const bundleCache = createDiskBundleCache(join(dataDir, 'cache', 'bundles'), db, bundleStore)
   const originGate = createOriginGate(config.host, config.trustProxyEnv)
 
   let shuttingDown = false
@@ -37,7 +39,7 @@ export function createManagedApp(config: ManagedConfig, options: Partial<Pick<Ma
     indexOnly: options.next != null, scanServer: options.serverInfo?.deepviewScanServer ?? null,
   })
   const handleRequest = createManagedRequestHandler({
-    ...options, config, db, avatarStore, reportStore, bundleStore, originGate, serveStatic,
+    ...options, config, db, avatarStore, reportStore, bundleStore, bundleCache, originGate, serveStatic,
     isShuttingDown: () => shuttingDown || options.isShuttingDown?.() === true, track,
   })
 

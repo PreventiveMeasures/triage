@@ -1168,13 +1168,13 @@ class ManagedAdminBundles extends ManagedPage {
     const when = Number.isFinite(b.uploadedAt) ? new Date(b.uploadedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : ''
     return html`<li class="bundle-row">
       <span class="identity"><span class="bundle-icon" aria-hidden="true">${BUNDLE_ICON}</span><span class="who">
-        <span class="filename">${b.filename}</span>
+        <button type="button" class="filename bundle-open" @click=${() => this.dispatchEvent(new CustomEvent('managed-bundle-open', { detail: { id: b.id }, bubbles: true, composed: true }))}>${b.filename}</button>
         <span class="meta"><span class="kind">${b.kind === 'stasis' ? 'Stasis' : 'Sourcemaps'}</span><span>${formatBytes(b.byteSize)}</span><span>${when}</span>${b.uploadedByLogin ? html`<span>@${b.uploadedByLogin}</span>` : nothing}</span>
       </span></span>
-      <span class="bundle-location">${repoRowSelect(this._data?.repos, b.repoId, (repoId) => this._setRepo(b, repoId), this._role === 'admin')}</span>
+      <span class="bundle-location">${b.canChangeRepo === false ? html`<span data-tooltip="Your teams do not grant access to change this repository link">${b.repoFullName ?? 'Attached repository'}</span>` : repoRowSelect(this._data?.repos, b.repoId, (repoId) => this._setRepo(b, repoId))}</span>
       <span class="actions">
         <a class="action" aria-label=${`Download ${b.filename}`} href=${`/api/admin/bundles/${encodeURIComponent(b.id)}`}><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8m-3-3 3 3 3-3M3 11v3h10v-3"/></svg></a>
-        <button type="button" class="action danger" aria-label=${`Delete ${b.filename}`} @click=${() => this._delete(b)}>${ADMIN_DELETE_ICON}</button>
+        <button type="button" class="action danger" aria-label=${`Delete ${b.filename}`} ?disabled=${b.canChangeRepo === false} data-tooltip=${b.canChangeRepo === false ? 'Repository access is required to detach or delete this bundle' : 'Delete bundle'} @click=${() => this._delete(b)}>${ADMIN_DELETE_ICON}</button>
       </span>
     </li>`
   }
@@ -1198,7 +1198,7 @@ class ManagedAdminBundles extends ManagedPage {
     try {
       while (this._queue.length > 0) {
         const file = this._queue.shift()
-        await this.appState.mutate(() => uploadBundle(file, this._csrf, this._repoId), ['bundles', 'reports', 'repo-impact', 'history', 'scan-sources'])
+        await this.appState.mutate(() => uploadBundle(file, this._csrf, this._repoId), ['bundles', 'bundle-metadata', 'reports', 'repo-impact', 'history', 'scan-sources'])
       }
     } catch (err) {
       this._queue = [] // fail-fast: drop the rest of the batch (matches the old behaviour)
@@ -1213,7 +1213,7 @@ class ManagedAdminBundles extends ManagedPage {
     if (!globalThis.confirm?.(`Delete “${b.filename}”? Linked reports will keep their pending link.`)) return
     this._error = null
     try {
-      await this.appState.mutate(() => deleteBundle(b.id, this._csrf), ['bundles', 'reports', 'repo-impact', 'history', 'scan-sources'])
+      await this.appState.mutate(() => deleteBundle(b.id, this._csrf), ['bundles', 'bundle-metadata', 'reports', 'repo-impact', 'history', 'scan-sources'])
     } catch (err) {
       this._error = `Delete failed: ${String(err?.message ?? err)}`
     }

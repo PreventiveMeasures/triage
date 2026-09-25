@@ -15,11 +15,17 @@ mock.module('../client/index.js', { namedExports: {
 } })
 mock.module('../ui/view/render.js', { namedExports: { render: () => { renders++ } } })
 mock.module('../ui/view/graph/state.js', { namedExports: { graph2: {} } })
+let contentFailure = false, contentRequests = 0, metadataRequests = 0
+mock.module('../ui/view/client-managed.js', { namedExports: {
+  fetchBundleMetadata: () => { metadataRequests++; return Promise.resolve(index) },
+  fetchBundleContents: async () => { contentRequests++; if (readGate) await readGate; if (contentFailure) throw new Error('offline'); return JSON.stringify(json) },
+} })
 const { buildBundleDetails, ensureBundleSources, openBundle, prefetchBundleHashes, prefetchBundleHashesAfterPaint, selectBundle } = await import('../ui/view/bundle-load.js')
 const index = await createBundleMetadata({ integrity: entry.integrity, kind: 'sourcemap', size: 123, json })
 beforeEach(() => {
   stored.clear(); recorded.clear(); indexReads = 0; reads = 0; writes = 0; renders = 0; readGate = null
   saved = Promise.withResolvers()
+  metadataRequests = 0; contentRequests = 0; contentFailure = false
   state.bundles = [entry]; selectBundle(entry.integrity, 'overview')
 })
 
@@ -174,4 +180,52 @@ it('resets to Overview after a non-bundle view, but honors explicit tab restores
   assert.equal(state.bundleDetailsTab, 'graph', 'boot restores the saved tab')
   selectBundle('second-bundle', 'compare')
   assert.equal(state.bundleDetailsTab, 'compare', 'explicit navigation wins')
+})
+
+
+it('managed bundle metadata and deferred contents stay in memory without reading or writing local storage', async () => {
+  state.bundles = [{ ...entry, managedId: 'managed-id', size: 123 }]
+  await openBundle(entry.integrity)
+  const metadata = state.bundleDetails
+  assert.equal(metadata.metadataOnly, true)
+  assert.equal(metadataRequests, 1)
+  assert.equal(contentRequests, 0)
+  assert.equal(indexReads, 0); assert.equal(reads, 0); assert.equal(writes, 0); assert.equal(recorded.size, 0)
+  const first = ensureBundleSources(), second = ensureBundleSources()
+  assert.equal(first, second)
+  const full = await first
+  assert.equal(full.managedId, 'managed-id')
+  assert.deepEqual(full.json.sourcesContent, json.sourcesContent)
+  assert.equal(full.codeStats, metadata.codeStats)
+  assert.equal(contentRequests, 1)
+  assert.equal(indexReads, 0); assert.equal(reads, 0); assert.equal(writes, 0)
+  await ensureBundleSources()
+  assert.equal(contentRequests, 1)
+})
+
+it('a failed managed contents request keeps metadata and retries only when requested', async () => {
+  state.bundles = [{ ...entry, managedId: 'managed-id', size: 123 }]
+  await openBundle(entry.integrity)
+  const metadata = state.bundleDetails
+  contentFailure = true
+  assert.equal(await ensureBundleSources(), null)
+  assert.equal(state.bundleDetails, metadata)
+  assert.equal(metadata.sourceError, 'offline')
+  await ensureBundleSources()
+  assert.equal(contentRequests, 1)
+  delete metadata.sourceError
+  contentFailure = false
+  assert.equal((await ensureBundleSources()).metadataOnly, undefined)
+  assert.equal(contentRequests, 2)
+})
+
+it('an abandoned managed source request cannot replace the next view', async () => {
+  state.bundles = [{ ...entry, managedId: 'managed-id', size: 123 }]
+  await openBundle(entry.integrity)
+  const gate = Promise.withResolvers(); readGate = gate.promise
+  const pending = ensureBundleSources()
+  selectBundle('another')
+  gate.resolve()
+  await pending
+  assert.equal(state.bundleDetails, null)
 })

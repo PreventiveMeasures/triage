@@ -412,12 +412,11 @@ sidebar-view-button[hidden] { display: none !important; }
    read as a card-like pill. */
 .file-item.team-item .team-icon { flex-shrink: 0; color: var(--muted); }
 
-/* Managed bundles shown beneath a team are repository-owned scan inputs. They
-   share the compact report-row rhythm but remain informational until the
-   managed bundle viewer exists. */
+/* Managed bundle links share the compact team report-row rhythm. */
 .file-item.team-bundle-item > .file-name {
   display: flex; align-items: center; gap: .5rem;
   width: 100%; box-sizing: border-box;
+  background: none; border: 0; cursor: pointer;
   padding: .2rem .3rem .2rem 1.3rem;
   color: var(--muted);
   font-family: inherit; font-size: .78rem;

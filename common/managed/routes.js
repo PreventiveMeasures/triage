@@ -12,6 +12,7 @@ export const MANAGED_PAGES = Object.freeze({
 
 export function managedRoutePath(route) {
   if (route.view === 'home') return '/'
+  if (route.view === 'bundles') return /^[A-Za-z0-9_-]+$/u.test(route.bundleId ?? '') ? `/bundles/${encodeURIComponent(route.bundleId)}` : null
   if (Object.hasOwn(MANAGED_PAGES, route.view)) {
     const path = MANAGED_PAGES[route.view]
     return route.view === 'manage-history' && route.actor ? `${path}?actor=${encodeURIComponent(route.actor)}` : path
@@ -28,6 +29,8 @@ export function parseManagedRoute(url) {
   if (path === '/' || path === '/index.html') return { view: 'home' }
   const view = Object.keys(MANAGED_PAGES).find(key => MANAGED_PAGES[key] === path)
   if (view) return { view, ...(view === 'manage-history' && url.searchParams.get('actor') ? { actor: url.searchParams.get('actor') } : {}) }
+  const bundle = /^\/bundles\/([A-Za-z0-9_-]+)$/u.exec(path)
+  if (bundle) return { view: 'bundles', bundleId: bundle[1] }
   const match = /^\/teams\/([^/]+)(?:\/reports\/([^/]+))?(\/files)?$/u.exec(path)
   if (!match) return null
   try {

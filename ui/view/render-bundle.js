@@ -19,10 +19,14 @@ import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS, REPORT_LOGOS, displayName, groupOf } from './file-display.js'
 import { BUNDLE_ICON_SVG } from './icons.js'
-import { findingsForFileHash, indexedHashFindingCount, reportsForFinding, reportsForFindingByPackage, reportsForFindingByRepo, state } from '#client/index.js'
+import { isManagedUiMode, findingsForFileHash as localFindingsForFileHash, indexedHashFindingCount as localIndexedHashFindingCount, reportsForFinding, reportsForFindingByPackage, reportsForFindingByRepo, state } from '#client/index.js'
+const findingsForFileHash = hash => isManagedUiMode() ? [] : localFindingsForFileHash(hash)
+const indexedHashFindingCount = () => isManagedUiMode() ? 0 : localIndexedHashFindingCount()
+
 import { SEVERITIES, SEVERITY_ORDER, formatBytes, formatRunMeta, stripCommonPathPrefix, titledDescription } from './format.js'
 import { utf8ByteLength } from '../../common/utf8.js'
 import { bundleFileKinds, bundleFileSizes, bundlePackageDirs, bundleSourceSizes, bundleSourcesAsMap } from './bundle-sources.js'
+import { bundleCodeStats } from '../../common/bundle-stats.js'
 import { bundleNeedsSources, bundleSourceLineCount, computeBundleFileHashes } from './bundle-metadata.js'
 import { bundleHasSbomComponents } from './sbom.js'
 import { buildSearchMatcher, runBundleSearch } from './bundle-search-scan.js'
@@ -1877,6 +1881,8 @@ function renderBundleSlide(entry) {
               ['issues', () => renderBundleIssuesList(details)],
               ['advisories', () => renderBundleAdvisoriesTab(details)],
             ])
+          : detailsReady && details.sourceError
+            ? html`<div class="bundles-slide-placeholder is-error">${details.sourceError} <button type="button" data-bundle-retry-sources>Retry</button></div>`
           : detailsReady && !details.metadataOnly
             ? html`<div class=${classMap({ 'bundles-slide-placeholder': true, 'is-error': Boolean(details.error) })}>
                 ${details.error ? `Failed to parse: ${details.error}` : 'Bundle contents not parsed.'}
@@ -1960,6 +1966,7 @@ function renderBundleIssuesEmpty(primary, hint) {
 // kicks it after parse), shows a hashing placeholder; the no-match
 // tiers below explain why nothing is listed.
 function renderBundleIssuesList(details) {
+  if (details.managedId) return renderBundleIssuesEmpty('Open a report to review its findings.', 'Bundle metadata includes source hashes; reports are available through your teams.')
   if (!details.fileHashes) {
     return renderBundleIssuesEmpty(
       'Computing file hashes…',
@@ -2188,14 +2195,6 @@ const SPDX_ICON = html`<svg viewBox="0 0 24 24" width="12" height="12" fill="cur
 // textual source body and are therefore excluded. Unknown extensions still
 // get a segment; their labels stay in the shared hover tooltip instead of
 // adding another legend to the Overview.
-const BUNDLE_LANGUAGE_LABELS = Object.freeze({
-  javascript: 'JavaScript', jsx: 'JSX', typescript: 'TypeScript', tsx: 'TSX',
-  json: 'JSON', css: 'CSS', markup: 'HTML', yaml: 'YAML', bash: 'Shell',
-  markdown: 'Markdown', solidity: 'Solidity', php: 'PHP', rust: 'Rust',
-  ruby: 'Ruby', java: 'Java', cpp: 'C++', c: 'C', objectivec: 'Objective-C',
-  python: 'Python', go: 'Go', kotlin: 'Kotlin', swift: 'Swift', dart: 'Dart',
-  sql: 'SQL', lua: 'Lua', csharp: 'C#', scala: 'Scala', vue: 'Vue', svelte: 'Svelte',
-})
 const BUNDLE_LANGUAGE_COLORS = Object.freeze({
   javascript: '#f1e05a', jsx: '#f1e05a', typescript: '#3178c6', tsx: '#3178c6',
   json: '#f1e05a', css: '#663399', markup: '#e34c26', yaml: '#cb171e',
@@ -2208,21 +2207,6 @@ const BUNDLE_LANGUAGE_COLORS = Object.freeze({
 const UNKNOWN_BUNDLE_LANGUAGE_COLORS = Object.freeze([
   '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#06b6d4', '#84cc16', '#e11d48', '#a855f7',
 ])
-
-const BUNDLE_EXTENSION_LANGUAGES = Object.freeze({
-  py: 'python', pyw: 'python', go: 'go', kt: 'kotlin', kts: 'kotlin', swift: 'swift',
-  dart: 'dart', sql: 'sql', lua: 'lua', cs: 'csharp', scala: 'scala', sc: 'scala',
-  vue: 'vue', svelte: 'svelte',
-})
-
-function bundleLanguageOf(path) {
-  const basename = typeof path === 'string' ? path.slice(path.lastIndexOf('/') + 1) : ''
-  const dot = basename.lastIndexOf('.')
-  const ext = dot > 0 ? basename.slice(dot + 1).trim().toLowerCase() : ''
-  const lang = langForPath(path) ?? BUNDLE_EXTENSION_LANGUAGES[ext]
-  if (lang) return { key: lang, label: BUNDLE_LANGUAGE_LABELS[lang] ?? lang }
-  return ext ? { key: `extension:${ext}`, label: `.${ext}` } : { key: 'other', label: 'Other' }
-}
 
 function bundleLanguageColor(key) {
   if (BUNDLE_LANGUAGE_COLORS[key]) return BUNDLE_LANGUAGE_COLORS[key]
@@ -2255,20 +2239,10 @@ function renderBundleLanguagesBar(details) {
   const lines = details.lineCounts?.size > 0
     ? details.lineCounts
     : new Map([...bundleSourcesAsMap(details)].map(([path, content]) => [path, bundleSourceLineCount(content)]))
-  const totals = new Map()
-  let total = 0
-  for (const [path, count] of lines) {
-    if (count <= 0) continue
-    const language = bundleLanguageOf(path)
-    totals.set(language.key, {
-      label: language.label,
-      lines: (totals.get(language.key)?.lines ?? 0) + count,
-    })
-    total += count
-  }
-  if (total <= 0 || totals.size === 0) return nothing
-  const segments = [...totals.entries()]
-    .toSorted((a, b) => b[1].lines - a[1].lines || a[1].label.localeCompare(b[1].label))
+  const stats = details.codeStats ?? bundleCodeStats(lines, bundleFileSizes(details))
+  const total = stats.lines
+  const segments = stats.languages.filter(language => language.lines > 0)
+  if (total <= 0 || segments.length === 0) return nothing
   return html`<div
     class="bundles-languages-bar"
     data-tooltip-managed
@@ -2276,7 +2250,7 @@ function renderBundleLanguagesBar(details) {
     @pointerover=${languageBarPointerOver}
     @pointerleave=${languageBarPointerLeave}
   >
-    ${segments.map(([key, { label, lines: lineCount }]) => {
+    ${segments.map(({ key, label, lines: lineCount }) => {
       const pct = lineCount / total * 100
       return html`<span
         class="bundles-languages-segment"
@@ -2306,9 +2280,9 @@ function bundleExportsColumn(entry, details) {
   return html`<div class="bundles-overview-exports">
     ${languages}
     <div class="bundles-overview-exports-row">
-      <button type="button" class="bundles-download-btn" data-bundle-download=${entry.integrity}>
+      ${entry.managedId ? html`<a class="bundles-download-btn" href=${`/api/bundles/${encodeURIComponent(entry.managedId)}/download`}>${DOWNLOAD_ICON}<span>Download bundle</span></a>` : html`<button type="button" class="bundles-download-btn" data-bundle-download=${entry.integrity}>
         ${DOWNLOAD_ICON}<span>Download bundle</span>
-      </button>
+      </button>`}
       ${hasSbom ? html`<div class="bundles-export-pair">
         <button type="button" class="bundles-download-btn" data-bundle-export-sbom="cyclonedx" data-tooltip="Export a CycloneDX SBOM (.cdx.json)">CycloneDX</button>
         <button type="button" class="bundles-download-btn" data-bundle-export-sbom="spdx" data-tooltip="Export an SPDX SBOM (.spdx.json)">${SPDX_ICON}<span>SPDX</span></button>

@@ -12,6 +12,7 @@ window also navigate to their managed page URL.
 | `/teams/:teamId/files` | Team files |
 | `/teams/:teamId/reports/:reportId` | Report findings |
 | `/teams/:teamId/reports/:reportId/files` | Report files |
+| `/bundles/:bundleId` | Bundle overview, files and dependency graph |
 | `/manage` | Manage overview |
 | `/manage/bundles` | Bundles |
 | `/manage/scans` | Scans |
@@ -111,3 +112,34 @@ on upgrade. Older management entries recorded only a display login, so they
 cannot be safely assigned to an account after a rename or login reuse. Users
 without attributable history show Unknown. Triage retention/deletion still
 applies because Last Activity is derived from the retained history.
+
+# Bundle metadata and contents
+
+`GET /api/bundles/:id/metadata` returns the shared `common/bundle-metadata.js`
+format: file inventory, byte sizes, source hashes and line counts, package
+identity, imports, entry points, executable flags and language/code statistics.
+It excludes source bodies and binary resources. `GET /api/bundles/:id/contents`
+returns the original sourcemap JSON or the decompressed Stasis JSON.
+Both endpoints support HEAD and stream cached files with `Content-Encoding:
+gzip`, compressed Content-Length, and `Cache-Control: private, no-store`.
+`GET /api/bundles/:id/download` serves the original uploaded bytes.
+
+The cache lives beside the managed database under `cache/bundles/:id/`.
+Uploads schedule a prebuild; reads build missing derivatives on demand. Builds
+are deduplicated and serialized to bound memory, with a 512 MiB decoded limit.
+Files are published atomically and removed on bundle or repository deletion,
+including when a build was already in flight. Invalid/unsupported bundles can
+still be downloaded as uploaded; derivative requests return 422.
+
+Admins can read/manage every bundle. Managers can read/manage bundles they own
+or can access through their teams. View/triage users need team access; the none
+role has no bundle access. Ownership survives repository attachment. Adding a
+repo link requires bundle management access and access to the destination repo;
+removing a link requires access to the current repo. Moving or deleting an
+attached bundle therefore checks the current repo too, even for its owner.
+Manage lists and repository pickers enforce these rules on the server.
+
+Opening a bundle downloads its metadata into managed app memory. Code,
+Terminal, source search and source comparison request contents when needed;
+the browser handles HTTP gzip decoding. Neither payload enters OPFS, IndexedDB
+or localStorage. Session/role changes clear managed caches and terminal state.

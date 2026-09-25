@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@exodus/stasis-core':
+        specifier: ^1.0.0-beta.4
+        version: 1.0.0-beta.4
       ws:
         specifier: ^8.20.1
         version: 8.21.0
@@ -15,9 +18,6 @@ importers:
       '@electric-sql/pglite':
         specifier: ^0.5.5
         version: 0.5.5
-      '@exodus/stasis-core':
-        specifier: ^1.0.0-beta.4
-        version: 1.0.0-beta.4
       '@noble/ciphers':
         specifier: ^2.3.0
         version: 2.3.0

@@ -639,6 +639,11 @@ report.addEventListener('click', (e) => {
   // (vault locked, OPFS gone) — surface that rather than failing
   // silently. The entry lookup also guards a stale integrity left in
   // the DOM after the bundle was deleted in another tab.
+  if (e.target.closest('[data-bundle-retry-sources]')) {
+    if (state.bundleDetails) delete state.bundleDetails.sourceError
+    render()
+    return
+  }
   const bundleDownload = e.target.closest('[data-bundle-download]')
   if (bundleDownload) {
     const integrity = bundleDownload.dataset.bundleDownload
@@ -2498,6 +2503,11 @@ report.addEventListener('bundle-search-case-toggle', () => {
 report.addEventListener('bundle-swap', (e) => {
   const integrity = e.detail?.integrity
   if (!integrity || !(state.bundles ?? []).some((b) => b.integrity === integrity)) return
+  const entry = state.bundles.find(b => b.integrity === integrity)
+  if (entry.managedId) {
+    void managedHistory.navigate({ view: 'bundles', bundleId: entry.managedId, bundleTab: 'compare' })
+    return
+  }
   selectBundle(integrity, 'compare')
   persistLastBundle(integrity, 'compare')
   render()
