@@ -9,8 +9,9 @@ export const SCAN_PAGE_STYLES = css`
   .head-title { display: flex; align-items: center; gap: .65rem; }
   .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   h1 { margin: 0; font-size: 1.65rem; font-weight: 600; letter-spacing: -.035em; }
-  .head-tabs { display: inline-flex; flex-shrink: 0; margin-left: auto; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
-  .head-tabs button { border: 0; border-right: 1px solid var(--border); padding: .25rem .6rem; color: var(--muted); background: transparent; font: inherit; font-size: .75rem; }
+  /* Let the switch's padding and border use the surrounding safe area, without enlarging the intro row. */
+  .head-tabs { display: inline-flex; flex-shrink: 0; margin-left: auto; margin-block: calc(-.25rem - 1px); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .head-tabs button { border: 0; border-right: 1px solid var(--border); padding: .25rem .6rem; color: var(--muted); background: transparent; font: inherit; font-size: .75rem; line-height: 1.5; }
   .head-tabs button:last-child { border-right: 0; }
   .head-tabs button.active { color: var(--text); background: var(--surface-active); }
   .head-tabs button:hover { color: var(--text); }

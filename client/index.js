@@ -69,6 +69,7 @@ export {
 } from './linked-findings-index.js'
 
 export { migrateLegacyFilenames } from './migrate-legacy.js'
+export { createManagedLocalImportSource } from './managed/local-import.js'
 
 export {
   disableEncryption,

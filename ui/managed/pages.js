@@ -8,6 +8,8 @@ import { ROLES } from '../../common/managed/roles.ts'
 import { VISIBILITY_PERMISSION_LABELS } from '../../common/managed/permissions.ts'
 import { REPORT_LOGOS } from '../view/report-logos.js'
 import { adminIcon, adminNavigation } from './navigation.js'
+import { ManagedLocalImport } from './local-import.js'
+import localImportStyles from './styles/local-import.css'
 import commonStyles from './styles/common.css'
 import homeStyles from './styles/home.css'
 import historyStyles from './styles/history.css'
@@ -111,8 +113,8 @@ class ManagedAdminHome extends LitElement {
 
   _page([view, title, description, icon]) {
     return html`<button type="button" class=${`page page-${icon}`} @click=${() => openAdminPage(view)}>
-      <span class="page-top"><span class="page-icon" aria-hidden="true">${adminIcon(icon)}</span><span class="arrow" aria-hidden="true">${adminIcon('arrow')}</span></span>
-      <span class="page-copy"><strong>${title}</strong><span>${description}</span></span>
+      <span class="page-top"><span class="page-icon" aria-hidden="true">${adminIcon(icon)}</span><strong class="page-title">${title}</strong><span class="arrow" aria-hidden="true">${adminIcon('arrow')}</span></span>
+      <span class="page-copy"><span>${description}</span></span>
     </button>`
   }
 
@@ -883,6 +885,7 @@ function installFileDropZone(host, onFiles, onState) {
 // uploader to repeat a repo or directory already present in the report header.
 class ManagedAdminReports extends LitElement {
   static properties = {
+    localImportSource: { attribute: false },
     _query: { state: true },
     _visibility: { state: true },
     _data: { state: true },
@@ -899,7 +902,7 @@ class ManagedAdminReports extends LitElement {
     _repoDirectory: { state: true },
   }
 
-  static styles = [unsafeCSS(reportsStyles), unsafeCSS(commonStyles)]
+  static styles = [unsafeCSS(reportsStyles), unsafeCSS(commonStyles), unsafeCSS(localImportStyles)]
 
   constructor() {
     super()
@@ -921,6 +924,10 @@ class ManagedAdminReports extends LitElement {
     this._repoDirectory = ''
     this._teardownDrop = null
     this._queue = []
+    this._localImport = new ManagedLocalImport(this, 'report', (file) => {
+      if (this._busy || !this._csrf) throw new Error('Wait for the current operation to finish, then try again.')
+      return this._upload([file], true)
+    })
   }
 
   connectedCallback() {
@@ -952,7 +959,8 @@ class ManagedAdminReports extends LitElement {
       ${this._dragOver ? html`<div class="dropzone">Drop reports to upload</div>` : nothing}
       <div class="wrap">${adminNavigation('manage-reports', this._role)}
         <h1 class="sr-only">Reports</h1>
-        <p class="intro">Upload reports. New reports stay hidden until you make them visible.</p>
+        <div class="page-intro"><p class="intro">Upload reports. New reports stay hidden until you make them visible.</p>${this._localImport.renderAction()}</div>
+        ${this._localImport.renderPanel(this._busy || !this._csrf)}
         <div class="drop-card"><span class="drop-icon" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10V2m0 0L5 5m3-3 3 3M3 9v3.5A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5V9"/></svg></span><span class="drop-copy"><strong>Upload reports</strong><span>Drop files anywhere on this page, or browse your computer.</span></span><button type="button" class="drop-browse" ?disabled=${this._busy} @click=${() => pickFiles((files) => void this._upload(files))}>${this._busy ? 'Uploading…' : 'Browse files'}</button></div>
         ${this._body()}
       </div>`
@@ -1053,7 +1061,7 @@ class ManagedAdminReports extends LitElement {
     } catch (err) { this._error = `Couldn't change report visibility: ${String(err?.message ?? err)}` }
   }
 
-  async _upload(files) {
+  async _upload(files, rethrow = false) {
     if (files.length === 0) return
     this._queue.push(...files)
     if (this._busy) return
@@ -1061,7 +1069,11 @@ class ManagedAdminReports extends LitElement {
     this._error = null
     try {
       while (this._queue.length > 0) await uploadReport(this._queue.shift(), this._csrf, this._repoId, this._repoDirectory.trim())
-    } catch (err) { this._queue = []; this._error = `Upload failed: ${String(err?.message ?? err)}` }
+    } catch (err) {
+      this._queue = []
+      this._error = `Upload failed: ${String(err?.message ?? err)}`
+      if (rethrow) throw err
+    }
     finally { this._busy = false; await this._load() }
   }
 
@@ -1120,6 +1132,7 @@ const BUNDLE_ICON = html`<svg class="report-icon" viewBox="0 0 16 16" width="16"
 // chunk, fetches its own data; no main-bundle state.
 class ManagedAdminBundles extends LitElement {
   static properties = {
+    localImportSource: { attribute: false },
     _query: { state: true },
     _data: { state: true },
     _repoId: { state: true },
@@ -1128,7 +1141,7 @@ class ManagedAdminBundles extends LitElement {
     _dragOver: { state: true },
   }
 
-  static styles = [unsafeCSS(bundlesStyles), unsafeCSS(commonStyles)]
+  static styles = [unsafeCSS(bundlesStyles), unsafeCSS(commonStyles), unsafeCSS(localImportStyles)]
 
   constructor() {
     super()
@@ -1141,6 +1154,10 @@ class ManagedAdminBundles extends LitElement {
     this._dragOver = false
     this._teardownDrop = null
     this._queue = [] // files awaiting upload; a drop during an in-flight upload joins it
+    this._localImport = new ManagedLocalImport(this, 'bundle', (file) => {
+      if (this._busy || !this._csrf) throw new Error('Wait for the current operation to finish, then try again.')
+      return this._upload([file], true)
+    })
   }
 
   connectedCallback() {
@@ -1172,7 +1189,8 @@ class ManagedAdminBundles extends LitElement {
       ${this._dragOver ? html`<div class="dropzone">Drop bundles to upload</div>` : nothing}
       <div class="wrap">${adminNavigation('manage-bundles', this._role)}
         <h1 class="sr-only">Bundles</h1>
-        <p class="intro">Source bundles and sourcemaps for your repositories.</p>
+        <div class="page-intro"><p class="intro">Source bundles and sourcemaps for your repositories.</p>${this._localImport.renderAction()}</div>
+        ${this._localImport.renderPanel(this._busy || !this._csrf)}
         <section class="upload-panel" aria-label="Upload bundles">
           <div class="upload-copy"><span class="drop-icon" aria-hidden="true">${adminIcon('upload')}</span><span><strong>Upload source bundles</strong><span class="upload-description">Drop archives or sourcemaps anywhere on this page.</span></span></div>
           <div class="upload-controls">${repoPickerTemplate(this._data?.repos, this._repoId, (v) => { this._repoId = v }, 'Repository')}<button type="button" class="drop-browse" ?disabled=${this._busy} @click=${() => pickFiles((files) => void this._upload(files))}>${this._busy ? 'Uploading…' : 'Browse files'}</button></div>
@@ -1218,7 +1236,7 @@ class ManagedAdminBundles extends LitElement {
     await this._load()
   }
 
-  async _upload(files) {
+  async _upload(files, rethrow = false) {
     if (files.length === 0) return
     this._queue.push(...files) // queue first so a drop mid-upload isn't silently lost
     if (this._busy) return // the running drain will pick these up
@@ -1232,6 +1250,7 @@ class ManagedAdminBundles extends LitElement {
     } catch (err) {
       this._queue = [] // fail-fast: drop the rest of the batch (matches the old behaviour)
       this._error = `Upload failed: ${String(err?.message ?? err)}`
+      if (rethrow) throw err
     } finally {
       this._busy = false
       await this._load()

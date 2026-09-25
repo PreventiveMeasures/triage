@@ -4,7 +4,7 @@ import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS, PRODUCER_LABELS, REPORT_LOGOS, findingBrand, loadedBrands } from './file-display.js'
-import { FOCUS_SPLIT_MAX, FOCUS_SPLIT_MIN, listBundles, listWorkspaces, state } from '#client/index.js'
+import { FOCUS_SPLIT_MAX, FOCUS_SPLIT_MIN, createManagedLocalImportSource, listBundles, listWorkspaces, state } from '#client/index.js'
 import { differingReports, isBundleInRemote, isInRemote, remoteCount, triageSync } from './client-sync.js'
 import { installShadowTooltipListener } from './tooltip.js'
 import { dropZone, report } from './dom.js'
@@ -1957,6 +1957,7 @@ function renderImpl() {
     const slot = ensureReportSlot(adminView.slot)
     if (slot && !slot.firstElementChild) {
       const el = document.createElement(adminView.tag)
+      el.localImportSource = createManagedLocalImportSource()
       slot.append(el)
       // The admin bundle is its own esbuild entry (no code splitting),
       // so it can't import view/tooltip.js without duplicating the
