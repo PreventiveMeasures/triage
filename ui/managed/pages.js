@@ -20,7 +20,7 @@ import reportsStyles from './styles/reports.css'
 import bundlesStyles from './styles/bundles.css'
 import teamsStyles from './styles/teams.css'
 import '../scan/page.js'
-import { managedScanSource } from './scan-source.js'
+import { loadManagedScanBundle, managedScanSource } from './scan-source.js'
 import { managedReportSources } from '../scan/report-source.js'
 import { fetchScanModels } from '../view/scan-models.js'
 import '../view/repository-selector.js'
@@ -1266,7 +1266,7 @@ class ManagedAdminScans extends ManagedPage {
   render() {
     return html`<div class="wrap">${adminNavigation('manage-scans', this._role)}
       ${this._error ? html`<p class="msg error" role="alert">Couldn’t load scan sources: ${this._error} <button type="button" class="btn" @click=${() => void this._load()}>Retry</button></p>` : nothing}
-      <deepview-scan-page hide-heading .source=${this._source} .sourceLoading=${this._loading && this._source == null} .loadModels=${this._loadModels} .loadReportSources=${this._loadReportSources}></deepview-scan-page>
+      <deepview-scan-page hide-heading .source=${this._source} .sourceLoading=${this._loading && this._source == null} .loadBundle=${loadManagedScanBundle} .loadModels=${this._loadModels} .loadReportSources=${this._loadReportSources}></deepview-scan-page>
     </div>`
   }
 }
