@@ -3,6 +3,7 @@ import { setImmediate } from 'node:timers/promises'
 import { test } from 'node:test'
 import './_polyfills.js'
 import { createManagedLocalImportSource } from '../client/managed/local-import.js'
+import { LINKS_KIND } from '../client/linked-findings.js'
 import { ManagedLocalImport } from '../ui/managed/local-import.js'
 import '../ui/client-managed.js'
 
@@ -19,6 +20,7 @@ function fixture({ encrypted = false, unlocked = false } = {}) {
     onBundleMutated: callback => { bundleListeners.add(callback); return () => bundleListeners.delete(callback) },
     unlockEncryption: () => { calls.push('unlock'); return false },
     listFiles: () => { calls.push('listFiles'); return ['report.md'] },
+    getKind: () => undefined,
     hasStoredBundleBytes: () => { calls.push('hasStoredBundleBytes'); return true },
     listBundles: () => { calls.push('listBundles'); return [{ name: 'source.map', integrity: 'sha512-test' }] },
     readFile: () => { calls.push('readFile'); return '# Report\nOriginal contents 🐈\n' },
@@ -86,6 +88,43 @@ test('empty local collections do not offer Import, including an empty bundle met
   f.deps.listBundles = () => []
   assert.equal(await f.source.hasData('report'), false)
   assert.equal(await f.source.hasData('bundle'), false)
+})
+
+test('report imports exclude known links while preserving reports with known and unknown kinds', async () => {
+  const f = fixture()
+  f.deps.listFiles = () => ['report.md', 'native.json', 'legacy.json', 'links.json']
+  f.deps.getKind = name => ({ 'report.md': 'deepsec', 'native.json': null, 'links.json': LINKS_KIND })[name]
+  assert.equal(await f.source.hasData('report'), true)
+  assert.deepEqual((await f.source.list('report')).map(option => option.value), ['report.md', 'native.json', 'legacy.json'])
+  await assert.rejects(f.source.importItem('report', 'links.json', () => assert.fail('must not upload links')), /no longer/u)
+  assert.equal(f.calls.includes('readFile'), false, 'known links are excluded before reading their contents')
+  f.deps.getKind = () => LINKS_KIND
+  await assert.rejects(f.source.importItem('report', 'report.md', () => assert.fail('must revalidate the selected kind')), /no longer/u)
+})
+
+test('links-only local storage does not show report Import or ask to unlock', async () => {
+  for (const encrypted of [false, true]) {
+    const f = fixture({ encrypted })
+    f.deps.listFiles = () => ['links.json']
+    f.deps.getKind = () => LINKS_KIND
+    const ui = controller(f.source)
+    try {
+      await ui.refresh()
+      assert.equal(ui.hasData, false)
+      assert.equal(await f.source.hasData('report'), false)
+      assert.equal(f.calls.includes('readFile'), false)
+      assert.equal(f.calls.includes('unlock'), false)
+    } finally { ui.hostDisconnected() }
+  }
+})
+
+test('a links file with a missing or stale kind cache cannot reach the report upload', async () => {
+  for (const cachedKind of [undefined, 'deepsec']) {
+    const f = fixture()
+    f.deps.getKind = () => cachedKind
+    f.deps.readFile = () => '[[{"id":"one"},{"id":"two"}]]'
+    await assert.rejects(f.source.importItem('report', 'report.md', () => assert.fail('must not upload links')), /Links files cannot be imported as reports/u)
+  }
 })
 
 test('removal, read failure and upload failure propagate without uploading a missing file', async () => {

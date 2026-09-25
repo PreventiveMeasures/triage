@@ -1,10 +1,12 @@
 import { hasStoredBundleBytes, listBundles, listFiles, onBundleMutated, onFileMutated, readBundle, readFile } from '../storage.js'
 import { isEncryptionEnabled, isUnlocked, onVaultStateChange, unlockEncryption } from '../passkey-vault.js'
+import { getKind } from '../counts.js'
+import { LINKS_KIND, parseLinkedFindings } from '../linked-findings.js'
 
 // Created in the main bundle and injected into the lazy Manage pages. Importing
 // storage/vault from that separate entry would create a second, locked session.
 const defaultDeps = {
-  hasStoredBundleBytes, listBundles, listFiles, onBundleMutated, onFileMutated, readBundle, readFile,
+  getKind, hasStoredBundleBytes, listBundles, listFiles, onBundleMutated, onFileMutated, readBundle, readFile,
   isEncryptionEnabled, isUnlocked, onVaultStateChange, unlockEncryption,
 }
 export function createManagedLocalImportSource(deps = defaultDeps) {
@@ -28,14 +30,15 @@ export function createManagedLocalImportSource(deps = defaultDeps) {
       unsubscribe() { offVault(); offItem?.() },
     }
   }
+  const reportNames = async () => (await deps.listFiles()).filter(name => deps.getKind(name) !== LINKS_KIND)
   const choices = async (kind) => kind === 'report'
-    ? (await deps.listFiles()).map(name => ({ value: name, label: name }))
+    ? (await reportNames()).map(name => ({ value: name, label: name }))
     : (await deps.listBundles()).map(bundle => ({ value: bundle.integrity, label: bundle.name, secondary: bundle.integrity }))
   return {
     get locked() { return locked() },
     async hasData(kind) {
       // Presence probes are safe while locked; don't decrypt bundle metadata.
-      if (kind === 'report') return (await deps.listFiles()).length > 0
+      if (kind === 'report') return (await reportNames()).length > 0
       return locked() ? deps.hasStoredBundleBytes() : (await deps.listBundles()).length > 0
     },
     async list(kind) {
@@ -63,6 +66,9 @@ export function createManagedLocalImportSource(deps = defaultDeps) {
         if (!item) throw new Error('This file is no longer in local storage. Select another file.')
         const content = kind === 'report' ? await deps.readFile(value) : await deps.readBundle(value)
         access.check()
+        // Kind metadata can be missing or stale; validate the selected bytes
+        // too, without reading every local document to populate the picker.
+        if (kind === 'report' && parseLinkedFindings(content)) throw new Error('Links files cannot be imported as reports. Select a report.')
         const file = new File([content], item.label, { type: kind === 'report' ? 'text/plain' : 'application/octet-stream' })
         // Start the upload synchronously after the last guard. Later local
         // changes or a vault lock cannot recall an already sent upload.
