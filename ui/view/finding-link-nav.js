@@ -22,6 +22,7 @@ import { findGroupById, groupKey, syncGroupTriage } from './group.js'
 import { switchToFile, switchToManagedTeam, switchToWorkspace } from './ingest.js'
 import { scrollRootOf } from './lazy-render.js'
 import { render } from './render.js'
+import { renderSidebar } from './sidebar.js'
 
 // How long the arrived-at finding keeps its highlight. Long enough to
 // catch the eye after the scroll settles, short enough that it doesn't
@@ -189,6 +190,7 @@ async function focusFound(hit, id) {
   const shownGroup = findGroupById(gid)
   if (shownGroup && syncGroupTriage(shownGroup)) queueMicrotask(saveTriage)
   render()
+  await renderSidebar({ revealSelection: true })
   const el = await findRenderedFinding(gid)
   if (!el) {
     // Nothing painted for this group. `unhideFinding` clears whatever

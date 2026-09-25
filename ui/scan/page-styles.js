@@ -57,18 +57,6 @@ export const SCAN_PAGE_STYLES = css`
   /* Reserve the scope control's footprint while metadata is being read. */
   .scope-slot { justify-self: end; width: min(34rem, 100%); min-height: 2rem; }
   .source-footer .bundle-stats { min-height: 2rem; }
-  .scope-toggle { display: flex; align-items: center; justify-content: end; gap: .7rem; min-width: 0; min-height: 2rem; }
-  .scope-options { display: flex; flex-shrink: 0; min-width: 0; border: 1px solid var(--border); border-radius: 5px; overflow: hidden; background: var(--bg); }
-  .scope-option { position: relative; flex: 1 0 auto; user-select: none; }
-  .scope-option + .scope-option { border-left: 1px solid var(--border); }
-  .scope-option input { position: absolute; width: 1px; height: 1px; opacity: 0; }
-  .scope-option span { display: grid; place-items: center; height: calc(2rem - 2px); padding: .3rem .55rem; color: var(--muted); font-size: .74rem; white-space: nowrap; }
-  .scope-option:hover span { color: var(--text); background: var(--surface-active); }
-  .scope-option input:checked + span { color: var(--text); background: var(--surface-active); font-weight: 500; }
-  .scope-option input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: -2px; }
-  .scope-description { order: -1; min-width: 0; color: var(--muted); font-size: .66rem; line-height: 1rem; text-align: right; }
-  .scope-field { display: flex; align-items: center; justify-content: end; gap: .5rem; min-width: 0; max-width: 100%; margin-left: auto; }
-  .scope-field select { width: 13rem; max-width: 100%; flex: 1 1 auto; }
   .choice-empty { display: flex; align-items: center; height: 2rem; padding: .28rem .5rem; border: 1px dashed var(--border); border-radius: 5px; color: var(--muted); background: var(--bg); font-size: .72rem; }
   .scope-head { display: flex; align-items: center; gap: .55rem; padding: .72rem .9rem; list-style: none; cursor: default; user-select: none; }
   .scope-head::-webkit-details-marker { display: none; }

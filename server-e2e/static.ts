@@ -7,8 +7,7 @@
 // request URL is only used as a Map key, never joined with the
 // filesystem — so the handler has no path-traversal surface at all:
 // `..`, percent-encoded slashes and absolute-form URIs all just
-// produce a key that isn't in the map and 404. Provider SVGs are
-// the one explicitly allowed asset subdirectory.
+// produce a key that isn't in the map and 404.
 //
 // Compression: every entry whose extension is in COMPRESSIBLE gets
 // pre-computed brotli + gzip at boot. The handler picks brotli over
@@ -167,14 +166,7 @@ function readStaticFiles(staticDir: string, deepviewScanServer: string | null): 
     throw err
   }
   for (const entry of entries) {
-    if (entry.isDirectory() && entry.name === 'provider-icons') {
-      for (const icon of readdirSync(join(staticDir, entry.name), { withFileTypes: true })) {
-        if (!icon.isFile() || extname(icon.name) !== '.svg') continue
-        const name = `${entry.name}/${icon.name}`
-        files.set(name, buildEntry(staticDir, name))
-      }
-    }
-    // Exclude other subdirectories, symlinks and non-file entries.
+    // Exclude subdirectories, symlinks and non-file entries.
     if (!entry.isFile()) continue
     files.set(entry.name, buildEntry(staticDir, entry.name, deepviewScanServer))
   }

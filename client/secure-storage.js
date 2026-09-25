@@ -53,6 +53,7 @@ export const SECURE_KEYS = Object.freeze([
   'deepview.sync.password',
   'deepview.repoUrls',
   'deepview.fileCounts',
+  'deepview.workspaceApp',
   'deepview.lastFile',
   'deepview.scan.access',
 ])

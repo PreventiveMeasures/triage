@@ -1,26 +1,9 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { defaultEffort, effortName, fetchScanModels, modelDeveloper, modelName } from './scan-models.js'
 import { modelColumns, modelRows, modelSections } from './scan-model-layout.js'
+import { providerIcon } from './provider-icons.js'
 
 const CHEVRON = html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg>`
-
-function developerIcon(key) {
-  // Google is the one provider mark whose identity depends on its four
-  // colours.  The other local marks are deliberately monochrome SVG masks so
-  // they inherit the provider colour from the surrounding icon slot; keeping
-  // this one inline lets the picker retain Google's recognisable palette.
-  if (key === 'google') {
-    return html`<svg class="google-mark" viewBox="0 0 24 24" aria-hidden="true">
-      <path fill="#4285F4" d="M21.35 12.27c0-.79-.07-1.55-.2-2.27H12v4.3h5.24a4.48 4.48 0 0 1-1.94 2.94v2.45h3.15c1.85-1.7 2.9-4.2 2.9-7.42Z"/>
-      <path fill="#34A853" d="M12 21.8c2.64 0 4.86-.87 6.48-2.35l-3.15-2.45c-.87.58-1.98.92-3.33.92-2.56 0-4.73-1.73-5.51-4.06H3.24v2.52A9.8 9.8 0 0 0 12 21.8Z"/>
-      <path fill="#FBBC05" d="M6.49 13.86a5.9 5.9 0 0 1 0-3.72V7.62H3.24a9.8 9.8 0 0 0 0 8.76l3.25-2.52Z"/>
-      <path fill="#EA4335" d="M12 6.08c1.43 0 2.72.49 3.74 1.45l2.8-2.8C16.85 3.14 14.63 2.2 12 2.2a9.8 9.8 0 0 0-8.76 5.42l3.25 2.52C7.27 7.81 9.44 6.08 12 6.08Z"/>
-    </svg>`
-  }
-  const iconFiles = { openai: 'openai', anthropic: 'claude', moonshotai: 'moonshot', nvidia: 'nvidia', qwen: 'qwen', deepseek: 'deepseek', 'x-ai': 'grok', 'z-ai': 'zai' }
-  if (iconFiles[key]) return html`<span class="provider-mark" style=${`--provider-icon: url('/provider-icons/${iconFiles[key]}.svg')`} aria-hidden="true"></span>`
-  return html`<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="4" y="4" width="12" height="12" rx="3"/><path d="M8 1v3m4-3v3M8 16v3m4-3v3M1 8h3m-3 4h3m12-4h3m-3 4h3"/></svg>`
-}
 
 class ScanModelPicker extends LitElement {
   static properties = {
@@ -60,8 +43,7 @@ class ScanModelPicker extends LitElement {
        real slot (rather than letting each SVG size itself) prevents wide
        marks such as Moonshot and Qwen from shifting the text column. */
     .icon { display: inline-grid; place-items: center; width: 1.7rem; height: 1.5rem; flex: 0 0 1.7rem; color: var(--text); }
-    .icon svg { display: block; width: 1.1rem; height: 1.1rem; }
-    .provider-mark { display: block; width: 1.12rem; height: 1.12rem; background: currentColor; -webkit-mask: var(--provider-icon) center / contain no-repeat; mask: var(--provider-icon) center / contain no-repeat; }
+    .icon svg { display: block; width: 1.12rem; height: 1.12rem; }
     .icon.openai { color: #10a37f; }
     .icon.anthropic { color: #d97757; }
     .icon.moonshotai { color: #8068d9; }
@@ -72,10 +54,10 @@ class ScanModelPicker extends LitElement {
     /* These marks have generous or unusually dense source viewBoxes.  A
        small optical correction keeps every provider mark the same apparent
        weight in both the selected value and the menu heading. */
-    .icon.moonshotai .provider-mark { transform: scale(.78); }
-    .icon.qwen .provider-mark { transform: scale(.82); }
-    .icon.nvidia .provider-mark { transform: scale(.86); }
-    .icon.deepseek .provider-mark { transform: scale(.9); }
+    .icon.moonshotai svg { transform: scale(.78); }
+    .icon.qwen svg { transform: scale(.82); }
+    .icon.nvidia svg { transform: scale(.86); }
+    .icon.deepseek svg { transform: scale(.9); }
     .extra { display: flex; min-width: 0; min-height: 4.9rem; align-items: flex-end; align-self: end; padding-bottom: .05rem; }
     /* The picker lives low in a long scan form. A fixed menu, positioned from
        the summary at open time, keeps it above the viewport edge and outside
@@ -94,7 +76,6 @@ class ScanModelPicker extends LitElement {
        optically normalized so their source viewBoxes cannot dominate. */
     legend .icon { width: .88rem; height: 1.25rem; flex-basis: .88rem; }
     legend .icon svg { width: .88rem; height: .88rem; }
-    legend .provider-mark { width: .88rem; height: .88rem; }
     .choice { display: flex; align-items: center; gap: .5rem; padding: .35rem .5rem; border-radius: 4px; font-size: .76rem; }
     .choice:hover { background: rgb(from var(--text) r g b / .05); }
     .choice:has(:checked) { color: var(--accent); background: rgb(from var(--accent) r g b / .1); }
@@ -278,7 +259,7 @@ class ScanModelPicker extends LitElement {
     return html`<div class=${`layout ${this.hasExtra ? 'with-extra' : ''}`}>
       <div class="field"><span class="label" id="model-label">Model</span>
         <div class="model-control"><details @toggle=${this._toggleMenu} @keydown=${(event) => { if (event.key === 'Escape') { this._close(); this.renderRoot.querySelector('summary')?.focus() } }}>
-          <summary aria-labelledby="model-label selected-model" @click=${this._resetMenuPosition}><span class=${`icon ${developer.key}`}>${developerIcon(developer.key)}</span><span class="selected-copy"><strong id="selected-model">${modelName(selectedRow.id)}</strong><small>${developer.name}</small></span>${selectedRow.pro ? html`<span class="pro-space" aria-hidden="true"></span>` : nothing}${CHEVRON}</summary>
+          <summary aria-labelledby="model-label selected-model" @click=${this._resetMenuPosition}><span class=${`icon ${developer.key}`} aria-hidden="true">${providerIcon(developer.key)}</span><span class="selected-copy"><strong id="selected-model">${modelName(selectedRow.id)}</strong><small>${developer.name}</small></span>${selectedRow.pro ? html`<span class="pro-space" aria-hidden="true"></span>` : nothing}${CHEVRON}</summary>
           <div class="menu"><div class="groups">${columns.map(column => html`<div class="provider-column">${column.map(section => this._modelSection(section))}</div>`)}</div></div>
         </details>${selectedRow.pro ? html`<button type="button" class="pro-toggle" role="switch" aria-label="Pro model" aria-checked=${selected.id === selectedRow.pro.id} @click=${this._togglePro}><span>Pro</span><span class="pro-track" aria-hidden="true"></span></button>` : nothing}</div>
       </div>
@@ -288,7 +269,7 @@ class ScanModelPicker extends LitElement {
   }
 
   _modelSection({ key, models }) {
-    return html`<fieldset><legend><span class=${`icon ${key}`}>${developerIcon(key)}</span>${modelDeveloper(models[0].id).name}</legend>${models.map((model) => html`<label class="choice"><input type="radio" name="scan-model" value=${model.id} .checked=${model.id === this.value || model.pro?.id === this.value} @change=${() => { this._selectRow(model); this.renderRoot.querySelector('summary')?.focus() }}><span>${modelName(model.id)}</span></label>`)}</fieldset>`
+    return html`<fieldset><legend><span class=${`icon ${key}`} aria-hidden="true">${providerIcon(key)}</span>${modelDeveloper(models[0].id).name}</legend>${models.map((model) => html`<label class="choice"><input type="radio" name="scan-model" value=${model.id} .checked=${model.id === this.value || model.pro?.id === this.value} @change=${() => { this._selectRow(model); this.renderRoot.querySelector('summary')?.focus() }}><span>${modelName(model.id)}</span></label>`)}</fieldset>`
   }
 
   _effortSlider(efforts) {

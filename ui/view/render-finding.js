@@ -842,7 +842,7 @@ function codePreview(f, site, bundle, path, line) {
 // Claude mark for the `[hand off to Claude Code]` shortcut button.
 // Reuse the report sticker's mark at the existing action-icon size.
 const CLAUDE_ICON = html`<svg viewBox="4 5 8 8" width="11" height="11" fill="currentColor" aria-hidden="true">
-  <path d=${CLAUDE_MARK_PATH}/>
+  <path d="${CLAUDE_MARK_PATH}"/>
 </svg>`
 
 // GitHub "issue opened" glyph (circle + center dot) for the `[github
@@ -1204,7 +1204,7 @@ function confTemplate(f) {
     return html`<div class=${`conf-ring ${displayedSeverity(f, state.severityMode)}`}>
       <svg viewBox="0 0 36 36" aria-hidden="true">
         <circle class="conf-ring-track" cx="18" cy="18" r="15.9155"/>
-        <circle class="conf-ring-arc" cx="18" cy="18" r="15.9155" style=${`stroke-dasharray: ${arc} 100`}/>
+        <circle class="conf-ring-arc" cx="18" cy="18" r="15.9155" style="stroke-dasharray: ${arc} 100"/>
       </svg>
       <span>${f.confidence}<small>/10</small></span>
     </div>

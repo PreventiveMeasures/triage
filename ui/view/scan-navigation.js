@@ -5,6 +5,7 @@ import { ensureClientMode, renderSidebar } from './sidebar.js'
 import { render } from './render.js'
 import { ScanAccess } from '../scan/access.js'
 import { detectTokenProvider } from '../scan/provider-token.js'
+import { providerIcon } from './provider-icons.js'
 import '../scan/page.js'
 import { loadLocalReportSources, loadLocalScanBundle, loadLocalScanSource } from './scan-local-source.js'
 import { availableScanServer } from '../scan/availability.js'
@@ -136,11 +137,13 @@ class LocalScanPage extends LitElement {
     .provider-choice:has(:checked) { color: var(--text); background: var(--surface-active); }
     .provider-choice:has(:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; }
     .provider-choice input { position: absolute; inset: 0; margin: 0; width: 100%; height: 100%; opacity: 0; cursor: default; }
-    .provider-icon { display: block; width: 1rem; height: 1rem; flex: 0 0 1rem; background: currentColor; -webkit-mask: var(--provider-icon) center / contain no-repeat; mask: var(--provider-icon) center / contain no-repeat; }
-    .provider-icon.anthropic { --provider-icon: url('/provider-icons/claude.svg'); color: #d97757; }
-    .provider-icon.openai { --provider-icon: url('/provider-icons/openai.svg'); color: #10a37f; }
-    .provider-icon.moonshot { --provider-icon: url('/provider-icons/moonshot.svg'); color: #8068d9; -webkit-mask-size: 80%; mask-size: 80%; }
-    .provider-icon.openrouter { --provider-icon: url('/provider-icons/openrouter.svg'); color: var(--text); }
+    .provider-icon { display: block; width: 1rem; height: 1rem; flex: 0 0 1rem; }
+    .provider-icon svg { display: block; width: 100%; height: 100%; }
+    .provider-icon.anthropic { color: #d97757; }
+    .provider-icon.openai { color: #10a37f; }
+    .provider-icon.moonshot { color: #8068d9; }
+    .provider-icon.moonshot svg { transform: scale(.8); }
+    .provider-icon.openrouter { color: var(--text); }
     .connect { justify-content: center; height: 2rem; padding: .35rem .8rem; color: var(--text); background: var(--surface-active); }
     .connection-status { flex: 1; min-width: 0; margin: 0 .7rem; line-height: 1rem; color: var(--muted); font-size: .7rem; }
     .connection-status.error { color: var(--critical, #e5534b); }
@@ -165,7 +168,7 @@ class LocalScanPage extends LitElement {
           <button type="submit" class="connect" ?disabled=${!access.apiKey.trim() || access.loading || (access.connected && !access.error)}>${access.connected && !access.error ? 'Connected' : 'Connect'}</button>
         </form>
         ${access.managed ? nothing : html`<div class="provider-row">
-          <fieldset class="provider-field"><legend>Provider</legend><div class="provider-options">${[['anthropic', 'Anthropic'], ['openai', 'OpenAI'], ['moonshot', 'Moonshot'], ['openrouter', 'OpenRouter']].map(([id, name]) => html`<label class="provider-choice"><input type="radio" name="scan-provider" value=${id} .checked=${access.provider === id} @change=${() => this._setProvider(id)}><span class=${`provider-icon ${id}`} aria-hidden="true"></span><span>${name}</span></label>`)}</div></fieldset>
+          <fieldset class="provider-field"><legend>Provider</legend><div class="provider-options">${[['anthropic', 'Anthropic'], ['openai', 'OpenAI'], ['moonshot', 'Moonshot'], ['openrouter', 'OpenRouter']].map(([id, name]) => html`<label class="provider-choice"><input type="radio" name="scan-provider" value=${id} .checked=${access.provider === id} @change=${() => this._setProvider(id)}><span class=${`provider-icon ${id}`} aria-hidden="true">${providerIcon(id)}</span><span>${name}</span></label>`)}</div></fieldset>
           <label>Token<input type="password" name="provider-token" placeholder="Enter provider token" autocomplete="off" spellcheck="false" .value=${this._providerToken} @input=${event => this._setProviderToken(event.target.value)}></label>
         </div>`}
       </div>

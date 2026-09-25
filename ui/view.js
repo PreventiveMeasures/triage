@@ -338,6 +338,9 @@ async function restoreInitialView() {
         selectBundle(integrity, tab)
         render()
         openBundle(integrity)
+        // The first sidebar paint predates selection. Reveal the restored
+        // bundle's workspace section even when every count is already cached.
+        await renderSidebar()
       }
     } else {
       const names = await listFiles()

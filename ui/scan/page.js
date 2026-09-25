@@ -12,7 +12,7 @@ import './regime-editor.js'
 import './depth-toggle.js'
 import { SCAN_PAGE_STYLES } from './page-styles.js'
 import { codeScanFiles, formatBytes, sourceMetrics } from './metrics.js'
-import { scanScopeOptions } from './scopes.js'
+import '../view/bundle-scope-selector.js'
 
 const SCAN_MODE_ICONS = {
   dependencies: html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="4" cy="8" r="2"/><circle cx="12" cy="4" r="2"/><circle cx="12" cy="12" r="2"/><path d="M6 8h2M10.2 5.3 6 7.3M10.2 10.7 6 8.7"/></svg>`,
@@ -206,13 +206,7 @@ export class ScanPage extends LitElement {
     if (!['code', 'agentic'].includes(this._mode)) return nothing
     const reasons = (bundle?.reasons ?? []).filter(reason => reason.id !== 'all')
     if (reasons.length === 0) return nothing
-    const agentic = this._mode === 'agentic'
-    const options = scanScopeOptions(reasons)
-    if (options) {
-      const selected = options.find(option => option.id === this._reason) ?? options[0]
-      return html`<div class="scope-toggle"><div class="scope-options" role="radiogroup" aria-label=${agentic ? 'Choose agentic scope' : 'Choose scan scope'} aria-describedby="scan-scope-description">${options.map(option => html`<label class="scope-option"><input type="radio" name="scan-scope" value=${option.id} .checked=${selected.id === option.id} @change=${() => this._changeReason(option.id)}><span>${option.label}</span></label>`)}</div><span class="scope-description" id="scan-scope-description">${selected.subtitle}</span></div>`
-    }
-    return html`<label class="scope-field"><span>Scope</span><select id=${agentic ? 'scan-agentic-scope' : 'scan-reason'} aria-label=${agentic ? 'Choose agentic scope' : 'Choose scan scope'} @change=${event => this._changeReason(event.target.value)}><option value="" .selected=${live(!this._reason || this._reason === 'all')}>All files</option>${reasons.map(reason => html`<option value=${reason.id} .selected=${live(reason.id === this._reason)}>${reason.label ?? reason.id}</option>`)}</select></label>`
+    return html`<bundle-scope-selector .reasons=${reasons} .value=${this._reason} label=${this._mode === 'agentic' ? 'Choose agentic scope' : 'Choose scan scope'} @scope-change=${event => this._changeReason(event.detail.value)}></bundle-scope-selector>`
   }
 
   _optionsPanel(mode, bundle, count) {

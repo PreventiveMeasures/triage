@@ -336,10 +336,32 @@ sidebar-view-button[hidden] { display: none !important; }
 
 /* Workspace row layout: name (flex-fill) | hover-revealed share /
    export / leave buttons, hidden until the row is hovered. */
-.file-item.workspace-item {
-  display: flex; align-items: stretch; gap: .15rem;
-}
+.file-item.workspace-item { display: block; border-radius: 0 5px 5px 0; }
+.workspace-heading { display: flex; align-items: stretch; gap: .15rem; }
 .file-item.workspace-item button.file-name { flex: 1; min-width: 0; }
+.workspace-meta {
+  display: flex; align-items: center; justify-content: space-between; gap: .35rem;
+  padding: 0 .3rem .2rem 2rem;
+  color: var(--muted); font-size: .68rem; line-height: 1.3;
+  white-space: nowrap;
+  user-select: none;
+}
+.workspace-findings { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.workspace-sections {
+  display: inline-flex; flex-shrink: 0;
+  border: 1px solid var(--border); border-radius: 4px; overflow: hidden;
+}
+.workspace-sections button {
+  padding: .06rem .25rem; border: 0;
+  background: transparent; color: var(--muted);
+  font: inherit; font-size: .64rem; line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+
+  & + button { border-left: 1px solid var(--border); }
+  &:hover:not(:disabled) { background: var(--surface-active); color: var(--text); }
+  &[aria-expanded='true'] { background: rgb(from var(--accent) r g b / .1); color: var(--accent); }
+  &:disabled { background: var(--surface-active); color: var(--muted); }
+}
 
 .workspace-share,
 .workspace-export,
@@ -467,6 +489,19 @@ sidebar-view-button[hidden] { display: none !important; }
   border-color: rgb(from var(--accent) r g b / .16);
 
   & .file-icon, & .file-count { color: var(--text); }
+}
+
+/* Hover and selection cover metadata and first-row actions together. */
+.file-item.workspace-item:hover { background: rgb(from var(--text) r g b / .04); }
+.file-item.workspace-item button.file-name:hover { background: transparent; }
+.file-item.workspace-item.current {
+  background: rgb(from var(--accent) r g b / .09);
+  border-radius: 0 5px 5px 0;
+  box-shadow: inset 0 0 0 1px rgb(from var(--accent) r g b / .16);
+}
+.file-item.workspace-item.current button.file-name {
+  background: transparent;
+  border-color: transparent;
 }
 
 button:focus-visible {

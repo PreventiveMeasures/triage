@@ -184,7 +184,7 @@ class ManagedAdminHome extends LitElement {
       team: 'M8 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm-4 5c0-2 1.7-3 4-3s4 1 4 3M2 7h2m8 0h2M8 1v2m0 9v2',
       scan: 'M3 3.5h10v9H3zM5.5 6h5M5.5 8h5M5.5 10h3',
     }
-    return html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"><path d=${paths[kind] ?? paths.report}/></svg>`
+    return html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"><path d="${paths[kind] ?? paths.report}"/></svg>`
   }
 }
 customElements.define('managed-admin-home', ManagedAdminHome)

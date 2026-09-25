@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { readFile } from 'node:fs/promises'
 import { build } from 'esbuild'
+import { litSvgAsHtml } from '../build-lit-svg.js'
 import { configuredScanServer, scanServerHtml } from '../server-common/scan-config.ts'
 import { DEFAULT_SCAN_SERVER } from '../common/scan-server.ts'
 import { availableScanServer } from '../ui/scan/availability.js'
@@ -40,7 +41,7 @@ test('runtime CSP grants only the configured origin and dev advertises its reque
 test('Scans is always in the main bundle, without managed fixtures or transport', async () => {
   const { metafile } = await build({
     entryPoints: ['ui/view.js', 'ui/client-managed.js'], bundle: true, format: 'esm',
-    outdir: 'out', write: false, loader: { '.css': 'text' }, metafile: true,
+    outdir: 'out', write: false, loader: { '.css': 'text' }, plugins: [litSvgAsHtml], metafile: true,
   })
   const main = metafile.outputs['out/view.js'].inputs
   const managed = metafile.outputs['out/client-managed.js'].inputs
