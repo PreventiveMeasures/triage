@@ -55,6 +55,10 @@
 /* Managed mode pins the sidebar open — hide the collapse toggle. */
 :host([data-mode='managed']) #sidebar-toggle { display: none; }
 
+/* Logged-out managed visits have no reports to search or account actions. */
+:host([data-mode='managed']:not([data-authenticated])) .sidebar-search,
+:host([data-mode='managed']:not([data-authenticated])) .sidebar-actions { display: none; }
+
 .sidebar-header {
   display: flex; align-items: center; gap: .5rem;
   padding: .5rem .75rem .4rem;
@@ -713,9 +717,8 @@ sidebar-delete-current button {
 /* Same specificity dance as #sync-status[hidden] above. */
 #storage-status[hidden] { display: none; }
 
-/* Managed-mode auth control + account menu (replaces the offline/online toggle
-   in managed mode). Logged out it is a "Log in" button; logged in it is the
-   user's avatar, opening the popover account menu below. */
+/* Managed account control, visible after login. The user's avatar opens the
+   popover account menu below. */
 #auth-status[hidden], #manage-status[hidden] { display: none !important; }
 #auth-status { display: inline-flex; align-items: center; }
 #auth-status[data-authed='1'] {

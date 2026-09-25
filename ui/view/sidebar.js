@@ -3,7 +3,7 @@ import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { LINKS_KIND, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, clientModeLabel, computeLinkHint, configureClientMode, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, ensureLinkedFindingsIndexed, getCount, getKind, getPackagesIndex, getRepositoriesIndex, getWorkspaceAppMetadata, getWorkspaceAppModeHint, hasStandaloneProbeHint, hydrateSecureStorage, isCombinedServerMode, isManagedUiMode, listBundles, listFiles, listWorkspaces, mergeSyncServerInfo, migrateLegacyFilenames, onVaultStateChange, onWorkspaceAppMetadataChanged, probeServerInfo, readCachedServerInfo, reloadTriageFromStorage, rememberStandaloneProbe, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, setLocalMode, state, syncObservedAfterHydrate, toggleClientMode, waitForServerInfo, writeCachedServerInfo } from '#client/index.js'
 import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, setSyncForceDisabled, triageSync } from './client-sync.js'
-import { clearPreviewRole, getPreviewRole, loadManagedBundle, login as managedLogin, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams } from './client-managed.js'
+import { clearPreviewRole, getPreviewRole, loadManagedBundle, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams } from './client-managed.js'
 import { ROLES, isRole } from '../../common/managed/roles.ts'
 import { initManagedTriagePush, resetManagedTriage } from './managed-triage.js'
 import sidebarCSS from './sidebar.css'
@@ -1112,12 +1112,6 @@ async function onSidebarClick(e) {
     void managedLogout(state.managedSession?.csrfToken)
     return
   }
-  if (e.target.closest('#auth-status')) {
-    // Logged in → the button is a popovertarget that opens the account menu
-    // (the browser toggles it); logged out → it hands off to the OAuth login.
-    if (state.managedSession == null) managedLogin(state.managed?.loginPath)
-    return
-  }
   if (e.target.closest('#sidebar-toggle')) {
     if (isManagedUiMode()) return
     hostEl.classList.toggle('collapsed')
@@ -1206,23 +1200,22 @@ function syncButtonVisible() {
   return listWorkspaces().length > 0
 }
 
-// Managed-mode auth control — replaces the offline/online toggle. Shows
-// "Log in" (→ the server's OAuth entry) when logged out, "Log out (user)"
-// when a managed session exists. `state.managedSession` is populated by the
-// future managed session probe; until then it stays null (logged out).
+// Managed account control. The landing page owns sign-in; the sidebar only
+// shows the account menu once the managed session probe finds a session.
 function renderAuthStatus() {
   const authBtn = root?.querySelector('#auth-status')
   if (!authBtn) return
   const manageBtn = root?.querySelector('#manage-status')
-  authBtn.hidden = false
   const menu = root?.querySelector('#user-menu')
   const session = state.managedSession
+  hostEl?.toggleAttribute('data-authenticated', session != null)
+  authBtn.hidden = session == null
   if (session == null) {
     if (manageBtn) manageBtn.hidden = true
     authBtn.dataset.authed = '0'
     authBtn.removeAttribute('popovertarget')
-    authBtn.setAttribute('aria-label', 'Log in')
-    litRender(html`Log in`, authBtn)
+    authBtn.removeAttribute('aria-label')
+    litRender(nothing, authBtn)
     if (menu) litRender(nothing, menu)
     return
   }
