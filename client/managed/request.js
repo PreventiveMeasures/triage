@@ -54,7 +54,8 @@ export async function managedFetch(url, options) {
   options?.signal?.throwIfAborted()
   if (preview) return previewResponse(url, options)
   const started = generation
-  const response = await fetch(url, options)
+  // Managed data lives on the server; it must not enter the browser HTTP cache.
+  const response = await fetch(url, { ...options, cache: 'no-store' })
   if (started !== generation) throw new DOMException('Managed session changed', 'AbortError')
   return response
 }

@@ -1343,7 +1343,7 @@ async function ingestReport(name, content, gen = null, { renderView = true, mana
     // with analyzer-stamped `repo.github` values in the Repositories
     // view rather than splitting the same repo across two keys.
     const declaredRepo = reportRepoGithub(data)
-    const repoFallback = declaredRepo ?? loadRepoUrlFor(name)
+    const repoFallback = declaredRepo ?? (managedReportId == null ? loadRepoUrlFor(name) : '')
     // …and the `directory` beside that declaration, stamped alongside
     // it: where inside the repository the tree this report describes
     // sits, which the link builders splice in front of every path the

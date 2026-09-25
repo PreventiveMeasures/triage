@@ -98,3 +98,14 @@ test('a real response started before a preview transition cannot restore stale d
   resolve(Response.json({ user: { login: 'stale' } }))
   await assert.rejects(request, { name: 'AbortError' })
 })
+
+test('managed requests bypass the browser HTTP cache for all server data', async (t) => {
+  const network = t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({})))
+  for (const path of ['/api/auth/session', '/api/reports/id', '/api/reports/id/triage', '/api/admin/bundles']) {
+    await managedFetch(path, { credentials: 'same-origin', cache: 'force-cache' })
+  }
+  for (const call of network.mock.calls) {
+    assert.equal(call.arguments[1].cache, 'no-store')
+    assert.equal(call.arguments[1].credentials, 'same-origin')
+  }
+})

@@ -1,4 +1,4 @@
-// Managed-server boot config (SYNC_MODE=managed), parsed once at startup and
+// Managed-server boot config, parsed once at startup and
 // failing fast on a missing / invalid required value — the same discipline as
 // server-e2e/config.ts. Auth (GitHub identity + sessions) is required. An
 // optional, SEPARATE GitHub App (id + private key + slug) enables PRIVATE repo
@@ -74,7 +74,7 @@ function urlOrFail(name: string, raw: string): URL {
   try { return new URL(raw) } catch { fail(`${name} is not a valid URL: ${raw}`) }
 }
 
-export function loadManagedConfig(): ManagedConfig {
+export function loadManagedConfig({ combined = false } = {}): ManagedConfig {
   const host = env['HOST'] ?? '127.0.0.1'
   const oauthCallbackUrl = requireStr('OAUTH_CALLBACK_URL')
   const callback = urlOrFail('OAUTH_CALLBACK_URL', oauthCallbackUrl)
@@ -90,9 +90,10 @@ export function loadManagedConfig(): ManagedConfig {
     fail(`SESSION_COOKIE_NAME=${sessionCookieName} uses the __Host- prefix but the callback is not https. Use a non-prefixed name for loopback http dev.`)
   }
   return {
-    port: intEnv('PORT', 8765, 1, 65535),
+    port: intEnv('PORT', 8765, 0, 65535),
     host,
-    dbPath: env['DB_PATH'] ?? 'server-managed/data/managed.db',
+    // DB_PATH belongs to e2e in a combined process. Keep the two stores apart.
+    dbPath: env['MANAGED_DB_PATH'] ?? (combined ? undefined : env['DB_PATH']) ?? 'server-managed/data/managed.db',
     debug: env['DEBUG'] === '1' || env['DEBUG'] === 'true',
     trustProxyEnv: env['TRUST_PROXY'],
     githubClientId: requireStr('GITHUB_CLIENT_ID'),

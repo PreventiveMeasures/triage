@@ -125,13 +125,14 @@
   ],
   "scripts": {
     "lint": "node --run lint:js && node --run lint:css && node --run lint:ts",
-    "lint:js": "oxlint -c .oxlintrc.json --ignore-pattern=ui/logs.js ./tests/ ./common/ ./report/ ./server-common/ ./server-e2e/ ./server-managed/ ./client/ ./ui/ ./api/",
+    "lint:js": "oxlint -c .oxlintrc.json --ignore-pattern=ui/logs.js ./server.js ./tests/ ./common/ ./report/ ./server-common/ ./server-e2e/ ./server-managed/ ./client/ ./ui/ ./api/",
     "lint:css": "stylelint 'ui/**/*.css'",
     "lint:ts": "tsc --noEmit",
     "prepack": "node --run build",
     "build": "node build.js build",
     "serve": "node build.js serve",
-    "server": "node server-e2e/index.ts",
+    "server": "node --run server-e2e --",
+    "server-e2e": "node server-e2e/index.ts",
     "server-managed": "node server-managed/index.ts",
     "server-managed-test": "node server-managed/test-server.ts",
     "test": "node --js-base-64 --import=./tests/_resource-loader.js --experimental-test-module-mocks --test-timeout=120000 --test ./tests/*.test.js ./report/tests/*.test.js"

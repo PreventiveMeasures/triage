@@ -18,8 +18,37 @@ pnpm server          # ws://127.0.0.1:8765/api/sync
 
 The SQLite file is created on first run; nothing else is needed.
 
-The server runs in one of **two deployment modes**, each pairing a
-metadata store with a byte (blob) store. The mode is chosen entirely by
+## Server entry points
+
+`pnpm server` is an alias for `pnpm server-e2e`. The `server-e2e` and
+`server-managed` scripts run their respective `index.ts` files independently.
+From a checkout, the root launcher can also run either server or both:
+
+```sh
+node server.js --mode e2e          # default when --mode is omitted
+node server.js --mode managed
+node server.js --mode managed-e2e
+node server.js --mode e2e-managed
+```
+
+Combined modes use one HTTP server on `HOST`/`PORT`, serving managed HTTP
+routes alongside the existing e2e HTTP, WebSocket and SSE routes. Only
+`/api/config` is shared: it advertises `managed+e2e` or `e2e+managed`, with
+the first mode selected by the client on each reload. Managed has no live
+transport of its own.
+
+Managed modes require `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` and
+`OAUTH_CALLBACK_URL`. For local HTTP development, set `SESSION_COOKIE_NAME`
+to a name without the `__Host-` prefix. Combined mode uses `DB_PATH` for e2e
+and `MANAGED_DB_PATH` for managed (default `server-managed/data/managed.db`);
+they must be different files. Standalone managed still accepts `DB_PATH`,
+with `MANAGED_DB_PATH` taking precedence when set. Managed reports, bundles
+and avatars live beside its database.
+
+## Storage backends
+
+The e2e server supports **two storage backends**, each pairing a
+metadata store with a byte (blob) store. The backend is chosen entirely by
 whether `DATABASE_URL` is set — there's no mix-and-match:
 
 | Mode                 | Metadata          | Blob bytes                  | Topology         |
