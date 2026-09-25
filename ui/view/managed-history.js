@@ -84,6 +84,20 @@ export function createManagedHistory(browser) {
     void navigate(route ?? { view: 'home' }, { pop: true })
   }
 
+  function onClick(event) {
+    if (!active || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+    // Finding cards live in shadow roots. Intercept ordinary self-link
+    // clicks before a cross-report navigation can unload pending triage.
+    const anchor = event.composedPath().find(node => node.matches?.('a.comment-self-ref[href]'))
+    if (!anchor || anchor.hasAttribute('download') || (anchor.target && anchor.target !== '_self')) return
+    const url = new URL(anchor.href)
+    if (url.origin !== browser.location.origin) return
+    const route = routeAt(url)
+    if (!route?.finding) return
+    event.preventDefault()
+    return navigate(route)
+  }
+
   return {
     get active() { return active },
     rememberFinding() {
@@ -101,6 +115,7 @@ export function createManagedHistory(browser) {
       if (!listening) {
         browser.addEventListener('popstate', onPop)
         browser.addEventListener('hashchange', onHash)
+        browser.addEventListener('click', onClick)
         browser.launchQueue?.setConsumer(({ targetURL }) => {
           if (!active || !targetURL) return
           const url = new URL(targetURL)

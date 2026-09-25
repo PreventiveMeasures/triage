@@ -3,8 +3,8 @@ import { html, nothing } from './frontend-global.js'
 // Direct relative import, NOT `#client/index.js`: this module rides in
 // the lazy `ui/graph.js` bundle, and the aggregator would drag `state`
 // and the whole client layer in with it (see fileUrl's note below).
-// `client/finding-link.js` is a leaf — its only import is
-// `common/utf8.js` — so pulling it in costs the codec and nothing else.
+// `client/finding-link.js` depends only on shared codec/route helpers,
+// so pulling it in does not load client state.
 import { parseFindingUrl } from '../../client/finding-link.js'
 // What a finding IS — the readers shared with the report library's
 // markdown writer — lives in that library; re-exported here unchanged so
@@ -1382,13 +1382,13 @@ export function displayFindingId(id) {
 // host + scheme, no credentials, canonical round-trip, a fragment that
 // parses as a finding ref.
 //
-// E2E links use a fragment; managed links retain their team/report path so
-// duplicate finding ids resolve in the intended report. Both stay in this tab.
-function selfRefToken(candidate) {
+// Local E2E navigation uses only a fragment. Managed navigation retains
+// the destination path, including `/` for links without a team/report.
+function selfRefToken(candidate, managed) {
   const found = parseFindingUrl(candidate)
   if (!found) return null
   const short = shortFindingId(found.id)
-  return { url: `${found.path ?? ''}#${found.fragment}`, label: short ? `finding ${short}` : 'finding', self: true }
+  return { url: `${managed ? found.path : ''}#${found.fragment}`, label: short ? `finding ${short}` : 'finding', self: true }
 }
 
 // Candidate-URL scanner: an `http(s)://` run of URL-legal characters.
@@ -1422,11 +1422,11 @@ function trimTrailingPunct(s) {
 
 // Split `text` into the segment list described above: alternating plain
 // `string` runs and validated link tokens — `{ url, label }` for an
-// external github ref, `{ url, label, self: true }` for a fragment-only
+// external github ref, `{ url, label, self: true }` for a finding
 // link into this instance. A comment with no recognised URL (the common
 // case) comes back as a single `[text]` entry; empty / non-string input
 // yields `[]`.
-export function parseCommentRefs(text) {
+export function parseCommentRefs(text, { managed = false } = {}) {
   if (typeof text !== 'string' || text.length === 0) return []
   const segments = []
   let lastIndex = 0
@@ -1437,7 +1437,7 @@ export function parseCommentRefs(text) {
     // GitHub first, then our own deep links. The two can't both match —
     // one requires host `github.com`, the other the host this app is
     // being served from.
-    const token = trimmed ? (githubRefToken(trimmed) ?? selfRefToken(trimmed)) : null
+    const token = trimmed ? (githubRefToken(trimmed) ?? selfRefToken(trimmed, managed)) : null
     if (token) {
       if (m.index > lastIndex) segments.push(text.slice(lastIndex, m.index))
       segments.push(token)

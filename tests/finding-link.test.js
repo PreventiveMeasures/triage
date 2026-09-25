@@ -26,6 +26,8 @@ import { beforeEach, describe, it } from 'node:test'
 // `state.ts`, `storage.js` and the client aggregator touch localStorage
 // etc. at module-load time.
 import './_polyfills.js'
+import { createManagedHistory } from '../ui/view/managed-history.js'
+import { browserAt } from './_managed-browser.js'
 
 // `ui/view/finding-link.js` → group.js → format.js → frontend-global.js
 // throws at module load without the `@rray/frontend` slot; tests don't
@@ -62,7 +64,7 @@ const { getItem: getSecureItem, setItem: setSecureItem, hydrate: hydrateSecureSt
 const { locateLinkedFinding, locateReportFinding } = await import('../ui/view/finding-link-route.js')
 const { deriveFindingId } = await import('../report/index.js')
 const { findGroupById, getMergedGroups, groupKey, sortTabs } = await import('../ui/view/group.js')
-const { configureRevalidation } = await import('../ui/view/format.js')
+const { configureRevalidation, parseCommentRefs } = await import('../ui/view/format.js')
 
 const { state } = await import('../client/state.ts')
 const {
@@ -727,6 +729,33 @@ describe('finding deep links — managed resolution', () => {
         }))
         return true
       },
+    }
+  })
+
+  it('follows a linkified E2E reference from one managed report to another', async () => {
+    const { browser } = browserAt('/teams/team/reports/first')
+    const nav = createManagedHistory(browser)
+    let hit
+    await nav.start(async route => {
+      if (!route.finding) return navigation.openManagedReport(team, 'first')
+      hit = await locateLinkedFinding({ ...route.finding, teamId: route.teamId, reportId: route.reportId }, navigation)
+      return hit ? { view: 'findings', teamId: state.currentManagedTeam, reportId: state.currentManagedReport } : false
+    })
+    const previousLocation = globalThis.location
+    globalThis.location = browser.location
+    try {
+      // Both a current hint and a stale hint must search outside the open report.
+      for (const report of [await computeLinkHint('report', second.filename), 'abcd']) {
+        await nav.navigate({ view: 'findings', teamId: 'team', reportId: 'first' })
+        const [link] = parseCommentRefs(`https://triage.test/#${encodeFindingRef({ id: UUID_B, report })}`, { managed: true })
+        assert.equal(await browser.click(link.url), true)
+        assert.equal(hit?.finding.id, UUID_B)
+        assert.equal(state.currentManagedReport, 'second')
+        assert.equal(browser.location.pathname, '/teams/team/reports/second')
+      }
+    } finally {
+      if (previousLocation === undefined) delete globalThis.location
+      else globalThis.location = previousLocation
     }
   })
 

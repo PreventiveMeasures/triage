@@ -305,12 +305,12 @@ export function extractFindingRef(hash) {
 
 // Recognise a finding deep link pasted into free text — the reverse of
 // `buildFindingUrl`, used to linkify comments (see `parseCommentRefs` in
-// `ui/view/format.js`). Returns `{ id, fragment, path? }` with the fragment
-// re-emitted canonically and an optional managed team/report path, or null
+// `ui/view/format.js`). Returns `{ id, fragment, path }` with the fragment
+// re-emitted canonically and a managed destination path, or null
 // for anything that isn't one of OUR links.
 //
 // "Ours" means the CURRENT host, scheme included. A finding id resolves
-// only against the reader's own local reports, so a link to some other
+// only against the reader's available reports, so a link to some other
 // deployment couldn't be followed usefully even if it were offered — and
 // a same-name look-alike on another host is exactly what a linkifier
 // must not present as the real thing. Credentials are refused for the
@@ -318,8 +318,9 @@ export function extractFindingRef(hash) {
 // something the app ever emits).
 //
 // Managed team/report paths are preserved to identify the intended copy.
-// Other paths become fragment-only links, keeping `/`, `/index.html`, and
-// subpath E2E deployments compatible.
+// Other paths resolve from `/` in managed mode, without inheriting the
+// current report. E2E consumers use just the fragment to stay on their
+// current deployment, including `/index.html` and subpaths.
 //
 // The anti-mutation guard is the one from `githubRefToken`: `new URL`
 // silently rewrites its input (resolving `..`, lower-casing, punycoding
@@ -342,6 +343,6 @@ export function parseFindingUrl(candidate) {
   // param or a mangled hint can't ride into the href we hand the
   // renderer.
   const route = parseManagedRoute(u)
-  const path = route?.teamId ? managedRoutePath({ ...route, view: 'findings' }) : null
-  return { id: ref.id, fragment: encodeFindingRef(ref), ...(path ? { path } : {}) }
+  const path = route?.teamId ? managedRoutePath({ ...route, view: 'findings' }) : '/'
+  return { id: ref.id, fragment: encodeFindingRef(ref), path }
 }

@@ -3,34 +3,7 @@ import { test } from 'node:test'
 import { setImmediate } from 'node:timers/promises'
 import { MANAGED_PAGES, managedRoutePath, parseManagedRoute } from '../common/managed/routes.js'
 import { createManagedHistory } from '../ui/view/managed-history.js'
-
-function browserAt(path = '/') {
-  const entries = [{ url: new URL(path, 'https://triage.test'), state: null }]
-  let index = 0, sequence = 0
-  const listeners = new Map()
-  const writes = []
-  const saved = new Map()
-  const browser = {
-    get location() { return entries[index].url },
-    crypto: { randomUUID: () => `generation-${++sequence}` },
-    addEventListener: (event, listener) => listeners.set(event, listener),
-    launchQueue: { setConsumer(consumer) { this.consume = consumer } },
-    sessionStorage: { getItem: key => saved.get(key), setItem: (key, value) => saved.set(key, value), removeItem: key => saved.delete(key) },
-    history: {
-      get state() { return entries[index].state },
-      replaceState(state, _, url) { entries[index] = { state, url: new URL(url, browser.location) }; writes.push('replace') },
-      pushState(state, _, url) { entries.splice(index + 1); entries.push({ state, url: new URL(url, browser.location) }); index++; writes.push('push') },
-    },
-    async move(delta) { index += delta; listeners.get('popstate')?.({ state: entries[index].state }); await setImmediate() },
-    async hash(value) {
-      entries[index].url.hash = value
-      listeners.get('popstate')?.({ state: entries[index].state })
-      listeners.get('hashchange')?.()
-      await setImmediate()
-    },
-  }
-  return { browser, entries, writes }
-}
+import { browserAt } from './_managed-browser.js'
 
 test('all managed pages and team/report Files routes round-trip', () => {
   const routes = [{ view: 'home' }, ...Object.keys(MANAGED_PAGES).map(view => ({ view })),
@@ -159,6 +132,44 @@ test('finding hash navigation is handled once, supports repeat clicks, and prese
   assert.deepEqual(findings, ['issue-id', 'issue-id'])
   assert.ok(browser.history.state.deepviewManagedNavigation)
   assert.equal(browser.location.hash, '')
+})
+
+test('comment finding links navigate in the same document and retain Back/Forward history', async () => {
+  const { browser, entries, writes } = browserAt('/teams/a/reports/first')
+  const nav = createManagedHistory(browser)
+  let restored
+  await nav.start(route => { restored = route; return true })
+  const href = '/teams/b/reports/second#finding=issue-id'
+  assert.equal(await browser.click(href), true, 'cancel native document navigation')
+  assert.deepEqual(restored, { view: 'findings', teamId: 'b', reportId: 'second', finding: { id: 'issue-id', report: null, workspace: null } })
+  assert.equal(browser.location.pathname, '/teams/b/reports/second')
+  assert.equal(browser.location.hash, '')
+  assert.deepEqual(writes, ['replace', 'push'])
+  assert.equal(await browser.click(href), true)
+  assert.equal(entries.length, 2, 'repeat clicks reveal the finding without duplicating history')
+  await browser.move(-1)
+  assert.equal(restored.reportId, 'first')
+  await browser.move(1)
+  assert.equal(restored.reportId, 'second')
+})
+
+test('comment routing preserves native link actions and stops intercepting in E2E mode', async () => {
+  const { browser, writes } = browserAt('/teams/a')
+  const nav = createManagedHistory(browser)
+  let restores = 0
+  await nav.start(() => { restores++; return true })
+  const href = '/teams/b#finding=issue-id'
+  for (const options of [{ button: 1 }, { metaKey: true }, { ctrlKey: true }, { shiftKey: true }, { altKey: true }, { target: '_blank' }, { download: true }, { self: false }]) {
+    assert.equal(await browser.click(href, options), false)
+  }
+  await browser.click(href, { defaultPrevented: true })
+  assert.equal(await browser.click('https://elsewhere.test/teams/b#finding=issue-id'), false)
+  assert.equal(await browser.click('/teams/b'), false)
+  assert.equal(restores, 1)
+  assert.deepEqual(writes, ['replace'])
+  nav.reset()
+  assert.equal(await browser.click(href), false)
+  assert.equal(restores, 1)
 })
 
 test('a finding destination survives the OAuth round trip and is consumed once', async () => {

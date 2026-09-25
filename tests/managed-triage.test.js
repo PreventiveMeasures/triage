@@ -6,6 +6,8 @@ import assert from 'node:assert/strict'
 import { beforeEach, mock, test } from 'node:test'
 import { bucketOf, patchEntry, setEntry } from '../client/triage-entry.ts'
 import { MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_TEXT } from '../common/managed/triage.ts'
+import { createManagedHistory } from '../ui/view/managed-history.js'
+import { browserAt } from './_managed-browser.js'
 
 const state = {
   serverMode: 'managed',
@@ -136,6 +138,22 @@ test('a view switch inside the debounce window still flushes the edits to the re
   state.reports = []
   await drain()
   assert.deepEqual(pushes(), [push('B', { y: { triage: 'inprogress' } })])
+})
+
+test('a comment link to another team preserves an edit made inside the debounce window', async () => {
+  const { browser } = browserAt('/teams/first/reports/B')
+  const nav = createManagedHistory(browser)
+  await nav.start(async route => {
+    await open(route.reportId, route.reportId === 'B' ? ['y'] : ['q'])
+    return true
+  })
+  await edit('y', { triage: 'inprogress' })
+  assert.deepEqual(pushes(), [], 'the edit is still waiting for its debounce')
+  assert.equal(await browser.click('/teams/second/reports/C#finding=q'), true)
+  await settle()
+  assert.deepEqual(calls, [{ fetch: 'B' }, push('B', { y: { triage: 'inprogress' } }), { fetch: 'C' }])
+  assert.equal(browser.location.pathname, '/teams/second/reports/C')
+  assert.equal(state.managedReport.id, 'C')
 })
 
 test('edits in two reports flush as separate batches, each to its own report', async () => {
