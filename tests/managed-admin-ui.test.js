@@ -383,7 +383,7 @@ test('history user and repository filters intersect, reset paging, and keep inde
   await clear
 })
 
-test('installed Show all defaults off, resets pagination, and ignores a late all-repos response', async (t) => {
+test('installed Show all defaults off, resets organization filtering, and ignores a late all-repos response', async (t) => {
   const page = createPage(Repositories)
   const pending = []
   t.mock.method(globalThis, 'fetch', (url) => new Promise(resolve => { pending.push({ url: new URL(url, 'http://localhost'), resolve }) }))
@@ -392,9 +392,9 @@ test('installed Show all defaults off, resets pagination, and ignores a late all
   assert.equal(pending[0].url.searchParams.get('showAll'), 'false')
   pending[0].resolve(Response.json({ repositories: [repo], total: 1 }))
   await setImmediate()
-  page._page = 3
+  page._organization = 'owner'
   page._setShowAll(true)
-  assert.equal(page._page, 1)
+  assert.equal(page._organization, null)
   assert.equal(page._data, null)
   assert.equal(pending[1].url.searchParams.get('showAll'), 'true')
   page._setShowAll(false)
@@ -411,4 +411,43 @@ test('installed Show all defaults off, resets pagination, and ignores a late all
   assert.equal(page._showAll, false)
   pending[4].resolve(Response.json({ repositories: [repo], total: 1 }))
   await setImmediate()
+})
+
+for (const scope of ['connected', 'installed', 'public']) {
+  test(`${scope} loads every repository once and filters locally by organization and search`, async (t) => {
+    const page = createPage(Repositories)
+    const repositories = [...Array.from({ length: 35 }, (_, i) => ({ id: i, fullName: `acme/repo-${i}` })), { id: 50, fullName: 'other/only' }]
+    const network = t.mock.method(globalThis, 'fetch', (url) => {
+      const params = new URL(url, 'http://localhost').searchParams
+      assert.equal(params.get('scope'), scope)
+      for (const name of ['q', 'page', 'limit']) assert.equal(params.has(name), false)
+      return Promise.resolve(Response.json({ repositories, total: repositories.length }))
+    })
+    page._open(scope)
+    await setImmediate()
+    let choices = page._repositoryChoices()
+    assert.equal(choices.count, 36)
+    assert.equal(choices.showFacets, true)
+    assert.deepEqual(choices.facets.map(org => [org.name, org.count]), [['acme', 35], ['other', 1]])
+    page._organization = 'other'
+    assert.deepEqual(page._repositoryChoices().sections[0].options.map(option => option.repo.id), [50])
+    page._search('repo-34')
+    assert.equal(page._repositoryChoices().count, 0, 'search stays within the selected organization')
+    page._organization = null
+    choices = page._repositoryChoices()
+    assert.equal(choices.count, 1)
+    assert.equal(choices.sections[0].options[0].repo.id, 34, 'repos beyond the old first page are searchable')
+    assert.equal(network.mock.callCount(), 1)
+    page._data = { repositories: repositories.slice(0, 35) }
+    page._search('')
+    assert.equal(page._repositoryChoices().showFacets, false, 'one organization needs no sidebar')
+  })
+}
+
+test('repository labels do not infer public visibility from the stored private flag', () => {
+  const page = createPage(Repositories)
+  assert.equal(page._accessLabel({ installed: true, private: false, visibility: 'internal' }), 'Internal · GitHub App')
+  assert.equal(page._accessLabel({ installed: true, private: false, visibility: 'public' }), 'Public · GitHub App')
+  assert.equal(page._accessLabel({ installed: true, private: false }), 'GitHub App', 'stored records with unknown visibility stay neutral')
+  assert.equal(page._accessLabel({ installed: true, private: true }), 'Private · GitHub App')
 })

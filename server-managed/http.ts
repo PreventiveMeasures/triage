@@ -305,7 +305,8 @@ async function handleListModels(res: ServerResponse, deps: ManagedHttpDeps, cook
 
 // GET /api/admin/repositories — the connected repositories by default. The
 // potentially large GitHub discovery lists are opt-in (`scope=installed` or
-// `scope=public`) and are searched/paged on the server. Admin-only. No CSRF.
+// `scope=public`). Return the complete catalogue for local search and organization
+// filtering. Admin-only. No CSRF.
 async function handleListRepositories(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, discovery: RepositoryDiscovery): Promise<void> {
   if ((req.method ?? 'GET') !== 'GET') { send405(res, 'GET'); return }
   const s = await readAdminSession(res, deps, cookie)
@@ -313,7 +314,7 @@ async function handleListRepositories(req: IncomingMessage, res: ServerResponse,
   const url = new URL(req.url ?? '/', 'http://localhost')
   // Keep the original unparameterized response shape for older clients. The
   // admin UI always sends an explicit scope, which opts into the connected-first
-  // and paged discovery flow below.
+  // discovery flow below.
   if ([...url.searchParams.keys()].length === 0) {
     const token = await ensureUserAccessToken(deps.config, deps.db, s.user.id, Date.now())
     const listing = await collectRepos(deps.config, token)
@@ -321,7 +322,7 @@ async function handleListRepositories(req: IncomingMessage, res: ServerResponse,
     sendJson(res, 200, {
       installUrl: installUrl(deps.config),
       repositories: listing.repositories.map((repo) => ({
-        id: repo.id, fullName: repo.fullName, private: repo.private, htmlUrl: repo.htmlUrl,
+        id: repo.id, fullName: repo.fullName, private: repo.private, visibility: repo.visibility, htmlUrl: repo.htmlUrl,
         installed: repo.installationId != null, selected: selected.has(repo.id),
       })),
       tokenMissing: listing.tokenMissing,
@@ -330,9 +331,6 @@ async function handleListRepositories(req: IncomingMessage, res: ServerResponse,
   }
   const scope = url.searchParams.get('scope') ?? 'connected'
   if (scope !== 'connected' && scope !== 'installed' && scope !== 'public') { sendJson(res, 400, { error: 'bad-scope' }); return }
-  const query = (url.searchParams.get('q') ?? '').trim().toLocaleLowerCase()
-  const page = Math.max(1, Number.parseInt(url.searchParams.get('page') ?? '1', 10) || 1)
-  const limit = Math.min(50, Math.max(1, Number.parseInt(url.searchParams.get('limit') ?? '20', 10) || 20))
   const selectedRows = await deps.db.listSelectedRepos()
   const allRows = scope === 'connected' ? await deps.db.listAllRepos() : []
   const selected = new Set(selectedRows.map((r) => r.repoId))
@@ -357,20 +355,18 @@ async function handleListRepositories(req: IncomingMessage, res: ServerResponse,
     tokenMissing = listing.tokenMissing
     repositories = listing.repositories
       .map((r) => ({
-        id: r.id, fullName: r.fullName, private: r.private, htmlUrl: r.htmlUrl,
+        id: r.id, fullName: r.fullName, private: r.private, visibility: r.visibility, htmlUrl: r.htmlUrl,
         installed: r.installationId != null, selected: selected.has(r.id),
       }))
   }
-  if (query) repositories = repositories.filter((r) => r.fullName.toLocaleLowerCase().includes(query))
   repositories.sort((a, b) => a.fullName.localeCompare(b.fullName))
   const total = repositories.length
-  const start = (page - 1) * limit
   sendJson(res, 200, {
     installUrl: installUrl(deps.config),
-    repositories: repositories.slice(start, start + limit),
+    repositories,
     connectedCount: selectedRows.length,
     inactiveCount: allRows.filter((r) => !r.active).length,
-    total, page, limit,
+    total,
     tokenMissing,
   })
 }

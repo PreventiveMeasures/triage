@@ -2642,7 +2642,7 @@ test('team slugs are assigned by the server and cannot be edited through create 
   assert.equal(JSON.parse((await send('GET', '/api/admin/teams', cookie)).body).teams[0].slug, team.slug)
 })
 
-test('installed discovery defaults to acting GH access, Show all stays admin-only, and paging reuses discovery', async (t) => {
+test('installed discovery defaults to acting GH access, Show all stays admin-only, and returns complete catalogues', async (t) => {
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())
   const cfg = { ...config, githubAppId: '1', githubAppPrivateKey: generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs1', format: 'pem' }) }
@@ -2652,18 +2652,19 @@ test('installed discovery defaults to acting GH access, Show all stays admin-onl
   const manager = (await readSession(cfg, db, cookiePair(bob.setCookie), Date.now())).user
   await db.setUserRole(manager.id, 'manage')
   await db.setUserTokens(admin.id, { accessToken: 'alice-token', refreshToken: null, expiresAt: null })
+  let installedRepos = [
+    { id: 10, full_name: 'org/alice-repo', private: false, visibility: 'internal' },
+    { id: 20, full_name: 'org/bob-repo', private: true, visibility: 'private' },
+  ]
+  let userRepos = []
   const calls = []
   t.mock.method(globalThis, 'fetch', (url, options) => {
     const path = new URL(url).pathname
     calls.push(path)
     if (path === '/app/installations') return jsonResponse([{ id: 7 }])
     if (path.endsWith('/access_tokens')) return jsonResponse({ token: 'installation' })
-    if (path === '/installation/repositories') {
-      return jsonResponse({ total_count: 2, repositories: [
-      { id: 10, full_name: 'org/alice-repo', private: true },
-      { id: 20, full_name: 'org/bob-repo', private: true },
-      ] })
-    }
+    if (path === '/installation/repositories') return jsonResponse({ total_count: installedRepos.length, repositories: installedRepos })
+    if (path === '/user/repos') return jsonResponse(userRepos)
     if (path === '/user') {
       assert.equal(options.headers.authorization, 'Bearer alice-token')
       return jsonResponse({ id: 1, login: 'alice' })
@@ -2673,9 +2674,9 @@ test('installed discovery defaults to acting GH access, Show all stays admin-onl
   })
   let pending
   const handler = createManagedRequestHandler({ config: cfg, db, avatarStore: fakeAvatarStore(), reportStore: fakeBlobStore(), bundleStore: createBundleStore(fakeBlobStore(), fakeBlobStore()), originGate: { trustProxy: false, isOriginAllowed: () => true }, isShuttingDown: () => false, track: promise => { pending = promise } })
-  async function get(query = '', cookie = cookiePair(alice.setCookie)) {
+  async function get(query = '', cookie = cookiePair(alice.setCookie), scope = 'installed') {
     const res = { statusCode: 0, body: '', writeHead(code) { this.statusCode = code }, end(body) { this.body = body } }
-    handler({ method: 'GET', url: `/api/admin/repositories?scope=installed${query}`, headers: { cookie } }, res)
+    handler({ method: 'GET', url: `/api/admin/repositories?scope=${scope}${query}`, headers: { cookie } }, res)
     await pending
     return { status: res.statusCode, ...JSON.parse(res.body) }
   }
@@ -2685,12 +2686,29 @@ test('installed discovery defaults to acting GH access, Show all stays admin-onl
   const filtered = await get()
   assert.equal(filtered.status, 200)
   assert.deepEqual(filtered.repositories.map(repo => repo.id), [10])
+  assert.equal(filtered.repositories[0].visibility, 'internal')
   const count = calls.length
   const all = await get('&showAll=true&limit=1&page=2')
   assert.equal(all.total, 2)
-  assert.deepEqual(all.repositories.map(repo => repo.id), [20])
-  assert.deepEqual((await get('&q=bob')).repositories, [])
-  assert.equal(calls.length, count, 'toggle, search and paging reuse the catalogue')
+  assert.deepEqual(all.repositories.map(repo => repo.id), [10, 20])
+  assert.deepEqual((await get('&q=bob')).repositories.map(repo => repo.id), [10])
+  assert.equal(calls.length, count, 'legacy paging/search parameters do not truncate the catalogue')
   await get('&refresh=true')
   assert.equal(calls.length, 2 * count)
+  installedRepos = Array.from({ length: 65 }, (_, i) => ({ id: i + 100, full_name: `org/installed-${i}`, private: false, visibility: 'public' }))
+  userRepos = Array.from({ length: 75 }, (_, i) => ({ id: i + 200, full_name: `org/public-${i}`, private: false, visibility: 'public' }))
+  const legacyPaging = '&q=does-not-match&page=2&limit=1'
+  const installed = await get(`&refresh=true${legacyPaging}`)
+  assert.equal(installed.repositories.length, 65)
+  assert.equal(installed.total, 65)
+  assert.equal('page' in installed, false)
+  assert.equal('limit' in installed, false)
+  const publicListing = await get(legacyPaging, cookiePair(alice.setCookie), 'public')
+  assert.equal(publicListing.repositories.length, 75)
+  for (const repo of installedRepos) {
+    await db.selectRepo({ repoId: repo.id, fullName: repo.full_name, private: false, installationId: 7, defaultBranch: 'main', htmlUrl: '', addedBy: admin.id }, Date.now())
+  }
+  const connected = await get(legacyPaging, cookiePair(alice.setCookie), 'connected')
+  assert.equal(connected.repositories.length, 65)
+  assert.equal(connected.connectedCount, 65)
 })

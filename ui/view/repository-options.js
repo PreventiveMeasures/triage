@@ -17,15 +17,16 @@ const searchKey = value => value.normalize('NFKC').toLocaleLowerCase()
 const compare = (a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })
 export const OTHER_REPOSITORIES = Symbol('other repositories')
 
-export function repositoryChoices(options, query = '', organization = null) {
+export function repositoryChoices(options, query = '', organization = null, { includeSingletonOrganizations = false } = {}) {
   const entries = options.map(option => ({ ...option, ...(option.special ? { owner: null, name: option.label } : repositoryParts(option.label)) }))
   const owners = new Map()
   for (const entry of entries) {
     if (entry.owner != null) owners.set(entry.owner, (owners.get(entry.owner) ?? 0) + 1)
   }
-  const organizations = [...owners].filter(([, count]) => count > 1)
+  const minimumGroupSize = includeSingletonOrganizations ? 1 : 2
+  const organizations = [...owners].filter(([, count]) => count >= minimumGroupSize)
     .toSorted(([a], [b]) => compare(a, b)).map(([name, count]) => ({ value: name, name, count }))
-  const isOther = entry => (owners.get(entry.owner) ?? 0) <= 1
+  const isOther = entry => (owners.get(entry.owner) ?? 0) < minimumGroupSize
   const otherCount = entries.filter(entry => !entry.special && !entry.reset && isOther(entry)).length
   if (otherCount > 0) organizations.push({ value: OTHER_REPOSITORIES, name: 'Other', count: otherCount })
   const activeOrganization = organizations.some(group => group.value === organization) ? organization : null
@@ -39,7 +40,7 @@ export function repositoryChoices(options, query = '', organization = null) {
   for (const entry of visible) {
     // Single-repository organizations share a flat section with full names;
     // don't spend a header and a second row on every scattered repository.
-    const group = (owners.get(entry.owner) ?? 0) > 1 ? entry.owner : null
+    const group = (owners.get(entry.owner) ?? 0) >= minimumGroupSize ? entry.owner : null
     if (!groups.has(group)) groups.set(group, [])
     groups.get(group).push(entry)
   }

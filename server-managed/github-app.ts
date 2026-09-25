@@ -18,8 +18,6 @@ const GITHUB_API = 'https://api.github.com'
 const API_VERSION = '2022-11-28'
 const USER_AGENT = 'deepview-triage'
 const PER_PAGE = 100
-// Pagination safety bound (100/page) so a runaway listing can't spin forever.
-const MAX_PAGES = 20
 
 // One listed repository. Carries the context to read its contents later:
 // `installationId` mints an App installation token (Contents: Read) for a repo
@@ -123,7 +121,7 @@ function parseRepo(raw: unknown, installationId: number | null): ConnectedRepo |
 // user's PUBLIC repos. READ-ONLY.
 export async function listUserRepos(accessToken: string, fetchImpl: typeof fetch = globalThis.fetch): Promise<ConnectedRepo[]> {
   const byName = new Map<string, ConnectedRepo>()
-  for (let page = 1; page <= MAX_PAGES; page++) {
+  for (let page = 1; ; page++) {
     const url = `${GITHUB_API}/user/repos?per_page=${PER_PAGE}&page=${page}&sort=full_name`
     const body = await githubJson(url, accessToken, fetchImpl)
     if (!Array.isArray(body)) break
@@ -156,7 +154,7 @@ export function appJwt(appId: string, privateKeyPem: string, now: number = Date.
 // The repositories App's installation ids (one per org/user that installed it).
 async function listInstallationIds(jwt: string, fetchImpl: typeof fetch): Promise<number[]> {
   const ids: number[] = []
-  for (let page = 1; page <= MAX_PAGES; page++) {
+  for (let page = 1; ; page++) {
     const body = await githubJson(`${GITHUB_API}/app/installations?per_page=${PER_PAGE}&page=${page}`, jwt, fetchImpl)
     if (!Array.isArray(body)) throw new GithubApiError(502, 'github-malformed')
     for (const inst of body) {
@@ -197,7 +195,7 @@ async function listInstallationRepos(token: string, installationId: number, fetc
   const first = await githubJson(pageUrl(1), token, fetchImpl) as { total_count?: unknown }
   const repos = repoPage(first, installationId)
   const total = typeof first.total_count === 'number' ? first.total_count : repos.length
-  const pages = Math.min(Math.ceil(total / PER_PAGE), MAX_PAGES)
+  const pages = Math.ceil(total / PER_PAGE)
   for (let page = 2; page <= pages; page++) {
     repos.push(...repoPage(await githubJson(pageUrl(page), token, fetchImpl), installationId))
   }

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { generateKeyPairSync } from 'node:crypto'
 import { test } from 'node:test'
 import { setImmediate } from 'node:timers/promises'
-import { listInstalledRepos } from '../server-managed/github-app.ts'
+import { listInstalledRepos, listUserRepos } from '../server-managed/github-app.ts'
 import { RepositoryDiscovery } from '../server-managed/repository-discovery.ts'
 
 const config = {
@@ -215,4 +215,30 @@ test('public discovery still surfaces user-repository failures independently of 
   await assert.rejects(directory.list('public', 'a', 'alice'), /github-status-403/u)
   userStatus = 401
   assert.deepEqual(await directory.list('public', 'a', 'alice'), { repositories: [], tokenMissing: true })
+})
+
+test('GitHub repository discovery reads beyond twenty upstream pages without truncation', async () => {
+  const total = 2001
+  const pageRepos = page => Array.from({ length: Math.min(100, total - (page - 1) * 100) }, (_, i) => ({
+    id: (page - 1) * 100 + i + 1, full_name: `Org/repo-${(page - 1) * 100 + i + 1}`, visibility: 'public',
+  }))
+  const userPages = []
+  const userRepos = await listUserRepos('user-token', url => {
+    const page = Number(new URL(url).searchParams.get('page'))
+    userPages.push(page)
+    return Promise.resolve(Response.json(pageRepos(page)))
+  })
+  assert.equal(userRepos.length, total)
+  assert.equal(userPages.at(-1), 21)
+  const installationPages = []
+  const installedRepos = await listInstalledRepos(config, url => {
+    const parsed = new URL(url)
+    if (parsed.pathname === '/app/installations') return Promise.resolve(Response.json([{ id: 7 }]))
+    if (parsed.pathname.endsWith('/access_tokens')) return Promise.resolve(Response.json({ token: 'installation' }))
+    const page = Number(parsed.searchParams.get('page'))
+    installationPages.push(page)
+    return Promise.resolve(Response.json({ total_count: total, repositories: pageRepos(page) }))
+  })
+  assert.equal(installedRepos.length, total)
+  assert.equal(installationPages.at(-1), 21)
 })
