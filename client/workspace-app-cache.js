@@ -42,6 +42,17 @@ function workspaceUnchanged(cache, workspace, token) {
     && token.workspaceEpoch === (workspaceEpochs.get(workspace?.id) ?? 0)
     && token.workspaceRevision === workspaceRevision(cache, workspace?.id)
 }
+function reportsUnchanged(cache, workspace, token) {
+  return token.reportEpoch === reportEpoch
+    && token.reportRevision === (cache.reportRevision ?? cache.revision)
+    && workspaceUnchanged(cache, workspace, token)
+}
+
+// A live view can describe its loaded reports with the current links before
+// the full library is verified. Report and membership revisions still apply.
+export function workspaceAppReportsCurrent(workspace, token) {
+  return reportsUnchanged(parse(), workspace, token)
+}
 
 function cachedEntry(workspace, cache) {
   if (allDirty || dirty.has(workspace.id)) return null
@@ -80,9 +91,7 @@ export async function workspaceAppCacheToken(workspace, reportsToken = null) {
   // membership in this workspace require a fresh load. A sibling tab can also
   // invalidate links without updating this tab's in-memory index: don't accept that revision
   // until the indexed links match the persisted snapshot.
-  if (reportsToken && (reportsToken.reportEpoch !== reportEpoch
-      || reportsToken.reportRevision !== reportRevision
-      || !workspaceUnchanged(cache, workspace, reportsToken)
+  if (reportsToken && (!reportsUnchanged(cache, workspace, reportsToken)
       || !linksMatch(cache))) return null
   return {
     epoch, revision: cache.revision, reportEpoch, reportRevision,

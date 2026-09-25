@@ -4,7 +4,7 @@ import { gzipSync } from 'node:zlib'
 import './_polyfills.js'
 import { SECURE_KEYS, getItem, hydrate, __test__ as secureTest, setItem } from '../client/secure-storage.js'
 import { addReportToWorkspace, createWorkspace, deleteWorkspace, listWorkspaces, renameWorkspace } from '../client/workspaces.js'
-import { cacheWorkspaceAppMetadata, getWorkspaceAppMetadata, getWorkspaceAppModeHint, invalidateWorkspaceAppMetadata, onWorkspaceAppMetadataChanged, workspaceAppCacheToken } from '../client/workspace-app-cache.js'
+import { cacheWorkspaceAppMetadata, getWorkspaceAppMetadata, getWorkspaceAppModeHint, invalidateWorkspaceAppMetadata, onWorkspaceAppMetadataChanged, workspaceAppCacheToken, workspaceAppReportsCurrent } from '../client/workspace-app-cache.js'
 import { deleteFile, listFiles, saveFile } from '../client/storage.js'
 import { ensureCounts, setCount } from '../client/counts.js'
 import { duplicatesOf, ensureLinkedFindingsIndexed, linkFiles } from '../client/linked-findings-index.js'
@@ -214,6 +214,7 @@ describe('workspace App metadata cache', () => {
     await saveFile(ws.reports[0], '{"findings":[]}')
     assert.equal(getWorkspaceAppMetadata(ws), null)
     assert.equal(getWorkspaceAppModeHint(ws), null, 'changed report content discards the layout hint too')
+    assert.equal(workspaceAppReportsCurrent(ws, token), false, 'live counts reject overwritten reports too')
     assert.equal(await cacheWorkspaceAppMetadata(ws, metadata, token), false)
     await indexFiles()
     assert.equal(getWorkspaceAppMetadata(other).appFindings, 3)
@@ -232,6 +233,7 @@ describe('workspace App metadata cache', () => {
       const token = await workspaceAppCacheToken(ws)
       const name = attached ? other.reports[0] : 'background-download.json'
       await saveFile(name, '{"findings":[]}')
+      assert.equal(workspaceAppReportsCurrent(ws, token), true, 'live counts survive unrelated writes before the rescan')
       await indexFiles()
       assert.ok(await workspaceAppCacheToken(ws, token), 'unrelated bytes do not invalidate the loaded reports')
       assert.equal(await cacheWorkspaceAppMetadata(ws, metadata, token), true, 'a completed calculation also survives an unrelated write')
@@ -245,6 +247,8 @@ describe('workspace App metadata cache', () => {
     await addReportToWorkspace('second.json', other.id)
     assert.ok(await workspaceAppCacheToken(ws, token))
     assert.equal(await workspaceAppCacheToken(other, otherToken), null)
+    assert.equal(workspaceAppReportsCurrent(other, otherToken), false)
+    assert.equal(workspaceAppReportsCurrent(ws, token), true)
     assert.equal(await cacheWorkspaceAppMetadata(other, metadata, token), false)
     assert.equal(await cacheWorkspaceAppMetadata(ws, metadata, token), true)
   })
@@ -259,6 +263,7 @@ describe('workspace App metadata cache', () => {
       delete cache.entries[changed]
       await setItem(KEY, JSON.stringify(cache))
       assert.equal(Boolean(await workspaceAppCacheToken(ws, token)), !affected)
+      assert.equal(workspaceAppReportsCurrent(ws, token), !affected)
       assert.equal(await cacheWorkspaceAppMetadata(ws, metadata, token), !affected)
     })
   }

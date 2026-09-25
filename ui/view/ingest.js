@@ -19,7 +19,7 @@ import { openPasskeyUnlockDialog } from './dialogs/passkey-unlock-dialog.js'
 import { openSyncDownloadDialog } from './dialogs/sync-download-dialog.js'
 import { fetchReport as fetchManagedReport, login as managedLogin } from './client-managed.js'
 import { showToast } from './toast.js'
-import { updateWorkspaceAppMetadata } from './workspace-app-load.js'
+import { setLoadedWorkspaceAppReports, updateWorkspaceAppMetadata } from './workspace-app-load.js'
 
 // localStorage key for the last-viewed file — restored on page load so
 // the user picks back up where they left off. The stored value is the
@@ -876,6 +876,15 @@ export async function switchToWorkspace(workspaceId) {
     state.revalidationDetailed = false
     configureReportRevalidation()
   }
+  const loadedReports = state.reports.slice()
+  setLoadedWorkspaceAppReports(ws, loadedReports, appToken, {
+    complete,
+    isCurrent: () => !isStaleLoad(gen) && state.currentWorkspace === workspaceId
+      && ['findings', 'files'].includes(state.currentView),
+  })
+  // Start the sidebar refresh with the completed snapshot, alongside the main
+  // view's first paint, without waiting for unrelated files to finish indexing.
+  const sidebarRender = renderSidebar().catch((err) => console.warn('workspace sidebar:', err))
   if (ingested > 0) {
     applyOpeningFilters(getShownGroups())
     if (!(await renderAfterAnimationFrame(gen))) return
@@ -886,7 +895,7 @@ export async function switchToWorkspace(workspaceId) {
   // left them alone; metadata still updates if they choose a different lens.
   const openingFields = ['showRevalidation', 'upstreamOnly', 'revalidationDetailed', 'filterConfMin', 'filterConfMax', 'filterRevalidate', 'filterPartial', 'sortBy', 'severityMode']
   const opening = openingFields.map((key) => state[key])
-  void updateWorkspaceAppMetadata(ws, state.reports.slice(), appToken, {
+  void updateWorkspaceAppMetadata(ws, loadedReports, appToken, {
     complete,
     isCurrent: () => !isStaleLoad(gen),
     onReady: async (metadata) => {
@@ -913,7 +922,7 @@ export async function switchToWorkspace(workspaceId) {
   // state.reports carries the report.
   triageSync.refreshSession(workspaceId)
   openPresence(workspaceId)
-  await renderSidebar()
+  await sidebarRender
 }
 
 // Remove the current file from OPFS and close the view. Doesn't

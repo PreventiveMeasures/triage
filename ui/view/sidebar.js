@@ -12,6 +12,7 @@ import { initEncryptionToggle, refreshEncryptionToggle } from './encryption-togg
 import { initStorageStatus, scheduleStorageStatusRefresh } from './storage-status.js'
 import { render } from './render.js'
 import { renderLandingWorkspaces } from './landing-workspaces.js'
+import { getLoadedWorkspaceAppMetadata } from './workspace-app-load.js'
 import { updateManagedLanding } from './landing-managed.js'
 import { refreshScanNavigation } from './scan-navigation.js'
 
@@ -680,7 +681,7 @@ export async function renderSidebar({ revealSelection = false } = {}) {
           missingBundles.push(integ)
         }
       }
-      const app = getWorkspaceAppMetadata(w)
+      const app = getLoadedWorkspaceAppMetadata(w) ?? getWorkspaceAppMetadata(w)
       const compact = app?.appMode ?? (getWorkspaceAppModeHint(w) === true)
       const sections = expandedWorkspaceSections.get(w.id)
       const showReports = !compact || searchActive || sections?.has('reports') === true
