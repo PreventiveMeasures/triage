@@ -22,9 +22,15 @@ class ManagedFixLink extends StateElement {
     .closed { color: light-dark(#d1242f, #f85149); }
     .merged { color: light-dark(#8250df, #a371f7); }
     .unknown { color: var(--muted); }
-    .ref { color: var(--muted); font-size: .9em; margin-left: .35em; }
+    :host(:not([compact])) { display: block; }
+    :host(:not([compact])) .fix-link { display: flex; align-items: center; gap: .55rem; min-width: 0; }
+    .link-icon { flex: none; line-height: 1; }
+    .link-icon svg { display: block; }
+    .link-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-weight: 500; line-height: 1.5; }
+    .ref { min-width: 0; max-width: 32%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: .74rem; }
+    .link-status { flex: none; padding: .15rem .4rem; border-radius: 999px; background: color-mix(in srgb, currentColor 10%, transparent); font-size: .7rem; font-weight: 500; line-height: 1.3; }
     :host([compact]) { display: inline-flex; }
-    :host([compact]) a { display: inline-flex; align-items: center; justify-content: center; width: 100%; height: 100%; }
+    :host([compact]) .fix-link { display: inline-flex; align-items: center; justify-content: center; width: 100%; height: 100%; }
     :host([compact]) .status { margin: 0; font-size: 1rem; line-height: 1; }
     .preview {
       position: fixed; inset: auto; margin: 0; padding: 14px; box-sizing: border-box;
@@ -33,11 +39,10 @@ class ManagedFixLink extends StateElement {
       box-shadow: 0 8px 28px rgb(0 0 0 / .25); font: 13px/1.45 system-ui, sans-serif;
       text-align: left; white-space: normal; overflow-wrap: anywhere; letter-spacing: normal; cursor: default;
     }
-    .preview-repo { color: var(--muted); font-size: 12px; }
-    .preview-title { margin: 8px 0 12px; font-size: 15px; font-weight: 600; line-height: 1.4; }
-    .preview-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-    .preview .preview-footer .status { margin: 0; font-size: 12px; line-height: 1.4; }
-    .preview-kind { color: var(--muted); font-size: 12px; }
+    .preview-header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+    .preview-ref { min-width: 0; color: var(--muted); font-size: 12px; }
+    .preview-title { margin-top: 8px; font-size: 15px; font-weight: 600; line-height: 1.4; }
+    .preview .preview-header .status { flex: none; margin: 0; font-size: 12px; line-height: 1.4; }
   `
 
   constructor() {
@@ -64,8 +69,8 @@ class ManagedFixLink extends StateElement {
   }
 
   updated(changed) {
-    // An edited link must not leave a preview for the previous destination.
-    if (changed.has('url')) this._hidePreview()
+    // Editing the destination or switching to a full row dismisses the preview.
+    if (changed.has('url') || changed.has('compact')) this._hidePreview()
     else if (this.renderRoot.querySelector('.preview')?.matches(':popover-open')) this._positionPreview()
   }
 
@@ -93,7 +98,9 @@ class ManagedFixLink extends StateElement {
   _leavePreview() {
     clearTimeout(this.showTimer)
     clearTimeout(this.hideTimer)
-    this.hideTimer = setTimeout(this._hidePreview, 150)
+    this.hideTimer = setTimeout(() => {
+      if (!this.renderRoot.querySelector('.preview')?.contains(this.renderRoot.activeElement)) this._hidePreview()
+    }, 150)
   }
 
   _hidePreview = () => {
@@ -110,6 +117,9 @@ class ManagedFixLink extends StateElement {
     if (event.key !== 'Escape') return
     event.preventDefault()
     event.stopPropagation()
+    if (this.renderRoot.querySelector('.preview')?.contains(this.renderRoot.activeElement)) {
+      this.renderRoot.querySelector('.fix-link').focus({ preventScroll: true })
+    }
     this._hidePreview()
   }
 
@@ -139,22 +149,26 @@ class ManagedFixLink extends StateElement {
     const name = ref ? `${ref.repo}#${ref.number}` : ''
     const description = data ? `${labels[data.status]} pull request: ${data.title} (${name})`
       : ref ? `Open ${pr ? 'pull request' : 'issue'}: ${name}` : `Open fix link: ${this.url}`
-    return html`<a href=${this.url} target="_blank" rel="noopener noreferrer" draggable="false" aria-label=${description}
-      aria-describedby=${ref ? 'fix-preview' : nothing} data-tooltip=${ref ? nothing : description}
+    return html`<a class="fix-link" href=${this.url} target="_blank" rel="noopener noreferrer" draggable="false" aria-label=${description}
+      aria-details=${this.compact && ref ? 'fix-preview' : nothing} data-tooltip=${this.compact && !ref ? description : nothing}
       @mouseenter=${this._schedulePreview} @mouseleave=${this._leavePreview}
       @focus=${this._schedulePreview} @blur=${this._leavePreview} @click=${this._hidePreview}>
-      ${icon ? html`<span class=${`status ${data?.status ?? 'unknown'}`}>${icon}${!this.compact && data ? labels[data.status] : nothing}</span>` : nothing}
-      ${this.compact ? (icon ? nothing : html`<slot></slot>`) : data
-        ? html`${data.title}<span class="ref">${name}</span>` : this.url}
-    </a>${ref ? html`<div class="preview" id="fix-preview" popover="manual" role="tooltip"
-      @mouseenter=${this._keepPreview} @mouseleave=${this._leavePreview} @click=${event => event.stopPropagation()}>
-      <div class="preview-repo">${ref.repo}</div>
-      <div class="preview-title">${data?.title ?? `${pr ? 'Pull request' : 'Issue'} #${ref.number}`}</div>
-      <div class="preview-footer">
-        <span class=${`status ${data?.status ?? 'unknown'}`}>${icon}${data ? labels[data.status] : pr ? 'Pull request' : 'Issue'}</span>
-        <span class="preview-kind">${pr ? 'Pull request' : 'Issue'} #${ref.number} · GitHub</span>
+      ${this.compact
+        ? icon ? html`<span class=${`status ${data?.status ?? 'unknown'}`}>${icon}</span>` : html`<slot></slot>`
+        : html`${icon ? html`<span class=${`link-icon ${data?.status ?? 'unknown'}`}>${icon}</span>` : nothing}
+          <span class="link-title">${data?.title ?? this.url}</span>
+          ${data ? html`<span class="ref">${name}</span><span class=${`link-status ${data.status}`}>${labels[data.status]}</span>` : nothing}`}
+    </a>${this.compact && ref ? html`<a class="preview" id="fix-preview" popover="manual" href=${this.url}
+      target="_blank" rel="noopener noreferrer" draggable="false" aria-label=${`Open ${pr ? 'pull request' : 'issue'} ${name} on GitHub`}
+      @mouseenter=${this._keepPreview} @mouseleave=${this._leavePreview}
+      @focusin=${this._keepPreview} @focusout=${this._leavePreview}
+      @click=${event => { event.stopPropagation(); this._hidePreview() }}>
+      <div class="preview-header">
+        <span class="preview-ref">${name}</span>
+        <span class=${`status ${data?.status ?? 'unknown'}`}>${icon}${data ? labels[data.status] : nothing}</span>
       </div>
-    </div>` : nothing}`
+      ${data ? html`<div class="preview-title">${data.title}</div>` : nothing}
+    </a>` : nothing}`
   }
 }
 

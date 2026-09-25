@@ -1227,6 +1227,18 @@ span.evidence-ref:not([role]) { color: var(--muted); }
   & a { color: var(--accent); text-decoration: none; }
   & a:hover { text-decoration: underline; }
 }
+.fix-block:has(managed-fix-link) {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  padding: .45rem .65rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgb(from var(--muted) r g b / .04);
+  word-break: normal;
+  & .fix-label { flex: none; font-size: .75rem; font-weight: 500; }
+  & managed-fix-link { flex: 1; min-width: 0; }
+}
 /* "Duplicates:" — the findings a links file says are this one reported
    again (render-finding.js), sitting under everything the report said
    and above the reader's own comment and fix.
