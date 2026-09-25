@@ -4,7 +4,7 @@
 // a live server can't easily prove (CSRF, token exchange, session lifecycle).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { Readable } from 'node:stream'
+import { Readable, Writable } from 'node:stream'
 import { createVerify, generateKeyPairSync, randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -73,6 +73,10 @@ function fakeBlobStore() {
     map,
     put(id, bytes) { map.set(id, bytes); return Promise.resolve() },
     get(id) { return Promise.resolve(map.get(id) ?? null) },
+    open(id) {
+      const bytes = map.get(id)
+      return Promise.resolve(bytes ? { size: bytes.length, stream: Readable.from([bytes]) } : null)
+    },
     delete(id) { map.delete(id); return Promise.resolve() },
   }
 }
@@ -930,15 +934,19 @@ function bundleHarness(db, cfg = config, reportStore = fakeBlobStore()) {
     isShuttingDown: () => false, track: (p) => { pending = p },
   })
   function mockRes() {
-    return {
-      statusCode: 0, headers: {}, body: '', bytes: Buffer.alloc(0), ended: false,
-      writeHead(c, h) { this.statusCode = c; if (h) this.headers = h; return this },
-      end(b) {
-        if (b != null) { this.body += b; this.bytes = Buffer.concat([this.bytes, Buffer.from(b)]) }
-        this.ended = true; return this
-      },
-      get headersSent() { return this.ended },
-    }
+    return new class extends Writable {
+      statusCode = 0
+      headers = {}
+      body = ''
+      bytes = Buffer.alloc(0)
+      ended = false
+      writeHead(c, h) { this.statusCode = c; if (h) this.headers = h; return this }
+      _write(chunk, _encoding, callback) {
+        this.body += chunk; this.bytes = Buffer.concat([this.bytes, chunk]); callback()
+      }
+      _final(callback) { this.ended = true; callback() }
+      get headersSent() { return this.ended }
+    }()
   }
   async function upload(url, cookie, csrf, body, extraHeaders = {}) {
     const res = mockRes()

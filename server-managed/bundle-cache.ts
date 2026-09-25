@@ -1,10 +1,9 @@
 // Metadata is cached as Brotli. Contents use the stored Brotli bytes directly:
-// unchanged Stasis uploads or sourcemaps compressed once at upload/migration.
+// unchanged Stasis uploads or sourcemaps compressed once at upload.
 import { Buffer } from 'node:buffer'
 import { mkdir, open, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { Readable } from 'node:stream'
 import { brotliDecompress } from 'node:zlib'
 import { promisify } from 'node:util'
 import { BUNDLE_METADATA_VERSION, createBundleMetadata, parseBundleContents } from '../common/bundle-metadata.js'
@@ -63,9 +62,9 @@ export function createDiskBundleCache(dir: string, db: ManagedDb, store: BundleS
     async open(record: ManagedBundle, part: BundleCachePart) {
       if (part === 'contents') {
         if (record.kind !== 'stasis' && record.kind !== 'sourcemap') throw new Error('Unsupported bundle')
-        const bytes = await store.get(record.id, record.kind)
-        if (!bytes) throw new Error('Bundle bytes unavailable')
-        return { size: bytes.length, stream: Readable.from([bytes]) }
+        const stored = await store.open(record.id, record.kind)
+        if (!stored) throw new Error('Bundle bytes unavailable')
+        return stored
       }
       await ensure(record)
       const file = await open(filename(record.id), 'r')

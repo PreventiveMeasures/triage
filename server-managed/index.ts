@@ -1,7 +1,6 @@
 // Managed HTTP app and standalone boot. The combined launcher mounts this
 // same app on e2e's listener; storage, routing and cleanup stay here.
 import { createServer } from 'node:http'
-import { readdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createOriginGate } from '../server-common/origin.ts'
@@ -36,23 +35,6 @@ export function createManagedApp(config: ManagedConfig, options: Partial<Pick<Ma
     inFlight.add(p)
     p.finally(() => inFlight.delete(p)).catch(() => {})
   }
-
-  // Convert legacy sourcemaps sequentially without delaying server startup.
-  // Reads also migrate on demand; per-bundle serialization covers races/deletion.
-  track((async () => {
-    const stored = new Set(await readdir(join(dataDir, 'bundles')).catch((err: NodeJS.ErrnoException) => {
-      if (err.code === 'ENOENT') return []
-      throw err
-    }))
-    for (const bundle of await db.listBundles()) {
-      if (shuttingDown) break
-      if (bundle.kind === 'sourcemap' && stored.has(bundle.id)) {
-        await bundleStore.get(bundle.id, bundle.kind).catch(err => {
-          console.warn('managed: sourcemap storage migration failed:', err)
-        })
-      }
-    }
-  })().catch(err => { console.warn('managed: sourcemap storage migration failed:', err) }))
 
   const serveStatic = loadManagedStatic(fileURLToPath(new URL('../out/', import.meta.url)), {
     indexOnly: options.next != null, scanServer: options.serverInfo?.deepviewScanServer ?? null,

@@ -2,10 +2,11 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { createServer, request } from 'node:http'
 import { randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { once } from 'node:events'
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { brotliCompressSync, brotliDecompressSync, gunzipSync, gzipSync } from 'node:zlib'
+import { brotliCompressSync, brotliDecompressSync } from 'node:zlib'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { createDiskBundleCache } from '../server-managed/bundle-cache.ts'
 import { createDiskBlobStore } from '../server-managed/blob-store.ts'
@@ -71,8 +72,7 @@ async function setup(t) {
         res.on('end', () => {
           const bytes = Buffer.concat(chunks)
           resolve({ status: res.statusCode, headers: res.headers, bytes,
-            json: () => JSON.parse((res.headers['content-encoding'] === 'br' ? brotliDecompressSync(bytes)
-              : res.headers['content-encoding'] === 'gzip' ? gunzipSync(bytes) : bytes).toString()) })
+            json: () => JSON.parse((res.headers['content-encoding'] === 'br' ? brotliDecompressSync(bytes) : bytes).toString()) })
         })
       })
       req.on('error', reject)
@@ -154,9 +154,37 @@ for (const kind of ['stasis', 'sourcemap']) {
   assert.deepEqual(Buffer.from(await decodedDownload.arrayBuffer()), kind === 'sourcemap' ? Buffer.from(map) : contents.bytes)
 })
 
+  test(`${kind}: GET and HEAD stream stored files without buffered reads`, async t => {
+    const h = await setup(t), record = await h.seed({ kind, repoId: 1 })
+    const bytes = await h.store.get(record.id, kind)
+    t.mock.method(h.store, 'get', () => { throw new Error('must not buffer contents or downloads') })
+    const open = h.store.open, streams = []
+    t.mock.method(h.store, 'open', async (...args) => {
+      const stored = await open(...args)
+      streams.push(stored.stream)
+      return stored
+    })
+    for (const part of ['contents', 'download']) {
+      const url = `/api/bundles/${record.id}/${part}`
+      const heads = await Promise.all(Array.from({ length: 4 }, () => h.send(url, 'viewer', 'HEAD')))
+      for (const head of heads) {
+        assert.equal(head.status, 200)
+        assert.equal(Number(head.headers['content-length']), bytes.length)
+        assert.equal(head.bytes.length, 0)
+      }
+      for (const stream of streams.splice(0)) {
+        if (!stream.closed) await once(stream, 'close')
+        assert.equal(stream.bytesRead, 0, 'HEAD closes the file without reading content')
+      }
+      const response = await h.send(url, 'viewer')
+      assert.equal(response.status, 200)
+      assert.deepEqual(response.bytes, bytes)
+      assert.equal(streams.shift().bytesRead, bytes.length)
+    }
+  })
 }
 
-test('Stasis contents bypass a pending metadata build and ignore legacy gzip derivatives', async t => {
+test('Stasis contents bypass a pending metadata build', async t => {
   const h = await setup(t), record = await h.seed({ repoId: 1 })
   const bytes = await h.store.get(record.id, record.kind)
   const gate = Promise.withResolvers(), get = h.store.get, started = Promise.withResolvers()
@@ -176,29 +204,9 @@ test('Stasis contents bypass a pending metadata build and ignore legacy gzip der
   gate.resolve()
   await build
   assert.deepEqual(await readdir(join(h.cacheDir, record.id)), ['v2-metadata.json.br'])
-  await writeFile(join(h.cacheDir, record.id, 'v2-contents.json.gz'), gzipSync('obsolete gzip derivative'))
   assert.deepEqual((await h.send(`/api/bundles/${record.id}/contents`, 'viewer')).bytes, bytes)
   await h.store.delete(record.id)
-  assert.equal((await h.send(`/api/bundles/${record.id}/contents`, 'viewer')).status, 422, 'never falls back to stale gzip contents')
-})
-
-test('legacy raw sourcemaps and gzip caches upgrade without changing bundle identity', async t => {
-  const h = await setup(t), record = await h.seed({ kind: 'sourcemap' })
-  await h.store.delete(record.id)
-  await createDiskBlobStore(h.bundleDir).put(record.id, Buffer.from(map))
-  const cacheDir = join(h.cacheDir, record.id)
-  await mkdir(cacheDir, { recursive: true })
-  await writeFile(join(cacheDir, 'v2-metadata.json.gz'), gzipSync('{"obsolete":true}'))
-  await writeFile(join(cacheDir, 'v2-contents.json.gz'), gzipSync(map))
-  const metadata = await h.send(`/api/bundles/${record.id}/metadata`, 'owner')
-  assert.equal(metadata.status, 200)
-  assert.equal(metadata.headers['content-encoding'], 'br')
-  assert.ok(parseBundleMetadata(metadata.json(), record.integrity))
-  const contents = await h.send(`/api/bundles/${record.id}/contents`, 'owner')
-  assert.equal(contents.headers['content-encoding'], 'br')
-  assert.equal(brotliDecompressSync(contents.bytes).toString(), map)
-  assert.deepEqual(await readdir(h.bundleDir), [`${record.id}.map.br`])
-  assert.deepEqual(await h.db.getBundle(record.id), record)
+  assert.equal((await h.send(`/api/bundles/${record.id}/contents`, 'viewer')).status, 422, 'missing source bytes are unavailable')
 })
 
 test('cached reads and manager inventory require ownership or team access; revocation applies on cache hits', async t => {
@@ -318,11 +326,12 @@ test('deletion during a cold build cannot leave cache files behind or serve dele
   await assert.rejects(readdir(join(h.cacheDir, record.id)), { code: 'ENOENT' })
 })
 
-for (const part of ['metadata', 'contents']) {
+for (const part of ['metadata', 'contents', 'download']) {
   test(`a membership revoked while loading ${part} prevents serving it`, async t => {
     const h = await setup(t), record = await h.seed({ repoId: 1 })
-    const gate = Promise.withResolvers(), get = h.store.get, started = Promise.withResolvers()
-    h.store.get = async (id, kind) => { started.resolve(); await gate.promise; return get(id, kind) }
+    const method = part === 'metadata' ? 'get' : 'open'
+    const gate = Promise.withResolvers(), read = h.store[method], started = Promise.withResolvers()
+    h.store[method] = async (id, kind) => { started.resolve(); await gate.promise; return read(id, kind) }
     const response = h.send(`/api/bundles/${record.id}/${part}`, 'viewer')
     await started.promise
     await h.db.removeTeamMember(h.team, h.users.viewer.userId)

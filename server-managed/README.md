@@ -198,6 +198,8 @@ returns the original sourcemap or Stasis JSON after HTTP decoding.
 Both endpoints use `Content-Encoding: br`. Metadata is cached as Brotli;
 contents serve the stored Brotli bytes directly, without waiting for metadata
 or generating another compressed copy. Stasis uploads remain byte-identical.
+Contents and downloads use paused file streams; HEAD reads file size only and
+GET streams with backpressure instead of buffering the full bundle per request.
 Clients are expected to support Brotli; no encoding negotiation is needed.
 Both endpoints support HEAD, compressed Content-Length, and
 `Cache-Control: private, no-store`.
@@ -206,11 +208,8 @@ sourcemaps use HTTP Brotli decoding, while Stasis downloads remain .br archives.
 
 Sourcemaps are compressed once to `bundles/:id.map.br`; the uncompressed .map
 is not retained. The DB keeps the original filename, byte size and integrity
-so deduplication and existing report hashes keep working. Legacy sourcemaps
-are converted sequentially in the background at startup and on demand when
-read. Conversion atomically publishes the .map.br file before removing the old
-copy, and resumes cleanup after an interrupted conversion. New sourcemaps and
-metadata use Brotli quality 4 to avoid slow maximum-quality compression.
+so deduplication and report hashes keep working. Sourcemaps and metadata use
+Brotli quality 4 to avoid slow maximum-quality compression.
 
 The cache lives beside the managed database under `cache/bundles/:id/`.
 Uploads schedule a prebuild; reads build missing derivatives on demand. Builds

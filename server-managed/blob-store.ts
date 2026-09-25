@@ -8,14 +8,20 @@
 // data/bundles/<uuid>); the BlobStore interface is backend-agnostic so an S3 /
 // Vercel Blob backend slots in later without touching callers. Bytes only — the
 // content-type / filename / integrity ride the DB row, so there's no sidecar.
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
-import { randomUUID } from 'node:crypto'
+import { mkdir, open, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { Buffer } from 'node:buffer'
+import type { Readable } from 'node:stream'
+
+export interface OpenedBlob {
+  size: number
+  stream: Readable
+}
 
 export interface BlobStore {
   put(id: string, bytes: Buffer): Promise<void>
   get(id: string): Promise<Buffer | null>
+  open(id: string): Promise<OpenedBlob | null>
   delete(id: string): Promise<void>
 }
 
@@ -32,9 +38,7 @@ export function createDiskBlobStore(dir: string, suffix = ''): BlobStore {
     async put(id, bytes) {
       const p = pathFor(id)
       await mkdir(dirname(p), { recursive: true })
-      const temp = `${p}.${randomUUID()}.tmp`
-      try { await writeFile(temp, bytes); await rename(temp, p) }
-      finally { await rm(temp, { force: true }) }
+      await writeFile(p, bytes)
     },
     async get(id) {
       try {
@@ -42,6 +46,16 @@ export function createDiskBlobStore(dir: string, suffix = ''): BlobStore {
       } catch {
         return null
       }
+    },
+    async open(id) {
+      let file
+      try { file = await open(pathFor(id), 'r') }
+      catch (err) { if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null; throw err }
+      try {
+        const info = await file.stat()
+        // Remain paused until piped. HEAD can close without reading the body.
+        return { size: info.size, stream: file.createReadStream() }
+      } catch (err) { await file.close(); throw err }
     },
     async delete(id) {
       // `force` so a missing file (already gone) is a no-op, not a throw — the

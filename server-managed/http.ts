@@ -926,26 +926,30 @@ async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, dep
 // are opaque archives, so served as application/octet-stream. Sourcemaps use
 // HTTP Brotli decoding to restore the uploaded .map bytes. 404 no such
 // bundle; 503 row-without-bytes (store desync).
-async function handleGetBundle(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string): Promise<void> {
+async function handleGetBundle(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string): Promise<void> {
   const s = await readSession(deps.config, deps.db, cookie, Date.now())
   if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
   if (!(await canAccessBundle(deps, s.user, id))) { sendJson(res, 404, { error: 'no-bundle' }); return }
   const rec = await deps.db.getBundle(id)
   if (rec == null) { sendJson(res, 404, { error: 'no-bundle' }); return }
-  const bytes = await deps.bundleStore.get(id, rec.kind)
-  if (bytes == null) { sendJson(res, 503, { error: 'unavailable' }); return }
+  const stored = await deps.bundleStore.open(id, rec.kind)
+  if (stored == null) { sendJson(res, 503, { error: 'unavailable' }); return }
   const current = await readSession(deps.config, deps.db, cookie, Date.now())
-  if (!current || !(await canAccessBundle(deps, current.user, id))) { sendJson(res, current ? 404 : 401, { error: 'no-bundle' }); return }
+  if (!current || !(await canAccessBundle(deps, current.user, id))) {
+    stored.stream.destroy()
+    sendJson(res, current ? 404 : 401, { error: 'no-bundle' }); return
+  }
   const dispoName = rec.filename.replaceAll('"', '')
   res.writeHead(200, {
     'content-type': 'application/octet-stream',
     ...(rec.kind === 'sourcemap' ? { 'content-encoding': 'br' } : {}),
-    'content-length': String(bytes.length),
+    'content-length': String(stored.size),
     'content-disposition': `attachment; filename="${dispoName}"`,
     'x-content-type-options': 'nosniff',
     'cache-control': 'no-store',
   })
-  res.end(bytes)
+  if (req.method === 'HEAD') { stored.stream.destroy(); res.end(); return }
+  try { await pipeline(stored.stream, res) } catch { res.destroy() }
 }
 
 // DELETE /api/admin/bundles/<id> — remove a bundle (admin|manage). Mutation:
@@ -1529,7 +1533,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (bundleRead) {
       if (method !== 'GET' && method !== 'HEAD') { send405(res, 'GET, HEAD'); return }
       const id = bundleRead[1]!
-      if (bundleRead[2] === 'download') await handleGetBundle(res, deps, cookie, id)
+      if (bundleRead[2] === 'download') await handleGetBundle(req, res, deps, cookie, id)
       else await handleBundleCache(req, res, deps, cookie, id, bundleRead[2] as BundleCachePart)
       return
     }
@@ -1544,7 +1548,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     }
     if (path.startsWith(BUNDLE_PREFIX)) {
       const id = path.slice(BUNDLE_PREFIX.length)
-      if (method === 'GET') { await handleGetBundle(res, deps, cookie, id); return }
+      if (method === 'GET') { await handleGetBundle(req, res, deps, cookie, id); return }
       if (method === 'DELETE') { await handleDeleteBundle(req, res, deps, cookie, id); return }
       send405(res, 'GET, DELETE'); return
     }
