@@ -864,9 +864,10 @@ async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, dep
   const existing = await deps.db.getBundleByIntegrity(integrity)
   if (existing != null) {
     if (!(await canAccessBundle(deps, s.user, existing.id))) { sendJson(res, 409, { error: 'bundle-already-stored' }); return }
+    // Reports uploaded while this bundle was inaccessible retain only its
+    // integrity. An authorized re-upload repairs those pending links too.
+    await deps.db.linkReportsToBundle(integrity, existing.id)
     prebuildBundle(deps, existing.id)
-    // Same bytes already stored → dedupe; the link to any referencing reports
-    // was already made when this integrity first landed.
     sendJson(res, 200, { id: existing.id, integrity, filename: existing.filename, deduped: true })
     return
   }
@@ -885,6 +886,7 @@ async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, dep
     const raced = await deps.db.getBundleByIntegrity(integrity)
     if (raced != null) {
       if (!(await canAccessBundle(deps, s.user, raced.id))) { sendJson(res, 409, { error: 'bundle-already-stored' }); return }
+      await deps.db.linkReportsToBundle(integrity, raced.id)
       prebuildBundle(deps, raced.id)
       sendJson(res, 200, { id: raced.id, integrity, filename: raced.filename, deduped: true }); return }
     throw err

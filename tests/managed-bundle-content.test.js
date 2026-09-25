@@ -178,6 +178,26 @@ test('upload prebuilds, deduplicates and deletes cached files; unauthorized uplo
   assert.equal((await h.send(`/api/bundles/${id}/metadata`, 'owner')).status, 404)
 })
 
+test('authorized duplicate uploads repair reports uploaded before bundle access was granted', async t => {
+  const h = await setup(t), record = await h.seed({ owner: 'admin', repoId: 1 })
+  const uploaded = await h.send('/api/admin/reports', 'owner', 'POST', JSON.stringify({ bundleHashes: [record.integrity], findings: [] }))
+  assert.equal(uploaded.status, 201)
+  const reportId = uploaded.json().id
+  const report = async () => (await h.db.listReports()).find(item => item.id === reportId)
+  assert.equal((await report()).bundleId, null)
+  assert.equal((await report()).bundleIntegrity, record.integrity)
+  const bytes = await h.store.get(record.id)
+  const upload = () => h.send('/api/admin/bundles', 'owner', 'POST', bytes, { 'x-bundle-filename': record.filename })
+  assert.equal((await upload()).status, 409)
+  assert.equal((await report()).bundleId, null, 'unauthorized dedup cannot change report links')
+  await h.db.setTeamMember(h.team, h.users.owner.userId, { dependencies: true, security: true })
+  const duplicate = await upload()
+  assert.equal(duplicate.status, 200)
+  assert.equal(duplicate.json().deduped, true)
+  assert.equal((await report()).bundleId, record.id)
+  assert.equal((await h.db.listBundles()).length, 1)
+})
+
 test('deletion during a cold build cannot leave cache files behind or serve deleted data', async t => {
   const h = await setup(t), record = await h.seed()
   const gate = Promise.withResolvers(), started = Promise.withResolvers()
