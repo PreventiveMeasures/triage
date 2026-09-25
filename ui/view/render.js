@@ -1000,7 +1000,8 @@ function kanbanCardTemplate(g, opts = {}) {
   let action = nothing
   if (isKanban && fix) {
     action = isHttpUrl(fix)
-      ? html`<a class="kanban-action kanban-fix-link" href=${fix} target="_blank" rel="noopener noreferrer" draggable="false" data-tooltip=${`Open fix link: ${fix}`} aria-label=${`Open fix link: ${fix}`}>${FIX_ICON}</a>`
+      ? isManagedUiMode() ? html`<managed-fix-link class="kanban-action kanban-fix-link" compact .url=${fix}>${FIX_ICON}</managed-fix-link>`
+        : html`<a class="kanban-action kanban-fix-link" href=${fix} target="_blank" rel="noopener noreferrer" draggable="false" data-tooltip=${`Open fix link: ${fix}`} aria-label=${`Open fix link: ${fix}`}>${FIX_ICON}</a>`
       : html`<button type="button" class="kanban-action mark-fix" data-tooltip=${`Edit fix link: ${fix}`} aria-label=${`Edit fix link: ${fix}`}>${FIX_ICON}</button>`
   } else if (isKanban && comment) {
     action = html`<button type="button" class="kanban-action mark-comment" data-tooltip=${`Edit comment: ${comment}`} aria-label=${`Edit comment: ${comment}`}>${COMMENT_ICON}</button>`

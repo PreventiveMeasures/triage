@@ -46,6 +46,10 @@ export async function fetchReportTriage(id) {
   return (await loadManagedBundle()).fetchReportTriage(id)
 }
 
+export async function fetchPullRequests(urls, csrfToken, signal) {
+  return (await loadManagedBundle()).fetchPullRequests(urls, csrfToken, signal)
+}
+
 export async function pushReportTriage(id, entries, csrfToken) {
   return (await loadManagedBundle()).pushReportTriage(id, entries, csrfToken)
 }

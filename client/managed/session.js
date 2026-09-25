@@ -100,6 +100,19 @@ export async function fetchReportTriage(id) {
   return entries != null && typeof entries === 'object' && !Array.isArray(entries) ? entries : null
 }
 
+export async function fetchPullRequests(urls, csrfToken, signal) {
+  try {
+    const res = await managedFetch('/api/github/pull-requests', {
+      method: 'POST', credentials: 'same-origin', signal,
+      headers: { 'content-type': 'application/json', ...(csrfToken ? { 'x-csrf-token': csrfToken } : {}) },
+      body: JSON.stringify({ urls }),
+    })
+    if (!res.ok) return null
+    const body = await res.json()
+    return Array.isArray(body?.pullRequests) ? body.pullRequests : null
+  } catch { return null }
+}
+
 // POST /api/reports/<id>/triage → push locally-changed triage entries
 // (`{ <findingId>: entry | null }`; null clears the server's row), sending the
 // double-submit CSRF token the server requires for mutations. Resolves with
