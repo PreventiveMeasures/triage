@@ -3,7 +3,7 @@ import { type StaticHandler, loadStatic } from '../server-e2e/static.ts'
 // A deep page URL must still resolve every asset at the app root. Preload
 // headers resolve against the request URL, so their hrefs must be absolute too.
 export function managedPageHtml(html: string): string {
-  return html.replace('<head>', '<head><base href="/">').replaceAll(/(href|src)="\.\//gu, '$1="/')
+  return html.replaceAll(/(href|src)="\.\//gu, '$1="/')
 }
 
 export function loadManagedStatic(staticDir: string, { indexOnly = false, scanServer = null }: { indexOnly?: boolean, scanServer?: string | null } = {}): StaticHandler {
