@@ -211,6 +211,8 @@ test('history search debounces, cancels stale work immediately, and actor naviga
   assert.equal(pending.length, 2)
   assert.match(pending[1].url, /q=alice/u)
   page._filter = 'access'
+  page._repo = 'owner/one'
+  page._reportId = 'report'
   page._onActorFilter({ detail: { actor: 'bob' } })
   assert.equal(pending[1].signal.aborted, false)
   assert.match(pending[2].url, /page=1&limit=100&kind=all&q=bob/u)
@@ -325,4 +327,53 @@ test('managed scan report inputs remain usable while cached sources refresh or f
   await loading
   assert.equal(inputs._error, null)
   assert.deepEqual(inputs.selection.inputs.map(input => input.id), ['r'])
+})
+
+
+test('history context filters use IDs, reset paging, and keep independent cached results', async t => {
+  const page = createPage(customElements.get('managed-admin-history'))
+  const requests = []
+  const filters = {
+    repos: ['owner/one', 'owner/two'],
+    reports: [{ id: 'one', filename: 'scan.json', repo: 'owner/one' }, { id: 'two', filename: 'scan.json', repo: 'owner/two' }],
+  }
+  t.mock.method(globalThis, 'fetch', url => new Promise(resolve => { requests.push({ params: new URL(url, 'http://test').searchParams, resolve }) }))
+  const finish = (index, id) => requests[index].resolve(Response.json({ history: [{ id }], total: 201, page: Number(requests[index].params.get('page')), filters }))
+  page._query = 'alice & bob'
+  page._filter = 'triage'
+  const initial = page._load(3)
+  finish(0, 'all')
+  await initial
+  assert.deepEqual(page._options, filters)
+  const repoLoad = page._setRepo('owner/one')
+  assert.deepEqual(Object.fromEntries(requests[1].params), { page: '1', limit: '100', kind: 'triage', q: 'alice & bob', repo: 'owner/one' })
+  finish(1, 'repo')
+  await repoLoad
+  const report = page._setReport('one')
+  assert.equal(requests[2].params.get('reportId'), 'one')
+  assert.equal(requests[2].params.get('repo'), 'owner/one')
+  assert.equal(requests[2].params.get('page'), '1')
+  finish(2, 'report')
+  await report
+  const secondPage = page._load(2)
+  assert.equal(requests[3].params.get('reportId'), 'one')
+  assert.equal(requests[3].params.get('page'), '2')
+  finish(3, 'second page')
+  await secondPage
+  const otherRepo = page._setRepo('owner/two')
+  assert.equal(page._reportId, '')
+  assert.equal(requests[4].params.has('reportId'), false)
+  assert.equal(requests[4].params.get('page'), '1')
+  finish(4, 'other repo')
+  await otherRepo
+  const returnToRepo = page._setRepo('owner/one')
+  assert.equal(page._history[0].id, 'repo', 'a repository cache never returns a report-filtered result')
+  finish(5, 'updated repo')
+  await returnToRepo
+  const clear = page._setRepo('')
+  assert.equal(requests[6].params.has('repo'), false)
+  assert.equal(requests[6].params.has('reportId'), false)
+  assert.equal(requests[6].params.get('q'), 'alice & bob')
+  finish(6, 'clear')
+  await clear
 })

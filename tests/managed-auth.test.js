@@ -2023,7 +2023,7 @@ test('workspace history enforces roles and current report access before search, 
     assert.equal((await send('GET', path, cookiePair(session.setCookie))).statusCode, 403)
   }
   assert.equal((await send('POST', path, adminCookie)).statusCode, 405)
-  for (const query of ['page=0', 'page=Infinity', 'limit=0', 'limit=101', 'limit=1.5', 'kind=unknown', `q=${'a'.repeat(501)}`]) {
+  for (const query of ['page=0', 'page=Infinity', 'limit=0', 'limit=101', 'limit=1.5', 'kind=unknown', `q=${'a'.repeat(501)}`, `repo=${'r'.repeat(501)}`, `reportId=${'r'.repeat(101)}`]) {
     assert.equal((await send('GET', `${path}?${query}`, adminCookie)).statusCode, 400)
   }
   await db.setTriage('own', { color: 'red' }, fx.admin.id, 'alice', fx.now)
@@ -2035,6 +2035,7 @@ test('workspace history enforces roles and current report access before search, 
     return JSON.parse(res.body)
   }
   assert.equal((await read(managerCookie)).total, 0, 'a manager outside any team sees no activity')
+  assert.deepEqual((await read(managerCookie)).filters, { repos: [], reports: [] })
   const team = (await db.listTeams()).find(row => row.name === 'Blue')
   await db.setTeamMember(team.id, fx.frankSess.userId, { dependencies: false, security: false })
 
@@ -2049,6 +2050,11 @@ test('workspace history enforces roles and current report access before search, 
   assert.equal(manager.history[0].repo, 'o/r')
   assert.doesNotMatch(JSON.stringify(manager), /confidential|private-report|o\/other/u)
   assert.equal((await read(managerCookie, '?q=confidential')).total, 0)
+  assert.equal((await read(managerCookie, '?repo=o%2Fother')).total, 0)
+  assert.equal((await read(managerCookie, '?reportId=private-report')).total, 0)
+  assert.equal((await read(managerCookie, `?repo=o%2Fr&reportId=${fx.reportId}&kind=triage&limit=1&page=2`)).total, 2)
+  assert.equal((await read(adminCookie, '?repo=o%2Fother&reportId=private-report&kind=triage')).total, 1)
+  assert.deepEqual(manager.filters, { repos: ['o/r'], reports: [{ id: fx.reportId, filename: 'scan.json', repo: 'o/r' }] })
   assert.equal((await read(managerCookie, '?kind=upload')).total, 1)
   assert.equal((await read(adminCookie, '?q=confidential&kind=triage')).total, 1)
 
