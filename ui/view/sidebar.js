@@ -477,7 +477,10 @@ const byReportName = (a, b) => displayName(a).localeCompare(displayName(b))
 export async function renderSidebar({ revealSelection = false } = {}) {
   await ensureClientMode()
   const modeAtStart = clientModeLabel()
-  updateManagedLanding({ serverMode: modeAtStart, session: state.managedSession, teams: state.managedTeams })
+  updateManagedLanding({
+    serverMode: modeAtStart, session: state.managedSession, teams: state.managedTeams,
+    alternateMode: isCombinedServerMode(state.serverModeConfig) ? 'e2e' : 'local', onSwitchMode: switchClientMode,
+  })
   refreshScanNavigation()
   if (isManagedUiMode()) {
     state.bundles = (state.bundles ?? []).filter(entry => entry.managedId)
@@ -782,6 +785,12 @@ function scheduleCountsRepaint() {
 onVaultStateChange(() => { renderSidebar() })
 onWorkspaceAppMetadataChanged(scheduleCountsRepaint)
 
+async function switchClientMode() {
+  root?.querySelector('#user-menu')?.hidePopover?.()
+  if (forcedManagedReturn) await restoreForcedManagedMode()
+  else if (toggleClientMode()) await finishClientModeTransition()
+}
+
 // Sidebar event delegation: file-list click switches; Delete removes
 // the current file; toggle collapses / expands; search filters on
 // input. The workspace "+" button intercepts BEFORE the file-row
@@ -803,10 +812,7 @@ async function onSidebarClick(e) {
     return
   }
   if (e.target.closest('[data-action="toggle-client-mode"]')) {
-    if (forcedManagedReturn) await restoreForcedManagedMode()
-    else if (toggleClientMode()) {
-      await finishClientModeTransition()
-    }
+    await switchClientMode()
     return
   }
   // DeepView brand → drop back to the empty welcome screen so the
@@ -1252,6 +1258,7 @@ function renderAuthStatus() {
           ${session.name ? html`<span class="user-name">${session.name}</span>` : nothing}
         </span>
       </div>
+      <button type="button" class="user-menu-row" data-action="toggle-client-mode">${isCombinedServerMode(state.serverModeConfig) ? 'E2E mode' : 'Local mode'}</button>
       <button type="button" class="user-menu-row logout-row" data-action="managed-logout">${LOGOUT_ICON}<span>Log out</span></button>
     `, menu)
   }
