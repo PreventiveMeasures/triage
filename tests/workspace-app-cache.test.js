@@ -4,7 +4,7 @@ import { gzipSync } from 'node:zlib'
 import './_polyfills.js'
 import { SECURE_KEYS, getItem, hydrate, __test__ as secureTest, setItem } from '../client/secure-storage.js'
 import { addReportToWorkspace, createWorkspace, deleteWorkspace, listWorkspaces, renameWorkspace } from '../client/workspaces.js'
-import { cacheWorkspaceAppMetadata, getWorkspaceAppMetadata, invalidateWorkspaceAppMetadata, workspaceAppCacheToken } from '../client/workspace-app-cache.js'
+import { cacheWorkspaceAppMetadata, getWorkspaceAppMetadata, invalidateWorkspaceAppMetadata, onWorkspaceAppMetadataChanged, workspaceAppCacheToken } from '../client/workspace-app-cache.js'
 import { deleteFile, saveFile } from '../client/storage.js'
 import { setCount } from '../client/counts.js'
 import { duplicatesOf, ensureLinkedFindingsIndexed, linkFiles } from '../client/linked-findings-index.js'
@@ -48,6 +48,31 @@ describe('workspace App metadata cache', () => {
     await renameWorkspace(ws.id, 'Renamed')
     assert.equal(getWorkspaceAppMetadata(listWorkspaces()[0]).appFindings, 3)
   })
+  it('withholds hydrated metadata until the matching links are indexed, then notifies readers', async () => {
+    const [a, b] = [crypto.randomUUID(), crypto.randomUUID()]
+    const name = await seedLinks([[a, b]])
+    const ws = await workspace()
+    // A reload restores the persisted metadata before rebuilding the index.
+    const cache = JSON.parse(getItem(KEY))
+    const entry = { ...metadata, reports: JSON.stringify(ws.reports.toSorted()) }
+    cache.links = JSON.stringify([{ name, groups: [[a, b]] }])
+    cache.entries[ws.id] = entry
+    await setItem(KEY, JSON.stringify(cache))
+    await hydrate()
+    assert.deepEqual(duplicatesOf(a), [])
+    assert.equal(getWorkspaceAppMetadata(ws), null)
+
+    const updates = []
+    const unsubscribe = onWorkspaceAppMetadataChanged(() => updates.push(getWorkspaceAppMetadata(ws)))
+    try {
+      await ensureLinkedFindingsIndexed()
+      await workspaceAppCacheToken()
+      assert.deepEqual(duplicatesOf(a), [b])
+      assert.deepEqual(getWorkspaceAppMetadata(ws), entry)
+      assert.deepEqual(JSON.parse(getItem(KEY)), cache, 'the matching cache is reused without rewriting it')
+      assert.ok(updates.some((update) => update?.appFindings === metadata.appFindings), 'readers repaint once cached metadata is usable')
+    } finally { unsubscribe() }
+  })
   it('discards metadata calculated using the previous severity-dependent rules', async () => {
     const ws = await workspace()
     await record(ws)
@@ -81,6 +106,28 @@ describe('workspace App metadata cache', () => {
     assert.equal(await cacheWorkspaceAppMetadata(ws, metadata, indexedToken), true)
   })
   for (const change of ['overwrite', 'delete']) {
+    it(`withholds metadata recomputed by a sibling after a links ${change}`, async () => {
+      const [a, b, c] = [crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()]
+      const name = await seedLinks([[a, b]])
+      await ensureLinkedFindingsIndexed()
+      const ws = await workspace()
+      await record(ws)
+      assert.equal(getWorkspaceAppMetadata(ws).appFindings, metadata.appFindings)
+
+      // The sibling has already recomputed the entry using its updated index.
+      const cache = JSON.parse(getItem(KEY))
+      cache.revision = crypto.randomUUID()
+      cache.links = JSON.stringify(change === 'delete' ? [] : [{ name, groups: [[a, c]] }])
+      cache.entries[ws.id].appFindings = 4
+      if (change === 'delete') localStorage.removeItem(`deepview.report:${name}`)
+      else localStorage.setItem(`deepview.report:${name}`, gzipSync(linksContent([[a, c]])).toString('base64'))
+      localStorage.setItem(KEY, JSON.stringify(cache))
+      await hydrate()
+      await ensureLinkedFindingsIndexed()
+      assert.deepEqual(duplicatesOf(a), [b], 'this tab still groups findings using the old links')
+      assert.equal(getWorkspaceAppMetadata(ws), null)
+      assert.deepEqual(JSON.parse(getItem(KEY)), cache, 'withholding the entry does not discard the sibling cache')
+    })
     it(`rejects stale indexed links after a sibling tab's ${change}`, async () => {
       const [a, b, c] = [crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()]
       const name = await seedLinks([[a, b]])

@@ -35,9 +35,13 @@ function indexedLinks() { return JSON.stringify(linkFiles().map(({ name, groups 
 
 export function getWorkspaceAppMetadata(workspace) {
   if (allDirty || dirty.has(workspace.id)) return null
-  const entry = parse().entries[workspace.id]
+  const cache = parse()
+  const entry = cache.entries[workspace.id]
   if (!entry || entry.reports !== membership(workspace) || typeof entry.appMode !== 'boolean') return null
   if (entry.appMode && (!Number.isSafeInteger(entry.appFindings) || entry.appFindings < 0)) return null
+  // Hydrated metadata may be newer than the index this tab uses to group
+  // findings. Only expose it once those duplicate relationships agree.
+  if (cache.links !== indexedLinks()) return null
   return entry
 }
 
@@ -117,5 +121,8 @@ subscribeToLinkedFindings(() => {
   // Comparing the actual links preserves cached headers across a reload, when
   // the same index is reconstructed from disk for the first time in this tab.
   const links = indexedLinks()
-  if (parse().links !== links) invalidateWorkspaceAppMetadata(null, links).catch(() => {})
+  if (parse().links === links) {
+    // A reload can make an existing entry readable without changing its value.
+    notify()
+  } else invalidateWorkspaceAppMetadata(null, links).catch(() => {})
 })
