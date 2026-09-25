@@ -4,3 +4,4 @@
 import './managed/pages.js'
 export * from '../client/managed/session.js'
 export { getPreviewRole, setPreviewRole } from '../client/managed/request.js'
+export { resetManagedAppState, setManagedAppSession } from './managed/state.js'

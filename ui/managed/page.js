@@ -1,4 +1,5 @@
 import { LitElement, html } from 'lit'
+import { managedAppState } from './state.js'
 
 // The host already knows the session before opening Manage. Pass it across the
 // lazy-bundle boundary instead of giving every page its own blocking probe.
@@ -8,6 +9,7 @@ export class ManagedPage extends LitElement {
   constructor() {
     super()
     this.session = null
+    this.appState = managedAppState
     this._loading = false
     this._loadRequest = null
   }
@@ -23,16 +25,17 @@ export class ManagedPage extends LitElement {
 
   // Keep the last successful result while refreshing. Late responses from an
   // older load or an unmounted page must never replace newer content.
-  async _loadCollection(load, apply) {
+  async _loadCollection(key, label, load, apply) {
     this._loadRequest?.abort()
     const request = new AbortController()
     this._loadRequest = request
     this._loading = true
     try {
-      const data = await load(request.signal)
-      if (!request.signal.aborted && this._loadRequest === request) apply(data)
+      await this.appState.load(key, label, load, { signal: request.signal, apply })
     } catch (err) {
-      if (!request.signal.aborted && this._loadRequest === request) this._error = String(err?.message ?? err)
+      // Background errors use the host toast; only a first-load failure needs
+      // an inline empty/error state. Keep existing content and layout intact.
+      if (!request.signal.aborted && err?.name !== 'AbortError' && this.appState.read(key) === undefined) this._error = String(err?.message ?? err)
     } finally {
       if (this._loadRequest === request) this._loading = false
     }

@@ -1957,6 +1957,8 @@ function renderImpl() {
   const adminView = ADMIN_VIEWS[state.currentView]
   if (adminView) {
     const slot = ensureReportSlot(adminView.slot)
+    const previous = slot?.firstElementChild?.session
+    if (previous?.id !== state.managedSession?.id || previous?.role !== state.managedSession?.role) slot?.replaceChildren()
     if (slot && !slot.firstElementChild) {
       const el = document.createElement(adminView.tag)
       el.session = state.managedSession
