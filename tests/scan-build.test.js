@@ -51,6 +51,7 @@ test('Scans is always in the main bundle, without managed fixtures or transport'
   assert.equal(Object.hasOwn(main, 'ui/managed/pages.js'), false)
   assert.equal(Object.hasOwn(main, 'client/managed/request.js'), false)
   assert.equal(Object.hasOwn(main, 'ui/scan/fixtures.js'), false)
+  assert.equal(Object.hasOwn(managed, 'ui/scan/fixtures.js'), false)
   assert.equal(Object.hasOwn(managed, 'ui/view/scan-local-source.js'), false)
   assert.ok(managed['ui/scan/page.js'])
   assert.equal(Object.hasOwn(managed, 'ui/view/scan-navigation.js'), false)
