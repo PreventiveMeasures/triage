@@ -1315,8 +1315,10 @@ function tabBodyTemplate(f, isActive, idx, total, context, tabIds) {
   // views keep it as their primary path into the bundle viewer.
   if (context !== 'focus' && isManagedUiMode() && linePreview) {
     codeButton = html`<button type="button" class="finding-code-btn"
-      data-code-preview=${codePreviewKey(f, 'loc', f.file, lineRange(f.line))}
-      aria-label=${`Show the source at ${f.file}`}>Code</button>`
+      data-finding-code-report=${bundle.reportId}
+      data-finding-code-file=${f.file}
+      data-finding-code-line=${f.line ?? ''}
+      aria-label=${`Open full source for ${f.file}`}>Code</button>`
   } else if (context !== 'focus' && !isManagedUiMode() && f.fileHash && Array.isArray(f._bundleHashes) && f._bundleHashes.length > 0) {
     // The lookup below reads a plain module Map, which this card's
     // autorun can't see change. `bundleHashTick` is the state read
