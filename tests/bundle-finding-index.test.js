@@ -193,7 +193,7 @@ describe('bundle-finding-index — reportsForFindingId (attribution from an id a
 describe('bundle-finding-index — original report rows', () => {
   it('preserves overlaps, single findings, and complete row membership', async () => {
     const prefix = `rows-${Date.now()}`
-    const f = (id) => ({ id: `${prefix}-${id}`, title: `Finding ${id}`, source: null, revalidate: '', isApp: false })
+    const f = (id) => ({ id: `${prefix}-${id}`, title: `Finding ${id}`, source: null, revalidate: '', isApp: false, isSecurity: false })
     const first = await seedReport({ findings: [[f('A'), f('B')], [f('A'), f('C')], f('D')] })
     const second = await seedReport({ groups: [[f('A'), f('B')]] })
     await ensureBundleFindingsIndexed()
@@ -215,8 +215,8 @@ describe('bundle-finding-index — original report rows', () => {
     await saveFile(name, JSON.stringify({ groups: [[{ id, title: 'Updated' }, { id: id + '-new' }]] }))
     await ensureBundleFindingsIndexed()
     assert.deepEqual(reportRowsForFindingIds([id])[0].members, [
-      { id, title: 'Updated', source: null, revalidate: '', isApp: false },
-      { id: id + '-new', title: '', source: null, revalidate: '', isApp: false },
+      { id, title: 'Updated', source: null, revalidate: '', isApp: false, isSecurity: false },
+      { id: id + '-new', title: '', source: null, revalidate: '', isApp: false, isSecurity: false },
     ])
     assert.deepEqual(reportRowsForFindingIds([id + '-old']), [])
     await deleteFile(name)
@@ -231,7 +231,7 @@ describe('bundle-finding-index — original report rows', () => {
     await ensureBundleFindingsIndexed()
     assert.deepEqual(reportRowsForFindingIds([findings[0].id]).filter((r) => r.report === name), [{
       report: name, index: 0,
-      members: findings.map((f) => ({ id: f.id, title: f.description, source: null, revalidate: '', isApp: false })),
+      members: findings.map((f) => ({ id: f.id, title: f.description, source: null, revalidate: '', isApp: false, isSecurity: false })),
     }])
   })
 
@@ -253,11 +253,11 @@ describe('bundle-finding-index — original report rows', () => {
     assert.deepEqual(reportRowsForFindingIds([id]), [{
       report: name, index: 0, members: [
         // App-layer by the report's marker, which this finding carries none of its own.
-        { id, title: 'From Codex', source: 'codex-security', revalidate: '', isApp: true },
+        { id, title: 'From Codex', source: 'codex-security', revalidate: '', isApp: true, isSecurity: false },
         // DeepView's own, and `deepview` is no producer marker — but this row IS the pass.
-        { id: id + '-native', title: '', source: 'deepview', revalidate: 'revalidation', isApp: true },
-        { id: id + '-claude', title: '', source: 'claude-security', revalidate: 'confirmed', isApp: true },
-        { id: id + '-drifted', title: '', source: 'claude-security', revalidate: '', isApp: true },
+        { id: id + '-native', title: '', source: 'deepview', revalidate: 'revalidation', isApp: true, isSecurity: false },
+        { id: id + '-claude', title: '', source: 'claude-security', revalidate: 'confirmed', isApp: true, isSecurity: false },
+        { id: id + '-drifted', title: '', source: 'claude-security', revalidate: '', isApp: true, isSecurity: false },
       ],
     }])
   })

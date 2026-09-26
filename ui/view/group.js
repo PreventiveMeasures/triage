@@ -1,4 +1,5 @@
-import { duplicatesOf, getPackagesIndex, isManagedUiMode, isReportIgnored, patchEntry, state } from '#client/index.js'
+import { duplicatesOf, getPackagesIndex, isManagedUiMode, isReportIgnored, patchEntry, reportRowsForFindingIds, state } from '#client/index.js'
+import { stampSecurityGroups } from '../../report/index.js'
 import { SEVERITY_ORDER, canDropRevalidation, displayedSeverity, isRevalidation, isRuledOut } from './format.js'
 // NOTE: filters.js imports from this module too (primaryTab / tabKey).
 // The cycle is deliberate and benign: both sides only call across
@@ -588,9 +589,9 @@ export function syncGroupTriage(group) {
   return changed
 }
 
-// Original report rows are immutable. Cache the derived partitions until
-// another report arrives; toggling the lens never re-parses reports or discards
-// their App rows. Report entries are replaced wholesale by the loading path.
+// Keep original report rows intact, updating only their derived security stamp.
+// Cache partitions until reports or known links change; display lenses never
+// re-parse reports or discard their App rows.
 let groupCache = null
 
 export function clearMergedGroups() { groupCache = null }
@@ -598,10 +599,18 @@ export function clearMergedGroups() { groupCache = null }
 function groupModel(showRevalidation, upstreamOnly = false, hideRuledOut = false) {
   const reports = state.reports
   const merges = state.workspaceMerges
+  const managed = isManagedUiMode()
   if (!groupCache || groupCache.reports.length !== reports.length
       || groupCache.reports.some((r, i) => r !== reports[i])
-      || groupCache.merges !== merges || groupCache.mergeCount !== merges.length) {
-    groupCache = { reports: [...reports], merges, mergeCount: merges.length }
+      || groupCache.merges !== merges || groupCache.mergeCount !== merges.length
+      || groupCache.securityLinksTick !== state.linksTick || groupCache.findingIndexTick !== state.findingIndexTick
+      || groupCache.managed !== managed) {
+    stampSecurityGroups(reports.flatMap((r) => r.groups ?? []), {
+      linkedIds: managed ? undefined : duplicatesOf,
+      knownRows: managed ? undefined : reportRowsForFindingIds,
+    })
+    groupCache = { reports: [...reports], merges, mergeCount: merges.length, managed,
+      securityLinksTick: state.linksTick, findingIndexTick: state.findingIndexTick }
   }
   const mode = upstreamOnly ? 'upstream' : showRevalidation ? hideRuledOut ? 'workspace-app' : 'app' : 'code'
   if (!groupCache[mode]) {

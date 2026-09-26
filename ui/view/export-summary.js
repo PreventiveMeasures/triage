@@ -139,6 +139,10 @@ export function activeFilterDescriptions(fields = state) {
     out.push({ key: 'app-stacked', label: 'App stack', value: fields.filterAppStacked === 'with'
       ? 'Only rows with multiple App findings' : 'Exclude rows with multiple App findings', clear: { filterAppStacked: '' } })
   }
+  if (fields.filterSecurity) {
+    out.push({ key: 'security', label: 'Security', value: fields.filterSecurity === 'with'
+      ? 'Only security-related rows' : 'Exclude security-related rows', clear: { filterSecurity: '' } })
+  }
   return out
 }
 

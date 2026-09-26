@@ -26,7 +26,7 @@
 import { addFindingToBucket, dropKeyFromBucket, indexFindingByVersion, isPlaceholderNpmPackage, newBucket, packageVersionOf, pruneVersionSlot, recomputeBucketReports } from './bundle-finding-versions.js'
 import { listFiles, onFileMutated, readFile } from './storage.js'
 import { loadRepoUrlFor, onRepoUrlChanged } from './state.ts'
-import { findingTitle, inheritReportMeta, isAppFinding, loadFindings, reportEntries, reportRepoGithub, revalidateKindOf } from '../report/index.js'
+import { findingTitle, inheritReportMeta, isAppFinding, loadFindings, reportEntries, reportRepoGithub, revalidateKindOf, stampSecurityGroups } from '../report/index.js'
 
 const byHash = new Map()
 const byPackage = new Map()
@@ -529,6 +529,7 @@ async function indexOne(name) {
     // the absence of meta fields, and nothing has held the finding
     // before this point.
     for (const f of findings) inheritReportMeta(f, data)
+    stampSecurityGroups(reportEntries(data).map((entry) => Array.isArray(entry) ? entry : [entry]), { source: data.source })
     // Per-report repo — the LAST fallback when neither
     // `f.repo.github` nor `f._repoFallback` is present (the
     // latter never is on freshly-parsed OPFS findings — that
@@ -560,7 +561,7 @@ async function indexOne(name) {
         // report-marker fallback ingest resolves into `_source`.
         members: members.map((f) => {
           const source = f.source ?? data.source ?? null
-          return { id: f.id, title: findingTitle(f), source, revalidate: revalidateKindOf(f), isApp: f.isApp ?? isAppFinding(f, source) }
+          return { id: f.id, title: findingTitle(f), source, revalidate: revalidateKindOf(f), isApp: f.isApp ?? isAppFinding(f, source), isSecurity: f.isSecurity }
         }),
       }
       for (const f of members) if (indexFindingById(f, name, row)) added = true

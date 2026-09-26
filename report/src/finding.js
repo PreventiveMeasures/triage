@@ -105,6 +105,18 @@ export function isAppFinding(f, source = f?.source) {
   return Object.hasOwn(SOURCE_LABELS, source) || revalidateKindOf(f) === 'revalidation'
 }
 
+// Security involvement is independent of the App/code layer and the displayed
+// (possibly corrected) severity. External reports use their original severity,
+// not the synthetic report-level `type: security` supplied by their parsers.
+// `security: false` opts out of the analyzer default, not the other OR rules.
+export function isSecurityFinding(f, source = f?._source ?? f?.source) {
+  const external = typeof source === 'string' && source !== '' && source !== 'deepview'
+  const analyzer = external ? source : f?.analyzer ?? f?.type ?? f?._analyzer
+  return f?.security === true
+    || ((analyzer === 'security' || analyzer === 'dependencies') && f?.security !== false)
+    || (external && ['critical', 'high', 'medium', 'low'].includes(f?.severity))
+}
+
 // ── Run meta ─────────────────────────────────────────────────────────
 export function prettyModel(model) {
   if (!model) return model

@@ -10,7 +10,7 @@ import { installShadowTooltipListener } from './tooltip.js'
 import { dropZone, report } from './dom.js'
 import { SEVERITIES, canDropRevalidation, configureDepsDir, configureRevalidation, displayedSeverity, fileLink, findingDisplayName, findingTitle, formatRunMeta, hasSeverityCorrection, isHttpUrl, isModule, lineLink, lineRangeLabel, reachableRevalidateFilters, revalidateKind, stampUpstreamFindings } from './format.js'
 import { activeTabFor, clearMergedGroups, drawnTabs, findingRepoTarget, getMergedGroups, getRevalidationGroups, groupKey, groupState, primaryTab, triageEntry, triageScope, underlyingFindingsShown } from './group.js'
-import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, applyScopeFilters, applySorting, isAppStackedGroup, isCrossContextGroup, modelOfFinding, priorityApplies, rangeApplies, repositoryFilterValues, shouldLockConfirmed } from './filters.js'
+import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, applyScopeFilters, applySorting, hasSecurityContrast, isAppStackedGroup, isCrossContextGroup, modelOfFinding, priorityApplies, rangeApplies, repositoryFilterValues, shouldLockConfirmed } from './filters.js'
 import { ANALYZER_LABELS } from './analyzer-select.js'
 import { reportDuplicateIds } from './report-duplicates.js'
 import { SOURCE_LABELS, revalidateKindOf } from '../../report/index.js'
@@ -672,7 +672,7 @@ function triageFilterTemplate(colorCounts) {
 // so the host drops it in unconditionally.
 
 function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCounts, flags, analyzerSelect, repoOptions) {
-  const { showSource, showConfidence, showPriority, showGraphMode, showFileSort, kanbanMode, showRepo, hasComment, hasFix, hasFlagged, hasDuplicates, hasCrossContext, hasAppStacked, showSeverityMode, revalidateOptions, showPartial, canDropLayer, canDetailLayer, canUpstreamLens, confirmedLocked } = flags
+  const { showSource, showConfidence, showPriority, showGraphMode, showFileSort, kanbanMode, showRepo, hasComment, hasFix, hasFlagged, hasDuplicates, hasCrossContext, hasAppStacked, showSecurity, showSeverityMode, revalidateOptions, showPartial, canDropLayer, canDetailLayer, canUpstreamLens, confirmedLocked } = flags
   // The findings tab gains a "graph" view-mode option when a
   // tree-bearing report is loaded (showGraphMode). The focus and
   // kanban modes sit between grouped and graph. Switching to graph
@@ -745,8 +745,8 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
            component owns its visibility (view/download-button.js). -->
       <div class="toolbar-end">
         <download-button></download-button>
-        ${(!state.currentWorkspace && (hasDuplicates || state.filterDuplicates)) || hasCrossContext || hasAppStacked || state.filterCrossContext || state.filterAppStacked
-          ? html`<annotation-filter group="context" .hasDuplicates=${hasDuplicates} .hasCrossContext=${hasCrossContext} .hasAppStacked=${hasAppStacked}></annotation-filter>`
+        ${(!state.currentWorkspace && (hasDuplicates || state.filterDuplicates)) || hasCrossContext || hasAppStacked || showSecurity || state.filterCrossContext || state.filterAppStacked
+          ? html`<annotation-filter group="context" .hasDuplicates=${hasDuplicates} .hasCrossContext=${hasCrossContext} .hasAppStacked=${hasAppStacked} .hasSecurityContrast=${showSecurity}></annotation-filter>`
           : nothing}
         ${canDropLayer || state.revalidateConflicts.size > 0
           ? html`<revalidation-switch
@@ -2055,6 +2055,10 @@ function renderImpl() {
   const hasAppStacked = allGroups.some(isAppStackedGroup)
   if (!hasCrossContext) state.filterCrossContext = ''
   if (!hasAppStacked) state.filterAppStacked = ''
+  // Test the available rows before filters, so selecting one side cannot hide
+  // its own toggle. Homogeneous sets have nothing to switch between.
+  const showSecurity = hasSecurityContrast(allGroups)
+  if (!showSecurity) state.filterSecurity = ''
   // Which values of `revalidate` the rows ON SCREEN carry, which decide
   // the outcomes the <revalidate-filter> can offer (one option covers
   // more than one value — see REVALIDATE_FILTERS). The toolbar drops
@@ -2469,6 +2473,7 @@ function renderImpl() {
       hasDuplicates,
       hasCrossContext,
       hasAppStacked,
+      showSecurity,
       // Corrected/Original lens switch — shown only when a correction
       // exists in the loaded set, or while parked in 'original' so the
       // user can always flip back (mirrors the annotation-filter rule).

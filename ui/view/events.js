@@ -1,6 +1,6 @@
 import { managedRouteForIds } from '../../common/managed/routes.js'
 import { managedHistory } from './managed-history.js'
-import { KANBAN_DETAIL_FULLSCREEN_KEY, SEVERITY_MODE_KEY, hasLinkedFindings, isEncryptionEnabled, isManagedUiMode, patchEntry, readBundle, saveRepoUrlFor, saveTriage, setReportIgnored, state, subscribeToBundleFindingIndex, subscribeToBundleHashIndex, subscribeToLinkedFindings } from '#client/index.js'
+import { KANBAN_DETAIL_FULLSCREEN_KEY, SEVERITY_MODE_KEY, isEncryptionEnabled, isManagedUiMode, patchEntry, readBundle, saveRepoUrlFor, saveTriage, setReportIgnored, state, subscribeToBundleFindingIndex, subscribeToBundleHashIndex, subscribeToLinkedFindings } from '#client/index.js'
 import { downloadBlob, report } from './dom.js'
 import { commonPrefix, configureRevalidation, handoffBlock, isModule, lineRange } from './format.js'
 import { activeTabFor, canApplyFixToGroup, canTriageFinding, findGroupById, findingRepo, findingReport, fixApplies, getShownGroups, groupState, groupWithPassRows, syncGroupTriage, tabKey, triageActionPlan, triageEntry, triageScope } from './group.js'
@@ -48,6 +48,9 @@ subscribeToBundleFindingIndex(() => {
 
 function refreshFindingIndexView() {
   findingIndexRenderQueued = false
+  // Rows with the same finding id can contribute security evidence even
+  // without an explicit links file. Invalidate the cached lens in every view.
+  state.findingIndexTick++
   if (state.currentView === 'bundles' && state.selectedBundle) render()
   else if (state.currentView === 'packages') render()
   else if (state.currentView === 'repositories') render()
@@ -56,22 +59,11 @@ function refreshFindingIndexView() {
   // reaches each report rather than after a reload.
   else if (state.currentView === 'links') render()
   else if (state.currentView === 'findings' || state.currentView === 'files') {
-    // Sidebar's PACKAGES / REPOSITORIES captions depend on the index
-    // too; refresh it (main view stays put).
+    // Sidebar's PACKAGES / REPOSITORIES captions depend on the index too.
     renderSidebar().catch(() => {})
-    // A finding card's "Duplicates:" row asks this index where each
-    // duplicate lives — the producer sticker beside it and the report
-    // names in its tooltip. Cards paint from their own autorun, which
-    // can't see a module Map fill, so bump the tick they read.
-    // Gated on there being a links file at all: with none, no card
-    // shows that row and every other card would re-render for nothing,
-    // on every refresh while reports are being indexed.
-    if (hasLinkedFindings()) {
-      state.findingIndexTick++
-      // Resolution changes can add/remove the report-only Duplicates
-      // filter or change which rows its active selection displays.
-      if (state.currentView === 'findings' && !state.currentWorkspace) render()
-    }
+    // Both the Duplicates filter and security lens can change as already
+    // requested indexing finishes. Refresh whole rows and toolbar visibility.
+    render()
   }
 }
 
@@ -2700,6 +2692,7 @@ report.addEventListener('annotation-filter-toggle', (e) => {
   else if (key === 'duplicates' && !state.currentWorkspace) state.filterDuplicates = next(state.filterDuplicates)
   else if (key === 'cross-context') state.filterCrossContext = next(state.filterCrossContext)
   else if (key === 'app-stacked') state.filterAppStacked = next(state.filterAppStacked)
+  else if (key === 'security') state.filterSecurity = next(state.filterSecurity)
   else return
   render()
 })
