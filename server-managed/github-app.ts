@@ -18,8 +18,6 @@ const GITHUB_API = 'https://api.github.com'
 const API_VERSION = '2022-11-28'
 const USER_AGENT = 'deepview-triage'
 const PER_PAGE = 100
-// Pagination safety bound (100/page) so a runaway listing can't spin forever.
-const MAX_PAGES = 20
 
 // One listed repository. Carries the context to read its contents later:
 // `installationId` mints an App installation token (Contents: Read) for a repo
@@ -29,6 +27,7 @@ export interface ConnectedRepo {
   id: number
   fullName: string
   private: boolean
+  visibility: 'public' | 'private' | 'internal' | null
   htmlUrl: string
   defaultBranch: string
   installationId: number | null
@@ -68,21 +67,24 @@ export function mergeRepos(...lists: ConnectedRepo[][]): ConnectedRepo[] {
   return [...byName.values()].toSorted((a, b) => a.fullName.localeCompare(b.fullName))
 }
 
-// One authenticated GitHub API call returning parsed JSON, Bearer-authed by a
+// One GitHub API call returning parsed JSON, optionally Bearer-authed by a
 // user token, App JWT, or installation token. Network / non-2xx / malformed
 // fold into a GithubApiError (401 passes through for the caller to handle).
-async function githubJson(url: string, token: string, fetchImpl: typeof fetch, method: 'GET' | 'POST' = 'GET'): Promise<unknown> {
+async function githubJson(url: string, token: string | null, fetchImpl: typeof fetch, method: 'GET' | 'POST' = 'GET'): Promise<unknown> {
   let res: Response
   try {
     res = await fetchImpl(url, {
       method,
+      signal: AbortSignal.timeout(10_000),
+      redirect: 'error',
       headers: {
-        'authorization': `Bearer ${token}`, 'accept': 'application/vnd.github+json',
+        ...(token == null ? {} : { authorization: `Bearer ${token}` }), 'accept': 'application/vnd.github+json',
         'user-agent': USER_AGENT, 'x-github-api-version': API_VERSION,
       },
     })
   } catch { throw new GithubApiError(502, 'github-unreachable') }
   if (res.status === 401) throw new GithubApiError(401, 'github-unauthorized')
+  if (res.status === 404) throw new GithubApiError(404, 'github-not-found')
   if (!res.ok) throw new GithubApiError(502, `github-status-${res.status}`)
   try { return await res.json() } catch { throw new GithubApiError(502, 'github-malformed') }
 }
@@ -100,14 +102,38 @@ function parseRepo(raw: unknown, installationId: number | null): ConnectedRepo |
   if (typeof fullName !== 'string' || fullName === '') return null
   const htmlUrl = (raw as { html_url?: unknown }).html_url
   const branch = (raw as { default_branch?: unknown }).default_branch
+  const visibility = (raw as { visibility?: unknown }).visibility
   return {
     id,
     fullName,
     private: (raw as { private?: unknown }).private === true,
+    visibility: visibility === 'public' || visibility === 'private' || visibility === 'internal' ? visibility : null,
     htmlUrl: typeof htmlUrl === 'string' ? htmlUrl : '',
     defaultBranch: typeof branch === 'string' ? branch : '',
     installationId,
   }
+}
+
+// Accept an owner/repo or exact GitHub repository URL, never an arbitrary API
+// path. Reject traversal and encoded separators before constructing a fixed URL.
+export function publicRepositoryName(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null
+  const name = raw.trim().replace(/^https:\/\/github\.com\//iu, '').replace(/\/$/u, '')
+  if (!/^[a-z\d](?:[a-z\d-]{0,38})\/[a-z\d_.-]{1,100}$/iu.test(name)) return null
+  if (['.', '..'].includes(name.split('/')[1]!)) return null
+  return name
+}
+
+// Public additions must be readable by the server without the acting user's
+// credentials. Require explicit public visibility and use GitHub's canonical
+// metadata, never client-supplied ids, installation ids, or branches.
+export async function fetchPublicRepository(fullName: string, fetchImpl: typeof fetch = globalThis.fetch): Promise<ConnectedRepo> {
+  if (publicRepositoryName(fullName) !== fullName) throw new GithubApiError(400, 'bad-repository')
+  const path = fullName.split('/').map(encodeURIComponent).join('/')
+  const repo = parseRepo(await githubJson(`${GITHUB_API}/repos/${path}`, null, fetchImpl), null)
+  if (repo == null || repo.private || repo.visibility !== 'public') throw new GithubApiError(409, 'repo-not-public')
+  if (publicRepositoryName(repo.fullName) !== repo.fullName || repo.fullName.toLowerCase() !== fullName.toLowerCase()) throw new GithubApiError(502, 'github-malformed')
+  return { ...repo, htmlUrl: `https://github.com/${repo.fullName}` }
 }
 
 // ── PUBLIC: the user's own repos via their login token ──
@@ -117,7 +143,7 @@ function parseRepo(raw: unknown, installationId: number | null): ConnectedRepo |
 // user's PUBLIC repos. READ-ONLY.
 export async function listUserRepos(accessToken: string, fetchImpl: typeof fetch = globalThis.fetch): Promise<ConnectedRepo[]> {
   const byName = new Map<string, ConnectedRepo>()
-  for (let page = 1; page <= MAX_PAGES; page++) {
+  for (let page = 1; ; page++) {
     const url = `${GITHUB_API}/user/repos?per_page=${PER_PAGE}&page=${page}&sort=full_name`
     const body = await githubJson(url, accessToken, fetchImpl)
     if (!Array.isArray(body)) break
@@ -149,12 +175,15 @@ export function appJwt(appId: string, privateKeyPem: string, now: number = Date.
 
 // The repositories App's installation ids (one per org/user that installed it).
 async function listInstallationIds(jwt: string, fetchImpl: typeof fetch): Promise<number[]> {
-  const body = await githubJson(`${GITHUB_API}/app/installations?per_page=${PER_PAGE}`, jwt, fetchImpl)
-  if (!Array.isArray(body)) return []
   const ids: number[] = []
-  for (const inst of body) {
-    const id = (inst as { id?: unknown }).id
-    if (typeof id === 'number' && Number.isSafeInteger(id)) ids.push(id)
+  for (let page = 1; ; page++) {
+    const body = await githubJson(`${GITHUB_API}/app/installations?per_page=${PER_PAGE}&page=${page}`, jwt, fetchImpl)
+    if (!Array.isArray(body)) throw new GithubApiError(502, 'github-malformed')
+    for (const inst of body) {
+      const id = (inst as { id?: unknown }).id
+      if (typeof id === 'number' && Number.isSafeInteger(id) && id > 0) ids.push(id)
+    }
+    if (body.length < PER_PAGE) break
   }
   return ids
 }
@@ -188,7 +217,7 @@ async function listInstallationRepos(token: string, installationId: number, fetc
   const first = await githubJson(pageUrl(1), token, fetchImpl) as { total_count?: unknown }
   const repos = repoPage(first, installationId)
   const total = typeof first.total_count === 'number' ? first.total_count : repos.length
-  const pages = Math.min(Math.ceil(total / PER_PAGE), MAX_PAGES)
+  const pages = Math.ceil(total / PER_PAGE)
   for (let page = 2; page <= pages; page++) {
     repos.push(...repoPage(await githubJson(pageUrl(page), token, fetchImpl), installationId))
   }
@@ -202,12 +231,61 @@ export async function listInstalledRepos(config: ManagedConfig, fetchImpl: typeo
   const { githubAppId, githubAppPrivateKey } = config
   if (githubAppId == null || githubAppPrivateKey == null) return []
   const jwt = appJwt(githubAppId, githubAppPrivateKey)
-  const byName = new Map<string, ConnectedRepo>()
-  for (const id of await listInstallationIds(jwt, fetchImpl)) {
+  const lists = await mapGithubRequests(await listInstallationIds(jwt, fetchImpl), async (id) => {
     const token = await mintInstallationToken(jwt, id, fetchImpl)
-    for (const repo of await listInstallationRepos(token, id, fetchImpl)) byName.set(repo.fullName, repo)
-  }
-  return [...byName.values()].toSorted((a, b) => a.fullName.localeCompare(b.fullName))
+    return listInstallationRepos(token, id, fetchImpl)
+  })
+  return mergeRepos(...lists)
+}
+
+// Bound fan-out while keeping independent installations/permission checks off
+// one long serial critical path. Preserve input order for deterministic merges.
+async function mapGithubRequests<T, U>(items: T[], work: (item: T) => Promise<U>): Promise<U[]> {
+  const results: U[] = []
+  let next = 0
+  await Promise.all(Array.from({ length: Math.min(4, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next++
+      results[index] = await work(items[index]!)
+    }
+  }))
+  return results
+}
+
+// The login App and repository App are separate: /user/repos with the login
+// token is not evidence of private-repo access. Ask the repository App for the
+// user's effective GitHub permission (including teams/org/enterprise grants).
+// This endpoint accepts installation tokens with Metadata: read; it does NOT
+// require Administration permission (unlike collaborator mutation endpoints).
+// https://docs.github.com/en/rest/collaborators/collaborators#get-repository-permissions-for-a-user
+// Resolve the current login from /user so renamed handles cannot check someone
+// else's access. All repo paths come from GitHub's installation catalogue.
+export async function filterInstalledRepos(config: ManagedConfig, repositories: ConnectedRepo[], userToken: string, fetchImpl: typeof fetch = globalThis.fetch): Promise<ConnectedRepo[]> {
+  const identity = await githubJson(`${GITHUB_API}/user`, userToken, fetchImpl) as { id?: unknown; login?: unknown }
+  if (typeof identity?.login !== 'string' || !identity.login || typeof identity.id !== 'number' || !Number.isSafeInteger(identity.id) || identity.id <= 0) throw new GithubApiError(502, 'github-malformed')
+  const tokens = new Map<number, Promise<string | null>>()
+  const allowed = await mapGithubRequests(repositories, async (repo) => {
+    // Internal repos may have private=false; missing visibility is not proof
+    // of public access either. Only explicitly public repositories skip checks.
+    if (repo.visibility === 'public') return true
+    if (repo.installationId == null) return false
+    let token = tokens.get(repo.installationId)
+    if (!token) {
+      token = repoAccessToken(config, repo.installationId, fetchImpl)
+      tokens.set(repo.installationId, token)
+    }
+    const accessToken = await token
+    if (!accessToken) return false
+    const path = repo.fullName.split('/').map(encodeURIComponent).join('/')
+    try {
+      const body = await githubJson(`${GITHUB_API}/repos/${path}/collaborators/${encodeURIComponent(identity.login as string)}/permission`, accessToken, fetchImpl) as { permission?: unknown; user?: { id?: unknown } }
+      return body?.user?.id === identity.id && ['read', 'write', 'admin'].includes(String(body?.permission))
+    } catch (err) {
+      if (err instanceof GithubApiError && err.status === 404) return false
+      throw err // Never broaden the list when GitHub cannot verify access.
+    }
+  })
+  return repositories.filter((_, index) => allowed[index])
 }
 
 // Mint a token to READ a selected repo's contents: an installation token (the

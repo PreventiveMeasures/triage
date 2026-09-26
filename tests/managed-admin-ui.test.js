@@ -382,3 +382,106 @@ test('history user and repository filters intersect, reset paging, and keep inde
   finish(8, 'clear')
   await clear
 })
+
+test('installed Show all defaults off, resets organization filtering, and ignores a late all-repos response', async (t) => {
+  const page = createPage(Repositories)
+  const pending = []
+  t.mock.method(globalThis, 'fetch', (url) => new Promise(resolve => { pending.push({ url: new URL(url, 'http://localhost'), resolve }) }))
+  page._open('installed')
+  assert.equal(page._showAll, false)
+  assert.equal(pending[0].url.searchParams.get('showAll'), 'false')
+  pending[0].resolve(Response.json({ repositories: [repo], total: 1 }))
+  await setImmediate()
+  page._organization = 'owner'
+  page._setShowAll(true)
+  assert.equal(page._organization, null)
+  assert.equal(page._data, null)
+  assert.equal(pending[1].url.searchParams.get('showAll'), 'true')
+  page._setShowAll(false)
+  pending[2].resolve(Response.json({ repositories: [repo], total: 1 }))
+  await setImmediate()
+  pending[1].resolve(Response.json({ repositories: [{ id: 999, fullName: 'other/private' }], total: 1 }))
+  await setImmediate()
+  assert.deepEqual(page._data.repositories, [repo])
+  const refresh = page._load(true)
+  assert.equal(pending[3].url.searchParams.get('refresh'), 'true')
+  pending[3].resolve(Response.json({ repositories: [repo], total: 1 }))
+  await refresh
+  page._open('installed')
+  assert.equal(page._showAll, false)
+  pending[4].resolve(Response.json({ repositories: [repo], total: 1 }))
+  await setImmediate()
+})
+
+for (const scope of ['connected', 'installed', 'public']) {
+  test(`${scope} loads every repository once and filters locally by organization and search`, async (t) => {
+    const page = createPage(Repositories)
+    const repositories = [...Array.from({ length: 35 }, (_, i) => ({ id: i, fullName: `acme/repo-${i}` })), { id: 50, fullName: 'other/only' }]
+    const network = t.mock.method(globalThis, 'fetch', (url) => {
+      const params = new URL(url, 'http://localhost').searchParams
+      assert.equal(params.get('scope'), scope)
+      for (const name of ['q', 'page', 'limit']) assert.equal(params.has(name), false)
+      return Promise.resolve(Response.json({ repositories, total: repositories.length }))
+    })
+    page._open(scope)
+    await setImmediate()
+    let choices = page._repositoryChoices()
+    assert.equal(choices.count, 36)
+    assert.equal(choices.showFacets, true)
+    assert.deepEqual(choices.facets.map(org => [org.name, org.count]), [['acme', 35], ['other', 1]])
+    page._organization = 'other'
+    assert.deepEqual(page._repositoryChoices().sections[0].options.map(option => option.repo.id), [50])
+    page._search('repo-34')
+    assert.equal(page._repositoryChoices().count, 0, 'search stays within the selected organization')
+    page._organization = null
+    choices = page._repositoryChoices()
+    assert.equal(choices.count, 1)
+    assert.equal(choices.sections[0].options[0].repo.id, 34, 'repos beyond the old first page are searchable')
+    assert.equal(network.mock.callCount(), 1)
+    page._data = { repositories: repositories.slice(0, 35) }
+    page._search('')
+    assert.equal(page._repositoryChoices().showFacets, false, 'one organization needs no sidebar')
+  })
+}
+
+test('repository labels do not infer public visibility from the stored private flag', () => {
+  const page = createPage(Repositories)
+  assert.equal(page._accessLabel({ installed: true, private: false, visibility: 'internal' }), 'Internal · GitHub App')
+  assert.equal(page._accessLabel({ installed: true, private: false, visibility: 'public' }), 'Public · GitHub App')
+  assert.equal(page._accessLabel({ installed: true, private: false }), 'GitHub App', 'stored records with unknown visibility stay neutral')
+  assert.equal(page._accessLabel({ installed: true, private: true }), 'Private · GitHub App')
+})
+
+test('public repository form submits with CSRF, retains failures and refreshes the connected catalogue on success', async t => {
+  const page = createPage(Repositories)
+  page.session = adminSession
+  page._publicRepoOpen = true
+  page._publicRepository = ' owner/repo '
+  let status = 403
+  let posts = 0
+  t.mock.method(globalThis, 'fetch', (url, options) => {
+    if (options.method === 'POST') {
+      posts++
+      assert.equal(url, '/api/admin/repositories/add-public')
+      assert.equal(options.headers['x-csrf-token'], adminSession.csrfToken)
+      assert.deepEqual(JSON.parse(options.body), { repository: 'owner/repo' })
+      return Promise.resolve(Response.json({}, { status }))
+    }
+    assert.match(url, /scope=connected/u)
+    return Promise.resolve(Response.json({ repositories: [repo], canAddAnyPublicRepository: true }))
+  })
+  await page._addPublicRepository()
+  assert.equal(page._publicRepoOpen, true)
+  assert.equal(page._publicRepository, ' owner/repo ')
+  assert.match(page._publicRepoError, /permission/u)
+  assert.equal(page._addingPublic, false)
+  status = 200
+  const adding = page._addPublicRepository()
+  await page._addPublicRepository()
+  await adding
+  assert.equal(posts, 2, 'double submission is ignored')
+  assert.equal(page._publicRepoOpen, false)
+  assert.equal(page._publicRepository, '')
+  assert.equal(page._publicRepoError, null)
+  assert.deepEqual(page._data.repositories, [repo])
+})

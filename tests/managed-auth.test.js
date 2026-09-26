@@ -451,7 +451,7 @@ test('listInstalledRepos: aggregates the separate App\'s installations, skips ar
   const fetchImpl = (url, opts) => {
     const u = String(url)
     calls.push(`${opts?.method ?? 'GET'} ${u}`)
-    if (u.endsWith('/app/installations?per_page=100')) return jsonResponse([{ id: 11 }, { id: 22 }])
+    if (u.endsWith('/app/installations?per_page=100&page=1')) return jsonResponse([{ id: 11 }, { id: 22 }])
     if (u.includes('/app/installations/11/access_tokens')) return jsonResponse({ token: 'tok-11' })
     if (u.includes('/app/installations/22/access_tokens')) return jsonResponse({ token: 'tok-22' })
     if (u.includes('/installation/repositories')) {
@@ -533,7 +533,7 @@ test('collectRepos: merges public + private (install-tagged); tokenMissing witho
   const fetchImpl = (url) => {
     const u = String(url)
     if (u.includes('/user/repos')) return jsonResponse([{ id: 1, full_name: 'o/pub', private: false, default_branch: 'main', html_url: 'h' }])
-    if (u.endsWith('/app/installations?per_page=100')) return jsonResponse([{ id: 9 }])
+    if (u.endsWith('/app/installations?per_page=100&page=1')) return jsonResponse([{ id: 9 }])
     if (u.includes('/access_tokens')) return jsonResponse({ token: 'tok' })
     if (u.includes('/installation/repositories')) return jsonResponse({ total_count: 1, repositories: [{ id: 2, full_name: 'o/priv', private: true, default_branch: 'release', html_url: 'h' }] })
     return jsonResponse({}, 404)
@@ -707,7 +707,7 @@ test('POST /api/admin/repositories/select: admin + CSRF; verifies access, persis
   // Stub GitHub so collectRepos sees one reachable public repo (id 55).
   const realFetch = globalThis.fetch
   globalThis.fetch = (url) => (String(url).includes('/user/repos')
-    ? jsonResponse([{ id: 55, full_name: 'o/pub', private: false, default_branch: 'main', html_url: 'https://github.com/o/pub' }])
+    ? jsonResponse([{ id: 55, full_name: 'o/pub', private: false, visibility: 'public', default_branch: 'main', html_url: 'https://github.com/o/pub' }])
     : jsonResponse({}, 404))
   try {
     assert.equal((await post(aCk, adminSess.csrfToken, { repoId: 999, selected: true })).statusCode, 404) // not reachable
@@ -2640,4 +2640,165 @@ test('team slugs are assigned by the server and cannot be edited through create 
   await db.setTeamMember(team.id, session.userId, { dependencies: false, security: false })
   assert.equal(JSON.parse((await send('GET', '/api/teams', cookie)).body).teams[0].slug, team.slug)
   assert.equal(JSON.parse((await send('GET', '/api/admin/teams', cookie)).body).teams[0].slug, team.slug)
+})
+
+test('installed discovery defaults to acting GH access, Show all stays admin-only, and returns complete catalogues', async (t) => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const cfg = { ...config, githubAppId: '1', githubAppPrivateKey: generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs1', format: 'pem' }) }
+  const alice = await createSession(cfg, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, Date.now())
+  const bob = await createSession(cfg, db, { githubUserId: 2, login: 'bob', name: null, avatarUrl: null }, Date.now())
+  const admin = (await readSession(cfg, db, cookiePair(alice.setCookie), Date.now())).user
+  const manager = (await readSession(cfg, db, cookiePair(bob.setCookie), Date.now())).user
+  await db.setUserRole(manager.id, 'manage')
+  await db.setUserTokens(admin.id, { accessToken: 'alice-token', refreshToken: null, expiresAt: null })
+  let installedRepos = [
+    { id: 10, full_name: 'org/alice-repo', private: false, visibility: 'internal' },
+    { id: 20, full_name: 'org/bob-repo', private: true, visibility: 'private' },
+  ]
+  let userRepos = []
+  const calls = []
+  t.mock.method(globalThis, 'fetch', (url, options) => {
+    const path = new URL(url).pathname
+    calls.push(path)
+    if (path === '/app/installations') return jsonResponse([{ id: 7 }])
+    if (path.endsWith('/access_tokens')) return jsonResponse({ token: 'installation' })
+    if (path === '/installation/repositories') return jsonResponse({ total_count: installedRepos.length, repositories: installedRepos })
+    if (path === '/user/repos') return jsonResponse(userRepos)
+    if (path === '/user') {
+      assert.equal(options.headers.authorization, 'Bearer alice-token')
+      return jsonResponse({ id: 1, login: 'alice' })
+    }
+    if (path.includes('/collaborators/alice/permission')) return jsonResponse({ permission: path.includes('/alice-repo/') ? 'read' : 'none', user: { id: 1 } })
+    throw new Error(`Unexpected request: ${path}`)
+  })
+  let pending
+  const handler = createManagedRequestHandler({ config: cfg, db, avatarStore: fakeAvatarStore(), reportStore: fakeBlobStore(), bundleStore: createBundleStore(fakeBlobStore(), fakeBlobStore()), originGate: { trustProxy: false, isOriginAllowed: () => true }, isShuttingDown: () => false, track: promise => { pending = promise } })
+  async function get(query = '', cookie = cookiePair(alice.setCookie), scope = 'installed') {
+    const res = { statusCode: 0, body: '', writeHead(code) { this.statusCode = code }, end(body) { this.body = body } }
+    handler({ method: 'GET', url: `/api/admin/repositories?scope=${scope}${query}`, headers: { cookie } }, res)
+    await pending
+    return { status: res.statusCode, ...JSON.parse(res.body) }
+  }
+  assert.equal((await get('&showAll=true', '')).status, 401)
+  assert.equal((await get('&showAll=true', cookiePair(bob.setCookie))).status, 403)
+  assert.equal(calls.length, 0)
+  const filtered = await get()
+  assert.equal(filtered.status, 200)
+  assert.deepEqual(filtered.repositories.map(repo => repo.id), [10])
+  assert.equal(filtered.repositories[0].visibility, 'internal')
+  const count = calls.length
+  const all = await get('&showAll=true&limit=1&page=2')
+  assert.equal(all.total, 2)
+  assert.deepEqual(all.repositories.map(repo => repo.id), [10, 20])
+  assert.deepEqual((await get('&q=bob')).repositories.map(repo => repo.id), [10])
+  assert.equal(calls.length, count, 'legacy paging/search parameters do not truncate the catalogue')
+  await get('&refresh=true')
+  assert.equal(calls.length, 2 * count)
+  installedRepos = Array.from({ length: 65 }, (_, i) => ({ id: i + 100, full_name: `org/installed-${i}`, private: false, visibility: 'public' }))
+  userRepos = Array.from({ length: 75 }, (_, i) => ({ id: i + 200, full_name: `org/public-${i}`, private: false, visibility: 'public' }))
+  const legacyPaging = '&q=does-not-match&page=2&limit=1'
+  const installed = await get(`&refresh=true${legacyPaging}`)
+  assert.equal(installed.repositories.length, 65)
+  assert.equal(installed.total, 65)
+  assert.equal('page' in installed, false)
+  assert.equal('limit' in installed, false)
+  const publicListing = await get(legacyPaging, cookiePair(alice.setCookie), 'public')
+  assert.equal(publicListing.repositories.length, 75)
+  for (const repo of installedRepos) {
+    await db.selectRepo({ repoId: repo.id, fullName: repo.full_name, private: false, installationId: 7, defaultBranch: 'main', htmlUrl: '', addedBy: admin.id }, Date.now())
+  }
+  const connected = await get(legacyPaging, cookiePair(alice.setCookie), 'connected')
+  assert.equal(connected.repositories.length, 65)
+  assert.equal(connected.connectedCount, 65)
+})
+
+test('arbitrary public additions require server admin AND WHITEHAT identity, never a login or request claim', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const session = await createSession(config, db, { githubUserId: 291301, login: 'renamed-whitehat', name: null, avatarUrl: null }, Date.now())
+  const impersonator = await createSession(config, db, { githubUserId: 999, login: 'ChALkeR', name: null, avatarUrl: null }, Date.now())
+  await db.setUserRole(impersonator.userId, 'admin')
+  const { send, upload } = bundleHarness(db)
+  const path = '/api/admin/repositories/add-public'
+  const cookie = cookiePair(session.setCookie)
+  const post = (payload, actor = session, csrf = actor.csrfToken) => upload(path, cookiePair(actor.setCookie), csrf, JSON.stringify(payload))
+  const capability = async actor => JSON.parse((await send('GET', '/api/admin/repositories?scope=connected', cookiePair(actor.setCookie))).body).canAddAnyPublicRepository
+  let metadata = { id: 123, full_name: 'Example/Repo', private: false, visibility: 'public', default_branch: 'main', html_url: 'https://github.com/Example/Repo' }
+  let status = 200
+  let demote = false
+  const calls = []
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    calls.push({ url, options })
+    assert.equal(url, 'https://api.github.com/repos/example/repo')
+    assert.equal(options.headers.authorization, undefined, 'public readability is independent of user credentials')
+    assert.equal(options.redirect, 'error')
+    if (demote) await db.setUserRole(session.userId, 'manage')
+    return Response.json(metadata, { status })
+  })
+  assert.equal(await db.getUserGithubId(session.userId), 291301)
+  assert.equal(await db.getUserGithubId('missing'), null)
+  assert.equal(await capability(session), true, 'renaming the allowlisted account retains the capability')
+  assert.equal(await capability(impersonator), false, 'matching the login is insufficient')
+  assert.equal((await post({ repository: 'example/repo', githubUserId: 291301, role: 'admin' }, impersonator)).statusCode, 403)
+  assert.equal((await upload(path, null, null, JSON.stringify({ repository: 'example/repo' }))).statusCode, 401)
+  assert.equal((await post({ repository: 'example/repo' }, session, null)).statusCode, 403)
+  for (const role of ['none', 'view', 'triage', 'manage']) {
+    await db.setUserRole(session.userId, role)
+    assert.equal((await post({ repository: 'example/repo' })).statusCode, 403, `WHITEHAT with ${role} is not admin`)
+    assert.equal((await send('GET', '/api/admin/repositories?scope=connected', cookie)).statusCode, 403)
+  }
+  await db.setUserRole(session.userId, 'admin')
+  for (const repository of [null, 123, '../repo', 'example/..', 'example/repo/issues', 'https://evil.test/example/repo', 'https://github.com@evil.test/example/repo', 'https://github.com/example/repo?x=1', 'example/%2e%2e', 'example\\repo']) {
+    assert.equal((await post({ repository })).statusCode, 400, String(repository))
+  }
+  assert.equal(calls.length, 0, 'authorization and malformed input fail before contacting GitHub')
+  const original = metadata
+  for (const invalid of [{ private: true }, { visibility: 'internal' }, { visibility: null }, { archived: true }]) {
+    metadata = { ...original, ...invalid }
+    assert.equal((await post({ repository: 'example/repo' })).statusCode, 409)
+  }
+  for (const invalid of [{ id: 0 }, { id: Number.MAX_SAFE_INTEGER + 1 }, { full_name: 'unrelated/repo' }]) {
+    metadata = { ...original, ...invalid }
+    assert.ok((await post({ repository: 'example/repo' })).statusCode >= 400)
+  }
+  metadata = original
+  status = 404
+  assert.equal((await post({ repository: 'example/repo' })).statusCode, 404)
+  status = 200
+  assert.deepEqual(await db.listSelectedRepos(), [])
+  demote = true
+  assert.equal((await post({ repository: 'example/repo' })).statusCode, 403, 'recheck admin after GitHub lookup')
+  assert.deepEqual(await db.listSelectedRepos(), [])
+  demote = false
+  await db.setUserRole(session.userId, 'admin')
+  assert.equal((await post({ repository: ' https://github.com/example/repo/ ', repoId: 999, installationId: 5, fullName: 'other/repo', defaultBranch: 'evil' })).statusCode, 200)
+  let [stored] = await db.listSelectedRepos()
+  assert.deepEqual([stored.repoId, stored.fullName, stored.defaultBranch, stored.installationId, stored.addedBy], [123, 'Example/Repo', 'main', null, session.userId])
+  await db.deactivateRepo(123)
+  // Reactivation fetches the stored canonical name, not anything in the request.
+  t.mock.method(globalThis, 'fetch', (url, options) => {
+    assert.equal(url, 'https://api.github.com/repos/Example/Repo')
+    assert.equal(options.headers.authorization, undefined)
+    return Promise.resolve(Response.json(metadata))
+  })
+  const activate = () => upload('/api/admin/repositories/select', cookie, session.csrfToken, JSON.stringify({ repoId: 123, selected: true }))
+  metadata = { ...original, id: 124 }
+  assert.equal((await activate()).statusCode, 409, 'a replacement repo must not take over the stored identity')
+  metadata = original
+  assert.equal((await activate()).statusCode, 200)
+  ;[stored] = await db.listSelectedRepos()
+  assert.equal(stored.fullName, 'Example/Repo')
+  for (const active of [true, false]) {
+    // The App has been uninstalled, but its old context remains in the database.
+    await db.selectRepo({ ...stored, installationId: 7 }, Date.now())
+    if (!active) await db.deactivateRepo(123)
+    assert.equal((await post({ repository: 'Example/Repo' })).statusCode, 200)
+    const [reconnected] = await db.listSelectedRepos()
+    assert.equal(reconnected.installationId, null, 'public addition discards unverified installation context')
+    assert.equal(reconnected.addedBy, session.userId)
+    const catalogue = JSON.parse((await send('GET', '/api/admin/repositories?scope=connected', cookie)).body)
+    assert.equal(catalogue.repositories[0].installed, false)
+    assert.equal(catalogue.repositories[0].active, true)
+  }
 })

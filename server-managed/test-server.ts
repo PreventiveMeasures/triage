@@ -29,20 +29,28 @@ const scanModels = MANAGED_SCAN_MODELS
 
 const repositories = [
   {
-    id: 101, fullName: 'example/managed-fixtures', private: true,
+    id: 101, fullName: 'example/managed-fixtures', private: true, visibility: 'private',
     installed: true, selected: true, htmlUrl: 'https://github.com/example/managed-fixtures',
   },
   {
-    id: 102, fullName: 'example/worker-service', private: true,
+    id: 102, fullName: 'example/worker-service', private: true, visibility: 'private',
     installed: true, selected: true, htmlUrl: 'https://github.com/example/worker-service',
   },
   {
-    id: 103, fullName: 'example/public-playground', private: false,
+    id: 103, fullName: 'example/public-playground', private: false, visibility: 'public',
     installed: false, selected: false, htmlUrl: 'https://github.com/example/public-playground',
   },
   {
-    id: 104, fullName: 'example/managed-public', private: false,
+    id: 104, fullName: 'example/managed-public', private: false, visibility: 'public',
     installed: true, selected: false, htmlUrl: 'https://github.com/example/managed-public',
+  },
+  {
+    id: 105, fullName: 'acme/api-service', private: false, visibility: 'internal',
+    installed: true, selected: true, htmlUrl: 'https://github.com/acme/api-service',
+  },
+  {
+    id: 106, fullName: 'tools/public-library', private: false, visibility: 'public',
+    installed: false, selected: false, htmlUrl: 'https://github.com/tools/public-library',
   },
 ]
 
@@ -319,19 +327,15 @@ function handleAdmin(url: URL, method: string, res: ServerResponse): void {
   if (url.pathname === '/api/admin/users') { sendJson(res, 200, { users }); return }
   if (url.pathname === '/api/admin/repositories') {
     const scope = url.searchParams.get('scope') ?? 'connected'
-    const query = (url.searchParams.get('q') ?? '').trim().toLocaleLowerCase()
-    const page = Math.max(1, Number.parseInt(url.searchParams.get('page') ?? '1', 10) || 1)
-    const limit = Math.min(50, Math.max(1, Number.parseInt(url.searchParams.get('limit') ?? '20', 10) || 20))
     const filtered = repositories
       .filter((repo) => scope === 'connected'
         ? repo.selected
         : scope === 'installed' ? repo.installed : (!repo.private && !repo.installed))
-      .filter((repo) => query === '' || repo.fullName.toLocaleLowerCase().includes(query))
       .toSorted((a, b) => a.fullName.localeCompare(b.fullName))
     sendJson(res, 200, {
-      repositories: filtered.slice((page - 1) * limit, page * limit),
+      repositories: filtered,
       connectedCount: repositories.filter((repo) => repo.selected).length,
-      total: filtered.length, page, limit,
+      total: filtered.length,
       tokenMissing: false,
       installUrl: 'https://github.com/apps/managed-fixtures/installations/new',
     })

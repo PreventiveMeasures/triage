@@ -37,6 +37,23 @@ and invalidates the old managed history entries, so Back cannot reopen them.
 History contains a navigation generation only, with no report or triage data.
 The server mode's advertised default still applies on reload.
 
+# Repository additions
+
+Adding repositories currently requires a server admin. Installed discovery
+defaults to the acting user's GitHub access; **Show all** lets admins choose any
+repository available to the repository App. Effective permission checks use
+GitHub's [Get repository permissions for a user](https://docs.github.com/en/rest/collaborators/collaborators#get-repository-permissions-for-a-user)
+endpoint with an installation token and **Metadata: read**, not Administration.
+
+Public discovery lists repositories the actor is involved with. The separate
+**Add a public repository** input is available only to admins whose numeric
+GitHub ID is in `WHITEHAT` in `repository-policy.ts`. Its POST endpoint,
+`/api/admin/repositories/add-public`, accepts `{ "repository": "owner/repo" }`
+or an exact GitHub repository URL, with the usual session, origin and CSRF checks.
+It verifies public visibility without user credentials and stores GitHub's
+canonical metadata. The allowlist bypasses only the public involvement safeguard;
+it never grants server permission to add repositories or access private repos.
+
 # Report repository metadata
 
 Managed report headers use the repository assignment stored on the server,
