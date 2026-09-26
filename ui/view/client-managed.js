@@ -45,6 +45,10 @@ export async function fetchReport(id) {
   return (await loadManagedBundle()).fetchReport(id)
 }
 
+export async function fetchReports(ids) {
+  return (await loadManagedBundle()).fetchReports(ids)
+}
+
 export async function fetchReportTriage(id) {
   return (await loadManagedBundle()).fetchReportTriage(id)
 }

@@ -10,6 +10,7 @@
 //   GET  /api/teams              → the current user's teams + their reports and bundles | 401
 //   POST /api/github/pull-requests → batch PR titles/statuses, restricted to the user's team repos
 //   GET  /api/reports/<id>       → view a report: admin, or ≥view role + team membership | 401/404
+//   POST /api/reports/query      → read a batch of viewable reports, with repository metadata | 400/401/404/503
 //   GET  /api/reports/<id>/triage → triage entries (by finding id, shared across reports) for a viewable report's findings | 401/404
 //   POST /api/reports/<id>/triage → write triage entries: admin, or ≥triage role + membership | 401/403/404
 //   GET  /api/reports/<id>/triage/history?finding=<fid> → one visible finding's triage trail, newest first | 400/401/404
@@ -55,7 +56,7 @@ import type { ManagedDb, ManagedSession, StoredUser, TriageEventRow, TriageRow }
 import type { OriginGate } from '../server-common/origin.ts'
 import { isRole, roleAtLeast } from '../common/managed/roles.ts'
 import { VISIBILITY_PERMISSIONS, parseTeamUserPermissions } from '../common/managed/permissions.ts'
-import { filterReportContent } from '../common/managed/report-filter.ts'
+import { filterReportContent, filterReportData } from '../common/managed/report-filter.ts'
 import type { TriageEntryPatch } from '../common/managed/triage.ts'
 import { MAX_FINDING_ID, MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_ENTRIES, MAX_TRIAGE_HISTORY, isTriageBucket, parseTriageEntryPatch } from '../common/managed/triage.ts'
 import { reportRepoGithub } from '../report/index.js'
@@ -1159,8 +1160,8 @@ async function handleReportSources(req: IncomingMessage, res: ServerResponse, de
 
 // GET /api/reports/<id> — view a report the caller is authorized to read (see
 // canViewReport: admin, manager ownership, or team access with publication rules).
-// Accept: application/json includes the server's repo assignment alongside the
-// filtered content. Other callers retain the raw text/plain response. The
+// Accept: application/json includes parsed, filtered data and the server's repo
+// assignment. Other callers retain the raw text/plain response. The
 // client renders either without caching to OPFS. 404 covers "no such report" AND
 // "not authorized" (so neither existence nor membership is probeable); 503 = row
 // without bytes (store desync).
@@ -1172,17 +1173,19 @@ async function handleViewReport(req: IncomingMessage, res: ServerResponse, deps:
   if (bytes == null) { sendJson(res, 503, { error: 'unavailable' }); return }
   const current = await readSession(deps.config, deps.db, cookie, Date.now())
   if (!current || !(await canViewReport(deps, current.user, id))) { sendJson(res, 404, { error: 'no-report' }); return }
-  const out = await viewerReportBytes(deps, current.user, id, bytes)
-  if (out == null) { sendJson(res, 404, { error: 'no-report' }); return }
   if (acceptsReportMetadata(req.headers.accept)) {
     const report = await deps.db.getReport(id)
     if (report == null) { sendJson(res, 404, { error: 'no-report' }); return }
+    const data = await viewerReportData(deps, current.user, id, bytes, report.filename)
+    if (data == null) { sendJson(res, 422, { error: 'unreadable-report' }); return }
     sendJson(res, 200, {
-      content: out.toString('utf8'),
+      data,
       repo: { github: await repositoryName(deps, report.repoId), directory: report.repoDirectory },
     }, { vary: 'Accept', 'x-content-type-options': 'nosniff' })
     return
   }
+  const out = await viewerReportBytes(deps, current.user, id, bytes)
+  if (out == null) { sendJson(res, 404, { error: 'no-report' }); return }
   res.writeHead(200, {
     'content-type': 'text/plain; charset=utf-8',
     'content-length': String(out.length),
@@ -1191,6 +1194,57 @@ async function handleViewReport(req: IncomingMessage, res: ServerResponse, deps:
     vary: 'Accept',
   })
   writeResponse(res, out)
+}
+
+// A read-only POST avoids URL-length limits when a workspace has many reports.
+// Authorize every requested id before reading blobs; never return a partial
+// workspace, or let one authorized report grant access to another in the batch.
+async function handleQueryReports(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
+  const s = await readSession(deps.config, deps.db, cookie, Date.now())
+  if (!s) { sendJson(res, 401, { error: 'unauthenticated' }); return }
+  let body
+  try { body = await readJsonBody(req, 1024 * 1024) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
+  const raw = (body as { ids?: unknown } | null)?.ids
+  if (!Array.isArray(raw) || raw.some(id => typeof id !== 'string' || !id || id.length > 256)) {
+    sendJson(res, 400, { error: 'bad-ids' }); return
+  }
+  const ids = [...new Set(raw as string[])]
+  for (const id of ids) {
+    if (!(await canViewReport(deps, s.user, id))) { sendJson(res, 404, { error: 'no-report' }); return }
+  }
+  // Bound blob-store concurrency while keeping a workspace load one HTTP read.
+  const bytes = new Map<string, Buffer>()
+  for (let offset = 0; offset < ids.length; offset += 8) {
+    const chunk = await Promise.all(ids.slice(offset, offset + 8).map(async id => [id, await deps.reportStore.get(id)] as const))
+    for (const [id, value] of chunk) {
+      if (value == null) { sendJson(res, 503, { error: 'unavailable' }); return }
+      bytes.set(id, value)
+    }
+  }
+  // Storage may be remote. Re-read the session and permissions after all bytes
+  // arrive, exactly as individual report reads do, before filtering the result.
+  const current = await readSession(deps.config, deps.db, cookie, Date.now())
+  if (!current || current.user.id !== s.user.id) { sendJson(res, 401, { error: 'unauthenticated' }); return }
+  const reports = []
+  for (const id of ids) {
+    if (!(await canViewReport(deps, current.user, id))) { sendJson(res, 404, { error: 'no-report' }); return }
+    const report = await deps.db.getReport(id)
+    if (report == null) { sendJson(res, 404, { error: 'no-report' }); return }
+    const data = await viewerReportData(deps, current.user, id, bytes.get(id)!, report.filename)
+    if (data == null) { sendJson(res, 422, { error: 'unreadable-report' }); return }
+    reports.push({ id, data,
+      repo: { github: await repositoryName(deps, report.repoId), directory: report.repoDirectory } })
+  }
+  sendJson(res, 200, { reports }, { 'x-content-type-options': 'nosniff' })
+}
+
+// Reports arrive on the managed UI wire as JSON objects even when the stored
+// upload is markdown or CSV. Parsing precedes visibility filtering, so those
+// formats obey the same permissions as native JSON reports.
+async function viewerReportData(deps: ManagedHttpDeps, user: StoredUser, id: string, bytes: Buffer, filename: string): Promise<unknown> {
+  const { data } = readManagedReport(bytes.toString('utf8'), filename)
+  if (data == null || user.role === 'admin' || user.role === 'manage') return data
+  return filterReportData(data, await deps.db.reportPermissionsFor(user.id, id))
 }
 
 // Apply the viewer's visibility-permission filter to a report's bytes. Admin and
@@ -1242,7 +1296,10 @@ async function visibleFindingIds(deps: ManagedHttpDeps, user: StoredUser, report
   const text = bytes.toString('utf8')
   const rec = await deps.db.getReport(reportId)
   if (rec == null) return ids
-  const report = await loadManagedFindings(perms == null ? text : filterReportContent(text, perms, rec.filename), rec.filename)
+  const { data } = readManagedReport(text, rec.filename)
+  if (data == null) return ids
+  const visibleData = perms == null ? data : filterReportData(data, perms)
+  const report = await loadManagedFindings(JSON.stringify(visibleData), rec.filename)
   if (report == null) return ids
   for (const f of report.findings) {
     const id = (f as { id?: unknown }).id
@@ -1700,6 +1757,10 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (method === 'GET') { await handleGetBundle(req, res, deps, cookie, id); return }
       if (method === 'DELETE') { await handleDeleteBundle(req, res, deps, cookie, id); return }
       send405(res, 'GET, DELETE'); return
+    }
+    if (path === '/api/reports/query') {
+      if (method !== 'POST') { send405(res, 'POST'); return }
+      await handleQueryReports(req, res, deps, cookie); return
     }
     const sourcesRoute = /^\/api\/reports\/([^/]+)\/sources$/u.exec(path)
     if (sourcesRoute) {

@@ -19,7 +19,7 @@ import { importWorkspaceFromGzip } from './workspace-import.js'
 import { maybePromptFirstUse } from './first-import-prompt.js'
 import { openPasskeyUnlockDialog } from './dialogs/passkey-unlock-dialog.js'
 import { openSyncDownloadDialog } from './dialogs/sync-download-dialog.js'
-import { clearReportSources, fetchReport as fetchManagedReport, login as managedLogin } from './client-managed.js'
+import { clearReportSources, fetchReport as fetchManagedReport, fetchReports as fetchManagedReports, login as managedLogin } from './client-managed.js'
 import { showToast } from './toast.js'
 import { managedHistory } from './managed-history.js'
 import { loadManagedReportComments } from './managed-comments.js'
@@ -708,19 +708,17 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   const selected = reportId === null ? team.reports : team.reports.filter((r) => r.id === reportId)
   if (reportId !== null && selected.length === 0) return false
   const gen = beginViewNavigation()
-  const contents = await Promise.all(selected.map((r) => fetchManagedReport(r.id)))
+  const contents = reportId === null
+    ? await fetchManagedReports(selected.map((r) => r.id))
+    : [await fetchManagedReport(reportId)]
   if (isStaleLoad(gen)) return false
   clearReportSources()
-  if (contents.some((content) => content === null)) {
+  if (contents === null || contents.some((content) => content === null)) {
     showToast('Could not load all team reports. Please try again.')
     return false
   }
-  // Validate the whole response set before clearing the prior view, so a
-  // missing/invalid report cannot quietly turn the team into a partial view.
-  if (contents.some((entry, i) => !readManagedReport(entry.content, selected[i].filename).data)) {
-    showToast('One of the team reports could not be read.')
-    return false
-  }
+  // The managed client validates every parsed JSON response before clearing
+  // the prior view, so a failed report cannot turn a team into a partial view.
   closeSessionsExcept(new Set())
   // Replace the previous report's controls while the new view is loading.
   // No partially hydrated findings may remain interactive during the awaits.
@@ -751,7 +749,7 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   state.repoEditing = false
   resetGraph2()
   for (let i = 0; i < selected.length; i++) {
-    await ingestReport(selected[i].filename, contents[i].content, gen, {
+    await ingestReport(selected[i].filename, contents[i].data, gen, {
       renderView: false, managedReportId: selected[i].id, managedRepo: contents[i].repo,
     })
     if (isStaleLoad(gen)) return false
@@ -1304,7 +1302,11 @@ async function ingestReport(name, content, gen = null, { renderView = true, mana
     // Format dispatch lives in the report library (report/index.js),
     // which also words the failure — usually a malformed dump rather
     // than an unknown format.
-    const { data, reason } = isManagedUiMode() ? readManagedReport(content, name) : readReport(content)
+    // Managed responses are already parsed. Clone before stamping IDs so the
+    // session's cached report remains independent of the active view.
+    const { data, reason } = managedReportId === null
+      ? isManagedUiMode() ? readManagedReport(content, name) : readReport(content)
+      : { data: structuredClone(content), reason: null }
     if (!data) throw new Error(reason)
     // First report in the current view (state.reports cleared on
     // switchToFile / deleteCurrent, accumulating in the headless print
