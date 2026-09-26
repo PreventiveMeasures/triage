@@ -30,6 +30,6 @@ export async function start(mode: 'managed+e2e' | 'e2e+managed'): Promise<void> 
   e2e.onShutdown(managed.close)
   e2e.httpServer.removeListener('request', next)
   e2e.httpServer.on('request', managed.handleRequest)
-  console.log(`triage combined server: mode=${mode}, managed db: ${config.dbPath}`)
+  console.log(`triage combined server: mode=${mode}, managed db: ${config.neonUrl ? 'neon-postgres' : config.dbPath}`)
   e2e.start()
 }

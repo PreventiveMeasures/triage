@@ -395,7 +395,7 @@ export type VercelBlobBackendOptions = {
   // Vercel Blob R/W token, typically from BLOB_READ_WRITE_TOKEN.
   // The SDK also reads it from process.env, but passing it
   // explicitly here keeps the env-var → boot config path single-
-  // sourced through server-e2e/index.ts (matches the Neon DATABASE_URL
+  // sourced through server-e2e/index.ts (matches the Neon database URL
   // handling — env-read at boot, threaded as a parameter).
   token: string
   // Test seam: inject a stub of the @vercel/blob module to avoid

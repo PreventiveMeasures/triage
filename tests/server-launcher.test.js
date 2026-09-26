@@ -11,7 +11,7 @@ import { createSession } from '../server-managed/session.ts'
 
 function environment(dir) {
   return {
-    ...process.env, HOST: '127.0.0.1', PORT: '0', DATABASE_URL: '',
+    ...process.env, HOST: '127.0.0.1', PORT: '0', DATABASE_URL: '', E2E_DATABASE_URL: '', MANAGED_DATABASE_URL: '',
     CONFIG_PATH: join(dir, 'config.json'), DB_PATH: join(dir, 'e2e.db'),
     MANAGED_DB_PATH: join(dir, 'managed.db'), OBJSTORE_DIR: join(dir, 'objstore'),
     GITHUB_CLIENT_ID: 'test-client', GITHUB_CLIENT_SECRET: 'test-secret',
@@ -161,5 +161,26 @@ test('launcher validates arguments before opening stores; help needs no managed 
     assert.notEqual(sameDb.status, 0)
     assert.match(sameDb.stderr, /must differ/u)
     assert.equal(existsSync(env.DB_PATH), false)
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('both combined launchers reject mixed backends and ambiguous URLs before opening storage', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'triage-launcher-databases-'))
+  try {
+    for (const mode of ['managed-e2e', 'e2e-managed']) {
+      for (const urls of [
+        { E2E_DATABASE_URL: 'postgres://example/e2e' },
+        { MANAGED_DATABASE_URL: 'postgres://example/managed' },
+        { DATABASE_URL: 'postgres://example/shared', E2E_DATABASE_URL: 'postgres://example/e2e' },
+        { DATABASE_URL: 'postgres://example/shared', MANAGED_DATABASE_URL: 'postgres://example/managed' },
+      ]) {
+        const env = { ...environment(dir), ...urls }
+        const proc = spawnSync(process.execPath, ['server.js', '--mode', mode], { env, encoding: 'utf8', timeout: 5000 })
+        assert.notEqual(proc.status, 0)
+        assert.match(proc.stderr, /Mixing Neon and SQLite|DATABASE_URL cannot be combined/u)
+        assert.equal(existsSync(env.DB_PATH), false)
+        assert.equal(existsSync(env.MANAGED_DB_PATH), false)
+      }
+    }
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })

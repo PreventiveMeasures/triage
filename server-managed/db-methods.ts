@@ -341,7 +341,7 @@ export interface ManagedDb extends ActivityStore, CommentStore {
   // entry writes the tombstone rather than deleting; setTriageEntries does the
   // same for a batch in one transaction: it lands whole or not at all. A write
   // that leaves the entry as it is changes nothing — neither the row's writer
-  // stamp nor the trail. Every change also appends to finding_triage_event;
+  // stamp nor the trail. Every change also appends to managed_finding_triage_event;
   // listTriageHistory walks one finding's trail, newest first.
   listTriage(findingIds: readonly string[]): Promise<TriageRow[]>
   setTriage(findingId: string, entry: TriageEntryPatch | null, updatedBy: string | null, updatedByLogin: string | null, now: number): Promise<void>
@@ -445,9 +445,9 @@ function prepareStatements(db: ManagedSql) {
     selectUsersStmt: db.prepare(
       `SELECT u.id, u.login, u.name, u.role, u.created_at AS created, u.last_seen_at AS lastSeen,
               (SELECT MAX(at) FROM (
-                SELECT MAX(e.at) AS at FROM finding_triage_event e WHERE e.actor_id = u.id
+                SELECT MAX(e.at) AS at FROM managed_finding_triage_event e WHERE e.actor_id = u.id
                 UNION ALL SELECT MAX(a.at) AS at FROM managed_activity a WHERE a.actor_id = u.id
-                UNION ALL SELECT MAX(c.at) AS at FROM finding_comment_event c WHERE c.actor_id = u.id
+                UNION ALL SELECT MAX(c.at) AS at FROM managed_finding_comment_event c WHERE c.actor_id = u.id
               ) AS events) AS lastActivity
          FROM managed_user u ORDER BY u.created_at ASC, u.login ASC`,
     ),
@@ -467,39 +467,39 @@ function prepareStatements(db: ManagedSql) {
     deleteSessionStmt: db.prepare(`DELETE FROM managed_session WHERE id = ?`),
     deleteExpiredStmt: db.prepare(`DELETE FROM managed_session WHERE expires_at <= ?`),
     upsertRepoStmt: db.prepare(
-      `INSERT INTO selected_repo (repo_id, full_name, is_private, installation_id, default_branch, html_url, added_by, added_at, updated_at, active)
+      `INSERT INTO managed_selected_repo (repo_id, full_name, is_private, installation_id, default_branch, html_url, added_by, added_at, updated_at, active)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
        ON CONFLICT(repo_id) DO UPDATE SET
          full_name = excluded.full_name, is_private = excluded.is_private,
          installation_id = excluded.installation_id, default_branch = excluded.default_branch,
          html_url = excluded.html_url, updated_at = excluded.updated_at, active = 1`,
     ),
-    deleteRepoStmt: db.prepare(`DELETE FROM selected_repo WHERE repo_id = ?`),
-    deactivateRepoStmt: db.prepare(`UPDATE selected_repo SET active = 0 WHERE repo_id = ? AND active = 1`),
-    reactivateRepoStmt: db.prepare(`UPDATE selected_repo SET active = 1 WHERE repo_id = ? AND active = 0`),
+    deleteRepoStmt: db.prepare(`DELETE FROM managed_selected_repo WHERE repo_id = ?`),
+    deactivateRepoStmt: db.prepare(`UPDATE managed_selected_repo SET active = 0 WHERE repo_id = ? AND active = 1`),
+    reactivateRepoStmt: db.prepare(`UPDATE managed_selected_repo SET active = 1 WHERE repo_id = ? AND active = 0`),
     selectReportsForRepoStmt: db.prepare(`SELECT id, filename, sha256, bundle_id AS bundleId FROM managed_report WHERE repo_id = ? ORDER BY filename ASC`),
     selectBundlesForRepoStmt: db.prepare(`SELECT id, filename FROM managed_bundle WHERE repo_id = ? ORDER BY filename ASC`),
     deleteReportsForRepoStmt: db.prepare(`DELETE FROM managed_report WHERE repo_id = ?`),
     deleteBundlesForRepoStmt: db.prepare(`DELETE FROM managed_bundle WHERE repo_id = ?`),
-    deleteTriageStmt: db.prepare(`DELETE FROM finding_triage WHERE finding_id IN (SELECT value FROM json_each(?))`),
-    deleteTriageHistoryStmt: db.prepare(`DELETE FROM finding_triage_event WHERE finding_id IN (SELECT value FROM json_each(?))`),
-    deleteCommentsStmt: db.prepare(`DELETE FROM finding_comment WHERE finding_id IN (SELECT value FROM json_each(?))`),
-    deleteCommentHistoryStmt: db.prepare(`DELETE FROM finding_comment_event WHERE finding_id IN (SELECT value FROM json_each(?))`),
+    deleteTriageStmt: db.prepare(`DELETE FROM managed_finding_triage WHERE finding_id IN (SELECT value FROM json_each(?))`),
+    deleteTriageHistoryStmt: db.prepare(`DELETE FROM managed_finding_triage_event WHERE finding_id IN (SELECT value FROM json_each(?))`),
+    deleteCommentsStmt: db.prepare(`DELETE FROM managed_finding_comment WHERE finding_id IN (SELECT value FROM json_each(?))`),
+    deleteCommentHistoryStmt: db.prepare(`DELETE FROM managed_finding_comment_event WHERE finding_id IN (SELECT value FROM json_each(?))`),
     countAnnotationsStmt: db.prepare(`SELECT count(*) AS total FROM (
-      SELECT finding_id FROM finding_triage WHERE finding_id IN (SELECT value FROM json_each(?))
-      UNION SELECT finding_id FROM finding_comment WHERE finding_id IN (SELECT value FROM json_each(?))
-      UNION SELECT finding_id FROM finding_comment_event WHERE finding_id IN (SELECT value FROM json_each(?))) AS annotations`),
+      SELECT finding_id FROM managed_finding_triage WHERE finding_id IN (SELECT value FROM json_each(?))
+      UNION SELECT finding_id FROM managed_finding_comment WHERE finding_id IN (SELECT value FROM json_each(?))
+      UNION SELECT finding_id FROM managed_finding_comment_event WHERE finding_id IN (SELECT value FROM json_each(?))) AS annotations`),
     selectReposStmt: db.prepare(
       `SELECT repo_id AS repoId, full_name AS fullName, is_private AS priv,
               installation_id AS installId, default_branch AS branch, html_url AS htmlUrl,
               added_by AS addedBy, added_at AS addedAt, active AS active
-         FROM selected_repo WHERE active = 1 ORDER BY full_name ASC`,
+         FROM managed_selected_repo WHERE active = 1 ORDER BY full_name ASC`,
     ),
     selectAllReposStmt: db.prepare(
       `SELECT repo_id AS repoId, full_name AS fullName, is_private AS priv,
               installation_id AS installId, default_branch AS branch, html_url AS htmlUrl,
               added_by AS addedBy, added_at AS addedAt, active AS active
-         FROM selected_repo ORDER BY full_name ASC`,
+         FROM managed_selected_repo ORDER BY full_name ASC`,
     ),
     insertReportStmt: db.prepare(
       `WITH candidate(id, slug) AS (VALUES (?, ?))
@@ -519,10 +519,10 @@ function prepareStatements(db: ManagedSql) {
               r.uploaded_at AS uploadedAt
          FROM managed_report r
          LEFT JOIN managed_user u ON u.id = r.uploaded_by
-         LEFT JOIN selected_repo sr ON sr.repo_id = r.repo_id
+         LEFT JOIN managed_selected_repo sr ON sr.repo_id = r.repo_id
          LEFT JOIN managed_bundle b ON b.id = r.bundle_id
         WHERE (? IS NULL OR r.uploaded_by = ? OR EXISTS (
-          SELECT 1 FROM team_repo tr JOIN team_user tu ON tu.team_id = tr.team_id
+          SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
           WHERE tr.repo_id = r.repo_id AND tu.user_id = ? AND ${REPORT_IN_TEAM_PATH_SQL}))
         ORDER BY r.uploaded_at DESC, r.filename ASC`,
     ),
@@ -537,15 +537,15 @@ function prepareStatements(db: ManagedSql) {
       `WITH requested AS (SELECT value AS id FROM json_each(?)), report_grants AS (
          SELECT r.id AS id, MAX(tu.view_dependencies) AS dependencies, MAX(tu.view_security) AS security
            FROM managed_report r JOIN requested q ON q.id = r.id
-           JOIN team_repo tr ON tr.repo_id = r.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}
-           JOIN team_user tu ON tu.team_id = tr.team_id AND tu.user_id = ?
+           JOIN managed_team_repo tr ON tr.repo_id = r.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}
+           JOIN managed_team_user tu ON tu.team_id = tr.team_id AND tu.user_id = ?
           GROUP BY r.id
        )
        SELECT r.id AS id, r.filename AS filename, r.byte_size AS byteSize, r.sha256 AS sha256,
               r.repo_directory AS repoDirectory, sr.full_name AS repoFullName,
               COALESCE(g.dependencies, 0) AS dependencies, COALESCE(g.security, 0) AS security
          FROM managed_report r JOIN requested q ON q.id = r.id
-         LEFT JOIN selected_repo sr ON sr.repo_id = r.repo_id
+         LEFT JOIN managed_selected_repo sr ON sr.repo_id = r.repo_id
          LEFT JOIN report_grants g ON g.id = r.id
         WHERE ? = 1 OR (? = 1 AND r.uploaded_by = ?)
            OR (g.id IS NOT NULL AND (? = 1 OR r.visible = 1))`,
@@ -555,7 +555,7 @@ function prepareStatements(db: ManagedSql) {
     setReportRepoStmt: db.prepare(`UPDATE managed_report SET repo_id = ?, repo_directory = ? WHERE id = ?`),
     setReportVisibleStmt: db.prepare(`UPDATE managed_report SET visible = ? WHERE id = ?`),
     upsertTriageStmt: db.prepare(
-      `INSERT INTO finding_triage (finding_id, color, triage, comment, fix, flagged, updated_by, updated_by_login, updated_at)
+      `INSERT INTO managed_finding_triage (finding_id, color, triage, comment, fix, flagged, updated_by, updated_by_login, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(finding_id) DO UPDATE SET
          color = excluded.color, triage = excluded.triage, comment = excluded.comment,
@@ -563,25 +563,25 @@ function prepareStatements(db: ManagedSql) {
          updated_by_login = excluded.updated_by_login, updated_at = excluded.updated_at`,
     ),
     selectTriageStateStmt: db.prepare(
-      `SELECT color, triage, comment, fix, flagged FROM finding_triage WHERE finding_id = ?`,
+      `SELECT color, triage, comment, fix, flagged FROM managed_finding_triage WHERE finding_id = ?`,
     ),
     insertTriageEventStmt: db.prepare(
-      `INSERT INTO finding_triage_event (finding_id, batch_id, color, triage, comment, fix, flagged, actor_id, actor_login, at, report_id, report, repo)
+      `INSERT INTO managed_finding_triage_event (finding_id, batch_id, color, triage, comment, fix, flagged, actor_id, actor_login, at, report_id, report, repo)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
          (SELECT filename FROM managed_report WHERE id = ?),
-         (SELECT p.full_name FROM managed_report r JOIN selected_repo p ON p.repo_id = r.repo_id WHERE r.id = ?))`,
+         (SELECT p.full_name FROM managed_report r JOIN managed_selected_repo p ON p.repo_id = r.repo_id WHERE r.id = ?))`,
     ),
     // With a retention limit set: keep the newest N events of a finding.
     trimTriageEventsStmt: db.prepare(
-      `DELETE FROM finding_triage_event
+      `DELETE FROM managed_finding_triage_event
         WHERE finding_id = ?
-          AND seq NOT IN (SELECT seq FROM finding_triage_event WHERE finding_id = ? ORDER BY seq DESC LIMIT ?)`,
+          AND seq NOT IN (SELECT seq FROM managed_finding_triage_event WHERE finding_id = ? ORDER BY seq DESC LIMIT ?)`,
     ),
     selectTriageHistoryStmt: db.prepare(
       `SELECT e.seq AS seq, e.finding_id AS findingId, e.batch_id AS batchId, e.color AS color, e.triage AS triage,
               e.comment AS comment, e.fix AS fix, e.flagged AS flagged,
               COALESCE(u.login, e.actor_login) AS actorLogin, e.at AS at
-         FROM finding_triage_event e
+         FROM managed_finding_triage_event e
          LEFT JOIN managed_user u ON u.id = e.actor_id
         WHERE e.finding_id = ?
         ORDER BY e.seq DESC
@@ -594,7 +594,7 @@ function prepareStatements(db: ManagedSql) {
       `SELECT t.finding_id AS findingId, t.color AS color, t.triage AS triage,
               t.comment AS comment, t.fix AS fix, t.flagged AS flagged,
               COALESCE(u.login, t.updated_by_login) AS updatedByLogin, t.updated_at AS updatedAt
-         FROM finding_triage t
+         FROM managed_finding_triage t
          LEFT JOIN managed_user u ON u.id = t.updated_by
         WHERE t.finding_id IN (SELECT value FROM json_each(?))
         ORDER BY t.finding_id ASC`,
@@ -619,25 +619,25 @@ function prepareStatements(db: ManagedSql) {
               b.repo_id AS repoId, sr.full_name AS repoFullName, b.uploaded_at AS uploadedAt
          FROM managed_bundle b
          LEFT JOIN managed_user u ON u.id = b.uploaded_by
-         LEFT JOIN selected_repo sr ON sr.repo_id = b.repo_id
+         LEFT JOIN managed_selected_repo sr ON sr.repo_id = b.repo_id
         WHERE (? IS NULL OR (b.uploaded_by = ? OR EXISTS (
-          SELECT 1 FROM team_repo tr JOIN team_user tu ON tu.team_id = tr.team_id
+          SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
           WHERE tr.repo_id = b.repo_id AND tu.user_id = ?)))
         ORDER BY b.uploaded_at DESC, b.filename ASC`,
     ),
     selectBundleReadableStmt: db.prepare(
       `SELECT 1 FROM managed_bundle b WHERE b.id = ? AND (b.uploaded_by = ? OR EXISTS (
-          SELECT 1 FROM team_repo tr JOIN team_user tu ON tu.team_id = tr.team_id
+          SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
           WHERE tr.repo_id = b.repo_id AND tu.user_id = ?))`,
     ),
     selectRepoReadableStmt: db.prepare(
-      `SELECT 1 FROM team_repo tr JOIN team_user tu ON tu.team_id = tr.team_id
+      `SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
         WHERE tr.repo_id = ? AND tu.user_id = ? LIMIT 1`,
     ),
     selectRepoPathReadableStmt: db.prepare(
       `WITH r(repo_directory) AS (VALUES (?))
-        SELECT 1 FROM r JOIN team_repo tr ON tr.repo_id = ? AND ${REPORT_IN_TEAM_PATH_SQL}
-        JOIN team_user tu ON tu.team_id = tr.team_id WHERE tu.user_id = ? LIMIT 1`,
+        SELECT 1 FROM r JOIN managed_team_repo tr ON tr.repo_id = ? AND ${REPORT_IN_TEAM_PATH_SQL}
+        JOIN managed_team_user tu ON tu.team_id = tr.team_id WHERE tu.user_id = ? LIMIT 1`,
     ),
     deleteBundleStmt: db.prepare(`DELETE FROM managed_bundle WHERE id = ?`),
     setBundleRepoStmt: db.prepare(`UPDATE managed_bundle SET repo_id = ? WHERE id = ?`),
@@ -645,7 +645,7 @@ function prepareStatements(db: ManagedSql) {
     // but haven't been linked yet (bundle uploaded after the report).
     linkReportsToBundleStmt: db.prepare(
       `UPDATE managed_report AS r SET bundle_id = ? WHERE bundle_integrity = ? AND bundle_id IS NULL
-       AND (? IS NULL OR r.uploaded_by = ? OR EXISTS (SELECT 1 FROM team_repo tr JOIN team_user tu ON tu.team_id = tr.team_id
+       AND (? IS NULL OR r.uploaded_by = ? OR EXISTS (SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
          WHERE tu.user_id = ? AND tr.repo_id = r.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}))`,
     ),
     // OR IGNORE: a duplicate name (UNIQUE) is the "taken" signal (0 changes); the
@@ -661,7 +661,7 @@ function prepareStatements(db: ManagedSql) {
     selectTeamsStmt: db.prepare(`SELECT id, slug, name FROM managed_team ORDER BY name ASC`),
     selectTeamsForUserStmt: db.prepare(
       `SELECT t.id AS id, t.slug AS slug, t.name AS name
-         FROM team_user tu JOIN managed_team t ON t.id = tu.team_id
+         FROM managed_team_user tu JOIN managed_team t ON t.id = tu.team_id
         WHERE tu.user_id = ? ORDER BY t.name ASC`,
     ),
     // Reports attached to the repos of the user's teams, tagged by team (a report
@@ -671,10 +671,10 @@ function prepareStatements(db: ManagedSql) {
               r.sha256 AS sha256, r.repo_id AS repoId, r.repo_directory AS repoDirectory, sr.full_name AS repoFullName,
               tu.view_dependencies AS dependencies, tu.view_security AS security,
               (SELECT role FROM managed_user WHERE id = tu.user_id) AS role
-         FROM team_user tu
-         JOIN team_repo tr ON tr.team_id = tu.team_id
+         FROM managed_team_user tu
+         JOIN managed_team_repo tr ON tr.team_id = tu.team_id
          JOIN managed_report r ON r.repo_id = tr.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}
-         LEFT JOIN selected_repo sr ON sr.repo_id = r.repo_id
+         LEFT JOIN managed_selected_repo sr ON sr.repo_id = r.repo_id
         WHERE tu.user_id = ? AND (r.visible = 1 OR (SELECT role FROM managed_user WHERE id = tu.user_id) = 'manage')
         ORDER BY r.uploaded_at DESC, r.filename ASC`,
     ),
@@ -683,22 +683,22 @@ function prepareStatements(db: ManagedSql) {
     // is the visibility decision for the bundle row in the sidebar.
     selectUserTeamBundlesStmt: db.prepare(
       `SELECT DISTINCT tr.team_id AS teamId, b.id AS id, b.filename AS filename, sr.full_name AS repoFullName, b.uploaded_at
-         FROM team_user tu
-         JOIN team_repo tr ON tr.team_id = tu.team_id
+         FROM managed_team_user tu
+         JOIN managed_team_repo tr ON tr.team_id = tu.team_id
          JOIN managed_bundle b ON b.repo_id = tr.repo_id
-         JOIN selected_repo sr ON sr.repo_id = b.repo_id
+         JOIN managed_selected_repo sr ON sr.repo_id = b.repo_id
         WHERE tu.user_id = ?
         ORDER BY b.uploaded_at DESC, b.filename ASC`,
     ),
     selectUserRepoScopesStmt: db.prepare(
       `SELECT DISTINCT tr.repo_id AS repoId, NULLIF(tr.path, '') AS path
-         FROM team_repo tr JOIN team_user tu ON tu.team_id = tr.team_id WHERE tu.user_id = ?`,
+         FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id WHERE tu.user_id = ?`,
     ),
     // A report is readable iff one of the user's team scopes contains it.
     selectReportReadableStmt: db.prepare(
       `SELECT 1 FROM managed_report r
-         JOIN team_repo tr ON tr.repo_id = r.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}
-         JOIN team_user tu ON tu.team_id = tr.team_id
+         JOIN managed_team_repo tr ON tr.repo_id = r.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}
+         JOIN managed_team_user tu ON tu.team_id = tr.team_id
         WHERE r.id = ? AND tu.user_id = ? LIMIT 1`,
     ),
     // The viewer's effective visibility permissions for a report: OR'd (MAX over
@@ -707,34 +707,34 @@ function prepareStatements(db: ManagedSql) {
     selectReportPermsStmt: db.prepare(
       `SELECT MAX(tu.view_dependencies) AS dependencies, MAX(tu.view_security) AS security
          FROM managed_report r
-         JOIN team_repo tr ON tr.repo_id = r.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}
-         JOIN team_user tu ON tu.team_id = tr.team_id AND tu.user_id = ?
+         JOIN managed_team_repo tr ON tr.repo_id = r.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}
+         JOIN managed_team_user tu ON tu.team_id = tr.team_id AND tu.user_id = ?
         WHERE r.id = ?`,
     ),
     selectUserOptionsStmt: db.prepare(`SELECT id, login, name, role FROM managed_user ORDER BY login ASC`),
     selectTeamReposStmt: db.prepare(
       `SELECT tr.team_id AS teamId, tr.repo_id AS repoId, sr.full_name AS fullName, NULLIF(tr.path, '') AS path
-         FROM team_repo tr JOIN selected_repo sr ON sr.repo_id = tr.repo_id
+         FROM managed_team_repo tr JOIN managed_selected_repo sr ON sr.repo_id = tr.repo_id
         ORDER BY sr.full_name ASC, tr.path ASC`,
     ),
     selectTeamMembersStmt: db.prepare(
       `SELECT tu.team_id AS teamId, tu.user_id AS userId, u.login AS login,
               tu.view_dependencies AS viewDependencies, tu.view_security AS viewSecurity
-         FROM team_user tu JOIN managed_user u ON u.id = tu.user_id
+         FROM managed_team_user tu JOIN managed_user u ON u.id = tu.user_id
         ORDER BY u.login ASC`,
     ),
     upsertTeamRepoStmt: db.prepare(
-      `INSERT OR IGNORE INTO team_repo (team_id, repo_id, path)
-       SELECT ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM team_repo WHERE team_id = ? AND repo_id = ? AND path = '')`,
+      `INSERT OR IGNORE INTO managed_team_repo (team_id, repo_id, path)
+       SELECT ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM managed_team_repo WHERE team_id = ? AND repo_id = ? AND path = '')`,
     ),
-    deleteTeamRepoStmt: db.prepare(`DELETE FROM team_repo WHERE team_id = ? AND repo_id = ?`),
-    deleteTeamRepoPathStmt: db.prepare(`DELETE FROM team_repo WHERE team_id = ? AND repo_id = ? AND path = ?`),
+    deleteTeamRepoStmt: db.prepare(`DELETE FROM managed_team_repo WHERE team_id = ? AND repo_id = ?`),
+    deleteTeamRepoPathStmt: db.prepare(`DELETE FROM managed_team_repo WHERE team_id = ? AND repo_id = ? AND path = ?`),
     upsertTeamMemberStmt: db.prepare(
-      `INSERT INTO team_user (team_id, user_id, view_dependencies, view_security) VALUES (?, ?, ?, ?)
+      `INSERT INTO managed_team_user (team_id, user_id, view_dependencies, view_security) VALUES (?, ?, ?, ?)
        ON CONFLICT(team_id, user_id) DO UPDATE SET
          view_dependencies = excluded.view_dependencies, view_security = excluded.view_security`,
     ),
-    deleteTeamMemberStmt: db.prepare(`DELETE FROM team_user WHERE team_id = ? AND user_id = ?`),
+    deleteTeamMemberStmt: db.prepare(`DELETE FROM managed_team_user WHERE team_id = ? AND user_id = ?`),
   }
 }
 

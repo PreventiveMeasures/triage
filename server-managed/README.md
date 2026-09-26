@@ -1,4 +1,6 @@
-For deployment on Vercel, see [the compatibility review and setup guide](VERCEL.md).
+For deployment on Vercel, see [the deployment guide](VERCEL.md).
+For database selection, shared-storage boundaries, and cleanup behavior across
+both server modes, see [storage separation](../server-common/STORAGE.md).
 
 # Account approval
 
@@ -136,7 +138,7 @@ invalidating it on account, team, or mode changes.
 
 # Managed comments
 
-Comments live in `finding_comment`, independently of the shared triage row.
+Comments live in `managed_finding_comment`, independently of the shared triage row.
 Each has its own ID, finding ID, text, optional author ID/login, optional creation and
 edit timestamps, and a version. Discussion posts are attributed to the
 authenticated user; the client cannot choose the author. Readers see the discussion; users

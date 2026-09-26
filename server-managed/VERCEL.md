@@ -1,143 +1,142 @@
 # Managed mode on Vercel
 
-Managed mode uses the same providers as server-e2e: Neon Postgres and private
-Vercel Blob storage. The optional Neon driver and Blob SDK boundary are shared.
-The existing e2e deployment configuration in `vercel.json` is unchanged;
-`vercel.managed.json` deploys managed mode independently.
+[vercel.managed.json](../vercel.managed.json) deploys the managed HTTP app and
+UI with Neon Postgres and private Vercel Blob storage. Authentication, team
+permissions, reports, bundles, triage, comments, and activity use the same
+managed application as the persistent server.
 
-## Compatibility review
+The function advertises managed mode only. Combined managed/e2e mode runs on
+the persistent Node launcher; it is not part of this deployment configuration.
+For all backend combinations and sharing rules, see
+[storage separation](../server-common/STORAGE.md).
 
-The following parts of the original managed server did not work unchanged in
-Vercel Functions:
+## Runtime and storage
 
-1. **SQLite metadata and sessions** (`db.ts`, `index.ts`). A local database is
-   neither durable nor shared across function instances. `db-methods.ts` now
-   holds the common asynchronous queries and behavior; `sql.ts` owns operation
-   transactions, and `db-neon.ts` supplies Neon connections. SQLite upgrades
-   stay in `db.ts`. PostgreSQL bootstrap is versioned and transactional.
-2. **Report and bundle bytes** (`blob-store.ts`). The startup always selected
-   filesystem storage. `storage.ts` now selects the disk or private Vercel
-   implementations of the same `BlobStore` interface. Both use `BundleStore`
-   to compress sourcemaps once into `.map.br` objects and retain uploaded
-   Stasis archives unchanged. Original sizes and hashes stay in the database.
-3. **Avatars, bundle derivatives, and report sources** (`avatar-store.ts`,
-   `bundle-cache.ts`, `report-sources.ts`). These previously depended on writable
-   local directories. Avatars now have a
-   private Blob adapter; bundle generation uses `BundleCacheStorage` with disk
-   and Blob adapters. Only Brotli metadata is cached; contents stream directly
-   from the stored Brotli bundle. Cache eviction is safe: metadata can be rebuilt from
-   durable uploads. Report-scoped sources use `CacheStorage` with disk and private
-   Blob adapters. Gzip responses retain main's report hash, filename format and
-   viewer-permission isolation, with authorization rechecked after cold builds.
-   Both caches reconcile deletion after publishing across function instances.
-   Process-local maps only deduplicate computation.
-4. **Listener, timers, and detached work** (`index.ts`, `http.ts`). The new
-   `api/managed.ts` awaits requests without starting a listener or installing
-   process signal handlers or cleanup intervals. Speculative background bundle
-   generation is disabled in functions; authorized reads build a missing cache
-   within the invocation. `api/managed-reap.ts` performs session and staging
-   cleanup through authenticated Vercel Cron.
-5. **Uploads larger than a function request** (`http.ts`,
-   `client/managed/request.js`). The old raw POST could exceed Vercel's request
-   payload ceiling. The managed client negotiates `uploadChunkBytes` from
-   `/api/config`, stages 3 MiB chunks, then finalizes with a small POST. Raw
-   uploads still work for small files and existing local servers. The report
-   and bundle limits remain 10 MiB and 100 MiB by default.
-6. **Large buffered responses** (`http.ts`). Reports and large JSON responses
-   write chunks through Node's streaming response API. Bundle metadata,
-   contents, report sources, and downloads stream from disk or private Blob storage with
-   backpressure. Sourcemap downloads use HTTP Brotli decoding to restore the
-   uploaded bytes; Stasis downloads remain byte-identical archives.
-7. **Function routing and raw request bodies**. The managed Vercel config
-   bundles `out/**`, routes API and History API page URLs to the managed
-   handler, and keeps cleanup separate. It sets `NODEJS_HELPERS=0` to preserve
-   raw request bytes. Proxy trust defaults on under `VERCEL=1`, and HTTPS
-   OAuth is required so session cookies remain secure.
+| Component | Current behavior |
+| --- | --- |
+| HTTP app | `api/managed.ts` handles API requests, assets, and managed page URLs; `out/**` is bundled with the function |
+| Metadata and sessions | Neon Postgres; transactional schema initialization, serialized writers, and consistent read snapshots |
+| Reports, bundles, avatars | Private Blob objects under `.managed/`; clients receive authorized responses, not Blob credentials or public URLs |
+| Bundle storage | Sourcemaps are stored as Brotli; Stasis archives retain their uploaded bytes; original sizes and hashes remain in Postgres |
+| Derived data | Brotli bundle metadata and gzip report sources are cached in Blob; source caches include the viewer's permissions |
+| Cleanup | `api/managed-reap.ts` deletes expired sessions and upload parts older than 24 hours; cron is scheduled daily at 00:00 UTC |
 
-Managed mode's GitHub requests and external scan service do not require local
-processes. There is no managed WebSocket server to port. The combined launcher
-continues to compose the e2e and managed apps on a persistent Node listener;
-the managed Vercel entry point advertises managed mode only.
+The app shares initialization within a function instance and retries failed
+initialization. Requests await their work; the serverless app installs no
+listener, signal handlers, or maintenance timers. Missing derivatives are built
+during authorized reads. Build deduplication and queues are local to each
+instance; caches are shared, and builders recheck database references after
+publishing to handle concurrent deletion. Access is checked again after cold
+builds. Each Neon operation closes its connection before returning.
 
-In a combined process, `DATABASE_URL` and `DB_PATH` belong to e2e. Managed mode
-keeps using `MANAGED_DB_PATH` (or its default SQLite path) unless
-`MANAGED_DATABASE_URL` explicitly selects Neon. Standalone and Vercel managed
-deployments also accept `DATABASE_URL` as a fallback.
+Use `DATABASE_URL` for a shared database, or `MANAGED_DATABASE_URL` for a
+managed-specific database. The global URL cannot be combined with either
+`MANAGED_DATABASE_URL` or `E2E_DATABASE_URL`. A managed database URL and
+`BLOB_READ_WRITE_TOKEN` are required; there is no SQLite/filesystem fallback.
+Changing backends does not migrate existing data. New users default to No
+access. Only a matching `MANAGED_INITIAL_ADMIN_GITHUB_ID` can bootstrap the
+empty database's first user as admin. Once any user exists, that variable has
+no effect. See [Account approval](README.md#account-approval).
 
-## Deploy
+E2e and managed may share a Postgres database and Blob store: their tables are
+separate, and e2e cleanup skips `.managed/`. This is logical separation under
+shared credentials. Multiple concurrent instances share the configured database
+and Blob storage; there is no per-instance namespace. All managed tables carry
+the `managed_` prefix. Startup renames tables in an existing managed database
+transactionally. Instances using that database must use the same schema names.
 
-Use Node.js 24.x and install the same optional peers required by e2e's Neon
-mode. Commit the dependency/lockfile updates for a Git-based deployment:
+## Deployment
+
+Use a repository checkout and Node.js 24.x. The cloud adapters require both
+optional peer dependencies declared in [package.json](../package.json):
 
 ```sh
-pnpm add @neondatabase/serverless @vercel/blob
+pnpm add '@neondatabase/serverless@^1.0.2' '@vercel/blob@^2.3.3'
 pnpm build
 vercel --local-config vercel.managed.json
 ```
 
-For Vercel Git integration, use `vercel.managed.json` as the project's
-configuration (copy it to `vercel.json` in the deployment branch). The CLI
-`--local-config` option applies to CLI deployments only.
+Include the dependency and lockfile updates in Git deployments. For Vercel Git
+integration, make the managed configuration the deployment's `vercel.json`;
+`--local-config` selects a configuration for CLI commands. The repository's
+root `vercel.json` configures e2e cleanup and does not route the managed app.
+See Vercel's [Node.js versions](https://vercel.com/docs/functions/runtimes/node-js/node-js-versions)
+and [CLI configuration selection](https://vercel.com/docs/cli/global-options#local-config).
 
-Set these variables in the Vercel project, for each deployment environment:
+Set these variables for each deployment environment:
 
-| Variable | Purpose |
+| Variable | Value |
 | --- | --- |
-| `MANAGED_DATABASE_URL` or `DATABASE_URL` | Neon Postgres connection string; managed-specific value takes precedence |
-| `BLOB_READ_WRITE_TOKEN` | Token for a **private** Vercel Blob store |
+| `DATABASE_URL` or `MANAGED_DATABASE_URL` | Shared or managed-specific Neon connection string; set exactly one |
+| `BLOB_READ_WRITE_TOKEN` | Token for a private Vercel Blob store paired with that database |
 | `GITHUB_CLIENT_ID` | GitHub login app client ID |
-| `GITHUB_CLIENT_SECRET` | GitHub login app secret |
+| `GITHUB_CLIENT_SECRET` | GitHub login app client secret |
 | `MANAGED_INITIAL_ADMIN_GITHUB_ID` | Optional numeric GitHub ID allowed to become admin on the first registration, only while the user table is empty |
-| `OAUTH_CALLBACK_URL` | `https://your-host/api/oauth/github/callback`, registered with GitHub |
-| `CRON_SECRET` | Secret used by Vercel's authenticated cleanup requests |
+| `OAUTH_CALLBACK_URL` | HTTPS callback registered with the login app, ending in `/api/oauth/github/callback` |
+| `CRON_SECRET` | Cleanup authorization secret; the endpoint requires `Authorization: Bearer <secret>` |
 
-The optional repository-access GitHub app variables and upload/history limits
-work as on the standalone managed server. Use separate databases and Blob
-stores for production and preview environments. Missing durable storage causes
-startup to fail; Vercel never silently falls back to local SQLite.
+The supplied configuration sets `NODEJS_HELPERS=0` to preserve raw request
+bodies, runs `pnpm build`, and uses `out` as its output directory. Keep helpers
+disabled in the deployed environment; see Vercel's
+[Node.js configuration](https://vercel.com/docs/functions/runtimes/node-js/advanced-node-configuration#disabling-helpers-for-nodejs).
+Under `VERCEL=1`, managed configuration defaults proxy trust on and requires an
+HTTPS OAuth callback. Optional repository-access GitHub app credentials and
+application limits are defined in [config.ts](config.ts).
 
-Reports, bundles, avatars, cache files and upload parts use separate prefixes
-under `.managed/`. No public Blob URL is returned to clients. The e2e blob
-reaper excludes this namespace. Existing managed SQLite data is **not**
-automatically copied into Neon or Blob: a new Neon database starts empty.
-New users default to No access. Only a matching `MANAGED_INITIAL_ADMIN_GITHUB_ID`
-can bootstrap the empty database's first user as admin. Once any user exists,
-that variable has no effect. See [Account approval](README.md#account-approval).
+## Uploads and resource limits
 
-## Upload protocol and runtime bounds
+The client reads `managed.uploadChunkBytes` from `/api/config` and splits uploads
+larger than 3 MiB into 3 MiB parts. Each part is sent to
+`POST /api/admin/uploads/{reports|bundles}/{uploadUuid}/{zeroBasedPart}` with the
+session cookie, manager/admin access, same-origin validation, and `X-CSRF-Token`.
+Parts are bound to the session, upload kind, upload ID, and part index.
 
-For a large upload, POST each binary part to
-`/api/admin/uploads/{reports|bundles}/{uploadUuid}/{zeroBasedPart}`. Every
-request requires the session cookie, same-origin validation, manager/admin
-role, and `X-CSRF-Token`. Parts are keyed by a hash of the authenticated session,
-upload kind, upload ID, and part index. They cannot be read by another session
-or finalized under another kind. The client does not receive storage tokens.
+Finalization posts an empty body to `/api/admin/reports` or `/api/admin/bundles`
+with the filename/repository headers and `X-Upload-Id`, `X-Upload-Parts`, and
+`X-Upload-Size`. The server checks part lengths and the total limit, assembles
+the file, and applies parsing, access checks, hashing, and deduplication. Once
+part assembly is attempted, the parts are consumed; a failed finalization may
+require re-uploading. Abandoned parts become eligible for the daily cleanup
+after 24 hours, so removal is not immediate at the 24-hour mark.
 
-Finalize by POSTing to the ordinary `/api/admin/reports` or
-`/api/admin/bundles` endpoint with an empty body, the ordinary filename/repo
-headers, and `X-Upload-Id`, `X-Upload-Parts`, and `X-Upload-Size`. The server
-checks the total limit and each exact part length, reconstructs the bytes,
-then applies the existing parsing, permissions, integrity, and deduplication
-logic. Finalization consumes the parts. Retry a failed finalization by
-re-uploading; incomplete transfers are collected after 24 hours. Daily cron
-also deletes expired sessions; session reads reject expiry immediately. Cleanup
-finishes listing all staging pages before deleting expired parts so deletions
-cannot shift pagination and skip objects.
+| Bound | Configured value |
+| --- | --- |
+| Report upload | 10 MiB by default (`MAX_REPORT_BYTES`) |
+| Bundle upload | 100 MiB by default (`MAX_BUNDLE_BYTES`) |
+| Upload part | 3 MiB |
+| Decoded bundle | 512 MiB |
+| App invocation | 300 seconds (`api/managed.ts` in the deployment configuration) |
+| Cleanup invocation | 60 seconds (`api/managed-reap.ts` in the deployment configuration) |
 
-Neon writers use a shared transaction lock so identity updates, slugs,
-comment version checks, triage/history changes and team-grant replacements
-remain atomic across instances. Reads use consistent snapshots. Connections
-are closed before each operation returns. PGlite parity tests cover SQL and
-rollback semantics; they do not simulate actual concurrent Neon connections.
+Chunking keeps individual upload requests below Vercel's documented 4.5 MB
+payload limit. Raw uploads remain subject to that platform limit even when the
+application permits larger files. See [function limits](https://vercel.com/docs/functions/limitations#request-body-size).
+Bundle downloads and cached derivatives use streams; reports and large JSON
+responses are materialized in memory and then written in chunks. Sourcemap
+responses use HTTP Brotli decoding to restore the uploaded bytes.
 
-Chunking removes the request payload bottleneck, but a finalization or cold
-bundle conversion must still finish within the configured 300-second function
-window and available memory. Bundle decoding retains its 512 MiB safety cap.
-For larger workloads, use the persistent server with the same Neon/Blob
-backends. This config deploys the full managed HTTP app, not the combined e2e
-listener.
+Finalization buffers the complete upload, and cold bundle processing can hold
+compressed bytes, decoded text, parsed objects, and generated output together.
+The 512 MiB decoding cap is not a total memory cap. These operations must fit
+within the function's memory and duration budget. Larger workloads can use the
+persistent server with the same Neon/Blob adapters.
 
-Platform references: [function limits](https://vercel.com/docs/functions/limitations),
-[streaming](https://vercel.com/docs/functions/streaming-functions),
-[raw Node.js requests](https://vercel.com/docs/functions/runtimes/node-js/advanced-node-configuration),
-and [project configuration](https://vercel.com/docs/project-configuration/vercel-json).
+## Coverage and limits
+
+The repository tests cover PostgreSQL queries and rollback behavior, function
+initialization/retry, upload authorization and assembly, streamed responses,
+Blob namespaces, cache deletion races, and authenticated cleanup. PostgreSQL
+coverage uses PGlite; Blob coverage uses SDK fixtures. See
+[managed-postgres](../tests/managed-postgres.test.js),
+[managed-vercel-runtime](../tests/managed-vercel-runtime.test.js),
+[managed-vercel-storage](../tests/managed-vercel-storage.test.js),
+[managed-vercel-reap](../tests/managed-vercel-reap.test.js), and
+[storage isolation](../tests/server-storage-isolation.test.js).
+
+These tests do not validate a deployed Vercel build, live OAuth/provider
+credentials, platform streaming, actual concurrent Neon connections, or memory
+and timeout behavior at upload limits. Those require deployment validation.
+
+Cleanup covers sessions and upload staging. Explicit report/bundle deletion
+also removes associated bytes and caches, but there is no general managed
+orphan-object sweep to recover every failed deletion or interrupted publish.

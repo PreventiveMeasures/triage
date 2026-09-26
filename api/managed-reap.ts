@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { createHash, timingSafeEqual } from 'node:crypto'
 import { openNeonManagedDb } from '../server-managed/db-neon.ts'
 import { openManagedVercelStorage } from '../server-managed/blob-vercel.ts'
+import { databaseUrls } from '../server-common/database-config.ts'
 
 export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const secret = process.env['CRON_SECRET']
@@ -15,7 +16,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   if (req.method !== 'GET') { res.statusCode = 405; res.setHeader('allow', 'GET'); res.end(); return }
   let db
   try {
-    const url = process.env['MANAGED_DATABASE_URL'] || process.env['DATABASE_URL']
+    const url = databaseUrls().managed
     const token = process.env['BLOB_READ_WRITE_TOKEN']
     if (!url || !token) throw new Error('Managed cron requires Neon and Vercel Blob')
     db = await openNeonManagedDb(url)

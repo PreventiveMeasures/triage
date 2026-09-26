@@ -12,6 +12,7 @@ import { argv, env } from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { configuredScanServer } from '../server-common/scan-config.ts'
+import { databaseUrls } from '../server-common/database-config.ts'
 
 export type Config = {
   port: number
@@ -55,9 +56,15 @@ Environment:
                              in /api/config and allowed by the UI CSP.
                              Unset by default (no external scan service).
   DB_PATH                    sqlite file (default: server-e2e/data/data.db);
-                             ignored when DATABASE_URL is set
-  DATABASE_URL               Neon Postgres connection string; if set,
-                             selects the Neon backend instead of
+                             ignored when an e2e database URL is set
+  DATABASE_URL               shared Neon Postgres URL for enabled modes.
+                             Cannot be combined with E2E_DATABASE_URL
+                             or MANAGED_DATABASE_URL.
+  E2E_DATABASE_URL           e2e-only Neon URL, used without DATABASE_URL.
+                             Combined mode also requires
+                             MANAGED_DATABASE_URL; mixing Neon and
+                             SQLite backends is rejected.
+                             Either e2e URL selects Neon instead of
                              SQLite. Requires the optional peer dep
                              @neondatabase/serverless. The Neon
                              pairing additionally requires
@@ -66,12 +73,12 @@ Environment:
                              local-FS bytes cannot back a multi-
                              replica DB plane.
   BLOB_READ_WRITE_TOKEN      Vercel Blob R/W token (private store).
-                             Required when DATABASE_URL is set;
+                             Required when an e2e database URL is set;
                              ignored otherwise. Requires the optional
                              peer dep @vercel/blob.
   OBJSTORE_TOKEN_SECRET      Base64 (32 bytes) HMAC secret for REST
-                             bearer tokens. REQUIRED when DATABASE_URL
-                             is set (multi-replica deployments: a
+                             bearer tokens. REQUIRED in Neon mode
+                             (multi-replica deployments: a
                              token minted on one replica's WS plane
                              must validate on another replica's REST
                              plane). Optional under SQLite (a fresh
@@ -81,8 +88,8 @@ Environment:
   OBJSTORE_DIR               object store root (default: ./objstore
                              next to DB_PATH). Used by the local-FS
                              byte plane only; ignored when
-                             DATABASE_URL + BLOB_READ_WRITE_TOKEN
-                             are set (bytes live in Vercel Blob).
+                             an e2e database URL selects Neon
+                             (bytes live in Vercel Blob).
   OBJSTORE_REAP_INTERVAL_MS  orphan reaper period (default 600000)
   OBJSTORE_REAP_DISABLED     set '1' / 'true' to disable the orphan
                              reaper ENTIRELY — no boot sweep, no
@@ -201,7 +208,7 @@ export function loadConfig(): Config {
     process.exit(0)
   }
 
-  const neonUrl = env['DATABASE_URL'] ?? null
+  const neonUrl = databaseUrls().e2e
   const blobToken = env['BLOB_READ_WRITE_TOKEN'] ?? null
   const tokenSecretB64 = env['OBJSTORE_TOKEN_SECRET'] ?? null
   const tokenSecret = tokenSecretB64 ? decodeTokenSecret(tokenSecretB64) : null

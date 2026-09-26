@@ -12,7 +12,10 @@ if (values.help) {
   console.log(`Usage: node server.js --mode <${modes.join('|')}>
 Defaults to e2e. Combined modes share HOST/PORT; the first mode is the client default.
 Managed modes require GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET and OAUTH_CALLBACK_URL.
-Combined storage: DB_PATH for e2e, MANAGED_DB_PATH for managed.`)
+Combined storage: DATABASE_URL for a shared Neon DB, or E2E_DATABASE_URL and
+MANAGED_DATABASE_URL for separate Neon DBs. Do not mix shared and per-mode URLs.
+Without URLs: SQLite at DB_PATH for e2e and MANAGED_DB_PATH for managed.
+Combined mode does not support mixing Neon and SQLite.`)
 } else if (values.mode === 'e2e') {
   const { start } = await import('./server-e2e/index.ts')
   start()

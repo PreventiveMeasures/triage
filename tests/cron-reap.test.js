@@ -13,13 +13,19 @@
 // (server-e2e/objstore/*) are specifier-cached and shared, so only reap.ts re-runs.
 
 import assert from 'node:assert/strict'
-import { test } from 'node:test'
+import { mock, test } from 'node:test'
 import { env } from 'node:process'
 
-const SNAP = ['CRON_SECRET', 'DATABASE_URL', 'BLOB_READ_WRITE_TOKEN']
+const SNAP = ['CRON_SECRET', 'DATABASE_URL', 'E2E_DATABASE_URL', 'MANAGED_DATABASE_URL', 'BLOB_READ_WRITE_TOKEN']
+const opened = []
+mock.module('../server-e2e/objstore/store-neon.ts', { namedExports: {
+  openNeonObjstore: url => { opened.push(url); return Promise.resolve({}) },
+} })
+mock.module('../server-e2e/objstore/blob-vercel.ts', { namedExports: { openVercelBlobBackend: () => Promise.resolve({}) } })
+mock.module('../server-e2e/objstore/reaper.ts', { namedExports: { reapOrphans: () => Promise.resolve() } })
 let importN = 0
 
-// Set the given env (clearing the three keys first), import a fresh handler so
+// Set the given env (clearing the backend keys first), import a fresh handler so
 // it captures exactly that env, then restore the prior env. The handler holds
 // the captured values in its module closure, so the restore doesn't affect it.
 async function loadHandler(envVals) {
@@ -59,4 +65,28 @@ test('cron reap: 500 not-configured when authed but Neon/Blob env is absent', as
   const res = await run(handler, 'Bearer topsecret')
   assert.equal(res.statusCode, 500)
   assert.equal(JSON.parse(res.body).error, 'not-configured')
+})
+
+test('cron reap selects the shared or e2e-specific URL, never the managed URL', async () => {
+  for (const urls of [{ DATABASE_URL: 'postgres://shared' }, { E2E_DATABASE_URL: 'postgres://e2e', MANAGED_DATABASE_URL: 'postgres://managed' }]) {
+    const handler = await loadHandler({ CRON_SECRET: 'secret', BLOB_READ_WRITE_TOKEN: 'blob', ...urls })
+    assert.equal((await run(handler, 'Bearer secret')).statusCode, 200)
+    assert.equal(opened.at(-1), urls.DATABASE_URL ?? urls.E2E_DATABASE_URL)
+  }
+  const handler = await loadHandler({ CRON_SECRET: 'secret', BLOB_READ_WRITE_TOKEN: 'blob', MANAGED_DATABASE_URL: 'postgres://managed' })
+  const before = opened.length
+  assert.equal((await run(handler, 'Bearer secret')).statusCode, 500)
+  assert.equal(opened.length, before)
+})
+
+test('cron reap rejects global/dedicated URL conflicts without touching storage', async () => {
+  const before = opened.length
+  for (const key of ['E2E_DATABASE_URL', 'MANAGED_DATABASE_URL']) {
+    const handler = await loadHandler({ CRON_SECRET: 'secret', BLOB_READ_WRITE_TOKEN: 'blob', DATABASE_URL: 'postgres://shared', [key]: 'postgres://dedicated' })
+    assert.equal((await run(handler, 'Bearer wrong')).statusCode, 401)
+    const response = await run(handler, 'Bearer secret')
+    assert.equal(response.statusCode, 500)
+    assert.match(JSON.parse(response.body).detail, /DATABASE_URL cannot be combined/u)
+  }
+  assert.equal(opened.length, before)
 })

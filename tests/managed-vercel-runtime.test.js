@@ -52,7 +52,7 @@ async function send(url, { method = 'GET', headers = {}, body = '' } = {}) {
 
 test('managed function retries failed cold starts, shares initialization, and authenticates chunk uploads', async t => {
   const oldEnv = { ...process.env }
-  Object.assign(process.env, { VERCEL: '1', DATABASE_URL: 'postgres://example/test', BLOB_READ_WRITE_TOKEN: 'test', GITHUB_CLIENT_ID: 'client', GITHUB_CLIENT_SECRET: 'secret', OAUTH_CALLBACK_URL: 'https://app.example/api/oauth/github/callback' })
+  Object.assign(process.env, { VERCEL: '1', DATABASE_URL: 'postgres://example/test', E2E_DATABASE_URL: '', MANAGED_DATABASE_URL: '', BLOB_READ_WRITE_TOKEN: 'test', GITHUB_CLIENT_ID: 'client', GITHUB_CLIENT_SECRET: 'secret', OAUTH_CALLBACK_URL: 'https://app.example/api/oauth/github/callback' })
   t.after(async () => { replaceEnv(oldEnv); await db.close() })
   const config = loadManagedConfig()
   t.mock.method(globalThis, 'setInterval', () => { throw new Error('serverless app must not install timers') })

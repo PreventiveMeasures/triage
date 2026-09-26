@@ -1263,7 +1263,7 @@ test('db: teams — create/list/delete, repo (+path) & member (+perms) links, FK
   assert.equal(t.repos[0].path, null)
   assert.deepEqual([t.members[0].dependencies, t.members[0].security], [true, true])
 
-  // Deselecting the repo cascades the team_repo link away.
+  // Deselecting the repo cascades the managed_team_repo link away.
   await db.deselectRepo(7)
   ;[t] = await db.listTeams()
   assert.deepEqual(t.repos, [])
@@ -1939,8 +1939,8 @@ test('db: permanent triage deletion rolls back current rows if history deletion 
   const raw = new DatabaseSync(path)
   t.after(() => raw.close())
   // Reproduce a legacy orphan and inject a failure in the second DELETE.
-  raw.exec("DELETE FROM finding_triage WHERE finding_id = 'history-only'")
-  raw.exec(`CREATE TRIGGER fail_history_delete BEFORE DELETE ON finding_triage_event
+  raw.exec("DELETE FROM managed_finding_triage WHERE finding_id = 'history-only'")
+  raw.exec(`CREATE TRIGGER fail_history_delete BEFORE DELETE ON managed_finding_triage_event
     BEGIN SELECT RAISE(ABORT, 'test history deletion failure'); END`)
   await assert.rejects(db.deleteTriage(['deleted']), /test history deletion failure/u)
   assert.equal((await db.listTriage(['deleted'])).length, 1, 'the first DELETE is rolled back')

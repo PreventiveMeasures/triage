@@ -61,11 +61,11 @@ const triageFields = `'triage:' || e.seq AS id, 'triage' AS kind,
   CASE WHEN e.color IS NULL AND e.triage IS NULL AND e.comment IS NULL AND e.fix IS NULL AND e.flagged IS NULL
     THEN 'cleared triage' ELSE 'updated triage' END AS action`
 const triage = `SELECT ${triageFields}, e.repo, e.report_id AS reportId, e.report, e.finding_id AS finding, e.at
-  FROM finding_triage_event e LEFT JOIN managed_user u ON u.id = e.actor_id`
+  FROM managed_finding_triage_event e LEFT JOIN managed_user u ON u.id = e.actor_id`
 const commentFields = `'comment:' || e.seq AS id, 'triage' AS kind,
   COALESCE(u.login, e.actor_login) AS actor, e.actor_id AS actorId, e.action`
 const comments = `SELECT ${commentFields}, e.repo, e.report_id AS reportId, e.report, e.finding_id AS finding, e.at
-  FROM finding_comment_event e LEFT JOIN managed_user u ON u.id = e.actor_id`
+  FROM managed_finding_comment_event e LEFT JOIN managed_user u ON u.id = e.actor_id`
 const adminSource = `${triage} UNION ALL ${comments} UNION ALL
   SELECT id, kind, actor, actor_id AS actorId, action, repo, report_id AS reportId, report, NULL AS finding, at FROM managed_activity`
 // Keep the finite set of accessible findings outside the indexed event
@@ -74,30 +74,30 @@ const managerSource = `SELECT ${triageFields},
   json_extract(c.value, '$.repo') AS repo, json_extract(c.value, '$.reportId') AS reportId,
   json_extract(c.value, '$.report') AS report, e.finding_id AS finding, e.at
   FROM json_each(:contexts) c
-  CROSS JOIN finding_triage_event e ON e.finding_id = json_extract(c.value, '$.finding')
+  CROSS JOIN managed_finding_triage_event e ON e.finding_id = json_extract(c.value, '$.finding')
   LEFT JOIN managed_user u ON u.id = e.actor_id
   UNION ALL SELECT ${commentFields},
     json_extract(c.value, '$.repo') AS repo, json_extract(c.value, '$.reportId') AS reportId,
     json_extract(c.value, '$.report') AS report, e.finding_id AS finding, e.at
   FROM json_each(:contexts) c
-  CROSS JOIN finding_comment_event e ON e.finding_id = json_extract(c.value, '$.finding')
+  CROSS JOIN managed_finding_comment_event e ON e.finding_id = json_extract(c.value, '$.finding')
   LEFT JOIN managed_user u ON u.id = e.actor_id
   UNION ALL SELECT a.id, a.kind, a.actor, a.actor_id AS actorId,
     CASE WHEN a.kind = 'repository' THEN 'changed a report repository assignment' ELSE a.action END AS action,
     p.full_name AS repo, r.id AS reportId, r.filename AS report, NULL AS finding, a.at
   FROM managed_activity a JOIN managed_report r ON r.id = a.report_id
-  LEFT JOIN selected_repo p ON p.repo_id = r.repo_id
+  LEFT JOIN managed_selected_repo p ON p.repo_id = r.repo_id
   WHERE EXISTS (
-    SELECT 1 FROM team_repo tr JOIN team_user tu ON tu.team_id = tr.team_id
+    SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
     WHERE tu.user_id = :userId AND tr.repo_id = r.repo_id AND ${withinTeamPath('r.repo_directory')}
   )
   UNION ALL SELECT a.id, a.kind, a.actor, a.actor_id AS actorId,
     CASE WHEN a.kind = 'repository' THEN 'changed a bundle repository assignment' ELSE a.action END AS action,
     p.full_name AS repo, NULL AS reportId, b.filename AS report, NULL AS finding, a.at
   FROM managed_activity a JOIN managed_bundle b ON b.id = a.bundle_id
-  LEFT JOIN selected_repo p ON p.repo_id = b.repo_id
+  LEFT JOIN managed_selected_repo p ON p.repo_id = b.repo_id
   WHERE a.report_id IS NULL AND EXISTS (
-    SELECT 1 FROM team_repo tr JOIN team_user tu ON tu.team_id = tr.team_id
+    SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
     WHERE tu.user_id = :userId AND tr.repo_id = b.repo_id
   )
   UNION ALL SELECT a.id, a.kind, a.actor, a.actor_id AS actorId, a.action, a.repo, a.report_id AS reportId,
@@ -105,7 +105,7 @@ const managerSource = `SELECT ${triageFields},
   WHERE a.kind = 'delete' AND (a.report_id IS NOT NULL OR a.bundle_id IS NOT NULL)
     AND NOT EXISTS (SELECT 1 FROM managed_report WHERE id = a.report_id)
     AND NOT EXISTS (SELECT 1 FROM managed_bundle WHERE id = a.bundle_id)
-    AND EXISTS (SELECT 1 FROM team_repo tr JOIN team_user tu ON tu.team_id = tr.team_id
+    AND EXISTS (SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
       WHERE tu.user_id = :userId AND tr.repo_id = a.repo_id
       AND (a.report_id IS NULL OR ${withinTeamPath('a.repo_directory')}))`
 
@@ -116,7 +116,7 @@ export const ACTIVITY_SCHEMA = `
       bundle_id TEXT, repo_id INTEGER, repo_directory TEXT, actor_id TEXT
     ) STRICT;
     CREATE INDEX IF NOT EXISTS managed_activity_at_idx ON managed_activity(at, id);
-    CREATE INDEX IF NOT EXISTS finding_triage_event_at_idx ON finding_triage_event(at, seq);
+    CREATE INDEX IF NOT EXISTS finding_triage_event_at_idx ON managed_finding_triage_event(at, seq);
 `
 
 export function initActivityMethods(db: DatabaseSync): void {
@@ -129,7 +129,7 @@ export function initActivityMethods(db: DatabaseSync): void {
     const columns = `id, kind, actor, action, repo, report_id, report, at, bundle_id, actor_id`
     const values = (alias: string) => `'${type}-upload:' || ${alias}.id, 'upload',
       COALESCE(${alias}.uploaded_by_login, (SELECT login FROM managed_user WHERE id = ${alias}.uploaded_by)), 'uploaded a ${type}',
-      (SELECT full_name FROM selected_repo WHERE repo_id = ${alias}.repo_id),
+      (SELECT full_name FROM managed_selected_repo WHERE repo_id = ${alias}.repo_id),
       ${type === 'report' ? `${alias}.id` : 'NULL'}, ${alias}.filename, ${alias}.uploaded_at,
       ${type === 'bundle' ? `${alias}.id` : 'NULL'}, ${alias}.uploaded_by`
     db.exec(`
@@ -146,8 +146,8 @@ export function activityMethods(db: ManagedSql): ActivityStore {
   const admin = activityStatements(db, adminSource)
   const manager = activityStatements(db, managerSource)
   const reports = db.prepare(`SELECT r.id AS reportId, r.filename AS report, p.full_name AS repo
-    FROM managed_report r JOIN selected_repo p ON p.repo_id = r.repo_id
-    WHERE EXISTS (SELECT 1 FROM team_repo tr JOIN team_user tu ON tu.team_id = tr.team_id
+    FROM managed_report r JOIN managed_selected_repo p ON p.repo_id = r.repo_id
+    WHERE EXISTS (SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
       WHERE tu.user_id = ? AND tr.repo_id = r.repo_id AND ${withinTeamPath('r.repo_directory')})
     ORDER BY r.uploaded_at DESC, r.id`)
   return {
