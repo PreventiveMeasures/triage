@@ -3,6 +3,7 @@
 // legacy entries. Never copy annotation bodies or credentials into this feed.
 import { randomUUID } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
+import type { ManagedSql } from './sql.ts'
 
 export interface ActivityInput {
   kind: 'access' | 'repository' | 'visibility' | 'delete'
@@ -108,8 +109,7 @@ const managerSource = `SELECT ${triageFields},
       WHERE tu.user_id = :userId AND tr.repo_id = a.repo_id
       AND (a.report_id IS NULL OR ${withinTeamPath('a.repo_directory')}))`
 
-export function activityMethods(db: DatabaseSync): ActivityStore {
-  db.exec(`
+export const ACTIVITY_SCHEMA = `
     CREATE TABLE IF NOT EXISTS managed_activity (
       id TEXT PRIMARY KEY, kind TEXT NOT NULL, actor TEXT, action TEXT NOT NULL,
       repo TEXT, report_id TEXT, report TEXT, at INTEGER NOT NULL,
@@ -117,7 +117,10 @@ export function activityMethods(db: DatabaseSync): ActivityStore {
     ) STRICT;
     CREATE INDEX IF NOT EXISTS managed_activity_at_idx ON managed_activity(at, id);
     CREATE INDEX IF NOT EXISTS finding_triage_event_at_idx ON finding_triage_event(at, seq);
-  `)
+`
+
+export function initActivityMethods(db: DatabaseSync): void {
+  db.exec(ACTIVITY_SCHEMA)
   migrateActivityScope(db)
   db.exec('CREATE INDEX IF NOT EXISTS managed_activity_actor_at_idx ON managed_activity(actor_id, at)')
   // Stable upload IDs make backfill idempotent, including after restarts.
@@ -135,6 +138,9 @@ export function activityMethods(db: DatabaseSync): ActivityStore {
       INSERT OR IGNORE INTO managed_activity (${columns}) SELECT ${values('source')} FROM managed_${type} source;
     `)
   }
+}
+
+export function activityMethods(db: ManagedSql): ActivityStore {
   const insert = db.prepare(`INSERT INTO managed_activity (id, kind, actor, action, repo, report_id, report, at, bundle_id, repo_id, repo_directory, actor_id)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
   const admin = activityStatements(db, adminSource)
@@ -145,33 +151,32 @@ export function activityMethods(db: DatabaseSync): ActivityStore {
       WHERE tu.user_id = ? AND tr.repo_id = r.repo_id AND ${withinTeamPath('r.repo_directory')})
     ORDER BY r.uploaded_at DESC, r.id`)
   return {
-    recordActivity(entry, at) {
-      insert.run(randomUUID(), entry.kind, entry.actor, entry.action, entry.repo ?? null, entry.reportId ?? null, entry.report ?? null, at,
+    async recordActivity(entry, at) {
+      await insert.run(randomUUID(), entry.kind, entry.actor, entry.action, entry.repo ?? null, entry.reportId ?? null, entry.report ?? null, at,
         entry.bundleId ?? null, entry.repoId ?? null, entry.repoDirectory ?? null, entry.actorId ?? null)
-      return Promise.resolve()
     },
-    listActivityReports(userId) {
-      return Promise.resolve(reports.all(userId) as Omit<ActivityContext, 'finding'>[])
+    async listActivityReports(userId) {
+      return (await reports.all(userId)) as Omit<ActivityContext, 'finding'>[]
     },
-    listActivity({ page, limit, kind, query, repo = '', actor = '', contexts, userId }) {
+    async listActivity({ page, limit, kind, query, repo = '', actor = '', contexts, userId }) {
       const stmts = contexts == null ? admin : manager
       const scope = contexts == null ? {} : { contexts: JSON.stringify(contexts), userId: userId ?? '' }
       const params = { ...scope, kind, query, repo, actor }
-      const { total } = stmts.count.get(params) as { total: number }
+      const { total } = (await stmts.count.get(params)) as { total: number }
       const currentPage = Math.min(page, Math.max(1, Math.ceil(total / limit)))
-      const history = stmts.rows.all({ ...params, limit, offset: (currentPage - 1) * limit }) as ActivityEntry[]
+      const history = (await stmts.rows.all({ ...params, limit, offset: (currentPage - 1) * limit })) as ActivityEntry[]
       const filters: ActivityFilters = {
-        repos: (stmts.repos.all(scope) as { repo: string }[]).map(row => row.repo),
-        users: (stmts.users.all(scope) as ActivityFilters['users']).map(row => ({ id: row.id, login: row.login, detail: row.detail })),
+        repos: ((await stmts.repos.all(scope)) as { repo: string }[]).map(row => row.repo),
+        users: ((await stmts.users.all(scope)) as ActivityFilters['users']).map(row => ({ id: row.id, login: row.login, detail: row.detail })),
       }
-      return Promise.resolve({ history, total, page: currentPage, limit, filters })
+      return { history, total, page: currentPage, limit, filters }
     },
   }
 }
 
 // Both rows and selector choices come from the authorized source. Keep legacy
 // login-only actors separate: a historical login is not proof of user identity.
-function activityStatements(db: DatabaseSync, source: string) {
+function activityStatements(db: ManagedSql, source: string) {
   const activity = `WITH events AS (${source}), activity AS (
     SELECT events.*, COALESCE('user:' || actorId, 'legacy:' || actor) AS actorKey FROM events
   )`
@@ -181,7 +186,7 @@ function activityStatements(db: DatabaseSync, source: string) {
     AND (:query = '' OR instr(lower(coalesce(actor, '') || ' ' || action || ' ' ||
       coalesce(repo, '') || ' ' || coalesce(report, '') || ' ' || coalesce(finding, '')), lower(:query)) > 0)`
   return {
-    count: db.prepare(`SELECT count(*) AS total FROM (${filtered})`),
+    count: db.prepare(`SELECT count(*) AS total FROM (${filtered}) AS filtered`),
     rows: db.prepare(`${filtered} ORDER BY at DESC,
       CASE WHEN kind = 'triage' THEN CAST(substr(id, instr(id, ':') + 1) AS INTEGER) ELSE 0 END DESC,
       id DESC LIMIT :limit OFFSET :offset`),

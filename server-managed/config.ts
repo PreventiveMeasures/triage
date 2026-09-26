@@ -13,6 +13,9 @@ export interface ManagedConfig {
   port: number
   host: string
   dbPath: string
+  neonUrl?: string | null
+  blobToken?: string | null
+  serverless?: boolean
   debug: boolean
   trustProxyEnv: string | undefined
   // GitHub App user-authorization (identity) credentials — the App's client id
@@ -51,8 +54,7 @@ export interface ManagedConfig {
 }
 
 function fail(msg: string): never {
-  console.error(msg)
-  process.exit(1)
+  throw new Error(msg)
 }
 
 function requireStr(name: string): string {
@@ -75,6 +77,11 @@ function urlOrFail(name: string, raw: string): URL {
 }
 
 export function loadManagedConfig({ combined = false } = {}): ManagedConfig {
+  const serverless = env['VERCEL'] === '1'
+  const neonUrl = env['MANAGED_DATABASE_URL'] || env['DATABASE_URL'] || null
+  const blobToken = env['BLOB_READ_WRITE_TOKEN'] || null
+  if (serverless && !neonUrl) fail('Vercel managed mode requires MANAGED_DATABASE_URL or DATABASE_URL.')
+  if (neonUrl && !blobToken) fail('Managed Neon mode requires BLOB_READ_WRITE_TOKEN.')
   const host = env['HOST'] ?? '127.0.0.1'
   const oauthCallbackUrl = requireStr('OAUTH_CALLBACK_URL')
   const callback = urlOrFail('OAUTH_CALLBACK_URL', oauthCallbackUrl)
@@ -82,20 +89,21 @@ export function loadManagedConfig({ combined = false } = {}): ManagedConfig {
   // A `__Host-` cookie mandates `Secure`, so any non-loopback bind must be
   // HTTPS — fail fast (mirrors server-e2e's boot check). Loopback dev over
   // http is allowed with a non-prefixed cookie name.
-  if (!LOOPBACK_HOSTS.has(host) && !cookieSecure) {
-    fail(`HOST=${host} is not loopback but OAUTH_CALLBACK_URL is not https — the session cookie needs Secure.`)
+  if ((serverless || !LOOPBACK_HOSTS.has(host)) && !cookieSecure) {
+    fail(`Vercel or non-loopback HOST=${host} requires an https OAUTH_CALLBACK_URL — the session cookie needs Secure.`)
   }
   const sessionCookieName = env['SESSION_COOKIE_NAME'] ?? '__Host-dvsid'
   if (sessionCookieName.startsWith('__Host-') && !cookieSecure) {
     fail(`SESSION_COOKIE_NAME=${sessionCookieName} uses the __Host- prefix but the callback is not https. Use a non-prefixed name for loopback http dev.`)
   }
   return {
+    neonUrl, blobToken, serverless,
     port: intEnv('PORT', 8765, 0, 65535),
     host,
     // DB_PATH belongs to e2e in a combined process. Keep the two stores apart.
     dbPath: env['MANAGED_DB_PATH'] ?? (combined ? undefined : env['DB_PATH']) ?? 'server-managed/data/managed.db',
     debug: env['DEBUG'] === '1' || env['DEBUG'] === 'true',
-    trustProxyEnv: env['TRUST_PROXY'],
+    trustProxyEnv: env['TRUST_PROXY'] ?? (serverless ? '1' : undefined),
     githubClientId: requireStr('GITHUB_CLIENT_ID'),
     githubClientSecret: requireStr('GITHUB_CLIENT_SECRET'),
     oauthCallbackUrl,

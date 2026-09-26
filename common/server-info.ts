@@ -15,6 +15,7 @@ export type ServerMode = 'e2e' | 'managed'
 export interface ManagedServerInfo {
   loginPath: string
   cookieName: string
+  uploadChunkBytes?: number
 }
 
 // The `server-info` frame payload (the `type` discriminant is added at the

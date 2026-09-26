@@ -1,3 +1,5 @@
+For deployment on Vercel, see [the compatibility review and setup guide](VERCEL.md).
+
 # Managed browser navigation
 
 Build the UI with `pnpm build` before starting a managed or combined server.

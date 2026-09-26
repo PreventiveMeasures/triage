@@ -1897,7 +1897,7 @@ test('db: permanent triage deletion rolls back current rows if history deletion 
   raw.exec("DELETE FROM finding_triage WHERE finding_id = 'history-only'")
   raw.exec(`CREATE TRIGGER fail_history_delete BEFORE DELETE ON finding_triage_event
     BEGIN SELECT RAISE(ABORT, 'test history deletion failure'); END`)
-  assert.throws(() => db.deleteTriage(['deleted']), /test history deletion failure/u)
+  await assert.rejects(db.deleteTriage(['deleted']), /test history deletion failure/u)
   assert.equal((await db.listTriage(['deleted'])).length, 1, 'the first DELETE is rolled back')
   assert.equal((await db.listTriageHistory('deleted', 10)).length, 1)
   raw.exec('DROP TRIGGER fail_history_delete')

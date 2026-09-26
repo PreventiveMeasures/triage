@@ -42,6 +42,7 @@
 //   POST /api/auth/logout        → same-origin + CSRF, drops the session
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { pipeline } from 'node:stream/promises'
+import { UPLOAD_CHUNK_BYTES, type UploadKind, putUploadPart, readUpload, validUploadPart } from './uploads.ts'
 import type { BundleCache, BundleCachePart } from './bundle-cache.ts'
 import type { BundleStore } from './bundle-store.ts'
 import { Buffer } from 'node:buffer'
@@ -168,6 +169,7 @@ export interface ManagedHttpDeps {
   bundleStore: BundleStore
   bundleCache?: BundleCache
   reportSourcesCache?: ReportSourcesCache
+  uploadStore?: BlobStore
   originGate: OriginGate
   isShuttingDown: () => boolean
   track: (p: Promise<unknown>) => void
@@ -177,11 +179,20 @@ export interface ManagedHttpDeps {
   serverInfo?: ServerInfo
 }
 
-type Handler = (req: IncomingMessage, res: ServerResponse) => void
+type Handler = (req: IncomingMessage, res: ServerResponse) => void | Promise<void>
+
+// Writing body chunks enables the function's streamed-response path. Data is
+// already materialized by the authorization/filtering layer before we get here.
+function writeResponse(res: ServerResponse, body: string | Buffer): void {
+  const bytes = typeof body === 'string' ? Buffer.from(body) : body
+  if (bytes.length <= UPLOAD_CHUNK_BYTES) { res.end(body); return }
+  for (let offset = 0; offset < bytes.length; offset += 64 * 1024) res.write(bytes.subarray(offset, offset + 64 * 1024))
+  res.end()
+}
 
 function sendJson(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
   res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store', ...headers })
-  res.end(JSON.stringify(body))
+  writeResponse(res, JSON.stringify(body))
 }
 
 function send405(res: ServerResponse, allow: string): void {
@@ -221,6 +232,31 @@ async function readBodyBytes(req: IncomingMessage, maxBytes: number): Promise<Bu
     chunks.push(c)
   }
   return Buffer.concat(chunks)
+}
+
+function readUploadBody(req: IncomingMessage, deps: ManagedHttpDeps, session: string, kind: UploadKind) {
+  const maxBytes = kind === 'reports' ? deps.config.maxReportBytes : deps.config.maxBundleBytes
+  if (req.headers['x-upload-id'] == null) return readBodyBytes(req, maxBytes)
+  if (!deps.uploadStore) throw new Error('bad-upload')
+  return readUpload(deps.uploadStore, req, session, kind, maxBytes)
+}
+
+async function handleUploadPart(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, path: string) {
+  if (req.method !== 'POST') { send405(res, 'POST'); return }
+  const s = await checkMutation(req, res, deps, cookie)
+  if (!s || !requireManageRole(res, s.user)) return
+  if (!deps.uploadStore) { sendJson(res, 404, { error: 'not-found' }); return }
+  const match = /^\/api\/admin\/uploads\/(reports|bundles)\/([^/]+)\/(0|[1-9][0-9]*)$/u.exec(path)
+  if (!match) { sendJson(res, 400, { error: 'bad-upload' }); return }
+  const id = match[2]!, index = Number(match[3]), kind = match[1] as UploadKind
+  const maxBytes = kind === 'reports' ? deps.config.maxReportBytes : deps.config.maxBundleBytes
+  if (!validUploadPart(id, index, maxBytes)) { sendJson(res, 400, { error: 'bad-upload' }); return }
+  let bytes
+  try { bytes = await readBodyBytes(req, Math.min(UPLOAD_CHUNK_BYTES, maxBytes)) }
+  catch { sendJson(res, 413, { error: 'too-large' }); return }
+  if (bytes.length === 0) { sendJson(res, 400, { error: 'empty' }); return }
+  await putUploadPart(deps.uploadStore, s.session.id, kind, id, index, bytes)
+  sendJson(res, 200, { ok: true })
 }
 
 // `maxBytes` overrides the small default for the one endpoint whose JSON body
@@ -744,17 +780,20 @@ async function resolveReportBundle(deps: ManagedHttpDeps, user: StoredUser, byte
 // are written first (keyed by a fresh uuid) then the metadata row — a failed
 // insert drops the orphan blob. 413 over the cap, 400 on empty.
 async function handleUploadReport(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
-  const s = await checkMutation(req, res, deps, cookie)
+  let s = await checkMutation(req, res, deps, cookie)
   if (s == null) return
   if (!requireManageRole(res, s.user)) return
   let bytes: Buffer
   try {
-    bytes = await readBodyBytes(req, deps.config.maxReportBytes)
+    bytes = await readUploadBody(req, deps, s.session.id, 'reports')
   } catch (err) {
     const tooLarge = err instanceof Error && err.message === 'too-large'
     sendJson(res, tooLarge ? 413 : 400, { error: tooLarge ? 'too-large' : 'bad-body' })
     return
   }
+  // Shared storage reads may outlast a session or role change.
+  s = await checkMutation(req, res, deps, cookie)
+  if (!s || !requireManageRole(res, s.user)) return
   if (bytes.length === 0) { sendJson(res, 400, { error: 'empty' }); return }
   const filename = sanitizeFilename(firstHeader(req.headers['x-report-filename']), 'report.json')
   const parsed = readManagedReport(bytes.toString('utf8'), filename)
@@ -825,7 +864,7 @@ async function handleGetReport(res: ServerResponse, deps: ManagedHttpDeps, cooki
     'x-content-type-options': 'nosniff',
     'cache-control': 'no-store',
   })
-  res.end(bytes)
+  writeResponse(res, bytes)
 }
 
 // DELETE /api/admin/reports/<id> — remove a report (admin|manage). Mutation:
@@ -870,7 +909,7 @@ async function bundleRepos(deps: ManagedHttpDeps, user: StoredUser) {
 }
 
 function prebuildBundle(deps: ManagedHttpDeps, id: string) {
-  if (!deps.bundleCache) return
+  if (!deps.bundleCache || deps.config.serverless) return
   deps.track((async () => {
     const record = await deps.db.getBundle(id)
     if (record?.kind) await deps.bundleCache!.prebuild(record)
@@ -898,7 +937,7 @@ async function handleBundleCache(req: IncomingMessage, res: ServerResponse, deps
   }
   res.writeHead(200, {
     'content-type': 'application/json', 'content-encoding': 'br',
-    'content-length': String(cached.size), 'cache-control': 'private, no-store',
+    ...(cached.size == null ? {} : { 'content-length': String(cached.size) }), 'cache-control': 'private, no-store',
     'x-content-type-options': 'nosniff',
   })
   if (req.method === 'HEAD') { cached.stream.destroy(); res.end(); return }
@@ -928,17 +967,20 @@ async function handleListBundles(res: ServerResponse, deps: ManagedHttpDeps, coo
 // After storing, any reports that declared this integrity but weren't linked yet
 // get attached (auto-link). 413 over the cap, 400 on empty.
 async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
-  const s = await checkMutation(req, res, deps, cookie)
+  let s = await checkMutation(req, res, deps, cookie)
   if (s == null) return
   if (!requireManageRole(res, s.user)) return
   let bytes: Buffer
   try {
-    bytes = await readBodyBytes(req, deps.config.maxBundleBytes)
+    bytes = await readUploadBody(req, deps, s.session.id, 'bundles')
   } catch (err) {
     const tooLarge = err instanceof Error && err.message === 'too-large'
     sendJson(res, tooLarge ? 413 : 400, { error: tooLarge ? 'too-large' : 'bad-body' })
     return
   }
+  // Shared storage reads may outlast a session or role change.
+  s = await checkMutation(req, res, deps, cookie)
+  if (!s || !requireManageRole(res, s.user)) return
   if (bytes.length === 0) { sendJson(res, 400, { error: 'empty' }); return }
   const repo = await resolveUploadRepoId(req, res, deps)
   if (!repo.ok) return
@@ -1005,7 +1047,7 @@ async function handleGetBundle(req: IncomingMessage, res: ServerResponse, deps: 
   res.writeHead(200, {
     'content-type': 'application/octet-stream',
     ...(rec.kind === 'sourcemap' ? { 'content-encoding': 'br' } : {}),
-    'content-length': String(stored.size),
+    ...(stored.size == null ? {} : { 'content-length': String(stored.size) }),
     'content-disposition': `attachment; filename="${dispoName}"`,
     'x-content-type-options': 'nosniff',
     'cache-control': 'no-store',
@@ -1148,7 +1190,7 @@ async function handleViewReport(req: IncomingMessage, res: ServerResponse, deps:
     'cache-control': 'no-store',
     vary: 'Accept',
   })
-  res.end(out)
+  writeResponse(res, out)
 }
 
 // Apply the viewer's visibility-permission filter to a report's bytes. Admin and
@@ -1519,6 +1561,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     const method = req.method ?? 'GET'
     const cookie = req.headers.cookie
 
+    if (path.startsWith('/api/admin/uploads/')) { await handleUploadPart(req, res, deps, cookie, path); return }
     if (path === '/api/github/pull-requests') {
       if (method !== 'POST') { send405(res, 'POST'); return }
       await handlePullRequests(req, res, deps, cookie); return
@@ -1526,7 +1569,8 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     // Public mode probe — lets a client detect the managed protocol up front.
     if (path === CONFIG_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }
-      sendJson(res, 200, deps.serverInfo ?? { mode: 'managed', managed: { loginPath: LOGIN_PATH, cookieName: config.sessionCookieName } })
+      const info = deps.serverInfo ?? { mode: 'managed', managed: { loginPath: LOGIN_PATH, cookieName: config.sessionCookieName } }
+      sendJson(res, 200, { ...info, managed: { ...info.managed, ...(deps.uploadStore ? { uploadChunkBytes: UPLOAD_CHUNK_BYTES } : {}) } })
       return
     }
     // OAuth: start → redirect to GitHub with the CSRF state cookie.
@@ -1717,10 +1761,12 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
 
   return (req, res) => {
     if (isShuttingDown()) { sendJson(res, 503, { error: 'shutting-down' }, { connection: 'close' }); return }
-    track(route(req, res).catch((err) => {
+    const work = route(req, res).catch((err) => {
       console.warn('managed: request handler error:', err)
       if (res.headersSent) { try { res.destroy() } catch {} }
       else sendJson(res, 500, { error: 'internal' })
-    }))
+    })
+    track(work)
+    return work
   }
 }

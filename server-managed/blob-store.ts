@@ -4,9 +4,8 @@
 // can operate on them — the metadata + attribution live in the DB, the bytes
 // live here, keyed by the blob's opaque `id`.
 //
-// On-disk for now (a dir beside the SQLite store, e.g. data/reports/<uuid> or
-// data/bundles/<uuid>); the BlobStore interface is backend-agnostic so an S3 /
-// Vercel Blob backend slots in later without touching callers. Bytes only — the
+// The disk backend uses a dir beside SQLite (data/reports/<uuid> or
+// data/bundles/<uuid>); blob-vercel.ts implements the same interface remotely. Bytes only — the
 // content-type / filename / integrity ride the DB row, so there's no sidecar.
 import { mkdir, open, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -14,7 +13,8 @@ import type { Buffer } from 'node:buffer'
 import type { Readable } from 'node:stream'
 
 export interface OpenedBlob {
-  size: number
+  // Remote streams may omit their size; callers then omit Content-Length.
+  size: number | null
   stream: Readable
 }
 

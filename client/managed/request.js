@@ -50,12 +50,44 @@ function previewResponse(url, options) {
   return Object.hasOwn(data, path) ? Response.json(data[path]) : Response.json({ error: 'not-found' }, { status: 404 })
 }
 
+// Each request is small enough for a function ingress. Capability negotiation
+// keeps local servers and older deployments on their existing raw upload API.
+async function uploadInParts(url, options, send) {
+  const config = await send('/api/config', { credentials: 'same-origin', signal: options.signal })
+  if (!config.ok) return config
+  const chunkBytes = (await config.json()).managed?.uploadChunkBytes
+  if (!Number.isSafeInteger(chunkBytes) || chunkBytes <= 0 || chunkBytes > 3 * 1024 * 1024) return send(url, options)
+  const file = options.body, id = crypto.randomUUID()
+  const kind = url.endsWith('/reports') ? 'reports' : 'bundles'
+  const count = Math.ceil(file.size / chunkBytes)
+  const partHeaders = new Headers(options.headers)
+  partHeaders.set('content-type', 'application/octet-stream')
+  for (let index = 0; index < count; index++) {
+    const response = await send(`/api/admin/uploads/${kind}/${id}/${index}`, {
+      ...options, headers: partHeaders, body: file.slice(index * chunkBytes, (index + 1) * chunkBytes),
+    })
+    if (!response.ok) return response
+  }
+  const headers = new Headers(options.headers)
+  headers.set('x-upload-id', id)
+  headers.set('x-upload-parts', String(count))
+  headers.set('x-upload-size', String(file.size))
+  return send(url, { ...options, headers, body: '' })
+}
+
 export async function managedFetch(url, options) {
   options?.signal?.throwIfAborted()
   if (preview) return previewResponse(url, options)
   const started = generation
-  // Managed data lives on the server; it must not enter the browser HTTP cache.
-  const response = await fetch(url, { ...options, cache: 'no-store' })
-  if (started !== generation) throw new DOMException('Managed session changed', 'AbortError')
-  return response
+  async function send(target, init) {
+    if (started !== generation) throw new DOMException('Managed session changed', 'AbortError')
+    const response = await fetch(target, { ...init, cache: 'no-store' })
+    if (started !== generation) throw new DOMException('Managed session changed', 'AbortError')
+    return response
+  }
+  if (options?.method === 'POST' && ['/api/admin/reports', '/api/admin/bundles'].includes(url)
+    && options.body instanceof Blob && options.body.size > 3 * 1024 * 1024) {
+    return uploadInParts(url, options, send)
+  }
+  return await send(url, options)
 }
