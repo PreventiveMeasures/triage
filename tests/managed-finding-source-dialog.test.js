@@ -92,14 +92,37 @@ test('a reset during loading discards the stale response and closes the popup', 
   assert.equal(view._content, null)
 })
 
-test('missing sources and request failures stop the loading placeholder', async t => {
+test('missing sources and cached failures keep the unavailable popup open without refetching', async t => {
   for (const status of [204, 503]) {
     clearReportSources()
-    t.mock.method(globalThis, 'fetch', () => Promise.resolve(new Response(null, { status })))
-    const view = dialog()
-    await view._load()
-    assert.equal(view._content, null)
-    assert.equal(view._loading, false)
-    view._finish(null)
+    const fetch = t.mock.method(globalThis, 'fetch', () => Promise.resolve(new Response(null, { status })))
+    for (let open = 0; open < 2; open++) {
+      const view = dialog()
+      await view._load()
+      assert.equal(view._content, null)
+      assert.equal(view._loading, false)
+      assert.ok(!view._settled, 'Source unavailable must stay visible on every open')
+      view._finish(null)
+    }
+    assert.equal(fetch.mock.callCount(), 1)
   }
 })
+
+for (const [name, reset] of [
+  ['logout', () => managedAppState.setSession(null)],
+  ['role change', () => managedAppState.setSession({ id: 'alice', role: 'none' })],
+  ['mode change', () => managedAppState.reset()],
+  ['report reload', clearReportSources],
+]) {
+  test(`${name} closes both a newly failed popup and one opened from a cached failure`, async t => {
+    t.mock.method(globalThis, 'fetch', () => Promise.resolve(new Response(null, { status: 503 })))
+    const first = dialog()
+    await first._load()
+    const cached = dialog()
+    await cached._load()
+    assert.ok(!first._settled && !cached._settled)
+    reset()
+    assert.equal(first._settled, true)
+    assert.equal(cached._settled, true)
+  })
+}

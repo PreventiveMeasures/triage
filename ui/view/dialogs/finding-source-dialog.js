@@ -27,10 +27,14 @@ class FindingSourceDialog extends AppDialog {
 
   async _load() {
     try {
-      const data = await fetchReportSources(this.reportId)
+      // Both fresh and cached failures belong to the resource, just like
+      // successful responses. They still need its invalidation listener.
+      const { data, error } = await fetchReportSources(this.reportId).then(value => ({ data: value }), reason => ({ error: reason }))
       if (this._settled || !this.isConnected) return
       const entry = readReportSources(this.reportId)
-      if (!entry || entry.data !== data || entry.controller?.signal.aborted) { this._finish(null); return }
+      const owned = error ? entry?.error === error
+        : entry?.data === data || data === null && Boolean(entry?.error)
+      if (!entry || !owned || error?.name === 'AbortError' || entry.controller?.signal.aborted) { this._finish(null); return }
       // Discard the open file along with its cache on logout, role/mode
       // changes or report reloads. Closing only this dialog keeps the cache.
       this._sourceSignal = entry.controller?.signal
