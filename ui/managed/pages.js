@@ -5,7 +5,7 @@ import { getPreviewRole, managedFetch } from '../../client/managed/request.js'
 import { html, nothing, unsafeCSS } from 'lit'
 import { ManagedPage, loadingRows } from './page.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { ROLES } from '../../common/managed/roles.ts'
+import { ROLES, roleAtLeast } from '../../common/managed/roles.ts'
 import { VISIBILITY_PERMISSION_LABELS } from '../../common/managed/permissions.ts'
 import { REPORT_LOGOS } from '../view/report-logos.js'
 import { DELETE_ICON_SVG, EDIT_ICON_SVG } from '../view/icons.js'
@@ -344,7 +344,7 @@ class ManagedAdminUsers extends ManagedPage {
         </span>
       </span>
       <span class="memberships">
-        ${u.role === 'admin' ? html`<span class="team-access"><strong>All reports</strong><span class="team-perms"><span class="permission-granted">+ Deps</span><span class="permission-granted">+ Security</span></span></span>` : memberships.length === 0 ? html`<span class="no-team">No team access</span>` : memberships.map(({ team, member }) => {
+        ${roleAtLeast(u.role, 'manage') ? html`<span class="team-access"><strong>${u.role === 'admin' ? 'All reports' : 'Owned and team reports'}</strong><span class="team-perms"><span class="permission-granted">+ Deps</span><span class="permission-granted">+ Security</span></span></span>` : memberships.length === 0 ? html`<span class="no-team">No team access</span>` : memberships.map(({ team, member }) => {
           return html`<span class="team-access"><strong>${adminIcon('team')}<span>${team.name}</span></strong><span class="team-perms">${['dependencies', 'security'].map((permission) => html`<span class=${member[permission] === true ? 'permission-granted' : 'permission-denied'}>${member[permission] === true ? '+' : '−'} ${permission === 'dependencies' ? 'Deps' : 'Security'}</span>`)}</span></span>`
         })}
       </span>
@@ -1523,12 +1523,12 @@ class ManagedAdminTeams extends ManagedPage {
 
   _memberRow(team, m) {
     const perms = Array.isArray(this._data.permissions) ? this._data.permissions : []
-    const isAdmin = this._data.users?.some(user => user.id === m.userId && user.role === 'admin')
+    const fullContentAccess = this._data.users?.some(user => user.id === m.userId && roleAtLeast(user.role, 'manage'))
     return html`<li class="member-row">
       <span class="member">${adminAvatar(m.userId, m.login)}<span class="ln">${m.login}</span></span>
       <span class="perms">
         ${perms.map((p) => html`<label class="perm">
-          <input type="checkbox" .checked=${isAdmin || m[p] === true} ?disabled=${this._busy || isAdmin}
+          <input type="checkbox" .checked=${fullContentAccess || m[p] === true} ?disabled=${this._busy || fullContentAccess}
             aria-label=${`${VISIBILITY_PERMISSION_LABELS[p] ?? p} access for ${m.login} in ${team.name}`}
             @change=${(e) => this._togglePerm(team, m, p, e.target.checked)}>
           ${VISIBILITY_PERMISSION_LABELS[p] ?? p}
@@ -1603,7 +1603,7 @@ class ManagedAdminTeams extends ManagedPage {
   }
 
   _togglePerm(team, m, perm, checked) {
-    if (this._data.users?.some(user => user.id === m.userId && user.role === 'admin')) return
+    if (this._data.users?.some(user => user.id === m.userId && roleAtLeast(user.role, 'manage'))) return
     const perms = {}
     for (const p of (this._data.permissions ?? [])) perms[p] = m[p] === true
     perms[perm] = checked
