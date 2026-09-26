@@ -21,4 +21,3 @@ export function sdkFixture() {
   }
   return { sdk, objects, calls }
 }
-
