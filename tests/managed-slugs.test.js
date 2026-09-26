@@ -42,7 +42,7 @@ test('slugs are global within each namespace, persistent, and leave UUID relatio
   const [visible] = await db.listTeamsForUser(user)
   assert.equal(visible.id, second)
   assert.equal(visible.slug, second, 'a collision outside the user\'s teams still reserves the short slug')
-  assert.deepEqual(visible.reports, [{ id: second, slug: second, filename: '2.json' }])
+  assert.deepEqual(visible.reports.map(({ id, slug, filename }) => ({ id, slug, filename })), [{ id: second, slug: second, filename: '2.json' }])
   assert.equal(await db.userCanReadReport(user, first), false)
   assert.equal(await db.userCanReadReport(user, second), true)
   assert.deepEqual((await db.listReports()).map(report => report.slug), [short, second])

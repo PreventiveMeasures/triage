@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import type { Role } from '../common/managed/roles.ts'
 import type { TeamUserPermissions } from '../common/managed/permissions.ts'
 import type { TriageEntryPatch } from '../common/managed/triage.ts'
@@ -252,6 +252,7 @@ export interface UserTeamReport {
   id: string
   slug: string
   filename: string
+  cacheKey: string
 }
 export interface UserTeamBundle {
   id: string
@@ -629,10 +630,14 @@ function prepareStatements(db: ManagedSql) {
     // Reports attached to the repos of the user's teams, tagged by team (a report
     // shows under every team whose repo it's attached to). Newest first.
     selectUserTeamReportsStmt: db.prepare(
-      `SELECT DISTINCT tr.team_id AS teamId, r.id AS id, r.slug AS slug, r.filename AS filename, r.uploaded_at
+      `SELECT DISTINCT tr.team_id AS teamId, r.id AS id, r.slug AS slug, r.filename AS filename, r.uploaded_at,
+              r.sha256 AS sha256, r.repo_id AS repoId, r.repo_directory AS repoDirectory, sr.full_name AS repoFullName,
+              tu.view_dependencies AS dependencies, tu.view_security AS security,
+              (SELECT role FROM managed_user WHERE id = tu.user_id) AS role
          FROM team_user tu
          JOIN team_repo tr ON tr.team_id = tu.team_id
          JOIN managed_report r ON r.repo_id = tr.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}
+         LEFT JOIN selected_repo sr ON sr.repo_id = r.repo_id
         WHERE tu.user_id = ? AND (r.visible = 1 OR (SELECT role FROM managed_user WHERE id = tu.user_id) = 'manage')
         ORDER BY r.uploaded_at DESC, r.filename ASC`,
     ),
@@ -1004,9 +1009,15 @@ function teamMethods( stmts: ReturnType<typeof prepareStatements>) {
     async listTeamsForUser(userId: string): Promise<UserTeam[]> {
       const teams = (await selectTeamsForUserStmt.all(userId)) as { id: string; slug: string; name: string }[]
       const reportsByTeam = new Map<string, UserTeamReport[]>()
-      for (const r of (await selectUserTeamReportsStmt.all(userId)) as { teamId: string; id: string; slug: string; filename: string }[]) {
+      for (const r of (await selectUserTeamReportsStmt.all(userId)) as {
+        teamId: string; id: string; slug: string; filename: string; sha256: string; repoId: number
+        repoDirectory: string; repoFullName: string | null; dependencies: number; security: number; role: string
+      }[]) {
         const list = reportsByTeam.get(r.teamId) ?? []
-        list.push({ id: r.id, slug: r.slug, filename: r.filename })
+        const cacheKey = createHash('sha256').update(JSON.stringify([
+          r.sha256, r.filename, r.repoId, r.repoDirectory, r.repoFullName, r.dependencies, r.security, r.role,
+        ])).digest('base64url')
+        list.push({ id: r.id, slug: r.slug, filename: r.filename, cacheKey })
         reportsByTeam.set(r.teamId, list)
       }
       const bundlesByTeam = new Map<string, UserTeamBundle[]>()

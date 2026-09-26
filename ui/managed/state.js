@@ -4,6 +4,7 @@ export class ManagedAppState {
   constructor(notify = () => {}) {
     this.resources = new Map()
     this.session = null
+    this.reportCatalog = null
     this.generation = 0
     this.sessionController = new AbortController()
     this.notify = notify
@@ -20,6 +21,36 @@ export class ManagedAppState {
     this.sessionController = new AbortController()
     this.invalidate()
     this.session = null
+    this.reportCatalog = null
+  }
+
+  // A report may be visible through multiple teams. Include every membership's
+  // version so a grant/revocation in any team invalidates the shared content.
+  setReportCatalog(teams) {
+    const grouped = new Map()
+    for (const team of teams) {
+      for (const report of team.reports) {
+        const keys = grouped.get(report.id) ?? []
+        keys.push(JSON.stringify([team.id, report.cacheKey ?? null]))
+        grouped.set(report.id, keys)
+      }
+    }
+    const next = new Map([...grouped].map(([id, keys]) => [id, JSON.stringify(keys.toSorted())]))
+    const previous = this.reportCatalog
+    this.reportCatalog = next
+    const changed = new Set()
+    for (const id of new Set([...previous?.keys() ?? [], ...next.keys()])) {
+      if (previous?.get(id) !== next.get(id)) changed.add(id)
+    }
+    for (const key of this.resources.keys()) {
+      if (!key.startsWith('reports:content:')) continue
+      const id = key.slice('reports:content:'.length)
+      if (!next.has(id) || changed.has(id)) {
+        this.invalidate([key])
+        changed.add(id)
+      }
+    }
+    return changed
   }
 
   read(key) { return this.resources.get(key)?.data }
@@ -85,4 +116,5 @@ export const managedAppState = new ManagedAppState(message => {
 })
 
 export function setManagedAppSession(session) { managedAppState.setSession(session) }
+export function setManagedReportCatalog(teams) { return managedAppState.setReportCatalog(teams) }
 export function resetManagedAppState() { managedAppState.reset() }

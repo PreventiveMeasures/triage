@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { beforeEach, test } from 'node:test'
 import { fetchReport, fetchReports } from '../ui/managed/report-data.js'
-import { managedAppState, resetManagedAppState, setManagedAppSession } from '../ui/managed/state.js'
+import { managedAppState, resetManagedAppState, setManagedAppSession, setManagedReportCatalog } from '../ui/managed/state.js'
 
 const content = id => ({ data: { findings: [{ id }] }, repo: { github: 'org/repo', directory: '' } })
 const session = { id: 'viewer', role: 'view' }
@@ -116,4 +116,52 @@ test('late responses cannot restore content after session reset or report invali
     assert.equal(managedAppState.resources.size, 0)
     calls.mock.restore()
   }
+})
+
+const catalog = (a = 'a-v1', b = 'b-v1') => [{ id: 'team', reports: [
+  { id: 'a', cacheKey: a }, { id: 'b', cacheKey: b },
+] }]
+
+test('unchanged refreshed catalogs preserve content while changed access/assignment versions refetch only affected reports', async t => {
+  const calls = network(t)
+  setManagedReportCatalog(catalog())
+  await fetchReports(['a', 'b'])
+  assert.deepEqual([...setManagedReportCatalog(catalog())], [])
+  await fetchReports(['b', 'a'])
+  assert.equal(calls.mock.callCount(), 1)
+  assert.deepEqual([...setManagedReportCatalog(catalog('a-new-grant'))], ['a'])
+  await fetchReports(['a', 'b'])
+  assert.equal(calls.mock.callCount(), 2)
+  assert.deepEqual(JSON.parse(calls.mock.calls[1].arguments[1].body).ids, ['a'])
+  setManagedReportCatalog(catalog('a-new-grant', 'b-new-repository'))
+  await fetchReport('b')
+  assert.equal(calls.mock.callCount(), 3)
+  assert.deepEqual([...setManagedReportCatalog([])].toSorted(), ['a', 'b'])
+  assert.equal(managedAppState.read('reports:content:a'), undefined)
+  assert.equal(managedAppState.read('reports:content:b'), undefined)
+})
+
+test('catalog versions include every team membership independent of ordering', async t => {
+  const calls = network(t)
+  const teams = [...catalog(), { id: 'other-team', reports: [{ id: 'a', cacheKey: 'other-grant' }] }]
+  setManagedReportCatalog(teams)
+  await fetchReport('a')
+  assert.deepEqual([...setManagedReportCatalog(teams.toReversed())], [])
+  await fetchReport('a')
+  assert.equal(calls.mock.callCount(), 1)
+  assert.deepEqual([...setManagedReportCatalog(catalog())], ['a'], 'revoking one membership invalidates shared findings')
+  await fetchReport('a')
+  assert.equal(calls.mock.callCount(), 2)
+})
+
+test('a refreshed catalog cancels older in-flight report content before it can restore revoked findings', async t => {
+  setManagedReportCatalog(catalog())
+  let resolve
+  const calls = t.mock.method(globalThis, 'fetch', () => new Promise(done => { resolve = done }))
+  const loading = fetchReports(['a', 'b'])
+  setManagedReportCatalog(catalog('a-revoked'))
+  assert.equal(calls.mock.calls[0].arguments[1].signal.aborted, true)
+  resolve(Response.json({ reports: ['a', 'b'].map(id => ({ id, ...content(id) })) }))
+  assert.equal(await loading, null)
+  assert.equal(managedAppState.read('reports:content:a'), undefined)
 })

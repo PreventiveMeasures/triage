@@ -4,11 +4,12 @@ import { Readable } from 'node:stream'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createSession } from '../server-managed/session.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
+import { MAX_REPORT_QUERY_BYTES, MAX_REPORT_QUERY_COUNT } from '../server-managed/report-query.ts'
 import { managedCsv, managedCsvIds } from './_managed-csv.js'
 
 const config = { sessionCookieName: 'sid', cookieSecure: false, sessionTtlMs: 3_600_000 }
 
-async function setup(t) {
+async function setup(t, createHandler = createManagedRequestHandler) {
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())
   const now = Date.now(), users = {}
@@ -38,7 +39,7 @@ async function setup(t) {
       sha256: id, uploadedBy: users.admin.userId, repoId, repoDirectory, visible, bundleId: null, bundleIntegrity: null }, now)
   }
   let pending
-  const handler = createManagedRequestHandler({
+  const handler = createHandler({
     config, db, reportStore: store, originGate: { isOriginAllowed: () => true },
     isShuttingDown: () => false, track: promise => { pending = promise },
   })
@@ -47,6 +48,7 @@ async function setup(t) {
     Object.assign(req, { method, url: path, headers: { accept: 'application/json', cookie: users[role]?.setCookie.split(';')[0] } })
     const res = { statusCode: 0, headers: {}, body: '', headersSent: false,
       writeHead(status, headers) { this.statusCode = status; this.headers = headers; return this },
+      write(value) { this.body += value; this.headersSent = true; return true },
       end(value) { this.body += value ?? ''; this.headersSent = true; return this },
     }
     handler(req, res)
@@ -145,4 +147,68 @@ test('unreadable reports fail the whole parsed JSON response', async t => {
     assert.equal(response.status, 422)
     assert.deepEqual(response.body, { error: 'unreadable-report' })
   }
+})
+
+test('large batches are rejected before storage reads by report count and total stored bytes', async t => {
+  const h = await setup(t)
+  const tooMany = await h.request({ ids: Array.from({ length: MAX_REPORT_QUERY_COUNT + 1 }, (_, index) => `id-${index}`) })
+  assert.equal(tooMany.status, 413)
+  const getReport = h.db.getReport.bind(h.db)
+  t.mock.method(h.db, 'getReport', async id => {
+    const report = await getReport(id)
+    return report && { ...report, byteSize: MAX_REPORT_QUERY_BYTES / 2 + 1 }
+  })
+  assert.equal((await h.request({ ids: ['a', 'b'] })).status, 413)
+  assert.deepEqual(h.reads, [])
+})
+
+test('actual storage bytes are bounded even when the catalog understates them', async t => {
+  const h = await setup(t)
+  t.mock.method(h.store, 'get', () => Promise.resolve({
+    length: MAX_REPORT_QUERY_BYTES + 1,
+    toString() { assert.fail('oversized bytes must never be parsed') },
+  }))
+  const response = await h.request({ ids: ['a'] })
+  assert.equal(response.status, 413)
+  assert.deepEqual(response.body, { error: 'batch-too-large' })
+})
+
+test('access changes to an earlier report during a later read reject all prepared content', async t => {
+  const h = await setup(t)
+  await h.db.setTeamMember('team', h.users.view.userId, { dependencies: true, security: true })
+  h.store.afterRead = id => id === 'b' && h.db.setTeamMember('team', h.users.view.userId, { dependencies: false, security: false })
+  const response = await h.request({ ids: ['a', 'b'] })
+  assert.equal(response.status, 404)
+  assert.deepEqual(response.body, { error: 'no-report' })
+})
+
+test('catalog report versions change with grants and repository assignments without reading blobs', async t => {
+  const h = await setup(t)
+  const catalog = async () => (await h.request({}, { method: 'GET', path: '/api/teams' })).body.teams
+  const original = await catalog()
+  assert.equal(typeof original[0].reports[0].cacheKey, 'string')
+  assert.deepEqual(await catalog(), original)
+  await h.db.setTeamMember('team', h.users.view.userId, { dependencies: true, security: false })
+  const granted = await catalog()
+  assert.notEqual(granted[0].reports[0].cacheKey, original[0].reports[0].cacheKey)
+  await h.db.setReportRepo('a', 7, 'packages/app/new')
+  const reassigned = await catalog()
+  assert.notEqual(reassigned[0].reports.find(r => r.id === 'a').cacheKey, granted[0].reports.find(r => r.id === 'a').cacheKey)
+  assert.equal(reassigned[0].reports.find(r => r.id === 'b').cacheKey, granted[0].reports.find(r => r.id === 'b').cacheKey)
+  await h.db.removeTeamMember('team', h.users.view.userId)
+  assert.deepEqual(await catalog(), [])
+  assert.deepEqual(h.reads, [])
+})
+
+test('encoded output has its own bound and never returns a partial workspace', async t => {
+  // Exercise the real endpoint with a small test budget rather than allocating
+  // gigabytes just to prove that JSON envelope/format expansion is counted.
+  t.mock.module('../server-managed/report-query.ts', { namedExports: { MAX_REPORT_QUERY_COUNT, MAX_REPORT_QUERY_BYTES: 1024 } })
+  const { createManagedRequestHandler: boundedHandler } = await import('../server-managed/http.ts?small-query-budget')
+  const h = await setup(t, boundedHandler)
+  for (const id of ['a', 'b']) h.blobs.set(id, Buffer.from(JSON.stringify({ findings: [{ id, description: 'x'.repeat(420) }] })))
+  assert.ok(h.blobs.get('a').length + h.blobs.get('b').length < 1024)
+  const response = await h.request({ ids: ['a', 'b'] }, { role: 'admin' })
+  assert.equal(response.status, 413)
+  assert.deepEqual(response.body, { error: 'batch-too-large' })
 })

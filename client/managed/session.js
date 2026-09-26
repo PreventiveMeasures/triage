@@ -65,7 +65,9 @@ export async function probeTeams({ fallback = [] } = {}) {
       reports: Array.isArray(t.reports)
         ? t.reports
           .filter((r) => r != null && typeof r.id === 'string' && typeof r.filename === 'string')
-          .map((r) => ({ id: r.id, slug: r.slug, filename: r.filename }))
+          .map((r) => ({ id: r.id, slug: r.slug, filename: r.filename,
+            ...(typeof r.cacheKey === 'string' ? { cacheKey: r.cacheKey } : {}),
+          }))
         : [],
       bundles: Array.isArray(t.bundles)
         ? t.bundles
