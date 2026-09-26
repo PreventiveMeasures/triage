@@ -33,7 +33,7 @@ function memberTemplate({ id, title }, reports = [], linked = true, chips = noth
   return html`<li class=${linked ? 'links-finding' : 'links-finding links-finding-context'}>
     ${report ? html`<button type="button" class="links-finding-id mono"
       data-links-preview=${id} data-preview-report=${report}
-      data-preview-row=${reports[0].rowIndex ?? nothing}
+      data-preview-row=${reports[0].rowIndex ?? nothing} data-preview-managed-report=${reports[0].managedReportId ?? nothing}
       data-tooltip=${displayId} aria-haspopup="dialog"
     >${label}</button>` : isLinkableFindingId(id) ? html`<a class="links-finding-id mono"
       href=${`#${encodeFindingRef({ id })}`} data-tooltip=${displayId}
@@ -46,9 +46,9 @@ function memberTemplate({ id, title }, reports = [], linked = true, chips = noth
 }
 
 function reportChipsTemplate(reports) {
-  return html`<div class="links-finding-reports">${reports.map(({ name, findingId }) => html`<button
+  return html`<div class="links-finding-reports">${reports.map(({ name, findingId, managedReportId }) => html`<button
     type="button" class="links-finding-report report-button" data-tooltip=${displayName(name)}
-    data-links-report=${name} data-links-finding=${findingId}
+    data-links-report=${name} data-links-finding=${findingId} data-managed-report=${managedReportId ?? nothing}
   >${unsafeHTML(REPORT_LOGOS[groupOf(name)] ?? REPORT_LOGOS.default)}<span class="links-finding-report-label report-button-label">${displayName(name)}</span></button>`)}</div>`
 }
 

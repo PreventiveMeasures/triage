@@ -1,0 +1,115 @@
+// Team content is filtered as one workspace, with separate report envelopes.
+// Only the visibility index is retained in memory for annotations/source reads.
+import { Buffer } from 'node:buffer'
+import { backfillFindingIds, reportEntries, stampSecurityGroups } from '../report/index.js'
+import { readManagedReport } from '../common/managed/report-content.ts'
+import { filterReportData, projectFinding } from '../common/managed/report-filter.ts'
+import type { BlobStore } from './blob-store.ts'
+import type { ManagedDb, TeamReportAccessSnapshot } from './db.ts'
+import { MAX_REPORT_QUERY_BYTES, MAX_REPORT_QUERY_COUNT } from './report-query.ts'
+
+type Finding = Record<string, unknown>
+type TeamReport = { id: string; filename: string; data: unknown; repo: { github: string | null; directory: string } }
+type Visibility = Map<string, Set<string>>
+const caches = new WeakMap<ManagedDb, Map<string, Visibility>>()
+export class TeamReportsError extends Error {
+  status: number
+  constructor(status: number, error: string) { super(error); this.status = status }
+}
+export function teamSnapshotKey(snapshot: TeamReportAccessSnapshot): string {
+  return JSON.stringify([snapshot.user.id, snapshot.user.role, snapshot.teamId, snapshot.reports])
+}
+export async function teamSnapshot(db: ManagedDb, sessionId: string, teamId: string): Promise<TeamReportAccessSnapshot> {
+  const snapshot = await db.getTeamReportAccessSnapshot(sessionId, Date.now(), teamId)
+  if (!snapshot) throw new TeamReportsError(401, 'unauthenticated')
+  if (!snapshot.teamId) throw new TeamReportsError(404, 'no-team')
+  return snapshot
+}
+export async function recheckTeam(db: ManagedDb, sessionId: string, snapshot: TeamReportAccessSnapshot): Promise<void> {
+  if (teamSnapshotKey(await teamSnapshot(db, sessionId, snapshot.teamId!)) !== teamSnapshotKey(snapshot)) throw new TeamReportsError(404, 'workspace-changed')
+}
+function groupsOf(data: unknown): Finding[][] {
+  return (reportEntries(data) ?? []).map(entry => (Array.isArray(entry) ? entry : [entry]).filter(
+    (finding): finding is Finding => finding !== null && typeof finding === 'object' && !Array.isArray(finding),
+  ))
+}
+function linksOf(data: unknown): string[][] | null {
+  const record = data as { source?: string; links?: string[][] }
+  if (record?.source !== 'links' || !Array.isArray(record.links)) return null
+  if (!record.links.every(ids => Array.isArray(ids) && ids.every(id => typeof id === 'string'))) throw new TeamReportsError(422, 'unreadable-links')
+  return record.links
+}
+export async function loadTeamReports(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot): Promise<TeamReport[]> {
+  if (snapshot.reports.length > MAX_REPORT_QUERY_COUNT || snapshot.reports.reduce((n, r) => n + r.byteSize, 0) > MAX_REPORT_QUERY_BYTES) throw new TeamReportsError(413, 'batch-too-large')
+  const reports: TeamReport[] = []
+  let inputBytes = 0
+  // Retain parsed reports for cross-report classification; release raw bytes
+  // after each parse. No unbounded burst of remote reads or duplicate buffers.
+  for (const access of snapshot.reports) {
+    const bytes = await store.get(access.id)
+    if (!bytes) throw new TeamReportsError(503, 'unavailable')
+    inputBytes += bytes.length
+    if (inputBytes > MAX_REPORT_QUERY_BYTES) throw new TeamReportsError(413, 'batch-too-large')
+    const parsed = readManagedReport(bytes.toString('utf8'), access.filename)
+    if (!parsed.data) throw new TeamReportsError(422, 'unreadable-report')
+    // Backfill before filtering so links, annotations and the client agree on
+    // IDs even when hiding a component would change the original row shape.
+    await backfillFindingIds(groupsOf(parsed.data).flat())
+    reports.push({ id: access.id, filename: access.filename, data: parsed.data, repo: access.repo })
+  }
+  const edges = new Map<string, Set<string>>()
+  const connect = (a: string, b: string) => {
+    if (!edges.has(a)) edges.set(a, new Set())
+    edges.get(a)!.add(b)
+  }
+  // A star is enough for transitive security propagation, without a quadratic
+  // expansion for large links. Unknown IDs can connect known findings.
+  for (const report of reports) {
+    for (const ids of linksOf(report.data) ?? []) {
+      for (const id of ids.slice(1)) { connect(ids[0]!, id); connect(id, ids[0]!) }
+    }
+  }
+  const groups = reports.flatMap(report => groupsOf(report.data).map(group => group.map(f => projectFinding(f, report.data as Finding)!)))
+  stampSecurityGroups(groups, { linkedIds: id => edges.get(id) ?? [] })
+  const securityIds = new Set(groups.flat().filter(f => f['isSecurity'] === true).map(f => String(f['id'])))
+  const allIds = new Set<string>(), visible: Visibility = new Map()
+  for (let i = 0; i < reports.length; i++) {
+    const access = snapshot.reports[i]!, report = reports[i]!
+    report.data = filterReportData(report.data, access.permissions, access.repo, securityIds)
+    const ids = new Set<string>()
+    for (const finding of groupsOf(report.data).flat()) {
+      // Preserve linked security classification for the UI lens, including a
+      // linked component that a dependency permission will hide from the UI.
+      finding['isSecurity'] = securityIds.has(String(finding['id']))
+      if (typeof finding['id'] === 'string') { ids.add(finding['id']); allIds.add(finding['id']) }
+    }
+    visible.set(report.id, ids)
+  }
+  for (const report of reports) {
+    const links = linksOf(report.data)
+    if (links) report.data = { source: 'links', findings: [], links: links.map(ids => [...new Set(ids.filter(id => allIds.has(id)))]).filter(ids => ids.length >= 2) }
+  }
+  let outputBytes = 14
+  for (const report of reports) {
+    outputBytes += Buffer.byteLength(JSON.stringify(report)) + 1
+    if (outputBytes > MAX_REPORT_QUERY_BYTES) throw new TeamReportsError(413, 'batch-too-large')
+  }
+  let cache = caches.get(db)
+  if (!cache) { cache = new Map(); caches.set(db, cache) }
+  // Bound total retained IDs as well as the number of snapshots.
+  while (cache.size >= 32 || [...cache.values()].reduce((n, entry) => n + [...entry.values()].reduce((sum, ids) => sum + ids.size, 0), 0) > 250_000) cache.delete(cache.keys().next().value!)
+  cache.set(teamSnapshotKey(snapshot), visible)
+  return reports
+}
+export async function teamFindingIds(db: ManagedDb, store: BlobStore, sessionId: string, teamId: string, reportId: string): Promise<Set<string>> {
+  const snapshot = await teamSnapshot(db, sessionId, teamId)
+  if (!snapshot.reports.some(r => r.id === reportId)) throw new TeamReportsError(404, 'no-report')
+  const key = teamSnapshotKey(snapshot)
+  let visible = caches.get(db)?.get(key)
+  if (!visible) {
+    await loadTeamReports(db, store, snapshot)
+    visible = caches.get(db)!.get(key)!
+  }
+  await recheckTeam(db, sessionId, snapshot)
+  return visible.get(reportId) ?? new Set()
+}

@@ -76,7 +76,7 @@ async function setupBackend(t, kind = 'sourcemap', backend = 'disk') {
   const report = await seed()
   function send(id = report.id, role = 'admin', method = 'GET', { path, body } = {}) {
     return new Promise((resolve, reject) => {
-      const req = request({ hostname: '127.0.0.1', port: server.address().port, path: path ?? `/api/reports/${id}/sources`, method, headers: users[role] ? { cookie: users[role].cookie, 'x-csrf-token': users[role].csrfToken } : {} }, res => {
+      const req = request({ hostname: '127.0.0.1', port: server.address().port, path: path ?? `/api/reports/${id}/sources${role === 'view' ? `?team=${team}` : ''}`, method, headers: users[role] ? { cookie: users[role].cookie, 'x-csrf-token': users[role].csrfToken } : {} }, res => {
         const chunks = []
         res.on('data', chunk => chunks.push(chunk))
         res.on('end', () => { const bytesOut = Buffer.concat(chunks); resolve({ status: res.statusCode, headers: res.headers, bytes: bytesOut, json: () => JSON.parse(res.headers['content-encoding'] === 'gzip' ? gunzipSync(bytesOut) : bytesOut) }) })
@@ -415,4 +415,21 @@ test('source files follow row security and same-organization dependency access a
   assert.deepEqual(renamed.json().files, [], 'do not reuse a source cache built under another own-source organization')
   const admin = await h.send(report.id, 'admin')
   assert.deepEqual(admin.json().files.map(([file]) => file).toSorted(), ['node_modules/dep/index.js', 'secret.js', 'src/main.js'])
+})
+
+test('team link security removes source files even after a broader source response was cached', async t => {
+  const h = await setupBackend(t)
+  await h.db.setTeamMember(h.team, h.users.view.userId, { dependencies: false, security: false })
+  assert.ok(new Map((await h.send(h.report.id, 'view')).json().files).has('src/main.js'))
+  await h.seed(JSON.stringify([[{ id: 'f1' }, { id: 'f3' }]]), null, 'links.json')
+  const filtered = await h.send(h.report.id, 'view')
+  assert.equal(filtered.status, 200)
+  assert.deepEqual(filtered.json().files, [])
+  const broad = 'other-team'
+  await h.db.createTeam(broad, broad, Date.now())
+  await h.db.setTeamRepo(broad, 1, null)
+  await h.db.setTeamMember(broad, h.users.view.userId, { dependencies: true, security: true })
+  const expanded = await h.send(h.report.id, 'view', 'GET', { path: `/api/reports/${h.report.id}/sources?team=${broad}` })
+  assert.ok(new Map(expanded.json().files).has('src/main.js'))
+  assert.deepEqual((await h.send(h.report.id, 'view')).json().files, [], 'another team grant cannot broaden this team source cache')
 })

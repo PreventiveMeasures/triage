@@ -2,6 +2,7 @@
 // Mirrors view/client-sync.js: the heavy module is dynamically imported via a
 // variable path so esbuild keeps it — and any future managed payload — out of
 // the main view bundle. The browser resolves the path against the page URL.
+import { state } from '#client/index.js'
 import { managedHistory } from './managed-history.js'
 
 let loadPromise = null
@@ -13,9 +14,9 @@ export function clearPreviewRole() { managedModule?.setPreviewRole(null) }
 export function resetManagedAppState() { managedModule?.resetManagedAppState() }
 export function setManagedAppSession(session) { managedModule?.setManagedAppSession(session) }
 export function setManagedReportCatalog(teams) { return managedModule?.setManagedReportCatalog(teams) ?? new Set() }
-export function readReportSources(id) { return managedModule?.readReportSources(id) }
+export function readReportSources(id, teamId = state.currentManagedTeam) { return managedModule?.readReportSources(id, teamId) }
 export function clearReportSources() { managedModule?.clearReportSources() }
-export async function fetchReportSources(id) { return (await loadManagedBundle()).fetchReportSources(id) }
+export async function fetchReportSources(id, teamId = state.currentManagedTeam) { return (await loadManagedBundle()).fetchReportSources(id, teamId) }
 
 export function loadManagedBundle() {
   if (loadPromise) return loadPromise
@@ -50,28 +51,28 @@ export async function fetchReports(ids) {
   return (await loadManagedBundle()).fetchReports(ids)
 }
 
-export async function fetchReportTriage(id) {
-  return (await loadManagedBundle()).fetchReportTriage(id)
+export async function fetchReportTriage(id, teamId = state.currentManagedTeam) {
+  return (await loadManagedBundle()).fetchReportTriage(id, teamId)
 }
 
 export async function fetchPullRequests(urls, csrfToken, signal) {
   return (await loadManagedBundle()).fetchPullRequests(urls, csrfToken, signal)
 }
 
-export async function fetchReportComments(id) {
-  return (await loadManagedBundle()).fetchReportComments(id)
+export async function fetchReportComments(id, teamId = state.currentManagedTeam) {
+  return (await loadManagedBundle()).fetchReportComments(id, teamId)
 }
 
-export async function saveReportComment(reportId, entry, csrfToken) {
-  return (await loadManagedBundle()).saveReportComment(reportId, entry, csrfToken)
+export async function saveReportComment(reportId, entry, csrfToken, teamId = state.currentManagedTeam) {
+  return (await loadManagedBundle()).saveReportComment(reportId, entry, csrfToken, teamId)
 }
 
-export async function deleteReportComment(reportId, commentId, version, csrfToken) {
-  return (await loadManagedBundle()).deleteReportComment(reportId, commentId, version, csrfToken)
+export async function deleteReportComment(reportId, commentId, version, csrfToken, teamId = state.currentManagedTeam) {
+  return (await loadManagedBundle()).deleteReportComment(reportId, commentId, version, csrfToken, teamId)
 }
 
-export async function pushReportTriage(id, entries, csrfToken) {
-  return (await loadManagedBundle()).pushReportTriage(id, entries, csrfToken)
+export async function pushReportTriage(id, entries, csrfToken, teamId = state.currentManagedTeam) {
+  return (await loadManagedBundle()).pushReportTriage(id, entries, csrfToken, teamId)
 }
 
 export async function login(loginPath) {
@@ -90,3 +91,5 @@ export async function fetchBundleMetadata(id) {
 export async function fetchBundleContents(id, options) {
   return (await loadManagedBundle()).fetchBundleContents(id, options)
 }
+
+export async function fetchTeamReports(teamId) { return (await loadManagedBundle()).fetchTeamReports(teamId) }

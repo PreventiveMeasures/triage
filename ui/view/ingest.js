@@ -1,3 +1,4 @@
+import { setManagedWorkspace } from '../../client/managed/workspace.js'
 import { managedRouteForIds } from '../../common/managed/routes.js'
 import { adoptRepoUrlFor, analyzeContent, computeLinkHint, deleteBundle, deleteFile, deleteWorkspace, dropBundleFromHashIndex, ensureTriageLoaded, getSecureItem, getWorkspaceAppMetadata, isManagedUiMode, listBundles, listFiles, listWorkspaces, loadRepoUrlFor, parseLinkedFindings, pruneOrphanTriage, readFile, readFileBytes, removeCount, removeSecureItem, saveBundle, saveFile, saveRepoUrlFor, setBundleWorkspace, setCount, setReportWorkspace, setSecureItem, state, workspaceAppCacheToken } from '#client/index.js'
 import { closeWorkspace as closePresence, deleteBundleFromRemote, deleteFromRemote as deletePresence, holdLocalChangeChecks, isInRemoteOrCached, openWorkspace as openPresence, putFile, triageSync } from './client-sync.js'
@@ -19,7 +20,7 @@ import { importWorkspaceFromGzip } from './workspace-import.js'
 import { maybePromptFirstUse } from './first-import-prompt.js'
 import { openPasskeyUnlockDialog } from './dialogs/passkey-unlock-dialog.js'
 import { openSyncDownloadDialog } from './dialogs/sync-download-dialog.js'
-import { clearReportSources, fetchReport as fetchManagedReport, fetchReports as fetchManagedReports, login as managedLogin } from './client-managed.js'
+import { clearReportSources, fetchTeamReports, login as managedLogin } from './client-managed.js'
 import { showToast } from './toast.js'
 import { managedHistory } from './managed-history.js'
 import { loadManagedReportComments } from './managed-comments.js'
@@ -705,18 +706,18 @@ export async function switchToFile(name, content, { workspaceId } = {}) {
 export async function switchToManagedTeam(team, reportId = null, { history = true } = {}) {
   if (!isManagedUiMode() || !team || !Array.isArray(team.reports)) return false
   if (history && managedHistory.active) return managedHistory.navigate(managedRouteForIds({ view: 'findings', teamId: team.id, reportId }, state.managedTeams))
-  const selected = reportId === null ? team.reports : team.reports.filter((r) => r.id === reportId)
-  if (reportId !== null && selected.length === 0) return false
+  if (reportId !== null && !team.reports.some(r => r.id === reportId)) return false
   const gen = beginViewNavigation()
-  const contents = reportId === null
-    ? await fetchManagedReports(selected.map((r) => r.id))
-    : [await fetchManagedReport(reportId)]
+  const workspace = await fetchTeamReports(team.id)
   if (isStaleLoad(gen)) return false
   clearReportSources()
-  if (contents === null || contents.some((content) => content === null)) {
+  if (workspace === null || reportId !== null && !workspace.some(r => r.id === reportId)) {
     showToast('Could not load all team reports. Please try again.')
     return false
   }
+  const selectedLink = workspace.find(r => r.id === reportId && r.data.source === 'links' && Array.isArray(r.data.links))
+  const selected = workspace.filter(r => reportId === null || selectedLink || r.id === reportId)
+  const findings = selected.filter(r => r.data.source !== 'links' || !Array.isArray(r.data.links))
   // The managed client validates every parsed JSON response before clearing
   // the prior view, so a failed report cannot turn a team into a partial view.
   closeSessionsExcept(new Set())
@@ -733,12 +734,13 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   clearMergedGroups()
   state.workspaceMerges = []
   state.revalidateConflicts = new Map()
-  state.currentFile = reportId === null ? null : selected[0].filename
+  state.currentFile = reportId === null ? null : workspace.find(r => r.id === reportId).filename
   // Namespaced, in-memory workspace identity: all existing workspace lens
   // rules apply, without registering a local workspace or sync subscription.
   state.currentWorkspace = reportId === null ? `managed-team:${team.id}` : null
   state.currentManagedTeam = team.id
   state.currentManagedReport = reportId
+  setManagedWorkspace(team.id, workspace)
   state.managedReports = selected.map((entry) => ({ id: entry.id, filename: entry.filename }))
   state.managedComments.clear()
   state.managedReport = reportId === null ? null : state.managedReports[0] ?? null
@@ -750,9 +752,9 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   state.repoUrl = ''
   state.repoEditing = false
   resetGraph2()
-  for (let i = 0; i < selected.length; i++) {
-    await ingestReport(selected[i].filename, contents[i].data, gen, {
-      renderView: false, managedReportId: selected[i].id, managedRepo: contents[i].repo,
+  for (const entry of findings) {
+    await ingestReport(entry.filename, entry.data, gen, {
+      renderView: false, managedReportId: entry.id, managedRepo: entry.repo,
     })
     if (isStaleLoad(gen)) return false
   }
@@ -763,7 +765,7 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   if (selected.length > 0) {
     const { hydrateManagedReportTriage } = await import('./managed-triage.js')
     if (isStaleLoad(gen)) return false
-    for (const entry of selected) {
+    for (const entry of findings) {
       const hydrated = (await Promise.all([
         hydrateManagedReportTriage(entry.id, { renderView: false }), loadManagedReportComments(entry.id),
       ])).every(Boolean)
@@ -775,7 +777,11 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
       }
     }
   }
-  if (selected.length === 0) {
+  if (selectedLink) {
+    state.currentView = 'links'
+    state.currentLinks = { name: selectedLink.filename, groups: selectedLink.data.links, skipped: 0 }
+    if (!(await renderAfterAnimationFrame(gen))) return false
+  } else if (selected.length === 0) {
     showEmptyMainPane()
   } else {
     applyOpeningFilters(getShownGroups())

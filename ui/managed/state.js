@@ -4,6 +4,7 @@ export class ManagedAppState {
   constructor(notify = () => {}) {
     this.resources = new Map()
     this.session = null
+    this.teamCatalog = null
     this.reportCatalog = null
     this.generation = 0
     this.sessionController = new AbortController()
@@ -21,12 +22,26 @@ export class ManagedAppState {
     this.sessionController = new AbortController()
     this.invalidate()
     this.session = null
+    this.teamCatalog = null
     this.reportCatalog = null
   }
 
-  // A report may be visible through multiple teams. Include every membership's
-  // version so a grant/revocation in any team invalidates the shared content.
+  // Each team owns one filtered workspace response. Any report/link or grant
+  // change invalidates that response, plus affected privileged report previews.
   setReportCatalog(teams) {
+    const changedTeams = new Set()
+    const teamCatalog = new Map(teams.map(team => [team.id, JSON.stringify(team.reports.map(report => [report.id, report.cacheKey ?? null]).toSorted())]))
+    for (const id of new Set([...this.teamCatalog?.keys() ?? [], ...teamCatalog.keys()])) {
+      if (this.teamCatalog?.get(id) !== teamCatalog.get(id)) changedTeams.add(`team:${id}`)
+    }
+    for (const key of this.resources.keys()) {
+      const prefix = 'reports:content:team:'
+      if (key.startsWith(prefix)) {
+        const teamId = key.slice(prefix.length)
+        if (!teamCatalog.has(teamId) || this.teamCatalog?.get(teamId) !== teamCatalog.get(teamId)) this.invalidate([key])
+      }
+    }
+    this.teamCatalog = teamCatalog
     const grouped = new Map()
     for (const team of teams) {
       for (const report of team.reports) {
@@ -38,12 +53,12 @@ export class ManagedAppState {
     const next = new Map([...grouped].map(([id, keys]) => [id, JSON.stringify(keys.toSorted())]))
     const previous = this.reportCatalog
     this.reportCatalog = next
-    const changed = new Set()
+    const changed = new Set(changedTeams)
     for (const id of new Set([...previous?.keys() ?? [], ...next.keys()])) {
       if (previous?.get(id) !== next.get(id)) changed.add(id)
     }
     for (const key of this.resources.keys()) {
-      if (!key.startsWith('reports:content:')) continue
+      if (!key.startsWith('reports:content:') || key.startsWith('reports:content:team:')) continue
       const id = key.slice('reports:content:'.length)
       if (!next.has(id) || changed.has(id)) {
         this.invalidate([key])

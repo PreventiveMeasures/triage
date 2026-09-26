@@ -269,7 +269,7 @@ function teamsSectionTemplate() {
 // it — opening is handled by its own @click, which renders the report from the
 // server WITHOUT caching it to OPFS.
 function teamReportTemplate(team, r) {
-  const current = state.currentManagedTeam === team.id && state.currentManagedReport === r.id && state.currentView === 'findings'
+  const current = state.currentManagedTeam === team.id && state.currentManagedReport === r.id && ['findings', 'links'].includes(state.currentView)
   return html`<li class=${`file-item indented team-report-item${current ? ' current' : ''}`}>
     <button type="button" class="file-name" data-tooltip=${r.filename} @click=${() => void openTeamReport(team, r)}>
       ${unsafeHTML(FILE_ICONS.default)}<span class="file-label">${r.filename}</span>
@@ -2040,7 +2040,7 @@ async function restoreManagedPage(route, isCurrent) {
   if (!canReuseReport && !(await switchToManagedTeam(team, route.reportId, { history: false }))) return false
   if (!isCurrent()) return false
   if (state.currentView !== route.view) cleanupGraph2()
-  state.currentView = route.view
+  state.currentView = state.currentLinks ? 'links' : route.view
   document.body.classList.remove('report-fullscreen')
   // Commit page restoration synchronously with its URL, including in a
   // background PWA window where a view transition may wait for a paint.
@@ -2048,7 +2048,7 @@ async function restoreManagedPage(route, isCurrent) {
   readyManagedView = currentViewGeneration()
   renderSidebar()
   document.querySelector('#main-content')?.scrollTo({ top: 0 })
-  return managedRouteForIds({ ...route, view: state.currentView }, state.managedTeams)
+  return managedRouteForIds({ ...route, view: state.currentView === 'links' ? 'findings' : state.currentView }, state.managedTeams)
 }
 
 async function openManagedBundle(id, isCurrent, tab = 'overview') {

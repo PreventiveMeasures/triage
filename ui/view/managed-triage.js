@@ -14,6 +14,7 @@
 // entry) is adopted wholesale, and one it has never seen carries whatever is
 // local up.
 import { bucketOf, saveTriage, setEntry, setManagedTriageChangeNotifier, state } from '#client/index.js'
+import { clearManagedWorkspace } from '../../client/managed/workspace.js'
 import { roleAtLeast } from '../../common/managed/roles.ts'
 import { MAX_FINDING_ID, MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_COLOR, MAX_TRIAGE_ENTRIES, MAX_TRIAGE_TEXT } from '../../common/managed/triage.ts'
 import { fetchReportTriage, pushReportTriage } from './client-managed.js'
@@ -64,6 +65,7 @@ const baseline = new Map()
 // Reports whose GET has been adopted — pushes for a report wait for its
 // hydrate, so nothing goes up before the server's copy has been read.
 const hydratedReports = new Set()
+const scopeFor = (id, teamId = state.currentManagedTeam) => JSON.stringify([teamId, id])
 
 // The edits captured since they last landed, per report id: the report they
 // were made in (the endpoint they go to) and the wire entries (null = clear)
@@ -139,10 +141,10 @@ function refusedAsSent(status) {
 // same id (an edit made while the batch was in flight) wins over what didn't
 // land.
 function requeue(p, ids) {
-  let q = pending.get(p.report.id)
+  let q = pending.get(p.key)
   if (q == null) {
-    q = { report: p.report, changes: new Map() }
-    pending.set(p.report.id, q)
+    q = { report: p.report, key: p.key, teamId: p.teamId, changes: new Map() }
+    pending.set(p.key, q)
   }
   for (const id of ids) if (!q.changes.has(id)) q.changes.set(id, p.changes.get(id))
 }
@@ -168,7 +170,7 @@ async function flush(p) {
       count++
       i++
     }
-    const status = await pushReportTriage(p.report.id, batch, state.managedSession?.csrfToken)
+    const status = await pushReportTriage(p.report.id, batch, state.managedSession?.csrfToken, p.teamId)
     const landed = status >= 200 && status < 300
     if (!landed && !refusedAsSent(status)) {
       // Transient: stop here, this batch and the rest go again next time.
@@ -212,11 +214,13 @@ function scheduleTriagePush() {
       continue
     }
     const report = reportForFinding(id)
-    if (report == null || !hydratedReports.has(report.id)) continue
-    let q = pending.get(report.id)
+    if (report == null || !hydratedReports.has(scopeFor(report.id))) continue
+    const teamId = state.currentManagedTeam
+    const scopeKey = scopeFor(report.id, teamId)
+    let q = pending.get(scopeKey)
     if (q == null) {
-      q = { report, changes: new Map() }
-      pending.set(report.id, q)
+      q = { report, key: scopeKey, teamId, changes: new Map() }
+      pending.set(scopeKey, q)
     }
     q.changes.set(id, wire)
   }
@@ -241,6 +245,7 @@ export function initManagedTriagePush() {
 // report cannot write after the local surface takes over, and a later managed
 // visit starts from fresh server state.
 export function resetManagedTriage() {
+  clearManagedWorkspace()
   state.managedComments?.clear()
   globalThis.document?.dispatchEvent(new Event('managed-comments-reset'))
   if (pushTimer != null) { clearTimeout(pushTimer); pushTimer = null }
@@ -264,7 +269,7 @@ export async function hydrateManagedReportTriage(reportId, { renderView = true }
     && state.managedSession != null && state.reports === reports
     && activeManagedReports().some((report) => report.id === reportId)
   if (!isCurrent()) return false
-  hydratedReports.delete(reportId)
+  hydratedReports.delete(scopeFor(reportId))
   // Whatever is still pending goes first, and lands before the server copy is
   // read — so an edit made moments ago is what "server wins" then confirms,
   // not what it reverts.
@@ -287,7 +292,7 @@ export async function hydrateManagedReportTriage(reportId, { renderView = true }
     const ignoredReports = wire?.triage == null ? state.triage.get(id)?.ignoredReports : undefined
     if (setEntry(state.triage, id, { ...wire, ignoredReports })) changed = true
   }
-  hydratedReports.add(reportId)
+  hydratedReports.add(scopeFor(reportId))
   if (changed) {
     // Notify the managed push and repaint the imperatively-rendered
     // surfaces (kanban, toolbar counts) that don't observe state.triage; the

@@ -69,9 +69,9 @@ export function createReportSourcesCache(storage: CacheStorage, db: ManagedDb, r
     queue = job.then(() => undefined, () => undefined)
     return job
   }
-  function filename(report: ReportRecord, bundle: ManagedBundle, permissions: ViewerPermissions, repo: { github: string | null }) {
+  function filename(report: ReportRecord, bundle: ManagedBundle, permissions: ViewerPermissions, repo: { github: string | null }, visible?: Set<string>) {
     const key = createHash('sha256').update(JSON.stringify([
-      'finding-access-v2', bundle.integrity, bundle.kind, permissions.dependencies, permissions.security, repo,
+      'finding-access-v3', visible ? [...visible].toSorted() : null, bundle.integrity, bundle.kind, permissions.dependencies, permissions.security, repo,
     ])).digest('hex')
     return `${formatDirectory(bundle.id, report.sha256, report.filename)}/${key}.json.gz`
   }
@@ -79,14 +79,14 @@ export function createReportSourcesCache(storage: CacheStorage, db: ManagedDb, r
     const names = await db.listReportFilenamesWithBundleHash(bundle.id, report.sha256)
     return names.some(name => reportFormat(name) === reportFormat(report.filename)) && await db.getBundle(bundle.id) != null
   }
-  async function build(target: string, report: ReportRecord, bundle: ManagedBundle, permissions: ViewerPermissions, repo: { github: string | null }) {
+  async function build(target: string, report: ReportRecord, bundle: ManagedBundle, permissions: ViewerPermissions, repo: { github: string | null }, visible?: Set<string>) {
     const bytes = await reports.get(report.id)
     if (!bytes) return false
     const parsed = await loadManagedFindings(filterReportContent(bytes.toString('utf8'), permissions, report.filename, repo), report.filename)
     if (!parsed) return false
     const details = await readBundleDetails(bundle, bundles)
     if (!details) return false
-    const selection = selectSources(parsed.findings, bundleSourcesAsMap(details))
+    const selection = selectSources(visible ? parsed.findings.filter(f => visible.has((f as { id: string }).id)) : parsed.findings, bundleSourcesAsMap(details))
     const body = await compress(Buffer.from(JSON.stringify({ integrity: bundle.integrity, ...selection })), { level: 6 })
     // A duplicate with the same hash AND format can use these parsed bytes.
     // Another format must not keep a deleted variant's late build alive.
@@ -100,7 +100,7 @@ export function createReportSourcesCache(storage: CacheStorage, db: ManagedDb, r
     }
     return true
   }
-  async function ensure(target: string, report: ReportRecord, bundle: ManagedBundle, permissions: ViewerPermissions, repo: { github: string | null }): Promise<boolean> {
+  async function ensure(target: string, report: ReportRecord, bundle: ManagedBundle, permissions: ViewerPermissions, repo: { github: string | null }, visible?: Set<string>): Promise<boolean> {
     const existing = pending.get(target)
     if (existing) {
       const ready = await existing.job
@@ -110,22 +110,22 @@ export function createReportSourcesCache(storage: CacheStorage, db: ManagedDb, r
       const initiator = await db.getReport(existing.reportId)
       if (initiator?.bundleId === bundle.id && initiator.sha256 === report.sha256) return false
       if (pending.get(target) === existing) pending.delete(target)
-      return ensure(target, report, bundle, permissions, repo)
+      return ensure(target, report, bundle, permissions, repo, visible)
     }
     const job = (async () => {
       if (await storage.exists(target)) return true
       // Serial cold builds bound peak decompression/parsing memory.
-      return enqueue(() => build(target, report, bundle, permissions, repo))
+      return enqueue(() => build(target, report, bundle, permissions, repo, visible))
     })()
     const entry = { reportId: report.id, job }
     pending.set(target, entry)
     try { return await job } finally { if (pending.get(target) === entry) pending.delete(target) }
   }
   return {
-    async open(report: ReportRecord, bundle: ManagedBundle, permissions: ViewerPermissions) {
+    async open(report: ReportRecord, bundle: ManagedBundle, permissions: ViewerPermissions, visible?: Set<string>) {
       const repo = { github: (await db.listAllRepos()).find(entry => entry.repoId === report.repoId)?.fullName ?? null }
-      const target = filename(report, bundle, permissions, repo)
-      if (!(await ensure(target, report, bundle, permissions, repo))) return null
+      const target = filename(report, bundle, permissions, repo, visible)
+      if (!(await ensure(target, report, bundle, permissions, repo, visible))) return null
       const opened = await storage.open(target)
       return { ...opened, repo }
     },

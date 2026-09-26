@@ -287,7 +287,7 @@ async function fixture(t) {
   async function request(method, path, name, body, csrf = true) {
     const session = sessions[name]
     const req = new Readable({ read() {} })
-    req.method = method; req.url = path
+    req.method = method; req.url = ['alice', 'reader', 'outside'].includes(name) ? `${path}?team=team` : path
     req.headers = { 'content-type': 'application/json' }
     if (session) req.headers.cookie = session.setCookie.split(';', 1)[0]
     if (session && csrf) req.headers['x-csrf-token'] = session.csrfToken
@@ -429,10 +429,7 @@ for (const method of ['GET', 'POST', 'PATCH', 'DELETE']) {
       if (revoke === 'security') await db.setTeamMember('team', userId, { dependencies: false, security: false })
       gate.resolve()
       const result = await pending
-      if (method === 'GET' && revoke === 'security') {
-        assert.equal(result.status, 200)
-        assert.deepEqual(result.comments, [])
-      } else assert.equal(result.status, 404)
+      assert.equal(result.status, 404)
       assert.deepEqual(await db.listComments(['secret']), [comment], 'revoked access cannot modify or add comments')
     })
   }

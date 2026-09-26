@@ -63,7 +63,7 @@ const { decodeReportLocation, encodeReportLocation } = await import('../client/r
 const { getItem: getSecureItem, setItem: setSecureItem, hydrate: hydrateSecureStorage } = await import('../client/secure-storage.js')
 const { locateLinkedFinding, locateReportFinding } = await import('../ui/view/finding-link-route.js')
 const { deriveFindingId } = await import('../report/index.js')
-const { fetchReport: fetchManagedReport } = await import('../client/managed/session.js')
+const { fetchTeamReports: fetchManagedTeam } = await import('../client/managed/session.js')
 const { findGroupById, getMergedGroups, groupKey, sortTabs } = await import('../ui/view/group.js')
 const { configureRevalidation, parseCommentRefs } = await import('../ui/view/format.js')
 
@@ -720,7 +720,7 @@ describe('finding deep links — managed resolution', () => {
     navigation = {
       openReport() { assert.fail('managed links must never open local reports') },
       openWorkspace() { assert.fail('managed links must never open local workspaces') },
-      readReport(id) { reads.push(id); return content[id] ?? null },
+      readTeam(id) { reads.push(id); return state.managedTeams.find(t => t.id === id).reports.map(r => ({ ...r, ...content[r.id] })) },
       openManagedReport(target, reportId) {
         calls.push([target.id, reportId])
         state.currentManagedTeam = target.id
@@ -776,26 +776,26 @@ describe('finding deep links — managed resolution', () => {
     const report = await computeLinkHint('report', second.filename)
     const hit = await locateLinkedFinding(extractFindingRef(`#finding=${UUID_B}&v=${report}AAAA`), navigation)
     assert.equal(hit.finding.id, UUID_B)
-    assert.deepEqual(reads, ['second'])
+    assert.deepEqual(reads, ['team'])
     assert.deepEqual(calls, [['team', 'second']])
   })
 
   it('falls back from E2E workspace hints or renamed reports without scanning a report twice', async () => {
     const ref = extractFindingRef(`#finding=${UUID_B}&v=wxxxx`)
     assert.ok(await locateLinkedFinding(ref, navigation))
-    assert.deepEqual(reads, ['first', 'second'])
+    assert.deepEqual(reads, ['team'])
     reads.length = 0
     const missing = await locateLinkedFinding({ id: UUID_C, report: 'xxxx' }, navigation)
     assert.equal(missing, null)
-    assert.deepEqual(reads, ['first', 'second'])
+    assert.deepEqual(reads, ['team', 'shared'])
   })
 
   it('resolves hints and fallback scans through the real managed JSON response contract', async t => {
     const network = t.mock.method(globalThis, 'fetch', url => {
-      const id = decodeURIComponent(url.slice('/api/reports/'.length))
-      return Promise.resolve(Response.json(content[id]))
+      const id = decodeURIComponent(url.split('/')[3])
+      return Promise.resolve(Response.json({ reports: state.managedTeams.find(candidate => candidate.id === id).reports.map(r => ({ ...r, ...content[r.id] })) }))
     })
-    navigation.readReport = fetchManagedReport
+    navigation.readTeam = fetchManagedTeam
     for (const hint of [await computeLinkHint('report', second.filename), 'xxxx']) {
       state.reports = []
       state.currentManagedTeam = null
@@ -805,8 +805,8 @@ describe('finding deep links — managed resolution', () => {
       const hit = await locateLinkedFinding({ id: UUID_B, report: hint }, navigation)
       assert.equal(hit.finding.id, UUID_B)
       assert.deepEqual(calls, [['team', 'second']])
-      assert.equal(network.mock.calls.at(-1).arguments[0], '/api/reports/second')
-      assert.equal(network.mock.callCount(), hint === 'xxxx' ? 2 : 1)
+      assert.equal(network.mock.calls.at(-1).arguments[0], '/api/teams/team/reports')
+      assert.equal(network.mock.callCount(), 1)
     }
   })
 
@@ -816,7 +816,7 @@ describe('finding deep links — managed resolution', () => {
     const id = await deriveFindingId(finding)
     assert.ok(id)
     const envelope = { data: { groups: [[Object.freeze(finding)]] }, repo }
-    navigation.readReport = () => envelope
+    navigation.readTeam = () => [{ id: 'grouped', ...envelope }]
     navigation.openManagedReport = (target, reportId) => {
       calls.push([target.id, reportId])
       state.currentManagedTeam = target.id
@@ -848,7 +848,7 @@ describe('finding deep links — managed resolution', () => {
   })
 
   it('ignores failed reads and stops on navigation, session, or mode changes', async () => {
-    navigation.readReport = id => id === 'first' ? null : content[id]
+    navigation.readTeam = id => id === 'team' ? null : [{ id: 'second', ...content.second }]
     assert.ok(await locateLinkedFinding({ id: UUID_B }, navigation))
     for (const cancel of ['navigation', 'session', 'mode']) {
       state.localMode = false
@@ -858,12 +858,12 @@ describe('finding deep links — managed resolution', () => {
       navigation.isCurrent = () => active
       calls.length = 0
       const pending = Promise.withResolvers()
-      navigation.readReport = () => pending.promise
+      navigation.readTeam = () => pending.promise
       const lookup = locateLinkedFinding({ id: UUID_A }, navigation)
       if (cancel === 'navigation') active = false
       if (cancel === 'session') state.managedSession = { id: 'other' }
       if (cancel === 'mode') state.localMode = true
-      pending.resolve(content.first)
+      pending.resolve([{ id: 'first', ...content.first }])
       assert.equal(await lookup, null)
       assert.deepEqual(calls, [])
     }

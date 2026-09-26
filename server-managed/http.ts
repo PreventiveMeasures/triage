@@ -9,8 +9,9 @@
 //   GET  /api/auth/session       → { user, csrfToken } | 401
 //   GET  /api/teams              → the current user's teams + their reports and bundles | 401
 //   POST /api/github/pull-requests → batch PR titles/statuses, restricted to the user's team repos
-//   GET  /api/reports/<id>       → view a report: admin, or ≥view role + team membership | 401/404
-//   POST /api/reports/query      → read a batch of viewable reports, with repository metadata | 400/401/404/503
+//   GET  /api/teams/<id>/reports → all reports and links filtered through this team | 401/404
+//   GET  /api/reports/<id>       → admin/manager report preview | 401/403/404
+//   POST /api/reports/query      → admin/manager batch preview, with repository metadata | 400/401/403/404/503
 //   GET  /api/reports/<id>/triage → triage entries (by finding id, shared across reports) for a viewable report's findings | 401/404
 //   POST /api/reports/<id>/triage → write triage entries: admin, or ≥triage role + membership | 401/403/404
 //   GET  /api/reports/<id>/triage/history?finding=<fid> → one visible finding's triage trail, newest first | 400/401/404
@@ -56,7 +57,7 @@ import type { ManagedDb, ManagedSession, StoredUser, TriageEventRow, TriageRow }
 import type { OriginGate } from '../server-common/origin.ts'
 import { isRole, roleAtLeast } from '../common/managed/roles.ts'
 import { VISIBILITY_PERMISSIONS, parseTeamUserPermissions } from '../common/managed/permissions.ts'
-import { filterReportContent, filterReportData } from '../common/managed/report-filter.ts'
+import { filterReportData } from '../common/managed/report-filter.ts'
 import type { TriageEntryPatch } from '../common/managed/triage.ts'
 import { MAX_FINDING_ID, MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_ENTRIES, MAX_TRIAGE_HISTORY, isTriageBucket, parseTriageEntryPatch } from '../common/managed/triage.ts'
 import { reportRepoGithub } from '../report/index.js'
@@ -73,6 +74,7 @@ import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, ensureUserAc
 import { clearCookie, endSession, readSession } from './session.ts'
 import type { ActivityContext, ActivityInput } from './activity.ts'
 import { acceptsReportMetadata } from './report-response.ts'
+import { TeamReportsError, loadTeamReports, recheckTeam, teamFindingIds, teamSnapshot } from './team-reports.ts'
 import { MAX_REPORT_QUERY_BYTES, MAX_REPORT_QUERY_COUNT } from './report-query.ts'
 import { MAX_PULL_REQUESTS, MAX_PULL_REQUEST_URL } from '../common/github-pr.ts'
 import { lookupPullRequests } from './github-pulls.ts'
@@ -158,7 +160,7 @@ async function handleHistory(res: ServerResponse, deps: ManagedHttpDeps, cookie:
     const findings = new Map<string, ActivityContext>()
     const reports = kind === 'all' || kind === 'triage' ? await deps.db.listActivityReports(s.user.id) : []
     for (const report of reports) {
-      for (const finding of await visibleFindingIds(deps, s.user, report.reportId)) {
+      for (const finding of await visibleFindingIds(deps, s.user, report.reportId, s.session.id, null)) {
         if (!findings.has(finding)) findings.set(finding, { finding, ...report })
       }
     }
@@ -1134,10 +1136,11 @@ async function canViewReport(deps: ManagedHttpDeps, user: StoredUser, reportId: 
 // GET/HEAD /api/reports/:id/sources. Only the linked bundle's files cited by
 // visible findings (location AND evidence) are returned. Missing/unavailable
 // bundles are a quiet no-op; cached gzip bodies stream directly from disk.
-async function handleReportSources(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string) {
+async function handleReportSources(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string, teamId: string | null) {
   const s = await readSession(deps.config, deps.db, cookie, Date.now())
   if (!s) { sendJson(res, 401, { error: 'unauthenticated' }); return }
   if (!(await canViewReport(deps, s.user, id))) { sendJson(res, 404, { error: 'no-report' }); return }
+  const visible = roleAtLeast(s.user.role, 'manage') ? undefined : await visibleFindingIds(deps, s.user, id, s.session.id, teamId)
   const report = await deps.db.getReport(id)
   const bundle = report?.bundleId ? await deps.db.getBundle(report.bundleId) : null
   const empty = () => { res.writeHead(204, { 'cache-control': 'private, no-store' }); res.end() }
@@ -1146,7 +1149,7 @@ async function handleReportSources(req: IncomingMessage, res: ServerResponse, de
   const permissions = s.user.role === 'admin' || s.user.role === 'manage'
     ? { dependencies: true, security: true } : await deps.db.reportPermissionsFor(s.user.id, id)
   let cached
-  try { cached = await deps.reportSourcesCache.open(report, bundle, permissions) }
+  try { cached = await deps.reportSourcesCache.open(report, bundle, permissions, visible) }
   catch { empty(); return }
   if (!cached) { empty(); return }
   // Cold parsing can outlast role/team changes, report deletion, or relinking.
@@ -1154,7 +1157,10 @@ async function handleReportSources(req: IncomingMessage, res: ServerResponse, de
   const latest = await deps.db.getReport(id)
   const currentPermissions = current && (current.user.role === 'admin' || current.user.role === 'manage'
     ? { dependencies: true, security: true } : await deps.db.reportPermissionsFor(current.user.id, id))
-  if (!current || !(await canViewReport(deps, current.user, id)) || !(await canAccessBundle(deps, current.user, bundle.id))
+  let latestVisible: Set<string> | undefined
+  try { latestVisible = current && !roleAtLeast(current.user.role, 'manage') ? await visibleFindingIds(deps, current.user, id, current.session.id, teamId) : undefined }
+  catch (error) { cached.stream.destroy(); throw error }
+  if (!current || current.user.role !== s.user.role || visible?.size !== latestVisible?.size || [...visible ?? []].some(findingId => !latestVisible?.has(findingId)) || !(await canViewReport(deps, current.user, id)) || !(await canAccessBundle(deps, current.user, bundle.id))
       || latest?.bundleId !== bundle.id || latest.sha256 !== report.sha256
       || latest.repoId !== report.repoId || await repositoryName(deps, latest.repoId) !== cached.repo.github
       || currentPermissions?.dependencies !== permissions.dependencies || currentPermissions?.security !== permissions.security) {
@@ -1171,26 +1177,25 @@ async function handleReportSources(req: IncomingMessage, res: ServerResponse, de
   try { await pipeline(cached.stream, res) } catch { res.destroy() }
 }
 
-// GET /api/reports/<id> — view a report the caller is authorized to read (see
-// canViewReport: admin, manager ownership, or team access with publication rules).
+// GET /api/reports/<id> — admin/manager preview, within management access.
 // Accept: application/json includes parsed, filtered data and the server's repo
 // assignment. Other callers retain the raw text/plain response. The
 // client renders either without caching to OPFS. 404 covers "no such report" AND
 // "not authorized" (so neither existence nor membership is probeable); 503 = row
 // without bytes (store desync).
 async function handleViewReport(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string): Promise<void> {
-  const s = await readSession(deps.config, deps.db, cookie, Date.now())
-  if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
+  const s = await readManageSession(res, deps, cookie)
+  if (s == null) return
   if (!(await canViewReport(deps, s.user, id))) { sendJson(res, 404, { error: 'no-report' }); return }
   const bytes = await deps.reportStore.get(id)
   if (bytes == null) { sendJson(res, 503, { error: 'unavailable' }); return }
   const current = await readSession(deps.config, deps.db, cookie, Date.now())
-  if (!current || !(await canViewReport(deps, current.user, id))) { sendJson(res, 404, { error: 'no-report' }); return }
+  if (!current || !roleAtLeast(current.user.role, 'manage') || !(await canViewReport(deps, current.user, id))) { sendJson(res, 404, { error: 'no-report' }); return }
   if (acceptsReportMetadata(req.headers.accept)) {
     const report = await deps.db.getReport(id)
     if (report == null) { sendJson(res, 404, { error: 'no-report' }); return }
     const repo = { github: await repositoryName(deps, report.repoId), directory: report.repoDirectory }
-    const data = await viewerReportData(deps, current.user, id, bytes, report.filename, repo)
+    const { data } = readManagedReport(bytes.toString('utf8'), report.filename)
     if (data == null) { sendJson(res, 422, { error: 'unreadable-report' }); return }
     sendJson(res, 200, {
       data,
@@ -1198,8 +1203,7 @@ async function handleViewReport(req: IncomingMessage, res: ServerResponse, deps:
     }, { vary: 'Accept', 'x-content-type-options': 'nosniff' })
     return
   }
-  const out = await viewerReportBytes(deps, current.user, id, bytes)
-  if (out == null) { sendJson(res, 404, { error: 'no-report' }); return }
+  const out = bytes
   res.writeHead(200, {
     'content-type': 'text/plain; charset=utf-8',
     'content-length': String(out.length),
@@ -1216,8 +1220,8 @@ async function handleViewReport(req: IncomingMessage, res: ServerResponse, deps:
 const REPORT_QUERY_CONCURRENCY = 8
 const REPORT_QUERY_IN_FLIGHT_BYTES = 64 * 1024 * 1024
 async function handleQueryReports(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
-  const s = await readSession(deps.config, deps.db, cookie, Date.now())
-  if (!s) { sendJson(res, 401, { error: 'unauthenticated' }); return }
+  const s = await readManageSession(res, deps, cookie)
+  if (!s) return
   let body
   try { body = await readJsonBody(req, 1024 * 1024) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
   const raw = (body as { ids?: unknown } | null)?.ids
@@ -1228,6 +1232,7 @@ async function handleQueryReports(req: IncomingMessage, res: ServerResponse, dep
   if (ids.length > MAX_REPORT_QUERY_COUNT) { sendJson(res, 413, { error: 'batch-too-large' }); return }
   const snapshot = await deps.db.getReportAccessSnapshot(s.session.id, Date.now(), ids)
   if (!snapshot || snapshot.user.id !== s.user.id) { sendJson(res, 401, { error: 'unauthenticated' }); return }
+  if (!roleAtLeast(snapshot.user.role, 'manage')) { sendJson(res, 404, { error: 'no-report' }); return }
   const reports = new Map(snapshot.reports.map(report => [report.id, report]))
   if (reports.size !== ids.length) { sendJson(res, 404, { error: 'no-report' }); return }
   const storedBytes = snapshot.reports.reduce((total, report) => total + report.byteSize, 0)
@@ -1301,29 +1306,19 @@ async function handleQueryReports(req: IncomingMessage, res: ServerResponse, dep
   writeResponse(res, Buffer.concat(parts, outputBytes))
 }
 
-// Reports arrive on the managed UI wire as JSON objects even when the stored
-// upload is markdown or CSV. Parsing precedes visibility filtering, so those
-// formats obey the same permissions as native JSON reports.
-async function viewerReportData(deps: ManagedHttpDeps, user: StoredUser, id: string, bytes: Buffer, filename: string, repo: unknown): Promise<unknown> {
-  const { data } = readManagedReport(bytes.toString('utf8'), filename)
-  if (data == null || user.role === 'admin' || user.role === 'manage') return data
-  return filterReportData(data, await deps.db.reportPermissionsFor(user.id, id), repo)
-}
-
-// Apply the viewer's visibility-permission filter to a report's bytes. Admin and
-// manage roles see the report whole; everyone else (triage / view — 'none' can't
-// reach here) has dependency / security findings they lack permission for
-// stripped server-side, per their team memberships. Unchanged → original bytes.
-async function viewerReportBytes(deps: ManagedHttpDeps, user: StoredUser, reportId: string, bytes: Buffer): Promise<Buffer | null> {
-  // Deletion can win while the authorized request is reading the blob. Missing
-  // metadata means unavailable, never a filename-free filtering fallback.
-  const rec = await deps.db.getReport(reportId)
-  if (rec == null) return null
-  if (user.role === 'admin' || user.role === 'manage') return bytes
-  const perms = await deps.db.reportPermissionsFor(user.id, reportId)
-  const text = bytes.toString('utf8')
-  const filtered = filterReportContent(text, perms, rec.filename, { github: await repositoryName(deps, rec.repoId) })
-  return filtered === text ? bytes : Buffer.from(filtered, 'utf8')
+// The server selects the complete workspace; clients cannot omit a report
+// or links file to evade classification through the rest of their team.
+async function handleTeamReports(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, teamId: string): Promise<void> {
+  const s = await readSession(deps.config, deps.db, cookie, Date.now())
+  if (!s) { sendJson(res, 401, { error: 'unauthenticated' }); return }
+  const snapshot = await teamSnapshot(deps.db, s.session.id, teamId)
+  const reports = await loadTeamReports(deps.db, deps.reportStore, snapshot)
+  await recheckTeam(deps.db, s.session.id, snapshot)
+  const parts = [Buffer.from('{"reports":[')]
+  for (const [index, report] of reports.entries()) parts.push(Buffer.from(`${index ? ',' : ''}${JSON.stringify(report)}`))
+  parts.push(Buffer.from(']}'))
+  res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' })
+  writeResponse(res, Buffer.concat(parts))
 }
 
 // Triage requires both a writing role and access to the report itself.
@@ -1331,27 +1326,20 @@ async function canTriageReport(deps: ManagedHttpDeps, user: StoredUser, reportId
   return roleAtLeast(user.role, 'triage') && await canViewReport(deps, user, reportId)
 }
 
-// The finding ids a viewer sees in a report — what the report-scoped triage
-// endpoints read and write, since the rows themselves are per finding id. The
-// stored bytes run through the viewer's content filter (viewerReportBytes'
-// rule: admin/manage whole, others per their visibility permissions), then
-// parse + flatten + id-backfill THE SAME WAY the client ingests them, so the
-// set matches the ids that viewer's client renders and keys triage by. Missing
-// bytes or an unparseable report yield an empty set (nothing is provably
-// visible). A report is immutable, so the set is memoized per (report, filter)
-// — a bounded map per deps, dropping the oldest entries — rather than
-// re-parsed on every debounced push. Handlers warm this cache before their
-// session/access recheck, then call again with the current user so permissions
-// revoked during the cold read/parse cannot authorize triage reads or writes.
+// Ordinary users authorize annotations through the complete team's filtered
+// workspace. Privileged users retain report-scoped access and the same stable
+// ID derivation. Both paths store/read annotations by finding ID alone.
 const VISIBLE_IDS_CACHE_MAX = 256
 const visibleIdsCaches = new WeakMap<ManagedHttpDeps, Map<string, Set<string>>>()
-async function visibleFindingIds(deps: ManagedHttpDeps, user: StoredUser, reportId: string): Promise<Set<string>> {
-  const whole = user.role === 'admin' || user.role === 'manage'
-  const perms = whole ? null : await deps.db.reportPermissionsFor(user.id, reportId)
+async function visibleFindingIds(deps: ManagedHttpDeps, user: StoredUser, reportId: string, sessionId: string, teamId: string | null): Promise<Set<string>> {
+  if (!roleAtLeast(user.role, 'manage')) {
+    if (!teamId) throw new TeamReportsError(404, 'no-team')
+    return teamFindingIds(deps.db, deps.reportStore, sessionId, teamId, reportId)
+  }
   const rec = await deps.db.getReport(reportId)
   if (rec == null) return new Set()
   const repo = { github: await repositoryName(deps, rec.repoId) }
-  const key = JSON.stringify([reportId, rec.sha256, rec.filename, repo, perms])
+  const key = JSON.stringify([reportId, rec.sha256, rec.filename, repo])
   let cache = visibleIdsCaches.get(deps)
   if (cache == null) { cache = new Map(); visibleIdsCaches.set(deps, cache) }
   const hit = cache.get(key)
@@ -1362,8 +1350,7 @@ async function visibleFindingIds(deps: ManagedHttpDeps, user: StoredUser, report
   const text = bytes.toString('utf8')
   const { data } = readManagedReport(text, rec.filename)
   if (data == null) return ids
-  const visibleData = perms == null ? data : filterReportData(data, perms, repo)
-  const report = await loadManagedFindings(JSON.stringify(visibleData), rec.filename)
+  const report = await loadManagedFindings(JSON.stringify(data), rec.filename)
   if (report == null) return ids
   for (const f of report.findings) {
     const id = (f as { id?: unknown }).id
@@ -1399,14 +1386,14 @@ function triageWireEntry(row: Pick<TriageRow, 'color' | 'triage' | 'comment' | '
 // findings their visibility permissions keep in THIS report — an entry on a
 // stripped finding must not leak that the finding exists. A cleared entry is
 // sent as null (the server's tombstone), distinct from one never set.
-async function handleGetReportTriage(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string): Promise<void> {
+async function handleGetReportTriage(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string, teamId: string | null): Promise<void> {
   const s = await readSession(deps.config, deps.db, cookie, Date.now())
   if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
   if (!(await canViewReport(deps, s.user, id))) { sendJson(res, 404, { error: 'no-report' }); return }
-  await visibleFindingIds(deps, s.user, id)
+  await visibleFindingIds(deps, s.user, id, s.session.id, teamId)
   const current = await readSession(deps.config, deps.db, cookie, Date.now())
   if (!current || !(await canViewReport(deps, current.user, id)) || current.user.role !== s.user.role) { sendJson(res, 404, { error: 'no-report' }); return }
-  const visible = await visibleFindingIds(deps, current.user, id)
+  const visible = await visibleFindingIds(deps, current.user, id, current.session.id, teamId)
   const entries: Record<string, TriageEntryPatch | null> = {}
   for (const row of await deps.db.listTriage([...visible])) entries[row.findingId] = triageWireEntry(row)
   sendJson(res, 200, { entries })
@@ -1418,16 +1405,16 @@ async function handleGetReportTriage(res: ServerResponse, deps: ManagedHttpDeps,
 // keep in it (a stripped or foreign id 404s without revealing whether it
 // exists). Each event is the entry as written then (null = a clear), who
 // wrote it and when; "what changed" is the diff against the next-older event.
-async function handleGetReportTriageHistory(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string, query: URLSearchParams): Promise<void> {
+async function handleGetReportTriageHistory(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string, query: URLSearchParams, teamId: string | null): Promise<void> {
   const s = await readSession(deps.config, deps.db, cookie, Date.now())
   if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
   if (!(await canViewReport(deps, s.user, id))) { sendJson(res, 404, { error: 'no-report' }); return }
   const finding = query.get('finding') ?? ''
   if (finding === '' || finding.length > MAX_FINDING_ID) { sendJson(res, 400, { error: 'bad-request' }); return }
-  await visibleFindingIds(deps, s.user, id)
+  await visibleFindingIds(deps, s.user, id, s.session.id, teamId)
   const current = await readSession(deps.config, deps.db, cookie, Date.now())
   if (!current || !(await canViewReport(deps, current.user, id)) || current.user.role !== s.user.role) { sendJson(res, 404, { error: 'no-report' }); return }
-  const visible = await visibleFindingIds(deps, current.user, id)
+  const visible = await visibleFindingIds(deps, current.user, id, current.session.id, teamId)
   if (!visible.has(finding)) { sendJson(res, 404, { error: 'no-finding' }); return }
   const events = (await deps.db.listTriageHistory(finding, MAX_TRIAGE_HISTORY)).map((row: TriageEventRow) => ({
     seq: row.seq, at: row.at, actorLogin: row.actorLogin, batchId: row.batchId, entry: triageWireEntry(row, true),
@@ -1444,7 +1431,7 @@ async function handleGetReportTriageHistory(res: ServerResponse, deps: ManagedHt
 // finding the writer sees in THIS report — the report is the authorization
 // scope for rows that are themselves per finding id — so a stripped (or
 // foreign) finding id 404s without revealing whether it exists.
-async function handleSetReportTriage(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string): Promise<void> {
+async function handleSetReportTriage(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string, teamId: string | null): Promise<void> {
   const s = await checkMutation(req, res, deps, cookie)
   if (s == null) return
   if (!(await canTriageReport(deps, s.user, id))) { sendJson(res, 404, { error: 'no-report' }); return }
@@ -1465,10 +1452,10 @@ async function handleSetReportTriage(req: IncomingMessage, res: ServerResponse, 
     }
     parsed.push([findingId, patch])
   }
-  await visibleFindingIds(deps, s.user, id)
+  await visibleFindingIds(deps, s.user, id, s.session.id, teamId)
   const current = await readSession(deps.config, deps.db, cookie, Date.now())
   if (!current || !(await canViewReport(deps, current.user, id)) || current.user.role !== s.user.role) { sendJson(res, 404, { error: 'no-report' }); return }
-  const visible = await visibleFindingIds(deps, current.user, id)
+  const visible = await visibleFindingIds(deps, current.user, id, current.session.id, teamId)
   if (parsed.some(([findingId]) => !visible.has(findingId))) {
     sendJson(res, 404, { error: 'no-finding' }); return
   }
@@ -1478,7 +1465,7 @@ async function handleSetReportTriage(req: IncomingMessage, res: ServerResponse, 
 
 // A report grants access to its visible findings; comments themselves are
 // shared by finding ID. Author IDs always come from the authenticated session.
-async function handleReportComments(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, reportId: string, commentId: string | null): Promise<void> {
+async function handleReportComments(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, reportId: string, commentId: string | null, teamId: string | null): Promise<void> {
   const method = req.method ?? 'GET'
   if (commentId == null ? method !== 'GET' && method !== 'POST' : method !== 'PATCH' && method !== 'DELETE') {
     send405(res, commentId == null ? 'GET, POST' : 'PATCH, DELETE'); return
@@ -1494,12 +1481,12 @@ async function handleReportComments(req: IncomingMessage, res: ServerResponse, d
   }
   // Body delivery and a cold report read can outlive a permission change.
   // Match triage's recheck before exposing or changing any annotation.
-  await visibleFindingIds(deps, s.user, reportId)
+  await visibleFindingIds(deps, s.user, reportId, s.session.id, teamId)
   const session = await readSession(deps.config, deps.db, cookie, Date.now())
   if (!session || session.user.role !== s.user.role || !(await canViewReport(deps, session.user, reportId))) {
     sendJson(res, 404, { error: 'no-report' }); return
   }
-  const visible = await visibleFindingIds(deps, session.user, reportId)
+  const visible = await visibleFindingIds(deps, session.user, reportId, session.session.id, teamId)
   if (method === 'GET') {
     sendJson(res, 200, { comments: await deps.db.listComments([...visible]) }); return
   }
@@ -1819,6 +1806,11 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (method === 'DELETE') { await handleDeleteBundle(req, res, deps, cookie, id); return }
       send405(res, 'GET, DELETE'); return
     }
+    const teamReports = /^\/api\/teams\/([^/]+)\/reports$/u.exec(path)
+    if (teamReports) {
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      await handleTeamReports(res, deps, cookie, teamReports[1]!); return
+    }
     if (path === '/api/reports/query') {
       if (method !== 'POST') { send405(res, 'POST'); return }
       await handleQueryReports(req, res, deps, cookie); return
@@ -1826,11 +1818,11 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     const sourcesRoute = /^\/api\/reports\/([^/]+)\/sources$/u.exec(path)
     if (sourcesRoute) {
       if (method !== 'GET' && method !== 'HEAD') { send405(res, 'GET, HEAD'); return }
-      await handleReportSources(req, res, deps, cookie, sourcesRoute[1]!); return
+      await handleReportSources(req, res, deps, cookie, sourcesRoute[1]!, url.searchParams.get('team')); return
     }
     const commentsRoute = /^\/api\/reports\/([^/]+)\/comments(?:\/([^/]+))?$/u.exec(path)
     if (commentsRoute) {
-      await handleReportComments(req, res, deps, cookie, commentsRoute[1]!, commentsRoute[2] ?? null); return
+      await handleReportComments(req, res, deps, cookie, commentsRoute[1]!, commentsRoute[2] ?? null, url.searchParams.get('team')); return
     }
     // Per-finding triage on a viewable report. The '/triage' suffixes are
     // matched before the bare per-id slice below (a report id is a uuid, so it
@@ -1839,16 +1831,15 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (path.startsWith(MY_REPORT_PREFIX) && path.endsWith(MY_REPORT_TRIAGE_HISTORY_SUFFIX)) {
       const id = path.slice(MY_REPORT_PREFIX.length, -MY_REPORT_TRIAGE_HISTORY_SUFFIX.length)
       if (method !== 'GET') { send405(res, 'GET'); return }
-      await handleGetReportTriageHistory(res, deps, cookie, id, url.searchParams); return
+      await handleGetReportTriageHistory(res, deps, cookie, id, url.searchParams, url.searchParams.get('team')); return
     }
     if (path.startsWith(MY_REPORT_PREFIX) && path.endsWith(MY_REPORT_TRIAGE_SUFFIX)) {
       const id = path.slice(MY_REPORT_PREFIX.length, -MY_REPORT_TRIAGE_SUFFIX.length)
-      if (method === 'GET') { await handleGetReportTriage(res, deps, cookie, id); return }
-      if (method === 'POST') { await handleSetReportTriage(req, res, deps, cookie, id); return }
+      if (method === 'GET') { await handleGetReportTriage(res, deps, cookie, id, url.searchParams.get('team')); return }
+      if (method === 'POST') { await handleSetReportTriage(req, res, deps, cookie, id, url.searchParams.get('team')); return }
       send405(res, 'GET, POST'); return
     }
-    // Team-scoped report view (any approved user who's in a team holding
-    // the report's repo). Distinct prefix from /api/admin/reports/.
+    // Individual report previews are reserved for admins/managers.
     if (path.startsWith(MY_REPORT_PREFIX)) {
       if (method !== 'GET') { send405(res, 'GET'); return }
       await handleViewReport(req, res, deps, cookie, path.slice(MY_REPORT_PREFIX.length)); return
@@ -1884,6 +1875,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
   return (req, res) => {
     if (isShuttingDown()) { sendJson(res, 503, { error: 'shutting-down' }, { connection: 'close' }); return }
     const work = route(req, res).catch((err) => {
+      if (err instanceof TeamReportsError && !res.headersSent) { sendJson(res, err.status, { error: err.message }); return }
       console.warn('managed: request handler error:', err)
       if (res.headersSent) { try { res.destroy() } catch {} }
       else sendJson(res, 500, { error: 'internal' })

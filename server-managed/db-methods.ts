@@ -111,6 +111,9 @@ export interface ReportAccessRecord {
   repo: { github: string | null; directory: string }
   permissions: TeamUserPermissions
 }
+export interface TeamReportAccessSnapshot extends ReportAccessSnapshot {
+  teamId: string | null
+}
 export interface ReportAccessSnapshot {
   user: StoredUser
   reports: ReportAccessRecord[]
@@ -325,6 +328,7 @@ export interface ManagedDb extends ActivityStore, CommentStore {
   insertReport(report: ReportRecordInput, now: number): Promise<void>
   listReports(userId?: string): Promise<AdminReport[]>
   getReport(id: string): Promise<ReportRecord | null>
+  getTeamReportAccessSnapshot(sessionId: string, now: number, teamId: string): Promise<TeamReportAccessSnapshot | null>
   getReportAccessSnapshot(sessionId: string, now: number, ids: readonly string[]): Promise<ReportAccessSnapshot | null>
   listReportFilenamesWithBundleHash(bundleId: string, sha256: string): Promise<string[]>
   deleteReport(id: string): Promise<boolean>
@@ -550,6 +554,18 @@ function prepareStatements(db: ManagedSql) {
         WHERE ? = 1 OR (? = 1 AND r.uploaded_by = ?)
            OR (g.id IS NOT NULL AND (? = 1 OR r.visible = 1))`,
     ),
+    selectTeamAccessStmt: db.prepare(`SELECT 1 FROM managed_team_user WHERE user_id = ? AND team_id = ?`),
+    selectTeamReportAccessStmt: db.prepare(
+      `SELECT DISTINCT r.id AS id, r.filename AS filename, r.byte_size AS byteSize, r.sha256 AS sha256,
+              r.repo_directory AS repoDirectory, sr.full_name AS repoFullName,
+              tu.view_dependencies AS dependencies, tu.view_security AS security
+         FROM managed_team_user tu
+         JOIN managed_team_repo tr ON tr.team_id = tu.team_id
+         JOIN managed_report r ON r.repo_id = tr.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}
+         LEFT JOIN managed_selected_repo sr ON sr.repo_id = r.repo_id
+        WHERE tu.user_id = ? AND tu.team_id = ? AND (r.visible = 1 OR ? = 1)
+        ORDER BY r.id`,
+    ),
     reportFilenamesWithBundleHashStmt: db.prepare(`SELECT DISTINCT filename FROM managed_report WHERE bundle_id = ? AND sha256 = ?`),
     deleteReportStmt: db.prepare(`DELETE FROM managed_report WHERE id = ?`),
     setReportRepoStmt: db.prepare(`UPDATE managed_report SET repo_id = ?, repo_directory = ? WHERE id = ?`),
@@ -675,7 +691,7 @@ function prepareStatements(db: ManagedSql) {
          JOIN managed_team_repo tr ON tr.team_id = tu.team_id
          JOIN managed_report r ON r.repo_id = tr.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}
          LEFT JOIN managed_selected_repo sr ON sr.repo_id = r.repo_id
-        WHERE tu.user_id = ? AND (r.visible = 1 OR (SELECT role FROM managed_user WHERE id = tu.user_id) = 'manage')
+        WHERE tu.user_id = ? AND (r.visible = 1 OR (SELECT role FROM managed_user WHERE id = tu.user_id) IN ('admin', 'manage'))
         ORDER BY r.uploaded_at DESC, r.filename ASC`,
     ),
     // Bundles are scoped through the same team -> repository links as reports.
@@ -844,6 +860,22 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>) {
         repoId: row.repoId, repoDirectory: row.repoDirectory, repoEmbedded: row.repoEmbedded === 1, analyzer: row.analyzer, visible: row.visible === 1,
         bundleId: row.bundleId,
       }
+    },
+    async getTeamReportAccessSnapshot(sessionId: string, now: number, teamId: string): Promise<TeamReportAccessSnapshot | null> {
+      const session = await stmts.selectSessionStmt.get(sessionId, now) as SessionRow | undefined
+      if (!session) return null
+      const user: StoredUser = { id: session.uid, login: session.login, name: session.name, avatarUrl: session.avatar, role: session.role }
+      if (user.role === 'none' || !await stmts.selectTeamAccessStmt.get(user.id, teamId)) return { user, teamId: null, reports: [] }
+      const whole = user.role === 'admin' || user.role === 'manage'
+      const rows = await stmts.selectTeamReportAccessStmt.all(user.id, teamId, whole ? 1 : 0) as {
+        id: string; filename: string; byteSize: number; sha256: string; repoDirectory: string
+        repoFullName: string | null; dependencies: number; security: number
+      }[]
+      return { user, teamId, reports: rows.map(row => ({
+        id: row.id, filename: row.filename, byteSize: row.byteSize, sha256: row.sha256,
+        repo: { github: row.repoFullName, directory: row.repoDirectory },
+        permissions: { dependencies: whole || row.dependencies === 1, security: whole || row.security === 1 },
+      })) }
     },
     async getReportAccessSnapshot(sessionId: string, now: number, ids: readonly string[]): Promise<ReportAccessSnapshot | null> {
       const session = await stmts.selectSessionStmt.get(sessionId, now) as SessionRow | undefined

@@ -38,7 +38,7 @@ mock.module('../ui/view/client-managed.js', { namedExports: {
     if (typeof serverEntries === 'function') return serverEntries(id)
     return Promise.resolve(serverEntries == null ? null : (serverEntries[id] ?? {}))
   },
-  pushReportTriage: (id, entries, csrfToken) => { calls.push({ id, entries, csrfToken }); return Promise.resolve(pushStatus) },
+  pushReportTriage: (id, entries, csrfToken, teamId) => { calls.push({ id, entries, csrfToken, ...(teamId ? { teamId } : {}) }); return Promise.resolve(pushStatus) },
 } })
 mock.module('../ui/view/render.js', { namedExports: { render: () => { renders++ } } })
 mock.method(console, 'warn', () => {})
@@ -71,6 +71,7 @@ beforeEach(async () => {
   resetManagedTriage()
   state.triage.clear(); state.reports = []; state.managedReport = null; state.managedReports = []
   state.localMode = false
+  state.currentManagedTeam = null
   state.managedSession = { role: 'triage', csrfToken: 'tok' }
   saves = 0; renders = 0; calls = []; pushStatus = 200; serverEntries = {}
   initManagedTriagePush()
@@ -367,4 +368,15 @@ test('a role below triage hydrates but never pushes; a failed GET keeps the loca
   await open('B', ['x', 'y'])
   await drain()
   assert.deepEqual(pushes(), [push('B', { y: { color: 'blue' } })], 'the next successful open carries it')
+})
+
+test('pending triage keeps its original team authorization when the same report opens in another team', async () => {
+  state.currentManagedTeam = 'one'
+  await open('A', ['x'])
+  await edit('x', { color: 'red' })
+  state.currentManagedTeam = 'two'
+  await open('A', ['x'])
+  await drain()
+  assert.equal(pushes()[0].teamId, 'one')
+  assert.equal(pushes()[0].entries.x.color, 'red')
 })

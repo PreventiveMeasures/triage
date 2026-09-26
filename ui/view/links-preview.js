@@ -1,7 +1,7 @@
 // Load the requested finding's report row for an in-place Links preview. Keep the
 // Links file and loaded reports unchanged; the card uses the usual ID-keyed
 // triage store and the original report's source/bundle metadata.
-import { computeLinkHint, duplicatesOf, ensureTriageLoaded, loadRepoUrlFor, readFile, reportRowsForFindingIds, state, workspacesHoldingReport } from '#client/index.js'
+import { computeLinkHint, duplicatesOf, ensureTriageLoaded, isManagedUiMode, loadRepoUrlFor, readFile, reportRowsForFindingIds, state, workspacesHoldingReport } from '#client/index.js'
 import { store } from '@rray/frontend/state-management'
 import { inheritReportMeta, isAppFinding, loadFindings, repoDirectory, reportEntries, reportRepoGithub, stampSecurityGroups } from '../../report/index.js'
 
@@ -17,7 +17,7 @@ export function closeLinksPreview() {
   preview = null
 }
 
-export async function openLinksPreview(id, reportName, rowIndex) {
+export async function openLinksPreview(id, reportName, rowIndex, managedReportId) {
   if (state.currentView !== 'links' || !state.currentLinks) return
   // Use the canonical reactive wrapper from the outset. StateElement
   // lazily wraps nested state on its first tracked read; retaining the raw
@@ -29,6 +29,13 @@ export async function openLinksPreview(id, reportName, rowIndex) {
   state.focusCodeAt = 0
   const active = () => ticket === generation && state.currentView === 'links' && state.currentLinks === owner
   try {
+    if (isManagedUiMode()) {
+      const row = reportRowsForFindingIds([id]).find(candidate => candidate.report === reportName && (!managedReportId || candidate.managedReportId === managedReportId) && (rowIndex == null || candidate.index === Number(rowIndex)))
+      if (!row) throw new Error('This finding is no longer in the team.')
+      preview = { owner, id, reportName, group: row.members.map(f => ({ ...f })), error: '' }
+      state.activeTabByGroup.set(row.members[0].id, id)
+      return
+    }
     const parsed = await loadFindings(await readFile(reportName))
     if (!active()) return
     const rows = (reportEntries(parsed?.data) ?? []).map((entry) => Array.isArray(entry) ? entry : [entry])

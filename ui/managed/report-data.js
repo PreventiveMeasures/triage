@@ -1,4 +1,4 @@
-import { fetchReport as requestReport, fetchReports as requestReports } from '../../client/managed/session.js'
+import { fetchReport as requestReport, fetchReports as requestReports, fetchTeamReports as requestTeamReports } from '../../client/managed/session.js'
 import { managedAppState } from './state.js'
 
 const keyFor = id => `reports:content:${id}`
@@ -37,4 +37,10 @@ export async function fetchReports(ids) {
     return (await batch)?.[missing.indexOf(id)] ?? null
   })))
   return result.some(data => data === null) ? null : result
+}
+
+// The same report may have different findings in different teams. Keep the
+// entire response together, including links, in a team-specific memory entry.
+export function fetchTeamReports(teamId) {
+  return cachedReport(`team:${teamId}`, signal => requestTeamReports(teamId, { signal }))
 }

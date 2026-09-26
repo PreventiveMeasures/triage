@@ -28,8 +28,8 @@ export function groupLinkedReportRows(ids, reportRows) {
       variant = { key, members, reports: [], first: Math.min(...matches.map((f) => order.get(f.id))) }
       variants.set(key, variant)
     }
-    if (!variant.reports.some((r) => r.name === row.report)) {
-      variant.reports.push({ name: row.report, findingId: matches[0].id, rowIndex: row.index })
+    if (!variant.reports.some((r) => r.name === row.report && r.managedReportId === row.managedReportId)) {
+      variant.reports.push({ name: row.report, ...(row.managedReportId ? { managedReportId: row.managedReportId } : {}), findingId: matches[0].id, rowIndex: row.index })
     }
   }
   return {
