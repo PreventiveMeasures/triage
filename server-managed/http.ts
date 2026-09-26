@@ -438,9 +438,8 @@ async function handleAddPublicRepository(req: IncomingMessage, res: ServerRespon
   }
   // A GitHub lookup can outlive a role change or logout.
   if (await readAdminSession(res, deps, cookie) == null) return
-  // Preserve existing App read context if this public repo is already connected.
-  const stored = (await deps.db.listAllRepos()).find(r => r.repoId === repo.id)
-  if (stored) repo.installationId = stored.installationId
+  // Only public access was verified. Keep its null installation context rather
+  // than restoring a stored App installation that may no longer cover this repo.
   await connectRepository(res, deps, s.user, repo)
 }
 

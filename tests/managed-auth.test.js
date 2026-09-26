@@ -2789,8 +2789,16 @@ test('arbitrary public additions require server admin AND WHITEHAT identity, nev
   assert.equal((await activate()).statusCode, 200)
   ;[stored] = await db.listSelectedRepos()
   assert.equal(stored.fullName, 'Example/Repo')
-  await db.selectRepo({ ...stored, installationId: 7 }, Date.now())
-  t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json(metadata)))
-  assert.equal((await post({ repository: 'Example/Repo' })).statusCode, 200)
-  assert.equal((await db.listSelectedRepos())[0].installationId, 7, 'adding again preserves an existing App installation')
+  for (const active of [true, false]) {
+    // The App has been uninstalled, but its old context remains in the database.
+    await db.selectRepo({ ...stored, installationId: 7 }, Date.now())
+    if (!active) await db.deactivateRepo(123)
+    assert.equal((await post({ repository: 'Example/Repo' })).statusCode, 200)
+    const [reconnected] = await db.listSelectedRepos()
+    assert.equal(reconnected.installationId, null, 'public addition discards unverified installation context')
+    assert.equal(reconnected.addedBy, session.userId)
+    const catalogue = JSON.parse((await send('GET', '/api/admin/repositories?scope=connected', cookie)).body)
+    assert.equal(catalogue.repositories[0].installed, false)
+    assert.equal(catalogue.repositories[0].active, true)
+  }
 })
