@@ -1220,6 +1220,7 @@ async function handleQueryReports(req: IncomingMessage, res: ServerResponse, dep
   // Retain only encoded response parts, not every blob and parsed object as
   // well. Check actual bytes too, in case storage and metadata disagree.
   const parts = [Buffer.from('{"reports":[')], versions = new Map<string, string>()
+  const repositoryNames = new Map((await deps.db.listAllRepos()).map(repo => [repo.repoId, repo.fullName]))
   let inputBytes = 0, outputBytes = parts[0]!.length + 2
   for (const id of ids) {
     const bytes = await deps.reportStore.get(id)
@@ -1228,7 +1229,7 @@ async function handleQueryReports(req: IncomingMessage, res: ServerResponse, dep
     if (inputBytes > MAX_REPORT_QUERY_BYTES) { sendJson(res, 413, { error: 'batch-too-large' }); return }
     const current = await readSession(deps.config, deps.db, cookie, Date.now())
     if (!current || current.user.id !== s.user.id) { sendJson(res, 401, { error: 'unauthenticated' }); return }
-    const access = await reportQueryAccess(deps, current.user, id)
+    const access = await reportQueryAccess(deps, current.user, id, repositoryNames)
     if (!access) { sendJson(res, 404, { error: 'no-report' }); return }
     const { data } = readManagedReport(bytes.toString('utf8'), access.report.filename)
     if (!data) { sendJson(res, 422, { error: 'unreadable-report' }); return }
@@ -1242,21 +1243,24 @@ async function handleQueryReports(req: IncomingMessage, res: ServerResponse, dep
   // Reject the whole answer if any content/access/assignment snapshot changed.
   const current = await readSession(deps.config, deps.db, cookie, Date.now())
   if (!current || current.user.id !== s.user.id) { sendJson(res, 401, { error: 'unauthenticated' }); return }
+  // Refresh once for this validation phase so repository renames still reject
+  // stale metadata without scanning the entire repository table per report.
+  const currentRepositoryNames = new Map((await deps.db.listAllRepos()).map(repo => [repo.repoId, repo.fullName]))
   for (const [id, version] of versions) {
-    if ((await reportQueryAccess(deps, current.user, id))?.version !== version) { sendJson(res, 404, { error: 'no-report' }); return }
+    if ((await reportQueryAccess(deps, current.user, id, currentRepositoryNames))?.version !== version) { sendJson(res, 404, { error: 'no-report' }); return }
   }
   parts.push(Buffer.from(']}'))
   res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' })
   writeResponse(res, Buffer.concat(parts, outputBytes))
 }
 
-async function reportQueryAccess(deps: ManagedHttpDeps, user: StoredUser, id: string) {
+async function reportQueryAccess(deps: ManagedHttpDeps, user: StoredUser, id: string, repositoryNames: ReadonlyMap<number, string>) {
   if (!(await canViewReport(deps, user, id))) return null
   const report = await deps.db.getReport(id)
   if (!report) return null
   const permissions = user.role === 'admin' || user.role === 'manage'
     ? { dependencies: true, security: true } : await deps.db.reportPermissionsFor(user.id, id)
-  const repo = { github: await repositoryName(deps, report.repoId), directory: report.repoDirectory }
+  const repo = { github: report.repoId == null ? null : repositoryNames.get(report.repoId) ?? null, directory: report.repoDirectory }
   const version = JSON.stringify([report.sha256, report.filename, user.role, repo, permissions])
   return { report, permissions, repo, version }
 }

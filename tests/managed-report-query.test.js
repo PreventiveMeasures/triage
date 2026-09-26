@@ -74,6 +74,39 @@ test('a workspace batch returns all requested content with the same filtering an
   }
 })
 
+test('batch repository scans stay constant as report count grows and preserve per-report assignments', async t => {
+  const h = await setup(t)
+  const original = await h.db.getReport('a')
+  const ids = []
+  for (let index = 0; index < 32; index++) {
+    const id = `report-${index}`, repoId = index % 2 === 0 ? 7 : 9
+    await h.db.insertReport({ ...original, id, repoId, repoDirectory: `packages/${index}`, sha256: id }, Date.now())
+    h.blobs.set(id, h.blobs.get('a'))
+    ids.push(id)
+  }
+  const scans = t.mock.method(h.db, 'listAllRepos')
+  const response = await h.request({ ids }, { role: 'admin' })
+  assert.equal(response.status, 200)
+  assert.equal(scans.mock.callCount(), 2, 'one repository snapshot per validation phase, independent of report count')
+  assert.equal(response.body.reports.length, ids.length)
+  for (const [index, entry] of response.body.reports.entries()) {
+    assert.deepEqual(entry.repo, { github: `org/repo${index % 2 === 0 ? 7 : 9}`, directory: `packages/${index}` })
+  }
+})
+
+test('repository names are revalidated after report reads before returning a batch', async t => {
+  const h = await setup(t)
+  const repo = (await h.db.listAllRepos()).find(entry => entry.repoId === 7)
+  h.store.afterRead = id => id === 'b' && h.db.selectRepo({ ...repo, fullName: 'org/renamed' }, Date.now())
+  const response = await h.request({ ids: ['a', 'b'] })
+  assert.equal(response.status, 404)
+  assert.deepEqual(response.body, { error: 'no-report' })
+  h.store.afterRead = null
+  const retried = await h.request({ ids: ['a', 'b'] })
+  assert.equal(retried.status, 200)
+  assert.deepEqual(retried.body.reports.map(entry => entry.repo.github), ['org/renamed', 'org/renamed'])
+})
+
 test('batch access is checked per report and rejected atomically before reading any report bytes', async t => {
   const h = await setup(t)
   assert.equal((await h.request({ ids: ['a'] }, { role: 'anonymous' })).status, 401)

@@ -7,6 +7,7 @@ import { clearPreviewRole, fetchBundleMetadata, getPreviewRole, loadManagedBundl
 import { resetManagedPullRequests } from './managed-pull-requests.js'
 import { showToast } from './toast.js'
 import { managedHistory } from './managed-history.js'
+import { managedReportViewChanged } from './managed-report-catalog.js'
 import { cleanupGraph2 } from './graph/state.js'
 import { MANAGED_PAGES, managedRouteForIds, resolveManagedRoute } from '../../common/managed/routes.js'
 import { ROLES, isRole } from '../../common/managed/roles.ts'
@@ -1968,8 +1969,7 @@ async function refreshManagedTeams(isCurrent) {
   state.managedTeams = teams
   // Discard an already-rendered view as well as its cached envelopes. In
   // particular, Findings/Files navigation must not reuse revoked findings.
-  if (state.currentManagedTeam && (state.managedReports.some(report => changedReports.has(report.id))
-    || !teams.some(team => team.id === state.currentManagedTeam))) {
+  if (managedReportViewChanged(state, teams, changedReports)) {
     readyManagedView = null
     await goHome({ history: false })
     if (!isCurrent()) return false
