@@ -11,6 +11,9 @@
 export function loadFindings(content: string): Promise<{ format: string, data: unknown, findings: unknown[] } | null>
 export function readReport(content: string): { data: any, format: string | null, reason: string | null }
 export function reportRepoGithub(data: any): string | null
+export function inheritReportMeta(finding: Record<string, unknown>, data: Record<string, unknown>): void
+export function isAppFinding(finding: unknown, source?: unknown): boolean
+export function stampSecurityGroups(groups: Record<string, unknown>[][]): boolean
 export function repoDirectory(repo: any): string
 export function detectFormat(content: string, filename?: string): string | null
 export function parseCodexCsvToScans(content: string): { displayName: string, data: { type: string, source: string, findings: unknown[] } }[]

@@ -1,24 +1,7 @@
-// Server-side report filtering by a viewer's visibility permissions, applied
-// before a team report's bytes are served (see server-managed/http.ts). A report
-// is the analyzer's native JSON dump — `{ findings: [...] }`, or `{ groups:
-// [...] }` for a pre-deduplicated dump (the shape a merged export writes; see
-// report/index.js reportEntries) — where each entry is a single finding object
-// OR an array of finding objects (a dedup "duplicates" group; the client's
-// toGroup() normalises both to an array of tabs).
-//
-// A viewer who lacks a permission has the matching findings stripped:
-//   - dependencies off → drop findings classified as dependencies, i.e. whose
-//     file sits under the report's deps dir (node_modules / vendor /
-//     dependencies, picked by the same precedence the client's configureDepsDir
-//     uses, scanned over THIS report).
-//   - security off → drop findings where the finding — OR any entry in its
-//     duplicates group — is from a security analyzer (an analyzer / type / source
-//     string containing "security") or is stamped `security: true`.
-//
-// CSV blobs are converted through the managed reader when a filename is given.
-// Markdown still passes through unchanged. Filtering is purely subtractive:
-// kept entries keep their exact original shape (single object or array).
-
+// Apply report permissions before serving findings, triage, or source files.
+// Security uses the same complete-row classification as the UI. Dependency
+// access is per finding: App, own source, and the own-source organizations stay.
+import { inheritReportMeta, isAppFinding, reportRepoGithub, stampSecurityGroups } from '../../report/index.js'
 import { readManagedReport } from './report-content.ts'
 
 export interface ViewerPermissions {
@@ -26,92 +9,100 @@ export interface ViewerPermissions {
   security: boolean
 }
 
-// Whole-segment matcher `(^|/)<dir>/` — `dir` must be a full path segment, so
-// `node_modules/` matches `a/node_modules/x` but not `my-node_modules-x`.
-function segRe(dir: string): RegExp {
-  return new RegExp(`(^|/)${dir}/`, 'u')
+type Finding = Record<string, unknown>
+function object(value: unknown): Finding | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Finding : null
 }
-
-const NODE_MODULES_RE = segRe('node_modules')
-const VENDOR_RE = segRe('vendor')
-const DEPENDENCIES_RE = segRe('dependencies')
-
-// A findings-array entry → its tabs (a lone finding is a one-tab group).
-function tabsOf(entry: unknown): unknown[] {
-  return Array.isArray(entry) ? entry : [entry]
+function pathOf(finding: Finding): string {
+  return typeof finding['file'] === 'string' ? finding['file'].replaceAll('\\', '/') : ''
 }
-
-function fileOf(tab: unknown): string {
-  const f = (tab as { file?: unknown } | null)?.file
-  return typeof f === 'string' ? f : ''
+function isDependency(finding: Finding): boolean {
+  return /(?:^|\/)(?:node_modules|vendor|dependencies)(?:\/|$)/u.test(pathOf(finding))
 }
-
-// The report's deps dir matcher, mirroring the client's precedence
-// (node_modules > vendor > dependencies) over this report's finding files.
-function depsDirRe(groups: unknown[][]): RegExp {
-  let hasVendor = false
-  for (const g of groups) {
-    for (const tab of g) {
-      const file = fileOf(tab)
-      if (NODE_MODULES_RE.test(file)) return NODE_MODULES_RE
-      if (VENDOR_RE.test(file)) hasVendor = true
+function githubOrg(value: unknown): string | null {
+  return reportRepoGithub(value)?.split('/')[0]?.toLowerCase() ?? null
+}
+function npmScope(finding: Finding, fromPath = false): string | null {
+  let name = object(object(finding['package'])?.['npm'])?.['name']
+  if (typeof name !== 'string' && fromPath) {
+    const parts = pathOf(finding).split('/')
+    for (let i = parts.length - 3; i >= 0; i--) {
+      if (['node_modules', 'vendor', 'dependencies'].includes(parts[i]!)) {
+        name = `${parts[i + 1]}/${parts[i + 2]}`
+        break
+      }
     }
   }
-  return hasVendor ? VENDOR_RE : DEPENDENCIES_RE
+  return typeof name === 'string' ? /^(@[^/\s]+)\/[^/\s]+$/u.exec(name)?.[1] ?? null : null
 }
 
-function hasSecurityWord(x: unknown): boolean {
-  return typeof x === 'string' && x.toLowerCase().includes('security')
+// Parsed projections keep run inheritance and derived flags out of cached
+// reports. A known positive security stamp may include linked findings outside
+// this report; a negative stamp never overrides the intrinsic classifier.
+function projectFinding(value: unknown, report: Finding): Finding | null {
+  const original = object(value)
+  if (!original) return null
+  const finding = { ...original }
+  inheritReportMeta(finding, report)
+  finding['_source'] = finding['source'] ?? report['source'] ?? null
+  if (!('isApp' in finding)) finding['isApp'] = isAppFinding(finding, finding['_source'])
+  if (finding['isSecurity'] === true) finding['security'] = true
+  return finding
 }
 
-// A tab is "security" if stamped `security: true`, or any analyzer-identifying
-// string (the tab's analyzer / type / source, or the report-level source) names
-// a security analyzer.
-function tabIsSecurity(tab: unknown, reportSource: unknown): boolean {
-  if (tab == null || typeof tab !== 'object') return false
-  const t = tab as { security?: unknown; analyzer?: unknown; type?: unknown; source?: unknown }
-  if (t.security === true) return true
-  return hasSecurityWord(t.analyzer) || hasSecurityWord(t.type) || hasSecurityWord(t.source) || hasSecurityWord(reportSource)
-}
-
-// Filter `content` for a viewer with `perms`. Returns the (possibly rewritten)
-// content string; after any CSV conversion, content is unchanged when nothing
-// is stripped or it isn't a JSON findings dump. Entries are read from `findings`
-// or, failing that, `groups` — the same precedence as reportEntries — and
-// written back under the key they came from.
-export function filterReportContent(content: string, perms: ViewerPermissions, filename = ''): string {
-  if (perms.dependencies && perms.security) return content // sees everything → no work
-  if (/\.csv$/iu.test(filename)) {
-    const parsed = readManagedReport(content, filename)
-    if (parsed.data == null) throw new Error('Cannot filter unreadable CSV report')
-    if (parsed.format === 'codex') content = JSON.stringify(parsed.data)
-  }
+// Native JSON and supported text imports obey the same permission rules.
+// A filtered text import is returned as JSON under its original filename, which
+// readManagedReport already accepts. Unchanged inputs keep their original bytes.
+export function filterReportContent(content: string, perms: ViewerPermissions, filename = '', repo?: unknown): string {
+  if (perms.dependencies && perms.security) return content
   let data: unknown
-  try { data = JSON.parse(content) } catch { return content } // not JSON → pass through
-  const filtered = filterReportData(data, perms)
+  try { data = JSON.parse(content) } catch {
+    const parsed = readManagedReport(content, filename)
+    if (parsed.data == null) {
+      if (/\.csv$/iu.test(filename)) throw new Error('Cannot filter unreadable CSV report')
+      return content
+    }
+    data = parsed.data
+  }
+  const filtered = filterReportData(data, perms, repo)
   return filtered === data ? content : JSON.stringify(filtered)
 }
 
-// Managed JSON responses parse every supported format first, then apply the
-// same subtractive filter to that object without serializing/reparsing it.
-export function filterReportData(data: unknown, perms: ViewerPermissions): unknown {
+// repo, when supplied, is the server's authoritative assignment (including an
+// explicit unassigned value). Finding-specific repos still describe their source.
+export function filterReportData(data: unknown, perms: ViewerPermissions, repo?: unknown): unknown {
   if (perms.dependencies && perms.security) return data
-  if (data == null || typeof data !== 'object') return data
-  const d = data as { findings?: unknown; groups?: unknown; source?: unknown }
-  const key = Array.isArray(d.findings) ? 'findings' : Array.isArray(d.groups) ? 'groups' : null
-  if (key == null) return data
-  const findings = d[key] as unknown[]
-  const reportSource = d.source
-  // Pair each original entry with its tabs (so kept entries keep their exact
-  // shape), and pick the deps-dir matcher from the full set of tabs.
-  const entries = findings.map((entry) => ({ entry, tabs: tabsOf(entry) }))
-  const moduleRe = depsDirRe(entries.map((e) => e.tabs))
-  const kept: unknown[] = []
-  for (const { entry, tabs } of entries) {
-    if (!perms.dependencies && tabs.some((t) => moduleRe.test(fileOf(t)))) continue
-    if (!perms.security && tabs.some((t) => tabIsSecurity(t, reportSource))) continue
-    kept.push(entry)
+  const report = object(data)
+  if (!report) return data
+  const key = Array.isArray(report['findings']) ? 'findings' : Array.isArray(report['groups']) ? 'groups' : null
+  if (!key) return data
+  const entries = (report[key] as unknown[]).map(entry => ({
+    entry, members: (Array.isArray(entry) ? entry : [entry]).map(original => ({ original, finding: projectFinding(original, report) })),
+  }))
+  const groups = entries.map(({ members }) => members.flatMap(({ finding }) => finding ? [finding] : []))
+  if (!perms.security) stampSecurityGroups(groups)
+  const githubOrgs = new Set<string>(), npmScopes = new Set<string>()
+  const addOrgs = (finding: Finding) => {
+    const github = githubOrg(finding), npm = npmScope(finding)
+    if (github) githubOrgs.add(github)
+    if (npm) npmScopes.add(npm)
   }
-  if (kept.length === findings.length) return data // nothing stripped
-  return { ...(data as object), [key]: kept }
+  addOrgs({ ...report, repo: repo === undefined ? report['repo'] : repo })
+  for (const finding of groups.flat()) {
+    if (finding['isApp'] !== true && !isDependency(finding)) addOrgs(finding)
+  }
+  const kept: unknown[] = []
+  let changed = false
+  for (const { entry, members } of entries) {
+    // Classify the complete row before hiding dependency components.
+    if (!perms.security && members.some(({ finding }) => finding?.['isSecurity'] === true)) { changed = true; continue }
+    const visible = members.filter(({ finding }) => !finding || perms.dependencies || finding['isApp'] === true || !isDependency(finding)
+      || githubOrgs.has(githubOrg(finding) ?? '') || npmScopes.has(npmScope(finding, true) ?? ''))
+    if (visible.length === members.length) kept.push(entry)
+    else {
+      changed = true
+      if (visible.length > 0) kept.push(Array.isArray(entry) ? visible.map(({ original }) => original) : visible[0]!.original)
+    }
+  }
+  return changed ? { ...report, [key]: kept } : data
 }

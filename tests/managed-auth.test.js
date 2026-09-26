@@ -20,6 +20,7 @@ import { appJwt, collectRepos, githubAppConfigured, installUrl, listInstalledRep
 import { bundleIntegrity } from '../server-managed/bundle.ts'
 import { createBundleStore } from '../server-managed/bundle-store.ts'
 import { filterReportContent } from '../common/managed/report-filter.ts'
+import { readManagedReport } from '../common/managed/report-content.ts'
 import { MAX_TRIAGE_HISTORY, parseTriageEntryPatch } from '../common/managed/triage.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { managedCsv, managedCsvIds } from './_managed-csv.js'
@@ -1007,12 +1008,12 @@ for (const [label, filename] of [
     assert.equal((await send('GET', view, adminCookie)).body, managedCsv)
     const own = await send('GET', view, memberCookie)
     assert.equal(own.statusCode, 200)
-    assert.deepEqual(JSON.parse(own.body).findings.map((finding) => finding.id), managedCsvIds.slice(0, 1))
+    assert.deepEqual(readManagedReport(own.body, rec.filename).data.findings.map((finding) => finding.id), managedCsvIds)
     const annotate = (cookie, csrf, id) => upload(triage, cookie, csrf, JSON.stringify({ entries: { [id]: { fix: 'Reviewed' } } }))
     assert.equal((await annotate(memberCookie, member.csrfToken, managedCsvIds[0])).statusCode, 200)
-    assert.equal((await annotate(memberCookie, member.csrfToken, managedCsvIds[1])).statusCode, 404)
+    assert.equal((await annotate(memberCookie, member.csrfToken, managedCsvIds[1])).statusCode, 200, 'external App findings survive dependency restrictions')
     assert.equal((await annotate(adminCookie, admin.csrfToken, managedCsvIds[1])).statusCode, 200)
-    assert.deepEqual(Object.keys(JSON.parse((await send('GET', triage, memberCookie)).body).entries), managedCsvIds.slice(0, 1))
+    assert.deepEqual(Object.keys(JSON.parse((await send('GET', triage, memberCookie)).body).entries).toSorted(), managedCsvIds.toSorted())
     const impact = await send('GET', '/api/admin/repositories/impact?repoId=7', adminCookie)
     assert.equal(impact.statusCode, 200)
     assert.equal(JSON.parse(impact.body).triageCount, 2)
@@ -1208,7 +1209,7 @@ test('db: teams — create/list/delete, repo (+path) & member (+perms) links, FK
   assert.equal(await db.createTeam(tId, 'Blue', now), true)
   assert.equal(await db.createTeam(randomUUID(), 'Blue', now), false) // name taken (UNIQUE)
   assert.deepEqual(await db.getTeam(tId), { id: tId, slug: tId.split('-').at(-1), name: 'Blue' })
-  assert.deepEqual(await db.listUserOptions(), [{ id: uid, login: 'alice', name: null }])
+  assert.deepEqual(await db.listUserOptions(), [{ id: uid, login: 'alice', name: null, role: 'admin' }])
 
   await db.setTeamRepo(tId, 7, 'src/app')
   await db.setTeamMember(tId, uid, { dependencies: true, security: false })
@@ -1447,7 +1448,7 @@ test('filterReportContent: strips dependency + security findings per the viewer 
     findings: [
       { id: 'own', file: 'src/a.js', type: 'correctness' },
       { id: 'dep', file: 'node_modules/lodash/x.js', type: 'correctness' },
-      { id: 'secAnalyzer', file: 'src/b.js', analyzer: 'codex-security' },
+      { id: 'secAnalyzer', file: 'src/b.js', source: 'codex-security', severity: 'high' },
       // a dedup group: the primary is correctness, but a duplicate is stamped security.
       [{ id: 'secDup', file: 'src/c.js', type: 'correctness' }, { id: 'secDupB', file: 'src/c.js', security: true }],
       { id: 'secFlag', file: 'src/d.js', security: true },
@@ -1461,15 +1462,13 @@ test('filterReportContent: strips dependency + security findings per the viewer 
   assert.deepEqual(ids(filterReportContent(report, { dependencies: false, security: false })), ['own'])
 })
 
-test('filterReportContent: report-level security source, non-JSON + no-strip passthrough', () => {
-  // Whole report from a security analyzer (source includes "security") → every
-  // finding is security; a viewer without that permission sees none.
-  const sec = JSON.stringify({ source: 'claude-security', findings: [{ id: 'x', file: 'src/a.js' }, { id: 'y', file: 'src/b.js' }] })
-  assert.deepEqual(JSON.parse(filterReportContent(sec, { dependencies: true, security: false })).findings, [])
+test('filterReportContent: external findings use severity rather than the report source label', () => {
+  const sec = JSON.stringify({ source: 'claude-security', findings: [{ id: 'x', file: 'src/a.js', severity: 'high' }, { id: 'y', file: 'src/b.js', severity: 'bug' }] })
+  assert.deepEqual(JSON.parse(filterReportContent(sec, { dependencies: true, security: false })).findings.map(f => f.id), ['y'])
   assert.equal(JSON.parse(filterReportContent(sec, { dependencies: true, security: true })).findings.length, 2)
-  // Non-JSON (markdown) and JSON-without-findings pass through byte-for-byte.
-  const md = '# Findings\n- something'
-  assert.equal(filterReportContent(md, { dependencies: false, security: false }), md)
+  // Unrecognized text and JSON-without-findings pass through byte-for-byte.
+  const text = 'not a report'
+  assert.equal(filterReportContent(text, { dependencies: false, security: false }), text)
   const noFindings = JSON.stringify({ hello: 'world' })
   assert.equal(filterReportContent(noFindings, { dependencies: false, security: false }), noFindings)
 })

@@ -1145,6 +1145,7 @@ async function handleReportSources(req: IncomingMessage, res: ServerResponse, de
     ? { dependencies: true, security: true } : await deps.db.reportPermissionsFor(current.user.id, id))
   if (!current || !(await canViewReport(deps, current.user, id)) || !(await canAccessBundle(deps, current.user, bundle.id))
       || latest?.bundleId !== bundle.id || latest.sha256 !== report.sha256
+      || latest.repoId !== report.repoId || await repositoryName(deps, latest.repoId) !== cached.repo.github
       || currentPermissions?.dependencies !== permissions.dependencies || currentPermissions?.security !== permissions.security) {
     cached.stream.destroy()
     sendJson(res, current ? 404 : 401, { error: current ? 'no-report' : 'unauthenticated' })
@@ -1177,11 +1178,12 @@ async function handleViewReport(req: IncomingMessage, res: ServerResponse, deps:
   if (acceptsReportMetadata(req.headers.accept)) {
     const report = await deps.db.getReport(id)
     if (report == null) { sendJson(res, 404, { error: 'no-report' }); return }
-    const data = await viewerReportData(deps, current.user, id, bytes, report.filename)
+    const repo = { github: await repositoryName(deps, report.repoId), directory: report.repoDirectory }
+    const data = await viewerReportData(deps, current.user, id, bytes, report.filename, repo)
     if (data == null) { sendJson(res, 422, { error: 'unreadable-report' }); return }
     sendJson(res, 200, {
       data,
-      repo: { github: await repositoryName(deps, report.repoId), directory: report.repoDirectory },
+      repo,
     }, { vary: 'Accept', 'x-content-type-options': 'nosniff' })
     return
   }
@@ -1251,7 +1253,7 @@ async function handleQueryReports(req: IncomingMessage, res: ServerResponse, dep
           if (inputBytes > MAX_REPORT_QUERY_BYTES) return fail(413, 'batch-too-large')
           const { data } = readManagedReport(bytes.toString('utf8'), access.filename)
           if (!data) return fail(422, 'unreadable-report')
-          const part = Buffer.from(`${index > 0 ? ',' : ''}${JSON.stringify({ id, data: filterReportData(data, access.permissions), repo: access.repo })}`)
+          const part = Buffer.from(`${index > 0 ? ',' : ''}${JSON.stringify({ id, data: filterReportData(data, access.permissions, access.repo), repo: access.repo })}`)
           outputBytes += part.length
           if (outputBytes > MAX_REPORT_QUERY_BYTES) return fail(413, 'batch-too-large')
           // Completion order may differ from the requested report order.
@@ -1291,10 +1293,10 @@ async function handleQueryReports(req: IncomingMessage, res: ServerResponse, dep
 // Reports arrive on the managed UI wire as JSON objects even when the stored
 // upload is markdown or CSV. Parsing precedes visibility filtering, so those
 // formats obey the same permissions as native JSON reports.
-async function viewerReportData(deps: ManagedHttpDeps, user: StoredUser, id: string, bytes: Buffer, filename: string): Promise<unknown> {
+async function viewerReportData(deps: ManagedHttpDeps, user: StoredUser, id: string, bytes: Buffer, filename: string, repo: unknown): Promise<unknown> {
   const { data } = readManagedReport(bytes.toString('utf8'), filename)
   if (data == null || user.role === 'admin' || user.role === 'manage') return data
-  return filterReportData(data, await deps.db.reportPermissionsFor(user.id, id))
+  return filterReportData(data, await deps.db.reportPermissionsFor(user.id, id), repo)
 }
 
 // Apply the viewer's visibility-permission filter to a report's bytes. Admin and
@@ -1309,7 +1311,7 @@ async function viewerReportBytes(deps: ManagedHttpDeps, user: StoredUser, report
   if (user.role === 'admin' || user.role === 'manage') return bytes
   const perms = await deps.db.reportPermissionsFor(user.id, reportId)
   const text = bytes.toString('utf8')
-  const filtered = filterReportContent(text, perms, rec.filename)
+  const filtered = filterReportContent(text, perms, rec.filename, { github: await repositoryName(deps, rec.repoId) })
   return filtered === text ? bytes : Buffer.from(filtered, 'utf8')
 }
 
@@ -1335,7 +1337,10 @@ const visibleIdsCaches = new WeakMap<ManagedHttpDeps, Map<string, Set<string>>>(
 async function visibleFindingIds(deps: ManagedHttpDeps, user: StoredUser, reportId: string): Promise<Set<string>> {
   const whole = user.role === 'admin' || user.role === 'manage'
   const perms = whole ? null : await deps.db.reportPermissionsFor(user.id, reportId)
-  const key = `${reportId}\n${perms == null ? 'whole' : `${perms.dependencies}/${perms.security}`}`
+  const rec = await deps.db.getReport(reportId)
+  if (rec == null) return new Set()
+  const repo = { github: await repositoryName(deps, rec.repoId) }
+  const key = JSON.stringify([reportId, rec.sha256, rec.filename, repo, perms])
   let cache = visibleIdsCaches.get(deps)
   if (cache == null) { cache = new Map(); visibleIdsCaches.set(deps, cache) }
   const hit = cache.get(key)
@@ -1344,11 +1349,9 @@ async function visibleFindingIds(deps: ManagedHttpDeps, user: StoredUser, report
   const bytes = await deps.reportStore.get(reportId)
   if (bytes == null) return ids
   const text = bytes.toString('utf8')
-  const rec = await deps.db.getReport(reportId)
-  if (rec == null) return ids
   const { data } = readManagedReport(text, rec.filename)
   if (data == null) return ids
-  const visibleData = perms == null ? data : filterReportData(data, perms)
+  const visibleData = perms == null ? data : filterReportData(data, perms, repo)
   const report = await loadManagedFindings(JSON.stringify(visibleData), rec.filename)
   if (report == null) return ids
   for (const f of report.findings) {

@@ -27,8 +27,8 @@ test('managed CSV reading rejects invalid exports without guessing from non-CSV 
 
 test('CSV visibility filtering and JSON responses under CSV filenames preserve the authorized set', async () => {
   const text = filterReportContent(managedCsv, { dependencies: false, security: true }, 'report.csv')
-  assert.deepEqual(readManagedReport(text, 'report.csv').data.findings.map((finding) => finding.id), managedCsvIds.slice(0, 1))
-  assert.deepEqual((await loadManagedFindings(text, 'report.csv')).findings.map((finding) => finding.id), managedCsvIds.slice(0, 1))
+  assert.deepEqual(readManagedReport(text, 'report.csv').data.findings.map((finding) => finding.id), managedCsvIds)
+  assert.deepEqual((await loadManagedFindings(text, 'report.csv')).findings.map((finding) => finding.id), managedCsvIds)
   const hidden = filterReportContent(managedCsv, { dependencies: true, security: false }, 'report.csv')
   assert.deepEqual(readManagedReport(hidden, 'report.csv').data.findings, [])
   assert.equal(filterReportContent(managedCsv, { dependencies: true, security: true }, 'report.csv'), managedCsv)
