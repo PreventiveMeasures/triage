@@ -59,11 +59,11 @@ async function setup(t, createHandler = createManagedRequestHandler) {
   return { db, users, blobs, reads, store, request }
 }
 
-async function addReports(h, count) {
+async function addReports(h, count, sizes = []) {
   const original = await h.db.getReport('a')
   const ids = Array.from({ length: count }, (_, index) => `report-${index}`)
-  for (const id of ids) {
-    await h.db.insertReport({ ...original, id, sha256: id }, Date.now())
+  for (const [index, id] of ids.entries()) {
+    await h.db.insertReport({ ...original, id, sha256: id, byteSize: sizes[index] ?? original.byteSize }, Date.now())
     h.blobs.set(id, h.blobs.get('a'))
   }
   return ids
@@ -100,13 +100,46 @@ test('batch blob reads overlap within a small pool and preserve request order', 
   assert.equal(h.reads.length, ids.length)
 })
 
-test('failed batches stop scheduling blobs and drain active reads before responding', async t => {
+test('blob concurrency respects a byte budget and admits large reports alone', async t => {
+  const mib = 1024 * 1024
+  for (const sizes of [Array.from({ length: 8 }, () => 100), [40, 24, 1, 32, 32, 80, 1, 3, 40]]) {
+    const h = await setup(t)
+    const ids = await addReports(h, sizes.length, sizes.map(size => size * mib))
+    let active = 0, activeBytes = 0, peak = 0
+    const admitted = []
+    t.mock.method(h.store, 'get', async id => {
+      const size = sizes[ids.indexOf(id)] * mib
+      active++
+      activeBytes += size
+      peak = Math.max(peak, active)
+      admitted.push({ active, bytes: activeBytes })
+      await setImmediate()
+      // Model large buffers without allocating hundreds of MiB in the test.
+      // Keep their reservation visible until parsing starts, after get resolves.
+      return { length: size, toString() {
+        active--
+        activeBytes -= size
+        return h.blobs.get(id).toString('utf8')
+      } }
+    })
+    const response = await h.request({ ids })
+    assert.equal(response.status, 200)
+    assert.deepEqual(response.body.reports.map(report => report.id), ids)
+    assert.ok(admitted.every(read => read.bytes <= 64 * mib || read.active === 1), JSON.stringify(admitted))
+    if (sizes[0] === 100) assert.equal(peak, 1)
+    else assert.ok(peak > 1 && peak <= 8)
+    assert.equal(active, 0)
+    assert.equal(activeBytes, 0)
+  }
+})
+
+test('failed batches wake byte-budget waiters and drain active reads before responding', async t => {
   for (const [kind, status, error] of [
     ['missing', 503, 'unavailable'], ['unreadable', 422, 'unreadable-report'],
     ['oversized', 413, 'batch-too-large'], ['throwing', 500, 'internal'],
   ]) {
     const h = await setup(t)
-    const ids = await addReports(h, 24)
+    const ids = await addReports(h, 24, Array.from({ length: 24 }, () => 32 * 1024 * 1024))
     const release = Promise.withResolvers()
     let active = 0, settled = false
     t.mock.method(h.store, 'get', async id => {
@@ -129,13 +162,13 @@ test('failed batches stop scheduling blobs and drain active reads before respond
     try {
       for (let i = 0; i < 100 && h.reads.length === 0; i++) await setImmediate()
       for (let i = 0; i < 5; i++) await setImmediate()
-      assert.ok(h.reads.length > 1 && h.reads.length <= 8, kind)
+      assert.equal(h.reads.length, 2, kind)
       assert.equal(settled, false, 'wait for already-started reads')
     } finally { release.resolve(); await response }
     const result = await response
     assert.equal(result.status, status, kind)
     assert.deepEqual(result.body, { error }, kind)
-    assert.ok(h.reads.length <= 8, 'do not start more reads after failure')
+    assert.equal(h.reads.length, 2, 'do not start more reads after failure')
     assert.equal(active, 0)
   }
 })

@@ -1201,6 +1201,7 @@ async function handleViewReport(req: IncomingMessage, res: ServerResponse, deps:
 // Authorize every requested id before reading blobs; never return a partial
 // workspace, or let one authorized report grant access to another in the batch.
 const REPORT_QUERY_CONCURRENCY = 8
+const REPORT_QUERY_IN_FLIGHT_BYTES = 64 * 1024 * 1024
 async function handleQueryReports(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   const s = await readSession(deps.config, deps.db, cookie, Date.now())
   if (!s) { sendJson(res, 401, { error: 'unauthenticated' }); return }
@@ -1223,26 +1224,43 @@ async function handleQueryReports(req: IncomingMessage, res: ServerResponse, dep
   const parts = [Buffer.from('{"reports":[')]
   let inputBytes = 0, outputBytes = parts[0]!.length + 2
   let next = 0, stopped = false
+  let inFlightBytes = 0
+  let capacity = Promise.withResolvers<void>()
   const fail = (status: number, error: string) => { stopped = true; return { status, error } }
   const workers = await Promise.allSettled(Array.from({ length: Math.min(REPORT_QUERY_CONCURRENCY, ids.length) }, async () => {
     try {
       while (next < ids.length) {
         if (stopped) return
-        const index = next++
+        const index = next
         const id = ids[index]!
-        const bytes = await deps.reportStore.get(id)
-        if (stopped) return
-        if (bytes == null) return fail(503, 'unavailable')
-        inputBytes += bytes.length
-        if (inputBytes > MAX_REPORT_QUERY_BYTES) return fail(413, 'batch-too-large')
         const access = reports.get(id)!
-        const { data } = readManagedReport(bytes.toString('utf8'), access.filename)
-        if (!data) return fail(422, 'unreadable-report')
-        const part = Buffer.from(`${index > 0 ? ',' : ''}${JSON.stringify({ id, data: filterReportData(data, access.permissions), repo: access.repo })}`)
-        outputBytes += part.length
-        if (outputBytes > MAX_REPORT_QUERY_BYTES) return fail(413, 'batch-too-large')
-        // Completion order may differ from the requested report order.
-        parts[index + 1] = part
+        const reservedBytes = Math.max(1, access.byteSize)
+        // Reserve stored bytes before starting remote reads, through encoding.
+        // A report larger than the concurrent budget is still allowed alone.
+        if (inFlightBytes > 0 && inFlightBytes + reservedBytes > REPORT_QUERY_IN_FLIGHT_BYTES) {
+          await capacity.promise
+          continue
+        }
+        next++
+        inFlightBytes += reservedBytes
+        try {
+          const bytes = await deps.reportStore.get(id)
+          if (stopped) return
+          if (bytes == null) return fail(503, 'unavailable')
+          inputBytes += bytes.length
+          if (inputBytes > MAX_REPORT_QUERY_BYTES) return fail(413, 'batch-too-large')
+          const { data } = readManagedReport(bytes.toString('utf8'), access.filename)
+          if (!data) return fail(422, 'unreadable-report')
+          const part = Buffer.from(`${index > 0 ? ',' : ''}${JSON.stringify({ id, data: filterReportData(data, access.permissions), repo: access.repo })}`)
+          outputBytes += part.length
+          if (outputBytes > MAX_REPORT_QUERY_BYTES) return fail(413, 'batch-too-large')
+          // Completion order may differ from the requested report order.
+          parts[index + 1] = part
+        } finally {
+          inFlightBytes -= reservedBytes
+          capacity.resolve()
+          capacity = Promise.withResolvers<void>()
+        }
       }
     } catch (error) {
       if (stopped) return
