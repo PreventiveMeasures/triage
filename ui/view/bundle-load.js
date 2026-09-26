@@ -93,10 +93,11 @@ export function buildBundleDetails(integrity, entry, { sources = true } = {}) {
 // repaints / calls `openBundle` on its own. Keep the active detail tab
 // between bundles; entering from another view starts on Overview. An explicit
 // tab still takes priority for boot restore and Compare's swap action.
-export function selectBundle(integrity, tab = state.currentView === 'bundles' ? state.bundleDetailsTab : 'overview') {
+export function selectBundle(integrity, tab = state.currentView === 'bundles' ? state.bundleDetailsTab : 'overview', { workspaceId = null } = {}) {
   beginViewNavigation()
   state.currentView = 'bundles'
   state.selectedBundle = integrity
+  state.selectedBundleWorkspace = workspaceId
   state.bundleDetails = null
   state.bundleSourceFile = null
   state.bundleSourceFindingIdx = null

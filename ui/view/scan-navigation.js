@@ -1,7 +1,7 @@
 import { LitElement, css, html, nothing } from 'lit'
-import { forgetScanAccess, hasSavedScanAccess, onSavedScanAccessChange, readSavedScanAccess, saveScanAccess, state } from '#client/index.js'
+import { forgetScanAccess, hasSavedScanAccess, isManagedUiMode, onSavedScanAccessChange, readSavedScanAccess, saveScanAccess, state } from '#client/index.js'
 import { currentViewGeneration, goHome } from './ingest.js'
-import { ensureClientMode, renderSidebar } from './sidebar.js'
+import { ensureClientMode, navigateToAdminPage, renderSidebar } from './sidebar.js'
 import { render } from './render.js'
 import { ScanAccess } from '../scan/access.js'
 import { detectTokenProvider } from '../scan/provider-token.js'
@@ -29,8 +29,36 @@ export function currentScanServer() {
   })
 }
 
+export function canScanBundle(entry) {
+  return isManagedUiMode()
+    ? Boolean(entry.managedId) && ['admin', 'manage'].includes(state.managedSession?.role)
+    : !entry.managedId && Boolean(currentScanServer())
+}
+
+export async function openScan(entry = null) {
+  const workspaceId = state.selectedBundleWorkspace
+  const initialGeneration = currentViewGeneration()
+  await ensureClientMode()
+  if (initialGeneration !== currentViewGeneration()) return
+  if (entry && !canScanBundle(entry)) return
+  if (isManagedUiMode()) {
+    if (entry) await navigateToAdminPage('manage-scans', { bundleId: entry.managedId })
+    return
+  }
+  if (!currentScanServer()) return
+  const home = goHome()
+  const generation = currentViewGeneration()
+  await home
+  if (!currentScanServer() || generation !== currentViewGeneration()) return
+  state.scanSelection = entry ? { bundleId: entry.integrity, ...(workspaceId ? { repoId: workspaceId } : {}) } : null
+  state.currentView = 'scan'
+  render()
+  void renderSidebar()
+}
+
 class LocalScanPage extends LitElement {
   static properties = {
+    selection: { attribute: false },
     _source: { state: true }, _error: { state: true },
     _providerToken: { state: true },
     _savedAccess: { state: true }, _savingAccess: { state: true },
@@ -176,7 +204,7 @@ class LocalScanPage extends LitElement {
     </section>`
   }
   render() {
-    return html`${this._error ? html`<p role="alert">Couldn’t load saved bundles: ${this._error} <button @click=${() => void this._loadSource()}>Retry</button></p>` : nothing}<deepview-scan-page .source=${this._source} .loadBundle=${this._loadBundle} .loadModels=${this._access.loadModels} .canRun=${this._access.ready} .loadReportSources=${loadLocalReportSources}><button slot="navigation" type="button" @click=${() => void goHome()}><span aria-hidden="true">‹</span> Home</button>${this._accessPanel()}</deepview-scan-page>`
+    return html`${this._error ? html`<p role="alert">Couldn’t load saved bundles: ${this._error} <button @click=${() => void this._loadSource()}>Retry</button></p>` : nothing}<deepview-scan-page .selection=${this.selection} scope-label="Workspace" .source=${this._source} .sourceLoading=${this._source == null && !this._error} .loadBundle=${this._loadBundle} .loadModels=${this._access.loadModels} .canRun=${this._access.ready} .loadReportSources=${loadLocalReportSources}><button slot="navigation" type="button" @click=${() => void goHome()}><span aria-hidden="true">‹</span> Home</button>${this._accessPanel()}</deepview-scan-page>`
   }
 }
 if (!customElements.get('local-scan-page')) customElements.define('local-scan-page', LocalScanPage)
@@ -190,20 +218,13 @@ export function refreshScanNavigation() {
     button.type = 'button'
     button.className = 'local-scan-button'
     button.innerHTML = `${SCAN_ICON_SVG}<span>Scan</span>`
-    button.addEventListener('click', async () => {
-      await ensureClientMode()
-      if (!currentScanServer()) return
-      const home = goHome()
-      const generation = currentViewGeneration()
-      await home
-      if (!currentScanServer() || generation !== currentViewGeneration()) return
-      state.currentView = 'scan'
-      render()
-      void renderSidebar()
-    })
+    button.addEventListener('click', () => void openScan())
     landing.append(button)
   }
   const server = currentScanServer()
   button.hidden = !server
   document.querySelector('local-scan-page')?.setScanServer(server)
+  const bundleButton = document.querySelector('.bundles-scan-button')
+  const entry = state.bundles?.find(bundle => bundle.integrity === state.selectedBundle)
+  if (bundleButton) bundleButton.hidden = !entry || !canScanBundle(entry)
 }

@@ -8,6 +8,8 @@ fetching a bundle catalogue. Its host supplies:
 - `loadModels(signal)`: model catalogue loader
 - `canRun`: host-controlled access gate (defaults to true for managed Scans)
 - `loadReportSources(signal)`: separate Merge bundle/results and Link scope/report catalogues
+- `selection`: initial `{ bundleId, repoId? }` selection, applied after the catalogue loads
+- `scopeLabel`: Repository by default; local/E2E hosts use Workspace
 - `hideHeading`: hides the visible page heading when the host already supplies navigation
 - `navigation` slot: the host’s breadcrumb or Home button
 - `access` slot: the host's optional access controls, above the scan options
@@ -35,8 +37,16 @@ contents or decode Brotli in the browser.
 The local/E2E wrapper lists saved bundles from browser storage,
 then uses the existing bundle metadata cache to load the selected bundle’s files,
 sizes, source-line counts, packages, and scopes. LoC uses the same source-line
-counting as the bundle overview and excludes resources. Stored bundles currently have no repository
-assignment, so they appear as Unattached. Local scan history starts empty.
+counting as the bundle overview and excludes resources. Bundles appear under each
+workspace that contains them; bundles without workspace membership appear as
+Unattached. Local scan history starts empty.
+
+The bundle header shows Scan when the local/E2E service is available or the
+managed user has an admin/manage role. It opens scan setup with that bundle and
+its repository/workspace selected. For a bundle shared across workspaces, the
+workspace row clicked in the sidebar is retained. Managed scan links include the
+bundle ID so Back/Forward and reload retain the requested input. An unavailable
+selection never silently switches to another bundle.
 
 ## Reports and Advanced Code scans
 

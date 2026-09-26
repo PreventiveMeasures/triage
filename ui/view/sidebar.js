@@ -328,6 +328,7 @@ const BUNDLE_ICON = html`${unsafeHTML(BUNDLE_ICON_SVG)}`
 function bundleItemTemplate(bundle, opts = {}) {
   const { integrity, name } = bundle
   const isCurrent = state.selectedBundle === integrity && state.currentView === 'bundles'
+    && (opts.workspaceId ?? null) === state.selectedBundleWorkspace
   // `indented` only when the row sits under a workspace — the tree-line
   // decoration anchors it to its parent. Top-level rows under the
   // Bundles category render flush with the other category rows
@@ -847,8 +848,9 @@ async function onSidebarClick(e) {
     // bundles list with a phantom selection and no panel content.
     if (bundleEl.classList.contains('bundle-missing')) return
     const integrity = bundleEl.dataset.bundleIntegrity
-    if (state.selectedBundle === integrity && state.currentView === 'bundles') return
-    selectBundle(integrity)
+    const workspaceId = bundleEl.dataset.workspaceId ?? null
+    if (state.selectedBundle === integrity && state.currentView === 'bundles' && state.selectedBundleWorkspace === workspaceId) return
+    selectBundle(integrity, undefined, { workspaceId })
     persistLastBundle(integrity, state.bundleDetailsTab)
     render()
     renderSidebar()
@@ -2085,7 +2087,7 @@ document.addEventListener('managed-bundle-open', event => {
 export async function navigateToAdminPage(view, options = {}) {
   if (options.history !== false && isManagedUiMode()) {
     if (!managedHistory.active) await refreshManagedSession()
-    if (managedHistory.active) return managedHistory.navigate({ view, ...(options.actor ? { actor: options.actor } : {}) })
+    if (managedHistory.active) return managedHistory.navigate({ view, ...(options.actor ? { actor: options.actor } : {}), ...(options.bundleId ? { bundleId: options.bundleId } : {}) })
   }
   if (!(view in ADMIN_PAGES) || !isManagedUiMode() || !canAccessManagedPage(view)) return false
   const navigation = beginViewNavigation()
@@ -2094,6 +2096,7 @@ export async function navigateToAdminPage(view, options = {}) {
   catch (err) { console.warn(ADMIN_PAGES[view], err); return false }
   if (generation !== clientModeGeneration || navigation !== currentViewGeneration() || !isManagedUiMode() || !canAccessManagedPage(view)) return false
   state.currentView = view
+  state.scanSelection = view === 'manage-scans' && options.bundleId ? { bundleId: options.bundleId } : null
   render({ animate: false })
   renderSidebar()
   // Use the known role and CSRF token immediately; apply session changes when

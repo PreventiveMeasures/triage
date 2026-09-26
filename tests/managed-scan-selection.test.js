@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import './_polyfills.js'
 import '../ui/scan/page.js'
 import { SCAN_REPOSITORY_FIXTURES, cloneScanFixtures } from '../ui/scan/fixtures.js'
+import { storedScanSource } from '../ui/scan/bundle-source.js'
 
 const Scans = customElements.get('deepview-scan-page')
 test('the host can block scan actions while disconnected even with selected files', () => {
@@ -24,6 +25,57 @@ function createPage() {
   page.willUpdate(new Map([['source', null]]))
   return page
 }
+
+test('bundle navigation waits for the catalogue and selects the bundle and its repository together', () => {
+  for (const bundleId of ['bundle-worker', 'bundle-unattached']) {
+    const page = new Scans()
+    page.selection = { bundleId }
+    page.willUpdate(new Map([['selection', null]]))
+    assert.equal(page._bundle, undefined)
+    page.source = { bundles: cloneScanFixtures(), repositories: SCAN_REPOSITORY_FIXTURES }
+    page.willUpdate(new Map([['source', null]]))
+    const requested = page.source.bundles.find(bundle => bundle.id === bundleId)
+    assert.equal(page._bundle, requested)
+    assert.equal(page._selectedRepoId, requested.repoId)
+    page._selectRepoById('repo-checkout')
+    page.willUpdate(new Map([['source', page.source]]))
+    assert.equal(page._selectedRepoId, 'repo-checkout', 'later source refresh does not reapply initial navigation')
+  }
+})
+
+test('a shared bundle keeps the clicked workspace through metadata loading and scan restart', async () => {
+  const page = new Scans()
+  page.source = storedScanSource([{ integrity: 'shared', name: 'shared.map' }], [
+    { id: 'first', name: 'First', bundles: ['shared'] }, { id: 'second', name: 'Second', bundles: ['shared'] },
+  ])
+  page.selection = { bundleId: 'shared', repoId: 'second' }
+  page.willUpdate(new Map([['source', null], ['selection', null]]))
+  assert.equal(page._selectedRepoId, 'second')
+  assert.equal(page._bundle.repo, 'Second')
+  page.loadBundle = bundle => Promise.resolve({ ...bundle, files: [{ path: 'main.js', bytes: 10, module: '__own__' }], reasons: [{ id: 'all', label: 'All' }] })
+  await page._loadSelectedBundle()
+  assert.deepEqual(page._bundles.map(bundle => bundle.repoId), ['first', 'second'], 'loading shared metadata preserves both memberships')
+  page._runScan()
+  const scan = page._scans[0]
+  assert.equal(scan.repoId, 'second')
+  page._selectRepoById('first')
+  page._restartScan(scan)
+  assert.equal(page._selectedRepoId, 'second')
+  assert.equal(page._bundle.id, 'shared')
+  for (const timer of page._timers) clearTimeout(timer)
+})
+
+test('missing requested bundles or workspace memberships never scan a different input', () => {
+  for (const selection of [{ bundleId: 'missing' }, { bundleId: 'bundle-worker', repoId: 'wrong-workspace' }]) {
+    const page = createPage()
+    page.selection = selection
+    page.willUpdate(new Map([['selection', null]]))
+    assert.equal(page._bundle, undefined)
+    assert.match(page._notice, /no longer available/u)
+    page._runScan()
+    assert.deepEqual(page._scans, [])
+  }
+})
 
 test('changing repository selects its first bundle and resets bundle-specific scope', () => {
   const page = createPage()

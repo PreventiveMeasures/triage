@@ -1948,6 +1948,7 @@ function renderImpl() {
     const slot = ensureReportSlot('scan-slot')
     if (slot && !slot.firstElementChild) {
       const el = document.createElement('local-scan-page')
+      el.selection = state.scanSelection
       slot.append(el)
       void el.updateComplete.then(() => installShadowTooltipListener(el.renderRoot, {
         gate: target => !Object.hasOwn(target.dataset, 'tooltipTruncated') || target.scrollWidth > target.clientWidth,
@@ -1968,6 +1969,7 @@ function renderImpl() {
       const el = document.createElement(adminView.tag)
       el.localImportSource = createManagedLocalImportSource()
       el.session = state.managedSession
+      if (state.currentView === 'manage-scans') el.selection = state.scanSelection
       slot.append(el)
       // The admin bundle is its own esbuild entry (no code splitting),
       // so it can't import view/tooltip.js without duplicating the
@@ -1985,6 +1987,7 @@ function renderImpl() {
       })().catch(() => {})
     }
     if (slot?.firstElementChild) slot.firstElementChild.session = state.managedSession
+    if (state.currentView === 'manage-scans' && slot?.firstElementChild) slot.firstElementChild.selection = state.scanSelection
     report.classList.add('active')
     dropZone.classList.add('hidden')
     document.title = adminView.title

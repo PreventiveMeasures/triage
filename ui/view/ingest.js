@@ -745,6 +745,8 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   state.currentReportWorkspace = null
   state.currentLinks = null
   state.selectedBundle = null
+  state.selectedBundleWorkspace = null
+  state.scanSelection = null
   state.repoUrl = ''
   state.repoEditing = false
   resetGraph2()
@@ -1051,6 +1053,8 @@ function clearActiveView({ forgetLastView = true } = {}) {
   state.managedReports = []
   state.managedComments.clear()
   state.selectedBundle = null
+  state.selectedBundleWorkspace = null
+  state.scanSelection = null
   state.bundleDetails = null
   state.bundleDetailsTab = 'overview'
   state.bundleSourceFile = null
@@ -1165,6 +1169,7 @@ export async function deleteCurrentBundle({ deleteFromRemoteWorkspaceIds = [] } 
   await setBundleWorkspace(integrity, null)
   if (isStaleLoad(gen)) return
   state.selectedBundle = null
+  state.selectedBundleWorkspace = null
   state.bundleDetails = null
   state.bundleSourceFile = null
   state.bundleSourceFindingIdx = null
