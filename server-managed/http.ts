@@ -1211,58 +1211,40 @@ async function handleQueryReports(req: IncomingMessage, res: ServerResponse, dep
   }
   const ids = [...new Set(raw as string[])]
   if (ids.length > MAX_REPORT_QUERY_COUNT) { sendJson(res, 413, { error: 'batch-too-large' }); return }
-  let storedBytes = 0
-  for (const id of ids) {
-    if (!(await canViewReport(deps, s.user, id))) { sendJson(res, 404, { error: 'no-report' }); return }
-    storedBytes += (await deps.db.getReport(id))?.byteSize ?? 0
-  }
+  const snapshot = await deps.db.getReportAccessSnapshot(s.session.id, Date.now(), ids)
+  if (!snapshot || snapshot.user.id !== s.user.id) { sendJson(res, 401, { error: 'unauthenticated' }); return }
+  const reports = new Map(snapshot.reports.map(report => [report.id, report]))
+  if (reports.size !== ids.length) { sendJson(res, 404, { error: 'no-report' }); return }
+  const storedBytes = snapshot.reports.reduce((total, report) => total + report.byteSize, 0)
   if (storedBytes > MAX_REPORT_QUERY_BYTES) { sendJson(res, 413, { error: 'batch-too-large' }); return }
   // Retain only encoded response parts, not every blob and parsed object as
   // well. Check actual bytes too, in case storage and metadata disagree.
-  const parts = [Buffer.from('{"reports":[')], versions = new Map<string, string>()
-  const repositoryNames = new Map((await deps.db.listAllRepos()).map(repo => [repo.repoId, repo.fullName]))
+  const parts = [Buffer.from('{"reports":[')]
   let inputBytes = 0, outputBytes = parts[0]!.length + 2
   for (const id of ids) {
     const bytes = await deps.reportStore.get(id)
     if (bytes == null) { sendJson(res, 503, { error: 'unavailable' }); return }
     inputBytes += bytes.length
     if (inputBytes > MAX_REPORT_QUERY_BYTES) { sendJson(res, 413, { error: 'batch-too-large' }); return }
-    const current = await readSession(deps.config, deps.db, cookie, Date.now())
-    if (!current || current.user.id !== s.user.id) { sendJson(res, 401, { error: 'unauthenticated' }); return }
-    const access = await reportQueryAccess(deps, current.user, id, repositoryNames)
-    if (!access) { sendJson(res, 404, { error: 'no-report' }); return }
-    const { data } = readManagedReport(bytes.toString('utf8'), access.report.filename)
+    const access = reports.get(id)!
+    const { data } = readManagedReport(bytes.toString('utf8'), access.filename)
     if (!data) { sendJson(res, 422, { error: 'unreadable-report' }); return }
-    const part = Buffer.from(`${versions.size > 0 ? ',' : ''}${JSON.stringify({ id, data: filterReportData(data, access.permissions), repo: access.repo })}`)
+    const part = Buffer.from(`${parts.length > 1 ? ',' : ''}${JSON.stringify({ id, data: filterReportData(data, access.permissions), repo: access.repo })}`)
     outputBytes += part.length
     if (outputBytes > MAX_REPORT_QUERY_BYTES) { sendJson(res, 413, { error: 'batch-too-large' }); return }
     parts.push(part)
-    versions.set(id, access.version)
   }
   // Access to an earlier report may change while a later blob is fetched.
   // Reject the whole answer if any content/access/assignment snapshot changed.
-  const current = await readSession(deps.config, deps.db, cookie, Date.now())
-  if (!current || current.user.id !== s.user.id) { sendJson(res, 401, { error: 'unauthenticated' }); return }
-  // Refresh once for this validation phase so repository renames still reject
-  // stale metadata without scanning the entire repository table per report.
-  const currentRepositoryNames = new Map((await deps.db.listAllRepos()).map(repo => [repo.repoId, repo.fullName]))
-  for (const [id, version] of versions) {
-    if ((await reportQueryAccess(deps, current.user, id, currentRepositoryNames))?.version !== version) { sendJson(res, 404, { error: 'no-report' }); return }
+  const current = await deps.db.getReportAccessSnapshot(s.session.id, Date.now(), ids)
+  if (!current || current.user.id !== snapshot.user.id) { sendJson(res, 401, { error: 'unauthenticated' }); return }
+  if (current.user.role !== snapshot.user.role || current.reports.length !== reports.size
+    || current.reports.some(report => JSON.stringify(report) !== JSON.stringify(reports.get(report.id)))) {
+    sendJson(res, 404, { error: 'no-report' }); return
   }
   parts.push(Buffer.from(']}'))
   res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' })
   writeResponse(res, Buffer.concat(parts, outputBytes))
-}
-
-async function reportQueryAccess(deps: ManagedHttpDeps, user: StoredUser, id: string, repositoryNames: ReadonlyMap<number, string>) {
-  if (!(await canViewReport(deps, user, id))) return null
-  const report = await deps.db.getReport(id)
-  if (!report) return null
-  const permissions = user.role === 'admin' || user.role === 'manage'
-    ? { dependencies: true, security: true } : await deps.db.reportPermissionsFor(user.id, id)
-  const repo = { github: report.repoId == null ? null : repositoryNames.get(report.repoId) ?? null, directory: report.repoDirectory }
-  const version = JSON.stringify([report.sha256, report.filename, user.role, repo, permissions])
-  return { report, permissions, repo, version }
 }
 
 // Reports arrive on the managed UI wire as JSON objects even when the stored

@@ -101,6 +101,21 @@ export interface ReportRecord {
   bundleId: string | null
 }
 
+// One transaction snapshots all metadata needed to authorize, filter and
+// revalidate a report batch. Unauthorized/missing reports are omitted.
+export interface ReportAccessRecord {
+  id: string
+  filename: string
+  byteSize: number
+  sha256: string
+  repo: { github: string | null; directory: string }
+  permissions: TeamUserPermissions
+}
+export interface ReportAccessSnapshot {
+  user: StoredUser
+  reports: ReportAccessRecord[]
+}
+
 // What the upload handler supplies to record a report; the store stamps
 // uploaded_at. `repoId` / `bundleId` are the (nullable) repo + auto-resolved
 // bundle links; `bundleIntegrity` is the report's declared primary bundle (kept
@@ -307,6 +322,7 @@ export interface ManagedDb extends ActivityStore, CommentStore {
   insertReport(report: ReportRecordInput, now: number): Promise<void>
   listReports(userId?: string): Promise<AdminReport[]>
   getReport(id: string): Promise<ReportRecord | null>
+  getReportAccessSnapshot(sessionId: string, now: number, ids: readonly string[]): Promise<ReportAccessSnapshot | null>
   listReportFilenamesWithBundleHash(bundleId: string, sha256: string): Promise<string[]>
   deleteReport(id: string): Promise<boolean>
   // Attach / detach a report's repo + directory link (repoId null = detach);
@@ -512,6 +528,23 @@ function prepareStatements(db: ManagedSql) {
               repo_id AS repoId, repo_directory AS repoDirectory, repo_embedded AS repoEmbedded,
               analyzer AS analyzer, visible AS visible, bundle_id AS bundleId
          FROM managed_report WHERE id = ?`,
+    ),
+    selectReportAccessStmt: db.prepare(
+      `WITH requested AS (SELECT value AS id FROM json_each(?)), report_grants AS (
+         SELECT r.id AS id, MAX(tu.view_dependencies) AS dependencies, MAX(tu.view_security) AS security
+           FROM managed_report r JOIN requested q ON q.id = r.id
+           JOIN team_repo tr ON tr.repo_id = r.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}
+           JOIN team_user tu ON tu.team_id = tr.team_id AND tu.user_id = ?
+          GROUP BY r.id
+       )
+       SELECT r.id AS id, r.filename AS filename, r.byte_size AS byteSize, r.sha256 AS sha256,
+              r.repo_directory AS repoDirectory, sr.full_name AS repoFullName,
+              COALESCE(g.dependencies, 0) AS dependencies, COALESCE(g.security, 0) AS security
+         FROM managed_report r JOIN requested q ON q.id = r.id
+         LEFT JOIN selected_repo sr ON sr.repo_id = r.repo_id
+         LEFT JOIN report_grants g ON g.id = r.id
+        WHERE ? = 1 OR (? = 1 AND r.uploaded_by = ?)
+           OR (g.id IS NOT NULL AND (? = 1 OR r.visible = 1))`,
     ),
     reportFilenamesWithBundleHashStmt: db.prepare(`SELECT DISTINCT filename FROM managed_report WHERE bundle_id = ? AND sha256 = ?`),
     deleteReportStmt: db.prepare(`DELETE FROM managed_report WHERE id = ?`),
@@ -807,6 +840,23 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>) {
         repoId: row.repoId, repoDirectory: row.repoDirectory, repoEmbedded: row.repoEmbedded === 1, analyzer: row.analyzer, visible: row.visible === 1,
         bundleId: row.bundleId,
       }
+    },
+    async getReportAccessSnapshot(sessionId: string, now: number, ids: readonly string[]): Promise<ReportAccessSnapshot | null> {
+      const session = await stmts.selectSessionStmt.get(sessionId, now) as SessionRow | undefined
+      if (!session) return null
+      const user: StoredUser = { id: session.uid, login: session.login, name: session.name, avatarUrl: session.avatar, role: session.role }
+      if (user.role === 'none' || ids.length === 0) return { user, reports: [] }
+      const admin = user.role === 'admin', manage = user.role === 'manage'
+      const rows = await stmts.selectReportAccessStmt.all(JSON.stringify([...new Set(ids)]), user.id,
+        admin ? 1 : 0, manage ? 1 : 0, user.id, manage ? 1 : 0) as {
+        id: string; filename: string; byteSize: number; sha256: string; repoDirectory: string
+        repoFullName: string | null; dependencies: number; security: number
+      }[]
+      return { user, reports: rows.map(row => ({
+        id: row.id, filename: row.filename, byteSize: row.byteSize, sha256: row.sha256,
+        repo: { github: row.repoFullName, directory: row.repoDirectory },
+        permissions: { dependencies: admin || manage || row.dependencies === 1, security: admin || manage || row.security === 1 },
+      })) }
     },
     async listReportFilenamesWithBundleHash(bundleId: string, sha256: string): Promise<string[]> {
       const rows = (await stmts.reportFilenamesWithBundleHashStmt.all(bundleId, sha256)) as { filename: string }[]

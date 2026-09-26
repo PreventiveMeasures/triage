@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { Readable } from 'node:stream'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
-import { createSession } from '../server-managed/session.ts'
+import { createSession, readSession } from '../server-managed/session.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { MAX_REPORT_QUERY_BYTES, MAX_REPORT_QUERY_COUNT } from '../server-managed/report-query.ts'
 import { managedCsv, managedCsvIds } from './_managed-csv.js'
@@ -13,7 +13,7 @@ async function setup(t, createHandler = createManagedRequestHandler) {
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())
   const now = Date.now(), users = {}
-  for (const [index, role] of ['admin', 'view', 'none'].entries()) {
+  for (const [index, role] of ['admin', 'view', 'none', 'manage', 'triage'].entries()) {
     users[role] = await createSession(config, db, { githubUserId: index + 1, login: role, name: null, avatarUrl: null }, now)
     await db.setUserRole(users[role].userId, role)
   }
@@ -74,7 +74,7 @@ test('a workspace batch returns all requested content with the same filtering an
   }
 })
 
-test('batch repository scans stay constant as report count grows and preserve per-report assignments', async t => {
+test('batch database calls stay constant as report count grows and preserve per-report assignments', async t => {
   const h = await setup(t)
   const original = await h.db.getReport('a')
   const ids = []
@@ -84,10 +84,16 @@ test('batch repository scans stay constant as report count grows and preserve pe
     h.blobs.set(id, h.blobs.get('a'))
     ids.push(id)
   }
-  const scans = t.mock.method(h.db, 'listAllRepos')
+  const calls = new Map(['sessionWithUser', 'getReportAccessSnapshot', 'listAllRepos', 'getReport', 'userCanReadReport', 'reportPermissionsFor']
+    .map(name => [name, t.mock.method(h.db, name)]))
+  assert.equal((await h.request({ ids: ids.slice(0, 1) }, { role: 'admin' })).status, 200)
+  const singleCounts = [...calls.values()].map(method => method.mock.callCount())
+  for (const method of calls.values()) method.mock.resetCalls()
   const response = await h.request({ ids }, { role: 'admin' })
   assert.equal(response.status, 200)
-  assert.equal(scans.mock.callCount(), 2, 'one repository snapshot per validation phase, independent of report count')
+  assert.deepEqual([...calls.values()].map(method => method.mock.callCount()), singleCounts)
+  assert.equal(calls.get('getReportAccessSnapshot').mock.callCount(), 2)
+  for (const name of ['listAllRepos', 'getReport', 'userCanReadReport', 'reportPermissionsFor']) assert.equal(calls.get(name).mock.callCount(), 0)
   assert.equal(response.body.reports.length, ids.length)
   for (const [index, entry] of response.body.reports.entries()) {
     assert.deepEqual(entry.repo, { github: `org/repo${index % 2 === 0 ? 7 : 9}`, directory: `packages/${index}` })
@@ -140,13 +146,17 @@ test('membership revoked while the batch reads storage prevents the entire respo
   assert.deepEqual(response.body, { error: 'no-report' })
 })
 
-test('permission changes during storage reads filter every report using the current grant', async t => {
+test('permission changes during storage reads reject the old snapshot and a retry uses the current grant', async t => {
   const h = await setup(t)
   await h.db.setTeamMember('team', h.users.view.userId, { dependencies: true, security: true })
   h.store.afterRead = () => h.db.setTeamMember('team', h.users.view.userId, { dependencies: false, security: false })
   const response = await h.request({ ids: ['a', 'b'] })
-  assert.equal(response.status, 200)
-  assert.deepEqual(response.body.reports.map(report => report.data.findings.map(finding => finding.id)), [['a-own'], ['b-own']])
+  assert.equal(response.status, 404)
+  assert.deepEqual(response.body, { error: 'no-report' })
+  h.store.afterRead = null
+  const retried = await h.request({ ids: ['a', 'b'] })
+  assert.equal(retried.status, 200)
+  assert.deepEqual(retried.body.reports.map(report => report.data.findings.map(finding => finding.id)), [['a-own'], ['b-own']])
 })
 
 test('markdown and multi-scan CSV are served as parsed JSON with permissions applied after parsing', async t => {
@@ -186,10 +196,10 @@ test('large batches are rejected before storage reads by report count and total 
   const h = await setup(t)
   const tooMany = await h.request({ ids: Array.from({ length: MAX_REPORT_QUERY_COUNT + 1 }, (_, index) => `id-${index}`) })
   assert.equal(tooMany.status, 413)
-  const getReport = h.db.getReport.bind(h.db)
-  t.mock.method(h.db, 'getReport', async id => {
-    const report = await getReport(id)
-    return report && { ...report, byteSize: MAX_REPORT_QUERY_BYTES / 2 + 1 }
+  const snapshot = h.db.getReportAccessSnapshot.bind(h.db)
+  t.mock.method(h.db, 'getReportAccessSnapshot', async (...args) => {
+    const result = await snapshot(...args)
+    return { ...result, reports: result.reports.map(report => ({ ...report, byteSize: MAX_REPORT_QUERY_BYTES / 2 + 1 })) }
   })
   assert.equal((await h.request({ ids: ['a', 'b'] })).status, 413)
   assert.deepEqual(h.reads, [])
@@ -213,6 +223,55 @@ test('access changes to an earlier report during a later read reject all prepare
   const response = await h.request({ ids: ['a', 'b'] })
   assert.equal(response.status, 404)
   assert.deepEqual(response.body, { error: 'no-report' })
+})
+
+test('session revocation, role changes, unpublishing, and report reassignment during loading reject the batch', async t => {
+  for (const change of [
+    async h => {
+      const { session } = await readSession(config, h.db, h.users.view.setCookie, Date.now())
+      await h.db.deleteSession(session.id)
+      return 401
+    },
+    async h => { await h.db.setUserRole(h.users.view.userId, 'none'); return 404 },
+    async h => { await h.db.setReportVisible('a', false); return 404 },
+    async h => { await h.db.setReportRepo('a', 9, ''); return 404 },
+  ]) {
+    const h = await setup(t)
+    let status
+    h.store.afterRead = async id => { if (id === 'b') status = await change(h) }
+    const response = await h.request({ ids: ['a', 'b'] })
+    assert.equal(response.status, status)
+    assert.equal(response.body.reports, undefined)
+  }
+})
+
+test('bulk authorization matches individual reads for every role, manager ownership, and overlapping team grants', async t => {
+  const h = await setup(t)
+  await h.db.setTeamMember('team', h.users.manage.userId, { dependencies: false, security: false })
+  await h.db.setTeamMember('team', h.users.triage.userId, { dependencies: false, security: true })
+  await h.db.createTeam('extra', 'Overlapping workspace', Date.now())
+  await h.db.setTeamRepo('extra', 7, 'packages/app/sub')
+  await h.db.setTeamMember('extra', h.users.triage.userId, { dependencies: true, security: false })
+  await h.db.insertReport({ ...await h.db.getReport('foreign'), id: 'owned', uploadedBy: h.users.manage.userId, visible: false }, Date.now())
+  h.blobs.set('owned', h.blobs.get('foreign'))
+  const ids = ['a', 'b', 'outside', 'foreign', 'draft', 'owned', 'missing']
+  for (const role of Object.keys(h.users)) {
+    const { session } = await readSession(config, h.db, h.users[role].setCookie, Date.now())
+    const snapshot = await h.db.getReportAccessSnapshot(session.id, Date.now(), ids)
+    const allowed = []
+    for (const id of ids) {
+      const single = await h.request({}, { method: 'GET', path: `/api/reports/${id}`, role })
+      if (single.status !== 200) continue
+      allowed.push(id)
+      const batch = await h.request({ ids: [id] }, { role })
+      assert.deepEqual(batch.body.reports[0], { id, ...single.body })
+    }
+    assert.deepEqual(snapshot.reports.map(report => report.id).toSorted(), allowed.toSorted())
+    if (role === 'triage') {
+      assert.deepEqual(snapshot.reports.find(report => report.id === 'a').permissions, { dependencies: false, security: true })
+      assert.deepEqual(snapshot.reports.find(report => report.id === 'b').permissions, { dependencies: true, security: true })
+    }
+  }
 })
 
 test('catalog report versions change with grants and repository assignments without reading blobs', async t => {
