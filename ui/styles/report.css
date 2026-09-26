@@ -2028,7 +2028,7 @@ bundle-search {
      so the body slot stays a flex column for the focus-view's
      own per-pane scroll setup (card / code / queue each own
      their own scroll inside .focus-view). */
-  .findings-content > #findings-body-slot:not(:has(> .findings-table-layout, > .focus-view)) {
+  .findings-content:not(.with-graph, .with-kanban) > #findings-body-slot:not(:has(> .findings-table-layout, > .focus-view)) {
     overflow-y: auto; overscroll-behavior: none;
     -webkit-app-region: no-drag; app-region: no-drag;
     scrollbar-gutter: stable;
