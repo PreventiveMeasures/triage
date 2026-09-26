@@ -1,34 +1,20 @@
 // Managed HTTP app and standalone boot. The combined launcher mounts this
 // same app on e2e's listener; storage, routing and cleanup stay here.
 import { createServer } from 'node:http'
-import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createOriginGate } from '../server-common/origin.ts'
-import { createDiskAvatarStore } from './avatar-store.ts'
-import { createDiskBundleCache } from './bundle-cache.ts'
-import { createDiskBlobStore } from './blob-store.ts'
-import { createDiskBundleStore } from './bundle-store.ts'
-import { createReportSourcesCache } from './report-sources.ts'
 import { type ManagedConfig, loadManagedConfig } from './config.ts'
-import { openSqliteManagedDb } from './db.ts'
 import { type ManagedHttpDeps, createManagedRequestHandler } from './http.ts'
 import { loadManagedStatic } from './static.ts'
+import { openManagedStorage } from './storage.ts'
 
 // Expired-session sweep period. Lookups already exclude expired rows
 // (`WHERE expires_at > now`), so this is housekeeping, not a security control.
 const SESSION_GC_INTERVAL_MS = 3_600_000
 
-export function createManagedApp(config: ManagedConfig, options: Partial<Pick<ManagedHttpDeps, 'next' | 'serverInfo' | 'isShuttingDown'>> = {}) {
-  const db = openSqliteManagedDb(config.dbPath, { triageHistoryLimit: config.triageHistoryLimit })
-  // Avatars cache on disk beside the DB (data/avatars/<uuid>) for now.
-  const avatarStore = createDiskAvatarStore(join(dirname(config.dbPath), 'avatars'))
-  // Uploaded report + bundle bytes live on disk beside the DB too
-  // (data/reports/<uuid>, data/bundles/<uuid>[.map.br]).
-  const dataDir = dirname(config.dbPath)
-  const reportStore = createDiskBlobStore(join(dataDir, 'reports'))
-  const bundleStore = createDiskBundleStore(join(dataDir, 'bundles'))
-  const bundleCache = createDiskBundleCache(join(dataDir, 'cache', 'bundles'), db, bundleStore)
-  const reportSourcesCache = createReportSourcesCache(join(dataDir, 'cache', 'report-sources'), db, reportStore, bundleStore)
+export async function createManagedApp(config: ManagedConfig, options: Partial<Pick<ManagedHttpDeps, 'next' | 'serverInfo' | 'isShuttingDown'>> = {}) {
+  const storage = await openManagedStorage(config)
+  const { db, avatarStore, reportStore, bundleStore, bundleCache, reportSourcesCache } = storage
   const originGate = createOriginGate(config.host, config.trustProxyEnv)
 
   let shuttingDown = false
@@ -43,19 +29,20 @@ export function createManagedApp(config: ManagedConfig, options: Partial<Pick<Ma
   })
   const handleRequest = createManagedRequestHandler({
     ...options, config, db, avatarStore, reportStore, bundleStore, bundleCache, reportSourcesCache, originGate, serveStatic,
+    ...('uploadStore' in storage ? { uploadStore: storage.uploadStore } : {}),
     isShuttingDown: () => shuttingDown || options.isShuttingDown?.() === true, track,
   })
 
-  const gcTimer = setInterval(() => {
-    track(db.deleteExpiredSessions(Date.now()).catch((err) => {
-      console.warn('managed: session GC failed:', err)
-      return 0
-    }))
+  const gcTimer = config.serverless ? null : setInterval(() => {
+    track(Promise.all([
+      db.deleteExpiredSessions(Date.now()),
+      ...('reapUploads' in storage ? [storage.reapUploads()] : []),
+    ].map(work => work.catch(err => console.warn('managed: maintenance failed:', err)))))
   }, SESSION_GC_INTERVAL_MS)
 
   function stop(): void {
     shuttingDown = true
-    clearInterval(gcTimer)
+    if (gcTimer) clearInterval(gcTimer)
   }
 
   async function close(): Promise<void> {
@@ -66,9 +53,9 @@ export function createManagedApp(config: ManagedConfig, options: Partial<Pick<Ma
   return { handleRequest, stop, close }
 }
 
-export function start(): void {
+export async function start(): Promise<void> {
   const config = loadManagedConfig()
-  const app = createManagedApp(config)
+  const app = await createManagedApp(config)
   const server = createServer(app.handleRequest)
   let closing = false
   async function shutdown(code: number): Promise<void> {
@@ -91,4 +78,4 @@ export function start(): void {
   })
 }
 
-if (import.meta.main) start()
+if (import.meta.main) await start()

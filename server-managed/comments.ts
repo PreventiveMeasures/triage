@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { type ManagedComment, canDeleteComment } from '../common/managed/comments.ts'
+import type { ManagedSql } from './sql.ts'
 
 export interface CommentInput {
   findingId: string
@@ -32,8 +33,7 @@ const COMMENT_COLUMNS = `id TEXT PRIMARY KEY, finding_id TEXT NOT NULL, body TEX
   author_login TEXT, created_at INTEGER, updated_at INTEGER,
   version INTEGER NOT NULL DEFAULT 1`
 
-function migrateComments(db: DatabaseSync): void {
-  db.exec(`
+export const COMMENT_SCHEMA = `
     CREATE TABLE IF NOT EXISTS finding_comment (${COMMENT_COLUMNS}) STRICT;
     CREATE INDEX IF NOT EXISTS finding_comment_finding_idx ON finding_comment(finding_id, created_at, id);
     CREATE TABLE IF NOT EXISTS finding_comment_event (
@@ -45,7 +45,10 @@ function migrateComments(db: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS finding_comment_event_finding_idx ON finding_comment_event(finding_id, seq);
     CREATE INDEX IF NOT EXISTS finding_comment_event_actor_at_idx ON finding_comment_event(actor_id, at);
     CREATE INDEX IF NOT EXISTS finding_comment_event_at_idx ON finding_comment_event(at, seq);
-  `)
+`
+
+export function initCommentMethods(db: DatabaseSync): void {
+  db.exec(COMMENT_SCHEMA)
   migrateCommentDates(db)
   // updated_by belongs to the whole triage row, not necessarily its comment.
   // Preserve legacy text without guessing an author. Clearing the old column
@@ -64,8 +67,7 @@ function migrateComments(db: DatabaseSync): void {
   }
 }
 
-export function commentMethods(db: DatabaseSync): CommentStore {
-  migrateComments(db)
+export function commentMethods(db: ManagedSql): CommentStore {
   const fields = `c.id, c.finding_id AS findingId, c.body, c.author_id AS authorId,
     COALESCE(u.login, c.author_login) AS authorLogin,
     c.created_at AS createdAt, c.updated_at AS updatedAt, c.version`
@@ -73,12 +75,12 @@ export function commentMethods(db: DatabaseSync): CommentStore {
     LEFT JOIN managed_user u ON u.id = c.author_id WHERE c.id = ?`)
   const list = db.prepare(`SELECT ${fields} FROM finding_comment c
     LEFT JOIN managed_user u ON u.id = c.author_id
-    WHERE c.finding_id IN (SELECT value FROM json_each(?)) ORDER BY c.created_at, c.id`)
+    WHERE c.finding_id IN (SELECT value FROM json_each(?)) ORDER BY c.created_at NULLS FIRST, c.id`)
   const insert = db.prepare(`INSERT INTO finding_comment
     (id, finding_id, body, author_id, author_login, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
   const update = db.prepare(`UPDATE finding_comment SET body = ?, updated_at = ?, version = version + 1
     WHERE id = ? AND author_id = ? AND version = ?`)
-  const remove = db.prepare('DELETE FROM finding_comment WHERE id = ? AND author_id IS ? AND version = ?')
+  const remove = db.prepare('DELETE FROM finding_comment WHERE id = ? AND (author_id = ? OR (author_id IS NULL AND ? IS NULL)) AND version = ?')
   const userRole = db.prepare('SELECT role FROM managed_user WHERE id = ?')
   // Deleted comments still have audit events which explicit annotation purges
   // must find, including when no current triage/comment record remains.
@@ -88,62 +90,47 @@ export function commentMethods(db: DatabaseSync): CommentStore {
     (comment_id, finding_id, actor_id, actor_login, action, at, report_id, report, repo)
     VALUES (?, ?, ?, ?, ?, ?, ?, (SELECT filename FROM managed_report WHERE id = ?),
       (SELECT p.full_name FROM managed_report r JOIN selected_repo p ON p.repo_id = r.repo_id WHERE r.id = ?))`)
-  const read = (id: string) => select.get(id) as ManagedComment | undefined
+  const read = async (id: string) => (await select.get(id)) as ManagedComment | undefined
   return {
-    listComments(ids) { return Promise.resolve(ids.length > 0 ? list.all(JSON.stringify(ids)) as unknown as ManagedComment[] : []) },
-    listCommentedFindingIds(ids) {
+    async listComments(ids) { return ids.length > 0 ? (await list.all(JSON.stringify(ids))) as unknown as ManagedComment[] : [] },
+    async listCommentedFindingIds(ids) {
       const json = JSON.stringify(ids)
-      return Promise.resolve((annotated.all(json, json) as { id: string }[]).map(row => row.id))
+      return ((await annotated.all(json, json)) as { id: string }[]).map(row => row.id)
     },
-    getComment(id) { return Promise.resolve(read(id) ?? null) },
-    createComment(input, now) {
+    async getComment(id) { return (await read(id)) ?? null },
+    async createComment(input, now) {
       const id = randomUUID()
-      db.exec('BEGIN')
-      try {
-        const createdAt = input.createdAt === undefined ? now : input.createdAt
-        const updatedAt = input.updatedAt === undefined ? createdAt : input.updatedAt
-        insert.run(id, input.findingId, input.body, input.authorId, input.authorLogin, createdAt, updatedAt)
-        event.run(id, input.findingId, input.actor?.id ?? input.authorId, input.actor?.login ?? input.authorLogin, 'added a comment', now,
-          input.reportId ?? null, input.reportId ?? null, input.reportId ?? null)
-        db.exec('COMMIT')
-      } catch (err) { db.exec('ROLLBACK'); throw err }
-      return Promise.resolve(read(id)!)
+      const createdAt = input.createdAt === undefined ? now : input.createdAt
+      const updatedAt = input.updatedAt === undefined ? createdAt : input.updatedAt
+      await insert.run(id, input.findingId, input.body, input.authorId, input.authorLogin, createdAt, updatedAt)
+      await event.run(id, input.findingId, input.actor?.id ?? input.authorId, input.actor?.login ?? input.authorLogin, 'added a comment', now,
+        input.reportId ?? null, input.reportId ?? null, input.reportId ?? null)
+      return (await read(id))!
     },
-    editComment(id, authorId, authorLogin, body, version, reportId, now) {
-      // No await between reading and committing: identity/version checks and
-      // the history event belong to the same SQLite transaction.
-      db.exec('BEGIN')
-      try {
-        const current = read(id)
-        if (!current || current.authorId !== authorId || current.version !== version || current.body === body) {
-          db.exec('COMMIT')
-          if (!current) return Promise.resolve(null)
-          if (current.authorId !== authorId) return Promise.resolve('forbidden')
-          if (current.version !== version) return Promise.resolve('conflict')
-          return Promise.resolve(current)
-        }
-        update.run(body, now, id, authorId, version)
-        event.run(id, current.findingId, authorId, authorLogin, 'edited a comment', now, reportId, reportId, reportId)
-        db.exec('COMMIT')
-        return Promise.resolve(read(id)!)
-      } catch (err) { db.exec('ROLLBACK'); throw err }
+    async editComment(id, authorId, authorLogin, body, version, reportId, now) {
+      // Identity/version checks and the event share the operation transaction.
+      const current = await read(id)
+      if (!current || current.authorId !== authorId || current.version !== version || current.body === body) {
+        if (!current) return null
+        if (current.authorId !== authorId) return 'forbidden'
+        if (current.version !== version) return 'conflict'
+        return current
+      }
+      await update.run(body, now, id, authorId, version)
+      await event.run(id, current.findingId, authorId, authorLogin, 'edited a comment', now, reportId, reportId, reportId)
+      return (await read(id))!
     },
-    deleteComment(id, actorId, actorLogin, version, reportId, now) {
-      db.exec('BEGIN')
-      try {
-        const current = read(id)
-        const role = (userRole.get(actorId) as { role: string } | undefined)?.role ?? 'none'
-        const allowed = current != null && canDeleteComment(current, { id: actorId, role })
-        if (!current || !allowed || current.version !== version) {
-          db.exec('COMMIT')
-          if (!current) return Promise.resolve(null)
-          return Promise.resolve(allowed ? 'conflict' : 'forbidden')
-        }
-        remove.run(id, current.authorId, version)
-        event.run(id, current.findingId, actorId, actorLogin, 'deleted a comment', now, reportId, reportId, reportId)
-        db.exec('COMMIT')
-        return Promise.resolve('deleted')
-      } catch (err) { db.exec('ROLLBACK'); throw err }
+    async deleteComment(id, actorId, actorLogin, version, reportId, now) {
+      const current = await read(id)
+      const role = (await userRole.get(actorId) as { role: string } | undefined)?.role ?? 'none'
+      const allowed = current != null && canDeleteComment(current, { id: actorId, role })
+      if (!current || !allowed || current.version !== version) {
+        if (!current) return null
+        return allowed ? 'conflict' : 'forbidden'
+      }
+      await remove.run(id, current.authorId, current.authorId, version)
+      await event.run(id, current.findingId, actorId, actorLogin, 'deleted a comment', now, reportId, reportId, reportId)
+      return 'deleted'
     },
   }
 }

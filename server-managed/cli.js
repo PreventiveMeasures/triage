@@ -10,4 +10,4 @@
 // `import.meta.main` auto-start gate stays off and we call `start()` ourselves.
 import '../strip-types-loader.js'
 const { start } = await import('./index.ts')
-start()
+await start()

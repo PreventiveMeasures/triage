@@ -18,7 +18,7 @@ Combined storage: DB_PATH for e2e, MANAGED_DB_PATH for managed.`)
   start()
 } else if (values.mode === 'managed') {
   const { start } = await import('./server-managed/index.ts')
-  start()
+  await start()
 } else {
   const { start } = await import('./server-managed/combined.ts')
   await start(values.mode === 'managed-e2e' ? 'managed+e2e' : 'e2e+managed')

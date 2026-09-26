@@ -3,9 +3,8 @@
 // /api/auth/avatar — the app's CSP is `img-src 'self'`, so the GitHub-hosted
 // original can't be loaded by the page directly.
 //
-// On-disk for now (a dir beside the SQLite store); the AvatarStore interface is
-// backend-agnostic so an S3 / Vercel Blob backend slots in later without
-// touching callers. Keyed by the user's opaque `id`.
+// The disk backend uses a dir beside SQLite; blob-vercel.ts implements the
+// same AvatarStore interface for remote storage. Keyed by the user's opaque `id`.
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { Buffer } from 'node:buffer'

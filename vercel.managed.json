@@ -1,0 +1,18 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "env": { "NODEJS_HELPERS": "0" },
+  "buildCommand": "pnpm build",
+  "outputDirectory": "out",
+  "functions": {
+    "api/managed.ts": { "maxDuration": 300, "includeFiles": "out/**" },
+    "api/managed-reap.ts": { "maxDuration": 60 }
+  },
+  "routes": [
+    { "src": "/api/managed-reap", "dest": "/api/managed-reap" },
+    { "src": "/(.*)", "dest": "/api/managed" }
+  ],
+  "crons": [
+    { "path": "/api/managed-reap", "schedule": "0 0 * * *" }
+  ]
+}
