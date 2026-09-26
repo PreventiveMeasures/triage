@@ -11,6 +11,7 @@ import { refreshGraph2Sidebar, refreshGraph2TopPkgs, render } from './render.js'
 import { refreshBundleGraphSidebar, refreshBundleGraphTopPkgs, revealBundleCodeCurrent } from './render-bundle.js'
 import { grantAdvisoriesProxyConsent, retryBundleAdvisories } from './render-bundle-advisories.js'
 import { openCommentDialog } from './dialogs/comment-dialog.js'
+import { openFindingSourceDialog } from './dialogs/finding-source-dialog.js'
 import { openDownloadBundleDialog } from './dialogs/download-bundle-dialog.js'
 import { openExportConfirmDialog } from './dialogs/export-confirm-dialog.js'
 import { openExportViewDialog } from './dialogs/export-view-dialog.js'
@@ -355,6 +356,15 @@ report.addEventListener('click', (e) => {
   // without navigating away, via the global overlay slot
   // (`#bundle-source-overlay-slot`, mounted by render.js each render).
   // Button lives in `<finding-card>`'s shadow root, hence composedPath.
+  const managedCode = pathClosest(e, '[data-finding-code-report]')
+  if (managedCode && isManagedUiMode()) {
+    void openFindingSourceDialog({
+      reportId: managedCode.dataset.findingCodeReport,
+      file: managedCode.dataset.findingCodeFile,
+      line: managedCode.dataset.findingCodeLine,
+    })
+    return
+  }
   const findingCode = pathClosest(e, '[data-finding-code-bundle]')
   if (findingCode) {
     const integrity = findingCode.dataset.findingCodeBundle

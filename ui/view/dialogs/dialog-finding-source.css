@@ -1,0 +1,47 @@
+dialog {
+  width: min(96vw, 1400px); max-width: 1400px;
+  height: min(88dvh, 1000px); max-height: 92dvh;
+  margin: auto; padding: 0;
+  overflow: hidden;
+}
+
+dialog[open] { display: flex; flex-direction: column; }
+
+header {
+  display: flex; align-items: center; gap: 1rem;
+  padding: .7rem 1rem; border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+
+  & h3 {
+    margin: 0; min-width: 0; flex: 1;
+    overflow-wrap: anywhere;
+    font: .85rem ui-monospace, monospace;
+  }
+  & button {
+    border: 0; background: transparent; color: var(--muted);
+    font-size: 1.4rem; padding: 0 .3rem;
+    &:hover { color: var(--text); }
+  }
+}
+
+.source-scroll {
+  flex: 1; min-height: 0; overflow: auto;
+  overscroll-behavior: contain;
+}
+.source-status { padding: 1rem; color: var(--muted); }
+.source-lines {
+  display: flex; min-width: 100%; width: max-content;
+  font: .8rem/1.6 ui-monospace, monospace;
+
+  & aside {
+    position: sticky; left: 0; align-self: stretch;
+    flex: 0 0 auto; padding: .75rem 0;
+    background: var(--surface); color: var(--muted);
+    border-right: 1px solid var(--border);
+    text-align: right; user-select: none;
+    & div { padding: 0 .75rem; }
+    & .cited { background: rgb(from var(--accent) r g b / .18); color: var(--accent); font-weight: 700; }
+  }
+  & pre { padding: .75rem 1rem; margin: 0; tab-size: 4; }
+  & pre, & code { font: inherit; white-space: pre; }
+}
