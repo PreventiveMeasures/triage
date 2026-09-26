@@ -54,6 +54,11 @@ processes. There is no managed WebSocket server to port. The combined launcher
 continues to compose the e2e and managed apps on a persistent Node listener;
 the managed Vercel entry point advertises managed mode only.
 
+In a combined process, `DATABASE_URL` and `DB_PATH` belong to e2e. Managed mode
+keeps using `MANAGED_DB_PATH` (or its default SQLite path) unless
+`MANAGED_DATABASE_URL` explicitly selects Neon. Standalone and Vercel managed
+deployments also accept `DATABASE_URL` as a fallback.
+
 ## Deploy
 
 Use Node.js 24.x and install the same optional peers required by e2e's Neon

@@ -78,9 +78,10 @@ function urlOrFail(name: string, raw: string): URL {
 
 export function loadManagedConfig({ combined = false } = {}): ManagedConfig {
   const serverless = env['VERCEL'] === '1'
-  const neonUrl = env['MANAGED_DATABASE_URL'] || env['DATABASE_URL'] || null
+  // DATABASE_URL belongs to e2e in a combined process, just like DB_PATH.
+  const neonUrl = env['MANAGED_DATABASE_URL'] || (combined ? null : env['DATABASE_URL'] || null)
   const blobToken = env['BLOB_READ_WRITE_TOKEN'] || null
-  if (serverless && !neonUrl) fail('Vercel managed mode requires MANAGED_DATABASE_URL or DATABASE_URL.')
+  if (serverless && !neonUrl) fail(`Vercel managed mode requires ${combined ? 'MANAGED_DATABASE_URL' : 'MANAGED_DATABASE_URL or DATABASE_URL'}.`)
   if (neonUrl && !blobToken) fail('Managed Neon mode requires BLOB_READ_WRITE_TOKEN.')
   const host = env['HOST'] ?? '127.0.0.1'
   const oauthCallbackUrl = requireStr('OAUTH_CALLBACK_URL')
