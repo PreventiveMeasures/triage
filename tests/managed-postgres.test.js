@@ -53,6 +53,10 @@ test('Postgres managed store: auth, scopes, uploads, history, comments, and rest
   await db.insertReport({ id: report, filename: 'report.json', contentType: 'application/json', byteSize: 30, sha256: 'hash', uploadedBy: admin, uploadedByLogin: 'user1', repoId: 1, repoDirectory: 'src', analyzer: null, visible: true, bundleId: null, bundleIntegrity: 'sha512-abc' }, 41)
   await db.linkReportsToBundle('sha512-abc', bundle, user)
   assert.equal((await db.listReports(user))[0].bundleId, bundle)
+  assert.equal((await db.getReport(report)).bundleId, bundle)
+  assert.deepEqual(await db.listReportFilenamesWithBundleHash(bundle, 'hash'), ['report.json'])
+  assert.deepEqual(await db.listReportFilenamesWithBundleHash(bundle, 'other'), [])
+  assert.deepEqual(await db.listReportsForRepo(1), [{ id: report, filename: 'report.json', sha256: 'hash', bundleId: bundle }])
   assert.equal((await db.listReports())[0].id, report)
   assert.equal((await db.listBundles(user))[0].byteSize, 20)
   assert.equal((await db.getBundleByIntegrity('sha512-abc')).id, bundle)
@@ -128,4 +132,48 @@ test('Postgres preserves undated comments, deletion history, and user filters', 
   assert.deepEqual(await db.listCommentedFindingIds(['f']), ['f'])
   assert.equal(await db.deleteTriage(['f']), 1, 'purge includes findings with only comment audit events')
   assert.deepEqual(await db.listCommentedFindingIds(['f']), [])
+})
+
+test('Postgres admins can delete unattributed comments with version checks and their own audit identity', async t => {
+  const { db, connect } = await database(t)
+  const admin = await db.upsertUser(identity(1), 1), user = await db.upsertUser(identity(2), 2)
+  await db.setUserRole(user, 'manage')
+  const input = { findingId: 'f', body: 'imported', authorId: null, authorLogin: null }
+  const imported = await db.createComment(input, 10)
+  assert.equal(await db.deleteComment(imported.id, user, 'user2', 1, '', 20), 'forbidden')
+  assert.equal(await db.deleteComment(imported.id, admin, 'user1', 2, '', 20), 'conflict')
+  assert.equal(await db.editComment(imported.id, admin, 'user1', 'claimed', 1, '', 20), 'forbidden')
+  assert.equal(await db.deleteComment(imported.id, admin, 'user1', 1, '', 20), 'deleted')
+  assert.equal(await db.getComment(imported.id), null)
+  const history = await db.listActivity({ page: 1, limit: 20, kind: 'all', query: '', contexts: null })
+  assert.equal(history.total, 2, 'forbidden and conflicting changes add no events')
+  assert.equal(history.history[0].actor, 'user1')
+  assert.equal(history.history[0].action, 'deleted a comment')
+  const orphan = await db.createComment({ ...input, authorId: user, authorLogin: 'user2' }, 21)
+  assert.equal(await db.deleteComment(orphan.id, admin, 'user1', 1, '', 22), 'forbidden')
+  const connection = await connect()
+  try { await connection.query('DELETE FROM managed_user WHERE id = $1', [user]) } finally { await connection.release() }
+  assert.equal(await db.deleteComment(orphan.id, admin, 'user1', 1, '', 23), 'deleted')
+  const next = await db.createComment(input, 24)
+  await db.setUserRole(admin, 'manage')
+  assert.equal(await db.deleteComment(next.id, admin, 'user1', 1, '', 25), 'forbidden', 'role comes from the current database row')
+})
+
+test('Postgres upgrades existing managed databases for report-source lookup without losing data', async t => {
+  const { db, connect } = await database(t)
+  const user = await db.upsertUser(identity(1), 1)
+  const previous = await connect()
+  try {
+    await previous.query('DROP INDEX managed_report_bundle_hash_idx; DELETE FROM managed_schema_version WHERE version = 2;')
+  } finally { await previous.release() }
+  for (let i = 0; i < 2; i++) {
+    const reopened = await openPostgresManagedDb(connect)
+    assert.equal((await reopened.listUsers()).find(row => row.id === user).login, 'user1')
+    await reopened.close()
+  }
+  const upgraded = await connect()
+  try {
+    assert.equal((await upgraded.query("SELECT indexname FROM pg_indexes WHERE indexname = 'managed_report_bundle_hash_idx'")).rows.length, 1)
+    assert.equal((await upgraded.query('SELECT version FROM managed_schema_version WHERE version = 2')).rows.length, 1)
+  } finally { await upgraded.release() }
 })

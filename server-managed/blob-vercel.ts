@@ -3,6 +3,7 @@ import { Readable } from 'node:stream'
 import { type VercelBlobSdk, isNotFound, loadVercelBlobSdk } from '../server-common/vercel-blob.ts'
 import type { AvatarStore } from './avatar-store.ts'
 import type { BlobStore } from './blob-store.ts'
+import { type CacheStorage, validateCacheKey } from './cache-storage.ts'
 import type { BundleCacheStorage } from './bundle-cache.ts'
 import { createBundleStore } from './bundle-store.ts'
 
@@ -12,20 +13,39 @@ function validate(id: string): string {
   return id
 }
 
-async function deletePrefix(blobs: VercelBlobSdk, token: string, prefix: string, remove: (path: string) => Promise<void>): Promise<void> {
+type ListedBlob = Awaited<ReturnType<VercelBlobSdk['list']>>['blobs'][number]
+
+async function deletePrefix(blobs: VercelBlobSdk, token: string, prefix: string, remove: (path: string) => Promise<void>, matches = (_blob: ListedBlob) => true): Promise<void> {
   const cursors = new Set<string>(), paths = new Set<string>()
   let cursor: string | undefined
   // Finish listing before deleting so pagination cannot skip objects as the
-  // listed set shrinks. Callers supply a trailing slash to isolate a bundle.
+  // listed set shrinks. Callers supply a trailing slash to isolate a namespace.
   do {
     const page = await blobs.list({ token, prefix, ...(cursor ? { cursor } : {}) })
-    for (const blob of page.blobs) if (blob.pathname.startsWith(prefix)) paths.add(blob.pathname)
+    for (const blob of page.blobs) if (blob.pathname.startsWith(prefix) && matches(blob)) paths.add(blob.pathname)
     if (!page.hasMore) break
     if (!page.cursor || cursors.has(page.cursor)) throw new Error('Invalid blob pagination')
     cursor = page.cursor
     cursors.add(cursor)
   } while (cursor)
   for (const path of paths) await remove(path)
+}
+
+function createBlobAvatarStore(avatarBlobs: BlobStore): AvatarStore {
+  return {
+    put(id, contentType, bytes) {
+      const type = contentType.split(';', 1)[0]!.trim()
+      if (!/^image\/[a-z0-9.+-]+$/iu.test(type)) throw new Error('Invalid avatar type')
+      return avatarBlobs.put(id, Buffer.concat([Buffer.from(`${type}\n`), bytes]))
+    },
+    async get(id) {
+      const bytes = await avatarBlobs.get(id)
+      if (!bytes) return null
+      const split = bytes.indexOf(10)
+      if (split < 0 || split > 100) throw new Error('Invalid cached avatar')
+      return { contentType: bytes.subarray(0, split).toString(), bytes: bytes.subarray(split + 1) }
+    },
+  }
 }
 
 export async function openManagedVercelStorage(token: string, sdk?: VercelBlobSdk) {
@@ -65,21 +85,7 @@ export async function openManagedVercelStorage(token: string, sdk?: VercelBlobSd
       async delete(id) { await remove(path(id)) },
     }
   }
-  const avatarBlobs = store('avatars')
-  const avatarStore: AvatarStore = {
-    put(id, contentType, bytes) {
-      const type = contentType.split(';', 1)[0]!.trim()
-      if (!/^image\/[a-z0-9.+-]+$/iu.test(type)) throw new Error('Invalid avatar type')
-      return avatarBlobs.put(id, Buffer.concat([Buffer.from(`${type}\n`), bytes]))
-    },
-    async get(id) {
-      const bytes = await avatarBlobs.get(id)
-      if (!bytes) return null
-      const split = bytes.indexOf(10)
-      if (split < 0 || split > 100) throw new Error('Invalid cached avatar')
-      return { contentType: bytes.subarray(0, split).toString(), bytes: bytes.subarray(split + 1) }
-    },
-  }
+  const avatarStore = createBlobAvatarStore(store('avatars'))
   const cachePath = (id: string, file: string) => `.managed/cache/bundles/${validate(id)}/${file}`
   const cacheStorage: BundleCacheStorage = {
     async exists(id, file) {
@@ -96,19 +102,24 @@ export async function openManagedVercelStorage(token: string, sdk?: VercelBlobSd
   }
   // Staging uploads are never published. An interrupted browser leaves only
   // parts here; the authenticated cron removes them after a full day.
-  async function reapUploads(now = Date.now()) {
-    let cursor: string | undefined
-    do {
-      const page = await blobs.list({ token, prefix: '.managed/uploads/', ...(cursor ? { cursor } : {}) })
-      for (const blob of page.blobs) {
-        const created = new Date(blob.uploadedAt ?? now).getTime()
-        if (created < now - 86_400_000) await remove(blob.pathname)
-      }
-      if (!page.hasMore) return
-      if (!page.cursor || page.cursor === cursor) throw new Error('Invalid blob pagination')
-      cursor = page.cursor
-    } while (cursor)
+  function reapUploads(now = Date.now()) {
+    return deletePrefix(blobs, token, '.managed/uploads/', remove,
+      blob => new Date(blob.uploadedAt ?? now).getTime() < now - 86_400_000)
+  }
+  const sourcesPath = (key: string) => `.managed/cache/report-sources/${validateCacheKey(key)}`
+  const reportSourcesStorage: CacheStorage = {
+    async exists(key) {
+      try { await blobs.head(sourcesPath(key), { token }); return true }
+      catch (err) { if (isNotFound(err)) return false; throw err }
+    },
+    put: (key, bytes) => put(sourcesPath(key), bytes),
+    async open(key) {
+      const result = await open(sourcesPath(key))
+      if (!result) throw new Error('Report sources cache unavailable')
+      return result
+    },
+    delete: prefix => deletePrefix(blobs, token, `${sourcesPath(prefix)}/`, remove),
   }
   const bundleStore = createBundleStore(store('bundles'), store('bundles', '.map.br'))
-  return { reportStore: store('reports'), bundleStore, uploadStore: store('uploads'), avatarStore, cacheStorage, reapUploads }
+  return { reportStore: store('reports'), bundleStore, uploadStore: store('uploads'), avatarStore, cacheStorage, reportSourcesStorage, reapUploads }
 }

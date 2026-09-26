@@ -219,10 +219,10 @@ returns the original sourcemap or Stasis JSON after HTTP decoding.
 Both endpoints use `Content-Encoding: br`. Metadata is cached as Brotli;
 contents serve the stored Brotli bytes directly, without waiting for metadata
 or generating another compressed copy. Stasis uploads remain byte-identical.
-Contents and downloads use paused file streams; HEAD reads file size only and
+Contents and downloads use disk or private Blob streams; HEAD closes the stream and
 GET streams with backpressure instead of buffering the full bundle per request.
 Clients are expected to support Brotli; no encoding negotiation is needed.
-Both endpoints support HEAD, compressed Content-Length, and
+Both endpoints support HEAD, compressed Content-Length when known, and
 `Cache-Control: private, no-store`.
 `GET /api/bundles/:id/download` preserves the uploaded filename and bytes:
 sourcemaps use HTTP Brotli decoding, while Stasis downloads remain .br archives.
@@ -232,13 +232,21 @@ is not retained. The DB keeps the original filename, byte size and integrity
 so deduplication and report hashes keep working. Sourcemaps and metadata use
 Brotli quality 4 to avoid slow maximum-quality compression.
 
-The cache lives beside the managed database under `cache/bundles/:id/`.
-Uploads schedule a prebuild; reads build missing derivatives on demand. Builds
+The cache lives beside SQLite under `cache/bundles/:id/`, or in private Blob
+storage for Neon deployments. Persistent servers schedule upload prebuilds;
+Vercel functions build missing derivatives during authorized reads. Builds
 are deduplicated and serialized to bound memory, with a 512 MiB decoded limit.
 Files are published atomically and removed on bundle or repository deletion,
 including when a build was already in flight. Invalid/unsupported bundles can
 still be downloaded as uploaded; metadata requests return 422. Contents are
 passed through without parsing; metadata generation still validates them.
+
+Report-scoped `/api/reports/:id/sources` responses use a separate gzip cache,
+backed by disk or private Blob storage. Derivatives are shared by report hash
+and filename format, scoped to the viewer's dependency/security permissions,
+and removed when their final report reference or bundle is deleted. Cold
+builders recheck references after publishing to reconcile concurrent deletion
+on another instance. Authorization is checked again before streaming sources.
 
 Admins can read/manage every bundle. Managers can read/manage bundles they own
 or can access through their teams. View/triage users need team access; the none

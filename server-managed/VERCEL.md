@@ -20,12 +20,17 @@ Vercel Functions:
    implementations of the same `BlobStore` interface. Both use `BundleStore`
    to compress sourcemaps once into `.map.br` objects and retain uploaded
    Stasis archives unchanged. Original sizes and hashes stay in the database.
-3. **Avatars and bundle derivatives** (`avatar-store.ts`, `bundle-cache.ts`).
-   Both previously depended on writable local directories. Avatars now have a
+3. **Avatars, bundle derivatives, and report sources** (`avatar-store.ts`,
+   `bundle-cache.ts`, `report-sources.ts`). These previously depended on writable
+   local directories. Avatars now have a
    private Blob adapter; bundle generation uses `BundleCacheStorage` with disk
    and Blob adapters. Only Brotli metadata is cached; contents stream directly
    from the stored Brotli bundle. Cache eviction is safe: metadata can be rebuilt from
-   durable uploads. Process-local maps only deduplicate computation.
+   durable uploads. Report-scoped sources use `CacheStorage` with disk and private
+   Blob adapters. Gzip responses retain main's report hash, filename format and
+   viewer-permission isolation, with authorization rechecked after cold builds.
+   Both caches reconcile deletion after publishing across function instances.
+   Process-local maps only deduplicate computation.
 4. **Listener, timers, and detached work** (`index.ts`, `http.ts`). The new
    `api/managed.ts` awaits requests without starting a listener or installing
    process signal handlers or cleanup intervals. Speculative background bundle
@@ -40,7 +45,7 @@ Vercel Functions:
    and bundle limits remain 10 MiB and 100 MiB by default.
 6. **Large buffered responses** (`http.ts`). Reports and large JSON responses
    write chunks through Node's streaming response API. Bundle metadata,
-   contents, and downloads stream from disk or private Blob storage with
+   contents, report sources, and downloads stream from disk or private Blob storage with
    backpressure. Sourcemap downloads use HTTP Brotli decoding to restore the
    uploaded bytes; Stasis downloads remain byte-identical archives.
 7. **Function routing and raw request bodies**. The managed Vercel config
@@ -112,7 +117,9 @@ checks the total limit and each exact part length, reconstructs the bytes,
 then applies the existing parsing, permissions, integrity, and deduplication
 logic. Finalization consumes the parts. Retry a failed finalization by
 re-uploading; incomplete transfers are collected after 24 hours. Daily cron
-also deletes expired sessions; session reads reject expiry immediately.
+also deletes expired sessions; session reads reject expiry immediately. Cleanup
+finishes listing all staging pages before deleting expired parts so deletions
+cannot shift pagination and skip objects.
 
 Neon writers use a shared transaction lock so first-admin selection, slugs,
 comment version checks, triage/history changes and team-grant replacements

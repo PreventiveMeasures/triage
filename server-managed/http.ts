@@ -1150,7 +1150,7 @@ async function handleReportSources(req: IncomingMessage, res: ServerResponse, de
   }
   res.writeHead(200, {
     'content-type': 'application/json', 'content-encoding': 'gzip',
-    'content-length': String(cached.size), 'cache-control': 'private, no-store',
+    ...(cached.size == null ? {} : { 'content-length': String(cached.size) }), 'cache-control': 'private, no-store',
     'x-content-type-options': 'nosniff',
   })
   if (req.method === 'HEAD') { cached.stream.destroy(); res.end(); return }

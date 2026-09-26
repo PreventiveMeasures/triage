@@ -14,27 +14,7 @@ import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createSession } from '../server-managed/session.ts'
 import { UPLOAD_CHUNK_BYTES, putUploadPart, readUpload, validUploadPart } from '../server-managed/uploads.ts'
 
-function sdkFixture() {
-  const calls = [], objects = new Map()
-  const missing = () => Object.assign(new Error('missing'), { name: 'BlobNotFoundError' })
-  const sdk = {
-    async put(path, bytes, options) {
-      calls.push({ op: 'put', path, options })
-      objects.set(path, { bytes, uploadedAt: new Date() })
-      return { pathname: path, url: `https://private.invalid/${path}` }
-    },
-    async get(path, options) {
-      calls.push({ op: 'get', path, options })
-      const object = objects.get(path)
-      if (!object) return null
-      return { statusCode: 200, blob: { size: object.bytes.length }, stream: new ReadableStream({ start(controller) { controller.enqueue(object.bytes); controller.close() } }) }
-    },
-    async head(path) { if (!objects.has(path)) throw missing(); return { size: objects.get(path).bytes.length } },
-    async del(path) { objects.delete(path) },
-    async list({ prefix }) { return { blobs: [...objects].filter(([path]) => path.startsWith(prefix)).map(([pathname, { uploadedAt }]) => ({ pathname, uploadedAt })), hasMore: false } },
-  }
-  return { sdk, objects, calls }
-}
+import { sdkFixture } from './_managed-vercel.js'
 
 test('private managed blobs and avatars survive independent instances without namespace collisions', async () => {
   const { sdk, objects, calls } = sdkFixture()
@@ -254,5 +234,52 @@ for (const kind of ['sourcemap', 'stasis']) {
     }
     assert.equal((await send(`/api/admin/bundles/${id}`, 'DELETE')).status, 200)
     assert.equal(objects.size, 0, 'deletion removes the archive and cached metadata')
+  })
+}
+
+test('upload reaping lists all pages before deleting stale parts and preserves recent uploads', async () => {
+  const { sdk, objects } = sdkFixture()
+  const now = 2 * 86_400_000, prefix = '.managed/uploads/'
+  for (let i = 0; i < 8; i++) objects.set(`${prefix}${i}`, { bytes: Buffer.from('part'), uploadedAt: new Date(i % 3 === 0 ? now : 0) })
+  const preserved = [...objects.keys()].filter((_, i) => i % 3 === 0)
+  for (const [suffix, uploadedAt] of [['unknown', undefined], ['invalid', 'invalid'], ['boundary', new Date(now - 86_400_000)]]) {
+    objects.set(`${prefix}${suffix}`, { bytes: Buffer.from('part'), uploadedAt }); preserved.push(`${prefix}${suffix}`)
+  }
+  const report = `.managed/reports/${randomUUID()}`
+  objects.set(report, { bytes: Buffer.from('report'), uploadedAt: new Date(0) }); preserved.push(report)
+  let pages = 0
+  sdk.list = async ({ cursor, prefix: requested }) => {
+    assert.equal(requested, prefix)
+    const paths = [...objects.keys()].filter(path => path.startsWith(prefix)).toSorted()
+    const start = Number(cursor ?? 0)
+    const end = start + 2
+    pages++
+    return { blobs: paths.slice(start, end).map(pathname => ({ pathname, uploadedAt: objects.get(pathname).uploadedAt })), hasMore: end < paths.length, cursor: String(end) }
+  }
+  const { reapUploads } = await openManagedVercelStorage('secret', sdk)
+  await reapUploads(now)
+  assert.equal(pages, 6)
+  assert.deepEqual([...objects.keys()].toSorted(), preserved.toSorted())
+  await reapUploads(now)
+  assert.deepEqual([...objects.keys()].toSorted(), preserved.toSorted())
+})
+
+for (const failure of ['network', 'missing cursor', 'cyclic cursor']) {
+  test(`upload reaping leaves all parts intact after ${failure} and retries successfully`, async () => {
+    const { sdk, objects } = sdkFixture()
+    const paths = ['a', 'b', 'c'].map(id => `.managed/uploads/${id}`)
+    for (const path of paths) objects.set(path, { bytes: Buffer.from('part'), uploadedAt: new Date(0) })
+    const list = sdk.list
+    sdk.list = async ({ cursor }) => {
+      if (cursor && failure === 'network') throw new Error('listing unavailable')
+      return { blobs: [{ pathname: paths[0], uploadedAt: new Date(0) }], hasMore: true,
+        cursor: failure === 'missing cursor' ? undefined : cursor === 'first' ? 'second' : 'first' }
+    }
+    const { reapUploads } = await openManagedVercelStorage('secret', sdk)
+    await assert.rejects(reapUploads(2 * 86_400_000), /listing unavailable|Invalid blob pagination/u)
+    assert.deepEqual([...objects.keys()], paths)
+    sdk.list = list
+    await reapUploads(2 * 86_400_000)
+    assert.equal(objects.size, 0)
   })
 }

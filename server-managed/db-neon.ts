@@ -33,6 +33,10 @@ async function initialize(db: PgConnection): Promise<void> {
       for (const type of ['report', 'bundle']) await createUploadTrigger(db, type)
       await db.query('INSERT INTO managed_schema_version VALUES (1)')
     }
+    if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 2')).rows.length === 0) {
+      await db.query('CREATE INDEX IF NOT EXISTS managed_report_bundle_hash_idx ON managed_report(bundle_id, sha256)')
+      await db.query('INSERT INTO managed_schema_version VALUES (2)')
+    }
     await db.query('COMMIT')
   } catch (err) {
     await db.query('ROLLBACK')

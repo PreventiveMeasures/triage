@@ -1,12 +1,12 @@
 import { Buffer } from 'node:buffer'
-import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, open, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { dirname, extname, join } from 'node:path'
+import { createHash } from 'node:crypto'
+import { extname } from 'node:path'
 import { promisify } from 'node:util'
 import { gzip } from 'node:zlib'
 import { bundleSourcesAsMap } from '../common/bundle-sources.js'
 import { loadManagedFindings } from '../common/managed/report-content.ts'
 import { type ViewerPermissions, filterReportContent } from '../common/managed/report-filter.ts'
+import type { CacheStorage } from './cache-storage.ts'
 import { readBundleDetails } from './bundle-cache.ts'
 import type { BlobStore } from './blob-store.ts'
 import type { BundleStore } from './bundle-store.ts'
@@ -15,15 +15,15 @@ import type { ManagedBundle, ManagedDb, ReportRecord } from './db.ts'
 const compress = promisify(gzip)
 const reportFormat = (filename: string) => extname(filename).toLowerCase()
 
-function bundleDirectory(dir: string, id: string) {
+function bundleDirectory(id: string) {
   if (!/^[a-f\d-]{36}$/iu.test(id)) throw new Error('Invalid bundle id')
-  return join(dir, id)
+  return id
 }
-function reportDirectory(dir: string, bundleId: string, sha256: string) {
-  return join(bundleDirectory(dir, bundleId), `v1-${createHash('sha256').update(sha256).digest('hex')}`)
+function reportDirectory(bundleId: string, sha256: string) {
+  return `${bundleDirectory(bundleId)}/v1-${createHash('sha256').update(sha256).digest('hex')}`
 }
-function formatDirectory(dir: string, bundleId: string, sha256: string, name: string) {
-  return join(reportDirectory(dir, bundleId, sha256), createHash('sha256').update(reportFormat(name)).digest('hex'))
+function formatDirectory(bundleId: string, sha256: string, name: string) {
+  return `${reportDirectory(bundleId, sha256)}/${createHash('sha256').update(reportFormat(name)).digest('hex')}`
 }
 
 // Match the report's spelling exactly, then an unambiguous path suffix. Never
@@ -61,7 +61,7 @@ function selectSources(findings: unknown[], sources: Map<string, string>) {
 // identity and visibility are part of the key: a broader viewer's sources must
 // never populate a restricted response. Group derivatives by hash and filename
 // format so each format's permissions can be removed after its last deletion.
-export function createReportSourcesCache(dir: string, db: ManagedDb, reports: BlobStore, bundles: BundleStore) {
+export function createReportSourcesCache(storage: CacheStorage, db: ManagedDb, reports: BlobStore, bundles: BundleStore) {
   const pending = new Map<string, { reportId: string; job: Promise<boolean> }>()
   let queue = Promise.resolve()
   function enqueue<T>(work: () => Promise<T>): Promise<T> {
@@ -73,7 +73,11 @@ export function createReportSourcesCache(dir: string, db: ManagedDb, reports: Bl
     const key = createHash('sha256').update(JSON.stringify([
       bundle.integrity, bundle.kind, permissions.dependencies, permissions.security,
     ])).digest('hex')
-    return join(formatDirectory(dir, bundle.id, report.sha256, report.filename), `${key}.json.gz`)
+    return `${formatDirectory(bundle.id, report.sha256, report.filename)}/${key}.json.gz`
+  }
+  async function referenced(report: ReportRecord, bundle: ManagedBundle) {
+    const names = await db.listReportFilenamesWithBundleHash(bundle.id, report.sha256)
+    return names.some(name => reportFormat(name) === reportFormat(report.filename)) && await db.getBundle(bundle.id) != null
   }
   async function build(target: string, report: ReportRecord, bundle: ManagedBundle, permissions: ViewerPermissions) {
     const bytes = await reports.get(report.id)
@@ -86,12 +90,14 @@ export function createReportSourcesCache(dir: string, db: ManagedDb, reports: Bl
     const body = await compress(Buffer.from(JSON.stringify({ integrity: bundle.integrity, ...selection })), { level: 6 })
     // A duplicate with the same hash AND format can use these parsed bytes.
     // Another format must not keep a deleted variant's late build alive.
-    const names = await db.listReportFilenamesWithBundleHash(bundle.id, report.sha256)
-    if (!names.some(name => reportFormat(name) === reportFormat(report.filename)) || !(await db.getBundle(bundle.id))) return false
-    await mkdir(dirname(target), { recursive: true })
-    const temp = `${target}.${randomUUID()}.tmp`
-    try { await writeFile(temp, body); await rename(temp, target) }
-    finally { await rm(temp, { force: true }) }
+    if (!(await referenced(report, bundle))) return false
+    await storage.put(target, body)
+    // Another instance may finish deletion while this write is in flight.
+    // Recheck after publishing so a late builder cannot resurrect its cache.
+    if (!(await referenced(report, bundle))) {
+      await storage.delete(formatDirectory(bundle.id, report.sha256, report.filename))
+      return false
+    }
     return true
   }
   async function ensure(target: string, report: ReportRecord, bundle: ManagedBundle, permissions: ViewerPermissions): Promise<boolean> {
@@ -107,8 +113,7 @@ export function createReportSourcesCache(dir: string, db: ManagedDb, reports: Bl
       return ensure(target, report, bundle, permissions)
     }
     const job = (async () => {
-      try { await stat(target); return true }
-      catch (err) { if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err }
+      if (await storage.exists(target)) return true
       // Serial cold builds bound peak decompression/parsing memory.
       return enqueue(() => build(target, report, bundle, permissions))
     })()
@@ -120,14 +125,12 @@ export function createReportSourcesCache(dir: string, db: ManagedDb, reports: Bl
     async open(report: ReportRecord, bundle: ManagedBundle, permissions: ViewerPermissions) {
       const target = filename(report, bundle, permissions)
       if (!(await ensure(target, report, bundle, permissions))) return null
-      const file = await open(target, 'r')
-      try { return { size: (await file.stat()).size, stream: file.createReadStream() } }
-      catch (err) { await file.close(); throw err }
+      return storage.open(target)
     },
     async deleteBundle(id: string) {
-      const prefix = `${bundleDirectory(dir, id)}/`
+      const prefix = `${bundleDirectory(id)}/`
       await Promise.allSettled([...pending].filter(([key]) => key.startsWith(prefix)).map(([, entry]) => entry.job))
-      await rm(bundleDirectory(dir, id), { recursive: true, force: true })
+      await storage.delete(bundleDirectory(id))
     },
     async deleteReport(report: Pick<ReportRecord, 'bundleId' | 'sha256' | 'filename'>) {
       const { bundleId, sha256 } = report
@@ -137,9 +140,9 @@ export function createReportSourcesCache(dir: string, db: ManagedDb, reports: Bl
       await enqueue(async () => {
         const names = await db.listReportFilenamesWithBundleHash(bundleId, sha256)
         if (names.length === 0) {
-          await rm(reportDirectory(dir, bundleId, sha256), { recursive: true, force: true })
+          await storage.delete(reportDirectory(bundleId, sha256))
         } else if (!names.some(name => reportFormat(name) === reportFormat(report.filename))) {
-          await rm(formatDirectory(dir, bundleId, sha256, report.filename), { recursive: true, force: true })
+          await storage.delete(formatDirectory(bundleId, sha256, report.filename))
         }
       })
     },
