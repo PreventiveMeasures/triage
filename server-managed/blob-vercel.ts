@@ -12,6 +12,22 @@ function validate(id: string): string {
   return id
 }
 
+async function deletePrefix(blobs: VercelBlobSdk, token: string, prefix: string, remove: (path: string) => Promise<void>): Promise<void> {
+  const cursors = new Set<string>(), paths = new Set<string>()
+  let cursor: string | undefined
+  // Finish listing before deleting so pagination cannot skip objects as the
+  // listed set shrinks. Callers supply a trailing slash to isolate a bundle.
+  do {
+    const page = await blobs.list({ token, prefix, ...(cursor ? { cursor } : {}) })
+    for (const blob of page.blobs) if (blob.pathname.startsWith(prefix)) paths.add(blob.pathname)
+    if (!page.hasMore) break
+    if (!page.cursor || cursors.has(page.cursor)) throw new Error('Invalid blob pagination')
+    cursor = page.cursor
+    cursors.add(cursor)
+  } while (cursor)
+  for (const path of paths) await remove(path)
+}
+
 export async function openManagedVercelStorage(token: string, sdk?: VercelBlobSdk) {
   const blobs = sdk ?? await loadVercelBlobSdk()
   const options = { token, access: 'private' as const, useCache: false }
@@ -76,7 +92,7 @@ export async function openManagedVercelStorage(token: string, sdk?: VercelBlobSd
       if (!result) throw new Error('Bundle cache unavailable')
       return result
     },
-    delete: (id, files) => Promise.all(files.map(file => remove(cachePath(id, file)))).then(() => undefined),
+    delete: id => deletePrefix(blobs, token, cachePath(id, ''), remove),
   }
   // Staging uploads are never published. An interrupted browser leaves only
   // parts here; the authenticated cron removes them after a full day.

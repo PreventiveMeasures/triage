@@ -29,11 +29,11 @@ export interface BundleCacheStorage {
   exists(id: string, file: string): Promise<boolean>
   put(id: string, file: string, bytes: Buffer): Promise<void>
   open(id: string, file: string): Promise<OpenedBlob>
-  delete(id: string, files: string[]): Promise<void>
+  // Remove all cached versions for this bundle, including legacy derivatives.
+  delete(id: string): Promise<void>
 }
 
 const filename = `v${BUNDLE_METADATA_VERSION}-metadata.json.br`
-const files = [filename]
 
 export function createBundleCache(storage: BundleCacheStorage, db: ManagedDb, store: BundleStore) {
   const pending = new Map<string, Promise<void>>()
@@ -48,7 +48,7 @@ export function createBundleCache(storage: BundleCacheStorage, db: ManagedDb, st
     // A different instance may have deleted the row while these writes ran.
     // Reconcile after publishing so its cleanup cannot be undone by us.
     if (!(await db.getBundle(record.id))) {
-      await storage.delete(record.id, files)
+      await storage.delete(record.id)
       throw new Error('Bundle deleted')
     }
   }
@@ -80,7 +80,7 @@ export function createBundleCache(storage: BundleCacheStorage, db: ManagedDb, st
       // Call after deleting the row. Waiting prevents an in-flight builder
       // from recreating its files after deletion has completed.
       await pending.get(id)?.catch(() => {})
-      await storage.delete(id, files)
+      await storage.delete(id)
     },
   }
 }

@@ -80,6 +80,52 @@ test('Brotli metadata persists across cold starts while contents use stored bund
   assert.ok((await consume(await cache.open(record, 'metadata'))).length > 0)
 })
 
+test('cache deletion removes every version across pages without touching other stored data', async () => {
+  const { sdk, objects } = sdkFixture()
+  const id = randomUUID(), other = randomUUID(), prefix = `.managed/cache/bundles/${id}/`
+  const versions = ['v1-metadata.json.gz', 'v1-contents.json.gz', 'v2-metadata.json.br', 'v3-metadata.json.br', 'old/metadata.json.br']
+  const retained = [`.managed/cache/bundles/${other}/v1-metadata.json.br`, `.managed/cache/bundles/${id}-other/metadata.json.br`,
+    `.managed/bundles/${id}`, `.managed/bundles/${id}.map.br`, `.managed/reports/${id}`, `.managed/uploads/${id}`]
+  for (const path of [...versions.map(file => prefix + file), ...retained]) objects.set(path, { bytes: Buffer.from('stored') })
+  let pages = 0
+  sdk.list = async options => {
+    assert.equal(options.token, 'secret')
+    assert.equal(options.prefix, prefix)
+    pages++
+    const paths = [...objects.keys()].filter(path => path.startsWith(options.prefix)).toSorted()
+    const start = Number(options.cursor ?? 0)
+    const end = start + 2
+    return { blobs: paths.slice(start, end).map(pathname => ({ pathname })), hasMore: end < paths.length, cursor: String(end) }
+  }
+  const storage = await openManagedVercelStorage('secret', sdk)
+  const cache = createBundleCache(storage.cacheStorage, {}, storage.bundleStore)
+  await cache.delete(id)
+  assert.deepEqual([...objects.keys()].toSorted(), retained.toSorted())
+  assert.equal(pages, 3)
+  await cache.delete(id)
+  assert.deepEqual([...objects.keys()].toSorted(), retained.toSorted(), 'repeated deletion is harmless')
+  await assert.rejects(cache.delete('../outside'), /Invalid/u)
+})
+
+test('cache deletion reports incomplete listings and can retry all versions', async () => {
+  const { sdk, objects } = sdkFixture()
+  const id = randomUUID(), prefix = `.managed/cache/bundles/${id}/`
+  const paths = ['v1-metadata.json.br', 'v2-metadata.json.br'].map(file => prefix + file)
+  for (const path of paths) objects.set(path, { bytes: Buffer.from('stored') })
+  const list = sdk.list
+  sdk.list = async ({ cursor }) => {
+    if (cursor) throw new Error('listing unavailable')
+    return { blobs: [{ pathname: paths[0] }], hasMore: true, cursor: 'next' }
+  }
+  const storage = await openManagedVercelStorage('secret', sdk)
+  const cache = createBundleCache(storage.cacheStorage, {}, storage.bundleStore)
+  await assert.rejects(cache.delete(id), /listing unavailable/u)
+  assert.equal(objects.size, 2, 'enumeration finishes before deletion changes the listed set')
+  sdk.list = list
+  await cache.delete(id)
+  assert.equal(objects.size, 0)
+})
+
 test('multipart upload isolation, byte limits, cleanup and orphan expiry', async () => {
   const { sdk, objects } = sdkFixture()
   const { uploadStore, reapUploads } = await openManagedVercelStorage('secret', sdk)
@@ -116,6 +162,7 @@ test('a cache builder does not leave derivatives after another instance deletes 
   const storage = await openManagedVercelStorage('secret', sdk)
   const bytes = Buffer.from(JSON.stringify({ version: 3, sources: [], sourcesContent: [], mappings: '' })), id = randomUUID()
   const record = { id, kind: 'sourcemap', filename: 'source.map', byteSize: bytes.length, integrity: 'hash' }
+  objects.set(`.managed/cache/bundles/${id}/v1-metadata.json.gz`, { bytes: Buffer.from('old cache') })
   await storage.bundleStore.put(id, bytes, record.kind)
   const cache = createBundleCache(storage.cacheStorage, { getBundle: async () => exists ? record : null }, storage.bundleStore)
   await assert.rejects(cache.prebuild(record), /Bundle deleted/u)
