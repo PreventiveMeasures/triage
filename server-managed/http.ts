@@ -1200,6 +1200,7 @@ async function handleViewReport(req: IncomingMessage, res: ServerResponse, deps:
 // A read-only POST avoids URL-length limits when a workspace has many reports.
 // Authorize every requested id before reading blobs; never return a partial
 // workspace, or let one authorized report grant access to another in the batch.
+const REPORT_QUERY_CONCURRENCY = 8
 async function handleQueryReports(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   const s = await readSession(deps.config, deps.db, cookie, Date.now())
   if (!s) { sendJson(res, 401, { error: 'unauthenticated' }); return }
@@ -1217,22 +1218,44 @@ async function handleQueryReports(req: IncomingMessage, res: ServerResponse, dep
   if (reports.size !== ids.length) { sendJson(res, 404, { error: 'no-report' }); return }
   const storedBytes = snapshot.reports.reduce((total, report) => total + report.byteSize, 0)
   if (storedBytes > MAX_REPORT_QUERY_BYTES) { sendJson(res, 413, { error: 'batch-too-large' }); return }
-  // Retain only encoded response parts, not every blob and parsed object as
-  // well. Check actual bytes too, in case storage and metadata disagree.
+  // Overlap remote blob reads, retaining only each report's encoded response
+  // after processing. Check actual bytes too if storage and metadata disagree.
   const parts = [Buffer.from('{"reports":[')]
   let inputBytes = 0, outputBytes = parts[0]!.length + 2
-  for (const id of ids) {
-    const bytes = await deps.reportStore.get(id)
-    if (bytes == null) { sendJson(res, 503, { error: 'unavailable' }); return }
-    inputBytes += bytes.length
-    if (inputBytes > MAX_REPORT_QUERY_BYTES) { sendJson(res, 413, { error: 'batch-too-large' }); return }
-    const access = reports.get(id)!
-    const { data } = readManagedReport(bytes.toString('utf8'), access.filename)
-    if (!data) { sendJson(res, 422, { error: 'unreadable-report' }); return }
-    const part = Buffer.from(`${parts.length > 1 ? ',' : ''}${JSON.stringify({ id, data: filterReportData(data, access.permissions), repo: access.repo })}`)
-    outputBytes += part.length
-    if (outputBytes > MAX_REPORT_QUERY_BYTES) { sendJson(res, 413, { error: 'batch-too-large' }); return }
-    parts.push(part)
+  let next = 0, stopped = false
+  const fail = (status: number, error: string) => { stopped = true; return { status, error } }
+  const workers = await Promise.allSettled(Array.from({ length: Math.min(REPORT_QUERY_CONCURRENCY, ids.length) }, async () => {
+    try {
+      while (next < ids.length) {
+        if (stopped) return
+        const index = next++
+        const id = ids[index]!
+        const bytes = await deps.reportStore.get(id)
+        if (stopped) return
+        if (bytes == null) return fail(503, 'unavailable')
+        inputBytes += bytes.length
+        if (inputBytes > MAX_REPORT_QUERY_BYTES) return fail(413, 'batch-too-large')
+        const access = reports.get(id)!
+        const { data } = readManagedReport(bytes.toString('utf8'), access.filename)
+        if (!data) return fail(422, 'unreadable-report')
+        const part = Buffer.from(`${index > 0 ? ',' : ''}${JSON.stringify({ id, data: filterReportData(data, access.permissions), repo: access.repo })}`)
+        outputBytes += part.length
+        if (outputBytes > MAX_REPORT_QUERY_BYTES) return fail(413, 'batch-too-large')
+        // Completion order may differ from the requested report order.
+        parts[index + 1] = part
+      }
+    } catch (error) {
+      if (stopped) return
+      stopped = true
+      throw error
+    }
+    return undefined
+  }))
+  // Stop scheduling on any failure, and drain already-started reads before
+  // responding so none outlive the tracked request or reject unhandled.
+  for (const result of workers) {
+    if (result.status === 'rejected') throw result.reason
+    if (result.value) { sendJson(res, result.value.status, { error: result.value.error }); return }
   }
   // Access to an earlier report may change while a later blob is fetched.
   // Reject the whole answer if any content/access/assignment snapshot changed.

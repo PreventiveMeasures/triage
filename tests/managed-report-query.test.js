@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { Readable } from 'node:stream'
+import { setImmediate } from 'node:timers/promises'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createSession, readSession } from '../server-managed/session.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
@@ -57,6 +58,87 @@ async function setup(t, createHandler = createManagedRequestHandler) {
   }
   return { db, users, blobs, reads, store, request }
 }
+
+async function addReports(h, count) {
+  const original = await h.db.getReport('a')
+  const ids = Array.from({ length: count }, (_, index) => `report-${index}`)
+  for (const id of ids) {
+    await h.db.insertReport({ ...original, id, sha256: id }, Date.now())
+    h.blobs.set(id, h.blobs.get('a'))
+  }
+  return ids
+}
+
+test('batch blob reads overlap within a small pool and preserve request order', async t => {
+  const h = await setup(t)
+  const ids = await addReports(h, 24)
+  const first = Promise.withResolvers()
+  let active = 0, peak = 0
+  const completed = []
+  h.store.afterRead = async id => {
+    peak = Math.max(peak, ++active)
+    // Keep the first read slow while the other workers consume the queue.
+    if (id === ids[0]) await first.promise
+    else await setImmediate()
+    completed.push(id)
+    active--
+  }
+  const response = h.request({ ids })
+  try {
+    for (let i = 0; i < 100 && completed.length < ids.length - 1; i++) await setImmediate()
+    assert.ok(peak > 1 && peak <= 8, `expected 2–8 simultaneous reads, got ${peak}`)
+    assert.equal(completed.length, ids.length - 1, 'one slow blob must not stall other workers')
+  } finally {
+    first.resolve()
+    await response
+  }
+  const result = await response
+  assert.equal(result.status, 200)
+  assert.deepEqual(result.body.reports.map(report => report.id), ids)
+  assert.equal(active, 0)
+  assert.equal(new Set(h.reads).size, ids.length)
+  assert.equal(h.reads.length, ids.length)
+})
+
+test('failed batches stop scheduling blobs and drain active reads before responding', async t => {
+  for (const [kind, status, error] of [
+    ['missing', 503, 'unavailable'], ['unreadable', 422, 'unreadable-report'],
+    ['oversized', 413, 'batch-too-large'], ['throwing', 500, 'internal'],
+  ]) {
+    const h = await setup(t)
+    const ids = await addReports(h, 24)
+    const release = Promise.withResolvers()
+    let active = 0, settled = false
+    t.mock.method(h.store, 'get', async id => {
+      h.reads.push(id)
+      active++
+      try {
+        if (id !== ids[0]) {
+          await release.promise
+          if (kind === 'throwing') throw new Error('later blob read failed')
+          return h.blobs.get(id)
+        }
+        await setImmediate()
+        if (kind === 'missing') return null
+        if (kind === 'unreadable') return Buffer.from('not a report')
+        if (kind === 'oversized') return { length: MAX_REPORT_QUERY_BYTES + 1, toString() { assert.fail('oversized report parsed') } }
+        throw new Error('blob read failed')
+      } finally { active-- }
+    })
+    const response = h.request({ ids }).then(result => { settled = true; return result })
+    try {
+      for (let i = 0; i < 100 && h.reads.length === 0; i++) await setImmediate()
+      for (let i = 0; i < 5; i++) await setImmediate()
+      assert.ok(h.reads.length > 1 && h.reads.length <= 8, kind)
+      assert.equal(settled, false, 'wait for already-started reads')
+    } finally { release.resolve(); await response }
+    const result = await response
+    assert.equal(result.status, status, kind)
+    assert.deepEqual(result.body, { error }, kind)
+    assert.ok(h.reads.length <= 8, 'do not start more reads after failure')
+    assert.equal(active, 0)
+  }
+})
 
 test('a workspace batch returns all requested content with the same filtering and metadata as individual reads', async t => {
   const h = await setup(t)
@@ -212,6 +294,17 @@ test('actual storage bytes are bounded even when the catalog understates them', 
     toString() { assert.fail('oversized bytes must never be parsed') },
   }))
   const response = await h.request({ ids: ['a'] })
+  assert.equal(response.status, 413)
+  assert.deepEqual(response.body, { error: 'batch-too-large' })
+})
+
+test('concurrent reads share the aggregate input-byte budget', async t => {
+  const h = await setup(t)
+  t.mock.method(h.store, 'get', async id => {
+    await setImmediate()
+    return { length: MAX_REPORT_QUERY_BYTES / 2 + 1, toString: () => h.blobs.get(id).toString('utf8') }
+  })
+  const response = await h.request({ ids: ['a', 'b'] })
   assert.equal(response.status, 413)
   assert.deepEqual(response.body, { error: 'batch-too-large' })
 })
