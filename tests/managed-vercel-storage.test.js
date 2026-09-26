@@ -193,11 +193,18 @@ for (const kind of ['sourcemap', 'stasis']) {
     assert.equal(metadata.headers['content-encoding'], 'br')
     assert.equal(JSON.parse(brotliDecompressSync(metadata.bytes)).id, id)
     const get = sdk.get
-    sdk.get = async (...args) => { const result = await get(...args); return { ...result, blob: { size: null } } }
-    const unknownSize = await send(`/api/bundles/${id}/download`)
-    assert.equal(unknownSize.status, 200)
-    assert.equal(unknownSize.headers['content-length'], undefined)
-    assert.deepEqual(unknownSize.bytes, encoded)
+    for (const size of [0, null]) {
+      // Private SDK GET responses can return zero even with a nonempty body.
+      sdk.get = async (...args) => { const result = await get(...args); return { ...result, blob: { size } } }
+      for (const part of ['metadata', 'contents', 'download']) {
+        for (const method of ['GET', 'HEAD']) {
+          const unknownSize = await send(`/api/bundles/${id}/${part}`, method)
+          assert.equal(unknownSize.status, 200)
+          assert.equal(unknownSize.headers['content-length'], undefined)
+          assert.deepEqual(unknownSize.bytes, method === 'HEAD' ? Buffer.alloc(0) : part === 'metadata' ? metadata.bytes : encoded)
+        }
+      }
+    }
     assert.equal((await send(`/api/admin/bundles/${id}`, 'DELETE')).status, 200)
     assert.equal(objects.size, 0, 'deletion removes the archive and cached metadata')
   })

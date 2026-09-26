@@ -24,7 +24,10 @@ export async function openManagedVercelStorage(token: string, sdk?: VercelBlobSd
       const result = await blobs.get(path, options)
       if (!result) return null
       if (result.statusCode !== 200 || !result.stream) throw new Error('Unexpected blob response')
-      return { size: result.blob.size, stream: Readable.fromWeb(result.stream as Parameters<typeof Readable.fromWeb>[0]) }
+      // Private SDK GETs may report zero for a nonempty body. Stream without
+      // Content-Length in that case so HTTP clients do not truncate the body.
+      const size = result.blob.size === 0 ? null : result.blob.size
+      return { size, stream: Readable.fromWeb(result.stream as Parameters<typeof Readable.fromWeb>[0]) }
     } catch (err) { if (isNotFound(err)) return null; throw err }
   }
   async function get(path: string) {
