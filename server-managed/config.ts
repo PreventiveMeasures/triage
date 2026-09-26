@@ -22,6 +22,9 @@ export interface ManagedConfig {
   // + secret, used by the login flow.
   githubClientId: string
   githubClientSecret: string
+  // Preapproved GitHub identity for the first registration in an empty DB.
+  // This never changes an existing user's role on later logins.
+  initialAdminGithubId: number | null
   // Absolute callback registered with GitHub, e.g.
   // 'https://triage.example.com/api/oauth/github/callback'.
   oauthCallbackUrl: string
@@ -72,6 +75,16 @@ function intEnv(name: string, def: number, min: number, max: number): number {
   return n
 }
 
+function optionalGithubId(name: string): number | null {
+  const raw = env[name]
+  if (raw == null || raw === '') return null
+  const id = Number(raw)
+  if (!/^[1-9]\d*$/u.test(raw) || !Number.isSafeInteger(id)) {
+    fail(`Invalid ${name}: must be a single positive numeric GitHub user ID.`)
+  }
+  return id
+}
+
 function urlOrFail(name: string, raw: string): URL {
   try { return new URL(raw) } catch { fail(`${name} is not a valid URL: ${raw}`) }
 }
@@ -107,6 +120,7 @@ export function loadManagedConfig({ combined = false } = {}): ManagedConfig {
     trustProxyEnv: env['TRUST_PROXY'] ?? (serverless ? '1' : undefined),
     githubClientId: requireStr('GITHUB_CLIENT_ID'),
     githubClientSecret: requireStr('GITHUB_CLIENT_SECRET'),
+    initialAdminGithubId: optionalGithubId('MANAGED_INITIAL_ADMIN_GITHUB_ID'),
     oauthCallbackUrl,
     cookieSecure,
     sessionCookieName,

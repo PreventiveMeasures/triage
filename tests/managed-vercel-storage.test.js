@@ -169,6 +169,7 @@ for (const kind of ['sourcemap', 'stasis']) {
     await new Promise(resolve => { server.listen(0, '127.0.0.1', resolve) })
     t.after(async () => { await new Promise(resolve => { server.close(resolve) }); await db.close() })
     const session = await createSession(config, db, { githubUserId: 1, login: 'admin', name: null, avatarUrl: null }, Date.now())
+    await db.setUserRole(session.userId, 'admin')
     async function send(path, method = 'GET', body, headers = {}) {
       return new Promise((resolve, reject) => {
         const req = httpRequest({ hostname: '127.0.0.1', port: server.address().port, path, method, headers: {

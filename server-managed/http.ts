@@ -113,6 +113,7 @@ const MAX_TEAM_NAME = 100
 async function handlePullRequests(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   const s = await checkMutation(req, res, deps, cookie)
   if (!s) return
+  if (!roleAtLeast(s.user.role, 'view')) { sendJson(res, 403, { error: 'forbidden' }); return }
   let body: unknown
   try { body = await readJsonBody(req, 128 * 1024) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
   const urls = (body as { urls?: unknown } | null)?.urls
@@ -120,7 +121,10 @@ async function handlePullRequests(req: IncomingMessage, res: ServerResponse, dep
     || urls.some(url => typeof url !== 'string' || url.length > MAX_PULL_REQUEST_URL)) {
     sendJson(res, 400, { error: 'bad-urls' }); return
   }
-  sendJson(res, 200, { pullRequests: await lookupPullRequests(deps.config, deps.db, s.user.id, urls) })
+  const pullRequests = await lookupPullRequests(deps.config, deps.db, s.user.id, urls)
+  // A role/session revocation while GitHub is responding must not release data.
+  if (await readWorkspaceSession(res, deps, cookie) == null) return
+  sendJson(res, 200, { pullRequests })
 }
 
 function activity(deps: ManagedHttpDeps, user: StoredUser, kind: ActivityInput['kind'], action: string, context: Pick<ActivityInput, 'repo' | 'reportId' | 'bundleId' | 'report' | 'repoId' | 'repoDirectory'> = {}): Promise<void> {
@@ -335,6 +339,13 @@ async function readAdminSession(res: ServerResponse, deps: ManagedHttpDeps, cook
   const s = await readSession(deps.config, deps.db, cookie, Date.now())
   if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return null }
   if (s.user.role !== 'admin') { sendJson(res, 403, { error: 'forbidden' }); return null }
+  return s
+}
+
+async function readWorkspaceSession(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<{ session: ManagedSession; user: StoredUser } | null> {
+  const s = await readSession(deps.config, deps.db, cookie, Date.now())
+  if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return null }
+  if (!roleAtLeast(s.user.role, 'view')) { sendJson(res, 403, { error: 'forbidden' }); return null }
   return s
 }
 
@@ -1098,7 +1109,7 @@ async function adminMutation(req: IncomingMessage, res: ServerResponse, deps: Ma
 }
 
 // GET /api/teams — the CURRENT user's teams, each with the reports and bundles
-// attached to the team's repos, for the sidebar's per-user Teams section. Any authenticated
+// attached to the team's repos, for the sidebar's per-user Teams section. Any approved
 // user (not just admin|manage); a user only ever sees their own teams.
 async function handleMyTeams(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   const s = await readSession(deps.config, deps.db, cookie, Date.now())
@@ -1671,11 +1682,6 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     const method = req.method ?? 'GET'
     const cookie = req.headers.cookie
 
-    if (path.startsWith('/api/admin/uploads/')) { await handleUploadPart(req, res, deps, cookie, path); return }
-    if (path === '/api/github/pull-requests') {
-      if (method !== 'POST') { send405(res, 'POST'); return }
-      await handlePullRequests(req, res, deps, cookie); return
-    }
     // Public mode probe — lets a client detect the managed protocol up front.
     if (path === CONFIG_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }
@@ -1718,11 +1724,13 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     // Authentication is not workspace access. Keep bootstrap/session/logout
     // available so blocked accounts can see their role and sign out, but deny
     // every managed data route before reading bodies or looking up resources.
-    const managedDataPath = path.startsWith('/api/admin/') || path.startsWith(MY_REPORT_PREFIX)
-      || path.startsWith('/api/bundles/') || path === MY_TEAMS_PATH || path.startsWith(AVATAR_PREFIX)
-    if (managedDataPath) {
-      const s = await readSession(config, db, cookie, Date.now())
-      if (s && !roleAtLeast(s.user.role, 'view')) { sendJson(res, 403, { error: 'forbidden' }); return }
+    const managedDataPath = ['/api/admin', '/api/reports', '/api/bundles', '/api/teams', '/api/avatar', '/api/github']
+      .some(prefix => path === prefix || path.startsWith(prefix + '/'))
+    if (managedDataPath && await readWorkspaceSession(res, deps, cookie) == null) return
+    if (path.startsWith('/api/admin/uploads/')) { await handleUploadPart(req, res, deps, cookie, path); return }
+    if (path === '/api/github/pull-requests') {
+      if (method !== 'POST') { send405(res, 'POST'); return }
+      await handlePullRequests(req, res, deps, cookie); return
     }
     // Cached avatar by user id, served same-origin (the page CSP forbids the
     // github CDN). The id in the path keys the browser cache per user, so a user
@@ -1839,13 +1847,13 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (method === 'POST') { await handleSetReportTriage(req, res, deps, cookie, id); return }
       send405(res, 'GET, POST'); return
     }
-    // Team-scoped report view (any authenticated user who's in a team holding
+    // Team-scoped report view (any approved user who's in a team holding
     // the report's repo). Distinct prefix from /api/admin/reports/.
     if (path.startsWith(MY_REPORT_PREFIX)) {
       if (method !== 'GET') { send405(res, 'GET'); return }
       await handleViewReport(req, res, deps, cookie, path.slice(MY_REPORT_PREFIX.length)); return
     }
-    // The signed-in user's own team memberships (any authenticated user).
+    // The signed-in user's own team memberships (any approved user).
     if (path === MY_TEAMS_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }
       await handleMyTeams(res, deps, cookie); return

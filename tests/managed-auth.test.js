@@ -170,7 +170,7 @@ test('session: create → read → expire → end', async () => {
   await db.close()
 })
 
-test('db: first user is admin, later users none; setUserRole + listUsers reflect roles', async () => {
+test('db: without initial-admin configuration, all new users start with none and re-login preserves assigned roles', async () => {
   const db = openSqliteManagedDb(':memory:')
   const now = Date.now()
   const first = await createSession(config, db, { githubUserId: 1, login: 'alice', name: 'Alice', avatarUrl: null }, now)
@@ -178,10 +178,11 @@ test('db: first user is admin, later users none; setUserRole + listUsers reflect
 
   const alice = (await readSession(config, db, cookiePair(first.setCookie), now)).user
   const bob = (await readSession(config, db, cookiePair(second.setCookie), now)).user
-  assert.equal(alice.role, 'admin')
+  assert.equal(alice.role, 'none')
   assert.equal(bob.role, 'none')
+  await db.setUserRole(alice.id, 'admin')
 
-  // A returning first user keeps admin (the upsert doesn't touch role).
+  // Login preserves operator/admin approval; identity changes cannot grant a role.
   await createSession(config, db, { githubUserId: 1, login: 'alice2', name: 'Alice R', avatarUrl: null }, now + 2000)
   assert.equal((await readSession(config, db, cookiePair(first.setCookie), now)).user.role, 'admin')
 
@@ -201,6 +202,7 @@ test('GET /api/admin/models: managed users receive the same starting catalogue a
   const db = openSqliteManagedDb(':memory:')
   const now = Date.now()
   const adminSess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
+  await db.setUserRole(adminSess.userId, 'admin')
   const manageSess = await createSession(config, db, { githubUserId: 2, login: 'bob', name: null, avatarUrl: null }, now + 1000)
   const noneSess = await createSession(config, db, { githubUserId: 3, login: 'cy', name: null, avatarUrl: null }, now + 2000)
   const manage = (await readSession(config, db, cookiePair(manageSess.setCookie), now)).user
@@ -222,6 +224,7 @@ test('GET /api/admin/users: admin-only (401 unauth, 403 non-admin, 200 admin)', 
   const db = openSqliteManagedDb(':memory:')
   const now = Date.now()
   const admin = await createSession(config, db, { githubUserId: 1, login: 'alice', name: 'Alice', avatarUrl: null }, now)
+  await db.setUserRole(admin.userId, 'admin')
   const plain = await createSession(config, db, { githubUserId: 2, login: 'bob', name: null, avatarUrl: null }, now + 1000)
 
   let pending = Promise.resolve()
@@ -257,6 +260,7 @@ test('POST /api/admin/set-role: admin-only mutation, CSRF, not-self', async () =
   const db = openSqliteManagedDb(':memory:')
   const now = Date.now()
   const adminSess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
+  await db.setUserRole(adminSess.userId, 'admin')
   const userSess = await createSession(config, db, { githubUserId: 2, login: 'bob', name: null, avatarUrl: null }, now + 1000)
   const admin = (await readSession(config, db, cookiePair(adminSess.setCookie), now)).user
   const bob = (await readSession(config, db, cookiePair(userSess.setCookie), now)).user
@@ -306,10 +310,11 @@ test('POST /api/admin/set-role: admin-only mutation, CSRF, not-self', async () =
   await db.close()
 })
 
-test('GET /api/avatar/<id>: any session may fetch a user avatar by id (401 unauth, 404 missing)', async () => {
+test('GET /api/avatar/<id>: approved users may fetch avatars (401 unauth, 404 missing)', async () => {
   const db = openSqliteManagedDb(':memory:')
   const now = Date.now()
   const sess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
+  await db.setUserRole(sess.userId, 'view')
   const s = await readSession(config, db, cookiePair(sess.setCookie), now)
   const avatarStore = fakeAvatarStore()
   await avatarStore.put(s.user.id, 'image/png', Buffer.from([1, 2, 3]))
@@ -369,7 +374,32 @@ test('handleCallback: valid state mints a session for the GitHub identity', asyn
   assert.ok(s)
   assert.match(s.user.id, /^[0-9a-f-]{36}$/u)
   assert.equal(s.user.login, 'mona')
+  assert.equal(s.user.role, 'none', 'even the first OAuth login requires approval')
   await db.close()
+})
+
+test('OAuth initial admin requires an empty user table and the configured GitHub ID', async t => {
+  for (const initialAdminGithubId of [null, 7, 8]) {
+    const db = openSqliteManagedDb(':memory:')
+    t.after(() => db.close())
+    const cfg = { ...config, initialAdminGithubId }
+    const login = async (id, name) => {
+      const result = await handleCallback(new URLSearchParams({ code: 'code', state: 'state' }), 'dvstate=state', {
+        config: cfg, db, fetchImpl: makeFetch({ token: { access_token: 'token' }, user: { id, login: name } }),
+      })
+      const cookie = cookiePair(result.setCookies.find(value => value.startsWith('dvsid=')))
+      return readSession(cfg, db, cookie, Date.now())
+    }
+    const first = await login(7, 'alice')
+    assert.equal(first.user.role, initialAdminGithubId === 7 ? 'admin' : 'none')
+    // Matching the login name does not match the immutable numeric identity.
+    assert.equal((await login(8, 'alice')).user.role, 'none', 'a later user is never auto-promoted, even when allowlisted')
+    await db.setUserRole(first.user.id, 'none')
+    cfg.initialAdminGithubId = 7
+    assert.equal((await login(7, 'renamed')).user.role, 'none', 'configured identity cannot undo revocation')
+    cfg.initialAdminGithubId = 9
+    assert.equal((await login(9, 'new-admin-candidate')).user.role, 'none', 'changing configuration cannot promote a new user in a populated DB')
+  }
 })
 
 test('handleCallback: caches the user avatar through the store, keyed by uuid', async () => {
@@ -620,6 +650,7 @@ test('GET /api/admin/repositories: admin only; no stored token → tokenMissing'
   const db = openSqliteManagedDb(':memory:')
   const now = Date.now()
   const adminSess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
+  await db.setUserRole(adminSess.userId, 'admin')
   const manageSess = await createSession(config, db, { githubUserId: 2, login: 'bob', name: null, avatarUrl: null }, now + 1000)
   const noneSess = await createSession(config, db, { githubUserId: 3, login: 'cy', name: null, avatarUrl: null }, now + 2000)
   const bob = (await readSession(config, db, cookiePair(manageSess.setCookie), now)).user
@@ -661,6 +692,7 @@ test('POST /api/admin/repositories/select: admin + CSRF; verifies access, persis
   const db = openSqliteManagedDb(':memory:')
   const now = Date.now()
   const adminSess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
+  await db.setUserRole(adminSess.userId, 'admin')
   const noneSess = await createSession(config, db, { githubUserId: 2, login: 'bob', name: null, avatarUrl: null }, now + 1000)
   const admin = (await readSession(config, db, cookiePair(adminSess.setCookie), now)).user
   // A non-expiring token so collectRepos can list the admin's public repos.
@@ -779,6 +811,7 @@ test('GET /api/admin/reports: admin|manage only (401 unauth, 403 none, 200 admin
   const db = openSqliteManagedDb(':memory:')
   const now = Date.now()
   const adminSess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
+  await db.setUserRole(adminSess.userId, 'admin')
   const manageSess = await createSession(config, db, { githubUserId: 2, login: 'bob', name: null, avatarUrl: null }, now + 1000)
   const noneSess = await createSession(config, db, { githubUserId: 3, login: 'cy', name: null, avatarUrl: null }, now + 2000)
   await db.setUserRole((await readSession(config, db, cookiePair(manageSess.setCookie), now)).user.id, 'manage')
@@ -817,6 +850,7 @@ test('reports upload/download/delete: CSRF + role, sanitised filename, attributi
   const db = openSqliteManagedDb(':memory:')
   const now = Date.now()
   const adminSess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
+  await db.setUserRole(adminSess.userId, 'admin')
   const noneSess = await createSession(config, db, { githubUserId: 2, login: 'bob', name: null, avatarUrl: null }, now + 1000)
   const admin = (await readSession(config, db, cookiePair(adminSess.setCookie), now)).user
   // Small cap so the too-large path is cheap to exercise.
@@ -983,6 +1017,7 @@ for (const [label, filename] of [
     t.after(() => db.close())
     const now = Date.now()
     const admin = await createSession(config, db, { githubUserId: 1, login: 'admin', name: null, avatarUrl: null }, now)
+    await db.setUserRole(admin.userId, 'admin')
     const member = await createSession(config, db, { githubUserId: 2, login: 'member', name: null, avatarUrl: null }, now)
     await db.setUserRole(member.userId, 'triage')
     await db.selectRepo({ repoId: 7, fullName: 'o/r', private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: admin.userId }, now)
@@ -1031,6 +1066,7 @@ for (const role of ['view', 'triage', 'admin']) {
     t.after(() => db.close())
     const now = Date.now()
     const admin = await createSession(config, db, { githubUserId: 1, login: 'admin', name: null, avatarUrl: null }, now)
+    await db.setUserRole(admin.userId, 'admin')
     const viewer = await createSession(config, db, { githubUserId: 2, login: 'viewer', name: null, avatarUrl: null }, now)
     await db.setUserRole(viewer.userId, role)
     await db.selectRepo({ repoId: 7, fullName: 'o/r', private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: admin.userId }, now)
@@ -1060,6 +1096,7 @@ test('bundles upload/download/delete: CSRF + role, sha512 dedup, kind, 413/400/4
   const db = openSqliteManagedDb(':memory:')
   const now = Date.now()
   const adminSess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
+  await db.setUserRole(adminSess.userId, 'admin')
   const noneSess = await createSession(config, db, { githubUserId: 2, login: 'bob', name: null, avatarUrl: null }, now + 1000)
   const { upload, send } = bundleHarness(db, { ...config, maxBundleBytes: 64 })
   const aCk = cookiePair(adminSess.setCookie)
@@ -1104,6 +1141,7 @@ test('report↔bundle auto-link (both upload orders) + optional repo link', asyn
   const db = openSqliteManagedDb(':memory:')
   const now = Date.now()
   const adminSess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
+  await db.setUserRole(adminSess.userId, 'admin')
   const admin = (await readSession(config, db, cookiePair(adminSess.setCookie), now)).user
   await db.selectRepo({ repoId: 42, fullName: 'o/repo', private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: admin.id }, now)
   const { upload, send } = bundleHarness(db)
@@ -1143,6 +1181,7 @@ test('reports/bundles set-repo: db attach/detach + endpoint (role, CSRF, validat
   const db = openSqliteManagedDb(':memory:')
   const now = Date.now()
   const adminSess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
+  await db.setUserRole(adminSess.userId, 'admin')
   const noneSess = await createSession(config, db, { githubUserId: 2, login: 'bob', name: null, avatarUrl: null }, now + 1000)
   const admin = (await readSession(config, db, cookiePair(adminSess.setCookie), now)).user
   await db.selectRepo({ repoId: 7, fullName: 'o/r', private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: admin.id }, now)
@@ -1209,7 +1248,7 @@ test('db: teams — create/list/delete, repo (+path) & member (+perms) links, FK
   assert.equal(await db.createTeam(tId, 'Blue', now), true)
   assert.equal(await db.createTeam(randomUUID(), 'Blue', now), false) // name taken (UNIQUE)
   assert.deepEqual(await db.getTeam(tId), { id: tId, slug: tId.split('-').at(-1), name: 'Blue' })
-  assert.deepEqual(await db.listUserOptions(), [{ id: uid, login: 'alice', name: null, role: 'admin' }])
+  assert.deepEqual(await db.listUserOptions(), [{ id: uid, login: 'alice', name: null, role: 'none' }])
 
   await db.setTeamRepo(tId, 7, 'src/app')
   await db.setTeamMember(tId, uid, { dependencies: true, security: false })
@@ -1300,8 +1339,9 @@ test('GET /api/teams + db.listTeamsForUser: a user sees only their own teams', a
 test('team reports: read iff admin, OR (>=view role AND in a team holding the repo)', async () => {
   const db = openSqliteManagedDb(':memory:')
   const now = Date.now()
-  // alice = first user = admin, deliberately NOT in any team (tests the admin bypass).
+  // alice is explicitly approved as admin and deliberately NOT in any team.
   const adminSess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
+  await db.setUserRole(adminSess.userId, 'admin')
   const viewerSess = await createSession(config, db, { githubUserId: 2, login: 'viewer', name: null, avatarUrl: null }, now + 1000)
   const nonerSess = await createSession(config, db, { githubUserId: 3, login: 'noner', name: null, avatarUrl: null }, now + 2000)
   const outsiderSess = await createSession(config, db, { githubUserId: 4, login: 'outsider', name: null, avatarUrl: null }, now + 3000)
@@ -1381,6 +1421,7 @@ test('team paths gate report listings, reads, triage, and permission aggregation
   t.after(() => db.close())
   const now = Date.now()
   const adminSess = await createSession(config, db, { githubUserId: 1, login: 'admin', name: null, avatarUrl: null }, now)
+  await db.setUserRole(adminSess.userId, 'admin')
   const memberSess = await createSession(config, db, { githubUserId: 2, login: 'member', name: null, avatarUrl: null }, now)
   const admin = (await readSession(config, db, cookiePair(adminSess.setCookie), now)).user
   const member = (await readSession(config, db, cookiePair(memberSess.setCookie), now)).user
@@ -1477,6 +1518,7 @@ test('GET /api/reports/<id>: filtered content and authoritative repo metadata (a
   const db = openSqliteManagedDb(':memory:')
   const now = Date.now()
   const adminSess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
+  await db.setUserRole(adminSess.userId, 'admin')
   const viewerSess = await createSession(config, db, { githubUserId: 2, login: 'viewer', name: null, avatarUrl: null }, now + 1000)
   const admin = (await readSession(config, db, cookiePair(adminSess.setCookie), now)).user
   const viewer = (await readSession(config, db, cookiePair(viewerSess.setCookie), now)).user
@@ -1582,6 +1624,7 @@ test('repository removal skips report parsing when keeping triage and preserves 
   t.after(() => db.close())
   const now = Date.now()
   const session = await createSession(config, db, { githubUserId: 1, login: 'admin', name: null, avatarUrl: null }, now)
+  await db.setUserRole(session.userId, 'admin')
   for (const repoId of [7, 8]) await db.selectRepo({ repoId, fullName: `o/r${repoId}`, private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: session.userId }, now)
   const store = fakeBlobStore()
   const reads = []
@@ -1643,6 +1686,7 @@ test('repository paths: invalid team scopes, embedded headers, upload headers, a
   t.after(() => db.close())
   const now = Date.now()
   const session = await createSession(config, db, { githubUserId: 1, login: 'admin', name: null, avatarUrl: null }, now)
+  await db.setUserRole(session.userId, 'admin')
   await db.selectRepo({ repoId: 7, fullName: 'o/r', private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: session.userId }, now)
   const teamId = randomUUID()
   await db.createTeam(teamId, 'Scoped', now)
@@ -1673,6 +1717,7 @@ test('repository removal deletes exclusive triage history and keeps shared histo
   t.after(() => db.close())
   const now = Date.now()
   const session = await createSession(config, db, { githubUserId: 1, login: 'admin', name: null, avatarUrl: null }, now)
+  await db.setUserRole(session.userId, 'admin')
   const repo = (repoId) => ({ repoId, fullName: `o/r${repoId}`, private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: session.userId })
   for (const repoId of [7, 8]) await db.selectRepo(repo(repoId), now)
   const { send, upload } = bundleHarness(db)
@@ -1708,6 +1753,7 @@ test('teams API: admin gating, create (409 dup), repo/member links + perms, CSRF
   const db = openSqliteManagedDb(':memory:')
   const now = Date.now()
   const adminSess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
+  await db.setUserRole(adminSess.userId, 'admin')
   const noneSess = await createSession(config, db, { githubUserId: 2, login: 'bob', name: null, avatarUrl: null }, now + 1000)
   const admin = (await readSession(config, db, cookiePair(adminSess.setCookie), now)).user
   const bob = (await readSession(config, db, cookiePair(noneSess.setCookie), now)).user
@@ -1939,6 +1985,7 @@ async function reportTriageFixture(db, reportStore) {
   const now = Date.now()
   const mk = (githubUserId, login, offset) => createSession(config, db, { githubUserId, login, name: null, avatarUrl: null }, now + offset)
   const adminSess = await mk(1, 'alice', 0)
+  await db.setUserRole(adminSess.userId, 'admin')
   const bobSess = await mk(2, 'bob', 1000)
   const carolSess = await mk(3, 'carol', 2000)
   const daveSess = await mk(4, 'dave', 3000)
@@ -2627,6 +2674,7 @@ test('team slugs are assigned by the server and cannot be edited through create 
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())
   const session = await createSession(config, db, { githubUserId: 1, login: 'admin', name: null, avatarUrl: null }, Date.now())
+  await db.setUserRole(session.userId, 'admin')
   const cookie = cookiePair(session.setCookie)
   const { send, upload } = bundleHarness(db)
   const created = await upload('/api/admin/teams', cookie, session.csrfToken, JSON.stringify({ name: 'Team', slug: 'custom' }))
@@ -2646,6 +2694,7 @@ test('installed discovery defaults to acting GH access, Show all stays admin-onl
   t.after(() => db.close())
   const cfg = { ...config, githubAppId: '1', githubAppPrivateKey: generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs1', format: 'pem' }) }
   const alice = await createSession(cfg, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, Date.now())
+  await db.setUserRole(alice.userId, 'admin')
   const bob = await createSession(cfg, db, { githubUserId: 2, login: 'bob', name: null, avatarUrl: null }, Date.now())
   const admin = (await readSession(cfg, db, cookiePair(alice.setCookie), Date.now())).user
   const manager = (await readSession(cfg, db, cookiePair(bob.setCookie), Date.now())).user
@@ -2716,6 +2765,7 @@ test('arbitrary public additions require server admin AND WHITEHAT identity, nev
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())
   const session = await createSession(config, db, { githubUserId: 291301, login: 'renamed-whitehat', name: null, avatarUrl: null }, Date.now())
+  await db.setUserRole(session.userId, 'admin')
   const impersonator = await createSession(config, db, { githubUserId: 999, login: 'ChALkeR', name: null, avatarUrl: null }, Date.now())
   await db.setUserRole(impersonator.userId, 'admin')
   const { send, upload } = bundleHarness(db)

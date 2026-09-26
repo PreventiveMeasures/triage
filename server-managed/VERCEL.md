@@ -87,6 +87,7 @@ Set these variables in the Vercel project, for each deployment environment:
 | `BLOB_READ_WRITE_TOKEN` | Token for a **private** Vercel Blob store |
 | `GITHUB_CLIENT_ID` | GitHub login app client ID |
 | `GITHUB_CLIENT_SECRET` | GitHub login app secret |
+| `MANAGED_INITIAL_ADMIN_GITHUB_ID` | Optional numeric GitHub ID allowed to become admin on the first registration, only while the user table is empty |
 | `OAUTH_CALLBACK_URL` | `https://your-host/api/oauth/github/callback`, registered with GitHub |
 | `CRON_SECRET` | Secret used by Vercel's authenticated cleanup requests |
 
@@ -99,7 +100,9 @@ Reports, bundles, avatars, cache files and upload parts use separate prefixes
 under `.managed/`. No public Blob URL is returned to clients. The e2e blob
 reaper excludes this namespace. Existing managed SQLite data is **not**
 automatically copied into Neon or Blob: a new Neon database starts empty.
-The first registered user becomes its admin.
+New users default to No access. Only a matching `MANAGED_INITIAL_ADMIN_GITHUB_ID`
+can bootstrap the empty database's first user as admin. Once any user exists,
+that variable has no effect. See [Account approval](README.md#account-approval).
 
 ## Upload protocol and runtime bounds
 
@@ -121,7 +124,7 @@ also deletes expired sessions; session reads reject expiry immediately. Cleanup
 finishes listing all staging pages before deleting expired parts so deletions
 cannot shift pagination and skip objects.
 
-Neon writers use a shared transaction lock so first-admin selection, slugs,
+Neon writers use a shared transaction lock so identity updates, slugs,
 comment version checks, triage/history changes and team-grant replacements
 remain atomic across instances. Reads use consistent snapshots. Connections
 are closed before each operation returns. PGlite parity tests cover SQL and
