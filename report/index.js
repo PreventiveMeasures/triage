@@ -89,6 +89,7 @@ import { deriveFindingId } from './src/finding-id.js'
 export { parseCodexCsvToScans } from './src/parse-codex.js'
 export { computeFileHash, deriveFindingId, findingId } from './src/finding-id.js'
 export { META_FIELDS, inheritReportMeta, repoDirectory, reportRepoGithub } from './src/meta.js'
+export { stampSecurityGroups } from './src/security.js'
 // The writing side: the document writer, and the label tables it
 // spells the app's enumerations with, for the viewer's surfaces that
 // describe the same things in prose.
@@ -104,7 +105,7 @@ export { COLOR_LABELS, SEVERITY_LABELS, SOURCE_LABELS, TRIAGE_LABELS, severityLa
 export {
   REVALIDATE_KINDS, SEVERITIES, SEVERITY_ORDER, correctedVariants, descriptionSections,
   displayedSeverity, effectiveSeverity, evidenceNote, findingDisplayName, findingTitle,
-  firstLine, hasSeverityCorrection, isAppFinding, locationLabel, prettyModel, revalidateKindOf,
+  firstLine, hasSeverityCorrection, isAppFinding, isSecurityFinding, locationLabel, prettyModel, revalidateKindOf,
   runMetaLine, splitDescription, stripExportMarker, titledDescription,
 } from './src/finding.js'
 

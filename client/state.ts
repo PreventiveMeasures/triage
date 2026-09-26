@@ -166,6 +166,7 @@ export interface State {
   filterCrossContext: AnnotationFilterState
   // App rows with more than one App finding in the row.
   filterAppStacked: AnnotationFilterState
+  filterSecurity: AnnotationFilterState
   repoUrl: string
   repoEditing: boolean
   sortBy: string
@@ -760,6 +761,7 @@ export const state: State = store<State>({
   filterDuplicates: '',
   filterCrossContext: '',
   filterAppStacked: '',
+  filterSecurity: '',
   repoUrl: '',
   // Transient flag — true while the header's repo chip has expanded
   // into its `<input>` form (user clicked the pencil). Cleared on

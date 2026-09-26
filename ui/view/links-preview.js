@@ -1,9 +1,9 @@
 // Load the requested finding's report row for an in-place Links preview. Keep the
 // Links file and loaded reports unchanged; the card uses the usual ID-keyed
 // triage store and the original report's source/bundle metadata.
-import { computeLinkHint, ensureTriageLoaded, loadRepoUrlFor, readFile, state, workspacesHoldingReport } from '#client/index.js'
+import { computeLinkHint, duplicatesOf, ensureTriageLoaded, loadRepoUrlFor, readFile, reportRowsForFindingIds, state, workspacesHoldingReport } from '#client/index.js'
 import { store } from '@rray/frontend/state-management'
-import { inheritReportMeta, isAppFinding, loadFindings, repoDirectory, reportEntries, reportRepoGithub } from '../../report/index.js'
+import { inheritReportMeta, isAppFinding, loadFindings, repoDirectory, reportEntries, reportRepoGithub, stampSecurityGroups } from '../../report/index.js'
 
 let preview = null
 let generation = 0
@@ -60,6 +60,14 @@ export async function openLinksPreview(id, reportName, rowIndex) {
       ...workspacesHoldingReport(reportName).map((w) => computeLinkHint('workspace', w.id)),
     ])
     if (active()) {
+      stampSecurityGroups([group], {
+        linkedIds: duplicatesOf,
+        knownRows: (ids) => [
+          ...reportRowsForFindingIds(ids),
+          ...state.reports.flatMap((r) => r.groups ?? [])
+            .filter((members) => members.some((f) => ids.includes(f.id))).map((members) => ({ members })),
+        ],
+      })
       preview.group = group
       state.activeTabByGroup.set(group[0].id, id)
     }

@@ -120,6 +120,7 @@ export function resetFilters() {
   state.filterDuplicates = ''
   state.filterCrossContext = ''
   state.filterAppStacked = ''
+  state.filterSecurity = ''
   // Including the revalidation outcome: this is "no filters", and one
   // that survived would keep hiding findings after a reset — which
   // matters more now that a revalidation report can OPEN on it (see
@@ -143,7 +144,7 @@ const FILTER_FIELDS = [
   'filterAnalyzer', 'filterModel', 'filterRepo',
   'filterConfMin', 'filterConfMax',
   'filterInclude', 'filterIncludeNegate',
-  'filterComment', 'filterFix', 'filterFlagged', 'filterDuplicates', 'filterCrossContext', 'filterAppStacked',
+  'filterComment', 'filterFix', 'filterFlagged', 'filterDuplicates', 'filterCrossContext', 'filterAppStacked', 'filterSecurity',
   'filterRevalidate', 'filterPartial',
 ]
 
@@ -743,6 +744,14 @@ export function isAppStackedGroup(group) {
   return app.length > 0 && app.length > 1
 }
 
+// isSecurity is propagated from full original rows before App/code/upstream
+// projection. A hidden source or refuted tab still classifies its whole row.
+export function isSecurityGroup(group) { return group.some((f) => f.isSecurity === true) }
+
+export function hasSecurityContrast(groups) {
+  return groups.some(isSecurityGroup) && groups.some((g) => !isSecurityGroup(g))
+}
+
 // Base rows for analyzer/severity/color counts and repository options. The
 // caller supplies the current lens's rows and triage bucket. After filtering
 // rows, project their visible tabs too: App mode folds underlying findings
@@ -760,10 +769,12 @@ export function applyFilters(groups) {
   const duplicateIds = duplicatesMode ? reportDuplicateIds() : null
   const crossContextMode = activeFilters().filterCrossContext
   const appStackedMode = activeFilters().filterAppStacked
+  const securityMode = activeFilters().filterSecurity
   return groups.filter((g) => g.some(matchesFilters) && matchesAnnotationFilters(g)
     && (!duplicatesMode || (duplicatesMode === 'with') === g.some((f) => duplicateIds.has(tabKey(f))))
     && (!crossContextMode || (crossContextMode === 'with') === isCrossContextGroup(g))
-    && (!appStackedMode || (appStackedMode === 'with') === isAppStackedGroup(g)))
+    && (!appStackedMode || (appStackedMode === 'with') === isAppStackedGroup(g))
+    && (!securityMode || (securityMode === 'with') === isSecurityGroup(g)))
 }
 
 // Numeric-field comparator factory behind the `priority-*` modes

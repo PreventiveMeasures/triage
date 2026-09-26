@@ -6,7 +6,7 @@ import { effectiveSeverity } from './format.js'
 // remain intact so App and code modes can use different row partitions.
 // Provenance stays with the first copy; corrected severity keeps per-report
 // variants. Missing/null fields are gaps, never disagreements.
-const KEEPS_ITS_OWN = new Set(['correctedSeverity', 'correctedSeverityReason', 'isApp', 'isUpstream', 'source'])
+const KEEPS_ITS_OWN = new Set(['correctedSeverity', 'correctedSeverityReason', 'isApp', 'isUpstream', 'isSecurity', 'source'])
 
 // Contradictory revalidate* answers disable App mode for this loaded set.
 // Retain the first answer on the derived copy; the conflict dialog exposes all

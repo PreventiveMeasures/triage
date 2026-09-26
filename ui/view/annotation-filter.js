@@ -1,8 +1,9 @@
 // `<annotation-filter>` — comment | fix | flag after the Sources / Deps
-// switch, or duplicates | cross-context | App-stacked beside App mode. Each
+// switch, or duplicates | cross-context | App-stacked | security beside App mode. Each
 // chip cycles an INDEPENDENT, AND-combined tri-state filter (state.filterComment /
 // filterFix / filterFlagged / filterDuplicates / filterCrossContext /
-// filterAppStacked: '' → 'with' → 'without' → ''): selecting more narrows the row set further
+// filterAppStacked / filterSecurity: '' → 'with' → 'without' → ''):
+// selecting more narrows the row set further
 // (see matchesFilters in filters.js). Mirrors `<source-filter>`'s
 // multi-chip pill, using the same glyphs as the per-finding marks.
 //
@@ -57,6 +58,9 @@ const APP_STACKED_GLYPH = html`<svg viewBox="0 0 16 16" width="12" height="12" a
     <rect x="1" y="9.1" width="10" height="3.6" rx=".8"/>
   </g>
 </svg>`
+const SECURITY_GLYPH = html`<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+  <path d="M8 1.5 13 3.5v4c0 3-2.1 5.5-5 7-2.9-1.5-5-4-5-7v-4Z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+</svg>`
 
 const CHIPS = [
   { key: 'comment', glyph: COMMENT_GLYPH, label: 'commented', stateKey: 'filterComment', hasKey: 'hasComment' },
@@ -65,8 +69,9 @@ const CHIPS = [
   { key: 'duplicates', glyph: DUPLICATES_GLYPH, label: 'rows with duplicates in other reports', stateKey: 'filterDuplicates', hasKey: 'hasDuplicates' },
   { key: 'cross-context', glyph: CROSS_CONTEXT_GLYPH, label: 'rows across multiple repos or packages', stateKey: 'filterCrossContext', hasKey: 'hasCrossContext' },
   { key: 'app-stacked', glyph: APP_STACKED_GLYPH, label: 'stacked App rows', stateKey: 'filterAppStacked', hasKey: 'hasAppStacked' },
+  { key: 'security', glyph: SECURITY_GLYPH, label: 'security-related rows', stateKey: 'filterSecurity', hasKey: 'hasSecurityContrast' },
 ]
-const CONTEXT_KEYS = new Set(['duplicates', 'cross-context', 'app-stacked'])
+const CONTEXT_KEYS = new Set(['duplicates', 'cross-context', 'app-stacked', 'security'])
 
 class AnnotationFilter extends StateElement {
   static properties = {
@@ -77,6 +82,7 @@ class AnnotationFilter extends StateElement {
     hasDuplicates: { attribute: false },
     hasCrossContext: { attribute: false },
     hasAppStacked: { attribute: false },
+    hasSecurityContrast: { attribute: false },
   }
 
   createRenderRoot() { return this }
@@ -90,6 +96,7 @@ class AnnotationFilter extends StateElement {
     this.hasDuplicates = false
     this.hasCrossContext = false
     this.hasAppStacked = false
+    this.hasSecurityContrast = false
   }
 
   connectedCallback() {
@@ -98,17 +105,17 @@ class AnnotationFilter extends StateElement {
   }
 
   render() {
-    // A chip shows when its annotation exists in the loaded set OR its
-    // filter is active (so it can be cycled back off).
+    // Security requires both matching and nonmatching rows. Other chips show
+    // when their annotation exists OR their filter is active (to clear it).
     const visible = CHIPS.filter((c) => (this.group === 'context') === CONTEXT_KEYS.has(c.key))
-      .filter((c) => c.key === 'duplicates'
+      .filter((c) => c.key === 'security' ? this.hasSecurityContrast : c.key === 'duplicates'
         ? !state.currentWorkspace && (this.hasDuplicates || state[c.stateKey])
         : this[c.hasKey] || state[c.stateKey])
     if (visible.length === 0) return nothing
     const renderChip = (c) => {
       // Tri-state: '' → 'with' (only) → 'without' (exclude) → ''.
       const sel = state[c.stateKey]
-      const label = c.key === 'duplicates' || c.key === 'cross-context' || c.key === 'app-stacked'
+      const label = CONTEXT_KEYS.has(c.key)
         ? c.label : `${c.label} findings`
       const title = sel === 'with'
         ? `Showing only ${label} — click to exclude them`

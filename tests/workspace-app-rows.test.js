@@ -14,13 +14,14 @@ const { canDropRevalidation, configureDepsDir, configureRevalidation, stampUpstr
 const { applyFilters, applyOpeningFilters, shouldLockConfirmed } = await import('../ui/view/filters.js')
 const { findGroupById, getMergedGroups, getShownGroups, getRevalidationConflicts, groupKey, groupWithPassRows, sortTabs, underlyingFindingsShown } = await import('../ui/view/group.js')
 
-const { isAppFinding } = await import('../report/index.js')
+const { isAppFinding, stampSecurityGroups } = await import('../report/index.js')
 const source = (id, extra = {}) => ({ id, severity: 'high', confidence: 9, file: 'src/auth.js', description: `Finding ${id}`, isApp: isAppFinding(extra, extra.source ?? extra._source), ...extra })
 const app = (id) => source(id, { revalidate: 'revalidation' })
 const report = (fileName, ...groups) => {
   const r = { fileName, groups }
   configureDepsDir([r])
   stampUpstreamFindings([r])
+  stampSecurityGroups(groups)
   return r
 }
 const ids = (groups) => groups.map((g) => g.map((f) => f.id))

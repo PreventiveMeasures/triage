@@ -14,7 +14,7 @@ import { ensureClientMode, navigateToAdminPage, renderSidebar } from './sidebar.
 import { resetBundleTerminal } from './terminal-attach.js'
 import { cleanupGraph2, graph2 } from './graph/state.js'
 import { openBundle, prefetchBundleHashesAfterPaint, selectBundle } from './bundle-load.js'
-import { backfillFindingIds, detectFormat, inheritReportMeta, isAppFinding, parseCodexCsvToScans, readReport, repoDirectory, reportEntries, reportRepoGithub } from '../../report/index.js'
+import { backfillFindingIds, detectFormat, inheritReportMeta, isAppFinding, parseCodexCsvToScans, readReport, repoDirectory, reportEntries, reportRepoGithub, stampSecurityGroups } from '../../report/index.js'
 import { importWorkspaceFromGzip } from './workspace-import.js'
 import { maybePromptFirstUse } from './first-import-prompt.js'
 import { openPasskeyUnlockDialog } from './dialogs/passkey-unlock-dialog.js'
@@ -1428,6 +1428,7 @@ async function ingestReport(name, content, gen = null, { renderView = true, mana
       }
       groups.push(stamped)
     }
+    stampSecurityGroups(groups)
     state.reports.push({
       type: data.type || 'analysis',
       // `source` is set by the markdown parser ('claude-security'),
