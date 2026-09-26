@@ -1,4 +1,5 @@
 import { managedFetch } from './request.js'
+import { reportEntries } from '../../report/index.js'
 // Managed-mode client auth. Loaded lazily (see ui/view/client-managed.js) so
 // this managed-only code stays out of the main view bundle, mirroring
 // client/sync. For now it covers the session lifecycle against the managed
@@ -7,10 +8,10 @@ import { managedFetch } from './request.js'
 
 // Same-origin JSON, clearing revoked access and retaining an optional cached
 // value when a background request fails.
-async function getJson(url, fallback = null) {
+async function getJson(url, fallback = null, options = {}) {
   let res
   try {
-    res = await managedFetch(url, { credentials: 'same-origin', headers: { accept: 'application/json' } })
+    res = await managedFetch(url, { credentials: 'same-origin', headers: { accept: 'application/json' }, ...options })
   } catch { return fallback }
   if (res.status === 401 || res.status === 403) return null
   if (!res.ok) return fallback
@@ -78,14 +79,37 @@ export async function probeTeams({ fallback = [] } = {}) {
     }))
 }
 
-// GET /api/reports/<id> → filtered text and the authoritative server repo.
+// GET /api/reports/<id> → parsed, filtered data and the authoritative server repo.
 // Keep them together so viewing does not depend on a stale sidebar catalogue.
 // The caller renders it WITHOUT caching to OPFS. null on failure / no access.
-export async function fetchReport(id) {
-  const body = await getJson(`/api/reports/${encodeURIComponent(id)}`)
-  if (typeof body?.content !== 'string' || typeof body.repo?.directory !== 'string') return null
+function reportContent(body) {
+  if (reportEntries(body?.data) === null || typeof body.repo?.directory !== 'string') return null
   if (body.repo.github !== null && typeof body.repo.github !== 'string') return null
-  return { content: body.content, repo: body.repo }
+  return { data: body.data, repo: body.repo }
+}
+
+export async function fetchReport(id, { signal } = {}) {
+  return reportContent(await getJson(`/api/reports/${encodeURIComponent(id)}`, null, { signal }))
+}
+
+// One read-only query for the missing reports in a workspace. Validate the
+// entire answer before exposing any content; a partial answer is a failure.
+export async function fetchReports(ids, { signal } = {}) {
+  const unique = [...new Set(ids)]
+  if (unique.length === 0) return []
+  const body = await getJson('/api/reports/query', null, {
+    method: 'POST', signal,
+    headers: { accept: 'application/json', 'content-type': 'application/json' },
+    body: JSON.stringify({ ids: unique }),
+  })
+  if (!Array.isArray(body?.reports) || body.reports.length !== unique.length) return null
+  const reports = new Map()
+  for (const entry of body.reports) {
+    const content = reportContent(entry)
+    if (!content || !unique.includes(entry.id) || reports.has(entry.id)) return null
+    reports.set(entry.id, content)
+  }
+  return ids.map(id => reports.get(id))
 }
 
 // GET /api/reports/<id>/triage → the server's triage entries for a team

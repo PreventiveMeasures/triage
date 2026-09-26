@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
 import { test } from 'node:test'
-import { fetchReport, probeTeams } from '../client/managed/session.js'
+import { fetchReport, fetchReports, probeTeams } from '../client/managed/session.js'
 import { managedRouteForIds, managedRoutePath, resolveManagedRoute } from '../common/managed/routes.js'
 import { createManagedHistory } from '../ui/view/managed-history.js'
 import { browserAt } from './_managed-browser.js'
@@ -82,11 +82,11 @@ test('managed preview triage persists in memory and stays scoped to the requeste
       const loaded = await fetchReport(report.id)
       assert.ok(loaded, report.filename)
       assert.deepEqual(loaded.repo, { github: report.repoFullName, directory: report.repoDirectory })
-      assert.ok(JSON.parse(loaded.content).findings.length > 0)
+      assert.ok(loaded.data.findings.length > 0)
       const raw = await fetch(`${base}/${report.id}`)
       assert.equal(raw.headers.get('content-type'), 'text/plain; charset=utf-8')
       assert.equal(raw.headers.get('vary'), 'Accept')
-      assert.equal(await raw.text(), loaded.content)
+      assert.deepEqual(JSON.parse(await raw.text()), loaded.data)
       for (const accept of ['application/json, */*', 'application/json; q=1']) {
         const response = await fetch(`${base}/${report.id}`, { headers: { accept } })
         assert.equal(response.headers.get('cache-control'), 'no-store')
@@ -95,6 +95,10 @@ test('managed preview triage persists in memory and stays scoped to the requeste
       }
     }
     assert.equal(await fetchReport('unknown'), null)
+    const ids = exported.reports.map(report => report.id)
+    const batch = await fetchReports(ids)
+    assert.deepEqual(batch, await Promise.all(ids.map(id => fetchReport(id))))
+    assert.equal(await fetchReports([...ids, 'unknown']), null)
   })
   const first = `${base}/fixture-report-1/triage`
   const second = `${base}/fixture-report-2/triage`
