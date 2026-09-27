@@ -259,41 +259,6 @@
   color: var(--muted);
   font-size: .8rem;
 }
-.location-editor {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(10rem, .7fr) auto;
-  align-items: end;
-  gap: .75rem;
-  padding: .85rem;
-  border-top: 1px solid var(--border);
-  background: rgb(from var(--bg) r g b / .35);
-}
-.location-field {
-  display: grid;
-  gap: .35rem;
-  min-width: 0;
-}
-.location-field > span,
-.location-field label {
-  color: var(--muted);
-  font-size: .75rem;
-}
-.location-field input {
-  width: 100%;
-}
-.location-actions {
-  display: flex;
-  gap: .4rem;
-}
-.location-actions .action {
-  padding: .4rem .65rem;
-  min-height: 2.25rem;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--text);
-  background: var(--bg);
-  font-size: .78rem;
-}
 @container (max-width: 35rem) {
   .drop-copy > span {
     display: none;

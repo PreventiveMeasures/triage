@@ -216,13 +216,14 @@ export interface ManagedBundle {
   kind: string | null
   byteSize: number
   uploadedBy: string | null
+  repoDirectory: string
   repoId: number | null
   uploadedAt: number
 }
 
 // What the upload handler supplies to record a bundle; the store stamps
 // uploaded_at. `uploadedByLogin` is the durable uploader-login snapshot.
-export type BundleInput = Omit<ManagedBundle, 'uploadedAt' | 'slug'> & { uploadedByLogin: string | null }
+export type BundleInput = Omit<ManagedBundle, 'uploadedAt' | 'slug' | 'repoDirectory'> & { uploadedByLogin: string | null; repoDirectory?: string }
 
 // A bundle row for the "Manage bundles" list — adds the uploader login + repo
 // full name display joins (null when absent / since removed).
@@ -234,6 +235,7 @@ export interface AdminBundle {
   kind: string | null
   byteSize: number
   uploadedByLogin: string | null
+  repoDirectory: string
   repoId: number | null
   repoFullName: string | null
   uploadedAt: number
@@ -285,6 +287,7 @@ export interface UserTeamBundle {
   integrity: string
   filename: string
   byteSize: number
+  repoDirectory: string
   repoId: number
   repoFullName: string
 }
@@ -380,9 +383,9 @@ export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataSt
   userCanReadBundleAdvisories(userId: string, bundleId: string, teamId: string | null): Promise<boolean>
   userCanReadRepoPath(userId: string, repoId: number, directory: string): Promise<boolean>
   deleteBundle(id: string): Promise<boolean>
-  // Attach / detach a bundle's repo link (repoId null = detach); resolves true
-  // iff the bundle exists. The caller validates repoId is a selected repo.
-  setBundleRepo(id: string, repoId: number | null): Promise<boolean>
+  // Set a bundle's repository and normalized directory (repoId null detaches
+  // and clears the directory). The caller validates the location and access.
+  setBundleRepo(id: string, repoId: number | null, directory?: string): Promise<boolean>
   linkReportsToBundle(integrity: string, bundleId: string, userId?: string): Promise<void>
   // Teams ("Manage teams"). createTeam inserts a team (false iff the name is
   // taken); renameTeam changes a team's name ('name-taken' iff another team
@@ -433,6 +436,8 @@ type UserRow = { id: string; login: string; name: string | null; role: Role; cre
 const REPORT_IN_TEAM_PATH_SQL = `(tr.path IS NULL OR tr.path = ''
   OR r.repo_directory = tr.path
   OR substr(r.repo_directory, 1, length(tr.path) + 1) = tr.path || '/')`
+
+const BUNDLE_IN_TEAM_PATH_SQL = REPORT_IN_TEAM_PATH_SQL.replaceAll('r.repo_directory', 'b.repo_directory')
 
 // Prepare every statement the store uses, returned as a bag the factory
 // destructures — keeps openSqliteManagedDb itself small (one place per query).
@@ -646,36 +651,36 @@ function prepareStatements(db: ManagedSql) {
       WHERE finding_id IN (SELECT value FROM json_each(?)) ORDER BY id`),
     insertBundleStmt: db.prepare(
       `WITH candidate(id, slug) AS (VALUES (?, ?))
-       INSERT INTO managed_bundle (id, slug, integrity, filename, kind, byte_size, uploaded_by, uploaded_by_login, repo_id, uploaded_at)
+       INSERT INTO managed_bundle (id, slug, integrity, filename, kind, byte_size, uploaded_by, uploaded_by_login, repo_id, repo_directory, uploaded_at)
        SELECT id, CASE WHEN EXISTS (SELECT 1 FROM managed_bundle WHERE slug = candidate.slug) THEN id ELSE slug END,
-              ?, ?, ?, ?, ?, ?, ?, ? FROM candidate`,
+              ?, ?, ?, ?, ?, ?, ?, ?, ? FROM candidate`,
     ),
     selectBundleByIntegrityStmt: db.prepare(
       `SELECT id, slug, integrity, filename, kind, byte_size AS byteSize,
-              uploaded_by AS uploadedBy, repo_id AS repoId, uploaded_at AS uploadedAt
+              uploaded_by AS uploadedBy, repo_id AS repoId, repo_directory AS repoDirectory, uploaded_at AS uploadedAt
          FROM managed_bundle WHERE integrity = ?`,
     ),
     selectBundleStmt: db.prepare(
       `SELECT id, slug, integrity, filename, kind, byte_size AS byteSize,
-              uploaded_by AS uploadedBy, repo_id AS repoId, uploaded_at AS uploadedAt
+              uploaded_by AS uploadedBy, repo_id AS repoId, repo_directory AS repoDirectory, uploaded_at AS uploadedAt
          FROM managed_bundle WHERE id = ?`,
     ),
     selectBundlesStmt: db.prepare(
       `SELECT b.id AS id, b.slug AS slug, b.integrity AS integrity, b.filename AS filename, b.kind AS kind,
               b.byte_size AS byteSize, COALESCE(u.login, b.uploaded_by_login) AS uploadedByLogin,
-              b.repo_id AS repoId, sr.full_name AS repoFullName, b.uploaded_at AS uploadedAt
+              b.repo_id AS repoId, b.repo_directory AS repoDirectory, sr.full_name AS repoFullName, b.uploaded_at AS uploadedAt
          FROM managed_bundle b
          LEFT JOIN managed_user u ON u.id = b.uploaded_by
          LEFT JOIN managed_selected_repo sr ON sr.repo_id = b.repo_id
         WHERE (? IS NULL OR (b.uploaded_by = ? OR EXISTS (
           SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
-          WHERE tr.repo_id = b.repo_id AND tu.user_id = ?)))
+          WHERE tr.repo_id = b.repo_id AND ${BUNDLE_IN_TEAM_PATH_SQL} AND tu.user_id = ?)))
         ORDER BY b.uploaded_at DESC, b.filename ASC`,
     ),
     selectBundleReadableStmt: db.prepare(
       `SELECT 1 FROM managed_bundle b WHERE b.id = ? AND (b.uploaded_by = ? OR EXISTS (
           SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
-          WHERE tr.repo_id = b.repo_id AND tu.user_id = ?))`,
+          WHERE tr.repo_id = b.repo_id AND ${BUNDLE_IN_TEAM_PATH_SQL} AND tu.user_id = ?))`,
     ),
     selectRepoReadableStmt: db.prepare(
       `SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
@@ -687,7 +692,7 @@ function prepareStatements(db: ManagedSql) {
         JOIN managed_team_user tu ON tu.team_id = tr.team_id WHERE tu.user_id = ? LIMIT 1`,
     ),
     deleteBundleStmt: db.prepare(`DELETE FROM managed_bundle WHERE id = ?`),
-    setBundleRepoStmt: db.prepare(`UPDATE managed_bundle SET repo_id = ? WHERE id = ?`),
+    setBundleRepoStmt: db.prepare(`UPDATE managed_bundle SET repo_id = ?, repo_directory = ? WHERE id = ?`),
     // Attach a freshly-stored bundle to the reports that declared its integrity
     // but haven't been linked yet (bundle uploaded after the report).
     linkReportsToBundleStmt: db.prepare(
@@ -733,14 +738,14 @@ function prepareStatements(db: ManagedSql) {
         ORDER BY r.uploaded_at DESC, r.filename ASC, r.id ASC`,
     ),
     // Bundles are scoped through the same team -> repository links as reports.
-    // They have no visibility flag: membership in a team that can see the repo
-    // is the visibility decision for the bundle row in the sidebar.
+    // They have no visibility flag: the bundle directory must fall inside a
+    // team repository scope to appear in that team's sidebar.
     selectUserTeamBundlesStmt: db.prepare(
       `SELECT DISTINCT tr.team_id AS teamId, b.id AS id, b.slug AS slug, b.integrity AS integrity,
-              b.filename AS filename, b.byte_size AS byteSize, b.repo_id AS repoId, sr.full_name AS repoFullName, b.uploaded_at
+              b.filename AS filename, b.byte_size AS byteSize, b.repo_id AS repoId, b.repo_directory AS repoDirectory, sr.full_name AS repoFullName, b.uploaded_at
          FROM managed_team_user tu
          JOIN managed_team_repo tr ON tr.team_id = tu.team_id
-         JOIN managed_bundle b ON b.repo_id = tr.repo_id
+         JOIN managed_bundle b ON b.repo_id = tr.repo_id AND ${BUNDLE_IN_TEAM_PATH_SQL}
          JOIN managed_selected_repo sr ON sr.repo_id = b.repo_id
         WHERE tu.user_id = ?
         ORDER BY b.uploaded_at DESC, b.filename ASC, b.id ASC`,
@@ -758,7 +763,7 @@ function prepareStatements(db: ManagedSql) {
     ),
     selectBundleSecurityStmt: db.prepare(
       `SELECT 1 FROM managed_bundle b
-         JOIN managed_team_repo tr ON tr.repo_id = b.repo_id
+         JOIN managed_team_repo tr ON tr.repo_id = b.repo_id AND ${BUNDLE_IN_TEAM_PATH_SQL}
          JOIN managed_team_user tu ON tu.team_id = tr.team_id
         WHERE b.id = ? AND tu.user_id = ? AND tu.view_security = 1
           AND (? IS NULL OR tr.team_id = ?) LIMIT 1`,
@@ -1046,17 +1051,17 @@ function triageMethods( stmts: ReturnType<typeof prepareStatements>, historyLimi
 
 type BundleRow = {
   id: string; slug: string; integrity: string; filename: string; kind: string | null; byteSize: number
-  uploadedBy: string | null; repoId: number | null; uploadedAt: number
+  uploadedBy: string | null; repoId: number | null; repoDirectory: string; uploadedAt: number
 }
 type BundleListRow = {
   id: string; slug: string; integrity: string; filename: string; kind: string | null; byteSize: number
-  uploadedByLogin: string | null; repoId: number | null; repoFullName: string | null; uploadedAt: number
+  uploadedByLogin: string | null; repoId: number | null; repoFullName: string | null; repoDirectory: string; uploadedAt: number
 }
 
 function mapBundle(r: BundleRow): ManagedBundle {
   return {
     id: r.id, slug: r.slug, integrity: r.integrity, filename: r.filename, kind: r.kind,
-    byteSize: r.byteSize, uploadedBy: r.uploadedBy, repoId: r.repoId, uploadedAt: r.uploadedAt,
+    byteSize: r.byteSize, uploadedBy: r.uploadedBy, repoId: r.repoId, repoDirectory: r.repoDirectory, uploadedAt: r.uploadedAt,
   }
 }
 
@@ -1070,7 +1075,7 @@ function bundleMethods(stmts: ReturnType<typeof prepareStatements>) {
     async insertBundle(bundle: BundleInput, now: number): Promise<void> {
       await insertBundleStmt.run(
         bundle.id, preferredSlug(bundle.id), bundle.integrity, bundle.filename, bundle.kind,
-        bundle.byteSize, bundle.uploadedBy, bundle.uploadedByLogin ?? null, bundle.repoId, now,
+        bundle.byteSize, bundle.uploadedBy, bundle.uploadedByLogin ?? null, bundle.repoId, bundle.repoId == null ? '' : bundle.repoDirectory ?? '', now,
       )
     },
     async getBundleByIntegrity(integrity: string): Promise<ManagedBundle | null> {
@@ -1085,7 +1090,7 @@ function bundleMethods(stmts: ReturnType<typeof prepareStatements>) {
       const rows = (await selectBundlesStmt.all(userId ?? null, userId ?? null, userId ?? null)) as BundleListRow[]
       return rows.map((r) => ({
         id: r.id, slug: r.slug, integrity: r.integrity, filename: r.filename, kind: r.kind, byteSize: r.byteSize,
-        uploadedByLogin: r.uploadedByLogin, repoId: r.repoId, repoFullName: r.repoFullName,
+        uploadedByLogin: r.uploadedByLogin, repoId: r.repoId, repoFullName: r.repoFullName, repoDirectory: r.repoDirectory,
         uploadedAt: r.uploadedAt,
       }))
     },
@@ -1101,8 +1106,8 @@ function bundleMethods(stmts: ReturnType<typeof prepareStatements>) {
     async deleteBundle(id: string): Promise<boolean> {
       return Number((await deleteBundleStmt.run(id)).changes) > 0
     },
-    async setBundleRepo(id: string, repoId: number | null): Promise<boolean> {
-      return Number((await setBundleRepoStmt.run(repoId, id)).changes) > 0
+    async setBundleRepo(id: string, repoId: number | null, directory?: string): Promise<boolean> {
+      return Number((await setBundleRepoStmt.run(repoId, repoId == null ? '' : directory ?? '', id)).changes) > 0
     },
     async linkReportsToBundle(integrity: string, bundleId: string, userId?: string): Promise<void> {
       await linkReportsToBundleStmt.run(bundleId, integrity, userId ?? null, userId ?? null, userId ?? null)
@@ -1168,7 +1173,7 @@ function teamMethods( stmts: ReturnType<typeof prepareStatements>) {
       for (const b of (await selectUserTeamBundlesStmt.all(userId)) as (UserTeamBundle & { teamId: string })[]) {
         const list = bundlesByTeam.get(b.teamId) ?? []
         list.push({ id: b.id, slug: b.slug, integrity: b.integrity, filename: b.filename,
-          byteSize: b.byteSize, repoId: b.repoId, repoFullName: b.repoFullName })
+          byteSize: b.byteSize, repoId: b.repoId, repoDirectory: b.repoDirectory, repoFullName: b.repoFullName })
         bundlesByTeam.set(b.teamId, list)
       }
       return teams.map((t) => ({

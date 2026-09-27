@@ -50,7 +50,7 @@ export async function probeSession({ fallback = null } = {}) {
 
 // GET /api/teams → the signed-in user's teams, each with the reports and bundles
 // attached to the team's repos ([{ id, slug, name, reports: [{ id, slug, filename }],
-// bundles: [{ id, slug, integrity, filename, byteSize, repoId, repoFullName }] }]), or [] when
+// bundles: [{ id, slug, integrity, filename, byteSize, repoId, repoDirectory, repoFullName }] }]), or [] when
 // unauthenticated. A failed background refresh keeps the provided fallback.
 // Kept on `state.managedTeams` and shown in the
 // sidebar's per-user Teams section. Never throws, so a probe failure can't break
@@ -85,6 +85,7 @@ export async function probeTeams({ fallback = [], signal } = {}) {
             byteSize: b.byteSize,
             repoId: b.repoId,
             filename: b.filename,
+            repoDirectory: typeof b.repoDirectory === 'string' ? b.repoDirectory : '',
             repoFullName: typeof b.repoFullName === 'string' ? b.repoFullName : '',
           }))
         : [],

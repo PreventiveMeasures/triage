@@ -266,7 +266,7 @@ for (const assigned of [true, false]) {
       const result = original(path, body, headers)
       if (path === '/api/admin/bundles' && body === undefined) {
         return { bundles: [
-          { id: 'bundle', integrity: 'sha512-existing', repoId: assigned ? 9 : null },
+          { id: 'bundle', integrity: 'sha512-existing', repoId: assigned ? 9 : null, repoDirectory: assigned ? 'foo' : '' },
           { id: 'unrelated', integrity: 'sha512-unrelated', repoId: 10 },
         ] }
       }
@@ -278,7 +278,7 @@ for (const assigned of [true, false]) {
     assert.equal(mock.calls.filter(call => call.path === '/api/admin/bundles').length, 1, 'resolve once and never upload')
     assert.equal(mock.calls.some(call => call.path.startsWith('/api/admin/reports')), false)
     assert.deepEqual(mock.calls.filter(call => call.path.endsWith('/set-repo')).map(call => call.body), assigned
-      ? [{ teamId: 'team', repoId: 9, path: '' }]
+      ? [{ teamId: 'team', repoId: 9, path: 'foo' }]
       : [{ bundleId: 'bundle', repoId: 7 }, { teamId: 'team', repoId: 7, path: '' }])
   })
 }

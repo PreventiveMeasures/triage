@@ -89,3 +89,14 @@ test('bundle assignment changes reload affected team reports and leave other tea
   }
   assert.equal(cache.setReportCatalog(catalog('two')).size, 0)
 })
+
+
+test('moving a bundle within the same team refreshes its location and source caches', async () => {
+  const cache = new ManagedAppState()
+  const catalog = directory => [{ id: 'team', reports: [report('report')], bundles: [{ id: 'bundle', filename: 'b.map', repoFullName: 'org/repo', repoDirectory: directory }] }]
+  cache.setReportCatalog(catalog('foo'))
+  await cache.load('bundle-metadata:bundle', 'bundle', () => Promise.resolve({ files: [] }))
+  const changed = cache.setReportCatalog(catalog('foo/sub'))
+  assert.deepEqual([...changed], ['team:team', 'bundle:bundle'])
+  assert.equal(cache.read('bundle-metadata:bundle'), undefined)
+})

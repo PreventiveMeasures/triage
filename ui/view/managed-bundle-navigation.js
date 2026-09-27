@@ -2,7 +2,7 @@ import { managedRouteForIds } from '../../common/managed/routes.js'
 
 export function managedBundleEntry(bundle) {
   return { managedId: bundle.id, slug: bundle.slug, integrity: bundle.integrity,
-    name: bundle.filename, size: bundle.byteSize, repoId: bundle.repoId }
+    name: bundle.filename, size: bundle.byteSize, repoId: bundle.repoId, repoFullName: bundle.repoFullName, repoDirectory: bundle.repoDirectory ?? '' }
 }
 
 // Keep the clicked team when a bundle belongs to several teams. Manage can

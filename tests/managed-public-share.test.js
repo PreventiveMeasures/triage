@@ -61,6 +61,22 @@ async function fixture(t) {
   return { db, config, sessions, reads, store, deps, request, mint, seed }
 }
 
+test('directory team links include bundles at or below their scope and immediately lose moved bundles', async t => {
+  const h = await fixture(t), token = await h.mint()
+  const catalog = async () => (await h.request('/api/teams/team/shared', { token })).body.team.bundles
+  assert.deepEqual(await catalog(), [], 'root bundles are outside /app')
+  for (const directory of ['app', 'app/child']) {
+    await h.db.setBundleRepo('bundle', 1, directory)
+    assert.equal((await catalog())[0].repoDirectory, directory)
+    assert.equal((await h.request('/api/bundles/bundle/download', { token })).status, 200)
+  }
+  await h.db.setBundleRepo('bundle', 1, 'application')
+  assert.deepEqual(await catalog(), [])
+  for (const suffix of ['metadata', 'contents', 'download', 'advisories']) {
+    assert.equal((await h.request(`/api/bundles/bundle/${suffix}`, { token })).status, 404)
+  }
+})
+
 test('public sharing is opt-in, requires team management and CSRF; the token is not a login session', async t => {
   const h = await fixture(t)
   h.config.allowShare = false

@@ -157,7 +157,8 @@ async function grantWorkspaceBundles(plan, defaultRepo, api, step, knownBundles)
     if (bundle.repoId == null) {
       await step(`bundle-repo:${bundle.id}`, () => api.send('/api/admin/bundles/set-repo', { bundleId: bundle.id, repoId }))
     }
-    await step(`repo:${repoId}:`, () => api.send('/api/admin/teams/set-repo', { teamId: plan.team.id, repoId, path: '' }))
+    const path = bundle.repoId == null ? '' : bundle.repoDirectory ?? ''
+    await step(`repo:${repoId}:${path}`, () => api.send('/api/admin/teams/set-repo', { teamId: plan.team.id, repoId, path }))
   }
 }
 
