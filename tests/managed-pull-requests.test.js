@@ -169,4 +169,15 @@ test('HTTP batch endpoint authenticates, checks CSRF/origin, bounds input, and r
     { url: 'https://github.com/OtherOrg/OtherRepo/pull/1', error: 'forbidden' }, { url: 'invalid', error: 'invalid-url' },
   ])
   assert.equal(githubCalls, 1)
+  await f.db.setUserRole(f.session.userId, 'none')
+  assert.equal((await send({ urls: [link(123)] })).status, 403, 'team grants and stored tokens cannot bypass No access')
+  assert.equal(githubCalls, 1, 'No access must not read or refresh GitHub data')
+  await f.db.setUserRole(f.session.userId, 'view')
+  t.mock.method(globalThis, 'fetch', async () => {
+    await f.db.setUserRole(f.session.userId, 'none')
+    return Response.json(payload(123))
+  })
+  const revoked = await send({ urls: [link(123)] })
+  assert.equal(revoked.status, 403, 'revocation while GitHub responds must discard its result')
+  assert.deepEqual(revoked.body, { error: 'forbidden' })
 })

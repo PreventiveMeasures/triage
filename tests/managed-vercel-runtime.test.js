@@ -62,6 +62,7 @@ test('managed function retries failed cold starts, shares initialization, and au
   assert.equal(calls, 2, 'one retry initializes both requests')
   assert.equal(configs[0].json().managed.uploadChunkBytes, UPLOAD_CHUNK_BYTES)
   const session = await createSession(config, db, { githubUserId: 1, login: 'admin', name: null, avatarUrl: null }, Date.now())
+  await db.setUserRole(session.userId, 'admin')
   const headers = { cookie: session.setCookie.split(';')[0], 'x-csrf-token': session.csrfToken, origin: 'https://app.example' }
   const id = randomUUID(), path = `/api/admin/uploads/bundles/${id}/0`
   assert.equal((await send(path, { method: 'POST', body: 'part' })).status, 401)

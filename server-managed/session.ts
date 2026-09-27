@@ -53,7 +53,7 @@ export async function createSession(
 ): Promise<{ setCookie: string; csrfToken: string; userId: string }> {
   const token = randomToken()
   const csrfToken = randomToken()
-  const userId = await db.upsertUser(user, now)
+  const userId = await db.upsertUser(user, now, config.initialAdminGithubId)
   await db.createSession({ id: hashToken(token), userId, csrfToken, expiresAt: now + config.sessionTtlMs }, now)
   const setCookie = buildCookie(config.sessionCookieName, token, {
     maxAgeS: Math.floor(config.sessionTtlMs / 1000), secure: config.cookieSecure, sameSite: 'Lax',

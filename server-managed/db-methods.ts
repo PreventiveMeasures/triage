@@ -286,7 +286,9 @@ export interface UserTeam {
 // Backend-agnostic store surface (SQLite + PostgreSQL implementations).
 export interface ManagedDb extends ActivityStore, CommentStore {
   // Upsert the identity; returns the user's opaque id (stable across logins).
-  upsertUser(user: ManagedUser, now: number): Promise<string>
+  // Initial-admin approval comes only from trusted server configuration and
+  // applies exclusively to the first insertion into an empty user table.
+  upsertUser(user: ManagedUser, now: number, initialAdminGithubId?: number | null): Promise<string>
   createSession(session: ManagedSession, now: number): Promise<void>
   sessionWithUser(id: string, now: number): Promise<{ session: ManagedSession; user: StoredUser } | null>
   deleteSession(id: string): Promise<void>
@@ -417,12 +419,13 @@ const REPORT_IN_TEAM_PATH_SQL = `(tr.path IS NULL OR tr.path = ''
 // destructures — keeps openSqliteManagedDb itself small (one place per query).
 function prepareStatements(db: ManagedSql) {
   return {
-    // role: the FIRST registered user (table empty at insert time) is admin;
-    // later users default to none. The subquery evaluates before this row is
-    // added. ON CONFLICT keeps an existing user's role untouched.
+    // Only the operator-preapproved identity may bootstrap the empty DB.
+    // The emptiness check and insert share the store's writer transaction,
+    // so concurrent first logins cannot both become admins. Re-login never
+    // overwrites approval or revocation through the ON CONFLICT update.
     upsertUserStmt: db.prepare(
       `INSERT INTO managed_user (id, github_user_id, login, name, avatar_url, role, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, (SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM managed_user) THEN 'admin' ELSE 'none' END), ?, ?)
+       VALUES (?, ?, ?, ?, ?, CASE WHEN NOT EXISTS(SELECT 1 FROM managed_user) THEN ? ELSE 'none' END, ?, ?)
        ON CONFLICT(github_user_id) DO UPDATE SET
          login = excluded.login, name = excluded.name,
          avatar_url = excluded.avatar_url, updated_at = excluded.updated_at`,
@@ -1145,10 +1148,12 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
   } = stmts
 
   return {
-    async upsertUser(user, now) {
+    async upsertUser(user, now, initialAdminGithubId = null) {
       // New row → a fresh id; ON CONFLICT(github_user_id) keeps an existing
       // user's id (DO UPDATE leaves it untouched), so re-read to return it.
-      await upsertUserStmt.run(randomUUID(), user.githubUserId, user.login, user.name, user.avatarUrl, now, now)
+      const initialRole = initialAdminGithubId != null && Number.isSafeInteger(initialAdminGithubId) && initialAdminGithubId > 0
+        && user.githubUserId === initialAdminGithubId ? 'admin' : 'none'
+      await upsertUserStmt.run(randomUUID(), user.githubUserId, user.login, user.name, user.avatarUrl, initialRole, now, now)
       const row = (await selectUserIdStmt.get(user.githubUserId)) as { id: string }
       return row.id
     },

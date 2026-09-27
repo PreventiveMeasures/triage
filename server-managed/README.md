@@ -1,5 +1,45 @@
 For deployment on Vercel, see [the compatibility review and setup guide](VERCEL.md).
 
+# Account approval
+
+GitHub sign-in establishes identity. New accounts default to the `none`
+(No access) role. To preapprove the initial administrator, set this optional
+environment variable to that account's numeric GitHub user ID before the
+first registration:
+
+```sh
+MANAGED_INITIAL_ADMIN_GITHUB_ID=123456
+```
+
+The first registration gets `admin` only when the user table is empty and
+GitHub returns the configured ID. The check and insertion are atomic. An
+unset or empty variable disables automatic promotion. Invalid IDs fail
+startup. If a different user registers first, they get No access and the
+bootstrap opportunity is closed.
+
+Once **any user exists**, the variable has no effect: it cannot promote an
+existing account, a later new account, or restore a revoked role. Changing
+the variable or restarting the server does not reopen bootstrapping.
+Team membership, upload ownership, and GitHub repository access do not grant
+a workspace role. Returning logins preserve the assigned role.
+
+For a populated deployment without an admin, a trusted operator must approve
+the intended account directly in the managed SQLite or Neon database. Verify
+the numeric GitHub user ID and replace `123456` with it:
+
+```sql
+UPDATE managed_user SET role = 'admin' WHERE github_user_id = 123456;
+```
+
+Verify that exactly the intended row was updated. The administrator can then
+approve other users through **Manage → Users**, and assign team access through
+**Manage → Teams**. Existing database roles are preserved on upgrade; operators
+should review existing admins, including accounts promoted by the previous
+unrestricted first-login behavior.
+
+These approval rules apply to the managed service. Combined managed + E2E
+deployments retain the E2E service's separate authentication and permissions.
+
 # Managed browser navigation
 
 Build the UI with `pnpm build` before starting a managed or combined server.
@@ -75,7 +115,7 @@ stored locally.
 # Fix pull requests
 
 `POST /api/github/pull-requests` accepts `{ "urls": ["https://github.com/Owner/Repo/pull/123"] }`
-with at most 50 links. A managed session, same-origin request, and `X-CSRF-Token`
+with at most 50 links. An approved managed session (at least `view`), same-origin request, and `X-CSRF-Token`
 are required. Results preserve input order in `{ pullRequests: [...] }`, with
 `{ url, title, status }` on success (`open`, `draft`, `closed`, or `merged`), or
 `{ url, error }` (`invalid-url`, `forbidden`, or `unavailable`) per failed item.
@@ -273,7 +313,9 @@ current repository path; new links require access to the destination path.
 
 The `none` (No access) role is denied at the managed data API boundary, even
 when the account owns uploads or belongs to teams. This includes team names,
-avatars, report/triage data, bundle caches, and every management endpoint.
+avatars, report/triage data, bundle caches, GitHub pull-request lookups, upload
+parts, and every management endpoint. Unauthenticated requests receive 401;
+unapproved accounts receive 403 before request bodies or resources are read.
 Public bootstrap, the user's own session status and sign-out remain available.
 The client shows a no-access page and clears previously loaded data when the
 role changes.

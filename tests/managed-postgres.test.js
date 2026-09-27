@@ -31,6 +31,27 @@ async function database(t) {
 }
 const identity = i => ({ githubUserId: i, login: `user${i}`, name: null, avatarUrl: null })
 
+test('Postgres initial admin is restricted to the allowlisted first identity and never re-promotes existing users', async t => {
+  const { db, connect } = await database(t)
+  const [first] = await Promise.all([
+    db.upsertUser(identity(7), 1, 7), db.upsertUser(identity(8), 2, 8), db.upsertUser(identity(7), 3, 7),
+  ])
+  assert.deepEqual((await db.listUsers()).map(user => user.role), ['admin', 'none'])
+  await db.setUserRole(first, 'none')
+  const reopened = await openPostgresManagedDb(connect)
+  try {
+    await reopened.upsertUser(identity(7), 4, 7)
+    await reopened.upsertUser(identity(9), 5, 9)
+    assert.deepEqual((await reopened.listUsers()).map(user => user.role), ['none', 'none', 'none'])
+  } finally { await reopened.close() }
+})
+
+test('Postgres rejects initial-admin promotion once a nonmatching user has registered', async t => {
+  const { db } = await database(t)
+  await Promise.all([db.upsertUser(identity(1), 1, 7), db.upsertUser(identity(7), 2, 7)])
+  assert.deepEqual((await db.listUsers()).map(user => user.role), ['none', 'none'])
+})
+
 test('Postgres report batches snapshot sessions, scoped grants, and metadata with constant SQL round trips', async t => {
   const { db, queries } = await database(t)
   const admin = await db.upsertUser(identity(1), 1), viewer = await db.upsertUser(identity(2), 2)
@@ -82,7 +103,8 @@ test('Postgres report batches snapshot sessions, scoped grants, and metadata wit
 test('Postgres managed store: auth, scopes, uploads, history, comments, and restart', async t => {
   const { db, connect } = await database(t)
   const [admin, user] = await Promise.all([db.upsertUser(identity(1), 10), db.upsertUser(identity(2), 11)])
-  assert.deepEqual((await db.listUsers()).map(u => u.role), ['admin', 'none'])
+  assert.deepEqual((await db.listUsers()).map(u => u.role), ['none', 'none'])
+  await db.setUserRole(admin, 'admin')
   assert.equal(await db.upsertUser(identity(1), 12), admin)
   await db.setUserRole(user, 'manage')
   await db.createSession({ id: 's', userId: user, csrfToken: 'csrf', expiresAt: 1000 }, 20)
@@ -191,6 +213,7 @@ test('Postgres admins can delete unattributed comments with version checks and t
   const { db, connect } = await database(t)
   const admin = await db.upsertUser(identity(1), 1), user = await db.upsertUser(identity(2), 2)
   await db.setUserRole(user, 'manage')
+  await db.setUserRole(admin, 'admin')
   const input = { findingId: 'f', body: 'imported', authorId: null, authorLogin: null }
   const imported = await db.createComment(input, 10)
   assert.equal(await db.deleteComment(imported.id, user, 'user2', 1, '', 20), 'forbidden')

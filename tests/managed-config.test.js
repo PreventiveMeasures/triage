@@ -23,12 +23,28 @@ function useEnv(t, values) {
   replaceEnv({ ...auth, ...values })
 }
 
+test('initial admin configuration accepts only one positive numeric GitHub ID, and defaults off', t => {
+  useEnv(t, {})
+  assert.equal(loadManagedConfig().initialAdminGithubId, null)
+  process.env.MANAGED_INITIAL_ADMIN_GITHUB_ID = ''
+  assert.equal(loadManagedConfig().initialAdminGithubId, null)
+  for (const value of ['1', '123456', String(Number.MAX_SAFE_INTEGER)]) {
+    process.env.MANAGED_INITIAL_ADMIN_GITHUB_ID = value
+    for (const combined of [false, true]) assert.equal(loadManagedConfig({ combined }).initialAdminGithubId, Number(value))
+  }
+  for (const value of ['octocat', '1,2', '0', '-1', '1.5', '1e3', '0x10', '01', ' 1 ', '9007199254740992']) {
+    process.env.MANAGED_INITIAL_ADMIN_GITHUB_ID = value
+    assert.throws(() => loadManagedConfig(), /MANAGED_INITIAL_ADMIN_GITHUB_ID/u, value)
+  }
+})
+
 test('combined e2e Neon configuration preserves existing managed SQLite data', async t => {
   const dir = await mkdtemp(join(tmpdir(), 'triage-managed-config-'))
   t.after(() => rm(dir, { recursive: true, force: true }))
   const path = join(dir, 'managed.db')
   const existing = openSqliteManagedDb(path)
   const userId = await existing.upsertUser({ githubUserId: 1, login: 'existing-admin', name: null, avatarUrl: null }, 1)
+  await existing.setUserRole(userId, 'admin')
   await existing.close()
   useEnv(t, { DATABASE_URL: 'postgres://e2e.invalid/e2e', BLOB_READ_WRITE_TOKEN: 'e2e-token', DB_PATH: join(dir, 'e2e.db'), MANAGED_DB_PATH: path })
   const config = loadManagedConfig({ combined: true })
