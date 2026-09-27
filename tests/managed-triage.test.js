@@ -34,9 +34,9 @@ mock.module('../client/index.js', { namedExports: {
   saveTriage: () => { saves++; notifier(); return Promise.resolve() },
 } })
 mock.module('../ui/view/client-managed.js', { namedExports: {
-  fetchReportTriage: (id) => {
+  fetchReportTriage: (id, teamId, options) => {
     calls.push({ fetch: id })
-    if (typeof serverEntries === 'function') return serverEntries(id)
+    if (typeof serverEntries === 'function') return serverEntries(id, teamId, options)
     return Promise.resolve(serverEntries == null ? null : (serverEntries[id] ?? {}))
   },
   pushReportTriage: (id, entries, csrfToken, teamId) => { calls.push({ id, entries, csrfToken, ...(teamId ? { teamId } : {}) }); return Promise.resolve(typeof pushStatus === 'function' ? pushStatus() : pushStatus) },
@@ -290,6 +290,42 @@ test('a triage response arriving in local mode is rejected', async () => {
   assert.equal(await hydrating, false)
   assert.equal(state.triage.size, 0)
   assert.equal(renders, 0)
+})
+
+test('initial hydration passes view cancellation to HTTP and rejects a late response even when reports are reused', async () => {
+  const controller = new AbortController(), pending = Promise.withResolvers()
+  load('B', ['y'])
+  state.currentManagedTeam = 'team'
+  serverEntries = (id, teamId, { signal }) => {
+    assert.equal(id, 'B')
+    assert.equal(teamId, 'team')
+    assert.equal(signal, controller.signal)
+    return pending.promise
+  }
+  const hydrating = hydrateManagedReportTriage('B', { signal: controller.signal })
+  await settle()
+  controller.abort()
+  pending.resolve({ y: { color: 'red' } })
+  assert.equal(await hydrating, false)
+  assert.equal(state.triage.size, 0)
+  assert.equal(saves, 0)
+  assert.equal(renders, 0)
+})
+
+const hydrationSessionFields = ['id', 'role']
+hydrationSessionFields.forEach(field => {
+  test(`initial hydration rejects a response after the session ${field} changes`, async () => {
+    const pending = Promise.withResolvers()
+    load('B', ['y'])
+    serverEntries = () => pending.promise
+    const hydrating = hydrateManagedReportTriage('B')
+    await settle()
+    state.managedSession = { ...state.managedSession, [field]: field === 'role' ? 'view' : 'other' }
+    pending.resolve({ y: { fix: 'private' } })
+    assert.equal(await hydrating, false)
+    assert.equal(state.triage.size, 0)
+    assert.equal(saves, 0)
+  })
 })
 
 test('a transient failure is retried with the next flush; a landed batch is not re-sent', async () => {

@@ -770,19 +770,23 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   // managed triage layer routes later edits by the per-report ids stamped
   // above, so overlapping findings are sent to a report that actually owns
   // them instead of silently posting them to the first report only.
-  if (selected.length > 0) {
+  if (findings.length > 0) {
     const { hydrateManagedReportTriage } = await import('./managed-triage.js')
     if (isStaleLoad(gen)) return false
-    for (const entry of findings) {
-      const hydrated = (await Promise.all([
-        hydrateManagedReportTriage(entry.id, { renderView: false }), loadManagedReportComments(entry.id),
-      ])).every(Boolean)
-      if (isStaleLoad(gen)) return false
-      if (!hydrated) {
-        await goHome({ history: false })
-        showToast('Could not load report annotations. Open the team or report again to retry.')
-        return false
+    const hydrated = await startManagedTeamFeed({ hydrate: async signal => {
+      for (const entry of findings) {
+        const loaded = (await Promise.all([
+          hydrateManagedReportTriage(entry.id, { renderView: false, signal }), loadManagedReportComments(entry.id, { signal }),
+        ])).every(Boolean)
+        if (!loaded || signal.aborted || isStaleLoad(gen)) return false
       }
+      return true
+    } })
+    if (isStaleLoad(gen)) return false
+    if (!hydrated) {
+      await goHome({ history: false })
+      showToast('Could not load report annotations. Open the team or report again to retry.')
+      return false
     }
   }
   if (selectedLink) {

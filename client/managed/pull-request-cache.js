@@ -1,5 +1,15 @@
 import { githubFixKey, githubIssueClosedReason, parseGithubFixUrl } from '../../common/github-pr.ts'
 
+function workspaceScope(context) {
+  const team = context?.teams?.find(candidate => candidate.id === context.teamId)
+  if (!team) return null
+  // These server versions cover grants, reports, links and repository scope.
+  // A catalog refresh or rename alone must not discard authorized metadata.
+  // Older/unversioned catalogs conservatively revalidate on every refresh.
+  if (!team.cacheKey || !Array.isArray(team.reports) || team.reports.some(report => !report.cacheKey)) return context.teams
+  return JSON.stringify([team.cacheKey, team.reports.map(report => [report.id, report.cacheKey]).toSorted()])
+}
+
 // One in-memory response per active workspace/session. A rendered URL is only
 // a local lookup key; it never becomes input to the server or GitHub request.
 export class FixCache {
@@ -11,6 +21,7 @@ export class FixCache {
     this.entries = new Map()
     this.expires = 0
     this.context = null
+    this.scope = null
     this.timer = null
     this.run = null
   }
@@ -23,15 +34,18 @@ export class FixCache {
     this.entries.clear()
     this.expires = 0
     this.context = null
+    this.scope = null
   }
 
   syncContext() {
     const next = this.getContext()
     if (next?.key !== this.context?.key || next?.teamId !== this.context?.teamId || next?.teams !== this.context?.teams) {
-      this.reset()
+      const scope = workspaceScope(next)
+      if (next?.key !== this.context?.key || next?.teamId !== this.context?.teamId || scope !== this.scope) this.reset()
       this.context = next
+      this.scope = scope
     }
-    return this.context
+    return this.scope === null ? null : this.context
   }
 
   read(url) {
@@ -40,7 +54,7 @@ export class FixCache {
     if (!ref) return null
     if (this.expires > this.now()) return this.entries.get(githubFixKey(ref)) ?? null
     if (!this.timer && !this.run) this.timer = setTimeout(() => { this.timer = null; void this.flush() }, 0)
-    return null
+    return this.entries.get(githubFixKey(ref)) ?? null
   }
 
   async flush() {

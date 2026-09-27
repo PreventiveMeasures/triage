@@ -8,10 +8,13 @@ import { setPreviewRole } from '../client/managed/request.js'
 const link = n => `https://github.com/Org/Repo/pull/${n}`
 const result = n => ({ url: link(n), title: `PR ${n}`, status: 'merged' })
 const settle = async () => { for (let i = 0; i < 4; i++) await setImmediate() }
+const team = (id = 'team') => ({ id, name: id, cacheKey: 'access-v1', reports: [
+  { id: 'report', cacheKey: 'report-v1' }, { id: 'links', cacheKey: 'links-v1' },
+] })
 
 function fixture(t, fetchWorkspace = () => Array.from({ length: 64 }, (_, i) => result(i + 1))) {
   t.mock.timers.enable({ apis: ['setTimeout'] })
-  let changes = 0, context = { key: 'alice', teamId: 'team', teams: [] }, time = 0
+  let changes = 0, context = { key: 'alice', teamId: 'team', teams: [team()] }, time = 0
   const calls = []
   const cache = new FixCache({
     context: () => context, now: () => time, changed: () => { changes++ },
@@ -42,6 +45,33 @@ test('visible links coalesce into one workspace read; all returned metadata is a
   assert.equal(f.calls.length, 1)
 })
 
+test('navigation and feed catalog refreshes keep one in-flight request and resolved links for unchanged access', async t => {
+  const delayed = Promise.withResolvers()
+  const f = fixture(t, () => delayed.promise)
+  f.cache.read(link(1))
+  await f.flush()
+  const signal = f.calls[0][1]
+  const refreshed = () => ({ key: 'alice', teamId: 'team', teams: [
+    { ...team('other'), cacheKey: 'other-team-changed' },
+    { ...team(), name: 'Renamed team', reports: team().reports.toReversed() },
+  ] })
+  f.context(refreshed())
+  assert.equal(f.cache.read(link(1)), null)
+  await f.flush()
+  assert.equal(f.calls.length, 1, 'unchanged access must not duplicate the initial /fixes request')
+  assert.equal(signal.aborted, false)
+  delayed.resolve([result(1)])
+  await settle()
+  assert.equal(f.cache.read(link(1)).status, 'merged')
+  for (let i = 0; i < 3; i++) {
+    f.context(refreshed())
+    assert.equal(f.cache.read(link(1)).status, 'merged', 'resolved links must not flash back to unavailable')
+    await f.flush()
+  }
+  assert.equal(f.calls.length, 1)
+  assert.equal(f.changes, 1)
+})
+
 test('workspace metadata expires, and malformed or unavailable entries do not label a link', async t => {
   const f = fixture(t, () => [result(1), { url: link(2), error: 'unavailable' },
     { url: link(3), title: 'Unknown state', status: 'invalid' }, { url: link(4), status: 'open' },
@@ -53,9 +83,27 @@ test('workspace metadata expires, and malformed or unavailable entries do not la
   await f.flush()
   assert.equal(f.calls.length, 1, 'missing results do not retry on every render')
   f.time(60_001)
-  assert.equal(f.cache.read(link(1)), null)
+  assert.equal(f.cache.read(link(1)).status, 'merged', 'refreshing metadata keeps the known status visible')
   await f.flush()
   assert.equal(f.calls.length, 2)
+})
+
+test('expired metadata stays visible until one refresh replaces it, including removed links', async t => {
+  const delayed = Promise.withResolvers()
+  let first = true
+  const f = fixture(t, () => { if (first) { first = false; return [result(1), result(2)] }; return delayed.promise })
+  f.cache.read(link(1))
+  await f.flush()
+  f.time(60_001)
+  for (let i = 0; i < 3; i++) {
+    assert.equal(f.cache.read(link(1)).status, 'merged')
+    await f.flush()
+  }
+  assert.equal(f.calls.length, 2)
+  delayed.resolve([{ ...result(1), status: 'open' }])
+  await settle()
+  assert.equal(f.cache.read(link(1)).status, 'open')
+  assert.equal(f.cache.read(link(2)), null, 'a completed response replaces the old authorized URL set')
 })
 
 for (const failure of ['empty', 'null', 'throw']) {
@@ -91,7 +139,7 @@ test('account, workspace, catalogue and mode changes discard metadata and abort 
   assert.equal(f.changes, 0)
   await f.flush()
   assert.equal(f.calls.length, 1, 'E2E and signed-out contexts make no requests')
-  const teams = []
+  const teams = [team(), team('second')]
   f.context({ key: 'bob', teamId: 'team', teams })
   f.cache.read(link(1))
   await f.flush()
@@ -100,12 +148,72 @@ test('account, workspace, catalogue and mode changes discard metadata and abort 
   assert.equal(f.cache.read(link(1)), null, 'same account and catalogue cannot reuse another workspace response')
   await f.flush()
   assert.equal(f.calls.at(-1)[0], 'second')
-  f.context({ key: 'bob', teamId: 'second', teams: [] })
-  assert.equal(f.cache.read(link(1)), null, 'a refreshed team catalogue revalidates access')
+  f.context({ key: 'bob', teamId: 'second', teams: [team(), { ...team('second'), cacheKey: 'access-v2' }] })
+  assert.equal(f.cache.read(link(1)), null, 'changed team permissions revalidate access')
   await f.flush()
   assert.equal(f.calls.length, 4)
   f.cache.reset()
   assert.equal(f.cache.read(link(1)), null)
+})
+
+for (const [name, change] of [
+  ['grants', current => ({ ...current, cacheKey: 'access-v2' })],
+  ['report versions', current => ({ ...current, reports: current.reports.map(report => ({ ...report, cacheKey: 'changed' })) })],
+  ['removed links', current => ({ ...current, reports: current.reports.filter(report => report.id !== 'links') })],
+  ['added links', current => ({ ...current, reports: [...current.reports, { id: 'new-links', cacheKey: 'new' }] })],
+]) {
+  test(`changed ${name} clear cached metadata and reject late replies`, async t => {
+    const delayed = Promise.withResolvers()
+    let first = true
+    const f = fixture(t, () => { if (first) { first = false; return [result(1)] }; return delayed.promise })
+    f.cache.read(link(1))
+    await f.flush()
+    f.time(60_001)
+    f.cache.read(link(1))
+    await f.flush()
+    const signal = f.calls.at(-1)[1]
+    f.context({ key: 'alice', teamId: 'team', teams: [change(team())] })
+    assert.equal(f.cache.read(link(1)), null)
+    assert.equal(signal.aborted, true)
+    delayed.resolve([result(1)])
+    await settle()
+    assert.equal(f.cache.read(link(1)), null)
+  })
+}
+
+test('losing team membership clears metadata without querying the removed team', async t => {
+  const f = fixture(t)
+  f.cache.read(link(1))
+  await f.flush()
+  f.context({ key: 'alice', teamId: 'team', teams: [team('other')] })
+  assert.equal(f.cache.read(link(1)), null)
+  await f.flush()
+  assert.equal(f.calls.length, 1)
+})
+
+test('a catalog without access versions revalidates on refresh', async t => {
+  const f = fixture(t)
+  const context = () => ({ key: 'alice', teamId: 'team', teams: [{ ...team(), cacheKey: undefined }] })
+  f.context(context())
+  f.cache.read(link(1))
+  await f.flush()
+  f.context(context())
+  assert.equal(f.cache.read(link(1)), null)
+  await f.flush()
+  assert.equal(f.calls.length, 2)
+})
+
+test('a failed refresh clears previously loaded metadata because access could have been revoked', async t => {
+  let first = true
+  const f = fixture(t, () => { if (first) { first = false; return [result(1)] }; return null })
+  f.cache.read(link(1))
+  await f.flush()
+  f.time(60_001)
+  f.cache.read(link(1))
+  await f.flush()
+  assert.equal(f.cache.read(link(1)), null)
+  await f.flush()
+  assert.equal(f.calls.length, 2)
 })
 
 test('resetting after a saved Fix discards an in-flight response and reads the new workspace result', async t => {
