@@ -115,6 +115,7 @@
     "common/utf8.js",
     "out/brotli-fallback.js",
     "out/client-managed.js",
+    "out/client-managed-import.js",
     "out/client-sync.js",
     "out/graph.js",
     "out/icon-maskable.svg",

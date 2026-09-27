@@ -10,6 +10,7 @@ export const MANAGED_PAGES = Object.freeze({
   'manage-repos': '/manage/repositories',
   'admin-users': '/manage/users',
   'manage-teams': '/manage/team',
+  'manage-import': '/manage/import',
   'manage-links': '/manage/links',
   'manage-history': '/manage/history',
 })

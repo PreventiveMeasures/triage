@@ -398,6 +398,27 @@ test('Postgres annotation revisions track visible changes across connections, tr
   assert.notEqual(await db.getAnnotationRevision(['finding']), red)
 })
 
+test('Postgres workspace triage imports compare and write atomically with other triage writers', async t => {
+  const { db, queries } = await database(t)
+  const id = await db.upsertUser(identity(1), 1)
+  const actor = { id, login: 'user1' }
+  const initial = await db.getImportTriage(['f'])
+  const expected = { f: initial.f.version }
+  const results = await Promise.all([
+    db.importTriage([['f', { color: 'red', comment: 'Imported' }]], expected, actor, null, 2),
+    db.importTriage([['f', { color: 'blue', comment: 'Other import' }]], expected, actor, null, 3),
+  ])
+  assert.deepEqual(results, [true, false])
+  assert.equal((await db.listTriage(['f']))[0].color, 'red')
+  assert.equal((await db.listComments(['f'])).length, 1)
+  assert.equal((await db.listComments(['f']))[0].authorId, null)
+  assert.ok(queries.some(query => query.includes('pg_advisory_xact_lock')))
+  const snapshot = await db.getImportTriage(['f'])
+  await db.setTriage('f', { color: 'green' }, id, 'user1', 4)
+  assert.equal(await db.importTriage([['f', { color: 'blue' }]], { f: snapshot.f.version }, actor, null, 5), false)
+  assert.equal((await db.listTriage(['f']))[0].color, 'green')
+})
+
 test('Postgres feed snapshots scope catalogs to the session and release read-only transactions', async t => {
   const { db, connect, queries } = await database(t)
   const peer = await openPostgresManagedDb(connect)

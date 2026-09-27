@@ -1,5 +1,13 @@
 import { hasStoredBundleBytes, listBundles, listFiles, onBundleMutated, onFileMutated, readBundle, readFileFresh, withStoredItem } from '../storage.js'
 import { isEncryptionEnabled, isUnlocked, onVaultStateChange, unlockEncryption } from '../passkey-vault.js'
+import { hydrateKey } from '../secure-storage.js'
+import { readTriageBlob } from '../triage.js'
+
+// Only dependency handles cross the lazy import boundary. The workspace reader
+// lives in the on-demand bundle and never hydrates managed reactive state.
+export function managedWorkspaceImportDeps() {
+  return { ...defaultDeps, hydrateKey, readTriageBlob }
+}
 
 // Created in the main bundle and injected into the lazy Manage pages. Importing
 // storage/vault from that separate entry would create a second, locked session.

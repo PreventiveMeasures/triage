@@ -10,6 +10,7 @@ const PAGES = [
   ['manage-repos', 'Repositories', 'admin'],
   ['admin-users', 'Users', 'admin'],
   ['manage-teams', 'Teams', 'admin'],
+  ['manage-import', 'Import', 'admin'],
   ['manage-links', 'Links'],
   ['manage-history', 'History'],
 ]
