@@ -1,10 +1,10 @@
-import { type GithubFixRef, type GithubFixResult, type GithubFixStatus, isGithubRepoName, parseGithubFixUrl } from '../common/github-pr.ts'
+import { type GithubFixRef, type GithubFixResult, type GithubFixStatus, githubIssueClosedReason, isGithubRepoName, parseGithubFixUrl } from '../common/github-pr.ts'
 import type { ManagedConfig } from './config.ts'
 import type { ManagedDb, TeamReportAccessSnapshot } from './db.ts'
 import type { GithubMetadata } from './github-metadata.ts'
 import { ensureUserAccessToken } from './github-oauth.ts'
 
-type Metadata = { title: string; description: string | null; status: GithubFixStatus }
+type Metadata = Pick<GithubMetadata, 'title' | 'description' | 'status' | 'stateReason'>
 const MAX_GITHUB_LOOKUPS = 200
 const GITHUB_LOOKUP_TIMEOUT_MS = 10_000
 const GITHUB_METADATA_TTL_MS = 60_000
@@ -22,7 +22,7 @@ async function fetchMetadata(ref: GithubFixRef, token: string, fetchImpl: typeof
     })
     if (!response.ok) return null
     const body = await response.json() as { number?: unknown; title?: unknown; body?: unknown; state?: unknown; merged?: unknown;
-      draft?: unknown; base?: { repo?: { full_name?: unknown } }; repository_url?: unknown; pull_request?: unknown } | null
+      draft?: unknown; base?: { repo?: { full_name?: unknown } }; repository_url?: unknown; pull_request?: unknown; state_reason?: unknown } | null
     if (body?.number !== ref.number || typeof body.title !== 'string' || !body.title.trim() || body.title.length > 1024
       || !['open', 'closed'].includes(String(body.state)) || (body.body != null && typeof body.body !== 'string')) return null
     let status: GithubFixStatus
@@ -37,7 +37,8 @@ async function fetchMetadata(ref: GithubFixRef, token: string, fetchImpl: typeof
         || body.repository_url.toLowerCase() !== `https://api.github.com/repos/${ref.repo}`.toLowerCase()) return null
       status = body.state === 'closed' ? 'closed' : 'open'
     }
-    return { title: body.title, description: body.body ?? null, status }
+    const stateReason = ref.kind === 'issue' && status === 'closed' ? githubIssueClosedReason(body.state_reason) : null
+    return { title: body.title, description: body.body ?? null, status, stateReason }
   } catch { return null }
 }
 
@@ -57,10 +58,17 @@ export async function lookupFixes(config: ManagedConfig, db: ManagedDb, snapshot
   })
   const metadata = new Map((await db.listGithubMetadata([...jobs.keys()])).map(entry => [entry.key, entry]))
   const now = Date.now()
-  const pending = [...jobs.entries()].filter(([key]) => {
+  const lastCheckedAt = (key: string) => {
     const cached = metadata.get(key)
-    return !cached || (['open', 'draft'].includes(cached.status) && cached.fetchedAt + GITHUB_METADATA_TTL_MS <= now)
-  }).toSorted(([a], [b]) => (metadata.get(a)?.fetchedAt ?? 0) - (metadata.get(b)?.fetchedAt ?? 0)).slice(0, MAX_GITHUB_LOOKUPS)
+    return Math.max(cached?.fetchedAt ?? 0, cached?.attemptedAt ?? 0)
+  }
+  const pending = [...jobs.entries()].filter(([key, ref]) => {
+    const cached = metadata.get(key)
+    // Backfill closed issues cached before closure reasons existed, within the
+    // same authorized/capped queue. Even an unknown reason completes backfill.
+    return !cached || (ref.kind === 'issue' && cached.status === 'closed' && cached.stateReason == null)
+      || (['open', 'draft'].includes(cached.status) && cached.fetchedAt + GITHUB_METADATA_TTL_MS <= now)
+  }).toSorted(([a], [b]) => lastCheckedAt(a) - lastCheckedAt(b)).slice(0, MAX_GITHUB_LOOKUPS)
   // Only stale/missing, distinct, authorized entries consume the request budget.
   // Prioritize missing/oldest entries so a large workspace makes progress.
   if (pending.length > 0) {
@@ -70,17 +78,23 @@ export async function lookupFixes(config: ManagedConfig, db: ManagedDb, snapshot
       return fetchImpl(input, { ...init, signal })
     }
     const token = await ensureUserAccessToken(config, db, snapshot.user.id, now, fetchWithinDeadline)
-    const fresh: GithubMetadata[] = []
+    const fresh: Omit<GithubMetadata, 'attemptedAt'>[] = []
+    const attempted: string[] = []
     if (token) {
       // Token refresh and all waves share one deadline, with at most four
       // upstream calls in flight. Failure retains even stale cached metadata.
       for (let i = 0; i < pending.length && !signal.aborted; i += 4) {
         await Promise.all(pending.slice(i, i + 4).map(async ([key, ref]) => {
+          if (signal.aborted) return
+          if (metadata.has(key)) attempted.push(key)
           const result = await fetchMetadata(ref, token, fetchWithinDeadline)
           if (result) fresh.push({ key, ...result, fetchedAt: Date.now() })
         }))
       }
     }
+    // Only started cached reads rotate. Missing entries retain priority, and
+    // jobs skipped by the cap, deadline or absent token keep their place.
+    if (attempted.length > 0) await db.recordGithubMetadataAttempts(attempted, Date.now())
     if (fresh.length > 0) {
       await db.setGithubMetadata(fresh)
       // A concurrent merged result must win over a slower open/closed read.
@@ -92,7 +106,7 @@ export async function lookupFixes(config: ManagedConfig, db: ManagedDb, snapshot
     const key = keys[index]
     if (!key) return []
     const found = metadata.get(key)
-    return [found ? { url, title: found.title, description: found.description, status: found.status } : { url, error: 'unavailable' }]
+    return [found ? { url, title: found.title, description: found.description, status: found.status, stateReason: found.stateReason } : { url, error: 'unavailable' }]
   })
 }
 

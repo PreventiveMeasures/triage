@@ -152,7 +152,19 @@ test('workspace results include ordinary issue metadata and descriptions under s
   const f = fixture(t, () => [{ ...result(1), description: 'PR description' }, { url, title: 'Issue title', description: 'Issue description', status: 'closed' }])
   f.cache.read(url)
   await f.flush()
-  assert.deepEqual(f.cache.read(url), { title: 'Issue title', description: 'Issue description', status: 'closed' })
+  assert.deepEqual(f.cache.read(url), { title: 'Issue title', description: 'Issue description', status: 'closed', stateReason: 'unknown' })
   assert.equal(f.cache.read(link(1)).description, 'PR description')
   assert.equal(f.calls.length, 1)
+})
+
+test('workspace cache preserves closed issue reasons and ignores them for open issues and PRs', async t => {
+  const reasons = ['completed', 'not_planned', 'duplicate', null, 'unexpected']
+  const rows = reasons.map((stateReason, i) => ({ url: `https://github.com/Org/Repo/issues/${i + 1}`, title: 'Issue', status: 'closed', stateReason }))
+  const open = { ...rows[0], url: 'https://github.com/Org/Repo/issues/99', status: 'open' }
+  const f = fixture(t, () => [...rows, open, { ...result(1), stateReason: 'completed' }])
+  f.cache.read(rows[0].url)
+  await f.flush()
+  assert.deepEqual(rows.map(row => f.cache.read(row.url).stateReason), ['completed', 'not_planned', 'duplicate', 'unknown', 'unknown'])
+  assert.equal(f.cache.read(open.url).stateReason, null)
+  assert.equal(f.cache.read(link(1)).stateReason, null)
 })
